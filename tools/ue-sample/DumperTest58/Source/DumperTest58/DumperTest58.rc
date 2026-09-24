@@ -46,7 +46,9 @@
 //      block is the THIRD detection fallback, and an engine tag there passes the row for the
 //      wrong reason.
 //  (c) ⛔ The staged `<Config>\Windows\DumperTest58.exe` is UE's ~150 KB BOOTSTRAP STUB, not the
-//      game — it still carries Default.rc2's 5.8.2.0 and reports Tier0 -> 508. Inject into
+//      game — it carries Default.rc2's ENGINE version (5.8.2.0 when packaged with 5.8.2;
+//      5.8.3.0 since the 2026-09-24 repackage, measured with pe_version_probe.py) and reports
+//      Tier0 -> 508. Inject into
 //      `DumperTest58\Binaries\Win64\DumperTest58*.exe`. See README.md § Traps.
 // ============================================================
 

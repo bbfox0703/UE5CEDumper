@@ -402,7 +402,12 @@ size_t CollectGObjectsCandidates(std::vector<uintptr_t>& out, uintptr_t avoid = 
 // Aura::InitWithExtendedLayout so the stride isn't re-detected (and mis-picked).
 // outCancelled (optional): set TRUE when the sweep bailed on Tot::Requested(), so a 0 return says nothing about
 // whether a static array exists. [P1-GENAU-ABORT]
-uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr, bool* outCancelled = nullptr);
+// [VND583-10] outItemObjOffset (optional): the UObject*'s offset inside the item -- 0x00 classic, 0x08 on
+// UE 5.7+'s reordered item. outUE58Array (optional): TRUE when the struct matched UE 5.8's FUObjectArray,
+// which moved ObjObjects to +0x00 (Objects @+0x00, NumElements @+0x08) -- hand that base to Aura::Init,
+// whose "UE5.8" preset reads it; a UE 5.0-5.7 base goes to Aura::InitWithExtendedLayout.
+uintptr_t FindGObjectsStaticStruct(int* outItemStride = nullptr, bool* outCancelled = nullptr,
+                                   int* outItemObjOffset = nullptr, bool* outUE58Array = nullptr);
 
 // Find GWorld by iterating GObjects for UWorld instance, then scanning .data
 // for a static pointer to that instance.  Requires GObjects + GNames already initialized.

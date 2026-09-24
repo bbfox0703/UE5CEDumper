@@ -55,6 +55,7 @@
 // all been removed, each documented at its old site with the byte string and the reason):
 //   V       : Original UE5CEDumper patterns (V1-V13, per target)
 //   PS      : patternsleuth (PS1-PS7)          github.com/trumank/patternsleuth
+//             (on disk since audit #7: vendor/RE-UE4SS/deps/first/patternsleuth [VND583-DOC PS-11])
 //   RE      : RE-UE4SS CustomGameConfigs (RE1-RE3)  github.com/UE4SS-RE/RE-UE4SS
 //   CT      : UE4 Dumper.CT (CT1/CT3/CT4)      vendor/UE4 Dumper.CT
 //   UD      : UEDumper (GOBJ_UD1, GNAM_UD2)    github.com/Spuckwaffel/UEDumper
@@ -94,7 +95,7 @@
 //             for a weakly-validated target.
 //   ES55    : Everspace 2, 2025-05-17 snapshot (UE 5.5, ships a full PDB — the second
 //             symbolised oracle). Note the project name "ES2-0517" is a DATE, not a
-//             version. Version pinned structurally: FFieldVariant=0x08 (>=5.1.1),
+//             version. Version pinned structurally: FFieldVariant=0x08 (>=5.3),
 //             UEnum::Names still TArray<TTuple> (<5.6), FUObjectItem 24B WITH RefCount,
 //             classic FChunkedFixedUObjectArray order (<5.8), and the PDB's
 //             EUnrealEngineObjectUE5Version enum ends at ASSETREGISTRY_PACKAGEBUILDDEPENDENCIES.
@@ -413,7 +414,9 @@ constexpr const char* AOB_GOBJECTS_V7 = "4C 8B 0D ?? ?? ?? ?? 99 0F B7 D2";
 constexpr const char* AOB_GOBJECTS_V8 = "4C 8B 0D ?? ?? ?? ?? 8B D0 C1 EA 10";
 // V9: mov r9,[rip+X]; cdqe; lea rcx,[rax+rax*2]  — extended index
 constexpr const char* AOB_GOBJECTS_V9 = "4C 8B 0D ?? ?? ?? ?? 48 98 48 8D 0C 40 49";
-// V10: lea rcx,[rip+X]; call; call; mov byte[],1  — Split Fiction (UE5.5+)
+// V10: lea rcx,[rip+X]; call; call; mov byte[],1  — credited to Split Fiction, UNVERIFIED there:
+//   RE-UE4SS pins that title at UE 5.4 (CustomGameConfigs/Split Fiction/UE4SS-settings.ini), not 5.5+,
+//   and this shape cannot match its GUObjectArray site (vendor audit #7, [VND583-DOC CGC-4]).
 //   Needs -0x10 adjustment (points into struct, not base)
 constexpr const char* AOB_GOBJECTS_V10 = "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? E8 ?? ?? ?? ?? C6 05 ?? ?? ?? ?? 01";
 // V11: lea reg,[rip+X]; mov r9,rcx; mov [rcx],rax; mov eax,-1  — Little Nightmares 3
@@ -1681,7 +1684,7 @@ constexpr AobSignature GOBJECTS_PATTERNS[] = {
     // the Shipping config of the very same 4.27.2 project that gives it 832. See the three-config
     // A/B table in its comment above.
     { "GOBJ_V10", AOB_GOBJECTS_V10, AobTarget::GObjects, AobResolve::RipBoth,
-      0, 3, 7, -0x10, 110, 0, false, "V", "Split Fiction UE5.5+ lea+call+call" },
+      0, 3, 7, -0x10, 110, 0, false, "V", "lea+call+call+mov byte (credited to Split Fiction; unverified there)" },
     SIG_RIP("GOBJ_DI427_3", AOB_GOBJECTS_DI427_3, AobTarget::GObjects, 0, 2, 6, -0x14, 115, "DI427",
             "UE4.27 IndexToObject bounds test + 64K chunk divide (-> NumElements, adj -0x14)"),
     SIG_RIP("GOBJ_AV1", AOB_GOBJECTS_AV1, AobTarget::GObjects, 0, 3, 7, -0x10, 120, "AV",
@@ -1839,7 +1842,7 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     // 340–380: Tier 2 — medium patterns
     SIG_RIP("GNAM_SF_2",  AOB_GNAMES_SF_2,   AobTarget::GNames, 0, 3, 7, 0, 340, "SF", "SatisfFactory SHL pattern (in Core DLL)"),
     SIG_RIP("GNAM_SF_3",  AOB_GNAMES_SF_3,   AobTarget::GNames, 0, 3, 7, 0, 360, "SF", "SatisfFactory FNameEntryId (in Core DLL)"),
-    SIG_RIP("GNAM_V6",    AOB_GNAMES_V6,     AobTarget::GNames, 0, 3, 7, 0, 380, "V", "GSpots UE5+ mov rax; test; jnz"),
+    SIG_RIP("GNAM_V6",    AOB_GNAMES_V6,     AobTarget::GNames, 0, 3, 7, 0, 380, "V", "UE4 TNameEntryArray lazy alloc: mov rax; test; jnz; mov ecx,0x808 (not UE5)"),
 
     // 600–620: Patternsleuth
     SIG_RIP("GNAM_PS1",   AOB_GNAMES_PS1,    AobTarget::GNames, 2, 3, 7, 0, 600, "PS", "jz+9; lea r8"),

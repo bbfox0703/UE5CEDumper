@@ -686,6 +686,89 @@ grep -n "^#\{4,6\} " docs/verification-register.md | sed -n '/<the heading you a
 
 ⚠ And the cost is asymmetric in the direction that hurts: §1.ab's stale HEADING makes you re-do closed work; a stale CAVEAT makes you re-do closed work **and** write a wrong “still open” line into the file the next session will read. Mine survived one commit before the retraction.
 
+### 1.ac A stateful TOGGLE read by PARITY counts the runs — and a queued call's drain needs its own witness
+
+L15's "once, not twice" (a timed-out Console command must not be re-sent) was recorded on 2026-09-12
+as "no valid instrument": the only spawn-style exec, `SpawnServerStatReplicator`, returned OK and
+changed nothing even with the game thread running. The instrument was there all along.
+`CheatManager::God` is a parameterless stock exec that **toggles** the pawn's `bCanBeDamaged`, and
+Teleport's God Mode ↻ reads that bit. So the parity of the final state counts the runs: one run
+flips it and two cancel out. Measured 2026-09-23: green flipped OFF → ON, and the red (the retry
+guard removed) stayed OFF with two enqueues in the DLL log.
+
+⚠ **"Unchanged" is also what "never ran" looks like.** An even count needs proof that the queue
+DRAINED. Nothing logs a drained entry (Stark's drain logs only SEH failures), so use one of two
+witnesses. (a) A reply with `game_thread_stalled:false` taken after the enqueue: a hook fire
+drains the WHOLE FIFO (`Stark.h` `ShouldDrainQueue`). (b) One more call that COMPLETES: FIFO order
+means everything queued before it has run. A state that CHANGED needs no witness.
+
+**When it applies:** any "did it run N times" question on a stock engine. Other toggles are
+`ToggleDebugCamera` (but see `[DEBUGCAM-QUEUED-OFF-NOESCALATE]`: on the original PC's CheatManager a
+second toggle is a no-op, so parity breaks there), `Fly`/`Walk` (idempotent: useless for parity),
+and `ChangeSize` (a parameter).
+
+### 1.ad Stdout is not evidence — tee every read at the time; the transcript can recover it, and the record must say so
+
+Three records on 2026-09-23 (L83, L46, L62) rested on readings printed by `pipe_client.py`,
+`suspend.py` or a swap rig and never saved. The verifier flagged each one as "unsupported",
+rightly: the DLL's `pipe-0.log` logs the REQUEST, not the reply, and the UI pipe log truncates RX
+lines. The fix is cheap: pipe every such read to a file under `out\<row>\` in the same command.
+When that was missed, the session transcript (`~\.claude\projects\<proj>\<session>.jsonl`) holds
+each tool result verbatim with its UTC timestamp. It can be copied into `out\` as
+`*_recovered.txt`, together with the command that produced it, and screenshots can be pulled from
+it the same way. The record must say "recovered from the session transcript", and a reply time is
+a second or two AFTER its request time.
+
+### 1.ae Another session may be working in the SAME tree — look before you launch, and re-hash `dist\`
+
+On 2026-09-23 a user-started peer session fixed `[SEETHRU-PROBE-SUBSTRING]`, committed to `dev` and
+re-published `dist\` from the same `D:\Github\UE5CEDumper`, while this session was swapping
+`dist\` for red arms. Nothing collided, by luck: this session's restore finished at 22:51 and the
+peer's publish ran at 22:59. The pipe name is machine-global, so two sessions' games or UIs would
+also fight over it. Three habits: (1) `ListAgents` and `git log -3` before any game session, and
+agree by `SendMessage` who owns games/UI/`dist\` until when. (2) Re-hash `dist\` at the start and
+end of every row and cite what the row actually ran, not what `dist\` holds now. (3) Stage only
+your own hunks (`git status` before every commit); never `git add -A` in a shared tree.
+
+### 1.af An injected Escape never reaches the app here — post it into the window, and MEASURE key routing before blaming the product
+
+L6 step 2 (edit, Escape, reopen, Enter) sat NOT RUN from 2026-09-12 to 09-24 as "synthetic Escape
+never reaches the cell editor". It was an environment fact, not a product one, and it took a logger
+to see which. A diagnostic UI (HEAD's `ui/` plus a `KeyDown` handler with `handledEventsToo: true` on
+the Window and the panel, Tunnel and Bubble, logging key / route / handled / source) showed Ctrl+A,
+F5 and Return reaching every stage, while an Escape from computer-use's `key` action or from
+SendInput reached **nothing**. Each time the foreground also jumped to another window (Windows 輸入體驗,
+the NVIDIA overlay, the Claude app). Something outside the app takes injected Escapes; a global hook
+is the likely owner. `py tools/verify/send_key.py esc --post UE5DumpUI` PostMessages
+`WM_KEYDOWN/UP` into the UI's own window, bypassing global input, and that Escape arrives and is
+handled. So: (1) for Escape (and any key that seems to vanish), use `--post`; (2) before recording
+"the product ignores key X", log the route with `handledEventsToo` — a key that never arrives and a
+key that the product swallows look identical on screen. Also measured the same day: in
+`cmd | tail -1 && next`, `&&` tests `tail`'s exit code, not `cmd`'s — a refused `dist_swap.py install`
+piped through `tail` let the chain launch the UI anyway. Test the file or redirect to a file first.
+
+### 1.ag A `\u` + four hex digits in written content becomes ONE character — scan for it
+
+Measured 2026-09-24: the Windows path `out\ue583\` written through the file-writing tool landed as `out` + U+E583 (a private-use character) + `\`, in a doc AND in a Python docstring, and was committed twice before anyone saw it. The tool-call layer decodes `\uXXXX` (four hex digits) as a Unicode escape, the way a shell heredoc collapses `\\` (CLAUDE.md's NUL-byte incidents). Paths are the usual victims: `\ue583`, `\uefa`, `\u0041`. **How to apply:** build a backslash as `chr(92)` in any generated text that holds such a path, and after writing, scan: `py -c "import sys; t=open(sys.argv[1],encoding='utf-8').read(); print([hex(ord(c)) for c in t if 0xE000<=ord(c)<=0xF8FF])" <file>` — a non-empty list is corruption. (Other decoded code points are not private-use and need a diff read to catch.)
+
+**The same collapse through a shell heredoc (measured 2026-09-24, VND583-03's todo row):** a Python patch script written with `cat > x.py <<'EOF'` held the evidence path `out\\vnd03\\`. The Bash tool delivered it as `out\vnd03\`, and Python then read `\v` as a vertical tab (0x0B). The committed-to-be row said `out` + VT + `nd03`, and only Python's `SyntaxWarning: invalid escape sequence` on the NEXT backslash gave it away. Every one-letter Python escape is a trap here (`\a \b \f \n \r \t \v \0`), not only `\u` and `\0`. **How to apply:** write patch scripts that carry a backslash with the file-writing tool and `chr(92)`, never through a heredoc, and scan the written file for control characters too: `[hex(ord(c)) for c in t if ord(c) < 32 and c not in '\r\n\t']`.
+
+**And a BOM survives a read, so do not add one on the write (measured 2026-09-24, VND583-06's fixture).** A patch helper read `DumperTestActor.h` as `utf-8`, which keeps U+FEFF as the first character of the text, then wrote it as `utf-8-sig` "to preserve the BOM", which adds a second one. UHT then failed on `Unable to find ... 'FDumperTestPingSignature'` at line 700, nowhere near the edit, and Build.bat exited 6. **How to apply:** read and write with the SAME codec: `utf-8` both ways keeps a BOM exactly as it was. Check with `head -c 6 <file> | od -An -tx1`: `ef bb bf ef bb bf` is the corruption.
+
+### 1.ah A DLL-only change can break a UI test: the UI suite pins DLL SOURCE TEXT
+
+Measured 2026-09-24 (VND583-10). `ui/UE5DumpUI.Tests` reads `dll/src/*.cpp` through `DllSource(...)` and asserts
+exact call text: `InvokeScriptTests` alone does it 37 times. A fix added two out-params to
+`Genau::FindGObjectsStaticStruct`. `build_dll.py`, `dll_helpers_test`, `dll_core_test` and all 23 gates
+stayed green, and the first `build.ps1 -Mode Publish` then failed on
+`InitRecovery_RecordsItsCancelForTheLatchGuard`, after it had already bumped the build number.
+**How to apply:** before calling a change to `dll/src` done, grep the UI tests for the text you changed
+(`grep -rn "<old call text>" ui/UE5DumpUI.Tests`). Otherwise run the UI suite too. When a Publish fails its
+tests after the bump, fix the test and publish AGAIN WITHOUT `-NoBumpBuildNumber`: the maintainer's rule is
+that the build number is the release number and advances on every build, so a re-publish may bump again
+(memory: build number = release number). ⚠ This paragraph said the opposite until 2026-09-24, and build
+3548 was re-published under it; that was a breach of the rule, not a precedent.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -2786,6 +2869,29 @@ values it did set were the two that most code exercises.
   (UE5.7 puts `EArrayPropertyFlags` before `Inner`, so `FARRAYPROP_INNER` is re-probed separately).
   An unexplained exception is indistinguishable from the bug.
 
+### 4.3h A case-preserving-FName host is one command away: an installed EDITOR running a project with `-game`
+
+Found 2026-09-24 (VND583-07). For months every CPN finding was filed "latent, no title measured, unit tests
+are the only vehicle", because WITH_CASE_PRESERVING_NAME = WITH_EDITORONLY_DATA and every packaged game
+is 0. But the editor binary running a project as a game IS such a build, and this PC has 4.18 to 5.8
+installed:
+
+    "C:\Program Files\Epic Games\UE_4.27\Engine\Binaries\Win64\UE4Editor.exe" "D:\Unreal Projects\UE427_3rdPerson\UE427_3rdPerson.uproject" -game -windowed
+    "C:\Program Files\Epic Games\UE_5.4\Engine\Binaries\Win64\UnrealEditor.exe" "D:\Unreal Projects\DumperTest\DumperTest.uproject" -game -windowed
+
+Inject by PID (`tools/verify/inject.py --pid`); the logs go to `Logs\UE4Editor\` / `Logs\UnrealEditor\`.
+What makes it a different host, each measured on these two:
+- **Two FName member orders.** UE4 / 5.0 put Number at +8 (after DisplayIndex); 5.1+ at +4. Use BOTH
+  editors -- the 5.1-5.8 editors cannot show the +8 order.
+- **Modular build.** GObjects comes from a DLL export, and GNames from the exported `FName::ToString`, whose
+  body reaches NamePoolData only through a call. `EOSSDK-Win64-Shipping.dll` embeds its OWN name pool, which
+  an AOB can take instead (0 of 10 names resolved until the call-follow).
+- **The editor FProperty head is 8 bytes wider**: ElementSize / Offset at +0x3C / +0x4C on the 5.4 editor
+  against +0x34 / +0x44 in 5.4 Shipping, and +0x44 / +0x54 on the 4.27 editor. Every probe that assumes the
+  Shipping head is exercised too.
+**How to apply:** before filing a CPN or editor-only row as "latent, unmeasurable", run it on these hosts.
+They boot in under a minute once the project has been opened in the editor once (shaders cached).
+
 ### 4.4 Do not use KismetMathLibrary as a verification target
 
 > ⚠ **NARROWED 2026-08-17 — it is not a version band.** **Lushfoil Photography Sim is UE 5.6 cooked
@@ -3024,7 +3130,7 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
   misleading about the rest. So the safest-looking command in the file silently destroys the only
   artifact the hand-over rule protects, and leaves a *runnable* exe behind, at the right build
   number, that merely happens to be the wrong one. **After any `-Target Test`, re-run
-  `-Mode Publish -NoBumpBuildNumber` and check the size before handing `dist/` over.**
+  `-Mode Publish` (letting it bump the build number) and check the size before handing `dist/` over.**
   Found by accident: a `-Target Test` run used only to confirm `build.ps1` still parsed after an
   edit, whose *summary listing* showed `UE5DumpUI.exe (106.8 MB)` where 54.7 MB was expected. The
   summary listing is worth reading for that reason alone.

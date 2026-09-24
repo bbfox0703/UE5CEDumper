@@ -25,6 +25,7 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "Components/ActorComponent.h"   // UDumperTestStealthComponent (L58)
 // Soft/lazy object pointers are NOT in CoreMinimal — include them explicitly rather than
 // relying on a transitive path, which is exactly the kind of thing an engine upgrade removes.
 #include "UObject/SoftObjectPtr.h"
@@ -167,6 +168,69 @@ class DUMPERTEST_API UDumperTestPayloadB : public UObject
 public:
 	UPROPERTY() int32 BValue  = 0;
 	UPROPERTY() float BScalar = 0.f;
+};
+
+/// ⭐ L58 step 1's host (`[A4-STEALTH-PRIME]`): a STEALTH METER the dumper can auto-find.
+///
+/// `Solide::FindStealthMeter` looks only at the LOCAL PAWN and its related objects
+/// (`Aura::GetRelatedObjects`: owned components and sub-objects), and only at reflected
+/// floats whose name `MatchStealthField` scores above zero (stealth / detect / visib / ...,
+/// minus max / min / time / rate / ...). The stock Third-Person pawn has none, so on this
+/// fixture "Detect" could only ever answer *Not found* -- and the row's Detect → Hold @0 →
+/// restart-the-UI arm was unreachable (survey 2026-09-22).
+///
+/// The pawn class is template code this mirror deliberately does not carry, so the meter
+/// arrives as a COMPONENT: `ADumperTestActor::Tick` attaches one to the player pawn the first
+/// frame a pawn exists, and registers it as an instance component so it is reachable through
+/// the pawn's reflected `InstanceComponents`.
+UCLASS()
+class DUMPERTEST_API UDumperTestStealthComponent : public UActorComponent
+{
+	GENERATED_BODY()
+
+public:
+	UDumperTestStealthComponent();
+
+	virtual void TickComponent(float DeltaTime, ELevelTick TickType,
+	                           FActorComponentTickFunction* ThisTickFunction) override;
+
+	/// The meter. The GAME rewrites it every frame -- it climbs from 0 to 1 over ten seconds
+	/// and wraps -- so a Hold @0 is a real contest with a live writer, not a write to a field
+	/// nothing else touches. The name carries two scorer keywords (stealth, detect) and none
+	/// of the excluded ones.
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Stealth")
+	float StealthDetection = 0.0f;
+
+	/// Frames on which the game wrote the meter. Proves the writer is alive while a Hold runs:
+	/// a frozen count would mean the hold is winning only because nobody else writes.
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Stealth")
+	int32 StealthWrites = 0;
+};
+
+/// ⭐ L48 step 1's host (`[P1-SPARSEDELEGATE-REFS]`): an object bound ONLY through a sparse
+/// delegate of ANOTHER object.
+///
+/// The fixture's only sparse binding used to be D4's, which binds `OnActorHit` to the actor
+/// ITSELF -- and Find References suppresses exactly that case (owner == target), so the
+/// row's "the binding is listed" half could not be observed on any available host.
+///
+/// ⚠ Three choices that each matter:
+///  * a plain UObject in the TRANSIENT PACKAGE, not an actor: an actor is also held by its
+///    level's Actors array, and then "bound only through a sparse delegate" is false;
+///  * kept alive by AddToRoot, NOT by a UPROPERTY on the fixture: a reflected pointer would
+///    be a second reference and Find Refs would list it first;
+///  * bound to `OnActorBeginOverlap`, NOT `OnActorHit`: D4's `OnActorHit` row reads
+///    "(1 sparse binding)" in records other rows already made, and a second binding there
+///    would silently change them.
+UCLASS()
+class DUMPERTEST_API UDumperTestSparseListener : public UObject
+{
+	GENERATED_BODY()
+
+public:
+	/// ⚠ Deliberately EMPTY, for D4_OnActorHitProbe's reason: it exists to be BOUND.
+	UFUNCTION()
+	void OnPeerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor);
 };
 
 UCLASS()
@@ -1022,6 +1086,32 @@ private:
 	/// The Third Person template ships no custom HUD so nothing is lost, but a project
 	/// that has one would lose it -- hence -DumperTestNoHud to opt out entirely.
 	void EnsureHeartbeatHud();
+
+	/// L58: the meter component this actor attached to the player pawn, or null until a pawn
+	/// exists. A handle for sessions and README checks; the pawn's own InstanceComponents is
+	/// what keeps it alive and what the dumper's related-object walk follows.
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Stealth")
+	TObjectPtr<UDumperTestStealthComponent> StealthComp;
+
+	/// [VND583-06] A weak pointer whose target is GARBAGE. With -DumperTestWeakGarbage, Tick spawns a
+	/// plain AActor every 5 s, points this at it and Destroy()s it. UWorld::DestroyActor marks it
+	/// garbage at once (UObjectBaseUtility::MarkAsGarbage: RF_MirroredGarbage in ObjectFlags plus the
+	/// item's Garbage bit), and it stays until the next GC purge (~61 s). So, but for up to 5 s per GC
+	/// cycle, this RESOLVES -- index, slot and serial all match -- to an object UE's Get() refuses,
+	/// and the dumper must show it "Name (Class) [garbage]". Without the switch it stays null.
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Weak")
+	TWeakObjectPtr<AActor> WeakToGarbage;
+
+	/// How many garbage targets WeakToGarbage has been given (0 without the switch).
+	UPROPERTY(VisibleAnywhere, Category = "DumperTest|Weak")
+	int32 WeakToGarbageCount = 0;
+
+	/// Seconds until the next garbage target. Not a UPROPERTY: it must not become a scan target.
+	float WeakToGarbageTimer = 0.f;
+
+	/// L48: the cross-object sparse listener. ⛔ NOT a UPROPERTY, on purpose -- see
+	/// UDumperTestSparseListener. Rooted in BeginPlay, unrooted in EndPlay.
+	UDumperTestSparseListener* SparseListener = nullptr;
 
 	/// Frames since BeginPlay. Driven by Tick, so it advances even if the 1 Hz timer
 	/// never fires -- which is the entire point: a blank screen and a dead timer used

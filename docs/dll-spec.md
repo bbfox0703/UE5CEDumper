@@ -163,7 +163,8 @@ namespace DynOff {
 
     // UEnum (lazy-detected on first EnumProperty encounter)
     inline int UENUM_NAMES         = 0x40; // TArray<TPair<FName,int64>> Names
-    inline int UENUM_ENTRY_SIZE    = 0x10; // sizeof(TPair<FName,int64>)
+    inline int UENUM_VALUE_SIZE    = 8;    // legacy pair value: 8 = int64, 1 = uint8 (UE 4.9-4.14) [VND583-04]
+    inline int UENUM_PAIR_STRIDE   = 0;    // legacy pair stride, 0 = the int64 pair's own
 
     // State flags (atomic, set by ValidateAndFixOffsets)
     inline std::atomic<bool> bCasePreservingName{false};

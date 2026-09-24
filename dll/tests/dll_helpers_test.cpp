@@ -4830,6 +4830,77 @@ static void Test_Neu_Disambiguation() {
     EXPECT_EQ_U64("disambig count", L.count, 2);
 }
 
+// [VND583-04] UE 4.9-4.14: TArray<TPair<FName, uint8>> -- one value byte after the FName and
+// padding the engine never writes (filled with 0xCD here, as a debug heap would).
+static void NeuPutLegacyU8(NeuFakeMem& fm, uintptr_t region, uintptr_t dataAddr,
+                           const std::vector<std::pair<int32_t,int>>& es, int fnameSize, int stride) {
+    std::vector<uint8_t> data(es.size() * stride, 0xCD);
+    for (size_t i = 0; i < es.size(); ++i) {
+        std::memcpy(&data[i*stride], &es[i].first, 4);            // FName ComparisonIndex
+        std::memset(&data[i*stride + 4], 0, fnameSize - 4);        // the FName's Number (+ DisplayIndex)
+        data[i*stride + fnameSize] = static_cast<uint8_t>(es[i].second);   // the uint8 value
+    }
+    fm.Put(dataAddr, data.data(), data.size());
+    uint8_t hdr[0x20] = {};
+    uint64_t dataU = dataAddr;         std::memcpy(hdr + 0, &dataU, 8);
+    int32_t num = (int32_t)es.size();  std::memcpy(hdr + 8, &num, 4);
+    std::memcpy(hdr + 12, &num, 4);
+    fm.Put(region, hdr, sizeof(hdr));
+}
+
+static void Test_Neu_Legacy_Uint8Values() {
+    // Geometry: the value offset and the pair stride per width and alignof(FName).
+    EXPECT_EQ_U64("VND583-04: int64 pair, FName 8 -> stride 16",      Neu::LegacyStrideFor(8, 8, 8), 16);
+    EXPECT_EQ_U64("VND583-04: int64 pair, CPN FName 12 -> stride 24", Neu::LegacyStrideFor(12, 8, 4), 24);
+    EXPECT_EQ_U64("VND583-04: uint8 pair, 8-aligned FName (4.11-4.14) -> 16", Neu::LegacyStrideFor(8, 1, 8), 16);
+    EXPECT_EQ_U64("VND583-04: uint8 pair, 4-aligned FName (4.9/4.10) -> 12",  Neu::LegacyStrideFor(8, 1, 4), 12);
+    EXPECT_EQ_U64("VND583-04: uint8 pair, CPN FName 12 -> 16, not 24",        Neu::LegacyStrideFor(12, 1, 4), 16);
+    EXPECT_EQ_U64("VND583-04: uint8 value sits right after the FName", Neu::LegacyValueOffset(12, 1), 12);
+    EXPECT_EQ_U64("VND583-04: int64 value sits at the next 8",         Neu::LegacyValueOffset(12, 8), 16);
+
+    // The width decision.
+    EXPECT("VND583-04: garbage above sequential low bytes proves uint8, whatever the version",
+           Neu::PickLegacyValueSize(false, true, 418) == 1);
+    EXPECT("VND583-04: zero padding (both agree) on 4.11 -> the source's uint8",
+           Neu::PickLegacyValueSize(true, true, 411) == 1);
+    EXPECT("VND583-04: no evidence on 4.14 -> uint8",  Neu::PickLegacyValueSize(false, false, 414) == 1);
+    EXPECT("VND583-04: no evidence on 4.09 -> uint8",  Neu::PickLegacyValueSize(false, false, 409) == 1);
+    EXPECT("VND583-04: 4.15 declared int64 -> 8",      Neu::PickLegacyValueSize(true, true, 415) == 8);
+    EXPECT("VND583-04: 4.27 -> 8",                     Neu::PickLegacyValueSize(true, true, 427) == 8);
+    EXPECT("VND583-04: an unknown version keeps 8",    Neu::PickLegacyValueSize(false, false, 0) == 8);
+
+    // The read: ENetRole-shaped (values 0..4), uint8 column, 0xCD padding, stride 16.
+    NeuFakeMem fm;
+    std::vector<std::pair<int32_t,int>> es = {{10,0},{20,1},{30,2},{40,3},{50,4}};
+    NeuPutLegacyU8(fm, 0x10000000, 0x20000000, es, 8, 16);
+    auto rd = [&](uintptr_t a, void* o, size_t n){ return fm.Read(a, o, n); };
+    Neu::EnumNamesLayout L;
+    EXPECT("VND583-04: the uint8 table still parses as legacy", Neu::DetectLayout(rd, 0x10000000, 8, 16384, L));
+    int32_t idx = 0; int64_t v = 0;
+    Neu::ReadEntry(rd, L, 2, idx, v);
+    EXPECT("VND583-04 the defect: an int64 read of a uint8 column carries the padding",
+           idx == 30 && v == static_cast<int64_t>(0xCDCDCDCDCDCDCD02ull));
+    EXPECT("VND583-04: ...so ENetRole's int64 column is NOT 0..n-1", !Neu::LegacyValuesSequential(rd, L, 8));
+    EXPECT("VND583-04: ...and its low bytes ARE", Neu::LegacyValuesSequential(rd, L, 1));
+    L.valueSize = 1;
+    L.legacyStride = static_cast<int>(Neu::LegacyStrideFor(8, 1, 8));
+    Neu::ReadEntry(rd, L, 2, idx, v);
+    EXPECT("VND583-04: read as one byte, entry 2 is (30, 2)", idx == 30 && v == 2);
+    Neu::ReadEntry(rd, L, 4, idx, v);
+    EXPECT("VND583-04: read as one byte, entry 4 is (50, 4)", idx == 50 && v == 4);
+
+    // 4.9/4.10 shape: 4-aligned FName, stride 12.
+    NeuFakeMem fm12;
+    NeuPutLegacyU8(fm12, 0x10000000, 0x20000000, es, 8, 12);
+    auto rd12 = [&](uintptr_t a, void* o, size_t n){ return fm12.Read(a, o, n); };
+    Neu::EnumNamesLayout L12;
+    Neu::DetectLayout(rd12, 0x10000000, 8, 16384, L12);
+    L12.valueSize = 1;
+    L12.legacyStride = static_cast<int>(Neu::LegacyStrideFor(8, 1, 4));
+    Neu::ReadEntry(rd12, L12, 3, idx, v);
+    EXPECT("VND583-04: a 12-byte pair reads entry 3 as (40, 3)", idx == 40 && v == 3);
+}
+
 static void Test_Neu_Edge() {
     Neu::EnumNamesLayout L;
     auto rd_none = [](uintptr_t, void*, size_t){ return false; };
@@ -6090,6 +6161,238 @@ static void Test_FunctionFlagsOffset() {
     EXPECT("A3: 0xB8 is not left until last", idxB8 < idxLast);
     EXPECT("A3: 0xB0 is tried first -- it covers 4.25 through 5.8",
            DynOff::FUNCTIONFLAGS_SWEEP[0] == 0xB0);
+    // --- [VND583-01] The version table above is only a FALLBACK. On a layout whose UObject is
+    //     shifted it lands inside UStruct::ScriptObjectReferences: DQ XI S (4.18, measured
+    //     PropertiesSize 0x50) has FunctionFlags at 0x98 where the table says 0x88, and FF7R's
+    //     fork has it at 0x90. FunctionFlags - PropertiesSize is 0x48 in UProperty mode
+    //     (4.08-4.24) and 0x58 in FProperty mode (4.25-5.08, case-preserving included) in all
+    //     31 UEPseudo tables and the RE-UE4SS MemberVarLayout templates:
+    //       4.18/4.21 0x40->0x88   4.22/4.24 0x50->0x98   4.25/4.27/5.01/5.08 0x58->0xB0
+    //       4.27 CPN 0x60->0xB8
+    EXPECT("VND583-01: 4.18 stock, PropertiesSize 0x40 -> 0x88",
+           DynOff::FunctionFlagsFromPropsSize(0x40, false) == 0x88);
+    EXPECT("VND583-01: 4.22-4.24, PropertiesSize 0x50 -> 0x98",
+           DynOff::FunctionFlagsFromPropsSize(0x50, false) == 0x98);
+    EXPECT("VND583-01: 4.25-5.8 FProperty, PropertiesSize 0x58 -> 0xB0",
+           DynOff::FunctionFlagsFromPropsSize(0x58, true) == 0xB0);
+    EXPECT("VND583-01: 4.27 case-preserving, PropertiesSize 0x60 -> 0xB8",
+           DynOff::FunctionFlagsFromPropsSize(0x60, true) == 0xB8);
+    // The relation reproduces the version table on every STOCK layout, so measuring can only
+    // change the answer where the layout is not stock.
+    for (unsigned v : { 411u, 418u, 421u })
+        EXPECT("VND583-01: stock 4.11-4.21 agrees with the table",
+               DynOff::FunctionFlagsFromPropsSize(0x40, false) == DynOff::FunctionFlagsOffsetFor(v, false));
+    for (unsigned v : { 422u, 424u })
+        EXPECT("VND583-01: stock 4.22-4.24 agrees with the table",
+               DynOff::FunctionFlagsFromPropsSize(0x50, false) == DynOff::FunctionFlagsOffsetFor(v, false));
+    for (unsigned v : { 425u, 427u, 501u, 508u })
+        EXPECT("VND583-01: stock 4.25-5.8 agrees with the table",
+               DynOff::FunctionFlagsFromPropsSize(0x58, true) == DynOff::FunctionFlagsOffsetFor(v, false));
+    EXPECT("VND583-01: stock 4.27 CPN agrees with the table",
+           DynOff::FunctionFlagsFromPropsSize(0x60, true) == DynOff::FunctionFlagsOffsetFor(427, true));
+
+    // The primary: the MEASURED PropertiesSize when the offsets probe validated, else the table.
+    EXPECT("VND583-01: DQ XI S shape -- a measured 0x50 on 4.18 gives 0x98, not the table's 0x88",
+           DynOff::FunctionFlagsPrimaryFor(418, false, 0x50, true, false) == 0x98);
+    EXPECT("VND583-01: an UNMEASURED PropertiesSize keeps the version table",
+           DynOff::FunctionFlagsPrimaryFor(418, false, 0x50, false, false) == 0x88);
+    EXPECT("VND583-01: an unmeasured 4.27 CPN keeps the table's +8",
+           DynOff::FunctionFlagsPrimaryFor(427, true, 0x58, false, true) == 0xB8);
+    EXPECT("VND583-01: a nonsense PropertiesSize (0) is not trusted even if 'validated'",
+           DynOff::FunctionFlagsPrimaryFor(425, false, 0, true, true) == 0xB0);
+
+    // The vote's per-sample rule: at the right offset, NumParms equals the function's own
+    // CPF_Parm count and ParmsSize covers the last parameter (rounded up by at most 16).
+    EXPECT("VND583-01: exact NumParms and ParmsSize match",
+           DynOff::FunctionTailMatches(2, 8, 2, 8));
+    EXPECT("VND583-01: ParmsSize rounded up past the last param still matches",
+           DynOff::FunctionTailMatches(3, 16, 3, 12));
+    EXPECT("VND583-01: a wrong NumParms does not match",
+           !DynOff::FunctionTailMatches(2, 8, 3, 8));
+    EXPECT("VND583-01: a ParmsSize that does not reach the last param does not match",
+           !DynOff::FunctionTailMatches(2, 4, 2, 8));
+    EXPECT("VND583-01: a function with no parameters cannot vote",
+           !DynOff::FunctionTailMatches(0, 0, 0, 0));
+    EXPECT("VND583-01: an absurd ParmsSize (a pointer's low bytes) does not match",
+           !DynOff::FunctionTailMatches(2, 0x4000, 2, 8));
+}
+
+// [VND583-02] UField::Next was never measured in FProperty mode (4.25+): DetectUPropertyMode
+// returned before touching it and the FProperty arm probed only FField::Next. On a 4.25+ title
+// whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30, SuperStruct 0x48)
+// WalkFunctions then stepped the wrong member. The probe walks a UClass's Children chain at
+// each candidate and takes the FIRST candidate (default first) that chains >= 2 Function hops.
+static void Test_UFieldNextFProperty() {
+    const int offs[] = { 0x28, 0x30, 0x20, 0x38, 0x40, 0x48 };
+    {   const int hops[] = { 3, 0, 0, 0, 0, 0 };
+        EXPECT("VND583-02: a stock chain keeps the default 0x28", DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x28); }
+    {   const int hops[] = { 0, 3, 0, 0, 0, 0 };
+        EXPECT("VND583-02: The Pathless shape (Next at 0x30) is measured, not defaulted",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x30); }
+    {   const int hops[] = { 1, 3, 0, 0, 0, 0 };
+        EXPECT("VND583-02: ONE hop is not a chain -- a single Function pointer can be a coincidence",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x30); }
+    {   const int hops[] = { 0, 0, 0, 0, 0, 0 };
+        EXPECT("VND583-02: nothing chains -> -1 (the caller keeps the default and says so)",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == -1); }
+    {   const int hops[] = { 2, 3, 0, 0, 0, 0 };
+        EXPECT("VND583-02: two candidates chain -> the earlier (the default) wins",
+               DynOff::PickUFieldNextOffset(offs, hops, 6) == 0x28); }
+}
+
+// [VND583-03] alignof(FName) is 8 on non-case-preserving UE 4.11-4.21 (a union with
+// uint64 CompositeComparisonValue, removed in 4.22), 4 everywhere else.
+static void Test_FNameAlign() {
+    for (unsigned v : { 411u, 414u, 417u, 418u, 421u })
+        EXPECT("VND583-03: non-CPN 4.11-4.21 -> alignof(FName) 8", DynOff::FNameAlignFor(v, false) == 8);
+    for (unsigned v : { 422u, 424u, 425u, 427u, 500u, 504u, 508u })
+        EXPECT("VND583-03: 4.22+ dropped the union -> 4", DynOff::FNameAlignFor(v, false) == 4);
+    EXPECT("VND583-03: a case-preserving 4.18 has no union -> 4", DynOff::FNameAlignFor(418, true) == 4);
+    EXPECT("VND583-03: an unknown version keeps the old 4", DynOff::FNameAlignFor(0, false) == 4);
+    EXPECT("VND583-03: below the 4.11 floor keeps 4", DynOff::FNameAlignFor(410, false) == 4);
+    // What it changes: TMap<FName, int32> on 4.18 strides 24 (pair 16, align 8), not 20.
+    const int a418 = DynOff::FNameAlignFor(418, false);
+    EXPECT("VND583-03: TMap<FName,int32> on 4.18 -- value still at +8",
+           Macht::ComputeMapValueOffset(8, 4, 4) == 8);
+    EXPECT("VND583-03: TMap<FName,int32> on 4.18 strides 24, not 20",
+           Macht::ComputeSetElementStride(12, a418 > 4 ? a418 : 4) == 24);
+    EXPECT("VND583-03 control: the same map on 4.22 strides 20",
+           Macht::ComputeSetElementStride(12, DynOff::FNameAlignFor(422, false)) == 20);
+    // The measurement's gate: a single-FName struct's MinAlignment, taken only when its size is
+    // FName's own and the value is 4 or 8.
+    EXPECT("VND583-03: measured 8 on an 8-byte struct -> 8",  DynOff::PickFNameAlign(8, 8, 8) == 8);
+    EXPECT("VND583-03: measured 4 on an 8-byte struct -> 4",  DynOff::PickFNameAlign(4, 8, 8) == 4);
+    EXPECT("VND583-03: case-preserving 12-byte struct, 4 -> 4", DynOff::PickFNameAlign(4, 12, 12) == 4);
+    EXPECT("VND583-03: a size that is not FName's is refused", DynOff::PickFNameAlign(8, 12, 8) == 0);
+    EXPECT("VND583-03: alignment 2 is refused",  DynOff::PickFNameAlign(2, 8, 8) == 0);
+    EXPECT("VND583-03: alignment 16 is refused", DynOff::PickFNameAlign(16, 8, 8) == 0);
+    EXPECT("VND583-03: an unread alignment (0) is refused", DynOff::PickFNameAlign(0, 8, 8) == 0);
+}
+
+// [VND583-07, A9 step 11] FName::Number is +8 only where the DisplayIndex sits at +4 (CPN UE4 / 5.0).
+static void Test_FNameNumberOffset() {
+    EXPECT("A9-11: a standard FName keeps Number at +4", DynOff::PickFNameNumberOffset(false, 100, 0) == 4);
+    EXPECT("A9-11: CPN with the DisplayIndex at +4 (UE4 / 5.0) -> Number at +8", DynOff::PickFNameNumberOffset(true, 100, 0) == 8);
+    EXPECT("A9-11: CPN with the DisplayIndex at +8 (5.1+) -> Number at +4", DynOff::PickFNameNumberOffset(true, 0, 745) == 4);
+    EXPECT("A9-11: CPN with no evidence keeps +4", DynOff::PickFNameNumberOffset(true, 0, 0) == 4);
+}
+
+// [VND583-07, A9 step 1] sizeof(FName) is measured from the engine's NameProperty ElementSize, within the family.
+static void Test_FNameSizePick() {
+    EXPECT("A9-1: case-preserving 5.4 editor, 12 on 331 of 331 -> 12", DynOff::PickFNameSize(true, 12, 331, 331) == 12);
+    EXPECT("A9-1: standard, 8 on 64 of 64 -> 8", DynOff::PickFNameSize(false, 8, 64, 64) == 8);
+    EXPECT("A9-1: standard + UE_FNAME_OUTLINE_NUMBER, 4 -> 4", DynOff::PickFNameSize(false, 4, 20, 20) == 4);
+    EXPECT("A9-1: case-preserving + outline number, 8 -> 8", DynOff::PickFNameSize(true, 8, 20, 20) == 8);
+    EXPECT("A9-1: 12 on a standard build is not its family -> 0", DynOff::PickFNameSize(false, 12, 50, 50) == 0);
+    EXPECT("A9-1: the old 0x10 myth is no FName size -> 0", DynOff::PickFNameSize(true, 16, 50, 50) == 0);
+    EXPECT("A9-1: four samples are too few -> 0", DynOff::PickFNameSize(false, 8, 4, 4) == 0);
+    EXPECT("A9-1: 6 of 10 is not three quarters -> 0", DynOff::PickFNameSize(false, 8, 6, 10) == 0);
+    EXPECT("A9-1: 6 of 8 is three quarters -> 12", DynOff::PickFNameSize(true, 12, 6, 8) == 12);
+}
+
+// [VND583-DOC D7-04] Force-null: strong and weak pointers are held; soft / lazy stay refused.
+static void Test_ObjectNullShape() {
+    using Solide::ObjectNullShape;
+    EXPECT("D7-04: a strong ObjectProperty is held at 0", Solide::ObjectNullShapeFor("ObjectProperty", 8) == ObjectNullShape::Strong);
+    EXPECT("D7-04: an 8-byte WeakObjectProperty is held at UE's own null", Solide::ObjectNullShapeFor("WeakObjectProperty", 8) == ObjectNullShape::Weak);
+    EXPECT("D7-04: a 16-byte (remote-handle) WeakObjectProperty is refused -- serial 0 is not its null",
+           Solide::ObjectNullShapeFor("WeakObjectProperty", 16) == ObjectNullShape::Refused);
+    EXPECT("D7-04: an unread (0) ElementSize refuses a weak pointer", Solide::ObjectNullShapeFor("WeakObjectProperty", 0) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a SoftObjectProperty stays refused (its path re-resolves)", Solide::ObjectNullShapeFor("SoftObjectProperty", 0x28) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a SoftClassProperty stays refused", Solide::ObjectNullShapeFor("SoftClassProperty", 0x28) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a LazyObjectProperty stays refused (its GUID re-resolves)", Solide::ObjectNullShapeFor("LazyObjectProperty", 0x1C) == ObjectNullShape::Refused);
+    EXPECT("D7-04: a numeric type is not a pointer", Solide::ObjectNullShapeFor("IntProperty", 4) == ObjectNullShape::Refused);
+    EXPECT("D7-04: UE4 resets a weak ObjectIndex to INDEX_NONE", Solide::WeakNullObjectIndexFor(427) == -1);
+    EXPECT("D7-04: so does 5.0",                                 Solide::WeakNullObjectIndexFor(500) == -1);
+    EXPECT("D7-04: 5.1+ resets it to 0 (ZEROINIT_FIX)",          Solide::WeakNullObjectIndexFor(501) == 0);
+    EXPECT("D7-04: 5.8 too",                                     Solide::WeakNullObjectIndexFor(508) == 0);
+    EXPECT("D7-04: an unknown version takes the modern 0",       Solide::WeakNullObjectIndexFor(0) == 0);
+}
+
+// [VND583-14] FSoftObjectPath's shape: the measurement wins; the version rule only when nothing was measured.
+static void Test_SoftPathShape() {
+    EXPECT("VND583-14: measured AssetPathName on a title labelled 5.5 -> NOT top-level",
+           !DynOff::SoftPathIsTopLevelFor(0, 505));
+    EXPECT("VND583-14: measured AssetPath on a title labelled 5.0 -> top-level", DynOff::SoftPathIsTopLevelFor(1, 500));
+    EXPECT("VND583-14: unmeasured 5.1 -> the rule, top-level", DynOff::SoftPathIsTopLevelFor(-1, 501));
+    EXPECT("VND583-14: unmeasured 5.0 -> the rule, FName", !DynOff::SoftPathIsTopLevelFor(-1, 500));
+    EXPECT("VND583-14: unmeasured 4.27 -> FName", !DynOff::SoftPathIsTopLevelFor(-1, 427));
+}
+
+// [VND583-13] A 16-byte Set/Map property on 5.7+ is a compact set; ReadTSparseArray refuses once latched.
+static void Test_CompactSetGuard() {
+    EXPECT("VND583-13: 0x10 on 5.7 is compact", DynOff::IsCompactSetLayout(0x10, 507));
+    EXPECT("VND583-13: 0x10 on 5.8 is compact", DynOff::IsCompactSetLayout(0x10, 508));
+    EXPECT("VND583-13: 0x10 on an unknown version is compact (no older engine has one)", DynOff::IsCompactSetLayout(0x10, 0));
+    EXPECT("VND583-13: 0x10 on 5.6 is not (the option does not exist there)", !DynOff::IsCompactSetLayout(0x10, 506));
+    EXPECT("VND583-13: the sparse 0x50 is never compact", !DynOff::IsCompactSetLayout(0x50, 508));
+    // The refusal: a header ReadTSparseArray accepts, until the latch is set.
+    struct { uintptr_t data; int32_t num, max; uint8_t rest[0x40]; } hdr{};
+    static int dummy[4];
+    hdr.data = reinterpret_cast<uintptr_t>(dummy); hdr.num = 2; hdr.max = 4;
+    Macht::TSparseArrayView sa;
+    EXPECT("VND583-13 control: a sparse header reads", Macht::ReadTSparseArray(reinterpret_cast<uintptr_t>(&hdr), sa));
+    DynOff::bCompactSets = true;
+    EXPECT("VND583-13: latched, ReadTSparseArray refuses", !Macht::ReadTSparseArray(reinterpret_cast<uintptr_t>(&hdr), sa));
+    DynOff::bCompactSets = false;
+}
+
+// [VND583-12] The lazy version refine: FNameData enums mean 5.7+, not 5.6+.
+static void Test_RefineVersionFromLazyMarkers() {
+    EXPECT("VND583-12: FNameData enums raise 5.4 to 5.7", DynOff::RefineVersionFromLazyMarkers(504, false, true) == 507);
+    EXPECT("VND583-12: ...and a 5.6 label to 5.7",        DynOff::RefineVersionFromLazyMarkers(506, false, true) == 507);
+    EXPECT("VND583-12: a Utf8Str property raises 5.3 to 5.5", DynOff::RefineVersionFromLazyMarkers(503, true, false) == 505);
+    EXPECT("VND583-12: both markers: the higher wins",     DynOff::RefineVersionFromLazyMarkers(503, true, true) == 507);
+    EXPECT("VND583-12: never lowers a 5.8",                DynOff::RefineVersionFromLazyMarkers(508, true, true) == 508);
+    EXPECT("VND583-12: never touches a UE4 label",         DynOff::RefineVersionFromLazyMarkers(427, true, true) == 427);
+    EXPECT("VND583-12: no marker, no change",              DynOff::RefineVersionFromLazyMarkers(504, false, false) == 504);
+}
+
+// [VND583-09] FFieldVariant shrank in 5.3.0, so 5.2 starts from the LARGE layout; and an unmeasured
+// FField::Next of 0x18 is not evidence of the tagged encoding.
+static void Test_FFieldVariantDefaults() {
+    EXPECT("VND583-09: 5.2 keeps the 16-byte FFieldVariant defaults", !DynOff::UsesSmallFFieldVariantDefault(502));
+    EXPECT("VND583-09: 5.1 keeps them too",                          !DynOff::UsesSmallFFieldVariantDefault(501));
+    EXPECT("VND583-09: 4.27 keeps them",                             !DynOff::UsesSmallFFieldVariantDefault(427));
+    EXPECT("VND583-09: 5.3 starts from the 8-byte layout",            DynOff::UsesSmallFFieldVariantDefault(503));
+    EXPECT("VND583-09: 5.8 too",                                      DynOff::UsesSmallFFieldVariantDefault(508));
+    EXPECT("VND583-09: an unknown version starts small",              DynOff::UsesSmallFFieldVariantDefault(0));
+    EXPECT("VND583-09: a MEASURED Next 0x18 infers the tag",   DynOff::InferTaggedFFieldVariant(true, 0x18, false, true));
+    EXPECT("VND583-09: an UNMEASURED Next 0x18 is only the default -- no inference",
+           !DynOff::InferTaggedFFieldVariant(true, 0x18, false, false));
+    EXPECT("VND583-09: a measured 0x20 infers nothing",        !DynOff::InferTaggedFFieldVariant(true, 0x20, false, true));
+    EXPECT("VND583-09: UProperty mode infers nothing",         !DynOff::InferTaggedFFieldVariant(false, 0x18, false, true));
+}
+
+// [VND583-08] An unresolved weak pointer is stale only if it was SET: UE's null test is serial == 0.
+static void Test_UnresolvedWeakLabel() {
+    EXPECT("VND583-08: {0, 0} is null",                     std::string(Ubel::UnresolvedWeakLabel(0, 0)) == "null");
+    EXPECT("VND583-08: {N, 0} is null, not stale (serial 0 = explicitly null)",
+           std::string(Ubel::UnresolvedWeakLabel(5, 0)) == "null");
+    EXPECT("VND583-08: {N, S} that no longer resolves is stale", std::string(Ubel::UnresolvedWeakLabel(5, 77)) == "null (stale)");
+    EXPECT("VND583-08: {0, S} is a real slot, so it can be stale", std::string(Ubel::UnresolvedWeakLabel(0, 77)) == "null (stale)");
+    EXPECT("VND583-08: a negative index is null",           std::string(Ubel::UnresolvedWeakLabel(-1, 77)) == "null");
+}
+
+// [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
+static void Test_WeakTargetGarbage() {
+    EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
+           DynOff::IsWeakTargetGarbage(504, 0x40000000u, false, 0));
+    EXPECT("VND583-06: UE5.8, the flag among others -> garbage",
+           DynOff::IsWeakTargetGarbage(508, 0x40000001u, true, 0));
+    EXPECT("VND583-06: UE5 clean flags -> live", !DynOff::IsWeakTargetGarbage(504, 0x00000001u, true, 0));
+    EXPECT("VND583-06: UE5 item Garbage (1<<21) -> garbage", DynOff::IsWeakTargetGarbage(504, 0, true, 1u << 21));
+    EXPECT("VND583-06: UE5 item Unreachable (1<<28) -> garbage", DynOff::IsWeakTargetGarbage(504, 0, true, 1u << 28));
+    EXPECT("VND583-06: UE5 item bit 29 is NOT PendingKill there -> live",
+           !DynOff::IsWeakTargetGarbage(504, 0, true, 1u << 29));
+    EXPECT("VND583-06: UE5 item flags unread (5.7+ layout) -> the object flag alone",
+           !DynOff::IsWeakTargetGarbage(504, 0, false, 1u << 21));
+    EXPECT("VND583-06: UE4 item PendingKill (1<<29) -> garbage", DynOff::IsWeakTargetGarbage(427, 0, true, 1u << 29));
+    EXPECT("VND583-06: UE4 item Unreachable (1<<28) -> garbage", DynOff::IsWeakTargetGarbage(418, 0, true, 1u << 28));
+    EXPECT("VND583-06: UE4 item bit 21 means nothing here -> live", !DynOff::IsWeakTargetGarbage(427, 0, true, 1u << 21));
+    EXPECT("VND583-06: UE4 never sets RF 0x40000000 -> ignored", !DynOff::IsWeakTargetGarbage(427, 0x40000000u, true, 0));
+    EXPECT("VND583-06: unknown version: the object flag only",
+           DynOff::IsWeakTargetGarbage(0, 0x40000000u, true, 0) && !DynOff::IsWeakTargetGarbage(0, 0, true, 1u << 29));
 }
 
 static void Test_ProcessEventVTableSlot() {
@@ -6367,6 +6670,16 @@ static void Test_PropertyFamilyIsCoherent() {
 
     DynOff::PropertyFamily tq2 = DynOff::PropertyFamilyFor(0x48);
     EXPECT("G12: Offset_Internal 0x48 -> family base 0x74", tq2.structProp == 0x74);
+
+    // [VND583-11] Case-preserving: RepNotifyFunc is a 12-byte FName, so the family starts 8 later.
+    // RE-UE4SS 4.27: Offset_Internal 0x4C -> Struct 0x78; the CasePreserving template: 0x80.
+    EXPECT("VND583-11: 4.27 non-CPN, Offset_Internal 0x4C -> Struct 0x78",
+           DynOff::PropertyFamilyFor(0x4C, false).structProp == 0x78);
+    EXPECT("VND583-11: 4.27 CPN, Offset_Internal 0x4C -> Struct 0x80",
+           DynOff::PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    EXPECT("VND583-11: 5.3+ CPN, Offset_Internal 0x44 -> Struct 0x78, EnumProperty 0x80",
+           DynOff::PropertyFamilyFor(0x44, true).structProp == 0x78 && DynOff::PropertyFamilyFor(0x44, true).enumEnum == 0x80);
+    EXPECT("VND583-11: the default argument is non-CPN", DynOff::PropertyFamilyFor(0x44).structProp == 0x70);
 
     // The base-taking overload must agree with the offset-taking one — Ubel's corrector has
     // the base in hand, Genau has Offset_Internal, and the two must not diverge.
@@ -8539,6 +8852,7 @@ int main() {
     RUN(Test_Neu_TagBitMasked);
     RUN(Test_Neu_Disambiguation);
     RUN(Test_Neu_Edge);
+    RUN(Test_Neu_Legacy_Uint8Values);
 
     // Orden — multi-value group scan SDR matcher (synthetic leaves, no game)
     RUN(Test_Orden_PerSlotCap);
@@ -8571,6 +8885,17 @@ int main() {
     RUN(Test_VersionTier2_BareNeedle_G11);
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
+    RUN(Test_UFieldNextFProperty);
+    RUN(Test_FNameAlign);
+    RUN(Test_WeakTargetGarbage);
+    RUN(Test_UnresolvedWeakLabel);
+    RUN(Test_FFieldVariantDefaults);
+    RUN(Test_RefineVersionFromLazyMarkers);
+    RUN(Test_CompactSetGuard);
+    RUN(Test_SoftPathShape);
+    RUN(Test_ObjectNullShape);
+    RUN(Test_FNameNumberOffset);
+    RUN(Test_FNameSizePick);
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);

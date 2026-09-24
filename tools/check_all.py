@@ -93,6 +93,11 @@ GATES = [
      ["tools/ghidra/pe_scan_selftest.py"],
      "the PE scanner self-test failed", False),
 
+    # [VND583-16] the CRC oracle must MERGE, never overwrite: its rows outlive the Editors they came from
+    ("crc_oracle_selftest",
+     ["tools/verify/crc_authority_survey.py", "--selftest"],
+     "the CRC oracle merge self-test failed", False),
+
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
      "an en.axaml key is referenced-but-undefined (a load-time crash) or "

@@ -1,0 +1,18 @@
+{
+ "name": "l40-l52-force-fallbacks",
+ "why": "L40/L52: force FindGObjects' and FindGNames' AOB result to 0 so the data-scan and string-ref tiers run uninterrupted (substitutions from genau_rip_recovery_ab.py FORCE_GOBJ / FORCE_GNAM)",
+ "subs": [
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    LogScanReport(report);\n\n    if (result) {\n        s_gobjectsMethod = ScanMethodFor(report);\n    } else {\n        // Fallback: exhaustive data-section pointer scan",
+   "new": "    LogScanReport(report);\n\n    result = 0;   // STAGING: force the recovery path (genau_rip_recovery_ab.py)\n    if (result) {\n        s_gobjectsMethod = ScanMethodFor(report);\n    } else {\n        // Fallback: exhaustive data-section pointer scan",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    if (result) {\n        s_gnamesMethod = ScanMethodFor(report);\n    } else {\n        // Tier 2: string-reference fallback",
+   "new": "    result = 0;   // STAGING: force the recovery path (genau_rip_recovery_ab.py)\n    if (result) {\n        s_gnamesMethod = ScanMethodFor(report);\n    } else {\n        // Tier 2: string-reference fallback",
+   "count": 1
+  }
+ ]
+}

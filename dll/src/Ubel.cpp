@@ -13,7 +13,7 @@
 #include "Genau.h"
 #include "Utf8Helpers.h"
 #include "Scharf.h"
-#include "Neu.h"     // UEnum::Names layout (legacy TArray vs UE5.6+ FNameData)
+#include "Neu.h"     // UEnum::Names layout (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // cooperative cancellation for the unbounded gap-fill loop
 
 #include <algorithm>
@@ -92,7 +92,7 @@ static std::string ReadFName(uintptr_t fnameAddr) {
     int32_t number = 0;
 
     if (!Macht::ReadSafe(fnameAddr, compIndex)) return "";
-    Macht::ReadSafe(fnameAddr + 4, number);
+    Macht::ReadSafe(fnameAddr + DynOff::FNAME_NUMBER, number);   // [VND583-07] +8 on CPN UE4 / 5.0
 
     return Serie::GetString(compIndex, number);
 }
@@ -104,17 +104,17 @@ static std::string ReadFName(uintptr_t fnameAddr) {
 // — while ReadFNameAt, reading the same 8 bytes through the function above, returned the
 // suffix. The panel and value search disagreed about one field. (audit #5 U8)
 //
-// Number sits at +4 in EVERY configuration: UE declares it immediately after
-// ComparisonIndex, and the case-preserving DisplayIndex is appended AFTER it (verified in
-// vendor/UnrealEngine .../UObject/NameTypes.h:1258-1267). That is why this takes a byte
-// count and not DynOff::bCasePreservingName — the 0x10 FName is wider at the TAIL, so the
-// two fields we read are at fixed offsets. `size` still gates the Number read, because a
-// caller holding only 4 bytes has no Number to decode and must keep the old behaviour.
+// Number sits at DynOff::FNAME_NUMBER: +4, except on a case-preserving UE4 / 5.0 build, whose
+// FName is {ComparisonIndex, DisplayIndex, Number} and puts it at +8. [VND583-07] This comment
+// said "+4 in EVERY configuration", which is true only from 5.1, where the DisplayIndex moved
+// to the tail (NameTypes.h: origin/4.27 and 5.0.3 vs 5.1.0 and 5.4.0). `size` still gates the
+// Number read, because a caller holding only 4 bytes has no Number to decode and must keep the
+// old behaviour.
 static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
     if (!bytes || size < 4) return "";
     int32_t compIndex = 0, number = 0;
     memcpy(&compIndex, bytes, 4);
-    if (size >= 8) memcpy(&number, bytes + 4, 4);
+    if (size >= DynOff::FNAME_NUMBER + 4) memcpy(&number, bytes + DynOff::FNAME_NUMBER, 4);
     return Serie::GetString(compIndex, number);
 }
 
@@ -152,7 +152,7 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
 
     // Slow path: parse UEnum::Names WITHOUT the lock (game-memory reads are the
     // expensive part), then insert. The container is either the legacy
-    // TArray<TPair<FName,int64>> or the UE5.6+ FNameData struct-of-arrays; the
+    // TArray<TPair<FName,int64>> or the UE5.7+ FNameData struct-of-arrays; the
     // format is a per-game constant established by DetectUEnumNames, so we build
     // the layout for that KNOWN format (Neu::BuildLayout — no per-enum guessing).
     auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
@@ -172,6 +172,10 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     // cached, or every lookup re-probes. A half-read table is the opposite case.
     bool tableComplete = true;
     if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
+        if (fmt == Neu::EnumNamesFormat::Legacy) {   // [VND583-04] uint8 values on 4.9-4.14
+            layout.valueSize    = DynOff::UENUM_VALUE_SIZE;
+            layout.legacyStride = DynOff::UENUM_PAIR_STRIDE;
+        }
         entries.reserve(layout.count);
         for (int32_t i = 0; i < layout.count; ++i) {
             int32_t nameIdx = 0;
@@ -340,12 +344,59 @@ static std::string ReadFUtf8String(uintptr_t instanceAddr, int32_t offset) {
 // UE4 / UE5.0: FSoftObjectPath = { FName AssetPathName; FString SubPathString; }
 // UE5.1+:      FSoftObjectPath = { FTopLevelAssetPath { FName PackageName; FName AssetName; }; FString SubPathString; }
 // ============================================================
+// [VND583-14] Measure FSoftObjectPath's shape once, from the reflected ScriptStruct `SoftObjectPath`:
+// its first field is `AssetPath` (a FTopLevelAssetPath, 5.1+) or `AssetPathName` (an FName, 4.x / 5.0).
+// FProperty mode only -- UProperty mode is UE4, where the answer is always AssetPathName and the version
+// rule gives it. Needs validated offsets; a cancelled walk latches nothing.
+static void ProbeSoftPathShape() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bSoftPathProbed.load(std::memory_order_relaxed)) return;
+    int measured = -1;
+    const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
+        if (ReadFName(obj + Grimoire::OFF_UOBJECT_NAME) != "SoftObjectPath") return true;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "ScriptStruct") return true;
+        uintptr_t field = 0;
+        Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, field);
+        for (int i = 0; i < 8 && field && Grimoire::IsUserspacePointer(field); ++i) {
+            const std::string name = ReadFName(field + DynOff::FFIELD_NAME);
+            if (name == "AssetPath")     { measured = 1; break; }
+            if (name == "AssetPathName") { measured = 0; break; }
+            uintptr_t next = 0;
+            if (!Macht::ReadSafe(field + DynOff::FFIELD_NEXT, next)) break;
+            field = DynOff::StripFFieldTag(next);
+        }
+        return false;   // the first ScriptStruct of that name decides
+    });
+    if (!complete) return;
+    if (measured >= 0) {
+        LOG_INFO("DetectSoftPath: FSoftObjectPath holds %s (measured on ScriptStruct SoftObjectPath; version rule says %s)",
+                 measured ? "FTopLevelAssetPath AssetPath" : "FName AssetPathName",
+                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+    } else {
+        LOG_WARN("DetectSoftPath: ScriptStruct SoftObjectPath not measured -- the version rule answers (%s)",
+                 g_cachedUEVersion >= 501 ? "AssetPath" : "AssetPathName");
+    }
+    DynOff::SOFTPATH_TOPLEVEL_MEASURED.store(measured, std::memory_order_release);
+    DynOff::bSoftPathProbed.store(true, std::memory_order_release);
+}
+
+static bool SoftPathIsTopLevel() {
+    if (!DynOff::bSoftPathProbed.load(std::memory_order_acquire) && DynOff::bUseFProperty
+        && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+        ProbeSoftPathShape();
+    return DynOff::SoftPathIsTopLevelFor(DynOff::SOFTPATH_TOPLEVEL_MEASURED.load(std::memory_order_acquire),
+                                         g_cachedUEVersion);
+}
+
 static std::string ReadSoftObjectPath(uintptr_t addr) {
     if (!addr) return "";
 
     int fnameSize = DynOff::SizeofFName();
 
-    bool isTopLevelAssetPath = (g_cachedUEVersion >= 501);
+    bool isTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14] measured; the version rule is the fallback
 
     if (isTopLevelAssetPath) {
         // UE5.1+: FTopLevelAssetPath = { FName PackageName, FName AssetName }
@@ -426,7 +477,7 @@ static int32_t SoftObjectPathPayloadSize() {
     // The AlignUp and the reason it is load-bearing live on DynOff::FSoftObjectPathSizeFor,
     // in the header so the test target can pin it.
     return static_cast<int32_t>(
-        DynOff::FSoftObjectPathSizeFor(fnameSize, g_cachedUEVersion >= 501));
+        DynOff::FSoftObjectPathSizeFor(fnameSize, SoftPathIsTopLevel()));   // [VND583-14]
 }
 
 // Offset of FSoftObjectPath inside a TSoftObjectPtr. `elemSize` is the property's
@@ -596,7 +647,7 @@ std::string GetName(uintptr_t uobjectAddr) {
     const uintptr_t fnameAddr = uobjectAddr + Grimoire::OFF_UOBJECT_NAME;
     NameWitness live{};
     if (!Macht::ReadSafe(fnameAddr, live.comparisonIndex)) return "";
-    Macht::ReadSafe(fnameAddr + 4, live.number);
+    Macht::ReadSafe(fnameAddr + DynOff::FNAME_NUMBER, live.number);   // [VND583-07]
 
     // Check name cache first — avoids repeated FNamePool lookups. The key is an
     // address the engine recycles, so a hit is only served when the bytes it was
@@ -788,6 +839,23 @@ static void WalkFFieldChain(uintptr_t firstField, std::vector<FieldInfo>& fields
         // Read offset and size (FProperty fields, may not be valid for non-property FFields)
         Macht::ReadSafe<int32_t>(current + DynOff::FPROPERTY_OFFSET, fi.Offset);
         Macht::ReadSafe<int32_t>(current + DynOff::FPROPERTY_ELEMSIZE, fi.Size);
+
+        // [VND583-13] A Set / Map property's size says whether this build's TSet is sparse (0x50) or
+        // compact (0x10, UE_USE_COMPACT_SET_AS_DEFAULT). Compact latches DynOff::bCompactSets; any other
+        // size is only logged -- no engine is known to produce one.
+        if (fi.Size != DynOff::SPARSE_SET_ELEMENT_SIZE && (fi.TypeName == "SetProperty" || fi.TypeName == "MapProperty")) {
+            if (DynOff::IsCompactSetLayout(fi.Size, g_cachedUEVersion)) {
+                if (!DynOff::bCompactSets.exchange(true))
+                    Sein::Warn("WALK", "%s '%s' is 16 bytes: this build uses COMPACT sets (UE_USE_COMPACT_SET_AS_DEFAULT). "
+                               "TSet/TMap contents are not decoded; only their counts are shown", fi.TypeName.c_str(),
+                               fi.Name.c_str());
+            } else {
+                static std::atomic<bool> s_loggedOddSetSize{false};
+                if (!s_loggedOddSetSize.exchange(true))
+                    Sein::Warn("WALK", "%s '%s' has ElementSize 0x%X, not the sparse 0x50 -- its contents are still "
+                               "read as a TSparseArray", fi.TypeName.c_str(), fi.Name.c_str(), fi.Size);
+            }
+        }
         // ArrayDim sits immediately before ElementSize (adjacent int32s) on every
         // UE 4.18-5.7 layout (see Genau Step 9). Reading it lets a static C-array
         // UPROPERTY (Type Foo[N]) report its full Size*ArrayDim footprint so the
@@ -1517,20 +1585,139 @@ int32_t FindFieldOffset(uintptr_t classAddr, const char* exact,
         ? fi.Offset : -1;
 }
 
+// [VND583-01] The function's own parameter shape: how many CPF_Parm properties it has and
+// where the last one ends. This is what UFunction::NumParms / ParmsSize record, so it is the
+// ground truth the FunctionFlags vote scores candidate offsets against. Reads the same chain
+// WalkFunctions does (ChildProperties/FField::Next, or Children/UField::Next before 4.25).
+static bool ReadParamShape(uintptr_t func, int& count, int& end) {
+    constexpr uint64_t CPF_Parm = 0x0080;
+    count = 0; end = 0;
+    const bool fprop = DynOff::bUseFProperty;
+    uintptr_t cur = 0;
+    if (!Macht::ReadSafe(func + (fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN), cur))
+        return false;
+    if (fprop) cur = DynOff::StripFFieldTag(cur);
+    for (int limit = 256; cur != 0 && limit-- > 0; ) {
+        if (fprop && DynOff::IsFFieldVariantUObject(cur)) break;
+        uint64_t flags = 0;
+        int32_t off = 0, size = 0;
+        if (!Macht::ReadSafe<uint64_t>(cur + (fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS), flags)) break;
+        Macht::ReadSafe<int32_t>(cur + (fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET), off);
+        Macht::ReadSafe<int32_t>(cur + (fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE), size);
+        if (flags & CPF_Parm) {
+            if (off < 0 || size <= 0 || off > 0x10000 || size > 0x10000) return false;   // not a real chain
+            ++count;
+            end = std::max(end, off + size);
+        }
+        uintptr_t next = 0;
+        if (!Macht::ReadSafe(cur + (fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT), next)) break;
+        cur = fprop ? DynOff::StripFFieldTag(next) : next;
+    }
+    return count > 0;
+}
+
+// [VND583-01] Decide UFunction::FunctionFlags' offset ONCE, by measurement. Candidates: the
+// measured primary (PropertiesSize + 0x48/0x58), the version table, and the six template
+// values; each with the version's own tail shift and an extra 0 or +4 (Split Fiction). A
+// candidate scores a sample when NumParms / ParmsSize read at it match the sampled function's
+// own parameter chain (DynOff::FunctionTailMatches). The winner needs >= 60% of at least 8
+// samples; otherwise the measured primary is latched when there is one, and 0 (undecided)
+// when there is not. Runs only after the offsets probe, because it walks property chains.
+static void EnsureFunctionFlagsOffset() {
+    if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_acquire)) return;
+    if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_relaxed)) return;
+
+    const unsigned ver = g_cachedUEVersion;
+    const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
+    const int primary = DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName,
+                                                        DynOff::USTRUCT_PROPSSIZE, measured,
+                                                        DynOff::bUseFProperty);
+    const int table = DynOff::FunctionFlagsOffsetFor(ver, DynOff::bCasePreservingName);
+    std::vector<int> cands{ primary };
+    auto addCand = [&](int c) { if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c); };
+    addCand(table);
+    for (int c : DynOff::FUNCTIONFLAGS_SWEEP) addCand(c);
+
+    struct Sample { uintptr_t f; int count; int end; };
+    std::vector<Sample> samples;
+    constexpr int kWant = 64;
+    const int32_t total = Aura::GetCount();
+    for (int32_t i = 0; i < total && static_cast<int>(samples.size()) < kWant; ++i) {
+        uintptr_t obj = Aura::GetByIndex(i);
+        if (!obj) continue;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "Function") continue;
+        Sample s{ obj, 0, 0 };
+        if (ReadParamShape(obj, s.count, s.end)) samples.push_back(s);
+    }
+
+    const int shift = DynOff::FunctionTailShiftFor(ver);
+    int bestOff = 0, bestExtra = 0, bestHits = -1;
+    for (int c : cands) {
+        for (int extra : { 0, 4 }) {
+            int hits = 0;
+            for (const Sample& s : samples) {
+                uint8_t numParms = 0;
+                uint16_t parmsSize = 0;
+                const uintptr_t tail = s.f + c + shift + extra;
+                if (Macht::ReadSafe<uint8_t>(tail + 0x04, numParms)
+                    && Macht::ReadSafe<uint16_t>(tail + 0x06, parmsSize)
+                    && DynOff::FunctionTailMatches(numParms, parmsSize, s.count, s.end))
+                    ++hits;
+            }
+            if (hits > bestHits) { bestHits = hits; bestOff = c; bestExtra = extra; }   // ties keep the earlier
+        }
+    }
+
+    const int n = static_cast<int>(samples.size());
+    const int need = std::max(6, (n * 6 + 9) / 10);
+    if (n >= 8 && bestHits >= need) {
+        DynOff::UFUNCTION_FLAGS = bestOff;
+        DynOff::UFUNCTION_TAIL_EXTRA = bestExtra;
+        LOG_INFO("DetectFunctionFlags: %d UFunction samples -> FunctionFlags=+0x%X tailExtra=+%d "
+                 "(%d/%d votes; measured primary +0x%X, version table +0x%X)",
+                 n, bestOff, bestExtra, bestHits, n, primary, table);
+    } else {
+        DynOff::UFUNCTION_FLAGS = measured ? primary : 0;
+        DynOff::UFUNCTION_TAIL_EXTRA = 0;
+        LOG_WARN("DetectFunctionFlags: inconclusive (%d samples, best +0x%X with %d votes, need %d) -- %s",
+                 n, bestOff, bestHits < 0 ? 0 : bestHits, need,
+                 measured ? "keeping the measured primary" : "undecided, readers keep the table + sweep");
+    }
+    DynOff::bUFunctionFlagsDetected.store(true, std::memory_order_release);
+}
+
+int FunctionFlagsOffset() {
+    EnsureFunctionFlagsOffset();
+    return DynOff::UFUNCTION_FLAGS;
+}
+
 // Read UFunction::FunctionFlags (+ the NumParms/ParmsSize/ReturnValueOffset that
-// sit at fixed offsets past it) into `fi`. Version-aware offset probe shared by
-// WalkFunctions and ResolveFunctionInfo. `funcAddr` must already be a validated
-// UFunction*; all reads are SEH-safe via Macht::ReadSafe.
+// sit at fixed offsets past it) into `fi`. Shared by WalkFunctions and
+// ResolveFunctionInfo. `funcAddr` must already be a validated UFunction*; all
+// reads are SEH-safe via Macht::ReadSafe.
 static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
-    // Version- AND case-preserving-aware. The table, the measurements behind it, and
-    // why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor
-    // (Grimoire.h) — in the header so the test target can pin every row.
+    // [VND583-01] The offset is DECIDED by the vote above when it can be; then a zero read is
+    // a zero, never a reason to sweep. Otherwise the primary (the measured PropertiesSize
+    // relation, else the version table) and the sweep, as before. The table, the measurements
+    // behind it, and why 0xC0 must never appear here live on DynOff::FunctionFlagsOffsetFor.
     uint32_t funcFlags = 0;
     int funcFlagsOff = -1;
-    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
-                                                       DynOff::bCasePreservingName);
+    const int decided = FunctionFlagsOffset();
+    const int primary = decided > 0 ? decided
+        : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
+                                          DynOff::USTRUCT_PROPSSIZE,
+                                          DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                          DynOff::bUseFProperty);
 
-    if (Macht::ReadSafe<uint32_t>(funcAddr + primary, funcFlags) && funcFlags != 0) {
+    if (decided > 0) {
+        Macht::ReadSafe<uint32_t>(funcAddr + decided, funcFlags);
+        funcFlagsOff = decided;
+    } else if (Macht::ReadSafe<uint32_t>(funcAddr + primary, funcFlags) && funcFlags != 0) {
         funcFlagsOff = primary;
     } else {
         // Fallback: try all known offsets (skip primary, already tried).
@@ -1551,7 +1738,8 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
     // on DynOff::FunctionTailShiftFor.
     if (funcFlagsOff >= 0) {
-        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion);
+        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
+                       + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);   // [VND583-01]
         Macht::ReadSafe<uint8_t> (funcAddr + tail + 0x04, fi.numParms);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x06, fi.parmsSize);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x08, fi.returnValueOffset);
@@ -1768,6 +1956,69 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
     return funcs;
 }
 
+// [VND583-07, A9 step 1] sizeof(FName), MEASURED once -- see DynOff::PickFNameSize. The modal ElementSize
+// over the first 64 NameProperty fields met: FField mode walks each UClass / UScriptStruct's own
+// ChildProperties, UProperty mode (UE4 < 4.25) reads the NameProperty objects in GObjects. Needs validated
+// offsets (FNameSize asks); a cancelled walk latches nothing, so the next ask retries. Raw reads only --
+// never the walker, whose InferScalarSize asks FNameSize and would re-enter this lock.
+static void ProbeFNameSize() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bFNameSizeProbed.load(std::memory_order_relaxed)) return;
+    constexpr size_t kSamples = 64;
+    std::vector<int32_t> sizes;
+    sizes.reserve(kSamples);
+    const bool fprop = DynOff::bUseFProperty;
+    const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        const std::string clsName = ReadFName(cls + Grimoire::OFF_UOBJECT_NAME);
+        if (!fprop) {
+            int32_t es = 0;
+            if (clsName == "NameProperty" && Macht::ReadSafe(obj + DynOff::UPROPERTY_ELEMSIZE, es))
+                sizes.push_back(es);
+            return sizes.size() < kSamples;
+        }
+        if (clsName != "Class" && clsName != "ScriptStruct") return true;
+        uintptr_t f = 0;
+        if (!Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDPROPS, f)) return true;
+        f = DynOff::StripFFieldTag(f);
+        for (int n = 0; f && n < 512 && sizes.size() < kSamples; ++n) {
+            if (DynOff::IsFFieldVariantUObject(f)) break;
+            int32_t es = 0;
+            if (GetFieldTypeName(f) == "NameProperty" && Macht::ReadSafe(f + DynOff::FPROPERTY_ELEMSIZE, es))
+                sizes.push_back(es);
+            if (!Macht::ReadSafe(f + DynOff::FFIELD_NEXT, f)) break;
+        }
+        return sizes.size() < kSamples;
+    });
+    if (!complete) return;   // cancelled: try again on the next ask
+    int modal = 0, modalCount = 0;
+    for (const int32_t s : sizes) {
+        const int c = static_cast<int>(std::count(sizes.begin(), sizes.end(), s));
+        if (c > modalCount) { modal = s; modalCount = c; }
+    }
+    const int picked = DynOff::PickFNameSize(DynOff::bCasePreservingName, modal, modalCount,
+                                             static_cast<int>(sizes.size()));
+    const int rule = DynOff::bCasePreservingName ? 0x0C : 0x08;
+    if (picked) {
+        LOG_INFO("DetectFNameSize: sizeof(FName) = %d, the ElementSize of %d of %zu NameProperty field(s) "
+                 "(the case-preserving rule says %d)", picked, modalCount, sizes.size(), rule);
+    } else {
+        LOG_WARN("DetectFNameSize: no agreed NameProperty ElementSize (%zu sampled, modal %d on %d) -- "
+                 "the case-preserving rule answers %d", sizes.size(), modal, modalCount, rule);
+    }
+    DynOff::FNAME_SIZE_MEASURED.store(picked, std::memory_order_release);
+    DynOff::bFNameSizeProbed.store(true, std::memory_order_release);
+}
+
+static int FNameSize() {
+    if (!DynOff::bFNameSizeProbed.load(std::memory_order_acquire)
+        && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+        ProbeFNameSize();
+    return DynOff::SizeofFName();
+}
+
 // --- Live Instance Walking ---
 
 /// Infer the expected element size from a well-known property type name.
@@ -1791,13 +2042,14 @@ static int32_t InferScalarSize(const std::string& typeName) {
     // WITH_CASE_PRESERVING_NAME (+ DisplayIndex(4), alignof 4, no trailing padding).
     // 0x10 is the UObject NamePrivate->Outer SLOT, which is a different question: that
     // gap exists because OuterPrivate is an 8-aligned pointer, not because FName is 16.
-    // This MUST be dynamic: ValidateArrayElemSize treats InferScalarSize as authoritative
-    // and OVERRIDES the engine's reported ElementSize -- which for a NameProperty is
-    // ALREADY the correct 0xC, so a wrong value here is actively substituted for a right one.
+    // This MUST be dynamic, and it is MEASURED when it can be (FNameSize, [VND583-07] A9 step 1):
+    // ResolveInnerSize returns this before it asks the engine, so a wrong value here is
+    // actively substituted for a right one. ValidateArrayElemSize no longer lets it override a
+    // plausible engine ElementSize (A9 step 7).
     // Feeds TArray<FName> stride, ComputeSetElementStride, and the TMap key size handed to
     // ComputeMapValueOffset -- which applies the pair padding ITSELF, so its input must be
     // the UNPADDED sizeof.
-    if (typeName == "NameProperty")   return DynOff::SizeofFName();
+    if (typeName == "NameProperty")   return FNameSize();
     if (typeName == "ObjectProperty") return 8;  // UObject* on x64
     if (typeName == "ClassProperty")  return 8;  // UClass* (inherits ObjectProperty)
     if (typeName == "WeakObjectProperty")  return 8;  // FWeakObjectPtr = { int32 + int32 }
@@ -1838,6 +2090,27 @@ static int32_t ValidateArrayElemSize(int32_t readSize, const std::string& typeNa
     // stays: without it the generic arm below would pass any garbage size from 1 to 65536.
     if (typeName == "LazyObjectProperty")
         return LazyGuidOffset(readSize) + 0x10;
+    // [VND583-07, A9 step 7] NameProperty: our RULE no longer overrides the engine. sizeof(FName) is one
+    // number per process, so a MEASURED size (FNameSize) still beats a single read that disagrees with it --
+    // that read is the misread. Unmeasured, a size this build's family can have is the engine's and is kept,
+    // but only on validated offsets (a default FPROPERTY_ELEMSIZE can read anything). A plausible
+    // disagreement is a Warn: it is a layout question, not the recovery noise of the Debug line below.
+    if (typeName == "NameProperty") {
+        const int32_t sz = FNameSize();
+        if (readSize == sz) return readSize;
+        if (DynOff::IsFNameSizeFor(readSize, DynOff::bCasePreservingName)) {
+            const bool measured = DynOff::FNAME_SIZE_MEASURED.load(std::memory_order_acquire) != 0;
+            const int32_t use = (!measured && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+                ? readSize : sz;
+            static std::atomic<int> s_warned{0};
+            if (s_warned.fetch_add(1, std::memory_order_relaxed) < 3)
+                Sein::Warn("WALK:ArrayP", "NameProperty ElementSize %d disagrees with the %s sizeof(FName) %d -- using %d",
+                           readSize, measured ? "measured" : "unmeasured", sz, use);
+            return use;
+        }
+        Sein::Debug("WALK:ArrayP", "elemSize=%d is invalid for 'NameProperty' (expected=%d), overriding", readSize, sz);
+        return sz;
+    }
     int32_t expected = InferScalarSize(typeName);
     if (expected > 0) {
         // For known types, we know the exact size — override if it doesn't match
@@ -1934,8 +2207,9 @@ int32_t GetSetElementStride(uintptr_t fieldAddr) {
 //
 // UStruct lays out `int32 PropertiesSize;` immediately followed by MinAlignment,
 // so it sits at USTRUCT_PROPSSIZE + 4 (which is also why USTRUCT_SCRIPT is
-// PROPSSIZE + 8). MinAlignment is int16 in UE 5.8 — StructStateFlags takes the
-// other half of that word — and int32 in UE4 / early UE5. Reading the LOW 16 BITS
+// PROPSSIZE + 8). MinAlignment is int16 since UE 5.6 (Class.h: int32 at 5.5.0-release, int16 at
+// 5.6.0-release [VND583-12]) — StructStateFlags takes the other half of that word — and int32 in
+// UE4 / UE 5.0-5.5. Reading the LOW 16 BITS
 // is correct for BOTH on little-endian x64 because alignments are small; reading
 // it as int32 would pick up StructStateFlags on newer engines.
 //
@@ -1956,6 +2230,58 @@ static int32_t GetStructAlignment(uintptr_t scriptStruct) {
     return Macht::SanitizeAlign(minAlign);
 }
 
+// [VND583-03] alignof(FName), MEASURED once: UScriptStruct::MinAlignment of a stock struct whose
+// only member is one FName -- CollisionProfileName (Engine, every 4.x/5.x), PrimaryAssetType
+// (CoreUObject, 4.16+), GameplayTag -- first found in that order wins (DynOff::PickFNameAlign
+// checks its size and value). The CLASS check matters: in UProperty mode FBodyInstance's
+// NameProperty is ALSO an object called "CollisionProfileName". Needs validated offsets
+// (PropertiesSize must be measured, not a default); a cancelled walk latches nothing.
+static void ProbeFNameAlignment() {
+    static std::mutex s_mutex;
+    std::lock_guard<std::mutex> lk(s_mutex);
+    if (DynOff::bFNameAlignProbed.load(std::memory_order_relaxed)) return;
+    static const char* kStructs[] = { "CollisionProfileName", "PrimaryAssetType", "GameplayTag" };
+    constexpr int kN = static_cast<int>(sizeof(kStructs) / sizeof(kStructs[0]));
+    const int fnameSize = DynOff::bCasePreservingName ? 12 : 8;
+    int found[kN] = {};       // the PickFNameAlign answer per name, 0 = none
+    bool seen[kN] = {};       // a ScriptStruct of that name was met (the first one decides)
+    const bool complete = Aura::ForEach([&](int32_t, uintptr_t obj) -> bool {
+        const std::string name = ReadFName(obj + Grimoire::OFF_UOBJECT_NAME);
+        int k = 0;
+        while (k < kN && name != kStructs[k]) ++k;
+        if (k == kN || seen[k]) return true;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "ScriptStruct") return true;
+        int32_t propsSize = 0;
+        if (!Macht::ReadSafe(obj + DynOff::USTRUCT_PROPSSIZE, propsSize)) return true;
+        seen[k] = true;
+        found[k] = DynOff::PickFNameAlign(GetStructAlignment(obj), propsSize, fnameSize);
+        return !(k == 0 && found[0]);   // the first-priority struct measured: nothing can beat it
+    });
+    if (!complete) return;   // cancelled: try again on the next ask
+    int picked = 0, from = -1;
+    for (int k = 0; k < kN && !picked; ++k)
+        if (found[k]) { picked = found[k]; from = k; }
+    const int rule = DynOff::FNameAlignFor(g_cachedUEVersion, DynOff::bCasePreservingName);
+    if (picked) {
+        LOG_INFO("DetectFNameAlign: alignof(FName) = %d, measured on ScriptStruct %s (version rule says %d)",
+                 picked, kStructs[from], rule);
+    } else {
+        LOG_WARN("DetectFNameAlign: no single-FName ScriptStruct measured -- the version rule answers %d", rule);
+    }
+    DynOff::FNAME_ALIGN_MEASURED.store(picked, std::memory_order_release);
+    DynOff::bFNameAlignProbed.store(true, std::memory_order_release);
+}
+
+static int FNameAlignment() {
+    if (!DynOff::bFNameAlignProbed.load(std::memory_order_acquire)
+        && DynOff::bOffsetsValidated.load(std::memory_order_acquire))
+        ProbeFNameAlignment();
+    const int measured = DynOff::FNAME_ALIGN_MEASURED.load(std::memory_order_acquire);
+    return measured ? measured : DynOff::FNameAlignFor(g_cachedUEVersion, DynOff::bCasePreservingName);
+}
+
 // ============================================================
 // ResolveElementAlignment — the real alignment of a TMap key/value or a
 // container element. Uses the per-type rule for everything Scharf can answer,
@@ -1966,6 +2292,8 @@ static int32_t ResolveElementAlignment(const std::string& typeName, int32_t size
                                        uintptr_t structAddr) {
     if (typeName == "StructProperty")
         return GetStructAlignment(structAddr);
+    if (typeName == "NameProperty")   // [VND583-03] measured; else 8 on non-CPN 4.11-4.21, 4 elsewhere
+        return FNameAlignment();
     return Scharf::RequiredAlignment(typeName, size, DynOff::bCasePreservingName);
 }
 
@@ -2745,12 +3073,32 @@ ReadArrayResult ReadPointerArrayElements(
 // Returns the UObject* or 0 if stale/invalid.
 // ============================================================
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber) {
-    if (objectIndex <= 0) return 0;
+    // [VND583-08] UE's FWeakObjectPtr::Internal_GetObjectItem, in its order: SerialNumber == 0 is an
+    // EXPLICITLY null pointer whatever the index says (without this, a {N, 0} pair "resolved" to any
+    // object whose serial had never been assigned -- serials are handed out lazily, so most read 0
+    // -- and Find References listed it); a negative index is null; and index 0 is a real slot.
+    if (serialNumber == 0 || objectIndex < 0) return 0;
     uintptr_t obj = Aura::GetByIndex(objectIndex);
     if (!obj) return 0;
     int32_t actualSerial = Aura::GetSerialNumber(objectIndex);
     if (actualSerial != serialNumber) return 0;  // stale reference
     return obj;
+}
+
+// [VND583-13] A TCompactSet's element count: { Elements*, int32 NumElements @ +0x08, int32 MaxElements }.
+static int32_t ReadCompactSetCount(uintptr_t addr) {
+    int32_t num = 0, maxE = 0;
+    if (!Macht::ReadSafe(addr + 0x08, num) || !Macht::ReadSafe(addr + 0x0C, maxE)) return 0;
+    return (num >= 0 && num <= maxE && num <= Grimoire::SANITY_MAX_CONTAINER_NUM) ? num : 0;
+}
+
+const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
+    if (!target) return "";
+    uint32_t objectFlags = 0;
+    Macht::ReadSafe(target + Grimoire::OFF_UOBJECT_FLAGS, objectFlags);
+    uint32_t itemFlags = 0;
+    const bool itemOk = Aura::GetItemFlags(objectIndex, itemFlags);
+    return DynOff::IsWeakTargetGarbage(g_cachedUEVersion, objectFlags, itemOk, itemFlags) ? " [garbage]" : "";
 }
 
 // ============================================================
@@ -2842,10 +3190,9 @@ ReadArrayResult ReadWeakObjectArrayElements(
             } else {
                 elem.value = hexBuf;
             }
-        } else if (objIdx > 0) {
-            elem.value = "null (stale)";
+            elem.value += WeakTargetGarbageTag(ptr, objIdx);   // [VND583-06]
         } else {
-            elem.value = "null";
+            elem.value = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
         }
 
         result.elements.push_back(std::move(elem));
@@ -3107,11 +3454,12 @@ ReadArrayResult ReadStructArrayElements(
                         sf.ptrClassName = GetName(cls);
                         sf.ptrClassAddr = cls;
                     }
-                    sf.value = !sf.ptrName.empty() ? sf.ptrName : "ptr";
+                    sf.value = (!sf.ptrName.empty() ? sf.ptrName : std::string("ptr"))
+                             + WeakTargetGarbageTag(ptr, objIdx);   // [VND583-06]
                 } else {
                     // Same wording as ReadWeakObjectArrayElements: a live index whose
                     // serial no longer matches is a DEAD reference, not a null one.
-                    sf.value = (objIdx > 0) ? "null (stale)" : "null";
+                    sf.value = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
                 }
             } else if (cf.typeName == "ObjectProperty" || cf.typeName == "ClassProperty"
                     || cf.typeName == "InterfaceProperty") {
@@ -3326,6 +3674,7 @@ ReadArrayResult ReadSoftObjectArrayElements(
                 ? (elem.ptrClassName.empty() ? elem.ptrName
                                               : elem.ptrName + " (" + elem.ptrClassName + ")")
                 : "(loaded)";
+            elem.value += WeakTargetGarbageTag(elem.ptrAddr, objIdx);   // [VND583-06]
         } else {
             elem.value = "(none)";
         }
@@ -3462,6 +3811,7 @@ ReadArrayResult ReadLazyObjectArrayElements(
             elem.value = std::string(guidStr) + " " + elem.ptrName;
             if (!elem.ptrClassName.empty())
                 elem.value += " (" + elem.ptrClassName + ")";
+            elem.value += WeakTargetGarbageTag(elem.ptrAddr, objIdx);   // [VND583-06]
         } else {
             elem.value = guidStr;
         }
@@ -3708,7 +4058,8 @@ ReadArrayResult ReadDelegateArrayElements(
         // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
         // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
         // touched. The multicast element loop has an explicit unbound branch; this one did not.
-        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName);
+        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName)
+                   + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
 
         result.elements.push_back(std::move(elem));
     }
@@ -3878,6 +4229,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                 std::string bdesc = DescribeScriptDelegate(
                     btarget != 0, btarget ? GetName(btarget) : std::string(),
                     bobjIdx, bserial, bfunc);
+                bdesc += WeakTargetGarbageTag(btarget, bobjIdx);   // [VND583-06]
                 if (IsNamedDelegateBinding(bdesc)) bindings.push_back(std::move(bdesc));
             }
 
@@ -4490,8 +4842,15 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
         // Handle WeakObjectProperty: FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
         if (fi.TypeName == "WeakObjectProperty") {
             int32_t objIdx = 0, serial = 0;
-            Macht::ReadSafe(instanceAddr + fi.Offset, objIdx);
-            Macht::ReadSafe(instanceAddr + fi.Offset + 4, serial);
+            // [VND583-05] Both reads are load-bearing, as in the InterfaceProperty reader below: a
+            // faulted read leaves 0, and {0, 0} would then be published -- and labelled -- as null.
+            const bool okIdx    = Macht::ReadSafe(instanceAddr + fi.Offset, objIdx);
+            const bool okSerial = Macht::ReadSafe(instanceAddr + fi.Offset + 4, serial);
+            if (!okIdx || !okSerial) {
+                fv.typedValue = DescribeUnreadableField("FWeakObjectPtr", fi.Offset);
+                result.fields.push_back(std::move(fv));
+                continue;
+            }
             uintptr_t ptr = ResolveWeakObjectPtr(objIdx, serial);
             if (ptr) {
                 fv.ptrValue = ptr;
@@ -4501,6 +4860,17 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.ptrClassName = GetName(cls);
                     fv.ptrClassAddr = cls;
                 }
+                // [VND583-06] A Garbage / PendingKill target still resolves: say so in the Value
+                // column, which otherwise shows "Name (Class)" from ptrName.
+                if (const char* tag = WeakTargetGarbageTag(ptr, objIdx); *tag)
+                    fv.typedValue = fv.ptrName + (fv.ptrClassName.empty() ? std::string()
+                                                                         : " (" + fv.ptrClassName + ")") + tag;
+            } else {
+                // [VND583-05] The same words as the three sibling weak readers (struct member,
+                // array element, search preview): a live index whose serial no longer matches is a
+                // DEAD reference, not a null one. Unlabelled, the Value column showed the raw
+                // index+serial hex.
+                fv.typedValue = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
             }
             char buf[20];
             snprintf(buf, sizeof(buf), "%08X%08X", objIdx, serial);
@@ -4566,6 +4936,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = fv.ptrClassName.empty()
                     ? fv.ptrName
                     : fv.ptrName + " (" + fv.ptrClassName + ")";
+                fv.typedValue += WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
             } else {
                 fv.typedValue = "(none)";
             }
@@ -4631,6 +5002,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = std::string(guidStr) + " " + fv.ptrName;
                 if (!fv.ptrClassName.empty())
                     fv.typedValue += " (" + fv.ptrClassName + ")";
+                fv.typedValue += WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
             } else {
                 fv.typedValue = guidStr;
             }
@@ -4843,7 +5215,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // — the CE XML / CSX exporter needs it to lay out the
                     // per-element FName leaf(s) at pathOffset / pathOffset+fnameSize.
                     fv.softArrayFNameSize = DynOff::SizeofFName();
-                    fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayIsTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14]
                     fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
 
                     if (arr.Data && fv.arrayCount > 0) {
@@ -5058,7 +5430,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Phase G: Soft object arrays (UProperty mode)
                 if (innerFound && IsSoftObjectArrayType(fv.arrayInnerType)) {
                     fv.softArrayFNameSize = DynOff::SizeofFName();
-                    fv.softArrayIsTopLevelAssetPath = (g_cachedUEVersion >= 501);
+                    fv.softArrayIsTopLevelAssetPath = SoftPathIsTopLevel();   // [VND583-14]
                     fv.softArrayPathOffset = SoftPathOffset(fv.arrayElemSize);
                     if (arr.Data && fv.arrayCount > 0) {
                         auto softResult = ReadSoftObjectArrayElements(
@@ -5161,6 +5533,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
                     static_cast<unsigned long long>(sa.Data), sa.MaxIndex, sa.NumFreeIndices);
                 fv.hexValue = buf;
+            } else if (DynOff::bCompactSets.load(std::memory_order_relaxed)) {
+                fv.mapCount = ReadCompactSetCount(instanceAddr + fi.Offset);   // [VND583-13] header only
+                fv.typedValue = "(compact TMap: " + std::to_string(fv.mapCount) + " pair(s), not decoded)";
             } else {
                 fv.mapCount = 0;
             }
@@ -5265,7 +5640,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                             && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
-                            // Map<Enum, Name> puts the value at +4. Wrong align => wrong
+                            // Map<Enum, Name> puts the value at +4 (FName is 8-aligned on non-CPN
+                            // 4.11-4.21 -- measured, VND583-03). Wrong align => wrong
                             // offset AND stride => every element reads garbage. For a
                             // StructProperty this reads UScriptStruct::MinAlignment, which
                             // Scharf deliberately will not answer (it is a validation helper,
@@ -5451,7 +5827,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         } else if (fv.mapCount > 0 && sa.Data && fv.mapKeySize > 0 && fv.mapValueSize > 0) {
                             // Key/value alignment from the real per-type rule (NOT a size
                             // guess) — FName/FWeakObjectPtr are 8 bytes but 4-aligned, so a
-                            // Map<Enum, Name> puts the value at +4. Wrong align => wrong
+                            // Map<Enum, Name> puts the value at +4 (FName is 8-aligned on non-CPN
+                            // 4.11-4.21 -- measured, VND583-03). Wrong align => wrong
                             // offset AND stride => every element reads garbage. For a
                             // StructProperty this reads UScriptStruct::MinAlignment, which
                             // Scharf deliberately will not answer (it is a validation helper,
@@ -5549,6 +5926,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 snprintf(buf, sizeof(buf), "%016llX %08X %08X",
                     static_cast<unsigned long long>(sa.Data), sa.MaxIndex, sa.NumFreeIndices);
                 fv.hexValue = buf;
+            } else if (DynOff::bCompactSets.load(std::memory_order_relaxed)) {
+                fv.setCount = ReadCompactSetCount(instanceAddr + fi.Offset);   // [VND583-13] header only
+                fv.typedValue = "(compact TSet: " + std::to_string(fv.setCount) + " element(s), not decoded)";
             } else {
                 fv.setCount = 0;
             }
@@ -6123,7 +6503,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
             }
             fv.typedValue = DescribeScriptDelegate(target != 0, targetName,
-                                                   objIdx, serial, funcName);
+                                                   objIdx, serial, funcName)
+                          + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
 
             // Hex: FWeakObjectPtr + FName raw bytes
             int delegateSize = 8 + fnameSize;
@@ -6261,7 +6642,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     // Embedded FWeakObjectPtr at field+0.
                     int32_t objIdx = 0, serial = 0;
                     if (Macht::ReadSafe(fieldAddr, objIdx) && Macht::ReadSafe(fieldAddr + 4, serial)) {
-                        if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) fillPtr(resolved);
+                        if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) {
+                            fillPtr(resolved);
+                            if (const char* tag = WeakTargetGarbageTag(resolved, objIdx); *tag)   // [VND583-06]
+                                fv.typedValue = fv.ptrName + (fv.ptrClassName.empty() ? std::string()
+                                                                                     : " (" + fv.ptrClassName + ")") + tag;
+                        }
                     }
                 } else if (isStrInner) {
                     std::string s = ReadFString(fieldAddr, 0);
@@ -6661,7 +7047,8 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 }
 
                 elem.value = DescribeScriptDelegate(target != 0, elem.ptrName,
-                                                    objIdx, serial, funcName);
+                                                    objIdx, serial, funcName)
+                           + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
                 if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
                     previewNames.push_back(elem.value);
 
@@ -6977,7 +7364,8 @@ void ResolvePropertyPreviews(
             uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial);
             if (resolved) {
                 std::string name = GetName(resolved);
-                m.preview = name.empty() ? "(loaded)" : name;
+                m.preview = (name.empty() ? std::string("(loaded)") : name)
+                          + WeakTargetGarbageTag(resolved, objIdx);   // [VND583-06]
             } else if (t == "LazyObjectProperty") {
                 const int gOff = LazyGuidOffset(sz);
                 uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
@@ -6991,7 +7379,7 @@ void ResolvePropertyPreviews(
             } else {
                 // Same wording as ReadWeakObjectArrayElements: a live index whose
                 // serial no longer matches is a DEAD reference, not a null one.
-                m.preview = (objIdx > 0) ? "null (stale)" : "null";
+                m.preview = UnresolvedWeakLabel(objIdx, serial);   // [VND583-08]
             }
             continue;
         }

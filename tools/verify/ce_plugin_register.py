@@ -2,7 +2,12 @@ r"""Register / unregister UE5Dumper.dll as a Cheat Engine plugin, reversibly.
 
     py tools/verify/ce_plugin_register.py status
     py tools/verify/ce_plugin_register.py register
+    py tools/verify/ce_plugin_register.py register --dll out\staged\<name>\UE5Dumper.dll   # a red build
     py tools/verify/ce_plugin_register.py unregister
+
+`--dll` registers a STAGED build (a red arm) instead of dist's. It is still an absolute path to the one
+artifact under test, never a copy, and `unregister` removes it like any UE5Dumper.dll entry (it matches
+on the file name). Only one UE5Dumper.dll entry is ever allowed: register refuses while one exists.
 
 WHY THIS EXISTS. Some rows can only be reached through the CE-plugin surface — the
 `Methode.cpp` `OnInjectAndConnect` callback and everything it logs (`B29`, and the
@@ -142,5 +147,16 @@ def unregister():
 
 
 if __name__ == "__main__":
-    cmd = sys.argv[1] if len(sys.argv) > 1 else "status"
+    args = sys.argv[1:]
+    if "--dll" in args:
+        i = args.index("--dll")
+        if i + 1 >= len(args):
+            say("--dll needs a path")
+            sys.exit(2)
+        DLL = pathlib.Path(args[i + 1]).resolve()
+        if not is_ours(str(DLL)):
+            say("refusing %s -- the file must be named UE5Dumper.dll, or unregister could not find it" % DLL)
+            sys.exit(2)
+        del args[i:i + 2]
+    cmd = args[0] if args else "status"
     sys.exit({"register": register, "unregister": unregister}.get(cmd, status)())

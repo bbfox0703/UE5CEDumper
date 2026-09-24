@@ -1,0 +1,9 @@
+{
+ "name": "l56-cdoscope-prefix",
+ "why": "L56 red arm: 07b04894 reversed under dll/src (the nearest-preview-class credit and the nested preview)",
+ "reverse_commit": "07b04894",
+ "paths": [
+  "dll/src"
+ ],
+ "subs": []
+}

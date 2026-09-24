@@ -383,7 +383,7 @@ static constexpr int32_t kMaxElementsCeiling = 0x2000000;  // 33,554,432
 
 // All known chunked layouts. Order: default first, then game-specific.
 static const LayoutPreset s_chunkedPresets[] = {
-    { "Default",     { 0x00, 0x10, 0x14, 0x18, 0x1C } },  // UE4.21+ and UE5 standard
+    { "Default",     { 0x00, 0x10, 0x14, 0x18, 0x1C } },  // UE4.20+ and UE5 standard (4.19 and earlier are flat -- RE-UE4SS 4_19 vs 4_20 TUObjectArray) [VND583-DOC UEP-D3]
     { "Back4Blood",  { 0x10, 0x00, 0x04, 0x08, 0x0C } },  // Objects at end
     { "Multiversus", { 0x18, 0x10, 0x00, 0x14, 0x20 } },  // NumElements first
     { "MindsEye",    { 0x18, 0x00, 0x14, 0x10, 0x04 } },  // MaxElements first
@@ -1494,7 +1494,8 @@ FUObjectItem* GetItem(int32_t index) {
     return Macht::Ptr<FUObjectItem>(itemAddr);
 }
 
-int32_t GetSerialNumber(int32_t index) {
+// The address of the FUObjectItem at `index`, or 0. Shared by the per-item field readers below.
+static uintptr_t ItemAddrOf(int32_t index) {
     if (!s_arrayAddr || index < 0 || index >= GetCount()) return 0;
 
     uintptr_t arrayBase = 0;
@@ -1502,17 +1503,25 @@ int32_t GetSerialNumber(int32_t index) {
         return 0;
     arrayBase = DecryptObjectPtr(arrayBase);
 
-    uintptr_t itemAddr = 0;
-    if (s_isFlat) {
-        itemAddr = arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
-    } else {
-        int32_t chunkIndex  = index / Grimoire::OBJECTS_PER_CHUNK;
-        int32_t withinChunk = index % Grimoire::OBJECTS_PER_CHUNK;
-        uintptr_t chunk = 0;
-        if (!Macht::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk)
-            return 0;
-        itemAddr = chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
-    }
+    if (s_isFlat)
+        return arrayBase + static_cast<uintptr_t>(index) * s_itemSize;
+    int32_t chunkIndex  = index / Grimoire::OBJECTS_PER_CHUNK;
+    int32_t withinChunk = index % Grimoire::OBJECTS_PER_CHUNK;
+    uintptr_t chunk = 0;
+    if (!Macht::ReadSafe(arrayBase + chunkIndex * sizeof(uintptr_t), chunk) || !chunk)
+        return 0;
+    return chunk + static_cast<uintptr_t>(withinChunk) * s_itemSize;
+}
+
+bool GetItemFlags(int32_t index, uint32_t& flags) {
+    if (s_layoutMode != Lineal::ItemLayoutMode::Classic || s_itemObjOffset != 0) return false;
+    const uintptr_t itemAddr = ItemAddrOf(index);
+    return itemAddr && Macht::ReadSafe(itemAddr + 0x08, flags);
+}
+
+int32_t GetSerialNumber(int32_t index) {
+    const uintptr_t itemAddr = ItemAddrOf(index);
+    if (!itemAddr) return 0;
 
     // The whole offset rule lives in Lineal so it can be unit-pinned — no target
     // compiles Aura.cpp, and the old inline `s_itemSize >= 24 ? 0x10 : 0x0C`
@@ -1938,6 +1947,81 @@ SearchResultSet FindInstancesDerivedFrom(const std::string& baseClassName, int m
                  rset.truncated ? " (capped)" : "",
                  (int)derivedCache.size(), rset.scanned, rset.nonNull);
     return rset;
+}
+
+uintptr_t FindLiveOrDefaultOf(const std::string& className) {
+    // [SEETHRU-PROBE-SUBSTRING] One walk, derivation-gated -- the contract is in Aura.h. The CDO fallback is picked up
+    // DURING the walk rather than by a second scan: a function library has no live instance, so the walk always runs
+    // to the end for one, and a second pass would double what the substring scan it replaces cost.
+    if (className.empty()) return 0;
+    std::string lowerQuery = className;
+    for (auto& c : lowerQuery) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+
+    std::unordered_map<uintptr_t, bool> derivedCache;   // per UClass, as in FindInstancesDerivedFrom
+    uintptr_t cdo = 0;
+    const int32_t count = GetCount();
+    for (int32_t i = 0; i < count; ++i) {
+        if ((i & 0xFFF) == 0 && Tot::Requested()) {
+            Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s': aborted at %d/%d -- returning nothing",
+                       className.c_str(), i, count);
+            return 0;
+        }
+        const uintptr_t obj = GetByIndex(i);
+        if (!obj) continue;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+
+        bool isDerived;
+        auto it = derivedCache.find(cls);
+        if (it != derivedCache.end()) {
+            isDerived = it->second;
+        } else {
+            isDerived = ClassChainMatchesLower(cls, lowerQuery);
+            derivedCache.emplace(cls, isDerived);
+        }
+        if (!isDerived) continue;
+
+        uint32_t nameIdx = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
+        const std::string objName = Serie::GetString(nameIdx);
+        if (objName.empty()) continue;
+
+        if (objName.rfind("Default__", 0) == 0) {
+            // A subclass's CDO derives too; only the named class's own default object may stand in.
+            if (!cdo) {
+                std::string clsName = Ubel::GetName(cls);
+                for (auto& c : clsName) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+                if (clsName == lowerQuery) cdo = obj;
+            }
+            continue;
+        }
+        Sein::Info("PIPE:find", "FindLiveOrDefaultOf '%s' -> 0x%llX (%s, class %s)", className.c_str(),
+                   static_cast<unsigned long long>(obj), objName.c_str(), Ubel::GetName(cls).c_str());
+        return obj;
+    }
+    if (cdo)
+        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> only its CDO: 0x%llX", className.c_str(),
+                   static_cast<unsigned long long>(cdo));
+    else
+        Sein::Warn("PIPE:find", "FindLiveOrDefaultOf '%s' -> not found (scanned=%d)", className.c_str(), count);
+    return cdo;
+}
+
+uintptr_t FindClassByPath(const std::string& classPath) {
+    // [SEETHRU-PROBE-SUBSTRING] FindByFullName, not FindByNameOrPath: that one falls back to a bare-FName match,
+    // and a class the caller named by package must not be answered by whatever else shares its leaf name.
+    const uintptr_t obj = FindByFullName(classPath);
+    if (!obj) {
+        Sein::Warn("PIPE:find", "FindClassByPath '%s': nothing at that path", classPath.c_str());
+        return 0;
+    }
+    // The object there must itself be a class: its own class is UClass or a subclass (BlueprintGeneratedClass).
+    if (!ClassDerivesFromAny(Ubel::GetClass(obj), {"Class"})) {
+        Sein::Warn("PIPE:find", "FindClassByPath '%s': 0x%llX is a '%s', not a class", classPath.c_str(),
+                   static_cast<unsigned long long>(obj), Ubel::GetName(Ubel::GetClass(obj)).c_str());
+        return 0;
+    }
+    return obj;
 }
 
 SearchResultSet FindActorsInLevel(uintptr_t levelAddr, int maxResults, int32_t* totalOut) {
@@ -6354,9 +6438,18 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
     // Shares DynOff::FunctionFlagsOffsetFor with Ubel::ReadFuncFlagsAndParams — these two
     // drifting apart is how one of them kept a dead `>= 550 -> 0xC0` band while the other
     // was fixed. One table, one sweep, one place to correct.
-    const int primary = DynOff::FunctionFlagsOffsetFor(g_cachedUEVersion,
-                                                       DynOff::bCasePreservingName);
+    // [VND583-01] The vote's decision first (a zero read then IS zero); otherwise the measured
+    // PropertiesSize relation, else the version table, and the sweep.
     uint32_t flags = 0;
+    const int decided = Ubel::FunctionFlagsOffset();
+    if (decided > 0) {
+        Macht::ReadSafe<uint32_t>(funcAddr + decided, flags);
+        return flags;
+    }
+    const int primary = DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName,
+                                                        DynOff::USTRUCT_PROPSSIZE,
+                                                        DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                                        DynOff::bUseFProperty);
     if (Macht::ReadSafe<uint32_t>(funcAddr + primary, flags) && flags != 0) return flags;
     for (int tryOff : DynOff::FUNCTIONFLAGS_SWEEP) {
         if (tryOff == primary) continue;

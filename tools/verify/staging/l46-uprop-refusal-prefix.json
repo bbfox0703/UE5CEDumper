@@ -1,0 +1,8 @@
+{
+ "name": "l46-uprop-refusal-prefix",
+ "why": "L46 red: cb20b61d reversed under dll/src -- a UProperty-mode (UE4 < 4.25) delegate-array arm drops the reader's stride refusal, so an unrecognised ElementSize reaches the UI as a bare header, indistinguishable from an empty array.",
+ "reverse_commit": "cb20b61d",
+ "paths": [
+  "dll/src"
+ ]
+}

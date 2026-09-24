@@ -1,14 +1,19 @@
-r"""Solide L2 — `Force → null` on a weak/soft/lazy pointer must REFUSE, loudly and without leaving
-a job behind.
+r"""Solide L2 — `Force → null` on a SOFT pointer must REFUSE, loudly and without leaving a job behind.
 
     py tools/verify/solide_l2_weakptr.py     (DumperTest dev running + injected, no UI)
 
-THE DEFECT. `object_null` writes a null over an ObjectProperty. A `TWeakObjectPtr` is not a raw
-pointer — it is `{ObjectIndex, ObjectSerialNumber}` — so zeroing it does not null anything; it makes
-the field point at **GObjects[0]**, a real and completely unrelated UObject. Before the fix the
-request was accepted, held nothing, and left a re-assert job scanning forever.
+⚠ RETARGETED 2026-09-24 (`[VND583-DOC D7-04]`). This rig used to force `Actor::ParentComponent`, a
+WeakObjectProperty, on the premise that zeroing a weak pointer "makes the field point at GObjects[0]".
+That premise was wrong in every UE version: SerialNumber 0 is UE's explicit null. So an 8-byte weak
+pointer is now HELD, at UE's own reset value. A soft / lazy pointer is still refused, because its asset
+path / GUID lies past the weak half and re-resolves the pointer, so a held null would not hold. The step
+therefore forces `DumperTestActor::Soft_Mesh` (a SoftObjectProperty). Everything the rig proves about
+the refusal, (a) (b) (c) below, is unchanged. The name of the file is kept so the register row still
+resolves.
 
-`Solide.cpp:263` is the whole fix: `if (fi.TypeName != "ObjectProperty") { refusal = FR_ERR_WEAK_PTR; }`
+THE DEFECT it pins. Before the refusal existed, the request was accepted, held nothing, and left a
+re-assert job scanning forever. The gate is `Solide::ObjectNullShapeFor` (Solide.h), called from
+Solide.cpp with the field's ElementSize.
 
 THREE THINGS MUST HOLD, and only the first is visible in the reply:
   (a) `code == -12` (`FR_ERR_WEAK_PTR`), `held == 0`, `resolved == false`
@@ -33,7 +38,7 @@ PREMISES, all verified offline before writing this (see the commit message):
   `kind` is a STRING, default "bool"; an unknown VALUE is a hard error (Fern.cpp)
   `FindInstancesDerivedFrom base=` is `Sein::Info("PIPE:find", ...)` -> LF_Pipe -> pipe-0.log
   SOLIDE_REASSERT_MS = 300  (Grimoire.h) -> ~3.3 scans/sec
-  Actor::ParentComponent is `TWeakObjectPtr<ChildActorComponent>` @0x01C0, WeakObjectProperty
+  DumperTestActor::Soft_Mesh is `TSoftObjectPtr<UStaticMesh>`, SoftObjectProperty (DumperTestActor.h)
 """
 import pathlib
 import sys
@@ -88,18 +93,18 @@ def main():
             return 2
 
         # ---- fixture probe -------------------------------------------------
-        sp = c.request("search_properties", query="ParentComponent", game_only=False, limit=20)
+        sp = c.request("search_properties", query="Soft_Mesh", game_only=False, limit=20)
         rows = sp.get("results", [])
-        hit = next((r for r in rows if r.get("prop_name") == "ParentComponent"
-                    and r.get("prop_type") == "WeakObjectProperty"), None)
+        hit = next((r for r in rows if r.get("prop_name") == "Soft_Mesh"
+                    and r.get("prop_type") == "SoftObjectProperty"), None)
         if not hit:
-            say("NOT_RUNNABLE: no WeakObjectProperty named ParentComponent on this host "
-                "(%d ParentComponent rows seen)" % len(rows))
+            say("NOT_RUNNABLE: no SoftObjectProperty named Soft_Mesh on this host "
+                "(%d Soft_Mesh rows seen)" % len(rows))
             return 2
         say("fixture: %s::%s is %s (declared on %s)"
             % (hit.get("class_name"), hit.get("prop_name"), hit.get("prop_type"),
                hit.get("defining_class_name")))
-        cls = hit.get("defining_class_name") or "Actor"
+        cls = hit.get("defining_class_name") or "DumperTestActor"
 
         # ---- clean slate: the erase branch is gated on `newlyAdded` ----------
         c.request("reset_all_fields")
@@ -139,9 +144,9 @@ def main():
 
         # ================= THE STEP =========================================
         say("")
-        say("== THE STEP: object_null on a WeakObjectProperty ==")
+        say("== THE STEP: object_null on a SoftObjectProperty ==")
         base2 = marker_count()
-        r2 = c.request("force_field", class_name=cls, field_name="ParentComponent",
+        r2 = c.request("force_field", class_name=cls, field_name="Soft_Mesh",
                        kind="object_null")
         d2 = r2.get("data", r2)
         code, held, resolved = d2.get("code"), d2.get("held"), d2.get("resolved")
@@ -210,7 +215,7 @@ def main():
         for f in fails:
             say("   - %s" % f)
         return 1
-    say("Solide L2: PASS%s — object_null on a weak pointer is refused with -12, persists no job%s"
+    say("Solide L2: PASS%s — object_null on a soft pointer is refused with -12, persists no job%s"
         % (" (with a caveat, see NOTE)" if notes else "",
            ", and starts no worker" if control_ok else ""))
     return 0

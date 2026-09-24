@@ -1,0 +1,12 @@
+{
+ "name": "l86-sentinel-overread-mutant",
+ "why": "L86 red: the first-scan intrusive-optional gate reads a flat 16 bytes again (the pre-96a6ad79 read) -- so an 8-byte TOptional<FName> ending an object at an unreadable page fails the read and a SET optional is dropped. A reverse of 96a6ad79 no longer builds: the refine gate added later calls SentinelBytesNeeded too.",
+ "subs": [
+  {
+   "file": "dll/src/Aura.cpp",
+   "old": "                int32_t need = Ubel::SentinelBytesNeeded(sf.optionalSentinel);\n                if (sf.size > 0 && sf.size < need) need = sf.size;\n",
+   "new": "                int32_t need = 16;   // L86 RED MUTANT: the pre-96a6ad79 flat 16-byte read\n",
+   "count": 1
+  }
+ ]
+}

@@ -1,5 +1,17 @@
 # Vendor audit — UE 5.8.2 + RE-UE4SS / Dumper-7 · 2026-09-05
 
+> ⚠ **POINT-IN-TIME, added 2026-09-24 by vendor audit #7** (`docs/audit-2026-09-24-vendor-ue583.md`,
+> `[BK-X6]`). This body is a record of what was true on 2026-09-05 and is deliberately NOT edited.
+> Its line numbers, counts and "open" statuses have moved since. A1–A4, A6–A8, A10 (but one line) and
+> A11 (but a rename) are done. A5's static-resolver half was filed and fixed as `[VND583-10]`, and A9
+> is filed as `[VND583-07]`. RE-UE4SS's config count is now 36, and D2 is resolved `[UE583-07]`: an
+> Outer at +0x28 means CPN only. The FUObjectHashTables "DO NOT ADOPT" verdict (below) still holds on
+> its two load-bearing reasons, our GObjects-index contract and the USES_ARRAYS misread. But three
+> supporting reasons are stale `[UEP-11]`: "zero callers", "unused and a WIP" and "no built-in scanner".
+> UE4SS now iterates through the hash tables by default (6101d36), with a patternsleuth-resolved getter.
+> The vendor-hygiene notes about patternsleuth predate it being on disk `[PS-11]`. Read the 09-24 audit's
+> "Status of the 2026-09-05 register" before acting on anything here.
+
 > ⚠ **PROVENANCE, added 2026-09-06 from the verification PC.** When this audit was written
 > the local `vendor/UnrealEngine` clone was checked out at **5.8.1-release** and had no
 > `5.8.2-release` tag at all, so `16d75d847` could not be resolved on that machine and

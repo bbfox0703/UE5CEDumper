@@ -135,6 +135,14 @@ B8 FF FF FF FF          mov  eax, -1
 89 41 08                mov  [rcx+8], eax
 ```
 
+> ⚠ **SUPERSEDED UPSTREAM** `[VND583-DOC CGC-3]` (vendor audit #7, 2026-09-24). RE-UE4SS `6c26f038`
+> ("halo campaign evolved gamepass signature") replaced the signature above with
+> `48 C7 ? 10 00 00 00 00 48 8D 05 ? ? ? ? ? ? ? 48 89 ? ? FF FF FF FF 89 ? 08`. It drops the
+> leading `45 84 C0`, and it WILDCARDS the three bytes after the `lea` and the ModRM of the
+> `mov [..],rax`. The Game Pass build uses other registers there. Those are exactly the literal
+> `4C 8B C9 48 89 01` bytes `GOBJ_V11` depends on, so the prediction below is for the Steam build
+> at best, and doubtful for Game Pass.
+
 **Prediction: our existing `GOBJ_V11` already matches this** (byte-for-byte over the
 tail). `GOBJ_V11` = `48 8D ?? ?? ?? ?? ?? 4C 8B C9 48 89 01 B8 FF FF FF FF` (Himmel.h,
 priority 14, "Little Nightmares 3"): its 2-byte `48 8D` + 5 wildcards absorb Halo's

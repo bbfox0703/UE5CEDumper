@@ -5131,7 +5131,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsAobMakerAvailable = _aobMaker.IsAvailable;
             if (!_aobMaker.IsAvailable && ok == 0)
             {
-                StatusText = "AOBMaker not connected — open CE with the plugin loaded";
+                StatusText = AobMakerUnavailable.Text(_aobMaker);   // [W1-PIPEBUSY-STATUS] busy ≠ "open CE"
             }
             else
             {
@@ -5887,7 +5887,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 ? $"Added to CE: {name}"
                 : (_aobMaker.IsAvailable
                     ? $"CE rejected record for {name}"
-                    : "AOBMaker not connected — open CE with the plugin loaded");
+                    : AobMakerUnavailable.Text(_aobMaker));   // [W1-PIPEBUSY-STATUS]
         }
         catch (Exception ex)
         {

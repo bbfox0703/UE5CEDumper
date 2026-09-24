@@ -121,10 +121,14 @@ def non_cdo(instances: list[dict]) -> list[dict]:
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--engine", default="427", choices=sorted(ENGINES))
-    ap.add_argument("--config", default="Development",
-                    help="Development is REQUIRED for the CheatManager route")
+    # UE4 creates the CheatManager in Shipping too (AddCheats gated only on AllowCheats; UE5's
+    # UE_WITH_CHEAT_MANAGER gate does not exist on 4.23). Measured on UE423_Flying Shipping, L46.
+    ap.add_argument("--config", default="Development", choices=("Development", "Shipping"),
+                    help="package config; the CheatManager route works on both on UE4")
     ap.add_argument("--wait", type=int, default=70, help="seconds to let the package load")
     ap.add_argument("--keep", action="store_true", help="leave the game running for the UI arm")
+    ap.add_argument("--dll", default=None,
+                    help="inject this build instead of dist\\UE5Dumper.dll (a staged red arm, e.g. L46)")
     a = ap.parse_args()
 
     proj, module = ENGINES[a.engine]
@@ -169,7 +173,8 @@ def main() -> int:
         raise SystemExit("the game exited during load")
 
     # ⭐ inject BY PID, not by name -- the pid we launched is the only one we may measure.
-    r = subprocess.run([sys.executable, str(HERE / "inject.py"), "--pid", str(proc.pid)],
+    r = subprocess.run([sys.executable, str(HERE / "inject.py"), "--pid", str(proc.pid)]
+                       + (["--dll", a.dll] if a.dll else []),
                        capture_output=True, text=True, encoding="utf-8", errors="replace",
                        cwd=str(ROOT))
     print((r.stdout or "").strip().splitlines()[-1] if r.stdout else r.stderr)
@@ -188,8 +193,11 @@ def main() -> int:
     else:
         raise SystemExit("the offset scan never found GObjects")
     off = call("get_offsets")
-    print("offsets    : use_fproperty=%r validated=%r  (4.23 -> False = the UProperty path)"
-          % (off.get("use_fproperty"), off.get("validated")))
+    # FField/FProperty arrived in 4.25: below it the walk takes the UProperty path.
+    uprop = int(a.engine) < 425
+    print("offsets    : use_fproperty=%r validated=%r  (UE %s.%s -> expect %s = the %s path)"
+          % (off.get("use_fproperty"), off.get("validated"), a.engine[0], a.engine[1:],
+             not uprop, "UProperty" if uprop else "FProperty"))
 
     fails: list[str] = []
 
@@ -213,8 +221,8 @@ def main() -> int:
         raise SystemExit(
             "no LIVE UCheatManager -- only the CDO. Summon on a CDO does nothing "
             "(GetOuterAPlayerController() is null) while still answering result=0, so this "
-            "would be a guaranteed false pass. A CheatManager needs a PlayerController: is the "
-            "package Development, and has the level actually started?")
+            "would be a guaranteed false pass. A CheatManager needs a PlayerController: has the "
+            "level actually started?")
 
     inv = call("invoke_function", {
         "instance_addr": live[0]["addr"],

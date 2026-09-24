@@ -1,0 +1,8 @@
+{
+ "name": "l84-struct-descent-prefix",
+ "why": "L84 red: c6db7cf5 reversed under dll/src -- Find Refs / Address Finder descend a TOptional<FStruct> whatever its bIsSet, so a RESET optional's stale Obj/Objs still report references.",
+ "reverse_commit": "c6db7cf5",
+ "paths": [
+  "dll/src"
+ ]
+}

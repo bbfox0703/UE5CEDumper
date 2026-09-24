@@ -279,12 +279,22 @@ bool UE5_Init() {
             // no AOB matches (Avowed / Obsidian UE5.3 — even patternsleuth fails). The
             // base is content-validated (first objects resolve to clean names), so the
             // layout is known — force UE5-Extended so Aura reads NumElements at +0x24.
-            int staticStride = 0;
+            int staticStride = 0, staticObjOff = 0;
             bool staticCancelled = false;   // [P1-GENAU-ABORT]
-            uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled);
+            bool staticUE58 = false;
+            uintptr_t staticBase = Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled,
+                                                                   &staticObjOff, &staticUE58);
             if (staticCancelled) ptrs.bScanCancelled = true;   // partial: the latch guard below must refuse
             if (staticBase) {
-                Aura::InitWithExtendedLayout(staticBase, staticStride);
+                // [VND583-10] A UE 5.8 array keeps ObjObjects at +0x00, which is what Aura::Init's
+                // "UE5.8" preset reads. A 5.0-5.7 one is UE5-Extended; its stride is forced only for a
+                // classic item (Obsidian's 20 bytes), and a 5.7+ item (UObject* @+0x08) is left to the
+                // item auto-detection, which knows that shape -- InitWithExtendedLayout's forced mode
+                // would read the UObject* at +0x00.
+                if (staticUE58)
+                    Aura::Init(staticBase);
+                else
+                    Aura::InitWithExtendedLayout(staticBase, staticObjOff == 0 ? staticStride : 0);
                 if (Aura::GetCount() > 0) {
                     LOG_INFO("UE5_Init: Recovery SUCCESS (static struct scan) — GObjects 0x%llX -> 0x%llX (Count=%d, stride=%d)",
                              static_cast<unsigned long long>(ptrs.GObjects),
@@ -690,23 +700,21 @@ void UE5_Shutdown() {
 }
 
 uint32_t UE5_GetVersion() {
-    // Lazy UE5.5 / 5.6 refines off markers discovered during walks / enum access (the
+    // Lazy UE5.5 / 5.7 refines off markers discovered during walks / enum access (the
     // structural item + property markers ran at init; these two only surface later):
     //   • a reflected Utf8StrProperty / AnsiStrProperty (Ubel flag) ⇒ UE5.5+
     //   • the FNameData struct-of-arrays UEnum::Names container (DynOff flag, set by
-    //     the lazy DetectUEnumNames) ⇒ UE5.6+ (this is the layout whose enum bug the
-    //     UE5.6+ Neu reader fixed; e.g. Titan Quest II).
-    // Monotonic + UE5-only (never lowers, never touches a UE4 label). Cheap reads; the
-    // UI polls this for the badge, so the version self-corrects as the user browses.
-    if (g_cachedUEVersion >= 500 && g_cachedUEVersion < 506) {
-        uint32_t floor = g_cachedUEVersion;
-        if (Ubel::SawUtf8OrAnsiStr() && floor < 505)          floor = 505;
-        if (DynOff::bEnumNamesNewContainer && floor < 506)    floor = 506;
-        if (floor != g_cachedUEVersion) {
-            LOG_INFO("UE5_GetVersion: marker refine %u -> %u (UE5.5/5.6 type/enum marker).",
-                     g_cachedUEVersion, floor);
-            g_cachedUEVersion = floor;
-        }
+    //     the lazy DetectUEnumNames) ⇒ UE5.7+ (this is the layout whose enum bug the
+    //     Neu reader fixed; e.g. Titan Quest II). [VND583-12] It was 5.6+ -- see
+    //     DynOff::RefineVersionFromLazyMarkers, which holds the rule and its citations.
+    // Cheap reads; the UI polls this for the badge, so the version self-corrects as the
+    // user browses.
+    const uint32_t refined = DynOff::RefineVersionFromLazyMarkers(
+        g_cachedUEVersion, Ubel::SawUtf8OrAnsiStr(), DynOff::bEnumNamesNewContainer);
+    if (refined != g_cachedUEVersion) {
+        LOG_INFO("UE5_GetVersion: marker refine %u -> %u (UE5.5 string-property / UE5.7 enum marker).",
+                 g_cachedUEVersion, refined);
+        g_cachedUEVersion = refined;
     }
     return g_cachedUEVersion;
 }
@@ -825,6 +833,10 @@ void UE5_WalkClassEnd() {
 bool UE5_ResolveFName(uint64_t fname, char* buf, int32_t bufLen) {
     int32_t compIndex = static_cast<int32_t>(fname & 0xFFFFFFFF);
     int32_t number    = static_cast<int32_t>((fname >> 32) & 0xFFFFFFFF);
+    // [VND583-07] The caller hands the FName's first 8 bytes. On a case-preserving UE4 / 5.0 build the
+    // high dword is the DisplayIndex (Number is at +8, which this signature cannot carry), so a
+    // suffix decoded from it would be a wrong one; the base name is the honest answer there.
+    if (DynOff::FNAME_NUMBER != 4) number = 0;
 
     std::string name = Serie::GetString(compIndex, number);
     return CopyToBuffer(name, buf, bufLen);
@@ -1048,6 +1060,11 @@ int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {
 
 // === UFunction Invocation ===
 
+// ⚠ A class-name SUBSTRING match (Aura::FindInstancesByClass, exactMatch=false) that falls back to the FIRST matching
+// CDO -- not "an instance of this class". Kept as-is because it is USER-facing: the C ABI, the pipe's
+// `invoke_function class_name`, and the mailbox's FIND_INSTANCE twin in Mimic.cpp. ⛔ Internal callers use
+// Aura::FindLiveOrDefaultOf (derivation-gated) or Aura::FindClassByPath: "Actor" through THIS answered
+// Default__ActorChannel on UE 5.4 Shipping and See-through refused a build that can hide. [SEETHRU-PROBE-SUBSTRING]
 uintptr_t UE5_FindInstanceOfClass(const char* className) {
     if (!className || !className[0]) return 0;
 
@@ -1180,7 +1197,13 @@ static bool DbgCam_WritePtr(uintptr_t obj, int off, uintptr_t val) {
 // Returns 1=ON, 0=OFF, -1=unknown. Outputs the CheatManager + DCC for reuse.
 static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     outCm = 0; outDcc = 0;
-    uintptr_t cm = UE5_FindInstanceOfClass("CheatManager");
+    // Derivation-gated, never the class-name substring UE5_FindInstanceOfClass matches: the stock engine has
+    // UCheatManagerExtension (4.27+) and GAS's UAbilitySystemCheatManagerExtension, which contain "CheatManager" and
+    // are no UCheatManager -- a live extension at a lower GObjects index, or the extension's CDO when no CheatManager
+    // is live, was taken over the real one. Same for UDebugCameraControllerSettings (4.23+) in the DCC fallback
+    // below: when its CDO sat first, it has no OriginalControllerRef, so the state read -1 and a Force ON refused
+    // (read from the code; L83's 5.4 fixture met the DCC's own CDO first). [SEETHRU-PROBE-SUBSTRING]
+    uintptr_t cm = Aura::FindLiveOrDefaultOf("CheatManager");
     outCm = cm;   // may be 0 (some titles spawn it lazily)
 
     // Hop 1: CheatManager.DebugCameraControllerRef.
@@ -1196,7 +1219,7 @@ static int DbgCam_ReadState(uintptr_t& outCm, uintptr_t& outDcc) {
     // CheatManagers and FindInstanceOfClass picked the wrong one. Find the DCC by
     // instance scan; its OriginalControllerRef is the authoritative active flag.
     if (!dcc) {
-        dcc = UE5_FindInstanceOfClass("DebugCameraController");
+        dcc = Aura::FindLiveOrDefaultOf("DebugCameraController");
         if (dcc)
             LOG_INFO("DbgCam_ReadState: DCC 0x%llX via instance scan "
                      "(CheatManager ref empty)", (unsigned long long)dcc);

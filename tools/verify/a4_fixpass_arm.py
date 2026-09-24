@@ -6,9 +6,9 @@ r"""Live arm for the audit-#4 fix pass, on DumperTest **Shipping**.
 reachable from the pipe and a rig that quietly skips them would read as a clean bill.
 
   REACHABLE HERE
-    [SOLIDE-REFUSAL]   MANUFACTURABLE. A K_OBJECT_NULL hold on a NON-strong pointer
-                       (Weak/Soft/Lazy) is type-refused on every instance -- Solide.cpp
-                       returns FR_ERR_WEAK_PTR rather than nulling an ObjectIndex-0 trap.
+    [SOLIDE-REFUSAL]   MANUFACTURABLE. A K_OBJECT_NULL hold on a Soft/Lazy pointer (and,
+                       since 2026-09-24, no longer on an 8-byte Weak one, which is held at UE's
+                       own reset value) is type-refused on every instance -- FR_ERR_WEAK_PTR.
                        Arm it TWICE: the first call is `newlyAdded`, the second is the
                        RE-ARM that used to answer plain held=0 and make the UI say "no live
                        instance ... exists right now".

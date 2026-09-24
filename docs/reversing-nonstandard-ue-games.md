@@ -24,9 +24,10 @@ non-standard UE x64 title. Tools referenced here live in [`tools/`](../tools/REA
 
 ## 1. Is it standard at all? — patternsleuth CLI
 
-[patternsleuth](https://github.com/trumank/patternsleuth) is the resolver library RE-UE4SS uses.
-Run its CLI on the EXE offline (no game running) to (a) confirm the standard resolvers fail and
-(b) get string-anchored candidate functions:
+[patternsleuth](https://github.com/trumank/patternsleuth) is the resolver library RE-UE4SS uses. It is
+already on disk as RE-UE4SS's submodule, `vendor/RE-UE4SS/deps/first/patternsleuth`: run the CLI from
+there so its `rust-toolchain.toml` pin applies `[VND583-DOC PS-11]`. Run it on the EXE offline (no game
+running) to (a) confirm the standard resolvers fail and (b) get string-anchored candidate functions:
 
 ```sh
 # does the standard GObjects resolver work?  (Avowed: "expected at least one value" = NO)
@@ -126,7 +127,8 @@ handle **encrypted** games. **Decision: no — and there is nothing to gain on t
 encryption axis.** Both repos (and this project) only provide a *plug-in hook*; neither
 decrypts any title out of the box. Read in full 2026-06-28 against `vendor/Dumper-7@c891b17` and
 `vendor/RE-UE4SS@2352d15b`; re-checked 2026-09-05 at `Dumper-7@b88241b` and `RE-UE4SS@24b12662`,
-where neither delta (37 and 135 commits) adds a decrypt path — no `encrypt`/`decrypt`/`aes` in
+and 2026-09-24 at `Dumper-7@dd8fe34` and `RE-UE4SS@f58e8f84`
+(`docs/audit-2026-09-24-vendor-ue583.md`), where no delta (37 + 135, then 4 + 15 commits) adds a decrypt path — no `encrypt`/`decrypt`/`aes` in
 either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`include` still hold zero
 `decrypt` hits. These are local reference clones, **not** git submodules — see `.gitmodules`.
 
@@ -147,7 +149,7 @@ either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`inclu
 | GObjects pointer-decrypt hook | ✅ `InitObjectArrayDecryption(lambda)`, default identity | ❌ none | ✅ `Aura::SetDecryptFunc` → `UE5_SetObjectDecryption` export, default nullptr |
 | Ships any per-game key/routine | ❌ zero (README `^ 0x8375` is a sample) | ❌ zero | ❌ zero (hook only) |
 | `TEncryptedObjectProperty` | ⚠️ opt-in `bEnableEncryptedObjectPropertySupport` (default off) | ❌ | ❌ |
-| Non-standard / forked engine | manual XOR/offset | per-game `assets/CustomGameConfigs/*.ini` (34 titles) overriding AOB / FName-method / version / vtable | per-game config (roadmap) |
+| Non-standard / forked engine | manual XOR/offset | per-game `assets/CustomGameConfigs/*.ini` (36 titles at RE-UE4SS@f58e8f84; 34 when first counted) overriding AOB / FName-method / version / vtable | per-game config (roadmap) |
 
 ### Findings
 
@@ -157,11 +159,13 @@ either range's changed filenames or commit subjects, and RE-UE4SS's `src`/`inclu
   setting is unrelated (it obfuscates Dumper-7's *own generated SDK strings*). The one piece
   worth borrowing *if* we ever hit it: `TEncryptedObjectProperty` support
   (`Dumper/Settings.h`), a real newer-UE feature for in-memory-encrypted object properties.
-- **RE-UE4SS** has **no AES / decrypt code at all** (the only `encrypt` hit is a YouTube
-  iframe). It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
+- **RE-UE4SS** has **no AES / decrypt code of its own** (the only `encrypt` hit is a YouTube
+  iframe). Its patternsleuth submodule does carry `resolvers/unreal/aes.rs` (PAK AES keys), but UE4SS's
+  binding does not collect it (`patternsleuth_bind/src/lib.rs`: the `UE4SSResolution` set has no AES
+  member) `[VND583-DOC PS-11]`, and a PAK key is not object-pointer decryption anyway. It copes with hard games via `CustomGameConfigs/*/UE4SS-settings.ini` — signature /
   offset / engine-version / vtable *overrides*, not decryption. It assumes `GUObjectArray` /
   `FName` are directly readable, so it does not target pointer-encrypted / strong-anti-cheat
-  titles. Its 34 shipped profiles (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
+  titles. Its 36 shipped profiles (34 when first counted) (FF7 Rebirth/Remake, Atomic Heart, Borderlands 3, Jedi
   Survivor, Lies of P, …) are forked-engine tuning, not encrypted-pointer cases.
 - **This project already has parity** with Dumper-7's pointer-decrypt hook: `Aura::SetDecryptFunc`
   / `Aura::DecryptObjectPtr` (`dll/src/Aura.cpp`), wired through the CE-Lua export

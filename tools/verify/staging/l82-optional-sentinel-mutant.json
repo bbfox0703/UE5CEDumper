@@ -1,0 +1,12 @@
+{
+ "name": "l82-optional-sentinel-mutant",
+ "why": "L82 red: the V1c intrusive-optional gate is disabled (sf.optionalSentinel forced to None), so an intrusive UNSET TOptional<FString> is scanned as a value -- the pre-19c5d065 behaviour for intrusive optionals, which OptionalFlagOffset never gated.",
+ "subs": [
+  {
+   "file": "dll/src/Aura.cpp",
+   "old": "                    sf.optionalSentinel   = gateSentinel;\n",
+   "new": "                    sf.optionalSentinel   = Ubel::OptionalUnsetSentinel::None;   // L82 RED MUTANT: intrusive optionals ungated\n",
+   "count": 1
+  }
+ ]
+}

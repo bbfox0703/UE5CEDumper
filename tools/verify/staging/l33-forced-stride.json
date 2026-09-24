@@ -1,0 +1,15 @@
+{
+ "name": "l33-forced-stride",
+ "why": "L33 step 2: Avowed resolves GObjects by AOB (GOBJ_AV1, build 1238) and never reaches the forced static-stride path. Skip the AOB winner's Aura::Init so Count==0 -- the recovery's own trigger -- and Genau::FindGObjectsStaticStruct + Aura::InitWithExtendedLayout run on the real Obsidian 20-byte layout. Built as the dxgi PROXY: Avowed loads ours by name.",
+ "subs": [
+  {
+   "file": "dll/src/Frieren.cpp",
+   "old": "    if (ptrs.GObjects) {\n        Aura::Init(ptrs.GObjects);\n    }\n",
+   "new": "    if (ptrs.GObjects) {\n        // STAGING (stage_dll.py l33-forced-stride): the AOB winner is not initialized, so Count==0 and the recovery runs\n        LOG_WARN(\"UE5_Init: STAGING l33-forced-stride: Aura::Init(0x%llX) skipped\", static_cast<unsigned long long>(ptrs.GObjects));\n    }\n",
+   "count": 1
+  }
+ ],
+ "proxies": [
+  "dxgi"
+ ]
+}

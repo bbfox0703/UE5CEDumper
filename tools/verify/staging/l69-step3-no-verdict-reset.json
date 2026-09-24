@@ -1,0 +1,12 @@
+{
+ "name": "l69-step3-no-verdict-reset",
+ "why": "L69 step 3 red: UE5_Shutdown no longer calls DynOff::ResetOffsetsVerdict, so after a CE Disable the verdict keeps the previous TRUE -- the 3373056c^ behaviour for the Disable path.",
+ "subs": [
+  {
+   "file": "dll/src/Frieren.cpp",
+   "old": "    DynOff::ResetOffsetsVerdict();\n",
+   "new": "    // DynOff::ResetOffsetsVerdict();   // L69 RED MUTANT: a Disable keeps the old verdict\n",
+   "count": 1
+  }
+ ]
+}

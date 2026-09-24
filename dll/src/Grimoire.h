@@ -117,19 +117,25 @@ constexpr int OFF_UOBJECT_NAME         = 0x18;
 
 // --- UStruct / FField / FProperty offsets (runtime-detected) ---
 // ValidateAndFixOffsets() dynamically detects all offsets below.
-// Defaults match UE5.0-5.1 layout (FFieldVariant=0x10 bytes).
-// UE5.1.1+ uses FFieldVariant=0x08 bytes, shifting FField::Next/Name/etc by -8.
+// Defaults match the UE 4.25-5.2 layout (FFieldVariant=0x10 bytes).
+// UE 5.3+ uses FFieldVariant=0x08 bytes, shifting FField::Next/Name/etc by -8. [VND583-DOC UEP-D1]
+// (This said 5.1.1 -- wrong against its own source: RE-UE4SS's 5_00/5_01/5_02 templates all put
+// Offset_Internal at 0x4C and 5_03 at 0x44, as Field.h does; DynOff::UsesSmallFFieldVariantDefault.)
 //
 // Version differences (from RE-UE4SS MemberVarLayoutTemplates):
-//   UE5.0-5.1.0: FFieldVariant=0x10 → Next=0x20, Name=0x28, Offset_Internal=0x4C
-//   UE5.1.1-5.5: FFieldVariant=0x08 → Next=0x18, Name=0x20, Offset_Internal=0x44
+//   UE5.0-5.2:   FFieldVariant=0x10 → Next=0x20, Name=0x28, Offset_Internal=0x4C
+//   UE5.3-5.8:   FFieldVariant=0x08 → Next=0x18, Name=0x20, Offset_Internal=0x44
 // UStruct offsets (Super, Children, ChildProperties) are stable: 0x40/0x48/0x50.
 //
 // UE4 differences:
 //   UE4 <4.25:   No FField/FProperty, properties are UProperty (UObject-derived) in Children chain
 //   UE4.25-4.27: FField/FProperty exists, layout similar to UE5.0-5.1 (FFieldVariant=0x10)
-//   UE4.27-CPN:  FName=0x10 bytes, shifts FField::Flags+0x8, FFieldClass offsets+0x8,
-//                 and UObject::Outer from 0x20 to 0x28
+//   UE4.27-CPN:  sizeof(FName)=0xC (DisplayIndex added; 0x10 is the UObject Name->Outer SLOT, not
+//                 the size). So FField::Flags moves +4 (0x30 -> 0x34) and FField stays 0x38;
+//                 FProperty's head (ArrayDim .. Offset_Internal) does NOT move, and only
+//                 RepNotifyFunc's tail moves +8 (PropertyFamilyFor's +0x34); FFieldClass members
+//                 after Name +8; UObject::Outer 0x20 -> 0x28 (the slot). RE-UE4SS
+//                 4_27_CasePreserving vs 4_27 templates. [VND583-DOC UEP-D2]
 
 } // namespace Grimoire
 
@@ -139,14 +145,14 @@ namespace DynOff {
 // Most are stable, but Outer shifts when CasePreservingName enlarges FName.
 inline int UOBJECT_OUTER      = 0x20;  // OuterPrivate: 0x20 (standard), 0x28 (CPN)
 
-// === UStruct — stable across UE4.25+ and UE5.0-5.5 ===
+// === UStruct — 0x40/0x48/0x50/0x58 from UE4.25 through 5.8 (RE-UE4SS 4_25..5_08) [VND583-DOC UEP-D3] ===
 inline int USTRUCT_SUPER      = 0x40;
 inline int USTRUCT_CHILDREN   = 0x48;  // UField* chain (functions; in UE4 <4.25: all properties here)
 inline int USTRUCT_CHILDPROPS = 0x50;  // FField* chain (properties; absent in UE4 <4.25)
 inline int USTRUCT_PROPSSIZE  = 0x58;
 // UStruct::Script — TArray<uint8> Kismet bytecode. Always sits immediately
 // after PropertiesSize(int32) + MinAlignment(int32), so == PROPSSIZE + 0x08 for
-// every UE 4.18-5.7 layout and every shifted custom-game layout (verified vs
+// every RE-UE4SS template 4.07-5.8, CPN included, and every shifted custom-game layout (verified vs
 // RE-UE4SS MemberVariableLayout templates). Set in Genau from the calibrated
 // PROPSSIZE; default mirrors the UE4.25+/UE5 standard (0x58 + 8 = 0x60).
 inline int USTRUCT_SCRIPT     = 0x60;
@@ -165,7 +171,7 @@ inline int UFUNCTION_FUNC     = 0;
 inline std::atomic<bool> bUFunctionFuncDetected{false};
 
 // === FField — defaults for UE5.0-5.1.0 (FFieldVariant=0x10) ===
-// UE5.1.1+ shifts these: Next=0x18, Name=0x20
+// UE5.3+ shifts these: Next=0x18, Name=0x20
 inline int FFIELD_CLASS       = 0x08;  // FFieldClass* — stable
 inline int FFIELD_OWNER       = 0x10;  // FFieldVariant Owner — stable position, variable size
 inline int FFIELD_NEXT        = 0x20;  // FField* next in chain
@@ -173,7 +179,7 @@ inline int FFIELD_NAME        = 0x28;  // FName
 
 // === FProperty (inherits from FField) — defaults for UE5.0-5.1.0 AND UE4.25-4.27 ===
 // (both have FFieldVariant = 0x10, so FField is 0x38 and FProperty's own fields follow it)
-// UE5.1.1+ shifts these: ElemSize=0x34, Flags=0x38, Offset=0x44
+// UE5.3+ shifts these: ElemSize=0x34, Flags=0x38, Offset=0x44
 //
 // ElementSize is 0x3C, NOT 0x38 — 0x38 is ArrayDim. Verified against the DropIn 4.27.2 PDB:
 // ArrayDim@0x38, ElementSize@0x3C, PropertyFlags@0x40, Offset_Internal@0x4C. The old 0x38
@@ -207,7 +213,8 @@ inline constexpr int kFFieldClassNameProbes[] = { 0x00, 0x08 };
 // True iff `s` is a plausible FFieldClass type name. Every FFieldClass name in the
 // engine ends in "Property" (IntProperty, ObjectProperty, ...), so a SUFFIX test is
 // strictly stronger than a substring find and is what makes the new 0x08 candidate
-// safe — at +0x08 on a <=5.7 build sits EClassFlags, and a substring test on garbage
+// safe — at +0x08 on a <=5.7 build sits a uint64 Id (<=5.6) or EClassFlags (5.7 only
+// [VND583-DOC UEP-D3]), and a substring test on garbage
 // is far likelier to false-positive than a suffix test.
 inline bool LooksLikeFieldClassName(const std::string& s) {
     return s.size() > 8 && s.size() <= 64 &&
@@ -231,7 +238,7 @@ inline int PickFFieldClassNameOffset(Resolve&& resolve) {
 
 // === FStructProperty (subclass of FProperty) ===
 // UScriptStruct* — first field after FProperty base layout.
-// Derived from FPROPERTY_OFFSET + 0x2C (UE5.0: 0x78, UE5.1.1+: 0x70).
+// Derived from FPROPERTY_OFFSET + 0x2C (UE 4.25-5.2: 0x78, UE 5.3+: 0x70; +0x34 under CPN -- PropertyFamilyFor).
 inline int FSTRUCTPROP_STRUCT = 0x78;
 
 // === FArrayProperty (subclass of FProperty) ===
@@ -352,6 +359,9 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 //   4.26 0x218 (the FF7R note's "stock 4.26")   4.27 0x220 (DropIn PDB + 4 live games)
 //   5.4  0x268 (DragonSword)                    5.6  0x260 (Lushfoil, Stark.h)
 //   5.7  0x260 (Solarpunk)                      5.8  0x250 (audit PDB work)
+// and a seventh, measured LIVE 2026-09-24 on the first 5.0-5.2 sample (DumperTest51, stock UE 5.1.1,
+// Shipping): `DetectProcessEvent (pattern): match at vtable+0x260`, Add_IntInt(3,4) == 7, zero
+// fallback lines (tools/verify/a2_es2_pehook.py DumperTest51-Win64-Shipping) -- the 501 row.
 //
 // ⚠ The table is NOT monotonic — 4.20 0x208 then 4.21 0x200, and 5.5 0x278 then 5.6
 // 0x260 — so it must stay an exact lookup. A `>=` ladder invites a "simplification"
@@ -479,6 +489,193 @@ constexpr int FunctionFlagsOffsetFor(unsigned ueVersion, bool casePreservingName
 // old sweep tried and which matches no version of anything.
 inline constexpr int FUNCTIONFLAGS_SWEEP[] = { 0xB0, 0xB8, 0x98, 0xA0, 0x88, 0x90 };
 
+// === [VND583-01] FunctionFlags is MEASURED, the version table above is only a fallback ===
+//
+// Before 4.25 FunctionFlags was the only UStruct/UFunction offset not taken from a probe, and
+// both readers accepted the first non-zero dword. On a layout whose UObject is shifted the
+// table lands inside UStruct::ScriptObjectReferences: DQ XI S (4.18, measured PropertiesSize
+// 0x50, a +0x10 shift) has FunctionFlags at 0x98 where the table says 0x88 -- the low dword of
+// ScriptObjectReferences.Data, non-zero for almost every Blueprint UFunction -- and FF7R's
+// 4.18 fork has it at 0x90 (RE-UE4SS FF7R MemberVariableLayout.ini, and every
+// `test [reg+0x90]` of FUNC_Native / FUNC_HasOutParms in ff7remake_.exe).
+//
+// FunctionFlags - PropertiesSize is CONSTANT per property mode in all 31 UEPseudo tables and
+// the RE-UE4SS MemberVarLayout templates: 0x48 in UProperty mode (4.08-4.24) and 0x58 in
+// FProperty mode (4.25-5.08, case-preserving included, because the CPN +8 already sits inside
+// the measured PropertiesSize). Measured from the templates 2026-09-24:
+//   4.18/4.21 0x40->0x88   4.22/4.24 0x50->0x98   4.25/4.27/5.01/5.08 0x58->0xB0   4.27 CPN 0x60->0xB8
+// so on every STOCK layout the relation reproduces the table, and it can only change the
+// answer where the layout is not stock -- which is exactly where the table is wrong.
+constexpr int FunctionFlagsFromPropsSize(int propsSizeOff, bool fproperty) {
+    return propsSizeOff + (fproperty ? 0x58 : 0x48);
+}
+
+// The primary a reader starts from before -- or without -- the vote in Ubel: the measured
+// relation when the offsets probe VALIDATED (PropertiesSize is ChildProperties + 8, measured)
+// and the value is plausible, else the version table. `measured` is DynOff::bOffsetsValidated.
+constexpr int FunctionFlagsPrimaryFor(unsigned ueVersion, bool casePreservingName, int propsSizeOff,
+                                      bool measured, bool fproperty) {
+    if (measured && propsSizeOff >= 0x30 && propsSizeOff <= 0x80)
+        return FunctionFlagsFromPropsSize(propsSizeOff, fproperty);
+    return FunctionFlagsOffsetFor(ueVersion, casePreservingName);
+}
+
+// The vote's per-sample rule (Ubel::EnsureFunctionFlagsOffset). At the right offset, NumParms
+// equals the function's own CPF_Parm count and ParmsSize covers the end of its last parameter,
+// rounded up by at most 16. A function with no parameters cannot tell offsets apart, and a
+// ParmsSize this large is a pointer's low bytes, not a parameter block.
+constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, int paramsEnd) {
+    return paramCount > 0 && numParms == paramCount && parmsSize >= paramsEnd
+        && parmsSize <= paramsEnd + 16;
+}
+
+// Latched once by Ubel::EnsureFunctionFlagsOffset (a vote over sampled UFunctions, run after
+// the offsets probe). UFUNCTION_FLAGS 0 = undecided -> the readers keep the primary + sweep.
+// UFUNCTION_TAIL_EXTRA is any gap between FunctionFlags and NumParms beyond the version's own
+// FunctionTailShiftFor -- upstream puts Split Fiction's tail +4 later (RE-UE4SS config).
+inline int UFUNCTION_FLAGS      = 0;
+inline int UFUNCTION_TAIL_EXTRA = 0;
+inline std::atomic<bool> bUFunctionFlagsDetected{false};
+
+// [VND583-03] alignof(FName), per engine version. On stock UE 4.x up to 4.21, in a NON
+// case-preserving build (every packaged game), FName sits in a union with
+// `uint64 CompositeComparisonValue` (NameTypes.h, removed in 4.22), so alignof(FName) == 8 and
+// the engine lays out a TMap<FName, int32> pair as 16 bytes, not 12. Source: the union is in
+// NameTypes.h on origin/4.11 through origin/4.21 and absent on 4.10 and 4.22 (vendor/UnrealEngine);
+// the RE-UE4SS PDB templates agree (4.11-4.17 put UProperty::RepNotifyFunc at 0x48 after a uint16
+// RepIndex at 0x40; 4.10 at 0x44). A case-preserving build has no such union (4), and 4.22+
+// dropped it (4). Below our 4.11 floor, or with an unknown version, the answer stays 4 -- the value
+// Scharf::RequiredAlignment has always given. Ubel::ResolveElementAlignment applies this for
+// NameProperty -- AFTER a measurement (below), which wins when it exists; Scharf stays
+// version-agnostic.
+constexpr int FNameAlignFor(unsigned ueVersion, bool casePreservingName) {
+    return (!casePreservingName && ueVersion >= 411 && ueVersion < 422) ? 8 : 4;
+}
+
+// [VND583-03] The measurement: UScriptStruct::MinAlignment of a stock struct whose ONLY member is
+// one FName. Accepted when that struct's PropertiesSize equals FName's own size (8, or 12 when
+// case-preserving) and the alignment is 4 or 8; 0 = no measurement, the version rule answers.
+// FNAME_ALIGN_MEASURED holds the answer; bFNameAlignProbed latches the one-shot search either way.
+constexpr int PickFNameAlign(int minAlign, int propsSize, int fnameSize) {
+    return (propsSize == fnameSize && (minAlign == 4 || minAlign == 8)) ? minAlign : 0;
+}
+inline std::atomic<int>  FNAME_ALIGN_MEASURED{0};
+inline std::atomic<bool> bFNameAlignProbed{false};
+
+// [VND583-07, A9 step 11] Where FName::Number sits. It is +4 on every non-case-preserving build and on
+// case-preserving UE 5.1+ ({ComparisonIndex, Number, DisplayIndex}). It is +8 on case-preserving UE4 and
+// 5.0 ({ComparisonIndex, DisplayIndex, Number}) -- NameTypes.h at origin/4.27 and 5.0.3-release vs
+// 5.1.0-release and 5.4.0-release. MEASURED, not version-gated (A9's instruction): on a case-preserving
+// build DetectCasePreservingName votes on which of UObject::NamePrivate +4 / +8 repeats the
+// ComparisonIndex -- that one is the DisplayIndex, equal to it for every name whose case was never
+// re-spelled. Measured on the UE 5.4 editor running DumperTest -game: display at +8 on 745 of 745
+// objects, so Number at +4.
+inline int FNAME_NUMBER = 4;
+constexpr int PickFNameNumberOffset(bool casePreserving, int displayAt4, int displayAt8) {
+    if (!casePreserving) return 4;
+    return displayAt4 > displayAt8 ? 8 : 4;
+}
+
+// [VND583-07, A9 step 1] sizeof(FName), MEASURED: the modal ElementSize of the NameProperty fields a walk
+// meets (Ubel::ProbeFNameSize) -- UE sets ElementSize from sizeof(FName) itself. Only a size this build's
+// family can have is taken: 4 or 8 on a standard build, 8 or 12 on a case-preserving one (the smaller of
+// each pair is UE_FNAME_OUTLINE_NUMBER, which moves Number out of FName), and only when at least
+// kFNameSizeMinAgree samples agree on three quarters of them. 0 = no measurement, and SizeofFName() then
+// answers from bCasePreservingName. Measured 2026-09-24 on both case-preserving hosts: 12 on 331 of 331
+// NameProperty fields (UE 5.4 editor, DumperTest -game) and on 239 of 239 (UE 4.27 editor, UE427_3rdPerson).
+constexpr int kFNameSizeMinAgree = 5;
+constexpr bool IsFNameSizeFor(int size, bool casePreserving) {
+    return casePreserving ? (size == 8 || size == 12) : (size == 4 || size == 8);
+}
+constexpr int PickFNameSize(bool casePreserving, int modalSize, int modalCount, int sampled) {
+    return (IsFNameSizeFor(modalSize, casePreserving) && modalCount >= kFNameSizeMinAgree
+            && modalCount * 4 >= sampled * 3) ? modalSize : 0;
+}
+inline std::atomic<int>  FNAME_SIZE_MEASURED{0};
+inline std::atomic<bool> bFNameSizeProbed{false};
+
+// [VND583-14] FSoftObjectPath's shape: UE 4.x / 5.0 hold `FName AssetPathName`; 5.1+ hold
+// `FTopLevelAssetPath AssetPath` (two FNames). It was decided by `ueVersion >= 501`, which a title
+// misdetected across 5.0/5.1 gets wrong -- and a fork that reports 505 over a 5.0 core is exactly that.
+// It is now MEASURED from the reflected ScriptStruct `SoftObjectPath` itself: a field called `AssetPath`
+// means 1 (top-level), `AssetPathName` 0. SOFTPATH_TOPLEVEL_MEASURED = -1 until measured, and then the
+// version rule answers.
+constexpr bool SoftPathIsTopLevelFor(int measured, unsigned ueVersion) {
+    return measured >= 0 ? measured == 1 : ueVersion >= 501;
+}
+inline std::atomic<int>  SOFTPATH_TOPLEVEL_MEASURED{-1};
+inline std::atomic<bool> bSoftPathProbed{false};
+
+// [VND583-13] Compact TSet / TMap. UE 5.7+ has an opt-in, UE_USE_COMPACT_SET_AS_DEFAULT (0 in the stock
+// engine, ContainerAllocationPolicies.h), that makes every reflected TSet / TMap a TCompactSet:
+// { Elements*, int32 NumElements, int32 MaxElements } = 16 bytes (CompactSetBase.h @5.8.3), not the sparse
+// 0x50 (TSparseArray 0x38 + the hash). Nothing here decodes one, and reading one as a TSparseArray runs
+// past its 16 bytes into the next property. The define is engine-wide, so ONE Set/Map property of
+// ElementSize 0x10 on 5.7+ (or an unknown version -- no earlier engine has a 16-byte set) latches
+// bCompactSets for the process: Macht::ReadTSparseArray then refuses, and the walker publishes the
+// header only (NumElements @ +0x08). GUARD, do not decode.
+constexpr int SPARSE_SET_ELEMENT_SIZE = 0x50;
+constexpr bool IsCompactSetLayout(int32_t elementSize, unsigned ueVersion) {
+    return elementSize == 0x10 && (ueVersion == 0 || ueVersion >= 507);
+}
+inline std::atomic<bool> bCompactSets{false};
+
+// [VND583-12] UE5_GetVersion's lazy refine, from two markers that surface only after init.
+// A reflected Utf8StrProperty / AnsiStrProperty => 5.5+ (AnsiStrProperty.h first ships in 5.5.0-release).
+// The UEnum::FNameData struct-of-arrays => **5.7+**: Class.h at 5.6.0-release still declares
+// `TArray<TPair<FName, int64>> Names;`, and 5.7.0-release declares `class FNameData`. It raised to 506,
+// one version early. Monotonic and UE5-only: it never lowers a version, and never touches a UE4 label.
+constexpr uint32_t RefineVersionFromLazyMarkers(uint32_t ver, bool sawUtf8OrAnsiStr, bool fnameDataEnums) {
+    if (ver < 500 || ver >= 507) return ver;
+    uint32_t floor = ver;
+    if (sawUtf8OrAnsiStr && floor < 505) floor = 505;
+    if (fnameDataEnums && floor < 507) floor = 507;
+    return floor;
+}
+
+// [VND583-09] The FField layout a version starts from BEFORE probing. FFieldVariant shrank from 16 bytes
+// (`union Container` + `bool bIsUObject`) to 8 (a pointer tagged by UObjectMask) in **5.3.0**, not 5.1.1:
+// Field.h at 5.1.1-release and 5.2.1-release still declares bIsUObject, 5.3.0-release declares
+// UObjectMask, and DumperTest51 (stock 5.1.1) measures Offset_Internal at 0x4C live. So 4.25-5.2 keep the
+// defaults above (Next 0x20, Name 0x28, Offset_Internal 0x4C), and only 5.3+ -- or an unknown version,
+// most of which are modern -- start from Next 0x18 / Name 0x20 / Offset_Internal 0x44. It was >= 502.
+// And the tag bit may be INFERRED from FField::Next == 0x18 only when that 0x18 was MEASURED; an
+// unmeasured 0x18 is the default this function just chose, not evidence.
+constexpr bool UsesSmallFFieldVariantDefault(unsigned ueVersion) { return ueVersion >= 503 || ueVersion == 0; }
+constexpr bool InferTaggedFFieldVariant(bool fproperty, int ffieldNext, bool alreadyTagged, bool nextMeasured) {
+    return fproperty && ffieldNext == 0x18 && !alreadyTagged && nextMeasured;
+}
+
+// [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
+// the live slot and the serial -- which Ubel::ResolveWeakObjectPtr does -- AND the object's GC state,
+// which it did not, so a Garbage object stayed resolvable until the next GC. UE5 mirrors
+// EInternalObjectFlags::Garbage (1<<21) into UObject::ObjectFlags as RF_MirroredGarbage (0x40000000;
+// RF_Garbage in 5.0-5.3). UE4 keeps PendingKill (1<<29) ONLY in FUObjectItem::Flags (its RF_AllFlags is
+// 0x1FFFFFFF, so 0x40000000 means nothing there). Unreachable (1<<28) is refused in both. objectFlags is
+// UObject+0x08; itemFlags reads only on the classic item layout (itemFlagsOk). An unknown version (0)
+// trusts the object flag alone, since the item bits mean different things in UE4 and UE5.
+constexpr bool IsWeakTargetGarbage(unsigned ueVersion, uint32_t objectFlags, bool itemFlagsOk, uint32_t itemFlags) {
+    if ((ueVersion == 0 || ueVersion >= 500) && (objectFlags & 0x40000000u)) return true;
+    if (!itemFlagsOk || ueVersion == 0) return false;
+    const uint32_t refused = ueVersion >= 500 ? ((1u << 21) | (1u << 28))    // Garbage | Unreachable
+                                              : ((1u << 29) | (1u << 28));   // PendingKill | Unreachable
+    return (itemFlags & refused) != 0;
+}
+
+// [VND583-02] UField::Next in FProperty mode (4.25+). It used to keep its 0x28 default:
+// DetectUPropertyMode returned before touching it and the FProperty arm probed only
+// FField::Next, so on a title whose UObject carries an extra 8-byte tail (The Pathless, a
+// 4.25-layout fork: UField Next 0x30, SuperStruct 0x48 -- RE-UE4SS config) every function list
+// stepped the wrong member while the run still said validated. Genau now walks a UClass's
+// Children chain at each candidate (the default first) and counts consecutive Function hops.
+// This picks the FIRST candidate with >= 2 hops: one hop can be a coincidental pointer, two in
+// a row cannot. -1 = nothing chained; the caller keeps the default and says so.
+inline int PickUFieldNextOffset(const int* offs, const int* hops, int n) {
+    for (int i = 0; i < n; ++i)
+        if (hops[i] >= 2) return offs[i];
+    return -1;
+}
+
 // === UFunction's tail behind FunctionFlags: NumParms (u8) / ParmsSize (u16) / ReturnValueOffset ===
 //
 // [A2-UFUNC-TAIL-4X] These three were read at a flat +4/+6/+8 under a comment calling that
@@ -559,7 +756,8 @@ constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
 
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
-// UField::Next is at UObject_TotalSize (0x28 or 0x30 for CPN).
+// UField::Next is at UObject_TotalSize: 0x28; 0x30 for CPN and on pre-4.25 STATS builds; 0x38
+// measured on DQ XI S. This is only the default -- it is probed. [VND583-DOC UEP-D3]
 inline int UFIELD_NEXT        = 0x28;  // UField::Next (standard): 0x28
 inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
@@ -617,9 +815,13 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 }
 
 // `propOffsetOff` is FProperty::Offset_Internal's offset; the subclass extension begins
-// 0x2C past it on every UE4.25-5.8 layout measured.
-inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff) {
-    return PropertyFamilyAtBase(propOffsetOff + 0x2C);
+// 0x2C past it on every UE4.25-5.8 layout measured -- in a NON case-preserving build.
+// [VND583-11] Offset_Internal is followed by `FName RepNotifyFunc`, which is 12 bytes under
+// WITH_CASE_PRESERVING_NAME, not 8, so the pointer run after it and the subclass extension start
+// 8 bytes later: +0x34. RE-UE4SS's 4.27 templates: Offset_Internal 0x4C -> FStructProperty::Struct
+// 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
+inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
+    return PropertyFamilyAtBase(propOffsetOff + (casePreservingName ? 0x34 : 0x2C));
 }
 
 // Publish all five together. Never assign a member of this family directly.
@@ -633,8 +835,13 @@ inline void ApplyPropertyFamily(const PropertyFamily& f) {
 
 // === UEnum — lazy-detected by DetectUEnumNames() ===
 inline int UENUM_NAMES          = 0x40;  // UEnum::Names (Neu::EnumNamesLayout region offset)
-inline int UENUM_ENTRY_SIZE     = 0x10;  // legacy sizeof(TPair<FName,int64>) = 8+8 = 16 bytes
-// UE5.6+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
+// [VND583-04] The legacy pair's value width (8 = int64; 1 = uint8 on UE 4.9-4.14) and stride
+// (0 = the int64 pair's own), decided by DetectUEnumNames and applied by the enum reader (Ubel).
+// Written before the bUEnumNamesDetected release-store, like bEnumNamesNewContainer. (This
+// replaces UENUM_ENTRY_SIZE, a 0x10 nothing read.)
+inline int UENUM_VALUE_SIZE     = 8;
+inline int UENUM_PAIR_STRIDE    = 0;
+// UE5.7+ replaced the interleaved TArray<TPair<FName,int64>> at UENUM_NAMES with the
 // FNameData struct-of-arrays {tagged FName*, tagged int64*, int32 NumValues}. Set by
 // DetectUEnumNames (try-both); the enum reader (Ubel) branches on it. Written before the
 // bUEnumNamesDetected release-store, so plain bool (same pattern as bCasePreservingName).
@@ -671,6 +878,11 @@ inline bool bCasePreservingName  = false;
 // (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can force it true,
 // and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
 inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
+    // [VND583-07, A9 step 1] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and
+    // only while it still fits this build's family -- a re-detection that flips bCasePreservingName
+    // must not keep a size measured under the other answer.
+    const int measured = FNAME_SIZE_MEASURED.load(std::memory_order_acquire);
+    if (measured && IsFNameSizeFor(measured, bCasePreservingName)) return measured;
     return bCasePreservingName      // FScriptDelegate, anything vs an engine ElementSize.
         ? 0x0C : 0x08;              // three int32, alignof 4, NO trailing pad.
 }
@@ -936,6 +1148,10 @@ constexpr double  SCHLACHT_TRACE_STEP    = 2.0;      // uu — advance the ray s
 constexpr int     SCHLACHT_PIERCE_DEFAULT = 1;       // hide this many nearest occluders by default
 constexpr int     SCHLACHT_PIERCE_MAX     = 10;      // UI/clamp ceiling for the pierce depth
 constexpr int     SCHLACHT_MAX_EXTRA_ITERS = 16;     // extra trace iterations beyond pierceN (skipped Pawns / dupes)
+// The producer probe asks these CLASSES, found by full path -- never a class guessed from an instance: a class-name
+// substring answered "Actor" with Default__ActorChannel on UE 5.4 Shipping. [SEETHRU-PROBE-SUBSTRING]
+constexpr const char* SCHLACHT_ACTOR_CLASS_PATH = "/Script/Engine.Actor";                // declares SetActorHiddenInGame
+constexpr const char* SCHLACHT_KSL_CLASS_PATH   = "/Script/Engine.KismetSystemLibrary";  // declares LineTraceSingle
 } // namespace Grimoire
 
 // ============================================================

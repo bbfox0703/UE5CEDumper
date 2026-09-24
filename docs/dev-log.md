@@ -25,6 +25,107 @@ builds ≤696 in
 
 -----
 
+## 2026-09-24 (build 3549) — weak Force-null, and the case-preserving-name bundle (VND583-07) measured on two editor hosts
+
+**3549 = 3548 plus four product commits, up to `c88ca562`.** Derive them: `git log --oneline 26993098..c88ca562
+-- dll ui`. The row text, tests and live evidence are in `docs/todo.md` (`[VND583-DOC]` D7-04 and `[VND583-07]`).
+- **Force-null holds a weak pointer** (`c181d742`, D7-04). `{0, 0}` is UE's own null, not "GObjects[0]", so an
+  8-byte WeakObjectProperty is now held at UE's reset value: `{INDEX_NONE, 0}` up to 5.0, `{0, 0}` from 5.1.
+  Soft and lazy pointers, and the 16-byte remote-handle weak pointer, are still refused. The UI's Force-null
+  button covers the weak type. Live on DumperTest 5.4 Shipping with `-DumperTestWeakGarbage`: 3548 answers -12;
+  the new build holds `WeakToGarbage` at null while the fixture re-points it every 5 s.
+- **A case-preserving host that resolves** (`d936681f`). The UE 5.4 editor running DumperTest `-game`: the
+  exported `FName::ToString` reaches NamePoolData only through a call, so `SymbolCallFollow` now follows up to
+  four calls. Before this, EOSSDK's own name pool won the AOB fallback and 0 of 10 names resolved.
+- **FName::Number is measured** (`937c216c`, A9 step 11). A case-preserving UE4 / 5.0 build keeps Number at +8,
+  after the DisplayIndex. On the UE 4.27 editor running UE427_3rdPerson `-game`: the pre-fix decode (`d936681f`)
+  put the DisplayIndex in the number on 3145 of 3145 names; the fixed one is right on 3300 of 3300.
+- **sizeof(FName) is measured** (`c88ca562`, A9 steps 1 and 7). It is the modal NameProperty ElementSize. The
+  rule no longer overrides a plausible engine size. Live: 12 on the 4.27 editor, 8 on DumperTest 5.4 Shipping, both
+  64 of 64. `fixture_smoke shipping` against 3548 differs in 0 offset verdicts and 0 AOB winners.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3548 → 3549: `dist\UE5DumpUI.exe` AOT 55.0 MB
+(57,723,392 bytes, sha `79bb951b2de9`), `UE5Dumper.dll` sha `31126a429fed`, stamp `1.0.0.3549 9d4fdb69-dirty`.
+The suffix is the bumped `build_number.txt` and nothing else (see the correction in the build 3368 entry, 2026-09-03).
+Four proxies went to `dist\proxy\`. Tests: UI **5329/5329**, `dll_helpers_test` 2903/0,
+`utf8_helpers_test` 265/0, `dll_core_test` 430 checks, and `grausam_window_test` / `sein_retention_test` passed.
+Gates 23/23.
+
+-----
+
+## 2026-09-24 (build 3548) — vendor audit #7 fixed: VND583-01..17 and the DOC bundle, published AOT
+
+**3548 = 3547 plus the `[VND583-*]` rows, up to `26993098`.** Derive the list, do not copy it:
+`git log --oneline b9e6aff0..26993098 -- dll ui` (20 commits, 14 row tags). Every row's commit, test and
+live evidence is in `docs/todo.md` `[VENDOR-UE583-2026-09-24]`; the source-side facts are in
+`docs/audit-2026-09-24-vendor-ue583.md`. In short:
+- **Measured instead of keyed on version**: UFunction::FunctionFlags by a vote over parameter chains (01);
+  UField::Next in FProperty mode (02); alignof(FName) on a single-FName ScriptStruct (03); the UEnum value
+  column on ENetRole (04, uint8 on 4.9–4.14); FSoftObjectPath's shape on the SoftObjectPath struct (14).
+- **Weak pointers**: a top-level weak says null / null (stale) / unreadable (05); a target UE's `Get()` would
+  refuse is labelled `[garbage]` (06); serial 0 is UE's explicit null (08).
+- **Layout and version**: UE 5.2 keeps the 16-byte FFieldVariant defaults (09); the static-struct GObjects
+  resolver reads 5.8's array and the 5.7+ item (10); the CPN property family starts at +0x34 (11); FNameData
+  enums mean 5.7+ (12); compact TSet/TMap builds are guarded (13).
+- **Tools**: the CRC oracle merges instead of overwriting, with a new gate (16); `find_gobjects.java` finds 5.8's
+  narrow anchor string (17). 07 (A9) and 15 are filed without code by the audit's own instruction; 18 (minhook)
+  stays on HOLD.
+
+**Live, red → green where a host exists**: DQ XI S (01, 03), NEKOPALIVE (04), DumperTest 5.4 (05, 06, 08),
+forced static recovery on DumperTest58 5.8 (10, whose live arm found a second defect, fixed in `de3d397a`), and
+Ghidra on StackOBot 5.8 (17). Regressions: DumperTest 5.1 / 5.4 / 5.8 and DQ I & II HD-2D (09, 11–14).
+**New hosts**: `-DumperTestWeakGarbage` (DumperTest repackaged: Development, Shipping and DebugGame; its
+`pe_hash` changed again), and the UE 5.4 editor running DumperTest `-game`, the first case-preserving host.
+CPN is detected there, but its name pool does not resolve yet (`[VND583-07]`).
+
+**The build.** `build.ps1 -Mode Publish` bumped 3547 → 3548 but failed its UI tests. A source-pinning test
+still expected the old `FindGObjectsStaticStruct` call; it was fixed in `26993098`. It then re-ran with
+`-NoBumpBuildNumber`: `dist\UE5DumpUI.exe` AOT 55.0 MB (sha `d2c240608c52`), `UE5Dumper.dll` sha
+`318682738eeb`, stamp `1.0.0.3548 26993098`, and four proxies to `dist\proxy\`. Tests: UI
+**5327/5327**, `dll_helpers_test` 2877/0, `utf8_helpers_test` 265/0, `dll_core_test` 414 checks, and
+`grausam_window_test` / `sein_retention_test` passed. Gates 23/23 (`crc_oracle_selftest` is new).
+
+-----
+
+## 2026-09-24 (build 3547) — the first bump since 3546: the whole fix pass, published AOT
+
+**Why an entry now.** Build 3546 was stamped at `567b9afc` (2026-09-12). Every product change of the
+fix pass since then shipped as "3546, no bump", so no build number could map a binary to its source.
+The maintainer asked on 2026-09-24 for the number to move again, so that this log can map builds to
+changes. **3547 = the fix pass up to `0f1be99f`.**
+
+**What 3547 contains that 3546 did not.** 139 commits touch `dll/` or `ui/` (395 in all), with 127
+distinct row tags. Derive the list, do not copy it:
+`git log --oneline 567b9afc..0f1be99f -- dll ui`. The per-row ledger is `docs/todo.md`
+`[FIXPASS-2026-09-10]`, and the live checks are `docs/fixpass-low-live-plan.md` plus the todo.md
+Live-check backlog. Two points matter to anyone holding an old binary or table:
+- the CE Lua ↔ DLL **mailbox contract is v5** (`[W5-OFFSETS-MAILBOX]`, min 1);
+- the See-through producer probe fix (`[SEETHRU-PROBE-SUBSTRING]`, `39ccb2a4`) and the export-status fix
+  (`[EXPORT-STATUS-LATE-PROGRESS]`) are the last product changes before the bump.
+
+**The build.** `build.ps1 -Mode Publish`: `dist\UE5DumpUI.exe` AOT 55.0 MB (sha `24b6ce92b330`),
+`UE5Dumper.dll` sha `7b1a26a20950`, stamp `1.0.0.3547 b9e6aff0` (the tree then differed from
+`0f1be99f` only in docs). Four proxies to `dist\proxy\`. Tests: UI **5327/5327**, `dll_helpers_test`
+2752/0, `utf8_helpers_test` 265/0, `dll_core_test` 356 checks, and `grausam_window_test` and
+`sein_retention_test` passed. Gates 22/22.
+
+**The same day, no product change:**
+- **Vendor sync + audit #7** (`docs/audit-2026-09-24-vendor-ue583.md`): UE 5.8.3, RE-UE4SS `f58e8f84`
+  with UEPseudo and patternsleuth initialised for the first time, Dumper-7 `dd8fe34`, and minhook HELD.
+  UE 5.8.3 changes nothing for us. Reading the new sources filed `[VND583-01..18]`, led by FunctionFlags
+  keyed on version (breaking on FF7R / DQ XI S).
+- **DumperTest58 repackaged with the UE 5.8.3 editor** (Shipping + Development). Its `pe_hash` changed,
+  which orphans its old per-game app-data folders. `tools/verify/fixture_smoke.py` found the DLL's 57
+  verdict lines and every AOB winner identical to the 5.8.2 runs.
+- **Live checks closed**:
+  - L6 step 2: an injected Escape never reaches the app on this rig, so `send_key.py --post` is used (lesson 1.af).
+  - L7 and L21: through the slow-walk staging.
+  - L13 steps 2-3: through a UI seam.
+  - L33 step 2: on Avowed through a staging, with a correction.
+- **New rigs**: `fixture_smoke.py`, `proxy_swap.py`, `send_key.py`, and `staging/slow-walk.json`.
+
+-----
+
 ## 2026-09-12 (build 3546, no bump) — the three HIGH live checks, run on a game
 
 No product change: three verification runs and their evidence. `[FIXPASS-2026-09-10]`'s ledger has

@@ -1,0 +1,12 @@
+{
+ "name": "l49-walkclassex-memo-mutant",
+ "why": "L49 red arm: WalkClassEx passes `true` for the read verdict again (the pre-84a8d8ca call), so an unreadable class is memoized as empty",
+ "subs": [
+  {
+   "file": "dll/src/Ubel.cpp",
+   "old": "    if (!ShouldPublishClassWalk(readOk, info.PropertiesSize)) {\n",
+   "new": "    if (!ShouldPublishClassWalk(true /* STAGING l49 mutant: the pre-fix verdict */, info.PropertiesSize)) {\n",
+   "count": 1
+  }
+ ]
+}

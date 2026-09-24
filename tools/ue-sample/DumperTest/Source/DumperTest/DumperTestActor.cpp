@@ -28,6 +28,7 @@
 #include "HAL/FileManager.h"
 #include "HAL/PlatformProcess.h"
 #include "CoreGlobals.h"               // GFrameCounter
+#include "UObject/Package.h"           // GetTransientPackage (L48 listener)
 
 #define LOCTEXT_NAMESPACE "DumperTest"
 
@@ -267,6 +268,29 @@ ADumperTestActor::ADumperTestActor()
 
 }
 
+UDumperTestStealthComponent::UDumperTestStealthComponent()
+{
+	PrimaryComponentTick.bCanEverTick = true;
+}
+
+void UDumperTestStealthComponent::TickComponent(float DeltaTime, ELevelTick TickType,
+                                                FActorComponentTickFunction* ThisTickFunction)
+{
+	Super::TickComponent(DeltaTime, TickType, ThisTickFunction);
+	// 0 -> 1 over ten seconds, then wrap: a meter that visibly moves, so a held value and a
+	// free one cannot be confused.
+	StealthDetection += DeltaTime * 0.1f;
+	if (StealthDetection >= 1.0f)
+	{
+		StealthDetection = 0.0f;
+	}
+	++StealthWrites;
+}
+
+void UDumperTestSparseListener::OnPeerBeginOverlap(AActor* /*OverlappedActor*/, AActor* /*OtherActor*/)
+{
+}
+
 /// D4 probe. Deliberately EMPTY: its only job is to exist so `OnActorHit` is a bound
 /// sparse delegate. Reacting to a hit would change every other row that shares this
 /// fixture.
@@ -289,6 +313,17 @@ void ADumperTestActor::BeginPlay()
 	// this actor is unbound, Ubel rejects before Aura::WalkSparseDelegateBindings is
 	// called, and the walker's own states cannot be observed on any host.
 	OnActorHit.AddDynamic(this, &ADumperTestActor::D4_OnActorHitProbe);
+
+	// L48: the CROSS-object binding D4 cannot provide (D4 binds the actor to itself, and Find
+	// References suppresses owner == target). See UDumperTestSparseListener for why it is a
+	// rooted transient UObject bound to OnActorBeginOverlap.
+	SparseListener = NewObject<UDumperTestSparseListener>(GetTransientPackage(),
+	                                                      TEXT("DumperTestSparseListener"));
+	if (SparseListener)
+	{
+		SparseListener->AddToRoot();
+		OnActorBeginOverlap.AddDynamic(SparseListener, &UDumperTestSparseListener::OnPeerBeginOverlap);
+	}
 
 	// D3: two elements so an element index means something.
 	Arr_MulticastDelegates.SetNum(2);
@@ -501,11 +536,55 @@ void ADumperTestActor::Tick(float DeltaSeconds)
 	// over 3 s while FrameCountReflected stayed 0. Keep the mirror next to the increment above.
 	FrameCountReflected = FrameCount;
 
+	// [VND583-06] -DumperTestWeakGarbage: a fresh garbage target for WeakToGarbage every 5 s.
+	// OPT-IN, because it spawns and destroys an actor on a clock, which churns GObjects slots and
+	// serial numbers under the rows that measure exactly those (Spawn_RecycleChurn and friends).
+	// Parsed once, like -DumperTestNoHud: FParse::Param scans the whole command line.
+	static const bool bWeakGarbage = FParse::Param(FCommandLine::Get(), TEXT("DumperTestWeakGarbage"));
+	if (bWeakGarbage)
+	{
+		WeakToGarbageTimer -= DeltaSeconds;
+		if (WeakToGarbageTimer <= 0.f)
+		{
+			WeakToGarbageTimer = 5.f;
+			FActorSpawnParameters SP;
+			SP.SpawnCollisionHandlingOverride = ESpawnActorCollisionHandlingMethod::AlwaysSpawn;
+			UWorld* W = GetWorld();
+			if (AActor* Doomed = W ? W->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SP) : nullptr)
+			{
+				WeakToGarbage = Doomed;
+				++WeakToGarbageCount;
+				Doomed->Destroy();   // -> MarkAsGarbage: RF_MirroredGarbage + the item's Garbage bit, at once
+			}
+		}
+	}
+
+	// L58: attach the stealth meter the first frame a player pawn exists. One null test per
+	// frame afterwards. The fixture does not respawn its pawn, so this runs once per life.
+	if (!StealthComp)
+	{
+		if (APawn* P = UGameplayStatics::GetPlayerPawn(this, 0))
+		{
+			StealthComp = NewObject<UDumperTestStealthComponent>(P, TEXT("DumperTestStealth"));
+			if (StealthComp)
+			{
+				StealthComp->RegisterComponent();
+				P->AddInstanceComponent(StealthComp);
+			}
+		}
+	}
+
 	EnsureHeartbeatHud();
 }
 
 void ADumperTestActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 {
+	if (SparseListener)
+	{
+		OnActorBeginOverlap.RemoveAll(SparseListener);
+		SparseListener->RemoveFromRoot();
+		SparseListener = nullptr;
+	}
 	if (UWorld* W = GetWorld())
 	{
 		W->GetTimerManager().ClearTimer(TickHandle);

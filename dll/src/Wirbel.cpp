@@ -37,7 +37,6 @@
 // Frieren exports reused internally (extern "C" must live at global scope).
 extern "C" int32_t   UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
                                             uintptr_t params, uint32_t paramsSize);
-extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
 extern uintptr_t g_cachedGWorld;   // &GWorld — deref once for UWorld*
 
 namespace {
@@ -1312,7 +1311,9 @@ bool InvokeWblInputMode(uintptr_t wbl, uintptr_t wblClass, const char* fn,
 // first reproduces that transition in one action.
 void ApplyCursorInputMode(uintptr_t pc, bool show) {
     if (!pc) return;
-    uintptr_t wbl = UE5_FindInstanceOfClass("WidgetBlueprintLibrary");
+    // Derivation-gated: the CDO of WidgetBlueprintLibrary ITSELF, never the first object whose class name merely
+    // contains the name. [SEETHRU-PROBE-SUBSTRING]
+    uintptr_t wbl = Aura::FindLiveOrDefaultOf("WidgetBlueprintLibrary");
     if (!wbl) {
         LOG_INFO("Teleport: cursor — no WidgetBlueprintLibrary (UMG cooked out?); "
                  "bShowMouseCursor write only (input mode may still hide it)");
@@ -1672,7 +1673,7 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
         // UKismetSystemLibrary::LineTraceSingle via the library CDO. Static-
         // native, but it reads the physics scene — game thread ONLY (the
         // Invoke helper guarantees that; never reuse Mimic's direct path).
-        uintptr_t ksl = UE5_FindInstanceOfClass("KismetSystemLibrary");
+        uintptr_t ksl = Aura::FindLiveOrDefaultOf("KismetSystemLibrary");   // [SEETHRU-PROBE-SUBSTRING]
         if (!ksl) {
             LOG_WARN("Teleport: cursor — KismetSystemLibrary instance/CDO not found");
             return TP_ERR_REFLECTION;

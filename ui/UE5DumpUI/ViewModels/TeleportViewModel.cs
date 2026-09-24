@@ -228,7 +228,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     public string AobMakerNote => IsAobMakerAvailable
         ? "AOBMaker connected — the standalone trainer will be pushed straight into CE."
-        : "AOBMaker plugin not detected. Start Cheat Engine with the AOBMaker plugin, then press ⟳.";
+        : AobMakerUnavailable.Text(_aobMaker) + ".";   // [W1-PIPEBUSY-STATUS] busy ≠ "start Cheat Engine"
 
     /// <summary>Push the latest engine state (GWorld AOB / module) for trainer bake.</summary>
     public void SetEngineState(Models.EngineState state) => _engineState = state;
@@ -239,6 +239,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (_aobMaker == null) return;
         try { IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync(); }
         catch { IsAobMakerAvailable = false; }
+        // [W1-PIPEBUSY-STATUS] The note also depends on WHY it failed, which can change (absent -> busy) while
+        // IsAobMakerAvailable stays false and so raises nothing.
+        OnPropertyChanged(nameof(AobMakerNote));
     }
 
     /// <summary>
@@ -4487,10 +4490,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         if (_aobMaker == null || !_aobMaker.IsAvailable)
         {
-            CoordStatus = "AOBMaker plugin not detected — cannot push the no-DLL picker into CE. " +
-                          "It needs the standalone trainer's Setup record, which only AOBMaker can " +
+            // [W1-PIPEBUSY-STATUS] The remedy clause comes from the bridge's last failure: "start CE" is wrong for a busy pipe.
+            CoordStatus = AobMakerUnavailable.Text(_aobMaker) + ". Cannot push the no-DLL picker into CE: " +
+                          "it needs the standalone trainer's Setup record, which only AOBMaker can " +
                           "deliver, so there is deliberately no clipboard fallback for this one. " +
-                          "Use 'Push to CE' (the DLL flavour) instead, or start CE with the AOBMaker plugin.";
+                          "Use 'Push to CE' (the DLL flavour) instead.";
             return;
         }
         try
@@ -4943,8 +4947,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (available) await PushGameThreadReminderAsync();   // one per button press
             if (!available)
             {
-                StatusText = "AOBMaker not connected — use 'Save .CT' instead " +
-                             "(open Cheat Engine with the AOBMaker plugin loaded).";
+                // [W1-PIPEBUSY-STATUS] busy ≠ "open Cheat Engine" — the remedy comes from the bridge.
+                StatusText = AobMakerUnavailable.Text(_aobMaker) + ", or use 'Save .CT' instead.";
                 return;
             }
             int ok = 0;

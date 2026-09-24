@@ -39,8 +39,6 @@ extern uintptr_t g_cachedGWorld;
 // scene and SetActorHiddenInGame refreshes render state, both game-thread only.
 extern "C" int32_t   UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
                                             uintptr_t params, uint32_t size);
-// Resolve a class CDO/instance by short name (KismetSystemLibrary for the trace).
-extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
 // Force the game-thread ProcessEvent hook up (user-initiated, so it retries a
 // transient MinHook failure) and report whether it is available.
 extern "C" bool      UE5_EnsureGameThreadHook();
@@ -371,18 +369,22 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
 // (with its OutHit) to find an occluder, and AActor::SetActorHiddenInGame to hide it. Asked at ENABLE, so a build that
 // lacks either refuses with STR_ERR_REFLECTION through SetEnabled's return -- which reaches the pipe's state, the
 // mailbox result and the CE script alike -- instead of running a worker that hides nothing while the card reads
-// "Active -- nothing blocking the view". Two GObjects scans, once per enable (the worker re-resolves its trace per
-// enable anyway). "Actor" resolves on every build: at worst to its CDO, whose class is AActor itself.
+// "Active -- nothing blocking the view". Two GObjects scans, once per enable, each stopping at its class.
+//
+// ⚠ Ask the CLASS, by full path -- never Ubel::GetClass() of an instance found by name. The first version asked
+// UE5_FindInstanceOfClass("Actor"), a class-name SUBSTRING match that falls back to the first matching CDO; on
+// DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel, so FindFuncByName found nothing and See-through
+// was refused as "cooked out" on a build that has SetActorHiddenInGame. [SEETHRU-PROBE-SUBSTRING]
 bool ProbeProducers(const char** missing) {
     FunctionInfo fi;
-    const uintptr_t ksl = UE5_FindInstanceOfClass("KismetSystemLibrary");
-    if (!ksl || !FindFuncByName(Ubel::GetClass(ksl), "LineTraceSingle", fi) || fi.parmsSize <= 0
+    const uintptr_t kslCls = Aura::FindClassByPath(Grimoire::SCHLACHT_KSL_CLASS_PATH);
+    if (!kslCls || !FindFuncByName(kslCls, "LineTraceSingle", fi) || fi.parmsSize <= 0
         || !FindParam(fi, "OutHit")) {
         *missing = "KismetSystemLibrary::LineTraceSingle";
         return false;
     }
-    const uintptr_t actor = UE5_FindInstanceOfClass("Actor");
-    if (!actor || !FindFuncByName(Ubel::GetClass(actor), "SetActorHiddenInGame", fi)) {
+    const uintptr_t actorCls = Aura::FindClassByPath(Grimoire::SCHLACHT_ACTOR_CLASS_PATH);
+    if (!actorCls || !FindFuncByName(actorCls, "SetActorHiddenInGame", fi)) {
         *missing = "AActor::SetActorHiddenInGame";
         return false;
     }
@@ -406,8 +408,8 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
     out.clear();
 
     // The KismetSystemLibrary CDO + LineTraceSingle signature are resolved ONCE
-    // per enable, not per tick. `UE5_FindInstanceOfClass` is a full GObjects scan
-    // (it only stops early on a non-CDO hit, and a function library has none), so
+    // per enable, not per tick. `Aura::FindLiveOrDefaultOf` is a full GObjects scan
+    // (it only stops early on a live hit, and a function library has none), so
     // the pre-cache version paid one whole-pool scan per trace: measured on The
     // Adventures of Elliot (326K objects) at ~5 scans/second for the whole 29 s
     // the feature was on, plus a class walk each time. A native function-library
@@ -421,7 +423,9 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
     if (s_cachedGen != gen) {
         s_ksl = 0;
         s_lt = FunctionInfo{};
-        uintptr_t ksl = UE5_FindInstanceOfClass("KismetSystemLibrary");
+        // Derivation-gated, like the probe's class-by-path: the CDO of KismetSystemLibrary ITSELF, never the first
+        // object whose class name merely contains it. [SEETHRU-PROBE-SUBSTRING]
+        uintptr_t ksl = Aura::FindLiveOrDefaultOf("KismetSystemLibrary");
         if (ksl && FindFuncByName(Ubel::GetClass(ksl), "LineTraceSingle", s_lt)
             && s_lt.parmsSize > 0) {
             s_ksl = ksl;

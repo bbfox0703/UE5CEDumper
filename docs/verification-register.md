@@ -10637,6 +10637,7 @@ audit #5 **D3**/Aura's, which was never renamed, so it stands.
     hanging the pipe thread; Grausam post-enable windows + shutdown teardown; Fern `str_params`
     malloc leak on a mid-loop JSON `type_error`). L8 and L12 are the ones with a user-visible
     symptom (pipe stall / leak under repeated failed invokes). ⬜
+  - ⚠ **BEHAVIOUR CHANGED 2026-09-24 (maintainer decision, `[VND583-DOC D7-04]`, `c181d742`).** The row below tested a WEAK pointer being refused, on the premise that `{0,0}` is "GObjects[0]". It is not: SerialNumber 0 is UE's null. An 8-byte WeakObjectProperty is now HELD at UE's own reset value. The refusal still stands for soft / lazy and for 16-byte remote-handle weak pointers. **Re-verified 2026-09-24** on DumperTest dev with the retargeted rig (`tools/verify/solide_l2_weakptr.py` now forces `DumperTestActor::Soft_Mesh`, a SoftObjectProperty): `code=-12 held=0 resolved=false`, no job persisted, 0 scans in the 4 s after the one-shot type resolution, and a control ran at 3.43/s. The weak side: on DumperTest 5.4 Shipping with `-DumperTestWeakGarbage`, `WeakToGarbage` is held at `{0, 0}` while the fixture re-points it every 5 s; 3548 (`31868273`) answers -12 there. Evidence: `out\weaknull\`.
   - ✅ **Solide LOW L2 — PASS 2026-08-21 `[SOLIDE-L2-2026-08-21]`.** `object_null` on
     `Actor::ParentComponent` (a `TWeakObjectPtr`, verified `WeakObjectProperty` @0x01C0) returns
     **`code=-12` (`FR_ERR_WEAK_PTR`), `held=0`, `resolved=false`**, persists **no** job, and starts

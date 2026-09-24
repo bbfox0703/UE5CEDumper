@@ -1,4 +1,4 @@
-using UE5DumpUI.Core;
+﻿using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using UE5DumpUI.ViewModels;
@@ -285,9 +285,45 @@ public class PropertySearchForceTests
         Assert.True(vm.ForceEnabled);
     }
 
+    [Fact]
+    public void CanForceNull_covers_strong_and_weak_pointers_but_not_soft_or_lazy()
+    {
+        // [VND583-DOC D7-04] A weak pointer's null is UE's own reset value (SerialNumber 0), not
+        // "GObjects[0]"; soft / lazy stay out because their path / GUID re-resolves the pointer.
+        Assert.True(NewMatch("ObjectProperty", "Target").CanForceNull);
+        Assert.True(NewMatch("WeakObjectProperty", "Target").CanForceNull);
+        Assert.False(NewMatch("SoftObjectProperty", "Target").CanForceNull);
+        Assert.False(NewMatch("SoftClassProperty", "Target").CanForceNull);
+        Assert.False(NewMatch("LazyObjectProperty", "Target").CanForceNull);
+        Assert.False(NewMatch("IntProperty", "Target").CanForceNull);
+    }
+
+    [Fact]
+    public void Solide_gates_object_null_on_the_shape_helper_with_the_element_size()
+    {
+        // [VND583-DOC D7-04] Solide.cpp is compiled by no test target, so its call site is pinned as
+        // text: the gate must go through ObjectNullShapeFor WITH the ElementSize (a 16-byte remote-handle
+        // weak pointer is refused), and must not fall back to the old strong-only type test.
+        var solide = SolideSource();
+        Assert.Contains("ObjectNullShapeFor(fi.TypeName, fi.Size)", solide, StringComparison.Ordinal);
+        Assert.DoesNotContain("if (fi.TypeName != \"ObjectProperty\") { refusal = FR_ERR_WEAK_PTR", solide,
+            StringComparison.Ordinal);
+    }
+
     // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    private static string SolideSource()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 8 && dir is not null; i++, dir = dir.Parent)
+        {
+            var c = Path.Combine(dir.FullName, "dll", "src", "Solide.cpp");
+            if (File.Exists(c)) return File.ReadAllText(c);
+        }
+        throw new FileNotFoundException("dll/src/Solide.cpp not found from " + AppContext.BaseDirectory);
+    }
 
     private static PropertySearchMatch NewMatch(string propType, string propName) => new PropertySearchMatch
     {

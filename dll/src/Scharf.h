@@ -77,6 +77,9 @@ inline int32_t RequiredAlignment(const std::string& typeName, int32_t elemSize,
     // The 8 seen in a TPair<FName, ptr> comes from the VALUE via max(keyAlign, valAlign),
     // never from FName -- which is why returning 8 here corrupted TMap<uint8,FName>:
     // ComputeMapValueOffset put the value at +8 where the engine puts it at +4.
+    // [VND583-03] ONE version exception, applied by the caller, not here: stock non-CPN 4.11-4.21
+    // put FName in a union with uint64 CompositeComparisonValue, so alignof(FName) was 8 there.
+    // Ubel::ResolveElementAlignment asks DynOff::FNameAlignFor before it reaches this arm.
     if (typeName == "NameProperty") return 4;
 
     // Primitive scalars — alignment == size.

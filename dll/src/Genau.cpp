@@ -14,7 +14,7 @@
 #include "Himmel.h"
 #include "Aura.h"
 #include "Serie.h"
-#include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.6+ FNameData)
+#include "Neu.h"     // UEnum::Names layout parse (legacy TArray vs UE5.7+ FNameData)
 #include "Tot.h"     // Tot::Requested — Extra Scan must bail so Fern::Stop's join is bounded (B18)
 #include "VersionNeedleScan.h"  // gated needle sweep + HasUEAnchorNearby (audit #5 G2)
 
@@ -28,6 +28,8 @@
 #include <chrono>     // AOBScanBatch timing
 #include <Winver.h>   // GetFileVersionInfoW / VerQueryValueW
 #include <Psapi.h>    // EnumProcessModules
+
+extern uint32_t g_cachedUEVersion;   // [VND583-04] DetectUEnumNames: the legacy value width's source rule
 
 namespace Genau {
 
@@ -673,51 +675,90 @@ static bool IsCleanAsciiName(const std::string& s) {
     return hasAlnum;
 }
 
-// Score `base` as a standard UE5 chunked FUObjectArray (ObjObjects.Objects @ +0x10,
-// NumElements @ +0x24): returns the count of clean-named objects among the first
-// slots, or 0 if `base` is not a valid, name-resolving object array. The FUObjectItem
-// stride is NOT fixed — Obsidian's UE5.3 packs it to 20 bytes (0x14) instead of the
-// standard 24 (0x18) — so we try several and report the one that decodes cleanly via
+// Score `base` as a chunked FUObjectArray: returns the count of clean-named objects among
+// the first slots, or 0 if `base` is not a valid, name-resolving object array. The
+// FUObjectItem stride is NOT fixed — Obsidian's UE5.3 packs it to 20 bytes (0x14) instead
+// of the standard 24 (0x18) — so we try several and report the one that decodes cleanly via
 // outStride (the winning stride, fed to Aura::InitWithExtendedLayout).
-static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride) {
-    uintptr_t chunkTable = 0;
-    if (!Macht::ReadSafe(base + 0x10, chunkTable)) return 0;     // ObjObjects.Objects
-    chunkTable = Aura::DecryptObjectPtr(chunkTable);
-    if (!LooksLikeDataPtr(chunkTable)) return 0;
-    int32_t num = 0;
-    if (!Macht::ReadSafe(base + 0x24, num)) return 0;           // NumElements
-    if (num < 16 || num > Grimoire::SANITY_MAX_UOBJECTS) return 0;
-    uintptr_t chunk0 = 0;
-    if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) return 0;
+//
+// [VND583-10] Nor are the array's geometry and the item's shape fixed, and both used to be.
+// UE 5.8 moved ObjObjects to the FRONT of FUObjectArray and reordered FChunkedFixedUObjectArray
+// (UObjectArray.h @5.8.3-release: Objects, NumElements, MaxElements, NumChunks, MaxChunks,
+// PreAllocatedObjects), so its Objects is at +0x00 and NumElements at +0x08, not +0x10 / +0x24.
+// And UE 5.7+ put FlagsAndRefCount first in the item, so the UObject* is at +0x08: read at +0x00,
+// a 24-byte item still "passed" at stride 16, whose every third read lands on an object -- and
+// the pool then vanished two in three (09-05 A5's failure, in this resolver). Every geometry x
+// object offset x stride is scored and the densest wins; outObjOff / outUE58 say which.
+// ⭐ And a geometry must be SELF-CONSISTENT, not merely point at a real chunk table: DumperTest58
+// (5.8 Shipping) showed a probe 0x10 below its array, read through the 5.0-5.7 geometry, finding
+// the real Objects pointer at +0x10 and the 5.8 MaxChunks (33) at +0x24 as "NumElements" --
+// 33 clean names, and the pool then held 33 objects. So Num <= Max, 1 <= NumChunks <= MaxChunks,
+// and Num <= NumChunks * OBJECTS_PER_CHUNK, as a real array's counts always are.
+struct StaticArrayGeometry { int objectsOff; int numOff; int maxOff; int numChunksOff; int maxChunksOff; bool ue58; };
+static const StaticArrayGeometry kStaticGeometries[] = {
+    { 0x10, 0x24, 0x20, 0x2C, 0x28, false },   // UE 5.0-5.7: four GC int32s, then {Objects, PreAllocated, Max, Num, MaxChunks, NumChunks}
+    { 0x00, 0x08, 0x0C, 0x10, 0x14, true  },   // UE 5.8: ObjObjects FIRST; {Objects, Num, Max, NumChunks, MaxChunks, PreAllocated}
+};
+// 20 (Obsidian-packed), 24 (std), 16, 32, and 40 -- a UE 5.7+ Test build's item with its StatID
+// pair (09-05 A5, whose static-resolver half this is).
+static const int kStaticStrides[] = { 0x14, 0x18, 0x10, 0x20, 0x28 };
+// The UObject* inside the item: +0x00 classic, +0x08 on UE 5.7+'s reordered item (FlagsAndRefCount first).
+static const int kStaticObjOffs[]  = { 0x00, 0x08 };
 
-    // The first chunk is a contiguous FUObjectItem[]; the first entries are the
-    // permanent core objects (Class / Package / etc.), all named. Object ptr @ +0x00.
-    static const int kStrides[] = { 0x14, 0x18, 0x10, 0x20 };   // 20 (Obsidian-packed), 24 (std), 16, 32
+static int ScoreGObjectsStaticBase(uintptr_t base, int* outStride, int* outObjOff = nullptr, bool* outUE58 = nullptr) {
     const int kProbe = 64;
-    int bestClean = 0, bestStride = 0;
-    for (int stride : kStrides) {
-        int scanned = 0, clean = 0;
-        for (int i = 0; i < kProbe && i < num; ++i) {
-            uintptr_t obj = 0;
-            if (!Macht::ReadSafe(chunk0 + static_cast<uintptr_t>(i) * stride, obj)) continue;
-            if (!LooksLikeDataPtr(obj)) continue;
-            ++scanned;
-            uint32_t nameIdx = 0;
-            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
-            if (IsCleanAsciiName(Serie::GetString(nameIdx))) ++clean;
-        }
-        // Require a clear majority of clean names plus an absolute floor.
-        if (scanned >= 8 && clean >= 6 && clean * 2 >= scanned && clean > bestClean) {
-            bestClean = clean;
-            bestStride = stride;
+    int bestClean = 0, bestStride = 0, bestObjOff = 0;
+    bool bestUE58 = false;
+    for (const StaticArrayGeometry& g : kStaticGeometries) {
+        uintptr_t chunkTable = 0;
+        if (!Macht::ReadSafe(base + g.objectsOff, chunkTable)) continue;     // ObjObjects.Objects
+        chunkTable = Aura::DecryptObjectPtr(chunkTable);
+        if (!LooksLikeDataPtr(chunkTable)) continue;
+        int32_t num = 0, maxE = 0, numC = 0, maxC = 0;
+        if (!Macht::ReadSafe(base + g.numOff, num)) continue;               // NumElements
+        if (num < 16 || num > Grimoire::SANITY_MAX_UOBJECTS) continue;
+        if (!Macht::ReadSafe(base + g.maxOff, maxE) || !Macht::ReadSafe(base + g.numChunksOff, numC)
+            || !Macht::ReadSafe(base + g.maxChunksOff, maxC)) continue;
+        if (num > maxE || numC < 1 || numC > maxC
+            || static_cast<int64_t>(num) > static_cast<int64_t>(numC) * Grimoire::OBJECTS_PER_CHUNK) continue;
+        uintptr_t chunk0 = 0;
+        if (!Macht::ReadSafe(chunkTable, chunk0) || !LooksLikeDataPtr(chunk0)) continue;
+
+        // The first chunk is a contiguous FUObjectItem[]; the first entries are the
+        // permanent core objects (Class / Package / etc.), all named.
+        for (int objOff : kStaticObjOffs) {
+            for (int stride : kStaticStrides) {
+                if (objOff + 8 > stride) continue;
+                int scanned = 0, clean = 0;
+                for (int i = 0; i < kProbe && i < num; ++i) {
+                    uintptr_t obj = 0;
+                    if (!Macht::ReadSafe(chunk0 + static_cast<uintptr_t>(i) * stride + objOff, obj)) continue;
+                    if (!LooksLikeDataPtr(obj)) continue;
+                    ++scanned;
+                    uint32_t nameIdx = 0;
+                    if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx)) continue;
+                    if (IsCleanAsciiName(Serie::GetString(nameIdx))) ++clean;
+                }
+                // Require a clear majority of clean names plus an absolute floor.
+                if (scanned >= 8 && clean >= 6 && clean * 2 >= scanned && clean > bestClean) {
+                    bestClean = clean;
+                    bestStride = stride;
+                    bestObjOff = objOff;
+                    bestUE58 = g.ue58;
+                }
+            }
         }
     }
     if (outStride) *outStride = bestStride;
+    if (outObjOff) *outObjOff = bestObjOff;
+    if (outUE58) *outUE58 = bestUE58;
     return bestClean;
 }
 
-uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled) {
+uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled, int* outItemObjOffset, bool* outUE58Array) {
     if (outItemStride) *outItemStride = 0;
+    if (outItemObjOffset) *outItemObjOffset = 0;
+    if (outUE58Array) *outUE58Array = false;
     Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: scanning for a static FUObjectArray...");
 
     uintptr_t modBase = Macht::GetModuleBase(nullptr);
@@ -775,28 +816,39 @@ uintptr_t FindGObjectsStaticStruct(int* outItemStride, bool* outCancelled) {
     // Probe a small window around each referenced slot — a code ref may point at any
     // member of the struct, so step back up to ObjAvailableList (+0x58) to find the base.
     uintptr_t bestBase = 0;
-    int bestScore = 0, bestStride = 0;
+    int bestScore = 0, bestStride = 0, bestObjOff = 0;
+    bool bestUE58 = false;
+    auto publish = [&]() {
+        if (outItemStride) *outItemStride = bestStride;
+        if (outItemObjOffset) *outItemObjOffset = bestObjOff;
+        if (outUE58Array) *outUE58Array = bestUE58;
+        Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d, "
+                   "item object @+0x%02X, %s array)", static_cast<unsigned long long>(bestBase), bestScore,
+                   bestStride, bestObjOff, bestUE58 ? "UE5.8" : "UE5.0-5.7");
+    };
     for (uintptr_t tgt : targets) {
         for (int off = -0x58; off <= 0x10; off += 8) {
-            int stride = 0;
-            int score = ScoreGObjectsStaticBase(tgt + off, &stride);
+            int stride = 0, objOff = 0;
+            bool ue58 = false;
+            int score = ScoreGObjectsStaticBase(tgt + off, &stride, &objOff, &ue58);
             if (score > bestScore) {
                 bestScore = score;
                 bestBase = tgt + off;
                 bestStride = stride;
-                if (bestScore >= 32) {   // unambiguous: a dense run of clean core objects
-                    if (outItemStride) *outItemStride = bestStride;
-                    Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d)",
-                               static_cast<unsigned long long>(bestBase), bestScore, bestStride);
-                    return bestBase;
-                }
+                bestObjOff = objOff;
+                bestUE58 = ue58;
             }
+        }
+        // [VND583-10] Unambiguous: a dense run of clean core objects -- but decided only once this
+        // target's WHOLE window is scored. Deciding inside it let a base 0x10 too low (33 clean, at
+        // the bar) return before the true one (64) was ever read, on DumperTest58.
+        if (bestScore >= 32) {
+            publish();
+            return bestBase;
         }
     }
     if (bestBase) {
-        if (outItemStride) *outItemStride = bestStride;
-        Sein::Info("SCAN:GObj", "FindGObjectsStaticStruct: static GObjects at 0x%llX (clean=%d, stride=%d)",
-                   static_cast<unsigned long long>(bestBase), bestScore, bestStride);
+        publish();
     } else {
         Sein::Warn("SCAN:GObj", "FindGObjectsStaticStruct: no static FUObjectArray found");
     }
@@ -932,6 +984,54 @@ static uintptr_t ScanFunctionBodyForRipRef(
     return 0;
 }
 
+// [VND583-07] The body scan, then ONE call deeper. On a modular EDITOR build the exported FName::ToString
+// holds no NamePoolData reference of its own. Measured on UnrealEditor-Core.dll (UE 5.4, case-preserving
+// names): ToString+0x18 `call` -> a resolver whose +0x15 is `lea rdi,[rip+..]` = NamePoolData (after a
+// `cmp [bNamePoolInitialized],0`). So GNAM_EXP_* found nothing, and on that host the multi-module AOB
+// fallback took EOSSDK-Win64-Shipping.dll's own, NON-case-preserving name pool instead: 0 of 10 UObject
+// names resolved. Up to four calls in the exported body are followed; the validator decides, as before.
+// True when `addr` is in a committed, executable page (image OR private -- the unit test's code is
+// VirtualAlloc'd). A call target that is not is a false E8 decode inside some other instruction.
+static bool IsExecutablePage(uintptr_t addr) {
+    if (addr < 0x10000) return false;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return false;
+    if (mbi.State != MEM_COMMIT || (mbi.Protect & PAGE_GUARD)) return false;
+    return (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY)) != 0;
+}
+
+static uintptr_t ScanFunctionAndCalleesForRipRef(uintptr_t funcAddr, const char* sigId, ValidatorFn validate) {
+    if (uintptr_t hit = ScanFunctionBodyForRipRef(funcAddr, sigId, validate)) return hit;
+
+    // The same bound as the body scan: the callee's own extent when .pdata has it, else 256 bytes.
+    int limit = 256;
+    uintptr_t fnBegin = 0, fnEnd = 0;
+    if (Macht::GetFunctionExtent(funcAddr, fnBegin, fnEnd) && fnEnd > funcAddr
+        && static_cast<uintptr_t>(limit) > (fnEnd - funcAddr))
+        limit = static_cast<int>(fnEnd - funcAddr);
+
+    int followed = 0;
+    for (int off = 0; off + 5 <= limit && followed < 4; ++off) {
+        uint8_t op = 0;
+        if (!Macht::ReadSafe(funcAddr + off, op)) break;
+        if (op != 0xE8) continue;
+        int32_t rel = 0;
+        if (!Macht::ReadSafe(funcAddr + off + 1, rel)) break;
+        const uintptr_t callee = funcAddr + off + 5 + static_cast<intptr_t>(rel);
+        if (!IsExecutablePage(callee)) continue;
+        // With .pdata a real call lands on a function START; a mid-instruction E8 does not.
+        uintptr_t cBegin = 0, cEnd = 0;
+        if (Macht::GetFunctionExtent(callee, cBegin, cEnd) && cBegin != callee) continue;
+        ++followed;
+        if (uintptr_t hit = ScanFunctionBodyForRipRef(callee, sigId, validate)) {
+            LOG_INFO("FuncBodyScan [%s]: ...reached through the call at func+0x%X (callee 0x%llX)",
+                     sigId, off, (unsigned long long)callee);
+            return hit;
+        }
+    }
+    return 0;
+}
+
 // Follow a CALL instruction at callOffset within the matched pattern,
 // then scan the called function's body for RIP-relative references.
 // Used for GNames V7_FNAME_CTOR pattern.
@@ -961,7 +1061,7 @@ static uintptr_t ResolveSymbolCallFollow(const AobSignature& sig, ValidatorFn va
     LOG_DEBUG("SymbolCallFollow [%s]: Scanning function body at 0x%llX",
               sig.id, (unsigned long long)funcAddr);
 
-    return ScanFunctionBodyForRipRef(funcAddr, sig.id, validate);
+    return ScanFunctionAndCalleesForRipRef(funcAddr, sig.id, validate);   // [VND583-07]
 }
 
 // Try resolving a single match address according to the signature's resolve strategy.
@@ -3274,6 +3374,62 @@ static uintptr_t FindStructByName(const char* structName) {
     return 0;
 }
 
+// [VND583-02] Measure UField::Next in FProperty mode, where it used to be left at its default.
+// Walks the UFunction chain (UStruct::Children, now derived from the measured ChildProperties)
+// of a stock engine class at each candidate offset, default first, and returns the first that
+// chains >= 2 consecutive Function objects (DynOff::PickUFieldNextOffset). -1 = no class had a
+// chain to measure on.
+static int ProbeUFieldNextFProperty() {
+    static const char* kClasses[] = { "KismetSystemLibrary", "KismetMathLibrary", "Actor", "Object" };
+    const int def = DynOff::bCasePreservingName ? 0x30 : 0x28;
+    int offs[8];
+    int n = 0;
+    for (int c : { def, 0x28, 0x30, 0x20, 0x38, 0x40, 0x48 }) {
+        bool dup = false;
+        for (int i = 0; i < n; ++i) dup = dup || offs[i] == c;
+        if (!dup) offs[n++] = c;
+    }
+    auto classNameOf = [](uintptr_t obj) -> std::string {
+        uintptr_t cls = 0;
+        uint32_t idx = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return {};
+        if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, idx)) return {};
+        return Serie::GetString(idx);
+    };
+    const int32_t count = Aura::GetCount();
+    for (const char* want : kClasses) {
+        for (int32_t i = 0; i < count; ++i) {
+            uintptr_t obj = Aura::GetByIndex(i);
+            if (!obj || classNameOf(obj) != "Class") continue;
+            uint32_t nameIdx = 0;
+            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, nameIdx) || Serie::GetString(nameIdx) != want) continue;
+            uintptr_t first = 0;
+            if (!Macht::ReadSafe(obj + DynOff::USTRUCT_CHILDREN, first) || !first
+                || !Grimoire::IsUserspacePointer(first) || classNameOf(first) != "Function")
+                break;   // this class has no function chain here -- try the next name
+            int hops[8] = {};
+            for (int k = 0; k < n; ++k) {
+                uintptr_t cur = first;
+                for (int h = 0; h < 4; ++h) {
+                    uintptr_t nxt = 0;
+                    if (!Macht::ReadSafe(cur + offs[k], nxt) || !nxt || !Grimoire::IsUserspacePointer(nxt)) break;
+                    if (classNameOf(nxt) != "Function") break;
+                    ++hops[k];
+                    cur = nxt;
+                }
+            }
+            const int picked = DynOff::PickUFieldNextOffset(offs, hops, n);
+            if (picked > 0) {
+                Sein::Info("DYNO", "ValidateAndFixOffsets: UField::Next at +0x%02X (FProperty mode, probed on %s's "
+                           "function chain)", picked, want);
+                return picked;
+            }
+            break;
+        }
+    }
+    return -1;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // DetectCasePreservingName — Measure FName size from UObject layout.
 //
@@ -3284,8 +3440,9 @@ static uintptr_t FindStructByName(const char* structName) {
 //   the Name->Outer SLOT is 0x10 (CasePreservingName), Outer=0x28. sizeof(FName) is 0xC;
 //   the extra 4 bytes are the 8-alignment padding in front of OuterPrivate, not part of FName.
 //
-// Also checks: if the two int32s at UObject::Name (+0x18 and +0x1C) are equal,
-// it's likely ComparisonIndex == DisplayIndex, confirming CPN.
+// Also checks: if the int32 at UObject::Name (+0x18) repeats at +0x1C (UE4 / 5.0) or at +0x20
+// (5.1+, where DisplayIndex follows Number), it's likely ComparisonIndex == DisplayIndex,
+// confirming CPN. The same repeat then says where FName::Number sits (DynOff::FNAME_NUMBER).
 // ─────────────────────────────────────────────────────────────────────────────
 static void DetectCasePreservingName() {
     Sein::Info("DYNO", "DetectCasePreservingName: Probing UObject layout...");
@@ -3334,10 +3491,13 @@ static void DetectCasePreservingName() {
             ++voteCPN;
         } else if (at20valid && at28valid) {
             // Ambiguous — check if CompIdx == DispIdx (CPN signature)
-            uint32_t compIdx = 0, dispIdx = 0;
+            // [VND583-07] The DisplayIndex is at +0x1C on UE4 / 5.0 but at +0x20 on 5.1+, where it
+            // follows Number; checking +0x1C alone voted a 5.1+ case-preserving object "standard".
+            uint32_t compIdx = 0, dispAt1C = 0, dispAt20 = 0;
             Macht::ReadSafe(obj + 0x18, compIdx);
-            Macht::ReadSafe(obj + 0x1C, dispIdx);
-            if (compIdx == dispIdx && compIdx > 0 && compIdx < 0x00FFFFFF) {
+            Macht::ReadSafe(obj + 0x1C, dispAt1C);
+            Macht::ReadSafe(obj + 0x20, dispAt20);
+            if ((compIdx == dispAt1C || compIdx == dispAt20) && compIdx > 0 && compIdx < 0x00FFFFFF) {
                 ++voteCPN;
             } else {
                 ++voteStandard;
@@ -3358,6 +3518,28 @@ static void DetectCasePreservingName() {
         DynOff::UOBJECT_OUTER = 0x20;
         Sein::Info("DYNO", "DetectCasePreservingName: Standard FName — UObject::Outer = +0x20");
     }
+
+    // [VND583-07, A9 step 11] Where FName::Number sits -- see DynOff::FNAME_NUMBER. Only a case-preserving
+    // build has a DisplayIndex to find; a standard one resets to +4 (a re-detection must not keep a stale +8).
+    int displayAt4 = 0, displayAt8 = 0;
+    if (DynOff::bCasePreservingName) {
+        for (int32_t i = 1, seen = 0; i < count && seen < 200; ++i) {
+            uintptr_t obj = Aura::GetByIndex(i);
+            if (!obj) continue;
+            uint32_t n0 = 0, n4 = 0, n8 = 0;
+            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME, n0) || n0 == 0) continue;
+            if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME + 4, n4)
+                || !Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_NAME + 8, n8)) continue;
+            ++seen;
+            if (n4 == n0 && n8 != n0)      ++displayAt4;
+            else if (n8 == n0 && n4 != n0) ++displayAt8;
+        }
+    }
+    DynOff::FNAME_NUMBER = DynOff::PickFNameNumberOffset(DynOff::bCasePreservingName, displayAt4, displayAt8);
+    if (DynOff::bCasePreservingName)
+        Sein::Info("DYNO", "DetectCasePreservingName: DisplayIndex at NamePrivate+4 on %d object(s), +8 on %d "
+                   "-> FName::Number at +%d (%s)", displayAt4, displayAt8, DynOff::FNAME_NUMBER,
+                   DynOff::FNAME_NUMBER == 8 ? "UE4 / 5.0 order" : "UE 5.1+ order");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3464,12 +3646,12 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // These serve as the fallback if Guid/Vector structs can't be found.
     if (DynOff::bUseFProperty) {
         if (ueVersion >= 501 || ueVersion == 0) {
-            // UE5.1.1+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44
-            // Also apply for unknown version since most modern UE5 games are 5.1+
-            // Note: UE5.0 and UE5.1.0 use FFieldVariant=0x10 (larger): Next=0x20, Name=0x28, Offset=0x4C
-            // We default to the more common 5.1.1+ layout; probing will correct if wrong.
-            if (ueVersion >= 502 || (ueVersion == 0)) {
-                // UE5.2+ almost certainly uses the smaller FFieldVariant
+            // [VND583-09] UE 5.3+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44.
+            // Also applied for an unknown version, since most modern UE5 games are 5.3+.
+            // UE 5.0-5.2 use FFieldVariant=0x10 (union + bool bIsUObject): Next=0x20, Name=0x28,
+            // Offset=0x4C -- Grimoire's defaults, so they are left alone. The shrink is 5.3.0, not
+            // 5.1.1 (DynOff::UsesSmallFFieldVariantDefault has the source citations); probing corrects either.
+            if (DynOff::UsesSmallFFieldVariantDefault(ueVersion)) {
                 DynOff::FFIELD_NEXT        = 0x18;
                 DynOff::FFIELD_NAME        = 0x20;
                 DynOff::FPROPERTY_ELEMSIZE = 0x34;
@@ -3479,15 +3661,16 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                 // block used to set only STRUCT and BOOLSIZE, leaving FARRAYPROP_INNER /
                 // FBYTEPROP_ENUM at 0x78 and FENUMPROP_ENUM at 0x80 — a SPLIT family that
                 // any "keeping defaults" exit path then shipped for the whole session.
-                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET));
-                Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.1.1+ defaults (FFieldVariant=0x08)");
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(DynOff::FPROPERTY_OFFSET,
+                                                                      DynOff::bCasePreservingName));   // [VND583-11]
+                Sein::Info("DYNO", "ValidateAndFixOffsets: Set UE5.3+ defaults (FFieldVariant=0x08)");
                 // UE5.3+ uses tagged FFieldVariant: LSB=1 means UObject, LSB=0 means FField
                 if (ueVersion >= 503) {
                     DynOff::bTaggedFFieldVariant = true;
                     Sein::Info("DYNO", "ValidateAndFixOffsets: UE5.3+ tagged FFieldVariant enabled");
                 }
             }
-            // UE5.1 is ambiguous (5.1.0 = larger, 5.1.1+ = smaller), leave as-is for probing
+            // UE 5.0-5.2 keep the larger layout's defaults; probing measures the real one.
         }
     }
 
@@ -3744,7 +3927,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     DynOff::FPROPERTY_FLAGS    = bestProbe - 0x0C;
                     // (G12) Third writer of the same family — coherent, but hand-rolled,
                     // which is precisely how it and Step 2.5 drifted apart. One expression now.
-                    DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe));
+                    DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(bestProbe, DynOff::bCasePreservingName));   // [VND583-11]
                 } else if (bestProbe >= 0) {
                     Sein::Info("DYNO", "Phase B: Confirmed default FPROPERTY_OFFSET=0x%02X", DynOff::FPROPERTY_OFFSET);
                 } else {
@@ -4013,8 +4196,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         }
 
         // Step 6.5: Infer FFieldVariant size from detected Next offset.
-        // If UE5.1.1+ defaults were set (Next=0x18) but probing found Next=0x20,
-        // the game uses FFieldVariant=0x10 (UE5.0-5.1.0 layout) despite its version number.
+        // If UE5.3+ defaults were set (Next=0x18) but probing found Next=0x20,
+        // the game uses FFieldVariant=0x10 (the UE 5.0-5.2 layout) despite its version number.
         // Common in Square Enix forks (DQ HD-2D series reports UE505 but uses UE5.0 FField layout).
         // Fix: set Name = Next + 8, disable tagged FFieldVariant.
         // FProperty offsets will be re-probed correctly in Step 8 with fixed field names.
@@ -4173,8 +4356,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     if (propElemSizeOff < 0 && propOffsetOff > 0) {
         // Heuristic: ElementSize sits 0x10 bytes before Offset_Internal.
-        // Holds in BOTH known layouts — UE4.25-4.27 / UE5.0-5.1.0 (0x3C vs 0x4C) and
-        // UE5.1.1+ (0x34 vs 0x44). The previous 0x14 landed on ArrayDim in both.
+        // Holds in BOTH known layouts — UE4.25-4.27 / UE5.0-5.2 (0x3C vs 0x4C) and
+        // UE5.3+ (0x34 vs 0x44). The previous 0x14 landed on ArrayDim in both.
+        // [VND583-DOC UEP-D3] Not on UE 4.11-4.17 (UProperty), where the delta is 0x1C: there the
+        // guess fails the read-back below, and the kept default of 0x34 is the right value.
         int guess = propOffsetOff - 0x10;
         if (guess >= probeStart) {
             int32_t val = 0;
@@ -4238,6 +4423,16 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         DynOff::USTRUCT_PROPSSIZE = childPropsOff + 8;
         DynOff::USTRUCT_CHILDREN  = childPropsOff - 8;
         DynOff::USTRUCT_SUPER     = childPropsOff - 0x10;
+        // [VND583-02] UField::Next is only used by function walks here, and it was never
+        // measured in this mode. A failed probe keeps the default WITHOUT flipping validated:
+        // property walks do not use it, so the run's other offsets are still measured.
+        const int ufieldNext = ProbeUFieldNextFProperty();
+        if (ufieldNext > 0) {
+            DynOff::UFIELD_NEXT = ufieldNext;
+        } else {
+            Sein::Warn("DYNO", "ValidateAndFixOffsets: UField::Next could not be measured in FProperty mode -- keeping "
+                       "+0x%02X; function lists may be wrong on a shifted UObject", DynOff::UFIELD_NEXT);
+        }
     } else {
         // UE4 UProperty mode: Children is the chain itself
         DynOff::USTRUCT_SUPER     = childPropsOff - 8;
@@ -4251,7 +4446,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // (G12) One expression for all five — see DynOff::PropertyFamilyFor. This site was
         // already coherent; routing it through the helper is what stops it and Step 2.5's
         // default block from drifting apart again.
-        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff));
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyFor(propOffsetOff, DynOff::bCasePreservingName));   // [VND583-11]
     } else if (propOffsetOff >= 0) {
         // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
         // in this function with zero writers -- it kept its 0x70 default on every UE4
@@ -4271,10 +4466,12 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     }
 
     // Infer tagged FFieldVariant from probed offsets:
-    // FFieldVariant=0x08 (Next at 0x18) implies UE5.1.1+ layout.
-    // UE5.3+ uses the tag-bit encoding. If version is unknown but layout matches,
-    // enable tag-bit masking defensively — the StripFFieldTag is a no-op when bit is 0.
-    if (DynOff::bUseFProperty && DynOff::FFIELD_NEXT == 0x18 && !DynOff::bTaggedFFieldVariant) {
+    // FFieldVariant=0x08 (Next at 0x18) is the UE 5.3+ layout, which uses the tag-bit encoding.
+    // If the version is unknown but the layout matches, enable tag-bit masking -- the
+    // StripFFieldTag is a no-op when the bit is 0. [VND583-09] Only on a MEASURED Next: an
+    // unmeasured 0x18 is the version default chosen above, and it used to count as proof.
+    if (DynOff::InferTaggedFFieldVariant(DynOff::bUseFProperty, DynOff::FFIELD_NEXT, DynOff::bTaggedFFieldVariant,
+                                         (unmeasured & UNMEASURED_FFIELD_NEXT) == 0)) {
         DynOff::bTaggedFFieldVariant = true;
         Sein::Info("DYNO", "ValidateAndFixOffsets: Inferred tagged FFieldVariant from FField::Next=0x18");
     }
@@ -4362,6 +4559,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "  FProperty::Flags    = +0x%02X", DynOff::FPROPERTY_FLAGS);
         Sein::Info("DYNO", "  FProperty::Offset   = +0x%02X", DynOff::FPROPERTY_OFFSET);
         Sein::Info("DYNO", "  FStructProp::Struct = +0x%02X", DynOff::FSTRUCTPROP_STRUCT);
+        Sein::Info("DYNO", "  UField::Next        = +0x%02X (function chains)", DynOff::UFIELD_NEXT);
     } else {
         Sein::Info("DYNO", "  UField::Next        = +0x%02X", DynOff::UFIELD_NEXT);
         Sein::Info("DYNO", "  UProperty::ElemSize = +0x%02X", DynOff::UPROPERTY_ELEMSIZE);
@@ -5448,7 +5646,7 @@ bool DetectUEnumNames() {
             cand.name, static_cast<unsigned long long>(enumAddr));
 
         // Probe offsets 0x30..0x120 (step 8). At each, try BOTH the legacy
-        // TArray<TPair<FName,int64>> layout AND the UE5.6+ FNameData
+        // TArray<TPair<FName,int64>> layout AND the UE5.7+ FNameData
         // struct-of-arrays (Neu disambiguates which one parses) — version-number
         // gating alone is unreliable on forked engines, so we validate by reading
         // the actual member FNames (same as before, format-agnostic now).
@@ -5456,16 +5654,18 @@ bool DetectUEnumNames() {
             return Macht::ReadBytesSafe(a, o, n);
         };
         const int fnameSize = DynOff::SizeofFName();
+        // [VND583-04] The legacy pair's geometry. UE 4.9-4.14 declare TPair<FName, uint8>, 4.15+
+        // TPair<FName, int64>: the version's own width is tried first, then the other, and a
+        // width's stride follows alignof(FName) (measured when Ubel has measured it).
+        const unsigned ver = g_cachedUEVersion;
+        const int measuredAlign = DynOff::FNAME_ALIGN_MEASURED.load(std::memory_order_acquire);
+        const int fnameAlign = measuredAlign > 0 ? measuredAlign
+                                                 : DynOff::FNameAlignFor(ver, DynOff::bCasePreservingName);
+        const int ruleWidth = Neu::PickLegacyValueSize(false, false, ver);
+        const int widths[2] = { ruleWidth, ruleWidth == 1 ? 8 : 1 };
 
-        for (int off = 0x30; off <= 0x120; off += 8) {
-            Neu::EnumNamesLayout layout;
-            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameSize, 16384, layout))
-                continue;
-
-            // Validate count range
-            if (layout.count < cand.minCount || layout.count > cand.maxCount) continue;
-
-            // Read first few members and check FNames resolve to expected substrings.
+        // Read the first few members and count the FNames that resolve to the expected substring.
+        auto verifyNames = [&](const Neu::EnumNamesLayout& layout) -> int {
             int verified = 0;
             const int32_t toCheck = (std::min)(layout.count, 5);
             for (int32_t i = 0; i < toCheck; ++i) {
@@ -5488,18 +5688,49 @@ bool DetectUEnumNames() {
                     ++verified;
                 }
             }
+            return verified;
+        };
+
+        for (int off = 0x30; off <= 0x120; off += 8) {
+            Neu::EnumNamesLayout layout;
+            if (!Neu::DetectLayout(readMem, enumAddr + off, fnameSize, 16384, layout))
+                continue;
+
+            // Validate count range
+            if (layout.count < cand.minCount || layout.count > cand.maxCount) continue;
+
+            const bool legacy = layout.format == Neu::EnumNamesFormat::Legacy;
+            int verified = 0;
+            for (int w = 0; w < (legacy ? 2 : 1) && verified < 2; ++w) {
+                if (legacy) {
+                    layout.valueSize    = widths[w];
+                    layout.legacyStride = static_cast<int>(Neu::LegacyStrideFor(fnameSize, widths[w], fnameAlign));
+                }
+                verified = verifyNames(layout);
+            }
 
             if (verified >= 2) {
+                // [VND583-04] ENetRole's values are 0..n-1, so its value column is MEASURED: garbage
+                // above sequential low bytes proves a uint8 column whatever the version says.
+                if (legacy && std::strcmp(cand.name, "ENetRole") == 0) {
+                    const bool seq8 = Neu::LegacyValuesSequential(readMem, layout, 8);
+                    const bool seq1 = Neu::LegacyValuesSequential(readMem, layout, 1);
+                    layout.valueSize = Neu::PickLegacyValueSize(seq8, seq1, ver);
+                    Sein::Info("DYNO:Enum", "  UEnum::Names value column: int64 reads %s, low bytes %s -> "
+                        "%d-byte values (UE %u)", seq8 ? "0..n-1" : "NOT 0..n-1",
+                        seq1 ? "0..n-1" : "NOT 0..n-1", layout.valueSize, ver);
+                }
                 DynOff::UENUM_NAMES = off;
-                DynOff::bEnumNamesNewContainer =
-                    (layout.format == Neu::EnumNamesFormat::FNameData57);
+                DynOff::bEnumNamesNewContainer = !legacy;
+                DynOff::UENUM_VALUE_SIZE  = legacy ? layout.valueSize : 8;
+                DynOff::UENUM_PAIR_STRIDE = legacy ? layout.legacyStride : 0;
                 DynOff::bUEnumNamesDetected.store(true, std::memory_order_release);
 
                 Sein::Info("DYNO:Enum", "  UEnum::Names detected at UEnum+0x%02X "
-                    "(%s, verified with '%s', count=%d, %d name matches)",
-                    off, DynOff::bEnumNamesNewContainer ? "UE5.6+ FNameData"
+                    "(%s, verified with '%s', count=%d, %d name matches, value %d B, pair stride %d)",
+                    off, DynOff::bEnumNamesNewContainer ? "UE5.7+ FNameData"
                                                         : "legacy TArray",
-                    cand.name, layout.count, verified);
+                    cand.name, layout.count, verified, DynOff::UENUM_VALUE_SIZE, DynOff::UENUM_PAIR_STRIDE);
                 return true;
             }
         }

@@ -97,9 +97,12 @@ public partial class PropertySearchMatch : ObservableObject
     /// <summary>Row is a BoolProperty → "Force ON / OFF" applies.</summary>
     public bool CanForceBool => ShowScalarActions && PropType == "BoolProperty";
 
-    /// <summary>Row is a strong ObjectProperty → "Force → null" applies (weak/soft
-    /// object ptrs are intentionally excluded — nulling their index hits GObjects[0]).</summary>
-    public bool CanForceNull => ShowScalarActions && PropType == "ObjectProperty";
+    /// <summary>Row is a strong ObjectProperty or a WeakObjectProperty → "Force → null" applies.
+    /// A weak pointer is held at UE's own reset value: SerialNumber 0 is its null, so the old
+    /// "nulling the index hits GObjects[0]" exclusion was wrong. Soft / Lazy pointers stay
+    /// excluded, because their asset path / GUID re-resolves the pointer, so a null would not
+    /// hold. The DLL gate is Solide::ObjectNullShapeFor. [VND583-DOC D7-04]</summary>
+    public bool CanForceNull => ShowScalarActions && PropType is "ObjectProperty" or "WeakObjectProperty";
 
     /// <summary>Row is a DLL-supported numeric type → "Force value…" applies.</summary>
     public bool CanForceNumeric => ShowScalarActions && PropType is

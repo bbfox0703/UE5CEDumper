@@ -343,6 +343,11 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // is not (or no longer) a UFunction.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
+// [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
+// (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
+// has not run, or it could not measure) -- the caller then keeps its primary + sweep.
+int FunctionFlagsOffset();
+
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
 
@@ -1204,6 +1209,21 @@ ReadArrayResult ReadPointerArrayElements(
 // Phase E: resolve FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber }
 // Returns the UObject* if valid (serial matches), or 0 if stale/invalid.
 uintptr_t ResolveWeakObjectPtr(int32_t objectIndex, int32_t serialNumber);
+
+// [VND583-08] The label for a weak pointer that did NOT resolve. UE calls a pointer explicitly null
+// when its SerialNumber is 0 (FWeakObjectPtr::Internal_GetObjectItem), whatever the index says, so only
+// a pointer that WAS set (serial != 0, index >= 0) and no longer resolves is "null (stale)" -- a dead
+// reference. It used to test objIdx > 0, which called {N, 0} stale and {0, S} null. Every weak reader
+// that labels uses this one rule.
+inline const char* UnresolvedWeakLabel(int32_t objIdx, int32_t serial) {
+    return (serial != 0 && objIdx >= 0) ? "null (stale)" : "null";
+}
+
+// [VND583-06] " [garbage]" when UE's FWeakObjectPtr::Get() would refuse this RESOLVED target -- Garbage
+// (UE5) / PendingKill (UE4) or Unreachable, per DynOff::IsWeakTargetGarbage -- else "". Such an object
+// stays resolvable until the next GC (~61 s by default); the readers keep resolving it, because the object
+// is really there, and append this tag to the text they DISPLAY. Never to ptrName, which navigation uses.
+const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);
 
 // Phase E: check if inner type is a weak-pointer type
 bool IsWeakPointerArrayType(const std::string& innerTypeName);

@@ -4,7 +4,7 @@
 // Solide — ゾリーデ (剣士 — blindfold swordsman, "solid")
 // EnemyDetection / ForceField: hold an arbitrary reflected field at a value
 // across ALL live instances of a class via a write-on-drift re-assert worker —
-// bool ON/OFF, ObjectProperty→null, or numeric→absolute. Plus a player
+// bool ON/OFF, Object/WeakObjectProperty→null, or numeric→absolute. Plus a player
 // stealth/noise/visibility-meter auto-finder (keyword-scored numeric field on
 // the local pawn + its owned components). The shipped, honest subset of the
 // "enemies can't detect you" evaluation: no universal detection bool exists, so
@@ -37,7 +37,7 @@ enum ForceResult : int32_t {
     FR_ERR_REFLECT   = -4,   // field not reflected on the class / wrong type
     FR_ERR_WRITE     = -10,  // raw write failed on every instance
     FR_ERR_BAD_KIND  = -11,  // unknown ForceKind
-    FR_ERR_WEAK_PTR  = -12,  // object-null asked on a weak/soft/lazy ptr (refused — GObjects[0] trap)
+    FR_ERR_WEAK_PTR  = -12,  // object-null asked on a soft/lazy ptr (refused -- its path re-resolves; see ObjectNullShapeFor)
     FR_ERR_BAD_ARGS  = -13,  // null/empty className or fieldName
 };
 
@@ -45,7 +45,7 @@ enum ForceResult : int32_t {
 // "kind" string mapping.
 enum ForceKind : int32_t {
     K_BOOL        = 0,   // FBoolProperty bit → value!=0 (ON) / ==0 (OFF)
-    K_OBJECT_NULL = 1,   // strong ObjectProperty → nullptr (value ignored)
+    K_OBJECT_NULL = 1,   // strong ObjectProperty → nullptr; WeakObjectProperty → UE's own reset value (value ignored)
     K_NUMERIC     = 2,   // Float/Double/Int* → held ABSOLUTE `value`
 };
 
@@ -138,6 +138,30 @@ inline void IntRangeOf(const IntWidth& w, double& lo, double& hi) {
         case 8: lo = -9007199254740992.0;        hi =  9007199254740992.0;        break;
         default: lo = 0.0; hi = 0.0; break;
     }
+}
+
+// [VND583-DOC D7-04] Which pointer fields Force-null can hold. A strong UObject* is written 0. A
+// FWeakObjectPtr { int32 ObjectIndex, int32 SerialNumber } is written UE's OWN reset value: SerialNumber 0
+// is its null (FWeakObjectPtr::Internal_GetObjectItem), so {0, 0} is null, NOT "a valid GObjects[0]"
+// as this gate used to claim. Soft / Lazy stay refused: their asset path / GUID lies past the weak
+// half and re-resolves the pointer, so a held null would not hold.
+// `elementSize` is the property's reflected ElementSize. A weak pointer is held ONLY at the stock 8 bytes:
+// UE_WITH_REMOTE_OBJECT_HANDLE (5.6+, off by default) adds an FRemoteObjectId (16 bytes in all), and there
+// SerialNumber 0 no longer means null -- a remote pointer is {0, 0, RemoteId}, and Get() re-resolves
+// through the RemoteId -- so an 8-byte write neither tests nor makes a null. Refused, as Soft is.
+enum class ObjectNullShape { Refused, Strong, Weak };
+inline ObjectNullShape ObjectNullShapeFor(const std::string& typeName, int32_t elementSize) {
+    if (typeName == "ObjectProperty")     return ObjectNullShape::Strong;
+    if (typeName == "WeakObjectProperty") return elementSize == 8 ? ObjectNullShape::Weak : ObjectNullShape::Refused;
+    return ObjectNullShape::Refused;
+}
+
+// The ObjectIndex UE's FWeakObjectPtr::Reset() writes: INDEX_NONE on UE4 and 5.0, 0 from 5.1
+// (UE_WEAKOBJECTPTR_ZEROINIT_FIX, on by default since 2022-03-30 -- WeakObjectPtr.h @5.1.0-release).
+// Either is null to Get(), because the serial is 0; this keeps IsExplicitlyNull() true as well. An
+// unknown version (0) takes the modern 0.
+inline int32_t WeakNullObjectIndexFor(unsigned ueVersion) {
+    return (ueVersion == 0 || ueVersion >= 501) ? 0 : -1;
 }
 
 // Keyword scorer for a stealth/noise/visibility/detection meter field name.

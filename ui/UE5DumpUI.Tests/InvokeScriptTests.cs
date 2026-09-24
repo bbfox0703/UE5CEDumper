@@ -2192,6 +2192,49 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void SeeThrough_ProbeAsksTheClassByPath_AndNoInternalLookupMatchesASubstring()
+    {
+        // [SEETHRU-PROBE-SUBSTRING] The probe asked Ubel::GetClass(UE5_FindInstanceOfClass("Actor")): a class-name SUBSTRING
+        // match falling back to the first matching CDO, which on DumperTest Shipping 5.4 was Default__ActorChannel -- so
+        // See-through refused (-3) a build that has SetActorHiddenInGame. Aura::FindClassByPath / FindLiveOrDefaultOf are
+        // pinned by dll_core_test's PROBECLASS block; this pins that the callers no test target compiles USE them.
+        // Comments are stripped: the fix's own comments name the old call.
+        static string CodeOnly(string s) => string.Join('\n', s.Split('\n').Select(l =>
+        {
+            int c = l.IndexOf("//", StringComparison.Ordinal);
+            return c >= 0 ? l[..c] : l;
+        }));
+        static int Count(string s, string what)
+        {
+            int n = 0;
+            for (int i = s.IndexOf(what, StringComparison.Ordinal); i >= 0; i = s.IndexOf(what, i + 1, StringComparison.Ordinal))
+                n++;
+            return n;
+        }
+
+        var schlacht = CodeOnly(DllSource("Schlacht.cpp"));
+        int fn = schlacht.IndexOf("bool ProbeProducers(const char** missing)", StringComparison.Ordinal);
+        Assert.True(fn >= 0, "the producer probe must exist");
+        var body = schlacht[fn..schlacht.IndexOf("\n}", fn, StringComparison.Ordinal)];
+        Assert.Contains("Aura::FindClassByPath(Grimoire::SCHLACHT_KSL_CLASS_PATH)", body, StringComparison.Ordinal);
+        Assert.Contains("Aura::FindClassByPath(Grimoire::SCHLACHT_ACTOR_CLASS_PATH)", body, StringComparison.Ordinal);
+        Assert.DoesNotContain("Ubel::GetClass(", body, StringComparison.Ordinal);   // a class, never guessed from an instance
+
+        var grimoire = DllSource("Grimoire.h");
+        Assert.Contains("SCHLACHT_ACTOR_CLASS_PATH = \"/Script/Engine.Actor\"", grimoire, StringComparison.Ordinal);
+        Assert.Contains("SCHLACHT_KSL_CLASS_PATH   = \"/Script/Engine.KismetSystemLibrary\"", grimoire, StringComparison.Ordinal);
+
+        // No internal caller left on the substring lookup. Frieren keeps exactly ONE occurrence: the definition, which
+        // stays substring because the C ABI, the pipe's invoke_function and the mailbox's FIND_INSTANCE twin are user-facing.
+        Assert.Equal(0, Count(schlacht, "UE5_FindInstanceOfClass("));
+        Assert.Equal(0, Count(CodeOnly(DllSource("Wirbel.cpp")), "UE5_FindInstanceOfClass("));
+        var frieren = CodeOnly(DllSource("Frieren.cpp"));
+        Assert.Equal(1, Count(frieren, "UE5_FindInstanceOfClass("));
+        Assert.Contains("uintptr_t cm = Aura::FindLiveOrDefaultOf(\"CheatManager\");", frieren, StringComparison.Ordinal);
+        Assert.Contains("dcc = Aura::FindLiveOrDefaultOf(\"DebugCameraController\");", frieren, StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void SeeThrough_PublishesARestoreThatGaveUp()
     {
         var src = DllSource("Schlacht.cpp");
@@ -2296,7 +2339,8 @@ public class InvokeScriptTests
         // [P1-GENAU-ABORT] UE5_Init's post-FindAll GObjects recovery runs two more cancellable sweeps. Their aborts must
         // reach ptrs.bScanCancelled, which the latch guard reads -- or a cancelled recovery latches a partial init.
         var frieren = DllSource("Frieren.cpp");
-        Assert.Contains("Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled)", frieren, StringComparison.Ordinal);
+        // [VND583-10] the call grew two out-params (item object offset, UE 5.8 array); the cancel is still the 2nd.
+        Assert.Contains("Genau::FindGObjectsStaticStruct(&staticStride, &staticCancelled,", frieren, StringComparison.Ordinal);
         Assert.Contains("if (staticCancelled) ptrs.bScanCancelled = true;", frieren, StringComparison.Ordinal);
         Assert.Contains("Genau::CollectGObjectsCandidates(candidates, ptrs.GObjects, 16, &heapCancelled)", frieren,
             StringComparison.Ordinal);

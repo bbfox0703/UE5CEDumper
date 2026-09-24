@@ -62,6 +62,7 @@ import time
 
 ROOT = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest")
 ROOT58 = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest58")
+ROOT51 = pathlib.Path(r"D:\UE_Analyze_data\for testing\DumperTest51")
 FLAVOURS = {
     "dev": ROOT / "Development/Windows/DumperTest/Binaries/Win64/DumperTest.exe",
     "shipping": ROOT / "Shipping/Windows/DumperTest/Binaries/Win64/DumperTest-Win64-Shipping.exe",
@@ -83,9 +84,16 @@ FLAVOURS = {
     # missing field as a defect.
     "dev58": ROOT58 / "Development/Windows/DumperTest58/Binaries/Win64/DumperTest58.exe",
     "shipping58": ROOT58 / "Shipping/Windows/DumperTest58/Binaries/Win64/DumperTest58-Win64-Shipping.exe",
+    # The UE 5.1 fixture (2026-09-24): the maintainer's stock 5.1.1 Third Person template, the first
+    # 5.0-5.2 sample on this machine (docs/reference-builds.md starts at 5.3). It is handled exactly like
+    # the 5.8 one -- no DumperTest switches -- until a fixture actor is added to its source. The UE 5.1
+    # editor may be uninstalled later (SSD space), so a rebuild is not guaranteed; the packages are.
+    "dev51": ROOT51 / "Development/Windows/DumperTest51/Binaries/Win64/DumperTest51.exe",
+    "shipping51": ROOT51 / "Shipping/Windows/DumperTest51/Binaries/Win64/DumperTest51-Win64-Shipping.exe",
+    "debug51": ROOT51 / "DebugGame/Windows/DumperTest51/Binaries/Win64/DumperTest51-Win64-DebugGame.exe",
 }
 # The 5.8 fixture takes NO sample-specific switch, because none of them exist in it.
-IS_58 = {"dev58", "shipping58"}
+IS_58 = {"dev58", "shipping58", "dev51", "shipping51", "debug51"}   # every STOCK-template fixture (5.8 and 5.1)
 # THREE flavours, and the exe NAME is not derivable from the folder: Development's binary is
 # plain `DumperTest.exe` with no suffix, the other two carry `-Win64-<Flavour>`. A glob written
 # as `DumperTest-Win64*.exe` silently finds two of three and reports the third as absent --
@@ -113,6 +121,7 @@ DETACHED = 0x00000008 | 0x00000200  # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROU
 FIXTURE_IMAGES = (
     "DumperTest.exe", "DumperTest-Win64-Shipping.exe", "DumperTest-Win64-DebugGame.exe",
     "DumperTest58.exe", "DumperTest58-Win64-Shipping.exe", "DumperTest58-Win64-DebugGame.exe",
+    "DumperTest51.exe", "DumperTest51-Win64-Shipping.exe", "DumperTest51-Win64-DebugGame.exe",
 )
 
 
@@ -145,6 +154,9 @@ def main(argv=None):
                     help="add -DumperTestIdle (B8's deferred half; breaks the D2 heartbeat row)")
     ap.add_argument("--wait", type=int, default=25, help="seconds to let the sample come up")
     ap.add_argument("--no-wait", action="store_true")
+    ap.add_argument("--extra", action="append", default=[], metavar="SWITCH",
+                    help="one more switch for the sample, e.g. --extra=-DumperTestWeakGarbage (the = is required: a value starting with - reads as an option); repeatable; "
+                         "DumperTest flavours only")
     ap.add_argument("--allow-second", action="store_true",
                     help="launch even though another fixture is running "
                          "(breaks the one-game-at-a-time rule -- see the refusal)")
@@ -183,9 +195,13 @@ def main(argv=None):
     else:
         house = HOUSE_ARGS
 
-    args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else [])
+    if a.extra and a.flavour in IS_58:
+        print("launch_dumpertest.py: FAILED -- --extra passes DumperTest-only switches; the stock "
+              "5.8 / 5.1 templates handle none of them", file=sys.stderr)
+        return 1
+    args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else []) + a.extra
     print("launching:", " ".join(args))
-    if a.flavour == "shipping58":
+    if a.flavour in ("shipping58", "shipping51"):
         print("  note: Shipping discards -ExecCmds, and the 5.8 template has no self-cap "
                "of its own (that is DumperTest's ApplyMaxFPS, which does not exist here). "
                "This one runs UNCAPPED -- measure the rate for any timing-sensitive row.")

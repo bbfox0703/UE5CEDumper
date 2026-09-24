@@ -1,0 +1,6 @@
+{
+ "name": "l47-unreadable-prefix",
+ "why": "L47 red arm: 4c094108 reversed under dll/src -- WalkInstance on an unreadable header returns an empty walk with no \"unreadable\" key, so the pre-fix UI can only show a blank grid.",
+ "reverse_commit": "4c094108",
+ "paths": ["dll/src"]
+}

@@ -98,6 +98,61 @@ public class MainWindowInjectHelperTests
     }
 
     // ------------------------------------------------------------------
+    // [W1-PIPEBUSY-STATUS] a BUSY pipe must not tell the user to open Cheat Engine
+    // ------------------------------------------------------------------
+    //
+    // 62f1596b made the bridge LOG a busy pipe as busy; the toolbar ⟳ still showed
+    // "open Cheat Engine with the AOBMaker plugin loaded" for it (live, L64,
+    // 2026-09-22). These go through the REAL bridge on its internal seam -- a pipe
+    // name nobody serves, a 150 ms connect, and the existence probe answering for
+    // "busy" -- so the whole chain from the timeout to the status line is exercised.
+
+    private static AobMakerBridgeService SeamBridge(bool pipeExists)
+        => new(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150, _ => pipeExists);
+
+    [Fact]
+    public async Task RefreshAobMaker_BusyPipe_SaysAnotherClientHoldsIt_NotOpenCheatEngine()
+    {
+        using var bridge = SeamBridge(pipeExists: true);
+        var vm = BuildVm(aobMaker: bridge);
+
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.Contains("busy", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("another program", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("open Cheat Engine", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshAobMaker_AbsentPipe_StillSaysOpenCheatEngine()
+    {
+        // The control, green both ways: nothing listening keeps the old remedy.
+        using var bridge = SeamBridge(pipeExists: false);
+        var vm = BuildVm(aobMaker: bridge);
+
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.False(vm.IsAobMakerAvailable);
+        Assert.Contains("open Cheat Engine", vm.StatusText, StringComparison.Ordinal);
+        Assert.DoesNotContain("busy", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task InjectCeHelperLua_BusyPipe_SaysAnotherClientHoldsIt_NotOpenCheatEngine()
+    {
+        // The same probe feeds the Tools-menu inject; it must not disagree with ⟳.
+        using var bridge = SeamBridge(pipeExists: true);
+        var vm = BuildVm(aobMaker: bridge);
+
+        await vm.InjectCeHelperLuaCommand.ExecuteAsync(null);
+
+        Assert.StartsWith("Inject helper:", vm.StatusText, StringComparison.Ordinal);
+        Assert.Contains("busy", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("open Cheat Engine", vm.StatusText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    // ------------------------------------------------------------------
     // Wiring helpers
     // ------------------------------------------------------------------
 

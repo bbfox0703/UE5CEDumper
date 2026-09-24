@@ -1,0 +1,12 @@
+{
+ "name": "l41-step1-enum-names-unlocated",
+ "why": "L41 step 1: rename DetectUEnumNames' three candidate enums to names no build has, so it logs FAILED and the USMAP export must warn",
+ "subs": [
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "        { \"ENetRole\",       4, 10, \"ROLE_\" },\n        { \"EObjectFlags\",   5, 50, \"RF_\" },\n        { \"EPropertyFlags\", 5, 80, \"CPF_\" },\n",
+   "new": "        { \"ENetRole_L41Staged\",       4, 10, \"ROLE_\" },   // STAGING (stage_dll.py l41-step1)\n        { \"EObjectFlags_L41Staged\",   5, 50, \"RF_\" },\n        { \"EPropertyFlags_L41Staged\", 5, 80, \"CPF_\" },\n",
+   "count": 1
+  }
+ ]
+}

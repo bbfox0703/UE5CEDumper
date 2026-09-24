@@ -140,7 +140,8 @@ public partial class PropertySearchPanel : UserControl
         => await ConfirmDialog.ShowAsync(
             "Force object pointer to null?",
             $"This nulls {match.ClassName}::{match.PropName} on every live instance and holds " +
-            "it null. If the game later dereferences that pointer it may crash. Continue?",
+            "it null. If the game later dereferences that pointer it may crash, and releasing the " +
+            "hold does not put the old pointer back. Continue?",
             confirmText: "Force null", cancelText: "Cancel");
 
     private async System.Threading.Tasks.Task<string?> PromptFreezeValueAsync(PropertySearchMatch match)

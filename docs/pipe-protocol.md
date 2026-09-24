@@ -583,8 +583,9 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
 
 ```jsonc
 // Force a field on every live instance of a class (and its subclasses) and hold it.
-// kind = "bool" (uses `on`) | "object_null" (value ignored — strong ObjectProperty
-//        only; weak/soft/lazy refused) | "numeric" (uses `value`, absolute).
+// kind = "bool" (uses `on`) | "object_null" (value ignored — a strong ObjectProperty is
+//        held at nullptr, an 8-byte WeakObjectProperty at UE's own reset value {0|-1, 0};
+//        soft/lazy and 16-byte remote-handle weak refused, code -12) | "numeric" (uses `value`, absolute).
 { "cmd": "force_field", "class_name": "BP_Enemy_C", "field_name": "bInvincible",
   "kind": "bool", "on": true }
 // → { "held": 3, "resolved": true, "code": 0 }   // held = live "N held" count (0 = matched nothing)

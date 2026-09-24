@@ -140,6 +140,48 @@ def load_cache():
     return by_name
 
 
+def merge_oracle(existing, harvested):
+    """[VND583-16] Merge freshly harvested entries INTO the stored oracle, keyed by sha256.
+
+    Returns (merged, added, updated, kept). An entry whose Editor is no longer installed is KEPT:
+    that is the whole value of the oracle -- its hashes are unobtainable once the Editor is gone.
+    Overwriting (the old behaviour) silently dropped every such row; re-harvesting after the 5.8.2
+    Editor was upgraded in place to 5.8.3 would have deleted the 5.8.2 CRC hash.
+    """
+    merged = dict(existing)
+    added, updated = [], []
+    for h, e in harvested.items():
+        if h not in merged:
+            added.append(h)
+        elif merged[h] != e:
+            updated.append(h)
+        merged[h] = e
+    kept = sorted(h for h in existing if h not in harvested)
+    return merged, sorted(added), sorted(updated), kept
+
+
+def selftest():
+    """[VND583-16] The merge, on synthetic entries -- no Editor, no file outside the repo."""
+    e = lambda h, ed, pv: {"editor": ed, "productVersion": pv, "sha256": h}
+    existing = {"a": e("a", "UE_5.8", "5.8.2.0"), "b": e("b", "UE_4.27", "4.27.2.0")}
+    harvested = {"c": e("c", "UE_5.8", "5.8.3.0"), "b": e("b", "UE_4.27", "4.27.2.0")}
+    merged, added, updated, kept = merge_oracle(existing, harvested)
+    checks = [
+        ("the uninstalled 5.8.2 row is KEPT", "a" in merged and kept == ["a"]),
+        ("the new 5.8.3 row is added", "c" in merged and added == ["c"]),
+        ("an unchanged row is neither added nor updated", "b" in merged and updated == []),
+        ("three rows in all", len(merged) == 3),
+    ]
+    renamed = {"b": e("b", "UE_4.27_moved", "4.27.2.0")}
+    m2, a2, u2, k2 = merge_oracle(existing, renamed)
+    checks.append(("a changed row under the same hash is UPDATED, not duplicated", u2 == ["b"] and len(m2) == 2))
+    failed = [name for name, ok in checks if not ok]
+    for name, ok in checks:
+        print("  %s  %s" % ("ok  " if ok else "FAIL", name))
+    print("crc_authority_survey selftest: %s" % ("FAILED" if failed else "OK"))
+    return 1 if failed else 0
+
+
 def do_oracle():
     eds = find_editors()
     print("=== ORACLE: CrashReportClient.exe shipped by each installed UE Editor ===")
@@ -153,6 +195,15 @@ def do_oracle():
         print("%-9s %-13s %-11s %10d  %s" % (name, prod or "-", code or "-", sz, h[:16]))
         entries[h] = {"editor": name, "productVersion": prod, "fileVersion": filev,
                       "code": code, "size": sz, "sha256": h}
+    # [VND583-16] MERGE into the stored oracle -- never overwrite it (see merge_oracle).
+    existing = {}
+    if ORACLE_PATH.exists():
+        existing = json.loads(ORACLE_PATH.read_text(encoding="utf-8")).get("entries", {})
+    entries, added, updated, kept = merge_oracle(existing, entries)
+    for h in kept:
+        print("kept      %-9s %-13s (its Editor is not installed now)" % (entries[h].get("editor"),
+                                                                        entries[h].get("productVersion")))
+    print("merged: %d added, %d updated, %d kept from before" % (len(added), len(updated), len(kept)))
     payload = {
         "_comment": ("Known-official CrashReportClient.exe binaries, harvested from installed UE "
                      "Editors. A game's CRC whose sha256 appears here is CORROBORATED; one that "
@@ -209,7 +260,10 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--oracle", action="store_true")
     ap.add_argument("--survey", action="store_true")
+    ap.add_argument("--selftest", action="store_true", help="check the oracle merge on synthetic data, then exit")
     a = ap.parse_args()
+    if a.selftest:
+        return selftest()
     if not (a.oracle or a.survey):
         a.oracle = a.survey = True
     oracle = {}

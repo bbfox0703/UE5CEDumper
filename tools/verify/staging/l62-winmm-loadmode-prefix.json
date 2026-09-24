@@ -1,0 +1,11 @@
+{
+ "name": "l62-winmm-loadmode-prefix",
+ "why": "L62 red: 723cb8f1 reversed under dll/src, built as the winmm.dll PROXY -- the load-mode classifier no longer names winmm, so an OS-loaded winmm proxy reports loaded:winmm.dll and never earns the per-game confirmed-proxy record.",
+ "reverse_commit": "723cb8f1",
+ "paths": [
+  "dll/src"
+ ],
+ "proxies": [
+  "winmm"
+ ]
+}

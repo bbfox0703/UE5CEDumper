@@ -1,0 +1,24 @@
+{
+ "name": "l40-hoist-mutant",
+ "why": "L40 red: the S11 FORCE_* staging plus DataScanGObjectsCandidates' abort store hoisted above its poll (set on every call) -- the defect 89dc858c's controls guard. An uninterrupted scan must then refuse the init latch, so the live control is shown to discriminate.",
+ "subs": [
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    LogScanReport(report);\n\n    if (result) {\n        s_gobjectsMethod = ScanMethodFor(report);\n    } else {\n        // Fallback: exhaustive data-section pointer scan",
+   "new": "    LogScanReport(report);\n\n    result = 0;   // STAGING: force the recovery path (genau_rip_recovery_ab.py)\n    if (result) {\n        s_gobjectsMethod = ScanMethodFor(report);\n    } else {\n        // Fallback: exhaustive data-section pointer scan",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    if (result) {\n        s_gnamesMethod = ScanMethodFor(report);\n    } else {\n        // Tier 2: string-reference fallback",
+   "new": "    result = 0;   // STAGING: force the recovery path (genau_rip_recovery_ab.py)\n    if (result) {\n        s_gnamesMethod = ScanMethodFor(report);\n    } else {\n        // Tier 2: string-reference fallback",
+   "count": 1
+  },
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    Sein::Info(\"SCAN:GObj\", \"DataScanGObjectsCandidates: Collecting static pointer references...\");\n",
+   "new": "    Sein::Info(\"SCAN:GObj\", \"DataScanGObjectsCandidates: Collecting static pointer references...\");\n    if (outCancelled) *outCancelled = true;   // L40 RED MUTANT: the bail store hoisted above its poll\n",
+   "count": 1
+  }
+ ]
+}

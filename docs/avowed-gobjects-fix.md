@@ -64,7 +64,11 @@ FindAll: Complete — GObjects=0x2077FF02800 (data_scan) ...   → Count=7,667,8
 3. The decoy's true element count (the offset `Aura::Init` later reads) is **0** → `Aura` initializes with `Count=0` → the dumper sees an empty object array → every downstream feature is dead.
 4. Because AOB "succeeded", `FindGObjects` never falls through to the `data_scan` fallback that *does* find the real heap array. Whether the decoy validates is **heap-state / ASLR dependent**, hence the intermittency.
 
-This matches RE-UE4SS's note for the sibling Obsidian/UE5 title **The Outer Worlds 2**: *"Changes were made to UObject"* — Obsidian ships a non-standard object/array layout.
+RE-UE4SS notes, for the sibling Obsidian/UE5 title **The Outer Worlds 2**, *"Changes were made to UObject"*.
+⚠ That is **not** a layout note `[VND583-DOC CGC-6]`. The TOW2 config ships no `MemberVariableLayout.ini`
+at all, and the change is in its `VTableLayout.ini`: `[UObject]` gains an extra virtual (`Unk_0`)
+between `PreSave_1` and `ResolveSubobject`, which is a vtable override. It says nothing about
+Obsidian's object or array layout, so it does not corroborate the failure above.
 
 ---
 

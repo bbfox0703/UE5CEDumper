@@ -1,0 +1,9 @@
+{
+ "name": "l50-lazy-latch-prefix",
+ "why": "L50 red arm: 8a22f413 reversed under dll/src (InferScalarSize's <=5.2 lazy guess overrides the raw ElementSize)",
+ "reverse_commit": "8a22f413",
+ "paths": [
+  "dll/src"
+ ],
+ "subs": []
+}

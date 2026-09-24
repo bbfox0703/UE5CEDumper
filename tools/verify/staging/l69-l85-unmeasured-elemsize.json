@@ -1,0 +1,12 @@
+{
+ "name": "l69-l85-unmeasured-elemsize",
+ "why": "L69 step 2 / L85 arm 3: force the elemsize give-up bit so the verdict reads validated=NO reason=unmeasured:elemsize (the offsets themselves are still measured)",
+ "subs": [
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    const bool allMeasured = (unmeasured == 0);\n",
+   "new": "    unmeasured |= 0x08;   // STAGING (stage_dll.py l69-l85-unmeasured-elemsize): force the elemsize give-up\n    const bool allMeasured = (unmeasured == 0);\n",
+   "count": 1
+  }
+ ]
+}

@@ -1,0 +1,6 @@
+{
+ "name": "l48-sparse-refs-prefix",
+ "why": "L48 arm A red: b123cf2a reversed under dll/src -- the sparse pass skips an unreadable invocation list silently, with no sparse_unlocated count on the wire.",
+ "reverse_commit": "b123cf2a",
+ "paths": ["dll/src"]
+}

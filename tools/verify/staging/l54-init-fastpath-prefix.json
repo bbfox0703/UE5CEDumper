@@ -1,0 +1,9 @@
+{
+ "name": "l54-init-fastpath-prefix",
+ "why": "L54 red arm: 420b1e53 reversed under dll/src (the mailbox's cached-globals fast path during UE5_Init)",
+ "reverse_commit": "420b1e53",
+ "paths": [
+  "dll/src"
+ ],
+ "subs": []
+}

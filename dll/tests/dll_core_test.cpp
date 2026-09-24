@@ -1068,11 +1068,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK and OPTLAYOUT below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK and OPTLAYOUT are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -3349,6 +3349,1081 @@ int main() {
         DynOff::bOffsetsValidated.store(false);
         DynOff::bOffsetsProbeRan.store(false);
         DynOff::g_offsetsFallbackReason = "";
+    }
+
+    // -- SEETHRU-PROBE-SUBSTRING-2026-09-23 -- the probe asks a CLASS found by path; internal lookups gate on derivation --
+    //
+    // ⛔ POOL-FAKING, like OFFSETS: own object pool AND own name pool, last. [SEETHRU-PROBE-SUBSTRING] See-through's
+    // producer probe resolved "Actor" through UE5_FindInstanceOfClass -- a class-name SUBSTRING match that falls back to
+    // the FIRST matching CDO -- and on DumperTest Shipping 5.4 that was Default__ActorChannel, a UChannel with no
+    // SetActorHiddenInGame, so See-through ON refused (-3) on a build that has it. Phase A is that pool: the first object
+    // whose class name contains "actor" is ActorChannel's CDO, and nothing live matches. The CheatManager rows are the same
+    // trap in the stock engine: UCheatManagerExtension (Engine) and GAS's UAbilitySystemCheatManagerExtension.
+    {
+        blk("PROBECLASS - the See-through probe finds AActor's function when \"actor\" first matches another CDO");
+        ResetCancel();
+
+        enum : int32_t { nClass = 1, nEngine, nPackage, nObject, nChannel, nActorChannel, nActor, nCdoActorChannel,
+                         nCdoActor, nFunction, nSetHidden, nBPDoor, nBPDoor0, nActorChannel0, nCheatMgr, nCheatExt,
+                         nCdoCheatExt, nCdoCheatMgr, nAbilityExt, nAbilityExt0, nCheatMgr0, nCdoBPDoor, nNames };
+        const char* pcNames[nNames] = { "", "Class", "/Script/Engine", "Package", "Object", "Channel", "ActorChannel",
+                                        "Actor", "Default__ActorChannel", "Default__Actor", "Function",
+                                        "SetActorHiddenInGame", "BP_Door_C", "BP_Door_C_0", "ActorChannel_0",
+                                        "CheatManager", "CheatManagerExtension", "Default__CheatManagerExtension",
+                                        "Default__CheatManager", "AbilitySystemCheatManagerExtension",
+                                        "AbilitySystemCheatManagerExtension_0", "CheatManager_0",
+                                        "Default__BP_Door_C" };
+        static uint8_t pcEntry[nNames][0x40] = {};
+        static uintptr_t pcChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(pcEntry[i] + 0x10, pcNames[i], strlen(pcNames[i]) + 1);
+            pcChunk[i] = reinterpret_cast<uintptr_t>(pcEntry[i]);
+        }
+        static uintptr_t pcChunks[2] = { reinterpret_cast<uintptr_t>(pcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(pcChunks), 0x10);
+        check("PROBECLASS setup: the name pool resolves the longest name",
+              Serie::GetString(nAbilityExt0) == "AbilitySystemCheatManagerExtension_0",
+              Serie::GetString(nAbilityExt0).c_str());
+
+        const bool     svCpnP   = DynOff::bCasePreservingName;
+        const bool     svFPropP = DynOff::bUseFProperty;
+        const uint32_t svVerP   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 504;
+
+        // One zeroed 0x200-byte blob per UObject -- clear of every UStruct / UFunction offset the walks read.
+        enum { bMeta, bPkgCls, bPkg, bObject, bChannel, bActorChannel, bActor, bFunctionCls, bSetHidden, bCdoActorChannel,
+               bCdoActor, bBPDoor, bDoor0, bChan0, bCheatMgr, bCheatExt, bCdoCheatExt, bCdoCheatMgr, bAbilityExt,
+               bAbility0, bCheat0, bCdoBPDoor, kBlobs };
+        alignas(16) static uint8_t pcB[kBlobs][0x200] = {};
+        auto A     = [&](int b) { return b < 0 ? uintptr_t{0} : reinterpret_cast<uintptr_t>(pcB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto obj = [&](int b, int cls, int32_t name, int outer) {
+            memset(pcB[b], 0, sizeof(pcB[b]));
+            putP(pcB[b], Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(pcB[b], Grimoire::OFF_UOBJECT_NAME, name);
+            putP(pcB[b], DynOff::UOBJECT_OUTER, A(outer));
+        };
+        // A native UClass: its class IS the meta-class "Class", its outer the /Script/Engine package.
+        auto klass = [&](int b, int32_t name, int super) {
+            obj(b, bMeta, name, bPkg);
+            putP(pcB[b], DynOff::USTRUCT_SUPER, A(super));
+        };
+        obj(bMeta, bMeta, nClass, -1);
+        obj(bPkgCls, bMeta, nPackage, -1);
+        obj(bPkg, bPkgCls, nEngine, -1);
+        klass(bObject, nObject, -1);
+        klass(bChannel, nChannel, bObject);
+        klass(bActorChannel, nActorChannel, bChannel);
+        klass(bActor, nActor, bObject);
+        obj(bFunctionCls, bMeta, nFunction, -1);
+        obj(bSetHidden, bFunctionCls, nSetHidden, bActor);
+        putP(pcB[bActor], DynOff::USTRUCT_CHILDREN, A(bSetHidden));   // AActor declares SetActorHiddenInGame
+        obj(bCdoActorChannel, bActorChannel, nCdoActorChannel, bPkg);
+        obj(bCdoActor, bActor, nCdoActor, bPkg);
+        klass(bBPDoor, nBPDoor, bActor);                               // no "actor" in its name, yet an AActor
+        obj(bDoor0, bBPDoor, nBPDoor0, -1);
+        obj(bCdoBPDoor, bBPDoor, nCdoBPDoor, bPkg);                    // a SUBCLASS's CDO: derives from Actor
+        obj(bChan0, bActorChannel, nActorChannel0, -1);
+        klass(bCheatMgr, nCheatMgr, bObject);
+        klass(bCheatExt, nCheatExt, bObject);                          // UCheatManagerExtension : UObject
+        obj(bCdoCheatExt, bCheatExt, nCdoCheatExt, bPkg);
+        obj(bCdoCheatMgr, bCheatMgr, nCdoCheatMgr, bPkg);
+        klass(bAbilityExt, nAbilityExt, bCheatExt);
+        obj(bAbility0, bAbilityExt, nAbilityExt0, -1);
+        obj(bCheat0, bCheatMgr, nCheatMgr0, -1);
+
+        FakePool pcPool;
+        pcPool.Build(11);
+        auto slot = [&](int i, int b) {
+            const uintptr_t o = A(b);
+            memcpy(pcPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        // Phase A -- GObjects order as measured: ActorChannel's CDO first, and no live instance of anything. A
+        // subclass's CDO sits before Actor's own, so a fallback that took ANY derived CDO would be caught too.
+        slot(0, bCdoActorChannel);
+        slot(1, bActorChannel);
+        slot(2, bActor);
+        slot(3, bCdoBPDoor);
+        slot(4, bCdoActor);
+        slot(5, bCdoCheatExt);
+        slot(6, bCdoCheatMgr);
+        Aura::InitWithExtendedLayout(pcPool.Addr(), FakePool::kItemSize);
+
+        auto nm = [](uintptr_t o) { return o ? Ubel::GetName(o) : std::string("(0)"); };
+        auto probeHas = [](uintptr_t cls, const char* fn) {   // Schlacht's FindFuncByName: the class, then its supers
+            FunctionInfo fi;
+            return Ubel::ResolveFunctionInChain(cls, fn,
+                [](uintptr_t c) { return Ubel::WalkFunctions(c); },
+                [](uintptr_t c, uintptr_t& s) {
+                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), s);
+                }, fi);
+        };
+
+        const auto subA = Aura::FindInstancesByClass("Actor", false, 100);
+        check("PROBECLASS control: the fixture is the measured shape -- \"actor\" first matches Default__ActorChannel",
+              !subA.results.empty() && subA.results[0].addr == A(bCdoActorChannel),
+              subA.results.empty() ? "(none)" : subA.results[0].name.c_str());
+
+        const uintptr_t actorCls = Aura::FindClassByPath("/Script/Engine.Actor");
+        check("PROBECLASS ⭐: /Script/Engine.Actor resolves to the AActor UClass itself", actorCls == A(bActor),
+              nm(actorCls).c_str());
+        check("PROBECLASS ⭐: ...so the probe finds SetActorHiddenInGame and does not refuse",
+              probeHas(actorCls, "SetActorHiddenInGame"));
+        check("PROBECLASS control: the class the substring gate chose has no SetActorHiddenInGame -- the -3",
+              !probeHas(Ubel::GetClass(A(bCdoActorChannel)), "SetActorHiddenInGame"));
+        check("PROBECLASS ⭐: an object at the path that is not a class is refused",
+              Aura::FindClassByPath("/Script/Engine.Default__Actor") == 0);
+        check("PROBECLASS control: a path nothing lives at resolves to nothing",
+              Aura::FindClassByPath("/Script/Engine.Pawn") == 0);
+
+        const uintptr_t actorA = Aura::FindLiveOrDefaultOf("Actor");
+        check("PROBECLASS ⭐: with nothing live, the fallback is Actor's OWN CDO -- not ActorChannel's, nor a subclass's",
+              actorA == A(bCdoActor), nm(actorA).c_str());
+        const uintptr_t cheatA = Aura::FindLiveOrDefaultOf("CheatManager");
+        check("PROBECLASS ⭐: ...and CheatManager's, not UCheatManagerExtension's, which the substring gate meets first",
+              cheatA == A(bCdoCheatMgr), nm(cheatA).c_str());
+
+        // Phase B -- live instances. Each one the substring gate would take (or miss) sits BEFORE the right one.
+        slot(7, bChan0);      // "ActorChannel_0": class name contains "actor", not an AActor
+        slot(8, bAbility0);   // GAS's cheat extension: class name contains "CheatManager", not a UCheatManager
+        slot(9, bDoor0);      // BP_Door_C_0: an AActor whose class name has no "actor" in it
+        slot(10, bCheat0);
+        Aura::InitWithExtendedLayout(pcPool.Addr(), FakePool::kItemSize);
+
+        const uintptr_t actorB = Aura::FindLiveOrDefaultOf("Actor");
+        check("PROBECLASS ⭐: a live instance DERIVED from Actor wins, whatever its class is called",
+              actorB == A(bDoor0), nm(actorB).c_str());
+        const uintptr_t cheatB = Aura::FindLiveOrDefaultOf("CheatManager");
+        check("PROBECLASS ⭐: the live CheatManager wins over a live cheat EXTENSION at a lower index",
+              cheatB == A(bCheat0), nm(cheatB).c_str());
+        check("PROBECLASS control: the name is compared case-insensitively, like FindInstancesByClass",
+              Aura::FindLiveOrDefaultOf("cheatmanager") == A(bCheat0));
+
+        // A walk cut short must not hand back a CDO it met on the way: a live instance may sit past the cut.
+        Tot::g_perCommand.store(true);
+        const uintptr_t cut = Aura::FindLiveOrDefaultOf("Actor");
+        ResetCancel();
+        check("PROBECLASS control: a cancelled walk returns nothing", cut == 0, nm(cut).c_str());
+
+        // The refusal survives: a build whose AActor really lacks the function is still refused.
+        putP(pcB[bActor], DynOff::USTRUCT_CHILDREN, 0);
+        check("PROBECLASS ⭐: a class that really lacks SetActorHiddenInGame still refuses",
+              Aura::FindClassByPath("/Script/Engine.Actor") == A(bActor)
+                  && !probeHas(A(bActor), "SetActorHiddenInGame"));
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnP;
+        DynOff::bUseFProperty       = svFPropP;
+        g_cachedUEVersion           = svVerP;
+    }
+
+    // -- [VND583-02] UField::Next is MEASURED in FProperty mode -------------------------------
+    //
+    // Upstream's The Pathless config (a 4.25-layout licensee fork) puts UField::Next at 0x30: its
+    // UObject carries one more 8-byte member, so every UField / UStruct / UFunction key sits +8
+    // later. No title on this machine has that shape, so it is BUILT here: a native class
+    // "KismetSystemLibrary" whose three UFunctions are chained at +0x30, with a pointer that is NOT
+    // a Function (the fork's extra member) at +0x28. Installs its OWN pool and name pool, like
+    // PROBECLASS above, and puts the main fixture back.
+    {
+        blk("UFIELDNEXT - UField::Next is measured in FProperty mode, on a built Pathless-shaped chain");
+        ResetCancel();
+
+        enum : int32_t { uClass = 1, uFunction, uKsl, uFA, uFB, uFC, uNames };
+        const char* ufNames[uNames] = { "", "Class", "Function", "KismetSystemLibrary", "FuncA", "FuncB", "FuncC" };
+        static uint8_t ufEntry[uNames][0x40] = {};
+        static uintptr_t ufChunk[uNames + 1] = {};
+        for (int i = 1; i < uNames; ++i) {
+            memcpy(ufEntry[i] + 0x10, ufNames[i], strlen(ufNames[i]) + 1);
+            ufChunk[i] = reinterpret_cast<uintptr_t>(ufEntry[i]);
+        }
+        static uintptr_t ufChunks[2] = { reinterpret_cast<uintptr_t>(ufChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ufChunks), 0x10);
+        check("UFIELDNEXT setup: the name pool resolves KismetSystemLibrary",
+              Serie::GetString(uKsl) == "KismetSystemLibrary", Serie::GetString(uKsl).c_str());
+
+        const bool     svCpnU   = DynOff::bCasePreservingName;
+        const bool     svFPropU = DynOff::bUseFProperty;
+        const int      svNextU  = DynOff::UFIELD_NEXT;
+        const int      svChildU = DynOff::USTRUCT_CHILDREN;
+        const uint32_t svVerU   = g_cachedUEVersion;
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = true;
+        g_cachedUEVersion           = 425;
+        DynOff::USTRUCT_CHILDREN    = 0x50;   // the fork's Children: +8, like every key after UObject
+
+        enum { bMeta, bFnCls, bKsl, bFA, bFB, bFC, kUB };
+        alignas(16) static uint8_t ufB[kUB][0x200] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(ufB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto build = [&](int nextOff) {
+            for (auto& b : ufB) memset(b, 0, sizeof(b));
+            putP(ufB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(ufB[bMeta], Grimoire::OFF_UOBJECT_NAME, uClass);
+            putP(ufB[bFnCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));  put32(ufB[bFnCls], Grimoire::OFF_UOBJECT_NAME, uFunction);
+            putP(ufB[bKsl], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));    put32(ufB[bKsl], Grimoire::OFF_UOBJECT_NAME, uKsl);
+            putP(ufB[bKsl], DynOff::USTRUCT_CHILDREN, A(bFA));
+            const int fn[3] = { bFA, bFB, bFC };
+            for (int i = 0; i < 3; ++i) {
+                putP(ufB[fn[i]], Grimoire::OFF_UOBJECT_CLASS, A(bFnCls));
+                put32(ufB[fn[i]], Grimoire::OFF_UOBJECT_NAME, uFA + i);
+                if (nextOff != 0x28) putP(ufB[fn[i]], 0x28, A(bKsl));   // the fork's extra member: a pointer, not a Function
+                if (i < 2) putP(ufB[fn[i]], nextOff, A(fn[i + 1]));
+            }
+        };
+
+        FakePool ufPool;
+        ufPool.Build(kUB);
+        for (int i = 0; i < kUB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(ufPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(ufPool.Addr(), FakePool::kItemSize);
+
+        // The Pathless shape.
+        build(0x30);
+        DynOff::UFIELD_NEXT = 0x28;   // what FProperty mode used to leave in place
+        const size_t atDefault = Ubel::WalkFunctions(A(bKsl)).size();
+        check("UFIELDNEXT the defect: at the old default 0x28 the walk sees ONE function, not three",
+              atDefault == 1, std::to_string(atDefault).c_str());
+        const int probed = Genau::ProbeUFieldNextFProperty();
+        check("UFIELDNEXT ⭐: the probe measures 0x30 on the Pathless-shaped chain",
+              probed == 0x30, std::to_string(probed).c_str());
+        DynOff::UFIELD_NEXT = probed > 0 ? probed : 0x28;
+        const size_t atProbed = Ubel::WalkFunctions(A(bKsl)).size();
+        check("UFIELDNEXT ⭐: at the measured offset the walk sees all three functions",
+              atProbed == 3, std::to_string(atProbed).c_str());
+
+        // The stock shape keeps the default, and a class with no chain measures nothing.
+        build(0x28);
+        check("UFIELDNEXT control: a stock chain measures the default 0x28", Genau::ProbeUFieldNextFProperty() == 0x28);
+        putP(ufB[bKsl], DynOff::USTRUCT_CHILDREN, 0);
+        check("UFIELDNEXT control: no function chain gives -1 (the caller keeps the default and says so)",
+              Genau::ProbeUFieldNextFProperty() == -1);
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnU;
+        DynOff::bUseFProperty       = svFPropU;
+        DynOff::UFIELD_NEXT         = svNextU;
+        DynOff::USTRUCT_CHILDREN    = svChildU;
+        g_cachedUEVersion           = svVerU;
+    }
+
+    // -- [VND583-03] a NameProperty's alignment follows the engine version -----------------
+    // ResolveElementAlignment is what every TMap / TSet / TOptional geometry asks. On non-CPN
+    // 4.11-4.21 FName is 8-aligned (a union with uint64), so a 4 there shortens the stride.
+    {
+        blk("FNAMEALIGN - ResolveElementAlignment gives FName its version's alignment");
+        const uint32_t svVerA = g_cachedUEVersion;
+        const bool     svCpnA = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;
+        DynOff::bFNameAlignProbed = true;     // "probed, nothing measured": the version rule answers
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+        g_cachedUEVersion = 418;
+        const int a418 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEALIGN ⭐: non-CPN 4.18 -> 8", a418 == 8, std::to_string(a418).c_str());
+        g_cachedUEVersion = 427;
+        const int a427 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEALIGN control: 4.27 -> 4", a427 == 4, std::to_string(a427).c_str());
+        g_cachedUEVersion = 418; DynOff::bCasePreservingName = true;
+        const int a418c = Ubel::ResolveElementAlignment("NameProperty", 12, 0);
+        check("FNAMEALIGN control: case-preserving 4.18 -> 4", a418c == 4, std::to_string(a418c).c_str());
+        g_cachedUEVersion = svVerA;
+        DynOff::bCasePreservingName = svCpnA;
+    }
+
+    // -- [VND583-03] ... and a MEASURED alignment beats the version rule -------------------------
+    // A built ScriptStruct "CollisionProfileName" (8 bytes, one FName) carries the answer in its
+    // MinAlignment. A NameProperty-classed object of the SAME name sits before it in the pool,
+    // shaped to answer 8 -- the class check must skip it. Own pool and name pool, like UFIELDNEXT.
+    {
+        blk("FNAMEMEASURE - alignof(FName) is measured on a single-FName ScriptStruct");
+        enum : int32_t { nClass = 1, nScriptStruct, nNameProp, nCpn, nNames };
+        const char* fmNames[nNames] = { "", "Class", "ScriptStruct", "NameProperty", "CollisionProfileName" };
+        static uint8_t fmEntry[nNames][0x40] = {};
+        static uintptr_t fmChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(fmEntry[i] + 0x10, fmNames[i], strlen(fmNames[i]) + 1);
+            fmChunk[i] = reinterpret_cast<uintptr_t>(fmEntry[i]);
+        }
+        static uintptr_t fmChunks[2] = { reinterpret_cast<uintptr_t>(fmChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fmChunks), 0x10);
+
+        const uint32_t svVerM   = g_cachedUEVersion;
+        const bool     svCpnM   = DynOff::bCasePreservingName;
+        const bool     svValidM = DynOff::bOffsetsValidated.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bOffsetsValidated   = true;
+
+        enum { bMeta, bSSCls, bNPCls, bDecoy, bStruct, kMB };
+        alignas(16) static uint8_t fmB[kMB][0x200] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(fmB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto build = [&](bool withStruct, int32_t structSize, int32_t structAlign) {
+            for (auto& b : fmB) memset(b, 0, sizeof(b));
+            putP(fmB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));    put32(fmB[bMeta], Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(fmB[bSSCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(fmB[bSSCls], Grimoire::OFF_UOBJECT_NAME, nScriptStruct);
+            putP(fmB[bNPCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(fmB[bNPCls], Grimoire::OFF_UOBJECT_NAME, nNameProp);
+            // The decoy: FBodyInstance's NameProperty, same name, shaped like an 8-aligned FName.
+            putP(fmB[bDecoy], Grimoire::OFF_UOBJECT_CLASS, A(bNPCls));  put32(fmB[bDecoy], Grimoire::OFF_UOBJECT_NAME, nCpn);
+            put32(fmB[bDecoy], DynOff::USTRUCT_PROPSSIZE, 8);           put32(fmB[bDecoy], DynOff::USTRUCT_PROPSSIZE + 4, 8);
+            if (withStruct) {
+                putP(fmB[bStruct], Grimoire::OFF_UOBJECT_CLASS, A(bSSCls)); put32(fmB[bStruct], Grimoire::OFF_UOBJECT_NAME, nCpn);
+                put32(fmB[bStruct], DynOff::USTRUCT_PROPSSIZE, structSize);
+                put32(fmB[bStruct], DynOff::USTRUCT_PROPSSIZE + 4, structAlign);
+            }
+            DynOff::bFNameAlignProbed = false;
+            DynOff::FNAME_ALIGN_MEASURED = 0;
+        };
+
+        FakePool fmPool;
+        fmPool.Build(kMB);
+        for (int i = 0; i < kMB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(fmPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(fmPool.Addr(), FakePool::kItemSize);
+
+        build(true, 8, 8);
+        g_cachedUEVersion = 427;   // the rule would say 4
+        const int m8 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE ⭐: a measured 8 beats 4.27's rule of 4", m8 == 8, std::to_string(m8).c_str());
+
+        build(true, 8, 4);
+        g_cachedUEVersion = 418;   // the rule would say 8, and so would the decoy
+        const int m4 = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE ⭐: a measured 4 beats 4.18's rule of 8, and the NameProperty decoy is skipped",
+              m4 == 4, std::to_string(m4).c_str());
+
+        build(true, 12, 8);        // not FName-sized: no measurement
+        g_cachedUEVersion = 427;
+        const int mSize = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE control: a struct that is not FName-sized measures nothing -> the rule (4)",
+              mSize == 4, std::to_string(mSize).c_str());
+
+        build(false, 0, 0);        // only the decoy
+        g_cachedUEVersion = 418;
+        const int mNone = Ubel::ResolveElementAlignment("NameProperty", 8, 0);
+        check("FNAMEMEASURE control: no ScriptStruct -> 4.18's rule (8)", mNone == 8, std::to_string(mNone).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bFNameAlignProbed   = false;
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+        DynOff::bOffsetsValidated   = svValidM;
+        DynOff::bCasePreservingName = svCpnM;
+        g_cachedUEVersion           = svVerM;
+    }
+
+    // -- [VND583-04] UE 4.9-4.14 enums carry uint8 values: detected, measured, and read as one byte ----
+    // A built "ENetRole" UEnum whose Names is TArray<TPair<FName, uint8>> with 0xCD padding (what an
+    // unwritten pair tail looks like). DetectUEnumNames must find it, MEASURE the column's width on
+    // ENetRole's 0..n-1 values, and ResolveEnumValue must then name every value. Own pool + name
+    // pool, like UFIELDNEXT.
+    {
+        blk("ENUMU8 - UEnum::Names with uint8 values: the width is measured and the byte read alone");
+        ResetCancel();
+        enum : int32_t { eClass = 1, eEnum, eNetRole, eR0, eR1, eR2, eR3, eR4, eNames };
+        const char* euNames[eNames] = { "", "Class", "Enum", "ENetRole", "ROLE_None", "ROLE_SimulatedProxy",
+                                        "ROLE_AutonomousProxy", "ROLE_Authority", "ROLE_MAX" };
+        static uint8_t euEntry[eNames][0x40] = {};
+        static uintptr_t euChunk[eNames + 1] = {};
+        for (int i = 1; i < eNames; ++i) {
+            memcpy(euEntry[i] + 0x10, euNames[i], strlen(euNames[i]) + 1);
+            euChunk[i] = reinterpret_cast<uintptr_t>(euEntry[i]);
+        }
+        static uintptr_t euChunks[2] = { reinterpret_cast<uintptr_t>(euChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(euChunks), 0x10);
+
+        const uint32_t svVerE    = g_cachedUEVersion;
+        const bool     svCpnE    = DynOff::bCasePreservingName;
+        const int      svNamesE  = DynOff::UENUM_NAMES;
+        const bool     svNewE    = DynOff::bEnumNamesNewContainer;
+        const int      svWidthE  = DynOff::UENUM_VALUE_SIZE;
+        const int      svStrideE = DynOff::UENUM_PAIR_STRIDE;
+        const bool     svProbedE = DynOff::bFNameAlignProbed.load();
+        const int      svAlignE  = DynOff::FNAME_ALIGN_MEASURED.load();
+        DynOff::bCasePreservingName  = false;
+        DynOff::bFNameAlignProbed    = true;    // nothing measured: alignof(FName) comes from the version rule
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+
+        enum { bMeta, bEnumCls, bNetRole, kEB };
+        alignas(16) static uint8_t euB[kEB][0x200] = {};
+        alignas(16) static uint8_t euData[5 * 16] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(euB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        // width 1 = uint8 values + 0xCD padding; width 8 = int64 values. stride = pair size.
+        auto build = [&](int width, int stride) {
+            for (auto& b : euB) memset(b, 0, sizeof(b));
+            memset(euData, 0xCD, sizeof(euData));
+            putP(euB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));        put32(euB[bMeta], Grimoire::OFF_UOBJECT_NAME, eClass);
+            putP(euB[bEnumCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));     put32(euB[bEnumCls], Grimoire::OFF_UOBJECT_NAME, eEnum);
+            putP(euB[bNetRole], Grimoire::OFF_UOBJECT_CLASS, A(bEnumCls));  put32(euB[bNetRole], Grimoire::OFF_UOBJECT_NAME, eNetRole);
+            for (int i = 0; i < 5; ++i) {
+                uint8_t* e = euData + i * stride;
+                put32(e, 0, eR0 + i);
+                put32(e, 4, 0);
+                if (width == 1) e[8] = static_cast<uint8_t>(i);
+                else { const int64_t v = i; memcpy(e + 8, &v, sizeof(v)); }
+            }
+            putP(euB[bNetRole], 0x40, reinterpret_cast<uintptr_t>(euData));   // TArray: Data*, Num, Max
+            put32(euB[bNetRole], 0x48, 5);
+            put32(euB[bNetRole], 0x4C, 5);
+            DynOff::bUEnumNamesDetected.store(false);
+            DynOff::bUEnumNamesFailed.store(false);
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            Ubel::s_enumCache.erase(A(bNetRole));
+        };
+
+        FakePool euPool;
+        euPool.Build(kEB);
+        for (int i = 0; i < kEB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(euPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(euPool.Addr(), FakePool::kItemSize);
+
+        // 4.11: uint8 values in a 16-byte pair (FName is 8-aligned there).
+        build(1, 16);
+        g_cachedUEVersion = 411;
+        const bool det411 = Genau::DetectUEnumNames();
+        check("ENUMU8 setup: ENetRole's Names is found at +0x40", det411 && DynOff::UENUM_NAMES == 0x40);
+        check("ENUMU8 ⭐: 4.11 -> 1-byte values", DynOff::UENUM_VALUE_SIZE == 1,
+              std::to_string(DynOff::UENUM_VALUE_SIZE).c_str());
+        const std::string r2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
+        const std::string r4 = Ubel::ResolveEnumValue(A(bNetRole), 4);
+        check("ENUMU8 ⭐: value 2 names ROLE_AutonomousProxy", r2 == "ROLE_AutonomousProxy", r2.c_str());
+        check("ENUMU8 ⭐: value 4 names ROLE_MAX", r4 == "ROLE_MAX", r4.c_str());
+
+        // The same memory on a version whose rule says int64: the MEASUREMENT still finds the byte.
+        build(1, 16);
+        g_cachedUEVersion = 427;
+        Genau::DetectUEnumNames();
+        const std::string m2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
+        check("ENUMU8 ⭐: garbage above sequential low bytes is measured as uint8 even where the rule says int64",
+              DynOff::UENUM_VALUE_SIZE == 1 && m2 == "ROLE_AutonomousProxy", m2.c_str());
+
+        // 4.10: FName is 4-aligned, so the uint8 pair strides 12.
+        build(1, 12);
+        g_cachedUEVersion = 410;
+        Genau::DetectUEnumNames();
+        const std::string t3 = Ubel::ResolveEnumValue(A(bNetRole), 3);
+        check("ENUMU8: a 12-byte pair (4.10) is found, strided and named", DynOff::UENUM_PAIR_STRIDE == 12
+              && t3 == "ROLE_Authority", (std::to_string(DynOff::UENUM_PAIR_STRIDE) + " " + t3).c_str());
+
+        // Control: 4.18's int64 column keeps 8 bytes and still names its values.
+        build(8, 16);
+        g_cachedUEVersion = 418;
+        Genau::DetectUEnumNames();
+        const std::string c2 = Ubel::ResolveEnumValue(A(bNetRole), 2);
+        check("ENUMU8 control: 4.18's int64 values stay 8 bytes and resolve",
+              DynOff::UENUM_VALUE_SIZE == 8 && c2 == "ROLE_AutonomousProxy", c2.c_str());
+
+        {
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            Ubel::s_enumCache.erase(A(bNetRole));
+        }
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bUEnumNamesDetected.store(false);
+        DynOff::bUEnumNamesFailed.store(false);
+        DynOff::UENUM_NAMES            = svNamesE;
+        DynOff::bEnumNamesNewContainer = svNewE;
+        DynOff::UENUM_VALUE_SIZE       = svWidthE;
+        DynOff::UENUM_PAIR_STRIDE      = svStrideE;
+        DynOff::bFNameAlignProbed      = svProbedE;
+        DynOff::FNAME_ALIGN_MEASURED   = svAlignE;
+        DynOff::bCasePreservingName    = svCpnE;
+        g_cachedUEVersion              = svVerE;
+    }
+
+    // -- [VND583-07, A9 step 11] FName::Number's offset is measured from NamePrivate on a case-preserving build ----
+    // Built: 16 "Thing" objects with a 12-byte (CPN) NamePrivate and OuterPrivate at +0x28, in either member order.
+    // UE4 / 5.0: {ComparisonIndex, DisplayIndex, Number}; 5.1+: {ComparisonIndex, Number, DisplayIndex}. Number is
+    // 5 on every one, so the right read renders "Thing_4". Own pool and name pool, like FNAMEMEASURE.
+    {
+        blk("FNAMENUMBER - FName::Number is read where the build keeps it");
+        enum : int32_t { nClass = 1, nThing, nNames };
+        const char* fnNames[nNames] = { "", "Class", "Thing" };
+        static uint8_t fnEntry[nNames][0x40] = {};
+        static uintptr_t fnChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(fnEntry[i] + 0x10, fnNames[i], strlen(fnNames[i]) + 1);
+            fnChunk[i] = reinterpret_cast<uintptr_t>(fnEntry[i]);
+        }
+        static uintptr_t fnChunks[2] = { reinterpret_cast<uintptr_t>(fnChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fnChunks), 0x10);
+        const bool svCpnN   = DynOff::bCasePreservingName;
+        const int  svOuterN = DynOff::UOBJECT_OUTER;
+        const int  svNumN   = DynOff::FNAME_NUMBER;
+
+        constexpr int kObjs = 17;   // [0] the metaclass, [1..16] Things
+        auto runCase = [&](bool ue4Order, uint8_t (&objs)[kObjs][0x40]) -> std::string {
+            for (auto& o : objs) memset(o, 0, sizeof(o));
+            const uintptr_t meta = reinterpret_cast<uintptr_t>(objs[0]);
+            memcpy(objs[0] + Grimoire::OFF_UOBJECT_CLASS, &meta, 8);
+            const int32_t cls = nClass;
+            memcpy(objs[0] + Grimoire::OFF_UOBJECT_NAME, &cls, 4);
+            for (int i = 1; i < kObjs; ++i) {
+                uint8_t* o = objs[i];
+                memcpy(o + Grimoire::OFF_UOBJECT_CLASS, &meta, 8);
+                const int32_t comp = nThing, number = 5;
+                memcpy(o + 0x18, &comp, 4);
+                memcpy(o + (ue4Order ? 0x1C : 0x20), &comp, 4);     // DisplayIndex
+                memcpy(o + (ue4Order ? 0x20 : 0x1C), &number, 4);   // Number
+                memcpy(o + 0x28, &meta, 8);                         // OuterPrivate (CPN slot)
+            }
+            FakePool fnPool;
+            fnPool.Build(kObjs);
+            for (int i = 0; i < kObjs; ++i) {
+                const uintptr_t a = reinterpret_cast<uintptr_t>(objs[i]);
+                memcpy(fnPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &a, 8);
+            }
+            Aura::InitWithExtendedLayout(fnPool.Addr(), FakePool::kItemSize);
+            Genau::DetectCasePreservingName();
+            const std::string name = Ubel::GetName(reinterpret_cast<uintptr_t>(objs[3]));
+            Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // before fnPool goes away
+            return name;
+        };
+        static uint8_t fnUe4[kObjs][0x40] = {};
+        const std::string n4 = runCase(true, fnUe4);
+        check("FNAMENUMBER setup: the UE4-order objects vote case-preserving", DynOff::bCasePreservingName);
+        check("FNAMENUMBER ⭐ A9-11: UE4 / 5.0 order -> FName::Number measured at +8", DynOff::FNAME_NUMBER == 8,
+              std::to_string(DynOff::FNAME_NUMBER).c_str());
+        check("FNAMENUMBER ⭐ A9-11: ...and the name renders with ITS number, Thing_4", n4 == "Thing_4", n4.c_str());
+        static uint8_t fnUe51[kObjs][0x40] = {};
+        const std::string n51 = runCase(false, fnUe51);
+        check("FNAMENUMBER control: 5.1+ order -> Number at +4 and Thing_4 too",
+              DynOff::FNAME_NUMBER == 4 && n51 == "Thing_4", n51.c_str());
+
+        DynOff::bCasePreservingName = svCpnN;
+        DynOff::UOBJECT_OUTER       = svOuterN;
+        DynOff::FNAME_NUMBER        = svNumN;
+    }
+
+    // -- [VND583-07, A9 steps 1 + 7] sizeof(FName) is MEASURED; the rule no longer overrides the engine -----------
+    // Built: a UClass "Thing" whose ChildProperties chain holds `nName` NameProperty FFields of ElementSize `es`
+    // between two IntProperty FFields. The walk reads DynOff's own offsets, so nothing here is hardcoded.
+    {
+        blk("FNAMESIZE - sizeof(FName) is the engine's NameProperty ElementSize");
+        enum : int32_t { nClass = 1, nNameProp, nIntProp, nThing, nNames };
+        const char* fsNames[nNames] = { "", "Class", "NameProperty", "IntProperty", "Thing" };
+        static uint8_t fsEntry[nNames][0x40] = {};
+        static uintptr_t fsChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(fsEntry[i] + 0x10, fsNames[i], strlen(fsNames[i]) + 1);
+            fsChunk[i] = reinterpret_cast<uintptr_t>(fsEntry[i]);
+        }
+        static uintptr_t fsChunks[2] = { reinterpret_cast<uintptr_t>(fsChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(fsChunks), 0x10);
+        const bool svCpnS   = DynOff::bCasePreservingName;
+        const bool svValidS = DynOff::bOffsetsValidated.load();
+        const bool svFpropS = DynOff::bUseFProperty;
+        DynOff::bUseFProperty     = true;
+        DynOff::bOffsetsValidated = true;
+
+        alignas(16) static uint8_t fsMeta[0x200] = {}, fsThing[0x200] = {};
+        alignas(16) static uint8_t fsFcName[0x40] = {}, fsFcInt[0x40] = {};
+        alignas(16) static uint8_t fsField[10][0x100] = {};
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        FakePool fsPool;
+        fsPool.Build(2);
+        const uintptr_t objs[2] = { reinterpret_cast<uintptr_t>(fsMeta), reinterpret_cast<uintptr_t>(fsThing) };
+        for (int i = 0; i < 2; ++i)
+            memcpy(fsPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &objs[i], 8);
+        auto build = [&](bool cpn, int nName, int32_t es) {
+            memset(fsMeta, 0, sizeof(fsMeta)); memset(fsThing, 0, sizeof(fsThing));
+            memset(fsFcName, 0, sizeof(fsFcName)); memset(fsFcInt, 0, sizeof(fsFcInt));
+            for (auto& f : fsField) memset(f, 0, sizeof(f));
+            putP(fsMeta, Grimoire::OFF_UOBJECT_CLASS, objs[0]);  put32(fsMeta, Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(fsThing, Grimoire::OFF_UOBJECT_CLASS, objs[0]); put32(fsThing, Grimoire::OFF_UOBJECT_NAME, nThing);
+            put32(fsFcName, DynOff::FFIELDCLASS_NAME, nNameProp);
+            put32(fsFcInt,  DynOff::FFIELDCLASS_NAME, nIntProp);
+            const int total = nName + 2;   // an IntProperty at each end
+            for (int i = 0; i < total; ++i) {
+                const bool isName = i > 0 && i < total - 1;
+                putP(fsField[i], DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(isName ? fsFcName : fsFcInt));
+                put32(fsField[i], DynOff::FPROPERTY_ELEMSIZE, isName ? es : 4);
+                if (i + 1 < total) putP(fsField[i], DynOff::FFIELD_NEXT, reinterpret_cast<uintptr_t>(fsField[i + 1]));
+            }
+            putP(fsThing, DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(fsField[0]));
+            DynOff::bCasePreservingName = cpn;
+            DynOff::bFNameSizeProbed    = false;
+            DynOff::FNAME_SIZE_MEASURED = 0;
+        };
+        Aura::InitWithExtendedLayout(fsPool.Addr(), FakePool::kItemSize);
+
+        build(false, 6, 4);   // a standard build with UE_FNAME_OUTLINE_NUMBER: FName is 4 bytes
+        const int sOutline = Ubel::FNameSize();
+        check("FNAMESIZE ⭐ A9-1: six NameProperty fields of 4 -> sizeof(FName) measured 4, not the rule's 8",
+              sOutline == 4 && DynOff::SizeofFName() == 4, std::to_string(sOutline).c_str());
+        build(true, 6, 12);
+        const int sCpn = Ubel::FNameSize();
+        check("FNAMESIZE ⭐ A9-1: case-preserving, 12 -> MEASURED 12 (it agrees with the rule, but is measured)",
+              sCpn == 12 && DynOff::FNAME_SIZE_MEASURED.load() == 12, std::to_string(DynOff::FNAME_SIZE_MEASURED.load()).c_str());
+        build(false, 6, 12);
+        check("FNAMESIZE control: 12 on a standard build is not its family -> the rule's 8",
+              Ubel::FNameSize() == 8 && DynOff::FNAME_SIZE_MEASURED.load() == 0);
+        build(false, 3, 4);
+        check("FNAMESIZE control: three fields are too few -> the rule's 8", Ubel::FNameSize() == 8);
+
+        // A9 step 7. Unmeasured (the latch set, nothing found), validated: a plausible engine size is kept.
+        build(false, 0, 0);
+        DynOff::bFNameSizeProbed = true;
+        const int32_t v4 = Ubel::ValidateArrayElemSize(4, "NameProperty");
+        check("FNAMESIZE ⭐ A9-7: unmeasured, the engine's plausible 4 is kept (the rule overrode it with 8)",
+              v4 == 4, std::to_string(v4).c_str());
+        check("FNAMESIZE control: an implausible 0x30 is still overridden with the rule",
+              Ubel::ValidateArrayElemSize(0x30, "NameProperty") == 8);
+        DynOff::bOffsetsValidated = false;
+        check("FNAMESIZE control: unvalidated offsets -> the rule, not the read",
+              Ubel::ValidateArrayElemSize(4, "NameProperty") == 8);
+        DynOff::bOffsetsValidated = true;
+        DynOff::FNAME_SIZE_MEASURED = 8;
+        check("FNAMESIZE control: MEASURED 8 beats a single read of 4",
+              Ubel::ValidateArrayElemSize(4, "NameProperty") == 8);
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bFNameSizeProbed    = false;
+        DynOff::FNAME_SIZE_MEASURED = 0;
+        DynOff::bCasePreservingName = svCpnS;
+        DynOff::bOffsetsValidated   = svValidS;
+        DynOff::bUseFProperty       = svFpropS;
+    }
+
+    // -- [VND583-07] SymbolCallFollow looks ONE CALL deep for the global it follows ---------------------------------
+    // The shape measured on UnrealEditor-Core.dll 5.4: the exported function has no RIP reference of its own; its
+    // first call's target has `lea rdi,[rip+X]` = the pool. Built in one RWX allocation: funcA at +0, funcB at +0x400
+    // (past the body scan's 256-byte fallback, so only the call-follow can reach it), the "pool" at +0x800.
+    {
+        blk("CALLFOLLOW - the export's callee is scanned when the export itself has no reference");
+        uint8_t* code = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_COMMIT | MEM_RESERVE,
+                                                           PAGE_EXECUTE_READWRITE));
+        check("CALLFOLLOW setup: an executable page", code != nullptr);
+        if (code) {
+            memset(code, 0xCC, 0x1000);
+            static uintptr_t s_cfPool = 0;
+            s_cfPool = reinterpret_cast<uintptr_t>(code + 0x800);
+            // funcA: sub rsp,28h / mov ecx,[rcx+8] / call funcB / add rsp,28h / ret
+            const uint8_t fa[] = { 0x48, 0x83, 0xEC, 0x28, 0x8B, 0x49, 0x08, 0xE8, 0, 0, 0, 0,
+                                   0x48, 0x83, 0xC4, 0x28, 0xC3 };
+            memcpy(code, fa, sizeof(fa));
+            const int32_t relB = 0x400 - (7 + 5);
+            memcpy(code + 8, &relB, 4);
+            // funcB: lea rdi,[rip+X] / mov rax,rdi / ret
+            const uint8_t fb[] = { 0x48, 0x8D, 0x3D, 0, 0, 0, 0, 0x48, 0x89, 0xF8, 0xC3 };
+            memcpy(code + 0x400, fb, sizeof(fb));
+            const int32_t relPool = 0x800 - (0x400 + 7);
+            memcpy(code + 0x403, &relPool, 4);
+            auto isPool = [](uintptr_t a) { return a == s_cfPool; };
+
+            const uintptr_t viaBody = Genau::ScanFunctionBodyForRipRef(reinterpret_cast<uintptr_t>(code), "CF", isPool);
+            check("CALLFOLLOW control: the export's own body holds no reference", viaBody == 0);
+            const uintptr_t got = Genau::ScanFunctionAndCalleesForRipRef(reinterpret_cast<uintptr_t>(code), "CF", isPool);
+            check("CALLFOLLOW ⭐ VND583-07: the pool is reached through funcA's call", got == s_cfPool);
+            // A validator that accepts nothing still gets nothing: the follow adds reach, not answers.
+            auto none = [](uintptr_t) { return false; };
+            check("CALLFOLLOW control: the validator still decides",
+                  Genau::ScanFunctionAndCalleesForRipRef(reinterpret_cast<uintptr_t>(code), "CF", none) == 0);
+            VirtualFree(code, 0, MEM_RELEASE);
+        }
+    }
+
+    // -- [VND583-14] FSoftObjectPath's shape is MEASURED on the reflected SoftObjectPath struct ---------------------
+    // A built ScriptStruct "SoftObjectPath" whose first FField is AssetPathName (the 4.x / 5.0 shape), on a title
+    // LABELLED 5.5 -- a fork that reports 505 over a 5.0 core. The path must read as ONE FName, not as
+    // "Package.Asset" from two. Own pool and name pool, like FNAMEMEASURE.
+    {
+        blk("SOFTPATH - FSoftObjectPath's shape is read off the SoftObjectPath struct, not the version");
+        enum : int32_t { nClass = 1, nScriptStruct, nSoftObjectPath, nAssetPathName, nAssetPath, nNameProp,
+                         nPkg, nAsset, nNames };
+        const char* spNames[nNames] = { "", "Class", "ScriptStruct", "SoftObjectPath", "AssetPathName", "AssetPath",
+                                        "NameProperty", "/Game/Pkg", "Asset" };
+        static uint8_t spEntry[nNames][0x40] = {};
+        static uintptr_t spChunk[nNames + 1] = {};
+        for (int i = 1; i < nNames; ++i) {
+            memcpy(spEntry[i] + 0x10, spNames[i], strlen(spNames[i]) + 1);
+            spChunk[i] = reinterpret_cast<uintptr_t>(spEntry[i]);
+        }
+        static uintptr_t spChunks[2] = { reinterpret_cast<uintptr_t>(spChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(spChunks), 0x10);
+
+        const uint32_t svVerS   = g_cachedUEVersion;
+        const bool     svFPropS = DynOff::bUseFProperty;
+        const bool     svValidS = DynOff::bOffsetsValidated.load();
+        DynOff::bUseFProperty     = true;
+        DynOff::bOffsetsValidated = true;
+        g_cachedUEVersion         = 505;
+
+        enum { bMeta, bSSCls, bStruct, kSB };
+        alignas(16) static uint8_t spB[kSB][0x200] = {};
+        static uint8_t spFieldClass[0x20] = {};
+        static uint8_t spField[0x100] = {};
+        auto A = [&](int b) { return reinterpret_cast<uintptr_t>(spB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto build = [&](int32_t fieldName) {
+            for (auto& b : spB) memset(b, 0, sizeof(b));
+            memset(spField, 0, sizeof(spField));
+            putP(spB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(spB[bMeta], Grimoire::OFF_UOBJECT_NAME, nClass);
+            putP(spB[bSSCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));  put32(spB[bSSCls], Grimoire::OFF_UOBJECT_NAME, nScriptStruct);
+            putP(spB[bStruct], Grimoire::OFF_UOBJECT_CLASS, A(bSSCls)); put32(spB[bStruct], Grimoire::OFF_UOBJECT_NAME, nSoftObjectPath);
+            putP(spB[bStruct], DynOff::USTRUCT_CHILDPROPS, reinterpret_cast<uintptr_t>(spField));
+            put32(spFieldClass, DynOff::FFIELDCLASS_NAME, nNameProp);
+            putP(spField, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(spFieldClass));
+            put32(spField, DynOff::FFIELD_NAME, fieldName);
+            DynOff::bSoftPathProbed = false;
+            DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+        };
+        FakePool spPool;
+        spPool.Build(kSB);
+        for (int i = 0; i < kSB; ++i) {
+            const uintptr_t o = A(i);
+            memcpy(spPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        }
+        Aura::InitWithExtendedLayout(spPool.Addr(), FakePool::kItemSize);
+
+        // The path's bytes: FName {/Game/Pkg} then FName {Asset}. Read as one FName: "/Game/Pkg".
+        // Read as a FTopLevelAssetPath: "/Game/Pkg.Asset".
+        static int32_t spPath[8] = { nPkg, 0, nAsset, 0, 0, 0, 0, 0 };
+        const uintptr_t pathAddr = reinterpret_cast<uintptr_t>(spPath);
+
+        build(nAssetPathName);
+        const std::string p50 = Ubel::ReadSoftObjectPath(pathAddr);
+        check("SOFTPATH ⭐ VND583-14: AssetPathName measured on a title labelled 5.5 -> one FName",
+              p50 == "/Game/Pkg", p50.c_str());
+        check("SOFTPATH: ...and the measurement is latched as 0", DynOff::SOFTPATH_TOPLEVEL_MEASURED.load() == 0);
+
+        build(nAssetPath);
+        g_cachedUEVersion = 500;
+        const std::string p51 = Ubel::ReadSoftObjectPath(pathAddr);
+        check("SOFTPATH ⭐ VND583-14: AssetPath measured on a title labelled 5.0 -> Package.Asset",
+              p51 == "/Game/Pkg.Asset", p51.c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bSoftPathProbed = false;
+        DynOff::SOFTPATH_TOPLEVEL_MEASURED = -1;
+        DynOff::bUseFProperty     = svFPropS;
+        DynOff::bOffsetsValidated = svValidS;
+        g_cachedUEVersion         = svVerS;
+    }
+
+    // -- [VND583-13] a compact TSet/TMap build is latched from a 16-byte Set/Map property, and walked header-only --
+    // Built like IFACEREAD: its own name pool (the two type names and two field names), one FFieldClass per type,
+    // one class blob per case. The sparse 0x50 control runs first, because the latch is process-wide.
+    {
+        blk("COMPACTSET - a 16-byte Set/Map on 5.7+ latches compact sets; the walk shows the count only");
+        const char* csNames[] = { "", "SetProperty", "MapProperty", "Cs", "Cm" };
+        static uint8_t csEntry[5][0x40] = {};
+        static uintptr_t csChunk[6] = {};
+        for (int i = 1; i < 5; ++i) {
+            memcpy(csEntry[i] + 0x10, csNames[i], strlen(csNames[i]) + 1);
+            csChunk[i] = reinterpret_cast<uintptr_t>(csEntry[i]);
+        }
+        static uintptr_t csChunks[2] = { reinterpret_cast<uintptr_t>(csChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(csChunks), 0x10);
+        const bool svFPropC = DynOff::bUseFProperty;
+        const uint32_t svVerC = g_cachedUEVersion;
+        DynOff::bUseFProperty = true;
+        g_cachedUEVersion = 508;
+        DynOff::bCompactSets = false;
+
+        static uint8_t csFieldClass[2][0x20] = {};
+        *reinterpret_cast<int32_t*>(csFieldClass[0] + DynOff::FFIELDCLASS_NAME) = 1;   // SetProperty
+        *reinterpret_cast<int32_t*>(csFieldClass[1] + DynOff::FFIELDCLASS_NAME) = 2;   // MapProperty
+        static uint8_t csProp[4][0x100] = {};
+        static uint8_t csCls[4][0x100] = {};
+        auto makeClass = [&](int i, bool map, int32_t elemSize) {
+            *reinterpret_cast<uintptr_t*>(csProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(csFieldClass[map ? 1 : 0]);
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FFIELD_NAME)           = map ? 4 : 3;
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FPROPERTY_OFFSET)      = 0x100;
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FPROPERTY_ELEMSIZE)    = elemSize;
+            *reinterpret_cast<int32_t*>(csProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            *reinterpret_cast<int32_t*>(csCls[i] + DynOff::USTRUCT_PROPSSIZE)      = 0x200;
+            *reinterpret_cast<uintptr_t*>(csCls[i] + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(csProp[i]);
+            return reinterpret_cast<uintptr_t>(csCls[i]);
+        };
+        // The instance: a UObject header, then at +0x100 a compact set { Elements*, Num 3, Max 4 } followed by
+        // non-zero bytes -- what a TSparseArray read would run into.
+        alignas(16) static uint8_t csInst[0x200] = {};
+        static uint8_t csElems[0x40] = {};
+        const uintptr_t el = reinterpret_cast<uintptr_t>(csElems);
+        memcpy(csInst + 0x100, &el, 8);
+        *reinterpret_cast<int32_t*>(csInst + 0x108) = 3;
+        *reinterpret_cast<int32_t*>(csInst + 0x10C) = 4;
+        memset(csInst + 0x110, 0x7F, 0x40);
+        const uintptr_t inst = reinterpret_cast<uintptr_t>(csInst);
+
+        auto fieldOf = [&](const Ubel::InstanceWalkResult& r) {
+            return r.fields.empty() ? Ubel::LiveFieldValue{} : r.fields[0];
+        };
+        const auto sparseF = fieldOf(Ubel::WalkInstance(inst, makeClass(0, false, 0x50), 64, 2, false));
+        check("COMPACTSET control: a 0x50 SetProperty does not latch compact sets", !DynOff::bCompactSets.load()
+              && sparseF.name == "Cs", sparseF.name.c_str());
+
+        const auto setF = fieldOf(Ubel::WalkInstance(inst, makeClass(1, false, 0x10), 64, 2, false));
+        check("COMPACTSET ⭐ VND583-13: a 16-byte SetProperty on 5.8 latches compact sets", DynOff::bCompactSets.load());
+        check("COMPACTSET ⭐ VND583-13: ...and the set shows its count from the compact header, not decoded",
+              setF.setCount == 3 && setF.typedValue.find("compact TSet") != std::string::npos, setF.typedValue.c_str());
+        const auto mapF = fieldOf(Ubel::WalkInstance(inst, makeClass(2, true, 0x10), 64, 2, false));
+        check("COMPACTSET ⭐ VND583-13: a compact TMap shows its count, and reads no pairs",
+              mapF.mapCount == 3 && mapF.typedValue.find("compact TMap") != std::string::npos
+              && mapF.containerElements.empty(), mapF.typedValue.c_str());
+
+        DynOff::bCompactSets = false;
+        DynOff::bUseFProperty = svFPropC;
+        g_cachedUEVersion = svVerC;
+    }
+
+    // -- [VND583-10] the static-struct GObjects resolver scores both array geometries and both item shapes --
+    // Heap-built static FUObjectArrays (LooksLikeDataPtr rejects this exe's own .data): the <=5.7 geometry
+    // (Objects @+0x10, NumElements @+0x24) and 5.8's (ObjObjects first: Objects @+0x00, NumElements @+0x08);
+    // items with the UObject* at +0x00 (classic) or +0x08 (5.7+); strides 20 / 24 / 40.
+    {
+        blk("STATICGOBJ - the static FUObjectArray scorer reads 5.8's array and 5.7+'s item");
+        static uint8_t sgEntry[2][0x40] = {};
+        memcpy(sgEntry[1] + 0x10, "CoreObject", sizeof("CoreObject"));
+        static uintptr_t sgChunk[3] = { 0, reinterpret_cast<uintptr_t>(sgEntry[1]), 0 };
+        static uintptr_t sgChunks[2] = { reinterpret_cast<uintptr_t>(sgChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(sgChunks), 0x10);
+
+        constexpr int kItems = 128;
+        std::vector<uint8_t> sgObjects(static_cast<size_t>(kItems) * 0x40, 0);
+        for (int i = 0; i < kItems; ++i) {
+            const int32_t nameIdx = 1;
+            memcpy(sgObjects.data() + static_cast<size_t>(i) * 0x40 + Grimoire::OFF_UOBJECT_NAME, &nameIdx, 4);
+        }
+        struct Built { std::vector<uint8_t> chunk0; std::vector<uintptr_t> table; std::vector<uint8_t> arr; };
+        auto build = [&](Built& b, bool ue58, int stride, int objOff) -> uintptr_t {
+            b.chunk0.assign(static_cast<size_t>(kItems) * stride + 0x100, 0);
+            for (int i = 0; i < kItems; ++i) {
+                const uintptr_t o = reinterpret_cast<uintptr_t>(sgObjects.data() + static_cast<size_t>(i) * 0x40);
+                memcpy(b.chunk0.data() + static_cast<size_t>(i) * stride + objOff, &o, sizeof(o));
+            }
+            b.table.assign(4, 0);
+            b.table[0] = reinterpret_cast<uintptr_t>(b.chunk0.data());
+            // The array sits 0x40 into its buffer, so a probe BELOW the real base reads this struct's own
+            // bytes -- which is how the live 5.8 decoy below was met. Every count field is set, as a real
+            // array's are: Max 2,162,688 (33 chunks of 64K), one chunk in use.
+            b.arr.assign(0xC0, 0);
+            uint8_t* a = b.arr.data() + 0x40;
+            const uintptr_t tbl = reinterpret_cast<uintptr_t>(b.table.data());
+            const int32_t num = kItems, maxE = 33 * 65536, numC = 1, maxC = 33;
+            memcpy(a + (ue58 ? 0x00 : 0x10), &tbl, sizeof(tbl));
+            memcpy(a + (ue58 ? 0x08 : 0x24), &num, 4);
+            memcpy(a + (ue58 ? 0x0C : 0x20), &maxE, 4);
+            memcpy(a + (ue58 ? 0x10 : 0x2C), &numC, 4);
+            memcpy(a + (ue58 ? 0x14 : 0x28), &maxC, 4);
+            return reinterpret_cast<uintptr_t>(a);
+        };
+        struct Case { const char* what; bool ue58; int stride; int objOff; bool star; };
+        const Case cases[] = {
+            { "<=5.7 array, classic item, stride 24",        false, 0x18, 0x00, false },
+            { "Obsidian: <=5.7 array, classic 20-byte item", false, 0x14, 0x00, false },
+            { "<=5.7 array, 5.7+ item (UObject* @+0x08), 24", false, 0x18, 0x08, true  },
+            { "5.8 array (ObjObjects first), 5.7+ item, 24",  true,  0x18, 0x08, true  },
+            { "<=5.7 array, 40-byte Test item, UObject* @+0x08", false, 0x28, 0x08, true },
+        };
+        for (const Case& k : cases) {
+            Built b;
+            const uintptr_t base = build(b, k.ue58, k.stride, k.objOff);
+            int stride = 0, objOff = -1;
+            bool ue58 = !k.ue58;
+            const int score = Genau::ScoreGObjectsStaticBase(base, &stride, &objOff, &ue58);
+            const std::string got = "score " + std::to_string(score) + " stride " + std::to_string(stride)
+                                  + " objOff " + std::to_string(objOff) + (ue58 ? " ue58" : " <=5.7");
+            check((std::string(k.star ? "STATICGOBJ ⭐ VND583-10: " : "STATICGOBJ control: ") + k.what
+                   + " -> read with its own stride, object offset and geometry").c_str(),
+                  score >= 32 && stride == k.stride && objOff == k.objOff && ue58 == k.ue58, got.c_str());
+        }
+
+        // ⭐ The decoy DumperTest58 (5.8 Shipping) handed the first cut of this fix, live: probed 0x10 BELOW
+        // a real 5.8 array, the 5.0-5.7 geometry finds the real Objects pointer at +0x10, and reads the
+        // 5.8 array's MaxChunks (33) at +0x24 as NumElements. 33 clean names cleared the early-exit bar
+        // of 32, so the true base, 0x10 higher, was never scored, and the pool held 33 objects. A 5.8
+        // struct read through the 5.0-5.7 geometry is self-inconsistent -- "MaxElements" (+0x20 = the
+        // 5.8 NumChunks, 1) is below "NumElements" (33) -- and must score 0.
+        {
+            Built b;
+            const uintptr_t base58 = build(b, true, 0x18, 0x08);
+            int stride = 0, objOff = -1;
+            bool ue58 = false;
+            const int decoy = Genau::ScoreGObjectsStaticBase(base58 - 0x10, &stride, &objOff, &ue58);
+            check("STATICGOBJ ⭐ VND583-10: 0x10 below a 5.8 array, the 5.0-5.7 geometry reads MaxChunks as "
+                  "NumElements -- that self-inconsistent struct scores 0",
+                  decoy == 0, ("score " + std::to_string(decoy) + " stride " + std::to_string(stride)).c_str());
+        }
+    }
+
+    // -- [VND583-05] a top-level WeakObjectProperty says null / stale / unreadable ---------------
+    // Its three siblings (struct member, array element, search preview) label a pointer that does
+    // not resolve; the top-level reader published only the raw index+serial hex, which the Live
+    // Walker then showed as the value. It also ignored both reads, so an UNREADABLE pointer
+    // printed "0000000000000000" -- the same bytes as a genuinely null one. Built like IFACEREAD:
+    // two reserved pages, one committed, with the last case's FWeakObjectPtr across the edge.
+    {
+        blk("WEAKLABEL - a top-level FWeakObjectPtr is labelled null / null (stale) / unreadable");
+        static uint8_t wkTypeEntry[0x40] = {};
+        static uint8_t wkNameEntry[0x40] = {};
+        memcpy(wkTypeEntry + 0x10, "WeakObjectProperty", sizeof("WeakObjectProperty"));
+        memcpy(wkNameEntry + 0x10, "Wk", sizeof("Wk"));
+        static uintptr_t wkChunk[4] = {};
+        wkChunk[1] = reinterpret_cast<uintptr_t>(wkTypeEntry);
+        wkChunk[2] = reinterpret_cast<uintptr_t>(wkNameEntry);
+        static uintptr_t wkChunks[2] = { reinterpret_cast<uintptr_t>(wkChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(wkChunks), 0x10);
+        const bool svFPropW = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+
+        static uint8_t wkFieldClass[0x20] = {};
+        *reinterpret_cast<int32_t*>(wkFieldClass + DynOff::FFIELDCLASS_NAME) = 1;
+        uint8_t* wpage = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x2000, MEM_RESERVE, PAGE_READWRITE));
+        check("WEAKLABEL setup: reserved two pages", wpage != nullptr);
+        if (wpage) {
+            VirtualAlloc(wpage, 0x1000, MEM_COMMIT, PAGE_READWRITE);
+            const uintptr_t winst = reinterpret_cast<uintptr_t>(wpage);
+            // One class blob per case: s_walkClassCache is keyed by the class address.
+            static uint8_t wkProp[8][0x80] = {};
+            static uint8_t wkCls[8][0x100] = {};
+            auto makeClass = [&](int i, int32_t fieldOffset) {
+                *reinterpret_cast<uintptr_t*>(wkProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkFieldClass);
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FFIELD_NAME)           = 2;
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FPROPERTY_OFFSET)      = fieldOffset;
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FPROPERTY_ELEMSIZE)    = 8;
+                *reinterpret_cast<int32_t*>(wkProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                *reinterpret_cast<int32_t*>(wkCls[i] + DynOff::USTRUCT_PROPSSIZE)      = 0x2000;
+                *reinterpret_cast<uintptr_t*>(wkCls[i] + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(wkProp[i]);
+                return reinterpret_cast<uintptr_t>(wkCls[i]);
+            };
+            // Anti-vacuity: every case must produce its one field, or an empty walk passes for free.
+            auto weakField = [&](const char* who, const Ubel::InstanceWalkResult& r) -> Ubel::LiveFieldValue {
+                check((std::string("WEAKLABEL control: ") + who + " -- the fake class produced exactly one field").c_str(),
+                      r.fields.size() == 1, std::to_string(r.fields.size()).c_str());
+                for (const auto& f : r.fields)
+                    if (f.typeName == "WeakObjectProperty") return f;
+                return Ubel::LiveFieldValue{};
+            };
+
+            // A null pointer {0, 0}.
+            *reinterpret_cast<int32_t*>(wpage + 0x100) = 0;
+            *reinterpret_cast<int32_t*>(wpage + 0x104) = 0;
+            const auto nullW = weakField("null", Ubel::WalkInstance(winst, makeClass(0, 0x100), 64, 2, false));
+            check("WEAKLABEL ⭐: {0, 0} says null", nullW.typedValue == "null", nullW.typedValue.c_str());
+            check("WEAKLABEL: ...and keeps its readable hex", nullW.hexValue == "0000000000000000", nullW.hexValue.c_str());
+
+            // A dead reference: a live index whose serial no longer matches.
+            *reinterpret_cast<int32_t*>(wpage + 0x200) = 1;
+            *reinterpret_cast<int32_t*>(wpage + 0x204) = 0x7777;
+            const auto staleW = weakField("stale", Ubel::WalkInstance(winst, makeClass(1, 0x200), 64, 2, false));
+            check("WEAKLABEL ⭐: {1, wrong serial} says null (stale)", staleW.typedValue == "null (stale)",
+                  staleW.typedValue.c_str());
+
+            // Across the page edge: ObjectIndex reads, SerialNumber faults.
+            *reinterpret_cast<int32_t*>(wpage + 0xFFC) = 0;
+            const auto deadW = weakField("half-unread", Ubel::WalkInstance(winst, makeClass(2, 0x0FFC), 64, 2, false));
+            check("WEAKLABEL ⭐: a half-readable FWeakObjectPtr publishes NO hex", deadW.hexValue.empty(),
+                  deadW.hexValue.c_str());
+            check("WEAKLABEL ⭐: ...and says unreadable at its own offset, not null",
+                  deadW.typedValue.find("unreadable at +0xFFC") != std::string::npos, deadW.typedValue.c_str());
+
+            // Control: a pointer that resolves carries its object and no label.
+            const uintptr_t o1 = Aura::GetByIndex(1);
+            if (o1) {
+                // [VND583-08] A real weak pointer carries a NON-zero serial (UE assigns one the first
+                // time a weak pointer is made), and serial 0 means null. The fake pool's items all read
+                // 0, so item 1 gets one for these cases and puts it back at the end.
+                uint8_t* item1s = pool.chunks[0].data() + static_cast<size_t>(1) * FakePool::kItemSize;
+                int32_t svSerial1 = 0;
+                memcpy(&svSerial1, item1s + 0x10, 4);
+                const int32_t serial1 = 0x55;
+                memcpy(item1s + 0x10, &serial1, 4);
+                check("WEAKLABEL setup: item 1 now carries serial 0x55", Aura::GetSerialNumber(1) == 0x55);
+                *reinterpret_cast<int32_t*>(wpage + 0x300) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x304) = Aura::GetSerialNumber(1);
+                const auto liveW = weakField("live", Ubel::WalkInstance(winst, makeClass(3, 0x300), 64, 2, false));
+                check("WEAKLABEL control: a resolving pointer publishes the object and no label",
+                      liveW.ptrValue == o1 && liveW.typedValue.empty(), liveW.typedValue.c_str());
+
+                // [VND583-06] ...unless UE's Get() would refuse it: still resolved, but LABELLED.
+                // UE5 marks Garbage in UObject::ObjectFlags (RF_MirroredGarbage); UE4 marks
+                // PendingKill only in the FUObjectItem.
+                uint8_t* item1 = pool.chunks[0].data() + static_cast<size_t>(1) * FakePool::kItemSize;
+                const uint32_t svVerG = g_cachedUEVersion;
+                uint32_t objFlags = 0, itemFlags = 0;
+                memcpy(&objFlags, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), 4);
+                memcpy(&itemFlags, item1 + 8, 4);
+                auto setFlags = [&](uint32_t objF, uint32_t itemF) {
+                    memcpy(reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), &objF, 4);
+                    memcpy(item1 + 8, &itemF, 4);
+                };
+
+                g_cachedUEVersion = 504;
+                setFlags(0x40000000u, 0);
+                const auto g5 = weakField("garbage-ue5", Ubel::WalkInstance(winst, makeClass(4, 0x300), 64, 2, false));
+                check("WEAKLABEL ⭐ VND583-06: UE5 RF_MirroredGarbage -> still resolved, labelled [garbage]",
+                      g5.ptrValue == o1 && g5.typedValue.find("[garbage]") != std::string::npos, g5.typedValue.c_str());
+
+                g_cachedUEVersion = 427;
+                setFlags(0, 1u << 29);
+                const auto g4 = weakField("pendingkill-ue4", Ubel::WalkInstance(winst, makeClass(5, 0x300), 64, 2, false));
+                check("WEAKLABEL ⭐ VND583-06: UE4 PendingKill in the item -> labelled [garbage]",
+                      g4.ptrValue == o1 && g4.typedValue.find("[garbage]") != std::string::npos, g4.typedValue.c_str());
+
+                g_cachedUEVersion = 504;
+                const auto c5 = weakField("ue5-bit29", Ubel::WalkInstance(winst, makeClass(6, 0x300), 64, 2, false));
+                check("WEAKLABEL control VND583-06: the same item bit on UE5 is not PendingKill -> no label",
+                      c5.ptrValue == o1 && c5.typedValue.empty(), c5.typedValue.c_str());
+
+                // The array reader, through the same tag: [{1, serial}, {0, 0}] on UE4 with PendingKill.
+                g_cachedUEVersion = 427;
+                *reinterpret_cast<uintptr_t*>(wpage + 0x400) = winst + 0x500;   // TArray Data*
+                *reinterpret_cast<int32_t*>(wpage + 0x408) = 2;                 // Num
+                *reinterpret_cast<int32_t*>(wpage + 0x40C) = 2;                 // Max
+                *reinterpret_cast<int32_t*>(wpage + 0x500) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x504) = Aura::GetSerialNumber(1);
+                *reinterpret_cast<int32_t*>(wpage + 0x508) = 0;
+                *reinterpret_cast<int32_t*>(wpage + 0x50C) = 0;
+                const auto arr = Ubel::ReadWeakObjectArrayElements(winst, 0x400, 8, 0, 8);
+                check("WEAKLABEL VND583-06: the array reader read both elements", arr.elements.size() == 2,
+                      std::to_string(arr.elements.size()).c_str());
+                if (arr.elements.size() == 2) {
+                    check("WEAKLABEL ⭐ VND583-06: a PendingKill array element is labelled [garbage]",
+                          arr.elements[0].value.find("[garbage]") != std::string::npos, arr.elements[0].value.c_str());
+                    check("WEAKLABEL control VND583-06: the null element beside it still says null",
+                          arr.elements[1].value == "null", arr.elements[1].value.c_str());
+                }
+
+                setFlags(objFlags, itemFlags);
+                g_cachedUEVersion = svVerG;
+
+                // [VND583-08] serial 0 is UE's explicit null: {1, 0} must not resolve to object 1 --
+                // it did, whenever object 1's own serial had never been assigned (most read 0).
+                memcpy(item1s + 0x10, &svSerial1, 4);   // item 1 back to serial 0, as unassigned
+                check("WEAKLABEL ⭐ VND583-08: {1, 0} does NOT resolve, even to an object whose serial is 0",
+                      Ubel::ResolveWeakObjectPtr(1, 0) == 0);
+                *reinterpret_cast<int32_t*>(wpage + 0x380) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x384) = 0;
+                const auto zeroW = weakField("{1,0}", Ubel::WalkInstance(winst, makeClass(7, 0x380), 64, 2, false));
+                check("WEAKLABEL ⭐ VND583-08: {1, 0} walks as null, not stale and not object 1",
+                      zeroW.ptrValue == 0 && zeroW.typedValue == "null", zeroW.typedValue.c_str());
+                // ...and index 0 is a real slot: {0, S} resolves when object 0's serial is S.
+                uint8_t* item0s = pool.chunks[0].data();
+                int32_t svSerial0 = 0;
+                memcpy(&svSerial0, item0s + 0x10, 4);
+                const int32_t serial0 = 0x66;
+                memcpy(item0s + 0x10, &serial0, 4);
+                const uintptr_t o0 = Aura::GetByIndex(0);
+                check("WEAKLABEL ⭐ VND583-08: {0, S} resolves to object 0, as UE's does",
+                      o0 != 0 && Ubel::ResolveWeakObjectPtr(0, 0x66) == o0);
+                memcpy(item0s + 0x10, &svSerial0, 4);
+            }
+            VirtualFree(wpage, 0, MEM_RELEASE);
+        }
+        DynOff::bUseFProperty = svFPropW;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
