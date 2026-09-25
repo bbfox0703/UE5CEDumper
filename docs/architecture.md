@@ -91,7 +91,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (200 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (201 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
 │       ├── Program.cs              ← Avalonia entry point

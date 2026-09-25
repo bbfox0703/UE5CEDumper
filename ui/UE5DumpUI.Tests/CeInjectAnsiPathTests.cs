@@ -127,7 +127,7 @@ public class CeInjectAnsiPathTests
 
     private sealed class FakeCodePage(byte[]? bytes) : ISystemCodePage
     {
-        public string AnsiView(string text) => text;
+        public string AnsiModuleName(string moduleFile) => moduleFile;
         public byte[]? AnsiPathBytes(string path) => bytes;
     }
 }
