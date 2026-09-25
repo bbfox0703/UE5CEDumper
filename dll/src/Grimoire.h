@@ -648,6 +648,20 @@ constexpr bool InferTaggedFFieldVariant(bool fproperty, int ffieldNext, bool alr
     return fproperty && ffieldNext == 0x18 && !alreadyTagged && nextMeasured;
 }
 
+// [R7-X4] The CharacterMovementComponent version markers, measured 2026-09-25 on stock builds by the reflected
+// names each carries: the FVector GravityDirection PROPERTY is already in stock 5.3 (Release-5.3-CL-29314046; absent
+// from 5.1), and what 5.4 added is the reflected UFUNCTIONs SetGravityDirection / GetGravityDirection (in 5.4.4, 5.6,
+// 5.7 and 5.8, not in 5.3). The property used to raise a stock 5.3 title to 504 -- ThirdPerson53, DragonSword and
+// Avowed all measured -- which also switched off the 5.0-5.3 PendingKill tag (IsWeakTargetGarbage, R7-B-01). So the
+// function means 5.4+, and the property alone only 5.3+ (a floor for a stripped build detected lower).
+constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool hasGravityDirectionProperty,
+                                    bool hasSetGravityDirectionFunction) {
+    if (!fproperty || ueVersion < 500 || ueVersion >= 504) return ueVersion;
+    if (hasSetGravityDirectionFunction) return 504;
+    if (hasGravityDirectionProperty && ueVersion < 503) return 503;
+    return ueVersion;
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
 // the live slot and the serial -- which Ubel::ResolveWeakObjectPtr does -- AND the object's GC state,
 // which it did not, so a Garbage object stayed resolvable until the next GC. UE5 mirrors

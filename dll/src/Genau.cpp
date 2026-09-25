@@ -2956,10 +2956,11 @@ static uint32_t DetectVersionFromPEResource() {
 // CrashReportClient says 4.27.2.0.
 //
 // ⚠ It is a build-provenance signal, so it ranks with the static detectors and NOT above the
-// runtime ladder in Frieren.cpp. Measured on DragonSword: CrashReportClient 5.3.2.0 -> 503,
-// detection 503, and the CMC::GravityDirection marker then raises to 504 at init. That is not a
-// conflict — the two answer different questions ("built from which engine" vs "has which engine
-// features"), and a licensee fork backports features. The ladder must keep the last word.
+// runtime ladder in Frieren.cpp. Measured on DragonSword: CrashReportClient 5.3.2.0 -> 503 and
+// detection 503. The CMC marker then raised it to 504 at init, and that was read here as a licensee
+// backport; it was not. Stock 5.3 already reflects GravityDirection, so the marker was wrong, and it
+// now keys on the 5.4-only SetGravityDirection UFUNCTION [R7-X4] -- DragonSword has only the
+// property. The ladder still keeps the last word; its 5.4 marker just has to BE a 5.4 marker.
 //
 // ⚠ Absence is the COMMON case, not an error: 8 of 66 folders on the maintainer's machine ship
 // one, and Avowed / DQ XI S / OCTOPATH / DumperTest ship none.

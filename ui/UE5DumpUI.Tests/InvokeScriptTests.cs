@@ -2184,6 +2184,19 @@ public class InvokeScriptTests
     }
 
     [Fact]
+    public void InitVersionMarker_IsTheCmcFunction_NotTheProperty()
+    {
+        // [R7-X4] Stock UE 5.3 already reflects CharacterMovementComponent::GravityDirection, so the property marker
+        // raised every stock 5.3 title with a CMC to 504 (ThirdPerson53, DragonSword, Avowed) -- and switched off the
+        // 5.0-5.3 PendingKill tag there. The rule lives in DynOff::CmcMarkerVersion (dll_helpers_test); Frieren.cpp
+        // reaches no test target, so the wiring is pinned in source.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        Assert.Contains("DynOff::CmcMarkerVersion(", frieren);
+        Assert.Contains("\"SetGravityDirection\"", frieren);
+        Assert.DoesNotContain("property marker (CMC::GravityDirection) = UE5.4+", frieren);
+    }
+
+    [Fact]
     public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
     {
         // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as

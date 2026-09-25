@@ -6375,6 +6375,23 @@ static void Test_UnresolvedWeakLabel() {
 }
 
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
+// [R7-X4] Which CharacterMovementComponent marker means which engine, as measured 2026-09-25 on stock builds: the
+// reflected GravityDirection PROPERTY is already in 5.3 (Release-5.3-CL-29314046), the SetGravityDirection UFUNCTION
+// only from 5.4. The property alone used to raise a stock 5.3 title to 504.
+static void Test_CmcMarkerVersion() {
+    std::printf("\n--- R7-X4: CMC version markers ---\n");
+    using DynOff::CmcMarkerVersion;
+    EXPECT("R7-X4 ⭐ stock 5.3 (property, no function) stays 503", CmcMarkerVersion(503, true, true, false) == 503);
+    EXPECT("R7-X4 ⭐ 5.4 (property + function) is raised to 504", CmcMarkerVersion(503, true, true, true) == 504);
+    EXPECT("R7-X4: the function alone is 5.4 too", CmcMarkerVersion(501, true, false, true) == 504);
+    EXPECT("R7-X4: a stripped build floored below 5.3 with the property is raised to 503 only",
+           CmcMarkerVersion(501, true, true, false) == 503);
+    EXPECT("R7-X4: no marker changes nothing", CmcMarkerVersion(502, true, false, false) == 502);
+    EXPECT("R7-X4: never lowers a 5.4+ detection", CmcMarkerVersion(506, true, true, false) == 506);
+    EXPECT("R7-X4: never raises UE4 (UProperty mode)", CmcMarkerVersion(427, false, true, true) == 427);
+    EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
+}
+
 static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
            DynOff::IsWeakTargetGarbage(504, 0x40000000u, false, 0));
@@ -8909,6 +8926,7 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
+    RUN(Test_CmcMarkerVersion);
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);

@@ -444,23 +444,36 @@ bool UE5_Init() {
             ptrs.UEVersion    = 503;
             g_cachedUEVersion = 503;
         }
-        // Property marker: UCharacterMovementComponent::GravityDirection (a reflected
-        // FVector StructProperty) was added in UE5.4. Only probe for UE5 games (the
-        // structural floor above already implies >=503), and only when below 504, so
-        // genuine UE4 games never pay the GObjects walk. Best-effort + bounded.
+        // CharacterMovementComponent markers [R7-X4]: the reflected UFUNCTION SetGravityDirection
+        // means UE5.4+, the FVector GravityDirection PROPERTY only 5.3+ -- stock 5.3 already has it,
+        // and treating it as 5.4 raised every stock 5.3 title with a CMC to 504. The rule and its
+        // measurements are DynOff::CmcMarkerVersion. Only probe for UE5 games below 504, so
+        // genuine UE4 games never pay the GObjects walk. Best-effort + bounded: one CMC answers it.
         if (DynOff::bUseFProperty && g_cachedUEVersion >= 500 && g_cachedUEVersion < 504) {
             auto cmcSet = Aura::FindInstancesByClass("CharacterMovementComponent", false, 3);
             for (const auto& r : cmcSet.results) {
                 if (!r.addr) continue;
                 uintptr_t cls = Ubel::GetClass(r.addr);
-                if (cls && Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
-                                                 nullptr, "StructProperty") >= 0) {
-                    LOG_WARN("UE5_Init: property marker (CMC::GravityDirection) = UE5.4+ — "
-                             "raising version %u -> 504.", g_cachedUEVersion);
-                    ptrs.UEVersion    = 504;
-                    g_cachedUEVersion = 504;
-                    break;
+                if (!cls) continue;
+                const bool prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
+                                                        nullptr, "StructProperty") >= 0;
+                FunctionInfo fn;
+                const bool func = Ubel::ResolveFunctionInChain(
+                    cls, "SetGravityDirection",
+                    [](uintptr_t c) { return Ubel::WalkFunctions(c); },
+                    [](uintptr_t c, uintptr_t& super) {
+                        return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+                    },
+                    fn);
+                const unsigned raised = DynOff::CmcMarkerVersion(g_cachedUEVersion, true, prop, func);
+                if (raised != g_cachedUEVersion) {
+                    LOG_WARN("UE5_Init: CMC markers (GravityDirection property=%s, SetGravityDirection "
+                             "function=%s) -- raising version %u -> %u.", prop ? "yes" : "no",
+                             func ? "yes" : "no", g_cachedUEVersion, raised);
+                    ptrs.UEVersion    = raised;
+                    g_cachedUEVersion = raised;
                 }
+                break;
             }
         }
         // Structural marker: the UE5.7 reordered FUObjectItem — the standard 24-byte
