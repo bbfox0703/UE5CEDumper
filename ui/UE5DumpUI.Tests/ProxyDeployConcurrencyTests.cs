@@ -573,6 +573,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
 
         Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
+        // The forced path now RELIES on this: with ForceSameVersion false the real service answers AlreadyCurrent,
+        // returns true WITHOUT writing, and the line below would claim a rewrite that never happened. (the fix's
+        // correctness skeptic)
+        Assert.All(svc.Deploys, d => Assert.True(d.Options.ForceSameVersion));
         Assert.StartsWith("Updated: 2", vm.LastOperationResult);
         Assert.Contains("same version", vm.LastOperationResult);
         Assert.DoesNotContain("already up-to-date", vm.LastOperationResult);
