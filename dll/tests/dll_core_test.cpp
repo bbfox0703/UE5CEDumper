@@ -4681,50 +4681,60 @@ int main() {
         // EnumProcessModules and then reads each module's headers and code with no guard; a DLL the booting engine
         // frees in between is read after it is unmapped. This case frees a real module, then scans its old base.
         const wchar_t* candidates[] = { L"wtsapi32.dll", L"srvcli.dll", L"dsreg.dll", L"wevtapi.dll", L"mscms.dll" };
+        // (eleventh review, R11-04) The DLL is QUALIFIED with no scan at all: loaded and freed, it must unmap on its
+        // own. Only that is the environment's business; everything after it is the scan's. Before, a scan that leaked
+        // its reference made every candidate fail the "unmapped" filter here and read as "no usable DLL".
         const wchar_t* used = nullptr;
-        uintptr_t base = 0;
-        char pattern[16 * 3 + 1] = {};
-        size_t liveHits = 0;
-        bool stillLoadedAfterScan = false, ownFreeOk = false;
         for (const wchar_t* name : candidates) {
             if (GetModuleHandleW(name)) continue;                       // must not be loaded by anyone else
-            HMODULE h = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
-            if (!h) continue;
-            const uintptr_t b = reinterpret_cast<uintptr_t>(h);
-            // Positive control: 16 bytes from the start of its first code section, as a pattern, are found while
-            // it is loaded -- so a later "0 matches" means "gone", not "this scan never finds anything here".
-            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
-            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
-            IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
-            const uint8_t* code = nullptr;
-            for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec)
-                if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) && sec->Misc.VirtualSize >= 64) {
-                    code = reinterpret_cast<const uint8_t*>(b + sec->VirtualAddress);
-                    break;
-                }
-            if (!code) { FreeLibrary(h); continue; }
-            for (int i = 0; i < 16; ++i) snprintf(pattern + i * 3, 4, i == 15 ? "%02X" : "%02X ", code[i]);
-            liveHits = Macht::AOBScanAll(pattern, b).size();
-            // (tenth review, R10-02) The scan released ONLY its own reference: the module is still ours to free.
-            // An over-release (a pin that took no reference but still called FreeLibrary) would have unloaded it.
-            stillLoadedAfterScan = GetModuleHandleW(name) == h;
-            ownFreeOk = FreeLibrary(h) != FALSE;
-            MEMORY_BASIC_INFORMATION mbi{};
-            const bool unmapped = !GetModuleHandleW(name)
-                && VirtualQuery(reinterpret_cast<void*>(b), &mbi, sizeof(mbi)) == sizeof(mbi)
-                && mbi.State == MEM_FREE;
-            if (!unmapped) continue;                                    // something kept it mapped: try the next
+            HMODULE q = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!q) continue;
+            const uintptr_t qb = reinterpret_cast<uintptr_t>(q);
+            FreeLibrary(q);
+            MEMORY_BASIC_INFORMATION qm{};
+            if (GetModuleHandleW(name)
+                || VirtualQuery(reinterpret_cast<void*>(qb), &qm, sizeof(qm)) != sizeof(qm) || qm.State != MEM_FREE)
+                continue;                                               // something keeps it mapped: try the next
             used = name;
-            base = b;
             break;
         }
-        check("SCAN-EARLY precondition: a System32 DLL loaded, scanned, freed and really unmapped", used != nullptr);
-        if (used) {
+        check("SCAN-EARLY precondition: a System32 DLL that unmaps when freed (qualified with no scan)", used != nullptr);
+        uintptr_t base = 0;
+        char pattern[16 * 3 + 1] = {};
+        HMODULE h = used ? LoadLibraryExW(used, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) : nullptr;
+        const uint8_t* code = nullptr;
+        if (h) {
+            base = reinterpret_cast<uintptr_t>(h);
+            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
+            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
+            IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+            for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec)
+                if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) && sec->Misc.VirtualSize >= 64) {
+                    code = reinterpret_cast<const uint8_t*>(base + sec->VirtualAddress);
+                    break;
+                }
+        }
+        if (used)
+            check("SCAN-EARLY precondition: it loads again and has a code section to cut a pattern from", h && code);
+        if (h && code) {
+            // Positive control: 16 bytes from the start of its first code section, as a pattern, are found while
+            // it is loaded -- so a later "0 matches" means "gone", not "this scan never finds anything here".
+            for (int i = 0; i < 16; ++i) snprintf(pattern + i * 3, 4, i == 15 ? "%02X" : "%02X ", code[i]);
+            const size_t liveHits = Macht::AOBScanAll(pattern, base).size();
+            // (tenth review, R10-02) The scan released ONLY its own reference: the module is still ours to free.
+            const bool stillLoadedAfterScan = GetModuleHandleW(used) == h;
+            const bool ownFreeOk = FreeLibrary(h) != FALSE;
+            // (R11-04) ...and released it at ALL: after the owner's free nothing else holds it, so it unmaps.
+            MEMORY_BASIC_INFORMATION mbi{};
+            const bool unmappedAfter = !GetModuleHandleW(used)
+                && VirtualQuery(reinterpret_cast<void*>(base), &mbi, sizeof(mbi)) == sizeof(mbi)
+                && mbi.State == MEM_FREE;
             check("SCAN-EARLY control: while loaded, a pattern cut from its own code is found in it", liveHits >= 1,
                   std::to_string(liveHits).c_str());
             check("SCAN-EARLY R10-02: after a scan the module is still loaded -- the pin released only its own reference",
                   stillLoadedAfterScan);
             check("SCAN-EARLY R10-02: ...and the owner's own FreeLibrary still succeeds", ownFreeOk);
+            check("SCAN-EARLY R11-04: ...and then it unmaps -- the scan released its reference (no leak)", unmappedAfter);
             size_t n = 999;
             const bool faulted = ScanFaultsAt(pattern, base, &n);
             check("SCAN-EARLY ⭐ scanning a module that is gone does NOT fault", !faulted);
