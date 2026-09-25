@@ -390,6 +390,17 @@ void ADumperTestActor::BeginPlay()
 	// dependency, so the acceptance is that the PATH reads back -- never that the asset is
 	// present. Engine paths are used so nothing project-specific has to be cooked at all.
 	Soft_Mesh = TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Cube.Cube")));
+
+	// ---- Review 7 hosts: the TOptional weak / soft / lazy arms (R7-B-02, R7-B-04, R7-S1) ----
+	Opt_Weak_Null.Emplace(nullptr);
+	Opt_Weak_Live.Emplace(this);
+	Opt_Soft.Emplace(TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Game/R7S1/NotCooked.NotCooked"))));
+	Opt_SoftClass.Emplace(TSoftClassPtr<AActor>(FSoftObjectPath(TEXT("/Script/Engine.Pawn"))));
+	{
+		TLazyObjectPtr<AActor> Lazy;
+		Lazy = FUniqueObjectGuid(FGuid(0x11111111, 0x22222222, 0x33333333, 0x44444444));
+		Opt_Lazy.Emplace(Lazy);
+	}
 	Arr_SoftMesh.Reset();
 	Arr_SoftMesh.Add(TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Cube.Cube"))));
 	Arr_SoftMesh.Add(TSoftObjectPtr<UStaticMesh>(FSoftObjectPath(TEXT("/Engine/BasicShapes/Sphere.Sphere"))));
@@ -553,6 +564,8 @@ void ADumperTestActor::Tick(float DeltaSeconds)
 			if (AActor* Doomed = W ? W->SpawnActor<AActor>(AActor::StaticClass(), FTransform::Identity, SP) : nullptr)
 			{
 				WeakToGarbage = Doomed;
+				Opt_Weak_Garbage = TWeakObjectPtr<AActor>(Doomed);   // [R7-B-04] the TOptional twin
+				if (!Opt_Weak_Stale.IsSet()) { Opt_Weak_Stale = TWeakObjectPtr<AActor>(Doomed); }   // [R7-B-02] once
 				++WeakToGarbageCount;
 				Doomed->Destroy();   // -> MarkAsGarbage: RF_MirroredGarbage + the item's Garbage bit, at once
 			}
@@ -590,7 +603,7 @@ void ADumperTestActor::EndPlay(const EEndPlayReason::Type EndPlayReason)
 		W->GetTimerManager().ClearTimer(TickHandle);
 		W->GetTimerManager().ClearTimer(LiniePeriodicHandle);
 	}
-	// ⚠ UNCONDITIONAL. If -DumperTestStarveVM reserved the ±2 GB window and the run aborts
+	// ⚠ UNCONDITIONAL. If -DumperTestStarveVM reserved the trampoline window and the run aborts
 	// before Hook_ReleaseTrampolineVM is called, leaving it reserved would starve every
 	// subsequent hook attempt in a process the next session assumes is clean.
 	ReleaseReservedVm();
@@ -1237,8 +1250,9 @@ int32 ADumperTestActor::InvokeGate_TakeStructRef(const FDumperTestInvokeProbe& P
 // ============================================================
 // Trampoline-VM starvation.
 //
-// MinHook must place its trampoline within ±2 GB of the hooked function, because the detour is
-// a 32-bit relative jump. Reserving that window makes MH_CreateHook fail with
+// MinHook must place its trampoline near the hooked function, because the detour is a 32-bit
+// relative jump (+-2 GB) -- and MinHook itself searches only +-1 GB (MAX_MEMORY_RANGE in
+// vendor/minhook/src/buffer.c). The sweep reserves +-2 GB, which covers that. Doing so makes MH_CreateHook fail with
 // MH_ERROR_MEMORY_ALLOC -- which is the intermittent, never-observed failure four shipped
 // behaviours depend on (bounded retry, the single-line fallback WARN, worker refusal -8, and
 // the UI recovering after release).
@@ -1327,3 +1341,17 @@ int32 ADumperTestActor::ReleaseReservedVm()
 }
 
 #include "Windows/HideWindowsPlatformTypes.h"
+
+// ============================================================
+// [R7-S11] Review 7: a container nested in a struct, sized on demand.
+// ============================================================
+void ADumperTestActor::S11_SetNestedBag(int32 Count)
+{
+	NestedBag.PairsA.Reset();
+	NestedBag.PairsB.Reset();
+	for (int32 i = 0; i < Count; ++i)
+	{
+		NestedBag.PairsA.Add(i, i * 3);
+		NestedBag.PairsB.Add(i, i * 7);
+	}
+}
