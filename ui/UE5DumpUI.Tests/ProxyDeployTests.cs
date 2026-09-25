@@ -1248,6 +1248,51 @@ public class ProxyDeployTests
         }
     }
 
+    [Fact]
+    public async Task RefreshDeployStatus_ASharedLogFolder_SaysTheLoadMayBeAnotherGames()
+    {
+        // (fifth review, R5-03 -- the maintainer's "mark it ambiguous" carried to the third exe-keyed signal) The Load
+        // column reads Logs\<exe stem>: games in different folders that ship the same exe name share that folder, so
+        // one game's load was credited to all of them while the Suggested column said the name cannot be attributed.
+        string appData = MakeTempDir();
+        try
+        {
+            string logs = Path.Combine(appData, Constants.LogFolderName, Constants.LogSubFolder);
+            Directory.CreateDirectory(Path.Combine(logs, "Shared-Win64-Shipping"));
+            File.WriteAllText(Path.Combine(logs, "Shared-Win64-Shipping", "init-0.log"), "x");
+            Directory.CreateDirectory(Path.Combine(logs, "Unique-Win64-Shipping"));
+            File.WriteAllText(Path.Combine(logs, "Unique-Win64-Shipping", "init-0.log"), "x");
+            DetectedGame G(string name, string exe)
+            {
+                string bin = Path.Combine(appData, name);
+                Directory.CreateDirectory(bin);
+                return new DetectedGame { Name = name, ExePath = Path.Combine(bin, exe), BinariesDir = bin };
+            }
+            var a = G("A", "Shared-Win64-Shipping.exe");
+            var b = G("B", "Shared-Win64-Shipping.exe");
+            var c = G("C", "Unique-Win64-Shipping.exe");
+            var d = G("D", "NeverRan-Win64-Shipping.exe");
+            var e = G("E", "NeverRan-Win64-Shipping.exe");
+
+            var svc = new ProxyDeployService(new NoopLog(), new AppDataPlatform(appData));
+            await svc.RefreshDeployStatusAsync(new List<DetectedGame> { a, b, c, d, e }, @"X:\missing.dll",
+                ProxyType.Version, ct: TestContext.Current.CancellationToken);
+
+            foreach (var g in new[] { a, b })
+            {
+                Assert.StartsWith("loaded ", g.LoadObservation);
+                Assert.EndsWith(" · shared exe name: may be another game's", g.LoadObservation);
+            }
+            Assert.DoesNotContain("shared", c.LoadObservation);          // a unique name: its own load
+            Assert.Equal("not observed", d.LoadObservation);              // nobody ran: nothing to attribute
+            Assert.Equal("not observed", e.LoadObservation);
+        }
+        finally
+        {
+            Directory.Delete(appData, recursive: true);
+        }
+    }
+
     private static string MakeTempDir()
     {
         string dir = Path.Combine(Path.GetTempPath(),
