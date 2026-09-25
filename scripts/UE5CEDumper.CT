@@ -72,9 +72,35 @@ end
 -- Feb-2026 build in CE's install folder was ~0.5 MB. See docs/todo.md
 -- [STALEDLL-2026-08-18]. A global so both the inject [ENABLE] chunk and the startup
 -- replay (different Lua chunks) can call it.
+-- [PATH-CT-INJECT-ANSI] One path in BOTH encodings: returns ansi, utf8. injectDLL hands its string to
+-- LoadLibraryA and Lua's io.open is fopen -- both read the ANSI code page -- while showMessage, fileExists and
+-- CE's dialogs speak UTF-8. A found path arrives in either (fromAnsi = io.open found it, so it IS ansi bytes).
+-- ansi is nil when the code page cannot hold the path: the round trip through CE's UTF8ToAnsi / ansiToUTF8 must
+-- give the path back, or the bytes would name another folder (best fit turns an accented e into e) or none ('?').
+function ue5_pathForms(p, fromAnsi)
+    if type(p) ~= "string" or p == "" then return nil, nil end
+    if not p:find("[\128-\255]") then return p, p end
+    if fromAnsi then
+        local ok, u = pcall(ansiToUTF8, p)
+        if ok and type(u) == "string" and u ~= "" then return p, u end
+        return p, p
+    end
+    local ok, a = pcall(UTF8ToAnsi, p)
+    if not ok or type(a) ~= "string" or a == "" then return nil, p end
+    local ok2, back = pcall(ansiToUTF8, a)
+    if not ok2 or back ~= p then return nil, p end
+    return a, p
+end
+
 function ue5_dllFileSize(path)
     if type(path) ~= "string" or path == "" then return nil end
     local f = io.open(path, "rb")
+    -- [PATH-CT-INJECT-ANSI] fopen reads ANSI bytes: a UTF-8 path (the breadcrumb, a dialog) opens only as its
+    -- ANSI form. Guarded, so the function still works where it is lifted on its own (dll_size_text_test).
+    if not f and ue5_pathForms then
+        local a = ue5_pathForms(path, false)
+        if a and a ~= path then f = io.open(a, "rb") end
+    end
     if not f then return nil end
     local ok, sz = pcall(function() return f:seek("end") end)
     f:close()
@@ -231,13 +257,14 @@ local function _dllAt(dir)
     if dir == "" then return nil end
     local p = dir .. "UE5Dumper.dll"
     local f = io.open(p, "rb")
-    if f then f:close() return p end
+    if f then f:close() return p, true end     -- fopen opened it: p is ANSI bytes
     local ok, hit = pcall(fileExists, p)
-    if ok and hit then return p end
+    if ok and hit then return p, false end     -- CE's fileExists: p is UTF-8
     return nil
 end
 
 DLL_PATH = nil
+DLL_PATH_ANSI = nil   -- [PATH-CT-INJECT-ANSI] the same path for injectDLL / io.open; nil = it has no ANSI form
 _DLL_FOUND_SLOT = nil
 local _dllFoundIn = nil
 local _dllFoundLabel = ""
@@ -248,9 +275,10 @@ local function _probeSlots(from)
         if s.dir == "" then
             s.state = "NOT SEARCHED"
         else
-            local hit = _dllAt(s.dir)
+            local hit, fromAnsi = _dllAt(s.dir)
             if hit then
-                DLL_PATH, _dllFoundIn, _DLL_FOUND_SLOT = hit, s.dir, i
+                DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(hit, fromAnsi)
+                _dllFoundIn, _DLL_FOUND_SLOT = s.dir, i
                 _dllFoundLabel = s.label
                 s.state = "FOUND"
                 return true
@@ -542,6 +570,10 @@ function ue5_pickDllManually()
                 if f then
                     f:close()
                     picked = fn
+                elseif fileExists(fn) then
+                    -- [PATH-CT-INJECT-ANSI] The dialog's name is UTF-8, which fopen cannot open for a non-ASCII
+                    -- folder -- so every such pick was dropped, and the error said to pick again.
+                    picked = fn
                 end
             end
         end)
@@ -587,7 +619,7 @@ function ue5_inject()
     -- WITHOUT aborting on a miss. Here is where a miss actually matters, and
     -- where returning false unticks the record.
     if not DLL_PATH then
-        DLL_PATH = ue5_pickDllManually()
+        DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(ue5_pickDllManually(), false)
     end
     if not DLL_PATH then
         ue5_logError("UE5Dumper.dll not found in any searchable folder.")
@@ -681,7 +713,18 @@ function ue5_inject()
     -- internally — no executeCodeEx calls needed or possible (remote threads may
     -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
     if not revived then
-        if not injectDLL(DLL_PATH) then
+        -- [PATH-CT-INJECT-ANSI] injectDLL copies its string into the game for LoadLibraryA, which reads ANSI bytes.
+        -- A UTF-8 path from a non-ASCII folder failed there, and CE then manual-mapped the DLL (no TLS, no .pdata).
+        if not DLL_PATH_ANSI then
+            ue5_logError("UE5Dumper.dll's path has no ANSI form, so injectDLL (LoadLibraryA) cannot load it: %s", DLL_PATH)
+            showMessage("UE5 Dumper Error:\n\nCheat Engine cannot load UE5Dumper.dll from this folder:\n  " .. DLL_PATH ..
+                "\n\nThe path has characters the Windows code page (ANSI) cannot represent, and CE's injectDLL\n" ..
+                "hands the path to LoadLibraryA, so the DLL would not load.\n\n" ..
+                "Move the UE5CEDumper folder to a path of plain English letters and re-tick --\n" ..
+                "or use UE5DumpUI &gt; Proxy Deploy &gt; Inject into running game, which does not go through Cheat Engine.")
+            return false
+        end
+        if not injectDLL(DLL_PATH_ANSI) then
             ue5_logError("injectDLL failed! Is CE attached to the game? DLL_PATH: %s", DLL_PATH)
             showMessage("UE5 Dumper Error:\n\ninjectDLL failed.\n\nPossible causes:\n1. CE is not attached to a game process\n2. DLL file not found: " .. DLL_PATH .. "\n3. Anti-cheat blocking injection")
             return false

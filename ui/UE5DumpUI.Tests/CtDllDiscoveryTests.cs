@@ -121,7 +121,9 @@ public class CtDllDiscoveryTests
         var s = Ct();
         Assert.Contains("function ue5_renderDllSearch()", s, StringComparison.Ordinal);
         Assert.Contains("function ue5_pickDllManually()", s, StringComparison.Ordinal);
-        Assert.Contains("DLL_PATH = ue5_pickDllManually()", s, StringComparison.Ordinal);
+        // [PATH-CT-INJECT-ANSI] The pick sets both encodings of the path (injectDLL needs the ANSI one).
+        Assert.Contains("DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(ue5_pickDllManually(), false)", s,
+            StringComparison.Ordinal);
     }
 
     [Fact]
