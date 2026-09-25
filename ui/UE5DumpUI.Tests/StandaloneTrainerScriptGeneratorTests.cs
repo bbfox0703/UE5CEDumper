@@ -198,4 +198,16 @@ public class StandaloneTrainerScriptGeneratorTests
         Assert.DoesNotContain("bAnd(", setup);
         Assert.DoesNotContain("bOr(", setup);
     }
+
+    [Fact]
+    public void An_apostrophe_in_the_exe_name_is_escaped()
+    {
+        // [PATH-TRAINER-APOSTROPHE] LuaModule was the one name-derived Lua literal that skipped EscapeLuaString:
+        // module = 'Tony's-Win64-Shipping.exe' is a syntax error on CE's VM, so Setup could never enable.
+        var o = Usable();
+        o.Module = "Tony's-Win64-Shipping.exe";
+        var setup = StandaloneTrainerScriptGenerator.Generate(o)[0].Script;
+        Assert.Contains(@"module = 'Tony\'s-Win64-Shipping.exe',", setup);
+        Assert.DoesNotContain("module = 'Tony's", setup);
+    }
 }
