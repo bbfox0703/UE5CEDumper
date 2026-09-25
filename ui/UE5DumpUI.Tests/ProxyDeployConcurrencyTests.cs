@@ -650,6 +650,57 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("updated: 1", vm.LastOperationResult ?? "");
     }
 
+    // ── [PROXY-DEPLOY-NOOP-COUNT] Deploy does not report a write that never happened ──────
+    //
+    // The same situation through the Deploy button: Force off, same version. The real service answers
+    // AlreadyCurrent and returns TRUE without writing, so the VM counted it and showed "Deployed: 2 success".
+
+    [Fact]
+    public async Task Deploy_SameVersion_NoForce_SaysAlreadyCurrent_NotDeployed()
+    {
+        var (vm, svc) = Ready(deployed: true);   // version.dll deployed; Version is the selected proxy
+        svc.VersionOf = _ => SameVersion;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.StartsWith("Deployed: 0 success", vm.LastOperationResult);
+        Assert.Contains("already current: 2", vm.LastOperationResult);
+        Assert.Contains("Force Overwrite", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task Deploy_SameVersion_Force_Deploys()
+    {
+        var (vm, svc) = Ready(deployed: true);
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
+        Assert.All(svc.Deploys, d => Assert.True(d.Options.ForceSameVersion));
+        Assert.StartsWith("Deployed: 2 success", vm.LastOperationResult);
+        Assert.DoesNotContain("already current", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task Deploy_SameVersion_ForeignTarget_StillGoesToTheService()
+    {
+        // Only OUR same-version proxy is short-circuited; a foreign DLL at any version stays the service's call,
+        // so its consent logic (refuse, or replace with "Replace other tools' DLLs") is untouched.
+        var (vm, svc) = Ready(deployed: true);
+        svc.VersionOf = _ => SameVersion;
+        svc.IsOurs = _ => false;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
+    }
+
     [Fact]
     public async Task UpdateAll_ReportsATally_WhenTheServiceThrows()
     {
