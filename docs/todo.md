@@ -459,6 +459,17 @@ INFO -- all in tests and the SCAN-EARLY rig; no product code. Fixed row by row.
 | R11-03 | INFO (tests) → ✅ `38e14bb4` (by mutation) | R9-01 | The writes matched "MinHeight =" with any value, so a fixed floor passed. Now RowFloors' result is pinned into both writes. |
 | R11-04 | INFO (tests) → ✅ `a5a9d7a6` (by mutation) | SCAN-EARLY | A leaked pin read as "no usable DLL" (the precondition). Candidates are now qualified with no scan, and "unmaps after the owner's free" is its own check. |
 
+**Twelfth skeptic review** (workflow `wf_4e2ae682-b6e`, over the eleventh round's fixes). 3 raised, 3 confirmed, all INFO,
+all in tests and the SCAN-EARLY rig. Fixed row by row. **The loop stops here:** rounds 11-12 found only test and rig
+strength issues; the product code has not changed since round 10's fixes, and build 3559 ships it. A thirteenth round
+is the maintainer's call.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R12-03 | INFO (tests) → ✅ `0bb948ef` | SCAN-EARLY | After R11-04's split, a candidate without a code section was picked (and failed) and its reloaded handle leaked. The code-section check is qualification now; the handle is freed on every path. |
+| R12-02 | INFO (tests) → ✅ `84787891` (by mutation) | R9-01 | The handler's guard, Auto-row sum and filter were unpinned; four one-token mutations brought R9-01 back green. All four pinned and caught. |
+| R12-01 | INFO → ✅ `b9d9cf64` | SCAN-EARLY rig | A copy could land between Popen and the loader mapping the proxy (~15-25 ms, measured), and main hashed three times. Now one hash per decision, and a second one after connect proves the mapped binary. |
+
 **Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ⏳ open -- **needs the maintainer
 with a real mouse.** On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
 one monitor), NO tooltip appears for a control whose position is past ~1138 DIP from the screen's left edge (physical
