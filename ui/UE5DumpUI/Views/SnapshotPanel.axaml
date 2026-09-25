@@ -10,8 +10,11 @@
        the user trade space between the snapshot list and the diff result.
        [UI-SPACE-2026-09-25] Both star rows carry a MinHeight: on a 4K screen at 225 % (1067 DIP high) the Auto rows
        left the diff grid its header only. 110 = a header and ~3 rows; 350 = the mode switch (~40) + the Compare
-       expander (~185) + a diff grid of a header and ~4 rows. -->
-  <Grid Margin="12">
+       expander (~185) + a diff grid of a header and ~4 rows.
+       (ninth review, R9-01) These are the FULL floors. The code-behind caps them, each layout pass, at the room the
+       Auto rows leave: the Noise picker (the last Auto row) or a capture's status lines must never be pushed below
+       the window, as they were with fixed floors. -->
+  <Grid x:Name="RootGrid" Margin="12">
     <Grid.RowDefinitions>
       <RowDefinition Height="Auto"/>
       <RowDefinition Height="Auto"/>
