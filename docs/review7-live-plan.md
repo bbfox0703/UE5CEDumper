@@ -58,7 +58,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-X1]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-X3]` | done | ✅ live PASS 2026-09-25 (before this plan; `068c590e`) |
 | `[R7-X4]` | 4 (found there) | yes · ✅ PASS red→green on stock 5.3; the stripped-5.4 function arm not run (Elliot) |
-| `[R7-X5]` | 19 (found there) | fix pending · ⏳ open (the invoke helper keeps its first-loaded copy for the CE session) |
+| `[R7-X5]` | 19 (found there) | fixed `2911801b` · ⏳ live check pending on the next build (1.3 then HEAD in one CE process → 1.4 resident; S3 passes without a fresh process) |
 | `[R7-X6]` | 20 (found there) | fixed `ab392699` · ⏳ live check pending on the next build (NestedBag 20,000 @ 16384 → TRUNCATED; also S11's F-20000 arm) |
 
 -----
