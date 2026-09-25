@@ -80,18 +80,38 @@ public sealed class CoordinateLibraryStore
         if (string.IsNullOrWhiteSpace(moduleName)) return "";
         // [PATH-UI-LEGACY-QMARK] '?' is never legal in a file name: it is what a DLL built before
         // [PATH-MODULE-NAME-UTF8] reports for each non-ASCII character. Such a name is lossy -- "???.exe" keyed to
-        // "" and "???-Win64-Shipping.exe" to a key every such game shares -- so it keys nothing.
+        // "" and "???-Win64-Shipping.exe" to a key every such game shares -- so it keys nothing. (A library it saved
+        // is found again by LegacyKeyFor and carried over once the DLL is updated.)
         if (moduleName!.Contains('?')) return "";
-        var name = moduleName!.Trim();
-        // Drop a trailing .exe/.dll so "MyGame.exe" and "MyGame" agree.
-        int dot = name.LastIndexOf('.');
-        if (dot > 0 &&
-            (name.AsSpan(dot).Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
-             name.AsSpan(dot).Equals(".dll", StringComparison.OrdinalIgnoreCase)))
-        {
-            name = name[..dot];
-        }
+        string key = SanitizeKey(moduleName);
+        if (key.Length > 0) return key;
+        // (skeptic QM-7) A real name with no character a key can hold ('★.exe') would get no library at all, under
+        // the new DLL too: key it by a stable hash of the name instead.
+        return "name-" + StableHash(StripExeOrDll(moduleName.Trim()).ToLowerInvariant());
+    }
 
+    /// <summary>[PATH-UI-LEGACY-QMARK] (skeptic QM-1) The key an OLDER DLL's report of this game keyed to: every
+    /// non-ASCII UTF-16 unit as '?' (or the name as given, if it already carries them), sanitised by the rules
+    /// <see cref="KeyFor"/> used before it refused such names. "" for an ASCII name -- it never had another key.
+    /// Libraries saved under it would otherwise be stranded: refused under the old DLL, a different key under the
+    /// new one.</summary>
+    public static string LegacyKeyFor(string? moduleName)
+    {
+        if (string.IsNullOrWhiteSpace(moduleName)) return "";
+        bool lossy = moduleName!.Contains('?');
+        bool nonAscii = false;
+        foreach (char c in moduleName) if (c >= 0x80) { nonAscii = true; break; }
+        if (!lossy && !nonAscii) return "";
+        var asOld = new StringBuilder(moduleName.Length);
+        foreach (char c in moduleName) asOld.Append(c >= 0x80 ? '?' : c);
+        return SanitizeKey(asOld.ToString());
+    }
+
+    /// <summary>The key rules themselves: extension dropped, lower-cased, everything but letters / digits / '-' /
+    /// '_' made '_', outer '_' trimmed, 96 characters at most.</summary>
+    private static string SanitizeKey(string moduleName)
+    {
+        var name = StripExeOrDll(moduleName.Trim());
         var sb = new StringBuilder(name.Length);
         foreach (var c in name)
         {
@@ -102,6 +122,31 @@ public sealed class CoordinateLibraryStore
         var key = sb.ToString().Trim('_');
         return key.Length > 96 ? key[..96] : key;
     }
+
+    // Drop a trailing .exe/.dll so "MyGame.exe" and "MyGame" agree.
+    private static string StripExeOrDll(string name)
+    {
+        int dot = name.LastIndexOf('.');
+        if (dot > 0 &&
+            (name.AsSpan(dot).Equals(".exe", StringComparison.OrdinalIgnoreCase) ||
+             name.AsSpan(dot).Equals(".dll", StringComparison.OrdinalIgnoreCase)))
+        {
+            return name[..dot];
+        }
+        return name;
+    }
+
+    /// <summary>FNV-1a over the UTF-16 units, 8 hex digits: stable across runs and machines (string.GetHashCode is
+    /// randomised per process).</summary>
+    private static string StableHash(string s)
+    {
+        uint h = 2166136261;
+        foreach (char c in s) { h ^= c; h *= 16777619; }
+        return h.ToString("x8");
+    }
+
+    /// <summary>Whether a library file exists for <paramref name="key"/>.</summary>
+    public bool Exists(string key) => !string.IsNullOrEmpty(key) && File.Exists(PathFor(key));
 
     private string PathFor(string key) =>
         Path.Combine(_dir, $"{Constants.CoordLibraryFilePrefix}.{key}.json");

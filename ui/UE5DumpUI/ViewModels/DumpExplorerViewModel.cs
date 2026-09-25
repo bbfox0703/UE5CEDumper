@@ -366,6 +366,12 @@ public partial class DumpExplorerViewModel : ViewModelBase
         bool fileLossy = fileModule.Contains('?'), liveLossy = liveModule.Contains('?');
         bool samePe = filePeHash.Length > 0 && livePeHash.Length > 0
                       && string.Equals(filePeHash, livePeHash, StringComparison.OrdinalIgnoreCase);
+        // (skeptic QM-3) Unknown is not ANY: the older DLL wrote ASCII verbatim and one '?' per non-ASCII UTF-16
+        // unit, so a name it cannot have produced -- another length, an ASCII letter where it wrote '?' -- is still a
+        // different game, and is refused as before.
+        if ((fileLossy || liveLossy) && fileModule.Length > 0 && liveModule.Length > 0
+            && !LossyCompatible(fileModule, liveModule))
+            return (true, "");
         if (fileLossy || liveLossy)
             return (false, samePe
                 ? ""
@@ -387,6 +393,21 @@ public partial class DumpExplorerViewModel : ViewModelBase
         // Pre-pe_hash / hand-made file, or a DLL that reported no module: match, but never let the absence of the
         // field read as a positive identity check.
         return (false, "Dump carries no game identity — could not confirm it is this game. ");
+    }
+
+    /// <summary>Could an older DLL's '?' report and this name be the same exe? Same UTF-16 length; each '?' stands for
+    /// one unit ≥ 0x80 (or another '?'); every other unit equal, ignoring case.</summary>
+    private static bool LossyCompatible(string a, string b)
+    {
+        if (a.Length != b.Length) return false;
+        for (int i = 0; i < a.Length; i++)
+        {
+            char x = a[i], y = b[i];
+            if (x == '?' && (y >= 0x80 || y == '?')) continue;
+            if (y == '?' && x >= 0x80) continue;
+            if (char.ToUpperInvariant(x) != char.ToUpperInvariant(y)) return false;
+        }
+        return true;
     }
 
     private async Task RunLiveMatchAsync(CancellationToken ct)

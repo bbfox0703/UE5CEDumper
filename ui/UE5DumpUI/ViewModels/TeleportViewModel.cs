@@ -3520,6 +3520,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// DLL), or "". While set, adding to the library is refused with <see cref="CoordLibraryUnavailableText"/>
     /// instead of adding a row that is never saved.</summary>
     private string _coordUnusableModule = "";
+    /// <summary>(skeptic QM-1) Under an older DLL: the file name of a library that name saved earlier, named in the
+    /// refusal, or "".</summary>
+    private string _coordLegacyFile = "";
+    /// <summary>(skeptic QM-2) CoordStatus holds a refusal: the next usable load clears it.</summary>
+    private bool _coordStatusIsRefusal;
     private bool _suppressCoordPersist;
     // Set only while ApplyCoordFilter re-selects the equivalent row after rebuilding
     // CoordResults, so the editor fields are not rewritten from the stored entry. (B20)
@@ -3643,8 +3648,17 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         _activeCoordKey = CoordinateLibraryStore.KeyFor(moduleName);
         _coordUnusableModule = !string.IsNullOrWhiteSpace(moduleName) && string.IsNullOrEmpty(_activeCoordKey)
             ? moduleName! : "";
+        // [PATH-UI-LEGACY-QMARK] (skeptic QM-1) The key an older DLL's '?' report of this game keyed to.
+        string legacyKey = CoordinateLibraryStore.LegacyKeyFor(moduleName);
+        _coordLegacyFile = _coordUnusableModule.Length > 0 && _coordStore.Exists(legacyKey)
+            ? Path.GetFileName(_coordStore.FilePathFor(legacyKey)) : "";
+        bool wasRefusal = _coordStatusIsRefusal;
+        _coordStatusIsRefusal = false;
         if (_coordUnusableModule.Length > 0)
+        {
             CoordStatus = CoordLibraryUnavailableText();
+            _coordStatusIsRefusal = true;
+        }
         _suppressCoordPersist = true;
         try
         {
@@ -3653,9 +3667,33 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(_activeCoordKey))
             {
                 var file = _coordStore.Load(_activeCoordKey);
+                // (skeptic QM-1 / T6) Nothing saved under the real name yet, but the older DLL's key holds a library:
+                // carry it over, and leave the old file as it was -- that key can be shared by another game whose
+                // name the old DLL mangled the same way, so it is copied, never moved.
+                string carriedFrom = "";
+                if (!_coordStore.Exists(_activeCoordKey) && legacyKey.Length > 0 && legacyKey != _activeCoordKey
+                    && _coordStore.Exists(legacyKey))
+                {
+                    var legacy = _coordStore.Load(legacyKey);
+                    if (legacy.Entries.Count > 0) { file = legacy; carriedFrom = legacyKey; }
+                }
                 foreach (var e in file.Entries) _coordAll.Add(e);
                 CoordZTolerance = file.ZTolerance;
-                _log.Info($"Coordinate library: loaded {_coordAll.Count} entries for '{_activeCoordKey}'");
+                _log.Info($"Coordinate library: loaded {_coordAll.Count} entries for '{_activeCoordKey}'"
+                          + (carriedFrom.Length > 0 ? $" (carried over from '{carriedFrom}')" : ""));
+                if (carriedFrom.Length > 0)
+                {
+                    _coordStore.Save(_activeCoordKey, CurrentCoordFile());
+                    CoordStatus = $"Loaded {_coordAll.Count} coordinate(s) from "
+                        + $"{Path.GetFileName(_coordStore.FilePathFor(carriedFrom))}, which an older UE5Dumper.dll saved "
+                        + "for this game (it reported non-ASCII characters as '?'). They are now kept under this "
+                        + "game's real name; the old file was left as it was. If they belong to another game, use "
+                        + "Clear all.";
+                }
+                else if (wasRefusal)
+                {
+                    CoordStatus = "";   // (skeptic QM-2) the refusal's cause is gone
+                }
             }
             RebuildCoordGroups();
             ApplyCoordFilter();
@@ -3880,16 +3918,29 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>[PATH-UI-LEGACY-QMARK] Says why the library cannot be used for this game, and that nothing was
     /// saved. Before this, a row was added in memory with an "Added" status and lost on the next launch.</summary>
+    /// (skeptic QM-5) The remedy is complete: a running game holds its proxy (Update All cannot replace it) and a
+    /// re-inject into it reattaches to the old DLL, so the game must be closed first. (QM-1) A library the old name
+    /// saved is named: it is carried over after the update.
     private string CoordLibraryUnavailableText() =>
         $"Coordinate library unavailable: the connected DLL reports this game as '{_coordUnusableModule}', which "
-        + "names no file (a UE5Dumper.dll older than this UI turns non-ASCII characters into '?'). Update the "
-        + "game's proxy DLL (Proxy Deploy > Update All) or re-inject, then reconnect. Nothing was saved.";
+        + "names no file (a UE5Dumper.dll older than this UI turns non-ASCII characters into '?'). Close the game, "
+        + "update its proxy DLL (Proxy Deploy > Update All) or inject the current UE5Dumper.dll into a freshly "
+        + "started game, then reconnect."
+        + (_coordLegacyFile.Length > 0
+            ? $" The library saved earlier under that name ({_coordLegacyFile}) is carried over then."
+            : "")
+        + " Nothing was saved.";
 
-    /// <summary>True, with the reason in <see cref="CoordStatus"/>, when the library cannot be written.</summary>
+    /// <summary>True, with the reason in <see cref="CoordStatus"/>, when the library cannot be written: a lossy
+    /// name, or (skeptic QM-4) no game yet -- entries are kept per game, so a row added before the first connect
+    /// was reported "Added", never saved, and cleared by that connect.</summary>
     private bool CoordLibraryRefused()
     {
-        if (_coordStore == null || _coordUnusableModule.Length == 0) return false;
-        CoordStatus = CoordLibraryUnavailableText();
+        if (_coordStore == null || _activeCoordKey.Length > 0) return false;
+        CoordStatus = _coordUnusableModule.Length > 0
+            ? CoordLibraryUnavailableText()
+            : "Coordinate library: connect to a game first -- entries are kept per game. Nothing was saved.";
+        _coordStatusIsRefusal = true;
         return true;
     }
 
@@ -4279,7 +4330,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (parsed.Issues.Count > 0)
             sb.Append("\nSkipped / adjusted:\n").Append(FormatIssues(parsed.Issues));
 
-        sb.Append("\nPress Apply to commit (a .preimport.bak is written first).");
+        // (skeptic QM-6) Say so up front when Apply can only be refused.
+        if (_coordStore != null && _activeCoordKey.Length == 0)
+            sb.Append("\nApply is unavailable: ").Append(_coordUnusableModule.Length > 0
+                ? "the coordinate library cannot be used for this game -- see the status line."
+                : "connect to a game first -- entries are kept per game.");
+        else
+            sb.Append("\nPress Apply to commit (a .preimport.bak is written first).");
         CoordImportPreview = sb.ToString();
         OnPropertyChanged(nameof(HasPendingCoordImport));
     }
@@ -4296,7 +4353,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplyCoordImport()
     {
         if (_pendingImport == null || _pendingChanges == null) return;
-        if (CoordLibraryRefused()) return;   // [PATH-UI-LEGACY-QMARK] the preview stays, for after an update
+        // [PATH-UI-LEGACY-QMARK] Refused while the library cannot be written. (skeptic QM-6) The preview cannot outlive
+        // the fix: the reconnect it needs drops it (LoadCoordLibraryForGame), so it is previewed again after.
+        if (CoordLibraryRefused()) return;
 
         var bak = _coordStore?.SavePreImportBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
