@@ -210,6 +210,30 @@ public class CeModuleViewTests
         Assert.True(exit == 0 && output.Contains("OK"), output);
     }
 
+    [Fact]
+    public void FernSendsTheRealName_AndCesViewOnlyWhereCeResolvesIt()
+    {
+        // (skeptic T3) No test target compiles Fern.cpp, so the red tests could only exercise the helpers. Pin that
+        // the three sites USE them and that no '?' narrowing survives.
+        string fern = File.ReadAllText(Path.Combine(RepoRoot(), "dll", "src", "Fern.cpp"));
+        Assert.DoesNotContain("(wc < 128) ? static_cast<char>(wc) : '?'", fern);
+        Assert.DoesNotContain("(wc < 128) ? static_cast<char>(towlower(wc)) : '?'", fern);
+        Assert.Contains("data[\"module_name\"] = Utf8Helpers::LeafUtf8(", fern);
+        Assert.Contains("Renge::CeModuleRelative(Methode::CeModuleNameUtf8(", fern);
+        Assert.DoesNotContain("static std::string AnsiViewUtf8", fern);   // moved to Methode.h, where it is tested
+    }
+
+    [Fact]
+    public void TheRigsThatPrintModuleName_WriteUtf8()
+    {
+        // (skeptic RIG-PRINT-NONASCII) With the real non-ASCII name, print() to a cp950 pipe raises
+        // UnicodeEncodeError. run_version_evidence.py and sweep_title.py already reconfigure stdout; dumpgate_case3.py
+        // did not.
+        foreach (var rig in new[] { "run_version_evidence.py", "sweep_title.py", "dumpgate_case3.py" })
+            Assert.Contains("sys.stdout.reconfigure(encoding=\"utf-8\"",
+                File.ReadAllText(Path.Combine(RepoRoot(), "tools", "verify", rig)));
+    }
+
     private sealed class RecordingBridge : IAobMakerBridge
     {
         public readonly List<string> Modules = new();

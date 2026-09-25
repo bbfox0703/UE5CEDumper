@@ -8748,6 +8748,24 @@ static void Test_Renge_CeModuleRelative_NeverTruncates() {
 // fell back to the 8.3 alias -- but re-narrowed THAT with flags 0 and no used-default check. On a volume without 8.3
 // names (D: here) GetShortPathNameW returns the long path, so a '?'-bearing string went to CE's InjectDLL
 // (LoadLibraryA) and the user saw the generic "32-bit / anti-cheat / administrator" failure.
+// [PATH-MODULE-NAME-UTF8] (skeptic MODVIEW-5C-TRAIL / T3) CE's own name for a module, as UTF-8: what ANSI Module32First
+// puts in szModule -- best fit, then cut after the ANSI path's last 0x5C byte (a DBCS trail byte can be 0x5C).
+// get_ce_pointer_info's ce_base is built from it. Was AnsiViewUtf8, file-static in Fern.cpp, untested.
+static void Test_Methode_CeModuleNameUtf8() {
+    auto n = [](const wchar_t* w, unsigned cp) { return Methode::CeModuleNameUtf8(w, std::wcslen(w), cp); };
+    EXPECT_EQ_STR("kana on 950 -> ???", n(L"\u30B2\u30FC\u30E0-Win64-Shipping.exe", 950), "???-Win64-Shipping.exe");
+    EXPECT_EQ_STR("e-acute best fit on 950 -> e", n(L"Caf\u00E9-Win64-Shipping.exe", 950), "Cafe-Win64-Shipping.exe");
+    EXPECT_EQ_STR("TM on 950 -> ?", n(L"Game\u2122-Win64-Shipping.exe", 950), "Game?-Win64-Shipping.exe");
+    EXPECT_EQ_STR("Big5-held name kept (UTF-8)", n(L"\u904A\u6232-Win64-Shipping.exe", 950),
+                  "\xE9\x81\x8A\xE6\x88\xB2-Win64-Shipping.exe");
+    EXPECT_EQ_STR("0x5C trail byte on 950: gong-fu -> fu", n(L"\u529F\u592B-Win64-Shipping.exe", 950),
+                  "\xE5\xA4\xAB-Win64-Shipping.exe");
+    EXPECT_EQ_STR("0x5C trail byte on 932: so-do -> do", n(L"\u30BD\u30FC\u30C9-Win64-Shipping.exe", 932),
+                  "\xE3\x83\xBC\xE3\x83\x89-Win64-Shipping.exe");
+    EXPECT_EQ_STR("ASCII unchanged", n(L"Tony's-Win64-Shipping.exe", 950), "Tony's-Win64-Shipping.exe");
+    EXPECT_EQ_STR("empty", n(L"", 950), "");
+}
+
 static void Test_Methode_NarrowForAnsiLoad() {
     const wchar_t* tm = L"D:\\Tools\\CE\u2122\\UE5Dumper.dll";
     EXPECT_EQ_STR("TM, no 8.3 alias (short == long): refused",
@@ -8793,6 +8811,7 @@ int main() {
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
     RUN(Test_Methode_NarrowForAnsiLoad);
+    RUN(Test_Methode_CeModuleNameUtf8);
     RUN(Test_TryStrToAddr_AcceptsValidHex);
     RUN(Test_TryStrToAddr_RejectsCePlaceholder);
     RUN(Test_TryStrToAddr_RejectsTrailingGarbage);
