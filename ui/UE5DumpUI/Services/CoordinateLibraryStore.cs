@@ -78,6 +78,10 @@ public sealed class CoordinateLibraryStore
     public static string KeyFor(string? moduleName)
     {
         if (string.IsNullOrWhiteSpace(moduleName)) return "";
+        // [PATH-UI-LEGACY-QMARK] '?' is never legal in a file name: it is what a DLL built before
+        // [PATH-MODULE-NAME-UTF8] reports for each non-ASCII character. Such a name is lossy -- "???.exe" keyed to
+        // "" and "???-Win64-Shipping.exe" to a key every such game shares -- so it keys nothing.
+        if (moduleName!.Contains('?')) return "";
         var name = moduleName!.Trim();
         // Drop a trailing .exe/.dll so "MyGame.exe" and "MyGame" agree.
         int dot = name.LastIndexOf('.');

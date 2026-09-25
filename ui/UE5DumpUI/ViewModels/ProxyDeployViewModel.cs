@@ -544,6 +544,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     public void RecordConfirmedProxy(string? exeName, string? proxyDllName)
     {
         if (string.IsNullOrEmpty(exeName)) return;
+        // [PATH-UI-LEGACY-QMARK] A name no file can have ('?' from a DLL older than [PATH-MODULE-NAME-UTF8]) would be
+        // a record that never matches Path.GetFileName(game.ExePath) -- and a dead key in ui-options.json forever.
+        if (exeName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return;
         if (ProxyTypeExtensions.FromDllName(proxyDllName) is not ProxyType type) return;
 
         if (!ConfirmedProxyByExe.TryGetValue(exeName, out var prev) || prev != type)

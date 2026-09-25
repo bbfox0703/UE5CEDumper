@@ -342,6 +342,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string AppVersion { get; } = GetAppVersion();
 
+    /// <summary>[PATH-UI-LEGACY-QMARK] A Save-dialog file name from the module name: the stem, with every character
+    /// a file name cannot hold made '_'. An older DLL reports non-ASCII characters as '?', which the Windows dialog
+    /// reads as a wildcard, so Save did nothing until the user retyped the name. Spaces are legal and kept.</summary>
+    internal static string SuggestedExportStem(string? moduleName, string fallback)
+    {
+        string stem = string.IsNullOrEmpty(moduleName) ? "" : Path.GetFileNameWithoutExtension(moduleName);
+        if (string.IsNullOrWhiteSpace(stem)) return fallback;
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new System.Text.StringBuilder(stem.Length);
+        foreach (char c in stem) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+        return sb.ToString();
+    }
+
     private static string GetAppVersion()
     {
         var ver = Assembly.GetEntryAssembly()?.GetName().Version;
@@ -3491,7 +3504,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game.exe";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
                 $"{safeModule}_symbols", filterName, filterExtension);
@@ -3529,7 +3542,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
                 $"{safeModule}_SDK", "C++ Header (*.h)", ".h");
@@ -3582,7 +3595,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
@@ -3677,7 +3690,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
                 $"{safeModule}", "USMAP (*.usmap)", ".usmap");

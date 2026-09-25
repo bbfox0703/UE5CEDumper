@@ -346,6 +346,49 @@ public partial class DumpExplorerViewModel : ViewModelBase
     // real live class the user can verify in the Live Walker.
     // ------------------------------------------------------------------
 
+    /// <summary>
+    /// The wrong-game gate, as a pure function of the two identities (module name + pe_hash). Refused = a different
+    /// GAME; otherwise the caveat (possibly "") that prefixes the match status.
+    ///
+    /// Tier 2 — same game, different BUILD. Class names survive a patch; addresses and offsets need not. Worth
+    /// matching, not worth asserting silently. Deliberately NOT a refusal: pe_hash is per-build, so refusing here
+    /// would also reject a dump the user took of this very game last week, which is the feature's normal use.
+    ///
+    /// [PATH-UI-LEGACY-QMARK] A module name containing '?' (never legal in a file name) is what a DLL older than
+    /// [PATH-MODULE-NAME-UTF8] reports for a non-ASCII exe. It is unknown, not a name: two such names being equal
+    /// does not make two games the same ("???.exe" == "???.exe"), and one such name differing from a real one does
+    /// not make them different (a dump taken through the old DLL, of this very exe). Equal pe_hashes still prove
+    /// the same exe; anything less cannot confirm it.
+    /// </summary>
+    internal static (bool Refused, string Caveat) JudgeIdentity(string fileModule, string filePeHash,
+                                                                 string liveModule, string livePeHash)
+    {
+        bool fileLossy = fileModule.Contains('?'), liveLossy = liveModule.Contains('?');
+        bool samePe = filePeHash.Length > 0 && livePeHash.Length > 0
+                      && string.Equals(filePeHash, livePeHash, StringComparison.OrdinalIgnoreCase);
+        if (fileLossy || liveLossy)
+            return (false, samePe
+                ? ""
+                : "An older DLL reported the game's name with '?' for its non-ASCII characters — could not "
+                  + "confirm it is this game. ");
+
+        if (fileModule.Length > 0 && liveModule.Length > 0 &&
+            !string.Equals(fileModule, liveModule, StringComparison.OrdinalIgnoreCase))
+            return (true, "");
+
+        if (fileModule.Length > 0 && liveModule.Length > 0)
+        {
+            if (filePeHash.Length > 0 && livePeHash.Length > 0 && !samePe)
+                return (false, "Different build of the same game — offsets may have moved. ");
+            if (filePeHash.Length == 0 || livePeHash.Length == 0)
+                return (false, "Build identity unknown (no pe_hash) — matched on module name only. ");
+            return (false, "");
+        }
+        // Pre-pe_hash / hand-made file, or a DLL that reported no module: match, but never let the absence of the
+        // field read as a positive identity check.
+        return (false, "Dump carries no game identity — could not confirm it is this game. ");
+    }
+
     private async Task RunLiveMatchAsync(CancellationToken ct)
     {
         if (!IsGameConnected)
@@ -381,9 +424,10 @@ public partial class DumpExplorerViewModel : ViewModelBase
         var fileModule = _loadedMeta?.Module ?? "";
         var filePeHash = _loadedMeta?.PeHash ?? "";
 
+        var (refused, caveat) = JudgeIdentity(fileModule, filePeHash, liveModule, livePeHash);
+
         // Tier 1 — different GAME. Refuse outright; nothing here is transferable.
-        if (fileModule.Length > 0 && liveModule.Length > 0 &&
-            !string.Equals(fileModule, liveModule, StringComparison.OrdinalIgnoreCase))
+        if (refused)
         {
             foreach (var e in _all) { e.IsMatched = false; e.LiveAddr = ""; }
             LiveChecked = false;
@@ -393,25 +437,6 @@ public partial class DumpExplorerViewModel : ViewModelBase
             return;
         }
 
-        // Tier 2 — same game, different BUILD. Class names survive a patch; addresses and
-        // offsets need not. Worth matching, not worth asserting silently. Deliberately NOT
-        // a refusal: pe_hash is per-build, so refusing here would also reject a dump the
-        // user took of this very game last week, which is the feature's normal use.
-        string caveat = "";
-        if (fileModule.Length > 0 && liveModule.Length > 0)
-        {
-            if (filePeHash.Length > 0 && livePeHash.Length > 0 &&
-                !string.Equals(filePeHash, livePeHash, StringComparison.OrdinalIgnoreCase))
-                caveat = "Different build of the same game — offsets may have moved. ";
-            else if (filePeHash.Length == 0 || livePeHash.Length == 0)
-                caveat = "Build identity unknown (no pe_hash) — matched on module name only. ";
-        }
-        else
-        {
-            // Pre-pe_hash / hand-made file, or a DLL that reported no module: match, but
-            // never let the absence of the field read as a positive identity check.
-            caveat = "Dump carries no game identity — could not confirm it is this game. ";
-        }
 
         StatusText = "Scanning the live game's classes…";
         var index = await BuildLiveClassIndexAsync(ct);

@@ -3515,6 +3515,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal bool HasCoordStore => _coordStore != null;
 
     private string _activeCoordKey = "";
+
+    /// <summary>[PATH-UI-LEGACY-QMARK] The module name that gave no library key (a lossy '?' name from an older
+    /// DLL), or "". While set, adding to the library is refused with <see cref="CoordLibraryUnavailableText"/>
+    /// instead of adding a row that is never saved.</summary>
+    private string _coordUnusableModule = "";
     private bool _suppressCoordPersist;
     // Set only while ApplyCoordFilter re-selects the equivalent row after rebuilding
     // CoordResults, so the editor fields are not rewritten from the stored entry. (B20)
@@ -3636,6 +3641,10 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
         if (_coordStore == null) return;
         _activeCoordKey = CoordinateLibraryStore.KeyFor(moduleName);
+        _coordUnusableModule = !string.IsNullOrWhiteSpace(moduleName) && string.IsNullOrEmpty(_activeCoordKey)
+            ? moduleName! : "";
+        if (_coordUnusableModule.Length > 0)
+            CoordStatus = CoordLibraryUnavailableText();
         _suppressCoordPersist = true;
         try
         {
@@ -3811,7 +3820,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             ApplyPoseAndMovement(p);
             var entry = FromPose(p, NextCoordLabel(p.Map));
-            AddCoordEntry(entry);
+            if (!AddCoordEntry(entry)) return;
             CoordStatus = $"Saved '{entry.Label}' ({CoordPrecision.Text(entry.X)}, " +
                           $"{CoordPrecision.Text(entry.Y)}, {CoordPrecision.Text(entry.Z)}).";
             CoordLibraryExpanded = true;
@@ -3869,9 +3878,26 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Insert an entry, assigning a unique uid and normalising its text.</summary>
-    private void AddCoordEntry(CoordEntry entry)
+    /// <summary>[PATH-UI-LEGACY-QMARK] Says why the library cannot be used for this game, and that nothing was
+    /// saved. Before this, a row was added in memory with an "Added" status and lost on the next launch.</summary>
+    private string CoordLibraryUnavailableText() =>
+        $"Coordinate library unavailable: the connected DLL reports this game as '{_coordUnusableModule}', which "
+        + "names no file (a UE5Dumper.dll older than this UI turns non-ASCII characters into '?'). Update the "
+        + "game's proxy DLL (Proxy Deploy > Update All) or re-inject, then reconnect. Nothing was saved.";
+
+    /// <summary>True, with the reason in <see cref="CoordStatus"/>, when the library cannot be written.</summary>
+    private bool CoordLibraryRefused()
     {
+        if (_coordStore == null || _coordUnusableModule.Length == 0) return false;
+        CoordStatus = CoordLibraryUnavailableText();
+        return true;
+    }
+
+    /// <summary>Insert an entry, assigning a unique uid and normalising its text. False (nothing added) when the
+    /// library is unavailable -- the caller must not report the row as added.</summary>
+    private bool AddCoordEntry(CoordEntry entry)
+    {
+        if (CoordLibraryRefused()) return false;
         // Re-mint when the uid is EMPTY or ALREADY TAKEN. "Only when empty" trusted an
         // incoming uid to be unique, and an imported file need not be: duplicate a row in
         // Excel and rename it, and the merge diff commits it as Added (the uid match is
@@ -3889,6 +3915,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         RebuildCoordGroups();
         ApplyCoordFilter();
         SelectedCoord = CoordResults.FirstOrDefault(r => r.Entry.Uid == entry.Uid);
+        return true;
     }
 
     /// <summary>Add an entry from the "TP to coords" fields (manual entry).</summary>
@@ -3910,7 +3937,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             Yaw = CoordPrecision.Round(CoordYaw),
             Roll = CoordPrecision.Round(CoordRoll),
         };
-        AddCoordEntry(entry);
+        if (!AddCoordEntry(entry)) return;
         CoordStatus = string.IsNullOrEmpty(entry.Map)
             ? $"Added '{entry.Label}' from the coordinate fields — with NO map: the current map is not "
               + "known right now (connect, or enter gameplay and press Refresh first)."
@@ -3985,7 +4012,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var copy = row.Entry.Clone();
         copy.Uid = "";
         copy.Label = CoordText.Normalize(row.Entry.Label + " (copy)", CoordText.MaxLabelLength);
-        AddCoordEntry(copy);
+        if (!AddCoordEntry(copy)) return;
         CoordStatus = $"Duplicated as '{copy.Label}'.";
     }
 
@@ -4269,6 +4296,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplyCoordImport()
     {
         if (_pendingImport == null || _pendingChanges == null) return;
+        if (CoordLibraryRefused()) return;   // [PATH-UI-LEGACY-QMARK] the preview stays, for after an update
 
         var bak = _coordStore?.SavePreImportBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
