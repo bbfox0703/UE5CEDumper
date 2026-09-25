@@ -84,18 +84,21 @@ end
 -- an older .CT's self-heal could write, would be probed against CE's current folder. A function so the Lua suite can
 -- run it; any I/O error reads as an empty list.
 function ue5_readBreadcrumbs(path)
-    local out = {}
+    local out, dropped = {}, 0
     pcall(function()
         local h = io.open(path, "r")
         if not h then return end
         for line in h:lines() do
             line = line:gsub("^\239\187\191", "")            -- UTF-8 BOM, if an editor added one
             line = ue5_driveRootFix((line:gsub("^%s+", ""):gsub("%s+$", "")))    -- also eats the CR of a CRLF
-            if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line) then out[#out + 1] = line end
+            if line ~= "" and line:sub(1, 1) ~= "#" then
+                if ue5_isAbsolutePath(line) then out[#out + 1] = line else dropped = dropped + 1 end
+            end
         end
         h:close()
     end)
-    return out
+    -- (sixth review, R6-02) The count of relative lines dropped: the slot says so instead of "nothing recorded".
+    return out, dropped
 end
 
 -- Report the RESOLVED DLL's size beside the path it chose, so a stale build is
@@ -277,18 +280,26 @@ _slot("folder of the running script", _scriptDir,
 local _appData = ""
 pcall(function() _appData = os.getenv("LOCALAPPDATA") or "" end)
 
-local _crumbs = {}
-if _appData ~= "" then _crumbs = ue5_readBreadcrumbs(_appData .. "\\UE5CEDumper\\dll-path.txt") end
-if #_crumbs == 0 then
-    _slot("folder recorded by UE5DumpUI", "",
-          "no folder recorded yet - UE5DumpUI writes this file at startup")
-else
-    for i = 1, #_crumbs do
-        _slot(i == 1 and "folder recorded by UE5DumpUI"
-                      or "folder recorded by UE5DumpUI (older entry)",
-              _crumbs[i], "")
+-- (sixth review, R6-02 / R6-06) A global function so the Lua suite runs the slots themselves; called once, right
+-- below. A file whose every line was dropped (relative lines an older .CT wrote) says so: "no folder recorded yet"
+-- would be false then.
+function ue5_breadcrumbSlots(appData)
+    local crumbs, dropped = {}, 0
+    if appData ~= "" then crumbs, dropped = ue5_readBreadcrumbs(appData .. "\\UE5CEDumper\\dll-path.txt") end
+    if #crumbs == 0 then
+        _slot("folder recorded by UE5DumpUI", "",
+              (dropped or 0) > 0
+                  and "dll-path.txt holds only relative folders -- not probed (they would read CE's current folder)"
+                  or "no folder recorded yet - UE5DumpUI writes this file at startup")
+    else
+        for i = 1, #crumbs do
+            _slot(i == 1 and "folder recorded by UE5DumpUI"
+                          or "folder recorded by UE5DumpUI (older entry)",
+                  crumbs[i], "")
+        end
     end
 end
+ue5_breadcrumbSlots(_appData)
 
 -- 8. CE's own folder. Unrelated to this table: a DLL here can only have been
 --    hand-placed, so it must stay below every table-derived slot above --
