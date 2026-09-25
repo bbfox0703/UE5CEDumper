@@ -425,7 +425,13 @@ build_proxy_dxgi/
 dist/
 
 # Claude Code
-.claude/
+# Everything under .claude/ stays private EXCEPT skills/. settings.local.json holds approved permission
+# rules (absolute paths, command strings), worktrees/ holds whole checkouts, and local-llm.json is one
+# machine's opt-in -- none of it belongs in a public repo. A skill is written to be machine-neutral.
+# ⚠ It must be `.claude/*`, not `.claude/`: git cannot re-include a path whose PARENT directory is
+# excluded, so `!.claude/skills/` under `.claude/` silently matches nothing (measured 2026-09-25).
+.claude/*
+!.claude/skills/
 
 # Local scratch / handoff staging — never committed.
 # Use this for cross-device handoff payloads (memory snapshots,
