@@ -667,6 +667,8 @@ public class ProxyImportAnalyzerTests
     [InlineData(" Game.exe", " Game")]                                       // a leading space is legal and kept
     [InlineData(".exe", "unknown")]                                          // never loose files in Logs\
     [InlineData("a?b:c.exe", "a_b_c")]
+    [InlineData("\u3000.exe", "\u3000")]                                      // Win32 trims ASCII space and dot only
+    [InlineData("\u00A0.exe", "\u00A0")]
     public void ProcessLogFolderName_TrimsWhatWin32Trims(string input, string expected)
         => Assert.Equal(expected, ProxyImportAnalyzer.ProcessLogFolderName(input));
 
@@ -678,6 +680,11 @@ public class ProxyImportAnalyzerTests
     [InlineData("DragonSword  Awakening.exe", "DragonSword  Awakening")]
     [InlineData(".exe", "unknown")]
     [InlineData("Octopath_Traveler-Win64-Shipping.exe", "Octopath_Traveler-Win64-Shipping")]
+    // (second review, MIRROR-WS-DIVERGE) A stem that is only Unicode white space is a legal folder name, and the DLL
+    // logs into it; the mirror's extra IsNullOrWhiteSpace -> "unknown" split the session across two folders.
+    [InlineData("\u3000.exe", "\u3000")]
+    [InlineData("\u00A0.exe", "\u00A0")]
+    [InlineData("", "unknown")]                                                // no name at all: never Logs\ itself
     public void UiMirrorFolder_MatchesTheDllFolder(string process, string expected)
         => Assert.Equal(expected, UE5DumpUI.Services.LoggingService.SanitizeFolderName(process));
 

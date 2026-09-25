@@ -298,6 +298,8 @@ int main() {
               Sein::ProcessFolderName(L".exe") == L"unknown");
         check("P7 the nine characters still map to '_'", Sein::ProcessFolderName(L"a?b:c.exe") == L"a_b_c");
         check("P8 a single trailing dot of the stem is trimmed too", Sein::ProcessFolderName(L"Game..exe") == L"Game");
+        check("P11 Win32 trims ASCII space and dot only: an ideographic-space stem is kept",
+              Sein::ProcessFolderName(L"\u3000.exe") == L"\u3000");
 
         // The trap itself, measured through the same calls Sein makes.
         std::error_code ec;
@@ -310,6 +312,31 @@ int main() {
         FILE* ok = _wfsopen((good / L"init-0.log").c_str(), L"ab", _SH_DENYNO);
         check("P10 inside the sanitised folder it can", ok != nullptr);
         if (ok) fclose(ok);
+    }
+
+    {   // ---- (second review, T-SEIN-MIRROR-UNTESTED) InitProcessMirror ITSELF, on the trap name ----
+        //
+        // P1-P10 pin the name function and the trap, but nothing ran the function that USES the name: a revert of
+        // InitProcessMirror to the raw stem passed them all. This drives it and reads back what it wrote.
+        // ⚠ LAST CASE ON PURPOSE: Sein::Shutdown (needed to close the five files before the fixture removes them)
+        // ends buffering for the rest of the process.
+        Fixture fx;
+        blk("InitProcessMirror logs into the sanitised folder");
+        fx.AssertSafe("pre-mirror");
+        Sein::InitProcessMirror(L"Game .exe");
+        check("M1 the process folder is <root>\\Game", Sein::s_processDir == fx.root / L"Game");
+        check("M2 the folder is ready", Sein::s_processDirReady);
+        check("M3 the category files opened", Sein::s_filesOpen);
+        Sein::Info("TEST", "sein_retention_test mirror probe %d", 4242);   // an unmapped category goes to init
+        Sein::Shutdown();
+        std::string text;
+        if (FILE* f = _wfsopen((fx.root / L"Game" / L"init-0.log").c_str(), L"rb", _SH_DENYNO)) {
+            char buf[4096]; size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+            fclose(f);
+        }
+        check("M4 the line reached <root>\\Game\\init-0.log",
+              text.find("mirror probe 4242") != std::string::npos);
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
