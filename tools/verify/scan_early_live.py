@@ -55,10 +55,11 @@ def proxy_sha(work: str) -> str:
     return hashlib.sha256((win64(work) / "version.dll").read_bytes()).hexdigest()
 
 
-def proxy_id(work: str) -> str:
+def proxy_id(work: str, sha: str) -> str:
+    """For display: the given digest (hashed ONCE by the caller -- a second read could see another file) + mtime."""
     dll = win64(work) / "version.dll"
     mtime = datetime.datetime.fromtimestamp(dll.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-    return f"version.dll sha {proxy_sha(work)[:12]} mtime {mtime}"
+    return f"version.dll sha {sha[:12]} mtime {mtime}"
 
 
 def read(p: pathlib.Path) -> str:
@@ -71,12 +72,14 @@ def read(p: pathlib.Path) -> str:
 def one_launch(work: str, exe: str, n: int, ref_sha: str) -> tuple[bool, str]:
     # (eleventh review, R11-02) The binary is re-checked BEFORE each launch: the run's verdict is about ONE proxy, and a
     # redeploy between launches (shutil.copy2 succeeds once the game is gone) must stop the run, not join its count.
-    # This pre-launch identity is also the one the process maps: Windows locks a loaded image against overwrites.
+    # (twelfth review, R12-01) Measured by the refuter: a copy can still land in the ~15-25 ms between Popen and the
+    # loader mapping version.dll, so the pre-launch hash is NOT proof of what the process runs. The proof is a second
+    # hash once the pipe answers: the proxy is mapped by then, and a mapped image cannot be overwritten.
     now_sha = proxy_sha(work)
     if now_sha != ref_sha:
         raise SystemExit(f"launch {n}: version.dll changed since the run started ({ref_sha[:12]} -> {now_sha[:12]}) "
                          "-- stopping: one binary per run")
-    ident = proxy_id(work)
+    ident = proxy_id(work, now_sha)
     path = win64(work) / exe
     folder = logs_of(exe)
     t0 = time.time()
@@ -85,6 +88,9 @@ def one_launch(work: str, exe: str, n: int, ref_sha: str) -> tuple[bool, str]:
     note = ""
     try:
         c.connect(retries=240, delay=0.25)
+        mapped_sha = proxy_sha(work)          # (R12-01) the bytes the answering process has mapped
+        if mapped_sha != ref_sha:
+            raise PipeError(f"the proxy this launch mapped is {mapped_sha[:12]}, not the run's {ref_sha[:12]}")
         c.assert_build()
         c.request("trigger_scan")
         sent = time.time() - t0
@@ -141,11 +147,10 @@ def main(a: list[str]) -> int:
         raise SystemExit(f"a fixture is already running -- one game at a time: {live}")
     if not (win64(work) / "version.dll").exists():
         raise SystemExit("no proxy in the fixture -- run path_shape_live.py deploy first")
-    ident = proxy_id(work)
-    print(f"  binary under test: {ident}")
-    if expect and not proxy_sha(work).startswith(expect):
+    ref_sha = proxy_sha(work)             # (R12-01) hashed ONCE: the header, the gate and the reference agree
+    print(f"  binary under test: {proxy_id(work, ref_sha)}")
+    if expect and not ref_sha.startswith(expect):
         raise SystemExit(f"refused: the deployed proxy is not the expected one ({expect})")
-    ref_sha = proxy_sha(work)
     results = []
     for n in range(1, launches + 1):
         results.append(one_launch(work, exe, n, ref_sha)[0])
