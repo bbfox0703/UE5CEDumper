@@ -1171,6 +1171,43 @@ public class ProxyDeployConcurrencyTests : IDisposable
     }
 
     [Fact]
+    public async Task UseConfirmed_ASharedExeName_UsesTheRadio_AndSaysWhy()
+    {
+        // [PROXY-CONFIRM-SHARED-EXE] Two detected games ship Shared.exe: the record cannot say which one it came from,
+        // so neither gets it -- the radio's type, and a note (not a silent fallback).
+        DetectedGame SharedExe(DetectedGame g) => new()
+        {
+            Name = g.Name, BinariesDir = g.BinariesDir, ExePath = Path.Combine(g.BinariesDir, "Shared.exe"),
+            IsSelected = true,
+        };
+        var (vm, svc) = ReadyWith(SharedExe(Game("A")), SharedExe(Game("B")));
+        vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("A", ProxyType.Version), ("B", ProxyType.Version) },
+                     svc.Deploys.Select(x => (x.Game, x.Type)));
+        Assert.DoesNotContain("confirmed type used", vm.LastOperationResult);
+        Assert.All(vm.Games, g => Assert.Contains("shared exe name", g.StatusDetail ?? ""));
+    }
+
+    [Fact]
+    public async Task UseConfirmed_TheSameExeInOneFolder_IsNotShared()
+    {
+        // Only DIFFERENT folders make a name ambiguous: one game listed once keeps its record.
+        var (vm, svc) = ReadyWith(Game("A"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(ProxyType.Winmm, Assert.Single(svc.Deploys).Type);
+    }
+
+    [Fact]
     public async Task UseConfirmed_Off_UsesTheRadio()
     {
         var (vm, svc) = ReadyWith(Game("A"));

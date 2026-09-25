@@ -985,6 +985,56 @@ public class ProxyDeployTests
         }
     }
 
+    // [PROXY-CONFIRM-SHARED-EXE] (maintainer's call, 2026-09-25: mark it ambiguous) The confirmed-working and injected
+    // records are keyed by the bare exe name, so they survive a reinstall -- but two games that ship the same exe name
+    // shared one record, and one game's proxy type was suggested (and, with "Use confirmed", deployed) for the other.
+    [Fact]
+    public async Task ApplyProxySuggestions_ASharedExeName_UsesNeitherRecord_AndSaysWhy()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-shared-exe-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            DetectedGame Make(string folder, string exe)
+            {
+                string bin = Path.Combine(dir, folder, "Binaries", "Win64");
+                Directory.CreateDirectory(bin);
+                string path = Path.Combine(bin, exe);
+                File.WriteAllBytes(path, new byte[] { 1, 2, 3 });   // not a PE: no import hint, isolates the records
+                return new DetectedGame { Name = folder, ExePath = path, BinariesDir = bin };
+            }
+            var a = Make("GameA", "Shared-Win64-Shipping.exe");
+            var b = Make("GameB", "Shared-Win64-Shipping.exe");
+            var c = Make("GameC", "Unique-Win64-Shipping.exe");
+            var d = Make("GameD", "Injected-Win64-Shipping.exe");
+            var e = Make("GameE", "Injected-Win64-Shipping.exe");
+            var confirmed = new Dictionary<string, ProxyType>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["shared-win64-shipping.exe"] = ProxyType.Winmm,
+                ["Unique-Win64-Shipping.exe"] = ProxyType.Winmm,
+            };
+            var injected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Injected-Win64-Shipping.exe" };
+            var svc = new ProxyDeployService(new NoopLog(), new NoopPlatform());
+
+            await svc.ApplyProxySuggestionsAsync(new List<DetectedGame> { a, b, c, d, e }, confirmed,
+                new Dictionary<string, ProxyType>(), injected, enabled: true, TestContext.Current.CancellationToken);
+
+            foreach (var g in new[] { a, b })
+            {
+                Assert.Equal(ProxyType.Version, g.SuggestedProxyType);             // the safe default, not winmm
+                Assert.DoesNotContain("confirmed working", g.SuggestedProxy);
+                Assert.Contains("shared exe name", g.SuggestedProxy);
+            }
+            Assert.Equal(ProxyType.Winmm, c.SuggestedProxyType);                   // a unique name keeps its record
+            Assert.Equal("winmm.dll · confirmed working", c.SuggestedProxy);
+            foreach (var g in new[] { d, e })
+            {
+                Assert.Equal(ProxyType.Version, g.SuggestedProxyType);             // not "injection · no proxy"
+                Assert.Contains("shared exe name", g.SuggestedProxy);
+            }
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ } }
+    }
+
     [Fact]
     public async Task FindUeGames_MonolithicLayout_StillPicksGameExeNotEngineSide()
     {
