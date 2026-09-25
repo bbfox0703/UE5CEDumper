@@ -332,8 +332,9 @@ static void __stdcall OnInjectAndConnect()
     }
     // InjectDLL takes a narrow (char*) path, which CE hands to LoadLibraryA in the game. An ASCII path goes as it is.
     // Otherwise: the 8.3 alias of the FOLDER plus the DLL's own long name (never the file's alias -- that renames the
-    // loaded module to UE5DUM~1.DLL, and every name check after the inject misses it; second review, measured), or
-    // the EXACT narrowing in the system ANSI code page, or nothing: best fit names another folder and '?' names none.
+    // loaded module to UE5DUM~1.DLL, and every name check after the inject misses it; second review, measured) when
+    // it is ASCII, else the EXACT narrowing in the system ANSI code page, else that alias's exact narrowing, else
+    // nothing: best fit names another folder and '?' names none. The order is Methode::NarrowForAnsiLoad's.
     // Aliases exist only where the volume keeps 8.3 names (C: here, not D:). [PATH-METHODE-NO8DOT3]
     std::wstring aliasW;
     {

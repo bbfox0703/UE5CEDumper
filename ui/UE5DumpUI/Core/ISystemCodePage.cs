@@ -21,7 +21,8 @@ public interface ISystemCodePage
     /// <c>injectDLL</c> uses) needs to open <paramref name="path"/>: an ASCII path as it is; else the ASCII 8.3 alias
     /// of its FOLDER plus the file's own name (code-page independent -- the game may run under another locale; the
     /// file's own alias would rename the loaded module); else its EXACT narrowing (never best fit -- best fit names
-    /// another folder); else null (no ANSI form exists). The default answers only for pure ASCII.</summary>
+    /// another folder); else that alias's exact narrowing; else null (no ANSI form exists). The default answers only
+    /// for pure ASCII.</summary>
     byte[]? AnsiPathBytes(string path)
     {
         if (string.IsNullOrEmpty(path)) return null;

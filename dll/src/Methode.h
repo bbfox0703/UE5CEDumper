@@ -16,7 +16,8 @@ namespace Methode {
 // [PATH-METHODE-NO8DOT3] The narrow path CE's InjectDLL needs for OUR DLL: CE copies it into the game and calls
 // LoadLibraryA on it. An ASCII longPath as it is. Otherwise the ASCII alias (shortPath: the 8.3 DIRECTORY plus the
 // DLL's own long name -- an alias that renames the file is ignored), else the EXACT narrowing of longPath in codePage
-// (WC_NO_BEST_FIT_CHARS + used-default: best fit names another folder, '?' names none), else "" -- the caller
+// (WC_NO_BEST_FIT_CHARS + used-default: best fit names another folder, '?' names none), else the alias's exact
+// narrowing, else "" -- the caller
 // refuses, naming the cause. The old code checked only the first narrowing and re-narrowed the alias with
 // flags 0: on a volume without 8.3 names (D: here) the alias IS the long path, so a '?'-bearing path went to CE.
 // codePage CP_ACP is read as GetACP(); a UTF-8 ANSI code page (the Windows beta option) takes UTF-8 as is, and

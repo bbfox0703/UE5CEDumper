@@ -14,8 +14,9 @@ namespace UE5DumpUI.Services;
 /// code page and failed -- and CE then silently manual-mapped the DLL (no TLS, no .pdata). So:
 /// <list type="bullet">
 ///   <item><c>DLL_PATH</c> is the path's ANSI bytes, as a pure-ASCII <c>\ddd</c> literal
-///     (<see cref="CeLuaHygiene.EscapeLuaBytes"/>): the exact narrowing, or the 8.3 short path. An ASCII path is
-///     baked exactly as before.</item>
+///     (<see cref="CeLuaHygiene.EscapeLuaBytes"/>), in <see cref="ISystemCodePage.AnsiPathBytes"/>' order: the ASCII
+///     8.3 alias of the FOLDER with the DLL's own name (it reads the same in every code page), else the exact
+///     narrowing, else the alias's exact narrowing. An ASCII path is baked exactly as before, never aliased.</item>
 ///   <item><c>DLL_PATH = nil</c> when no ANSI form exists (a character the code page lacks, on a volume without 8.3
 ///     names -- D: here), and the script refuses before <c>injectDLL</c>, saying why and what works.</item>
 ///   <item><c>DLL_PATH_SHOWN</c> is the real path (UTF-8), for every message: CE shows UTF-8.</item>
