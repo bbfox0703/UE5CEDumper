@@ -1029,22 +1029,24 @@ public class ProxyDeployTests
                 remembered, injected, enabled: true, TestContext.Current.CancellationToken);
 
             // (fifth review, R5-01) Exact texts: the note names the record that EXISTS and is not used.
-            const string NoConfirmed = "shared exe name: the confirmed-working record is not used";
+            // (sixth review, R6-03) The "shared · " tag LEADS: the column shows ~28 characters, and a mark at the end
+            // was clipped away. The header's tooltip says what the tag means.
+            const string NoConfirmed = "the confirmed-working record is not used";
             Assert.Equal(ProxyType.Dxgi, a.SuggestedProxyType);                    // its own last-used pick survives
-            Assert.Equal($"dxgi.dll · last used · {NoConfirmed}", a.SuggestedProxy);
+            Assert.Equal($"shared · dxgi.dll · last used · {NoConfirmed}", a.SuggestedProxy);
             Assert.Equal(ProxyType.Version, b.SuggestedProxyType);                 // the safe default, not winmm
-            Assert.Equal($"version · default · {NoConfirmed}", b.SuggestedProxy);
+            Assert.Equal($"shared · version · default · {NoConfirmed}", b.SuggestedProxy);
             Assert.Equal(ProxyType.Winmm, c.SuggestedProxyType);                   // a unique name keeps its record
             Assert.Equal("winmm.dll · confirmed working", c.SuggestedProxy);
             foreach (var g in new[] { d, e })
             {
                 Assert.Equal(ProxyType.Version, g.SuggestedProxyType);             // not "injection · no proxy"
-                Assert.Equal("version · default · shared exe name: the injection record is not used", g.SuggestedProxy);
+                Assert.Equal("shared · version · default · the injection record is not used", g.SuggestedProxy);
             }
             foreach (var g in new[] { f, g2 })                                      // no record: nothing to say
                 Assert.Equal("version · default", g.SuggestedProxy);
             foreach (var g in new[] { h, i })
-                Assert.Equal("version · default · shared exe name: the confirmed-working and injection records are not used",
+                Assert.Equal("shared · version · default · the confirmed-working and injection records are not used",
                              g.SuggestedProxy);
         }
         finally { try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ } }
@@ -1273,16 +1275,27 @@ public class ProxyDeployTests
             var c = G("C", "Unique-Win64-Shipping.exe");
             var d = G("D", "NeverRan-Win64-Shipping.exe");
             var e = G("E", "NeverRan-Win64-Shipping.exe");
+            // (sixth review, R6-05) The key is the LOG folder: 'Game .exe' and 'Game.exe' both log into Logs\Game.
+            Directory.CreateDirectory(Path.Combine(logs, "Game"));
+            File.WriteAllText(Path.Combine(logs, "Game", "init-0.log"), "x");
+            var f = G("F", "Game .exe");
+            var g2 = G("G", "Game.exe");
+            // ...and the same folder listed twice is ONE game: no tag.
+            Directory.CreateDirectory(Path.Combine(logs, "Twice-Win64-Shipping"));
+            File.WriteAllText(Path.Combine(logs, "Twice-Win64-Shipping", "init-0.log"), "x");
+            var t1 = G("T", "Twice-Win64-Shipping.exe");
+            var t2 = new DetectedGame { Name = "T (again)", ExePath = t1.ExePath, BinariesDir = t1.BinariesDir };
 
             var svc = new ProxyDeployService(new NoopLog(), new AppDataPlatform(appData));
-            await svc.RefreshDeployStatusAsync(new List<DetectedGame> { a, b, c, d, e }, @"X:\missing.dll",
+            await svc.RefreshDeployStatusAsync(new List<DetectedGame> { a, b, c, d, e, f, g2, t1, t2 }, @"X:\missing.dll",
                 ProxyType.Version, ct: TestContext.Current.CancellationToken);
 
-            foreach (var g in new[] { a, b })
-            {
+            // (sixth review, R6-03) The tag LEADS: the Load column shows ~18 characters, and a mark appended after
+            // "loaded <date>" was clipped away. The header's tooltip says what it means.
+            foreach (var g in new[] { a, b, f, g2 })
+                Assert.StartsWith("shared · loaded ", g.LoadObservation);
+            foreach (var g in new[] { t1, t2 })
                 Assert.StartsWith("loaded ", g.LoadObservation);
-                Assert.EndsWith(" · shared exe name: may be another game's", g.LoadObservation);
-            }
             Assert.DoesNotContain("shared", c.LoadObservation);          // a unique name: its own load
             Assert.Equal("not observed", d.LoadObservation);              // nobody ran: nothing to attribute
             Assert.Equal("not observed", e.LoadObservation);
