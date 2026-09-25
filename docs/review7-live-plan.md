@@ -38,7 +38,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S8]` | 17, 24 | yes · ✅ PASS red→green (the complete-but-low capture warns; the red said nothing) |
 | `[R7-D-01]` | 17, 21 | yes · ✅ PASS red→green (both SPC grids) |
 | `[R7-D-04]` | 18, 22 | yes · ✅ PASS red→green (absent / busy / released / denied each distinct) |
-| `[R7-S12]` | 18, 25 | yes · ⏳ green captured (session 18: ⟳ and own probe, both directions); red pending (session 25) |
+| `[R7-S12]` | 18, 25 | yes · ✅ PASS red→green on the ⟳ path (Live Walker + Teleport); the own-probe arm does not discriminate live |
 | `[R7-S7]` | 18, 24 | yes · ✅ PASS red→green (a1, a2, b: the busy reason reaches every surface; SYM greyed) |
 | `[R7-C-02]` | 18, 22 | yes · ✅ PASS red→green (Bytesize 16 → 32; CE reads 16 characters) |
 | `[R7-C-04]` | 18-19, 22-23 | yes · ✅ PASS red→green (arm B: no modal, 3/3; arm A: one dialog, 4/4) |
