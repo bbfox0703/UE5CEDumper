@@ -144,7 +144,8 @@ public class PanelSpaceBudgetTests
         Assert.Matches(@"const\s+int\s+LowerRow\s*=\s*" + lowerRow + @"\s*;", code);
         Assert.Matches(@"RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*=", code);
         Assert.Matches(@"RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*=", code);
-        Assert.Matches(@"RowFloors\(", code);
+        // (tenth review, R10-04) The CALL, with its argument -- the method's own declaration also contains "RowFloors(".
+        Assert.Matches(@"=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
     }
 
     /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
