@@ -2524,6 +2524,17 @@ is fast and gives exact bytes. Two traps, one of which the maintainer caught on 
 - ⚠ Bash heredocs collapse `\\` -- a pipe path written in a heredoc became `\.\pipe…` and every open failed. Put
   pipe-path Python in a file.
 
+### 3.wb A hover that fails at one spot: move the control before blaming it
+
+The S5 pass (2026-09-25) lost an hour to one confounder. The Proxy Deploy header tooltips never showed, and three
+staged builds "confirmed" the header markup was at fault (control content, hit-test background, tip on the header cell)
+because every probe hovered the SAME screen position. Dragging the column left made the untouched original tooltip
+show; a plain ComboBox on another tab failed at the same x. On that screen nothing past ~1138 DIP shows a tooltip
+(`[UI-TOOLTIP-RIGHT-THIRD]`). Before changing code for a hover / tooltip / hit-test failure:
+- try the SAME control at a second screen position (resize a column, move the window), and
+- try a DIFFERENT control at the SAME position.
+Only a failure that follows the control is the control's.
+
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
 It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source

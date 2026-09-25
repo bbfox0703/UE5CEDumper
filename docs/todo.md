@@ -424,6 +424,25 @@ confirmed, INFO. The seventh round's width fix measured the wrong font, so it di
 |---|---|---|---|
 | R8-01 | INFO → ✅ `8f1df50c` (red `819882bd`) | CONFIRM-SHARED-EXE (from `85a61a2d`) | **Measured from the sources at the pinned versions.** The grid's `FontSize="12"` never reaches a cell: the DataGrid Fluent theme sets `DataGridCell` to 15 px (Inter, `WithInterFont`) with 12 px margins, so a 210 px Load column has ~186 px for text and `shared · loaded 2026-09-25` (~201 px) still lost the day. A trailing `(stale)` never showed at any width we used, so an old load read as a recent one. **Fix:** marks lead (`stale · loaded <date>`), the column is 240, and the header tooltip explains both marks. |
 
+**Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ⏳ open -- **needs the maintainer
+with a real mouse.** On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
+one monitor), NO tooltip appears for a control whose position is past ~1138 DIP from the screen's left edge (physical
+x ≈ 2560, two-thirds of the width); left of it every tooltip shows. Measured with computer-use (synthetic input), staged
+builds, hovering from outside each time:
+- shows: Snapshot "Auto detect Engine/System noise" (x ≈ 1080 DIP); Proxy Deploy Force Overwrite; the Proxy Deploy
+  "Loaded?" header tooltip once its column is dragged left to ~1120 DIP, and on 3557's own TextBlock header too.
+- never shows: Snapshot "Per-game quota" (~1505 DIP), also with `ToolTip.Placement="Bottom"`; the "Loaded?" /
+  "Suggested proxy" headers where they sit by default (~1320 / ~1585 DIP); even a style-set tip on the Status header
+  past ~1140 DIP, while the same header shows it on its text at ~1115 DIP.
+- same on 3557 (Avalonia 12.1.1) and 3558 (12.1.3): not a regression from tonight's upgrade. Clicks there work (the
+  headers sort).
+So the explanation tooltips of R6-03 / R7-06 / R8-01 are unreachable at the default column widths on this screen, and
+so is every right-hand tooltip. **To decide:** hover the Snapshot tab's Per-game quota box with the real mouse. If its
+tooltip shows, this is an artefact of synthetic input -- close the row. If not, it is a real Avalonia popup placement
+issue at 225 % and needs a repro against Avalonia upstream (a two-control window, one each side of the line). A first
+attempt to fix it in the DataGrid (`204e4907`, withdrawn in `eaf7467b`) blamed the header markup; position was the
+confounder. Lesson: working-lessons §3.wb.
+
 **Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ⏳ open, investigate.
 Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
 (the S1 rig's first version) logged `RunScan: UNCAUGHT non-standard exception — contained` in 4 of 5 launches
