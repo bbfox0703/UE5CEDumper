@@ -32,7 +32,7 @@ public class ValueSearchTests
     private static DumpService MakeService(out MockPipeClient pipe)
     {
         pipe = new MockPipeClient();
-        return new DumpService(pipe, new MockLoggingService());
+        return new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
     }
 
     [Fact]

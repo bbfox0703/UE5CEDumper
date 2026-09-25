@@ -103,7 +103,7 @@ public class DumpServiceTests
     private readonly MockPipeClient _pipe = new();
     private readonly MockLoggingService _log = new();
 
-    private DumpService CreateService() => new(_pipe, _log);
+    private DumpService CreateService() => new(_pipe, _log, UE5DumpUI.Core.IdentityCodePage.Instance);
 
     // Audit #5 AD4 — get_protect_state parsing.
     //

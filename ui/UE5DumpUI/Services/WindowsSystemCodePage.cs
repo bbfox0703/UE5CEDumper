@@ -17,7 +17,7 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
 {
     private const uint CP_ACP = 0;
 
-    public string AnsiView(string text) => AnsiView(text, CP_ACP);
+    public string AnsiModuleName(string moduleFile) => AnsiModuleName(moduleFile, CP_ACP);
 
     public byte[]? AnsiPathBytes(string path) => AnsiPathBytes(path, CP_ACP, ShortPath);
 
@@ -64,9 +64,9 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
         return m > 0 && m < n ? new string(buf, 0, m) : null;
     }
 
-    /// <summary>The round trip in an explicit code page, so tests do not depend on the machine's ACP. Any API
-    /// failure returns the text unchanged: the same answer as before this existed.</summary>
-    internal static string AnsiView(string text, uint codePage)
+    /// <summary><see cref="ISystemCodePage.AnsiModuleName"/> in an explicit code page, so tests do not depend on the
+    /// machine's ACP. Any API failure returns the name unchanged: the same answer as before this existed.</summary>
+    internal static string AnsiModuleName(string text, uint codePage)
     {
         if (string.IsNullOrEmpty(text)) return text ?? "";
         bool ascii = true;
@@ -78,6 +78,14 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
         if (n <= 0) return text;
         var bytes = new byte[n];
         if (WideCharToMultiByte(codePage, 0, text, text.Length, bytes, n, IntPtr.Zero, IntPtr.Zero) != n) return text;
+        // Module32First keeps what follows the ANSI path's last '\' BYTE; in a DBCS code page that can be a trail byte.
+        int cut = Array.LastIndexOf(bytes, (byte)0x5C);
+        if (cut >= 0)
+        {
+            bytes = bytes[(cut + 1)..];
+            n = bytes.Length;
+            if (n == 0) return "";
+        }
 
         int m = MultiByteToWideChar(codePage, 0, bytes, n, null, 0);
         if (m <= 0) return text;

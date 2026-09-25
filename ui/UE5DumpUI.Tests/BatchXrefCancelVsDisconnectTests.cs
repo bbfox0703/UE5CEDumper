@@ -605,7 +605,7 @@ public class BatchXrefCancelVsDisconnectTests
             },
             ["xrefs"] = new System.Text.Json.Nodes.JsonArray(),
         });
-        var svc = new DumpService(pipe, new MockLoggingService());
+        var svc = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
         var ct = TestContext.Current.CancellationToken;
 
         var byProp  = await svc.FindPropertyXrefsAsync("0x1", true, 200, ct);

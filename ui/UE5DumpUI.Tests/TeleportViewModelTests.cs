@@ -2824,7 +2824,7 @@ public class TeleportViewModelTests
             return new System.Text.Json.Nodes.JsonObject
                 { ["ok"] = true, ["code"] = 0, ["map"] = "", ["source"] = "raw" };
         });
-        var svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService());
+        var svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
         var rel = await svc.TeleportRelativeAsync(100, true, TestContext.Current.CancellationToken);
         var pose = await svc.TeleportGetPoseAsync(TestContext.Current.CancellationToken);

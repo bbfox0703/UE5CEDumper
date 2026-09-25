@@ -1407,6 +1407,9 @@ public static class CeXmlExportService
     /// The script scans for the GWorld AOB pattern at runtime, registers a unique CE symbol,
     /// and a "base" pointer entry dereferences it. All breadcrumb/field children nest under base.
     /// This format survives game restarts (re-scans AOB on script activation).
+    /// <para>The <c>moduleName</c> argument is NOT used: the script scans CE's own name for the main module
+    /// (<c>process</c>), which is the ANSI bytes <c>enumModules</c> compares -- a baked name is not, for a non-ASCII
+    /// exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW] (skeptic T10)</para>
     /// </summary>
     public static string GenerateAobWrappedXml(
         string rootName,

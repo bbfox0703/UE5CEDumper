@@ -13,13 +13,14 @@ public sealed class DumpService : IDumpService
     private readonly ILoggingService _log;
     private readonly ISystemCodePage _codePage;
 
-    /// <param name="codePage">[PATH-CE-MODULE-VIEW] Gives <see cref="EngineState.CeModuleName"/>. Omitted = no
-    /// conversion, which is the pre-fix behaviour.</param>
-    public DumpService(IPipeClient pipe, ILoggingService log, ISystemCodePage? codePage = null)
+    /// <param name="codePage">[PATH-CE-MODULE-VIEW] Gives <see cref="EngineState.CeModuleName"/>. REQUIRED (skeptic
+    /// T2): an optional one let a composition root forget it and silently fall back to no conversion. Tests that
+    /// do not care pass <see cref="IdentityCodePage.Instance"/>.</param>
+    public DumpService(IPipeClient pipe, ILoggingService log, ISystemCodePage codePage)
     {
         _pipe = pipe;
         _log = log;
-        _codePage = codePage ?? IdentityCodePage.Instance;
+        _codePage = codePage;
     }
 
     public async Task<EngineState> InitAsync(CancellationToken ct = default)
@@ -173,7 +174,7 @@ public sealed class DumpService : IDumpService
             SparseDelegatesAddr = ptrs["sparse_delegates"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
             ModuleName = moduleName,
-            CeModuleName = _codePage.AnsiView(moduleName),
+            CeModuleName = _codePage.AnsiModuleName(moduleName),
             ProcessId  = ptrs["pid"]?.GetValue<int>() ?? 0,
             ModuleBase = ptrs["module_base"]?.GetValue<string>() ?? "",
             // How the DLL was loaded (self-reported); "" on older DLLs.

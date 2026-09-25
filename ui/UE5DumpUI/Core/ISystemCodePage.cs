@@ -10,9 +10,12 @@ namespace UE5DumpUI.Core;
 /// </summary>
 public interface ISystemCodePage
 {
-    /// <summary>The ANSI round trip of <paramref name="text"/> in the system code page, best fit included
-    /// (what ANSI <c>Module32First</c> produces). Pure ASCII is returned unchanged.</summary>
-    string AnsiView(string text);
+    /// <summary>CE's name for a module FILE named <paramref name="moduleFile"/>: exactly what ANSI
+    /// <c>Module32First</c> puts in <c>szModule</c>. The name is narrowed to the system code page with best fit
+    /// (Café → Cafe, ™ → ?) -- and then cut after its LAST byte 0x5C, because Module32First takes the part of the
+    /// ANSI PATH after the last '\' byte, and a DBCS character's trail byte can be 0x5C (Big5 功 = A5 5C, Shift-JIS
+    /// ソ = 83 5C): CE knows 功夫-….exe as 夫-….exe (measured, skeptic MODVIEW-5C-TRAIL). Pure ASCII is unchanged.</summary>
+    string AnsiModuleName(string moduleFile);
 
     /// <summary>[PATH-CE-INJECT-ANSI] The bytes an ANSI API (<c>LoadLibraryA</c>, which Cheat Engine's
     /// <c>injectDLL</c> uses) needs to open <paramref name="path"/>: its EXACT narrowing (never best fit -- best fit
@@ -31,5 +34,5 @@ public interface ISystemCodePage
 public sealed class IdentityCodePage : ISystemCodePage
 {
     public static readonly IdentityCodePage Instance = new();
-    public string AnsiView(string text) => text ?? "";
+    public string AnsiModuleName(string moduleFile) => moduleFile ?? "";
 }
