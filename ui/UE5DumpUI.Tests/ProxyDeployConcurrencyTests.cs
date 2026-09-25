@@ -96,7 +96,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         /// <summary>Every deploy the VM asked for, with the options it passed. [PROXY-FORCE-UPDATEALL] Kept apart
         /// from <see cref="Calls"/>, whose exact "deploy:A" strings other tests assert.</summary>
-        public readonly List<(string Game, ProxyType Type, DeployOptions Options)> Deploys = new();
+        public readonly List<(string Game, ProxyType Type, DeployOptions Options, string Source)> Deploys = new();
         /// <summary>Overrides <see cref="GetDllVersion"/> (null = the default newer-source pair).</summary>
         public Func<string, string?>? VersionOf;
         /// <summary>Overrides <see cref="IsOurProxyDll"/> (null = every DLL is ours).</summary>
@@ -105,7 +105,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         public async Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
                                             DeployOptions options = default, CancellationToken ct = default)
         {
-            Deploys.Add((game.Name, proxyType, options));
+            Deploys.Add((game.Name, proxyType, options, sourceDllPath));
             await WaitAsync($"deploy:{game.Name}");
             DuringDeploy?.Invoke();
             return true;
@@ -808,6 +808,133 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
 
         Assert.Equal(new[] { ProxyType.Version, ProxyType.Winmm }, svc.Deploys.Select(d => d.Type).OrderBy(t => t));
+    }
+
+    // ── [PROXY-USE-CONFIRMED] "Use confirmed-working proxy" ─────────────────────────────
+    //
+    // Maintainer request: for a game with a CONFIRMED-WORKING proxy on record and none of ours in its folder (a
+    // reinstall, say), deploy the recorded type instead of the radio's. Read from ConfirmedProxyByExe -- never from
+    // the Suggested column, which also carries last-used and the default.
+
+    [Theory]
+    [InlineData(ProxyType.Version, false, (int)ProxyType.Winmm, 0, ProxyType.Version, false)]   // box off
+    [InlineData(ProxyType.Version, true,  -1,                   0, ProxyType.Version, false)]   // no record
+    [InlineData(ProxyType.Version, true,  (int)ProxyType.Winmm, 0, ProxyType.Winmm,   true)]    // the substitution
+    [InlineData(ProxyType.Version, true,  (int)ProxyType.Version, 0, ProxyType.Version, false)] // record == radio
+    [InlineData(ProxyType.Version, true,  (int)ProxyType.Winmm, 1, ProxyType.Version, false)]   // folder not clean
+    public void PickDeployType_SubstitutesOnlyForACleanFolderWithARecord(
+        ProxyType radio, bool useConfirmed, int confirmed, int oursPresent, ProxyType expected, bool substituted)
+    {
+        var got = ProxyDeployViewModel.PickDeployType(radio, useConfirmed,
+            confirmed < 0 ? null : (ProxyType)confirmed, oursPresent);
+        Assert.Equal((expected, substituted), got);
+    }
+
+    private static string Exe(string game) => $"{game}.exe";
+
+    [Fact]
+    public async Task UseConfirmed_CleanFolder_DeploysTheConfirmedType_AndRemembersIt_WithoutForeignConsent()
+    {
+        var (vm, svc) = ReadyWith(Game("A"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        vm.AllowForeignOverwrite = true;                           // a switched row never passes it
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        var d = Assert.Single(svc.Deploys);
+        Assert.Equal(("A", ProxyType.Winmm), (d.Game, d.Type));
+        Assert.EndsWith($"{Path.DirectorySeparatorChar}proxy{Path.DirectorySeparatorChar}winmm.dll", d.Source);
+        Assert.False(d.Options.ForeignConsent);
+        Assert.Equal(ProxyType.Winmm, vm.LastManualProxyByGame["A"]);   // the type actually deployed
+        Assert.Contains("confirmed type used: 1", vm.LastOperationResult);
+        Assert.Equal("Deployed winmm.dll (confirmed working) instead of version.dll", vm.Games[0].StatusDetail);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_Off_UsesTheRadio()
+    {
+        var (vm, svc) = ReadyWith(Game("A"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("A", ProxyType.Version) }, svc.Deploys.Select(x => (x.Game, x.Type)));
+    }
+
+    [Fact]
+    public async Task UseConfirmed_NoRecord_UsesTheRadio()
+    {
+        var (vm, svc) = ReadyWith(Game("A"));
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("A", ProxyType.Version) }, svc.Deploys.Select(x => (x.Game, x.Type)));
+        Assert.DoesNotContain("confirmed type used", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_RadioTypeAlreadyDeployed_DoesNotSwitch()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("A", ProxyType.Version) }, svc.Deploys.Select(x => (x.Game, x.Type)));
+    }
+
+    [Fact]
+    public async Task UseConfirmed_AnotherOfOursDeployed_IsStillSkipped()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Dxgi));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("skipped: 1", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_MissingSource_FailsThatRowOnly_NoSilentFallback()
+    {
+        var (vm, svc) = ReadyWith(Game("A"), Game("B"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        var all = vm.ResolveSources();
+        vm.ResolveSources = () => all.Where(kv => kv.Key != ProxyType.Winmm).ToDictionary(kv => kv.Key, kv => kv.Value);
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("B", ProxyType.Version) }, svc.Deploys.Select(x => (x.Game, x.Type)));   // not A as version
+        Assert.StartsWith("Deployed: 1 success, 1 failed", vm.LastOperationResult);
+        Assert.Contains("winmm.dll", vm.Games[0].StatusDetail);
+        Assert.Contains("not found", vm.Games[0].StatusDetail);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_IsReadOncePerRun()
+    {
+        var (vm, svc) = ReadyWith(Game("A"), Game("B"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.ConfirmedProxyByExe[Exe("B")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.DuringDeploy = () => vm.UseConfirmedProxy = false;       // unticked while A is being written
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ProxyType.Winmm, ProxyType.Winmm }, svc.Deploys.Select(x => x.Type));
     }
 
     [Fact]
