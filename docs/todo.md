@@ -424,6 +424,18 @@ confirmed, INFO. The seventh round's width fix measured the wrong font, so it di
 |---|---|---|---|
 | R8-01 | INFO → ✅ `8f1df50c` (red `819882bd`) | CONFIRM-SHARED-EXE (from `85a61a2d`) | **Measured from the sources at the pinned versions.** The grid's `FontSize="12"` never reaches a cell: the DataGrid Fluent theme sets `DataGridCell` to 15 px (Inter, `WithInterFont`) with 12 px margins, so a 210 px Load column has ~186 px for text and `shared · loaded 2026-09-25` (~201 px) still lost the day. A trailing `(stale)` never showed at any width we used, so an old load read as a recent one. **Fix:** marks lead (`stale · loaded <date>`), the column is 240, and the header tooltip explains both marks. |
 
+**Ninth skeptic review** (workflow `wf_6619499e-4a3`, over `85a61a2d..` -- R8-01, the NuGet upgrades, the UI-SPACE
+layout, the twin rig). 6 raised, 6 confirmed: 1 MED, 1 LOW, 4 INFO. Fixed row by row.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R9-01 | MED → ✅ `061afafa` (red `2a33372b`) | UI-SPACE (from `aab7263b`) | **Measured by the refuter** (a harness laying out the real MainWindow at 225 %, grid 846.7 DIP): the Snapshot row floors 110 / 350 sat 3 DIP from binding by default, and opening the Noise picker (the last Auto row) overflowed by 299 DIP -- its grid and buttons off the window, no collapse could free them. **Fix:** `SnapshotPanel.RowFloors(room)` caps both floors at the room the Auto rows leave, in proportion, re-applied every layout pass. On screen: default unchanged; Noise open shows its buttons. |
+| R9-05 | LOW → ✅ `d81059af` (reproduced first) | CONFIRM-SHARED-EXE rig | `shared_exe_twin.py make` refused any relative path ("not one volume": an unresolved path has no drive letter) and could leave a half-built twin. **Fix:** resolve, compare `st_dev`, remove the twin on a failed link. |
+| R9-02 | INFO → ✅ `15de25e3` (red `604b9a59`) | CONFIRM-SHARED-EXE | The longest Load text, "shared · stale · loaded <date>", needs ~272 px at the cell's 15 px Inter; 240 cut the date. **Fix:** 280, pinned with the exact string. |
+| R9-03 | INFO → ✅ `fb1c13ab` | CONFIRM-SHARED-EXE | `DetectedGame.LoadObservation`'s comment still gave the pre-R8-01 "(stale)" text. Comment only. |
+| R9-04 | INFO (tests) → ✅ `1438f634` (by mutation) | UI-SPACE | `PanelSpaceBudgetTests` pins weaker than claimed (parent-only, "!= Wrap", a proximity regex). Now every ancestor, NoWrap, the scroller Disabled, the real assignment with comments stripped; three mutations caught. |
+| R9-06 | INFO → ✅ `e859a8fd` | NuGet (Avalonia 12.1.3) | `InputLayerFaultClassifier`'s TextBox clipboard IL read was 12.1.1's; 12.1.3 catches the expected clipboard exceptions itself. Re-read with ilspycmd; the trade holds; comments updated. |
+
 **Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ⏳ open -- **needs the maintainer
 with a real mouse.** On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
 one monitor), NO tooltip appears for a control whose position is past ~1138 DIP from the screen's left edge (physical
