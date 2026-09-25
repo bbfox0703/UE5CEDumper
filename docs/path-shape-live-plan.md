@@ -55,7 +55,7 @@ Attach CE.
 
 | # | row | check | status |
 |---|---|---|---|
-| 5 | `[PATH-CE-MODULE-VIEW]` (UI side) | Connected to `功夫-…`, a CE address the UI copies (Pointer panel / Live Walker) reads `"夫-Win64-Shipping.exe"+RVA` and resolves when pasted into CE | ⏳ |
+| 5 | `[PATH-CE-MODULE-VIEW]` (UI side) | Connected to `功夫-…`, a CE address the UI copies (Pointer panel / Live Walker) reads `"夫-Win64-Shipping.exe"+RVA` and resolves when pasted into CE | ✅ PASS 2026-09-25, build 3557 (the real name gives nil) |
 | 6 | `[PATH-AOBMAKER-ANSI-MATCH]` | Connected to `DumperTest51遊戲-…`, "Register GWorld symbol" through AOBMaker registers; `getAddress` of it resolves in CE | ✅ PASS 2026-09-25 (matched by name, no fallback) |
 | 7 | `[PATH-TRAINER-APOSTROPHE]` | Connected to `Tony's&Jerry-…`: the standalone trainer, pushed to CE, enables Setup | ✅ PASS 2026-09-25, build 3557 |
 | 8 | `[PATH-CEXML-AMP]` | The same game: an AOB-wrapped CE XML export pastes into CE and its script enables | ✅ PASS 2026-09-25, build 3557 (module-rooted AA via AOBMaker; clipboard XML by xUnit) |
