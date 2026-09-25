@@ -4685,6 +4685,7 @@ int main() {
         uintptr_t base = 0;
         char pattern[16 * 3 + 1] = {};
         size_t liveHits = 0;
+        bool stillLoadedAfterScan = false, ownFreeOk = false;
         for (const wchar_t* name : candidates) {
             if (GetModuleHandleW(name)) continue;                       // must not be loaded by anyone else
             HMODULE h = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
@@ -4704,7 +4705,10 @@ int main() {
             if (!code) { FreeLibrary(h); continue; }
             for (int i = 0; i < 16; ++i) snprintf(pattern + i * 3, 4, i == 15 ? "%02X" : "%02X ", code[i]);
             liveHits = Macht::AOBScanAll(pattern, b).size();
-            FreeLibrary(h);
+            // (tenth review, R10-02) The scan released ONLY its own reference: the module is still ours to free.
+            // An over-release (a pin that took no reference but still called FreeLibrary) would have unloaded it.
+            stillLoadedAfterScan = GetModuleHandleW(name) == h;
+            ownFreeOk = FreeLibrary(h) != FALSE;
             MEMORY_BASIC_INFORMATION mbi{};
             const bool unmapped = !GetModuleHandleW(name)
                 && VirtualQuery(reinterpret_cast<void*>(b), &mbi, sizeof(mbi)) == sizeof(mbi)
@@ -4718,10 +4722,34 @@ int main() {
         if (used) {
             check("SCAN-EARLY control: while loaded, a pattern cut from its own code is found in it", liveHits >= 1,
                   std::to_string(liveHits).c_str());
+            check("SCAN-EARLY R10-02: after a scan the module is still loaded -- the pin released only its own reference",
+                  stillLoadedAfterScan);
+            check("SCAN-EARLY R10-02: ...and the owner's own FreeLibrary still succeeds", ownFreeOk);
             size_t n = 999;
             const bool faulted = ScanFaultsAt(pattern, base, &n);
             check("SCAN-EARLY ⭐ scanning a module that is gone does NOT fault", !faulted);
             check("SCAN-EARLY ⭐ ...and finds nothing there", !faulted && n == 0, std::to_string(n).c_str());
+
+            // (tenth review, R10-02) The race the fix is for, forced: the owner frees the module DURING the scan (the
+            // seam runs between the pin and the reads). The pin must keep the image mapped -- the scan neither faults
+            // nor misses -- and, released on return, must be the LAST reference, so the image is gone afterwards.
+            HMODULE h2 = LoadLibraryExW(used, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            check("SCAN-EARLY R10-02 precondition: the DLL loads again", h2 != nullptr);
+            if (h2) {
+                const uintptr_t b2 = reinterpret_cast<uintptr_t>(h2);
+                Macht::g_afterModulePinForTest = [](uintptr_t mod) { FreeLibrary(reinterpret_cast<HMODULE>(mod)); };
+                size_t n2 = 999;
+                const bool faulted2 = ScanFaultsAt(pattern, b2, &n2);
+                Macht::g_afterModulePinForTest = nullptr;
+                MEMORY_BASIC_INFORMATION mbi2{};
+                const bool gone = !GetModuleHandleW(used)
+                    && VirtualQuery(reinterpret_cast<void*>(b2), &mbi2, sizeof(mbi2)) == sizeof(mbi2)
+                    && mbi2.State == MEM_FREE;
+                check("SCAN-EARLY R10-02 ⭐ freed by its owner mid-scan, the pinned image does NOT fault", !faulted2);
+                check("SCAN-EARLY R10-02 ⭐ ...and is still scanned whole (the pattern is found)", !faulted2 && n2 >= 1,
+                      std::to_string(n2).c_str());
+                check("SCAN-EARLY R10-02 ⭐ ...and the pin, released on return, was the last reference: unmapped", gone);
+            }
         }
     }
 

@@ -441,6 +441,12 @@ static void ScanRegionAll(
 // Public: AOBScanAll
 // ============================================================
 
+// (tenth review, R10-02) Test seam: called after AOBScanAll has pinned a non-main module and before it reads it. Null
+// in the product. dll_core_test, which #includes this file, sets it to drop the test's own reference mid-scan -- the
+// only way to prove the pin HOLDS the image and is released exactly once. Not declared in Macht.h, so nothing outside
+// this translation unit can set it.
+static void (*g_afterModulePinForTest)(uintptr_t moduleBase) = nullptr;
+
 std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
     std::vector<uintptr_t> results;
 
@@ -476,6 +482,7 @@ std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
                       static_cast<unsigned long long>(moduleBase));
             return results;
         }
+        if (g_afterModulePinForTest) g_afterModulePinForTest(moduleBase);
     }
 
     auto sections = GetExecutableSections(moduleBase);
