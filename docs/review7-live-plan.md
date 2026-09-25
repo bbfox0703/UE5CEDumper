@@ -49,7 +49,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S14]` | 20, 25 | yes · ⏳ green captured (session 20: both arms refuse at once, sentinel kept; controls export); red pending (session 25) |
 | `[R7-S11]` | 20, 24 | partial · ⏳ open |
 | `[R7-S6]` | 20 | partial · ✅ PASS red→green (A1–A5; the scalar no-lever arm unit-only; reds from L63) |
-| `[R7-D-07]` | 20-21 | yes · ⏳ red captured (session 21: "capped at 64 per fetch" on SpawnedHolders 64/200); green pending |
+| `[R7-D-07]` | 20-21 | yes · ✅ PASS red→green (on a pointer array: SpawnedHolders) |
 | `[R7-S10]` | 20, 24 | yes · ⏳ open |
 | `[R7-D-03]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-S5]` | — | no · ✅ recorded as no live check (todo.md) |
@@ -114,9 +114,13 @@ wrong on a live host, fix the step here in the same commit as the row's record.
    - Run `dist_swap.py restore` between two installs: `install` copies over dist\ and leaves extras behind.
    - The UI embeds `scripts/ue5_*_helper.lua` (EmbeddedResource). Each prefix UI therefore streams its own commit's Lua. Keep each CE process on one commit's Lua.
 
-10. **R7-D-07 / R7-S10: no Spawn_Holders.**
-    - Greens reuse S6's inflated actor: Arr_Churn 16,388 shows a 64-element preview at limit 64 and is capped by the DLL at 4,096 at limit 16384.
-    - Reds use `l63_instexport.py grow`. It only grows Arr_Churn and Map_Churn and creates no game objects, so it cannot disturb the snapshot premise (holders can).
+10. **R7-D-07 / R7-S10: a POINTER array, so Spawn_Holders after all.** ⚠ Corrected 2026-09-25 (sessions 21 and 20): the
+    planners' `Arr_Churn` is `TArray<int32>`; a scalar array re-fetches through `read_array_elements` and never reaches the
+    drill branch these rows fixed. Both rows use `SpawnedHolders` (`TArray<TObjectPtr<AActor>>`), grown with
+    `l63_instexport.py spawn`. Spawn only after the snapshot rows of the same session are done (holders are game objects).
+    - Greens reuse S6's inflated actor plus `spawn --count 200`: SpawnedHolders 4,296, a 64-element preview at limit 64, and
+      4,096 back per fetch at limit 16384.
+    - Reds: `spawn --count 200` for D-07 (64 of 200); for S10 the count must pass the 4,096 per-fetch cap.
 
 11. **R7-C-01 / C-03 / S3 Lua loading.**
     - `invokeUFunction` is guarded by `if not invokeUFunction`, and the invoke helper is version '1.3' at every commit. So a CE process that ever loaded HEAD's helpers silently keeps them, and a red run in it would come out green. Each red must run in a fresh CE process.
@@ -457,13 +461,13 @@ Start with no CE running: `tasklist | findstr /I cheatengine` must be empty.
    - A5, limit 64: about 797 entries, 3 names plus `+2 more`.
    - REDs are already recorded by L63. A1's red is optional in session 21.
 5. D-07, at limit 64:
-   - Live Walker DumperTestActor_0, Refresh. Suspend, set the limit to 256 (its refresh fails after about 10 s), click Arr_Churn's drill, wait 11 s.
-   - **GREEN:** `Showing the first 64 of 16,388 entries — re-open this container to re-read it. — ⚠ Could not re-read 'Arr_Churn'…` with no "per fetch"; view-0.log has `Drill: re-read … timed out`.
+   - Live Walker DumperTestActor_0, Refresh. Suspend, set the limit to 256 (its refresh fails after about 10 s), click SpawnedHolders' drill, wait 11 s.
+   - **GREEN:** `Showing the first 64 of 4,296 entries — re-open this container to re-read it. — ⚠ Could not re-read 'SpawnedHolders'…` with no "per fetch"; view-0.log has `Drill: re-read … timed out`.
    - **RED (session 21):** `… elements — this view is capped at 64 per fetch.`
    - Resume, Back, drill again as a control.
 6. S10:
-   - With the game running, set the limit to 16384 and Refresh; Arr_Churn shows 4,096 of 16,388. Suspend, drill, wait 11 s.
-   - **GREEN:** `Showing the first 4,096 of 16,388 entries — re-open…`, with neither "Array Limit" nor "per fetch".
+   - With the game running, set the limit to 16384 and Refresh; SpawnedHolders shows 4,096 of 4,296. Suspend, drill, wait 11 s.
+   - **GREEN:** `Showing the first 4,096 of 4,296 entries — re-open…`, with neither "Array Limit" nor "per fetch".
    - Resume, Back, drill: `… capped at 4,096 per fetch.`
    - **RED (session 24):** `… raise the "Array Limit" slider…`.
 7. Restore the Array Limit. Kill.
@@ -472,7 +476,7 @@ Start with no CE running: `tasklist | findstr /I cheatengine` must be empty.
 1. Launch, inject, Connect. The build-mismatch badge is expected.
 2. Session 17, steps 1–2, with the REDs.
 3. R1: session 17, step 4 with label R1. R2: step 6's sequence Q with Game objects only ON, label R2. D-01's RED: SPC Refresh shows bare labels. Restore Min free to 10 / 50.
-4. D-07: `l63_instexport.py grow --count 200` (Arr_Churn becomes 204), then session 20, step 5. RED.
+4. D-07: `l63_instexport.py spawn --count 200` (SpawnedHolders becomes 200), then session 20, step 5. RED.
 5. Optional S6 A1: blank status. Kill.
 
 **22. c88ca562 UI, then a fresh CE process (R1b). Rows: D-04, C-02, C-04 arm B (red).** About 45 min.
@@ -494,7 +498,7 @@ Start with no CE running: `tasklist | findstr /I cheatengine` must be empty.
 2. S8R: sequence Q, Game objects only ON. RED: just `Captured …`, the row is '' and usable, and the second click is still refused. Restore Min free.
 3. S7: session 18, step 3. REDs.
 4. S11: session 20, step 3 arms (1) and (2). REDs. Then Count 0.
-5. S10: `grow --count 5000` (Arr_Churn becomes 5,004), limit 16384, Refresh (4,096 of 5,004), suspend, drill. RED.
+5. S10: `spawn --count 4296` (SpawnedHolders 4,296), limit 16384, Refresh (4,096 of 4,296), suspend, drill. RED.
 6. Kill. `dist_swap.py restore`.
 
 **25. e2f23e4b UI (R3).** Install it. Rows: S12, S13, S14 (red). About 30 min.
