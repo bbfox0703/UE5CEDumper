@@ -1754,6 +1754,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // [PROXY-RISKNOTE-WIPED] The import-risk notes this run's deploys wrote -- and [PROXY-PRODUCTNAME-UNREADABLE]
         // the proxies it could not read -- re-applied after the refresh erases them.
         var riskNotes = new List<(DetectedGame Game, string Note)>();
+        // A folder can carry two of our types. Once one failed, a later one's success must not overwrite the failure on a
+        // row the refresh preserves (second review: the grid showed DeployedCurrent beside "failed: 1").
+        var failedState = new Dictionary<string, (ProxyDeployStatus Status, string? Detail)>(StringComparer.OrdinalIgnoreCase);
         // [PROXY-FORCE-UPDATEALL] Force Overwrite means rewrite OUR proxy whatever its version -- in Update All as in
         // Deploy (maintainer, 2026-09-25: no hash or timestamp second check; whoever ticks it knows what they want).
         // Read ONCE: the checkbox stays live during a run, and an untick half-way must not split one Update All
@@ -1820,8 +1823,18 @@ public partial class ProxyDeployViewModel : ViewModelBase
                         updated++;
                         if (sameVersion) forcedSame++;
                         if (!string.IsNullOrEmpty(game.StatusDetail)) riskNotes.Add((game, game.StatusDetail!));
+                        if (failedState.TryGetValue(game.BinariesDir, out var earlier))
+                        {
+                            game.Status = earlier.Status;
+                            game.StatusDetail = earlier.Detail;
+                        }
                     }
-                    else { fail++; failedDirs.Add(game.BinariesDir); }
+                    else
+                    {
+                        fail++;
+                        failedDirs.Add(game.BinariesDir);
+                        failedState.TryAdd(game.BinariesDir, (game.Status, game.StatusDetail));
+                    }
                 }
             }
 
