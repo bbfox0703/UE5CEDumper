@@ -28,7 +28,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S2]` | 6-7, 11 | yes · ✅ arm A PASS red→green (4.27); arm B PASS (5.4, green only) |
 | `[R7-X2]` | 8 | yes · ✅ PASS red→green (4.27 editor; pipe + AOT UI) |
 | `[R7-S1]` | 9-10 | yes · ⏳ open |
-| `[R7-B-04]` | 9-10 | partial · ⏳ open |
+| `[R7-B-04]` | 9-10 | partial · ✅ PASS red→green (TOptional + sparse element; two sub-cases unit-only) |
 | `[R7-C-05]` | 11, 13-14 | yes · ✅ PASS red→green (pokes wait the fence out; red served 296 early) |
 | `[R7-S4]` | 11-12 | yes · ✅ PASS red→green (5.4; red walked 0x100001 for 31 s) |
 | `[R7-S9]` | 15-16 | partial · ✅ PASS red→green (first ordering; the arg-order race is unit-only) |
