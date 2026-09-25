@@ -224,7 +224,8 @@ public class ProxyDeployPolicyTests
             File.WriteAllBytes(source, new byte[] { 0x4D, 0x5A });
             var svc = new ProxyDeployService(new MockLoggingService(), new MockPlatformService(dir))
             {
-                OwnershipProbe = p => p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase),
+                OwnerProbe = p => p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase)
+                    ? DllOwner.Ours : DllOwner.NotOurs,
             };
             var game = new DetectedGame { Name = "G", BinariesDir = dir, ExePath = Path.Combine(dir, "G.exe") };
 
@@ -237,6 +238,93 @@ public class ProxyDeployPolicyTests
             Assert.StartsWith("Skipped:", game.StatusDetail);
         }
         finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
+    }
+
+    // ── [PROXY-PRODUCTNAME-UNREADABLE] a third state: a proxy-named file we cannot read ──
+    //
+    // Measured (.NET 10, the UI's ownership read): no version resource, a file ACL denying read, and a file held open
+    // with FileShare.None ALL give ProductName == null with no exception. Our DLLs always carry a version resource, so
+    // "readable, no resource" is not ours (maintainer: that stays); "could not read it at all" is UNREADABLE --
+    // never written or deleted, and said so, instead of "another program's".
+
+    private static string TempDir()
+    {
+        string d = Path.Combine(Path.GetTempPath(), "ue5-unreadable", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(d);
+        return d;
+    }
+
+    [Fact]
+    public void ReadOwner_ReadableWithoutAVersionResource_IsNotOurs()
+    {
+        string d = TempDir();
+        try
+        {
+            string f = Path.Combine(d, "version.dll");
+            File.WriteAllText(f, "not a PE");
+            Assert.Equal(DllOwner.NotOurs, ProxyDeployService.ReadOwner(f));
+        }
+        finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
+    public void ReadOwner_HeldOpenWithNoSharing_IsUnreadable()
+    {
+        string d = TempDir();
+        try
+        {
+            string f = Path.Combine(d, "version.dll");
+            File.WriteAllText(f, "not a PE");
+            using (new FileStream(f, FileMode.Open, FileAccess.Read, FileShare.None))
+                Assert.Equal(DllOwner.Unreadable, ProxyDeployService.ReadOwner(f));
+            Assert.Equal(DllOwner.NotOurs, ProxyDeployService.ReadOwner(f));   // released: readable again
+        }
+        finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
+    public void PlanDeploy_AnUnreadableTarget_IsNeverReplaced_ForceAndConsentIncluded()
+    {
+        Assert.Equal(DeployVerdict.TargetUnreadable, ProxyDeployService.PlanDeploy(
+            targetExists: true, targetIsOurs: false, sameVersion: false,
+            new DeployOptions(ForceSameVersion: true, ForeignConsent: true), targetUnreadable: true));
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Service_AnUnreadableTarget_DeployRefuses_RefreshAndUndeploySayWhy()
+    {
+        string d = TempDir();
+        try
+        {
+            string target = Path.Combine(d, "version.dll");
+            File.WriteAllBytes(target, new byte[] { 0x4D, 0x5A, 1, 2 });
+            string source = Path.Combine(d, "source-version.dll");
+            File.WriteAllBytes(source, new byte[] { 0x4D, 0x5A });
+            var svc = new ProxyDeployService(new MockLoggingService(), new MockPlatformService(d))
+            {
+                OwnerProbe = p => p.EndsWith("\\version.dll", StringComparison.OrdinalIgnoreCase)
+                    ? DllOwner.Unreadable : DllOwner.NotOurs,
+            };
+            var game = new DetectedGame { Name = "G", BinariesDir = d, ExePath = Path.Combine(d, "G.exe") };
+            var ct = TestContext.Current.CancellationToken;
+
+            bool ok = await svc.DeployAsync(source, game, ProxyType.Version,
+                new DeployOptions(ForceSameVersion: true, ForeignConsent: true), ct);
+            Assert.False(ok);
+            Assert.Equal(new byte[] { 0x4D, 0x5A, 1, 2 }, File.ReadAllBytes(target));        // untouched
+            Assert.Equal(ProxyDeployStatus.Unreadable, game.Status);
+            Assert.StartsWith("Cannot read version.dll", game.StatusDetail);
+
+            await svc.RefreshDeployStatusAsync(new[] { game }, source, ProxyType.Version, ct: ct);
+            Assert.Equal(ProxyDeployStatus.Unreadable, game.Status);
+            Assert.StartsWith("Cannot read version.dll", game.StatusDetail);
+
+            await svc.UndeployAsync(game, ct);
+            Assert.True(File.Exists(target));                                               // never deleted
+            Assert.Contains("Cannot read version.dll", game.StatusDetail);
+            Assert.DoesNotContain("not our proxy", game.StatusDetail);                      // not "another program's"
+        }
+        finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
     }
 
     [Fact]

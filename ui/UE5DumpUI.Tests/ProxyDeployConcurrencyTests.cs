@@ -139,6 +139,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
             => Task.CompletedTask;
 
         public bool IsOurProxyDll(string dllPath) => IsOurs?.Invoke(dllPath) ?? true;
+        /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] Which proxy-named files cannot be read (null = none).</summary>
+        public Func<string, bool>? Unreadable;
+        public bool IsUnreadableDll(string dllPath) => Unreadable?.Invoke(dllPath) ?? false;
 
         /// <summary>Source newer than target, or -- with Force Overwrite off, the default -- UpdateAllAsync's
         /// "already up to date" branch skips every game and DeployAsync is never called — which would make the two Update All
@@ -615,6 +618,57 @@ public class ProxyDeployConcurrencyTests : IDisposable
     // redeployed. Force Overwrite means rewrite OUR proxy whatever its version -- in Update All too.
 
     private const string SameVersion = "1.0.0.3552";
+
+    // ── [PROXY-PRODUCTNAME-UNREADABLE] a proxy-named file we cannot read is treated conservatively ──
+
+    private static bool IsWinmm(string p) => p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase);
+
+    [Fact]
+    public async Task Deploy_AnUnreadableProxyNamedFile_IsNotJoinedByASecondProxy()
+    {
+        // It may be one of ours we cannot read: adding version.dll next to it could make a double.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm));
+        svc.IsOurs = p => !IsWinmm(p);
+        svc.Unreadable = IsWinmm;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("skipped: 1", vm.LastOperationResult);
+        Assert.Contains("winmm.dll", vm.Games[0].StatusDetail ?? "");
+        Assert.Contains("cannot be read", vm.Games[0].StatusDetail ?? "");
+    }
+
+    [Fact]
+    public async Task UseConfirmed_AFolderWithAnUnreadableProxyNamedFile_IsNotClean()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm));
+        svc.IsOurs = p => !IsWinmm(p);
+        svc.Unreadable = IsWinmm;
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Dxgi;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);                                   // neither dxgi (not clean) nor version (guard)
+    }
+
+    [Fact]
+    public async Task UpdateAll_AnUnreadableProxy_IsCounted_AndSaysWhy()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version));
+        svc.IsOurs = _ => false;
+        svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("cannot read: 1", vm.LastOperationResult ?? "");
+        Assert.Contains("Cannot read version.dll", vm.Games[0].StatusDetail ?? "");
+    }
 
     // ── [PROXY-RISKNOTE-WIPED] the one-shot import-risk note outlives the refresh ──
     //
