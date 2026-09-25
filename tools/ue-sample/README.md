@@ -608,7 +608,7 @@ Appended to `ADumperTestActor` (after every existing member, so no earlier field
 | `Opt_SoftClass` | set, `/Script/Engine.Pawn` | **R7-S1**: reads the path |
 | `Opt_Lazy` | set, GUID `{11111111-22222222-33333333-44444444}` | **R7-S1**: reads the GUID |
 | `Opt_Soft_Unset` | unset | control: `(unset)` |
-| `NestedBag.PairsA` / `PairsB` (`TMap<int32,int32>` in `FDumperTestNestedBag`) | empty until **`S11_SetNestedBag(Count)`** (SET semantics, unclamped; 0 empties) | **R7-S11**: an Instance Finder CE XML export resolves them through the struct at the Array Limit; 20000 pairs push the export past its 60,000-entry cap |
+| `NestedBag` → `PairsA` / `PairsB` (`TMap<int32,int32>` in `FDumperTestNestedBag`) | empty until **`S11_SetNestedBag(Count)`** (SET semantics, unclamped; 0 empties) | **R7-S11**: an Instance Finder CE XML export resolves them through the struct at the Array Limit (300 pairs at 256 → `PairsA (256 of 300), PairsB (256 of 300)` disclosed); 20000 pairs at 16384 push the export past its 60,000-entry cap -- ⚠ only since **R7-X6**: before it the map emitter never checked the cap and copied 98,890 entries unflagged |
 
 Package identity recaptured the same day (`package-identity.json`); the PE hash changed, so snapshot, bookmark and
 teleport-coordinate data keyed by the old hash is orphaned, as after every repackage.
