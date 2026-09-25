@@ -52,12 +52,45 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// </summary>
     [ObservableProperty] private bool _allowForeignOverwrite;
 
+    /// <summary>
+    /// [PROXY-USE-CONFIRMED] Deploy the proxy type recorded as CONFIRMED WORKING for a game
+    /// (<see cref="ConfirmedProxyByExe"/>) instead of the selected radio -- only into a folder that holds none of
+    /// our proxies (a reinstall, say). Maintainer request. <b>Not persisted</b>, like
+    /// <see cref="AllowForeignOverwrite"/>: it changes WHAT is written, so it is tied to the session the user is
+    /// looking at. Read once per run.
+    /// </summary>
+    [ObservableProperty] private bool _useConfirmedProxy;
+
+    /// <summary>The proxy sources this UI ships: &lt;exeDir&gt;/proxy/&lt;type&gt;.dll, the files that exist.
+    /// Shared by Update All and "Use confirmed-working proxy"; replaceable for tests (a missing source must not be
+    /// simulated by deleting the shared fixture).</summary>
+    internal Func<IReadOnlyDictionary<ProxyType, string>> ResolveSources { get; set; } = DefaultSources;
+
+    private static string ProxySourceDir =>
+        Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "proxy");
+
+    private static IReadOnlyDictionary<ProxyType, string> DefaultSources() =>
+        Enum.GetValues<ProxyType>()
+            .Select(t => (Type: t, Path: Path.Combine(ProxySourceDir, t.GetDllName())))
+            .Where(s => File.Exists(s.Path))
+            .ToDictionary(s => s.Type, s => s.Path);
+
+    /// <summary>[PROXY-USE-CONFIRMED] Which type Deploy writes for one game. The confirmed type replaces the radio
+    /// only when the box is ticked, a record exists and differs from the radio, and the folder holds NONE of our
+    /// proxies (a folder with the radio's type keeps it; one with another of ours is skipped by the double guard).
+    /// Pure, so the rule is a truth table.</summary>
+    internal static (ProxyType Type, bool Substituted) PickDeployType(ProxyType radio, bool useConfirmed,
+                                                                     ProxyType? confirmed, int oursPresentCount) =>
+        useConfirmed && confirmed is { } c && c != radio && oursPresentCount == 0 ? (c, true) : (radio, false);
+
     [ObservableProperty] private string? _lastOperationResult;
 
     /// <summary>
     /// Opt-in (default ON): show a per-game suggested proxy in the grid, derived
     /// from the .exe import table + the proxy the user last deployed for that game.
-    /// Advisory only — never changes the selected proxy radio, never auto-deploys.
+    /// Advisory only — never changes the selected proxy radio, never auto-deploys. (Deploy acts on a CONFIRMED
+    /// record only through <see cref="UseConfirmedProxy"/>, and reads <see cref="ConfirmedProxyByExe"/>, not this
+    /// column. [PROXY-USE-CONFIRMED])
     /// </summary>
     [ObservableProperty] private bool _lkgSuggestEnabled = true;
 
@@ -1406,6 +1439,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
         bool force = ForceOverwrite;
         string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
+        // [PROXY-USE-CONFIRMED] Also read once; the record and the sources are snapshotted with it.
+        bool useConfirmed = UseConfirmedProxy;
+        var confirmedByExe = new Dictionary<string, ProxyType>(ConfirmedProxyByExe, StringComparer.OrdinalIgnoreCase);
+        var sources = useConfirmed ? ResolveSources() : new Dictionary<ProxyType, string>();
+        int usedConfirmed = 0;
 
         try
         {
@@ -1420,7 +1458,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 // over games that already carry ANOTHER of ours made doubles to be fixed game by game -- and Undeploy
                 // removes both, so the user had to remember which one worked. Skipped even with Force Overwrite, and
                 // foreign consent is not consumed; the type that is already ours here still follows the Force rules.
-                var others = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsOurProxyDll)
+                var ours = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsOurProxyDll);
+                var others = ours
                     .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
                     .ToList();
                 if (others.Count > 0)
@@ -1436,24 +1475,49 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     }
                 }
 
+                // [PROXY-USE-CONFIRMED] A clean folder with a confirmed-working record takes that type. Its source must
+                // exist: a missing one fails THIS row -- never a silent fallback to the radio's type.
+                var (type, substituted) = PickDeployType(SelectedProxyType, useConfirmed,
+                    confirmedByExe.TryGetValue(Path.GetFileName(game.ExePath), out var c) ? c : null, ours.Count);
+                string source = SourceDllPath;
+                if (substituted)
+                {
+                    if (!sources.TryGetValue(type, out var confirmedSource))
+                    {
+                        fail++;
+                        failedDirs.Add(game.BinariesDir);   // preserved by the refresh, so the reason stays visible
+                        game.StatusDetail = $"Source {type.GetDllName()} not found in {ProxySourceDir} — the "
+                                            + "confirmed-working type could not be deployed";
+                        continue;
+                    }
+                    source = confirmedSource;
+                }
+
                 // [PROXY-DEPLOY-NOOP-COUNT] OUR proxy already at the source's version, with Force off: the service
                 // would answer AlreadyCurrent and return TRUE without writing, and this loop counted it as deployed.
                 // Counted here as already current instead. A foreign DLL still goes to the service (consent).
-                if (srcVer != null && File.Exists(target) && _deploy.IsOurProxyDll(target)
+                if (!substituted && srcVer != null && File.Exists(target) && _deploy.IsOurProxyDll(target)
                     && _deploy.GetDllVersion(target) == srcVer)
                 {
                     current++;
-                    RememberPick(game);
+                    RememberPick(game, SelectedProxyType);
                     continue;
                 }
 
-                bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType,
+                // A switched row never passes foreign consent: the user ticked it for the radio's name, not this one.
+                bool success = await _deploy.DeployAsync(source, game, type,
                     new DeployOptions(ForceSameVersion: force,
-                                      ForeignConsent:   AllowForeignOverwrite), ct);
+                                      ForeignConsent:   !substituted && AllowForeignOverwrite), ct);
                 if (success)
                 {
                     ok++;
-                    RememberPick(game);
+                    RememberPick(game, type);
+                    if (substituted)
+                    {
+                        usedConfirmed++;
+                        skipNotes.Add((game, $"Deployed {type.GetDllName()} (confirmed working) instead of "
+                                             + $"{SelectedProxyType.GetDllName()}"));
+                    }
                 }
                 else { fail++; failedDirs.Add(game.BinariesDir); }
             }
@@ -1474,7 +1538,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
             string skippedNote = skipped > 0
                 ? $", skipped: {skipped} (another of our proxies is already deployed — see Details)"
                 : "";
-            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}{skippedNote}", fail);
+            string confirmedNote = usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed} (see Details)" : "";
+            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}{skippedNote}{confirmedNote}", fail);
             if (ok == 0 && fail == 0)
             {
                 // Nothing was written: neutral, as Update All's "already up-to-date" -- the success colour on a
@@ -1495,17 +1560,18 @@ public partial class ProxyDeployViewModel : ViewModelBase
             foreach (var (g, note) in skipNotes) g.StatusDetail = note;
             SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}"
                                + (current > 0 ? $", already current: {current}" : "")
-                               + (skipped > 0 ? $", skipped: {skipped}" : ""), fail);
+                               + (skipped > 0 ? $", skipped: {skipped}" : "")
+                               + (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed}" : ""), fail);
         }
 
         // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name
         // so it survives reinstall. An already-current proxy is the user's pick too.
-        void RememberPick(DetectedGame game)
+        void RememberPick(DetectedGame game, ProxyType type)
         {
             if (string.IsNullOrEmpty(game.Name)) return;
-            if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != SelectedProxyType)
+            if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != type)
             {
-                LastManualProxyByGame[game.Name] = SelectedProxyType;
+                LastManualProxyByGame[game.Name] = type;
                 pickChanged = true;
             }
         }
@@ -1599,15 +1665,14 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // of the selected radio button. So a new dxgi.dll replaces an old
         // dxgi.dll, a new version.dll replaces an old version.dll, etc. Adding
         // a 4th proxy type needs no change here (iterates the enum).
-        var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-        var sources = Enum.GetValues<ProxyType>()
-            .Select(t => (Type: t, Path: Path.Combine(exeDir, "proxy", t.GetDllName())))
-            .Where(s => File.Exists(s.Path))
+        var sources = ResolveSources()
+            .OrderBy(kv => kv.Key)                     // enum order, as before
+            .Select(kv => (Type: kv.Key, Path: kv.Value))
             .ToList();
 
         if (sources.Count == 0)
         {
-            SetError($"No source proxy DLLs found in {Path.Combine(exeDir, "proxy")}");
+            SetError($"No source proxy DLLs found in {ProxySourceDir}");
             return;
         }
 

@@ -299,6 +299,12 @@
                     IsChecked="{Binding AllowForeignOverwrite}"
                     ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.ForeignOverwrite}"
                     Foreground="#E0A050" VerticalAlignment="Center" Margin="8,0"/>
+          <!-- [PROXY-USE-CONFIRMED] Not persisted, like the foreign box: it changes WHAT is written. Stays
+               clickable during a run (read once per run), as Force and the foreign box do. -->
+          <CheckBox Content="{StaticResource str.ProxyDeploy.UseConfirmed}"
+                    IsChecked="{Binding UseConfirmedProxy}"
+                    ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.UseConfirmed}"
+                    Foreground="#CCCCCC" VerticalAlignment="Center" Margin="8,0"/>
           <TextBlock Text="{Binding LastOperationResult}"
                      Foreground="{Binding LastOperationColor}" VerticalAlignment="Center" FontSize="11"
                      FontWeight="SemiBold" Margin="8,0"

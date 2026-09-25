@@ -442,6 +442,20 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.DoesNotContain("IsEnabled", foreignPanelTag);
     }
 
+    [Fact]
+    public void UseConfirmed_IsNotPersisted_AndStaysClickableDuringARun()
+    {
+        // [PROXY-USE-CONFIRMED] It changes WHAT Deploy writes, so -- like the foreign box -- it must not become a
+        // standing choice carried in from an earlier session: no bool for it in the persisted options.
+        Assert.DoesNotContain(typeof(ProxyDeployUiOptions).GetProperties(),
+            p => p.PropertyType == typeof(bool) && p.Name.Contains("Confirmed", StringComparison.Ordinal));
+
+        // Read once per run, so it stays clickable, as Force and the foreign box do.
+        var box = System.Text.RegularExpressions.Regex.Match(PanelXaml(), @"<CheckBox[^>]*UseConfirmedProxy[^>]*>");
+        Assert.True(box.Success, "the confirmed-working checkbox is gone -- re-point this pin");
+        Assert.DoesNotContain("IsEnabled", box.Value);
+    }
+
     // ── AE6: two DIFFERENT commands over the same folder ─────────────────────
 
     [Fact]

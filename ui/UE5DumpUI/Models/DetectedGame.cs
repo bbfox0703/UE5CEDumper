@@ -80,7 +80,9 @@ public sealed partial class DetectedGame : ObservableObject
     /// <summary>
     /// Suggested proxy type for this game (import-table + remembered-pick based),
     /// or null when suggestions are disabled / not yet computed. Advisory only —
-    /// it never changes the global proxy radio and never auto-deploys.
+    /// it never changes the global proxy radio and never auto-deploys. ("Use
+    /// confirmed-working proxy" reads the confirmed record directly, never this
+    /// field, which also carries last-used and the default. [PROXY-USE-CONFIRMED])
     /// </summary>
     [ObservableProperty] private ProxyType? _suggestedProxyType;
 

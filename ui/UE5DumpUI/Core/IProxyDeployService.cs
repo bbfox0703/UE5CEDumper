@@ -182,7 +182,8 @@ public interface IProxyDeployService
     /// file name) and never deployed a proxy; (3) the safe <c>version.dll</c>
     /// default, with the .exe import table only annotating which proxies are
     /// importable. When <paramref name="enabled"/> is false the suggestion fields
-    /// are cleared. Advisory only — never changes the selected proxy type, never deploys.
+    /// are cleared. Advisory only — never changes the selected proxy type, never deploys. (The view model's
+    /// "Use confirmed-working proxy" acts on the confirmed record itself. [PROXY-USE-CONFIRMED])
     /// </summary>
     Task ApplyProxySuggestionsAsync(
         IReadOnlyList<DetectedGame> games,
