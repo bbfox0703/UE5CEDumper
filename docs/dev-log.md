@@ -25,6 +25,41 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3553) — Proxy Deploy: Update All honours Force Overwrite; Deploy stops claiming no-op writes, published AOT
+
+**3553 = 3552 plus 3 product commits, up to `55327e9d`** (`git log --oneline 9019eada..55327e9d -- dll/src
+ui/UE5DumpUI scripts`). The rows are in `docs/todo.md` under `[PROXY-FORCE-UPDATEALL-2026-09-25]`.
+- **Reported by the maintainer.** With Force Overwrite ticked, Update All said "All N deployed proxy DLL(s) already
+  up-to-date" and wrote nothing. So a rebuild that kept its build number (the proxy's FileVersion is only
+  `1.0.0.<build_number>`) was never redeployed, which is exactly what happened on the other PC.
+- **Cause.** `UpdateAllAsync` ran its own FileVersion check and never read the checkbox. The Deploy button already
+  passed it.
+- **The fix (`d5f60f09`).** Update All skips a same-version proxy only when Force is off. The checkbox is read once per
+  run. The result line says what Force did: `Updated: N (M rewritten at the same version — Force Overwrite)`.
+  - There is no hash or timestamp check: the maintainer's call, now settled in working-lessons §6.
+  - AC1 is untouched: only a proxy already deployed AND ours is written, and foreign consent is never passed.
+  - Both tooltips state the rule.
+- **Mapping.** A 3-agent read-only workflow mapped every same-version skip and everything that pins or describes one.
+  Only this one path broke the rule. The archived AC1 live check had recorded this very symptom as a PASS.
+- **Three skeptic lenses over the fix** found no defect. Their test gap, pinning the `ForceSameVersion: true` the forced
+  path now relies on, is closed in `8039ab4b`.
+- **The adjacent row they found, `[PROXY-DEPLOY-NOOP-COUNT]` (`0aee3925`, `bd8869cf`).** With Force off, Deploy
+  onto our proxy already at the source's version wrote nothing (the service answers AlreadyCurrent), yet showed a
+  green `Deployed: 1 success`. It now counts that as `already current: N (tick Force Overwrite to rewrite them)`, in
+  neutral colour, as Update All does. Two more skeptics found behaviour parity with the service case by case.
+- ⚠ **Side effect, intended.** Force Overwrite is persisted, so a tick left from an earlier session now makes every
+  Update All rewrite every deployed proxy of ours. A running game's proxy then fails as "Target in use" instead of
+  being skipped silently.
+- **Not yet run on a game:** the live check, recorded as pending on both rows.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3552 → 3553: `dist\UE5DumpUI.exe` AOT 55.1 MB
+(57,810,432 bytes, sha `8ba915f779ed`), `UE5Dumper.dll` 3,008,000 bytes, sha `cef9994d70f5`, stamp `1.0.0.3553
+55327e9d-dirty` (the dirty suffix is the bumped `build_number.txt`). Four proxies went to `dist\proxy\`
+(`check_proxy_exports --artifacts` OK). Tests: UI **5397/5397**, `dll_helpers_test` 2921/0, `utf8_helpers_test`
+265/0, `dll_core_test` 455 checks, `grausam_window_test` 22 and `sein_retention_test` 14 checks. Gates 23/23.
+
+-----
+
 ## 2026-09-25 (build 3552) — R7-X8: Instance Finder's truncation advice follows every container, published AOT
 
 **3552 = 3551 plus 2 product commits, up to `9019eada`** (`git log --oneline c6d667ec..9019eada -- dll/src
