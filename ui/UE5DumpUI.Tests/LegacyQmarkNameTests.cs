@@ -120,6 +120,31 @@ public class LegacyQmarkNameTests : IDisposable
     }
 
     [Fact]
+    public void Teleport_ACarriedOverLibrary_ClearedByTheUser_StaysCleared()
+    {
+        // (second review, COORD-CARRY-RESURRECT / T-QMARK-RESURRECT, MED) The carry-over's own status says 'use Clear
+        // all' if the rows belong to another game. Clear all deletes the main file -- so the next connect saw 'no
+        // library under the real name' and carried the legacy rows over AGAIN: the [A1-COORD-RESURRECT] shape.
+        var vm = Vm(out var store);
+        store.Save("pok_mon", TwoRows());
+        vm.LoadCoordLibraryForGame("Pokémon.exe");
+        Assert.Equal(2, vm.CoordEntries.Count);
+
+        store.Delete(CoordinateLibraryStore.KeyFor("Pokémon.exe"));   // what Clear all does
+        vm.LoadCoordLibraryForGame("Pokémon.exe");
+
+        Assert.Empty(vm.CoordEntries);
+    }
+
+    [Fact]
+    public void Key_TheHashKeyIsStableAcrossProcesses()
+    {
+        // (second review, T-QMARK-HASH-STABILITY) Within one process, string.GetHashCode would pass the other test and
+        // strand the library on every restart. FNV-1a over U+2605, computed independently.
+        Assert.Equal("name-003b8f40", CoordinateLibraryStore.KeyFor("★.exe"));
+    }
+
+    [Fact]
     public void Teleport_UnderTheOlderDll_TheRefusalNamesTheEarlierLibrary()
     {
         var vm = Vm(out var store);
