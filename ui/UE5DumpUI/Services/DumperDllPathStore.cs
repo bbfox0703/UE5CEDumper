@@ -59,6 +59,9 @@ public sealed class DumperDllPathStore
             {
                 var line = raw.Trim('﻿').Trim();
                 if (line.Length == 0 || line[0] == '#') continue;
+                // (fifth review, R5-04) A RELATIVE line (an older UE5CEDumper.CT's self-heal could write one) is not a
+                // folder anyone can find again: the .CT would probe it against Cheat Engine's current folder.
+                if (!Path.IsPathFullyQualified(line)) continue;
                 list.Add(line);
                 if (list.Count >= MaxEntries) break;
             }
@@ -84,6 +87,8 @@ public sealed class DumperDllPathStore
         // for the Lua reader. Win32 forbids 0x00-0x1F in a path component, so reaching
         // this is a caller bug, not user input.
         if (dllDirectory.IndexOf('\r') >= 0 || dllDirectory.IndexOf('\n') >= 0) return;
+        // (fifth review, R5-04) Only a fully qualified folder ('sub', 'C:rel' and '\x' depend on a current folder).
+        if (!Path.IsPathFullyQualified(dllDirectory)) return;
 
         var dir = dllDirectory.TrimEnd('\\', '/');
         try

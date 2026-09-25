@@ -54,7 +54,8 @@ function ue5_recordDllDir(dir)
         if h then
             for line in h:lines() do
                 line = line:gsub("^\239\187\191", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                if line ~= "" and line:sub(1, 1) ~= "#"
+                -- (fifth review, R5-04) An older .CT's self-heal could write a RELATIVE line: not carried forward.
+                if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line)
                    and line:lower() ~= dir:lower() and #keep &lt; 3 then
                     keep[#keep + 1] = line
                 end
@@ -70,6 +71,24 @@ function ue5_recordDllDir(dir)
         for _, l in ipairs(keep) do w:write(l .. "\n") end
         w:close()
     end)
+end
+
+-- The folders dll-path.txt records, newest first -- ABSOLUTE ones only (fifth review, R5-04): a relative line, which
+-- an older .CT's self-heal could write, would be probed against CE's current folder. A function so the Lua suite can
+-- run it; any I/O error reads as an empty list.
+function ue5_readBreadcrumbs(path)
+    local out = {}
+    pcall(function()
+        local h = io.open(path, "r")
+        if not h then return end
+        for line in h:lines() do
+            line = line:gsub("^\239\187\191", "")            -- UTF-8 BOM, if an editor added one
+            line = line:gsub("^%s+", ""):gsub("%s+$", "")    -- also eats the CR of a CRLF
+            if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line) then out[#out + 1] = line end
+        end
+        h:close()
+    end)
+    return out
 end
 
 -- Report the RESOLVED DLL's size beside the path it chose, so a stale build is
@@ -252,18 +271,7 @@ local _appData = ""
 pcall(function() _appData = os.getenv("LOCALAPPDATA") or "" end)
 
 local _crumbs = {}
-if _appData ~= "" then
-    pcall(function()
-        local h = io.open(_appData .. "\\UE5CEDumper\\dll-path.txt", "r")
-        if not h then return end
-        for line in h:lines() do
-            line = line:gsub("^\239\187\191", "")            -- UTF-8 BOM, if an editor added one
-            line = line:gsub("^%s+", ""):gsub("%s+$", "")    -- also eats the CR of a CRLF
-            if line ~= "" and line:sub(1, 1) ~= "#" then _crumbs[#_crumbs + 1] = line end
-        end
-        h:close()
-    end)
-end
+if _appData ~= "" then _crumbs = ue5_readBreadcrumbs(_appData .. "\\UE5CEDumper\\dll-path.txt") end
 if #_crumbs == 0 then
     _slot("folder recorded by UE5DumpUI", "",
           "no folder recorded yet - UE5DumpUI writes this file at startup")
