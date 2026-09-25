@@ -340,6 +340,8 @@ green. The column after the id says which row takes it.
 | T11 | INFO | tooling | (1) Process note: `3e2f7d03` loosened the red regex (`attach` → `[Aa]ttach`) to match the emitted text. It is recorded here. (2) No gate runs `scripts/tests/*.lua`. Add one that runs `ce_lua53_host.py` when `out/ce_lua53` exists and reports SKIPPED otherwise. |
 | `[PROXY-CONFIRM-SHARED-EXE]` | LOW | ⏳ open (from T7) | `ConfirmedProxyByExe` is keyed by the bare exe name. That is chosen so the record survives a reinstall, but two games that ship the same exe name share one record. It needs a design decision (folder + exe? pe_hash is lost on a patch), not only a patch. |
 
+**Found while adding T11's gate (outside `[PATH-SHAPE]`):** `[CI-GATE-DRIFT-2026-09-25]` | MED | ⏳ open. Nine gates that `tools/check_all.py` runs were never added to `.github/workflows/ci.yml`. They were appended after `854cd406` closed the previous drift on 2026-09-06: `crc_oracle_selftest`, `check_processevent_slots`, `check_property_family`, `check_ce_untick_placement`, `check_badge_prime_symmetry`, `check_ce_idlewait_scope`, `check_clipboard_delivery`, `check_json_default_ignore` and `check_session_gate`. So a PR could break any of them and CI would stay green. `check_all.py`'s own docstring already said "nothing enforces that". **Fix:** add the nine to CI, and add `tools/check_ci_gate_parity.py` as a gate in BOTH lists, so the drift cannot recur silently.
+
 ## 🔎 Review 7 — the code added since Review 6, read adversarially `[REVIEW7-2026-09-24]`
 
 **Scope:** product code in `8a22f413..29114cfb` (`dll/src`, `ui/UE5DumpUI`, `scripts`): about 3.6K added
