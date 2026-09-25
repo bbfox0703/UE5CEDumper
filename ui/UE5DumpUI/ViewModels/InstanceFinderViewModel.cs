@@ -918,6 +918,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         var containers = new List<(string Name, int Loaded)>();
         foreach (var f in fields)
         {
+            if (IsOneEntry(f)) continue;
             Add(f.Name, f.ArrayElements?.Count ?? 0, f.ArrayCount);
             Add(f.Name, f.MapElements?.Count ?? 0, f.MapCount);
             Add(f.Name, f.SetElements?.Count ?? 0, f.SetCount);
@@ -936,9 +937,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             var levers = containers.Where(c => c.Loaded > Constants.MinArrayLimit)
                                    .OrderByDescending(c => c.Loaded)   // the ones that pay most, first
                                    .Select(c => c.Name).ToList();
+            // Shrinking is not the same as fitting: beside a truncation driven by scalars a small container sheds a
+            // few entries and the copy stays incomplete, so the part-export advice that always works stays too.
             return levers.Count > 0
                 ? head + $"; lower the Array Limit to shrink it ({Names(levers)} then export only "
-                       + "their first elements)"
+                       + "their first elements), or use Open in Live Walker → Copy CE Field for the part you need"
                 : head + ", and no toolbar setting shrinks this export; use Open in Live Walker → Copy CE Field for "
                        + "the part you need";
         }
@@ -948,6 +951,13 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         var shown = clipped.Take(3).Select(c => $"{c.Name} ({c.Loaded:N0} of {c.Total:N0})");
         return "Copied; only part of these containers was exported: " + string.Join(", ", shown)
                + (clipped.Count > 3 ? $" +{clipped.Count - 3} more" : "");
+
+        // [R7-X8] Written as ONE entry at any length, so the Array Limit shrinks neither: a sparse delegate (EmitFields
+        // sends only ArrayProperty / MulticastInline / Multicast to the array emitter) and a TArray<TFieldPath> (no CE
+        // type for its element: one placeholder). Neither is a lever, nor a clipped export to disclose.
+        static bool IsOneEntry(LiveFieldValue f) =>
+            f.TypeName == "MulticastSparseDelegateProperty"
+            || (f.TypeName == "ArrayProperty" && f.ArrayInnerType == "FieldPathProperty");
 
         void Add(string name, int loaded, int total)
         {
