@@ -77,6 +77,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
         public readonly List<HashSet<string>> Preserves = new();
         /// <summary>Overrides DeployAsync's result per game (null = success).</summary>
         public Func<DetectedGame, bool>? DeployResult;
+        /// <summary>The import-risk note a successful DeployAsync writes into Details (the real one:
+        /// ProxyImportAnalyzer.DescribeDeployAdvisory), or null for none.</summary>
+        public Func<DetectedGame, ProxyType, string?>? DeployNote;
         /// <summary>The types actually written to the grid, in the order they landed.</summary>
         public readonly List<ProxyType> Applied = new();
 
@@ -116,7 +119,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
             Deploys.Add((game.Name, proxyType, options, sourceDllPath));
             await WaitAsync($"deploy:{game.Name}");
             DuringDeploy?.Invoke();
-            return DeployResult?.Invoke(game) ?? true;
+            bool ok = DeployResult?.Invoke(game) ?? true;
+            // As the real service: a successful deploy writes its one-shot import-risk note (or nothing) into Details.
+            if (ok && DeployNote != null) game.StatusDetail = DeployNote(game, proxyType);
+            return ok;
         }
 
         public async Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default)
@@ -609,6 +615,58 @@ public class ProxyDeployConcurrencyTests : IDisposable
     // redeployed. Force Overwrite means rewrite OUR proxy whatever its version -- in Update All too.
 
     private const string SameVersion = "1.0.0.3552";
+
+    // ── [PROXY-RISKNOTE-WIPED] the one-shot import-risk note outlives the refresh ──
+    //
+    // DeployAsync writes an advisory when a flavour may not load (BYPASS: imported, so a System32 copy can pre-empt it;
+    // NEVER-LOADS: a static-only flavour nothing names). Both fail silently when real, so the note is the one nudge
+    // at deploy time -- and the same run's refresh, which rewrites every row outside failedDirs from disk, erased it.
+
+    private const string RiskNote = "version.dll is imported by the game -- an already-mapped System32 copy can pre-empt it";
+
+    [Fact]
+    public async Task Deploy_TheImportRiskNote_SurvivesTheRefresh()
+    {
+        var (vm, svc) = ReadyWith(Game("A"));
+        svc.DeployNote = (_, _) => RiskNote;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.StartsWith("Deployed: 1 success", vm.LastOperationResult);
+        Assert.Contains(RiskNote, vm.Games[0].StatusDetail ?? "");
+    }
+
+    [Fact]
+    public async Task Deploy_ASwitchedRow_KeepsTheSwitchNote_AndTheRiskNote()
+    {
+        var (vm, svc) = ReadyWith(Game("A"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.DeployNote = (_, _) => RiskNote;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Contains("confirmed working", vm.Games[0].StatusDetail ?? "");
+        Assert.Contains(RiskNote, vm.Games[0].StatusDetail ?? "");
+    }
+
+    [Fact]
+    public async Task UpdateAll_TheImportRiskNote_SurvivesTheRefresh()
+    {
+        var (vm, svc) = Ready(deployed: true);
+        svc.ClearDetailsOnRefresh = true;
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.DeployNote = (_, _) => RiskNote;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.StartsWith("Updated: 2", vm.LastOperationResult);
+        Assert.All(vm.Games, g => Assert.Contains(RiskNote, g.StatusDetail ?? ""));
+    }
 
     [Fact]
     public async Task UpdateAll_SameVersion_Force_RewritesEveryDeployedProxy()
