@@ -262,7 +262,49 @@ def http_json(url: str, payload=None, timeout: float = PROBE_TIMEOUT):
         return json.loads(r.read().decode("utf-8"))
 
 
+def _toolhelp_images() -> list[str]:
+    """Process image names from a Toolhelp32 snapshot -- milliseconds, where `tasklist` took ~1.6 s.
+
+    The hook runs before EVERY Bash call while the model is loaded, so the spawn cost was paid on each
+    one (measured 2026-09-25). ctypes, not PowerShell: see the AMSI note in handover section 10."""
+    import ctypes
+    from ctypes import wintypes
+
+    class PROCESSENTRY32W(ctypes.Structure):
+        _fields_ = [("dwSize", wintypes.DWORD), ("cntUsage", wintypes.DWORD),
+                    ("th32ProcessID", wintypes.DWORD), ("th32DefaultHeapID", ctypes.c_size_t),
+                    ("th32ModuleID", wintypes.DWORD), ("cntThreads", wintypes.DWORD),
+                    ("th32ParentProcessID", wintypes.DWORD), ("pcPriClassBase", ctypes.c_long),
+                    ("dwFlags", wintypes.DWORD), ("szExeFile", ctypes.c_wchar * 260)]
+
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.CreateToolhelp32Snapshot.restype = wintypes.HANDLE
+    k32.CreateToolhelp32Snapshot.argtypes = [wintypes.DWORD, wintypes.DWORD]
+    for fn in (k32.Process32FirstW, k32.Process32NextW):
+        fn.argtypes = [wintypes.HANDLE, ctypes.POINTER(PROCESSENTRY32W)]
+        fn.restype = wintypes.BOOL
+    k32.CloseHandle.argtypes = [wintypes.HANDLE]
+    snap = k32.CreateToolhelp32Snapshot(0x2, 0)                  # TH32CS_SNAPPROCESS
+    if not snap or snap == ctypes.c_void_p(-1).value:            # INVALID_HANDLE_VALUE
+        raise OSError(ctypes.get_last_error(), "CreateToolhelp32Snapshot")
+    try:
+        entry = PROCESSENTRY32W()
+        entry.dwSize = ctypes.sizeof(entry)
+        names, more = [], k32.Process32FirstW(snap, ctypes.byref(entry))
+        while more:
+            names.append(entry.szExeFile)
+            more = k32.Process32NextW(snap, ctypes.byref(entry))
+        return names
+    finally:
+        k32.CloseHandle(snap)
+
+
 def running_images() -> list[str]:
+    if os.name == "nt":
+        try:
+            return _toolhelp_images()
+        except (OSError, AttributeError, ValueError):
+            pass                                                  # fall back to tasklist
     try:
         out = subprocess.run(["tasklist", "/FO", "CSV", "/NH"], capture_output=True, text=True,
                              errors="replace", timeout=15).stdout
