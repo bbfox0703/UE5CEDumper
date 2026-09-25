@@ -1359,12 +1359,14 @@ public static class CeXmlExportService
         sb.AppendLine($"      <AssemblerScript>");
 
         sb.AppendLine("[ENABLE]");
-        sb.AppendLine($"define({symbolName},{formattedAddress})");
-        sb.AppendLine($"registersymbol({symbolName})");
+        // [PATH-CEXML-AMP] XML-escaped: an exe name may hold '&' ("Tom&Jerry-Win64-Shipping.exe"+RVA). CE, and
+        // ExtractAssemblerScript for the AOBMaker push, un-escape it back to the raw script.
+        sb.AppendLine($"define({EscapeXmlContent(symbolName)},{EscapeXmlContent(formattedAddress)})");
+        sb.AppendLine($"registersymbol({EscapeXmlContent(symbolName)})");
         sb.AppendLine();
 
         sb.AppendLine("[DISABLE]");
-        sb.AppendLine($"unregistersymbol({symbolName})");
+        sb.AppendLine($"unregistersymbol({EscapeXmlContent(symbolName)})");
 
         sb.AppendLine($"      </AssemblerScript>");
         sb.AppendLine($"    </CheatEntry>");
@@ -1493,7 +1495,7 @@ public static class CeXmlExportService
         sb.AppendLine($"{baseIndent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{baseIndent}  <ShowAsSigned>0</ShowAsSigned>");
         sb.AppendLine($"{baseIndent}  <VariableType>8 Bytes</VariableType>");
-        sb.AppendLine($"{baseIndent}  <Address>{symbolName}</Address>");
+        sb.AppendLine($"{baseIndent}  <Address>{EscapeXmlContent(symbolName)}</Address>");
         sb.AppendLine($"{baseIndent}  <Offsets>");
         sb.AppendLine($"{baseIndent}    <Offset>0</Offset>");
         sb.AppendLine($"{baseIndent}  </Offsets>");
@@ -3721,7 +3723,7 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
         if (varType != null)
             sb.AppendLine($"{indent}  <VariableType>{varType}</VariableType>");
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}  <CheatEntries>");
     }
@@ -3753,7 +3755,7 @@ public static class CeXmlExportService
         // excluded — its address is absolute, not "+...".
         if (_collapsePointerNodes && address.StartsWith("+"))
             sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
@@ -3786,7 +3788,7 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <BitLength>{ceField.BitLength}</BitLength>");
             sb.AppendLine($"{indent}  <ShowAsBinary>0</ShowAsBinary>");
         }
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
@@ -3826,7 +3828,7 @@ public static class CeXmlExportService
         sb.AppendLine($"{indent}  <Unicode>{(unicode ? 1 : 0)}</Unicode>");
         sb.AppendLine($"{indent}  <CodePage>{(codepage ? 1 : 0)}</CodePage>");
         sb.AppendLine($"{indent}  <ZeroTerminate>1</ZeroTerminate>");
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
