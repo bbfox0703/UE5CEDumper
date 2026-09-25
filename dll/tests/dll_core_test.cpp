@@ -131,6 +131,16 @@ struct FakePool {
     uintptr_t Addr() const { return reinterpret_cast<uintptr_t>(header.data()); }
 };
 
+// [SCAN-EARLY-TRIGGER-CONTAINED] AOBScanAll on a module base, run under SEH so a fault is a FAIL line, not a dead
+// test process. The vector lives in its own function: a __try frame cannot hold objects that need unwinding.
+static size_t ScanCountAt(const char* pattern, uintptr_t base) {
+    return Macht::AOBScanAll(pattern, base).size();
+}
+static bool ScanFaultsAt(const char* pattern, uintptr_t base, size_t* count) {
+    __try { *count = ScanCountAt(pattern, base); return false; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return true; }
+}
+
 // Tot's cancel flag is a per-command atomic in a header. Reset it explicitly between
 // cases: it is process-global and a leaked `true` would make every later walk look
 // cancelled — the exact shape that would turn this whole file into a false pass.
@@ -4663,6 +4673,56 @@ int main() {
             VirtualFree(wpage, 0, MEM_RELEASE);
         }
         DynOff::bUseFProperty = svFPropW;
+    }
+
+    {   blk("SCAN-EARLY — AOBScanAll on a module that was unloaded after the module list was taken");
+        // [SCAN-EARLY-TRIGGER-CONTAINED] Measured on build 3555: a trigger_scan ~1 s after launch died with an
+        // uncaught non-standard exception in FindGObjects' multi-module fallback. AOBScanAllModules snapshots
+        // EnumProcessModules and then reads each module's headers and code with no guard; a DLL the booting engine
+        // frees in between is read after it is unmapped. This case frees a real module, then scans its old base.
+        const wchar_t* candidates[] = { L"wtsapi32.dll", L"srvcli.dll", L"dsreg.dll", L"wevtapi.dll", L"mscms.dll" };
+        const wchar_t* used = nullptr;
+        uintptr_t base = 0;
+        char pattern[16 * 3 + 1] = {};
+        size_t liveHits = 0;
+        for (const wchar_t* name : candidates) {
+            if (GetModuleHandleW(name)) continue;                       // must not be loaded by anyone else
+            HMODULE h = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!h) continue;
+            const uintptr_t b = reinterpret_cast<uintptr_t>(h);
+            // Positive control: 16 bytes from the start of its first code section, as a pattern, are found while
+            // it is loaded -- so a later "0 matches" means "gone", not "this scan never finds anything here".
+            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
+            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
+            IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+            const uint8_t* code = nullptr;
+            for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec)
+                if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) && sec->Misc.VirtualSize >= 64) {
+                    code = reinterpret_cast<const uint8_t*>(b + sec->VirtualAddress);
+                    break;
+                }
+            if (!code) { FreeLibrary(h); continue; }
+            for (int i = 0; i < 16; ++i) snprintf(pattern + i * 3, 4, i == 15 ? "%02X" : "%02X ", code[i]);
+            liveHits = Macht::AOBScanAll(pattern, b).size();
+            FreeLibrary(h);
+            MEMORY_BASIC_INFORMATION mbi{};
+            const bool unmapped = !GetModuleHandleW(name)
+                && VirtualQuery(reinterpret_cast<void*>(b), &mbi, sizeof(mbi)) == sizeof(mbi)
+                && mbi.State == MEM_FREE;
+            if (!unmapped) continue;                                    // something kept it mapped: try the next
+            used = name;
+            base = b;
+            break;
+        }
+        check("SCAN-EARLY precondition: a System32 DLL loaded, scanned, freed and really unmapped", used != nullptr);
+        if (used) {
+            check("SCAN-EARLY control: while loaded, a pattern cut from its own code is found in it", liveHits >= 1,
+                  std::to_string(liveHits).c_str());
+            size_t n = 999;
+            const bool faulted = ScanFaultsAt(pattern, base, &n);
+            check("SCAN-EARLY ⭐ scanning a module that is gone does NOT fault", !faulted);
+            check("SCAN-EARLY ⭐ ...and finds nothing there", !faulted && n == 0, std::to_string(n).c_str());
+        }
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
