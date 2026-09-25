@@ -408,6 +408,15 @@ fixes `b50422b8^..49d4dd93`). 6 raised, 6 confirmed: 1 LOW (a regression from R5
 | R6-04 | INFO (tests) → ✅ `0775479d` (by mutation) | CT-MRU-ZERO | No control that a list with NO UE5CEDumper.CT still says "has no UE5CEDumper.CT". |
 | R6-03 + R6-05 | INFO → ✅ `9f225dad` (red `d3a5c79a`) | CONFIRM-SHARED-EXE | The Load column (150 px) shows ~18 characters, so a mark appended after "loaded 2026-09-25" is clipped away (the Suggested column's too); and `SharedLogFolders` groups by LOG folder ('Game .exe' and 'Game.exe' share `Logs\Game`), so its mark must not say "shared exe name", and its test reaches neither the same-folder nor the trimmed-name case. |
 
+**Seventh skeptic review** (workflow `wf_0081ac66-461`, over the sixth-round fixes `cf475e6d..9f225dad`). 6 raised, 6
+confirmed, all INFO (test pins, one tooltip, one column width); nothing LOW or above. Fixed in three rows.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R7-01 + R7-02 | INFO (tests) | CT-MRU-ZERO | The chunk's `ue5_breadcrumbSlots(_appData)` call is still pinned by a raw substring (a commented-out call passes); the slot test has one absolute line (the older-entry loop is unpinned) and no header-only file (the `#` guard on the dropped count is unpinned). |
+| R7-03 + R7-04 | INFO (tests) | CT-MRU-ZERO | The C# drive-root test passes on Load's fix alone (no raw-line assert) and its no-rewrite check depends on timing; the lower-case root (`e:\`, legacy `e:`) is untested on both sides. |
+| R7-05 + R7-06 | INFO | CONFIRM-SHARED-EXE | With the tag leading, a shared row's Load shows 'shared · loaded 20' -- the date is cut (widen the column); the Suggested tooltip names the import table as a source (it only annotates) and omits injection. |
+
 **Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ⏳ open, investigate.
 Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
 (the S1 rig's first version) logged `RunScan: UNCAUGHT non-standard exception — contained` in 4 of 5 launches
