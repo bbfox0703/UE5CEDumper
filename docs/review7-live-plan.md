@@ -36,7 +36,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-D-08]` | 17, 21 | yes · ✅ PASS red→green on the reconnect arm (the relaunch arm does not discriminate) |
 | `[R7-D-06]` | 17, 21 | yes · ✅ PASS red→green (cap + low disk; real cuts still marked) |
 | `[R7-S8]` | 17, 24 | yes · ⏳ open |
-| `[R7-D-01]` | 17, 21 | yes · ⏳ open |
+| `[R7-D-01]` | 17, 21 | yes · ✅ PASS red→green (both SPC grids) |
 | `[R7-D-04]` | 18, 22 | yes · ⏳ open |
 | `[R7-S12]` | 18, 25 | yes · ⏳ open |
 | `[R7-S7]` | 18, 24 | yes · ⏳ open |
