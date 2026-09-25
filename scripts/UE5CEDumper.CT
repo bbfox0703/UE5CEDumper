@@ -33,8 +33,16 @@ if syntaxcheck then return end
 -- table's filename. Never from a folder that merely happened to win the probe --
 -- pinning, say, a stale copy left in CE's install folder would silently load a
 -- mismatched build on every future run, which is worse than failing loudly.
+-- (fourth review, R4-MRU-RELATIVE-SUBFOLDER-SHADOWS) An ABSOLUTE path: a drive (X:\ or X:/) or UNC (\\). A relative
+-- one (a recent-files entry CE stored for `cheatengine.exe sub\UE5CEDumper.CT`) reads CE's CURRENT folder, which is
+-- not where that table was -- never probed, never recorded.
+function ue5_isAbsolutePath(p)
+    return type(p) == "string" and (p:find("^%a:[\\/]") ~= nil or p:find("^[\\/][\\/]") ~= nil)
+end
+
 function ue5_recordDllDir(dir)
     if type(dir) ~= "string" or dir == "" then return end
+    if not ue5_isAbsolutePath(dir) then return end
     dir = dir:gsub("[\\/]+$", "")
     pcall(function()
         local ad = os.getenv("LOCALAPPDATA") or ""
@@ -358,15 +366,17 @@ function ue5_probeRecentFiles()
     -- the list safe to trust: it cannot bind to a stale UE5Dumper.dll sitting
     -- beside some unrelated game's table. (Measured: this .CT has been seen at
     -- both position 1 and position 2 of that list, so never take entry 1 blindly.)
-    -- A RELATIVE entry of this name (CE started with a relative table argument) has no folder: skip it, or it
-    -- shadows a later absolute one (third review, MRU-RELATIVE-SELF-MATCH-SHADOWS).
+    -- A RELATIVE entry of this name (CE started with a relative table argument) is skipped, with or without a
+    -- folder, or it shadows a later absolute one (third review, MRU-RELATIVE-SELF-MATCH-SHADOWS; fourth review).
     local _mruSelf = ""
     for i = 1, #_mru do
         local leaf = ""
         pcall(function() leaf = (extractFileName(_mru[i]) or ""):lower() end)
         if leaf == "ue5cedumper.ct" then
-            pcall(function() _mruSelf = extractFilePath(_mru[i]) or "" end)
-            if _mruSelf ~= "" then break end
+            local f = ""
+            pcall(function() f = extractFilePath(_mru[i]) or "" end)
+            -- (fourth review) Only an ABSOLUTE folder: a relative one is CE's current folder, not the table's.
+            if ue5_isAbsolutePath(f) then _mruSelf = f break end
         end
     end
     _slot("folder of the most recent UE5CEDumper.CT in CE's recent-files list", _mruSelf,
@@ -378,6 +388,7 @@ function ue5_probeRecentFiles()
     -- list is other games' tables, and probing those invites a stale hit.
     local _mruTop = ""
     if _mru[1] then pcall(function() _mruTop = extractFilePath(_mru[1]) or "" end) end
+    if not ue5_isAbsolutePath(_mruTop) then _mruTop = "" end
     _slot("folder of the most recently opened cheat table", _mruTop,
           "CE reported no recent files")
 

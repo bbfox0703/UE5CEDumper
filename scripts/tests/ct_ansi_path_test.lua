@@ -218,6 +218,9 @@ end
 if okMru and lifted then
   -- its own dependency (pcall'd inside the probe: a missing one would just read as "no recent files")
   assert(load(unxml(ct:match("(function%s+ue5_splitRegMultiSz.-\nend)")), "ue5_splitRegMultiSz"))()
+  local absSrc = ct:match("(function%s+ue5_isAbsolutePath%(.-\nend)")
+  check("lifted ue5_isAbsolutePath from the .CT", absSrc ~= nil)
+  if absSrc then assert(load(unxml(absSrc), "ue5_isAbsolutePath"))() end
   assert(load(unxml(ct:match("(function%s+ue5_probeRecentFiles.-\nend)")), "ue5_probeRecentFiles"))()
   -- the .CT's chunk-level locals, as globals here
   _slots, _seen, _dllFoundIn, _dllFoundLabel = {}, {}, nil, ""
@@ -277,6 +280,15 @@ if okMru and lifted then
   check("the NEWEST UE5CEDumper.CT entry wins", DLL_PATH == "D:\\A\\UE5Dumper.dll", DLL_PATH)
   probe("D:\\A\\UE5CEDumper.CT" .. S0 .. "UE5CEDumper.CT", function(q) return q == "D:\\A\\UE5Dumper.dll" end)
   check("  ...and an older relative entry does not undo it", DLL_PATH == "D:\\A\\UE5Dumper.dll", DLL_PATH)
+
+  if ue5_isAbsolutePath then
+    for _, c in ipairs({ { "D:\\x\\", true }, { "D:/x/", true }, { "\\\\srv\\share\\", true },
+                         { "sub\\", false }, { "\\x\\", false }, { "", false }, { "D:x", false } }) do
+      check("ue5_isAbsolutePath(" .. c[1] .. ") == " .. tostring(c[2]), ue5_isAbsolutePath(c[1]) == c[2])
+    end
+  end
+  check("the self-heal writer refuses a relative folder",
+        (unxml(ct):match("function ue5_recordDllDir%(dir%).-\nend") or ""):find("if not ue5_isAbsolutePath(dir) then return end", 1, true) ~= nil)
 end
 
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
