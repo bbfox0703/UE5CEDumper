@@ -304,6 +304,10 @@ if okMru and lifted then
   probe("D:\\R\\MyGame.CT" .. S0 .. "E:\\other.CT", function(q) return q == "D:\\R\\UE5Dumper.dll" end)
   check("a renamed table's folder (the top slot) is still probed", DLL_PATH == "D:\\R\\UE5Dumper.dll", DLL_PATH)
   check("  ...but not self-healed: it is not name-matched", recorded == nil, recorded)
+  -- (sixth review, R6-04) ...and a list with NO UE5CEDumper.CT in it keeps that reason (not "relative").
+  local noSelf = why("most recent UE5CEDumper.CT")
+  check("a list with no UE5CEDumper.CT says so", noSelf:find("has no UE5CEDumper.CT", 1, true) ~= nil, noSelf)
+  check("  ...and not 'relative'", noSelf:find("relative", 1, true) == nil, noSelf)
 
   if ue5_isAbsolutePath then
     for _, c in ipairs({ { "D:\\x\\", true }, { "D:/x/", true }, { "\\\\srv\\share\\", true },
