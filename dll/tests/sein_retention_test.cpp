@@ -323,6 +323,11 @@ int main() {
         Fixture fx;
         blk("InitProcessMirror logs into the sanitised folder");
         fx.AssertSafe("pre-mirror");
+        // (third review, T3-SEIN-M2-PRESET) Undo what Fixture() presets, so M1-M3 read what InitProcessMirror set --
+        // with s_processDirReady left true, deleting its assignment (retention then never runs) passed M2.
+        Sein::s_processDir.clear();
+        Sein::s_processDirReady = false;
+        Sein::s_filesOpen = false;
         Sein::InitProcessMirror(L"Game .exe");
         check("M1 the process folder is <root>\\Game", Sein::s_processDir == fx.root / L"Game");
         check("M2 the folder is ready", Sein::s_processDirReady);
