@@ -189,9 +189,11 @@ function Test-AlreadyInjected($proc, [string]$dllLeaf) {
     return $false
 }
 
+# [PATH-PS1-LITERALPATH] -LiteralPath throughout: a positional path binds to -Path, which expands wildcards, so a
+# folder like 'UE5CEDumper [3554]' (a character class) never matched the DLL sitting in it.
 function Resolve-Dll {
     if ($Dll) {
-        if (Test-Path $Dll) { return (Resolve-Path $Dll).Path }
+        if (Test-Path -LiteralPath $Dll) { return (Resolve-Path -LiteralPath $Dll).Path }
         throw "DLL not found: $Dll"
     }
     $root = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
@@ -201,7 +203,7 @@ function Resolve-Dll {
         (Join-Path $root 'dist\UE5Dumper.dll'),
         (Join-Path (Get-Location).Path 'UE5Dumper.dll')
     )
-    foreach ($c in $candidates) { if (Test-Path $c) { return (Resolve-Path $c).Path } }
+    foreach ($c in $candidates) { if (Test-Path -LiteralPath $c) { return (Resolve-Path -LiteralPath $c).Path } }
     throw "UE5Dumper.dll not found near the script. Pass -Dll <path> (e.g. dist\UE5Dumper.dll)."
 }
 
