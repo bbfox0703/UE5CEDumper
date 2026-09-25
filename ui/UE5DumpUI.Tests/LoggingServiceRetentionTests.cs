@@ -130,4 +130,28 @@ public class LoggingServiceRetentionTests : IDisposable
         // And the decisive one: the event written AFTER the cap survived.
         Assert.Contains(initLogs, f => File.ReadAllText(f).Contains(marker, StringComparison.Ordinal));
     }
+
+    [Fact]
+    public void A_logged_message_is_written_verbatim_braces_included()
+    {
+        // [PATH-SERILOG-BRACES] Info/Warn/Error/Debug passed the text to Serilog as a message TEMPLATE, so a doubled
+        // brace in a folder name was logged single ("A{{B}}" -> "A{B}"), and the leftover finder, which recovers
+        // deploy paths from this log, then looked for a folder that does not exist.
+        string[] texts =
+        {
+            @"Deployed version.dll to G: E:\Games\A{{B}}\Binaries\Win64\version.dll",
+            @"E:\Games\Title {GOTY}\x.dll",
+            "index {0} and {Name:l} and }} and {{",
+        };
+        using (var log = new LoggingService(_dir))
+        {
+            log.Info(UE5DumpUI.Constants.LogCatInit, texts[0]);
+            log.Warn(UE5DumpUI.Constants.LogCatInit, texts[1]);
+            log.Error(UE5DumpUI.Constants.LogCatInit, texts[2]);
+        }
+        string all = string.Concat(Directory.GetFiles(_dir, "init-*.log", SearchOption.AllDirectories)
+            .Select(File.ReadAllText));
+        foreach (var t in texts)
+            Assert.Contains(t, all, StringComparison.Ordinal);
+    }
 }
