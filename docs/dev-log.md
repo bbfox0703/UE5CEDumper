@@ -25,6 +25,50 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3559) — SCAN-EARLY: the multi-module scan pins each module; skeptic rounds 9-11; S5 closed, published AOT
+
+**3559 = 3558 plus one DLL fix, three review rounds' fixes and the S5 live pass, up to `7d2b2fcb`.**
+- **`[SCAN-EARLY-TRIGGER-CONTAINED]`, found during tonight's live pass, now fixed (DLL).**
+  - **Cause.** A `trigger_scan` sent ~1 s after launch died with `RunScan: UNCAUGHT non-standard exception —
+    contained`. `Macht::AOBScanAllModules` snapshots `EnumProcessModules`, then read each module's headers and code
+    with no reference on it. A DLL the booting engine freed in between was read after it was unmapped.
+  - **Fix.** `AOBScanAll` now pins any non-exe module with `GetModuleHandleExW` for the length of its scan, and skips
+    a module that is already gone.
+  - **Tests.** Red→green in `dll_core_test` (a freed System32 DLL). A test-only seam frees a module mid-scan to prove
+    the pin holds the image and is released exactly once. Rounds 10-11 hardened this case against three pin mutations.
+  - **Live** (`tools/verify/scan_early_live.py`, five launches each, trigger at 0.8 s):
+    - red on 3558: 0/5 clean;
+    - green on a tree-built proxy: 5/5;
+    - green on this published build's proxy (`618fcc388e66`): 5/5.
+    - GObjects is now found on every early launch, so the row's "the scan finds nothing that early" half was the fault
+      itself.
+- **Skeptic round 9** (6 findings) — **1 MED:** R9-01, the Snapshot row floors pushed an opened Noise picker below the
+  window (measured: 299 DIP of overflow). They are now capped at the room the Auto rows leave, on every layout pass.
+  - **1 LOW:** the twin rig refused relative paths.
+  - **4 INFO:**
+    - the Load column is 280 px for its longest text, "shared · stale · loaded <date>";
+    - a stale comment;
+    - the layout pins strengthened;
+    - the TextBox clipboard read re-taken against Avalonia 12.1.3.
+- **Round 10** (7 raised, 5 confirmed, 2 refuted) and **round 11** (4 confirmed): all fixes in tests, comments and the
+  SCAN-EARLY rig. The rig now checks the proxy's SHA before every launch.
+- **S5 live (Proxy Deploy, 3558):** rows 14-18 all PASS. The fixture was hosted in the repo's `EVERSPACE™ 2` shape and
+  found by Scan drives; row 18's second folder came from `tools/verify/shared_exe_twin.py`. **All 18 path-shape rows
+  are closed.** Also live PASS: `[PATH-UI-LEGACY-QMARK]` (the 3558 UI against a 3553 proxy that sends `?` names).
+- **Found and handed to the maintainer:**
+  - `[UI-TOOLTIP-RIGHT-THIRD]`: no tooltip past ~1138 DIP on the 4K-at-225 % screen, on 3557 and 3558 alike. It needs a
+    real-mouse check.
+  - `[PATH-METHODE-NO8DOT3]`'s live step: registering a CE plugin was not done unattended.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3558 → 3559.
+- `dist\UE5DumpUI.exe`: AOT, 58,177,024 bytes (sha `58dfbe42ceaf`).
+- `UE5Dumper.dll`: 3,015,680 bytes (sha `c55a879b5b01`), FileVersion `1.0.0.3559`.
+- Proxies: version `618fcc388e66`, dinput8 `cbe1dbde4ed6`, dxgi `71ae9a48a21b`, winmm `69d05ae3164e`.
+- Tests: UI 5596/5596. `dll_core_test` 467, `dll_helpers_test` 2962, `utf8_helpers_test` 273,
+  `sein_retention_test` 30, `grausam_window_test` 22.
+- Gates: 26/26.
+- Checked on screen (AOT, 225 %): with the Snapshot Noise picker open, its buttons are inside the window.
+
 ## 2026-09-25 (build 3558) — R8-01, NuGet upgrades, and the 4K-at-225 % layout pass, published AOT
 
 **3558 = 3557 plus four things, up to `5191b39c`.** It has no DLL or `.CT` code change; the DLL differs only in the
