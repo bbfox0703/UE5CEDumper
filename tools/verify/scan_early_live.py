@@ -1,7 +1,7 @@
 """Live check for [SCAN-EARLY-TRIGGER-CONTAINED]: a trigger_scan sent the moment the pipe answers must not fault.
 
     py tools/verify/path_shape_live.py deploy <work dir>                  # dist\\proxy\\version.dll into the fixture
-    py tools/verify/scan_early_live.py <work dir> [launches] [exe] [--expect-sha <hex prefix>]
+    py tools/verify/scan_early_live.py <work dir> [launches] [exe] [--expect-sha <8-64 hex: a prefix of the SHA-256>]
                                                   # default 5 launches, the plain exe name
     py tools/verify/path_shape_live.py undeploy <work dir>
 
@@ -16,7 +16,9 @@ the run. Paths are arguments.
 
 WHICH BINARY (tenth review, R10-07). assert_build compares only the build STAMP, and a proxy built from the tree with
 build_dll.py keeps dist's stamp -- so the stamp cannot tell a fixed proxy from an unfixed one. Every launch line prints
-the SHA-256 (first 12 hex) and mtime of the version.dll it ran against; --expect-sha refuses to run on any other.
+the SHA-256 (first 12 hex) and mtime of the version.dll it ran against; --expect-sha refuses to run on any other. It
+takes 8 to 64 hex -- a prefix of the FULL digest, so the full SHA from sha256sum / STAGED.txt works (eleventh review,
+R11-01: it was compared with the 12-hex display, refusing the correct full SHA and accepting an empty one).
 """
 from __future__ import annotations
 
@@ -24,6 +26,7 @@ import datetime
 import hashlib
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
@@ -47,11 +50,15 @@ def this_launch_logs(folder: pathlib.Path, t0: float) -> list[pathlib.Path]:
     return [p for p in folder.glob("*-0.log") if p.stat().st_mtime >= t0 - 2]
 
 
+def proxy_sha(work: str) -> str:
+    """The FULL SHA-256 of the deployed proxy."""
+    return hashlib.sha256((win64(work) / "version.dll").read_bytes()).hexdigest()
+
+
 def proxy_id(work: str) -> str:
     dll = win64(work) / "version.dll"
-    sha = hashlib.sha256(dll.read_bytes()).hexdigest()[:12]
     mtime = datetime.datetime.fromtimestamp(dll.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
-    return f"version.dll sha {sha} mtime {mtime}"
+    return f"version.dll sha {proxy_sha(work)[:12]} mtime {mtime}"
 
 
 def read(p: pathlib.Path) -> str:
@@ -112,7 +119,9 @@ def main(a: list[str]) -> int:
     expect = None
     if "--expect-sha" in a:
         i = a.index("--expect-sha")
-        expect = a[i + 1].lower()
+        expect = (a[i + 1] if i + 1 < len(a) else "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{8,64}", expect):
+            raise SystemExit(f"--expect-sha takes 8 to 64 hex characters (a prefix of the SHA-256), got {expect!r}")
         a = a[:i] + a[i + 2:]
     if not a:
         raise SystemExit(__doc__)
@@ -126,7 +135,7 @@ def main(a: list[str]) -> int:
         raise SystemExit("no proxy in the fixture -- run path_shape_live.py deploy first")
     ident = proxy_id(work)
     print(f"  binary under test: {ident}")
-    if expect and not ident.split()[2].startswith(expect):
+    if expect and not proxy_sha(work).startswith(expect):
         raise SystemExit(f"refused: the deployed proxy is not the expected one ({expect})")
     results = []
     for n in range(1, launches + 1):
