@@ -5,10 +5,22 @@
              x:Class="UE5DumpUI.Views.SnapshotPanel"
              x:DataType="vm:SnapshotViewModel">
 
-  <!-- Rows: intro / capture(collapsible) / usage / saved-header / saved-grid(2*) /
+  <!-- Rows: intro / capture(collapsible) / saved-header + usage / saved-grid(2*) /
        splitter / compare+diff block(5*) / noise. The two star rows + splitter let
-       the user trade space between the snapshot list and the diff result. -->
-  <Grid Margin="12" RowDefinitions="Auto,Auto,Auto,Auto,2*,Auto,5*,Auto">
+       the user trade space between the snapshot list and the diff result.
+       [UI-SPACE-2026-09-25] Both star rows carry a MinHeight: on a 4K screen at 225 % (1067 DIP high) the Auto rows
+       left the diff grid its header only. 110 = a header and ~3 rows; 350 = the mode switch (~40) + the Compare
+       expander (~185) + a diff grid of a header and ~4 rows. -->
+  <Grid Margin="12">
+    <Grid.RowDefinitions>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="2*" MinHeight="110"/>
+      <RowDefinition Height="Auto"/>
+      <RowDefinition Height="5*" MinHeight="350"/>
+      <RowDefinition Height="Auto"/>
+    </Grid.RowDefinitions>
 
     <!-- Intro -->
     <TextBlock Grid.Row="0" Text="{StaticResource str.Snapshot.Intro}"
@@ -91,11 +103,14 @@
         <Border Background="#2D2D30" BorderBrush="#3C3C3C" BorderThickness="1" CornerRadius="3"
                 Padding="8" Margin="0,4,0,0">
           <StackPanel Spacing="6">
-            <TextBlock Text="{StaticResource str.Snapshot.Auto.Hint}" Foreground="#999" FontSize="11" TextWrapping="Wrap"/>
+            <!-- [UI-SPACE-2026-09-25] The "manual switch, never auto-starts" hint is the tooltip of the header and the
+                 switch, not a line of its own. -->
             <WrapPanel Orientation="Horizontal">
               <TextBlock Text="{StaticResource str.Snapshot.Auto.Header}" Foreground="#9CDCFE"
+                         ToolTip.Tip="{StaticResource str.Snapshot.Auto.Hint}"
                          FontWeight="SemiBold" VerticalAlignment="Center" Margin="0,0,10,0"/>
               <ToggleSwitch IsChecked="{Binding AutoSnapshotEnabled}" IsEnabled="{Binding CanToggleAuto}"
+                            ToolTip.Tip="{StaticResource str.Snapshot.Auto.Hint}"
                             OffContent="{StaticResource str.Snapshot.Auto.Off}"
                             OnContent="{StaticResource str.Snapshot.Auto.On}" Margin="0,0,14,0"/>
               <TextBlock Text="{StaticResource str.Snapshot.Auto.Interval}" Foreground="#CCCCCC"
@@ -126,8 +141,23 @@
       </StackPanel>
     </Expander>
 
-    <!-- Usage / quota + the free-disk-space guard (blocks ALL captures) -->
-    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="10" Margin="0,0,0,8" VerticalAlignment="Center">
+    <!-- Saved-snapshots header + actions, then usage / quota + the free-disk-space guard (blocks ALL captures).
+         [UI-SPACE-2026-09-25] One wrapping row: two lines only when the window cannot hold both groups. -->
+    <WrapPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,6">
+    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,24,2" VerticalAlignment="Center">
+      <TextBlock Text="{StaticResource str.Snapshot.Saved}" Foreground="#9CDCFE"
+                 FontWeight="SemiBold" VerticalAlignment="Center"/>
+      <Button Content="{StaticResource str.Snapshot.Refresh}" Command="{Binding RefreshCommand}" Padding="8,3"/>
+      <Button Content="{StaticResource str.Snapshot.Delete}" Command="{Binding DeleteCommand}"
+              CommandParameter="{Binding SelectedSnapshot}" Padding="8,3"
+              IsEnabled="{Binding !IsDeleting}"/>
+      <Button Content="{StaticResource str.Snapshot.DeleteAll}" Command="{Binding DeleteAllCommand}"
+              Padding="8,3" IsEnabled="{Binding !IsDeleting}"
+              ToolTip.Tip="{StaticResource str.Snapshot.DeleteAllTip}"/>
+      <Button Content="{StaticResource str.Snapshot.OpenDbFolder}" Command="{Binding OpenDbFolderCommand}"
+              Padding="8,3" ToolTip.Tip="{StaticResource str.Snapshot.OpenDbFolderTip}"/>
+    </StackPanel>
+    <StackPanel Orientation="Horizontal" Spacing="10" Margin="0,0,0,2" VerticalAlignment="Center">
       <TextBlock Text="{StaticResource str.Snapshot.Usage}" Foreground="#999" VerticalAlignment="Center"/>
       <TextBlock Text="{Binding UsageText}" Foreground="#D4D4D4" FontFamily="Consolas"
                  VerticalAlignment="Center" MinWidth="150"/>
@@ -148,25 +178,11 @@
                      ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
       <TextBlock Text="GB" Foreground="#999" VerticalAlignment="Center"/>
     </StackPanel>
-
-    <!-- Saved-snapshots header + actions -->
-    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="10" Margin="0,0,0,6" VerticalAlignment="Center">
-      <TextBlock Text="{StaticResource str.Snapshot.Saved}" Foreground="#9CDCFE"
-                 FontWeight="SemiBold" VerticalAlignment="Center"/>
-      <Button Content="{StaticResource str.Snapshot.Refresh}" Command="{Binding RefreshCommand}" Padding="8,3"/>
-      <Button Content="{StaticResource str.Snapshot.Delete}" Command="{Binding DeleteCommand}"
-              CommandParameter="{Binding SelectedSnapshot}" Padding="8,3"
-              IsEnabled="{Binding !IsDeleting}"/>
-      <Button Content="{StaticResource str.Snapshot.DeleteAll}" Command="{Binding DeleteAllCommand}"
-              Padding="8,3" IsEnabled="{Binding !IsDeleting}"
-              ToolTip.Tip="{StaticResource str.Snapshot.DeleteAllTip}"/>
-      <Button Content="{StaticResource str.Snapshot.OpenDbFolder}" Command="{Binding OpenDbFolderCommand}"
-              Padding="8,3" ToolTip.Tip="{StaticResource str.Snapshot.OpenDbFolderTip}"/>
-    </StackPanel>
+    </WrapPanel>
 
     <!-- Snapshot list (fixed height; diff grid gets the remaining space) -->
     <DataGrid x:Name="SnapshotsGrid"
-              Grid.Row="4" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}"
+              Grid.Row="3" ItemsSource="{Binding Snapshots}" SelectedItem="{Binding SelectedSnapshot}"
               IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
               CanUserResizeColumns="True" CanUserSortColumns="True"
               HorizontalScrollBarVisibility="Auto">
@@ -182,14 +198,14 @@
     </DataGrid>
 
     <!-- Drag to trade vertical space between the snapshot list and the diff. -->
-    <GridSplitter Grid.Row="5" Height="5" HorizontalAlignment="Stretch"
+    <GridSplitter Grid.Row="4" Height="5" HorizontalAlignment="Stretch"
                   ResizeDirection="Rows" Background="#3C3C3C" Margin="0,4,0,4"/>
 
     <!-- Compare (collapsible) + diff results share the lower star row: collapsing
          the compare Expander hands its space to the diff grid below it. A Diff /
          Group toggle swaps the lower area between the snapshot diff and the
          Multiple-Values group match over one snapshot. -->
-    <DockPanel Grid.Row="6">
+    <DockPanel Grid.Row="5">
       <!-- Diff / Group mode toggle -->
       <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8"
                   Margin="0,0,0,8" VerticalAlignment="Center">
@@ -485,7 +501,7 @@
 
     <!-- N1: noise picker for the diff. Same shape as the SPC tab — Apply pushes
          ticked classes into the Diff-scope denylist and re-runs the diff. Diff-only. -->
-    <Expander Grid.Row="7" Header="{StaticResource str.Noise.PanelHeader}"
+    <Expander Grid.Row="6" Header="{StaticResource str.Noise.PanelHeader}"
               IsVisible="{Binding !IsGroupMode}"
               IsExpanded="{Binding NoisePanelOpen}" Margin="0,8,0,0"
               Background="#252526" BorderBrush="#3C3C3C" BorderThickness="1">
