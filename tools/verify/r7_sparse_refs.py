@@ -111,6 +111,12 @@ def main():
                 for x in sparse:
                     say(f"    sparse hit: owner {x.get('owner_name')} ({x.get('owner_class')}) field {x.get('field_name')}")
                 log["refs"].append({"target": t, "reply": r})
+                # The walker's side of the same binding: walk each sparse hit's OWNER directly.
+                for owner in sorted({x.get("owner_addr") for x in sparse if x.get("owner_addr")}):
+                    w = data_of(c.request("walk_instance", addr=owner, array_limit=8))
+                    for f in (w.get("fields") or []):
+                        if f.get("type") == "MulticastSparseDelegateProperty" and "unbound" not in str(f.get("value")):
+                            say(f"    owner walk {owner} {f.get('name'):30} {str(f.get('value'))[:100]}")
             if a.walk_class:
                 fi = data_of(c.request("find_instances", class_name=a.walk_class, exact_match=False, limit=256))
                 inst = [i for i in (fi.get("instances") or []) if not (i.get("name") or "").startswith("Default__")]
