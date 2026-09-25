@@ -317,6 +317,10 @@ end
 -- writer refuses a relative folder and drops a relative line an older .CT wrote; the reader never returns one (it would
 -- be probed against CE's current folder).
 print("-- (fifth review) dll-path.txt: no relative folder is written, carried forward, or read --")
+-- its dependency (sixth review, R6-01): a drive root keeps its separator
+local dsrc = ct:match("(function%s+ue5_driveRootFix%(.-\nend)")
+check("lifted ue5_driveRootFix", dsrc ~= nil)
+if dsrc then assert(load(unxml(dsrc), "ue5_driveRootFix"))() end
 local wsrc = ct:match("(function%s+ue5_recordDllDir%(.-\nend)")
 check("lifted ue5_recordDllDir", wsrc ~= nil)
 if wsrc then assert(load(unxml(wsrc), "ue5_recordDllDir"))() end

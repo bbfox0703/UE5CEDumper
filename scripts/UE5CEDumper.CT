@@ -40,10 +40,17 @@ function ue5_isAbsolutePath(p)
     return type(p) == "string" and (p:find("^%a:[\\/]") ~= nil or p:find("^[\\/][\\/]") ~= nil)
 end
 
+-- (sixth review, R6-01 -- measured) A drive ROOT keeps its separator: stripped to a bare 'E:' it is drive-relative, and
+-- every reader drops it. A legacy bare 'X:' line (both writers wrote that until this fix) is read as that root.
+function ue5_driveRootFix(p)
+    if type(p) == "string" and p:match("^%a:$") then return p .. "\\" end
+    return p
+end
+
 function ue5_recordDllDir(dir)
     if type(dir) ~= "string" or dir == "" then return end
     if not ue5_isAbsolutePath(dir) then return end
-    dir = dir:gsub("[\\/]+$", "")
+    dir = ue5_driveRootFix((dir:gsub("[\\/]+$", "")))
     pcall(function()
         local ad = os.getenv("LOCALAPPDATA") or ""
         if ad == "" then return end
@@ -53,7 +60,7 @@ function ue5_recordDllDir(dir)
         local h = io.open(p, "r")
         if h then
             for line in h:lines() do
-                line = line:gsub("^\239\187\191", ""):gsub("^%s+", ""):gsub("%s+$", "")
+                line = ue5_driveRootFix((line:gsub("^\239\187\191", ""):gsub("^%s+", ""):gsub("%s+$", "")))
                 -- (fifth review, R5-04) An older .CT's self-heal could write a RELATIVE line: not carried forward.
                 if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line)
                    and line:lower() ~= dir:lower() and #keep &lt; 3 then
@@ -83,7 +90,7 @@ function ue5_readBreadcrumbs(path)
         if not h then return end
         for line in h:lines() do
             line = line:gsub("^\239\187\191", "")            -- UTF-8 BOM, if an editor added one
-            line = line:gsub("^%s+", ""):gsub("%s+$", "")    -- also eats the CR of a CRLF
+            line = ue5_driveRootFix((line:gsub("^%s+", ""):gsub("%s+$", "")))    -- also eats the CR of a CRLF
             if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line) then out[#out + 1] = line end
         end
         h:close()
