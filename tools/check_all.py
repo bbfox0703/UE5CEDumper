@@ -261,6 +261,12 @@ _CLASSIFY_SELFTEST = [
     ("the SKIP: spelling too", ("g", 0, "SKIP: tools/ue-sample not present\n\n"), "skip"),
     ("a skip line that is not the LAST line is not a skip", ("g", 0, "SKIPPED: one part\nCHECK OK: the rest\n"), "ok"),
     ("a failure that printed SKIPPED is still a failure", ("g", 2, "SKIPPED: x\n"), "fail"),
+    # (third review, CHECKALL-PESLOTS-SKIP-COUNTED-OK) check_processevent_slots names itself first -- and skips on
+    # every fresh clone and on CI, where vendor/RE-UE4SS/ is gitignored.
+    ("a gate that names itself before SKIP",
+     ("g", 0, "check_processevent_slots: SKIP -- no vendored templates under vendor\\RE-UE4SS\n"), "skip"),
+    ("a summary that counts skipped rows is not a skip", ("g", 0, "blocks 340   ok 340   FAIL 0   skipped 0\n"), "ok"),
+    ("a lower-case 'skip' in prose is not a skip", ("g", 0, "check_x: skip list empty, all checked\n"), "ok"),
 ]
 
 
