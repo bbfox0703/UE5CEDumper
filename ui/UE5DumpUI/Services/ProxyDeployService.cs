@@ -2073,9 +2073,10 @@ public sealed class ProxyDeployService : IProxyDeployService
              .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
     /// <summary>The tag that LEADS a Load or Suggested text whose exe-keyed signal another listed game shares
-    /// (<see cref="SharedLogFolders"/>, <see cref="SharedExeNames"/>). Leading, not trailing: the Load column shows
-    /// about 18 characters and Suggested about 28, and a mark at the end was clipped away (sixth review, R6-03). The
-    /// columns' header tooltips say what it means.</summary>
+    /// (<see cref="SharedLogFolders"/>, <see cref="SharedExeNames"/>). Leading, not trailing: a DataGrid column clips
+    /// the END of its text, and a trailing mark was clipped away (sixth review, R6-03). The Load column is sized for its
+    /// longest text, "shared · stale · loaded yyyy-MM-dd" (280 px, pinned by LoadColumn_HoldsTheLongestLoadText;
+    /// tenth review, R10-06). The columns' header tooltips say what the marks mean.</summary>
     internal const string SharedTag = "shared · ";
 
     /// <summary>What a row says when its exe name's confirmed-working record is not used (<see cref="SharedExeNames"/>).
