@@ -2057,8 +2057,20 @@ public sealed class ProxyDeployService : IProxyDeployService
              .Select(grp => grp.Key)
              .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>What a row says when its exe name's record is not used (<see cref="SharedExeNames"/>).</summary>
+    /// <summary>What a row says when its exe name's confirmed-working record is not used (<see cref="SharedExeNames"/>).
+    /// Deploy's "Use confirmed" note: that record is the only one Deploy reads.</summary>
     internal const string SharedExeNote = "shared exe name: the confirmed-working record is not used";
+
+    /// <summary>The Suggested column's note for a shared exe name: it names the record(s) that EXIST and are not used --
+    /// an injection-only name must not claim a confirmed-working record (fifth review, R5-01). Null when neither
+    /// exists: then there is nothing to say.</summary>
+    internal static string? SharedExeNoteFor(bool hasConfirmed, bool hasInjected) => (hasConfirmed, hasInjected) switch
+    {
+        (true, true) => "shared exe name: the confirmed-working and injection records are not used",
+        (true, false) => SharedExeNote,
+        (false, true) => "shared exe name: the injection record is not used",
+        _ => null,
+    };
 
     public async Task ApplyProxySuggestionsAsync(
         IReadOnlyList<DetectedGame> games,
@@ -2097,8 +2109,11 @@ public sealed class ProxyDeployService : IProxyDeployService
                 var imports = ReadProxyImports(game.ExePath);
                 var suggestion = ProxyImportAnalyzer.Recommend(imports, confirmed, remembered, injected);
                 string? display = suggestion.Display;
-                if (ambiguous && (confirmedByExe.ContainsKey(exeName) || injectedExes.Contains(exeName)))
-                    display = string.IsNullOrEmpty(display) ? SharedExeNote : $"{display} · {SharedExeNote}";
+                string? note = ambiguous
+                    ? SharedExeNoteFor(confirmedByExe.ContainsKey(exeName), injectedExes.Contains(exeName))
+                    : null;
+                if (note != null)
+                    display = string.IsNullOrEmpty(display) ? note : $"{display} · {note}";
 
                 results.Add((game, suggestion.Type, display));
             }
