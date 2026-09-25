@@ -25,6 +25,7 @@ UE5CEDumper is a interactive inspector toolchain. It provides a **live window** 
 [![Avalonia](https://img.shields.io/badge/Avalonia-UI-8B5CF6)](https://avaloniaui.net/)
 [![License](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
 [![Built with Claude Code](https://img.shields.io/badge/Built%20with-Claude%20Code-CC785C?logo=claude)](https://claude.ai/code)
+[![Local LLM](https://img.shields.io/badge/Local%20LLM-Google%20Gemma%204-4285F4?logo=google&logoColor=white)](https://deepmind.google/models/gemma/)
 
 ## Sample screenshots
 <img src="./img/MainUI.gif" alt="Live Walker"/>  
