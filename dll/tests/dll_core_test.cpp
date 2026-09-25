@@ -4684,13 +4684,26 @@ int main() {
         // (eleventh review, R11-04) The DLL is QUALIFIED with no scan at all: loaded and freed, it must unmap on its
         // own. Only that is the environment's business; everything after it is the scan's. Before, a scan that leaked
         // its reference made every candidate fail the "unmapped" filter here and read as "no usable DLL".
+        // (twelfth review, R12-03) Whether the DLL HAS a code section to cut a pattern from is the environment's too,
+        // so it is part of the qualification, as it was before R11-04 split this.
+        auto firstCode = [](uintptr_t b) -> const uint8_t* {
+            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
+            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
+            IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+            for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec)
+                if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) && sec->Misc.VirtualSize >= 64)
+                    return reinterpret_cast<const uint8_t*>(b + sec->VirtualAddress);
+            return nullptr;
+        };
         const wchar_t* used = nullptr;
         for (const wchar_t* name : candidates) {
             if (GetModuleHandleW(name)) continue;                       // must not be loaded by anyone else
             HMODULE q = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
             if (!q) continue;
             const uintptr_t qb = reinterpret_cast<uintptr_t>(q);
+            const bool hasCode = firstCode(qb) != nullptr;
             FreeLibrary(q);
+            if (!hasCode) continue;
             MEMORY_BASIC_INFORMATION qm{};
             if (GetModuleHandleW(name)
                 || VirtualQuery(reinterpret_cast<void*>(qb), &qm, sizeof(qm)) != sizeof(qm) || qm.State != MEM_FREE)
@@ -4698,21 +4711,16 @@ int main() {
             used = name;
             break;
         }
-        check("SCAN-EARLY precondition: a System32 DLL that unmaps when freed (qualified with no scan)", used != nullptr);
+        check("SCAN-EARLY precondition: a System32 DLL with a code section that unmaps when freed (qualified with no scan)",
+              used != nullptr);
         uintptr_t base = 0;
         char pattern[16 * 3 + 1] = {};
         HMODULE h = used ? LoadLibraryExW(used, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) : nullptr;
         const uint8_t* code = nullptr;
         if (h) {
             base = reinterpret_cast<uintptr_t>(h);
-            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(base);
-            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(base + dos->e_lfanew);
-            IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
-            for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec)
-                if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) && sec->Misc.VirtualSize >= 64) {
-                    code = reinterpret_cast<const uint8_t*>(base + sec->VirtualAddress);
-                    break;
-                }
+            code = firstCode(base);
+            if (!code) { FreeLibrary(h); h = nullptr; }   // (R12-03) never leave the test's reference behind
         }
         if (used)
             check("SCAN-EARLY precondition: it loads again and has a code section to cut a pattern from", h && code);
