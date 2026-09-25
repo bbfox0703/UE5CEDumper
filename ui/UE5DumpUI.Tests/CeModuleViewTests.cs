@@ -117,7 +117,7 @@ public class CeModuleViewTests
         Assert.Contains("local mod = process", setup);
         Assert.DoesNotContain("local mod = UE5T.module", setup);
         // No process opened: say so and untick, instead of string.lower(nil) inside the helper.
-        Assert.Matches(@"if mod == nil or mod == '' then\s+showMessage\('\[UE5 Trainer\][^']*attach", setup);
+        Assert.Matches(@"if mod == nil or mod == '' then\s+showMessage\('\[UE5 Trainer\][^']*[Aa]ttach", setup);
     }
 
     [Fact]

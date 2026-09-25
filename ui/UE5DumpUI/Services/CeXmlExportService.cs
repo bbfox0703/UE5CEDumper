@@ -1631,7 +1631,9 @@ public static class CeXmlExportService
         sb.AppendLine("      modList = enumModules()");
         sb.AppendLine("    end)");
         sb.AppendLine("    for _, mod in ipairs(modList) do");
-        sb.AppendLine("      if string.lower(mod.Name) == string.lower(moduleName) then");
+        // [PATH-CE-MODULE-VIEW] Name is ANSI bytes; a caller may hold CE's UTF-8 name (the symbol handler's).
+        sb.AppendLine("      if string.lower(mod.Name) == string.lower(moduleName)");
+        sb.AppendLine("         or string.lower(ansiToUTF8(mod.Name) or '') == string.lower(moduleName) then");
         sb.AppendLine("        baseAddr = mod.Address");
         sb.AppendLine("        maxAddr = baseAddr + mod.Size");
         sb.AppendLine("        break");

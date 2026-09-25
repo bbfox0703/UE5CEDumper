@@ -859,7 +859,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(
-                inst.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                inst.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateInstanceXml(
@@ -979,7 +979,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             var hexAddr = $"0x{absAddr:X}";
 
             var formatted = AddressHelper.FormatAddress(
-                hexAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -996,7 +996,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                instance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                instance.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -1138,7 +1138,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                match.OwnerAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                match.OwnerAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
             LookupStatusText = $"Copied {formatted}  ({match.OwnerClassName})";
         }
@@ -1158,7 +1158,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             var symbolName = instance.ClassName.Replace(" ", "_").Replace("-", "_");
 
             var formattedAddr = AddressHelper.FormatAddress(
-                instance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                instance.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
 
             var xml = CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr);
 

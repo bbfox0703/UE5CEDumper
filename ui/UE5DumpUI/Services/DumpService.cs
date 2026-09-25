@@ -11,11 +11,15 @@ public sealed class DumpService : IDumpService
 {
     private readonly IPipeClient _pipe;
     private readonly ILoggingService _log;
+    private readonly ISystemCodePage _codePage;
 
-    public DumpService(IPipeClient pipe, ILoggingService log)
+    /// <param name="codePage">[PATH-CE-MODULE-VIEW] Gives <see cref="EngineState.CeModuleName"/>. Omitted = no
+    /// conversion, which is the pre-fix behaviour.</param>
+    public DumpService(IPipeClient pipe, ILoggingService log, ISystemCodePage? codePage = null)
     {
         _pipe = pipe;
         _log = log;
+        _codePage = codePage ?? IdentityCodePage.Instance;
     }
 
     public async Task<EngineState> InitAsync(CancellationToken ct = default)
@@ -134,7 +138,7 @@ public sealed class DumpService : IDumpService
     /// build_number on BOTH responses from the same cached globals (Fern.cpp CMD_INIT and
     /// FillPointerSnapshot), so the wire fallback can never disagree with the init value.
     /// </summary>
-    private static EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool? versionDetected = null,
+    private EngineState BuildEngineState(JsonObject ptrs, int ueVersion = 0, bool? versionDetected = null,
                                                  bool? isUserOverride = null, bool? isLowConfidence = null,
                                                  int dllBuildNumber = 0, JsonObject? offsets = null)
     {
@@ -142,6 +146,7 @@ public sealed class DumpService : IDumpService
             ueVersion = ptrs["ue_version"]?.GetValue<int>() ?? 0;
 
         var scanStats = ptrs["scan_stats"] as JsonObject;
+        string moduleName = ptrs["module_name"]?.GetValue<string>() ?? "";
 
         return new EngineState
         {
@@ -167,7 +172,8 @@ public sealed class DumpService : IDumpService
             GWorldAddr = ptrs["gworld"]?.GetValue<string>() ?? "",
             SparseDelegatesAddr = ptrs["sparse_delegates"]?.GetValue<string>() ?? "",
             ObjectCount = ptrs["object_count"]?.GetValue<int>() ?? 0,
-            ModuleName = ptrs["module_name"]?.GetValue<string>() ?? "",
+            ModuleName = moduleName,
+            CeModuleName = _codePage.AnsiView(moduleName),
             ProcessId  = ptrs["pid"]?.GetValue<int>() ?? 0,
             ModuleBase = ptrs["module_base"]?.GetValue<string>() ?? "",
             // How the DLL was loaded (self-reported); "" on older DLLs.

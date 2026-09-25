@@ -399,9 +399,9 @@ public class CeMailboxBailoutTests
         // The momentary shape: armed ahead of the bail-outs for the two TP rows.
         Assert.Equal(2, Regex.Matches(src, @"AppendUntick\(sb,").Count);
 
-        // The stateful shape: one per bail-out that applies nothing. Nine of them —
-        // Setup x3, Knob, Jump, GodMode x2, Fly x2.
-        Assert.Equal(9, Regex.Matches(src, @"Line\(sb, CeLuaHygiene\.DeferredUntickLua\(").Count);
+        // The stateful shape: one per bail-out that applies nothing. Ten of them —
+        // Setup x4 (the 4th: no process opened, [PATH-CE-MODULE-VIEW]), Knob, Jump, GodMode x2, Fly x2.
+        Assert.Equal(10, Regex.Matches(src, @"Line\(sb, CeLuaHygiene\.DeferredUntickLua\(").Count);
 
         // And no bail-out may go back to returning silently. Every `return` inside a
         // showMessage branch has to be preceded by one of the two shapes; the count check above

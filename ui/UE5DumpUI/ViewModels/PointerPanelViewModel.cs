@@ -115,6 +115,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private int _gworldAobLen;
     [ObservableProperty] private string _moduleName = "";
 
+    /// <summary>[PATH-CE-MODULE-VIEW] CE's name for the module (<see cref="EngineState.CeModuleName"/>), for the
+    /// AOBMaker symbol scripts: CE matches them against its own ANSI view. <see cref="ModuleName"/> stays the
+    /// displayed, real name.</summary>
+    private string _ceModuleName = "";
+
     // --- GEngine (&GEngine slot) + its AOB metadata, same contract as GWorld's ---
     [ObservableProperty] private string _gEngineAddress = "";
     [ObservableProperty] private string _gEngineMethod = "not_found";
@@ -641,6 +646,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GengineAobPos = state.GEngineAobPos;
         GengineAobLen = state.GEngineAobLen;
         ModuleName = state.ModuleName;
+        _ceModuleName = state.CeModuleName;
         PeHash = state.PeHash;
         DllBuildNumber = state.DllBuildNumber;
         // Re-sync the invoke timeout from the DLL (already-applied per-game override or default).
@@ -1134,7 +1140,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         if (_aobMaker == null || string.IsNullOrEmpty(GworldAob)) return;
 
         string symbolName = "gworld_addr";
-        string module = !string.IsNullOrEmpty(ModuleName) ? ModuleName : "game.exe";
+        string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
 
         // Send CreateSymbolScript — the CE Plugin's BuildSymbolScanScript() generates
         // a full AA script that: AOBScanModule for the pattern, reads the RIP-relative
@@ -1166,7 +1172,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         if (_aobMaker == null || string.IsNullOrEmpty(GengineAob)) return;
 
         string symbolName = "gengine_addr";
-        string module = !string.IsNullOrEmpty(ModuleName) ? ModuleName : "game.exe";
+        string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
 
         bool success = await _aobMaker.CreateSymbolScriptAsync(
             name: $"&GEngine → {symbolName}",

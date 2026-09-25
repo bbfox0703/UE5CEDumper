@@ -45,6 +45,13 @@ public sealed class EngineState
     public int ObjectCount { get; init; }
     public string ModuleName { get; init; } = "";
 
+    /// <summary>[PATH-CE-MODULE-VIEW] Cheat Engine's name for the same module: the ANSI round trip of
+    /// <see cref="ModuleName"/> (see <see cref="Core.ISystemCodePage"/>). Every string handed to CE -- a
+    /// <c>"module"+RVA</c> address, an AA <c>define</c>, a symbol script's module -- uses THIS. Identity, keys and
+    /// display use <see cref="ModuleName"/>. Falls back to <see cref="ModuleName"/> when not set.</summary>
+    public string CeModuleName { get => _ceModuleName ?? ModuleName; init => _ceModuleName = value; }
+    private readonly string? _ceModuleName;
+
     /// <summary>PID of the process on the other end of the pipe. 0 when the DLL predates the
     /// field. The pipe name is a single global, so when two games have the dumper loaded they
     /// both serve it and the client lands on whichever instance is free -- this is what lets

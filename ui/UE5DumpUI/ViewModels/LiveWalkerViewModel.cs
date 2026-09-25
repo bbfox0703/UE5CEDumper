@@ -4637,7 +4637,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateAobWrappedXml(
                     rootBc.Label, breadcrumbsForXml, fieldsForXml,
                     _engineState!.GWorldAob, _engineState.GWorldAobPos, _engineState.GWorldAobLen,
-                    _engineState.ModuleName,
+                    _engineState.CeModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
@@ -4659,7 +4659,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 var rootAddress = AddressHelper.FormatAddress(
-                    rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                    rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
@@ -4994,7 +4994,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateAobWrappedXml(
                     rootBc.Label, breadcrumbsForXml, fieldsForXml,
                     _engineState!.GWorldAob, _engineState.GWorldAobPos, _engineState.GWorldAobLen,
-                    _engineState.ModuleName,
+                    _engineState.CeModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
@@ -5018,7 +5018,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 var rootAddress = AddressHelper.FormatAddress(
-                    rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                    rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
@@ -5175,7 +5175,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var addr = Convert.ToUInt64(hexAddr.Replace("0x", "").Replace("0X", ""), 16);
         var moduleBase = Convert.ToUInt64(_engineState!.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
         var rva = addr - moduleBase;
-        return $"\"{_engineState.ModuleName}\"+{rva:X}";
+        return $"\"{_engineState.CeModuleName}\"+{rva:X}";
     }
 
     [RelayCommand]
@@ -5296,7 +5296,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ? "hardcoded address (GWorld path not forward-walkable)"
             : "hardcoded address (not a GWorld-rooted path)";
         var formattedAddr = AddressHelper.FormatAddress(
-            CurrentAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            CurrentAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
         return (CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr), note);
     }
 
@@ -5619,7 +5619,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else return;
 
             var formatted = AddressHelper.FormatAddress(
-                hexAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -5663,7 +5663,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                field.PtrAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                field.PtrAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -5926,7 +5926,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                CurrentAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                CurrentAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -5973,7 +5973,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                CurrentOuterAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                CurrentOuterAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
