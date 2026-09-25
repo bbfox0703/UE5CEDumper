@@ -8793,6 +8793,19 @@ static void Test_Methode_NarrowForAnsiLoad() {
     // CE's code page but decoded in the GAME's (Locale Emulator gives it another).
     EXPECT_EQ_STR("ASCII alias preferred over an exact non-ASCII narrowing",
                   Methode::NarrowForAnsiLoad(gongju, L"D:\\5DE5~1\\UE5Dumper.dll", 950), "D:\\5DE5~1\\UE5Dumper.dll");
+    // (second review, T-ALIAS-LEAF-PLUGIN, HIGH -- measured) A REAL 8.3 alias of the FILE shortens the leaf too
+    // (UE5DUM~1.DLL), and the game then maps our DLL under that name: the plugin's own post-inject name check missed
+    // it and called every successful inject a manual map. An ASCII path is never aliased; an alias whose leaf is not
+    // the DLL's own name is never used.
+    EXPECT_EQ_STR("an ASCII path is never aliased",
+                  Methode::NarrowForAnsiLoad(L"C:\\Program Files\\CE\\UE5Dumper.dll",
+                                             L"C:\\PROGRA~1\\CE\\UE5Dumper.dll", 950),
+                  "C:\\Program Files\\CE\\UE5Dumper.dll");
+    EXPECT_EQ_STR("a file alias (leaf UE5DUM~1.DLL) is never used: the exact narrowing instead",
+                  Methode::NarrowForAnsiLoad(gongju, L"D:\\5DE5~1\\UE5DUM~1.DLL", 950),
+                  "D:\\\xA4u\xA8\xE3\\UE5Dumper.dll");
+    EXPECT_EQ_STR("a file alias for an unrepresentable path: refused, not a renamed load",
+                  Methode::NarrowForAnsiLoad(tm, L"D:\\Tools\\CE~1\\UE5DUM~1.DLL", 950), "");
 }
 
 int main() {

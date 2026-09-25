@@ -183,6 +183,55 @@ public class CeInjectAnsiPathTests
         Assert.Contains("BYTES=" + Convert.ToHexString(big5), output);
     }
 
+    [Fact]
+    public void AnsiPathBytes_AnAsciiPath_IsNeverAliased()
+    {
+        // (second review, T-ALIAS-LEAF-UI) The alias exists for code-page independence; ASCII already has it.
+        Assert.Equal(Encoding.ASCII.GetBytes(@"C:\Program Files\UE5CEDumper\UE5Dumper.dll"),
+            WindowsSystemCodePage.AnsiPathBytes(@"C:\Program Files\UE5CEDumper\UE5Dumper.dll", 950,
+                _ => @"C:\PROGRA~1\UE5CED~1\UE5Dumper.dll"));
+    }
+
+    [Fact]
+    public void AnsiPathBytes_AnAliasThatRenamesTheDll_IsNeverUsed()
+    {
+        // (second review, HIGH, measured) GetShortPathNameW of the FILE gives the leaf UE5DUM~1.DLL, and the game then
+        // maps our DLL under that name: load_mode 'loaded:ue5dum~1.dll', the UI's loaded-module detection misses it.
+        const string path = @"C:\Users\王小明\Downloads\UE5CEDumper\UE5Dumper.dll";
+        byte[]? b = WindowsSystemCodePage.AnsiPathBytes(path, 950, _ => @"C:\Users\5B2F~1\DOWNLO~1\UE5CED~1\UE5DUM~1.DLL");
+        Assert.Equal(Big5.GetBytes(path), b);                        // the exact narrowing, the DLL's own name
+    }
+
+    [Fact]
+    public void AnsiPathBytes_TheProductionAlias_KeepsTheDllsName_AndIsFoundWhenTheVolumeHasOne()
+    {
+        // (second review, T-REALAPI-VACUOUS) The real entry point again, but no vacuous pass: when the folder HAS an
+        // ASCII 8.3 form (measured independently here), the answer must be non-null and end in the DLL's own name.
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-alias-\U0001F600-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        string dll = Path.Combine(dir, "UE5Dumper.dll");
+        File.WriteAllBytes(dll, new byte[] { 0x4D, 0x5A });
+        try
+        {
+            byte[]? b = new WindowsSystemCodePage().AnsiPathBytes(dll);
+            var sb = new StringBuilder(1024);
+            uint n = GetShortPathNameW(dir, sb, (uint)sb.Capacity);
+            string shortDir = n > 0 && n < sb.Capacity ? sb.ToString() : "";
+            bool aliasable = shortDir.Length > 0 && shortDir != dir && shortDir.All(c => c < 0x80);
+            if (aliasable)
+            {
+                Assert.NotNull(b);
+                Assert.Equal(Path.Combine(shortDir, "UE5Dumper.dll"), Encoding.ASCII.GetString(b!));
+            }
+            if (b != null && !b.SequenceEqual(Encoding.UTF8.GetBytes(dll)))
+                Assert.EndsWith(@"\UE5Dumper.dll", Encoding.ASCII.GetString(b));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
+    private static extern uint GetShortPathNameW(string longPath, StringBuilder shortPath, uint length);
+
     private sealed class FakeCodePage(byte[]? bytes) : ISystemCodePage
     {
         public string AnsiModuleName(string moduleFile) => moduleFile;
