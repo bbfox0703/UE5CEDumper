@@ -47,7 +47,7 @@ Attach CE.
 
 | # | row | check | status |
 |---|---|---|---|
-| 4 | `[PATH-ES2-CE-SYMBOLS]` | In CE's Lua Engine, `print(getAddress('UE5_Init'))` returns an address for our proxy under the letterlike folder (CE loads symbols from the ANSI `EVERSPACE?`-style path). Record the answer either way: it settles the question. | ⏳ |
+| 4 | `[PATH-ES2-CE-SYMBOLS]` | In CE's Lua Engine, `print(getAddress('UE5_Init'))` returns an address for our proxy under the letterlike folder (CE loads symbols from the ANSI `EVERSPACE?`-style path). Record the answer either way: it settles the question. | ✅ answered 2026-09-25, build 3556: NOT a finding -- `UE5_Init` resolves although CE's path for the proxy reads `? ? ? ? Ω ? ? ? K A …` |
 
 **Teardown:** `unhost letterlike`.
 
