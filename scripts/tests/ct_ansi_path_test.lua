@@ -215,6 +215,19 @@ if okMru and liftLocal("_slot") and liftLocal("_dllAt") and liftLocal("_probeSlo
   check("  ...injectDLL gets its ANSI bytes", DLL_PATH_ANSI == P_ANSI, DLL_PATH_ANSI)
   check("  ...and the self-heal records the folder as UTF-8",
         recorded == "D:\\" .. U_GONGJU .. "\\UE5CEDumper\\", recorded)
+
+  -- (third review, MRU-RELATIVE-SELF-MATCH-SHADOWS) A RELATIVE "UE5CEDumper.CT" entry (CE started with a relative
+  -- table argument) is its own entry since MRU-REL-MERGE. Matched first, its folder is empty -- a later ABSOLUTE
+  -- entry of the same name must still be the one probed.
+  _slots, _seen, _dllFoundIn, _dllFoundLabel = {}, {}, nil, ""
+  DLL_PATH, DLL_PATH_ANSI, recorded = nil, nil, nil
+  mruLine = "    Recent Files    REG_MULTI_SZ    D:\\Games\\Other.CT\\0UE5CEDumper.CT\\0D:\\" .. U_GONGJU
+            .. "\\UE5CEDumper\\UE5CEDumper.CT\r\n"
+  io.popen = function() return { read = function() return mruLine end, close = function() end } end
+  io.open = fakeOpen
+  ue5_probeRecentFiles()
+  io.open, io.popen = realOpen, realPopen
+  check("a relative self-match does not shadow a later absolute one", DLL_PATH == P_UTF8, DLL_PATH)
 end
 
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
