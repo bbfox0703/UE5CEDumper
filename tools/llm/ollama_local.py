@@ -45,6 +45,15 @@ behaviours are Ollama's own):
     VRAM from it; "unloaded" means "absent from /api/ps".
   * ⚠ on Windows a connect to a CLOSED loopback port waits out the whole timeout (a 1.5 s timeout
     took 1.51 s) instead of failing fast, so PROBE_TIMEOUT is short.
+  * ⛔ BY DEFAULT OLLAMA TRUNCATES AN OVER-WINDOW PROMPT SILENTLY. A ~134k-token request to a 32k
+    window came back HTTP 200 with prompt_eval_count 16387: the question at the top was cut away and
+    the model confidently answered a DIFFERENT question. Every request therefore sends
+    `truncate: false`, which makes the same request an HTTP 400 carrying the server's exact count
+    ("request (134020 tokens) exceeds the available context size (32768 tokens)") in 0.8 s. An Ollama
+    too old to know the field would ignore it and truncate again -- measured on 0.34.4.
+  * ⚠ THIS MODEL'S TOKENIZER SPLITS NUMBERS DIGIT BY DIGIT: numeric log text measured 1.5-1.7 chars
+    per token (the estimate had assumed 2.8 and was 1.8x short). So the estimate only PLANS slices;
+    the server's count decides, and --chunked re-splits an overflowing slice at the MEASURED rate.
 
 ⚠ NOT OLLAMA_HOST. That variable is the SERVER's bind address; on a machine that exposes Ollama to
 the network it is `0.0.0.0`, which a client cannot connect to on Windows. The URL comes from the
@@ -63,6 +72,7 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
 import urllib.request
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -86,8 +96,12 @@ TEMPERATURE = 0.2
 VRAM_MARGIN_MB = 1536                  # KV cache + runtime on top of the weights
 HOOK_TIMEOUT_S = 15
 HOOK_MATCHER = "Bash|PowerShell"
-ASCII_CHARS_PER_TOKEN = 2.8            # deliberately pessimistic: hex-heavy logs tokenize badly
+ASCII_CHARS_PER_TOKEN = 2.0            # planning only; numeric logs measured 1.5-1.7, prose ~4
+HOPELESS_CHARS_PER_TOKEN = 8           # no real text averages more, so len/8 > window can't fit
 CHUNK_SLACK_TOKENS = 256
+RESPLIT_SAFETY = 0.85                  # re-split an overflowing slice at 85% of its measured rate
+MAX_RESPLIT_DEPTH = 6
+OVERFLOW_RE = re.compile(r"request \((\d+) tokens\) exceeds", re.I)
 
 # A UE packaged-game process: <Stem>-<Platform>-<Config>.exe. A launcher shim (Elliot.exe) is not
 # matched; the shipping exe beside it always runs while the game does.
@@ -163,25 +177,42 @@ def commercial_games(images) -> list[str]:
     return sorted({i for i in images if is_commercial_process(i)}, key=str.lower)
 
 
-def estimate_tokens(text: str) -> int:
+def estimate_tokens(text: str, cpt: float = ASCII_CHARS_PER_TOKEN) -> int:
+    """A PLANNING estimate (cpt = ASCII chars per token); the server's count is the truth."""
     ascii_n = len(text.encode("ascii", "ignore"))
-    return int(ascii_n / ASCII_CHARS_PER_TOKEN + (len(text) - ascii_n)) + 1
+    return int(ascii_n / cpt + (len(text) - ascii_n)) + 1
 
 
-def split_lines(text: str, budget_tokens: int) -> list[tuple[int, int, str]]:
+def parse_overflow(status: int, body: str):
+    """The token count the server gave when refusing an over-window request (truncate:false);
+    -1 if it refused without a count; None if this is not an overflow at all."""
+    if status != 400 or "exceed" not in (body or "").lower():
+        return None
+    m = OVERFLOW_RE.search(body or "")
+    return int(m.group(1)) if m else -1
+
+
+def build_request(prompt: str, sections) -> str:
+    """Content FIRST, the task LAST: models attend best to the end of a long context, and it is the
+    end that survives if anything is ever cut. `sections` = [(header, text), ...]."""
+    body = "".join(f"=== {header} ===\n{text}\n\n" for header, text in sections)
+    return f"{body}=== TASK ===\n{prompt}"
+
+
+def split_lines(text: str, budget_tokens: int, cpt: float = ASCII_CHARS_PER_TOKEN) -> list[tuple[int, int, str]]:
     """Consecutive line slices (first, last line number, text), each under the token budget.
 
     A single line over budget is cut by characters, so nothing is dropped and nothing overlaps."""
-    max_chars = max(1, int(budget_tokens * ASCII_CHARS_PER_TOKEN / 2))   # safe for any mix
+    max_chars = max(1, int(budget_tokens * min(cpt, 1.0)))   # 1 char >= 1 token: safe for any mix
     pieces = []
     for n, line in enumerate(text.splitlines(keepends=True), 1):
-        if estimate_tokens(line) <= budget_tokens:
+        if estimate_tokens(line, cpt) <= budget_tokens:
             pieces.append((n, line))
         else:
             pieces.extend((n, line[i:i + max_chars]) for i in range(0, len(line), max_chars))
     chunks, cur, first, last, used = [], [], None, None, 0
     for n, piece in pieces:
-        cost = estimate_tokens(piece)
+        cost = estimate_tokens(piece, cpt)
         if cur and used + cost > budget_tokens:
             chunks.append((first, last, "".join(cur)))
             cur, first, used = [], None, 0
@@ -467,23 +498,66 @@ def cmd_unload(args) -> int:
     return 0 if ok else 1
 
 
+class ContextOverflow(Exception):
+    def __init__(self, tokens: int):
+        super().__init__(f"request is {tokens} tokens")
+        self.tokens = tokens
+
+
+class Refused(Exception):
+    pass
+
+
 def _chat(p: Probe, user: str, think: bool) -> dict:
-    return http_json(p.url + "/api/chat", {
-        "model": p.name, "stream": False, "think": bool(think), "keep_alive": p.keep_alive,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT},
-                     {"role": "user", "content": user}],
-        "options": {"num_ctx": p.num_ctx, "temperature": TEMPERATURE, "num_predict": OUTPUT_RESERVE},
-    }, timeout=GENERATE_TIMEOUT)
+    """One request. `truncate: false` turns Ollama's silent over-window cut into ContextOverflow."""
+    try:
+        return http_json(p.url + "/api/chat", {
+            "model": p.name, "stream": False, "think": bool(think), "keep_alive": p.keep_alive,
+            "truncate": False,
+            "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+                         {"role": "user", "content": user}],
+            "options": {"num_ctx": p.num_ctx, "temperature": TEMPERATURE, "num_predict": OUTPUT_RESERVE},
+        }, timeout=GENERATE_TIMEOUT)
+    except urllib.error.HTTPError as e:
+        tokens = parse_overflow(e.code, e.read().decode("utf-8", errors="replace"))
+        if tokens is None:
+            raise
+        raise ContextOverflow(tokens) from None
 
 
-def _stats(r: dict, estimate: int, num_ctx: int) -> str:
+def _stats(r: dict) -> str:
     gen_s = (r.get("eval_duration") or 0) / 1e9
     rate = f"{(r.get('eval_count') or 0) / gen_s:.0f} tok/s" if gen_s else "n/a"
-    s = (f"[local-llm] load {(r.get('load_duration') or 0) / 1e9:.1f}s, prompt "
-         f"{r.get('prompt_eval_count')} tok (estimated {estimate}), answer {r.get('eval_count')} tok @ {rate}")
-    if (r.get("prompt_eval_count") or 0) >= num_ctx - OUTPUT_RESERVE:
-        s += " -- ⚠ the prompt filled the window; the input may have been TRUNCATED"
-    return s
+    return (f"[local-llm] load {(r.get('load_duration') or 0) / 1e9:.1f}s, prompt "
+            f"{r.get('prompt_eval_count')} tok (untruncated), answer {r.get('eval_count')} tok @ {rate}")
+
+
+def _answer_slices(p: Probe, prompt: str, name: str, first: int, last: int, text: str, think: bool,
+                   cpt: float, depth: int = 0):
+    """Yield (first, last, response) for one slice; on overflow re-split it at the MEASURED rate."""
+    refusal = guard(p)                               # a game may start mid-batch
+    if refusal:
+        raise Refused(refusal)
+    request = build_request(prompt, [(f"FILE: {name} (lines {first}-{last})", text)])
+    try:
+        r = _chat(p, request, think)
+    except ContextOverflow as e:
+        if depth >= MAX_RESPLIT_DEPTH or not text:
+            raise
+        measured = len(request) / e.tokens if e.tokens > 0 else cpt / 2
+        cpt = min(cpt, measured) * RESPLIT_SAFETY
+        budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(SYSTEM_PROMPT + prompt, cpt) - CHUNK_SLACK_TOKENS
+        subs = split_lines(text, max(budget, 256), cpt)
+        if len(subs) < 2:                            # never retry the same slice unchanged
+            half = max(1, len(text) // 2)
+            subs = [(1, 1, text[:half]), (1, 1, text[half:])]
+        print(f"[local-llm] {name} lines {first}-{last} was {e.tokens} tokens; re-split into "
+              f"{len(subs)} at {cpt:.2f} chars/token", file=sys.stderr)
+        for a, b, t in subs:
+            yield from _answer_slices(p, prompt, name, first + a - 1, first + b - 1, t, think, cpt, depth + 1)
+        return
+    p.loaded = True
+    yield first, last, r
 
 
 def cmd_ask(args) -> int:
@@ -500,35 +574,43 @@ def cmd_ask(args) -> int:
     if refusal:
         print(f"local-llm: refused -- {refusal}", file=sys.stderr)
         return 3
-    fixed = estimate_tokens(SYSTEM_PROMPT + prompt) + CHUNK_SLACK_TOKENS
-    budget = p.num_ctx - OUTPUT_RESERVE - fixed
-    whole = prompt + "".join(f"\n\n=== FILE: {name} ===\n{text}" for name, text in files)
+    budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(SYSTEM_PROMPT + prompt) - CHUNK_SLACK_TOKENS
 
     if not args.chunked:
-        est = estimate_tokens(SYSTEM_PROMPT + whole)
-        if est > p.num_ctx - OUTPUT_RESERVE:
-            print(f"local-llm: input is ~{est} tokens; the window is {p.num_ctx} with {OUTPUT_RESERVE} "
-                  f"kept for the answer. Pre-slice it (grep/sed) or pass --chunked.", file=sys.stderr)
+        whole = build_request(prompt, [(f"FILE: {name}", text) for name, text in files])
+        if len(whole) > p.num_ctx * HOPELESS_CHARS_PER_TOKEN:
+            print(f"local-llm: {len(whole)} chars cannot fit a {p.num_ctx}-token window. Pre-slice it "
+                  f"(grep/sed) or pass --chunked.", file=sys.stderr)
             return 4
-        r = _chat(p, whole, args.think)
+        try:
+            r = _chat(p, whole, args.think)
+        except ContextOverflow as e:
+            print(f"local-llm: the server counted {e.tokens} tokens; the window is {p.num_ctx}. Pre-slice "
+                  f"it (grep/sed) or pass --chunked.", file=sys.stderr)
+            return 4
         print(r["message"]["content"])
-        print(_stats(r, est, p.num_ctx), file=sys.stderr)
+        print(_stats(r), file=sys.stderr)
         return 0
 
     if budget < 1024:
         print("local-llm: the prompt alone nearly fills the window", file=sys.stderr)
         return 4
-    jobs = [(name, first, last, text) for name, body in (files or [("(prompt only)", "")])
-            for first, last, text in (split_lines(body, budget) or [(0, 0, "")])]
-    for i, (name, first, last, text) in enumerate(jobs, 1):
-        refusal = guard(p)                           # a game may start mid-batch
-        if refusal:
-            print(f"local-llm: stopped before chunk {i}/{len(jobs)} -- {refusal}", file=sys.stderr)
-            return 3
-        r = _chat(p, f"{prompt}\n\n=== FILE: {name} (lines {first}-{last}) ===\n{text}", args.think)
-        p.loaded = True
-        print(f"### chunk {i}/{len(jobs)} -- {name} lines {first}-{last}\n{r['message']['content']}\n")
-        print(_stats(r, estimate_tokens(text) + fixed, p.num_ctx), file=sys.stderr)
+    n = 0
+    try:
+        for name, body in files or [("(prompt only)", "")]:
+            for first, last, text in split_lines(body, budget) or [(0, 0, "")]:
+                for a, b, r in _answer_slices(p, prompt, name, first, last, text, args.think,
+                                              ASCII_CHARS_PER_TOKEN):
+                    n += 1
+                    print(f"### slice {n} -- {name} lines {a}-{b}\n{r['message']['content']}\n", flush=True)
+                    print(_stats(r), file=sys.stderr)
+    except Refused as e:
+        print(f"local-llm: stopped after {n} slice(s) -- {e}", file=sys.stderr)
+        return 3
+    except ContextOverflow as e:
+        print(f"local-llm: a slice stayed over the window after {MAX_RESPLIT_DEPTH} re-splits "
+              f"({e.tokens} tokens) -- pre-slice the input", file=sys.stderr)
+        return 4
     return 0
 
 
@@ -668,7 +750,8 @@ def selftest() -> int:
        parse_tasklist("INFO: No tasks are running which match the specified criteria.\r\n") == [])
     ok("games: DumperTest exempt, commercial kept", commercial_games(images) == ["Elliot-Win64-Shipping.exe"])
 
-    ok("estimate: ascii is pessimistic", 1200 <= estimate_tokens("a" * 3500) <= 1300)
+    ok("estimate: ascii at the planning rate", 1700 <= estimate_tokens("a" * 3500) <= 1800)
+    ok("estimate: a measured rate is honoured", 1000 <= estimate_tokens("a" * 1500, 1.5) <= 1001)
     ok("estimate: CJK is one per char", 1000 <= estimate_tokens("中" * 1000) <= 1001)
     text = "".join(f"line {i:05d} 0x7FF6{i:08X}\n" for i in range(1, 5001))
     chunks = split_lines(text, 2000)
@@ -682,6 +765,21 @@ def selftest() -> int:
     ok("split: an over-budget line is cut, not dropped", "".join(c for _, _, c in parts) == giant
        and all(estimate_tokens(c) <= 1000 for _, _, c in parts))
     ok("split: empty input -> no chunks", split_lines("", 1000) == [])
+    tighter = split_lines(text, 2000, 1.5)
+    ok("split: a lower measured rate makes more, smaller slices", len(tighter) > len(chunks)
+       and "".join(c for _, _, c in tighter) == text)
+
+    measured = ('{"error":"{\\"error\\":{\\"code\\":400,\\"message\\":\\"request (134020 tokens) exceeds the '
+                'available context size (32768 tokens), try increasing it\\",\\"type\\":\\"exceed_context_size_error\\"}}"}')
+    ok("overflow: the measured 0.34.4 body parses to its count", parse_overflow(400, measured) == 134020)
+    ok("overflow: a 400 that says exceed but gives no count -> -1", parse_overflow(400, "context exceeded") == -1)
+    ok("overflow: another 400 is not an overflow", parse_overflow(400, '{"error":"model not found"}') is None)
+    ok("overflow: a 500 is not an overflow", parse_overflow(500, measured) is None)
+    nl = chr(10)
+    req = build_request("What is on the last line?", [("FILE: a.log", "x" + nl), ("FILE: b.log", "y" + nl)])
+    ok("request: content first, the task LAST", req.index("FILE: a.log") < req.index("FILE: b.log") < req.index("=== TASK ===")
+       and req.rstrip().endswith("What is on the last line?"))
+    ok("request: no files -> the task alone", build_request("Q", []) == "=== TASK ===" + nl + "Q")
 
     main = pathlib.Path("D:/Repo")
     wt = main / ".claude" / "worktrees" / "blissful-x"
