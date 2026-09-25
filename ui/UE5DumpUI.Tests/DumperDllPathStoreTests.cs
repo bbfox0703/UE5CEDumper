@@ -125,6 +125,26 @@ public class DumperDllPathStoreTests : IDisposable
         Assert.Equal(new[] { @"D:\new", @"D:\old", @"\\srv\share" }, lines);
     }
 
+    // (sixth review, R6-01 -- measured) A DLL folder at a DRIVE ROOT: Record trimmed 'E:\' to a bare 'E:', which Load
+    // then skipped as relative -- UE5DumpUI started from E:\ rewrote the file on every start, and the .CT ignored it.
+    [Fact]
+    public void A_drive_root_round_trips_as_the_root()
+    {
+        _store.Record(@"E:\");
+        Assert.Equal(new[] { @"E:\" }, _store.Load());
+        var before = File.GetLastWriteTimeUtc(_store.FilePath);
+        _store.Record(@"E:\");                                   // already the head: no rewrite
+        Assert.Equal(before, File.GetLastWriteTimeUtc(_store.FilePath));
+    }
+
+    [Fact]
+    public void A_legacy_bare_drive_line_reads_as_that_drives_root()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_store.FilePath)!);
+        File.WriteAllLines(_store.FilePath, new[] { "# header", "E:", @"D:\old" });
+        Assert.Equal(new[] { @"E:\", @"D:\old" }, _store.Load());
+    }
+
     [Theory]
     [InlineData("sub")]
     [InlineData(@"C:rel")]

@@ -355,6 +355,18 @@ if rsrc then
   check("the reader returns only the absolute lines",
         type(got) == "table" and #got == 2 and got[1] == "D:\\old" and got[2] == "\\\\srv\\share\\ce",
         type(got) == "table" and table.concat(got, " | ") or tostring(got))
+
+  -- (sixth review, R6-01 -- measured) A DLL folder at a DRIVE ROOT: the writer stripped 'E:\\' to a bare 'E:', which
+  -- every reader then dropped as relative. It keeps the root separator, and a legacy bare 'E:' reads as 'E:\\'.
+  local w3 = withFile(nil, function() ue5_recordDllDir("E:\\") end)
+  check("a drive root is written as 'E:\\', not a bare 'E:'", (w3 or ""):find("\nE:\\\n", 1, true) ~= nil, w3)
+  local _, r3 = withFile({ "E:\\", "D:\\old" }, function() return ue5_readBreadcrumbs("x") end)
+  check("  ...and read back", type(r3) == "table" and r3[1] == "E:\\", type(r3) == "table" and table.concat(r3, " | ") or "")
+  local _, r4 = withFile({ "E:", "D:\\old" }, function() return ue5_readBreadcrumbs("x") end)
+  check("a legacy bare 'E:' (both writers wrote that) reads as the drive root 'E:\\'",
+        type(r4) == "table" and r4[1] == "E:\\" and r4[2] == "D:\\old", type(r4) == "table" and table.concat(r4, " | ") or "")
+  local w4 = withFile({ "E:", "D:\\old" }, function() ue5_recordDllDir("F:\\x\\") end)
+  check("  ...and is carried forward as 'E:\\'", (w4 or ""):find("\nE:\\\n", 1, true) ~= nil, w4)
 end
 
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
