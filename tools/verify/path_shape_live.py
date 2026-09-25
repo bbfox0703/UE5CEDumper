@@ -35,7 +35,9 @@ from path_shape_fixture import SHAPES, win64     # noqa: E402
 
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 PROXY = ROOT / "dist" / "proxy" / "version.dll"
-ARGS = ["-windowed", "-ResX=1280", "-ResY=720"]   # a stock 5.1 template: none of DumperTest's own switches
+ARGS = ["-windowed", "-ResX=1280", "-ResY=720"]
+BOOT_WAIT_S = 15   # seconds after the pipe answers, before the first trigger_scan
+SCAN_TRIES = 3   # a stock 5.1 template: none of DumperTest's own switches
 DETACHED = 0x00000008 | 0x00000200
 
 
@@ -128,7 +130,20 @@ def check_one(work, exe):
     try:
         c.connect(retries=90, delay=1.0)   # not `with`: __enter__ connects again, with only 10 retries
         c.assert_build()
-        ptr = c.ensure_scanned()
+        # Let the engine BOOT first (handover 3: a process that exists is not a game that booted). Measured
+        # 2026-09-25: a trigger_scan ~1 s after launch hit 'RunScan: UNCAUGHT non-standard exception -- contained'
+        # in 4 of 5 launches and never rescanned. Wait, then retrigger a scan that came back empty.
+        time.sleep(BOOT_WAIT_S)
+        ptr = None
+        for attempt in range(1, SCAN_TRIES + 1):
+            try:
+                ptr = c.ensure_scanned(timeout=60)
+                break
+            except PipeError as e:
+                print(f"    scan attempt {attempt} came back empty ({str(e)[:60]}...); retrying")
+                time.sleep(10)
+        if ptr is None:
+            raise PipeError(f"no pointers after {SCAN_TRIES} scans")
         rec("module_name is the real name (UTF-8)", field(ptr, "module_name") == exe, field(ptr, "module_name"))
         inst = c.request("find_instances", class_name="World", max_results=4)
         addr = first_addr(inst)

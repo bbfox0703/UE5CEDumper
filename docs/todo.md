@@ -398,6 +398,17 @@ confirmed: 4 LOW, 9 INFO; nothing HIGH or MED. Fixed row by row.
 | R5-02 + R5-T-MRU-TOP-SLOT-POSITIVE-UNTESTED | LOW → ✅ `88509173` (red `0284ec74`) | CT-MRU-ZERO | A relative entry now dropped still gets the old reasons: "has no UE5CEDumper.CT in it" / "CE reported no recent files" -- false, in the failure dialog and the log. And the top slot's positive case (a renamed table, absolute) is untested. |
 | R5-04 + R5-T-WRITER-GUARD-PIN-SURVIVES-COMMENT-OUT | INFO → ✅ `49d4dd93` (red `657955ab`) | CT-MRU-ZERO | A RELATIVE line an older `.CT` wrote into `dll-path.txt` is still read as a breadcrumb (probed against CE's current folder) and carried forward by both writers (the `.CT` keep loop, `DumperDllPathStore`). The writer's guard is pinned by raw text only. |
 
+**Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ⏳ open, investigate.
+Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
+(the S1 rig's first version) logged `RunScan: UNCAUGHT non-standard exception — contained` in 4 of 5 launches
+(`GOBJ_ES53_1: 37 match(es), none validated`, GObjects Num ~546: the engine was still booting). `Routine::RunThreadGuarded`'s
+`catch (...)` contained it (under `/EHa` that includes an access violation) and the game survived. But the scan was never
+retried: `get_pointers` stayed `not_found` until another `trigger_scan`. The launch that happened to scan ~3 s after start
+succeeded. The UI's Scan is a manual button, so a user needs an early click to hit this. **To find out:** which read escaped
+the guarded memory readers during an early `UE5_Init`; and whether the UI should say "the game may still be loading --
+scan again" when a proxy-mode scan finds nothing. Logs: `%LOCALAPPDATA%\UE5CEDumper\Logs\DumperTest51遊戲-Win64-Shipping\`,
+`…\Tony's&Jerry-Win64-Shipping\` (scan-0 / pipe-0, 21:24 and 21:31). The rig now waits 15 s and retries.
+
 **Found while adding T11's gate (outside `[PATH-SHAPE]`):** `[CI-GATE-DRIFT-2026-09-25]` | MED | ✅ 2026-09-25 `c2835edc` (red `d14cf364`). Nine gates that `tools/check_all.py` runs were never added to `.github/workflows/ci.yml`. They were appended after `854cd406` closed the previous drift on 2026-09-06: `crc_oracle_selftest`, `check_processevent_slots`, `check_property_family`, `check_ce_untick_placement`, `check_badge_prime_symmetry`, `check_ce_idlewait_scope`, `check_clipboard_delivery`, `check_json_default_ignore` and `check_session_gate`. So a PR could break any of them and CI would stay green. `check_all.py`'s own docstring already said "nothing enforces that". **Fix:** add the nine to CI, and add `tools/check_ci_gate_parity.py` as a gate in BOTH lists, so the drift cannot recur silently.
 
 ## 🔎 Review 7 — the code added since Review 6, read adversarially `[REVIEW7-2026-09-24]`
