@@ -668,6 +668,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.StartsWith("Deployed: 0 success", vm.LastOperationResult);
         Assert.Contains("already current: 2", vm.LastOperationResult);
         Assert.Contains("Force Overwrite", vm.LastOperationResult);
+        // Nothing was written: neutral, as Update All shows the same situation -- not the success colour.
+        // (the fix's tests-and-text skeptic)
+        Assert.Equal("#888888", vm.LastOperationColor);
+        Assert.Equal("#888888", vm.StatusColor);
     }
 
     [Fact]
