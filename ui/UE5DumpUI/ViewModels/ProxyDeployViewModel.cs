@@ -1438,7 +1438,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         var failedDirs = NewBinariesDirSet();
         // [PROXY-DOUBLE-GUARD] Why each skipped game was skipped. Written to its Details AFTER the refresh, which
         // rewrites every row outside failedDirs from disk -- so the row keeps its true Status and Load, plus this.
-        var skipNotes = new List<(DetectedGame Game, string Note, bool KeepRefreshDetail)>();
+        var rowNotes = new List<(DetectedGame Game, string Note, bool KeepRefreshDetail)>();
         // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
         bool force = ForceOverwrite;
         string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
@@ -1475,7 +1475,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                         skipped++;
                         // An ALREADY-doubled folder keeps the refresh's "Multiple proxy DLLs deployed …" warning --
                         // on exactly the folder this guard exists for, it is the one line that says so.
-                        skipNotes.Add((game, ProxyDeployService.DescribeOtherTypeSkip(others), others.Count > 1));
+                        rowNotes.Add((game, ProxyDeployService.DescribeOtherTypeSkip(others), others.Count > 1));
                         continue;
                     }
                 }
@@ -1522,19 +1522,26 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 }
 
                 // A switched row never passes foreign consent: the user ticked it for the radio's name, not this one.
+                // [PROXY-RISKNOTE-WIPED] Cleared first: on success the service writes its one-shot import-risk note here
+                // (or nothing), and a detail left from before must not be taken for it.
+                game.StatusDetail = null;
                 bool success = await _deploy.DeployAsync(source, game, type,
                     new DeployOptions(ForceSameVersion: force,
                                       ForeignConsent:   !substituted && AllowForeignOverwrite), ct);
                 if (success)
                 {
                     ok++;
+                    string? riskNote = game.StatusDetail;
                     RememberPick(game, type);
                     if (substituted)
                     {
                         usedConfirmed++;
-                        skipNotes.Add((game, $"Deployed {type.GetDllName()} (confirmed working) instead of "
+                        rowNotes.Add((game, $"Deployed {type.GetDllName()} (confirmed working) instead of "
                                              + $"{SelectedProxyType.GetDllName()}", false));
                     }
+                    // [PROXY-RISKNOTE-WIPED] The refresh below rewrites this row from disk, which erased the note the
+                    // moment it was shown; it is written back after it (appended, so a switch note above stays).
+                    if (!string.IsNullOrEmpty(riskNote)) rowNotes.Add((game, riskNote!, true));
                 }
                 else
                 {
@@ -1592,7 +1599,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // Load column, plus the reason. [PROXY-DOUBLE-GUARD] [PROXY-USE-CONFIRMED]
         void WriteNotes()
         {
-            foreach (var (g, note, keep) in skipNotes)
+            foreach (var (g, note, keep) in rowNotes)
                 g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? $"{g.StatusDetail}. {note}" : note;
         }
 
@@ -1711,6 +1718,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
         ClearError();
         int updated = 0, fail = 0, upToDate = 0, forcedSame = 0;
         var failedDirs = NewBinariesDirSet();
+        // [PROXY-RISKNOTE-WIPED] The import-risk notes this run's deploys wrote, re-applied after the refresh erases them.
+        var riskNotes = new List<(DetectedGame Game, string Note)>();
         // [PROXY-FORCE-UPDATEALL] Force Overwrite means rewrite OUR proxy whatever its version -- in Update All as in
         // Deploy (maintainer, 2026-09-25: no hash or timestamp second check; whoever ticks it knows what they want).
         // Read ONCE: the checkbox stays live during a run, and an untick half-way must not split one Update All
@@ -1755,9 +1764,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     // ForeignConsent stays FALSE: the loop above already refuses anything
                     // that is not our proxy, so Update All never needs it and must not
                     // acquire it by 'simplification'.
+                    game.StatusDetail = null;   // [PROXY-RISKNOTE-WIPED] see DeploySelectedAsync
                     bool success = await _deploy.DeployAsync(srcPath, game, type,
                         new DeployOptions(ForceSameVersion: true, ForeignConsent: false), ct: ct);
-                    if (success) { updated++; if (sameVersion) forcedSame++; }
+                    if (success)
+                    {
+                        updated++;
+                        if (sameVersion) forcedSame++;
+                        if (!string.IsNullOrEmpty(game.StatusDetail)) riskNotes.Add((game, game.StatusDetail!));
+                    }
                     else { fail++; failedDirs.Add(game.BinariesDir); }
                 }
             }
@@ -1765,6 +1780,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // Refresh status from disk for the currently-selected type's view, keeping the reason
             // on any game this run failed to update (see DeploySelectedAsync).
             await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
+            WriteRiskNotes();
 
             if (updated == 0 && fail == 0)
             {
@@ -1793,6 +1809,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // [A3-DEPLOY-CANCEL] And bring the grid back in line with the disk, as Deploy / Remove
             // do: without it the rows kept the old versions for the games this run HAD written.
             await RefreshAfterCancelAsync(failedDirs);
+            WriteRiskNotes();
             SetOperationResult($"Update All cancelled — updated: {updated}, failed: {fail}", fail);
         }
         catch (Exception ex)
@@ -1803,6 +1820,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
             SetOperationResult($"Update All failed — updated: {updated}, failed: {fail}", fail + 1);
             SetError(ex);
             _log.Error("ProxyDeploy", $"Update All failed: {ex.Message}");
+        }
+
+        // Appended to what the refresh wrote, one per deployed type (a doubled folder can carry two).
+        void WriteRiskNotes()
+        {
+            foreach (var (g, note) in riskNotes)
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : $"{g.StatusDetail}. {note}";
         }
     }
 
