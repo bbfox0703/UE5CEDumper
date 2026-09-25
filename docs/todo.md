@@ -426,7 +426,13 @@ retried: `get_pointers` stayed `not_found` until another `trigger_scan`. The lau
 succeeded. The UI's Scan is a manual button, so a user needs an early click to hit this. **To find out:** which read escaped
 the guarded memory readers during an early `UE5_Init`; and whether the UI should say "the game may still be loading --
 scan again" when a proxy-mode scan finds nothing. Logs: `%LOCALAPPDATA%\UE5CEDumper\Logs\DumperTest51遊戲-Win64-Shipping\`,
-`…\Tony's&Jerry-Win64-Shipping\` (scan-0 / pipe-0, 21:24 and 21:31). The rig now waits 15 s and retries.
+`…\Tony's&Jerry-Win64-Shipping\` (scan-0 / pipe-0, 21:24 and 21:31). The rig now waits 15 s and retries. **Where it stops** (a lead
+from the local LLM over the 63 KB archived scan log, then checked line by line against it): `FindGObjects`' hint
+`GOBJ_G42_2` matched once and did not validate (the engine had not filled GObjects), the full scan's batch 1 gave 37
+`GOBJ_ES53_1` candidates, none valid, then a run of per-pattern `AOBScanAll` calls (0 matches each) ran to
+21:31:12.008 -- and the exception is logged at 12.009. So the uncontained read is in the step `FindGObjects` takes after
+those scans, which logs nothing before it fails. Archived logs: `scan-20260925-213112.log` / `pipe-20260925-213411.log`
+in the Tony's&Jerry folder.
 
 **Found while adding T11's gate (outside `[PATH-SHAPE]`):** `[CI-GATE-DRIFT-2026-09-25]` | MED | ✅ 2026-09-25 `c2835edc` (red `d14cf364`). Nine gates that `tools/check_all.py` runs were never added to `.github/workflows/ci.yml`. They were appended after `854cd406` closed the previous drift on 2026-09-06: `crc_oracle_selftest`, `check_processevent_slots`, `check_property_family`, `check_ce_untick_placement`, `check_badge_prime_symmetry`, `check_ce_idlewait_scope`, `check_clipboard_delivery`, `check_json_default_ignore` and `check_session_gate`. So a PR could break any of them and CI would stay green. `check_all.py`'s own docstring already said "nothing enforces that". **Fix:** add the nine to CI, and add `tools/check_ci_gate_parity.py` as a gate in BOTH lists, so the drift cannot recur silently.
 
