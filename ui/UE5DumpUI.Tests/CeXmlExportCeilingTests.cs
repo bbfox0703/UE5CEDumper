@@ -92,6 +92,76 @@ public class CeXmlExportCeilingTests
         Assert.InRange(Entries(xml), CeXmlExportService.MaxEmitEntries, CeXmlExportService.MaxEmitEntries + Slack);
     }
 
+    // The same invariant for every other element loop that had no check of its own. Each would need an unusually big
+    // container to overshoot (arrays arrive 4,096 per fetch), but the ceiling is documented as a hard stop.
+
+    private static void AssertStopsAtTheCeiling(LiveFieldValue last)
+    {
+        var xml = Export(last);
+        Assert.True(CeXmlExportService.LastExportTruncated);
+        Assert.InRange(Entries(xml), CeXmlExportService.MaxEmitEntries, CeXmlExportService.MaxEmitEntries + Slack);
+    }
+
+    [Fact]
+    public void ScalarArray_EmittedLast_StopsAtTheCeiling_AndSaysSo() => AssertStopsAtTheCeiling(new LiveFieldValue
+    {
+        Name = "Ints", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+        ArrayCount = 70_000, ArrayInnerType = "IntProperty", ArrayElemSize = 4,
+        ArrayElements = Enumerable.Range(0, 70_000)
+            .Select(i => new ArrayElementValue { Index = i, Value = i.ToString(), Hex = "00000000" }).ToList(),
+    });
+
+    [Fact]
+    public void StringArray_EmittedLast_StopsAtTheCeiling_AndSaysSo() => AssertStopsAtTheCeiling(new LiveFieldValue
+    {
+        Name = "Names", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+        ArrayCount = 70_000, ArrayInnerType = "StrProperty", ArrayElemSize = 16,
+        ArrayElements = Enumerable.Range(0, 70_000)
+            .Select(i => new ArrayElementValue { Index = i, Value = $"s{i}" }).ToList(),
+    });
+
+    [Fact]
+    public void StructArray_EmittedLast_StopsAtTheCeiling_AndSaysSo() => AssertStopsAtTheCeiling(new LiveFieldValue
+    {
+        Name = "Positions", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+        ArrayCount = 25_000, ArrayInnerType = "StructProperty", ArrayStructType = "Vector", ArrayElemSize = 8,
+        ArrayElements = Enumerable.Range(0, 25_000).Select(i => new ArrayElementValue
+        {
+            Index = i, Value = "{X=0, Y=0}", Hex = "00",
+            StructFields = new List<StructSubFieldValue>
+            {
+                new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4, Value = "0.0" },
+                new() { Name = "Y", TypeName = "FloatProperty", Offset = 4, Size = 4, Value = "0.0" },
+            },
+        }).ToList(),
+    });
+
+    [Fact]
+    public void UnresolvedStructArray_EmittedLast_StopsAtTheCeiling_AndSaysSo() => AssertStopsAtTheCeiling(new LiveFieldValue
+    {
+        Name = "Blobs", TypeName = "ArrayProperty", Offset = 0x100, Size = 16,
+        ArrayCount = 70_000, ArrayInnerType = "StructProperty", ArrayStructType = "Blob", ArrayElemSize = 8,
+        ArrayElements = Enumerable.Range(0, 70_000)
+            .Select(i => new ArrayElementValue { Index = i, Value = "", Hex = "00" }).ToList(),
+    });
+
+    [Fact]
+    public void DataTableRows_EmittedLast_StopAtTheCeiling_AndSaySo() => AssertStopsAtTheCeiling(new LiveFieldValue
+    {
+        Name = "RowMap", TypeName = "DataTableRows", Offset = 0xB0, Size = 0,
+        DataTableRowCount = 30_000, DataTableStructName = "RecipeRow",
+        DataTableFNameSize = 8, DataTableStride = 24, DataTableRowStructAddr = "0xABC",
+        DataTableRowData = Enumerable.Range(0, 30_000).Select(i => new DataTableRowInfo
+        {
+            SparseIndex = i, RowName = $"Row_{i}", DataAddr = $"0x{0x10000 + i * 0x10:X}",
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Damage", TypeName = "FloatProperty", Offset = 0x0, Size = 4, TypedValue = "1.0" },
+                new() { Name = "Level", TypeName = "IntProperty", Offset = 0x4, Size = 4, TypedValue = "1" },
+            },
+        }).ToList(),
+    });
+
     [Fact]
     public void Map_UnderTheCeiling_IsNotTruncated()
     {
