@@ -117,7 +117,7 @@ constexpr const char* CMD_GET_FOREGROUND_LOCK      = "get_foreground_lock";
 constexpr const char* CMD_GET_MOVEMENT_PARAMS      = "get_movement_params";
 constexpr const char* CMD_SET_MOVEMENT_MULTIPLIER  = "set_movement_multiplier";
 constexpr const char* CMD_RESET_MOVEMENT           = "reset_movement";
-// Gravity DIRECTION vector (UE5.4+ GravityDirection); x/y/z normalized DLL-side.
+// Gravity DIRECTION vector (UE5.3+ GravityDirection); x/y/z normalized DLL-side.
 constexpr const char* CMD_SET_GRAVITY_DIRECTION    = "set_gravity_direction";
 constexpr const char* CMD_RESET_GRAVITY_DIRECTION  = "reset_gravity_direction";
 

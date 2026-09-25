@@ -57,7 +57,7 @@ struct KnobState {
 };
 KnobState s_knobs[KNOB_COUNT];
 
-// Gravity-DIRECTION override (UE5.4+ FVector GravityDirection). Parallel to the
+// Gravity-DIRECTION override (UE5.3+ FVector GravityDirection; stock 5.3 honours it too -- [R7-X7]). Parallel to the
 // scalar knobs: same base-capture / re-assert discipline. Guarded by s_mutex.
 struct GravDirState {
     bool      active       = false;
@@ -262,7 +262,7 @@ bool ResolveField(const Ctx& c, int knobId, FieldLoc& f) {
     return true;
 }
 
-// Resolve the GravityDirection FVector field on the live CMC (UE5.4+).
+// Resolve the GravityDirection FVector field on the live CMC (UE5.3+).
 bool ResolveGravDirField(const Ctx& c, uintptr_t& addr, int32_t& size) {
     FieldInfo fi{};
     if (!Ubel::FindField(c.cmcClass, "GravityDirection", "GravityDirection",
@@ -328,7 +328,7 @@ void ApplyGravDirLocked(const Ctx& c, bool* drifted) {
 void FillGravDirLocked(const Ctx& c, GravDirInfo& info) {
     info.active = s_gravDir.active;
     uintptr_t addr = 0; int32_t size = 0;
-    if (!ResolveGravDirField(c, addr, size)) return;   // pre-5.4 / not reflected
+    if (!ResolveGravDirField(c, addr, size)) return;   // pre-5.3 / not reflected
     double cur[3] = {};
     if (!ReadVec3At(addr, size, cur)) return;
     info.resolved    = true;
@@ -554,7 +554,7 @@ int32_t SetGravityDirection(double x, double y, double z) {
         rc = ResolveCtx(c);
         if (rc != MR_OK) return rc;
         uintptr_t addr = 0; int32_t size = 0;
-        if (!ResolveGravDirField(c, addr, size)) return MR_ERR_REFLECT;  // pre-5.4
+        if (!ResolveGravDirField(c, addr, size)) return MR_ERR_REFLECT;  // pre-5.3
         double cur[3] = {};
         if (!ReadVec3At(addr, size, cur)) return MR_ERR_REFLECT;
         // Capture the untouched default only on (re)activation or pawn change.

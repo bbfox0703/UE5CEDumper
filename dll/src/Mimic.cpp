@@ -1454,7 +1454,7 @@ static void HandleMovement() {
     const uint64_t knobId = g_invokeMailbox.instanceAddr;
     int32_t rc;
     if (knobId == 3) {
-        // Gravity direction (UE5.4+): 3 doubles x/y/z in paramsData. (0,0,0) = off.
+        // Gravity direction (UE5.3+): 3 doubles x/y/z in paramsData. (0,0,0) = off.
         double v[3] = {};
         memcpy(v, g_invokeMailbox.paramsData, sizeof(v));
         rc = UE5_SetGravityDirection(v[0], v[1], v[2]);

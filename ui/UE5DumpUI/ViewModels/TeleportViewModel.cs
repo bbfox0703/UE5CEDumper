@@ -784,7 +784,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Tracks whether see-through is engaged (for the toggle hotkey/button).</summary>
     private bool _seeThroughActive;
 
-    // ── Gravity Direction (Laufen, UE5.4+ GravityDirection vector) ─────
+    // ── Gravity Direction (Laufen, UE5.3+ GravityDirection vector) ─────
     /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.4 / no
     /// reflected GravityDirection).</summary>
     [ObservableProperty] private string _gravDirState = "Unknown";
@@ -3218,7 +3218,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.4+) ──
 
-    // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.4).
+    // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.3).
     // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
     // which is what the connect/disconnect reset's own comment always said it did.
     private const int GravDirUnavailable = -2;
@@ -3240,7 +3240,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var g = mp.GravityDirection;
         // [W2-GRAVDIR-VERDICT] Two different answers, and only one is about the engine. No CMC at this
         // instant (menu, loading, cutscene, spectator, vehicle pawn) is transient; a CMC WITHOUT a
-        // reflected GravityDirection is the pre-5.4 verdict.
+        // reflected GravityDirection is the pre-5.3 verdict.
         if (!mp.HasCmc)
         {
             GravDirCurrentText = "Current: — (no pawn / no CharacterMovement right now; enter gameplay).";
@@ -3249,7 +3249,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         if (!g.Resolved)
         {
-            GravDirCurrentText = "Current: unavailable (needs UE5.4+ with a reflected GravityDirection).";
+            GravDirCurrentText = "Current: unavailable (needs UE5.3+ with a reflected GravityDirection).";
             ApplyGravDirState(GravDirUnavailable);
             return;
         }
@@ -3273,7 +3273,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
                 : mp.GravityDirection.Resolved
                     ? "Read gravity direction."
-                    : "Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection).";   // [W2-GRAVDIR-VERDICT]
+                    : "Gravity direction unavailable (needs UE5.3+ with a reflected GravityDirection).";   // [W2-GRAVDIR-VERDICT]
         }
         catch (Exception ex)
         {
@@ -5011,7 +5011,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 if (await _aobMaker!.CreateAAScriptAsync(s.Desc, script, autoActivate: false, group: CeGroupDll))
                     ok++;
             }
-            // Gravity Direction vector (UE5.4+) baked at the current sliders.
+            // Gravity Direction vector (UE5.3+) baked at the current sliders.
             string gdDesc = string.Format(CultureInfo.InvariantCulture,
                 "Movement: Gravity Direction ({0:0.0#}, {1:0.0#}, {2:0.0#})", GravDirX, GravDirY, GravDirZ);
             string gdScript = MovementScriptGenerator.GenerateGravityDirection(GravDirX, GravDirY, GravDirZ);

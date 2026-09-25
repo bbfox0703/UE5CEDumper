@@ -103,9 +103,9 @@ public static class Constants
 
     // ── Movement result codes (Laufen) ──────────────────────────────────────
     // set_gravity_direction's `state` carries Laufen::MoveResult (dll/src/Laufen.h). -4, MR_ERR_REFLECT,
-    // is what a pre-5.4 engine returns: the CMC exists but has no reflected GravityDirection. It is NOT
+    // is what a pre-5.3 engine returns: the CMC exists but has no reflected GravityDirection. It is NOT
     // only that -- ResolveCtx returns it when the pawn / CMC class lookup fails, SetGravityDirection when
-    // the vector read fails -- so the UI states the pre-5.4 verdict only when a fresh read ALSO shows a
+    // the vector read fails -- so the UI states the pre-5.3 verdict only when a fresh read ALSO shows a
     // live CMC without the field. -3 (no pawn), -5 (no CharacterMovement) and -1 (not initialised) are
     // transient: a menu, a loading screen, a vehicle pawn. [W2-GRAVDIR-VERDICT]
     public const int LaufenErrReflect = -4;

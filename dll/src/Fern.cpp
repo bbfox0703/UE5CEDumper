@@ -5844,7 +5844,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             knobs["gravity"]    = knobJson(snap.knobs[Laufen::KNOB_GRAVITY]);
             knobs["jump"]       = knobJson(snap.knobs[Laufen::KNOB_JUMP]);
             data["knobs"] = knobs;
-            // Gravity DIRECTION (UE5.4+); resolved=false on pre-5.4 games.
+            // Gravity DIRECTION (UE5.3+); resolved=false on pre-5.3 games.
             json gd;
             gd["resolved"] = snap.gravDir.resolved;
             gd["x"] = snap.gravDir.x; gd["y"] = snap.gravDir.y; gd["z"] = snap.gravDir.z;

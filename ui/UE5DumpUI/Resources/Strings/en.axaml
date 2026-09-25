@@ -1223,9 +1223,9 @@
     <sys:String x:Key="str.Tip.TP.SeeThroughAddCe">Push a self-contained CE toggle script (tick = ON / untick = OFF) straight into Cheat Engine via AOBMaker. It drives the DLL's See-through through the mailbox, so no pipe connection is needed once added. Disabled when the AOBMaker CE plugin isn't detected.</sys:String>
 
     <!-- Gravity Direction (Laufen — UE5.4+ UCharacterMovementComponent.GravityDirection) -->
-    <sys:String x:Key="str.TP.GdHeader">Gravity Direction (UE5.4+)</sys:String>
+    <sys:String x:Key="str.TP.GdHeader">Gravity Direction (UE5.3+)</sys:String>
     <sys:String x:Key="str.TP.GdState">State:</sys:String>
-    <sys:String x:Key="str.TP.GdHint">Tilt gravity to any direction by setting the per-axis components (each −100%…+100%, i.e. −1.0…+1.0). This is DIRECTION only — the DLL normalizes to a unit vector, so a single-axis setting like (0,0,−62%) collapses to (0,0,−1): it only re-aims gravity, it does NOT change strength (use the Gravity card for strength). To tilt you must mix axes, e.g. X=+100%, Z=−100% → diagonal. Default (0,0,−100%) = straight down; X=+100%, Z=0 makes gravity pull along +X (walk on a wall). Apply holds the direction; Reset restores the game's captured default and snaps the sliders back to down. Needs UE5.4+ with a reflected GravityDirection (pre-5.4 games show Unavailable). Single-player only.</sys:String>
+    <sys:String x:Key="str.TP.GdHint">Tilt gravity to any direction by setting the per-axis components (each −100%…+100%, i.e. −1.0…+1.0). This is DIRECTION only — the DLL normalizes to a unit vector, so a single-axis setting like (0,0,−62%) collapses to (0,0,−1): it only re-aims gravity, it does NOT change strength (use the Gravity card for strength). To tilt you must mix axes, e.g. X=+100%, Z=−100% → diagonal. Default (0,0,−100%) = straight down; X=+100%, Z=0 makes gravity pull along +X (walk on a wall). Apply holds the direction; Reset restores the game's captured default and snaps the sliders back to down. Needs UE5.3+ with a reflected GravityDirection (older games show Unavailable). Single-player only.</sys:String>
     <sys:String x:Key="str.TP.GdApply">Apply</sys:String>
     <sys:String x:Key="str.TP.GdReset">Reset</sys:String>
     <sys:String x:Key="str.TP.GdRefresh">↻</sys:String>
