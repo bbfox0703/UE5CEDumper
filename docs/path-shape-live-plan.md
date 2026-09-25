@@ -38,7 +38,7 @@ before the next.
 |---|---|---|---|
 | 1 | `[PATH-MODULE-NAME-UTF8]` | `module_name` is the real UTF-8 name, for all five | ✅ PASS 2026-09-25, build 3555 |
 | 2 | `[PATH-CE-MODULE-VIEW]` (DLL side) | `ce_base` names the module as CE does: `DumperTest51?-…` for ™, `夫-…` for `功夫-…` (the 0x5C cut) | ✅ PASS 2026-09-25, build 3555 |
-| 3 | `[PATH-SEIN-TRAILING-SPACE]` (DLL side) | `… .exe` logs into `Logs\DumperTest51-Win64-Shipping\init-0.log` (this launch's) | ⏳ |
+| 3 | `[PATH-SEIN-TRAILING-SPACE]` (DLL side) | `… .exe` logs into `Logs\DumperTest51-Win64-Shipping\init-0.log` (this launch's) | ✅ PASS 2026-09-25, build 3555 |
 
 ### S2 — the ™-folder question (CE)
 
