@@ -25,6 +25,34 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3552) — R7-X8: Instance Finder's truncation advice follows every container, published AOT
+
+**3552 = 3551 plus 2 product commits, up to `9019eada`** (`git log --oneline c6d667ec..9019eada -- dll/src
+ui/UE5DumpUI scripts`). The row is `docs/todo.md` `[R7-X8]`.
+- **Found live on 3551, by R7-S11's finding probe.** DumperTest's NestedBag had 16,000 pairs at Array Limit 16384.
+  The copy truncated with "no toolbar setting shrinks this export", yet the same copy at 8192 was complete (49,738
+  entries). R7-S6 named the limit only for a container bound by the CURRENT limit. But lowering the limit shrinks
+  every container longer than the new one.
+- **The advice now names the Array Limit** whenever a walked container has more elements than the slider's floor
+  (`Constants.MinArrayLimit` = 2), largest first. It keeps "… or use Open in Live Walker → Copy CE Field for the part
+  you need" beside it, because shrinking is not fitting.
+- **Two more containers stop counting:** a sparse delegate and a `TArray<TFieldPath>`. Each is written as one entry
+  at any length, so it is neither a lever nor a clipped export.
+- **One skeptic reviewed the fix.** It found no defect; its two notes are the follow-up `abf9991e`.
+- **Not yet run on a game:** the NestedBag copy at 16,000 / 16384 must now name the Array Limit (the row's live
+  check).
+- Also since 3551, docs only: the live PASS records for X5 and X6 on 3551. X6's NestedBag export stops at 60,001
+  entries, marked TRUNCATED (3550 copied 98,890 unflagged). X5: a 1.4 invoke helper replaces a resident 1.3 in the same
+  CE process, and R7-S3's re-inject then passes.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3551 → 3552: `dist\UE5DumpUI.exe` AOT 55.1 MB
+(57,807,360 bytes, sha `479735bbe97c`), `UE5Dumper.dll` 3,008,000 bytes, sha `05ce27367fca`, stamp `1.0.0.3552
+9019eada-dirty` (the dirty suffix is the bumped `build_number.txt`). Four proxies went to `dist\proxy\`
+(`check_proxy_exports --artifacts` OK). Tests: UI **5389/5389**, `dll_helpers_test` 2921/0, `utf8_helpers_test`
+265/0, `dll_core_test` 455 checks, `grausam_window_test` 22 and `sein_retention_test` 14 checks. Gates 23/23.
+
+-----
+
 ## 2026-09-25 (build 3551) — Review 7's live pass: every live row PASS, and four more rows fixed, published AOT
 
 **3551 = 3550 plus 6 product commits, up to `c6d667ec`.** Derive them: `git log --oneline 1c514220..c6d667ec
