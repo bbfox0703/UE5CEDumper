@@ -2885,6 +2885,30 @@ public class TeleportViewModelTests
     }
 
     [Fact]
+    public async Task SaveCurrentPos_is_refused_while_the_library_is_unavailable()
+    {
+        // [PATH-UI-LEGACY-QMARK] (skeptic T5) The save-pose path of the refusal, which no test reached.
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-qmark-pose", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var platform = new MockPlatformService(dir);
+            var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+            var vm = new TeleportViewModel(fake, new NoopLogger(), platform,
+                coordStore: new CoordinateLibraryStore(platform));
+            vm.IsConnected = true;
+            vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
+
+            await vm.SaveCurrentPosToLibraryCommand.ExecuteAsync(null);
+
+            Assert.Empty(vm.CoordEntries);
+            Assert.Contains("Nothing was saved", vm.CoordStatus);
+            Assert.Empty(Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
     public async Task Connect_primes_the_pose_map()
     {
         var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };

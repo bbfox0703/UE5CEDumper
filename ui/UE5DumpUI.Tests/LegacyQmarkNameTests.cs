@@ -65,6 +65,148 @@ public class LegacyQmarkNameTests : IDisposable
         Assert.DoesNotContain("unavailable", vm.CoordStatus, StringComparison.OrdinalIgnoreCase);
     }
 
+    // ── the skeptic review (wf_6ba4bc83-14d) ──
+
+    private TeleportViewModel Vm(out CoordinateLibraryStore store)
+    {
+        var platform = new MockPlatformService(_dir);
+        store = new CoordinateLibraryStore(platform);
+        return new TeleportViewModel(new StubDumpService(), new MockLoggingService(), platform, coordStore: store);
+    }
+
+    private static UE5DumpUI.Models.CoordinateLibraryFile TwoRows() => new()
+    {
+        Entries =
+        {
+            new UE5DumpUI.Models.CoordEntry { Uid = "a", Label = "Chest", Map = "Map01", X = 1, Y = 2, Z = 3 },
+            new UE5DumpUI.Models.CoordEntry { Uid = "b", Label = "Boss", Map = "Map01", X = 4, Y = 5, Z = 6 },
+        },
+    };
+
+    [Fact]
+    public void Key_ANameWithNoFileNameCharacters_StillGetsAStableKey()
+    {
+        // (QM-7) '★.exe' keyed to '' under the NEW DLL too, and the text blamed an old DLL: an update that loops.
+        string star = CoordinateLibraryStore.KeyFor("★.exe");
+        Assert.NotEqual("", star);
+        Assert.Equal(star, CoordinateLibraryStore.KeyFor("★.EXE"));
+        Assert.NotEqual(star, CoordinateLibraryStore.KeyFor("☆.exe"));
+    }
+
+    [Theory]
+    [InlineData("Pokémon.exe", "pok_mon")]        // what the older DLL's 'Pok?mon.exe' keyed to
+    [InlineData("Pok?mon.exe", "pok_mon")]        // the older DLL's name itself
+    [InlineData("ゲーム-Win64-Shipping.exe", "-win64-shipping")]
+    [InlineData("Plain-Win64-Shipping.exe", "")]  // an ASCII name never had another key
+    public void LegacyKey_IsWhatAnOlderDllsNameKeyedTo(string module, string expected)
+        => Assert.Equal(expected, CoordinateLibraryStore.LegacyKeyFor(module));
+
+    [Fact]
+    public void Teleport_ALibrarySavedUnderTheOlderDllsKey_IsCarriedOver_AndTheOldFileKept()
+    {
+        // (QM-1 / T6) Before: 'Pok?mon.exe' -> 'pok_mon' saved real rows. After the fix the old DLL is refused and the
+        // new DLL keys 'pokémon' -- the rows were stranded, with no notice.
+        var vm = Vm(out var store);
+        store.Save("pok_mon", TwoRows());
+        string legacyPath = store.FilePathFor("pok_mon");
+        string before = File.ReadAllText(legacyPath);
+
+        vm.LoadCoordLibraryForGame("Pokémon.exe");
+
+        Assert.Equal(2, vm.CoordEntries.Count);
+        Assert.Contains(Path.GetFileName(legacyPath), vm.CoordStatus);
+        Assert.True(File.Exists(store.FilePathFor(CoordinateLibraryStore.KeyFor("Pokémon.exe"))), "not saved under the new key");
+        Assert.Equal(before, File.ReadAllText(legacyPath));                 // left as it was
+    }
+
+    [Fact]
+    public void Teleport_UnderTheOlderDll_TheRefusalNamesTheEarlierLibrary()
+    {
+        var vm = Vm(out var store);
+        store.Save("pok_mon", TwoRows());
+        vm.LoadCoordLibraryForGame("Pok?mon.exe");
+        Assert.Contains("unavailable", vm.CoordStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(Path.GetFileName(store.FilePathFor("pok_mon")), vm.CoordStatus);
+    }
+
+    [Fact]
+    public void Teleport_TheRefusalTellsTheWholeRemedy()
+    {
+        // (QM-5) Re-injecting into the running game reattaches to the OLD DLL; Update All cannot replace a proxy the
+        // running game holds. The game must be closed first.
+        var vm = Vm(out _);
+        vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
+        Assert.Contains("Close the game", vm.CoordStatus);
+    }
+
+    [Fact]
+    public void Teleport_TheRefusalDoesNotOutliveItsCause()
+    {
+        // (QM-2) After the remedy (update, reconnect), the old refusal naming '???-…' stayed on screen.
+        var vm = Vm(out _);
+        vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
+        vm.LoadCoordLibraryForGame("ゲーム-Win64-Shipping.exe");
+        Assert.DoesNotContain("unavailable", vm.CoordStatus, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Teleport_BeforeAnyGameIsConnected_AddingIsRefused()
+    {
+        // (QM-4) No key yet: 'Added …' was shown, nothing was saved, and the first connect cleared the row.
+        var vm = Vm(out _);
+        vm.CoordX = 1;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+        Assert.Empty(vm.CoordEntries);
+        Assert.Contains("connect", vm.CoordStatus, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Nothing was saved", vm.CoordStatus);
+    }
+
+    [Fact]
+    public void Teleport_ApplyImport_IsRefusedWhileUnavailable_AndThePreviewSaysSo()
+    {
+        // (T5 / QM-6) The preview said 'Press Apply to commit' while Apply could only be refused.
+        var vm = Vm(out _);
+        vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
+        vm.BuildImportPreview(UE5DumpUI.Services.CoordCsvCodec.Parse("label,map,x,y,z\nChest 1,Map01,1,2,3\n"), "t.csv");
+        Assert.Contains("unavailable", vm.CoordImportPreview, StringComparison.OrdinalIgnoreCase);
+
+        vm.ApplyCoordImportCommand.Execute(null);
+        Assert.Empty(vm.CoordEntries);
+        Assert.Contains("Nothing was saved", vm.CoordStatus);
+        Assert.Empty(Directory.GetFiles(_dir, "*.json", SearchOption.AllDirectories));
+    }
+
+    [Fact]
+    public void Teleport_ARealName_WritesTheFile()
+    {
+        // (T5) 'StillSaves' checked only the in-memory list.
+        var vm = Vm(out var store);
+        vm.LoadCoordLibraryForGame("ゲーム-Win64-Shipping.exe");
+        vm.CoordX = 1;
+        vm.AddCoordFromFieldsCommand.Execute(null);
+        Assert.True(File.Exists(store.FilePathFor(CoordinateLibraryStore.KeyFor("ゲーム-Win64-Shipping.exe"))));
+    }
+
+    [Theory]
+    [InlineData("???-Win64-Shipping.exe", "Fortnite-Win64-Shipping.exe")]   // '?' stood for non-ASCII: never 'F'
+    [InlineData("???.exe", "Foo.exe")]
+    [InlineData("???.exe", "ゲーム-Win64-Shipping.exe")]                     // a different length
+    public void DumpIdentity_ALegacyNameThatCannotBeTheLiveOne_IsRefused(string file, string live)
+    {
+        // (QM-3) Any '?' name used to mean 'unknown', so a legacy dump was never refused -- not even against an
+        // ASCII name the old DLL would have reported verbatim.
+        var (refused, _) = DumpExplorerViewModel.JudgeIdentity(file, "A", live, "B");
+        Assert.True(refused);
+    }
+
+    [Fact]
+    public void DumpIdentity_ALegacyNameThatCanBeTheLiveOne_IsNotRefused()
+    {
+        var (refused, caveat) = DumpExplorerViewModel.JudgeIdentity("???.exe", "A", "游戏的.exe", "B");
+        Assert.False(refused);
+        Assert.Contains("could not confirm", caveat);
+    }
+
     // ── the confirmed-working proxy record ──
 
     [Fact]
