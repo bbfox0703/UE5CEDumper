@@ -2302,6 +2302,17 @@ Four rules came out of it:
    `.ps1` is for the maintainer to invoke by hand. Same family as the older AMSI finding (a
    `LoadLibrary`/`GetProcAddress` P/Invoke probe is refused as "malicious content").
 
+5. **READING injector source can be enough: a tool's output file is scanned too.** 2026-09-25, a skeptic
+   subagent reviewing `[PATH-PS1-*]` ran `sed -n …p scripts/inject-ue.ps1` over two long ranges. The output was
+   large, so the harness persisted it to `%TEMP%\claude\…\tasks\<id>.output`, and Bitdefender's file scan
+   quarantined that TEXT file as `CMD:Heur.BZC.PZQ.Boxter` within seconds. Its content was our own injector:
+   `OpenProcess` / `VirtualAllocEx` / `WriteProcessMemory` / `CreateRemoteThread` plus a `Start-Process -Verb
+   RunAs` relaunch. Nothing was executed, and the repo copies were untouched; the maintainer saw the alert. **Rule:**
+   read injector-shaped code (`scripts/inject-ue.ps1`, the P/Invoke inject path in `WindowsPlatformService`, the
+   `.CT`'s inject block) in SMALL targeted ranges, or with `grep` for the lines in question -- never dump it in
+   bulk. Put the same instruction in any subagent prompt that has to review it. A quarantined `tasks\*.output` needs
+   no restore; it is only a copy.
+
 **Do not respond by making the script look like something else.** The behaviour genuinely *is*
 persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
 implementation in a less-inspected host, and not running the thing automatically.
