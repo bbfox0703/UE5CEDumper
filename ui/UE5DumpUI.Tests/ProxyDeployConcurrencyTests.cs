@@ -720,6 +720,74 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("Not updated", vm.Games[0].StatusDetail ?? "");
     }
 
+    // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The real refresh names an unreadable file at ANY proxy name, not
+    // only the selected one -- so a note that restated it came out twice. And a row the refresh PRESERVES (a failure in
+    // the same folder) is never refreshed, so there the note must name the file itself.
+    private static string RealRefreshNaming(params string[] unreadable) =>
+        UE5DumpUI.Services.ProxyDeployService.DescribeUnreadable(unreadable);
+
+    private static int Count(string text, string what) =>
+        System.Text.RegularExpressions.Regex.Matches(text, System.Text.RegularExpressions.Regex.Escape(what)).Count;
+
+    [Fact]
+    public async Task Deploy_AnUnreadableOtherName_TheRefreshedRowSaysItOnce()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm));
+        svc.IsOurs = p => !IsWinmm(p);
+        svc.Unreadable = IsWinmm;
+        svc.RefreshDetail = _ => RealRefreshNaming("winmm.dll");
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        string detail = vm.Games[0].StatusDetail ?? "";
+        Assert.Equal(1, Count(detail, "access denied"));
+        Assert.Contains("Skipped", detail);
+        Assert.Contains("cannot read: 1", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_AnUnreadableOtherName_TheRefreshedRowSaysItOnce()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.IsOurs = p => !IsWinmm(p);
+        svc.Unreadable = IsWinmm;
+        svc.VersionOf = _ => SameVersion;                  // version.dll (ours) is current: nothing to rewrite
+        svc.RefreshDetail = _ => RealRefreshNaming("winmm.dll");
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        string detail = vm.Games[0].StatusDetail ?? "";
+        Assert.Equal(1, Count(detail, "access denied"));
+        Assert.Contains("Not updated", detail);
+        Assert.Contains("cannot read: 1", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_APreservedRow_StillNamesTheUnreadableFile()
+    {
+        // version.dll (the radio's) cannot be read; winmm.dll (ours) fails to write, so the row is preserved and the
+        // refresh never names version.dll. Details said '<the lock failure> Not updated.' beside 'cannot read: 1'.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.IsOurs = IsWinmm;
+        svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.SimulateStatus = true;
+        svc.DeployResultByType = (_, t) => t != ProxyType.Winmm;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        string detail = vm.Games[0].StatusDetail ?? "";
+        Assert.Contains("Cannot read version.dll", detail);
+        Assert.Contains("Target in use", detail);
+        Assert.Equal(1, Count(detail, "access denied"));
+        Assert.Contains("cannot read: 1", vm.LastOperationResult);
+        Assert.Contains("failed: 1", vm.LastOperationResult);
+    }
+
     // ── [PROXY-RISKNOTE-WIPED] the one-shot import-risk note outlives the refresh ──
     //
     // DeployAsync writes an advisory when a flavour may not load (BYPASS: imported, so a System32 copy can pre-empt it;
