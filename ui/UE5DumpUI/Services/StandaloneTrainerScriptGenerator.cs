@@ -565,7 +565,9 @@ public static class StandaloneTrainerScriptGenerator
     }
 
     private static string LuaModule(string? module) =>
-        string.IsNullOrWhiteSpace(module) ? "nil" : $"'{module}'";
+        // [PATH-TRAINER-APOSTROPHE] Escaped like every other name-derived literal: an apostrophe in the exe name
+        // (Tony's-Win64-Shipping.exe) made this a Lua syntax error, so Setup could never enable.
+        string.IsNullOrWhiteSpace(module) ? "nil" : $"'{CeLuaHygiene.EscapeLuaString(module)}'";
 
     private static string Hex(int v) =>
         v < 0 ? "-1" : "0x" + v.ToString("X", CultureInfo.InvariantCulture);
