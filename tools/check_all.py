@@ -225,6 +225,14 @@ GATES = [
      ["tools/check_ci_gate_parity.py"],
      "a gate runs in tools/check_all.py but not in .github/workflows/ci.yml, or the other way round -- add it to "
      "BOTH lists with the same arguments. Run 'py tools/check_ci_gate_parity.py --list'", False),
+
+    # [PATH-SHAPE-2026-09-25] (skeptic T11) The Lua suites -- the only behavioural tests of the .CT and of the Lua the
+    # UI emits -- on CE's own VM. SKIPS (passes) where out/ce_lua53 is not built, e.g. CI: building it needs a local
+    # Cheat Engine, which a gate must not reach for. Machine-bound suites are excluded (the script says which).
+    ("check_lua_suites",
+     ["tools/check_lua_suites.py"],
+     "a scripts/tests/*.lua suite failed on Cheat Engine's own Lua VM -- the .CT or an emitted CE script regressed. "
+     "Run 'py tools/check_lua_suites.py' (and --list for what runs and what is excluded)", False),
 ]
 
 
