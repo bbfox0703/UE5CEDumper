@@ -25,6 +25,44 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3558) — R8-01, NuGet upgrades, and the 4K-at-225 % layout pass, published AOT
+
+**3558 = 3557 plus four things, up to `5191b39c`.** It has no DLL or `.CT` code change; the DLL differs only in the
+build stamp.
+- **Round 8 (`wf_41d4c1ab-5e4`): 1 finding, INFO.** `[R8-01]`: the seventh round widened the Load column for a font it
+  never gets. A DataGrid cell is Fluent's 15 px Inter with 12 px margins, not the grid's 12 px, so 210 px still cut
+  `shared · loaded 2026-09-25`, and a trailing `(stale)` never showed at all. Now the marks lead
+  (`stale · loaded <date>`), the column is 240 px, and the header tooltip explains both marks.
+- **NuGet (maintainer's request, evaluated one by one):**
+  - **Avalonia 12.1.1 → 12.1.3** (Win32, Skia, HarfBuzz, Themes.Fluent, Fonts.Inter). Avalonia.Skia 12.1.3 and
+    Avalonia.HarfBuzz 12.1.3 still declare **SkiaSharp 3.119.4 / HarfBuzzSharp 8.3.1.3** (read from their nuspecs).
+    So `<SkiaSharpVersion>` / `<HarfBuzzSharpVersion>` do not move: SkiaSharp 4.x / HarfBuzzSharp 14.x are not what
+    this Avalonia is built against (the ABI crash of the archived todo). `Avalonia.Controls.DataGrid` stays at 12.1.2,
+    the newest published.
+  - **xunit.v3 3.2.2 → 4.0.1, xunit.runner.visualstudio 3.1.5 → 4.0.0, Microsoft.NET.Test.Sdk 18.8.1 → 18.10.1.**
+    xunit.v3 4 drops Microsoft Testing Platform v1, so the graph moves from `mtp-v1` / MTP 1.9.1 to `mtp-v2` /
+    MTP 2.4.0, still transitive. The forbidden-pin guard is unchanged. Nothing here uses what 4.0 broke: no orderers,
+    no `CollectionBehavior` parallel properties, no `-report-*` switches. xunit.analyzers 2.1.0 raised no new
+    warning, and `--filter-class` still works.
+- **`[UI-SPACE-2026-09-25]` (maintainer's request).** Measured on the maintainer's 3840x2400 laptop at 225 %
+  (1707x1067 DIP), build 3557:
+  - **Main tab strip.** It wrapped to three 48 DIP rows. It is now 18 px headers in 36 DIP rows: two rows.
+  - **Snapshot.** The diff grid had only its header. Both grid rows now carry a MinHeight, the auto-snapshot hint is
+    a tooltip, and the saved header and the usage row share one wrapping row. On screen: the saved list ~4 rows, the
+    diff grid ~3.
+  - **Class Pivot.** The field picker and the results were below the window. Now the three paragraphs are one trimmed
+    line each, with the full text on hover. The limits box opens from a toggle. Discover and the pivot target scroll
+    under a cap of half the panel's height. On screen, both work grids show.
+  - Pinned by `PanelSpaceBudgetTests` (red `f0df71a8`). Checked on screen from a staged build before publishing.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3557 → 3558.
+- `dist\UE5DumpUI.exe`: AOT, 58,174,976 bytes (sha `a6ca83e47cad`).
+- `UE5Dumper.dll`: 3,015,680 bytes (sha `c5fe3f2fbea6`), FileVersion `1.0.0.3558`.
+- Proxies: version `33c4372d300d`, dinput8 `62c2086159f4`, dxgi `b9b263781dcb`, winmm `1f4750d7e27b`.
+- Tests: UI 5594/5594. `utf8_helpers_test`, `dll_helpers_test` passed; `dll_core_test` 455, `sein_retention_test` 30,
+  `grausam_window_test` 22.
+- Gates: 26/26.
+
 ## 2026-09-25 (build 3557) — PATH-SHAPE: the seventh skeptic round's fixes, published AOT
 
 **3557 = 3556 plus the seventh skeptic round's fixes, up to `45fd9a9c`.** It has no DLL or `.CT` code change; its
