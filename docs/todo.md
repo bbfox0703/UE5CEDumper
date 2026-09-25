@@ -249,6 +249,15 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🐞 Maintainer report 2026-09-25 — Update All ignores Force Overwrite `[PROXY-FORCE-UPDATEALL-2026-09-25]`
+
+Reported by the maintainer. Mapped by a 3-agent read-only workflow (`wf_d56b3fa7-097`: two maps and one design
+critic, who checked the maps against the source and corrected four of their claims).
+
+| id | sev | status | what | where |
+|---|---|---|---|---|
+| `[PROXY-FORCE-UPDATEALL]` | MED | ⏳ open | **Reported by the maintainer.** In the Proxy Deploy tab, with **Force Overwrite** ticked, **Update All** does nothing to a proxy whose version equals the UI's source DLL. It reports `All N deployed proxy DLL(s) already up-to-date`. Found because the build number had not been bumped on the other PC, so a rebuilt DLL carried the same version and was never redeployed. `UpdateAllAsync` runs its own `FileVersion` equality check (`srcVer != null && srcVer == tgtVer` → `upToDate++; continue`) and never reads `ForceOverwrite`. Its `DeployAsync` call hard-codes `ForceSameVersion: true`, so the service's force-aware `PlanDeploy` never decides on this path. The Deploy button already passes `ForceSameVersion: ForceOverwrite`. The Force tooltip ("Redeploy over OUR proxy even when the version already matches") and `DeployOptions`' doc already state the intended rule. The skip dates from `14abbfea` (2026-03-04, "only target DeployedOutdated games"), which never considered Force, and nothing in working-lessons §6 settles it. ⚠ The archived AC1 live check (`archive/todo-closed-2026-08-23-build-3337.md`, step 7: "Update All with BOTH boxes ticked → All 10 deployed proxy DLL(s) already up-to-date") recorded this bug as a PASS; its real claim (the foreign DLL's SHA is unchanged) is unaffected. **Maintainer's decision:** Force Overwrite means rewrite OUR proxy whatever its version, with no hash / timestamp second check — "whoever ticks it knows what they want". **Safe fix:** read the checkbox ONCE per run and skip a same-version proxy only when it is off. Keep the exists-and-ours pre-gate, and keep `ForeignConsent: false` (AC1). Do not route the decision through `PlanDeploy`: `AlreadyCurrent` returns `true`, so a skipped proxy would count as updated. The result line says how many were rewritten at the same version. Red tests: same version + Force → every deployed proxy rewritten; Force unticked mid-run still covers the whole run. | `ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs` `UpdateAllAsync`; `en.axaml` `str.Tip.ProxyDeploy.Force` / `.UpdateAll` |
+
 ## 🔎 Review 7 — the code added since Review 6, read adversarially `[REVIEW7-2026-09-24]`
 
 **Scope:** product code in `8a22f413..29114cfb` (`dll/src`, `ui/UE5DumpUI`, `scripts`): about 3.6K added
