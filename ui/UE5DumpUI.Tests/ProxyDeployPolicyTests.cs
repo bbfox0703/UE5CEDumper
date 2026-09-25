@@ -452,5 +452,11 @@ public class ProxyDeployPolicyTests
         // A preserved row: the failure names the file, but not as unreadable.
         Assert.False(ProxyDeployService.DetailNamesUnreadable("File locked (game running?): winmm.dll", new[] { "winmm.dll" }));
         Assert.False(ProxyDeployService.DetailNamesUnreadable(null, new[] { "winmm.dll" }));
+        // (fourth review, R4-UNREAD-PARSE-FIRST-SENTENCE-ONLY) Two SEPARATE sentences -- the refresh writes that when the
+        // selected name and another are both unreadable -- are both read, not only the first.
+        string separate = ProxyDeployService.DescribeUnreadable(new[] { "version.dll" }) + " "
+                          + ProxyDeployService.DescribeUnreadable(new[] { "winmm.dll" });
+        Assert.True(ProxyDeployService.DetailNamesUnreadable(separate, new[] { "winmm.dll" }));
+        Assert.True(ProxyDeployService.DetailNamesUnreadable(separate, new[] { "version.dll", "winmm.dll" }));
     }
 }

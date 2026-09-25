@@ -760,7 +760,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         string detail = vm.Games[0].StatusDetail ?? "";
         Assert.Equal(1, Count(detail, "access denied"));
-        Assert.Contains("Not updated", detail);
+        // (fourth review, R4-UPDATEALL-SHORT-NOTE-NAME-UNPINNED) The short note names its file: two unreadable files
+        // must not read "Not updated. Not updated."
+        Assert.Contains("Not updated: winmm.dll.", detail);
         Assert.Contains("cannot read: 1", vm.LastOperationResult);
     }
 
