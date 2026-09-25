@@ -275,8 +275,11 @@ if (-not [string]::IsNullOrEmpty($err) -and $err -match 'Win32 5\)' -and -not $E
     if (-not $isAdmin) {
         Write-Host "[info] Access denied — the game may be running as Administrator. Relaunching elevated (accept the UAC prompt)..." -ForegroundColor Yellow
         $psExe = (Get-Process -Id $PID).Path
-        $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File', $PSCommandPath,
-                     '-ProcessId', "$($target.PID)", '-Dll', "$dllPath", '-Elevated')
+        # [PATH-PS1-ELEVATE-QUOTE] Start-Process joins -ArgumentList with single spaces and quotes nothing (its docs:
+        # a value containing a space needs escaped double quotes), so a path with a space -- C:\Program Files, a
+        # profile, 'DragonSword  Awakening' -- split in the elevated child. A Windows path cannot hold a double quote.
+        $argList = @('-NoProfile','-ExecutionPolicy','Bypass','-File', ('"{0}"' -f $PSCommandPath),
+                     '-ProcessId', "$($target.PID)", '-Dll', ('"{0}"' -f $dllPath), '-Elevated')
         try {
             $p = Start-Process -FilePath $psExe -Verb RunAs -ArgumentList $argList -PassThru -Wait -ErrorAction Stop
             if ($p.ExitCode -eq 0) {
