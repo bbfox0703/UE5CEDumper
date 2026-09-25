@@ -860,8 +860,8 @@ public sealed class ProxyDeployService : IProxyDeployService
             DateTime? lastWrite = present ? NewestLogWrite(procDir) : null;
             string display = ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
             // [PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) A log folder games in different folders share: the load
-            // it shows may be another game's. Said only where there IS a load to attribute.
-            return present && sharedLogFolders.Contains(folderName) ? $"{display} · {SharedLoadNote}" : display;
+            // it shows may be another game's. Said only where there IS a load to attribute, by the leading tag.
+            return present && sharedLogFolders.Contains(folderName) ? SharedTag + display : display;
         }
         catch (Exception ex)
         {
@@ -2072,8 +2072,11 @@ public sealed class ProxyDeployService : IProxyDeployService
              .Select(grp => grp.Key)
              .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
-    /// <summary>The Load column's mark for a shared log folder (<see cref="SharedLogFolders"/>).</summary>
-    internal const string SharedLoadNote = "shared exe name: may be another game's";
+    /// <summary>The tag that LEADS a Load or Suggested text whose exe-keyed signal another listed game shares
+    /// (<see cref="SharedLogFolders"/>, <see cref="SharedExeNames"/>). Leading, not trailing: the Load column shows
+    /// about 18 characters and Suggested about 28, and a mark at the end was clipped away (sixth review, R6-03). The
+    /// columns' header tooltips say what it means.</summary>
+    internal const string SharedTag = "shared · ";
 
     /// <summary>What a row says when its exe name's confirmed-working record is not used (<see cref="SharedExeNames"/>).
     /// Deploy's "Use confirmed" note: that record is the only one Deploy reads.</summary>
@@ -2084,9 +2087,9 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// exists: then there is nothing to say.</summary>
     internal static string? SharedExeNoteFor(bool hasConfirmed, bool hasInjected) => (hasConfirmed, hasInjected) switch
     {
-        (true, true) => "shared exe name: the confirmed-working and injection records are not used",
-        (true, false) => SharedExeNote,
-        (false, true) => "shared exe name: the injection record is not used",
+        (true, true) => "the confirmed-working and injection records are not used",
+        (true, false) => "the confirmed-working record is not used",
+        (false, true) => "the injection record is not used",
         _ => null,
     };
 
@@ -2130,8 +2133,8 @@ public sealed class ProxyDeployService : IProxyDeployService
                 string? note = ambiguous
                     ? SharedExeNoteFor(confirmedByExe.ContainsKey(exeName), injectedExes.Contains(exeName))
                     : null;
-                if (note != null)
-                    display = string.IsNullOrEmpty(display) ? note : $"{display} · {note}";
+                if (note != null)   // the tag leads (sixth review, R6-03); what was not used follows
+                    display = SharedTag + (string.IsNullOrEmpty(display) ? note : $"{display} · {note}");
 
                 results.Add((game, suggestion.Type, display));
             }
