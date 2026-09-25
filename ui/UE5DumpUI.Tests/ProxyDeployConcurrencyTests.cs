@@ -80,6 +80,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
         /// <summary>The import-risk note a successful DeployAsync writes into Details (the real one:
         /// ProxyImportAnalyzer.DescribeDeployAdvisory), or null for none.</summary>
         public Func<DetectedGame, ProxyType, string?>? DeployNote;
+        /// <summary>Overrides DeployAsync's result per (game, type) -- a doubled folder can fail one type and not the other.</summary>
+        public Func<DetectedGame, ProxyType, bool>? DeployResultByType;
+        /// <summary>Opt-in: DeployAsync writes Status / StatusDetail as the real service does.</summary>
+        public bool SimulateStatus;
         /// <summary>The types actually written to the grid, in the order they landed.</summary>
         public readonly List<ProxyType> Applied = new();
 
@@ -119,7 +123,13 @@ public class ProxyDeployConcurrencyTests : IDisposable
             Deploys.Add((game.Name, proxyType, options, sourceDllPath));
             await WaitAsync($"deploy:{game.Name}");
             DuringDeploy?.Invoke();
-            bool ok = DeployResult?.Invoke(game) ?? true;
+            bool ok = DeployResultByType?.Invoke(game, proxyType) ?? DeployResult?.Invoke(game) ?? true;
+            if (SimulateStatus)
+            {
+                // As the real service's ApplyStatus: a success writes DeployedCurrent, a locked target ErrorLocked.
+                game.Status = ok ? ProxyDeployStatus.DeployedCurrent : ProxyDeployStatus.ErrorLocked;
+                game.StatusDetail = ok ? null : "Target in use (game running?) or write-protected";
+            }
             // As the real service: a successful deploy writes its one-shot import-risk note (or nothing) into Details.
             if (ok && DeployNote != null) game.StatusDetail = DeployNote(game, proxyType);
             return ok;
@@ -760,6 +770,26 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         Assert.StartsWith("Updated: 2", vm.LastOperationResult);
         Assert.All(vm.Games, g => Assert.Contains(RiskNote, g.StatusDetail ?? ""));
+    }
+
+    [Fact]
+    public async Task UpdateAll_ADoubledFolder_ALaterSuccessDoesNotHideAnEarlierFailure()
+    {
+        // (second review, UPDATEALL-DOUBLED-FAIL-OVERWRITTEN, pre-existing) version.dll locked (the running game maps
+        // it), winmm.dll rewritten: the success's status overwrote the failure on a row the refresh preserves -- the
+        // grid said DeployedCurrent with no reason while the line said 'failed: 1'.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.SimulateStatus = true;
+        svc.DeployResultByType = (_, t) => t != ProxyType.Version;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.Contains("failed: 1", vm.LastOperationResult);
+        Assert.Equal(ProxyDeployStatus.ErrorLocked, vm.Games[0].Status);
+        Assert.Contains("Target in use", vm.Games[0].StatusDetail ?? "");
     }
 
     [Fact]
