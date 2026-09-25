@@ -2234,6 +2234,32 @@ public sealed class ProxyDeployService : IProxyDeployService
         + $"cannot tell whether {(names.Count == 1 ? "it is" : "they are")} one of ours, so Deploy does not add a "
         + "second proxy next to it.";
 
+    /// <summary>(third review, UNREAD-NOTE-DOUBLED-OTHERNAME) <see cref="DescribeUnreadableSkip"/> for a row that
+    /// already names the files as unreadable: only the skip.</summary>
+    internal static string UnreadableSkipReason(int count) =>
+        $"Skipped: Deploy does not add a second proxy next to {(count == 1 ? "a file that" : "files that")} may be ours.";
+
+    /// <summary>(third review, UNREAD-NOTE-DOUBLED-OTHERNAME) Whether <paramref name="detail"/> already says that every
+    /// one of <paramref name="names"/> cannot be read. The refresh writes <see cref="DescribeUnreadable"/> for such a
+    /// file at ANY proxy name on a row it rewrites -- and nothing on a row it preserves -- so a note appended after the
+    /// refresh must decide from the row itself whether to name the files.</summary>
+    internal static bool DetailNamesUnreadable(string? detail, IReadOnlyList<string> names)
+    {
+        if (string.IsNullOrEmpty(detail)) return false;
+        const string Head = "Cannot read ", Tail = " here (";
+        var said = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int i = 0;
+        while ((i = detail.IndexOf(Head, i, StringComparison.Ordinal)) >= 0)
+        {
+            int start = i + Head.Length;
+            int end = detail.IndexOf(Tail, start, StringComparison.Ordinal);
+            if (end < 0) break;
+            foreach (var n in detail[start..end].Split(", ")) said.Add(n.Trim());
+            i = end;
+        }
+        return names.All(said.Contains);
+    }
+
     /// <summary>Static twin of <see cref="IsOurProxyDll"/> so the staged-copy helper
     /// (which must stay static to be unit-testable against a temp folder) can apply the
     /// SAME ownership predicate the panel and both removal paths use.</summary>

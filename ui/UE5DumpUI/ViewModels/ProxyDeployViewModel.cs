@@ -1440,6 +1440,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // [PROXY-DOUBLE-GUARD] Why each skipped game was skipped. Written to its Details AFTER the refresh, which
         // rewrites every row outside failedDirs from disk -- so the row keeps its true Status and Load, plus this.
         var rowNotes = new List<(DetectedGame Game, string Note, bool KeepRefreshDetail)>();
+        // [PROXY-PRODUCTNAME-UNREADABLE] Rows the unreadable guard skipped; their note is decided after the refresh.
+        var unreadableSkips = new List<(DetectedGame Game, IReadOnlyList<string> Names)>();
         // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
         bool force = ForceOverwrite;
         string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
@@ -1497,7 +1499,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                             otherOfOursPresent: true) == DeployVerdict.OtherProxyOfOurs)
                     {
                         cannotReadSkipped++;
-                        rowNotes.Add((game, ProxyDeployService.DescribeUnreadableSkip(unreadableOthers), true));
+                        unreadableSkips.Add((game, unreadableOthers));
                         continue;
                     }
                 }
@@ -1629,6 +1631,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             foreach (var (g, note, keep) in rowNotes)
                 g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? JoinDetail(g.StatusDetail!, note) : note;
+            // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The refresh already names an unreadable file at any proxy
+            // name, so a refreshed row gets only the skip; a row it did not rewrite gets the whole sentence.
+            foreach (var (g, names) in unreadableSkips)
+            {
+                string note = ProxyDeployService.DetailNamesUnreadable(g.StatusDetail, names)
+                    ? ProxyDeployService.UnreadableSkipReason(names.Count)
+                    : ProxyDeployService.DescribeUnreadableSkip(names);
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
+            }
         }
 
         // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name
@@ -1754,6 +1765,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // [PROXY-RISKNOTE-WIPED] The import-risk notes this run's deploys wrote -- and [PROXY-PRODUCTNAME-UNREADABLE]
         // the proxies it could not read -- re-applied after the refresh erases them.
         var riskNotes = new List<(DetectedGame Game, string Note)>();
+        // [PROXY-PRODUCTNAME-UNREADABLE] Proxy files Update All could not read; their note is decided after the refresh.
+        var unreadableNotes = new List<(DetectedGame Game, string Name)>();
         // A folder can carry two of our types. Once one failed, a later one's success must not overwrite the failure on a
         // row the refresh preserves (second review: the grid showed DeployedCurrent beside "failed: 1").
         var failedState = new Dictionary<string, (ProxyDeployStatus Status, string? Detail)>(StringComparer.OrdinalIgnoreCase);
@@ -1790,11 +1803,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                         if (_deploy.IsUnreadableDll(targetDll))
                         {
                             cannotRead++;
-                            // The refresh already names the SELECTED type's unreadable file (second review: the
-                            // sentence came out twice); for it, only what Update All adds.
-                            riskNotes.Add((game, type == SelectedProxyType
-                                ? "Not updated."
-                                : ProxyDeployService.DescribeUnreadable(new[] { type.GetDllName() }) + " Not updated."));
+                            unreadableNotes.Add((game, type.GetDllName()));
                         }
                         continue;
                     }
@@ -1890,6 +1899,16 @@ public partial class ProxyDeployViewModel : ViewModelBase
         {
             foreach (var (g, note) in riskNotes)
                 g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
+            // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) A refreshed row already names an unreadable file at any
+            // proxy name (the second review's selected-name-only rule said it twice for the others); a PRESERVED row
+            // -- a failure in the same folder -- was never refreshed, so there the note names the file itself.
+            foreach (var (g, name) in unreadableNotes)
+            {
+                string note = ProxyDeployService.DetailNamesUnreadable(g.StatusDetail, new[] { name })
+                    ? $"Not updated: {name}."
+                    : ProxyDeployService.DescribeUnreadable(new[] { name }) + " Not updated.";
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
+            }
         }
     }
 

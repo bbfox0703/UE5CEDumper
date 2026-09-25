@@ -418,4 +418,20 @@ public class ProxyDeployPolicyTests
             Assert.DoesNotContain("import", t, StringComparison.OrdinalIgnoreCase);
         }
     }
+
+    // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The row decides whether a note names the unreadable files.
+    [Fact]
+    public void DetailNamesUnreadable_ReadsWhatTheRefreshWrote()
+    {
+        string one = ProxyDeployService.DescribeUnreadable(new[] { "winmm.dll" });
+        string two = ProxyDeployService.DescribeUnreadable(new[] { "dxgi.dll", "winmm.dll" });
+        Assert.True(ProxyDeployService.DetailNamesUnreadable(one, new[] { "winmm.dll" }));
+        Assert.True(ProxyDeployService.DetailNamesUnreadable(two, new[] { "winmm.dll", "dxgi.dll" }));
+        Assert.True(ProxyDeployService.DetailNamesUnreadable("Multiple proxy DLLs deployed. " + one, new[] { "WINMM.DLL" }));
+        Assert.False(ProxyDeployService.DetailNamesUnreadable(one, new[] { "dxgi.dll" }));
+        Assert.False(ProxyDeployService.DetailNamesUnreadable(one, new[] { "winmm.dll", "dxgi.dll" }));
+        // A preserved row: the failure names the file, but not as unreadable.
+        Assert.False(ProxyDeployService.DetailNamesUnreadable("File locked (game running?): winmm.dll", new[] { "winmm.dll" }));
+        Assert.False(ProxyDeployService.DetailNamesUnreadable(null, new[] { "winmm.dll" }));
+    }
 }
