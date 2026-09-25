@@ -423,7 +423,7 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // === Raise-only version markers (the structural half) ===
 //
 // UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
-// (CMC::GravityDirection) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
+// (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
 // 4.27 while the structural probes have already proved otherwise. The two PURE predicates
 // live here so the tests can pin them; the 503/504 markers walk GObjects and stay in

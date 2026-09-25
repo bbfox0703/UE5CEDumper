@@ -6374,7 +6374,6 @@ static void Test_UnresolvedWeakLabel() {
     EXPECT("VND583-08: a negative index is null",           std::string(Ubel::UnresolvedWeakLabel(-1, 77)) == "null");
 }
 
-// [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
 // [R7-X4] Which CharacterMovementComponent marker means which engine, as measured 2026-09-25 on stock builds: the
 // reflected GravityDirection PROPERTY is already in 5.3 (Release-5.3-CL-29314046), the SetGravityDirection UFUNCTION
 // only from 5.4. The property alone used to raise a stock 5.3 title to 504.
@@ -6392,6 +6391,7 @@ static void Test_CmcMarkerVersion() {
     EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
 }
 
+// [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
 static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
            DynOff::IsWeakTargetGarbage(504, 0x40000000u, false, 0));

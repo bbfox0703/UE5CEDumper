@@ -286,9 +286,10 @@ Four traps, all measured rather than guessed, if you write a fourth rig:
   file-scope literal, so it captures them at load time. Stub them afterwards and mapped types
   silently get `Vartype = nil` while `EnumProperty`, the unknown-type fallback and the UObject
   header rows still resolve, which is harder to diagnose than a uniform failure.
-- **Re-declaration guards make a reload a no-op** (`invoke`, `freeze`). `if not invokeUFunction then`
-  means a second `loadfile()+call` rebinds nothing, so a rig cannot reload between cases for a clean
-  slate — reset the helper's globals by hand instead (`_ue5_invoke_busy`, `_ue5_invoke_str_bufs`).
+- **Re-declaration guards make a SAME-version reload a no-op** (`invoke`, `freeze`). Both helpers gate
+  their public functions on their version (the freeze helper since AA30, the invoke helper since 1.4 /
+  `[R7-X5]`): only a NEWER chunk rebinds them, so reloading the same file rebinds nothing and a rig cannot
+  reload between cases for a clean slate — reset the helper's globals by hand instead (`_ue5_invoke_busy`, `_ue5_invoke_str_bufs`).
   Miss one and state leaks silently from case to case.
 - **⚠ Stub FIDELITY decides what the rig can see.** CE does *not* raise on a nil address:
   `lua_toaddress` falls through to `lua_tointeger`, and `lua_tointeger(nil)` is `0`, so
