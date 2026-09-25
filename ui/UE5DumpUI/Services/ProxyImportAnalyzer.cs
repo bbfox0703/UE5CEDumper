@@ -477,8 +477,9 @@ internal static class ProxyImportAnalyzer
     /// <summary>
     /// The per-process log SUBFOLDER name the DLL creates for a host executable — the join key
     /// between a <c>DetectedGame</c> and its <c>%LOCALAPPDATA%\UE5CEDumper\Logs\&lt;name&gt;</c>
-    /// folder. Mirrors <c>dll/src/Sein.cpp InitProcessMirror</c> EXACTLY: take the file leaf, drop the
-    /// last extension, then replace each Windows-invalid path character with '_'. Kept a pure string
+    /// folder. Mirrors <c>dll/src/Sein.cpp Sein::ProcessFolderName</c> EXACTLY: take the file leaf, drop the
+    /// last extension, replace each Windows-invalid path character with '_', trim trailing ASCII spaces and
+    /// dots (what Win32 trims), and name an empty result "unknown". An empty INPUT gives "". Kept a pure string
     /// transform (no IO) so a test can pin it against that C++ rule — a drift there silently makes
     /// every load probe miss its folder.
     /// </summary>

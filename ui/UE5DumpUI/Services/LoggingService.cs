@@ -531,11 +531,14 @@ public sealed class LoggingService : ILoggingService, IDisposable
 
     /// <summary>The mirror folder for a game process: the SAME folder the DLL logs into (Sein::ProcessFolderName), so
     /// one session's logs are not split. It used to be its own rule (".exe" only, no trim), which for a stem ending in
-    /// a space or dots named a folder the DLL never uses. [PATH-SEIN-TRAILING-SPACE]</summary>
+    /// a space or dots named a folder the DLL never uses. [PATH-SEIN-TRAILING-SPACE]
+    /// "unknown" only for an EMPTY name (no name given: never Logs\ itself). Not for white space: a stem of only
+    /// U+3000 / U+00A0 is a legal folder the DLL logs into, and treating it as blank split the session.
+    /// (second review, MIRROR-WS-DIVERGE)</summary>
     internal static string SanitizeFolderName(string name)
     {
         string folder = ProxyImportAnalyzer.ProcessLogFolderName(name);
-        return string.IsNullOrWhiteSpace(folder) ? "unknown" : folder;
+        return folder.Length == 0 ? "unknown" : folder;
     }
 
     /// <summary>
