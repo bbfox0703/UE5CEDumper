@@ -31,10 +31,15 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
     internal static byte[]? AnsiPathBytes(string path, uint codePage, Func<string, string?> shortPath)
     {
         if (string.IsNullOrEmpty(path)) return null;
+        // (second review, T-ALIAS-LEAF-UI -- measured) An ASCII path is never aliased: it already reads the same in
+        // every code page, and an alias of the FILE renames the loaded module (UE5DUM~1.DLL).
+        if (IsAscii(path)) return System.Text.Encoding.ASCII.GetBytes(path);
         // (skeptic CEINJ-4) The bytes are decoded in the GAME's code page, which is not the UI's under Locale
-        // Emulator; an ASCII 8.3 alias reads the same in every code page, so it wins when there is one.
+        // Emulator; an ASCII 8.3 alias reads the same in every code page, so it wins when there is one -- but only
+        // one that keeps the DLL's own name.
         string? sp = shortPath(path);
-        bool haveShort = !string.IsNullOrEmpty(sp) && !string.Equals(sp, path, StringComparison.Ordinal);
+        bool haveShort = !string.IsNullOrEmpty(sp) && !string.Equals(sp, path, StringComparison.Ordinal)
+                         && string.Equals(Path.GetFileName(sp), Path.GetFileName(path), StringComparison.OrdinalIgnoreCase);
         if (haveShort && IsAscii(sp!)) return System.Text.Encoding.ASCII.GetBytes(sp!);
         byte[]? exact = ExactAnsi(path, codePage);
         if (exact != null) return exact;
@@ -63,14 +68,18 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
         return bytes;
     }
 
-    /// <summary>GetShortPathNameW, or null. The path unchanged is a legitimate answer: a volume with 8.3 names off.</summary>
+    /// <summary>The 8.3 alias of the FOLDER plus the file's own long name, or null. Never the file's alias: that
+    /// renames the loaded module (UE5DUM~1.DLL -- second review, measured). The folder unchanged is a legitimate
+    /// answer: a volume with 8.3 names off.</summary>
     private static string? ShortPath(string path)
     {
-        int n = GetShortPathNameW(path, null, 0);
+        string? dir = Path.GetDirectoryName(path);
+        if (string.IsNullOrEmpty(dir)) return null;
+        int n = GetShortPathNameW(dir, null, 0);
         if (n <= 0) return null;
         var buf = new char[n];
-        int m = GetShortPathNameW(path, buf, n);
-        return m > 0 && m < n ? new string(buf, 0, m) : null;
+        int m = GetShortPathNameW(dir, buf, n);
+        return m > 0 && m < n ? Path.Combine(new string(buf, 0, m), Path.GetFileName(path)) : null;
     }
 
     /// <summary><see cref="ISystemCodePage.AnsiModuleName"/> in an explicit code page, so tests do not depend on the

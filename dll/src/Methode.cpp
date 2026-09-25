@@ -330,14 +330,22 @@ static void __stdcall OnInjectAndConnect()
             "UE5CEDumper: Failed to resolve DLL path."));
         return;
     }
-    // InjectDLL takes a narrow (char*) path, which CE hands to LoadLibraryA in the game. It must be the EXACT
-    // narrowing of the long path in the system ANSI code page, or of its 8.3 alias, or nothing: best fit names another
-    // folder and '?' names none. The alias exists only where the volume keeps 8.3 names (C: here, not D:), and
-    // until [PATH-METHODE-NO8DOT3] it was re-narrowed without the check, so on D: a '?' path went to CE and the user
-    // got the generic "32-bit / anti-cheat / administrator" failure. ASCII paths narrow to the same bytes as before.
-    wchar_t shortW[MAX_PATH] = {};
-    const bool haveShort = GetShortPathNameW(dllPathW, shortW, MAX_PATH) > 0;
-    const std::string narrow = Methode::NarrowForAnsiLoad(dllPathW, haveShort ? shortW : nullptr, CP_ACP);
+    // InjectDLL takes a narrow (char*) path, which CE hands to LoadLibraryA in the game. An ASCII path goes as it is.
+    // Otherwise: the 8.3 alias of the FOLDER plus the DLL's own long name (never the file's alias -- that renames the
+    // loaded module to UE5DUM~1.DLL, and every name check after the inject misses it; second review, measured), or
+    // the EXACT narrowing in the system ANSI code page, or nothing: best fit names another folder and '?' names none.
+    // Aliases exist only where the volume keeps 8.3 names (C: here, not D:). [PATH-METHODE-NO8DOT3]
+    std::wstring aliasW;
+    {
+        const std::wstring longW(dllPathW);
+        const auto slash = longW.find_last_of(L"\\/");
+        wchar_t shortDirW[MAX_PATH] = {};
+        if (slash != std::wstring::npos) {
+            const DWORD n = GetShortPathNameW(longW.substr(0, slash).c_str(), shortDirW, MAX_PATH);
+            if (n > 0 && n < MAX_PATH) aliasW = std::wstring(shortDirW) + longW.substr(slash);
+        }
+    }
+    const std::string narrow = Methode::NarrowForAnsiLoad(dllPathW, aliasW.empty() ? nullptr : aliasW.c_str(), CP_ACP);
     char dllPath[MAX_PATH] = {};
     if (narrow.empty() || narrow.size() >= sizeof(dllPath)) {
         const std::string whereU8 = Utf8Helpers::EncodeUtf16(dllPathW, wcslen(dllPathW));

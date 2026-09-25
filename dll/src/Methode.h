@@ -14,9 +14,10 @@
 namespace Methode {
 
 // [PATH-METHODE-NO8DOT3] The narrow path CE's InjectDLL needs for OUR DLL: CE copies it into the game and calls
-// LoadLibraryA on it. The EXACT narrowing of longPath in codePage (WC_NO_BEST_FIT_CHARS + used-default: best fit
-// names another folder, '?' names none); else the exact narrowing of shortPath, the 8.3 alias; else "" -- the
-// caller refuses, naming the cause. The old code checked only the first narrowing and re-narrowed the alias with
+// LoadLibraryA on it. An ASCII longPath as it is. Otherwise the ASCII alias (shortPath: the 8.3 DIRECTORY plus the
+// DLL's own long name -- an alias that renames the file is ignored), else the EXACT narrowing of longPath in codePage
+// (WC_NO_BEST_FIT_CHARS + used-default: best fit names another folder, '?' names none), else "" -- the caller
+// refuses, naming the cause. The old code checked only the first narrowing and re-narrowed the alias with
 // flags 0: on a volume without 8.3 names (D: here) the alias IS the long path, so a '?'-bearing path went to CE.
 // codePage CP_ACP is read as GetACP(); a UTF-8 ANSI code page (the Windows beta option) takes UTF-8 as is, and
 // refuses both the flag and the used-default out-parameter.
@@ -38,13 +39,26 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
         out = std::move(s);
         return true;
     };
+    auto ascii = [](const wchar_t* w) {
+        for (const wchar_t* p = w; p && *p; ++p) if (*p >= 0x80) return false;
+        return true;
+    };
+    auto leaf = [](const wchar_t* w) {
+        const wchar_t* l = w;
+        for (const wchar_t* p = w; p && *p; ++p) if (*p == L'\\' || *p == L'/') l = p + 1;
+        return l;
+    };
+    std::string out;
+    // (second review, T-ALIAS-LEAF-PLUGIN -- HIGH, measured) An ASCII path is never aliased: it already reads the
+    // same in every code page, and a real 8.3 alias of the FILE renames it (UE5DUM~1.DLL) -- the game then maps our
+    // DLL under that name, and every name check after the inject misses it.
+    if (longPath && ascii(longPath)) return exact(longPath, out) ? out : std::string{};
+    // An alias is usable only if it keeps the DLL's own name: the caller shortens the DIRECTORY, not the file.
+    const bool haveShort = shortPath && longPath && std::wcscmp(shortPath, longPath) != 0
+                           && _wcsicmp(leaf(shortPath), leaf(longPath)) == 0;
     // (skeptic CEINJ-4) CE makes these bytes in ITS code page, the game decodes them in its own (Locale Emulator
     // gives it another): an ASCII alias reads the same in every code page, so it wins when there is one.
-    const bool haveShort = shortPath && longPath && std::wcscmp(shortPath, longPath) != 0;
-    bool shortAscii = haveShort;
-    for (const wchar_t* p = shortPath; shortAscii && p && *p; ++p) if (*p >= 0x80) shortAscii = false;
-    std::string out;
-    if (shortAscii && exact(shortPath, out)) return out;
+    if (haveShort && ascii(shortPath) && exact(shortPath, out)) return out;
     if (exact(longPath, out)) return out;
     if (haveShort && exact(shortPath, out)) return out;
     return {};

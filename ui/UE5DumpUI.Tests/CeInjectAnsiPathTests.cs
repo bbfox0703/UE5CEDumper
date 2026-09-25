@@ -197,8 +197,8 @@ public class CeInjectAnsiPathTests
     {
         // (second review, HIGH, measured) GetShortPathNameW of the FILE gives the leaf UE5DUM~1.DLL, and the game then
         // maps our DLL under that name: load_mode 'loaded:ue5dum~1.dll', the UI's loaded-module detection misses it.
-        const string path = @"C:\Users\王小明\Downloads\UE5CEDumper\UE5Dumper.dll";
-        byte[]? b = WindowsSystemCodePage.AnsiPathBytes(path, 950, _ => @"C:\Users\5B2F~1\DOWNLO~1\UE5CED~1\UE5DUM~1.DLL");
+        const string path = @"C:\工具\下載\UE5CEDumper\UE5Dumper.dll";
+        byte[]? b = WindowsSystemCodePage.AnsiPathBytes(path, 950, _ => @"C:\5DE5~1\4E0B~1\UE5CED~1\UE5DUM~1.DLL");
         Assert.Equal(Big5.GetBytes(path), b);                        // the exact narrowing, the DLL's own name
     }
 
