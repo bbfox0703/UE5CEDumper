@@ -68,7 +68,15 @@ def read(p: pathlib.Path) -> str:
         return ""
 
 
-def one_launch(work: str, exe: str, n: int) -> tuple[bool, str]:
+def one_launch(work: str, exe: str, n: int, ref_sha: str) -> tuple[bool, str]:
+    # (eleventh review, R11-02) The binary is re-checked BEFORE each launch: the run's verdict is about ONE proxy, and a
+    # redeploy between launches (shutil.copy2 succeeds once the game is gone) must stop the run, not join its count.
+    # This pre-launch identity is also the one the process maps: Windows locks a loaded image against overwrites.
+    now_sha = proxy_sha(work)
+    if now_sha != ref_sha:
+        raise SystemExit(f"launch {n}: version.dll changed since the run started ({ref_sha[:12]} -> {now_sha[:12]}) "
+                         "-- stopping: one binary per run")
+    ident = proxy_id(work)
     path = win64(work) / exe
     folder = logs_of(exe)
     t0 = time.time()
@@ -109,7 +117,7 @@ def one_launch(work: str, exe: str, n: int) -> tuple[bool, str]:
                 break
             time.sleep(1)
     survived = alive(p.pid)
-    print(f"  launch {n}: {'PASS' if ok else 'FAIL'}  [{proxy_id(work)}]  {note}  (killed; alive afterwards: {survived})")
+    print(f"  launch {n}: {'PASS' if ok else 'FAIL'}  [{ident}]  {note}  (killed; alive afterwards: {survived})")
     if survived:
         raise SystemExit(f"launch {n} (pid {p.pid}) survived its kill -- stopping: one game at a time")
     return ok, note
@@ -137,9 +145,10 @@ def main(a: list[str]) -> int:
     print(f"  binary under test: {ident}")
     if expect and not proxy_sha(work).startswith(expect):
         raise SystemExit(f"refused: the deployed proxy is not the expected one ({expect})")
+    ref_sha = proxy_sha(work)
     results = []
     for n in range(1, launches + 1):
-        results.append(one_launch(work, exe, n)[0])
+        results.append(one_launch(work, exe, n, ref_sha)[0])
         time.sleep(3)
     print(f"\n{sum(results)}/{len(results)} launches clean")
     return 0 if all(results) else 1
