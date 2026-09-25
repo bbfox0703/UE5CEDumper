@@ -237,6 +237,48 @@ public class CeInjectAnsiPathTests
         finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
     }
 
+    // ── The maintainer's path shapes (tools/verify/path_shape_folders.py makes the same folders under out/pathshape/;
+    //    names escaped so no input method can normalise them). cp950, as on this PC. ──
+
+    public static TheoryData<string, string, string, string> MaintainerShapes => new()
+    {
+        // shape, folder, AnsiPathBytes with no 8.3 alias (refused / ascii / big5), CE's name for "<folder>.exe"
+        { "letterlike", "™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ", "refused", "? ? ? ? \u03A9 ? ? ? K A ? ? ? ? ? ? ? ? ? ?.exe" },
+        { "letterlike-signs", "™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ", "refused", "? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ? ?.exe" },
+        { "tm", "EVERSPACE\u2122 2", "refused", "EVERSPACE? 2.exe" },
+        { "big5", "\u5DE5\u5177", "big5", "\u5DE5\u5177.exe" },
+        { "big5-5c", "\u529F\u592B", "big5", "\u592B.exe" },                  // A5 5C: cut after the trail byte
+        { "kana", "\u30C4\u30FC\u30EB", "refused", "???.exe" },
+        { "spaces", "DragonSword  Awakening", "ascii", "DragonSword  Awakening.exe" },
+        { "apostrophe", "No Man's Sky", "ascii", "No Man's Sky.exe" },
+        { "ampersand", "Tom&Jerry", "ascii", "Tom&Jerry.exe" },
+        { "emoji", "\U0001F600 smile", "refused", "?? smile.exe" },
+    };
+
+    [Theory]
+    [MemberData(nameof(MaintainerShapes))]
+    public void TheMaintainersShapes_AnsiPath_CeName_AndLogFolder(string shape, string folder, string ansi, string ceName)
+    {
+        _ = shape;
+        string dll = $@"D:\{folder}\UE5CEDumper\UE5Dumper.dll";
+        // No 8.3 alias (D: here): refused, or the exact bytes -- never best fit.
+        byte[]? b = WindowsSystemCodePage.AnsiPathBytes(dll, 950, _ => null);
+        switch (ansi)
+        {
+            case "refused": Assert.Null(b); break;
+            case "ascii": Assert.Equal(Encoding.ASCII.GetBytes(dll), b); break;
+            default: Assert.Equal(Big5.GetBytes(dll), b); break;
+        }
+        // With an ASCII 8.3 folder alias (C: here) every non-ASCII shape injects through it; ASCII is never aliased.
+        const string Alias = @"C:\PATHSH~1\UE5CED~1\UE5Dumper.dll";
+        byte[]? viaAlias = WindowsSystemCodePage.AnsiPathBytes(dll, 950, _ => Alias);
+        Assert.Equal(Encoding.ASCII.GetBytes(ansi == "ascii" ? dll : Alias), viaAlias);
+        // CE's own name for an exe of that name: best fit, then the 0x5C cut.
+        Assert.Equal(ceName, WindowsSystemCodePage.AnsiModuleName(folder + ".exe", 950));
+        // The log folder an exe of that name gets: the name itself (nothing to replace or trim).
+        Assert.Equal(folder, ProxyImportAnalyzer.ProcessLogFolderName(folder + ".exe"));
+    }
+
     [System.Runtime.InteropServices.DllImport("kernel32.dll", CharSet = System.Runtime.InteropServices.CharSet.Unicode)]
     private static extern uint GetShortPathNameW(string longPath, StringBuilder shortPath, uint length);
 

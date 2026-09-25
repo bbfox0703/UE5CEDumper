@@ -8811,6 +8811,23 @@ static void Test_Methode_NarrowForAnsiLoad() {
 // (third review, T3-METHODE-FOLDER-ALIAS-UNTESTED) The alias the plugin hands NarrowForAnsiLoad: the FOLDER's 8.3 form
 // plus the DLL's own long name. It was built inline in Methode.cpp, which no test target compiles, so a revert to the
 // FILE's alias (UE5DUM~1.DLL -- discarded by the leaf guard, which silently loses the CEINJ-4 ASCII alias) passed.
+// The maintainer's path shapes (tools/verify/path_shape_folders.py): a folder no ANSI code page holds is refused
+// without an alias and injects through an ASCII folder alias; CE's name for such an exe is its best-fit view.
+static void Test_Methode_MaintainersShapes() {
+    const wchar_t* letterlike = L"D:\\™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ\\UE5Dumper.dll";
+    const wchar_t* signs = L"D:\\™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ\\UE5Dumper.dll";
+    const wchar_t* emoji = L"D:\\\U0001F600 smile\\UE5Dumper.dll";
+    for (const wchar_t* p : { letterlike, signs, emoji }) {
+        EXPECT("no ANSI form and no alias: refused", Methode::NarrowForAnsiLoad(p, p, 950).empty());
+        EXPECT("  ...but an ASCII folder alias injects",
+               Methode::NarrowForAnsiLoad(p, L"D:\\PATHSH~1\\UE5Dumper.dll", 950) == "D:\\PATHSH~1\\UE5Dumper.dll");
+    }
+    const std::wstring exe = L"™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ.exe";
+    EXPECT_EQ_STR("CE's name for the letterlike exe: its best-fit view",
+                  Methode::CeModuleNameUtf8(exe.c_str(), exe.size(), 950),
+                  "? ? ? ? \xCE\xA9 ? ? ? K A ? ? ? ? ? ? ? ? ? ?.exe");
+}
+
 static void Test_Methode_FolderAliasOf() {
     std::wstring asked;
     auto fake = [&asked](const std::wstring& p) -> std::wstring {
@@ -8880,6 +8897,7 @@ int main() {
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
     RUN(Test_Methode_NarrowForAnsiLoad);
     RUN(Test_Methode_FolderAliasOf);
+    RUN(Test_Methode_MaintainersShapes);
     RUN(Test_Methode_CeModuleNameUtf8);
     RUN(Test_TryStrToAddr_AcceptsValidHex);
     RUN(Test_TryStrToAddr_RejectsCePlaceholder);

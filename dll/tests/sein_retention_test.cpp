@@ -298,6 +298,9 @@ int main() {
               Sein::ProcessFolderName(L".exe") == L"unknown");
         check("P7 the nine characters still map to '_'", Sein::ProcessFolderName(L"a?b:c.exe") == L"a_b_c");
         check("P8 a single trailing dot of the stem is trimmed too", Sein::ProcessFolderName(L"Game..exe") == L"Game");
+        // The maintainer's letterlike folder name as an exe stem (tools/verify/path_shape_folders.py): kept as is.
+        check("P12 a letterlike-symbol stem is kept",
+              Sein::ProcessFolderName(L"\u2122 \u2123 \u2124 \u2125 \u03A9 \u2127 \u2128 \u2129 K \u00C5 \u212C \u212D \u212E \u212F \u2130 \u2131 \u2132 \u2133 \u2134 \u2135.exe") == L"\u2122 \u2123 \u2124 \u2125 \u03A9 \u2127 \u2128 \u2129 K \u00C5 \u212C \u212D \u212E \u212F \u2130 \u2131 \u2132 \u2133 \u2134 \u2135");
         check("P11 Win32 trims ASCII space and dot only: an ideographic-space stem is kept",
               Sein::ProcessFolderName(L"\u3000.exe") == L"\u3000");
 
