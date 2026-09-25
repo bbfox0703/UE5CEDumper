@@ -45,9 +45,9 @@
          (the IOutputDevice.DisplayAsync signature changed between MTP versions).
          Let xunit.v3's transitive graph resolve the whole Microsoft.Testing.* set. -->
 
-    <PackageReference Include="xunit.v3" Version="3.*" />
-    <PackageReference Include="xunit.runner.visualstudio" Version="3.*" />
-    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.8.1" />
+    <PackageReference Include="xunit.v3" Version="4.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.*" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
   </ItemGroup>
 
   <ItemGroup>

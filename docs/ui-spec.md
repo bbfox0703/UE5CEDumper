@@ -18,7 +18,7 @@
 - **Theme**: `FluentTheme` Dark mode (`FluentAvaloniaTheme` — see `App.axaml`)
 - **Publish**: `PublishSingleFile` Native AOT trimmed, single exe
 - **Logging**: `Serilog 4.3.1` + `Serilog.Sinks.File 7.0.0` + `Serilog.Sinks.Console 6.*`
-- **Testing**: `xunit.v3 3.2.2+`, `Microsoft.Testing.Platform`, **~3200 tests across ~135 files** (2026-08-05; an absolute count here rots within days — run the suite)
+- **Testing**: `xunit.v3 4.x` (4.0.1 on 2026-09-25), `Microsoft.Testing.Platform` v2 (xunit.v3 4 dropped MTP v1), **~3200 tests across ~135 files** (2026-08-05; an absolute count here rots within days — run the suite)
 - **Other**: `MicroCom.Runtime 0.11.6`, `Tmds.DBus.Protocol 0.93.0`, `HarfBuzzSharp 8.3.1.3`
 
 See "Rules" section in [CLAUDE.md](../CLAUDE.md) for language, i18n, logging, platform abstraction, and other constraints.
