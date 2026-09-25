@@ -4,6 +4,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
+using UE5DumpUI.Services;
 
 namespace UE5DumpUI.ViewModels;
 
@@ -1396,9 +1397,12 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
 
         ClearError();
-        int ok = 0, fail = 0, current = 0;
+        int ok = 0, fail = 0, current = 0, skipped = 0;
         bool pickChanged = false;
         var failedDirs = NewBinariesDirSet();
+        // [PROXY-DOUBLE-GUARD] Why each skipped game was skipped. Written to its Details AFTER the refresh, which
+        // rewrites every row outside failedDirs from disk -- so the row keeps its true Status and Load, plus this.
+        var skipNotes = new List<(DetectedGame Game, string Note)>();
         // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
         bool force = ForceOverwrite;
         string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
@@ -1410,10 +1414,31 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 ct.ThrowIfCancellationRequested();
                 StatusText = $"Deploying to {game.Name}...";
 
+                string target = Path.Combine(game.BinariesDir, SelectedProxyType.GetDllName());
+
+                // [PROXY-DOUBLE-GUARD] Never add a second of our proxy types (maintainer request): a Select-All Deploy
+                // over games that already carry ANOTHER of ours made doubles to be fixed game by game -- and Undeploy
+                // removes both, so the user had to remember which one worked. Skipped even with Force Overwrite, and
+                // foreign consent is not consumed; the type that is already ours here still follows the Force rules.
+                var others = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsOurProxyDll)
+                    .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (others.Count > 0)
+                {
+                    bool exists = File.Exists(target);
+                    if (ProxyDeployService.PlanDeploy(exists, exists && _deploy.IsOurProxyDll(target), sameVersion: false,
+                            new DeployOptions(ForceSameVersion: force, ForeignConsent: AllowForeignOverwrite),
+                            otherOfOursPresent: true) == DeployVerdict.OtherProxyOfOurs)
+                    {
+                        skipped++;
+                        skipNotes.Add((game, ProxyDeployService.DescribeOtherTypeSkip(others)));
+                        continue;
+                    }
+                }
+
                 // [PROXY-DEPLOY-NOOP-COUNT] OUR proxy already at the source's version, with Force off: the service
                 // would answer AlreadyCurrent and return TRUE without writing, and this loop counted it as deployed.
                 // Counted here as already current instead. A foreign DLL still goes to the service (consent).
-                string target = Path.Combine(game.BinariesDir, SelectedProxyType.GetDllName());
                 if (srcVer != null && File.Exists(target) && _deploy.IsOurProxyDll(target)
                     && _deploy.GetDllVersion(target) == srcVer)
                 {
@@ -1441,11 +1466,15 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // Reflect the just-recorded pick in the Suggested column immediately.
             await ApplyProxySuggestionsAsync(ct);
             if (pickChanged) RequestOptionSave?.Invoke();
+            foreach (var (g, note) in skipNotes) g.StatusDetail = note;
 
             string currentNote = current > 0
                 ? $", already current: {current} (tick Force Overwrite to rewrite them)"
                 : "";
-            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}", fail);
+            string skippedNote = skipped > 0
+                ? $", skipped: {skipped} (another of our proxies is already deployed — see Details)"
+                : "";
+            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}{skippedNote}", fail);
             if (ok == 0 && fail == 0)
             {
                 // Nothing was written: neutral, as Update All's "already up-to-date" -- the success colour on a
@@ -1463,8 +1492,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // and bring the grid back in line WITHOUT the cancelled token (it would throw again).
             if (pickChanged) RequestOptionSave?.Invoke();
             await RefreshAfterCancelAsync(failedDirs);
+            foreach (var (g, note) in skipNotes) g.StatusDetail = note;
             SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}"
-                               + (current > 0 ? $", already current: {current}" : ""), fail);
+                               + (current > 0 ? $", already current: {current}" : "")
+                               + (skipped > 0 ? $", skipped: {skipped}" : ""), fail);
         }
 
         // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name
