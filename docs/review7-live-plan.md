@@ -23,7 +23,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | row | sessions | live? · status |
 |---|---|---|
 | `[R7-B-01]` | 1-4 | yes · ✅ PASS red→green on 5.1 (Shipping + Development); 5.3 blocked by `[R7-X4]` |
-| `[R7-A-01]` | 5 | partial · ⏳ open |
+| `[R7-A-01]` | 5 | partial · ✅ no-regression PASS on 5.8 (compact branch unreachable) |
 | `[R7-B-02]` | 6-7, 9-10 | yes · ⏳ open |
 | `[R7-S2]` | 6-7, 11 | yes · ⏳ open |
 | `[R7-X2]` | 8 | yes · ⏳ open |
