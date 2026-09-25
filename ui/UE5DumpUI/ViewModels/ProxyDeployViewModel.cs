@@ -32,8 +32,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private string _sourceDllPath = "";
     [ObservableProperty] private string? _sourceDllVersion;
-    /// <summary>Redeploy over OUR proxy even at the same version. Persisted
-    /// (<c>ui-options.json</c>) — it is benign and reversible.</summary>
+    /// <summary>Redeploy over OUR proxy even at the same version -- in Deploy AND Update All
+    /// ([PROXY-FORCE-UPDATEALL]). Persisted (<c>ui-options.json</c>) — it is benign and reversible.</summary>
     [ObservableProperty] private bool _forceOverwrite;
 
     /// <summary>
@@ -1552,8 +1552,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
 
         ClearError();
-        int updated = 0, fail = 0, upToDate = 0;
+        int updated = 0, fail = 0, upToDate = 0, forcedSame = 0;
         var failedDirs = NewBinariesDirSet();
+        // [PROXY-FORCE-UPDATEALL] Force Overwrite means rewrite OUR proxy whatever its version -- in Update All as in
+        // Deploy (maintainer, 2026-09-25: no hash or timestamp second check; whoever ticks it knows what they want).
+        // Read ONCE: the checkbox stays live during a run, and an untick half-way must not split one Update All
+        // into two policies.
+        bool force = ForceOverwrite;
 
         // Snapshot. This used to enumerate the live bound ObservableCollection across an await,
         // so a Scan completing mid-loop (Games.Clear() + re-Add) invalidated the enumerator and
@@ -1579,7 +1584,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
                     string? srcVer = _deploy.GetDllVersion(srcPath);
                     string? tgtVer = _deploy.GetDllVersion(targetDll);
-                    if (srcVer != null && srcVer == tgtVer)
+                    // The version is FileVersion = 1.0.0.<build_number>: a rebuild that kept its build number reads
+                    // the same, which is exactly when Force is needed. Decided HERE, not by PlanDeploy: its
+                    // AlreadyCurrent returns true without writing, and would be counted as updated.
+                    bool sameVersion = srcVer != null && srcVer == tgtVer;
+                    if (sameVersion && !force)
                     {
                         upToDate++;
                         continue;
@@ -1591,7 +1600,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     // acquire it by 'simplification'.
                     bool success = await _deploy.DeployAsync(srcPath, game, type,
                         new DeployOptions(ForceSameVersion: true, ForeignConsent: false), ct: ct);
-                    if (success) updated++;
+                    if (success) { updated++; if (sameVersion) forcedSame++; }
                     else { fail++; failedDirs.Add(game.BinariesDir); }
                 }
             }
@@ -1603,7 +1612,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
             if (updated == 0 && fail == 0)
             {
                 string msg = upToDate > 0
-                    ? $"All {upToDate} deployed proxy DLL(s) already up-to-date"
+                    ? $"All {upToDate} deployed proxy DLL(s) already up-to-date (tick Force Overwrite to rewrite them "
+                      + "anyway)"
                     : "No deployed proxy DLLs to update";
                 LastOperationResult = msg;
                 StatusText = msg;
@@ -1613,7 +1623,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             }
             else
             {
-                SetOperationResult($"Updated: {updated}, up-to-date: {upToDate}, failed: {fail}", fail);
+                string forcedNote = forcedSame > 0
+                    ? $" ({forcedSame} rewritten at the same version — Force Overwrite)"
+                    : "";
+                SetOperationResult($"Updated: {updated}{forcedNote}, up-to-date: {upToDate}, failed: {fail}", fail);
             }
         }
         catch (OperationCanceledException)

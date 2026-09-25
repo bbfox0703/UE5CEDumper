@@ -8,7 +8,9 @@ namespace UE5DumpUI.Models;
 /// <item><b>ForceSameVersion</b> — redeploy over OUR proxy even when the version
 /// already matches. Benign, reversible, and by far the commoner reason a user
 /// reaches for "Force Overwrite". This is the one that is persisted across
-/// sessions in <c>ui-options.json</c>.</item>
+/// sessions in <c>ui-options.json</c>. Update All applies it through its own
+/// version gate in the view model, not through <c>PlanDeploy</c>
+/// ([PROXY-FORCE-UPDATEALL]).</item>
 /// <item><b>ForeignConsent</b> — replace a file that is provably NOT ours:
 /// ReShade, Special K, Ultimate ASI Loader, or a wrapper the game shipped.
 /// Irreversible — there is no backup and no Recycle Bin on this path — and the
