@@ -47,6 +47,7 @@ def main():
     ap.add_argument("--refs-name", default=None, help="substring of an object name (find_instances by class first)")
     ap.add_argument("--walk-class", default=None)
     ap.add_argument("--max-targets", type=int, default=8)
+    ap.add_argument("--max-walks", type=int, default=4)
     ap.add_argument("--poke-header", type=lambda s: int(s, 0), default=None)
     ap.add_argument("--poke-keys", action="store_true")
     a = ap.parse_args()
@@ -111,10 +112,10 @@ def main():
                     say(f"    sparse hit: owner {x.get('owner_name')} ({x.get('owner_class')}) field {x.get('field_name')}")
                 log["refs"].append({"target": t, "reply": r})
             if a.walk_class:
-                fi = data_of(c.request("find_instances", class_name=a.walk_class, exact_match=False, limit=16))
+                fi = data_of(c.request("find_instances", class_name=a.walk_class, exact_match=False, limit=256))
                 inst = [i for i in (fi.get("instances") or []) if not (i.get("name") or "").startswith("Default__")]
                 log["walks"] = []
-                for i in inst[:4]:
+                for i in inst[:a.max_walks]:
                     w = data_of(c.request("walk_instance", addr=i["addr"], array_limit=8))
                     sp = [f for f in (w.get("fields") or []) if f.get("type") == "MulticastSparseDelegateProperty"]
                     bound = [f for f in sp if "unbound" not in str(f.get("value"))]
