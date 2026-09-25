@@ -629,8 +629,9 @@ public class ProxyImportAnalyzerTests
         var now = new DateTime(2026, 8, 18);
         var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-30), now, 21);
         Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.ObservedStale, sig);
-        Assert.Contains("(stale)", disp);
-        Assert.Contains("2026-07-19", disp);
+        // (eighth review, R8-01) The mark LEADS: the Load column clips the END of its text (measured at Inter 15 px, a
+        // trailing "(stale)" never showed), so an old load read as a recent one.
+        Assert.Equal("stale · loaded 2026-07-19", disp);
     }
 
     [Fact]
