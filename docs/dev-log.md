@@ -25,6 +25,63 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3555) — PATH-SHAPE: non-ASCII / multi-space / special-character paths and exe names, five skeptic rounds, published AOT
+
+**3555 = 3554 plus 49 product commits, up to `7bcab1ba`** (`git log --oneline 641ea268..7bcab1ba -- dll/src
+ui/UE5DumpUI scripts`; 131 commits in all). The rows are in `docs/todo.md` under `[PATH-SHAPE-2026-09-25]`.
+- **Maintainer request.** While fixing `[PROXY-CONFIRM-EXE-KEY]` (a non-ASCII exe name), also check the path shapes on
+  this PC: a non-ASCII folder (`EVERSPACE™ 2`), two spaces in a row (`DragonSword  Awakening`), special-but-legal
+  characters (`No Man's Sky`). A 6-agent read-only workflow mapped them into 18 rows. Each row was fixed red → green,
+  one commit per row.
+- **The two measured facts behind the fixes.**
+  - CE never sees a module's Unicode name. It sees the ANSI `Module32First` name: best-fit narrowing, then cut after
+    the last 0x5C byte, so Big5 功 = A5 5C and `功夫-…` is `夫-…` to CE. CE-facing strings now use that view (the UI's
+    `ISystemCodePage.AnsiModuleName`, the DLL's `Methode::CeModuleNameUtf8`), while keys use the real UTF-8 name
+    (`module_name`).
+  - CE's `injectDLL` hands the path's bytes to `LoadLibraryA`. The generated scripts, the `.CT` and the CE plugin now
+    use, in order:
+    1. an ASCII path as it is;
+    2. an ASCII 8.3 alias of the FOLDER, keeping the DLL's own name (a file alias renames the loaded module to
+       `UE5DUM~1.DLL`);
+    3. the exact ANSI narrowing (never best fit);
+    4. the alias's exact narrowing;
+    5. otherwise a refusal that says why.
+    Before, CE silently manual-mapped the DLL (no TLS, no `.pdata`).
+- **Also fixed:**
+  - a log folder for a stem ending in a space or dots;
+  - an apostrophe in the trainer's Lua;
+  - `&` in CE XML;
+  - braces in Serilog output;
+  - the PS1's elevation quoting and `-LiteralPath`;
+  - the `.CT`'s recent-files split on `\0`, which read reg.exe output as UTF-8;
+  - a proxy-named file we cannot read is now a third state, UNREADABLE (maintainer's call): never written or
+    deleted, and said once;
+  - the one-shot import-risk note outlives the refresh;
+  - `[CI-GATE-DRIFT-2026-09-25]`: nine gates never reached CI; a parity gate, `check_ci_gate_parity`, now requires
+    each CI gate line's exit check;
+  - gate 25, `check_lua_suites`, runs the Lua suites on CE's own VM, and a skipped gate is counted as skipped.
+- **Maintainer's decisions, 2026-09-25:**
+  - `[PROXY-CONFIRM-SHARED-EXE]`: mark it ambiguous. An exe name that games in different folders ship uses neither
+    exe-keyed record (confirmed, injected), and the Load column says the load may be another game's.
+  - `[PATH-AOBMAKER-ANSI-MATCH]`: fixed in AOBMaker's own session (`ce8247c`); the deployed plugin is that build.
+  - Path shapes come from a committed script inside the repo: `tools/verify/path_shape_folders.py` builds 10 folders
+    under `out/pathshape/`, including the maintainer's letterlike-symbol folder in both spellings, and the unit tests
+    pin them.
+- **Five skeptic rounds over the fixes:** 24, 27, 9, 7 and 13 findings. Every one was fixed, a test gap's red measured
+  by mutation. One HIGH, a regression from our own fix: the 8.3 FILE alias renamed the loaded DLL (`bc21def8`). A
+  sixth round, over the fifth's fixes, is running.
+- **Not yet run on a game:** the live checks, in `docs/path-shape-live-plan.md` (5 sessions, 18 checks), together with
+  build 3554's `[PROXY-DEPLOY-UX]` checks.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3554 → 3555.
+- `dist\UE5DumpUI.exe`: AOT, 55.3 MB (58,001,920 bytes, sha `9654a38bf11a`).
+- `UE5Dumper.dll`: 3,015,680 bytes, sha `0689f44d3e62`, FileVersion `1.0.0.3555`, built from `7bcab1ba-dirty` (the
+  dirty suffix is the bumped `build_number.txt`).
+- Proxies in `dist\proxy\`: version `80c7ec21eb6a`, dinput8 `33baedb17bfb`, dxgi `cda5136f3043`, winmm `920ac9b05a08`.
+- Tests: UI **5585/5585**. `dll_helpers_test` 2962/0, `utf8_helpers_test` 273/0, `dll_core_test` 455 checks, `sein_retention_test` 30,
+  `grausam_window_test` 22. All 11 Lua suites pass on CE's VM.
+- Gates: 25/25.
+
 ## 2026-09-25 (build 3554) — Proxy Deploy: never a second of our proxies; "Use confirmed-working proxy", published AOT
 
 **3554 = 3553 plus 4 product commits, up to `64dcd886`** (`git log --oneline 55327e9d..64dcd886 -- dll/src
