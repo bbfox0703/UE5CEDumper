@@ -4,6 +4,7 @@
     py tools/check_all.py            # every pre-build gate
     py tools/check_all.py --quick    # skip the two that need a Ghidra-pattern re-extract
     py tools/check_all.py --list     # print the sequence and exit
+    py tools/check_all.py --selftest # the result classifier's controls only (every run does them first)
 
 WHY THIS EXISTS. The gates lived only as inline `pwsh` lines inside
 `.github/workflows/ci.yml`, each with its own `throw` -- and a session that knows
@@ -236,13 +237,52 @@ GATES = [
 ]
 
 
+def classify(name: str, returncode: int, stdout: str) -> str:
+    """ok / skip / warn / fail for one gate's result."""
+    if returncode == 0:
+        return "ok"
+    return "warn" if name in ADVISORY else "fail"
+
+
+# (second review, LUAGATE-SKIP-HIDDEN) A gate that cannot run here says so and exits 0 (check_lua_suites without its
+# CE host: "SKIPPED: ..."; check_ue_sample_values without its sample: "SKIP: ..."). Counting that as a pass made the
+# summary say "25 gate(s) run, 0 skipped" on a machine where the Lua suites never ran.
+_CLASSIFY_SELFTEST = [
+    ("a pass", ("g", 0, "  ok  x\nCHECK OK: all fine\n"), "ok"),
+    ("a failure", ("g", 1, "CHECK FAILED\n"), "fail"),
+    ("a gate that could not run and said SKIPPED", ("g", 0, "SKIPPED: the host is not built here.\n"), "skip"),
+    ("the SKIP: spelling too", ("g", 0, "SKIP: tools/ue-sample not present\n\n"), "skip"),
+    ("a skip line that is not the LAST line is not a skip", ("g", 0, "SKIPPED: one part\nCHECK OK: the rest\n"), "ok"),
+    ("a failure that printed SKIPPED is still a failure", ("g", 2, "SKIPPED: x\n"), "fail"),
+]
+
+
+def selftest(verbose: bool) -> bool:
+    ok_all = True
+    for what, args_, want in _CLASSIFY_SELFTEST:
+        got = classify(*args_)
+        ok_all &= got == want
+        if verbose or got != want:
+            print("  %s  %s%s" % ("PASS" if got == want else "FAIL", what,
+                                  "" if got == want else "   want %s, got %s" % (want, got)))
+    return ok_all
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--quick", action="store_true",
                     help="skip the two gates that re-extract the Ghidra pattern TSV")
     ap.add_argument("--list", action="store_true", help="print the sequence and exit")
+    ap.add_argument("--selftest", action="store_true", help="run the result classifier's controls and exit")
     args = ap.parse_args()
+
+    if not selftest(args.selftest):
+        print("check_all: its result classifier misses its own controls (above) -- the summary would lie.")
+        return 1
+    if args.selftest:
+        print("selftest: PASS")
+        return 0
 
     if args.list:
         for i, (name, argv, _, slow) in enumerate(GATES, 1):
