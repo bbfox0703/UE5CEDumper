@@ -189,6 +189,16 @@ inline std::string AddrToStr(uintptr_t addr) {
     return oss.str();
 }
 
+// [PATH-MODULE-NAME-UTF8] A CE module-relative address, "\"<module file>\"+<RVA hex>". Built as a std::string:
+// the char[128] snprintf it replaces cut a long name's closing quote and RVA silently, and once the name is UTF-8
+// a cut could split a sequence that json::dump then throws on. Pass CE's OWN name for the module (the ANSI round
+// trip), not the Unicode one -- CE never sees the latter.
+inline std::string CeModuleRelative(const std::string& moduleFile, uint64_t rva) {
+    std::ostringstream oss;
+    oss << '"' << moduleFile << "\"+" << std::uppercase << std::hex << rva;
+    return oss.str();
+}
+
 // Strict hex parse: optional "0x"/"0X" prefix, allows trailing whitespace, rejects
 // any other trailing garbage (e.g. unsubstituted CE placeholders like "0x[ply_base]").
 // Returns true and writes outAddr on success; returns false on failure (outAddr untouched).

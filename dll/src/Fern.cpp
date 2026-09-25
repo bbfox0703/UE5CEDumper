@@ -61,6 +61,29 @@ using json = nlohmann::json;
 // mis-attributes when two proxies coexist because they share the PE ProductName.
 extern HMODULE g_hDllModule;
 
+// [PATH-MODULE-NAME-UTF8] Cheat Engine's OWN name for a module, as UTF-8: the ANSI round trip of the file name,
+// WideCharToMultiByte(CP_ACP, 0) -- best fit included -- and back. CE's symbol handler names a module
+// WinCPToUTF8(szModule) from ANSI Module32First, which measured byte-identical to this conversion on code page 950
+// (ゲーム -> ???, Game™ -> Game?, Café -> Cafe, 遊戲 kept). Only for strings CE itself must resolve (ce_base); the
+// UI computes its own view in UE5DumpUI (ISystemCodePage) rather than trusting this, because the GAME's CP_ACP
+// differs from the system one if the game's manifest sets activeCodePage. Any API failure falls back to UTF-8.
+static std::string AnsiViewUtf8(const std::wstring& w)
+{
+    if (w.empty()) return {};
+    const int wlen = static_cast<int>(w.size());
+    const int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), wlen, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
+    std::string ansi(static_cast<size_t>(n), '\0');
+    if (WideCharToMultiByte(CP_ACP, 0, w.c_str(), wlen, ansi.data(), n, nullptr, nullptr) != n)
+        return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
+    const int m = MultiByteToWideChar(CP_ACP, 0, ansi.data(), n, nullptr, 0);
+    if (m <= 0) return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
+    std::wstring back(static_cast<size_t>(m), L'\0');
+    if (MultiByteToWideChar(CP_ACP, 0, ansi.data(), n, back.data(), m) != m)
+        return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
+    return Utf8Helpers::EncodeUtf16(back.c_str(), back.size());
+}
+
 // Forward declare ExportAPI functions (extern "C" must be at global scope)
 extern "C" bool      UE5_Init();
 extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
@@ -1384,15 +1407,10 @@ static void FillPointerSnapshot(json& data) {
     data["module_base"] = Renge::AddrToStr(moduleBase);
     wchar_t moduleNameW[MAX_PATH] = {};
     GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
-    std::wstring modulePath(moduleNameW);
-    auto lastSlash = modulePath.find_last_of(L"\\/");
-    std::wstring moduleFileName = (lastSlash != std::wstring::npos)
-        ? modulePath.substr(lastSlash + 1) : modulePath;
-    std::string moduleName;
-    for (wchar_t wc : moduleFileName) {
-        moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
-    }
-    data["module_name"] = moduleName;
+    // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8. It used to turn every character >= 128 into '?', so the UI
+    // keyed the confirmed-working proxy, the teleport library and its log folder on a name no file has. The UI
+    // derives CE's own (ANSI) view of the name itself for anything it hands to Cheat Engine.
+    data["module_name"] = Utf8Helpers::LeafUtf8(moduleNameW, wcslen(moduleNameW));
     // The ONLY unambiguous answer to "which process is this pipe talking to". The pipe name
     // is a single global, so two injected games both serve it and a connecting client lands on
     // whichever instance is free -- the UI cannot otherwise tell it attached to the wrong game.
@@ -1410,8 +1428,10 @@ static void FillPointerSnapshot(json& data) {
             std::wstring selfPath(selfPathW);
             auto ss = selfPath.find_last_of(L"\\/");
             std::wstring selfFile = (ss != std::wstring::npos) ? selfPath.substr(ss + 1) : selfPath;
-            for (wchar_t wc : selfFile)
-                selfName += (wc < 128) ? static_cast<char>(towlower(wc)) : '?';
+            // [PATH-MODULE-NAME-UTF8] Lower-cased, then UTF-8 (was '?' per non-ASCII character): the proxy names
+            // it is compared with are ASCII, and a "loaded:<name>" report now carries the real name.
+            for (wchar_t& wc : selfFile) wc = static_cast<wchar_t>(towlower(wc));
+            selfName = Utf8Helpers::EncodeUtf16(selfFile.c_str(), selfFile.size());
         }
         std::string loadMode;
         // [W1-WINMM-LOADMODE] All four proxies we ship (Methode.cpp's kProxyDllNames; InvokeScriptTests pins the
@@ -5012,11 +5032,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::wstring moduleNameNoExt = (dotPos != std::wstring::npos)
                 ? moduleFileName.substr(0, dotPos) : moduleFileName;
 
-            // Convert to narrow string
-            std::string moduleName;
-            for (wchar_t wc : moduleNameNoExt) {
-                moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
-            }
+            // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8 (was '?' per non-ASCII character).
+            std::string moduleName = Utf8Helpers::EncodeUtf16(moduleNameNoExt.c_str(), moduleNameNoExt.size());
 
             json data;
             data["module"]         = moduleName;
@@ -5086,11 +5103,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             data["ce_offsets"] = offsets;
 
-            // CE base address string: "Module.exe+RVA"
-            char ceBase[128];
-            snprintf(ceBase, sizeof(ceBase), "\"%s.exe\"+%llX",
-                     moduleName.c_str(), static_cast<unsigned long long>(gobjectsRVA));
-            data["ce_base"] = ceBase;
+            // CE base address string: "Module.exe"+RVA, in CE's OWN name for the module -- the ANSI round trip
+            // of the file name, which is what CE's symbol handler knows (see AnsiViewUtf8). A std::string: the
+            // char[128] it replaces cut a long name's quote and RVA silently. [PATH-MODULE-NAME-UTF8]
+            data["ce_base"] = Renge::CeModuleRelative(AnsiViewUtf8(moduleFileName),
+                                                      static_cast<uint64_t>(gobjectsRVA));
 
             return Renge::MakeResponse(id, data).dump();
         }
