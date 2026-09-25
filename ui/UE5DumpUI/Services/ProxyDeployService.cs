@@ -2045,6 +2045,21 @@ public sealed class ProxyDeployService : IProxyDeployService
     // Proxy Suggestion (import-table + remembered pick)
     // ────────────────────────────────────────────────────────────────
 
+    /// <summary>[PROXY-CONFIRM-SHARED-EXE] Exe file names that games in DIFFERENT folders ship. The confirmed-working
+    /// and injected records are keyed by the bare exe name -- so a record survives a reinstall -- and for such a name
+    /// a record cannot say which game it came from: it is used for none of them (maintainer's call, 2026-09-25: mark
+    /// it ambiguous, never apply one game's proxy type to another). Only the detected games can show it: a record
+    /// from a game not listed here still applies to a listed one of the same name.</summary>
+    internal static HashSet<string> SharedExeNames(IEnumerable<DetectedGame> games) =>
+        games.Where(g => !string.IsNullOrEmpty(g.ExePath))
+             .GroupBy(g => Path.GetFileName(g.ExePath), StringComparer.OrdinalIgnoreCase)
+             .Where(grp => grp.Select(g => g.BinariesDir).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+             .Select(grp => grp.Key)
+             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>What a row says when its exe name's record is not used (<see cref="SharedExeNames"/>).</summary>
+    internal const string SharedExeNote = "shared exe name: the confirmed-working record is not used";
+
     public async Task ApplyProxySuggestionsAsync(
         IReadOnlyList<DetectedGame> games,
         IReadOnlyDictionary<string, ProxyType> confirmedByExe,
@@ -2054,6 +2069,7 @@ public sealed class ProxyDeployService : IProxyDeployService
         CancellationToken ct = default)
     {
         var targets = games.ToList();
+        var shared = SharedExeNames(targets);
 
         var suggestions = await Task.Run(() =>
         {
@@ -2070,16 +2086,21 @@ public sealed class ProxyDeployService : IProxyDeployService
                 }
 
                 string exeName = Path.GetFileName(game.ExePath);
+                // [PROXY-CONFIRM-SHARED-EXE] An exe name another listed game ships: neither exe-keyed record is its.
+                bool ambiguous = shared.Contains(exeName);
                 ProxyType? confirmed =
-                    confirmedByExe.TryGetValue(exeName, out var c) ? c : null;
+                    !ambiguous && confirmedByExe.TryGetValue(exeName, out var c) ? c : null;
                 ProxyType? remembered =
                     rememberedByGame.TryGetValue(game.Name, out var p) ? p : null;
-                bool injected = injectedExes.Contains(exeName);
+                bool injected = !ambiguous && injectedExes.Contains(exeName);
 
                 var imports = ReadProxyImports(game.ExePath);
                 var suggestion = ProxyImportAnalyzer.Recommend(imports, confirmed, remembered, injected);
+                string? display = suggestion.Display;
+                if (ambiguous && (confirmedByExe.ContainsKey(exeName) || injectedExes.Contains(exeName)))
+                    display = string.IsNullOrEmpty(display) ? SharedExeNote : $"{display} · {SharedExeNote}";
 
-                results.Add((game, suggestion.Type, suggestion.Display));
+                results.Add((game, suggestion.Type, display));
             }
 
             return results;

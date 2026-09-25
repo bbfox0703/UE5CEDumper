@@ -1190,7 +1190,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Equal(new[] { ("A", ProxyType.Version), ("B", ProxyType.Version) },
                      svc.Deploys.Select(x => (x.Game, x.Type)));
         Assert.DoesNotContain("confirmed type used", vm.LastOperationResult);
-        Assert.All(vm.Games, g => Assert.Contains("shared exe name", g.StatusDetail ?? ""));
+        Assert.All(vm.Games, g => Assert.Contains("shared exe name", g.StatusDetail ?? "", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains("confirmed record not used: 2", vm.LastOperationResult);
     }
 
     [Fact]

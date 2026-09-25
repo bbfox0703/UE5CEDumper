@@ -55,7 +55,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// <summary>
     /// [PROXY-USE-CONFIRMED] Deploy the proxy type recorded as CONFIRMED WORKING for a game
     /// (<see cref="ConfirmedProxyByExe"/>) instead of the selected radio -- only into a folder that holds none of
-    /// our proxies (a reinstall, say). Maintainer request. <b>Not persisted</b>, like
+    /// our proxies (a reinstall, say). Maintainer request. Not for an exe name games in different folders ship: the
+    /// record cannot say which one it came from, so the radio's type is used and the row says why
+    /// ([PROXY-CONFIRM-SHARED-EXE]). <b>Not persisted</b>, like
     /// <see cref="AllowForeignOverwrite"/>: it changes WHAT is written, so it is tied to the session the user is
     /// looking at. Read once per run.
     /// </summary>
@@ -1450,6 +1452,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
         var confirmedByExe = new Dictionary<string, ProxyType>(ConfirmedProxyByExe, StringComparer.OrdinalIgnoreCase);
         var sources = useConfirmed ? ResolveSources() : new Dictionary<ProxyType, string>();
         int usedConfirmed = 0;
+        // [PROXY-CONFIRM-SHARED-EXE] Exe names games in different folders ship: a record there is not used.
+        var sharedExes = ProxyDeployService.SharedExeNames(Games);
+        int sharedNotUsed = 0;
 
         try
         {
@@ -1506,9 +1511,20 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
                 // [PROXY-USE-CONFIRMED] A clean folder with a confirmed-working record takes that type. Its source must
                 // exist: a missing one fails THIS row -- never a silent fallback to the radio's type.
-                var (type, substituted) = PickDeployType(SelectedProxyType, useConfirmed,
-                    confirmedByExe.TryGetValue(Path.GetFileName(game.ExePath), out var c) ? c : null,
-                    ours.Count + unreadable.Count);   // a folder with an unreadable proxy-named file is not clean
+                string exeName = Path.GetFileName(game.ExePath);
+                ProxyType? record = confirmedByExe.TryGetValue(exeName, out var c) ? c : null;
+                int oursHere = ours.Count + unreadable.Count;   // a folder with an unreadable proxy-named file is not clean
+                // [PROXY-CONFIRM-SHARED-EXE] A record for an exe name another listed game ships cannot say which game
+                // it came from: the radio's type, and the row says why (never a silent fallback).
+                if (sharedExes.Contains(exeName) && PickDeployType(SelectedProxyType, useConfirmed, record, oursHere).Substituted)
+                {
+                    record = null;
+                    sharedNotUsed++;
+                    rowNotes.Add((game, $"{char.ToUpperInvariant(ProxyDeployService.SharedExeNote[0])}"
+                                        + $"{ProxyDeployService.SharedExeNote[1..]} ({exeName} is in more than one "
+                                        + $"game's folder) — {SelectedProxyType.GetDllName()} instead", true));
+                }
+                var (type, substituted) = PickDeployType(SelectedProxyType, useConfirmed, record, oursHere);
                 string source = SourceDllPath;
                 if (substituted)
                 {
@@ -1594,7 +1610,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             string skippedNote = skipped > 0
                 ? $", skipped: {skipped} (another of our proxies is already deployed — see Details)"
                 : "";
-            string confirmedNote = usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed} (see Details)" : "";
+            string confirmedNote = (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed} (see Details)" : "")
+                                   + (sharedNotUsed > 0
+                                       ? $", confirmed record not used: {sharedNotUsed} (shared exe name — see Details)"
+                                       : "");
             string cannotReadNote = cannotReadSkipped > 0
                 ? $", cannot read: {cannotReadSkipped} (a proxy-named file there cannot be read — see Details)"
                 : "";
@@ -1622,7 +1641,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
                                + (current > 0 ? $", already current: {current}" : "")
                                + (skipped > 0 ? $", skipped: {skipped}" : "")
                                + (cannotReadSkipped > 0 ? $", cannot read: {cannotReadSkipped}" : "")
-                               + (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed}" : ""), fail);
+                               + (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed}" : "")
+                               + (sharedNotUsed > 0 ? $", confirmed record not used: {sharedNotUsed}" : ""), fail);
         }
 
         // After the refresh, which rewrote every row outside failedDirs from disk: the row keeps its true Status and
