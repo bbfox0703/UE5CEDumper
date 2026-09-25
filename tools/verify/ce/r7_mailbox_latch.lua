@@ -15,8 +15,9 @@
 
   ⚠ R7.freeze's filter DROPS every address before it is cached, so the handle never writes a byte: only its
   rescan (a LIST_INSTANCES mailbox command) runs. R7.invoke calls DumperTestActor::Spawn_CountHolders, which is
-  const and read-only. ⚠ invokeUFunction is guarded against re-declaration, so a CE process that ever loaded one
-  helper version keeps it: run a red arm in a FRESH CE process.
+  const and read-only. ⚠ A helper up to 1.3 guards invokeUFunction against re-declaration, so a CE process that ever
+  loaded one keeps it: run a red arm in a FRESH CE process. From 1.4 ([R7-X5]) a NEWER copy replaces the resident one,
+  but a same/older copy still does not -- so a pre-fix red arm after a HEAD load still needs a fresh process.
 ]==]
 
 R7 = R7 or {}

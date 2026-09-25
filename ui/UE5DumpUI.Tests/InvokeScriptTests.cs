@@ -741,7 +741,7 @@ public class InvokeScriptTests
         Assert.Contains("t == 'fstring'", content);
         Assert.Contains("t == 'fstringn'", content);
         Assert.Contains("t == 'fstruct'", content);               // by-value struct param support
-        Assert.Contains("UE5_INVOKE_HELPER_VERSION = '1.3'", content);
+        Assert.Contains("THIS_HELPER_VERSION = '1.4'", content);   // [R7-X5] the version gate; 1.4 replaces a resident 1.3
     }
 
     // --- InputParams property ---
