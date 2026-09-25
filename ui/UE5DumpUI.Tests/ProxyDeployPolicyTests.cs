@@ -229,7 +229,7 @@ public class ProxyDeployPolicyTests
             var game = new DetectedGame { Name = "G", BinariesDir = dir, ExePath = Path.Combine(dir, "G.exe") };
 
             bool ok = await svc.DeployAsync(source, game, ProxyType.Version,
-                new DeployOptions(ForceSameVersion: true, ForeignConsent: true));
+                new DeployOptions(ForceSameVersion: true, ForeignConsent: true), TestContext.Current.CancellationToken);
 
             Assert.False(ok);
             Assert.False(File.Exists(Path.Combine(dir, "version.dll")));

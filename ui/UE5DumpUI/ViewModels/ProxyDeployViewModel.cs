@@ -1435,7 +1435,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         var failedDirs = NewBinariesDirSet();
         // [PROXY-DOUBLE-GUARD] Why each skipped game was skipped. Written to its Details AFTER the refresh, which
         // rewrites every row outside failedDirs from disk -- so the row keeps its true Status and Load, plus this.
-        var skipNotes = new List<(DetectedGame Game, string Note)>();
+        var skipNotes = new List<(DetectedGame Game, string Note, bool KeepRefreshDetail)>();
         // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
         bool force = ForceOverwrite;
         string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
@@ -1470,7 +1470,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
                             otherOfOursPresent: true) == DeployVerdict.OtherProxyOfOurs)
                     {
                         skipped++;
-                        skipNotes.Add((game, ProxyDeployService.DescribeOtherTypeSkip(others)));
+                        // An ALREADY-doubled folder keeps the refresh's "Multiple proxy DLLs deployed …" warning --
+                        // on exactly the folder this guard exists for, it is the one line that says so.
+                        skipNotes.Add((game, ProxyDeployService.DescribeOtherTypeSkip(others), others.Count > 1));
                         continue;
                     }
                 }
@@ -1491,6 +1493,18 @@ public partial class ProxyDeployViewModel : ViewModelBase
                         continue;
                     }
                     source = confirmedSource;
+                    // Another program's file at the confirmed name: a switched row never replaces it, so say so here
+                    // -- the service's own refusal would read as a refusal of the radio's type.
+                    string confirmedTarget = Path.Combine(game.BinariesDir, type.GetDllName());
+                    if (File.Exists(confirmedTarget) && !_deploy.IsOurProxyDll(confirmedTarget))
+                    {
+                        fail++;
+                        failedDirs.Add(game.BinariesDir);
+                        game.StatusDetail = $"{type.GetDllName()} (confirmed working) is another program's file here — "
+                                            + $"not replaced. Untick \"Use confirmed-working proxy\" to deploy "
+                                            + $"{SelectedProxyType.GetDllName()} instead";
+                        continue;
+                    }
                 }
 
                 // [PROXY-DEPLOY-NOOP-COUNT] OUR proxy already at the source's version, with Force off: the service
@@ -1516,10 +1530,17 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     {
                         usedConfirmed++;
                         skipNotes.Add((game, $"Deployed {type.GetDllName()} (confirmed working) instead of "
-                                             + $"{SelectedProxyType.GetDllName()}"));
+                                             + $"{SelectedProxyType.GetDllName()}", false));
                     }
                 }
-                else { fail++; failedDirs.Add(game.BinariesDir); }
+                else
+                {
+                    fail++;
+                    failedDirs.Add(game.BinariesDir);
+                    // The row's reason came from the service about THIS type; say it was the confirmed one.
+                    if (substituted)
+                        game.StatusDetail = $"{type.GetDllName()} (confirmed working): {game.StatusDetail ?? "deploy failed"}";
+                }
             }
 
             // Refresh status from disk to ensure DataGrid reflects actual state — EXCEPT for the
@@ -1530,7 +1551,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // Reflect the just-recorded pick in the Suggested column immediately.
             await ApplyProxySuggestionsAsync(ct);
             if (pickChanged) RequestOptionSave?.Invoke();
-            foreach (var (g, note) in skipNotes) g.StatusDetail = note;
+            WriteNotes();
 
             string currentNote = current > 0
                 ? $", already current: {current} (tick Force Overwrite to rewrite them)"
@@ -1557,11 +1578,19 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // and bring the grid back in line WITHOUT the cancelled token (it would throw again).
             if (pickChanged) RequestOptionSave?.Invoke();
             await RefreshAfterCancelAsync(failedDirs);
-            foreach (var (g, note) in skipNotes) g.StatusDetail = note;
+            WriteNotes();
             SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}"
                                + (current > 0 ? $", already current: {current}" : "")
                                + (skipped > 0 ? $", skipped: {skipped}" : "")
                                + (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed}" : ""), fail);
+        }
+
+        // After the refresh, which rewrote every row outside failedDirs from disk: the row keeps its true Status and
+        // Load column, plus the reason. [PROXY-DOUBLE-GUARD] [PROXY-USE-CONFIRMED]
+        void WriteNotes()
+        {
+            foreach (var (g, note, keep) in skipNotes)
+                g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? $"{g.StatusDetail}. {note}" : note;
         }
 
         // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name

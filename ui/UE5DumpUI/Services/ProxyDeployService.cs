@@ -2132,7 +2132,12 @@ public sealed class ProxyDeployService : IProxyDeployService
         }
     }
 
-    public bool IsOurProxyDll(string dllPath) => DllProductIsOurs(dllPath);
+    public bool IsOurProxyDll(string dllPath) => OwnershipProbe(dllPath);
+
+    /// <summary>The ownership read behind <see cref="IsOurProxyDll"/> (PE ProductName). Replaceable for tests
+    /// only: a fabricated PE with a version resource would test the fixture, not the wiring
+    /// ([PROXY-DOUBLE-GUARD]'s service backstop is tested through it).</summary>
+    internal Func<string, bool> OwnershipProbe { get; init; } = DllProductIsOurs;
 
     /// <summary>Static twin of <see cref="IsOurProxyDll"/> so the staged-copy helper
     /// (which must stay static to be unit-testable against a temp folder) can apply the
