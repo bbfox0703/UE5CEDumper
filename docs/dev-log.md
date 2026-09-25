@@ -25,6 +25,38 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3551) — Review 7's live pass: every live row PASS, and four more rows fixed, published AOT
+
+**3551 = 3550 plus 6 product commits, up to `c6d667ec`.** Derive them: `git log --oneline 1c514220..c6d667ec
+-- dll/src ui/UE5DumpUI scripts`. Rows, recipes and evidence: `docs/todo.md` `[REVIEW7-2026-09-24]` and
+`docs/review7-live-plan.md` (sessions 1-26).
+- **The live pass.** Every Review 7 row with a live check is a live PASS red→green, recorded on its own row. The
+  reds came from staged pre-fix DLLs and pre-fix UIs identified by SHA. A few are partial, and each says which arm
+  stays unit-only. The plan's own errors were corrected in place: D-07 / S10 need a pointer array; S12's own-probe
+  arm does not discriminate; S11's truncated arms wait on X6.
+- **Four more rows, all fixed here** (X4-X6 from the live pass, X7 from its skeptic):
+  - `[R7-X4]` (MED). A stock UE 5.3 title was reported as 5.4. The marker is now CMC's `SetGravityDirection`
+    UFUNCTION, not the `GravityDirection` property that 5.3 already reflects. Live on stock 5.3: 503, and
+    R7-B-01's `[garbage]` tag now reaches it. DragonSword and Avowed are 5.3.
+  - `[R7-X5]`. The CE invoke helper kept the first copy a CE session loaded; R7-S3's latch fix never reached a
+    table opened earlier. It is now version-gated like the freeze helper (1.4).
+  - `[R7-X6]`. Eight container element loops ignored the CE XML export's 60,000-entry ceiling. A map emitted
+    last copied 98,890 entries unflagged.
+  - `[R7-X7]`, text only. The Gravity Direction card said "UE5.4+". Measured, stock 5.3 honours the field.
+- **One skeptic over X4-X6:** no defect in the fixes. Its X4-adjacent note became X7 after the measurement, and its
+  three stale comments were fixed.
+- **Not yet run on a game:** X5 (a 1.3 helper, then 1.4, in one CE process) and X6 (the NestedBag export must now read
+  TRUNCATED, which is also R7-S11's F-20000 arm). Both are recorded as pending on their rows.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3550 → 3551: `dist\UE5DumpUI.exe` AOT 55.1 MB
+(57,773,568 bytes, sha `8d0322b5a355`), `UE5Dumper.dll` 3,008,000 bytes, sha `25bb1f2878fe`, stamp `1.0.0.3551
+c6d667ec-dirty`. The suffix is the bumped `build_number.txt` and nothing else. Four proxies went to `dist\proxy\`
+(`check_proxy_exports --artifacts` OK). Tests: UI **5385/5385**, `dll_helpers_test` 2921/0, `utf8_helpers_test`
+265/0, `dll_core_test` 455 checks, `grausam_window_test` 22 and `sein_retention_test` 14 checks. The Lua suites
+pass 10/10 on CE's own Lua 5.3 VM. Gates 23/23.
+
+-----
+
 ## 2026-09-25 (build 3550) — Review 7: the code since Review 6, fixed at every tier, published AOT
 
 **3550 = 3549 plus 32 product commits, up to `1c514220`.** Derive them: `git log --oneline c88ca562..1c514220
