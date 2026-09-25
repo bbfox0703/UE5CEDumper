@@ -1,4 +1,6 @@
 using System.Linq;
+using System.Text;
+using System.Text.RegularExpressions;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -209,5 +211,31 @@ public class StandaloneTrainerScriptGeneratorTests
         var setup = StandaloneTrainerScriptGenerator.Generate(o)[0].Script;
         Assert.Contains(@"module = 'Tony\'s-Win64-Shipping.exe',", setup);
         Assert.DoesNotContain("module = 'Tony's", setup);
+    }
+
+    [Theory]
+    [InlineData("Tony's-Win64-Shipping.exe")]
+    [InlineData("Tony's&Jerry-Win64-Shipping.exe")]
+    [InlineData("功夫-Win64-Shipping.exe")]
+    public void Every_entry_compiles_on_CEs_VM_and_the_module_literal_reads_back(string exe)
+    {
+        // (second review, T-TRAINER-APOS-NOCOMPILE) The apostrophe fix above is pinned by its TEXT only. This compiles
+        // every {$lua} block of every entry on CE's own VM, then evaluates the baked literal. Skips where the host is
+        // not built (CeLua53Host).
+        var o = Usable();
+        o.Module = exe;
+        var entries = StandaloneTrainerScriptGenerator.Generate(o);
+        var sb = new StringBuilder();
+        int n = 0;
+        foreach (var e in entries)
+            foreach (Match m in Regex.Matches(e.Script, @"\{\$lua\}\r?\n(.*?)\r?\n\{\$asm\}", RegexOptions.Singleline))
+                sb.Append($"assert(load([==[{m.Groups[1].Value}]==], 'chunk{n++}'))\n");
+        Assert.True(n >= entries.Count, $"{n} Lua block(s) in {entries.Count} entries");
+        string rhs = Regex.Match(entries[0].Script, @"module = ('(?:[^'\\]|\\.)*'),").Groups[1].Value;
+        sb.Append($"local v = {rhs}\nprint('MODULE=' .. v)\n");
+
+        var (exit, output) = CeLua53Host.Run(sb.ToString());
+        Assert.True(exit == 0, output);
+        Assert.Contains("MODULE=" + exe, output);
     }
 }
