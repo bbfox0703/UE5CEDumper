@@ -37,19 +37,19 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-D-06]` | 17, 21 | yes · ✅ PASS red→green (cap + low disk; real cuts still marked) |
 | `[R7-S8]` | 17, 24 | yes · ⏳ open |
 | `[R7-D-01]` | 17, 21 | yes · ✅ PASS red→green (both SPC grids) |
-| `[R7-D-04]` | 18, 22 | yes · ⏳ open |
+| `[R7-D-04]` | 18, 22 | yes · ⏳ red captured (session 22: "○ Not reachable" while busy); green pending |
 | `[R7-S12]` | 18, 25 | yes · ⏳ open |
 | `[R7-S7]` | 18, 24 | yes · ⏳ open |
-| `[R7-C-02]` | 18, 22 | yes · ⏳ open |
-| `[R7-C-04]` | 18-19, 22-23 | yes · ⏳ open |
-| `[R7-C-01]` | 19, 23 | yes · ⏳ open |
-| `[R7-C-03]` | 19, 23 | yes · ⏳ open |
-| `[R7-S3]` | 19, 23 | yes · ⏳ open |
+| `[R7-C-02]` | 18, 22 | yes · ⏳ red captured (session 22: file-level `Bytesize` 16); green pending |
+| `[R7-C-04]` | 18-19, 22-23 | yes · ⏳ red captured (session 22 arm B: 3 modals; session 23 arm A: second dialog 4/4); green pending |
+| `[R7-C-01]` | 19, 23 | yes · ⏳ red captured (session 23: freeze command overwritten, no LIST_INSTANCES); green pending |
+| `[R7-C-03]` | 19, 23 | yes · ⏳ red captured (session 23: kept freeze abandoned on "mailbox busy" + modal); green pending |
+| `[R7-S3]` | 19, 23 | yes · ⏳ red captured (session 23: latch survives the revive, a minute later still refused); green pending |
 | `[R7-S13]` | 20, 25 | yes · ⏳ open |
 | `[R7-S14]` | 20, 25 | yes · ⏳ open |
 | `[R7-S11]` | 20, 24 | partial · ⏳ open |
 | `[R7-S6]` | 20 | partial · ⏳ open |
-| `[R7-D-07]` | 20-21 | yes · ⏳ open |
+| `[R7-D-07]` | 20-21 | yes · ⏳ red captured (session 21: "capped at 64 per fetch" on SpawnedHolders 64/200); green pending |
 | `[R7-S10]` | 20, 24 | yes · ⏳ open |
 | `[R7-D-03]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-S5]` | — | no · ✅ recorded as no live check (todo.md) |
