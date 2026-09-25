@@ -223,6 +223,14 @@ public class CeInjectAnsiPathTests
                 Assert.NotNull(b);
                 Assert.Equal(Path.Combine(shortDir, "UE5Dumper.dll"), Encoding.ASCII.GetString(b!));
             }
+            else
+            {
+                // (third review) No ASCII alias here (a volume without 8.3 names): an emoji is in no ANSI code page, so
+                // the only right answers are none at all, or the UTF-8 bytes under a UTF-8 ANSI code page. Before, this
+                // branch asserted nothing.
+                Assert.True(b is null || b.SequenceEqual(Encoding.UTF8.GetBytes(dll)),
+                            "no alias, and yet bytes that are not the UTF-8 path");
+            }
             if (b != null && !b.SequenceEqual(Encoding.UTF8.GetBytes(dll)))
                 Assert.EndsWith(@"\UE5Dumper.dll", Encoding.ASCII.GetString(b));
         }

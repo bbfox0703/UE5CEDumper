@@ -300,6 +300,25 @@ public class ProxyDeployPolicyTests
         finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
     }
 
+    // (third review, T3-READOWNER-NO-READER-CONTROL) The other side of the line: a plain concurrent READER (an AV scan,
+    // Explorer's property handler, another tool) must NOT make a file unreadable -- else a foreign proxy with no
+    // ProductName reads as Unreadable while it is scanned, Deploy skips the folder and Undeploy reports a failure.
+    [Theory]
+    [InlineData(FileShare.ReadWrite | FileShare.Delete)]
+    [InlineData(FileShare.Read)]
+    public void ReadOwner_HeldByAPlainReader_StaysReadable(FileShare readerShares)
+    {
+        string d = TempDir();
+        try
+        {
+            string f = Path.Combine(d, "version.dll");
+            File.WriteAllText(f, "not a PE");
+            using (new FileStream(f, FileMode.Open, FileAccess.Read, readerShares))
+                Assert.Equal(DllOwner.NotOurs, ProxyDeployService.ReadOwner(f));
+        }
+        finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
+    }
+
     [Theory]
     [InlineData(1, false)]   // removed one, left an unreadable one: NOT "nothing of ours left behind"
     [InlineData(0, false)]
