@@ -83,6 +83,9 @@ def flip(src):
 
 
 if __name__ == "__main__":
+    # [PATH-MODULE-NAME-UTF8] The DLL now reports the real (possibly non-ASCII) module name; '%r' keeps printable
+    # non-ASCII, which a cp950 pipe cannot encode. The sibling rigs already do this.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     a = sys.argv[1:] or ["livehash"]
     if a[0] == "livehash":
         raise SystemExit(livehash())

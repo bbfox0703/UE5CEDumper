@@ -18,6 +18,7 @@
 #include "Grimoire.h"
 #include "Sein.h"
 #include "Utf8Helpers.h"   // [A2-CRC-PATH-LS] a wide string is logged as UTF-8, never through a wide format
+#include "Methode.h"       // CeModuleNameUtf8 -- CE's own name for a module (ce_base), [PATH-MODULE-NAME-UTF8]
 #include "Macht.h"
 #include "Genau.h"
 #include "Aura.h"
@@ -61,28 +62,6 @@ using json = nlohmann::json;
 // mis-attributes when two proxies coexist because they share the PE ProductName.
 extern HMODULE g_hDllModule;
 
-// [PATH-MODULE-NAME-UTF8] Cheat Engine's OWN name for a module, as UTF-8: the ANSI round trip of the file name,
-// WideCharToMultiByte(CP_ACP, 0) -- best fit included -- and back. CE's symbol handler names a module
-// WinCPToUTF8(szModule) from ANSI Module32First, which measured byte-identical to this conversion on code page 950
-// (ゲーム -> ???, Game™ -> Game?, Café -> Cafe, 遊戲 kept). Only for strings CE itself must resolve (ce_base); the
-// UI computes its own view in UE5DumpUI (ISystemCodePage) rather than trusting this, because the GAME's CP_ACP
-// differs from the system one if the game's manifest sets activeCodePage. Any API failure falls back to UTF-8.
-static std::string AnsiViewUtf8(const std::wstring& w)
-{
-    if (w.empty()) return {};
-    const int wlen = static_cast<int>(w.size());
-    const int n = WideCharToMultiByte(CP_ACP, 0, w.c_str(), wlen, nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
-    std::string ansi(static_cast<size_t>(n), '\0');
-    if (WideCharToMultiByte(CP_ACP, 0, w.c_str(), wlen, ansi.data(), n, nullptr, nullptr) != n)
-        return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
-    const int m = MultiByteToWideChar(CP_ACP, 0, ansi.data(), n, nullptr, 0);
-    if (m <= 0) return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
-    std::wstring back(static_cast<size_t>(m), L'\0');
-    if (MultiByteToWideChar(CP_ACP, 0, ansi.data(), n, back.data(), m) != m)
-        return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
-    return Utf8Helpers::EncodeUtf16(back.c_str(), back.size());
-}
 
 // Forward declare ExportAPI functions (extern "C" must be at global scope)
 extern "C" bool      UE5_Init();
@@ -5103,10 +5082,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             data["ce_offsets"] = offsets;
 
-            // CE base address string: "Module.exe"+RVA, in CE's OWN name for the module -- the ANSI round trip
-            // of the file name, which is what CE's symbol handler knows (see AnsiViewUtf8). A std::string: the
-            // char[128] it replaces cut a long name's quote and RVA silently. [PATH-MODULE-NAME-UTF8]
-            data["ce_base"] = Renge::CeModuleRelative(AnsiViewUtf8(moduleFileName),
+            // CE base address string: "Module.exe"+RVA, in CE's OWN name for the module (Methode::CeModuleNameUtf8:
+            // what ANSI Module32First gives, 0x5C cut included). A std::string: the char[128] it replaces cut a long
+            // name's quote and RVA silently. [PATH-MODULE-NAME-UTF8]
+            data["ce_base"] = Renge::CeModuleRelative(Methode::CeModuleNameUtf8(moduleFileName.c_str(),
+                                                                                moduleFileName.size(), CP_ACP),
                                                       static_cast<uint64_t>(gobjectsRVA));
 
             return Renge::MakeResponse(id, data).dump();

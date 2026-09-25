@@ -9,6 +9,7 @@
 #include <Windows.h>
 #include <cwchar>
 #include <string>
+#include "Utf8Helpers.h"
 
 namespace Methode {
 
@@ -41,6 +42,35 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
     if (exact(longPath, out)) return out;
     if (shortPath && longPath && std::wcscmp(shortPath, longPath) != 0 && exact(shortPath, out)) return out;
     return {};
+}
+
+// [PATH-MODULE-NAME-UTF8] Cheat Engine's OWN name for a module file, as UTF-8 -- exactly what ANSI Module32First
+// puts in szModule, which CE's symbol handler names the module with (WinCPToUTF8, symbolhandler.pas ~6040): the
+// leaf narrowed with best fit (flags 0: Café -> Cafe, ™ -> ?), then cut after its LAST byte 0x5C, because
+// Module32First keeps what follows the ANSI path's last '\\' byte and a DBCS trail byte can be 0x5C (Big5 功 = A5 5C,
+// Shift-JIS ソ = 83 5C: CE knows 功夫-….exe as 夫-….exe -- measured, skeptic MODVIEW-5C-TRAIL). Widened back and UTF-8.
+// codePage CP_ACP is read as GetACP() -- the GAME's; the UI computes its own view for everything IT hands CE
+// (ISystemCodePage.AnsiModuleName), because a game started under another locale has another ACP. Used for
+// get_ce_pointer_info's ce_base. Any API failure falls back to the plain UTF-8 name.
+inline std::string CeModuleNameUtf8(const wchar_t* leaf, size_t len, UINT codePage)
+{
+    if (!leaf || len == 0) return {};
+    const UINT cp = (codePage == CP_ACP) ? GetACP() : codePage;
+    const int wlen = static_cast<int>(len);
+    const int n = WideCharToMultiByte(cp, 0, leaf, wlen, nullptr, 0, nullptr, nullptr);
+    if (n <= 0) return Utf8Helpers::EncodeUtf16(leaf, len);
+    std::string ansi(static_cast<size_t>(n), '\0');
+    if (WideCharToMultiByte(cp, 0, leaf, wlen, ansi.data(), n, nullptr, nullptr) != n)
+        return Utf8Helpers::EncodeUtf16(leaf, len);
+    const size_t cut = ansi.find_last_of('\\');   // a BYTE search: a DBCS trail byte counts, as it does for Windows
+    if (cut != std::string::npos) ansi.erase(0, cut + 1);
+    if (ansi.empty()) return {};
+    const int m = MultiByteToWideChar(cp, 0, ansi.data(), static_cast<int>(ansi.size()), nullptr, 0);
+    if (m <= 0) return Utf8Helpers::EncodeUtf16(leaf, len);
+    std::wstring back(static_cast<size_t>(m), L'\0');
+    if (MultiByteToWideChar(cp, 0, ansi.data(), static_cast<int>(ansi.size()), back.data(), m) != m)
+        return Utf8Helpers::EncodeUtf16(leaf, len);
+    return Utf8Helpers::EncodeUtf16(back.c_str(), back.size());
 }
 
 } // namespace Methode
