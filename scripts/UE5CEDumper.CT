@@ -307,12 +307,12 @@ _probeSlots(1)
 if not DLL_PATH then
     local _mruFirst = #_slots + 1
     local _mru = {}
+    -- [PATH-CT-INJECT-ANSI] (skeptic CEINJ-1, measured) Plain reg.exe writes the console code page WITH best fit:
+    -- a folder named Cafe-acute came back as 'Cafe' and one with a trade mark as '?', so neither probe could ever
+    -- find it (and where the OEM and ANSI code pages differ, no non-ASCII folder at all). 'chcp 65001' first makes
+    -- every entry exact UTF-8, which _dllAt's fileExists branch and ue5_pathForms then handle -- and the
+    -- self-heal records UTF-8, as dll-path.txt's header says it holds.
     pcall(function()
-        -- [PATH-CT-INJECT-ANSI] (skeptic CEINJ-1, measured) Plain reg.exe writes the console code page WITH best fit:
-        -- a folder named Cafe-acute came back as 'Cafe' and one with a trade mark as '?', so neither probe could ever
-        -- find it (and where the OEM and ANSI code pages differ, no non-ASCII folder at all). 'chcp 65001' first makes
-        -- every entry exact UTF-8, which _dllAt's fileExists branch and ue5_pathForms then handle -- and the
-        -- self-heal records UTF-8, as dll-path.txt's header says it holds.
         local h = io.popen('chcp 65001&gt;nul &amp; reg query "HKCU\\Software\\Cheat Engine" /v "Recent Files" 2&gt;nul')
         if not h then return end
         local out = h:read("*a") or ""
