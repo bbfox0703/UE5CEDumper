@@ -1,7 +1,7 @@
 """Does this engine's CharacterMovementComponent READ GravityDirection? Flip it and watch the pawn.
 
     py tools/verify/r7_gravdir_probe.py --out out/r7live/x7/ue53
-    py tools/verify/r7_gravdir_probe.py --out out/r7live/x7/ue54 --x 0 --y 0 --z 1
+    py tools/verify/r7_gravdir_probe.py --out out/r7live/x7/ue54 --jump
 
 For the Review 7 skeptic's X4-adjacent note: the Gravity Direction card (Laufen) gates on the reflected
 `GravityDirection` property and its text says "UE5.4+", but stock UE 5.3 reflects that property too (R7-X4). Whether
@@ -9,8 +9,9 @@ a 5.3 CMC ever reads it decides whether the card works there or reports a succes
 
 It reads `get_movement_params` (the gravity_direction block) and the pawn's location (`teleport_get_pose`), sets the
 direction with `set_gravity_direction`, samples the location every --gap seconds for --seconds, resets it with
-`reset_gravity_direction`, and samples again. A honoured (0,0,1) sends a grounded pawn UP (Z rises by metres within a
-second); an ignored one leaves Z where it was. Writes only the one field, and resets it. Needs the DLL injected.
+`reset_gravity_direction`, and samples again. ⚠ An IDLE grounded pawn does not move either way --
+measured on stock 5.3 AND on DumperTest 5.4 (the CMC does not re-test an unmoving floor) -- so --jump makes it move:
+under a honoured (0,0,1) the jump never comes down (Z keeps rising); an ignored one lands back where it started. Writes only the one field, and resets it. Needs the DLL injected.
 """
 import argparse
 import json
@@ -36,6 +37,8 @@ def main():
     ap.add_argument("--z", type=float, default=1.0)
     ap.add_argument("--seconds", type=float, default=4.0)
     ap.add_argument("--gap", type=float, default=0.5)
+    ap.add_argument("--jump", action="store_true",
+                    help="invoke Jump / StopJumping on the pawn after the flip: an idle grounded pawn does not re-test its floor")
     a = ap.parse_args()
     os.makedirs(a.out, exist_ok=True)
     lines = []
@@ -63,9 +66,16 @@ def main():
                 pose(f"{label} +{time.time() - t0:4.1f}s")
                 time.sleep(a.gap)
 
+        before = data(c.request("teleport_get_pose"))
         pose("before")
         r = c.request("set_gravity_direction", x=a.x, y=a.y, z=a.z)
         say("set_gravity_direction -> " + json.dumps(data(r))[:300])
+        if a.jump:
+            pawn = before.get("pawn_addr")
+            for fn in ("Jump", "StopJumping"):
+                j = data(c.request("invoke_function", instance_addr=pawn, func_name=fn, parms_size=0))
+                say(f"invoke {fn} -> ok={j.get('ok')} {j.get('message')}")
+                time.sleep(0.3)
         sample("flipped")
         r = c.request("reset_gravity_direction")
         say("reset_gravity_direction -> " + json.dumps(data(r))[:300])
