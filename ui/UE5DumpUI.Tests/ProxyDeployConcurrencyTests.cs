@@ -635,9 +635,46 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
 
         Assert.Empty(svc.Deploys);
-        Assert.Contains("skipped: 1", vm.LastOperationResult);
+        // (second review, UNREAD-RESULTLINE-CLAIMS-OURS) Counted as what it is, not as 'another of our proxies'.
+        Assert.Contains("cannot read: 1", vm.LastOperationResult);
+        Assert.DoesNotContain("another of our proxies", vm.LastOperationResult);
         Assert.Contains("winmm.dll", vm.Games[0].StatusDetail ?? "");
         Assert.Contains("cannot be read", vm.Games[0].StatusDetail ?? "");
+    }
+
+    [Fact]
+    public async Task Deploy_TheSelectedTypeAlreadyOurs_BesideAnUnreadableFile_FollowsTheSameTypeRules()
+    {
+        // (second review, UNREAD-VM-GUARD-OWNTYPE) The unreadable guard skipped even when the selected type was already
+        // ours there -- 'does not add a second proxy' was false, and the service backstop and Update All disagreed.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.IsOurs = p => !IsWinmm(p);
+        svc.Unreadable = IsWinmm;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(ProxyType.Version, Assert.Single(svc.Deploys).Type);
+        Assert.DoesNotContain("cannot read", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_TheSelectedNameUnreadable_SaysItOnce()
+    {
+        // (second review, UNREAD-UPDATEALL-DUP-NOTE) The refresh already reports the selected name as unreadable; the
+        // note repeated the sentence, with '..' between.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version));
+        svc.IsOurs = _ => false;
+        svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
+        svc.RefreshDetail = g => "Cannot read version.dll here (access denied, or held open by another program) — "
+                                 + "cannot tell whose it is.";
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        string detail = vm.Games[0].StatusDetail ?? "";
+        Assert.Single(System.Text.RegularExpressions.Regex.Matches(detail, "Cannot read version.dll"));
+        Assert.DoesNotContain("..", detail);
     }
 
     [Fact]

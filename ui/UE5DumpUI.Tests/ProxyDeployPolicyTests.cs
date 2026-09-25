@@ -282,6 +282,78 @@ public class ProxyDeployPolicyTests
         finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
     }
 
+    // ── the second skeptic review (wf_af037a8c-153) on the unreadable state ──
+
+    [Fact]
+    public void ReadOwner_HeldByAWriterThatSharesRead_IsUnreadable()
+    {
+        // (UNREAD-WRITER-SHARE, measured) The fallback open shared Write, so a proxy held by a writer that shares
+        // read (a hex editor, a mod manager, Python's open) opened fine and read as "another program's".
+        string d = TempDir();
+        try
+        {
+            string f = Path.Combine(d, "version.dll");
+            File.WriteAllText(f, "not a PE");
+            using (new FileStream(f, FileMode.Open, FileAccess.ReadWrite, FileShare.Read))
+                Assert.Equal(DllOwner.Unreadable, ProxyDeployService.ReadOwner(f));
+        }
+        finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
+    }
+
+    [Theory]
+    [InlineData(1, false)]   // removed one, left an unreadable one: NOT "nothing of ours left behind"
+    [InlineData(0, false)]
+    public void Undeploy_LeavingAnUnreadableFile_IsNotASuccess(int removed, bool success)
+    {
+        // (UNREAD-UNDEPLOY-NOTE-WIPED) A success let the view model's refresh wipe the 'Cannot read' note at once --
+        // and the contract is 'true when nothing of ours is left behind', which an unreadable file may be.
+        var (status, message, ok) = ProxyDeployService.ResolveUndeployOutcome(
+            removed, Array.Empty<string>(), Array.Empty<string>(), new[] { "winmm.dll" });
+        Assert.Equal(success, ok);
+        Assert.Equal(ProxyDeployStatus.Unreadable, status);
+        Assert.Contains("Cannot read winmm.dll", message);
+    }
+
+    [Fact]
+    public async System.Threading.Tasks.Task Service_AnUnreadableFileAtAnotherName_IsReportedAndSkipped_AsUnreadable()
+    {
+        // (UNREAD-REFRESH-OTHERNAME) The refresh showed a clean NotDeployed for a folder whose only proxy-named file
+        // could not be read -- the folder Deploy then skipped. (UNREAD-RESULTLINE-CLAIMS-OURS) The backstop called it
+        // DeployedOtherType, 'another of OUR types', for a file it cannot tell the owner of.
+        string d = TempDir();
+        try
+        {
+            File.WriteAllBytes(Path.Combine(d, "winmm.dll"), new byte[] { 0x4D, 0x5A });
+            string source = Path.Combine(d, "source-version.dll");
+            File.WriteAllBytes(source, new byte[] { 0x4D, 0x5A });
+            var svc = new ProxyDeployService(new MockLoggingService(), new MockPlatformService(d))
+            {
+                OwnerProbe = p => p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase)
+                    ? DllOwner.Unreadable : DllOwner.NotOurs,
+            };
+            var game = new DetectedGame { Name = "G", BinariesDir = d, ExePath = Path.Combine(d, "G.exe") };
+            var ct = TestContext.Current.CancellationToken;
+
+            await svc.RefreshDeployStatusAsync(new[] { game }, source, ProxyType.Version, ct: ct);
+            Assert.Equal(ProxyDeployStatus.Unreadable, game.Status);
+            Assert.Contains("Cannot read winmm.dll", game.StatusDetail);
+
+            bool ok = await svc.DeployAsync(source, game, ProxyType.Version, new DeployOptions(), ct);
+            Assert.False(ok);
+            Assert.False(File.Exists(Path.Combine(d, "version.dll")));
+            Assert.Equal(ProxyDeployStatus.Unreadable, game.Status);
+        }
+        finally { try { Directory.Delete(d, true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
+    public void IsUnreadableDll_IsARequiredMember()
+    {
+        // (UNREAD-DIM-DEFAULT-FALSE) A default returning false let a wrapper that forgot it silently disable every
+        // unreadable guard -- the fallback-to-default shape the first review flagged as T2.
+        Assert.True(typeof(UE5DumpUI.Core.IProxyDeployService).GetMethod(nameof(UE5DumpUI.Core.IProxyDeployService.IsUnreadableDll))!.IsAbstract);
+    }
+
     [Fact]
     public void PlanDeploy_AnUnreadableTarget_IsNeverReplaced_ForceAndConsentIncluded()
     {
