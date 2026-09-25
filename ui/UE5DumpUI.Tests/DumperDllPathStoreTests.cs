@@ -111,6 +111,30 @@ public class DumperDllPathStoreTests : IDisposable
         Assert.Equal(new[] { @"D:\good" }, _store.Load().ToArray());
     }
 
+    // (fifth review, R5-04) A RELATIVE line -- an older UE5CEDumper.CT's self-heal could write one -- is neither read nor
+    // carried forward, and none is written: the .CT would probe it against Cheat Engine's current folder.
+    [Fact]
+    public void A_relative_line_is_not_read_and_not_carried_forward()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_store.FilePath)!);
+        File.WriteAllLines(_store.FilePath, new[] { "# header", "sub", @"D:\old", @"C:rel", @"\x" , @"\\srv\share" });
+        Assert.Equal(new[] { @"D:\old", @"\\srv\share" }, _store.Load());
+
+        _store.Record(@"D:\new");
+        var lines = File.ReadAllLines(_store.FilePath).Where(l => l.Length > 0 && l[0] != '#').ToArray();
+        Assert.Equal(new[] { @"D:\new", @"D:\old", @"\\srv\share" }, lines);
+    }
+
+    [Theory]
+    [InlineData("sub")]
+    [InlineData(@"C:rel")]
+    [InlineData(@"\x")]
+    public void Record_refuses_a_relative_folder(string relative)
+    {
+        _store.Record(relative);
+        Assert.False(File.Exists(_store.FilePath));
+    }
+
     [Fact]
     public void Comments_and_blank_lines_are_ignored_by_the_reader()
     {

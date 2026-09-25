@@ -311,8 +311,50 @@ if okMru and lifted then
       check("ue5_isAbsolutePath(" .. c[1] .. ") == " .. tostring(c[2]), ue5_isAbsolutePath(c[1]) == c[2])
     end
   end
-  check("the self-heal writer refuses a relative folder",
-        (unxml(ct):match("function ue5_recordDllDir%(dir%).-\nend") or ""):find("if not ue5_isAbsolutePath(dir) then return end", 1, true) ~= nil)
+end
+
+-- (fifth review, R5-04 / R5-T-WRITER-GUARD-PIN-SURVIVES-COMMENT-OUT) dll-path.txt, by BEHAVIOUR, not by its text: the
+-- writer refuses a relative folder and drops a relative line an older .CT wrote; the reader never returns one (it would
+-- be probed against CE's current folder).
+print("-- (fifth review) dll-path.txt: no relative folder is written, carried forward, or read --")
+local wsrc = ct:match("(function%s+ue5_recordDllDir%(.-\nend)")
+check("lifted ue5_recordDllDir", wsrc ~= nil)
+if wsrc then assert(load(unxml(wsrc), "ue5_recordDllDir"))() end
+local function withFile(existing, fn)
+  local written
+  local realGetenv, realIoOpen = os.getenv, io.open
+  os.getenv = function(k) if k == "LOCALAPPDATA" then return "X:\\AD" end return realGetenv(k) end
+  io.open = function(_, mode)
+    if mode == "r" then
+      if not existing then return nil end
+      local i = 0
+      return { lines = function() return function() i = i + 1 return existing[i] end end, close = function() end }
+    elseif mode == "w" then
+      local buf = {}
+      return { write = function(_, s) buf[#buf + 1] = s end, close = function() written = table.concat(buf) end }
+    end
+  end
+  local ok, res = pcall(fn)
+  os.getenv, io.open = realGetenv, realIoOpen
+  assert(ok, res)
+  return written, res
+end
+local old = { "# header", "sub", "D:\\old", "  ", "\\\\srv\\share\\ce" }
+local w1 = withFile(old, function() ue5_recordDllDir("sub\\") end)
+check("the writer refuses a relative folder: nothing written", w1 == nil, w1)
+local w2 = withFile(old, function() ue5_recordDllDir("D:\\new\\") end)
+check("the writer records an absolute folder first", (w2 or ""):find("\nD:\\new\n", 1, true) ~= nil, w2)
+check("  ...keeps the absolute old lines (drive and UNC)",
+      (w2 or ""):find("\nD:\\old\n", 1, true) ~= nil and (w2 or ""):find("\n\\\\srv\\share\\ce\n", 1, true) ~= nil, w2)
+check("  ...and drops the relative line an older .CT wrote", (w2 or ""):find("\nsub\n", 1, true) == nil, w2)
+local rsrc = ct:match("(function%s+ue5_readBreadcrumbs%(.-\nend)")
+check("the breadcrumb reader is a function the suite can run", rsrc ~= nil)
+if rsrc then
+  assert(load(unxml(rsrc), "ue5_readBreadcrumbs"))()
+  local _, got = withFile(old, function() return ue5_readBreadcrumbs("X:\\AD\\UE5CEDumper\\dll-path.txt") end)
+  check("the reader returns only the absolute lines",
+        type(got) == "table" and #got == 2 and got[1] == "D:\\old" and got[2] == "\\\\srv\\share\\ce",
+        type(got) == "table" and table.concat(got, " | ") or tostring(got))
 end
 
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
