@@ -46,7 +46,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-C-03]` | 19, 23 | yes · ✅ PASS red→green (the finished latch is released; rescans every 2 s, not abandoned) |
 | `[R7-S3]` | 19, 23 | yes · ✅ PASS red→green (the latch is released on the reset mailbox; invokes and the freeze run) |
 | `[R7-S13]` | 20, 25 | yes · ✅ PASS red→green (the export is the instance clicked, not B's root over A's layout) |
-| `[R7-S14]` | 20, 25 | yes · ⏳ green captured (session 20: both arms refuse at once, sentinel kept; controls export); red pending (session 25) |
+| `[R7-S14]` | 20, 25 | yes · ✅ PASS red→green on arm A (refused at once vs A's rows under B); arm B green only |
 | `[R7-S11]` | 20, 24 | partial · ✅ PASS red→green (the nested disclosure, 300 @ 256 and 20,000 @ 16384; the truncated arms blocked by `[R7-X6]`) |
 | `[R7-S6]` | 20 | partial · ✅ PASS red→green (A1–A5; the scalar no-lever arm unit-only; reds from L63) |
 | `[R7-D-07]` | 20-21 | yes · ✅ PASS red→green (on a pointer array: SpawnedHolders) |
