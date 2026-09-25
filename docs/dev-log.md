@@ -25,6 +25,36 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3557) — PATH-SHAPE: the seventh skeptic round's fixes, published AOT
+
+**3557 = 3556 plus the seventh skeptic round's fixes, up to `45fd9a9c`.** It has no DLL or `.CT` code change; its
+DLL differs only in the build stamp.
+- **Round 7:** 6 findings, all INFO, nothing LOW or above.
+  - **R7-01 / R7-02, R7-03 / R7-04:** test pins, each proven by mutation. The breadcrumb call is pinned
+    comment-proof. The older-entry loop and a comment-only `dll-path.txt` are pinned. The drive-root fix is pinned on
+    the writer's own line and in lower case, on both sides.
+  - **R7-05:** the Proxy Deploy panel's Load column widened from 150 to 210 px, so a shared row shows its date.
+  - **R7-06:** the Suggested column's tooltip now follows `ProxyImportAnalyzer.Recommend`'s real order.
+- **Live so far (plan `docs/path-shape-live-plan.md`):**
+  - S1: 15/15 on 3555.
+  - S2: `[PATH-ES2-CE-SYMBOLS]` answered on 3556, not a finding.
+  - S3 #6: the AOBMaker plugin matches the `遊戲` exe by name.
+  - S3 #10: the confirmed record uses the real name.
+  - Still open: S3's UI-side items and S5.
+- **Also:**
+  - A peer session added the `local-llm` skill and `tools/llm/ollama_local.py`. Its selftest is gate 26, in
+    `check_all` and CI.
+  - This session reviewed it (sound) and used it. It summarised the 63 KB archived scan log of an early
+    `trigger_scan` for `[SCAN-EARLY-TRIGGER-CONTAINED]`, and the lead was checked against the raw log.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3556 → 3557.
+- `dist\UE5DumpUI.exe`: AOT, 58,004,992 bytes (sha `ffcb286e1abd`).
+- `UE5Dumper.dll`: 3,015,680 bytes (sha `2f70377c3aaa`), FileVersion `1.0.0.3557`, from `45fd9a9c-dirty`.
+- Proxies: version `c965b79bc80b`, dinput8 `918c80f4392a`, dxgi `e2ccfe7656c7`, winmm `e9ad326eddd4`.
+- Tests: UI 5588/5588. `dll_helpers_test` 2962/0, `utf8_helpers_test` 273/0, `dll_core_test` 455, `sein_retention_test`
+  30, `grausam_window_test` 22. All 11 Lua suites pass on CE's VM.
+- Gates: 26/26.
+
 ## 2026-09-25 (build 3556) — PATH-SHAPE: the sixth skeptic round's fixes, published AOT
 
 **3556 = 3555 plus the sixth skeptic round's fixes, up to `9aa99ca2`.** The DLL's code is unchanged from 3555; only its
