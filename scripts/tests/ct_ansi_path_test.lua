@@ -250,6 +250,33 @@ if okMru and lifted then
   ue5_probeRecentFiles()
   io.open, io.popen = realOpen, realPopen
   check("a relative self-match does not shadow a later absolute one", DLL_PATH == P_UTF8, DLL_PATH)
+
+  -- (fourth review, R4-MRU-RELATIVE-SUBFOLDER-SHADOWS / R4-MRU-SELF-NO-BREAK-PASSES) A folder counts only when it is
+  -- ABSOLUTE: 'sub\UE5CEDumper.CT' (CE started as `cheatengine.exe sub\UE5CEDumper.CT`) has a folder, but a relative
+  -- one -- probing it reads CE's current folder, and a hit would self-heal a relative path into dll-path.txt. And the
+  -- NEWEST self entry wins: the loop stops at the first absolute match.
+  local function probe(line, exists)
+    _slots, _seen, _dllFoundIn, _dllFoundLabel = {}, {}, nil, ""
+    DLL_PATH, DLL_PATH_ANSI, recorded = nil, nil, nil
+    mruLine = "    Recent Files    REG_MULTI_SZ    " .. line .. "\r\n"
+    fileExists = exists
+    io.popen = function() return { read = function() return mruLine end, close = function() end } end
+    io.open = fakeOpen
+    ue5_probeRecentFiles()
+    io.open, io.popen = realOpen, realPopen
+  end
+  local S0 = "\\0"
+  local ABS_CT = "D:\\" .. U_GONGJU .. "\\UE5CEDumper\\UE5CEDumper.CT"
+  probe("D:\\Games\\Other.CT" .. S0 .. "sub\\UE5CEDumper.CT" .. S0 .. ABS_CT, function(q) return q == P_UTF8 end)
+  check("a relative entry WITH a folder does not shadow a later absolute one", DLL_PATH == P_UTF8, DLL_PATH)
+  probe("sub\\UE5CEDumper.CT", function(q) return q == "sub\\UE5Dumper.dll" end)
+  check("  ...and is never probed, even where CE's current folder holds a DLL", DLL_PATH == nil, DLL_PATH)
+  check("  ...so nothing relative is self-healed into dll-path.txt", recorded == nil, recorded)
+  probe("D:\\A\\UE5CEDumper.CT" .. S0 .. ABS_CT,
+        function(q) return q == "D:\\A\\UE5Dumper.dll" or q == P_UTF8 end)
+  check("the NEWEST UE5CEDumper.CT entry wins", DLL_PATH == "D:\\A\\UE5Dumper.dll", DLL_PATH)
+  probe("D:\\A\\UE5CEDumper.CT" .. S0 .. "UE5CEDumper.CT", function(q) return q == "D:\\A\\UE5Dumper.dll" end)
+  check("  ...and an older relative entry does not undo it", DLL_PATH == "D:\\A\\UE5Dumper.dll", DLL_PATH)
 end
 
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
