@@ -200,6 +200,9 @@ do
   local body = unxml(ct)
   local def = body:match("(function%s+ue5_probeRecentFiles.-\nend)") or ""
   local outside = body:gsub(def:gsub("%p", "%%%0"), "", 1)
+  -- (fourth review, R4-MRU-PROBE-PIN-SURVIVES-COMMENT-OUT) Comments out, block then line: a commented-out call (the
+  -- probe opens a console window, so commenting it out is a realistic edit) is not a call.
+  outside = outside:gsub("%-%-%[(=*)%[.-%]%1%]", ""):gsub("%-%-[^\n]*", "")
   local calls = select(2, outside:gsub("ue5_probeRecentFiles%(%)", ""))
   check("the .CT calls ue5_probeRecentFiles() exactly once", calls == 1, calls)
   local at = outside:find("if not DLL_PATH then ue5_probeRecentFiles() end", 1, true)
