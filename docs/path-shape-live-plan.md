@@ -84,3 +84,7 @@ Attach CE.
 
 **Teardown:** undeploy everything from the fixture. Restore `ui-options.json` and `dll-path.txt`. Run
 `path_shape_folders.py clean`.
+
+✅ **Done 2026-09-26:** nothing of ours left in the fixture or the twin; the twin removed; the fixture moved back to
+`D:\UE_Analyze_data\For Testing\PathShape`; `ui-options.json` and `dll-path.txt` restored byte-exact from
+`out/pathshape/backup/`; `out/pathshape/` removed. **All 18 rows are closed.**
