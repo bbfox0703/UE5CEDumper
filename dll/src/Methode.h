@@ -65,6 +65,29 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
     return {};
 }
 
+// [PATH-METHODE-NO8DOT3] The alias the plugin hands NarrowForAnsiLoad as shortPath: shortOf(the FOLDER) plus the DLL's
+// own long name -- never the file's own alias, which renames the loaded module (UE5DUM~1.DLL; second review, measured).
+// "" when there is no folder or the lookup answers nothing. shortOf is ShortDirOf in production, a fake in the test:
+// built inline in Methode.cpp, which no test target compiles, a revert to the file alias passed every test (third
+// review, T3-METHODE-FOLDER-ALIAS-UNTESTED).
+template <typename ShortOf>
+inline std::wstring FolderAliasOf(const std::wstring& longPath, ShortOf shortOf)
+{
+    const auto slash = longPath.find_last_of(L"\\/");
+    if (slash == std::wstring::npos) return {};
+    const std::wstring dir = shortOf(longPath.substr(0, slash));
+    return dir.empty() ? std::wstring{} : dir + longPath.substr(slash);
+}
+
+// The production lookup: GetShortPathNameW of a folder. On a volume with 8.3 names off (D: here) it answers the folder
+// unchanged, which NarrowForAnsiLoad then treats as no alias. "" on failure.
+inline std::wstring ShortDirOf(const std::wstring& dir)
+{
+    wchar_t buf[MAX_PATH] = {};
+    const DWORD n = GetShortPathNameW(dir.c_str(), buf, MAX_PATH);
+    return (n > 0 && n < MAX_PATH) ? std::wstring(buf, n) : std::wstring{};
+}
+
 // [PATH-MODULE-NAME-UTF8] Cheat Engine's OWN name for a module file, as UTF-8 -- exactly what ANSI Module32First
 // puts in szModule, which CE's symbol handler names the module with (WinCPToUTF8, symbolhandler.pas ~6040): the
 // leaf narrowed with best fit (flags 0: Café -> Cafe, ™ -> ?), then cut after its LAST byte 0x5C, because

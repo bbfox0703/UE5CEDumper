@@ -336,16 +336,7 @@ static void __stdcall OnInjectAndConnect()
     // it is ASCII, else the EXACT narrowing in the system ANSI code page, else that alias's exact narrowing, else
     // nothing: best fit names another folder and '?' names none. The order is Methode::NarrowForAnsiLoad's.
     // Aliases exist only where the volume keeps 8.3 names (C: here, not D:). [PATH-METHODE-NO8DOT3]
-    std::wstring aliasW;
-    {
-        const std::wstring longW(dllPathW);
-        const auto slash = longW.find_last_of(L"\\/");
-        wchar_t shortDirW[MAX_PATH] = {};
-        if (slash != std::wstring::npos) {
-            const DWORD n = GetShortPathNameW(longW.substr(0, slash).c_str(), shortDirW, MAX_PATH);
-            if (n > 0 && n < MAX_PATH) aliasW = std::wstring(shortDirW) + longW.substr(slash);
-        }
-    }
+    const std::wstring aliasW = Methode::FolderAliasOf(std::wstring(dllPathW), Methode::ShortDirOf);
     const std::string narrow = Methode::NarrowForAnsiLoad(dllPathW, aliasW.empty() ? nullptr : aliasW.c_str(), CP_ACP);
     char dllPath[MAX_PATH] = {};
     if (narrow.empty() || narrow.size() >= sizeof(dllPath)) {
