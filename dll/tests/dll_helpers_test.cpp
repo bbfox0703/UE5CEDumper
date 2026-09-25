@@ -8836,6 +8836,27 @@ static void Test_Methode_FolderAliasOf() {
            a.size() > leaf.size() && a.compare(a.size() - leaf.size(), leaf.size(), leaf) == 0);
     EXPECT("  ...under a folder that exists",
            a.size() > leaf.size() && GetFileAttributesW(a.substr(0, a.size() - leaf.size()).c_str()) != INVALID_FILE_ATTRIBUTES);
+    // (fourth review, R4-SHORTDIROF-IDENTITY-PASSES) %TEMP% here is already 8.3-legal, so a ShortDirOf that returned its
+    // input passed the three checks above. A folder whose name is NOT 8.3-legal: where the volume keeps 8.3 names, the
+    // alias must be exactly the independent GetShortPathNameW answer plus the DLL's name.
+    const std::wstring odd = dir + L"\\ue5 alias \U0001F600 " + std::to_wstring(GetCurrentProcessId());
+    if (CreateDirectoryW(odd.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS) {
+        wchar_t sb[MAX_PATH] = {};
+        const DWORD n = GetShortPathNameW(odd.c_str(), sb, MAX_PATH);
+        const std::wstring independent = (n > 0 && n < MAX_PATH) ? std::wstring(sb, n) : std::wstring();
+        const std::wstring got = Methode::FolderAliasOf(odd + leaf, Methode::ShortDirOf);
+        if (!independent.empty() && independent != odd) {
+            EXPECT("a non-8.3 folder: the alias is GetShortPathNameW's answer plus the DLL's name",
+                   got == independent + leaf);
+            EXPECT("  ...which differs from the long path", got != odd + leaf);
+        } else {
+            printf("  (note) %%TEMP%%'s volume makes no 8.3 names: the non-8.3 alias case cannot run here\n");
+            EXPECT("no 8.3 names: the folder comes back unchanged", got == odd + leaf);
+        }
+        RemoveDirectoryW(odd.c_str());
+    } else {
+        EXPECT("could create the non-8.3 test folder under %TEMP%", false);
+    }
 }
 
 int main() {
