@@ -194,6 +194,8 @@ end
 local okMru = ct:match("(function%s+ue5_probeRecentFiles.-\nend)") ~= nil
 check("ue5_probeRecentFiles is in the .CT", okMru)
 if okMru and liftLocal("_slot") and liftLocal("_dllAt") and liftLocal("_probeSlots") then
+  -- its own dependency (pcall'd inside the probe: a missing one would just read as "no recent files")
+  assert(load(unxml(ct:match("(function%s+ue5_splitRegMultiSz.-\nend)")), "ue5_splitRegMultiSz"))()
   assert(load(unxml(ct:match("(function%s+ue5_probeRecentFiles.-\nend)")), "ue5_probeRecentFiles"))()
   -- the .CT's chunk-level locals, as globals here
   _slots, _seen, _dllFoundIn, _dllFoundLabel = {}, {}, nil, ""

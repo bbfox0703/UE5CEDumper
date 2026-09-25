@@ -106,7 +106,12 @@ function ue5_splitRegMultiSz(data)
             local a, b = data:find("\\0", from, true)
             if not a then break end
             local rest = data:sub(b + 1)
-            if rest == "" or rest:find("^%s*%a:[\\/]") or rest:find("^%s*\\\\") then cut = a break end
+            -- (second review, MRU-REL-MERGE) ...or where the entry before it already ends in a table's extension:
+            -- CE can store a RELATIVE entry (started with a relative table argument, then saved), and gluing it onto
+            -- the entry before wrecked that one too.
+            local before = data:sub(pos, a - 1):lower()
+            if rest == "" or rest:find("^%s*%a:[\\/]") or rest:find("^%s*\\\\")
+               or before:find("%.ct%s*$") or before:find("%.cetrainer%s*$") then cut = a break end
             from = b + 1
         end
         local entry = (cut and data:sub(pos, cut - 1) or data:sub(pos)):gsub("^%s+", ""):gsub("%s+$", "")
@@ -329,7 +334,8 @@ _probeSlots(1)
 --
 -- reg.exe renders a REG_MULTI_SZ with the LITERAL two characters \0 between
 -- entries, so the split is on that, not on a real NUL.
-if not DLL_PATH then
+-- A global so the Lua suite can run it (second review, T-MRU-UTF8-SELFHEAL); called once, right below.
+function ue5_probeRecentFiles()
     local _mruFirst = #_slots + 1
     local _mru = {}
     -- [PATH-CT-INJECT-ANSI] (skeptic CEINJ-1, measured) Plain reg.exe writes the console code page WITH best fit:
@@ -381,6 +387,7 @@ if not DLL_PATH then
         pcall(function() ue5_recordDllDir(_dllFoundIn) end)
     end
 end
+if not DLL_PATH then ue5_probeRecentFiles() end
 
 -- Rendered on demand so the failure dialog, the log file and the debug dump all
 -- show the SAME list -- a user's screenshot can never disagree with the log.
