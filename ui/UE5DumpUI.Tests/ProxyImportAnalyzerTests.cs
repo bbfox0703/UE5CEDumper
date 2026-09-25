@@ -634,6 +634,38 @@ public class ProxyImportAnalyzerTests
         Assert.Equal("stale · loaded 2026-07-19", disp);
     }
 
+    /// <summary>
+    /// (ninth review, R9-02) The Load column must hold its LONGEST text: a shared folder whose newest log is stale,
+    /// "shared · stale · loaded 2026-07-19". Measured from the Inter Regular in Avalonia.Fonts.Inter 12.1.3 at the
+    /// cell's 15 px: ~248 px of text + 12 px margins each side = ~272 px, so the 240 px of R8-01 cut the date again.
+    /// The exact string is pinned too: if the text grows, the width must be re-measured.
+    /// </summary>
+    [Fact]
+    public void LoadColumn_HoldsTheLongestLoadText()
+    {
+        var now = new DateTime(2026, 8, 18);
+        var (_, stale) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-30), now, 21);
+        Assert.Equal("shared · stale · loaded 2026-07-19", ProxyDeployService.SharedTag + stale);
+
+        string axaml = File.ReadAllText(RepoFileForWidth("ui/UE5DumpUI/Views/ProxyDeployPanel.axaml"));
+        var m = System.Text.RegularExpressions.Regex.Match(axaml,
+            @"<DataGridTextColumn\b[^>]*Binding=""\{Binding LoadObservation\}""[^>]*\bWidth=""(\d+)""");
+        Assert.True(m.Success, "no Load column (Binding LoadObservation) with a Width in ProxyDeployPanel.axaml");
+        Assert.True(int.Parse(m.Groups[1].Value) >= 280,
+            $"Load column is {m.Groups[1].Value} px; its longest text needs ~272 (see this test's summary)");
+    }
+
+    private static string RepoFileForWidth(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 8 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
+        {
+            var candidate = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
+    }
+
     [Fact]
     public void ClassifyLoad_PresentButNoTimestamp_IsObserved_WithoutDate()
     {
