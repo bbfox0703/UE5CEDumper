@@ -269,6 +269,10 @@ _CLASSIFY_SELFTEST = [
      ("g", 0, "check_processevent_slots: SKIP -- no vendored templates under vendor\\RE-UE4SS\n"), "skip"),
     ("a summary that counts skipped rows is not a skip", ("g", 0, "blocks 340   ok 340   FAIL 0   skipped 0\n"), "ok"),
     ("a lower-case 'skip' in prose is not a skip", ("g", 0, "check_x: skip list empty, all checked\n"), "ok"),
+    # (fourth review, R4-CLASSIFY-NEGCTRL-CASE-ONLY) Upper case too: SKIP must START the line (after an optional
+    # '<gate>:'), and be a whole word -- re.search, a dropped \b or a '.*' prefix would take these.
+    ("an upper-case SKIPPED count later in a summary is not a skip", ("g", 0, "blocks 3   ok 3   SKIPPED 0\n"), "ok"),
+    ("SKIPPING is not SKIP", ("g", 0, "check_x: SKIPPING nothing, all checked\n"), "ok"),
 ]
 
 
