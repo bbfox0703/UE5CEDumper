@@ -92,6 +92,31 @@ function ue5_pathForms(p, fromAnsi)
     return a, p
 end
 
+-- [PATH-CT-MRU-ZERO] reg.exe prints a REG_MULTI_SZ with the LITERAL two characters \0 between entries -- and a path
+-- holds the same two characters wherever a folder name starts with 0 (D:\0Games\...), so a blind split on every one
+-- turned such an entry into 'D:' plus a RELATIVE path (measured on CE's VM). A separator is a \0 that the next
+-- ABSOLUTE path follows (X:\ or \\), or the end. Entries are trimmed. A global so the Lua suite can lift it.
+function ue5_splitRegMultiSz(data)
+    local out = {}
+    if type(data) ~= "string" or data == "" then return out end
+    local pos = 1
+    while true do
+        local cut, from = nil, pos
+        while true do
+            local a, b = data:find("\\0", from, true)
+            if not a then break end
+            local rest = data:sub(b + 1)
+            if rest == "" or rest:find("^%s*%a:[\\/]") or rest:find("^%s*\\\\") then cut = a break end
+            from = b + 1
+        end
+        local entry = (cut and data:sub(pos, cut - 1) or data:sub(pos)):gsub("^%s+", ""):gsub("%s+$", "")
+        if entry ~= "" then out[#out + 1] = entry end
+        if not cut then break end
+        pos = cut + 2
+    end
+    return out
+end
+
 function ue5_dllFileSize(path)
     if type(path) ~= "string" or path == "" then return nil end
     local f = io.open(path, "rb")
@@ -319,10 +344,8 @@ if not DLL_PATH then
         h:close()
         local data = out:match("REG_MULTI_SZ%s+([^\r\n]*)")
         if not data or data == "" then return end
-        for entry in (data .. "\\0"):gmatch("(.-)\\0") do
-            entry = entry:gsub("^%s+", ""):gsub("%s+$", "")
-            if entry ~= "" then _mru[#_mru + 1] = entry end
-        end
+        -- [PATH-CT-MRU-ZERO] Not a blind split on \0: a folder that starts with 0 holds those two characters too.
+        for _, entry in ipairs(ue5_splitRegMultiSz(data)) do _mru[#_mru + 1] = entry end
     end)
 
     -- The entry whose FILENAME is this table's own name. That check is what makes
