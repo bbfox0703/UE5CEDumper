@@ -367,6 +367,62 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("no toolbar setting", vm.StatusText);
     }
 
+    // [R7-X8] The X8 skeptic: a truncation driven by scalars, with only a small container beside them. Lowering the
+    // limit shrinks that container a little and the export stays truncated, so the advice that does work -- export the
+    // part you need -- must still be there.
+    private static List<LiveFieldValue> ScalarsPlus(LiveFieldValue extra)
+    {
+        var fields = new List<LiveFieldValue>();
+        for (int i = 0; i < 61_000; i++)
+            fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
+        fields.Insert(0, extra);   // first, so it is emitted before the cap
+        return fields;
+    }
+
+    private static List<ArrayElementValue> Elems(int n)
+    {
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < n; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        return elems;
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByScalarsBesideASmallContainer_StillOffersCopyCeField()
+    {
+        var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
+        {
+            Name = "Tiny", TypeName = "ArrayProperty", Offset = 0x10, Size = 0x10, ArrayCount = 3,
+            ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = Elems(3),
+        }));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("Copy CE Field", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData("MulticastSparseDelegateProperty", "")]   // EmitFields never sends it to the array emitter: one entry
+    [InlineData("ArrayProperty", "FieldPathProperty")]    // no CE type for the element: one placeholder entry
+    public async Task InstanceFinder_CeXmlExport_AContainerEmittedAsOneEntry_IsNoLever(string type, string inner)
+    {
+        // [R7-X8] The X8 skeptic's INFO: the DLL fills these elements up to the Array Limit, but the export writes
+        // the field as a single entry at any limit, so lowering the limit shrinks nothing.
+        var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
+        {
+            Name = "OneEntry", TypeName = type, Offset = 0x10, Size = 0x10, ArrayCount = 5_000,
+            ArrayInnerType = inner, ArrayElemSize = 0x20, ArrayElements = Elems(5_000),
+        }));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.DoesNotContain("OneEntry", vm.StatusText);
+        Assert.Contains("no toolbar setting", vm.StatusText);
+    }
+
     // [R7-S11] A container inside a STRUCT field is resolved at the Array Limit too, and emitted through the resolved
     // struct -- but the status looked at the top-level fields only, where the struct has no elements of its own.
     private static List<LiveFieldValue> TuneStruct() => new()
