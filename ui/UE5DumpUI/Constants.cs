@@ -326,6 +326,10 @@ public static class Constants
     // exponent slider.
     public const int DefaultArrayLimit = 128;
 
+    // The lowest Array Limit the toolbar slider reaches (2^1; MainWindow.axaml's slider Minimum="1"). [R7-X8] A
+    // container with more elements than this is one that lowering the slider shrinks.
+    public const int MinArrayLimit = 2;
+
     // Default CE DropDownList enum-entry cap (2^9). InstanceFinder / LiveWalker seed
     // their per-panel DropDownLimit with this.
     public const int DefaultDropDownLimit = 512;

@@ -903,14 +903,19 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>[INSTEXPORT-TRUNC-ADVICE] The status after a SUCCESSFUL copy. Truncated: the Array Limit is named only
-    /// when a container is bound by it (fewer elements back than it holds, or as many as the limit allows), with what
-    /// lowering it costs; otherwise no toolbar lever, and the way to export a part instead. Complete: empty, unless a
+    /// <summary>[INSTEXPORT-TRUNC-ADVICE] The status after a SUCCESSFUL copy. Truncated: the Array Limit is named when
+    /// any walked container holds more elements than the slider's minimum -- lowering it shrinks every container longer
+    /// than the new limit, not only one bound by the current limit [R7-X8] -- listing the largest first, with what
+    /// lowering it costs; with no such container (scalars only), no toolbar lever, and the way to export a part instead. Complete: empty, unless a
     /// container came back clipped -- disclosed, naming no lever, because an array is also bound by the DLL's
     /// per-fetch cap, which no slider raises.</summary>
     internal static string ExportStatus(bool truncated, IReadOnlyList<LiveFieldValue> fields, int arrayLimit)
     {
         var bound = new List<(string Name, int Loaded, int Total)>();
+        // [R7-X8] Every walked container, for the truncation advice: lowering the slider shrinks EVERY container longer
+        // than the new limit, not only one bound by the current limit. Measured on DumperTest's NestedBag: two whole
+        // 16,000-pair maps at 16384 truncated with "no toolbar setting", and the same copy at 8192 was complete.
+        var containers = new List<(string Name, int Loaded)>();
         foreach (var f in fields)
         {
             Add(f.Name, f.ArrayElements?.Count ?? 0, f.ArrayCount);
@@ -928,8 +933,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         {
             string head = $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — "
                         + "the CE table is incomplete";
-            return bound.Count > 0
-                ? head + $"; lower the Array Limit to shrink it ({Names(bound.Select(b => b.Name))} then export only "
+            var levers = containers.Where(c => c.Loaded > Constants.MinArrayLimit)
+                                   .OrderByDescending(c => c.Loaded)   // the ones that pay most, first
+                                   .Select(c => c.Name).ToList();
+            return levers.Count > 0
+                ? head + $"; lower the Array Limit to shrink it ({Names(levers)} then export only "
                        + "their first elements)"
                 : head + ", and no toolbar setting shrinks this export; use Open in Live Walker → Copy CE Field for "
                        + "the part you need";
@@ -943,6 +951,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
         void Add(string name, int loaded, int total)
         {
+            if (loaded > 0) containers.Add((name, loaded));
             if (loaded > 0 && (loaded < total || loaded >= arrayLimit)) bound.Add((name, loaded, total));
         }
     }
