@@ -48,7 +48,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S13]` | 20, 25 | yes · ⏳ green captured (session 20: A's root and entries after clicking B mid-resolve); red pending (session 25) |
 | `[R7-S14]` | 20, 25 | yes · ⏳ green captured (session 20: both arms refuse at once, sentinel kept; controls export); red pending (session 25) |
 | `[R7-S11]` | 20, 24 | partial · ⏳ open |
-| `[R7-S6]` | 20 | partial · ⏳ open |
+| `[R7-S6]` | 20 | partial · ✅ PASS red→green (A1–A5; the scalar no-lever arm unit-only; reds from L63) |
 | `[R7-D-07]` | 20-21 | yes · ⏳ red captured (session 21: "capped at 64 per fetch" on SpawnedHolders 64/200); green pending |
 | `[R7-S10]` | 20, 24 | yes · ⏳ open |
 | `[R7-D-03]` | — | no · ✅ recorded as no live check (todo.md) |
