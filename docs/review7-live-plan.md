@@ -59,6 +59,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-X3]` | done | ✅ live PASS 2026-09-25 (before this plan; `068c590e`) |
 | `[R7-X4]` | 4 (found there) | yes · ✅ PASS red→green on stock 5.3; the stripped-5.4 function arm not run (Elliot) |
 | `[R7-X5]` | 19 (found there) | fix pending · ⏳ open (the invoke helper keeps its first-loaded copy for the CE session) |
+| `[R7-X6]` | 20 (found there) | fix pending · ⏳ open (map / set element loops ignore the 60,000-entry export ceiling) |
 
 -----
 
