@@ -189,6 +189,15 @@ internal static class InputLayerFaultClassifier
     /// If Cut ever grows a mutation whose undo is NOT a no-op — anything touching the
     /// document, the selection or the clipboard's own contents — re-run this read and
     /// re-take the decision, because the trade above is what would have changed.</para>
+    ///
+    /// <para><b>Re-read against Avalonia 12.1.3 (2026-09-26, ninth review R9-06, ilspycmd on the NuGet package).</b>
+    /// The IL above is 12.1.1's. In 12.1.3 <c>Cut</c>, <c>Copy</c> and <c>Paste</c> wrap their clipboard await in
+    /// <c>catch (Exception ex) when (ClipboardHelper.IsExpectedClipboardException(ex))</c>, which logs a warning and
+    /// returns: <c>TimeoutException</c>, <c>OperationCanceledException</c>, <c>UnauthorizedAccessException</c> and
+    /// <c>COMException</c> (the captured fault's type) no longer leave the TextBox. <c>Cut</c> still calls
+    /// <c>SnapshotUndoRedo</c> before the await and returns before <c>DeleteSelection</c> on a failed write -- the same
+    /// no-op undo residue as above, so the trade is unchanged. These markers stay: they cover any other exception from
+    /// those three, and the clipboard / IME TYPES above cover the paths that are not a TextBox's.</para>
     /// </summary>
     internal static readonly string[] MethodMarkers =
     {

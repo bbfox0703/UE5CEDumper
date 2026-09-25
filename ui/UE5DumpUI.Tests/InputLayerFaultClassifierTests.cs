@@ -343,6 +343,12 @@ public class InputLayerFaultClassifierTests
         //
         // The IL is kept because it is what makes this a decision. If Cut ever grows
         // a mutation whose undo is NOT a no-op, re-run the read and re-take it.
+        //
+        // Re-read on Avalonia 12.1.3 (ninth review, R9-06): Cut / Copy / Paste now catch
+        // ClipboardHelper.IsExpectedClipboardException (Timeout, OperationCanceled,
+        // UnauthorizedAccess, COMException) themselves, log it and return. Cut still
+        // snapshots undo before the await and returns before DeleteSelection, so the
+        // residue and the trade are unchanged; the markers stay for any other exception.
         Assert.Equal(InputFaultVerdict.InputLayer,
             InputLayerFaultClassifier.ClassifyStackText(
                 "   at Avalonia.Controls.TextBox.Cut()", out _));
