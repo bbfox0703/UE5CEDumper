@@ -43,6 +43,7 @@
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
 #include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
 #include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
+#include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 
 #include <Windows.h>
@@ -8743,6 +8744,35 @@ static void Test_Renge_CeModuleRelative_NeverTruncates() {
     EXPECT_EQ_STR("zero rva", Renge::CeModuleRelative("G.exe", 0), "\"G.exe\"+0");
 }
 
+// [PATH-METHODE-NO8DOT3] The CE-plugin inject path (Methode.cpp) narrowed the long path with WC_NO_BEST_FIT_CHARS and
+// fell back to the 8.3 alias -- but re-narrowed THAT with flags 0 and no used-default check. On a volume without 8.3
+// names (D: here) GetShortPathNameW returns the long path, so a '?'-bearing string went to CE's InjectDLL
+// (LoadLibraryA) and the user saw the generic "32-bit / anti-cheat / administrator" failure.
+static void Test_Methode_NarrowForAnsiLoad() {
+    const wchar_t* tm = L"D:\\Tools\\CE\u2122\\UE5Dumper.dll";
+    EXPECT_EQ_STR("TM, no 8.3 alias (short == long): refused",
+                  Methode::NarrowForAnsiLoad(tm, tm, 950), "");
+    EXPECT_EQ_STR("TM, no short path at all: refused",
+                  Methode::NarrowForAnsiLoad(tm, nullptr, 950), "");
+    const wchar_t* kana = L"D:\\\u30C4\u30FC\u30EB\\UE5Dumper.dll";
+    EXPECT_EQ_STR("katakana, short == long: refused", Methode::NarrowForAnsiLoad(kana, kana, 950), "");
+    EXPECT_EQ_STR("TM, ASCII 8.3 alias: the alias",
+                  Methode::NarrowForAnsiLoad(tm, L"D:\\Tools\\CE~1\\UE5Dumper.dll", 950),
+                  "D:\\Tools\\CE~1\\UE5Dumper.dll");
+    const wchar_t* gongju = L"D:\\\u5DE5\u5177\\UE5Dumper.dll";   // 工具: Big5 A4 75 A8 E3
+    EXPECT_EQ_STR("Big5-representable: its exact bytes",
+                  Methode::NarrowForAnsiLoad(gongju, gongju, 950), "D:\\\xA4u\xA8\xE3\\UE5Dumper.dll");
+    const wchar_t* bjork = L"D:\\Bj\u00F6rk\\UE5Dumper.dll";
+    EXPECT_EQ_STR("best fit is never taken (Bjork is not Bj\\xF6rk's folder)",
+                  Methode::NarrowForAnsiLoad(bjork, bjork, 950), "");
+    EXPECT_EQ_STR("1252 holds o-umlaut exactly",
+                  Methode::NarrowForAnsiLoad(bjork, bjork, 1252), "D:\\Bj\xF6rk\\UE5Dumper.dll");
+    EXPECT_EQ_STR("ASCII is itself", Methode::NarrowForAnsiLoad(L"C:\\CE\\UE5Dumper.dll", nullptr, 950),
+                  "C:\\CE\\UE5Dumper.dll");
+    EXPECT_EQ_STR("UTF-8 ANSI code page: UTF-8 as is",
+                  Methode::NarrowForAnsiLoad(tm, tm, CP_UTF8), "D:\\Tools\\CE\xE2\x84\xA2\\UE5Dumper.dll");
+}
+
 int main() {
     // UNBUFFERED, and this is not a style choice. When this exe died on CI with
     // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
@@ -8762,6 +8792,7 @@ int main() {
     std::printf("------------------------------------------\n");
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
+    RUN(Test_Methode_NarrowForAnsiLoad);
     RUN(Test_TryStrToAddr_AcceptsValidHex);
     RUN(Test_TryStrToAddr_RejectsCePlaceholder);
     RUN(Test_TryStrToAddr_RejectsTrailingGarbage);
