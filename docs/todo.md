@@ -436,6 +436,19 @@ layout, the twin rig). 6 raised, 6 confirmed: 1 MED, 1 LOW, 4 INFO. Fixed row by
 | R9-04 | INFO (tests) → ✅ `1438f634` (by mutation) | UI-SPACE | `PanelSpaceBudgetTests` pins weaker than claimed (parent-only, "!= Wrap", a proximity regex). Now every ancestor, NoWrap, the scroller Disabled, the real assignment with comments stripped; three mutations caught. |
 | R9-06 | INFO → ✅ `e859a8fd` | NuGet (Avalonia 12.1.3) | `InputLayerFaultClassifier`'s TextBox clipboard IL read was 12.1.1's; 12.1.3 catches the expected clipboard exceptions itself. Re-read with ilspycmd; the trade holds; comments updated. |
 
+**Tenth skeptic review** (workflow `wf_0fce41af-86a`, over the ninth round's fixes and the `[SCAN-EARLY-TRIGGER-CONTAINED]`
+fix + rigs). 7 raised, 5 confirmed (1 LOW, 4 INFO), 2 refuted. Fixed row by row.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R10-02 | LOW (tests) → ✅ `b5f084f7` (by mutation) | SCAN-EARLY | The DLL case covered only a module gone BEFORE the scan; a pin that took no reference, or one that over-released, passed (reproduced). Now the module stays loaded after a scan, and a test-only seam frees it DURING one: no fault, pattern found, unmapped on return. Mutations (a) / (b) caught. |
+| R10-03 | INFO → ✅ `4e5a0c8b` | SCAN-EARLY | The pin's lifetime trade was undocumented: the scan's FreeLibrary can be the last one, so DETACH may run on the scan thread (measured by the refuter). Comment only. |
+| R10-04 | INFO (tests) → ✅ `c19f0e4d` (by mutation) | R9-01 | `Matches("RowFloors\\(")` was satisfied by the declaration; the call is pinned now. |
+| R10-06 | INFO → ✅ `69694800` | R9-02 | `SharedTag`'s doc still said the Load column shows ~18 characters. Comment only. |
+| R10-07 | INFO → ✅ `98940f39` | SCAN-EARLY rig | The rig could not tell a tree-built proxy from dist's (same stamp); it now prints the SHA per launch and takes `--expect-sha`. |
+| R10-01 | refuted (INFO at most) → folded into `98940f39` | SCAN-EARLY rig | No false PASS is reachable (a survivor gives a visible FAIL); the docstring's "confirmed gone" is now enforced -- a survivor stops the run. |
+| R10-05 | refuted | R9-04 | Requiring an explicit `HorizontalScrollBarVisibility="Disabled"` is a deliberate pin, not a spurious failure. No change. |
+
 **Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ⏳ open -- **needs the maintainer
 with a real mouse.** On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
 one monitor), NO tooltip appears for a control whose position is past ~1138 DIP from the screen's left edge (physical
