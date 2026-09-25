@@ -505,7 +505,7 @@ Start with no CE running: `tasklist | findstr /I cheatengine` must be empty.
 1. Session 18, step 2 (no CE). Session 20, steps 1–2 (arm A). REDs.
 2. Kill. `dist_swap.py restore`: it must print mismatches: 0 and the AOT sha.
 
-**26. Close-out.** About 15 min. UI closed:
+**26. Close-out.** ✅ Done 2026-09-25: the pad dropped (DB 135.4 MB), no filler left on C:, both option files restored from `out\r7live\s0\`, no widen flag left, `dist\` back on the AOT 3550 (`133c75b3`, mismatches 0). The S11 finding probe was not run: it needs a truncation, which `[R7-X6]` prevents. About 15 min. UI closed:
 1. `snapshot_db_pad.py unpad <PE>`.
 2. `disk_squeeze.py release`, and confirm no filler is left on C:.
 3. Restore `ui-options.json` and `experimental.json`.
