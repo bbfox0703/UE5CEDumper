@@ -568,7 +568,7 @@ public class ProxyDeployTests
     {
         var values = Enum.GetValues<ProxyDeployStatus>();
 
-        Assert.Equal(7, values.Length);
+        Assert.Equal(8, values.Length);   // 8th: Unreadable, [PROXY-PRODUCTNAME-UNREADABLE]
         Assert.Contains(ProxyDeployStatus.NotDeployed, values);
         Assert.Contains(ProxyDeployStatus.DeployedCurrent, values);
         Assert.Contains(ProxyDeployStatus.DeployedOutdated, values);
@@ -576,6 +576,7 @@ public class ProxyDeployTests
         Assert.Contains(ProxyDeployStatus.DeployedOtherType, values);
         Assert.Contains(ProxyDeployStatus.ErrorLocked, values);
         Assert.Contains(ProxyDeployStatus.ErrorOther, values);
+        Assert.Contains(ProxyDeployStatus.Unreadable, values);
     }
 
     // ────────────────────────────────────────────────────────────────

@@ -1480,10 +1480,24 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     }
                 }
 
+                // [PROXY-PRODUCTNAME-UNREADABLE] A proxy-named file here we cannot read may be one of ours: the same
+                // guard, conservatively -- skipped, and said why. (Its own name, the radio's, is the service's refusal.)
+                var unreadable = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsUnreadableDll);
+                var unreadableOthers = unreadable
+                    .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (unreadableOthers.Count > 0)
+                {
+                    skipped++;
+                    rowNotes.Add((game, ProxyDeployService.DescribeUnreadableSkip(unreadableOthers), false));
+                    continue;
+                }
+
                 // [PROXY-USE-CONFIRMED] A clean folder with a confirmed-working record takes that type. Its source must
                 // exist: a missing one fails THIS row -- never a silent fallback to the radio's type.
                 var (type, substituted) = PickDeployType(SelectedProxyType, useConfirmed,
-                    confirmedByExe.TryGetValue(Path.GetFileName(game.ExePath), out var c) ? c : null, ours.Count);
+                    confirmedByExe.TryGetValue(Path.GetFileName(game.ExePath), out var c) ? c : null,
+                    ours.Count + unreadable.Count);   // a folder with an unreadable proxy-named file is not clean
                 string source = SourceDllPath;
                 if (substituted)
                 {
@@ -1716,9 +1730,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
 
         ClearError();
-        int updated = 0, fail = 0, upToDate = 0, forcedSame = 0;
+        int updated = 0, fail = 0, upToDate = 0, forcedSame = 0, cannotRead = 0;
         var failedDirs = NewBinariesDirSet();
-        // [PROXY-RISKNOTE-WIPED] The import-risk notes this run's deploys wrote, re-applied after the refresh erases them.
+        // [PROXY-RISKNOTE-WIPED] The import-risk notes this run's deploys wrote -- and [PROXY-PRODUCTNAME-UNREADABLE]
+        // the proxies it could not read -- re-applied after the refresh erases them.
         var riskNotes = new List<(DetectedGame Game, string Note)>();
         // [PROXY-FORCE-UPDATEALL] Force Overwrite means rewrite OUR proxy whatever its version -- in Update All as in
         // Deploy (maintainer, 2026-09-25: no hash or timestamp second check; whoever ticks it knows what they want).
@@ -1745,8 +1760,19 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
                     // Only update a proxy that is ALREADY deployed (and ours) for
                     // this game — never push a fresh type the user didn't choose.
-                    if (!File.Exists(targetDll) || !_deploy.IsOurProxyDll(targetDll))
+                    if (!File.Exists(targetDll)) continue;
+                    if (!_deploy.IsOurProxyDll(targetDll))
+                    {
+                        // [PROXY-PRODUCTNAME-UNREADABLE] Not updated either way -- but a file we cannot read is said,
+                        // not skipped silently as if it were another program's.
+                        if (_deploy.IsUnreadableDll(targetDll))
+                        {
+                            cannotRead++;
+                            riskNotes.Add((game, ProxyDeployService.DescribeUnreadable(new[] { type.GetDllName() })
+                                                 + " Not updated."));
+                        }
                         continue;
+                    }
 
                     string? srcVer = _deploy.GetDllVersion(srcPath);
                     string? tgtVer = _deploy.GetDllVersion(targetDll);
@@ -1784,10 +1810,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
             if (updated == 0 && fail == 0)
             {
-                string msg = upToDate > 0
+                string msg = (upToDate > 0
                     ? $"All {upToDate} deployed proxy DLL(s) already up-to-date (tick Force Overwrite to rewrite them "
                       + "anyway)"
-                    : "No deployed proxy DLLs to update";
+                    : "No deployed proxy DLLs to update")
+                    + (cannotRead > 0 ? $", cannot read: {cannotRead} (see Details)" : "");
                 LastOperationResult = msg;
                 StatusText = msg;
                 StatusColor = StatusNeutral;
@@ -1799,7 +1826,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 string forcedNote = forcedSame > 0
                     ? $" ({forcedSame} rewritten at the same version — Force Overwrite)"
                     : "";
-                SetOperationResult($"Updated: {updated}{forcedNote}, up-to-date: {upToDate}, failed: {fail}", fail);
+                SetOperationResult($"Updated: {updated}{forcedNote}, up-to-date: {upToDate}, failed: {fail}"
+                                   + (cannotRead > 0 ? $", cannot read: {cannotRead} (see Details)" : ""), fail);
             }
         }
         catch (OperationCanceledException)

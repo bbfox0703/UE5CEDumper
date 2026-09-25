@@ -31,7 +31,11 @@ public enum ProxyDeployStatus
     ErrorLocked,
 
     /// <summary>Unexpected error during deploy/undeploy.</summary>
-    ErrorOther
+    ErrorOther,
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The proxy-named file cannot be read (access denied, or held open by another
+    /// program), so whose it is cannot be told. Never written or deleted.</summary>
+    Unreadable
 }
 
 /// <summary>

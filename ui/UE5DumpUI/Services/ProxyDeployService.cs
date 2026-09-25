@@ -939,6 +939,12 @@ public sealed class ProxyDeployService : IProxyDeployService
                     status = absentStatus;
                     errorMessage = message;
                 }
+                else if (OwnerProbe(targetDll) == DllOwner.Unreadable)
+                {
+                    // [PROXY-PRODUCTNAME-UNREADABLE] Not "another program's": whose it is cannot be told.
+                    status = ProxyDeployStatus.Unreadable;
+                    errorMessage = DescribeUnreadable(new[] { selectedDllName });
+                }
                 else if (!IsOurProxyDll(targetDll))
                 {
                     status = ProxyDeployStatus.OtherProxy;
@@ -1035,8 +1041,11 @@ public sealed class ProxyDeployService : IProxyDeployService
 
     public static DeployVerdict PlanDeploy(bool targetExists, bool targetIsOurs,
                                            bool sameVersion, DeployOptions options,
-                                           bool otherOfOursPresent = false)
+                                           bool otherOfOursPresent = false, bool targetUnreadable = false)
     {
+        // [PROXY-PRODUCTNAME-UNREADABLE] Whose it is cannot be told: never replaced, Force and consent included.
+        if (targetExists && targetUnreadable) return DeployVerdict.TargetUnreadable;
+
         // [PROXY-DOUBLE-GUARD] Ranked above everything else, consent included: a missing or foreign target in a
         // folder that already holds another of OUR proxies would become a double. Only redeploying the type that
         // is already ours there adds nothing, so that one falls through to the same-type rules below.
@@ -1153,7 +1162,8 @@ public sealed class ProxyDeployService : IProxyDeployService
                 string targetDll = Path.Combine(game.BinariesDir, proxyType.GetDllName());
 
                 bool exists   = File.Exists(targetDll);
-                bool isOurs   = exists && IsOurProxyDll(targetDll);
+                var owner     = exists ? OwnerProbe(targetDll) : DllOwner.NotOurs;
+                bool isOurs   = exists && owner == DllOwner.Ours;
                 string? srcVer = null, tgtVer = null;
                 if (exists && isOurs)
                 {
@@ -1165,12 +1175,25 @@ public sealed class ProxyDeployService : IProxyDeployService
                 var others = OursPresent(game.BinariesDir, IsOurProxyDll)
                     .Where(n => !n.Equals(proxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
                     .ToList();
+                // [PROXY-PRODUCTNAME-UNREADABLE] A proxy-named file we cannot read may be one of ours: the same guard.
+                var unreadableOthers = OursPresent(game.BinariesDir, IsUnreadableDll)
+                    .Where(n => !n.Equals(proxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                switch (PlanDeploy(exists, isOurs, sameVersion, options, otherOfOursPresent: others.Count > 0))
+                switch (PlanDeploy(exists, isOurs, sameVersion, options,
+                            otherOfOursPresent: others.Count > 0 || unreadableOthers.Count > 0,
+                            targetUnreadable: owner == DllOwner.Unreadable))
                 {
+                    case DeployVerdict.TargetUnreadable:
+                        return (false, new GameStatusUpdate(game, ProxyDeployStatus.Unreadable,
+                            StatusDetail: DescribeUnreadable(new[] { proxyType.GetDllName() }) + " Not replaced.",
+                            SetInstalledVersion: false));
+
                     case DeployVerdict.OtherProxyOfOurs:
                         return (false, new GameStatusUpdate(game, ProxyDeployStatus.DeployedOtherType,
-                            StatusDetail: DescribeOtherTypeSkip(others), SetInstalledVersion: false));
+                            StatusDetail: others.Count > 0 ? DescribeOtherTypeSkip(others)
+                                                           : DescribeUnreadableSkip(unreadableOthers),
+                            SetInstalledVersion: false));
 
                     case DeployVerdict.NeedsForeignConsent:
                         return (false, new GameStatusUpdate(game, ProxyDeployStatus.OtherProxy,
@@ -1300,19 +1323,31 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// otherwise it is a note on an otherwise successful clean-up.
     /// </summary>
     public static (ProxyDeployStatus Status, string? Message, bool Success) ResolveUndeployOutcome(
-        int removed, IReadOnlyList<string> foreignSkipped, IReadOnlyList<string> locked)
+        int removed, IReadOnlyList<string> foreignSkipped, IReadOnlyList<string> locked,
+        IReadOnlyList<string>? unreadable = null)
     {
+        // [PROXY-PRODUCTNAME-UNREADABLE] A file we cannot read is left in place, and named as unreadable -- never as
+        // "not our proxy" / "another program's", which it may not be.
+        string? cannotRead = unreadable is { Count: > 0 } ? DescribeUnreadable(unreadable) + " Left in place." : null;
+        string With(string? main) => cannotRead == null ? main ?? "" : main == null ? cannotRead : $"{main}; {cannotRead}";
+
         if (locked.Count > 0)
             return (ProxyDeployStatus.ErrorLocked,
-                    $"File locked (game running?): {string.Join(", ", locked)}", false);
+                    With($"File locked (game running?): {string.Join(", ", locked)}"), false);
 
         if (removed == 0 && foreignSkipped.Count > 0)
             return (ProxyDeployStatus.OtherProxy,
-                    $"Refused: not our proxy DLL ({string.Join(", ", foreignSkipped)})", false);
+                    With($"Refused: not our proxy DLL ({string.Join(", ", foreignSkipped)})"), false);
+
+        if (removed == 0 && cannotRead != null)
+            return (ProxyDeployStatus.Unreadable, cannotRead, false);
 
         if (foreignSkipped.Count > 0)
             return (ProxyDeployStatus.NotDeployed,
-                    $"Left another program's {string.Join(", ", foreignSkipped)}", true);
+                    With($"Left another program's {string.Join(", ", foreignSkipped)}"), true);
+
+        if (cannotRead != null)
+            return (ProxyDeployStatus.NotDeployed, cannotRead, true);
 
         // removed >= 0 with nothing foreign: a clean folder is just as much a
         // success as one we emptied.
@@ -1336,6 +1371,10 @@ public sealed class ProxyDeployService : IProxyDeployService
                     bool exists = File.Exists(p);
                     return (name, exists, exists && IsOurProxyDll(p));
                 }));
+                // [PROXY-PRODUCTNAME-UNREADABLE] Left in place like a foreign DLL -- but reported as what it is.
+                var unreadable = plan.ForeignSkipped
+                    .Where(n => IsUnreadableDll(Path.Combine(game.BinariesDir, n))).ToList();
+                var foreign = plan.ForeignSkipped.Except(unreadable, StringComparer.OrdinalIgnoreCase).ToList();
 
                 var locked = new List<string>();
                 int removed = 0;
@@ -1364,7 +1403,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 }
 
                 var (status, message, success) =
-                    ResolveUndeployOutcome(removed, plan.ForeignSkipped, locked);
+                    ResolveUndeployOutcome(removed, foreign, locked, unreadable);
                 // InstalledVersion is only cleared when something was actually removed.
                 return (success, new GameStatusUpdate(game, status,
                     StatusDetail: message, SetInstalledVersion: removed > 0));
@@ -2132,12 +2171,48 @@ public sealed class ProxyDeployService : IProxyDeployService
         }
     }
 
-    public bool IsOurProxyDll(string dllPath) => OwnershipProbe(dllPath);
+    public bool IsOurProxyDll(string dllPath) => OwnerProbe(dllPath) == DllOwner.Ours;
 
-    /// <summary>The ownership read behind <see cref="IsOurProxyDll"/> (PE ProductName). Replaceable for tests
-    /// only: a fabricated PE with a version resource would test the fixture, not the wiring
+    public bool IsUnreadableDll(string dllPath) => File.Exists(dllPath) && OwnerProbe(dllPath) == DllOwner.Unreadable;
+
+    /// <summary>The ownership read behind <see cref="IsOurProxyDll"/> / <see cref="IsUnreadableDll"/>. Replaceable for
+    /// tests only: a fabricated PE with a version resource would test the fixture, not the wiring
     /// ([PROXY-DOUBLE-GUARD]'s service backstop is tested through it).</summary>
-    internal Func<string, bool> OwnershipProbe { get; init; } = DllProductIsOurs;
+    internal Func<string, DllOwner> OwnerProbe { get; init; } = ReadOwner;
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] Whose <paramref name="dllPath"/> is: our ProductName -> Ours; another
+    /// ProductName -> NotOurs; no ProductName -> open it: readable (no version resource, which ours always carry) is
+    /// NotOurs, not readable (access denied, sharing violation) is Unreadable. The open is needed because
+    /// FileVersionInfo answers null for both, with no exception -- measured on .NET 10.</summary>
+    internal static DllOwner ReadOwner(string dllPath)
+    {
+        string? product = null;
+        try { product = FileVersionInfo.GetVersionInfo(dllPath).ProductName; }
+        catch { /* a folder we cannot list reads as absent: decided by the open below */ }
+        if (string.Equals(product, Constants.ProxyProductName, StringComparison.OrdinalIgnoreCase)) return DllOwner.Ours;
+        if (product != null) return DllOwner.NotOurs;
+        try
+        {
+            using var fs = new FileStream(dllPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            return DllOwner.NotOurs;
+        }
+        catch (FileNotFoundException) { return DllOwner.NotOurs; }       // gone: nothing to claim
+        catch (DirectoryNotFoundException) { return DllOwner.NotOurs; }
+        catch (UnauthorizedAccessException) { return DllOwner.Unreadable; }
+        catch (IOException) { return DllOwner.Unreadable; }               // sharing violation, and the like
+    }
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The Details text for a proxy-named file that cannot be read.</summary>
+    internal static string DescribeUnreadable(IReadOnlyList<string> names) =>
+        $"Cannot read {string.Join(", ", names)} here (access denied, or held open by another program) — cannot "
+        + "tell whose it is.";
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The Details text for a game Deploy skipped because a proxy-named file
+    /// there cannot be read: it may be one of ours, and a second proxy next to it could make a double.</summary>
+    internal static string DescribeUnreadableSkip(IReadOnlyList<string> names) =>
+        $"Skipped: {string.Join(", ", names)} here cannot be read (access denied, or held open by another program) — "
+        + $"cannot tell whether {(names.Count == 1 ? "it is" : "they are")} one of ours, so Deploy does not add a "
+        + "second proxy next to it.";
 
     /// <summary>Static twin of <see cref="IsOurProxyDll"/> so the staged-copy helper
     /// (which must stay static to be unit-testable against a temp folder) can apply the

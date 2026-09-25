@@ -36,6 +36,17 @@ public readonly record struct DeployOptions(bool ForceSameVersion, bool ForeignC
 
 /// <summary>What <c>ProxyDeployService.PlanDeploy</c> decided, before any file
 /// is touched.</summary>
+/// <summary>[PROXY-PRODUCTNAME-UNREADABLE] Whose a proxy-named DLL is. FileVersionInfo gives the SAME null ProductName for
+/// a file with no version resource and for one it could not read at all (ACL deny, held with FileShare.None --
+/// measured), so "not ours" alone confused the two. Our DLLs always carry a version resource: readable without one is
+/// <see cref="NotOurs"/>; not readable is <see cref="Unreadable"/> -- never written or deleted, and said so.</summary>
+public enum DllOwner
+{
+    Ours,
+    NotOurs,
+    Unreadable,
+}
+
 public enum DeployVerdict
 {
     /// <summary>Write the file.</summary>
@@ -53,4 +64,8 @@ public enum DeployVerdict
     /// Force Overwrite (same type, any version) and foreign consent (another
     /// program's file) are no licence to add a second type of ours.</summary>
     OtherProxyOfOurs,
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The target exists and cannot be read: whose it is cannot be told, so it is
+    /// never replaced -- Force Overwrite and foreign consent included.</summary>
+    TargetUnreadable,
 }

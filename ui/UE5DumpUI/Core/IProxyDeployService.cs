@@ -198,6 +198,11 @@ public interface IProxyDeployService
     /// </summary>
     bool IsOurProxyDll(string dllPath);
 
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] True for a file that exists and cannot be read at all -- not the same as
+    /// "not ours": it may BE ours. Callers treat it conservatively (never write it, never join it with a second
+    /// proxy, say so).</summary>
+    bool IsUnreadableDll(string dllPath) => false;
+
     /// <summary>
     /// Get the file version string from a DLL's PE version info.
     /// Returns null if version info is unavailable.
