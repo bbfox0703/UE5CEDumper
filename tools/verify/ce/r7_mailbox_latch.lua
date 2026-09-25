@@ -1,4 +1,4 @@
---[[
+--[==[
   r7_mailbox_latch.lua -- drive the CE-side shared mailbox latch from CE's Lua Engine.
 
   For Review 7 rows R7-C-01, R7-C-03 and R7-S3 (docs/review7-live-plan.md sessions 19 / 23): the freeze helper and
@@ -17,7 +17,7 @@
   rescan (a LIST_INSTANCES mailbox command) runs. R7.invoke calls DumperTestActor::Spawn_CountHolders, which is
   const and read-only. ⚠ invokeUFunction is guarded against re-declaration, so a CE process that ever loaded one
   helper version keeps it: run a red arm in a FRESH CE process.
-]]
+]==]
 
 R7 = R7 or {}
 local LOG = [[D:\Github\UE5CEDumper\out\r7live\latch\lua.log]]
