@@ -1205,8 +1205,9 @@ public class InvokeScriptTests
         // The two functions the generator's output depends on
         Assert.Contains("function invokeUFunction(", content);
         Assert.Contains("function readUFunctionReturn(", content);
-        // Re-declaration guard pattern
-        Assert.Contains("if not invokeUFunction then", content);
+        // Re-declaration guard, version-gated [R7-X5]: a same/older re-load keeps the resident copy, a newer one
+        // replaces it (the freeze helper's AA30 shape; invoke_helper_test.lua runs all three directions).
+        Assert.Contains("if not invokeUFunction or _invokeOutdated then", content);
         Assert.Contains("registerLuaFunctionHighlight('invokeUFunction')", content);
     }
 
