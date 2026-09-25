@@ -60,7 +60,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-X4]` | 4 (found there) | yes · ✅ PASS red→green on stock 5.3; the stripped-5.4 function arm not run (Elliot) |
 | `[R7-X5]` | 19 (found there) | ✅ PASS red→green on 3551 (1.3 then 1.4 in one CE: replaced, S3 passes; 1.3 then pre-X5 1.3: kept, refused) |
 | `[R7-X6]` | 20 (found there) | ✅ PASS red→green on 3551 (60,001 entries, TRUNCATED; 3550 copied 98,890 unflagged) |
-| `[R7-X8]` | 27 (found there) | fixed `afa47cda` · ⏳ live check pending on the next build (NestedBag 16,000 @ 16384 → names the Array Limit) |
+| `[R7-X8]` | 27 (found there) | ✅ PASS red→green on 3552 (NestedBag 16,000 @ 16384 now names the Array Limit; 3551 said no toolbar setting) |
 | `[R7-X7]` | after (the X4-X6 skeptic) | text only · ✅ measured on stock 5.3 and 5.4 (`out/r7live/x7/`): 5.3 honours GravityDirection; the "UE5.4+" wording corrected |
 
 -----
