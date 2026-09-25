@@ -158,11 +158,21 @@ public class PanelSpaceBudgetTests
     public void ClassPivot_AnExplanationIsOneLine_WithTheWholeTextOnHover(string key)
     {
         var tb = TextBlockOf(Axaml("ClassPivotPanel.axaml"), key);
-        Assert.NotEqual("Wrap", Attr(tb, "TextWrapping"));
+        // One line: no wrapping of any kind (WrapWithOverflow wraps too -- ninth review, R9-04).
+        Assert.True(Attr(tb, "TextWrapping") is null or "NoWrap", $"TextWrapping={Attr(tb, "TextWrapping")}");
         Assert.Equal("CharacterEllipsis", Attr(tb, "TextTrimming"));
         Assert.Equal(Res(key), Attr(tb, "ToolTip.Tip"));
-        // Trimming needs a bounded width; a WrapPanel hands its child the DESIRED width, so it would never trim.
-        Assert.NotEqual("WrapPanel", tb.Parent!.Name.LocalName);
+        // Trimming needs a bounded width. (R9-04) Every ancestor, not only the parent: a WrapPanel or a horizontal
+        // StackPanel hands its child the DESIRED width, and a ScrollViewer that may scroll horizontally hands it
+        // infinity -- in each case the line never trims.
+        foreach (var up in tb.Ancestors())
+        {
+            string n = up.Name.LocalName;
+            Assert.NotEqual("WrapPanel", n);
+            Assert.False(n == "StackPanel" && Attr(up, "Orientation") == "Horizontal", "inside a horizontal StackPanel");
+            if (n == "ScrollViewer")
+                Assert.Equal("Disabled", Attr(up, "HorizontalScrollBarVisibility"));
+        }
     }
 
     [Fact]
@@ -181,7 +191,11 @@ public class PanelSpaceBudgetTests
         Assert.Contains(scroller.Descendants(), e => Attr(e, X + "Name") == "DiscoverGrid");
         Assert.DoesNotContain(scroller.Descendants(), e => Attr(e, X + "Name") == "FieldPickGrid");
 
-        var code = File.ReadAllText(RepoFile("ui/UE5DumpUI/Views/ClassPivotPanel.axaml.cs"));
-        Assert.Matches(@"SetupScroller[\s\S]{0,400}MaxHeight|MaxHeight[\s\S]{0,400}SetupScroller", code);
+        // (R9-04) The actual assignment, comments stripped: two words near each other in the raw text also matched a
+        // commented-out line or an unrelated MaxHeight.
+        Assert.Equal("Disabled", Attr(scroller, "HorizontalScrollBarVisibility"));
+        var code = StripComments(File.ReadAllText(RepoFile("ui/UE5DumpUI/Views/ClassPivotPanel.axaml.cs")));
+        Assert.Matches(@"FindControl<ScrollViewer>\(\s*""SetupScroller""\s*\)\s*is\s*\{\s*\}\s*setup", code);
+        Assert.Matches(@"SizeChanged\s*\+=\s*\(\s*_\s*,\s*e\s*\)\s*=>\s*setup\.MaxHeight\s*=\s*Math\.Max\(\s*SetupMinHeight\s*,\s*e\.NewSize\.Height\s*\*\s*SetupShare\s*\)", code);
     }
 }
