@@ -375,6 +375,12 @@ if rsrc then
         type(r4) == "table" and r4[1] == "E:\\" and r4[2] == "D:\\old", type(r4) == "table" and table.concat(r4, " | ") or "")
   local w4 = withFile({ "E:", "D:\\old" }, function() ue5_recordDllDir("F:\\x\\") end)
   check("  ...and is carried forward as 'E:\\'", (w4 or ""):find("\nE:\\\n", 1, true) ~= nil, w4)
+  -- (seventh review, R7-04) Lower case, as the C# DriveRootFix: 'e:\\' written as is, a legacy 'e:' read as 'e:\\'.
+  local w5 = withFile(nil, function() ue5_recordDllDir("e:\\") end)
+  check("a lower-case root is written as 'e:\\'", (w5 or ""):find("\ne:\\\n", 1, true) ~= nil, w5)
+  local _, r5 = withFile({ "e:" }, function() return ue5_readBreadcrumbs("x") end)
+  check("  ...and a legacy 'e:' reads as 'e:\\'", type(r5) == "table" and r5[1] == "e:\\",
+        type(r5) == "table" and table.concat(r5, " | ") or "")
 end
 
 -- (sixth review, R6-02 / R6-06) The breadcrumb SLOT, run: a folder read from dll-path.txt becomes the slot (the chunk's

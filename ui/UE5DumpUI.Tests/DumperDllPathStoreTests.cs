@@ -127,22 +127,31 @@ public class DumperDllPathStoreTests : IDisposable
 
     // (sixth review, R6-01 -- measured) A DLL folder at a DRIVE ROOT: Record trimmed 'E:\' to a bare 'E:', which Load
     // then skipped as relative -- UE5DumpUI started from E:\ rewrote the file on every start, and the .CT ignored it.
-    [Fact]
-    public void A_drive_root_round_trips_as_the_root()
+    [Theory]
+    [InlineData(@"E:\")]
+    [InlineData(@"e:\")]      // (seventh review, R7-04) lower case: the .CT's rule agrees
+    public void A_drive_root_round_trips_as_the_root(string root)
     {
-        _store.Record(@"E:\");
-        Assert.Equal(new[] { @"E:\" }, _store.Load());
+        _store.Record(root);
+        // (seventh review, R7-03) The WRITER's half: the line on disk keeps its separator -- Load's own fix alone would
+        // pass a round trip with 'E:' written.
+        Assert.Equal(new[] { root }, File.ReadAllLines(_store.FilePath).Where(l => l.Length > 0 && l[0] != '#').ToArray());
+        Assert.Equal(new[] { root }, _store.Load());
+        // Already the head: no rewrite. The stamp is moved back first, as the neighbouring test does, so a rewrite
+        // inside the same clock tick cannot pass as none.
         var before = File.GetLastWriteTimeUtc(_store.FilePath);
-        _store.Record(@"E:\");                                   // already the head: no rewrite
-        Assert.Equal(before, File.GetLastWriteTimeUtc(_store.FilePath));
+        File.SetLastWriteTimeUtc(_store.FilePath, before.AddDays(-1));
+        var stamped = File.GetLastWriteTimeUtc(_store.FilePath);
+        _store.Record(root);
+        Assert.Equal(stamped, File.GetLastWriteTimeUtc(_store.FilePath));
     }
 
     [Fact]
     public void A_legacy_bare_drive_line_reads_as_that_drives_root()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_store.FilePath)!);
-        File.WriteAllLines(_store.FilePath, new[] { "# header", "E:", @"D:\old" });
-        Assert.Equal(new[] { @"E:\", @"D:\old" }, _store.Load());
+        File.WriteAllLines(_store.FilePath, new[] { "# header", "E:", "e:", @"D:\old" });
+        Assert.Equal(new[] { @"E:\", @"e:\", @"D:\old" }, _store.Load());
     }
 
     [Theory]
