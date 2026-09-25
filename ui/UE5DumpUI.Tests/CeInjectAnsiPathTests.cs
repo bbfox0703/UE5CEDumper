@@ -125,6 +125,64 @@ public class CeInjectAnsiPathTests
         Assert.Contains(@"local DLL_PATH = 'C:\\Tools\\UE5CEDumper\\UE5Dumper.dll'", lua);
     }
 
+    // ── the skeptic review (wf_6ba4bc83-14d) ──
+
+    [Fact]
+    public void AnsiPathBytes_AnAsciiShortPath_IsPreferred_ItDoesNotDependOnTheGamesCodePage()
+    {
+        // (CEINJ-4) The bytes are made in the UI's ACP but decoded in the GAME's -- a game under Locale Emulator has
+        // another one. An ASCII 8.3 alias reads the same in every code page.
+        const string shortPath = @"C:\PROGRA~2\TOOLS~1\UE5Dumper.dll";
+        Assert.Equal(Encoding.ASCII.GetBytes(shortPath),
+            WindowsSystemCodePage.AnsiPathBytes(@"C:\Program Files (x86)\工具\UE5Dumper.dll", 950, _ => shortPath));
+    }
+
+    [Fact]
+    public void AnsiPathBytes_TheRealApi_OnAFolderNoAnsiCodePageHolds()
+    {
+        // (T9) The production entry point (GetACP, GetShortPathNameW) was never run by a test. An emoji is in no ANSI
+        // code page, so the answer must be null, an ASCII alias that opens the file, or (a UTF-8 ACP) the UTF-8 bytes.
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-ansi-\U0001F600-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        string dll = Path.Combine(dir, "UE5Dumper.dll");
+        File.WriteAllBytes(dll, new byte[] { 0x4D, 0x5A });
+        try
+        {
+            byte[]? b = new WindowsSystemCodePage().AnsiPathBytes(dll);
+            if (b is null) return;                                              // no ANSI form: refused upstream
+            if (b.SequenceEqual(Encoding.UTF8.GetBytes(dll))) return;           // a UTF-8 ANSI code page
+            Assert.All(b, x => Assert.True(x < 0x80, "a non-ASCII byte for a path no code page holds"));
+            Assert.True(File.Exists(Encoding.ASCII.GetString(b)), "the ASCII alias does not open the file");
+        }
+        finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
+    }
+
+    [Theory]
+    [MemberData(nameof(Generators))]
+    public void GeneratedScripts_OnCesVm_CompileAndBakeTheExactBytes(string which)
+    {
+        // (T9) The CE-VM check was run once by hand; this commits it. Skips where the host is not built.
+        const string path = @"D:\工具\UE5CEDumper\UE5Dumper.dll";
+        byte[] big5 = Big5.GetBytes(path);
+        string lua = Gen(which, path, new FakeCodePage(big5));
+
+        // Every Lua chunk compiles (the record: each {$lua} block; the autorun: the file).
+        var chunks = which == "inject"
+            ? Regex.Matches(lua, @"\{\$lua\}\n(.*?)\n\{\$asm\}", RegexOptions.Singleline).Select(m => m.Groups[1].Value).ToList()
+            : new List<string> { lua };
+        Assert.NotEmpty(chunks);
+        string rhs = Regex.Match(lua, @"local DLL_PATH = ('[^']*')").Groups[1].Value;
+        var sb = new StringBuilder();
+        for (int i = 0; i < chunks.Count; i++)
+            sb.Append($"assert(load([==[{chunks[i]}]==], 'chunk{i}'))\n");
+        sb.Append($"local v = {rhs}\nlocal hex = {{}}\nfor k = 1, #v do hex[#hex + 1] = string.format('%02X', v:byte(k)) end\n");
+        sb.Append("print('BYTES=' .. table.concat(hex))\n");
+
+        var (exit, output) = CeLua53Host.Run(sb.ToString());
+        Assert.True(exit == 0, output);
+        Assert.Contains("BYTES=" + Convert.ToHexString(big5), output);
+    }
+
     private sealed class FakeCodePage(byte[]? bytes) : ISystemCodePage
     {
         public string AnsiModuleName(string moduleFile) => moduleFile;

@@ -8789,6 +8789,10 @@ static void Test_Methode_NarrowForAnsiLoad() {
                   "C:\\CE\\UE5Dumper.dll");
     EXPECT_EQ_STR("UTF-8 ANSI code page: UTF-8 as is",
                   Methode::NarrowForAnsiLoad(tm, tm, CP_UTF8), "D:\\Tools\\CE\xE2\x84\xA2\\UE5Dumper.dll");
+    // (skeptic CEINJ-4) An ASCII alias is preferred even when the long path narrows exactly: the bytes are made in
+    // CE's code page but decoded in the GAME's (Locale Emulator gives it another).
+    EXPECT_EQ_STR("ASCII alias preferred over an exact non-ASCII narrowing",
+                  Methode::NarrowForAnsiLoad(gongju, L"D:\\5DE5~1\\UE5Dumper.dll", 950), "D:\\5DE5~1\\UE5Dumper.dll");
 }
 
 int main() {
