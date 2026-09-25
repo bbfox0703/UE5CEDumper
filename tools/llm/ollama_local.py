@@ -95,8 +95,9 @@ EXE_TAIL = r"-(?:Win64|WinGDK|WinGRDK)-(?:Shipping|Test|DebugGame)\.exe"
 PROCESS_EXE_RE = re.compile(r"(.+)" + EXE_TAIL, re.I)
 COMMAND_EXE_RE = re.compile(r"([^\\/\"'\s]+)" + EXE_TAIL + r"\b", re.I)
 EXEMPT_STEM_PREFIX = "dumpertest"
-# DumperTest is never a Steam app, so any Steam launch is a commercial one.
-STEAM_LAUNCH_RE = re.compile(r"steam(?:\.exe)?[\"']?\s+(?:\S+\s+)*?-applaunch\s+\d+"
+# DumperTest is never a Steam app, so any Steam launch is a commercial one. `[\\"']*` and not `["']?`:
+# in raw (unparsed) hook JSON the closing quote after steam.exe arrives escaped, as `\"`.
+STEAM_LAUNCH_RE = re.compile(r"steam(?:\.exe)?[\\\"']*\s+(?:\S+\s+)*?-applaunch\s+\d+"
                              r"|steam://(?:rungameid|run)/\d+", re.I)
 
 SYSTEM_PROMPT = (
@@ -138,6 +139,18 @@ def command_launches_commercial(command: str) -> str | None:
         if not m.group(1).lower().startswith(EXEMPT_STEM_PREFIX):
             return m.group(0)
     return None
+
+
+def hook_command(raw: str) -> str:
+    """The shell command from the hook's stdin JSON; the RAW text if that is not parseable JSON.
+
+    A guard that goes blind on malformed input is the wrong way to fail: found 2026-09-25 when a
+    hand-built test payload (a `\\` collapsed by the shell) was silently a no-op."""
+    try:
+        data = json.loads(raw) if (raw or "").strip() else {}
+        return str(((data.get("tool_input") or {}).get("command")) or "")
+    except (ValueError, AttributeError):
+        return raw or ""
 
 
 def parse_tasklist(text: str) -> list[str]:
@@ -481,8 +494,7 @@ def cmd_hook(args) -> int:
     """Never blocks and never fails the tool call: every path exits 0."""
     try:
         raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
-        data = json.loads(raw) if raw.strip() else {}
-        command = str(((data.get("tool_input") or {}).get("command")) or "")
+        command = hook_command(raw)
         cfg, _ = load_config()
         if cfg is None:
             return 0
@@ -597,6 +609,12 @@ def selftest() -> int:
         ("", False),
     ]:
         ok(f"command {cmd[:48]!r} -> {want}", (command_launches_commercial(cmd) is not None) is want)
+
+    good = json.dumps({"tool_name": "Bash", "tool_input": {"command": "steam.exe -applaunch 1"}})
+    ok("hook input: the command field", hook_command(good) == "steam.exe -applaunch 1")
+    ok("hook input: malformed JSON is scanned raw, not ignored",
+       command_launches_commercial(hook_command('{"command":"\\"C:\\Steam\\steam.exe\\" -applaunch 3"')) is not None)
+    ok("hook input: empty and non-object inputs", hook_command("") == "" and hook_command("[1]") == "[1]")
 
     listing = ('"System Idle Process","0","Services","0","8 K"\r\n'
                '"Elliot-Win64-Shipping.exe","4242","Console","1","3,210,000 K"\r\n'
