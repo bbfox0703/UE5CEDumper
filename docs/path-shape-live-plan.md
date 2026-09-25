@@ -60,7 +60,7 @@ Attach CE.
 | 7 | `[PATH-TRAINER-APOSTROPHE]` | Connected to `Tony's&Jerry-…`: the standalone trainer, pushed to CE, enables Setup | ⏳ |
 | 8 | `[PATH-CEXML-AMP]` | The same game: an AOB-wrapped CE XML export pastes into CE and its script enables | ⏳ |
 | 9 | `[PATH-SEIN-TRAILING-SPACE]` (UI side) | Connected to `… .exe`: the UI's own log mirror lands in the DLL's folder | ⏳ |
-| 10 | `[PATH-MODULE-NAME-UTF8]` / confirmed record | After the confirm dwell, `ui-options.json` holds the real `DumperTest51遊戲-…` name, not `?` | ⏳ |
+| 10 | `[PATH-MODULE-NAME-UTF8]` / confirmed record | After the confirm dwell, `ui-options.json` holds the real `DumperTest51遊戲-…` name, not `?` | ✅ PASS 2026-09-25, build 3556 |
 
 ### S4 — CE inject from folder shapes (proxy REMOVED from the fixture)
 
