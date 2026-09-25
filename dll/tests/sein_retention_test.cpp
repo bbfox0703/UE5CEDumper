@@ -281,6 +281,37 @@ int main() {
         check("T12b and the sweep still did its work", !Exists(fx.root / "Game0"));
     }
 
+    {   // ---- [PATH-SEIN-TRAILING-SPACE] the per-process folder name ----
+        //
+        // A stem ending in a space or in 2+ dots ("Game .exe", "Game...exe") gave Logs\Game \: create_directories
+        // succeeds -- Win32 trims the LAST segment and creates "Game" -- but every file opened INSIDE "Game " fails,
+        // because an intermediate segment is not trimmed. The whole session then went unlogged, with no notice.
+        Fixture fx;
+        blk("the process folder name");
+        check("P1 'Game .exe' -> 'Game'", Sein::ProcessFolderName(L"Game .exe") == L"Game");
+        check("P2 'Game...exe' -> 'Game'", Sein::ProcessFolderName(L"Game...exe") == L"Game");
+        check("P3 'My Game  .exe' -> 'My Game'", Sein::ProcessFolderName(L"My Game  .exe") == L"My Game");
+        check("P4 interior double space kept", Sein::ProcessFolderName(L"DragonSword  Awakening.exe")
+                                                   == L"DragonSword  Awakening");
+        check("P5 leading space kept (Win32 keeps it)", Sein::ProcessFolderName(L" Game.exe") == L" Game");
+        check("P6 '.exe' (empty stem) -> 'unknown', never loose files in Logs\\",
+              Sein::ProcessFolderName(L".exe") == L"unknown");
+        check("P7 the nine characters still map to '_'", Sein::ProcessFolderName(L"a?b:c.exe") == L"a_b_c");
+        check("P8 a single trailing dot of the stem is trimmed too", Sein::ProcessFolderName(L"Game..exe") == L"Game");
+
+        // The trap itself, measured through the same calls Sein makes.
+        std::error_code ec;
+        fs::create_directories(fx.root / L"Game ", ec);
+        FILE* bad = _wfsopen((fx.root / L"Game " / L"init-0.log").c_str(), L"ab", _SH_DENYNO);
+        check("P9 (the trap) a file inside 'Game ' cannot be opened", bad == nullptr);
+        if (bad) fclose(bad);
+        const fs::path good = fx.root / Sein::ProcessFolderName(L"Game .exe");
+        fs::create_directories(good, ec);
+        FILE* ok = _wfsopen((good / L"init-0.log").c_str(), L"ab", _SH_DENYNO);
+        check("P10 inside the sanitised folder it can", ok != nullptr);
+        if (ok) fclose(ok);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

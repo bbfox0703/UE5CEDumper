@@ -655,6 +655,32 @@ public class ProxyImportAnalyzerTests
         Assert.Equal(expected, ProxyImportAnalyzer.ProcessLogFolderName(input));
     }
 
+    // [PATH-SEIN-TRAILING-SPACE] A stem ending in a space or dots: Win32 creates "Game" for "Game ", and a file INSIDE
+    // "Game " cannot be opened -- so the DLL's session went unlogged. The DLL now trims them (Sein::ProcessFolderName),
+    // and this key, which finds the DLL's folder for the Load column, must trim them identically.
+    [Theory]
+    [InlineData("Game .exe", "Game")]
+    [InlineData("Game...exe", "Game")]
+    [InlineData("Game..exe", "Game")]
+    [InlineData("My Game  .exe", "My Game")]
+    [InlineData("DragonSword  Awakening.exe", "DragonSword  Awakening")]   // interior spaces are kept
+    [InlineData(" Game.exe", " Game")]                                       // a leading space is legal and kept
+    [InlineData(".exe", "unknown")]                                          // never loose files in Logs\
+    [InlineData("a?b:c.exe", "a_b_c")]
+    public void ProcessLogFolderName_TrimsWhatWin32Trims(string input, string expected)
+        => Assert.Equal(expected, ProxyImportAnalyzer.ProcessLogFolderName(input));
+
+    // The UI's own mirror folder must land in the SAME folder as the DLL's.
+    [Theory]
+    [InlineData("Game .exe", "Game")]
+    [InlineData("Game...exe", "Game")]
+    [InlineData("My Game  .exe", "My Game")]
+    [InlineData("DragonSword  Awakening.exe", "DragonSword  Awakening")]
+    [InlineData(".exe", "unknown")]
+    [InlineData("Octopath_Traveler-Win64-Shipping.exe", "Octopath_Traveler-Win64-Shipping")]
+    public void UiMirrorFolder_MatchesTheDllFolder(string process, string expected)
+        => Assert.Equal(expected, UE5DumpUI.Services.LoggingService.SanitizeFolderName(process));
+
     [Fact]
     public void ProcessLogFolderName_EmptyInput_IsEmpty()
     {
