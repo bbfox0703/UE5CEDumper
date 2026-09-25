@@ -126,7 +126,8 @@ def main():
                     err = None
                 except Exception as e:  # a purge inside the window fails the walk
                     fl, err = [], str(e)
-                picked = [f for f in fl if any(k in (f.get("type") or "") for k in INTERESTING)]
+                picked = [f for f in fl if any(k in (f.get("type") or "") for k in INTERESTING)
+                          or "Delegate" in (f.get("name") or "")]   # delegate ARRAYS too (type ArrayProperty)
                 rec["objects"][tag] = {"addr": addr, "flags": flags, "error": err, "fields": picked}
                 say(f"  {tag:18} {addr}  flags {show_flags(flags)}" + (f"  WALK FAILED: {err[:80]}" if err else ""))
                 for f in picked:
