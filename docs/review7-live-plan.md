@@ -35,7 +35,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-D-02]` | 17, 21 | yes · ✅ PASS red→green (Dump All 3/3; Explorer race not reproduced, 0/3) |
 | `[R7-D-08]` | 17, 21 | yes · ✅ PASS red→green on the reconnect arm (the relaunch arm does not discriminate) |
 | `[R7-D-06]` | 17, 21 | yes · ✅ PASS red→green (cap + low disk; real cuts still marked) |
-| `[R7-S8]` | 17, 24 | yes · ⏳ open |
+| `[R7-S8]` | 17, 24 | yes · ✅ PASS red→green (the complete-but-low capture warns; the red said nothing) |
 | `[R7-D-01]` | 17, 21 | yes · ✅ PASS red→green (both SPC grids) |
 | `[R7-D-04]` | 18, 22 | yes · ✅ PASS red→green (absent / busy / released / denied each distinct) |
 | `[R7-S12]` | 18, 25 | yes · ⏳ green captured (session 18: ⟳ and own probe, both directions); red pending (session 25) |
