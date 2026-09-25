@@ -398,6 +398,16 @@ confirmed: 4 LOW, 9 INFO; nothing HIGH or MED. Fixed row by row.
 | R5-02 + R5-T-MRU-TOP-SLOT-POSITIVE-UNTESTED | LOW → ✅ `88509173` (red `0284ec74`) | CT-MRU-ZERO | A relative entry now dropped still gets the old reasons: "has no UE5CEDumper.CT in it" / "CE reported no recent files" -- false, in the failure dialog and the log. And the top slot's positive case (a renamed table, absolute) is untested. |
 | R5-04 + R5-T-WRITER-GUARD-PIN-SURVIVES-COMMENT-OUT | INFO → ✅ `49d4dd93` (red `657955ab`) | CT-MRU-ZERO | A RELATIVE line an older `.CT` wrote into `dll-path.txt` is still read as a breadcrumb (probed against CE's current folder) and carried forward by both writers (the `.CT` keep loop, `DumperDllPathStore`). The writer's guard is pinned by raw text only. |
 
+**Sixth skeptic review** (workflow `wf_9401c10a-2d7`, one reviewer, then one refuter per finding; over the fifth-round
+fixes `b50422b8^..49d4dd93`). 6 raised, 6 confirmed: 1 LOW (a regression from R5-04), 5 INFO. Fixed row by row.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R6-01 | LOW | CT-MRU-ZERO (from `49d4dd93`) | **Measured on CE's VM.** Both dll-path.txt writers check "absolute" BEFORE stripping trailing separators, so a DLL folder at a drive root, `E:\`, is written as a bare `E:` -- which every reader now drops as relative. The self-heal and the picker then never stick, and UE5DumpUI started from `E:\` rewrites the file on every start. **Fix:** keep the root separator in both writers; both readers take a legacy bare `X:` as that drive's root. |
+| R6-02 + R6-06 | INFO | CT-MRU-ZERO | When every recorded line is dropped, the breadcrumb slot says "no folder recorded yet" -- false. And the chunk-level `_crumbs = ue5_readBreadcrumbs(...)` is pinned only by a substring. |
+| R6-04 | INFO (tests) | CT-MRU-ZERO | No control that a list with NO UE5CEDumper.CT still says "has no UE5CEDumper.CT". |
+| R6-03 + R6-05 | INFO | CONFIRM-SHARED-EXE | The Load column (150 px) shows ~18 characters, so a mark appended after "loaded 2026-09-25" is clipped away (the Suggested column's too); and `SharedLogFolders` groups by LOG folder ('Game .exe' and 'Game.exe' share `Logs\Game`), so its mark must not say "shared exe name", and its test reaches neither the same-folder nor the trimmed-name case. |
+
 **Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ⏳ open, investigate.
 Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
 (the S1 rig's first version) logged `RunScan: UNCAUGHT non-standard exception — contained` in 4 of 5 launches
