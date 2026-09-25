@@ -470,6 +470,11 @@ std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
     // GetModuleHandleExW from the base adds a reference, so the image stays mapped until FreeLibrary below; if the
     // module is already gone the call fails, and if another module now sits at that address its handle differs from
     // the base -- either way this module has nothing left to scan.
+    // (tenth review, R10-03) The trade, measured: while pinned, the owner's own FreeLibrary returns without unloading,
+    // so OUR FreeLibrary may be the last one -- the module's DLL_PROCESS_DETACH then runs on this scan thread, and its
+    // unload waits one module scan. A module already part-way through unloading is not pinnable (GetModuleHandleExW
+    // fails at once, error 126) and takes the skip above. An SEH guard alone would not do instead: it cannot tell an
+    // unmapped module's range that has since been reused, and would read someone else's bytes as this module's.
     struct ModulePin {
         HMODULE h = nullptr;
         ~ModulePin() { if (h) FreeLibrary(h); }
