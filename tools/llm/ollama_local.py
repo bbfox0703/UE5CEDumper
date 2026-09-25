@@ -569,9 +569,9 @@ def selftest() -> int:
     ok("normalize adds :latest", normalize_model("gemma-4-12b-it-Q8_0") == "gemma-4-12b-it-q8_0:latest")
     ok("normalize keeps a tag", normalize_model("qwen:7b") == "qwen:7b")
     ok("normalize: a registry path's colon is the tag", normalize_model("hf.co/org/repo") == "hf.co/org/repo:latest")
-    ok("find: bare tag matches :latest", find_model(tags, "gemma-4-12b-it-Q8_0")["name"] == "gemma-4-12b-it-Q8_0:latest")
+    ok("find: bare tag matches :latest", (find_model(tags, "gemma-4-12b-it-Q8_0") or {}).get("name") == "gemma-4-12b-it-Q8_0:latest")
     ok("find: case-insensitive", find_model(tags, "GEMMA-4-12B-IT-q8_0:LATEST") is not None)
-    ok("find: gemma4 is not the 12B", find_model(tags, "gemma4")["name"] == "gemma4:latest")
+    ok("find: gemma4 is not the 12B", (find_model(tags, "gemma4") or {}).get("name") == "gemma4:latest")
     ok("find: absent -> None", find_model(tags, "gemma-4-12b-it-Q4_0") is None)
     ok("find: no models key", find_model({}, "x") is None)
 
