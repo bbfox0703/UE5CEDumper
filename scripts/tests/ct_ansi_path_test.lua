@@ -193,6 +193,19 @@ local function liftLocal(name)
 end
 local okMru = ct:match("(function%s+ue5_probeRecentFiles.-\nend)") ~= nil
 check("ue5_probeRecentFiles is in the .CT", okMru)
+-- (third review, T3-MRU-PROBE-CALL-UNPINNED) The suite calls the probe itself, so it must also pin that the .CT still
+-- does: exactly one call OUTSIDE the function's own body, guarded by `if not DLL_PATH`, after the first slot probe.
+do
+  local body = unxml(ct)
+  local def = body:match("(function%s+ue5_probeRecentFiles.-\nend)") or ""
+  local outside = body:gsub(def:gsub("%p", "%%%0"), "", 1)
+  local calls = select(2, outside:gsub("ue5_probeRecentFiles%(%)", ""))
+  check("the .CT calls ue5_probeRecentFiles() exactly once", calls == 1, calls)
+  local at = outside:find("if not DLL_PATH then ue5_probeRecentFiles() end", 1, true)
+  check("  ...as 'if not DLL_PATH then ue5_probeRecentFiles() end'", at ~= nil)
+  local first = outside:find("\n_probeSlots(1)", 1, true)
+  check("  ...after the first slot probe", at ~= nil and first ~= nil and first < at, tostring(first) .. " / " .. tostring(at))
+end
 if okMru and liftLocal("_slot") and liftLocal("_dllAt") and liftLocal("_probeSlots") then
   -- its own dependency (pcall'd inside the probe: a missing one would just read as "no recent files")
   assert(load(unxml(ct:match("(function%s+ue5_splitRegMultiSz.-\nend)")), "ue5_splitRegMultiSz"))()
