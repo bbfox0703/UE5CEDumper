@@ -57,6 +57,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-D-05]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-X1]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-X3]` | done | ✅ live PASS 2026-09-25 (before this plan; `068c590e`) |
+| `[R7-X4]` | 4 (found there) | yes · ✅ PASS red→green on stock 5.3; the stripped-5.4 function arm not run (Elliot) |
 
 -----
 

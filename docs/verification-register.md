@@ -5474,7 +5474,8 @@ This cost two contradictory readings of Avowed before it was pinned down:
 3. **`get_pointers.ue_version`** — `g_cachedUEVersion`, which is the value **after any runtime
    raise**. Avowed detects 503 and then logs `property marker (CMC::GravityDirection) = UE5.4+ —
    raising version 503 -> 504`, exactly as DragonSword Awakening does, so 503 and 504 are *both
-   right* for different questions.
+   right* for different questions. ⚠ **Corrected 2026-09-25 `[R7-X4]`: the raise itself was wrong** — stock 5.3 already reflects
+   `GravityDirection`; the 5.4 marker is now the `SetGravityDirection` UFUNCTION, which Avowed lacks, so it reports 503.
 ⇒ **G11 step 1 must compare the cache against the LOG LINE.** On that basis: **6 of 8 IDENTICAL**
 (Lushfoil 506, Manor Lords 505, Solarpunk 507, ES2 505, Geri 427, DQ7R 427 — and Solarpunk's is a
 genuine cross-revision re-detect, its entry was still `rev=3`). The two that differ are Avowed
