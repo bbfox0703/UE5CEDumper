@@ -736,7 +736,8 @@
     <sys:String x:Key="str.Pivot.Discover.Pick">Snapshots (tick 2-4, oldest → newest = Before … After):</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Run">🔍 Discover</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Use">Use → (pivot this)</sys:String>
-    <!-- Usage limits, shown on the tab so expectations are clear up front. -->
+    <!-- Usage limits, one click away: the toggle's label, then the text it shows. -->
+    <sys:String x:Key="str.Pivot.Discover.LimitsToggle">ⓘ How it works &amp; limits</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Limits">How it works &amp; limits:&#10;• Capture 2-4 snapshots around the action you want to isolate (Before … After).&#10;• Use 3-4 to separate a one-time change from constant per-frame noise (rotation, timers, positions); with only 2, both just look "changed".&#10;• Only fields that MOVED appear — a value that never changed between your captures will not show.&#10;• Across a game restart, only objects that re-appear with a stable identity (GameInstance / PlayerState / Pawn / components / GAS) re-join reliably; randomly-spawned actors may not.&#10;• The scan covers the numeric fields captured in the snapshot and runs server-side; on a large capture it can take several seconds (cancellable).</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Class">Class</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Prop">Property</sys:String>

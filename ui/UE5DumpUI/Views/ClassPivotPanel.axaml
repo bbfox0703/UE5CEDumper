@@ -5,24 +5,40 @@
              x:Class="UE5DumpUI.Views.ClassPivotPanel"
              x:DataType="vm:ClassPivotViewModel">
 
-  <Grid Margin="12" RowDefinitions="Auto,Auto,Auto,Auto,*,Auto">
+  <!-- [UI-SPACE-2026-09-25] Measured on a 4K screen at 225 % (1067 DIP high), build 3557: ~20 lines of explanation and
+       the two setup expanders pushed the field picker and the results grid entirely below the window. Now each
+       explanation is one trimmed line with the whole text on hover, the limits box opens on demand, and the setup
+       area (Discover + the pivot target) scrolls inside SetupScroller, whose MaxHeight the code-behind ties to the
+       panel's height, so the field picker and the results always keep the rest. -->
+  <Grid Margin="12" RowDefinitions="Auto,Auto,Auto,*,Auto">
 
-    <!-- Intro -->
+    <!-- Intro: one line; the whole text on hover -->
     <TextBlock Grid.Row="0" Text="{StaticResource str.Pivot.Intro}"
-               Foreground="#999" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,10"/>
+               ToolTip.Tip="{StaticResource str.Pivot.Intro}" TextTrimming="CharacterEllipsis"
+               Foreground="#999" FontSize="12" Margin="0,0,0,8"/>
+
+    <ScrollViewer x:Name="SetupScroller" Grid.Row="1" Margin="0,0,0,8"
+                  VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <StackPanel Orientation="Vertical">
 
     <!-- Change-driven discovery: the automatic front-door. Find the (class, prop)
          targets that moved between two snapshots, ranked, so the user doesn't have to
          guess a class/key. "Use →" hands the chosen candidate to the pivot below. -->
-    <Expander Grid.Row="1" Margin="0,0,0,8" IsExpanded="True"
+    <Expander Margin="0,0,0,8" IsExpanded="True"
               Header="{StaticResource str.Pivot.Discover.Header}">
       <StackPanel Orientation="Vertical" Spacing="6">
-        <TextBlock Text="{StaticResource str.Pivot.Discover.Intro}"
-                   Foreground="#999" FontSize="11" TextWrapping="Wrap"/>
+        <!-- One line + the whole text on hover; the limits toggle sits at its end. -->
+        <DockPanel>
+          <ToggleButton x:Name="LimitsToggle" DockPanel.Dock="Right" Margin="8,0,0,0" Padding="8,2" FontSize="11"
+                        Content="{StaticResource str.Pivot.Discover.LimitsToggle}"/>
+          <TextBlock Text="{StaticResource str.Pivot.Discover.Intro}"
+                     ToolTip.Tip="{StaticResource str.Pivot.Discover.Intro}" TextTrimming="CharacterEllipsis"
+                     Foreground="#999" FontSize="11" VerticalAlignment="Center"/>
+        </DockPanel>
 
-        <!-- Usage limits, shown up front so expectations are clear before running. -->
+        <!-- Usage limits, one click away (the toggle above). -->
         <Border Background="#16313D" BorderBrush="#2D6A8A" BorderThickness="1"
-                CornerRadius="4" Padding="8,6">
+                CornerRadius="4" Padding="8,6" IsVisible="{Binding #LimitsToggle.IsChecked}">
           <TextBlock Text="{StaticResource str.Pivot.Discover.Limits}"
                      Foreground="#9FC6D8" FontSize="11" TextWrapping="Wrap"/>
         </Border>
@@ -84,7 +100,7 @@
     <!-- Snapshot / class selection. Collapsible (the picker + class list take vertical
          space; collapse to give the results grid more room). Grayed during a pivot run so
          the source / snapshot / class can't change mid-operation. -->
-    <Expander Grid.Row="2" Margin="0,0,0,8" IsExpanded="True"
+    <Expander Margin="0,0,0,8" IsExpanded="True"
               Header="{StaticResource str.Pivot.SourceHeader}">
       <StackPanel Orientation="Vertical" IsEnabled="{Binding !IsBusy}">
       <WrapPanel Orientation="Horizontal">
@@ -192,9 +208,11 @@
       </ListBox>
       </StackPanel>
     </Expander>
+    </StackPanel>
+    </ScrollViewer>
 
     <!-- Key mode -->
-    <StackPanel Grid.Row="3" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8" VerticalAlignment="Center">
+    <StackPanel Grid.Row="2" Orientation="Horizontal" Spacing="6" Margin="0,0,0,8" VerticalAlignment="Center">
       <TextBlock Text="{StaticResource str.Pivot.GroupBy}" Foreground="#CCCCCC" VerticalAlignment="Center"
                  IsVisible="{Binding IsSnapshotSource}"/>
       <ComboBox ItemsSource="{Binding KeyModeOptions}" SelectedItem="{Binding SelectedKeyMode}" MinWidth="170"
@@ -219,7 +237,7 @@
 
     <!-- Resizable region: drag the splitter to reallocate height between the field
          picker (top) and the results (bottom). -->
-    <Grid Grid.Row="4" RowDefinitions="1.3*,Auto,2.5*">
+    <Grid Grid.Row="3" RowDefinitions="1.3*,Auto,2.5*">
 
     <!-- Field picker: tick the value fields to project per group, and the Key
          fields to add to the composite group key (Field mode). KeyScore hints which
@@ -262,15 +280,17 @@
 
     <!-- Results region: hint + filter, then one row per group -->
     <Grid Grid.Row="2" RowDefinitions="Auto,*">
-      <WrapPanel Grid.Row="0" Orientation="Horizontal" Margin="0,6,0,6">
-        <TextBlock Text="{StaticResource str.Pivot.ResultsHint}" Foreground="#888"
-                   FontSize="11" TextWrapping="Wrap" Width="680" Margin="0,0,12,0"/>
-        <AutoCompleteBox Text="{Binding ResultFilter, Mode=TwoWay}"
+      <!-- The filter box docks right; the hint takes the rest as one trimmed line (the whole text on hover). -->
+      <DockPanel Grid.Row="0" Margin="0,6,0,6">
+        <AutoCompleteBox DockPanel.Dock="Right" Text="{Binding ResultFilter, Mode=TwoWay}"
                          ItemsSource="{Binding ResultFilterHistory}"
                          FilterMode="Contains"
                          Width="220" Height="26" VerticalAlignment="Center"
                          PlaceholderText="{StaticResource str.Pivot.ResultFilterHint}"/>
-      </WrapPanel>
+        <TextBlock Text="{StaticResource str.Pivot.ResultsHint}" Foreground="#888"
+                   ToolTip.Tip="{StaticResource str.Pivot.ResultsHint}" TextTrimming="CharacterEllipsis"
+                   FontSize="11" VerticalAlignment="Center" Margin="0,0,12,0"/>
+      </DockPanel>
 
       <!-- Results: one row per group -->
       <DataGrid Grid.Row="1" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
@@ -288,7 +308,7 @@
 
     <!-- N1: hidden-class chips (Pivot-scope denylist). Only shown when non-empty.
          Click a chip to un-hide; "Clear all" empties the Pivot denylist. -->
-    <Border Grid.Row="5" Background="#252526" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
+    <Border Grid.Row="4" Background="#252526" CornerRadius="4" Padding="8,6" Margin="0,8,0,0"
             BorderBrush="#3C3C3C" BorderThickness="1"
             IsVisible="{Binding HasHiddenClasses}">
       <StackPanel Orientation="Vertical">
