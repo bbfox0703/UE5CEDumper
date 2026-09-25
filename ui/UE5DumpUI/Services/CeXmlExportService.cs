@@ -2731,6 +2731,7 @@ public static class CeXmlExportService
             {
                 foreach (var elem in field.ArrayElements)
                 {
+                    if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
                     int elemByteOffset = elem.Index * field.ArrayElemSize;
                     EmitGroupPlaceholder(sb, elemIndent,
                         DecorateDesc($"[{elem.Index}]", elemByteOffset, field.ArrayStructType),
@@ -2792,6 +2793,7 @@ public static class CeXmlExportService
             var strIndent = indent + "  ";
             foreach (var elem in field.ArrayElements)
             {
+                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
                 int elemByteOffset = elem.Index * field.ArrayElemSize;
                 EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{elem.Index}]", elemByteOffset, null),
                     $"+{elemByteOffset:X}", field.ArrayInnerType);
@@ -2931,6 +2933,8 @@ public static class CeXmlExportService
         int elemPad = ElemDelegatePad(field);
         foreach (var elem in field.ArrayElements)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+
             // Element: simple offset from the already-dereferenced Data pointer.
             int elemByteOffset = elem.Index * field.ArrayElemSize;
 
@@ -3140,6 +3144,8 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements ?? new List<ArrayElementValue>())
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // The soft-path string is a meaningful asset identity (not an object
             // instance name), so it's kept as the element's name. +Offset annotates;
@@ -3215,6 +3221,8 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements!)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // Bare index for the synth field (EmitResolvedStruct re-decorates it via
             // EmitFields); a separately-decorated form for the shallow placeholder paths.
@@ -3396,6 +3404,10 @@ public static class CeXmlExportService
 
         foreach (var elem in field.MapElements)
         {
+            // [R7-X6] The budget is checked per element here too: EmitFields only checks BETWEEN fields, so a big
+            // map emitted last ran past the ceiling unflagged (98,890 entries, measured on DumperTest's NestedBag).
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+
             int elemByteOffset = elem.Index * stride;
 
             // Record / primitive-leaf flatten: when the map VALUE is a struct whose entire subtree
@@ -3548,6 +3560,8 @@ public static class CeXmlExportService
 
         foreach (var elem in field.SetElements)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+
             int elemByteOffset = elem.Index * stride;
             // An object element's instance name is dropped (its class returns via +Type
             // downstream); a scalar/string element value is its identity, kept as the name.
@@ -3613,6 +3627,8 @@ public static class CeXmlExportService
 
         foreach (var row in field.DataTableRowData)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+
             // Level 2: Row — deref uint8* at sparseIndex*stride+fnameSize. The row's
             // FName key is its identity, kept as the name; +Offset annotates.
             int rowPtrOffset = row.SparseIndex * field.DataTableStride + field.DataTableFNameSize;
