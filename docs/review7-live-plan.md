@@ -44,7 +44,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-C-04]` | 18-19, 22-23 | yes · ✅ PASS red→green (arm B: no modal, 3/3; arm A: one dialog, 4/4) |
 | `[R7-C-01]` | 19, 23 | yes · ✅ PASS red→green (the latch holds the invoke off; the freeze's LIST_INSTANCES runs) |
 | `[R7-C-03]` | 19, 23 | yes · ✅ PASS red→green (the finished latch is released; rescans every 2 s, not abandoned) |
-| `[R7-S3]` | 19, 23 | yes · ⏳ red captured (session 23: latch survives the revive, a minute later still refused); green pending |
+| `[R7-S3]` | 19, 23 | yes · ✅ PASS red→green (the latch is released on the reset mailbox; invokes and the freeze run) |
 | `[R7-S13]` | 20, 25 | yes · ⏳ open |
 | `[R7-S14]` | 20, 25 | yes · ⏳ open |
 | `[R7-S11]` | 20, 24 | partial · ⏳ open |
