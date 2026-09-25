@@ -2502,6 +2502,28 @@ should not be cited as evidence without a Steam-launched re-run.
 
 -----
 
+### 3.wa Driving CE through the AOBMaker bridge: ONE CE, and a busy pipe is not a dead one
+
+The [PATH-SHAPE] live pass (2026-09-25) drove Cheat Engine with no clicking: `tools/verify/ce_bridge_probe.py` and
+`ce_symbol_match_check.py` add an Auto Assembler record through `\\.\pipe\AOBMakerCEBridge` whose `{$lua}` block does
+the work (`openProcess`, `getAddressSafe`, `enumModules`, `loadTable`) and writes its answer to a file under `out/`. It
+is fast and gives exact bytes. Two traps, one of which the maintainer caught on screen:
+
+- ⛔ **Never start CE when one is already running.** A "restart and attach" helper launched `Cheat Engine.exe`
+  without killing the old one -- TWO CE instances, both loading the AOBMaker plugin, both serving the same pipe name.
+  The maintainer saw it ("multiple CE"). `tasklist | grep -ic cheatengine` first; kill ALL
+  `cheatengine-x86_64-SSE4-AVX2.exe` (the shim `Cheat Engine.exe` exits at once) before starting exactly one.
+- ⚠ **`OSError: [Errno 22] Invalid argument` on `open(pipe)` means BUSY, not absent** (absent is errno 2). The plugin
+  serves one request per connection and re-creates the instance, so a second connection right after the first can
+  land in that gap. Retry for a few seconds; do not read it as "the plugin is not loaded".
+- A record whose script calls `showMessage` (every refusal we emit) BLOCKS the enabling Lua until the dialog is
+  closed -- run such a probe in the background, screenshot the dialog (it is the evidence), then click OK.
+- The UI copies staged under `out/pathshape/` are different exe PATHS, so computer-use needs `request_access` for each
+  (`ue5dumpui.exe` resolves to the running copy), and they reopen with the saved window state -- restore / maximize by
+  pid before clicking.
+- ⚠ Bash heredocs collapse `\\` -- a pipe path written in a heredoc became `\.\pipe…` and every open failed. Put
+  pipe-path Python in a file.
+
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
 It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
