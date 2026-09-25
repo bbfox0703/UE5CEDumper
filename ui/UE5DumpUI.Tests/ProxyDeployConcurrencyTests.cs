@@ -66,6 +66,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
         public readonly List<TaskCompletionSource> PendingRefreshes = new();
         /// <summary>Set true to make refreshes park until a test releases them.</summary>
         public bool ParkRefreshes;
+        /// <summary>Opt-in: clear StatusDetail on every row outside the preserve set, as the REAL refresh does
+        /// (it rewrites the row from disk). [PROXY-DOUBLE-GUARD] A note written before the refresh would not
+        /// survive it.</summary>
+        public bool ClearDetailsOnRefresh;
         /// <summary>The types actually written to the grid, in the order they landed.</summary>
         public readonly List<ProxyType> Applied = new();
 
@@ -84,6 +88,9 @@ public class ProxyDeployConcurrencyTests : IDisposable
             // not stop the write — which is precisely the gap the post-await re-check closes.
             // A stub that threw on ct would model away the thing under test.
             if (ThrowOnCancelledRefresh) ct.ThrowIfCancellationRequested();
+            if (ClearDetailsOnRefresh)
+                foreach (var g in games)
+                    if (preserve is null || !preserve.Contains(g.BinariesDir)) g.StatusDetail = null;
             Applied.Add(proxyType);
         }
 
@@ -183,6 +190,25 @@ public class ProxyDeployConcurrencyTests : IDisposable
             ExePath = Path.Combine(bin, $"{name}.exe"),
             IsSelected = true,
         };
+    }
+
+    /// <summary>A Binaries dir holding exactly the given proxy DLLs (all "ours" unless the stub's IsOurs says
+    /// otherwise). [PROXY-DOUBLE-GUARD]</summary>
+    private DetectedGame Game(string name, params ProxyType[] deployed)
+    {
+        var g = Game(name, deployed: false);
+        foreach (var t in deployed)
+            File.WriteAllBytes(Path.Combine(g.BinariesDir, t.GetDllName()), new byte[] { 0x4D, 0x5A });
+        return g;
+    }
+
+    private (ProxyDeployViewModel Vm, GatedService Svc) ReadyWith(params DetectedGame[] games)
+    {
+        _ = ProxySources.Value;
+        var svc = new GatedService { ClearDetailsOnRefresh = true };
+        var vm = new ProxyDeployViewModel(svc, new MockLoggingService());
+        foreach (var g in games) vm.Games.Add(g);
+        return (vm, svc);
     }
 
     private void CleanTemp()
@@ -703,6 +729,85 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
 
         Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
+    }
+
+    // ── [PROXY-DOUBLE-GUARD] Deploy never adds a second of our proxy types ──────────────
+    //
+    // Maintainer request: Select All + Deploy over games that already carry ANOTHER of our proxies made doubles,
+    // each to be fixed by hand. The guard skips those games -- even with Force Overwrite, and without consuming
+    // foreign consent -- and says why in Details, AFTER the refresh that would otherwise wipe it.
+
+    [Fact]
+    public async Task Deploy_OtherOfOurs_IsSkipped_EvenWithForce()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm), Game("B", ProxyType.Dxgi));   // radio: version.dll
+        vm.ForceOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("skipped: 2", vm.LastOperationResult);
+        Assert.Equal("#888888", vm.LastOperationColor);               // nothing written: neutral
+        Assert.Empty(vm.LastManualProxyByGame);                        // a skipped game is not the user's pick
+        Assert.StartsWith("Skipped:", vm.Games[0].StatusDetail);       // survives the refresh
+        Assert.Contains("winmm.dll", vm.Games[0].StatusDetail);
+        Assert.Contains("dxgi.dll", vm.Games[1].StatusDetail);
+    }
+
+    [Fact]
+    public async Task Deploy_ForeignTargetPlusOtherOfOurs_IsSkipped_AndConsentIsNotConsumed()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        char sep = Path.DirectorySeparatorChar;
+        svc.IsOurs = p => !p.EndsWith($"{sep}version.dll", StringComparison.OrdinalIgnoreCase);   // version.dll is foreign
+        vm.AllowForeignOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("skipped: 1", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task Deploy_ForeignAtAnotherName_IsNotOurs_SoItStillDeploys()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm));
+        svc.IsOurs = p => !p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase);    // someone else's winmm.dll
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("A", ProxyType.Version) }, svc.Deploys.Select(d => (d.Game, d.Type)));
+        Assert.DoesNotContain("skipped", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task Deploy_AlreadyDoubledFolder_SameType_FollowsForce()
+    {
+        // A folder that is doubled already: redeploying the type that is THERE adds nothing new.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ("A", ProxyType.Version) }, svc.Deploys.Select(d => (d.Game, d.Type)));
+        Assert.StartsWith("Deployed: 1 success", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_AlreadyDoubledFolder_StillUpdatesEveryTypeThere()
+    {
+        // Update All only rewrites types already present, so the guard has nothing to say to it.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { ProxyType.Version, ProxyType.Winmm }, svc.Deploys.Select(d => d.Type).OrderBy(t => t));
     }
 
     [Fact]
