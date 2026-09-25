@@ -1034,8 +1034,14 @@ public sealed class ProxyDeployService : IProxyDeployService
     };
 
     public static DeployVerdict PlanDeploy(bool targetExists, bool targetIsOurs,
-                                           bool sameVersion, DeployOptions options)
+                                           bool sameVersion, DeployOptions options,
+                                           bool otherOfOursPresent = false)
     {
+        // [PROXY-DOUBLE-GUARD] Ranked above everything else, consent included: a missing or foreign target in a
+        // folder that already holds another of OUR proxies would become a double. Only redeploying the type that
+        // is already ours there adds nothing, so that one falls through to the same-type rules below.
+        if (otherOfOursPresent && !(targetExists && targetIsOurs)) return DeployVerdict.OtherProxyOfOurs;
+
         if (!targetExists) return DeployVerdict.Proceed;
 
         if (!targetIsOurs)
@@ -1155,9 +1161,17 @@ public sealed class ProxyDeployService : IProxyDeployService
                     tgtVer = GetDllVersion(targetDll);
                 }
                 bool sameVersion = srcVer != null && srcVer == tgtVer;
+                // [PROXY-DOUBLE-GUARD] The backstop for any caller: the view model pre-checks, this refuses anyway.
+                var others = OursPresent(game.BinariesDir, IsOurProxyDll)
+                    .Where(n => !n.Equals(proxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                switch (PlanDeploy(exists, isOurs, sameVersion, options))
+                switch (PlanDeploy(exists, isOurs, sameVersion, options, otherOfOursPresent: others.Count > 0))
                 {
+                    case DeployVerdict.OtherProxyOfOurs:
+                        return (false, new GameStatusUpdate(game, ProxyDeployStatus.DeployedOtherType,
+                            StatusDetail: DescribeOtherTypeSkip(others), SetInstalledVersion: false));
+
                     case DeployVerdict.NeedsForeignConsent:
                         return (false, new GameStatusUpdate(game, ProxyDeployStatus.OtherProxy,
                             StatusDetail: "Refused: another program's proxy DLL",
@@ -1224,6 +1238,24 @@ public sealed class ProxyDeployService : IProxyDeployService
         ApplyStatus(update);   // caller's thread — see the threading contract above
         return ok;
     }
+
+    /// <summary>[PROXY-DOUBLE-GUARD] OUR proxy DLLs present in <paramref name="binariesDir"/>: one of our four
+    /// names, on disk, and ours by <paramref name="isOurs"/> (ProductName). Another program's file at one of those
+    /// names is AC1's business, not a double.</summary>
+    internal static IReadOnlyList<string> OursPresent(string binariesDir, Func<string, bool> isOurs) =>
+        AllProxyDllNames()
+            .Where(name =>
+            {
+                string p = Path.Combine(binariesDir, name);
+                return File.Exists(p) && isOurs(p);
+            })
+            .ToList();
+
+    /// <summary>[PROXY-DOUBLE-GUARD] The Details text for a game Deploy skipped. It names what is there and how to
+    /// switch type, and says nothing about whether a flavour CAN load (working-lessons §6).</summary>
+    internal static string DescribeOtherTypeSkip(IReadOnlyList<string> others) =>
+        $"Skipped: {string.Join(", ", others)} (ours) {(others.Count == 1 ? "is" : "are")} already deployed here — "
+        + "Deploy never adds a second of our proxies. Undeploy first to switch type.";
 
     /// <summary>All distinct proxy DLL file names we ship. <c>Distinct</c> guards
     /// against a future enum value whose switch arm falls back to the default.</summary>

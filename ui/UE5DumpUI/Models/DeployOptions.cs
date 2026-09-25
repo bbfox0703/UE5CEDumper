@@ -47,4 +47,10 @@ public enum DeployVerdict
     /// <summary>Target belongs to another program and no foreign consent was
     /// given. Refuse — never fall through to a copy.</summary>
     NeedsForeignConsent,
+
+    /// <summary>[PROXY-DOUBLE-GUARD] The folder already holds ANOTHER of our proxy
+    /// types and the target is not ours: deploying would make a double. Refuse —
+    /// Force Overwrite (same type, any version) and foreign consent (another
+    /// program's file) are no licence to add a second type of ours.</summary>
+    OtherProxyOfOurs,
 }
