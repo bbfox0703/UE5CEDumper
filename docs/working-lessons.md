@@ -3074,6 +3074,11 @@ architecture or UX changes in these areas.
 - **Bookmark expiry sweep** — **rejected**, not pending. `BookmarkStore` passes `maxAgeDays: 0`
   deliberately: a few KB of hand-placed navigation nobody can regenerate ≠ a regenerable multi-GB
   snapshot DB. Do not "finish" it later.
+- **Force Overwrite = rewrite OUR proxy whatever its version, in Deploy AND Update All** (maintainer,
+  2026-09-25, `[PROXY-FORCE-UPDATEALL]`). No hash / timestamp / size second check: whoever ticks it knows
+  what they want, and the proxy's `FileVersion` is only `1.0.0.<build_number>`, so a rebuild that kept its
+  build number is exactly the case Force exists for. Foreign consent stays a SEPARATE, non-persisted box
+  (audit #5 AC1), and Update All never uses it nor reaches a proxy that is not already deployed and ours.
 - **Auto re-scan after a leftover-proxy delete** — rejected. It would re-find every FAILED row with a
   **blank** status, and that status is the only actionable output a failed delete produces.
 - **`docs/evaluations/` subfolder** — rejected. After fixing stale status headers the set of "record of
