@@ -51,7 +51,7 @@ def file_version(p):
 
 
 def ours():
-    return [(d, exe, q) for d, exe, q in deployed() if product_name(q) == "UE5CEDumper"]
+    return [(d, exe, q) for d, exe, q in deployed() if product_name(str(q)) == "UE5CEDumper"]
 
 
 def report():
