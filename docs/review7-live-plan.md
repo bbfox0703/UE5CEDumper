@@ -50,7 +50,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S11]` | 20, 24 | partial · ✅ PASS red→green (the nested disclosure, 300 @ 256 and 20,000 @ 16384; the truncated arms blocked by `[R7-X6]`) |
 | `[R7-S6]` | 20 | partial · ✅ PASS red→green (A1–A5; the scalar no-lever arm unit-only; reds from L63) |
 | `[R7-D-07]` | 20-21 | yes · ✅ PASS red→green (on a pointer array: SpawnedHolders) |
-| `[R7-S10]` | 20, 24 | yes · ⏳ green captured (session 20, SpawnedHolders 4,096 of 4,296: no Array Limit, no per-fetch); red pending (session 24) |
+| `[R7-S10]` | 20, 24 | yes · ✅ PASS red→green (a failed re-read names no lever; the red said "raise the Array Limit" at its maximum) |
 | `[R7-D-03]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-S5]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-A-03]` | — | no · ✅ recorded as no live check (todo.md) |
