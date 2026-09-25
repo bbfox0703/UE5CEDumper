@@ -308,7 +308,12 @@ if not DLL_PATH then
     local _mruFirst = #_slots + 1
     local _mru = {}
     pcall(function()
-        local h = io.popen('reg query "HKCU\\Software\\Cheat Engine" /v "Recent Files" 2&gt;nul')
+        -- [PATH-CT-INJECT-ANSI] (skeptic CEINJ-1, measured) Plain reg.exe writes the console code page WITH best fit:
+        -- a folder named Cafe-acute came back as 'Cafe' and one with a trade mark as '?', so neither probe could ever
+        -- find it (and where the OEM and ANSI code pages differ, no non-ASCII folder at all). 'chcp 65001' first makes
+        -- every entry exact UTF-8, which _dllAt's fileExists branch and ue5_pathForms then handle -- and the
+        -- self-heal records UTF-8, as dll-path.txt's header says it holds.
+        local h = io.popen('chcp 65001&gt;nul &amp; reg query "HKCU\\Software\\Cheat Engine" /v "Recent Files" 2&gt;nul')
         if not h then return end
         local out = h:read("*a") or ""
         h:close()
@@ -720,8 +725,12 @@ function ue5_inject()
             showMessage("UE5 Dumper Error:\n\nCheat Engine cannot load UE5Dumper.dll from this folder:\n  " .. DLL_PATH ..
                 "\n\nThe path has characters the Windows code page (ANSI) cannot represent, and CE's injectDLL\n" ..
                 "hands the path to LoadLibraryA, so the DLL would not load.\n\n" ..
-                "Move the UE5CEDumper folder to a path of plain English letters and re-tick --\n" ..
+                "Move the UE5CEDumper folder to a path of plain English letters, then tick this record again and\n" ..
+                "choose UE5Dumper.dll in the file picker that opens --\n" ..
                 "or use UE5DumpUI &gt; Proxy Deploy &gt; Inject into running game, which does not go through Cheat Engine.")
+            -- (skeptic CEINJ-3) Forget this path: it came from the init record's probe, and ue5_inject re-probes
+            -- (the picker) only when DLL_PATH is nil -- otherwise every re-tick after the move refused again.
+            DLL_PATH, DLL_PATH_ANSI = nil, nil
             return false
         end
         if not injectDLL(DLL_PATH_ANSI) then
