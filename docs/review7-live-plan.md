@@ -42,7 +42,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S7]` | 18, 24 | yes · ⏳ green captured (session 18: a1, a2, b); red pending (session 24) |
 | `[R7-C-02]` | 18, 22 | yes · ✅ PASS red→green (Bytesize 16 → 32; CE reads 16 characters) |
 | `[R7-C-04]` | 18-19, 22-23 | yes · ✅ PASS red→green (arm B: no modal, 3/3; arm A: one dialog, 4/4) |
-| `[R7-C-01]` | 19, 23 | yes · ⏳ red captured (session 23: freeze command overwritten, no LIST_INSTANCES); green pending |
+| `[R7-C-01]` | 19, 23 | yes · ✅ PASS red→green (the latch holds the invoke off; the freeze's LIST_INSTANCES runs) |
 | `[R7-C-03]` | 19, 23 | yes · ⏳ red captured (session 23: kept freeze abandoned on "mailbox busy" + modal); green pending |
 | `[R7-S3]` | 19, 23 | yes · ⏳ red captured (session 23: latch survives the revive, a minute later still refused); green pending |
 | `[R7-S13]` | 20, 25 | yes · ⏳ open |
