@@ -449,6 +449,16 @@ fix + rigs). 7 raised, 5 confirmed (1 LOW, 4 INFO), 2 refuted. Fixed row by row.
 | R10-01 | refuted (INFO at most) → folded into `98940f39` | SCAN-EARLY rig | No false PASS is reachable (a survivor gives a visible FAIL); the docstring's "confirmed gone" is now enforced -- a survivor stops the run. |
 | R10-05 | refuted | R9-04 | Requiring an explicit `HorizontalScrollBarVisibility="Disabled"` is a deliberate pin, not a spurious failure. No change. |
 
+**Eleventh skeptic review** (workflow `wf_9384814d-de6`, over the tenth round's fixes). 4 raised, 4 confirmed: 1 LOW, 3
+INFO -- all in tests and the SCAN-EARLY rig; no product code. Fixed row by row.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R11-01 | LOW → ✅ `276314a9` (reproduced first) | SCAN-EARLY rig | `--expect-sha` was compared with the 12-hex display: the correct full SHA was refused, `""` skipped the gate, one hex char accepted ~1/16 wrong binaries. Now a prefix of the full digest, 8-64 hex, validated. |
+| R11-02 | INFO → ✅ `ca33bad9` | SCAN-EARLY rig | The binary was checked once, before launch 1; a redeploy between launches would have joined the clean count. Now re-checked before every launch, a change stops the run. |
+| R11-03 | INFO (tests) → ✅ `38e14bb4` (by mutation) | R9-01 | The writes matched "MinHeight =" with any value, so a fixed floor passed. Now RowFloors' result is pinned into both writes. |
+| R11-04 | INFO (tests) → ✅ `a5a9d7a6` (by mutation) | SCAN-EARLY | A leaked pin read as "no usable DLL" (the precondition). Candidates are now qualified with no scan, and "unmaps after the owner's free" is its own check. |
+
 **Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ⏳ open -- **needs the maintainer
 with a real mouse.** On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
 one monitor), NO tooltip appears for a control whose position is past ~1138 DIP from the screen's left edge (physical
