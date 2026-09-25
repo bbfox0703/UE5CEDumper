@@ -17,14 +17,16 @@ the list held 13, and `CONTRIBUTING.md` said "All 13 gates" for the same reason:
 number in prose does not move when someone appends a tuple. `--list` prints it, and the
 run's own final line reports "N gate(s) run".
 
-⚠ ADDING A GATE MEANS ADDING IT TO BOTH LISTS, and nothing enforces that. This file
-and `ci.yml` had silently drifted -- `check_evidence_index` and `check_inert_trimming`
-ran here and were absent from CI from the day they were added until 2026-09-06, so a
-PR could break either and redden nothing. Both sequences are 1:1 again as of that
-date (CI additionally runs `check_proxy_exports --artifacts` post-build, which needs a
-build and is deliberately not here). Compare them with:
-    grep -oE 'py tools/[a-z_/]+[.]py' .github/workflows/ci.yml
-    py tools/check_all.py --list
+⚠ ADDING A GATE MEANS ADDING IT TO BOTH LISTS -- enforced since 2026-09-25 by the
+`check_ci_gate_parity` gate, which also requires each CI line's exit check. This file
+and `ci.yml` had silently drifted twice: `check_evidence_index` and
+`check_inert_trimming` until 2026-09-06, then nine gates appended after that date
+([CI-GATE-DRIFT-2026-09-25]). CI additionally runs `check_proxy_exports --artifacts`
+post-build, which needs a build and is deliberately not here. Compare them with:
+    py tools/check_ci_gate_parity.py --list
+
+⚠ A GATE THAT CANNOT RUN HERE says so on its LAST line ("SKIPPED: ..." / "SKIP: ...")
+and exits 0; it is counted as skipped, not run (classify below).
 
 ⚠ ORDER MATTERS. `aob_specificity` reads the TSV that `extract_patterns --check`
 writes, so it cannot run first. The sequence below is CI's, not alphabetical.
@@ -41,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -228,7 +231,7 @@ GATES = [
      "BOTH lists with the same arguments. Run 'py tools/check_ci_gate_parity.py --list'", False),
 
     # [PATH-SHAPE-2026-09-25] (skeptic T11) The Lua suites -- the only behavioural tests of the .CT and of the Lua the
-    # UI emits -- on CE's own VM. SKIPS (passes) where out/ce_lua53 is not built, e.g. CI: building it needs a local
+    # UI emits -- on CE's own VM. SKIPS (exit 0, counted as skipped) where out/ce_lua53 is not built, e.g. CI: building it needs a local
     # Cheat Engine, which a gate must not reach for. Machine-bound suites are excluded (the script says which).
     ("check_lua_suites",
      ["tools/check_lua_suites.py"],
@@ -237,10 +240,14 @@ GATES = [
 ]
 
 
+def last_line(stdout: str) -> str:
+    return ([ln for ln in (stdout or "").splitlines() if ln.strip()][-1:] or [""])[0]
+
+
 def classify(name: str, returncode: int, stdout: str) -> str:
     """ok / skip / warn / fail for one gate's result."""
     if returncode == 0:
-        return "ok"
+        return "skip" if re.match(r"\s*SKIP(?:PED)?:", last_line(stdout)) else "ok"
     return "warn" if name in ADVISORY else "fail"
 
 
@@ -304,10 +311,13 @@ def main() -> int:
                            capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
         dt = time.time() - t
-        tail = [ln for ln in (r.stdout or "").splitlines() if ln.strip()][-1:] or [""]
-        if r.returncode == 0:
-            print("  ok    %-28s %5.1fs  %s" % (name, dt, tail[0][:96]))
-        elif name in ADVISORY:
+        verdict = classify(name, r.returncode, r.stdout)
+        if verdict == "ok":
+            print("  ok    %-28s %5.1fs  %s" % (name, dt, last_line(r.stdout)[:96]))
+        elif verdict == "skip":
+            skipped.append(name)
+            print("  SKIP  %-28s %5.1fs  %s" % (name, dt, last_line(r.stdout).strip()[:96]))
+        elif verdict == "warn":
             advisory.append((name, why, r))
             print("  warn  %-28s %5.1fs  exit=%d  (advisory -- does not fail the run)"
                   % (name, dt, r.returncode))

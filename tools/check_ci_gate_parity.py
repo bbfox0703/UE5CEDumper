@@ -14,6 +14,10 @@ redden nothing. This is the enforcement.
 HOW. The gates are read from check_all.GATES (imported, not parsed). A gate "is in CI" when ci.yml runs its script
 with the same arguments on an `& $py ...` line. The one post-build CI step (check_proxy_exports --artifacts, which
 needs the built DLLs) is expected in CI only. Comments in ci.yml do not count.
+
+EXIT CHECK (second review, PARITY-NO-EXITCHECK). Every such line must be followed AT ONCE (the next non-blank line)
+by `if ($LASTEXITCODE -ne 0) { throw ... }`: PowerShell does not stop on a failing native command, so a gate line
+without it runs, fails, and leaves the step green. The negative controls (_SELFTEST) run before every check.
 """
 from __future__ import annotations
 
@@ -39,16 +43,22 @@ def check_all_gates():
     return out
 
 
+EXIT_CHECK = re.compile(r"^if\s*\(\s*\$LASTEXITCODE\s+-ne\s+0\s*\)\s*\{\s*throw\b")
+
+
 def ci_invocations(text: str):
-    """-> [(command, checked)] for every `& $py tools/...` line of the CI text."""
+    """-> [(command, checked)] for every `& $py tools/...` line of the CI text. `checked`: the very next non-blank
+    line throws on a non-zero $LASTEXITCODE."""
+    lines = text.splitlines()
     runs = []
-    for line in text.splitlines():
+    for i, line in enumerate(lines):
         s = line.strip()
         if s.startswith("#"):
             continue
         m = re.match(r"&\s*\$py\s+(tools/\S+\.py(?:\s+[^;|]*?)?)\s*$", s)
         if m:
-            runs.append((normalise(re.sub(r"\s+", " ", m.group(1)).strip()), True))
+            nxt = next((ln.strip() for ln in lines[i + 1:] if ln.strip()), "")
+            runs.append((normalise(re.sub(r"\s+", " ", m.group(1)).strip()), bool(EXIT_CHECK.match(nxt))))
     return runs
 
 
@@ -136,7 +146,8 @@ def main(argv):
               "BOTH lists (same arguments), each CI line followed at once by "
               "`if ($LASTEXITCODE -ne 0) { throw \"...\" }`.")
         return 1
-    print(f"CHECK OK: all {len(gates)} check_all gates run in ci.yml, and CI runs no pre-build gate check_all lacks.")
+    print(f"CHECK OK: all {len(gates)} check_all gates run in ci.yml, each with its exit check, and CI runs no "
+          "pre-build gate check_all lacks.")
     return 0
 
 
