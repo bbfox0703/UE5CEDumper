@@ -45,8 +45,8 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-C-01]` | 19, 23 | yes · ✅ PASS red→green (the latch holds the invoke off; the freeze's LIST_INSTANCES runs) |
 | `[R7-C-03]` | 19, 23 | yes · ✅ PASS red→green (the finished latch is released; rescans every 2 s, not abandoned) |
 | `[R7-S3]` | 19, 23 | yes · ✅ PASS red→green (the latch is released on the reset mailbox; invokes and the freeze run) |
-| `[R7-S13]` | 20, 25 | yes · ⏳ open |
-| `[R7-S14]` | 20, 25 | yes · ⏳ open |
+| `[R7-S13]` | 20, 25 | yes · ⏳ green captured (session 20: A's root and entries after clicking B mid-resolve); red pending (session 25) |
+| `[R7-S14]` | 20, 25 | yes · ⏳ green captured (session 20: both arms refuse at once, sentinel kept; controls export); red pending (session 25) |
 | `[R7-S11]` | 20, 24 | partial · ⏳ open |
 | `[R7-S6]` | 20 | partial · ⏳ open |
 | `[R7-D-07]` | 20-21 | yes · ⏳ red captured (session 21: "capped at 64 per fetch" on SpawnedHolders 64/200); green pending |
