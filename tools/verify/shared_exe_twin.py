@@ -31,19 +31,32 @@ def shape_dir(shape: str) -> pathlib.Path:
     return psf.shape_dir(shape)
 
 
+def existing_ancestor(p: pathlib.Path) -> pathlib.Path:
+    while not p.exists() and p.parent != p:
+        p = p.parent
+    return p
+
+
 def make(bin_dir: str, exe: str, shape: str):
-    src = pathlib.Path(bin_dir) / exe
+    # (ninth review, R9-05) Resolve first, as path_shape_folders.host does: an unresolved relative path has no drive
+    # letter, so the old letter comparison refused every relative path with a false "not one volume". And compare the
+    # VOLUME (st_dev is the volume serial on Windows), not the letter -- a mounted folder shares a letter, not a volume.
+    src = (pathlib.Path(bin_dir) / exe).resolve()
     if not src.is_file():
         raise SystemExit(f"no such exe: {src}")
     root = shape_dir(shape) / TWIN
-    if os.path.splitdrive(str(src))[0].lower() != os.path.splitdrive(str(root))[0].lower():
+    if os.stat(src).st_dev != os.stat(existing_ancestor(root)).st_dev:
         raise SystemExit("refused: a hard link needs the fixture and the twin on one volume")
     if root.exists():
         raise SystemExit(f"already there: {root} (clean first)")
     win64 = root / "DumperTest51" / "Binaries" / "Win64"
-    win64.mkdir(parents=True)
-    (root / "Engine" / "Binaries" / "Win64").mkdir(parents=True)
-    os.link(src, win64 / exe)
+    try:
+        win64.mkdir(parents=True)
+        (root / "Engine" / "Binaries" / "Win64").mkdir(parents=True)
+        os.link(src, win64 / exe)
+    except OSError:
+        shutil.rmtree(root, ignore_errors=True)    # never leave a half-built twin for the scan to find
+        raise
     print(f"  twin: {win64 / exe}\n     == {src} (hard link)")
 
 
