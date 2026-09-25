@@ -31,11 +31,20 @@ public sealed class WindowsSystemCodePage : ISystemCodePage
     internal static byte[]? AnsiPathBytes(string path, uint codePage, Func<string, string?> shortPath)
     {
         if (string.IsNullOrEmpty(path)) return null;
+        // (skeptic CEINJ-4) The bytes are decoded in the GAME's code page, which is not the UI's under Locale
+        // Emulator; an ASCII 8.3 alias reads the same in every code page, so it wins when there is one.
+        string? sp = shortPath(path);
+        bool haveShort = !string.IsNullOrEmpty(sp) && !string.Equals(sp, path, StringComparison.Ordinal);
+        if (haveShort && IsAscii(sp!)) return System.Text.Encoding.ASCII.GetBytes(sp!);
         byte[]? exact = ExactAnsi(path, codePage);
         if (exact != null) return exact;
-        string? sp = shortPath(path);
-        if (string.IsNullOrEmpty(sp) || string.Equals(sp, path, StringComparison.Ordinal)) return null;
-        return ExactAnsi(sp, codePage);
+        return haveShort ? ExactAnsi(sp!, codePage) : null;
+    }
+
+    private static bool IsAscii(string s)
+    {
+        foreach (char c in s) if (c >= 0x80) return false;
+        return true;
     }
 
     /// <summary>The narrowing, or null when a character has no exact form in the code page.</summary>

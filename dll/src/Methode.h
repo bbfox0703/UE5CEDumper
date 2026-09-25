@@ -38,9 +38,15 @@ inline std::string NarrowForAnsiLoad(const wchar_t* longPath, const wchar_t* sho
         out = std::move(s);
         return true;
     };
+    // (skeptic CEINJ-4) CE makes these bytes in ITS code page, the game decodes them in its own (Locale Emulator
+    // gives it another): an ASCII alias reads the same in every code page, so it wins when there is one.
+    const bool haveShort = shortPath && longPath && std::wcscmp(shortPath, longPath) != 0;
+    bool shortAscii = haveShort;
+    for (const wchar_t* p = shortPath; shortAscii && p && *p; ++p) if (*p >= 0x80) shortAscii = false;
     std::string out;
+    if (shortAscii && exact(shortPath, out)) return out;
     if (exact(longPath, out)) return out;
-    if (shortPath && longPath && std::wcscmp(shortPath, longPath) != 0 && exact(shortPath, out)) return out;
+    if (haveShort && exact(shortPath, out)) return out;
     return {};
 }
 
