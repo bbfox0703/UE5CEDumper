@@ -184,5 +184,36 @@ check("DLL_PATH and DLL_PATH_ANSI are cleared before returning",
       block:find("DLL_PATH, DLL_PATH_ANSI = nil, nil", 1, true) ~= nil)
 check("and the text says the picker comes next", block:find("file picker", 1, true) ~= nil)
 
+print("-- (second review, T-MRU-UTF8-SELFHEAL) the recent-files probe, RUN on UTF-8 reg.exe output --")
+local function liftLocal(name)
+  local src = ct:match("(local function " .. name .. ".-\nend)")
+  if not src then return false end
+  assert(load((unxml(src):gsub("^local function " .. name, "function " .. name)), name))()
+  return true
+end
+local okMru = ct:match("(function%s+ue5_probeRecentFiles.-\nend)") ~= nil
+check("ue5_probeRecentFiles is in the .CT", okMru)
+if okMru and liftLocal("_slot") and liftLocal("_dllAt") and liftLocal("_probeSlots") then
+  assert(load(unxml(ct:match("(function%s+ue5_probeRecentFiles.-\nend)")), "ue5_probeRecentFiles"))()
+  -- the .CT's chunk-level locals, as globals here
+  _slots, _seen, _dllFoundIn, _dllFoundLabel = {}, {}, nil, ""
+  DLL_PATH, DLL_PATH_ANSI = nil, nil
+  local recorded
+  function ue5_recordDllDir(d) recorded = d end
+  function extractFileName(p) return (p:match("([^\\]*)$")) end
+  function extractFilePath(p) return (p:gsub("[^\\]*$", "")) end
+  function fileExists(p) return p == P_UTF8 end
+  local mruLine = "    Recent Files    REG_MULTI_SZ    D:\\" .. U_GONGJU .. "\\UE5CEDumper\\UE5CEDumper.CT\\0E:\\other.CT\r\n"
+  local realPopen = io.popen
+  io.popen = function() return { read = function() return mruLine end, close = function() end } end
+  io.open = fakeOpen
+  ue5_probeRecentFiles()
+  io.open, io.popen = realOpen, realPopen
+  check("the MRU slot finds the DLL beside the table (UTF-8 path)", DLL_PATH == P_UTF8, DLL_PATH)
+  check("  ...injectDLL gets its ANSI bytes", DLL_PATH_ANSI == P_ANSI, DLL_PATH_ANSI)
+  check("  ...and the self-heal records the folder as UTF-8",
+        recorded == "D:\\" .. U_GONGJU .. "\\UE5CEDumper\\", recorded)
+end
+
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
 os.exit(fails == 0 and 0 or 1)

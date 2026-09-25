@@ -53,6 +53,13 @@ if src then
   check("entries are trimmed, inner spaces kept", same(t, { "D:\\a b.CT", "D:\\c.CT" }), show(t))
   t = ue5_splitRegMultiSz("")
   check("empty in, nothing out", #t == 0, show(t))
+  -- (second review, MRU-REL-MERGE) CE can store a RELATIVE entry (started with a relative table argument, then
+  -- saved): it must not be glued onto the entry before it, which the old blind split kept whole.
+  t = ue5_splitRegMultiSz("D:\\T\\UE5CEDumper.CT" .. S .. "rel.ct" .. S .. "E:\\y.CT")
+  check("a relative entry after a table is its own entry",
+        same(t, { "D:\\T\\UE5CEDumper.CT", "rel.ct", "E:\\y.CT" }), show(t))
+  t = ue5_splitRegMultiSz("D:\\0Games\\x.CT")
+  check("still: a 0-folder is not a separator", same(t, { "D:\\0Games\\x.CT" }), show(t))
 end
 
 local body = unxml(ct)
