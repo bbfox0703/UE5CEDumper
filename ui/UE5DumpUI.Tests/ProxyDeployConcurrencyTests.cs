@@ -87,9 +87,18 @@ public class ProxyDeployConcurrencyTests : IDisposable
             Applied.Add(proxyType);
         }
 
+        /// <summary>Every deploy the VM asked for, with the options it passed. [PROXY-FORCE-UPDATEALL] Kept apart
+        /// from <see cref="Calls"/>, whose exact "deploy:A" strings other tests assert.</summary>
+        public readonly List<(string Game, ProxyType Type, DeployOptions Options)> Deploys = new();
+        /// <summary>Overrides <see cref="GetDllVersion"/> (null = the default newer-source pair).</summary>
+        public Func<string, string?>? VersionOf;
+        /// <summary>Overrides <see cref="IsOurProxyDll"/> (null = every DLL is ours).</summary>
+        public Func<string, bool>? IsOurs;
+
         public async Task<bool> DeployAsync(string sourceDllPath, DetectedGame game, ProxyType proxyType,
                                             DeployOptions options = default, CancellationToken ct = default)
         {
+            Deploys.Add((game.Name, proxyType, options));
             await WaitAsync($"deploy:{game.Name}");
             DuringDeploy?.Invoke();
             return true;
@@ -108,14 +117,14 @@ public class ProxyDeployConcurrencyTests : IDisposable
             IReadOnlySet<string> injectedExes, bool enabled, CancellationToken ct = default)
             => Task.CompletedTask;
 
-        public bool IsOurProxyDll(string dllPath) => true;
+        public bool IsOurProxyDll(string dllPath) => IsOurs?.Invoke(dllPath) ?? true;
 
-        /// <summary>Source newer than target, or UpdateAllAsync's "already up to date" branch
-        /// skips every game and DeployAsync is never called — which would make the two Update All
+        /// <summary>Source newer than target, or -- with Force Overwrite off, the default -- UpdateAllAsync's
+        /// "already up to date" branch skips every game and DeployAsync is never called — which would make the two Update All
         /// tests below pass while exercising nothing. (One of them silently did, until the
         /// throwing test showed the loop body was unreachable.)</summary>
         public string? GetDllVersion(string dllPath)
-            => dllPath.Contains($"{Path.DirectorySeparatorChar}proxy{Path.DirectorySeparatorChar}",
+            => VersionOf is { } v ? v(dllPath) : dllPath.Contains($"{Path.DirectorySeparatorChar}proxy{Path.DirectorySeparatorChar}",
                                 StringComparison.OrdinalIgnoreCase) ? "2.0.0" : "1.0.0";
 
         private static T No<T>() => throw new NotSupportedException("not reachable from these flows");
@@ -543,6 +552,98 @@ public class ProxyDeployConcurrencyTests : IDisposable
         // half-way. The success tally is the only wording that means the loop RAN TO THE END,
         // so it is what discriminates the snapshot from the catch that backs it up.
         Assert.StartsWith("Updated:", vm.LastOperationResult);
+    }
+
+    // ── [PROXY-FORCE-UPDATEALL] Update All honours Force Overwrite ────────────
+    //
+    // Reported by the maintainer: with Force Overwrite ticked, Update All skipped every proxy whose version
+    // equalled the source's and said "already up-to-date". A rebuild that kept its build number was never
+    // redeployed. Force Overwrite means rewrite OUR proxy whatever its version -- in Update All too.
+
+    private const string SameVersion = "1.0.0.3552";
+
+    [Fact]
+    public async Task UpdateAll_SameVersion_Force_RewritesEveryDeployedProxy()
+    {
+        var (vm, svc) = Ready(deployed: true);
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
+        Assert.StartsWith("Updated: 2", vm.LastOperationResult);
+        Assert.Contains("same version", vm.LastOperationResult);
+        Assert.DoesNotContain("already up-to-date", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_SameVersion_NoForce_SkipsEveryDeployedProxy()
+    {
+        // The control: unticked, a same-version proxy is still skipped -- and the message says how to force it.
+        var (vm, svc) = Ready(deployed: true);
+        svc.VersionOf = _ => SameVersion;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("All 2 deployed proxy DLL(s) already up-to-date", vm.LastOperationResult);
+        Assert.Contains("Force Overwrite", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_Force_NeverTouchesForeignOrUndeployed_AndNeverGrantsForeignConsent()
+    {
+        // AC1 stays: Force reaches only a proxy that is already deployed AND ours, and Update All never
+        // passes foreign consent -- not even with "Replace other tools' DLLs" ticked beside it.
+        var (vm, svc) = Ready(deployed: true);
+        char sep = Path.DirectorySeparatorChar;
+        svc.VersionOf = _ => SameVersion;
+        svc.IsOurs = p => !p.Contains($"{sep}A{sep}Binaries{sep}", StringComparison.Ordinal);   // A's DLL is foreign
+        vm.ForceOverwrite = true;
+        vm.AllowForeignOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        var only = Assert.Single(svc.Deploys);                       // not A (foreign), and on B only the
+        Assert.Equal(("B", ProxyType.Version), (only.Game, only.Type)); // type that is deployed -- no new type
+        Assert.False(only.Options.ForeignConsent);
+    }
+
+    [Fact]
+    public async Task UpdateAll_ForceUntickedMidRun_StillCoversTheWholeRun()
+    {
+        // The checkbox stays live during a run. Read per proxy, an untick half-way split one Update All into
+        // two policies; it is read once, when the user pressed the button.
+        var (vm, svc) = Ready(deployed: true);
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.DuringDeploy = () => vm.ForceOverwrite = false;
+        svc.Gate.SetResult();
+
+        await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
+
+        Assert.Equal(new[] { "A", "B" }, svc.Deploys.Select(d => d.Game));
+        Assert.StartsWith("Updated: 2", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UpdateAll_Force_CancelledMidRun_ReportsWhatItWrote()
+    {
+        var (vm, svc) = Ready(deployed: true);
+        svc.VersionOf = _ => SameVersion;
+        vm.ForceOverwrite = true;
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);   // cancel during game A
+        svc.Gate.SetResult();
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.UpdateAllCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("updated: 1", vm.LastOperationResult ?? "");
     }
 
     [Fact]
