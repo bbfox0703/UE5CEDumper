@@ -101,6 +101,56 @@ public class PanelSpaceBudgetTests
         Assert.Contains(doc.Descendants(), e => Attr(e, "ToolTip.Tip") == Res("str.Snapshot.Auto.Hint"));
     }
 
+    /// <summary>
+    /// (ninth review, R9-01, MED) The floors must never take space the Auto rows need. Measured by the reviewer on the
+    /// committed layout at 225 % (grid 846.7 DIP): by default the rows sat 3 DIP above their floors, and opening the
+    /// Noise picker (the last Auto row) overflowed by 299 DIP -- its grid and buttons below the window, and no
+    /// collapse could free them. So each layout pass caps the floors at the room the Auto rows leave, both in
+    /// proportion: full floors when there is room, less when the picker, a status line or a short window needs it.
+    /// </summary>
+    [Fact]
+    public void Snapshot_RowFloors_NeverTakeTheAutoRowsSpace()
+    {
+        var full = UE5DumpUI.Views.SnapshotPanel.RowFloors(room: 10_000);
+        Assert.Equal((0d, 0d), UE5DumpUI.Views.SnapshotPanel.RowFloors(room: 0));
+        Assert.Equal((0d, 0d), UE5DumpUI.Views.SnapshotPanel.RowFloors(room: -50));   // Auto rows already overflow
+        Assert.Equal(full, UE5DumpUI.Views.SnapshotPanel.RowFloors(room: full.Saved + full.Lower));
+        var half = UE5DumpUI.Views.SnapshotPanel.RowFloors(room: (full.Saved + full.Lower) / 2);
+        Assert.Equal(full.Saved / 2, half.Saved, 6);
+        Assert.Equal(full.Lower / 2, half.Lower, 6);
+        foreach (double room in new[] { 1d, 37d, 163.5d, 299d, 459.9d })
+        {
+            var f = UE5DumpUI.Views.SnapshotPanel.RowFloors(room);
+            Assert.True(f.Saved + f.Lower <= room + 1e-9, $"room {room}: floors {f.Saved} + {f.Lower} take more than it");
+        }
+
+        // The full floors ARE the XAML's (one pair of numbers, two places, pinned together).
+        var doc = Axaml("SnapshotPanel.axaml");
+        var root = doc.Root!.Elements().First(e => e.Name.LocalName == "Grid");
+        Assert.Equal("RootGrid", Attr(root, X + "Name"));
+        int savedRow = int.Parse(Attr(Assert.Single(root.Elements(),
+            e => Attr(e, X + "Name") == "SnapshotsGrid")!, "Grid.Row") ?? "0");
+        int lowerRow = int.Parse(Attr(Assert.Single(root.Elements(),
+            e => e.Name.LocalName == "DockPanel" && e.Descendants().Any(d => Attr(d, X + "Name") == "DiffGrid"))!,
+            "Grid.Row") ?? "0");
+        Assert.Equal(RowMinHeight(root, savedRow), full.Saved);
+        Assert.Equal(RowMinHeight(root, lowerRow), full.Lower);
+
+        // The code-behind re-applies them on every layout pass, from the room the Auto rows leave.
+        var code = StripComments(File.ReadAllText(RepoFile("ui/UE5DumpUI/Views/SnapshotPanel.axaml.cs")));
+        Assert.Contains("LayoutUpdated", code);
+        Assert.Contains("DesiredSize.Height", code);
+        Assert.Matches(@"const\s+int\s+SavedRow\s*=\s*" + savedRow + @"\s*;", code);
+        Assert.Matches(@"const\s+int\s+LowerRow\s*=\s*" + lowerRow + @"\s*;", code);
+        Assert.Matches(@"RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*=", code);
+        Assert.Matches(@"RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*=", code);
+        Assert.Matches(@"RowFloors\(", code);
+    }
+
+    /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
+    private static string StripComments(string code) =>
+        System.Text.RegularExpressions.Regex.Replace(code, @"/\*[\s\S]*?\*/|//[^\n]*", "");
+
     [Theory]
     [InlineData("str.Pivot.Intro")]
     [InlineData("str.Pivot.Discover.Intro")]
