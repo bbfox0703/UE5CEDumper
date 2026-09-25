@@ -373,5 +373,30 @@ if rsrc then
   check("  ...and is carried forward as 'E:\\'", (w4 or ""):find("\nE:\\\n", 1, true) ~= nil, w4)
 end
 
+-- (sixth review, R6-02 / R6-06) The breadcrumb SLOT, run: a folder read from dll-path.txt becomes the slot (the chunk's
+-- own call is what runs, not a substring of it), and a file whose every line was dropped says so -- not "no folder
+-- recorded yet", which is false then.
+local bsrc = ct:match("(function%s+ue5_breadcrumbSlots%(.-\nend)")
+check("the breadcrumb slots are a function the suite can run", bsrc ~= nil)
+if bsrc and rsrc then
+  assert(load(unxml(bsrc), "ue5_breadcrumbSlots"))()
+  local function slotFor(lines)
+    _slots, _seen = {}, {}
+    withFile(lines, function() ue5_breadcrumbSlots("X:\\AD") end)
+    for _, sl in ipairs(_slots) do
+      if sl.label == "folder recorded by UE5DumpUI" then return sl end
+    end
+    return { dir = "(no slot)", why = "(no slot)" }
+  end
+  local s1 = slotFor({ "# header", "sub", "rel\\x" })
+  check("every line dropped: the slot says they were relative",
+        s1.dir == "" and (s1.why or ""):find("relative", 1, true) ~= nil, s1.why)
+  check("  ...not that no folder was recorded", (s1.why or ""):find("no folder recorded yet", 1, true) == nil, s1.why)
+  local s2 = slotFor({ "# header", "D:\\old" })
+  check("an absolute line becomes the slot", s2.dir == "D:\\old\\", s2.dir)
+  local s3 = slotFor(nil)
+  check("no file: 'no folder recorded yet'", (s3.why or ""):find("no folder recorded yet", 1, true) ~= nil, s3.why)
+end
+
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
 os.exit(fails == 0 and 0 or 1)
