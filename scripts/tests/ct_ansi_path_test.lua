@@ -186,7 +186,8 @@ check("and the text says the picker comes next", block:find("file picker", 1, tr
 
 print("-- (second review, T-MRU-UTF8-SELFHEAL) the recent-files probe, RUN on UTF-8 reg.exe output --")
 local function liftLocal(name)
-  local src = ct:match("(local function " .. name .. ".-\nend)")
+  -- the exact name, then its "(": not a prefix of another (a renamed _slotX still lifted as _slot)
+  local src = ct:match("(local function " .. name .. "%(.-\nend)")
   if not src then return false end
   assert(load((unxml(src):gsub("^local function " .. name, "function " .. name)), name))()
   return true
@@ -206,7 +207,15 @@ do
   local first = outside:find("\n_probeSlots(1)", 1, true)
   check("  ...after the first slot probe", at ~= nil and first ~= nil and first < at, tostring(first) .. " / " .. tostring(at))
 end
-if okMru and liftLocal("_slot") and liftLocal("_dllAt") and liftLocal("_probeSlots") then
+-- (third review, T3-MRU-LIFT-SILENT-SKIP) Each lift is a check of its own: folded into the `if`, a renamed helper
+-- dropped the end-to-end checks below and the suite still passed.
+local lifted = true
+for _, name in ipairs({ "_slot", "_dllAt", "_probeSlots" }) do
+  local ok = liftLocal(name)
+  check("lifted 'local function " .. name .. "' from the .CT", ok)
+  lifted = lifted and ok
+end
+if okMru and lifted then
   -- its own dependency (pcall'd inside the probe: a missing one would just read as "no recent files")
   assert(load(unxml(ct:match("(function%s+ue5_splitRegMultiSz.-\nend)")), "ue5_splitRegMultiSz"))()
   assert(load(unxml(ct:match("(function%s+ue5_probeRecentFiles.-\nend)")), "ue5_probeRecentFiles"))()

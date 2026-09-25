@@ -60,6 +60,14 @@ if src then
         same(t, { "D:\\T\\UE5CEDumper.CT", "rel.ct", "E:\\y.CT" }), show(t))
   t = ue5_splitRegMultiSz("D:\\0Games\\x.CT")
   check("still: a 0-folder is not a separator", same(t, { "D:\\0Games\\x.CT" }), show(t))
+  -- (third review, T3-MRU-NEGCTRL-DUPLICATE) The extension rule stays narrow: the text before the separator must END in
+  -- '.ct' / '.cetrainer' -- dot included, anchored -- and '.cetrainer' counts too.
+  t = ue5_splitRegMultiSz("D:\\Project\\0Games\\x.CT")
+  check("a folder ending in 'ct' before a 0-folder is not a table", same(t, { "D:\\Project\\0Games\\x.CT" }), show(t))
+  t = ue5_splitRegMultiSz("D:\\a.ct.old\\0x\\y.CT")
+  check("'.ct' inside a folder name is not a table's end", same(t, { "D:\\a.ct.old\\0x\\y.CT" }), show(t))
+  t = ue5_splitRegMultiSz("D:\\T\\x.CETRAINER" .. S .. "rel.ct")
+  check("a relative entry after a .cetrainer is its own entry", same(t, { "D:\\T\\x.CETRAINER", "rel.ct" }), show(t))
 end
 
 local body = unxml(ct)
