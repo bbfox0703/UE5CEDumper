@@ -844,7 +844,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// error degrades to "not observed". The join key + classification are the pure, tested
     /// <c>ProxyImportAnalyzer.ProcessLogFolderName</c> / <c>ClassifyLoad</c>.
     /// </summary>
-    private string ComputeLoadObservation(string exePath)
+    private string ComputeLoadObservation(string exePath, IReadOnlySet<string> sharedLogFolders)
     {
         DateTime now = DateTime.Now;
         try
@@ -858,7 +858,10 @@ public sealed class ProxyDeployService : IProxyDeployService
 
             bool present = Directory.Exists(procDir);
             DateTime? lastWrite = present ? NewestLogWrite(procDir) : null;
-            return ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
+            string display = ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
+            // [PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) A log folder games in different folders share: the load
+            // it shows may be another game's. Said only where there IS a load to attribute.
+            return present && sharedLogFolders.Contains(folderName) ? $"{display} · {SharedLoadNote}" : display;
         }
         catch (Exception ex)
         {
@@ -905,6 +908,7 @@ public sealed class ProxyDeployService : IProxyDeployService
 
             string selectedDllName = proxyType.GetDllName();
             string[] allProxyNames = AllProxyDllNames();
+            var sharedLogFolders = SharedLogFolders(targets);
 
             foreach (var game in targets)
             {
@@ -997,7 +1001,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // "Did it actually load?" — orthogonal to the disk status above, so it is set on
                 // EVERY refresh regardless of that status ([PROXYLOAD-2026-08-17]). Cheap: a
                 // Directory.Exists + a mtime read, no PE parse.
-                string loadObservation = ComputeLoadObservation(game.ExePath);
+                string loadObservation = ComputeLoadObservation(game.ExePath, sharedLogFolders);
 
                 results.Add(new GameStatusUpdate(game, status, installedVersion, errorMessage,
                     LoadObservation: loadObservation, SetLoadObservation: true));
@@ -2056,6 +2060,20 @@ public sealed class ProxyDeployService : IProxyDeployService
              .Where(grp => grp.Select(g => g.BinariesDir).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
              .Select(grp => grp.Key)
              .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>[PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) The per-process LOG folder names (Sein::ProcessFolderName
+    /// of the exe) that games in DIFFERENT folders share -- the Load column's key, the third exe-keyed signal. By the
+    /// folder name, not the exe name: 'Game .exe' and 'Game.exe' log into the same 'Game'.</summary>
+    internal static HashSet<string> SharedLogFolders(IEnumerable<DetectedGame> games) =>
+        games.Where(g => !string.IsNullOrEmpty(g.ExePath))
+             .GroupBy(g => ProxyImportAnalyzer.ProcessLogFolderName(g.ExePath), StringComparer.OrdinalIgnoreCase)
+             .Where(grp => grp.Key.Length > 0
+                           && grp.Select(g => g.BinariesDir).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+             .Select(grp => grp.Key)
+             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The Load column's mark for a shared log folder (<see cref="SharedLogFolders"/>).</summary>
+    internal const string SharedLoadNote = "shared exe name: may be another game's";
 
     /// <summary>What a row says when its exe name's confirmed-working record is not used (<see cref="SharedExeNames"/>).
     /// Deploy's "Use confirmed" note: that record is the only one Deploy reads.</summary>
