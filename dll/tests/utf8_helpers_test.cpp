@@ -772,9 +772,39 @@ static void Test_LooksLikeDecodedText() {
 
 // ----- main ------------------------------------------------------------------
 
+// ----- [PATH-MODULE-NAME-UTF8] LeafUtf8: the exe/module leaf, exact UTF-8 ------
+// Fern.cpp turned every UTF-16 unit >= 128 of the module name into '?', so the UI keyed the confirmed-proxy record,
+// the teleport library, the log mirror folder and the dump identity on a name no file has.
+
+static void Test_LeafUtf8_KeepsNonAsciiExactly() {
+    const wchar_t* kana = L"C:\\G\\\u30B2\u30FC\u30E0-Win64-Shipping.exe";   // ゲーム-Win64-Shipping.exe
+    EXPECT_EQ_STR("kana leaf is exact UTF-8",
+                  Utf8Helpers::LeafUtf8(kana, std::wcslen(kana)),
+                  "\xE3\x82\xB2\xE3\x83\xBC\xE3\x83\xA0-Win64-Shipping.exe");
+    const wchar_t* tm = L"C:\\Program Files (x86)\\Steam\\steamapps\\common\\EVERSPACE\u2122 2\\Game\u2122.exe";
+    EXPECT_EQ_STR("trade-mark leaf is exact UTF-8",
+                  Utf8Helpers::LeafUtf8(tm, std::wcslen(tm)), "Game\xE2\x84\xA2.exe");
+    const wchar_t* emoji = L"D:/x/\U0001F600.exe";   // a surrogate pair, forward slash
+    EXPECT_EQ_STR("surrogate pair leaf, forward slash",
+                  Utf8Helpers::LeafUtf8(emoji, std::wcslen(emoji)), "\xF0\x9F\x98\x80.exe");
+}
+
+static void Test_LeafUtf8_AsciiAndEdges() {
+    const wchar_t* ascii = L"D:\\SteamLibrary\\steamapps\\common\\DragonSword  Awakening\\DS.exe";
+    EXPECT_EQ_STR("ascii leaf", Utf8Helpers::LeafUtf8(ascii, std::wcslen(ascii)), "DS.exe");
+    EXPECT_EQ_STR("no separator: the whole name", Utf8Helpers::LeafUtf8(L"Game.exe", 8), "Game.exe");
+    EXPECT_EQ_STR("trailing separator: empty leaf", Utf8Helpers::LeafUtf8(L"C:\\G\\", std::wcslen(L"C:\\G\\")), "");
+    EXPECT_EQ_STR("null / empty", Utf8Helpers::LeafUtf8(nullptr, 0), "");
+    const wchar_t* apos = L"D:\\No Man's Sky\\Tony's.exe";
+    EXPECT_EQ_STR("apostrophe kept", Utf8Helpers::LeafUtf8(apos, std::wcslen(apos)), "Tony's.exe");
+}
+
 int main() {
     std::printf("Utf8Helpers self-test\n");
     std::printf("---------------------\n");
+
+    Test_LeafUtf8_KeepsNonAsciiExactly();
+    Test_LeafUtf8_AsciiAndEdges();
 
     Test_Sanitize_AsciiPassthrough();
     Test_Sanitize_RejectsControlBytes();

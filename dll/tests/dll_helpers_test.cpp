@@ -8727,6 +8727,22 @@ static void Test_Serie_UE4NameIndexInBounds() {
 static bool g_trace = false;
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
+// [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
+// quote and the RVA silently, and once the name is UTF-8 a cut can split a sequence that json::dump throws on.
+static void Test_Renge_CeModuleRelative_NeverTruncates() {
+    EXPECT_EQ_STR("short", Renge::CeModuleRelative("Game-Win64-Shipping.exe", 0x8A12340ull),
+                  "\"Game-Win64-Shipping.exe\"+8A12340");
+    std::string longStem(110, 'A');
+    EXPECT_EQ_STR("110-char stem keeps its +RVA",
+                  Renge::CeModuleRelative(longStem + ".exe", 0x8A12340ull),
+                  "\"" + longStem + ".exe\"+8A12340");
+    std::string cjk;
+    for (int i = 0; i < 40; ++i) cjk += "\xE9\x81\x8A";   // 40 x 遊 = 120 bytes
+    std::string out = Renge::CeModuleRelative(cjk + ".exe", 0x1234ull);
+    EXPECT("40 CJK chars keep the suffix", out.size() >= 6 && out.compare(out.size() - 6, 6, "\"+1234") == 0);
+    EXPECT_EQ_STR("zero rva", Renge::CeModuleRelative("G.exe", 0), "\"G.exe\"+0");
+}
+
 int main() {
     // UNBUFFERED, and this is not a style choice. When this exe died on CI with
     // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
@@ -8745,6 +8761,7 @@ int main() {
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
 
+    RUN(Test_Renge_CeModuleRelative_NeverTruncates);
     RUN(Test_TryStrToAddr_AcceptsValidHex);
     RUN(Test_TryStrToAddr_RejectsCePlaceholder);
     RUN(Test_TryStrToAddr_RejectsTrailingGarbage);
