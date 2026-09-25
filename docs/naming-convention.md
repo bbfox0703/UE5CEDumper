@@ -86,7 +86,7 @@ narrative identity resonates with what the module *does*.
 | `PipeProtocol.h` | `Renge.h` | `Renge.h` |
 | `GameThreadDispatch.h/.cpp` | `Stark.h/.cpp` | `Stark.h` |
 | `Mailbox.h/.cpp` | `Mimic.h/.cpp` | `Mimic.h` |
-| `CEPlugin.cpp` | `Methode.cpp` | *(no header)* |
+| `CEPlugin.cpp` | `Methode.cpp` + `Methode.h` | `Methode.h` (pure helpers only, [PATH-METHODE-NO8DOT3]) |
 | `dllmain.cpp` | `Heiter.cpp` | *(no header)* |
 | `ProxyVersion.cpp` | `Lugner.cpp` | *(no header)* |
 | *(generated)* | `Lugner_Winmm.cpp/.asm` + `ProxyWinmm.def` | *(no header)* |

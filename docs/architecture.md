@@ -17,9 +17,10 @@ UE5CEDumper/
 │
 ├── dll/                            ← C++ DLL (injected into game process)
 │   ├── CMakeLists.txt              ← DLL build config (versioning, git hash, deps)
-│   └── src/                        ← 31 .cpp + 39 .h as of build 3262 (Frieren-themed; see naming-convention.md)
+│   └── src/                        ← 31 .cpp + 40 .h (40th: Methode.h, [PATH-METHODE-NO8DOT3]; Frieren-themed; see naming-convention.md)
 │       ├── Heiter.cpp              ← dllmain — DLL_PROCESS_ATTACH, AutoStartThreadProc
 │       ├── Methode.cpp             ← CEPlugin — CE plugin Type 5 main menu
+│       ├── Methode.h               ← CEPlugin pure helpers (NarrowForAnsiLoad), tested by dll_helpers_test
 │       ├── BuildStamp.cpp / .h     ← build/version metadata accessors (only TU that includes generated BuildInfo.h), build 1817
 │       ├── Grimoire.h              ← Constants — magic strings, pipe name, UObject offsets, DynOff namespace
 │       ├── Himmel.h                ← Signatures — 151 AOB + 1 CallFollow + 6 symbol exports = 158 (31 sources)
