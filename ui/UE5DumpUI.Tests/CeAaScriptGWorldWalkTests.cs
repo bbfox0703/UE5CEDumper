@@ -313,6 +313,33 @@ public class CeAaScriptGWorldWalkTests
         Assert.Contains("Map_FName", platform.LastClipboard);
     }
 
+    // ── [PATH-CEXML-AMP] an '&' in the exe name (legal) must not break the XML ──
+
+    private const string AmpModule = "\"Tom&Jerry-Win64-Shipping.exe\"+1234";
+
+    [Fact]
+    public void RegisterSymbolXml_AnAmpersandInTheModule_IsWellFormed_AndThePushedScriptIsRaw()
+    {
+        var xml = CeXmlExportService.GenerateRegisterSymbolXml("BP_Test", AmpModule);
+
+        var doc = System.Xml.Linq.XDocument.Parse(xml);          // a raw '&' threw here
+        string script = doc.Descendants("AssemblerScript").Single().Value;
+        Assert.Contains("define(BP_Test,\"Tom&Jerry-Win64-Shipping.exe\"+1234)", script);
+        // The AOBMaker push un-escapes, so it byte-matches what CE runs after a paste.
+        Assert.Contains("define(BP_Test,\"Tom&Jerry-Win64-Shipping.exe\"+1234)",
+            CeXmlExportService.ExtractAssemblerScript(xml));
+    }
+
+    [Fact]
+    public void InstanceXml_AModuleRootedAddressWithAnAmpersand_IsWellFormed()
+    {
+        var xml = CeXmlExportService.GenerateInstanceXml(AmpModule, "Inst", "TestClass",
+            new[] { new LiveFieldValue { Name = "Health", TypeName = "FloatProperty", Offset = 0x10, Size = 4 } });
+
+        var doc = System.Xml.Linq.XDocument.Parse(xml);
+        Assert.Contains(doc.Descendants("Address"), a => a.Value == AmpModule);
+    }
+
     // ── ExtractAssemblerScript: raw body for the AOBMaker CreateAAScript push ──
 
     [Fact]
