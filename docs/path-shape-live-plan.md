@@ -68,8 +68,8 @@ Attach CE.
 
 | # | row | check | status |
 |---|---|---|---|
-| 11 | `[PATH-CE-INJECT-ANSI]` | The UI run from `工具` and from `功夫`: "Inject CE bootstrap", pushed to CE, injects; `load_mode` is `loaded:…ue5dumper.dll`, not a manual map | ⏳ |
-| 12 | `[PATH-CE-INJECT-ANSI]` (refusal) | The UI run from the letterlike folder (D:, no 8.3 names): the record refuses before `injectDLL`, says why, and unticks | ⏳ |
+| 11 | `[PATH-CE-INJECT-ANSI]` | The UI run from `工具` and from `功夫`: "Inject CE bootstrap", pushed to CE, injects; `load_mode` is `loaded:…ue5dumper.dll`, not a manual map | ✅ PASS 2026-09-25, build 3557 (`load_mode` = `injected`: the DLL's own name) |
+| 12 | `[PATH-CE-INJECT-ANSI]` (refusal) | The UI run from the letterlike folder (D:, no 8.3 names): the record refuses before `injectDLL`, says why, and unticks | ✅ PASS 2026-09-25, build 3557 |
 | 13 | `[PATH-CT-INJECT-ANSI]` | `UE5CEDumper.CT` opened from `工具`: it finds the DLL and injects; from the letterlike folder it refuses and clears the path | ⏳ |
 
 ### S5 — Proxy Deploy panel (the fixture found by "Scan drives")
