@@ -499,7 +499,10 @@ internal static class ProxyImportAnalyzer
             if (c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|')
                 buf[i] = '_';
         }
-        return new string(buf);
+        // [PATH-SEIN-TRAILING-SPACE] Trailing spaces and dots trimmed, empty -> "unknown": Sein::ProcessFolderName.
+        // Win32 trims them from the last path segment only, so the DLL's folder for "Game .exe" is "Game".
+        string folder = new string(buf).TrimEnd(' ', '.');
+        return folder.Length == 0 ? "unknown" : folder;
     }
 
     private static readonly char[] s_pathSeparators = { '/', '\\' };

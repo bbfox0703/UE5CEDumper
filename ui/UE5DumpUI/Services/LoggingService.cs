@@ -524,16 +524,13 @@ public sealed class LoggingService : ILoggingService, IDisposable
         return parts.Length == 2 || parts[2].All(char.IsAsciiDigit);
     }
 
-    private static string SanitizeFolderName(string name)
+    /// <summary>The mirror folder for a game process: the SAME folder the DLL logs into (Sein::ProcessFolderName), so
+    /// one session's logs are not split. It used to be its own rule (".exe" only, no trim), which for a stem ending in
+    /// a space or dots named a folder the DLL never uses. [PATH-SEIN-TRAILING-SPACE]</summary>
+    internal static string SanitizeFolderName(string name)
     {
-        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            name = name[..^4];
-
-        var invalid = Path.GetInvalidFileNameChars();
-        foreach (var c in invalid)
-            name = name.Replace(c, '_');
-
-        return string.IsNullOrWhiteSpace(name) ? "unknown" : name;
+        string folder = ProxyImportAnalyzer.ProcessLogFolderName(name);
+        return string.IsNullOrWhiteSpace(folder) ? "unknown" : folder;
     }
 
     /// <summary>

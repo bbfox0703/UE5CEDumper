@@ -579,12 +579,13 @@ bool Init() {
     return true;
 }
 
-void InitProcessMirror(const std::wstring& processName) {
-    std::lock_guard<std::mutex> lock(s_mutex);
-
-    if (processName.empty()) return;
-
-    // Sanitize process name
+// The per-process log folder's name, from the host exe's leaf: the stem (last extension dropped), the nine
+// characters a file name cannot hold made '_', then TRAILING spaces and dots trimmed -- [PATH-SEIN-TRAILING-SPACE].
+// Win32 trims those from the LAST path segment only: for "Game .exe" create_directories made "Game", and every file
+// opened inside "Game " then failed, so the session went unlogged with no notice. An empty result ('.exe') is
+// "unknown", never Logs\ itself. The UI derives the same name (ProxyImportAnalyzer.ProcessLogFolderName, which
+// LoggingService's mirror uses too) -- change the three together.
+std::wstring ProcessFolderName(const std::wstring& processName) {
     std::wstring safeName = processName;
     auto dotPos = safeName.rfind(L'.');
     if (dotPos != std::wstring::npos) safeName = safeName.substr(0, dotPos);
@@ -594,8 +595,17 @@ void InitProcessMirror(const std::wstring& processName) {
             c = L'_';
         }
     }
+    while (!safeName.empty() && (safeName.back() == L' ' || safeName.back() == L'.')) safeName.pop_back();
+    if (safeName.empty()) safeName = L"unknown";
+    return safeName;
+}
 
-    s_processDir = s_logDir / safeName;
+void InitProcessMirror(const std::wstring& processName) {
+    std::lock_guard<std::mutex> lock(s_mutex);
+
+    if (processName.empty()) return;
+
+    s_processDir = s_logDir / ProcessFolderName(processName);
     std::error_code ec;
     fs::create_directories(s_processDir, ec);
     if (ec) return;
