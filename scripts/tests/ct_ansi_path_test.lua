@@ -129,5 +129,60 @@ check("every probe hit sets both forms", body:find("DLL_PATH_ANSI, DLL_PATH = ue
 check("a picked path gets its ANSI form",
       body:find("DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(ue5_pickDllManually(), false)", 1, true) ~= nil)
 
+-- ---- the skeptic review (wf_6ba4bc83-14d) ------------------------------------------------------------------
+
+print("-- (T4) _dllAt says which probe found the file --")
+local okA, errA = lift("(local function _dllAt.-\nend)", "_dllAt")
+check("_dllAt is in the .CT", okA, errA)
+-- _dllAt is a LOCAL in the .CT: re-lift it as a global to call it here.
+local dllAtSrc = unxml(ct:match("(local function _dllAt.-\nend)") or ""):gsub("^local function _dllAt", "function _dllAt")
+assert(load(dllAtSrc, "_dllAt-global"))()
+function fileExists(p) return p == P_UTF8 end
+io.open = fakeOpen
+local hit, fromAnsi = _dllAt("D:\\" .. A_GONGJU .. "\\UE5CEDumper\\")
+check("an io.open hit is the ANSI bytes, flagged fromAnsi", hit == P_ANSI and fromAnsi == true, tostring(fromAnsi))
+hit, fromAnsi = _dllAt("D:\\" .. U_GONGJU .. "\\UE5CEDumper\\")
+check("a fileExists hit is UTF-8, flagged not fromAnsi", hit == P_UTF8 and fromAnsi == false, tostring(fromAnsi))
+io.open = realOpen
+
+print("-- (T1) the probe loop itself sets both forms --")
+local probeSrc = unxml(ct:match("(local function _probeSlots.-\nend)") or ""):gsub("^local function _probeSlots",
+                                                                                  "function _probeSlots")
+check("_probeSlots is in the .CT", probeSrc ~= "")
+if probeSrc ~= "" then
+  -- Its upvalues in the .CT (_slots, _dllAt, _dllFoundIn, _dllFoundLabel) resolve as globals here.
+  assert(load(probeSrc, "_probeSlots"))()
+  io.open = fakeOpen
+  _slots = { { dir = "D:\\" .. U_GONGJU .. "\\UE5CEDumper\\", label = "breadcrumb" } }
+  DLL_PATH, DLL_PATH_ANSI = nil, nil
+  _probeSlots(1)
+  check("a UTF-8 slot: DLL_PATH is the real path", DLL_PATH == P_UTF8, DLL_PATH)
+  check("a UTF-8 slot: DLL_PATH_ANSI is its ANSI bytes", DLL_PATH_ANSI == P_ANSI, DLL_PATH_ANSI)
+  _slots = { { dir = "D:\\" .. A_GONGJU .. "\\UE5CEDumper\\", label = "mru" } }
+  DLL_PATH, DLL_PATH_ANSI = nil, nil
+  _probeSlots(1)
+  check("an ANSI slot: DLL_PATH is shown as UTF-8", DLL_PATH == P_UTF8, DLL_PATH)
+  check("an ANSI slot: DLL_PATH_ANSI is the bytes", DLL_PATH_ANSI == P_ANSI, DLL_PATH_ANSI)
+  _slots = { { dir = "C:\\Tools\\", label = "ascii" } }
+  DLL_PATH, DLL_PATH_ANSI = nil, nil
+  _probeSlots(1)
+  check("an ASCII slot: both forms are the path", DLL_PATH == "C:\\Tools\\UE5Dumper.dll" and DLL_PATH_ANSI == DLL_PATH)
+  io.open = realOpen
+end
+
+print("-- (CEINJ-1) the recent-files slot reads reg.exe as UTF-8 --")
+-- Measured 2026-09-25 through a pipe: plain reg.exe gave the console code page with best fit (Cafe for Cafe-acute,
+-- '?' for TM) -- lossy; after 'chcp 65001' every entry came back as exact UTF-8.
+local popen = body:match("io%.popen%('([^']*)'%)")
+check("the MRU popen switches the console to UTF-8 first", popen ~= nil and popen:find("chcp 65001", 1, true) ~= nil, popen)
+
+print("-- (CEINJ-3) a refusal clears the path, so the next tick reaches the picker --")
+local r0 = body:find("if not DLL_PATH_ANSI then", 1, true)
+local r1 = r0 and body:find("return false", r0, true)
+local block = (r0 and r1) and body:sub(r0, r1) or ""
+check("DLL_PATH and DLL_PATH_ANSI are cleared before returning",
+      block:find("DLL_PATH, DLL_PATH_ANSI = nil, nil", 1, true) ~= nil)
+check("and the text says the picker comes next", block:find("file picker", 1, true) ~= nil)
+
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
 os.exit(fails == 0 and 0 or 1)
