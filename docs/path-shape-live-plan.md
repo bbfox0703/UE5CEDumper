@@ -79,7 +79,7 @@ Attach CE.
 | 14 | `[PROXY-DOUBLE-GUARD]` | With `version.dll` deployed, Deploy `winmm.dll`: skipped, with the reason on the row | ✅ PASS 2026-09-26, build 3558 (the other way round: winmm.dll there, version.dll deployed) |
 | 15 | `[PROXY-USE-CONFIRMED]` | A clean folder with a confirmed record deploys the recorded type, and says so | ⏳ |
 | 16 | `[PROXY-RISKNOTE-WIPED]` | A deploy's import-risk note is still on the row after the refresh (Deploy and Update All) | ✅ PASS 2026-09-25, build 3558 |
-| 17 | `[PROXY-PRODUCTNAME-UNREADABLE]` | `hold_exclusive.py` on a proxy-named file: Deploy skips (said once), Update All says "Not updated: <name>.", Undeploy leaves it and fails the row | ⏳ |
+| 17 | `[PROXY-PRODUCTNAME-UNREADABLE]` | `hold_exclusive.py` on a proxy-named file: Deploy skips (said once), Update All says "Not updated: <name>.", Undeploy leaves it and fails the row || ✅ PASS 2026-09-26, build 3558 |
 | 18 | `[PROXY-CONFIRM-SHARED-EXE]` | Two folders shipping the same exe name: neither uses the record, and the row says so. Needs a second detected copy; if drive scan cannot find one on this machine, record that it is unit-only | ⏳ |
 
 **Teardown:** undeploy everything from the fixture. Restore `ui-options.json` and `dll-path.txt`. Run
