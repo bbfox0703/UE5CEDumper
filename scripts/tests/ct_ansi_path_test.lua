@@ -284,6 +284,27 @@ if okMru and lifted then
   probe("D:\\A\\UE5CEDumper.CT" .. S0 .. "UE5CEDumper.CT", function(q) return q == "D:\\A\\UE5Dumper.dll" end)
   check("  ...and an older relative entry does not undo it", DLL_PATH == "D:\\A\\UE5Dumper.dll", DLL_PATH)
 
+  -- (fifth review, R5-02) A dropped relative entry gets its OWN reason in the failure dialog / log -- not "the list has
+  -- no UE5CEDumper.CT" / "CE reported no recent files", which are false then.
+  local function why(labelPart)
+    for _, sl in ipairs(_slots) do if sl.label:find(labelPart, 1, true) then return sl.why or "" end end
+    return "(no slot)"
+  end
+  probe("sub\\UE5CEDumper.CT" .. S0 .. "D:\\Games\\Other.CT", function() return false end)
+  local selfWhy, topWhy = why("most recent UE5CEDumper.CT"), why("most recently opened cheat table")
+  check("the self slot says the entry was relative", selfWhy:find("relative", 1, true) ~= nil, selfWhy)
+  check("  ...not that the list has no UE5CEDumper.CT", selfWhy:find("has no UE5CEDumper.CT", 1, true) == nil, selfWhy)
+  check("the top slot says the most recent table's path was relative", topWhy:find("relative", 1, true) ~= nil, topWhy)
+  check("  ...not that CE reported no recent files", topWhy:find("no recent files", 1, true) == nil, topWhy)
+  probe("", function() return false end)
+  check("an empty list still says so", why("most recently opened cheat table"):find("no recent files", 1, true) ~= nil,
+        why("most recently opened cheat table"))
+
+  -- (fifth review, R5-T-MRU-TOP-SLOT-POSITIVE-UNTESTED) The top slot's reason to exist: a RENAMED table, absolute.
+  probe("D:\\R\\MyGame.CT" .. S0 .. "E:\\other.CT", function(q) return q == "D:\\R\\UE5Dumper.dll" end)
+  check("a renamed table's folder (the top slot) is still probed", DLL_PATH == "D:\\R\\UE5Dumper.dll", DLL_PATH)
+  check("  ...but not self-healed: it is not name-matched", recorded == nil, recorded)
+
   if ue5_isAbsolutePath then
     for _, c in ipairs({ { "D:\\x\\", true }, { "D:/x/", true }, { "\\\\srv\\share\\", true },
                          { "sub\\", false }, { "\\x\\", false }, { "", false }, { "D:x", false } }) do
