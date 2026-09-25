@@ -450,10 +450,32 @@ std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
         return results;
     }
 
-    if (!moduleBase) moduleBase = GetModuleBase(nullptr);
+    const uintptr_t mainBase = GetModuleBase(nullptr);
+    if (!moduleBase) moduleBase = mainBase;
     if (!moduleBase) {
         LOG_ERROR("AOBScanAll: Cannot get module base");
         return results;
+    }
+
+    // [SCAN-EARLY-TRIGGER-CONTAINED] Hold a reference on any module other than the exe for the length of the scan.
+    // AOBScanAllModules takes its module list from EnumProcessModules and scans afterwards; a DLL the process frees
+    // in between (a booting engine loads and frees many) was read after it was unmapped -- an access violation that
+    // only RunThreadGuarded's catch(...) stopped, ending the scan (measured on 3555, a trigger_scan ~1 s after launch).
+    // GetModuleHandleExW from the base adds a reference, so the image stays mapped until FreeLibrary below; if the
+    // module is already gone the call fails, and if another module now sits at that address its handle differs from
+    // the base -- either way this module has nothing left to scan.
+    struct ModulePin {
+        HMODULE h = nullptr;
+        ~ModulePin() { if (h) FreeLibrary(h); }
+    } pin;
+    if (moduleBase != mainBase) {
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                reinterpret_cast<LPCWSTR>(moduleBase), &pin.h)
+            || reinterpret_cast<uintptr_t>(pin.h) != moduleBase) {
+            LOG_DEBUG("AOBScanAll: module at 0x%llX is no longer loaded -- skipped",
+                      static_cast<unsigned long long>(moduleBase));
+            return results;
+        }
     }
 
     auto sections = GetExecutableSections(moduleBase);
