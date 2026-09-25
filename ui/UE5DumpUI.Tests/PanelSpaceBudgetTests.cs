@@ -142,10 +142,12 @@ public class PanelSpaceBudgetTests
         Assert.Contains("DesiredSize.Height", code);
         Assert.Matches(@"const\s+int\s+SavedRow\s*=\s*" + savedRow + @"\s*;", code);
         Assert.Matches(@"const\s+int\s+LowerRow\s*=\s*" + lowerRow + @"\s*;", code);
-        Assert.Matches(@"RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*=", code);
-        Assert.Matches(@"RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*=", code);
+        // (eleventh review, R11-03) The DATA FLOW: RowFloors' result is what both writes store -- a write of a fixed floor
+        // (the R9-01 regression) would satisfy a bare "MinHeight =".
+        Assert.Matches(@"RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*=\s*saved\s*;", code);
+        Assert.Matches(@"RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*=\s*lower\s*;", code);
         // (tenth review, R10-04) The CALL, with its argument -- the method's own declaration also contains "RowFloors(".
-        Assert.Matches(@"=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
+        Assert.Matches(@"var\s*\(\s*saved\s*,\s*lower\s*\)\s*=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
     }
 
     /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
