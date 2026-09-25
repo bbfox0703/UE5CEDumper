@@ -8808,6 +8808,36 @@ static void Test_Methode_NarrowForAnsiLoad() {
                   Methode::NarrowForAnsiLoad(tm, L"D:\\Tools\\CE~1\\UE5DUM~1.DLL", 950), "");
 }
 
+// (third review, T3-METHODE-FOLDER-ALIAS-UNTESTED) The alias the plugin hands NarrowForAnsiLoad: the FOLDER's 8.3 form
+// plus the DLL's own long name. It was built inline in Methode.cpp, which no test target compiles, so a revert to the
+// FILE's alias (UE5DUM~1.DLL -- discarded by the leaf guard, which silently loses the CEINJ-4 ASCII alias) passed.
+static void Test_Methode_FolderAliasOf() {
+    std::wstring asked;
+    auto fake = [&asked](const std::wstring& p) -> std::wstring {
+        asked = p;
+        return p == L"D:\\\u5DE5\u5177\\UE5CEDumper" ? std::wstring(L"D:\\5DE5~1\\UE5CED~1") : std::wstring();
+    };
+    const std::wstring gongju = L"D:\\\u5DE5\u5177\\UE5CEDumper\\UE5Dumper.dll";   // D:\工具\UE5CEDumper\UE5Dumper.dll
+    EXPECT("the folder's alias plus the DLL's own name",
+           Methode::FolderAliasOf(gongju, fake) == L"D:\\5DE5~1\\UE5CED~1\\UE5Dumper.dll");
+    EXPECT("  ...the lookup is asked about the FOLDER, never the file", asked == L"D:\\\u5DE5\u5177\\UE5CEDumper");
+    EXPECT("no alias when the lookup fails", Methode::FolderAliasOf(L"D:\\x\\UE5Dumper.dll", fake).empty());
+    EXPECT("no alias for a bare name", Methode::FolderAliasOf(L"UE5Dumper.dll", fake).empty());
+    // The production lookup on a real folder (%TEMP%): whatever the volume's 8.3 setting, the DLL keeps its name and
+    // the folder part exists.
+    wchar_t tmp[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, tmp);
+    const std::wstring leaf = L"\\UE5Dumper.dll";
+    std::wstring dir(tmp);
+    while (!dir.empty() && dir.back() == L'\\') dir.pop_back();
+    const std::wstring a = Methode::FolderAliasOf(dir + leaf, Methode::ShortDirOf);
+    EXPECT("the real lookup answers for %TEMP%", !a.empty());
+    EXPECT("  ...and keeps the DLL's own name",
+           a.size() > leaf.size() && a.compare(a.size() - leaf.size(), leaf.size(), leaf) == 0);
+    EXPECT("  ...under a folder that exists",
+           a.size() > leaf.size() && GetFileAttributesW(a.substr(0, a.size() - leaf.size()).c_str()) != INVALID_FILE_ATTRIBUTES);
+}
+
 int main() {
     // UNBUFFERED, and this is not a style choice. When this exe died on CI with
     // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
@@ -8828,6 +8858,7 @@ int main() {
 
     RUN(Test_Renge_CeModuleRelative_NeverTruncates);
     RUN(Test_Methode_NarrowForAnsiLoad);
+    RUN(Test_Methode_FolderAliasOf);
     RUN(Test_Methode_CeModuleNameUtf8);
     RUN(Test_TryStrToAddr_AcceptsValidHex);
     RUN(Test_TryStrToAddr_RejectsCePlaceholder);
