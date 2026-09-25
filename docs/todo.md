@@ -478,7 +478,7 @@ issue at 225 % and needs a repro against Avalonia upstream (a two-control window
 attempt to fix it in the DataGrid (`204e4907`, withdrawn in `eaf7467b`) blamed the header markup; position was the
 confounder. Lesson: working-lessons §3.wb.
 
-**Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ✅ FIXED 2026-09-26 `016a0269` (red `8a8d05ec`) + **live red→green** (`tools/verify/scan_early_live.py`, below); ⏳ repeat on the next published build.
+**Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ✅ FIXED 2026-09-26 `016a0269` (red `8a8d05ec`) + **live red→green** (`tools/verify/scan_early_live.py`, below); ✅ **repeated on published 3559** (2026-09-26): 5/5 clean, proxy `618fcc388e66` accepted by its full SHA (`--expect-sha`), `gobjects_method=aob` on every launch, trigger at 0.8 s (`out/scan_early_green_3559.log`).
 Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
 (the S1 rig's first version) logged `RunScan: UNCAUGHT non-standard exception — contained` in 4 of 5 launches
 (`GOBJ_ES53_1: 37 match(es), none validated`, GObjects Num ~546: the engine was still booting). `Routine::RunThreadGuarded`'s
