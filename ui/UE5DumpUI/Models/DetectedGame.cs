@@ -96,8 +96,10 @@ public sealed partial class DetectedGame : ObservableObject
 
     /// <summary>
     /// Concise column text for the "did it actually load?" signal — "loaded 2026-08-17",
-    /// "loaded 2026-07-01 (stale)", or "not observed" — computed from the per-process log
-    /// folder the DLL creates on load (see <c>ProxyImportAnalyzer.ClassifyLoad</c>).
+    /// "stale · loaded 2026-07-01", or "not observed" — computed from the per-process log
+    /// folder the DLL creates on load (see <c>ProxyImportAnalyzer.ClassifyLoad</c>). A folder another
+    /// listed game logs into as well gets a leading "shared · " (<c>ProxyDeployService.ComputeLoadObservation</c>):
+    /// the marks LEAD because the column clips the end (R8-01, ninth review R9-03).
     ///
     /// <para><b>Orthogonal to <see cref="Status"/>, which is DISK state only.</b>
     /// <c>DeployedCurrent</c> + "not observed" is precisely the <c>[PROXYLOAD-2026-08-17]</c>
