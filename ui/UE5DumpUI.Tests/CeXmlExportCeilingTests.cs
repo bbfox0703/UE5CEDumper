@@ -24,7 +24,7 @@ public class CeXmlExportCeilingTests
     {
         var fields = new[]
         {
-            new LiveFieldValue { Name = "Before", TypeName = "IntProperty", Offset = 0x28, Size = 4, Value = "1" },
+            new LiveFieldValue { Name = "Before", TypeName = "IntProperty", Offset = 0x28, Size = 4, TypedValue = "1" },
             last,
         };
         return CeXmlExportService.GenerateInstanceXml("\"Game.exe\"+1000", "MyObj", "UMyClass", fields);
