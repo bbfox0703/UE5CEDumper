@@ -339,6 +339,34 @@ public class AuditL11HonestyTests
         Assert.DoesNotContain("DropDown Limit", vm.StatusText);
     }
 
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByCompleteContainersUnderTheLimit_StillNamesTheArrayLimit()
+    {
+        // [R7-X8] Found live (DumperTest's NestedBag, 16,000 pairs at Array Limit 16384): every container came back
+        // whole and under the limit, so none was "bound", and the notice said no toolbar setting shrinks the export --
+        // but the same copy at 8192 was complete. Lowering the limit shrinks every container LONGER than the new
+        // limit, not only one sitting at the current one. Four whole 16,000-element arrays: 64,000 entries.
+        var fields = new List<LiveFieldValue>();
+        foreach (var name in new[] { "PairsA", "PairsB", "PairsC", "PairsD" })
+        {
+            var elems = new List<ArrayElementValue>();
+            for (int i = 0; i < 16_000; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+            fields.Add(new LiveFieldValue { Name = name, TypeName = "ArrayProperty", Offset = 0x28 + fields.Count * 0x10,
+                                           Size = 0x10, ArrayCount = 16_000, ArrayInnerType = "IntProperty",
+                                           ArrayElemSize = 4, ArrayElements = elems });
+        }
+        var (vm, platform) = FinderWithFields(fields);
+        vm.ArrayLimit = 16_384;   // above every container: none is clipped, none sits at the limit
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("lower the Array Limit", vm.StatusText);
+        Assert.Contains("PairsA", vm.StatusText);
+        Assert.DoesNotContain("no toolbar setting", vm.StatusText);
+    }
+
     // [R7-S11] A container inside a STRUCT field is resolved at the Array Limit too, and emitted through the resolved
     // struct -- but the status looked at the top-level fields only, where the struct has no elements of its own.
     private static List<LiveFieldValue> TuneStruct() => new()
