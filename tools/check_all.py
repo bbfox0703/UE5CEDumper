@@ -218,6 +218,13 @@ GATES = [
      "with nothing enabling it that reaches the game session (GameSessionId / _currentSessionId), so a "
      "previous launch's address is walked in this one. Gate it the way Snapshot Diff and SPC do "
      "([W1-PIVOT-SESSION]). Run 'py tools/check_session_gate.py --list' or '--selftest'", False),
+
+    # [CI-GATE-DRIFT-2026-09-25] Enforces what the docstring above used to only ask for: every gate here also runs in
+    # ci.yml, with the same arguments, and CI runs no pre-build gate this list lacks. Nine had drifted out again.
+    ("check_ci_gate_parity",
+     ["tools/check_ci_gate_parity.py"],
+     "a gate runs in tools/check_all.py but not in .github/workflows/ci.yml, or the other way round -- add it to "
+     "BOTH lists with the same arguments. Run 'py tools/check_ci_gate_parity.py --list'", False),
 ]
 
 
