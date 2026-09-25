@@ -1,0 +1,6 @@
+{
+ "name": "r7-s4-red",
+ "why": "R7-S4 red: HEAD with only 621e9ef1 reversed -- Find References' sparse pass walks the storage when ReadTMapHeader REFUSED it (it fills the header first), so an implausible ArrayNum is walked unbounded and not reported.",
+ "reverse_commit": "621e9ef1",
+ "paths": ["dll/src"]
+}
