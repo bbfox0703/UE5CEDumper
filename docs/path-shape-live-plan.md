@@ -59,7 +59,7 @@ Attach CE.
 | 6 | `[PATH-AOBMAKER-ANSI-MATCH]` | Connected to `DumperTest51遊戲-…`, "Register GWorld symbol" through AOBMaker registers; `getAddress` of it resolves in CE | ✅ PASS 2026-09-25 (matched by name, no fallback) |
 | 7 | `[PATH-TRAINER-APOSTROPHE]` | Connected to `Tony's&Jerry-…`: the standalone trainer, pushed to CE, enables Setup | ✅ PASS 2026-09-25, build 3557 |
 | 8 | `[PATH-CEXML-AMP]` | The same game: an AOB-wrapped CE XML export pastes into CE and its script enables | ✅ PASS 2026-09-25, build 3557 (module-rooted AA via AOBMaker; clipboard XML by xUnit) |
-| 9 | `[PATH-SEIN-TRAILING-SPACE]` (UI side) | Connected to `… .exe`: the UI's own log mirror lands in the DLL's folder | ⏳ |
+| 9 | `[PATH-SEIN-TRAILING-SPACE]` (UI side) | Connected to `… .exe`: the UI's own log mirror lands in the DLL's folder | ✅ PASS 2026-09-25, build 3557 |
 | 10 | `[PATH-MODULE-NAME-UTF8]` / confirmed record | After the confirm dwell, `ui-options.json` holds the real `DumperTest51遊戲-…` name, not `?` | ✅ PASS 2026-09-25, build 3556 |
 
 ### S4 — CE inject from folder shapes (proxy REMOVED from the fixture)
