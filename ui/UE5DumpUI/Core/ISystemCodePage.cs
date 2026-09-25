@@ -13,6 +13,17 @@ public interface ISystemCodePage
     /// <summary>The ANSI round trip of <paramref name="text"/> in the system code page, best fit included
     /// (what ANSI <c>Module32First</c> produces). Pure ASCII is returned unchanged.</summary>
     string AnsiView(string text);
+
+    /// <summary>[PATH-CE-INJECT-ANSI] The bytes an ANSI API (<c>LoadLibraryA</c>, which Cheat Engine's
+    /// <c>injectDLL</c> uses) needs to open <paramref name="path"/>: its EXACT narrowing (never best fit -- best fit
+    /// names another folder), else its 8.3 short form if that narrows exactly, else null (no ANSI form exists).
+    /// The default answers only for pure ASCII.</summary>
+    byte[]? AnsiPathBytes(string path)
+    {
+        if (string.IsNullOrEmpty(path)) return null;
+        foreach (char c in path) if (c >= 0x80) return null;
+        return System.Text.Encoding.ASCII.GetBytes(path);
+    }
 }
 
 /// <summary>No conversion: the view of a machine whose ANSI code page holds every character. Used where no platform

@@ -340,6 +340,37 @@ public static class CeLuaHygiene
         return s!.Replace("\r\n", "\n").Replace('\r', '\n');
     }
 
+    /// <summary>[PATH-CE-INJECT-ANSI] <see cref="EscapeLuaString"/> for raw BYTES (a path in the ANSI code page): a
+    /// byte outside printable ASCII is a 3-digit decimal escape (<c>\185</c>; three digits so a following digit
+    /// cannot join it), and the quote / backslash / long-bracket rules are the same. The emitted literal is pure
+    /// ASCII, so it survives every UTF-8 route to CE (the AOBMaker JSON, the clipboard, the autorun file) and CE's
+    /// Lua turns it back into exactly these bytes.</summary>
+    public static string EscapeLuaBytes(byte[] bytes)
+    {
+        var sb = new StringBuilder(bytes.Length * 2);
+        for (int i = 0; i < bytes.Length; i++)
+        {
+            byte b = bytes[i];
+            switch (b)
+            {
+                case (byte)'\\': sb.Append("\\\\"); break;
+                case (byte)'\'': sb.Append("\\'"); break;
+                case (byte)']':
+                {
+                    int j = i + 1;
+                    while (j < bytes.Length && bytes[j] == (byte)'=') j++;
+                    sb.Append(j < bytes.Length && bytes[j] == (byte)']' ? "\\093" : "]");
+                    break;
+                }
+                default:
+                    if (b < 0x20 || b >= 0x7F) sb.Append('\\').Append(b.ToString("D3"));
+                    else sb.Append((char)b);
+                    break;
+            }
+        }
+        return sb.ToString();
+    }
+
     public static string EscapeLuaString(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";
