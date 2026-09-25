@@ -70,6 +70,13 @@ public class ProxyDeployConcurrencyTests : IDisposable
         /// (it rewrites the row from disk). [PROXY-DOUBLE-GUARD] A note written before the refresh would not
         /// survive it.</summary>
         public bool ClearDetailsOnRefresh;
+        /// <summary>What the refresh writes into Details for a row it rewrites (null = nothing), e.g. the real
+        /// refresh's "Multiple proxy DLLs deployed …" warning for a doubled folder.</summary>
+        public Func<DetectedGame, string?>? RefreshDetail;
+        /// <summary>The preserve set each refresh was given: a row in it is NOT rewritten from disk.</summary>
+        public readonly List<HashSet<string>> Preserves = new();
+        /// <summary>Overrides DeployAsync's result per game (null = success).</summary>
+        public Func<DetectedGame, bool>? DeployResult;
         /// <summary>The types actually written to the grid, in the order they landed.</summary>
         public readonly List<ProxyType> Applied = new();
 
@@ -88,9 +95,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
             // not stop the write — which is precisely the gap the post-await re-check closes.
             // A stub that threw on ct would model away the thing under test.
             if (ThrowOnCancelledRefresh) ct.ThrowIfCancellationRequested();
+            Preserves.Add(preserve is null ? new HashSet<string>() : new HashSet<string>(preserve));
             if (ClearDetailsOnRefresh)
                 foreach (var g in games)
-                    if (preserve is null || !preserve.Contains(g.BinariesDir)) g.StatusDetail = null;
+                    if (preserve is null || !preserve.Contains(g.BinariesDir)) g.StatusDetail = RefreshDetail?.Invoke(g);
             Applied.Add(proxyType);
         }
 
@@ -108,7 +116,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
             Deploys.Add((game.Name, proxyType, options, sourceDllPath));
             await WaitAsync($"deploy:{game.Name}");
             DuringDeploy?.Invoke();
-            return true;
+            return DeployResult?.Invoke(game) ?? true;
         }
 
         public async Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default)
@@ -764,7 +772,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("skipped: 2", vm.LastOperationResult);
         Assert.Equal("#888888", vm.LastOperationColor);               // nothing written: neutral
         Assert.Empty(vm.LastManualProxyByGame);                        // a skipped game is not the user's pick
-        Assert.StartsWith("Skipped:", vm.Games[0].StatusDetail);       // survives the refresh
+        Assert.StartsWith("Skipped:", vm.Games[0].StatusDetail);       // survives the refresh...
+        Assert.DoesNotContain(vm.Games[0].BinariesDir, svc.Preserves.Last());   // ...which DID rewrite the row
         Assert.Contains("winmm.dll", vm.Games[0].StatusDetail);
         Assert.Contains("dxgi.dll", vm.Games[1].StatusDetail);
     }
@@ -810,6 +819,51 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         Assert.Equal(new[] { ("A", ProxyType.Version) }, svc.Deploys.Select(d => (d.Game, d.Type)));
         Assert.StartsWith("Deployed: 1 success", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task Deploy_AlreadyDoubledFolder_SameType_NoForce_IsAlreadyCurrent()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Version, ProxyType.Winmm));
+        svc.VersionOf = _ => SameVersion;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.Contains("already current: 1", vm.LastOperationResult);
+        Assert.DoesNotContain("skipped", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task Deploy_SkippingAnAlreadyDoubledFolder_KeepsTheDoubleWarning()
+    {
+        // The skip note replaced the refresh's "Multiple proxy DLLs deployed …" -- losing the one warning about the
+        // double on exactly the folder this guard exists for. (the text skeptic)
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Dxgi, ProxyType.Winmm));
+        svc.RefreshDetail = _ => "Multiple proxy DLLs deployed (dxgi.dll, winmm.dll) — only one will activate at runtime";
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Contains("Multiple proxy DLLs deployed", vm.Games[0].StatusDetail);
+        Assert.Contains("Skipped:", vm.Games[0].StatusDetail);
+    }
+
+    [Fact]
+    public async Task Deploy_CancelledAfterASkip_KeepsTheSkipNote_AndCountsIt()
+    {
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm), Game("B"));
+        svc.ThrowOnCancelledRefresh = true;
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);   // cancel during B, after A was skipped
+        svc.Gate.SetResult();
+
+        var ex = await Record.ExceptionAsync(() => Refused(vm.DeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.Null(ex);
+        Assert.Contains("cancel", (vm.LastOperationResult ?? "").ToLowerInvariant());
+        Assert.Contains("skipped: 1", vm.LastOperationResult ?? "");
+        Assert.StartsWith("Skipped:", vm.Games[0].StatusDetail);
     }
 
     [Fact]
@@ -934,6 +988,42 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.StartsWith("Deployed: 1 success, 1 failed", vm.LastOperationResult);
         Assert.Contains("winmm.dll", vm.Games[0].StatusDetail);
         Assert.Contains("not found", vm.Games[0].StatusDetail);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_ForeignFileAtTheConfirmedName_FailsThatRow_AndSaysWhy()
+    {
+        // The confirmed name is taken by another program's file (ReShade's dxgi.dll, say). A switched row never
+        // replaces it -- and the row must say so, naming the confirmed type, not read as a refusal of the radio's.
+        var (vm, svc) = ReadyWith(Game("A", ProxyType.Winmm));
+        svc.IsOurs = p => !p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase);    // winmm.dll is foreign
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        vm.AllowForeignOverwrite = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Empty(svc.Deploys);
+        Assert.StartsWith("Deployed: 0 success, 1 failed", vm.LastOperationResult);
+        Assert.Contains("winmm.dll", vm.Games[0].StatusDetail);
+        Assert.Contains("confirmed working", vm.Games[0].StatusDetail);
+        Assert.Contains("another program", vm.Games[0].StatusDetail);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_ASwitchedRowThatFails_SaysItWasTheConfirmedType()
+    {
+        var (vm, svc) = ReadyWith(Game("A"));
+        vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.DeployResult = _ => false;                                  // locked, say
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.StartsWith("Deployed: 0 success, 1 failed", vm.LastOperationResult);
+        Assert.Contains("winmm.dll (confirmed working)", vm.Games[0].StatusDetail);
     }
 
     [Fact]

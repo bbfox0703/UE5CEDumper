@@ -211,6 +211,35 @@ public class ProxyDeployPolicyTests
     }
 
     [Fact]
+    public async System.Threading.Tasks.Task DeployAsync_Backstop_RefusesASecondOfOurTypes_WithoutWriting()
+    {
+        // The view model pre-checks; the service must refuse anyway, for any caller. Ownership is a PE ProductName
+        // read, so the probe is replaced (a fabricated PE would test the fixture, not the wiring).
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-backstop", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllBytes(Path.Combine(dir, "winmm.dll"), new byte[] { 0x4D, 0x5A });
+            string source = Path.Combine(dir, "source-version.dll");
+            File.WriteAllBytes(source, new byte[] { 0x4D, 0x5A });
+            var svc = new ProxyDeployService(new MockLoggingService(), new MockPlatformService(dir))
+            {
+                OwnershipProbe = p => p.EndsWith("winmm.dll", StringComparison.OrdinalIgnoreCase),
+            };
+            var game = new DetectedGame { Name = "G", BinariesDir = dir, ExePath = Path.Combine(dir, "G.exe") };
+
+            bool ok = await svc.DeployAsync(source, game, ProxyType.Version,
+                new DeployOptions(ForceSameVersion: true, ForeignConsent: true));
+
+            Assert.False(ok);
+            Assert.False(File.Exists(Path.Combine(dir, "version.dll")));
+            Assert.Equal(ProxyDeployStatus.DeployedOtherType, game.Status);
+            Assert.StartsWith("Skipped:", game.StatusDetail);
+        }
+        finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
+    }
+
+    [Fact]
     public void DescribeOtherTypeSkip_NamesEveryProxy_AndSaysHowToSwitch_WithoutViabilityWording()
     {
         string one = ProxyDeployService.DescribeOtherTypeSkip(new[] { "winmm.dll" });
