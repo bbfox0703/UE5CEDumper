@@ -1,7 +1,8 @@
 """Live check for [SCAN-EARLY-TRIGGER-CONTAINED]: a trigger_scan sent the moment the pipe answers must not fault.
 
     py tools/verify/path_shape_live.py deploy <work dir>                  # dist\\proxy\\version.dll into the fixture
-    py tools/verify/scan_early_live.py <work dir> [launches] [exe]        # default 5 launches, the plain exe name
+    py tools/verify/scan_early_live.py <work dir> [launches] [exe] [--expect-sha <hex prefix>]
+                                                  # default 5 launches, the plain exe name
     py tools/verify/path_shape_live.py undeploy <work dir>
 
 WHY. On build 3555 a trigger_scan ~1 s after launch logged 'RunScan: UNCAUGHT non-standard exception — contained' in 4
@@ -10,10 +11,17 @@ each module for its scan. This repeats the failing shape -- trigger as early as 
 launch, that the scan thread reached 'RunScan: finished' and that NO log of this launch holds 'UNCAUGHT'. Whether the
 early scan FINDS GObjects is reported but not judged: the engine may not have filled them yet (the row's other half).
 
-One game at a time: each launch is killed (and confirmed gone) before the next. Paths are arguments.
+One game at a time: each launch is killed and confirmed gone before the next; a launch that survives its kill STOPS
+the run. Paths are arguments.
+
+WHICH BINARY (tenth review, R10-07). assert_build compares only the build STAMP, and a proxy built from the tree with
+build_dll.py keeps dist's stamp -- so the stamp cannot tell a fixed proxy from an unfixed one. Every launch line prints
+the SHA-256 (first 12 hex) and mtime of the version.dll it ran against; --expect-sha refuses to run on any other.
 """
 from __future__ import annotations
 
+import datetime
+import hashlib
 import os
 import pathlib
 import subprocess
@@ -37,6 +45,13 @@ def this_launch_logs(folder: pathlib.Path, t0: float) -> list[pathlib.Path]:
     """The live (-0) logs this launch wrote. Each start archives the previous -0 files, so a -0 log with an mtime
     at or after the launch is this launch's."""
     return [p for p in folder.glob("*-0.log") if p.stat().st_mtime >= t0 - 2]
+
+
+def proxy_id(work: str) -> str:
+    dll = win64(work) / "version.dll"
+    sha = hashlib.sha256(dll.read_bytes()).hexdigest()[:12]
+    mtime = datetime.datetime.fromtimestamp(dll.stat().st_mtime).strftime("%Y-%m-%d %H:%M:%S")
+    return f"version.dll sha {sha} mtime {mtime}"
 
 
 def read(p: pathlib.Path) -> str:
@@ -86,11 +101,19 @@ def one_launch(work: str, exe: str, n: int) -> tuple[bool, str]:
             if not alive(p.pid):
                 break
             time.sleep(1)
-    print(f"  launch {n}: {'PASS' if ok else 'FAIL'}  {note}  (killed; alive afterwards: {alive(p.pid)})")
+    survived = alive(p.pid)
+    print(f"  launch {n}: {'PASS' if ok else 'FAIL'}  [{proxy_id(work)}]  {note}  (killed; alive afterwards: {survived})")
+    if survived:
+        raise SystemExit(f"launch {n} (pid {p.pid}) survived its kill -- stopping: one game at a time")
     return ok, note
 
 
 def main(a: list[str]) -> int:
+    expect = None
+    if "--expect-sha" in a:
+        i = a.index("--expect-sha")
+        expect = a[i + 1].lower()
+        a = a[:i] + a[i + 2:]
     if not a:
         raise SystemExit(__doc__)
     work = a[0]
@@ -101,6 +124,10 @@ def main(a: list[str]) -> int:
         raise SystemExit(f"a fixture is already running -- one game at a time: {live}")
     if not (win64(work) / "version.dll").exists():
         raise SystemExit("no proxy in the fixture -- run path_shape_live.py deploy first")
+    ident = proxy_id(work)
+    print(f"  binary under test: {ident}")
+    if expect and not ident.split()[2].startswith(expect):
+        raise SystemExit(f"refused: the deployed proxy is not the expected one ({expect})")
     results = []
     for n in range(1, launches + 1):
         results.append(one_launch(work, exe, n)[0])
