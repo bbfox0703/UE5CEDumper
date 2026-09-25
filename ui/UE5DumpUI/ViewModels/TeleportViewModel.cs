@@ -3671,7 +3671,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // carry it over, and leave the old file as it was -- that key can be shared by another game whose
                 // name the old DLL mangled the same way, so it is copied, never moved.
                 string carriedFrom = "";
-                if (!_coordStore.Exists(_activeCoordKey) && legacyKey.Length > 0 && legacyKey != _activeCoordKey
+                // Only into a key that NEVER held a library: after Clear all (main file deleted, backups kept) the
+                // rows must stay gone, not be carried over again on the next connect (second review).
+                if (!_coordStore.EverHadLibrary(_activeCoordKey) && legacyKey.Length > 0 && legacyKey != _activeCoordKey
                     && _coordStore.Exists(legacyKey))
                 {
                     var legacy = _coordStore.Load(legacyKey);
