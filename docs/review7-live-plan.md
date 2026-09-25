@@ -37,7 +37,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-D-06]` | 17, 21 | yes · ✅ PASS red→green (cap + low disk; real cuts still marked) |
 | `[R7-S8]` | 17, 24 | yes · ⏳ open |
 | `[R7-D-01]` | 17, 21 | yes · ✅ PASS red→green (both SPC grids) |
-| `[R7-D-04]` | 18, 22 | yes · ⏳ red captured (session 22: "○ Not reachable" while busy); green pending |
+| `[R7-D-04]` | 18, 22 | yes · ✅ PASS red→green (absent / busy / released / denied each distinct) |
 | `[R7-S12]` | 18, 25 | yes · ⏳ open |
 | `[R7-S7]` | 18, 24 | yes · ⏳ open |
 | `[R7-C-02]` | 18, 22 | yes · ⏳ red captured (session 22: file-level `Bytesize` 16); green pending |
