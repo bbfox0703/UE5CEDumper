@@ -80,7 +80,7 @@ Attach CE.
 | 15 | `[PROXY-USE-CONFIRMED]` | A clean folder with a confirmed record deploys the recorded type, and says so || ✅ PASS 2026-09-26, build 3558 |
 | 16 | `[PROXY-RISKNOTE-WIPED]` | A deploy's import-risk note is still on the row after the refresh (Deploy and Update All) | ✅ PASS 2026-09-25, build 3558 |
 | 17 | `[PROXY-PRODUCTNAME-UNREADABLE]` | `hold_exclusive.py` on a proxy-named file: Deploy skips (said once), Update All says "Not updated: <name>.", Undeploy leaves it and fails the row || ✅ PASS 2026-09-26, build 3558 |
-| 18 | `[PROXY-CONFIRM-SHARED-EXE]` | Two folders shipping the same exe name: neither uses the record, and the row says so. Needs a second detected copy; if drive scan cannot find one on this machine, record that it is unit-only | ⏳ |
+| 18 | `[PROXY-CONFIRM-SHARED-EXE]` | Two folders shipping the same exe name: neither uses the record, and the row says so. Needs a second detected copy; if drive scan cannot find one on this machine, record that it is unit-only || ✅ PASS 2026-09-26, build 3558 (the second copy made by `tools/verify/shared_exe_twin.py`) |
 
 **Teardown:** undeploy everything from the fixture. Restore `ui-options.json` and `dll-path.txt`. Run
 `path_shape_folders.py clean`.
