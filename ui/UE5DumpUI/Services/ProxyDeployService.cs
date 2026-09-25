@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Microsoft.Win32;
@@ -972,6 +972,20 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // not warn (otherwise switching tabs falsely flags every game
                 // that has a different single proxy installed). N-proxy-safe: no
                 // hardcoded type pair. deployedProxyNames was computed up front.
+                // [PROXY-PRODUCTNAME-UNREADABLE] (second review) A proxy-named file at ANOTHER name that cannot be read:
+                // said on the row, and a folder that is otherwise clean is Unreadable, not a clean NotDeployed -- it is
+                // the folder Deploy will skip.
+                var unreadableOthers = allProxyNames
+                    .Where(name => !name.Equals(selectedDllName, StringComparison.OrdinalIgnoreCase)
+                                   && IsUnreadableDll(Path.Combine(game.BinariesDir, name)))
+                    .ToList();
+                if (unreadableOthers.Count > 0)
+                {
+                    string note = DescribeUnreadable(unreadableOthers);
+                    errorMessage = string.IsNullOrEmpty(errorMessage) ? note : $"{errorMessage} {note}";
+                    if (status == ProxyDeployStatus.NotDeployed) status = ProxyDeployStatus.Unreadable;
+                }
+
                 string? conflictMsg = BuildConflictMessage(deployedProxyNames);
                 if (conflictMsg != null)
                 {
@@ -1190,7 +1204,9 @@ public sealed class ProxyDeployService : IProxyDeployService
                             SetInstalledVersion: false));
 
                     case DeployVerdict.OtherProxyOfOurs:
-                        return (false, new GameStatusUpdate(game, ProxyDeployStatus.DeployedOtherType,
+                        // An unreadable-only skip is Unreadable: DeployedOtherType would claim a type of OURS is there.
+                        return (false, new GameStatusUpdate(game,
+                            others.Count > 0 ? ProxyDeployStatus.DeployedOtherType : ProxyDeployStatus.Unreadable,
                             StatusDetail: others.Count > 0 ? DescribeOtherTypeSkip(others)
                                                            : DescribeUnreadableSkip(unreadableOthers),
                             SetInstalledVersion: false));
@@ -1339,15 +1355,16 @@ public sealed class ProxyDeployService : IProxyDeployService
             return (ProxyDeployStatus.OtherProxy,
                     With($"Refused: not our proxy DLL ({string.Join(", ", foreignSkipped)})"), false);
 
-        if (removed == 0 && cannotRead != null)
-            return (ProxyDeployStatus.Unreadable, cannotRead, false);
+        // Not a success while an unreadable file is left: it may be ours (the contract is "true when nothing of ours
+        // is left behind"), and a success let the view model's refresh wipe this very note (second review).
+        if (cannotRead != null)
+            return (ProxyDeployStatus.Unreadable,
+                    foreignSkipped.Count > 0 ? With($"Left another program's {string.Join(", ", foreignSkipped)}")
+                                             : cannotRead, false);
 
         if (foreignSkipped.Count > 0)
             return (ProxyDeployStatus.NotDeployed,
-                    With($"Left another program's {string.Join(", ", foreignSkipped)}"), true);
-
-        if (cannotRead != null)
-            return (ProxyDeployStatus.NotDeployed, cannotRead, true);
+                    $"Left another program's {string.Join(", ", foreignSkipped)}", true);
 
         // removed >= 0 with nothing foreign: a clean folder is just as much a
         // success as one we emptied.
@@ -2193,7 +2210,10 @@ public sealed class ProxyDeployService : IProxyDeployService
         if (product != null) return DllOwner.NotOurs;
         try
         {
-            using var fs = new FileStream(dllPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete);
+            // Read|Delete sharing -- NOT Write: a file someone holds open for writing (a hex editor, a mod manager, a
+            // copy in flight) is not one we can vouch for, and FileVersionInfo returned null for it too (second
+            // review, measured). A mapped image (a running game's proxy) still opens.
+            using var fs = new FileStream(dllPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
             return DllOwner.NotOurs;
         }
         catch (FileNotFoundException) { return DllOwner.NotOurs; }       // gone: nothing to claim

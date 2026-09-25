@@ -1,4 +1,4 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
@@ -1434,6 +1434,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
         ClearError();
         int ok = 0, fail = 0, current = 0, skipped = 0;
+        int cannotReadSkipped = 0;   // [PROXY-PRODUCTNAME-UNREADABLE] counted apart from the double guard
         bool pickChanged = false;
         var failedDirs = NewBinariesDirSet();
         // [PROXY-DOUBLE-GUARD] Why each skipped game was skipped. Written to its Details AFTER the refresh, which
@@ -1486,11 +1487,19 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 var unreadableOthers = unreadable
                     .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
                     .ToList();
+                // (second review) Through PlanDeploy, like the guard above: the selected type already ours there follows
+                // the same-type rules (as the service backstop and Update All do), and the refresh's own note stays.
                 if (unreadableOthers.Count > 0)
                 {
-                    skipped++;
-                    rowNotes.Add((game, ProxyDeployService.DescribeUnreadableSkip(unreadableOthers), false));
-                    continue;
+                    bool exists = File.Exists(target);
+                    if (ProxyDeployService.PlanDeploy(exists, exists && _deploy.IsOurProxyDll(target), sameVersion: false,
+                            new DeployOptions(ForceSameVersion: force, ForeignConsent: AllowForeignOverwrite),
+                            otherOfOursPresent: true) == DeployVerdict.OtherProxyOfOurs)
+                    {
+                        cannotReadSkipped++;
+                        rowNotes.Add((game, ProxyDeployService.DescribeUnreadableSkip(unreadableOthers), true));
+                        continue;
+                    }
                 }
 
                 // [PROXY-USE-CONFIRMED] A clean folder with a confirmed-working record takes that type. Its source must
@@ -1584,7 +1593,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 ? $", skipped: {skipped} (another of our proxies is already deployed — see Details)"
                 : "";
             string confirmedNote = usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed} (see Details)" : "";
-            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}{skippedNote}{confirmedNote}", fail);
+            string cannotReadNote = cannotReadSkipped > 0
+                ? $", cannot read: {cannotReadSkipped} (a proxy-named file there cannot be read — see Details)"
+                : "";
+            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}{skippedNote}{cannotReadNote}"
+                               + confirmedNote, fail);
             if (ok == 0 && fail == 0)
             {
                 // Nothing was written: neutral, as Update All's "already up-to-date" -- the success colour on a
@@ -1606,6 +1619,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}"
                                + (current > 0 ? $", already current: {current}" : "")
                                + (skipped > 0 ? $", skipped: {skipped}" : "")
+                               + (cannotReadSkipped > 0 ? $", cannot read: {cannotReadSkipped}" : "")
                                + (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed}" : ""), fail);
         }
 
@@ -1614,7 +1628,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         void WriteNotes()
         {
             foreach (var (g, note, keep) in rowNotes)
-                g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? $"{g.StatusDetail}. {note}" : note;
+                g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? JoinDetail(g.StatusDetail!, note) : note;
         }
 
         // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name
@@ -1704,6 +1718,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Appends a note to a row's Details: one space after a sentence that already ends in a full stop, ". "
+    /// otherwise -- never "..".</summary>
+    private static string JoinDetail(string detail, string note) =>
+        detail.TrimEnd().EndsWith('.') ? $"{detail.TrimEnd()} {note}" : $"{detail}. {note}";
+
     [RelayCommand]
     private async Task UpdateAllAsync(CancellationToken ct)
     {
@@ -1768,8 +1787,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
                         if (_deploy.IsUnreadableDll(targetDll))
                         {
                             cannotRead++;
-                            riskNotes.Add((game, ProxyDeployService.DescribeUnreadable(new[] { type.GetDllName() })
-                                                 + " Not updated."));
+                            // The refresh already names the SELECTED type's unreadable file (second review: the
+                            // sentence came out twice); for it, only what Update All adds.
+                            riskNotes.Add((game, type == SelectedProxyType
+                                ? "Not updated."
+                                : ProxyDeployService.DescribeUnreadable(new[] { type.GetDllName() }) + " Not updated."));
                         }
                         continue;
                     }
@@ -1854,7 +1876,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
         void WriteRiskNotes()
         {
             foreach (var (g, note) in riskNotes)
-                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : $"{g.StatusDetail}. {note}";
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
         }
     }
 

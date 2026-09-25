@@ -698,6 +698,8 @@ public class ProxyDeployConcurrencyTests : IDisposable
         var (vm, svc) = ReadyWith(Game("A", ProxyType.Version));
         svc.IsOurs = _ => false;
         svc.Unreadable = p => p.EndsWith("version.dll", StringComparison.OrdinalIgnoreCase);
+        // As the real refresh: it reports the selected name as unreadable (second review: the VM adds only "Not updated.").
+        svc.RefreshDetail = _ => UE5DumpUI.Services.ProxyDeployService.DescribeUnreadable(new[] { "version.dll" });
         svc.Gate.SetResult();
 
         await Refused(vm.UpdateAllCommand.ExecuteAsync(null));
@@ -705,6 +707,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Empty(svc.Deploys);
         Assert.Contains("cannot read: 1", vm.LastOperationResult ?? "");
         Assert.Contains("Cannot read version.dll", vm.Games[0].StatusDetail ?? "");
+        Assert.Contains("Not updated", vm.Games[0].StatusDetail ?? "");
     }
 
     // ── [PROXY-RISKNOTE-WIPED] the one-shot import-risk note outlives the refresh ──

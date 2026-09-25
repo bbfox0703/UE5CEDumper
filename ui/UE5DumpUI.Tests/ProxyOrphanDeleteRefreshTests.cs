@@ -410,6 +410,7 @@ public class ProxyOrphanDeleteRefreshTests
         public Task<bool> UndeployAsync(DetectedGame game, CancellationToken ct = default) => No<Task<bool>>();
         public Task ApplyProxySuggestionsAsync(IReadOnlyList<DetectedGame> games, IReadOnlyDictionary<string, ProxyType> confirmedByExe, IReadOnlyDictionary<string, ProxyType> rememberedByGame, IReadOnlySet<string> injectedExes, bool enabled, CancellationToken ct = default) => Task.CompletedTask;
         public bool IsOurProxyDll(string dllPath) => true;
+        public bool IsUnreadableDll(string dllPath) => false;
         public string? GetDllVersion(string dllPath) => null;
     }
 }
