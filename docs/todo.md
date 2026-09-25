@@ -359,6 +359,16 @@ records the mutation and what failed. ⏳ The live checks are still owed: each r
 | T-TRAINER-APOS-NOCOMPILE | LOW → ✅ `3f3f9840` (by mutation) | TRAINER-APOSTROPHE | The emitted literal is checked by text only; it should be compiled on CE's VM. |
 | T-WALKER-PIN-DROPPED / T-STALE-DOCS | INFO → ✅ `3cbaf14e` (the pin by mutation; DeployVerdict's doc in `41dbbf55`) | CE-MODULE-VIEW, docs | Nothing pins that the GWorld-walk export's module argument stays unused. Stale docs: `AnsiPathBytes`' order, the `Methode.cpp` comment. |
 
+**Third skeptic review** (over the second-round fixes `9a034438..3cbaf14e`, one agent at a time: product code, then
+tests). Product code: 3 findings, all LOW; nothing HIGH or MED. The C# / C++ ANSI-path twins and the UI / DLL log-folder
+twins agree, and none of the new C# relies on reflection. Fixed row by row, red before green.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| UNREAD-NOTE-DOUBLED-OTHERNAME | LOW | PRODUCTNAME-UNREADABLE | Since the refresh names an unreadable file at ANY proxy name, Deploy's skip note and Update All's note repeat the sentence for a non-selected name, and a PRESERVED row (Update All, a failure in the same folder) names no file at all. The stub's refresh wrote only the selected-name sentence, so no test saw it. **Fix:** decide at note time from what the row already says. |
+| CHECKALL-PESLOTS-SKIP-COUNTED-OK | LOW | tooling | `check_processevent_slots` says `check_processevent_slots: SKIP -- no vendored templates` (always, on CI: `vendor/RE-UE4SS/` is gitignored), which `classify` counted as a run. **Fix:** accept a `<gate>: SKIP` last line too, with a control. |
+| MRU-RELATIVE-SELF-MATCH-SHADOWS | LOW | CT-MRU-ZERO (from `3c05a00a`) | A relative `UE5CEDumper.CT` entry, now its own entry, is matched first; its folder is empty, and the loop stops, so a later absolute entry is never tried. **Fix:** skip a match with no folder. |
+
 **Found while adding T11's gate (outside `[PATH-SHAPE]`):** `[CI-GATE-DRIFT-2026-09-25]` | MED | ✅ 2026-09-25 `c2835edc` (red `d14cf364`). Nine gates that `tools/check_all.py` runs were never added to `.github/workflows/ci.yml`. They were appended after `854cd406` closed the previous drift on 2026-09-06: `crc_oracle_selftest`, `check_processevent_slots`, `check_property_family`, `check_ce_untick_placement`, `check_badge_prime_symmetry`, `check_ce_idlewait_scope`, `check_clipboard_delivery`, `check_json_default_ignore` and `check_session_gate`. So a PR could break any of them and CI would stay green. `check_all.py`'s own docstring already said "nothing enforces that". **Fix:** add the nine to CI, and add `tools/check_ci_gate_parity.py` as a gate in BOTH lists, so the drift cannot recur silently.
 
 ## 🔎 Review 7 — the code added since Review 6, read adversarially `[REVIEW7-2026-09-24]`
