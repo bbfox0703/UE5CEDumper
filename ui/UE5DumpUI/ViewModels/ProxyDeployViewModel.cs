@@ -1396,9 +1396,12 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
 
         ClearError();
-        int ok = 0, fail = 0;
+        int ok = 0, fail = 0, current = 0;
         bool pickChanged = false;
         var failedDirs = NewBinariesDirSet();
+        // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
+        bool force = ForceOverwrite;
+        string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
 
         try
         {
@@ -1407,22 +1410,25 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 ct.ThrowIfCancellationRequested();
                 StatusText = $"Deploying to {game.Name}...";
 
+                // [PROXY-DEPLOY-NOOP-COUNT] OUR proxy already at the source's version, with Force off: the service
+                // would answer AlreadyCurrent and return TRUE without writing, and this loop counted it as deployed.
+                // Counted here as already current instead. A foreign DLL still goes to the service (consent).
+                string target = Path.Combine(game.BinariesDir, SelectedProxyType.GetDllName());
+                if (srcVer != null && File.Exists(target) && _deploy.IsOurProxyDll(target)
+                    && _deploy.GetDllVersion(target) == srcVer)
+                {
+                    current++;
+                    RememberPick(game);
+                    continue;
+                }
+
                 bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType,
-                    new DeployOptions(ForceSameVersion: ForceOverwrite,
+                    new DeployOptions(ForceSameVersion: force,
                                       ForeignConsent:   AllowForeignOverwrite), ct);
                 if (success)
                 {
                     ok++;
-                    // Remember what the user deployed for this game (mini "last known
-                    // good"), keyed by the stable folder name so it survives reinstall.
-                    if (!string.IsNullOrEmpty(game.Name))
-                    {
-                        if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != SelectedProxyType)
-                        {
-                            LastManualProxyByGame[game.Name] = SelectedProxyType;
-                            pickChanged = true;
-                        }
-                    }
+                    RememberPick(game);
                 }
                 else { fail++; failedDirs.Add(game.BinariesDir); }
             }
@@ -1436,7 +1442,10 @@ public partial class ProxyDeployViewModel : ViewModelBase
             await ApplyProxySuggestionsAsync(ct);
             if (pickChanged) RequestOptionSave?.Invoke();
 
-            SetOperationResult($"Deployed: {ok} success, {fail} failed", fail);
+            string currentNote = current > 0
+                ? $", already current: {current} (tick Force Overwrite to rewrite them)"
+                : "";
+            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}", fail);
         }
         catch (OperationCanceledException)
         {
@@ -1447,7 +1456,20 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // and bring the grid back in line WITHOUT the cancelled token (it would throw again).
             if (pickChanged) RequestOptionSave?.Invoke();
             await RefreshAfterCancelAsync(failedDirs);
-            SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}", fail);
+            SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}"
+                               + (current > 0 ? $", already current: {current}" : ""), fail);
+        }
+
+        // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name
+        // so it survives reinstall. An already-current proxy is the user's pick too.
+        void RememberPick(DetectedGame game)
+        {
+            if (string.IsNullOrEmpty(game.Name)) return;
+            if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != SelectedProxyType)
+            {
+                LastManualProxyByGame[game.Name] = SelectedProxyType;
+                pickChanged = true;
+            }
         }
     }
 
