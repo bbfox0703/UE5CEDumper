@@ -51,11 +51,11 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-S6]` | 20 | partial · ⏳ open |
 | `[R7-D-07]` | 20-21 | yes · ⏳ open |
 | `[R7-S10]` | 20, 24 | yes · ⏳ open |
-| `[R7-D-03]` | — | no · — no live check (see below) |
-| `[R7-S5]` | — | no · — no live check (see below) |
-| `[R7-A-03]` | — | no · — no live check (see below) |
-| `[R7-D-05]` | — | no · — no live check (see below) |
-| `[R7-X1]` | — | no · — no live check (see below) |
+| `[R7-D-03]` | — | no · ✅ recorded as no live check (todo.md) |
+| `[R7-S5]` | — | no · ✅ recorded as no live check (todo.md) |
+| `[R7-A-03]` | — | no · ✅ recorded as no live check (todo.md) |
+| `[R7-D-05]` | — | no · ✅ recorded as no live check (todo.md) |
+| `[R7-X1]` | — | no · ✅ recorded as no live check (todo.md) |
 | `[R7-X3]` | done | ✅ live PASS 2026-09-25 (before this plan; `068c590e`) |
 
 -----
