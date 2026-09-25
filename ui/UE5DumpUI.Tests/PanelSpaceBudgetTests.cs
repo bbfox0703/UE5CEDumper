@@ -146,6 +146,13 @@ public class PanelSpaceBudgetTests
         // (the R9-01 regression) would satisfy a bare "MinHeight =".
         Assert.Matches(@"RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*=\s*saved\s*;", code);
         Assert.Matches(@"RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*=\s*lower\s*;", code);
+        // (twelfth review, R12-02) ...and the rest of the handler's decisions, each a one-token regression back to R9-01:
+        // the change guard (> 0.5; with < the writes never run and the XAML's fixed floors stay), the Auto-row SUM
+        // (+=), and the filter (the two star rows out, invisible children out).
+        Assert.Matches(@"Math\.Abs\(\s*root\.RowDefinitions\[\s*SavedRow\s*\]\.MinHeight\s*-\s*saved\s*\)\s*>\s*0\.5\s*\)", code);
+        Assert.Matches(@"Math\.Abs\(\s*root\.RowDefinitions\[\s*LowerRow\s*\]\.MinHeight\s*-\s*lower\s*\)\s*>\s*0\.5\s*\)", code);
+        Assert.Matches(@"autos\s*\+=\s*child\.DesiredSize\.Height\s*;", code);
+        Assert.Matches(@"row\s*!=\s*SavedRow\s*&&\s*row\s*!=\s*LowerRow\s*&&\s*child\.IsVisible\s*\)", code);
         // (tenth review, R10-04) The CALL, with its argument -- the method's own declaration also contains "RowFloors(".
         Assert.Matches(@"var\s*\(\s*saved\s*,\s*lower\s*\)\s*=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
     }
