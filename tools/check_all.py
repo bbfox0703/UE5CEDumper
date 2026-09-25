@@ -25,8 +25,8 @@ and `ci.yml` had silently drifted twice: `check_evidence_index` and
 post-build, which needs a build and is deliberately not here. Compare them with:
     py tools/check_ci_gate_parity.py --list
 
-⚠ A GATE THAT CANNOT RUN HERE says so on its LAST line ("SKIPPED: ..." / "SKIP: ...")
-and exits 0; it is counted as skipped, not run (classify below).
+⚠ A GATE THAT CANNOT RUN HERE says so on its LAST line ("SKIPPED: ...", "SKIP: ...", or
+"<gate>: SKIP -- ...") and exits 0; it is counted as skipped, not run (classify below).
 
 ⚠ ORDER MATTERS. `aob_specificity` reads the TSV that `extract_patterns --check`
 writes, so it cannot run first. The sequence below is CI's, not alphabetical.
@@ -247,7 +247,9 @@ def last_line(stdout: str) -> str:
 def classify(name: str, returncode: int, stdout: str) -> str:
     """ok / skip / warn / fail for one gate's result."""
     if returncode == 0:
-        return "skip" if re.match(r"\s*SKIP(?:PED)?:", last_line(stdout)) else "ok"
+        # "SKIPPED: ..." / "SKIP: ...", or "<gate>: SKIP -- ..." (check_processevent_slots). Upper case only: a
+        # summary's "skipped 0" or prose is not a skip.
+        return "skip" if re.match(r"\s*(?:[\w.-]+:\s*)?SKIP(?:PED)?\b", last_line(stdout)) else "ok"
     return "warn" if name in ADVISORY else "fail"
 
 
