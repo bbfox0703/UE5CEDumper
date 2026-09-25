@@ -1196,11 +1196,21 @@ public class ProxyDeployConcurrencyTests : IDisposable
         Assert.Contains("confirmed record not used: 2", vm.LastOperationResult);
     }
 
-    [Fact]
-    public async Task UseConfirmed_TheSameExeInOneFolder_IsNotShared()
+    private static DetectedGame SharedExeGame(DetectedGame g, bool selected = true) => new()
     {
-        // Only DIFFERENT folders make a name ambiguous: one game listed once keeps its record.
-        var (vm, svc) = ReadyWith(Game("A"));
+        Name = g.Name, BinariesDir = g.BinariesDir, ExePath = Path.Combine(g.BinariesDir, "Shared.exe"),
+        IsSelected = selected,
+    };
+
+    [Fact]
+    public async Task UseConfirmed_TheSameExeListedTwiceInOneFolder_IsNotShared()
+    {
+        // (fifth review, R5-T-SAMEFOLDER-CONTROL-UNREACHABLE) Only DIFFERENT folders make a name ambiguous: the same
+        // folder listed twice (SharedExeNames' Distinct over BinariesDir) keeps its record. The old control was ONE game
+        // and could not reach the Distinct.
+        var a = Game("A");
+        var twin = new DetectedGame { Name = "A (again)", BinariesDir = a.BinariesDir, ExePath = a.ExePath, IsSelected = false };
+        var (vm, svc) = ReadyWith(a, twin);
         vm.ConfirmedProxyByExe[Exe("A")] = ProxyType.Winmm;
         vm.UseConfirmedProxy = true;
         svc.Gate.SetResult();
@@ -1208,6 +1218,60 @@ public class ProxyDeployConcurrencyTests : IDisposable
         await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
 
         Assert.Equal(ProxyType.Winmm, Assert.Single(svc.Deploys).Type);
+        Assert.DoesNotContain("confirmed record not used", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_ASharedExeName_IsAmbiguousOverTheLISTEDGames_NotTheSelectedOnes()
+    {
+        // (fifth review, R5-T-SHARED-DEPLOY-SELECTED-SUBSET) Deploying to ONE of the two -- the common case: the other
+        // game is listed, not ticked, and still makes the record ambiguous.
+        var (vm, svc) = ReadyWith(SharedExeGame(Game("A")), SharedExeGame(Game("B"), selected: false));
+        vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.Equal(("A", ProxyType.Version), Assert.Single(svc.Deploys.Select(x => (x.Game, x.Type))));
+        Assert.Contains("shared exe name", vm.Games[0].StatusDetail ?? "", StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("confirmed record not used: 1", vm.LastOperationResult);
+        Assert.DoesNotContain("confirmed type used", vm.LastOperationResult);
+    }
+
+    [Theory]
+    [InlineData(false, true)]    // the box is off, a record exists
+    [InlineData(true, false)]    // the box is on, no record
+    public async Task UseConfirmed_ASharedExeName_WithNothingToSubstitute_SaysNothing(bool useConfirmed, bool record)
+    {
+        // (fifth review, R5-T-SHARED-NOTE-WITHOUT-SUBSTITUTION) The note and the count mean "the record WOULD have been
+        // used and was not": with nothing to substitute there is nothing to say.
+        var (vm, svc) = ReadyWith(SharedExeGame(Game("A")), SharedExeGame(Game("B")));
+        if (record) vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = useConfirmed;
+        svc.Gate.SetResult();
+
+        await Refused(vm.DeploySelectedCommand.ExecuteAsync(null));
+
+        Assert.All(svc.Deploys, d => Assert.Equal(ProxyType.Version, d.Type));
+        Assert.All(vm.Games, g => Assert.DoesNotContain("shared exe name", g.StatusDetail ?? "", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain("confirmed record not used", vm.LastOperationResult);
+    }
+
+    [Fact]
+    public async Task UseConfirmed_ASharedExeName_CancelledMidRun_StillCountsIt()
+    {
+        // (fifth review, R5-T-SHARED-CANCEL-LINE-UNPINNED) The cancelled result line counts it too (6452f625 says so).
+        var (vm, svc) = ReadyWith(SharedExeGame(Game("A")), SharedExeGame(Game("B")));
+        vm.ConfirmedProxyByExe["Shared.exe"] = ProxyType.Winmm;
+        vm.UseConfirmedProxy = true;
+        svc.Gate.SetResult();
+        svc.DuringDeploy = () => vm.CancelOperationCommand.Execute(null);   // cancel during game A
+
+        await Record.ExceptionAsync(() => Refused(vm.DeploySelectedCommand.ExecuteAsync(null)));
+
+        Assert.StartsWith("Deploy cancelled", vm.LastOperationResult ?? "");
+        Assert.Contains("confirmed record not used: 1", vm.LastOperationResult ?? "");
     }
 
     [Fact]
