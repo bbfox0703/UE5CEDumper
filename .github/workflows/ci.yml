@@ -208,6 +208,8 @@ jobs:
           # this reports SKIPPED here; it runs and can fail wherever out/ce_lua53 is built.
           & $py tools/check_lua_suites.py
           if ($LASTEXITCODE -ne 0) { throw "check_lua_suites FAILED ($LASTEXITCODE) - a scripts/tests/*.lua suite failed on Cheat Engine's own Lua VM. Run 'py tools/check_lua_suites.py'." }
+          & $py tools/llm/ollama_local.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "ollama_local selftest FAILED ($LASTEXITCODE) - tools/llm/ollama_local.py's controls failed: the commercial-game / DumperTest classification, the model tag match, the chunker or the settings.local.json hook merge regressed. Run 'py tools/llm/ollama_local.py --selftest' for the failing control." }
           # The two gate lists are one list kept in two places: check_all.GATES and this file.
           & $py tools/check_ci_gate_parity.py
           if ($LASTEXITCODE -ne 0) { throw "check_ci_gate_parity FAILED ($LASTEXITCODE) - a gate runs in tools/check_all.py but not here, or here but not there. Add it to BOTH lists with the same arguments; the failure names each one." }

@@ -237,6 +237,14 @@ GATES = [
      ["tools/check_lua_suites.py"],
      "a scripts/tests/*.lua suite failed on Cheat Engine's own Lua VM -- the .CT or an emitted CE script regressed. "
      "Run 'py tools/check_lua_suites.py' (and --list for what runs and what is excluded)", False),
+
+    # The local-LLM helper's pure logic -- above all the game guard, whose regression would leave a ~14 GB model
+    # on the GPU while a commercial game runs. No network and no processes, so it runs identically in CI.
+    ("ollama_local --selftest",
+     ["tools/llm/ollama_local.py", "--selftest"],
+     "tools/llm/ollama_local.py's controls failed -- the commercial-game / DumperTest classification, the model "
+     "tag match, the chunker or the settings.local.json hook merge regressed. Run "
+     "'py tools/llm/ollama_local.py --selftest' for the failing control", False),
 ]
 
 
