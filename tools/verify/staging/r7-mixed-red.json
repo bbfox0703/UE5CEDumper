@@ -1,0 +1,35 @@
+{
+ "name": "r7-mixed-red",
+ "why": "One red DLL for R7-B-02, R7-B-04, R7-S1 and R7-S2 (docs/review7-live-plan.md, Pre-fix binaries A.2). 9ea4bb2f (S1) reversed whole; B-02(a) the delegate labeller calls {-1,0} stale; B-02(b) the TOptional weak arm says (stale); B-04(a) the sparse element is labelled without the garbage tag; B-04(b) the TOptional resolved name drops its tag; S2 the Find References sparse pass is gated on UE >= 5.0 again. Each reading depends on exactly one of these (the plan's attribution table).",
+ "reverse_commit": "9ea4bb2f",
+ "paths": [
+  "dll/src"
+ ],
+ "subs": [
+  {
+   "file": "dll/src/Ubel.h",
+   "old": "    (void)objIdx;\n    if (!named && serial == 0) return \"(unbound)\";",
+   "new": "    if (!named && objIdx == 0 && serial == 0) return \"(unbound)\";   // STAGING R7-B-02(a) pre-fix"
+  },
+  {
+   "file": "dll/src/Ubel.cpp",
+   "old": "                    fv.typedValue = optWeakRead ? UnresolvedWeakLabel(optWeakIdx, optWeakSerial)\n                                                : DescribeUnreadableField(\"optional\", fi.Offset);",
+   "new": "                    fv.typedValue = optWeakRead ? \"(stale)\" : DescribeUnreadableField(\"optional\", fi.Offset);   // STAGING R7-B-02(b)"
+  },
+  {
+   "file": "dll/src/Ubel.cpp",
+   "old": "elem.value = DescribeDelegateBinding(b.targetObj, b.targetName,",
+   "new": "elem.value = DescribeScriptDelegate(b.targetObj != 0, b.targetName,   /* STAGING R7-B-04(a) */"
+  },
+  {
+   "file": "dll/src/Ubel.cpp",
+   "old": ": fv.ptrName + \" (\" + fv.ptrClassName + \")\") + optWeakTag;   // [R7-B-04]",
+   "new": ": fv.ptrName + \" (\" + fv.ptrClassName + \")\");   // STAGING R7-B-04(b)"
+  },
+  {
+   "file": "dll/src/Aura.cpp",
+   "old": "const bool sparseEra = ::g_cachedUEVersion == 0 || ::g_cachedUEVersion >= 423;",
+   "new": "const bool sparseEra = ::g_cachedUEVersion >= 500;   // STAGING R7-S2 pre-fix gate"
+  }
+ ]
+}
