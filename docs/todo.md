@@ -413,9 +413,16 @@ confirmed, all INFO (test pins, one tooltip, one column width); nothing LOW or a
 
 | finding | sev | row | what |
 |---|---|---|---|
-| R7-01 + R7-02 | INFO (tests) | CT-MRU-ZERO | The chunk's `ue5_breadcrumbSlots(_appData)` call is still pinned by a raw substring (a commented-out call passes); the slot test has one absolute line (the older-entry loop is unpinned) and no header-only file (the `#` guard on the dropped count is unpinned). |
-| R7-03 + R7-04 | INFO (tests) | CT-MRU-ZERO | The C# drive-root test passes on Load's fix alone (no raw-line assert) and its no-rewrite check depends on timing; the lower-case root (`e:\`, legacy `e:`) is untested on both sides. |
-| R7-05 + R7-06 | INFO | CONFIRM-SHARED-EXE | With the tag leading, a shared row's Load shows 'shared · loaded 20' -- the date is cut (widen the column); the Suggested tooltip names the import table as a source (it only annotates) and omits injection. |
+| R7-01 + R7-02 | INFO (tests) → ✅ `1cffaa01` (by mutation) | CT-MRU-ZERO | The chunk's `ue5_breadcrumbSlots(_appData)` call is still pinned by a raw substring (a commented-out call passes); the slot test has one absolute line (the older-entry loop is unpinned) and no header-only file (the `#` guard on the dropped count is unpinned). |
+| R7-03 + R7-04 | INFO (tests) → ✅ `62b6b089` (by mutation) | CT-MRU-ZERO | The C# drive-root test passes on Load's fix alone (no raw-line assert) and its no-rewrite check depends on timing; the lower-case root (`e:\`, legacy `e:`) is untested on both sides. |
+| R7-05 + R7-06 | INFO → ✅ `85a61a2d` | CONFIRM-SHARED-EXE | With the tag leading, a shared row's Load shows 'shared · loaded 20' -- the date is cut (widen the column); the Suggested tooltip names the import table as a source (it only annotates) and omits injection. |
+
+**Eighth skeptic review** (workflow `wf_41d4c1ab-5e4`, over the seventh-round fixes `1cffaa01..85a61a2d`). 1 raised, 1
+confirmed, INFO. The seventh round's width fix measured the wrong font, so it did not do what it said.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R8-01 | INFO → ✅ `8f1df50c` (red `819882bd`) | CONFIRM-SHARED-EXE (from `85a61a2d`) | **Measured from the sources at the pinned versions.** The grid's `FontSize="12"` never reaches a cell: the DataGrid Fluent theme sets `DataGridCell` to 15 px (Inter, `WithInterFont`) with 12 px margins, so a 210 px Load column has ~186 px for text and `shared · loaded 2026-09-25` (~201 px) still lost the day. A trailing `(stale)` never showed at any width we used, so an old load read as a recent one. **Fix:** marks lead (`stale · loaded <date>`), the column is 240, and the header tooltip explains both marks. |
 
 **Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ⏳ open, investigate.
 Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
