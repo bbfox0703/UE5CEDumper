@@ -101,7 +101,7 @@ public class CtDllDiscoveryTests
     {
         // A UE5Dumper.dll in CE's own folder can only have been hand-placed, and is
         // most likely a stale build. Silently loading it is worse than failing.
-        var s = Ct();
+        var s = CodeOnly(Ct());   // (seventh review, R7-01) comments out: a commented-out call is not a call
         int crumb = s.IndexOf("ue5_breadcrumbSlots(_appData)", StringComparison.Ordinal);   // the call (sixth review: a function)
         int ceDir = s.IndexOf("getCheatEngineDir", StringComparison.Ordinal);
         Assert.True(crumb > 0 && ceDir > 0);

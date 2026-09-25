@@ -400,6 +400,32 @@ if bsrc and rsrc then
   check("an absolute line becomes the slot", s2.dir == "D:\\old\\", s2.dir)
   local s3 = slotFor(nil)
   check("no file: 'no folder recorded yet'", (s3.why or ""):find("no folder recorded yet", 1, true) ~= nil, s3.why)
+
+  -- (seventh review, R7-02) An OLDER entry is its own slot (the loop over them), and a file of only comment lines is
+  -- "no folder recorded yet" -- a comment is not a dropped relative folder.
+  _slots, _seen = {}, {}
+  withFile({ "# header", "D:\\new", "D:\\old" }, function() ue5_breadcrumbSlots("X:\\AD") end)
+  local older
+  for _, sl in ipairs(_slots) do if sl.label == "folder recorded by UE5DumpUI (older entry)" then older = sl end end
+  check("an older recorded folder is its own slot", older ~= nil and older.dir == "D:\\old\\", older and older.dir)
+  local s4 = slotFor({ "# header", "# another" })
+  check("a file of only comment lines: 'no folder recorded yet'",
+        (s4.why or ""):find("no folder recorded yet", 1, true) ~= nil, s4.why)
+end
+
+-- (seventh review, R7-01) The chunk's own CALL, pinned like the recent-files probe's: comments out (block, then line)
+-- and the definition out, exactly one call, before the CE-install slot. The suite runs the body itself, so without this
+-- a commented-out call passed.
+do
+  local body = unxml(ct)
+  local def = body:match("(function%s+ue5_breadcrumbSlots%(.-\nend)") or ""
+  local code = body:gsub(def:gsub("%p", "%%%0"), "", 1)
+  code = code:gsub("%-%-%[(=*)%[.-%]%1%]", ""):gsub("%-%-[^\n]*", "")
+  local n = select(2, code:gsub("ue5_breadcrumbSlots%(_appData%)", ""))
+  check("the .CT calls ue5_breadcrumbSlots(_appData) exactly once", n == 1, n)
+  local at = code:find("ue5_breadcrumbSlots(_appData)", 1, true)
+  local ce = code:find('_slot("Cheat Engine install folder"', 1, true)
+  check("  ...before the CE-install slot", at ~= nil and ce ~= nil and at < ce, tostring(at) .. " / " .. tostring(ce))
 end
 
 print(string.format("\n%d check(s), %d failure(s)", checks, fails))
