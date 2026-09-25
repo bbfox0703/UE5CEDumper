@@ -462,7 +462,7 @@ INFO -- all in tests and the SCAN-EARLY rig; no product code. Fixed row by row.
 **Twelfth skeptic review** (workflow `wf_4e2ae682-b6e`, over the eleventh round's fixes). 3 raised, 3 confirmed, all INFO,
 all in tests and the SCAN-EARLY rig. Fixed row by row. **The loop stops here:** rounds 11-12 found only test and rig
 strength issues; the product code has not changed since round 10's fixes, and build 3559 ships it. A thirteenth round
-is the maintainer's call.
+is the maintainer's call. **The maintainer's answer (2026-09-26): no thirteenth round.**
 
 | finding | sev | row | what |
 |---|---|---|---|
@@ -470,8 +470,12 @@ is the maintainer's call.
 | R12-02 | INFO (tests) → ✅ `84787891` (by mutation) | R9-01 | The handler's guard, Auto-row sum and filter were unpinned; four one-token mutations brought R9-01 back green. All four pinned and caught. |
 | R12-01 | INFO → ✅ `b9d9cf64` | SCAN-EARLY rig | A copy could land between Popen and the loader mapping the proxy (~15-25 ms, measured), and main hashed three times. Now one hash per decision, and a second one after connect proves the mapped binary. |
 
-**Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ⏳ open -- **needs the maintainer
-with a real mouse.** On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
+**Found during the S5 live pass (2026-09-25, build 3558):** `[UI-TOOLTIP-RIGHT-THIRD]` | LOW | ✅ CLOSED 2026-09-26 --
+**an artefact of synthetic input, not a UI bug.** The maintainer hovered the Snapshot "Per-game quota" box with the real
+mouse and its tooltip showed. Nothing to fix; the R6-03 / R7-06 / R8-01 tooltips are reachable. What stays true is the
+measurement below: computer-use's hover shows no tooltip past physical x ≈ 2560 on this screen, so a tooltip check there
+needs the control moved left first, or the maintainer's mouse (working-lessons §3.wb). The original record:
+On the 3840x2400 laptop at 225 % (1707 DIP wide; `GetDpiForSystem` and `GetDpiForMonitor` both 216,
 one monitor), NO tooltip appears for a control whose position is past ~1138 DIP from the screen's left edge (physical
 x ≈ 2560, two-thirds of the width); left of it every tooltip shows. Measured with computer-use (synthetic input), staged
 builds, hovering from outside each time:

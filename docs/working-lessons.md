@@ -2535,6 +2535,11 @@ show; a plain ComboBox on another tab failed at the same x. On that screen nothi
 - try a DIFFERENT control at the SAME position.
 Only a failure that follows the control is the control's.
 
+**How it ended (2026-09-26):** the maintainer hovered the same "Per-game quota" box with the real mouse and the tooltip
+showed. The line at ~1138 DIP (physical x ≈ 2560 on the 3840x2400 / 225 % laptop) belongs to computer-use's SYNTHETIC
+hover, not to Avalonia. So on this screen a missing tooltip right of that line is not evidence at all: move the window
+or the control left of it first, or ask the maintainer to hover. Clicks there are unaffected.
+
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
 It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
