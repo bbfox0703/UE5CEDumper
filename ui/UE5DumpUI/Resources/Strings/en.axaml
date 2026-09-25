@@ -772,7 +772,7 @@
     <sys:String x:Key="str.ProxyDeploy.ColStatus">Status</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColLoad">Loaded?</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColSuggested">Suggested proxy</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.ColLoad">Whether UE5Dumper was SEEN to load: its per-process log folder under %LOCALAPPDATA%\UE5CEDumper\Logs. "shared · " -- another listed game logs into the same folder (the same exe name, or one Windows trims to it), so the load shown may be that game's.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.ColLoad">Whether UE5Dumper was SEEN to load: its per-process log folder under %LOCALAPPDATA%\UE5CEDumper\Logs. "shared · " -- another listed game logs into the same folder (the same exe name, or one Windows trims to it), so the load shown may be that game's. "stale · " -- the newest log there is older than the retention window: an old load, not a recent one.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.ColSuggested">The proxy to deploy, in this order: a proxy confirmed working for this exe, your last pick for this game, "injection" if you only ever injected it (no proxy), else the version.dll default -- the import table only annotates the alternatives, and flags a version.dll the game imports directly. "shared · " -- another listed game ships the same exe name, so that exe's confirmed-working / injection record cannot say which game it came from and is not used.</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColVersion">Version</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColDetails">Details</sys:String>
