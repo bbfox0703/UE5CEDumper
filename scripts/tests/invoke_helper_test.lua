@@ -755,6 +755,74 @@ do
 end
 
 -- ============================================================
+-- R7-X5: an UPDATED helper must take effect on re-load; a same/older one must not.
+-- ============================================================
+-- The freeze helper's AA30 contract, which this file never got: its public functions sat behind bare
+-- `if not X then` guards, so a CE session that had loaded one copy kept it however often a newer copy was
+-- re-loaded -- R7-S3's latch release never reached a table opened before the update. Found by R7-S3's live
+-- check, whose red arms each needed a fresh CE process for exactly this reason. Versions are DERIVED from
+-- the file under test, never typed (the lesson freeze_helper_test.lua's AA30 block records).
+local CUR = UE5_INVOKE_HELPER_VERSION
+local function bump(v, d)
+  local a, b = v:match('^(%d+)%.(%d+)$')
+  return string.format('%s.%d', a, tonumber(b) + d)
+end
+local OLDER, NEWER = bump(CUR, -1), bump(CUR, 1)
+local PUBLIC = { 'invokeUFunction', 'readUFunctionReturn', 'freeInvokeStringBuffers', 'setDebugCamera',
+                 'getOffsetsVerdict' }
+
+local function plantSentinels()
+  local s = {}
+  for _, n in ipairs(PUBLIC) do s[n] = function() return 'RESIDENT' end; _G[n] = s[n] end
+  return s
+end
+
+case('R7-X5: a newer helper REPLACES every public function of a resident older one on re-load')
+do
+  resetWorld()
+  local s = plantSentinels()
+  UE5_INVOKE_HELPER_VERSION = OLDER
+  assert(loadfile(HELPER))()
+  for _, n in ipairs(PUBLIC) do
+    check(type(_G[n]) == 'function' and _G[n] ~= s[n], 'R7-X5: the newer helper redefined ' .. n)
+  end
+  eq(UE5_INVOKE_HELPER_VERSION, CUR, 'R7-X5: and bumped the resident version')
+end
+
+case('R7-X5: the SAME version is a no-op -- the resident functions and the shared latch are kept')
+do
+  resetWorld()
+  local s = plantSentinels()
+  UE5_INVOKE_HELPER_VERSION = CUR
+  _ue5_invoke_busy, _ue5_invoke_stale_mb = true, MB   -- an in-flight call that a re-load must not clear
+  assert(loadfile(HELPER))()
+  for _, n in ipairs(PUBLIC) do eq(_G[n], s[n], 'R7-X5: same version keeps ' .. n) end
+  eq(_ue5_invoke_busy, true, 'R7-X5: and the busy flag')
+  eq(_ue5_invoke_stale_mb, MB, 'R7-X5: and the stale-mailbox latch')
+end
+
+case('R7-X5: an OLDER file re-added does not downgrade a newer resident helper')
+do
+  resetWorld()
+  local s = plantSentinels()
+  UE5_INVOKE_HELPER_VERSION = NEWER
+  assert(loadfile(HELPER))()
+  for _, n in ipairs(PUBLIC) do eq(_G[n], s[n], 'R7-X5: the newer resident keeps ' .. n) end
+  eq(UE5_INVOKE_HELPER_VERSION, NEWER, 'R7-X5: and the resident version is not downgraded')
+end
+
+case('R7-X5: the version moved past 1.3, the last one before R7-S3 changed invokeUFunction')
+do
+  local a, b = CUR:match('^(%d+)%.(%d+)$')
+  check(tonumber(a) > 1 or tonumber(b) > 3, 'R7-X5: a 1.3 resident must be replaced by this file, so it cannot be 1.3')
+  -- Leave real functions resident for anything that runs after this block.
+  for _, n in ipairs(PUBLIC) do _G[n] = nil end
+  UE5_INVOKE_HELPER_VERSION = nil
+  resetWorld()
+  assert(loadfile(HELPER))()
+end
+
+-- ============================================================
 
 realPrint(string.format('\n%d checks, %d failure(s)', checks, failures))
 os.exit(failures == 0 and 0 or 1)
