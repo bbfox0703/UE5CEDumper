@@ -25,6 +25,32 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3556) — PATH-SHAPE: the sixth skeptic round's fixes, published AOT
+
+**3556 = 3555 plus the sixth skeptic round's fixes, up to `9aa99ca2`.** The DLL's code is unchanged from 3555; only its
+build stamp differs. So the live checks S1 passed on 3555 (`module_name`, `ce_base`, the log folder) stand for the DLL.
+The changes are to the `.CT` and the UI:
+- **`[R6-01]`, LOW** (a regression from R5-04, measured by the reviewer on CE's VM): a DLL folder at a drive root
+  (`E:\`) was written to `dll-path.txt` as a bare `E:`, which every reader dropped as relative. Both writers now keep
+  the root separator, and both readers read a legacy bare `X:` as that drive's root.
+- **`[R6-02]` / `[R6-06]`:** the breadcrumb slot is now a function the Lua suite runs. It says "holds only relative
+  folders" when every recorded line was dropped.
+- **`[R6-03]` / `[R6-05]`:** the `shared · ` ambiguity tag now LEADS the Proxy Deploy panel's Load and Suggested texts.
+  A trailing mark was clipped by the columns' width. The two column headers carry a tooltip saying what the tag means.
+  The Load tag follows the log folder, not only the exe name.
+- **`[R6-04]`:** a negative control.
+- Also since 3555: `[SCAN-EARLY-TRIGGER-CONTAINED]` is recorded (a `trigger_scan` during engine boot is contained but
+  not retried). The live-check rig now waits for the engine to boot.
+- A seventh skeptic round, over these fixes, is running.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3555 → 3556.
+- `dist\UE5DumpUI.exe`: AOT, 58,004,992 bytes (sha `7d6dfbcbe87d`).
+- `UE5Dumper.dll`: 3,015,680 bytes (sha `cb4031cc0917`), FileVersion `1.0.0.3556`, from `9aa99ca2-dirty`.
+- Proxies: version `bc599b640d6b`, dinput8 `1cb6ed3486b3`, dxgi `1ddf3d8b803a`, winmm `bb659306e0af`.
+- Tests: UI 5587/5587. `dll_helpers_test` 2962/0, `utf8_helpers_test` 273/0, `dll_core_test` 455, `sein_retention_test`
+  30, `grausam_window_test` 22. All 11 Lua suites pass on CE's VM.
+- Gates: 25/25.
+
 ## 2026-09-25 (build 3555) — PATH-SHAPE: non-ASCII / multi-space / special-character paths and exe names, five skeptic rounds, published AOT
 
 **3555 = 3554 plus 49 product commits, up to `7bcab1ba`** (`git log --oneline 641ea268..7bcab1ba -- dll/src
