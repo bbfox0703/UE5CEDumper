@@ -13,7 +13,7 @@
 
 ## Tech Stack
 
-- **.NET 10** (`net10.0-windows`) + **Avalonia 12.1.0** (see `ui/UE5DumpUI/UE5DumpUI.csproj` — that file is the source of truth, not this line). Can use VS 2026 IDE (.sln file)
+- **.NET 10** (`net10.0-windows`) + **Avalonia 12.1.3** (see `ui/UE5DumpUI/UE5DumpUI.csproj` — that file is the source of truth, not this line). Can use VS 2026 IDE (.sln file)
 - **ReactiveUI + CommunityToolkit.Mvvm 8.\*** (source-generator `[ObservableProperty]`, no reflection)
 - **Theme**: `FluentTheme` Dark mode (`FluentAvaloniaTheme` — see `App.axaml`)
 - **Publish**: `PublishSingleFile` Native AOT trimmed, single exe
