@@ -443,7 +443,7 @@ issue at 225 % and needs a repro against Avalonia upstream (a two-control window
 attempt to fix it in the DataGrid (`204e4907`, withdrawn in `eaf7467b`) blamed the header markup; position was the
 confounder. Lesson: working-lessons §3.wb.
 
-**Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ⏳ open, investigate.
+**Found during the live pass (outside `[PATH-SHAPE]`):** `[SCAN-EARLY-TRIGGER-CONTAINED]` | LOW | ✅ the escaped read FIXED 2026-09-26 `016a0269` (red `8a8d05ec`); ⏳ live check on the next build; the UI half is **the maintainer's call** (below).
 Measured 2026-09-25 on build 3555, DumperTest51 Shipping + the `version.dll` proxy: a `trigger_scan` sent ~1 s after launch
 (the S1 rig's first version) logged `RunScan: UNCAUGHT non-standard exception — contained` in 4 of 5 launches
 (`GOBJ_ES53_1: 37 match(es), none validated`, GObjects Num ~546: the engine was still booting). `Routine::RunThreadGuarded`'s
@@ -458,7 +458,7 @@ from the local LLM over the 63 KB archived scan log, then checked line by line a
 `GOBJ_ES53_1` candidates, none valid, then a run of per-pattern `AOBScanAll` calls (0 matches each) ran to
 21:31:12.008 -- and the exception is logged at 12.009. So the uncontained read is in the step `FindGObjects` takes after
 those scans, which logs nothing before it fails. Archived logs: `scan-20260925-213112.log` / `pipe-20260925-213411.log`
-in the Tony's&Jerry folder.
+in the Tony's&Jerry folder. **Found (2026-09-26):** the step after those scans is `ScanForTarget`'s multi-module fallback, `Macht::AOBScanAllModules`: it snapshots `EnumProcessModules`, then `AOBScanAll(pattern, m.base)` read each module's PE headers and code with no guard and no reference on the module, so a DLL the booting engine freed in between was read after it was unmapped -- each module scan logs only when it ends, hence the silent 1 ms before the exception. **Fix:** `AOBScanAll` takes a reference (`GetModuleHandleExW` from the base) on any module other than the exe for the length of its scan, and skips a module already gone. Red→green in `dll_core_test` (a System32 DLL loaded, a pattern cut from its code found in it, freed and checked `MEM_FREE`, then scanned: red faulted, green returns nothing). **Live check owed:** the S1 rig's first shape -- the fixture with a proxy, `trigger_scan` ~1 s after launch, five launches -- must log no "UNCAUGHT" line; the scan may still find nothing that early (the engine has not filled GObjects), which is the other half. **For the maintainer:** when a proxy-mode scan that early finds nothing, should the UI say "the game may still be loading -- scan again", or should the DLL retry by itself? Not decided here.
 
 **Found while adding T11's gate (outside `[PATH-SHAPE]`):** `[CI-GATE-DRIFT-2026-09-25]` | MED | ✅ 2026-09-25 `c2835edc` (red `d14cf364`). Nine gates that `tools/check_all.py` runs were never added to `.github/workflows/ci.yml`. They were appended after `854cd406` closed the previous drift on 2026-09-06: `crc_oracle_selftest`, `check_processevent_slots`, `check_property_family`, `check_ce_untick_placement`, `check_badge_prime_symmetry`, `check_ce_idlewait_scope`, `check_clipboard_delivery`, `check_json_default_ignore` and `check_session_gate`. So a PR could break any of them and CI would stay green. `check_all.py`'s own docstring already said "nothing enforces that". **Fix:** add the nine to CI, and add `tools/check_ci_gate_parity.py` as a gate in BOTH lists, so the drift cannot recur silently.
 
