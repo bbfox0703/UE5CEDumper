@@ -26,7 +26,7 @@ wrong on a live host, fix the step here in the same commit as the row's record.
 | `[R7-A-01]` | 5 | partial · ✅ no-regression PASS on 5.8 (compact branch unreachable) |
 | `[R7-B-02]` | 6-7, 9-10 | yes · ◐ delegate half PASS red→green (4.27); TOptional half open |
 | `[R7-S2]` | 6-7, 11 | yes · ◐ arm A PASS red→green (4.27); arm B open |
-| `[R7-X2]` | 8 | yes · ⏳ open |
+| `[R7-X2]` | 8 | yes · ✅ PASS red→green (4.27 editor; pipe + AOT UI) |
 | `[R7-S1]` | 9-10 | yes · ⏳ open |
 | `[R7-B-04]` | 9-10 | partial · ⏳ open |
 | `[R7-C-05]` | 11, 13-14 | yes · ⏳ open |
