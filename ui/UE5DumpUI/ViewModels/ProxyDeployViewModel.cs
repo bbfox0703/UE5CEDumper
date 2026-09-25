@@ -1446,6 +1446,13 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 ? $", already current: {current} (tick Force Overwrite to rewrite them)"
                 : "";
             SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}", fail);
+            if (ok == 0 && fail == 0)
+            {
+                // Nothing was written: neutral, as Update All's "already up-to-date" -- the success colour on a
+                // no-op run was the other half of the green "Deployed" this row removed.
+                StatusColor = StatusNeutral;
+                LastOperationColor = StatusNeutral;
+            }
         }
         catch (OperationCanceledException)
         {
