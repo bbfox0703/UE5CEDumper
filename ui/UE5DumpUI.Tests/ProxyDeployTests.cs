@@ -1007,30 +1007,45 @@ public class ProxyDeployTests
             var c = Make("GameC", "Unique-Win64-Shipping.exe");
             var d = Make("GameD", "Injected-Win64-Shipping.exe");
             var e = Make("GameE", "Injected-Win64-Shipping.exe");
+            var f = Make("GameF", "Plain-Win64-Shipping.exe");                    // shared, no record at all
+            var g2 = Make("GameG", "Plain-Win64-Shipping.exe");
+            var h = Make("GameH", "Both-Win64-Shipping.exe");                     // shared, both records
+            var i = Make("GameI", "Both-Win64-Shipping.exe");
             var confirmed = new Dictionary<string, ProxyType>(StringComparer.OrdinalIgnoreCase)
             {
                 ["shared-win64-shipping.exe"] = ProxyType.Winmm,
                 ["Unique-Win64-Shipping.exe"] = ProxyType.Winmm,
+                ["Both-Win64-Shipping.exe"] = ProxyType.Dinput8,
             };
-            var injected = new HashSet<string>(StringComparer.OrdinalIgnoreCase) { "Injected-Win64-Shipping.exe" };
+            var injected = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Injected-Win64-Shipping.exe", "Both-Win64-Shipping.exe",
+            };
+            // (fifth review, R5-T-SUGGEST-REMEMBERED-DROPPED) The per-game pick is keyed by the FOLDER: never ambiguous.
+            var remembered = new Dictionary<string, ProxyType>(StringComparer.OrdinalIgnoreCase) { ["GameA"] = ProxyType.Dxgi };
             var svc = new ProxyDeployService(new NoopLog(), new NoopPlatform());
 
-            await svc.ApplyProxySuggestionsAsync(new List<DetectedGame> { a, b, c, d, e }, confirmed,
-                new Dictionary<string, ProxyType>(), injected, enabled: true, TestContext.Current.CancellationToken);
+            await svc.ApplyProxySuggestionsAsync(new List<DetectedGame> { a, b, c, d, e, f, g2, h, i }, confirmed,
+                remembered, injected, enabled: true, TestContext.Current.CancellationToken);
 
-            foreach (var g in new[] { a, b })
-            {
-                Assert.Equal(ProxyType.Version, g.SuggestedProxyType);             // the safe default, not winmm
-                Assert.DoesNotContain("confirmed working", g.SuggestedProxy);
-                Assert.Contains("shared exe name", g.SuggestedProxy);
-            }
+            // (fifth review, R5-01) Exact texts: the note names the record that EXISTS and is not used.
+            const string NoConfirmed = "shared exe name: the confirmed-working record is not used";
+            Assert.Equal(ProxyType.Dxgi, a.SuggestedProxyType);                    // its own last-used pick survives
+            Assert.Equal($"dxgi.dll · last used · {NoConfirmed}", a.SuggestedProxy);
+            Assert.Equal(ProxyType.Version, b.SuggestedProxyType);                 // the safe default, not winmm
+            Assert.Equal($"version · default · {NoConfirmed}", b.SuggestedProxy);
             Assert.Equal(ProxyType.Winmm, c.SuggestedProxyType);                   // a unique name keeps its record
             Assert.Equal("winmm.dll · confirmed working", c.SuggestedProxy);
             foreach (var g in new[] { d, e })
             {
                 Assert.Equal(ProxyType.Version, g.SuggestedProxyType);             // not "injection · no proxy"
-                Assert.Contains("shared exe name", g.SuggestedProxy);
+                Assert.Equal("version · default · shared exe name: the injection record is not used", g.SuggestedProxy);
             }
+            foreach (var g in new[] { f, g2 })                                      // no record: nothing to say
+                Assert.Equal("version · default", g.SuggestedProxy);
+            foreach (var g in new[] { h, i })
+                Assert.Equal("version · default · shared exe name: the confirmed-working and injection records are not used",
+                             g.SuggestedProxy);
         }
         finally { try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ } }
     }
