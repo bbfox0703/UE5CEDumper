@@ -2540,6 +2540,24 @@ showed. The line at ~1138 DIP (physical x ≈ 2560 on the 3840x2400 / 225 % lapt
 hover, not to Avalonia. So on this screen a missing tooltip right of that line is not evidence at all: move the window
 or the control left of it first, or ask the maintainer to hover. Clicks there are unaffected.
 
+### 3.wc A registry write from the shell may never reach CE: confirm it through the consumer
+
+2026-09-26, desktop-app session (`[PATH-METHODE-NO8DOT3]`). `ce_plugin_register.py register` wrote a plugin entry and
+`status` read it back, but CE never saw it. CE kept loading the maintainer's `D:\tmp\UE5Dumper.dll`, an entry the shell
+could not see at all.
+- The maintainer's regedit showed `Plugins64` as CE-Handwire / AOBMaker / `D:\tmp\UE5Dumper.dll`.
+- The shell showed AOBMaker / CE-Handwire plus its own writes, and the key's last-write time was the rig's. This held
+  for Python's `winreg` and `reg.exe` alike, with and without the Bash sandbox flag.
+- The shell is not inside an MSIX package (`GetCurrentPackageFullName` returns 15700). The mechanism is unknown.
+
+The rule:
+- a registry value the shell wrote and read back proves nothing about what another process reads, and the shell's view
+  of a key can also be stale;
+- confirm through the CONSUMER. For a CE plugin, that is the DLL's own init log in
+  `Logs\cheatengine-x86_64-SSE4-AVX2\` ("Module identity ... path:"), or CE's Settings > Plugins;
+- change CE's plugin list through that dialog (it writes the registry CE reads), or ask the maintainer to look in
+  regedit. Cancel leaves it untouched.
+
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
 It compares **SHA-256**, and our build is not byte-reproducible: rebuilding *identical* source
