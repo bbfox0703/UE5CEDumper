@@ -386,6 +386,18 @@ mutations on CE's VM). 1 LOW in the product, 6 INFO test gaps; nothing HIGH or M
 | R4-MRU-PROBE-PIN-SURVIVES-COMMENT-OUT | INFO (tests) → ✅ `d7a53411` (by mutation) | CT-MRU-ZERO | The call-site pin finds a commented-out call (`-- if not DLL_PATH then …`). **Fix:** anchor it to a line start. |
 | R4-CLASSIFY-NEGCTRL-CASE-ONLY | INFO (tests) → ✅ `3276b7ea` (by mutation) | tooling | The classifier's negative controls are lower case only, so `re.search`, a dropped `\b` or a `.*` prefix passed. **Fix:** upper-case controls that must stay `ok`. |
 
+**Fifth skeptic review** (workflow `wf_173985a5-eaa`, one agent at a time: a product and a tests reviewer, then one
+refuter per finding; over `790d99d7..3276b7ea`, the shared-exe fix and the fourth-round fixes). 13 raised, 13
+confirmed: 4 LOW, 9 INFO; nothing HIGH or MED. Fixed row by row.
+
+| finding | sev | row | what |
+|---|---|---|---|
+| R5-01 + R5-T-SUGGEST-INJECTED-NOTE-WRONG-RECORD / -NOTE-WITHOUT-RECORD / -REMEMBERED-DROPPED | LOW | CONFIRM-SHARED-EXE | The Suggested note always says "the confirmed-working record is not used", also for a name with only an INJECTION record -- it claims a record that does not exist. Tests only matched a substring; no pair without a record; the per-game "last used" pick (folder-keyed, kept) unchecked. |
+| R5-T-SHARED-DEPLOY-SELECTED-SUBSET / -NOTE-WITHOUT-SUBSTITUTION / -CANCEL-LINE-UNPINNED / -SAMEFOLDER-CONTROL-UNREACHABLE | LOW (tests) | CONFIRM-SHARED-EXE | Deploy's ambiguity is over the LISTED games, but the test ticks both; no shared name without a substitution; the cancelled line's count unpinned; the "same folder" control is one game and cannot reach its `Distinct`. |
+| R5-03 | INFO | CONFIRM-SHARED-EXE (maintainer's "mark ambiguous" carried over) | The Load column is exe-keyed too (`Logs\<exe stem>`), so it credits one game's load to every game of that name while the Suggested column says the name cannot be attributed. **Fix:** say so on the Load text for a shared name. |
+| R5-02 + R5-T-MRU-TOP-SLOT-POSITIVE-UNTESTED | LOW | CT-MRU-ZERO | A relative entry now dropped still gets the old reasons: "has no UE5CEDumper.CT in it" / "CE reported no recent files" -- false, in the failure dialog and the log. And the top slot's positive case (a renamed table, absolute) is untested. |
+| R5-04 + R5-T-WRITER-GUARD-PIN-SURVIVES-COMMENT-OUT | INFO | CT-MRU-ZERO | A RELATIVE line an older `.CT` wrote into `dll-path.txt` is still read as a breadcrumb (probed against CE's current folder) and carried forward by both writers (the `.CT` keep loop, `DumperDllPathStore`). The writer's guard is pinned by raw text only. |
+
 **Found while adding T11's gate (outside `[PATH-SHAPE]`):** `[CI-GATE-DRIFT-2026-09-25]` | MED | ✅ 2026-09-25 `c2835edc` (red `d14cf364`). Nine gates that `tools/check_all.py` runs were never added to `.github/workflows/ci.yml`. They were appended after `854cd406` closed the previous drift on 2026-09-06: `crc_oracle_selftest`, `check_processevent_slots`, `check_property_family`, `check_ce_untick_placement`, `check_badge_prime_symmetry`, `check_ce_idlewait_scope`, `check_clipboard_delivery`, `check_json_default_ignore` and `check_session_gate`. So a PR could break any of them and CI would stay green. `check_all.py`'s own docstring already said "nothing enforces that". **Fix:** add the nine to CI, and add `tools/check_ci_gate_parity.py` as a gate in BOTH lists, so the drift cannot recur silently.
 
 ## 🔎 Review 7 — the code added since Review 6, read adversarially `[REVIEW7-2026-09-24]`
