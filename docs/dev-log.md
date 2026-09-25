@@ -25,6 +25,49 @@ builds ≤696 in
 
 -----
 
+## 2026-09-25 (build 3554) — Proxy Deploy: never a second of our proxies; "Use confirmed-working proxy", published AOT
+
+**3554 = 3553 plus 4 product commits, up to `64dcd886`** (`git log --oneline 55327e9d..64dcd886 -- dll/src
+ui/UE5DumpUI scripts`). The rows are in `docs/todo.md` under `[PROXY-DEPLOY-UX-2026-09-25]`.
+- **Maintainer requests, two.** (1) Deploying one type across many games put a SECOND proxy of ours into every game
+  that already carried another type. (2) A game whose confirmed-working proxy is known, but whose folder is clean
+  again (a reinstall), should get that type whatever the radio says.
+- **Evaluation.** A 5-agent read-only workflow (`wf_b499f5ad-c49`: two maps, two designs, a judge that checked both
+  against the source) found both worth building, as one design. Two things weighed:
+  - At runtime the first-loaded proxy wins Heiter's mutex, and a double leaves no log trace.
+  - Undeploy removes BOTH proxies, so a user repairing a double can delete the one that worked.
+- **`[PROXY-DOUBLE-GUARD]` (`f4bf14ed`, `22083ab8`).** An always-on guard, with no checkbox.
+  - A folder that already holds another of OUR proxies (by PE ProductName) is skipped by Deploy, even with Force
+    Overwrite and even with foreign consent.
+  - The same type still follows the Force rules.
+  - The row says why: "Skipped: winmm.dll (ours) is already deployed here — Deploy never adds a second of our
+    proxies. Undeploy first to switch type." The result line counts `skipped: N`.
+  - `PlanDeploy` has a new `OtherProxyOfOurs` verdict, and `DeployAsync` refuses too, for any caller.
+  - Update All is unchanged: it only rewrites types already there.
+- **`[PROXY-USE-CONFIRMED]` (`7376ae05`).** A new checkbox, "Use confirmed-working proxy", which is not persisted.
+  - For a ticked game with NONE of our proxies and a confirmed record, Deploy writes the recorded type.
+  - Foreign consent is never used for it.
+  - The row says "Deployed winmm.dll (confirmed working) instead of version.dll". The result line counts `confirmed
+    type used: N`.
+- **Review (`wf_c116385e-ad2`, 4 lenses; file safety found nothing), fixed in `0ef097ec`, red `3f306407`.**
+  - Skipping an already-doubled folder had wiped the refresh's "Multiple proxy DLLs deployed" warning. It is kept now.
+  - A foreign file at the confirmed type's name failed with a message that named neither type. It now says so.
+  - A switched row's failure now says the confirmed type failed.
+  - The checkbox tooltip over-claimed, and is now narrower.
+  - Five test gaps closed, the service backstop through the real `DeployAsync` among them.
+- **Not yet run on a game:** the live check, recorded as pending on both rows.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3553 → 3554.
+- `dist\UE5DumpUI.exe`: AOT, 55.2 MB (57,897,984 bytes, sha `767e52a6098b`).
+- `UE5Dumper.dll`: 3,008,000 bytes, sha `8c3a7fbd6b24`, FileVersion `1.0.0.3554`, built from `64dcd886-dirty` (the
+  dirty suffix is the bumped `build_number.txt`).
+- Four proxies went to `dist\proxy\`.
+- Tests: UI **5430/5430**. `dll_helpers_test` and `utf8_helpers_test` pass. `dll_core_test` 455 checks,
+  `grausam_window_test` 22 and `sein_retention_test` 14 checks.
+- Gates: 23/23.
+
+-----
+
 ## 2026-09-25 (build 3553) — Proxy Deploy: Update All honours Force Overwrite; Deploy stops claiming no-op writes, published AOT
 
 **3553 = 3552 plus 3 product commits, up to `55327e9d`** (`git log --oneline 9019eada..55327e9d -- dll/src
