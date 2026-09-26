@@ -339,7 +339,15 @@ def merge_hook(settings: dict, python: str, script: str) -> dict:
                    "timeout": HOOK_TIMEOUT_S}],
     }]
     out["hooks"] = hooks
-    return out
+    order = list(settings or {})                     # keep the user's key order: remove_hook may have
+    return dict(sorted(out.items(),                  # popped "hooks" and re-adding would append it
+                       key=lambda kv: order.index(kv[0]) if kv[0] in order else len(order)))
+
+
+def settings_text(data: dict) -> str:
+    """A Claude Code settings file as written back: non-ASCII stays literal (the user-level file holds
+    e.g. a "language" in CJK), never \\u-escaped."""
+    return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
 def disabled_by_env(env) -> bool:
@@ -921,7 +929,7 @@ def _save_settings(path: pathlib.Path, before: dict, after: dict, backup: bool) 
         if not bak.exists():
             shutil.copy2(path, bak)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(after, indent=2) + "\n", encoding="utf-8")
+    path.write_text(settings_text(after), encoding="utf-8")
 
 
 def cmd_setup(args) -> int:
