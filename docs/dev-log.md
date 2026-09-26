@@ -27,6 +27,43 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3561, tools only — no rebuild) — the local-LLM helper: 23 review findings fixed, the free-VRAM need computed from the model, live-checked
+
+**No binary changed.** Everything here is `tools/llm/ollama_local.py`, its skill and its docs, after the
+3561 publish (`ffdf203d` .. `0ba57795`). `dist\` is still the 3561 build.
+
+- **Review of the peer session's and this session's LLM work** (workflow `wf_b18865b3-513`: a runtime lens,
+  a cooperative lens, and one skeptic). The skeptic reproduced 23 of 24 findings; all 23 are fixed, red
+  `ffdf203d` -> green `ee32aac5`, selftest 152/152.
+  - **HIGH:** `CLAUDE_LOCAL_LLM=off` disabled the machine-wide hook for that session, so a game it
+    launched booted beside another session's model. The hook now ignores the per-shell switch.
+  - **Guard:**
+    - `guard` re-reads `/api/ps`, so a refusal unloads;
+    - a model resident under a reservation is evicted;
+    - the post-exit grace runs from the last game seen (it was 0 s);
+    - computer-use actions that can launch now run the hook;
+    - no retry past a refusal;
+    - the hook's unload fits its deadline;
+    - state files are written by write-then-rename.
+  - **Cooperative:**
+    - the skill always comes from the same checkout as the helper;
+    - an older checkout cannot downgrade the install (`--force`);
+    - `status` flags a missing interpreter;
+    - `join` refuses the source repo, a missing directory, home, and a foreign skill;
+    - a CJK repo path resolves correctly.
+  - **Privacy:** the selftest no longer carries this machine's model tag or paths.
+- **Free VRAM (the maintainer's ask).**
+  - **Need:** weights + KV cache from the model's own GGUF metadata (any architecture) + compute
+    overhead + a 512 MiB buffer, floored at the machine's `--min-free-vram-mb`.
+  - **Checked against the measured table:** at 8k / 32k / 64k the estimate sits the buffer above the
+    measurement.
+  - **Which GPU:** NVIDIA only, so an integrated GPU is never judged; `CUDA_VISIBLE_DEVICES` is honoured.
+  - **This PC:** need 15,317 MiB, floor 16,384 (machine config only).
+- **Live check** (a fresh session after a Claude Code restart), recorded in the helper header (`0ba57795`):
+  - a launch-shaped Bash command reserved the GPU;
+  - with the model resident and a reservation written outside the hook, a computer-use
+    `open_application` alone unloaded it.
+
 ## 2026-09-26 (build 3561) — comment integrity (gates + cleanup), a bool Freeze that could stamp packed siblings, the local LLM installed once per machine; published AOT
 
 **3561 = 3560 plus two DLL changes and one UI fix, up to `80764dcf`.**

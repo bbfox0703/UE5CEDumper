@@ -82,9 +82,13 @@ replaces it). `leave` refuses the source repo and leaves a foreign skill file un
 - **One helper, one config, one hook** for the whole machine. A joined repo holds no copy of the
   helper, so there is no version to drift and no second hook to fight over: `join` / `leave` touch the
   skill file only, and no repo can remove another's guard.
-- **The guard is machine-wide.** The hook runs before every Bash / PowerShell call in every session,
-  joined repo or not, and a GPU reservation or a request in flight is visible to all of them
-  (`status`: `gpu_reserved`, `in_use_by`).
+- **The guard is machine-wide.** The hook runs before every Bash / PowerShell call, and before every
+  computer-use action that can start a game (a click, a key, opening an app), in every session, joined
+  repo or not. A GPU reservation or a request in flight is visible to all of them (`status`:
+  `gpu_reserved`, `in_use_by`), and the per-shell `CLAUDE_LOCAL_LLM=off` never turns the guard off.
+- **The free-VRAM check judges the right GPU and the right model.** Only NVIDIA GPUs are counted (an
+  integrated GPU never is), and the need is computed from the installed model's own metadata, so it
+  holds whichever model a machine installs; the machine's `--min-free-vram-mb` floor sits under it.
 - **`status` reports the install's health:** `install=machine`, the installed `version`, `hook=ok`
   (or what to fix), and, run from this repo, `update=...` when the installed copy is behind.
 
