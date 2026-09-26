@@ -135,7 +135,7 @@
               FontSize="12"
               FontFamily="Consolas, Menlo, monospace">
       <DataGrid.Columns>
-        <DataGridTemplateColumn Header="Score" Width="60" SortMemberPath="FinalScore" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.IF.Col.Score}" Width="60" SortMemberPath="FinalScore" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredFunctionRow">
               <TextBlock Text="{Binding FinalScore}"
@@ -147,7 +147,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="Cat" Width="80" SortMemberPath="CategoryLabel" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.IF.Col.Cat}" Width="80" SortMemberPath="CategoryLabel" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredFunctionRow">
               <TextBlock Text="{Binding CategoryLabel}"
@@ -158,10 +158,10 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="220"/>
-        <DataGridTextColumn Header="Function" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="200"/>
-        <DataGridTextColumn Header="Flags" Binding="{Binding ShortFlags}" SortMemberPath="ShortFlags" Width="120"/>
-        <DataGridTextColumn Header="Params" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="80" CanUserSort="True"/>
+        <DataGridTextColumn Header="{StaticResource str.IF.Col.Class}" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="220"/>
+        <DataGridTextColumn Header="{StaticResource str.IF.Col.Function}" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="200"/>
+        <DataGridTextColumn Header="{StaticResource str.IF.Col.Flags}" Binding="{Binding ShortFlags}" SortMemberPath="ShortFlags" Width="120"/>
+        <DataGridTextColumn Header="{StaticResource str.IF.Col.Params}" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="80" CanUserSort="True"/>
         <DataGridTemplateColumn Header="{StaticResource str.IF.UsesCol}" Width="200" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredFunctionRow">

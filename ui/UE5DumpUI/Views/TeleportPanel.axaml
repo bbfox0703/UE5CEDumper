@@ -598,11 +598,11 @@
                       Background="#1E1E1E" Foreground="#D4D4D4"
                       FontFamily="Consolas, Menlo, monospace" FontSize="12">
               <DataGrid.Columns>
-                <DataGridTextColumn Header="Label" Binding="{Binding Label}"
+                <DataGridTextColumn Header="{StaticResource str.TP.Col.Label}" Binding="{Binding Label}"
                                     Width="180" MinWidth="90" SortMemberPath="Label"/>
-                <DataGridTextColumn Header="Group" Binding="{Binding Group}"
+                <DataGridTextColumn Header="{StaticResource str.TP.Col.Group}" Binding="{Binding Group}"
                                     Width="110" MinWidth="60" SortMemberPath="Group"/>
-                <DataGridTextColumn Header="Map" Binding="{Binding Map}"
+                <DataGridTextColumn Header="{StaticResource str.TP.Col.Map}" Binding="{Binding Map}"
                                     Width="130" MinWidth="60" SortMemberPath="Map"/>
                 <DataGridTextColumn Header="X" Binding="{Binding XText}"
                                     Width="90" SortMemberPath="Entry.X" CanUserSort="True"/>
@@ -610,9 +610,9 @@
                                     Width="90" SortMemberPath="Entry.Y" CanUserSort="True"/>
                 <DataGridTextColumn Header="Z" Binding="{Binding ZText}"
                                     Width="80" SortMemberPath="Entry.Z" CanUserSort="True"/>
-                <DataGridTextColumn Header="Yaw" Binding="{Binding YawText}"
+                <DataGridTextColumn Header="{StaticResource str.TP.Col.Yaw}" Binding="{Binding YawText}"
                                     Width="70" SortMemberPath="Entry.Yaw" CanUserSort="True"/>
-                <DataGridTextColumn Header="Dist" Binding="{Binding DistanceText}"
+                <DataGridTextColumn Header="{StaticResource str.TP.Col.Dist}" Binding="{Binding DistanceText}"
                                     Width="80" SortMemberPath="Distance" CanUserSort="True"/>
               </DataGrid.Columns>
             </DataGrid>

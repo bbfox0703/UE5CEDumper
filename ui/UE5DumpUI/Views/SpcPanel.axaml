@@ -98,9 +98,9 @@
                 <ComboBox ItemsSource="{Binding AbsKindOptions}" SelectedItem="{Binding AbsKind}"
                           IsEnabled="{Binding AbsEnabled}" MinWidth="96"/>
                 <TextBox Text="{Binding AbsLow}" Width="52" IsEnabled="{Binding AbsEnabled}"
-                         IsVisible="{Binding ShowAbsLow}" PlaceholderText="lo"/>
+                         IsVisible="{Binding ShowAbsLow}" PlaceholderText="{StaticResource str.Spc.LoHint}"/>
                 <TextBox Text="{Binding AbsHigh}" Width="52" IsEnabled="{Binding AbsEnabled}"
-                         IsVisible="{Binding ShowAbsHigh}" PlaceholderText="hi"/>
+                         IsVisible="{Binding ShowAbsHigh}" PlaceholderText="{StaticResource str.Spc.HiHint}"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
@@ -136,13 +136,13 @@
       </WrapPanel>
       <WrapPanel Orientation="Horizontal">
         <TextBlock Text="{StaticResource str.Spc.SeqFirst}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,4,0"/>
-        <TextBox Text="{Binding SeqFirstMin}" Width="70" Margin="0,0,2,0" PlaceholderText="min"/>
+        <TextBox Text="{Binding SeqFirstMin}" Width="70" Margin="0,0,2,0" PlaceholderText="{StaticResource str.Spc.MinHint}"/>
         <TextBlock Text="–" Foreground="#888" VerticalAlignment="Center" Margin="0,0,2,0"/>
-        <TextBox Text="{Binding SeqFirstMax}" Width="70" Margin="0,0,12,0" PlaceholderText="max"/>
+        <TextBox Text="{Binding SeqFirstMax}" Width="70" Margin="0,0,12,0" PlaceholderText="{StaticResource str.Spc.MaxHint}"/>
         <TextBlock Text="{StaticResource str.Spc.SeqLast}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,4,0"/>
-        <TextBox Text="{Binding SeqLastMin}" Width="70" Margin="0,0,2,0" PlaceholderText="min"/>
+        <TextBox Text="{Binding SeqLastMin}" Width="70" Margin="0,0,2,0" PlaceholderText="{StaticResource str.Spc.MinHint}"/>
         <TextBlock Text="–" Foreground="#888" VerticalAlignment="Center" Margin="0,0,2,0"/>
-        <TextBox Text="{Binding SeqLastMax}" Width="70" Margin="0,0,8,0" PlaceholderText="max"/>
+        <TextBox Text="{Binding SeqLastMax}" Width="70" Margin="0,0,8,0" PlaceholderText="{StaticResource str.Spc.MaxHint}"/>
         <Button Content="{StaticResource str.Spc.ApplyRange}" Command="{Binding ApplyResultRangeCommand}" Padding="8,3" Margin="0,0,4,0"/>
         <Button Content="{StaticResource str.Spc.ResetRange}" Command="{Binding ResetResultRangeCommand}" Padding="8,3"/>
       </WrapPanel>
@@ -382,9 +382,9 @@
                   <ComboBox ItemsSource="{Binding AbsKindOptions}" SelectedItem="{Binding GroupActiveAbsKind}"
                             IsEnabled="{Binding AbsEnabled}" MinWidth="96"/>
                   <TextBox Text="{Binding GroupActiveAbsLow}" Width="52" IsEnabled="{Binding AbsEnabled}"
-                           IsVisible="{Binding GroupShowAbsLow}" PlaceholderText="lo"/>
+                           IsVisible="{Binding GroupShowAbsLow}" PlaceholderText="{StaticResource str.Spc.LoHint}"/>
                   <TextBox Text="{Binding GroupActiveAbsHigh}" Width="52" IsEnabled="{Binding AbsEnabled}"
-                           IsVisible="{Binding GroupShowAbsHigh}" PlaceholderText="hi"/>
+                           IsVisible="{Binding GroupShowAbsHigh}" PlaceholderText="{StaticResource str.Spc.HiHint}"/>
                 </StackPanel>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>

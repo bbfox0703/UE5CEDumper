@@ -179,7 +179,7 @@
       <NumericUpDown Value="{Binding SnapshotMinFreeGbValue}" Minimum="0" Maximum="100000" ClipValueToMinMax="True" Increment="10"
                      FormatString="0" MinWidth="110" FontSize="12" VerticalAlignment="Center"
                      ToolTip.Tip="{StaticResource str.Tip.Snapshot.MinFreeDisk}"/>
-      <TextBlock Text="GB" Foreground="#999" VerticalAlignment="Center"/>
+      <TextBlock Text="{StaticResource str.Snapshot.GB}" Foreground="#999" VerticalAlignment="Center"/>
     </StackPanel>
     </WrapPanel>
 
@@ -279,13 +279,13 @@
                      PlaceholderText="{StaticResource str.Snapshot.Diff.GlobalHint}"
                      ItemsSource="{Binding DiffGlobalHistory}" FilterMode="Contains"/>
             <TextBlock Text="{StaticResource str.Snapshot.Diff.OldRange}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,4,0"/>
-            <TextBox Text="{Binding DiffOldMin}" Width="70" Margin="0,0,2,0" PlaceholderText="min"/>
+            <TextBox Text="{Binding DiffOldMin}" Width="70" Margin="0,0,2,0" PlaceholderText="{StaticResource str.Snapshot.MinHint}"/>
             <TextBlock Text="–" Foreground="#888" VerticalAlignment="Center" Margin="0,0,2,0"/>
-            <TextBox Text="{Binding DiffOldMax}" Width="70" Margin="0,0,12,0" PlaceholderText="max"/>
+            <TextBox Text="{Binding DiffOldMax}" Width="70" Margin="0,0,12,0" PlaceholderText="{StaticResource str.Snapshot.MaxHint}"/>
             <TextBlock Text="{StaticResource str.Snapshot.Diff.NewRange}" Foreground="#CCCCCC" VerticalAlignment="Center" Margin="0,0,4,0"/>
-            <TextBox Text="{Binding DiffNewMin}" Width="70" Margin="0,0,2,0" PlaceholderText="min"/>
+            <TextBox Text="{Binding DiffNewMin}" Width="70" Margin="0,0,2,0" PlaceholderText="{StaticResource str.Snapshot.MinHint}"/>
             <TextBlock Text="–" Foreground="#888" VerticalAlignment="Center" Margin="0,0,2,0"/>
-            <TextBox Text="{Binding DiffNewMax}" Width="70" Margin="0,0,8,0" PlaceholderText="max"/>
+            <TextBox Text="{Binding DiffNewMax}" Width="70" Margin="0,0,8,0" PlaceholderText="{StaticResource str.Snapshot.MaxHint}"/>
             <Button Content="{StaticResource str.Snapshot.Diff.ApplyRange}" Command="{Binding ApplyDiffRangeCommand}" Padding="8,3" Margin="0,0,4,0"/>
             <Button Content="{StaticResource str.Snapshot.Diff.ResetRange}" Command="{Binding ResetDiffRangeCommand}" Padding="8,3" Margin="0,0,8,0"/>
           </WrapPanel>

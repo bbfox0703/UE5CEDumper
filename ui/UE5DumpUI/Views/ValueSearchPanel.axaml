@@ -336,15 +336,15 @@
                   FontSize="12"
                   FontFamily="Consolas, Menlo, monospace">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="Class.Field" Binding="{Binding LocationLabel}" SortMemberPath="LocationLabel" Width="320"/>
-            <DataGridTextColumn Header="Type" Binding="{Binding FieldType}" SortMemberPath="FieldType" Width="120"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.ClassField}" Binding="{Binding LocationLabel}" SortMemberPath="LocationLabel" Width="320"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Type}" Binding="{Binding FieldType}" SortMemberPath="FieldType" Width="120"/>
             <!-- Native-C (P1): "Reflected" vs "Native-C (Int32)". Client-computed,
                  so NOT server-sortable (the windowed session has no Origin key). -->
-            <DataGridTextColumn Header="Origin" Binding="{Binding Origin}" CanUserSort="False" Width="130"/>
-            <DataGridTextColumn Header="Value" Binding="{Binding Value}" SortMemberPath="Value" Width="120"/>
-            <DataGridTextColumn Header="Offset" Binding="{Binding OffsetHex}" SortMemberPath="FieldOffset" Width="80"/>
-            <DataGridTextColumn Header="Address" Binding="{Binding Addr}" SortMemberPath="Addr" Width="160"/>
-            <DataGridTextColumn Header="Instance" Binding="{Binding InstanceName}" SortMemberPath="InstanceName" Width="200"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Origin}" Binding="{Binding Origin}" CanUserSort="False" Width="130"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Value}" Binding="{Binding Value}" SortMemberPath="Value" Width="120"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Offset}" Binding="{Binding OffsetHex}" SortMemberPath="FieldOffset" Width="80"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Address}" Binding="{Binding Addr}" SortMemberPath="Addr" Width="160"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Instance}" Binding="{Binding InstanceName}" SortMemberPath="InstanceName" Width="200"/>
             <DataGridTemplateColumn Header="" Width="Auto" CanUserSort="False">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:ValueCandidate">
@@ -445,13 +445,13 @@
                           SelectedItem="{Binding ScanType}"
                           ToolTip.Tip="{StaticResource str.Tip.VS.Group.ScanType}"
                           MinWidth="100" Padding="4,2" FontSize="12"/>
-                <TextBox Text="{Binding Value}" PlaceholderText="value"
+                <TextBox Text="{Binding Value}" PlaceholderText="{StaticResource str.VS.ValueHint}"
                          IsVisible="{Binding RequiresValueInput}"
                          Width="160" Padding="4,2" FontSize="12"/>
                 <!-- Between upper bound — only shown when scan type is Between. -->
                 <TextBlock Text=".." Foreground="#888888" VerticalAlignment="Center"
                            IsVisible="{Binding RequiresValue2Input}"/>
-                <TextBox Text="{Binding Value2}" PlaceholderText="to"
+                <TextBox Text="{Binding Value2}" PlaceholderText="{StaticResource str.VS.ToHint}"
                          IsVisible="{Binding RequiresValue2Input}"
                          Width="120" Padding="4,2" FontSize="12"/>
                 <!-- Live coerced-range preview for this Between row (mixed numeric →
@@ -649,9 +649,9 @@
                   HorizontalScrollBarVisibility="Auto"
                   ToolTip.Tip="{StaticResource str.Tip.VS.Group.Matched}">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="Class" Binding="{Binding LocationLabel}" Width="280"/>
-            <DataGridTextColumn Header="Instance" Binding="{Binding InstanceName}" Width="180"/>
-            <DataGridTextColumn Header="Matched values" Binding="{Binding SlotSummary}" Width="440" MinWidth="240"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Class}" Binding="{Binding LocationLabel}" Width="280"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.Instance}" Binding="{Binding InstanceName}" Width="180"/>
+            <DataGridTextColumn Header="{StaticResource str.VS.Col.MatchedValues}" Binding="{Binding SlotSummary}" Width="440" MinWidth="240"/>
             <DataGridTemplateColumn Header="" Width="Auto">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:GroupCandidate">
