@@ -80,6 +80,14 @@ request is in flight: `status` shows other sessions' as in_use_by, and a PENDING
 holder. Nothing here sees `ollama run`, another app or a LAN client -- Ollama exposes no in-flight
 requests.
 
+LIVE-CHECKED 2026-09-26, in a fresh session after the version-2 install (hook -> the machine copy):
+  * a Bash command whose TEXT held `steam.exe -applaunch <id>` (an echo) wrote the launch reservation
+    before the command ran;
+  * with the model resident (/api/ps listed it) and a reservation written by a tool the matcher does NOT
+    cover (so no hook ran), a computer-use `open_application` alone unloaded it: /api/ps read empty
+    right after, with 10 minutes of keep_alive left. That is the computer-use matcher and the
+    evict-under-reservation path, both on the real hook.
+
 MEASURED 2026-09-25 on the first machine that opted in (the numbers are hardware-bound; the
 behaviours are Ollama's own):
   * cold load ~20 s; unload (keep_alive 0) ~0.35 s, VRAM back within 1 s.
