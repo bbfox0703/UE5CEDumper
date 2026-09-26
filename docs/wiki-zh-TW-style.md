@@ -142,7 +142,7 @@ actually uses:
 | hash / signature | 雜湊 / 簽章 | 哈希 / 簽名 |
 | module / library / package | 模組 / 程式庫 / 套件 | 模塊 / 程序庫 / 包 |
 | plugin | 外掛程式、外掛 | 插件 |
-| script | 指令碼 | 腳本 |
+| script (incl. Lua / CE) | 指令碼 | 腳本 |
 | template | 範本 | 模板 |
 | overflow | 溢位 | 溢出 |
 | session | 工作階段 | 會話 |
@@ -156,8 +156,10 @@ actually uses:
 
 Conflicts, decided: **runtime** stays 執行階段 (the maintainer's edit; Wikibooks has 執行期);
 **process** stays 處理程序 (Windows Task Manager's zh-TW wording; Wikibooks has 行程); **build**
-stays 建置 (Wikibooks' Windows column). **Script** is 指令碼 even though CE users often say 腳本 —
-Wikibooks lists 腳本 as Mainland, and the existing zh-TW pages already use 指令碼 two to one.
+stays 建置 (Wikibooks' Windows column). **Script** is 指令碼 — the maintainer's call
+(2026-09-26), Lua and CE scripts included: here a script is *program code*. 腳本 reads as a
+screenplay, and its Mainland sense leans to "simplified / automation" or front-end and game-story
+scripting (JavaScript, 劇情腳本, 自動化腳本) — not what a CE Lua script is.
 
 ⚠ **列 / 行 is a trap for tables**: in Taiwan a *row* is 列 and a *column* is 欄 (the Mainland
 reverses 行/列). Every "Status column" is 「Status 欄」, every "row" is 「列」.
