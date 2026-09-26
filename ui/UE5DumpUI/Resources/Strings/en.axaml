@@ -965,7 +965,7 @@
     <sys:String x:Key="str.IF.GenerateCT">📦 Generate CT</sys:String>
     <sys:String x:Key="str.Tip.IF.GenerateCT">Generate one .CT file containing baked-invoke entries for every selected row. Use Ctrl/Shift+click in the grid to multi-select first. Functions with parameters: the helper zero-fills PARAMS; edit the baked PARAMS table in the generated entry before activating.</sys:String>
     <sys:String x:Key="str.IF.BatchProps">⤋ Props</sys:String>
-    <sys:String x:Key="str.Tip.IF.BatchProps">Fill the "Uses" column for the selected rows at once (or all rows if none selected), so you see which class fields each function reads/writes without opening the per-row popup. Fast — each call reads only that one function's bytecode. Most rows show 0 (native funcs / no field access).</sys:String>
+    <sys:String x:Key="str.Tip.IF.BatchProps">Fill the "Uses" column for the selected rows at once (or all rows if none selected), so you see which class fields each function reads/writes without opening the per-row popup. Each row runs the same analysis as Props: Blueprint functions exactly, native functions by the disassembly heuristic. 0 = analysed, no class field found; n/a = nothing could be analysed.</sys:String>
     <sys:String x:Key="str.IF.UsesCol">Uses</sys:String>
     <sys:String x:Key="str.IF.Col.Score">Score</sys:String>
     <sys:String x:Key="str.IF.Col.Cat">Cat</sys:String>
@@ -1040,7 +1040,7 @@
     <sys:String x:Key="str.Tip.Con.Load">Scan every UFunction and surface those marked with UFUNCTION(exec) (FUNC_Exec=0x200). Many games leave these intact in cooked Shipping — they're the cheat surface the developer already curated.</sys:String>
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>
-    <sys:String x:Key="str.Tip.Con.Filter">Substring match against command name OR class name (case-insensitive). Empty = show all.</sys:String>
+    <sys:String x:Key="str.Tip.Con.Filter">Space-separated keywords are ANDed; each may match the command name or the class name (case-insensitive). Empty = show all.</sys:String>
     <sys:String x:Key="str.Tip.Con.CommandInput">Type an exec command name and press Run. No-arg commands invoke directly; commands with parameters open the InvokeParamDialog. Leading slash is stripped (/fly == fly).</sys:String>
     <sys:String x:Key="str.Tip.Con.RunCommand">Resolve the typed command against the loaded list and invoke. Match is case-insensitive exact funcName; first match wins if multiple classes implement the same name.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunSelected">Invoke the currently selected row. Same code path as Run on a row.</sys:String>
@@ -1436,7 +1436,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.IP.Filter">Space-separated keywords are ANDed; each may match the property name or the class name (case-insensitive). e.g. "Health", or "PlayerState Score" for Score properties on PlayerState classes.</sys:String>
     <sys:String x:Key="str.Tip.IP.ClearFilters">Clear the name filter, category, and the Unusual-only / Show-all toggles (reset to defaults).</sys:String>
     <sys:String x:Key="str.Tip.IP.OpenInst">Open this row's class in the Instance Finder tab — pre-fills the class name and runs the search to list its live instances.</sys:String>
-    <sys:String x:Key="str.Tip.IP.Category">Filter by category. Stats / Combat / Resources / Movement / Utility / Other.</sys:String>
+    <sys:String x:Key="str.Tip.IP.Category">Filter by category. Stats / Combat / Resources / Movement / Utility / Timing / Other.</sys:String>
     <sys:String x:Key="str.Tip.IP.UnusualOnly">Show only properties whose owning class is in the Unusual Location list (LocalPlayer / GameViewportClient / HUD / CheatManager) — properties developers placed outside the conventional Character/Pawn/PlayerState containers.</sys:String>
     <sys:String x:Key="str.Tip.IP.ShowAll">When off, hide rows below the InterestingThreshold (currently 4). When on, show every property regardless of score.</sys:String>
     <sys:String x:Key="str.Tip.IP.OpenLive">Open this property's owning class in Live Walker (live instance lookup), or fall back to Class Struct if no live instance exists.</sys:String>
@@ -1596,7 +1596,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.GuessWhat">Fill gaps between known fields with guessed data types (pointer, float, int, etc.)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyFieldAddr">Copy field absolute address</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyFieldName">Copy field name to clipboard</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.Search">Highlight the fields that match every keyword (space-separated terms are ANDed). A keyword can match a field's name, type or value, or the class or struct type behind it; it needs at least 2 characters. Matching rows are highlighted, not hidden: ▲ / ▼ step between them. Keywords that return matches are remembered for this session (up to 8, most-recent first) — type a few letters to pick one again. The box clears when you navigate to different data (drill-down / Back / Parent); it's kept across tab switches and refreshes.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.Search">Highlight the fields that match every keyword (space-separated terms are ANDed). A keyword can match a field's name, type or value, or the class or struct type behind it. Highlighting starts once the box holds at least 2 characters. Matching rows are highlighted, not hidden: ▲ / ▼ step between them. Keywords that return matches are remembered for this session (up to 8, most-recent first) — type a few letters to pick one again. The box clears when you navigate to different data (drill-down / Back / Parent); it's kept across tab switches and refreshes.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.NavigateToParentOuterPrivate">Navigate to parent (OuterPrivate)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ToggleAutomaticRefresh">Toggle automatic refresh</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.AutoRefreshIntervalSeconds">Auto-refresh interval (seconds)</sys:String>
@@ -1608,7 +1608,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.ExpandInlineStruct">Expand inline struct</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ViewContainerElements">View container elements</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyPointerTargetAddress">Copy pointer target address</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.FuncFilter">Substring match on function name (case-insensitive)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FuncFilter">Space-separated keywords are ANDed; each must match the function name (case-insensitive). e.g. "get health" for functions whose name holds both.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.FuncFilterClear">Clear filter</sys:String>
 
     <!-- Tooltips: Pointer Panel -->

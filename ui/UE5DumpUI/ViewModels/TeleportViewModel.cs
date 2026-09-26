@@ -784,7 +784,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _seeThroughActive;
 
     // ── Gravity Direction (Laufen, UE5.3+ GravityDirection vector) ─────
-    /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.4 / no
+    /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.3 / no
     /// reflected GravityDirection).</summary>
     [ObservableProperty] private string _gravDirState = "Unknown";
     [ObservableProperty] private string _gravDirBadgeColor = "#888888";
@@ -3229,7 +3229,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             1                  => ("ON",          "#4EC9B0"),
             0                  => ("OFF",         "#999999"),
-            GravDirUnavailable => ("Unavailable", "#C9A04E"),   // pre-5.4 / no reflected GravityDirection
+            GravDirUnavailable => ("Unavailable", "#C9A04E"),   // pre-5.3 / no reflected GravityDirection
             _                  => ("Unknown",     "#888888"),   // no pawn right now / reset / failed read
         };
     }
@@ -3303,7 +3303,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                        "✓ Gravity direction held at ({0:0.00}, {1:0.00}, {2:0.00}).", g.X, g.Y, g.Z),
                 0 => "Gravity direction off (a zero vector = off).",
                 // [W2-GRAVDIR-VERDICT] The verdict needs BOTH signals. `resolved` alone comes from a fresh
-                // read and is false with no pawn as well as on a pre-5.4 engine; -4 alone is also returned
+                // read and is false with no pawn as well as on a pre-5.3 engine; -4 alone is also returned
                 // when the pawn / CMC class lookup or the vector read fails (Laufen.cpp ResolveCtx,
                 // SetGravityDirection). So: the set refused on reflection AND a live CMC lacks the field.
                 _ when r.State == Constants.LaufenErrReflect && mp.HasCmc && !g.Resolved
@@ -3359,7 +3359,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (!g.HasAddr)
             {
                 // [W2-GRAVDIR-VERDICT] review follow-up: the readout's split, here too. No CMC right now
-                // is transient; only a CMC WITHOUT the reflected field is the pre-5.4 verdict.
+                // is transient; only a CMC WITHOUT the reflected field is the pre-5.3 verdict.
                 StatusText = !mp.HasCmc
                     ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
                     : !g.Resolved
@@ -5138,8 +5138,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             int total = specs.Length + moveSpecs.Length + 1 + timeSpecs.Length + flySpecs.Count;
             string groups = flySpecs.Count > 0 ? "Teleport + Movement + Time + Fly" : "Teleport + Movement + Time";
+            string toggles = flySpecs.Count > 0 ? "movement/time/fly" : "movement/time";
             StatusText = $"Added {ok}/{total} {groups} records to CE " +
-                         "(teleport = momentary; movement/time/fly = on/off toggle; bind CE hotkeys as you like).";
+                         $"(teleport = momentary; {toggles} = on/off toggle; bind CE hotkeys as you like).";
             _log.Info($"{groups} actions -> CE via AOBMaker ({ok}/{total})");
         }
         catch (Exception ex)

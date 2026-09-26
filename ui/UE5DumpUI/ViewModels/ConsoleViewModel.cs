@@ -331,7 +331,7 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>
     /// Rebuild <see cref="Results"/> from <see cref="_allExec"/> applying
-    /// the name substring filter. Order is preserved from the pre-sorted
+    /// the keyword filter (space = AND). Order is preserved from the pre-sorted
     /// underlying list.
     /// </summary>
     private void ApplyFilter()

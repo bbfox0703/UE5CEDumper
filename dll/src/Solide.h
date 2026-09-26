@@ -105,7 +105,7 @@ struct IntWidth {
 // `bytes == 0` means "not one of ours"; the caller must not read or write it.
 //
 // THIS TABLE IS THE ONLY LIST. `IsIntType` below is derived from it rather than
-// spelling the same five names a second time — two lists that must agree is how the
+// spelling the same names a second time — two lists that must agree is how the
 // read and the write came to disagree in the first place, and a type admitted by the
 // gate but unknown to the table would be accepted by Force and then fail every
 // read and write with no explanation.
