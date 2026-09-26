@@ -77,11 +77,11 @@
                    IsEnabled="{Binding CanEditSettings}" Margin="0,0,12,0"/>
           <!-- Pre-flight size estimate: sample-walk + extrapolate, never writes the DB. -->
           <Button Content="{StaticResource str.Snapshot.Estimate}" Command="{Binding EstimateSizeCommand}"
-                  IsEnabled="{Binding CanCapture}" IsVisible="{Binding !IsBusy}"
+                  IsEnabled="{Binding CanManualCapture}" IsVisible="{Binding !IsBusy}"
                   ToolTip.Tip="{StaticResource str.Tip.Snapshot.Estimate}"
                   Padding="12,5" Margin="0,0,8,0"/>
           <Button Content="{StaticResource str.Snapshot.Capture}" Command="{Binding CaptureCommand}"
-                  IsEnabled="{Binding CanCapture}" IsVisible="{Binding !IsBusy}"
+                  IsEnabled="{Binding CanManualCapture}" IsVisible="{Binding !IsBusy}"
                   Classes="accent" Padding="12,5" FontWeight="Bold" Margin="0,0,8,0"/>
           <!-- Cancel surfaces for BOTH a running capture and a running estimate. -->
           <Button Content="{StaticResource str.Snapshot.Cancel}" Command="{Binding CancelCommand}"
