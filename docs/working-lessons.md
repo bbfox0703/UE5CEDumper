@@ -1312,6 +1312,14 @@ explicitly in the register, since it correspondingly proves nothing about the pa
   367,401 rows over the full 84,387-object pool, zero 1-byte rows, against 81,547 for the opposite
   predicate on the same data type. Same pool, same value, opposite predicate: that pairing is the
   evidence, not either number alone (§1.6).
+- **"Past the cap" has two impostors; rule both out at the moment of the test** (audit #5 X2, 2026-08-18,
+  kept here when its register record was archived on 2026-09-26):
+  - **a class that does not exist.** A misread name (`ES2GameInstance` for `ESGameInstance`) is absent
+    from every list, exactly like a class past the cap. Confirm it EXISTS first; `find_instances`
+    answers that in one call;
+  - **a walk position taken earlier.** While the game streams, the same class sat at index 4412 in one
+    query and 2582 in another minutes later. Re-check at the moment of the test, with the UI's own
+    filter as the witness rather than a stored index. Pausing the game stabilises it.
 
 **And the reason to do this work at all:** running AA4–AA7 step 1 for the first time surfaced
 **AU1** — find-object-by-path had never worked, on any of three APIs that advertised it, because
@@ -3178,6 +3186,15 @@ architecture or UX changes in these areas.
   here because they share a failure mode — all three are the *obvious* fix for their symptom, so a
   fresh session re-invents them. Moved here from the memory index 2026-08-22; that index does not
   travel with git, and this was the only fact in it the repo did not already own.
+- **Two asymmetries found by the 2026-09-09 claims slices and left on purpose** (kept here when
+  `[CLAIMS-SLICE-2026-09-09]` was archived on 2026-09-26):
+  - **Fly OFF with no pawn.** `SetEnabled(false)` returns 0 without restoring anything when `ResolveCtx`
+    fails. There is no pawn to write to, so "Fly OFF." is said over a mode nobody restored. Reporting a
+    failure instead would claim one we cannot tell apart from a legitimately absent pawn: the defect
+    that slice removed, pointed the other way.
+  - **Map / set element sizes cross the wire as 0.** `Fern` gates `array_elem_size` on `> 0` but emits
+    `map_key_size` / `map_value_size` / `set_elem_size` unconditionally. Every consumer gates, and
+    gating the emit would drop a field older UI builds read.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
 for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,
