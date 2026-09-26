@@ -251,13 +251,13 @@ public class CeMailboxBailoutTests
         yield return new object[] { "Freeze.Int", FreezeScriptGenerator.Generate(new FreezeScriptParams
         {
             ClassName = "DumperTestActor", PropertyName = "TickCount", PropertyOffset = 0x6A8,
-            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "9999",
+            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, BoolNative = false, ValueLiteral = "9999",
         }) };
 
         yield return new object[] { "Freeze.Bool", FreezeScriptGenerator.Generate(new FreezeScriptParams
         {
             ClassName = "Actor", PropertyName = "bCanBeDamaged", PropertyOffset = 0x5A,
-            UeTypeName = "BoolProperty", PropertySize = 1, BoolFieldMask = 0x04, ValueLiteral = "0",
+            UeTypeName = "BoolProperty", PropertySize = 1, BoolFieldMask = 0x04, BoolNative = false, ValueLiteral = "0",
         }) };
 
         yield return new object[] { "Baked.Invoke", BakedScriptGenerator.Generate(

@@ -51,6 +51,7 @@ public class CheatTableBuilderTests
                 UeTypeName     = ueType,
                 PropertySize   = propSize,
                 BoolFieldMask  = 0,
+                BoolNative     = false,
                 ValueLiteral   = value,
             },
         };
@@ -300,9 +301,9 @@ public class CheatTableBuilderTests
             MakeScoredProp("Health",     "FloatProperty",  PropertyCategory.Stats),
             MakeScoredProp("Inventory",  "ArrayProperty",  PropertyCategory.Resources),
             MakeScoredProp("Pos",        "StructProperty", PropertyCategory.Movement),
-            MakeScoredProp("IsDead",     "BoolProperty",   PropertyCategory.Stats),
+            MakeScoredProp("IsDead",     "BoolProperty",   PropertyCategory.Stats, boolNative: true),
         };
-        var (rows, skippedUnsupported, _) =
+        var (rows, skippedUnsupported, _, _) =
             InterestingPropertiesViewModel.BuildRowsFromSelection(selection);
 
         Assert.Equal(2, rows.Count);
@@ -322,7 +323,7 @@ public class CheatTableBuilderTests
         row.Match.DefiningClassName = "ACharacter";  // declared on engine super
         row.Match.ClassName         = "BP_Player_C"; // user picked the BP subclass
 
-        var (rows, _, _) = InterestingPropertiesViewModel
+        var (rows, _, _, _) = InterestingPropertiesViewModel
             .BuildRowsFromSelection(new[] { row });
 
         Assert.Single(rows);
@@ -343,8 +344,9 @@ public class CheatTableBuilderTests
     public void PropsBuildRows_DefaultFreezeLiteralPerType(
         string ueType, string expectedLiteral)
     {
-        var row = MakeScoredProp("X", ueType, PropertyCategory.Stats);
-        var (rows, _, _) = InterestingPropertiesViewModel
+        var row = MakeScoredProp("X", ueType, PropertyCategory.Stats,
+                                 boolNative: ueType == "BoolProperty");
+        var (rows, _, _, _) = InterestingPropertiesViewModel
             .BuildRowsFromSelection(new[] { row });
         Assert.Single(rows);
         Assert.Equal(expectedLiteral,
@@ -370,7 +372,7 @@ public class CheatTableBuilderTests
         var row = MakeScoredProp("Stance", "EnumProperty", PropertyCategory.Stats,
                                  propSize: propSize);
 
-        var (rows, _, _) = InterestingPropertiesViewModel
+        var (rows, _, _, _) = InterestingPropertiesViewModel
             .BuildRowsFromSelection(new[] { row });
 
         Assert.Single(rows);
@@ -434,9 +436,60 @@ public class CheatTableBuilderTests
     // Both models are required-init records; tests need full ctors.
     // ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------
+    // [BOOL-NATIVE-SEARCH] -- a bool with NO single-bit mask is native OR unresolved, and only the DLL's
+    // bool_native tells them apart. The batch CT used to emit a whole-byte freeze for both, which on an
+    // unresolved PACKED bool stamps 0x01 / 0x00 over up to 7 siblings every tick (the AA1 corruption).
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void PropsBuildRows_UnresolvedBool_IsSkippedAndCounted()
+    {
+        var row = MakeScoredProp("bIsInvulnerable", "BoolProperty", PropertyCategory.Stats,
+                                 propSize: 1, boolNative: false, boolMask: 0);
+
+        var (rows, skippedUnsupported, skippedMissingOffset, skippedUnresolvedBool) =
+            InterestingPropertiesViewModel.BuildRowsFromSelection(new[] { row });
+
+        Assert.Empty(rows);
+        Assert.Equal(1, skippedUnresolvedBool);
+        Assert.Equal(0, skippedUnsupported);
+        Assert.Equal(0, skippedMissingOffset);
+    }
+
+    [Fact]
+    public void PropsBuildRows_NativeBool_KeepsTheWholeByteWrite()
+    {
+        var row = MakeScoredProp("bCanBeDamaged", "BoolProperty", PropertyCategory.Stats,
+                                 propSize: 1, boolNative: true, boolMask: 0);
+
+        var (rows, _, _, skippedUnresolvedBool) =
+            InterestingPropertiesViewModel.BuildRowsFromSelection(new[] { row });
+
+        Assert.Single(rows);
+        Assert.Equal(0, skippedUnresolvedBool);
+        Assert.True(((CtPropertyRow)rows[0]).FreezeParams.BoolNative);
+        Assert.DoesNotContain("boolMask", rows[0].GenerateScript());
+    }
+
+    [Fact]
+    public void PropsBuildRows_PackedBool_KeepsItsMask()
+    {
+        var row = MakeScoredProp("bIsInvulnerable", "BoolProperty", PropertyCategory.Stats,
+                                 propSize: 1, boolNative: false, boolMask: 0x04);
+
+        var (rows, _, _, skippedUnresolvedBool) =
+            InterestingPropertiesViewModel.BuildRowsFromSelection(new[] { row });
+
+        Assert.Single(rows);
+        Assert.Equal(0, skippedUnresolvedBool);
+        Assert.Contains("boolMask           = 0x04,", rows[0].GenerateScript());
+    }
+
     private static ScoredPropertyRow MakeScoredProp(
         string propName, string propType, PropertyCategory cat,
-        string className = "BP_Player_C", int offset = 0x40, int propSize = 4)
+        string className = "BP_Player_C", int offset = 0x40, int propSize = 4,
+        bool boolNative = false, int boolMask = 0)
     {
         var match = new PropertySearchMatch
         {
@@ -446,6 +499,8 @@ public class CheatTableBuilderTests
             PropOffset        = offset,
             PropSize          = propSize,
             DefiningClassName = className,  // tests override per case
+            BoolNative        = boolNative,
+            BoolFieldMask     = boolMask,
         };
         return new ScoredPropertyRow
         {

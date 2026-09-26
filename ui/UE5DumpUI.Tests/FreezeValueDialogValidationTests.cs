@@ -681,5 +681,7 @@ public class FreezeValueDialogValidationTests
         PropType          = propType,
         PropOffset        = 0x2C1,
         PropSize          = propSize,
+        // A mask-less bool must be a NATIVE one to be freezable at all ([BOOL-NATIVE-SEARCH]).
+        BoolNative        = propType == "BoolProperty",
     };
 }

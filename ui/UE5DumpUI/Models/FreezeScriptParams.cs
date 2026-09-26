@@ -63,6 +63,11 @@ public sealed class FreezeScriptParams
     /// </summary>
     public required int BoolFieldMask { get; init; }
 
+    /// <summary>The DLL's <c>bool_native</c> (<c>PropertySearchMatch.BoolNative</c>): a native bool
+    /// that owns its whole byte. Required for the same reason as <see cref="BoolFieldMask"/>.
+    /// [BOOL-NATIVE-SEARCH]</summary>
+    public required bool BoolNative { get; init; }
+
     /// <summary>User-supplied value as a literal Lua expression (already
     /// validated by <c>FreezeValueDialog</c>). For numerics this is a
     /// number literal; for bool it is the string "true" or "false".</summary>

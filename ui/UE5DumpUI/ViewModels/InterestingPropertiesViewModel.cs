@@ -604,12 +604,14 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     public static (
         List<CheatTableRow> rows,
         int skippedUnsupported,
-        int skippedMissingOffset) BuildRowsFromSelection(
+        int skippedMissingOffset,
+        int skippedUnresolvedBool) BuildRowsFromSelection(
             IEnumerable<ScoredPropertyRow> selected)
     {
         var rows = new List<CheatTableRow>();
         int skippedUnsupported = 0;
         int skippedMissingOffset = 0;
+        int skippedUnresolvedBool = 0;
         foreach (var sr in selected)
         {
             if (sr is null) continue;
@@ -637,6 +639,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 UeTypeName      = sr.PropType,
                 PropertySize    = sr.PropSize,
                 BoolFieldMask   = sr.BoolFieldMask,
+                BoolNative      = sr.BoolNative,
                 ValueLiteral    = DefaultFreezeLiteral(sr.PropType),
             };
             string desc = targetClass == sr.ClassName
@@ -649,7 +652,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 FreezeParams = fp,
             });
         }
-        return (rows, skippedUnsupported, skippedMissingOffset);
+        return (rows, skippedUnsupported, skippedMissingOffset, skippedUnresolvedBool);
     }
 
     /// <summary>"Generate Cheat Table from Selection" command. The
@@ -667,7 +670,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             return;
         }
 
-        var (rows, skippedUnsupported, skippedMissingOffset) =
+        var (rows, skippedUnsupported, skippedMissingOffset, skippedUnresolvedBool) =
             BuildRowsFromSelection(selected);
 
         if (rows.Count == 0)

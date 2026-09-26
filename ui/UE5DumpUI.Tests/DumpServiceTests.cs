@@ -2447,6 +2447,55 @@ public class DumpServiceTests
         Assert.NotNull(res.Results[1].PropNameTooltip);
     }
 
+    // [BOOL-NATIVE-SEARCH] -- both search parsers must carry the DLL's bool_native. Without it a
+    // mask-less bool is native OR unresolved, and every freeze path downstream read it as native.
+    [Fact]
+    public async Task SearchPropertiesAsync_ParsesBoolNative()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["total"] = 3, ["scanned_classes"] = 1, ["scanned_objects"] = 10,
+            ["results"] = new JsonArray
+            {
+                new JsonObject { ["class_name"] = "Actor", ["prop_name"] = "bCanBeDamaged",
+                                 ["prop_type"] = "BoolProperty", ["prop_offset"] = 0x5A, ["prop_size"] = 1,
+                                 ["bool_native"] = true },
+                new JsonObject { ["class_name"] = "Actor", ["prop_name"] = "bHidden",
+                                 ["prop_type"] = "BoolProperty", ["prop_offset"] = 0x58, ["prop_size"] = 1,
+                                 ["bool_mask"] = 4 },
+                // Neither key: an unresolved layout (or a DLL older than the key).
+                new JsonObject { ["class_name"] = "Actor", ["prop_name"] = "bUnknown",
+                                 ["prop_type"] = "BoolProperty", ["prop_offset"] = 0x59, ["prop_size"] = 1 },
+            },
+        });
+
+        var res = await CreateService().SearchPropertiesAsync("b", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(res.Results[0].BoolNative);
+        Assert.False(res.Results[1].BoolNative);
+        Assert.Equal(4, res.Results[1].BoolFieldMask);
+        Assert.False(res.Results[2].BoolNative);
+        Assert.Equal(0, res.Results[2].BoolFieldMask);
+    }
+
+    [Fact]
+    public void ParseSearchPropertiesBatch_ParsesBoolNative()
+    {
+        var json = """
+        {"per_query":[{"query":"b","match_count":2,"results":[
+            {"class_name":"Actor","prop_name":"bCanBeDamaged","prop_type":"BoolProperty",
+             "prop_offset":90,"prop_size":1,"bool_native":true},
+            {"class_name":"Actor","prop_name":"bUnknown","prop_type":"BoolProperty",
+             "prop_offset":89,"prop_size":1}]}],
+         "query_count":1,"total":2,"scanned_classes":1,"scanned_objects":1}
+        """;
+
+        var r = DumpService.ParseSearchPropertiesBatchForTest(json);
+
+        Assert.True(r.PerQuery[0].Results[0].BoolNative);
+        Assert.False(r.PerQuery[0].Results[1].BoolNative);
+    }
+
     // "Auto detect Engine/System noise" PRE-filter: the opt-in toggle must reach the
     // wire as auto_skip_noise=true ONLY when enabled (off keeps the request byte-
     // identical, matching the other opt-in scan toggles).

@@ -59,6 +59,10 @@ public partial class PropertySearchMatch : ObservableObject
     /// </summary>
     public int BoolFieldMask { get; set; }
 
+    /// <summary>The DLL's <c>bool_native</c>: this BoolProperty is a NATIVE bool that owns its
+    /// whole byte. [BOOL-NATIVE-SEARCH]</summary>
+    public bool BoolNative { get; set; }
+
     // === Inheritance-aware fields (build 610+) ===
     public string DefiningClassName { get; set; } = "";
     public string DefiningClassAddr { get; set; } = "";

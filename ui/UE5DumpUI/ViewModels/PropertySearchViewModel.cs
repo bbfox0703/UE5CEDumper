@@ -393,6 +393,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // up to 7 sibling bools and, unless the mask was 0x01, never setting the
             // intended one. Same dropped-field shape as PropertySize above.
             BoolFieldMask  = match.BoolFieldMask,
+            BoolNative     = match.BoolNative,
             ValueLiteral   = literal,
         };
 
