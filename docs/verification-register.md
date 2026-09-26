@@ -412,7 +412,9 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 
 #### Not scheduled
 
-**DQ XI S (A6's only UI-visible host) and NEKOPALIVE** — exe backups exist under `D:\UE_Analyze_data\Game Binary backup\` but a backup exe cannot be launched. The A6 row stays open, blocked on a host, and its amended text should say so.
+**DQ XI S (A6's only UI-visible host) and NEKOPALIVE** — exe backups exist under `D:\UE_Analyze_data\Game Binary backup\` but a backup exe cannot be launched. The A6 row stays open, blocked on a host, and its amended text should say so. ✅ *Since closed:
+`[A6-BOOLFIELD-2026-09-05]`, FIXED + LIVE-VERIFIED 2026-09-05; that section moved to
+[archive/verification-register-closed-2026-09-26-build-3559.md](archive/verification-register-closed-2026-09-26-build-3559.md) on 2026-09-26.*
 
 ---
 
@@ -467,6 +469,9 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 > (`Ubel.cpp:421-432`, whose comment says *"There is no era in which 0x10 is correct here"*).
 > Recorded because a verification rig that encodes the pre-fix model will manufacture a false
 > regression against a correct fix.
+>
+> ✅ *Closed since: todo.md `## ✅ DONE 2026-09-05 (build 3374) — TArray<TLazyObjectPtr> no longer strides 0x20`,
+> moved to [archive/todo-closed-2026-09-26-build-3559.md](archive/todo-closed-2026-09-26-build-3559.md) on 2026-09-26. The text below is the original record.*
 >
 > ⛔ **STILL OPEN, and found offline, not here — `ReadLazyObjectArrayElements` forces the discredited
 > stride.** `Ubel.cpp:2976-2978` discards the caller's `elemSize` and sets `elemSize = 0x20`, the

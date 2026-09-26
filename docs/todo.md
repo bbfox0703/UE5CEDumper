@@ -820,7 +820,8 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    - **No DLL unit test:** `dll_core_test` can fault `ParallelGObjectsScan` only through its
      lambda, not inside `CaptureSnapshotChunk`. So the DLL half is proven by the build and by live
      check L2.
-   - ⬜ **Live check deferred:** backlog L2 in `[FIXPASS-2026-09-10]`.
+   - ⬜ **Live check deferred:** backlog L2 in `[FIXPASS-2026-09-10]`. ✅ *L2 PASSED 2026-09-12; the row
+     moved to [archive/todo-closed-2026-09-26-build-3559.md](archive/todo-closed-2026-09-26-build-3559.md) on 2026-09-26.*
 
 2. ✅ **`[W1-QUOTA-UNLIMITED]` "Unlimited" snapshot quota is never written, silently reverts to
    1 GB, and FIFO-deletes the user's snapshots.** `ExperimentalSettings.cs:31` sets
@@ -852,7 +853,8 @@ CEB-1's decompiled the shipped `System.IO.Pipes.dll` to read `NamedPipeClientStr
    - **Red before green:** `ExperimentalGateTests.SnapshotQuotaMb_Unlimited_Zero_SurvivesARoundTrip`
      failed first, *"Expected: 0 / Actual: 1024"*, the exact defect, then passed after the fix.
    - **Results:** UI tests **4802 / 4802**; `check_all.py` **21 gates, 0 failed**.
-   - ⬜ **Live verification is deferred to the end of the fix pass**, as the maintainer directed:
+   - ⬜ **Live verification is deferred to the end of the fix pass**, as the maintainer directed. ✅ *Backlog L1
+     PASSED 2026-09-12; the row moved to [archive/todo-closed-2026-09-26-build-3559.md](archive/todo-closed-2026-09-26-build-3559.md) on 2026-09-26.*
      1. In an AOT build, pick *Unlimited*, restart the UI, and confirm `experimental.json` carries
         `"snapshotQuotaMb": 0` and the combo still reads Unlimited.
      2. Confirm no snapshot is FIFO-deleted on the next capture.
@@ -5981,7 +5983,8 @@ test pins them. Each names its own evidence; the live check that raised it is in
 ⚠ Items marked **CE** need Cheat Engine: announce first. Every other row carries its own `experiment`
 in its section; copy it into the backlog when the row is fixed.
 
-- `[A3-ST1-SUPER-DRAIN]` — L36. The rig cannot do its step 2 yet (review 5); the pipe's `direct_call: true`
+- `[A3-ST1-SUPER-DRAIN]` — L36 (✅ *PASSED 2026-09-16 by hand over the pipe; the row moved to
+  [archive/todo-closed-2026-09-26-build-3559.md](archive/todo-closed-2026-09-26-build-3559.md) on 2026-09-26*). The rig cannot do its step 2 yet (review 5); the pipe's `direct_call: true`
   reaches the same branch without CE, and the mailbox route needs CE.
 - **CE:** `[A3-B30-STALE-FLAG]` — tick the inject record, reopen the `.CT` without merging, tick
   again. The pipe must survive.
