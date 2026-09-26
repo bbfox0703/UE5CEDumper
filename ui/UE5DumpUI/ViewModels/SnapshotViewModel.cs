@@ -1372,8 +1372,15 @@ public partial class SnapshotViewModel : ViewModelBase
                     await Task.Delay(1000, ct);
                 }
             }
+            // Only a cancellation leaves the loop this way (the toggle, a disconnect); every
+            // self-stop above wrote its own reason and returned. Without this the countdown
+            // stayed frozen on "next snapshot in Ns" [AUTOSNAP-STOP-STALE-STATUS].
+            AutoStatusText = Res.Format("str.Snapshot.Auto.Stopped", captured);
         }
-        catch (OperationCanceledException) { /* stopped */ }
+        catch (OperationCanceledException)
+        {
+            AutoStatusText = Res.Format("str.Snapshot.Auto.Stopped", captured);   // as above
+        }
         catch (Exception ex)
         {
             _log.Error(Constants.LogCatView, "Snapshot: auto loop error", ex);

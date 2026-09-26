@@ -577,6 +577,7 @@
     <sys:String x:Key="str.Snapshot.Auto.AdjustQuota">Auto-adjust quota</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.Auto.AdjustQuota">Off (default): total usage stays bound by the per-game quota; if the quota can only hold one snapshot while you want to keep more, auto snapshot stops. On: when the quota can't hold the wanted number of snapshots, it is raised to the next preset that fits (up to Unlimited). The free-disk-space guard is always the real ceiling regardless.</sys:String>
     <sys:String x:Key="str.Snapshot.Auto.Hint">Periodically capture snapshots unattended. This is a manual switch — it never auto-starts on connect or auto-resumes on the next launch; only the settings are remembered. Use Cancel to stop a running auto snapshot.</sys:String>
+    <sys:String x:Key="str.Snapshot.Auto.Stopped">Auto snapshot stopped  ·  captured {0}</sys:String>
     <sys:String x:Key="str.Snapshot.Saved">Saved snapshots</sys:String>
     <sys:String x:Key="str.Snapshot.Col.Size">Est. Size</sys:String>
     <sys:String x:Key="str.Snapshot.Col.Label">Label</sys:String>

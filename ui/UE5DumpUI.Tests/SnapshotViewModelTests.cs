@@ -333,6 +333,15 @@ public class SnapshotViewModelTests : IDisposable
         await loop!.WaitAsync(TimeSpan.FromSeconds(30), ct);
 
         Assert.DoesNotContain("next snapshot", vm.AutoStatusText, StringComparison.Ordinal);
+
+        // The replacement text is en.axaml's (a NEW VM status string, [VM-INLINE-STRINGS]); Res
+        // resolves to "" without an Application, so pin the resource itself.
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var stopped = System.Text.RegularExpressions.Regex.Match(axaml,
+            @"x:Key=""str\.Snapshot\.Auto\.Stopped"">([^<]*)</sys:String>");
+        Assert.True(stopped.Success, "str.Snapshot.Auto.Stopped missing from en.axaml");
+        Assert.Contains("stopped", stopped.Groups[1].Value, StringComparison.Ordinal);
+        Assert.Contains("{0}", stopped.Groups[1].Value, StringComparison.Ordinal);
     }
 
     [Fact]
