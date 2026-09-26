@@ -89,3 +89,33 @@ they are the ground truth for tone.
 | memory | 記憶體 | 內存 | |
 | program / software | 程式 / 軟體 | 程序 / 軟件 | |
 | information | 資訊 | 信息 | |
+
+### From the Ministry of Education cross-strait table
+
+Source: 教育部《國語辭典簡編本》附錄〈兩岸常用詞語對照表〉,
+<https://dict.concised.moe.edu.tw/appendix.jsp?ID=54&la=0&powerMode=0> (619 pairs; the
+maintainer's reference). Only the computing-relevant pairs are copied here; the site is the
+authority for anything else.
+
+| ✅ Taiwan | ❌ Mainland | | ✅ Taiwan | ❌ Mainland |
+|---|---|---|---|---|
+| 列（row）/ 欄（column） | 行（row）/ 列（column） | | 程式、程式員 | 程序、程序員 |
+| 資料、資料庫 | 數據、數據庫 | | 軟體、硬體 | 軟件、硬件 |
+| 記憶體 | 存儲器、內存 | | 儲存設備 | 存儲設備 |
+| 磁碟、硬碟、隨身碟 | 磁盤、硬盤、U盤 | | 伺服器 | 服務器 |
+| 網路、網際網路 | 網絡、互聯網 | | 網站、首頁 | 站點、主頁 |
+| 專案 | 項目 | | 作業系統 | 操作系統 |
+| 啟動 | 激活 | | 解除安裝 | 卸載 |
+| 除錯 | 調試 | | 當機 | 死機 |
+| 字元、位元 | 字符、比特 | | 游標 | 光標 |
+| 滑鼠 | 鼠標 | | 搖桿 | 手柄 |
+| 螢幕 | 屏幕 | | 影片 | 視頻 |
+| 解析度 | 分辨率 | | 高畫質 | 高清 |
+| 剪貼簿 | 剪貼板 | | 列印、印表機 | 打印、打印機 |
+| 晶片、主機板 | 芯片、主板 | | 機率 | 概率 |
+| 複製（clone） | 克隆 | | 埠（port） | 端口 |
+| 快閃記憶體 | 閃存 | | 寬頻 | 寬帶 |
+| 儲值 | 充值 | | 輸入鍵（Enter） | 回車鍵 |
+
+⚠ **列 / 行 is a trap for tables**: in Taiwan a *row* is 列 and a *column* is 欄 (the Mainland
+reverses 行/列). Every "Status column" is 「Status 欄」, every "row" is 「列」.
