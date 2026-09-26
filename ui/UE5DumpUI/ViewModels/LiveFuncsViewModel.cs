@@ -293,8 +293,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
-                    + "idle\" — a rare idle function below the cut also shows as NEW. Narrow the "
-                    + "window or use the filter before trusting the top rows."
+                    + "idle\" — a rare idle function below the cut also shows as NEW. Only a "
+                    + "shorter recording window brings it back; the filter narrows only the rows already fetched."
                   : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
