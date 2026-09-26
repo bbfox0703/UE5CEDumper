@@ -1214,11 +1214,94 @@ def selftest() -> int:
     ok("env: UE5CE_LLM=off disables", disabled_by_env({DISABLE_ENV: "off"}) and disabled_by_env({DISABLE_ENV: " OFF "}))
     ok("env: unset or on does not", not disabled_by_env({}) and not disabled_by_env({DISABLE_ENV: "on"}))
 
+    # ── Machine install + join / leave: several repos, ONE helper, ONE config, ONE hook ───────────────
+    try:
+        _selftest_cooperative(ok)
+    except Exception as e:                           # noqa: BLE001 -- a missing API is a failed control
+        ok(f"cooperative: the install / join / leave API runs ({type(e).__name__}: {e})", False)
+
     failed = [n for n, good in checks if not good]
     for n in failed:
         print(f"FAIL  {n}")
     print(f"ollama_local selftest: {len(checks) - len(failed)}/{len(checks)} controls passed")
     return 1 if failed else 0
+
+
+def _selftest_cooperative(ok) -> None:
+    """Every repo on a machine shares one installed helper, one config and one hook; a repo joins by
+    receiving the skill and leaves by losing it. Run against a temp state dir -- never the real one."""
+    import tempfile
+
+    ok("env: the generic CLAUDE_LOCAL_LLM=off disables too", disabled_by_env({"CLAUDE_LOCAL_LLM": "off"}))
+    ok("exempt: defaults keep DumperTest exempt", exempt_of({}) == DEFAULT_EXEMPT_PREFIXES
+       and not is_commercial_process("DumperTest58-Win64-Shipping.exe"))
+    ok("exempt: a machine config can add its own fixtures",
+       exempt_of({"exempt_prefixes": ["MyFixture"]}) == ("myfixture",)
+       and not is_commercial_process("MyFixture-Win64-Shipping.exe", exempt=("myfixture",))
+       and is_commercial_process("MyFixture-Win64-Shipping.exe"))
+    ok("exempt: reaches the launch and game checks",
+       command_launches_commercial('"X\\MyFixture-Win64-Shipping.exe"', exempt=("myfixture",)) is None
+       and commercial_games(["MyFixture-Win64-Shipping.exe"], exempt=("myfixture",)) == [])
+    ok("prompt: neutral by default, overridable per machine",
+       "Unreal" not in system_prompt_of({}) and system_prompt_of({"system_prompt": "S"}) == "S")
+
+    saved = os.environ.get(HOME_ENV)
+    with tempfile.TemporaryDirectory() as td:
+        os.environ[HOME_ENV] = str(pathlib.Path(td) / "state")
+        try:
+            src = pathlib.Path(td) / "Src"
+            (src / "tools" / "llm").mkdir(parents=True)
+            src_script = src / "tools" / "llm" / "ollama_local.py"
+            src_script.write_text("# helper\n", encoding="utf-8")
+            skill = "---\nname: local-llm\n---\nuse $LOCALAPPDATA/claude-local-llm/ollama_local.py\n"
+            (src / ".claude").mkdir()
+            (src / CONFIG_REL).write_text('{"model": "legacy"}', encoding="utf-8")
+
+            install_machine(src_script, skill, {"model": "m"})
+            cfg_disk = _read_json(machine_config_path()) or {}
+            ok("install: one machine copy, its skill, and the config",
+               machine_script().read_text(encoding="utf-8") == "# helper\n"
+               and machine_skill().read_text(encoding="utf-8") == skill and cfg_disk.get("model") == "m")
+            ok("install: the config records the helper version", cfg_disk.get("version") == HELPER_VERSION)
+            cfg, _ = load_config(root=src)
+            ok("config: the machine install wins over a repo's legacy opt-in", (cfg or {}).get("model") == "m")
+
+            b = pathlib.Path(td) / "RepoB"
+            (b / ".claude").mkdir(parents=True)
+            (b / ".claude" / "settings.json").write_text("{}", encoding="utf-8")
+            ok("join: writes the skill", join_repo(b, skill) == "joined"
+               and repo_skill_path(b).read_text(encoding="utf-8") == skill)
+            ok("join: again is a no-op", join_repo(b, skill) == "current")
+            ok("join: a changed skill is an update", join_repo(b, skill + "v2\n") == "updated")
+            listed = {r["path"]: r["status"] for r in joined_repos()}
+            ok("repos: a joined repo whose skill differs from the installed one is outdated",
+               listed.get(str(b)) == "outdated")
+            ok("leave: removes the skill", leave_repo(b) == "left" and not repo_skill_path(b).exists())
+            ok("leave: keeps the repo's other .claude content",
+               (b / ".claude" / "settings.json").is_file() and not (b / ".claude" / "skills").exists())
+            ok("leave: again is not-joined", leave_repo(b) == "not-joined")
+            ok("leave: unregistered", str(b) not in {r["path"] for r in joined_repos()})
+            ok("leave: the helper's own source repo is refused", leave_repo(src) == "refused-source")
+
+            legacy = merge_hook({}, "py", "D:/R/tools/llm/ollama_local.py")
+            moved = merge_hook(legacy, "py", machine_script().as_posix())
+            ours = [h for g in moved["hooks"]["PreToolUse"] for h in g["hooks"] if _is_our_hook(h)]
+            ok("hook: the machine copy replaces a repo-pointing entry (still exactly one)",
+               len(ours) == 1 and hook_target(moved) == machine_script().as_posix())
+            ok("hook: the machine entry is recognised as ours", remove_hook(moved) == {})
+            ok("hook: none -> no target", hook_target({}) is None)
+
+            uninstall_machine()
+            ok("uninstall: the machine copy, skill and config are gone",
+               not machine_script().exists() and not machine_skill().exists()
+               and not machine_config_path().exists())
+            cfg, _ = load_config(root=src)
+            ok("config: without the install a legacy repo opt-in still reads", (cfg or {}).get("model") == "legacy")
+        finally:
+            if saved is None:
+                os.environ.pop(HOME_ENV, None)
+            else:
+                os.environ[HOME_ENV] = saved
 
 
 def main(argv) -> int:
