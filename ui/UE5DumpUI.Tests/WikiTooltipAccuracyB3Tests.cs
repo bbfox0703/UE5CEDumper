@@ -93,6 +93,23 @@ public class WikiTooltipAccuracyB3Tests
     }
 
     [Fact]
+    public void Cursor_hotkey_tip_spells_out_each_rung_of_the_ladder()
+    {
+        // [TP-CURSORHK-TIP] "Ctrl+F8→F5" read as a key sequence. Each modifier's first and last
+        // candidate must appear as a full combo, taken from the service's own ladder.
+        var svc = File.ReadAllText(Repo("ui/UE5DumpUI/Services/WindowsGlobalHotkeyService.cs"));
+        var ladder = Regex.Matches(svc, @"\(HotkeyModifiers\.(\w+),\s*VK_F\d+,\s*""([^""]+)""\)")
+            .Select(m => (Mod: m.Groups[1].Value, Label: m.Groups[2].Value)).ToList();
+        Assert.True(ladder.Count >= 4, "the cursor-hotkey ladder was not found");
+        var tip = EnString("str.Tip.TP.CursorHotkey");
+        foreach (var rung in ladder.GroupBy(r => r.Mod))
+        {
+            Assert.Contains(rung.First().Label, tip, StringComparison.Ordinal);
+            Assert.Contains(rung.Last().Label, tip, StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
     public void Run_BugItGo_hint_says_it_runs_the_field()
     {
         var vm = File.ReadAllText(Repo(TeleportVm));
