@@ -250,7 +250,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`9` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -956,6 +956,24 @@ ladder as runtime-only and re-applied on every init, so no cached detection need
 values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sentence above stands.
 
 -----
+
+### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
+
+Fixed in `2093ea91` (red `85c9e8ed`); the row and its mechanism are in `todo.md`. Unit tests pin the UI half and
+a source pin holds the DLL half (Fern.cpp is in no test target); what is owed is the wire. On DumperTest with the
+NEW DLL:
+
+1. **DLL side (pipe):** `search_properties` for a native Blueprint bool returns the row with `"bool_native": true`
+   and no `bool_mask`; for a `uint8 b:1` field it returns a single-bit `bool_mask` and no `bool_native`. The same two
+   rows through `search_properties_batch`.
+2. **UI side:** Property Search → Freeze on the native bool prompts for a value and creates a script whose CFG has
+   no `boolMask`; on the packed bool the CFG carries `boolMask = 0x..`. Interesting Properties → select both →
+   Generate Cheat Table keeps both rows and reports no skipped bool.
+3. **Unresolved:** not producible on a stock 5.4 host (as L9 step 3). A host whose probe misses (DQ XI S, per
+   `[A3-BOOL-NATIVE-NOWRITE]`) would show it live: the row carries neither key, Freeze refuses before the prompt,
+   and the batch CT reports the bool as skipped.
+
+Needs: DumperTest + the new DLL (steps 1-2), the AOBMaker bridge (step 2).
 
 ### ⬜ SHIPPED 2026-09-08/09, NEEDS A LIVE CHECK — the blind-spot sweep's residue: D2 · clipboard delivery · CE Lua · the CE-side delegate pad · the refusal arms
 
