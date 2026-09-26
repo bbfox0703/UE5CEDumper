@@ -1556,6 +1556,10 @@ def selftest() -> int:
         _selftest_cooperative(ok)
     except Exception as e:                           # noqa: BLE001 -- a missing API is a failed control
         ok(f"cooperative: the install / join / leave API runs ({type(e).__name__}: {e})", False)
+    try:
+        _selftest_review(ok)
+    except Exception as e:                           # noqa: BLE001
+        ok(f"review: the controls run ({type(e).__name__}: {e})", False)
 
     failed = [n for n, good in checks if not good]
     for n in failed:
@@ -1639,6 +1643,224 @@ def _selftest_cooperative(ok) -> None:
                 os.environ.pop(HOME_ENV, None)
             else:
                 os.environ[HOME_ENV] = saved
+
+
+def _selftest_review(ok) -> None:
+    """wf_b18865b3-513's findings (runtime + cooperative) and the VRAM estimate, each as a control. The world is
+    faked in-process: a temp state dir and settings file, a fake Ollama, a fake process list."""
+    import contextlib
+    import tempfile
+
+    ok("matcher: launch-capable computer-use tools run the hook too",
+       re.fullmatch(HOOK_MATCHER, "mcp__computer-use__left_click") is not None
+       and re.fullmatch(HOOK_MATCHER, "Bash") is not None
+       and re.fullmatch(HOOK_MATCHER, "mcp__computer-use__screenshot") is None)
+    for cmd in ("py tools/verify/inject.py --exe=DumperTest51-Win64-Shipping.exe",
+                "run(DumperTest51-Win64-Shipping.exe)", "x --target=DumperTest-Win64-Shipping.exe"):
+        ok(f"exempt: a fixture after punctuation is not a launch: {cmd[:40]}", command_launches_commercial(cmd) is None)
+    ok("exempt: a real game after '=' still is", command_launches_commercial("x --exe=Elliot-Win64-Shipping.exe") is not None)
+    ok("ollama process: seen / not seen",
+       ollama_running(["ollama.exe", "x.exe"]) and ollama_running(["ollama app.exe"]) and not ollama_running(["x.exe"]))
+
+    # VRAM need from the model's own metadata (a public 12B GGUF: 48 layers, 40 sliding 8 KV heads x 256,
+    # 8 global 1 KV head x 512, window 1024). Measured VRAM over idle: 8k 14287, 32k 14767, 64k 15407 MiB.
+    info = {"general.architecture": "g4", "g4.block_count": 48, "g4.attention.head_count": 16,
+            "g4.attention.head_count_kv": [8, 8, 8, 8, 8, 1] * 8, "g4.attention.key_length": 512,
+            "g4.attention.value_length": 512, "g4.attention.key_length_swa": 256,
+            "g4.attention.value_length_swa": 256, "g4.attention.sliding_window": 1024,
+            "g4.attention.sliding_window_pattern": ([True] * 5 + [False]) * 8, "g4.embedding_length": 3840}
+    ok("kv: sliding + global layers from metadata (320 + 512 MiB at 32k)", abs(kv_cache_mib(info, 32768) - 832) < 1)
+    for ctx, measured in ((8192, 14287), (32768, 14767), (65536, 15407)):
+        need, _ = vram_need_mib(13_309_873_056, info, ctx)
+        ok(f"need at {ctx}: above the measured {measured} by the buffer, not more", 0 < need - measured <= VRAM_BUFFER_MIB + 100)
+    ok("kv: a dense model (32 layers x 8 KV heads x 128) = 4096 MiB at 32k",
+       kv_cache_mib({"general.architecture": "l", "l.block_count": 32, "l.attention.head_count": 32,
+                     "l.attention.head_count_kv": 8, "l.embedding_length": 4096}, 32768) == 4096)
+    ok("kv: an integer sliding pattern (every Nth layer global)",
+       kv_cache_mib({"general.architecture": "g", "g.block_count": 6, "g.attention.head_count_kv": 1,
+                     "g.attention.key_length": 128, "g.attention.value_length": 128,
+                     "g.attention.sliding_window": 1024, "g.attention.sliding_window_pattern": 6}, 32768)
+       == (5 * 1024 + 1 * 32768) * 256 * 2 / 1048576)
+    need, how = vram_need_mib(8_000_000_000, {}, 32768)
+    ok("need: no metadata falls back to a conservative KV, and says so", "fallback" in how and need > 8_000_000_000 / 1048576 + 4000)
+    ok("need: the machine floor wins when higher", vram_need_mib(13_309_873_056, info, 32768, 16384)[0] == 16384)
+    csv_ = "0, GPU-aa, NVIDIA GeForce RTX X Laptop GPU, 24463, 117\n1, GPU-bb, NVIDIA RTX Y, 8192, 100\n"
+    ok("gpu: the NVIDIA GPU with the most free memory", pick_gpu(csv_) == (24346, "NVIDIA GeForce RTX X Laptop GPU"))
+    ok("gpu: CUDA_VISIBLE_DEVICES by index or UUID", pick_gpu(csv_, "1") == (8092, "NVIDIA RTX Y")
+       and pick_gpu(csv_, "GPU-bb") == (8092, "NVIDIA RTX Y"))
+    ok("gpu: none listed -> None", pick_gpu("", None) is None)
+
+    ok("revisions: newer / older / same / unknown",
+       compare_revisions(100, 200) == "newer" and compare_revisions(200, 100) == "older"
+       and compare_revisions(100, 100) == "same" and compare_revisions(None, 100) == "unknown")
+
+    saved_env = {k: os.environ.get(k) for k in (HOME_ENV, USER_SETTINGS_ENV, "CLAUDE_LOCAL_LLM", "UE5CE_LLM")}
+    saved_g = {k: globals()[k] for k in ("http_json", "running_processes", "gpu_free", "_post_with_retry")}
+    saved_stdin = sys.stdin
+    with tempfile.TemporaryDirectory() as td:
+        tdp = pathlib.Path(td)
+        os.environ[HOME_ENV] = str(tdp / "state")
+        os.environ[USER_SETTINGS_ENV] = str(tdp / "settings.json")
+        OLL = (5, "ollama.exe")
+        world = {"resident": True, "posts": [], "procs": [(4, "x.exe"), OLL], "free": 20000}
+
+        def fake_http(url, payload=None, timeout=PROBE_TIMEOUT):
+            if url.endswith("/api/ps"):
+                return {"models": [{"name": "m:latest", "size": 13_309_873_056}] if world["resident"] else []}
+            if url.endswith("/api/tags"):
+                return {"models": [{"name": "m:latest", "size": 13_309_873_056}]}
+            if url.endswith("/api/show"):
+                return {"model_info": info}
+            if url.endswith("/api/generate") and payload and payload.get("keep_alive") == 0:
+                world["posts"].append(("unload", timeout))
+                world["resident"] = False
+                return {}
+            world["posts"].append(("gen", timeout))
+            world["resident"] = True
+            return {"done": True}
+
+        def run_hook(command):
+            sys.stdin = type("S", (), {"buffer": io.BytesIO(json.dumps({"tool_input": {"command": command}}).encode())})()
+            out = io.StringIO()
+            with contextlib.redirect_stdout(out):
+                rc = cmd_hook(None)
+            return rc, out.getvalue()
+
+        try:
+            globals().update(http_json=fake_http, running_processes=lambda: list(world["procs"]),
+                             gpu_free=lambda: (world["free"], "GPU"))
+            install_machine(pathlib.Path(__file__), "skill claude-local-llm/ollama_local.py\n", {"model": "m"})
+
+            os.environ["CLAUDE_LOCAL_LLM"] = "off"
+            world.update(resident=True, posts=[])
+            rc, _ = run_hook("steam.exe -applaunch 526870")
+            ok("[ENV-OFF] the per-shell switch never disables the machine guard: launch still reserves + unloads",
+               rc == 0 and read_reservation() is not None and any(k == "unload" for k, _ in world["posts"]))
+            os.environ.pop("CLAUDE_LOCAL_LLM", None)
+            release_gpu()
+
+            world.update(resident=True, posts=[], procs=[(9, "Elliot-Win64-Shipping.exe"), OLL])
+            stale = Probe({"model": "m"}).run()
+            stale.loaded = False
+            ok("[STALE-LOADED] guard re-reads /api/ps: a resident model beside a game is unloaded",
+               guard(stale) is not None and any(k == "unload" for k, _ in world["posts"]))
+            release_gpu()
+
+            world.update(resident=True, posts=[], procs=[(4, "x.exe"), OLL])
+            reserve_gpu("launch", "test")
+            rc, msg = run_hook("git status")
+            ok("[RES-UNLOAD] a model resident under an active reservation is unloaded by any hook",
+               any(k == "unload" for k, _ in world["posts"]) and "reserv" in msg.lower())
+            world.update(resident=True, posts=[])
+            p = Probe({"model": "m"}).run()
+            ok("[RES-UNLOAD] guard's reservation refusal unloads a resident model too",
+               guard(p) is not None and any(k == "unload" for k, _ in world["posts"]))
+            release_gpu()
+
+            now = time.time()
+            ok("[GRACE] the grace runs from the last time a game was SEEN, not from set_at",
+               reservation_state({"kind": "running", "set_at": now - 600, "last_game": now - 5}, now, False) == "active"
+               and reservation_state({"kind": "running", "set_at": now - 600, "last_game": now - 600}, now, False) == "expired")
+            reserve_gpu("launch", "test")
+            m0 = read_reservation()
+            active_reservation(["Elliot-Win64-Shipping.exe"])
+            ok("[GRACE] seeing a game refreshes last_game", (read_reservation() or {}).get("last_game", 0) >= m0["set_at"])
+            world.update(resident=False, posts=[], procs=[(9, "Elliot-Win64-Shipping.exe"), OLL])
+            m1 = dict(read_reservation() or {}); m1["last_game"] = time.time() - 100
+            _write_json(state_dir() / RESERVATION_FILE, m1)
+            run_hook("git status")
+            ok("[GRACE] a hook refreshes last_game while a marker exists, model loaded or not",
+               (read_reservation() or {}).get("last_game", 0) > time.time() - 10)
+            release_gpu()
+
+            fresh = {"kind": "launch", "set_at": time.time() + 5}
+            _write_json(state_dir() / RESERVATION_FILE, fresh)
+            ok("[STATE-RACE] release with a stale expected set_at keeps a fresh marker",
+               release_gpu(expected_set_at=1.0) is False and read_reservation() is not None)
+            release_gpu()
+            ld = state_dir() / LEASE_DIRNAME
+            ld.mkdir(parents=True, exist_ok=True)
+            (ld / "777.json").write_text(json.dumps({"pid": 777, "started": time.time()}), encoding="utf-8")
+            globals()["running_processes"] = lambda: []
+            other_leases()
+            ok("[STATE-RACE] an empty process list never prunes leases", (ld / "777.json").is_file())
+            globals()["running_processes"] = lambda: list(world["procs"])
+
+            calls = []
+
+            def post500(url, payload, timeout):
+                calls.append(url)
+                if len(calls) == 1:
+                    raise urllib.error.HTTPError(url, 500, "x", None, io.BytesIO(b"{}"))
+                return {"done": True}
+            try:
+                saved_g["_post_with_retry"](("u"), {}, 1, post=post500, sleep=lambda s: None,
+                                            precheck=lambda: "reserved")
+                refused = False
+            except Refused:
+                refused = True
+            except TypeError:
+                refused = False
+            ok("[RETRY] a 500 is not retried when the guard now refuses", refused and len(calls) == 1)
+
+            world.update(resident=True, posts=[])
+            p = Probe({"model": "m"}).run()
+            p.unload(5, deadline=time.monotonic() + 2)
+            ok("[HOOK-BUDGET] an unload POST never outlives the caller's deadline",
+               all(t <= 2.5 for k, t in world["posts"] if k == "unload"))
+
+            world.update(resident=False, posts=[], free=15500, procs=[(4, "x.exe"), OLL])
+            p = Probe({"model": "m", "min_free_vram_mb": 16384}).run()
+            ok("[VRAM] the machine floor refuses a load with less free", guard(p) is not None)
+            world.update(free=17000)
+            p = Probe({"model": "m", "min_free_vram_mb": 16384}).run()
+            ok("[VRAM] ...and allows one with more", guard(p) is None)
+
+            os.environ["CLAUDE_LOCAL_LLM"] = "off"
+            ok("[INSTALL-ENV] install reads the machine config whatever the shell switch",
+               (existing_machine_config() or {}).get("model") == "m")
+            os.environ.pop("CLAUDE_LOCAL_LLM", None)
+
+            wt = tdp / "Main" / ".claude" / "worktrees" / "wt1"
+            ok("[WORKTREE] install takes the skill from the checkout whose helper it installs",
+               install_skill_source(wt) == wt / SKILL_REL)
+
+            python_missing = merge_hook({}, str(tdp / "NoSuch" / "py.EXE"), machine_script().as_posix())
+            pathlib.Path(os.environ[USER_SETTINGS_ENV]).write_text(json.dumps(python_missing), encoding="utf-8")
+            ok("[INTERPRETER] status flags a hook whose interpreter is gone",
+               "interpreter" in str(install_health().get("hook")))
+
+            src = tdp / "Src"
+            (src / "tools" / "llm").mkdir(parents=True)
+            (src / "tools" / "llm" / "ollama_local.py").write_text("#", encoding="utf-8")
+            ok("[JOIN-SOURCE] the source repo cannot join (its skill is source)", join_refusal(src, False) is not None)
+            ok("[JOIN-GHOST] a directory that does not exist cannot join", join_refusal(tdp / "Nope", False) is not None)
+            ok("[JOIN-HOME] the home directory cannot join", join_refusal(pathlib.Path.home(), False) is not None)
+            foreign = tdp / "Foreign"
+            repo_skill_path(foreign).parent.mkdir(parents=True)
+            repo_skill_path(foreign).write_text("my own LM Studio notes\n", encoding="utf-8")
+            ok("[FOREIGN] join refuses to overwrite a skill that is not ours", join_refusal(foreign, False) is not None
+               and join_refusal(foreign, True) is None)
+            ok("[FOREIGN] leave refuses to delete a skill that is not ours", leave_repo(foreign) == "refused-foreign"
+               and repo_skill_path(foreign).is_file())
+            u16 = tdp / "U16"
+            join_repo(u16, "skill claude-local-llm/ollama_local.py\n")
+            repo_skill_path(u16).write_bytes("skill".encode("utf-16"))
+            try:
+                st = {r["path"]: r["status"] for r in joined_repos()}.get(str(u16))
+            except UnicodeDecodeError:
+                st = "crash"
+            ok("[UNREADABLE] a skill that is not UTF-8 is reported, not a crash", st == "unreadable")
+        except Exception as e:                       # noqa: BLE001 -- a missing API is a failed control
+            ok(f"review controls ran ({type(e).__name__}: {e})", False)
+        finally:
+            sys.stdin = saved_stdin
+            globals().update(saved_g)
+            for k, v in saved_env.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
 
 
 def main(argv) -> int:
