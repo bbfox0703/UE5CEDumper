@@ -6071,7 +6071,28 @@ not reach. ⚠ Each entry names the file:line, so **re-derive before acting**; l
 
 -----
 
-## UE5 non-Shipping: GNames reaches nothing — decide whether to mine a pattern
+## ✅ DONE 2026-09-26 (build 3560) — UE5 non-Shipping GNames: a pattern was mined `[GNAMES-NONSHIP-LLM54]`
+
+**Mined and shipped: `GNAM_LLM54_1` (priority 695) + `GNAM_IWB_1` (725)**, red `bff562c6` -> green
+`59ddb588`. The maintainer asked on 2026-09-26 whether 5.8 offers new AOBs now that the fixtures ship
+PDBs (they all do: DumperTest 5.1 / 5.4 / 5.6 / 5.8.3, Shipping included, every pair GUID+age
+matched); 5.8.3 Shipping needed none, and this row was the real gap.
+- **Cause** (UE source + PDBs): 5.4 added `LLM(FLowLevelMemTracker::Get().FinishInitialise())` to
+  `GetNamePool()`'s init; LLM is compiled out of Shipping, so only non-Shipping codegen changed.
+- **Measured** by a 2-agent workflow (`wf_8c5dd600-b4f`, miner + adversarial verifier, own scanners
+  plus `replay_patterns.py`): LLM54_1 every hit truth on 8 non-Shipping builds 5.4-5.8.3, 0 hits on
+  every Shipping build and pre-5.4, 0 decoys over the 65-program corpus. Walk simulation over 64
+  programs: only the non-Shipping 5.4+ winners change.
+- **Live, red -> green** (`out/llm54_live`, each arm hint-free, `fixture_smoke --baseline`):
+  DumperTest 5.4 Dev `GNAM_V1` -> `GNAM_LLM54_1`, same address, GNames step 7.58 -> 5.02 s, logged
+  rejects 30 -> 1; DumperTest58 5.8.3 Dev V1 -> LLM54_1, 8.38 -> 6.49 s, 29 -> 0; offsets verdicts
+  0 diff on both. Shipping 5.4 (V8) and 5.8.3 (ES53_1): AOB winners and offsets 0 diff.
+- **The trade the maintainer chose:** low priority, because few games ship non-Shipping. So 15-16
+  Pass-2 multi-module scans still run before 695, which is most of the remaining ~5-6.5 s. At 101 the
+  simulation gives 0 Pass-2 and every game would scan one more pattern. Revisit only if non-Shipping
+  scan time matters.
+
+The original row, as it stood:
 
 *Parent: the 2026-07-29 PDB+replay pass. Full evidence in
 [GROUND-TRUTH.md](../tools/ghidra/GROUND-TRUTH.md) §Still open.* **Effort S–M · Risk med.**

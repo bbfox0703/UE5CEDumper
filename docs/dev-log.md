@@ -27,6 +27,45 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3560) — GNames on non-Shipping UE 5.4+ gets its own pattern; the docs archived; published AOT, released as the v3560 draft
+
+**3560 = 3559 plus one DLL change (two AOB rows), up to `a0047064`.** Everything else since 3559 is docs, tests and rigs.
+- **`[GNAMES-NONSHIP-LLM54]` (DLL).** The maintainer asked whether 5.8 offers new AOBs now that the
+  fixtures ship PDBs. They all do (DumperTest 5.1 / 5.4 / 5.6 / 5.8.3, Shipping included, every pair
+  GUID+age matched), and 5.8.3 Shipping needed none. The real gap was non-Shipping.
+  - **Cause** (UE source + PDBs): UE 5.4 added `LLM(FLowLevelMemTracker::Get().FinishInitialise())` to
+    `GetNamePool()`'s one-time init. LLM is compiled out of Shipping, so only Development / DebugGame
+    codegen changed, and every GNames pattern but the 4-byte `GNAM_V1` stopped reaching NamePoolData
+    there.
+  - **Fix:** `GNAM_LLM54_1` (695) on that init, plus `GNAM_IWB_1` (725) on `FName::IsWithinBounds` as
+    insurance. The priority is the maintainer's rule: below every band a 4.23+ Shipping build resolves
+    in. Mined and adversarially verified by workflow `wf_8c5dd600-b4f`: every hit truth on 8
+    non-Shipping builds 5.4-5.8.3, 0 hits on Shipping, 0 decoys over the 65-program corpus.
+  - **Live red -> green**, hint-free: DumperTest 5.4 Dev and 5.8.3 Dev `V1` -> `LLM54_1` at the same
+    address, GNames step 7.58 -> 5.02 s and 8.38 -> 6.49 s. Shipping 5.4 / 5.8.3: 0 diff. Repeated on
+    this published DLL: `build 3560`, `LLM54_1` wins.
+  - The remaining time is 15-16 Pass-2 scans, left by the low priority; 101 would remove them.
+- **Docs archived** (the maintainer's request), byte-identical and re-checked:
+  - `dev-log.md` 457 -> 176 KB, builds 2779-3261 to `archive/dev-log-2026-08-pre-build-3263.md`;
+  - `todo.md` 1.68 -> 1.19 MB, 1,516 lines to `archive/todo-closed-2026-09-26-build-3559.md`;
+  - `verification-register.md` 940 -> 904 KB, 4 sections. The rest is open work.
+  - An adversarial verifier per cut sent 14 units back; they stay live.
+- **Live, closed:** `[PATH-METHODE-NO8DOT3]`. A plugin at an ASCII D: path injects. The refusal is
+  unreachable, because CE cannot load a plugin from a non-ASCII path (error 126).
+- **Closed:** `[UI-TOOLTIP-RIGHT-THIRD]`. The real mouse shows the tooltip, so it was synthetic input.
+- **New lesson:** working-lessons 3.wc. A registry write from the shell may never reach CE, so
+  `ce_plugin_register.py` now warns.
+- **Readme:** a "Local LLM: Google Gemma 4" badge.
+- **Release:** v3559 was tagged and its draft built on 2026-09-26 but never published. 3560 supersedes it.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3559 -> 3560.
+- `dist\UE5DumpUI.exe`: AOT, 58,177,024 bytes (sha `57b1ee656f1d`).
+- `UE5Dumper.dll`: 3,016,192 bytes (sha `909538a51d10`), FileVersion `1.0.0.3560`.
+- Proxies: version `a04a7f784e43`, dinput8 `2baebdc0fece`, dxgi `a9fbfe74949b`, winmm `33f3b43b764d`.
+- Tests: UI 5596/5596. `dll_helpers_test` 2984, `utf8_helpers_test` 273, `dll_core_test` 467,
+  `sein_retention_test` 30, `grausam_window_test` 22.
+- Gates: 26/26.
+
 ## 2026-09-26 (build 3559) — SCAN-EARLY: the multi-module scan pins each module; skeptic rounds 9-11; S5 closed, published AOT
 
 **3559 = 3558 plus one DLL fix, three review rounds' fixes and the S5 live pass, up to `7d2b2fcb`.**

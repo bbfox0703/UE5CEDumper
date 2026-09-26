@@ -4,7 +4,7 @@
 
 | Feature | Description |
 |---|---|
-| **AOB Scanning** | 151 AOB patterns + 1 CallFollow + 6 symbol exports (158 entries) from 31 source tags. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. **Scan Hint Cache** remembers winning patterns per game for 3× faster repeat scans, with UI buttons to clear/reset the cache. |
+| **AOB Scanning** | 153 AOB patterns + 1 CallFollow + 6 symbol exports (160 entries) from 33 source tags. Supports `FChunkedFixed` and `FFixed` object arrays. Encrypted GObjects + preset layout detection. **Scan Hint Cache** remembers winning patterns per game for 3× faster repeat scans, with UI buttons to clear/reset the cache. |
 | **DynOff (Dynamic Offsets)** | Runtime probing of `FField`, `FProperty`, and `UStruct`. No more manual offset updating after game patches. |
 | **Live Walker** | Inspect instance memory data with real-time value updates. Navigate into pointers (→), inline structs ({}), and containers ([]). Breadcrumb trail for full navigation history. Auto-refresh with configurable interval. |
 | **Definition View** | Drill into UScriptStruct/UClass definitions to see field layouts, types, and live hex values. Works seamlessly with CE XML export for pointer chain navigation. |

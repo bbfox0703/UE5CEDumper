@@ -5,13 +5,13 @@
 
 // ============================================================
 // Himmel — 欣梅爾 (勇者 — The Hero, Remembered Forever)
-// Signatures: the AOB pattern database — 158 entries over FIVE targets
+// Signatures: the AOB pattern database — 160 entries over FIVE targets
 //
 // Every byte-pattern signature the scanner uses lives in this file, for all five
 // AobTarget values:
 //
 //   GObjects         FUObjectArray / GUObjectArray            55 AOB + 1 symbol export
-//   GNames           FNamePool (4.23+) or TNameEntryArray      29 AOB + 1 CallFollow
+//   GNames           FNamePool (4.23+) or TNameEntryArray      31 AOB + 1 CallFollow
 //                                                              + 3 symbol exports
 //                                                              (CT2 removed b2407 — see note)
 //   GWorld           UWorldProxy                               50 AOB + 1 symbol export
@@ -24,7 +24,7 @@
 //                                                                because its validator needs
 //                                                                reflection (see that section)
 //
-//   = 151 AOB + 1 CallFollow + 6 symbol exports = 158 entries, over 31 distinct `source` tags
+//   = 153 AOB + 1 CallFollow + 6 symbol exports = 160 entries, over 33 distinct `source` tags
 //     (counting the combined ones like DI427+SP57, which record every binary that vouches).
 //
 // THESE COUNTS GO STALE SILENTLY — regenerate them, do not hand-edit:
@@ -739,6 +739,35 @@ constexpr const char* AOB_GNAMES_GH_1 = "89 74 24 18 57 48 83 EC 20 C1 EA 03 48 
 // GH_2: FNameEntryId::FromValidEName — sub rsp,20; cmp byte[bInitialized],0; mov rbx,rcx; lea rcx,[NamePoolData]; movsxd rdi,edx; jnz; call
 //   instrOffset=12, 31 bytes, 19 fixed — cross-game ES/ES2/SAT
 constexpr const char* AOB_GNAMES_GH_2 = "EC 20 80 3D ?? ?? ?? 00 00 48 8B D9 48 8D 0D ?? ?? ?? ?? 48 63 FA 75 ?? E8 ?? ?? ?? ?? 48 8B";
+
+// --- UE 5.4+ NON-SHIPPING (LLM) -- mined 2026-09-26 from PDB truth [GNAMES-NONSHIP-LLM54] ---
+// WHY: UE 5.4 added `LLM(FLowLevelMemTracker::Get().FinishInitialise());` right after
+// `bNamePoolInitialized = true;` in GetNamePool() (UnrealNames.cpp; 5.4 line 2017 through 5.8).
+// LLM is compiled out of Shipping, so only Development / DebugGame codegen changed. There, two
+// calls now follow the FNamePool ctor, the pool pointer lives in a callee-saved register, and
+// the bigger init body is no longer inlined into the FName callers -- so every GNames pattern
+// but the 4-byte GNAM_V1 stopped reaching NamePoolData, and V1 got there only after
+// ~2,200-2,400 rejected candidates (tools/ghidra/GROUND-TRUTH.md, "Still open").
+// LLM54_1: lea rcx,[NamePoolData]; call FNamePool::FNamePool; mov <rbx|rsi|rdi|r12|r15>,rax;
+//   mov byte[bNamePoolInitialized],1; mov rax,[FLowLevelMemTracker::TrackerInstance];
+//   test rax,rax; jnz +5; call FLowLevelMemTracker::Construct; mov rcx,rax;
+//   call FLowLevelMemTracker::FinishInitialise. 43 bytes, 21 literal.
+//   Measured: every hit is truth on 5.4 / 5.4 DumperTest / 5.6 Development + DebugGame, 5.7.4
+//   DebugGame and 5.8.3 Development (16-26 sites each); 0 hits on every Shipping build, on 5.1 /
+//   5.3 non-Shipping and on UE4; 0 decoys over the 65-program archive corpus.
+//   ⚠ The evidence is 4 Epic engine compiles on 2 MSVC toolsets plus 4 editor DLLs, not 8
+//   independent builds; a studio's own toolset / Clang / LTCG is unmeasured. Hence IWB_1 below.
+constexpr const char* AOB_GNAMES_LLM54_1 =
+    "48 8D 0D ?? ?? ?? ?? E8 ?? ?? ?? ?? 4? 8B ?? C6 05 ?? ?? ?? ?? 01 "
+    "48 8B 05 ?? ?? ?? ?? 48 85 C0 75 05 E8 ?? ?? ?? ?? 48 8B C8 E8";
+// IWB_1: FName::IsWithinBounds -- mov eax,[Pool.Entries.CurrentBlock]; inc eax; shr ecx,10h;
+//   cmp ecx,eax; setb al; ret. The one NamePoolData site whose bytes did NOT change 5.3 -> 5.4:
+//   identical from 4.23 to 5.8.3 in every config, one hit per binary, all truth. The operand is
+//   NamePoolData+8, so the adjustment is -8, and it is LOAD-BEARING: Pool+8 alone still passes
+//   ValidateGNames (its +0x08 alias reaches Blocks) and would publish a base 8 bytes too high.
+//   It vanishes wherever IsWithinBounds is inlined (ES2 5.5, Solarpunk 5.7: 0 hits, not decoys),
+//   so it is insurance, not a replacement.
+constexpr const char* AOB_GNAMES_IWB_1 = "8B 05 ?? ?? ?? ?? FF C0 C1 E9 10 3B C8 0F 92 C0 C3";
 
 
 // ============================================================
@@ -1848,6 +1877,18 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     SIG_RIP("GNAM_PS1",   AOB_GNAMES_PS1,    AobTarget::GNames, 2, 3, 7, 0, 600, "PS", "jz+9; lea r8"),
     SIG_RIP("GNAM_PS2",   AOB_GNAMES_PS2,    AobTarget::GNames, 7, 3, 7, 0, 620, "PS", "sub rsp; shr; lea rbp"),
 
+    // 695: UE 5.4+ NON-SHIPPING (Development / DebugGame). The maintainer's rule (2026-09-26):
+    // few games ship a non-Shipping build, so it sits BELOW every band a 4.23+ Shipping build
+    // resolves in (all of them resolve by GNAM_PS2 at 620) and needs only to come before the
+    // V-series, whose ~1,200 decoys per pattern made non-Shipping cost ~2,300 validations.
+    // Walk simulated over 23 local + 41 corpus programs: non-Shipping 5.4-5.8.3 now wins in
+    // batch 3 with 0-1 wasted validations (was 2,199-2,372), Pass-2 multi-module scans 20-23 ->
+    // 15-16; no other program changes winner, wasted count or Pass-2 count. (At 101 the Pass-2
+    // count would be 0 too, at the price of every game scanning it -- declined.) Pre-4.23 titles
+    // cross it at zero hits: there is no FNamePool before 4.23.
+    SIG_RIP("GNAM_LLM54_1", AOB_GNAMES_LLM54_1, AobTarget::GNames, 0, 3, 7, 0, 695, "LLM54",
+            "UE5.4+ non-Shipping GetNamePool init + FLowLevelMemTracker::FinishInitialise"),
+
     // 700–720: UE4 pre-FNamePool (TNameEntryArray / TStaticIndirectArrayThreadSafeRead).
     // A different structure entirely, and measurably MISSES on every FNamePool binary, so
     // sitting below the Tier-2 block costs nothing and saves wasted validations on a UE4 title.
@@ -1858,6 +1899,11 @@ constexpr AobSignature GNAMES_PATTERNS[] = {
     SIG_RIP("GNAM_SAT422_1", AOB_GNAMES_SAT422_1, AobTarget::GNames, 0, 3, 7, 0, 715, "SAT422", "Satisfactory UE4.22 FName::GetNames + game-thread assert (PDB-corrected b2407)"),
     SIG_RIP("GNAM_XX_1",  AOB_GNAMES_XX_1,   AobTarget::GNames, 8, 3, 7, 0, 717, "XX", "pre-4.23 FName::GetNames write-back+epilogue — 8/8 pre-4.23 oracles at index 0"),
     SIG_RIP("GNAM_CT4",   AOB_GNAMES_CT4,    AobTarget::GNames, 3, 3, 7, 0, 720, "CT", "UE4 pre-FNamePool write pattern"),
+    // 725: insurance for a future non-Shipping build whose LLM tail changes shape: the walk
+    // would land here after at most the CT3 / G42_1 / CT4 decoys (1-4) instead of the V-series.
+    // Never reached today (LLM54_1 wins first on non-Shipping; Shipping resolves by 620).
+    SIG_RIP("GNAM_IWB_1", AOB_GNAMES_IWB_1,  AobTarget::GNames, 0, 2, 6, -0x8, 725, "IWB",
+            "FName::IsWithinBounds mov eax,[Pool+8] (CurrentBlock), 4.23-5.8.3"),
 
     // 850–890: last resort — the short V-series, demoted here in build 2405.
     //

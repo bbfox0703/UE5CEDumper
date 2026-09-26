@@ -114,7 +114,7 @@ namespace Genau {  // legacy alias: OffsetFinder
 
 ### AOB Scan Strategy
 
-Scans game module **executable sections only** (`.text`). 151 AOB patterns + 1 CallFollow + 6 symbol exports — 158 entries defined in `Himmel.h` — drawn from 31 source tags cover UE4.18–UE5.8+. Pattern handlers dispatch via `AobResolve` (RipDirect / RipDeref / RipBoth / SymbolExport / CallFollow / SymbolCallFollow), then validate via `ValidateGObjects()` / `ValidateGNames()`:
+Scans game module **executable sections only** (`.text`). 153 AOB patterns + 1 CallFollow + 6 symbol exports — 160 entries defined in `Himmel.h` — drawn from 31 source tags cover UE4.18–UE5.8+. Pattern handlers dispatch via `AobResolve` (RipDirect / RipDeref / RipBoth / SymbolExport / CallFollow / SymbolCallFollow), then validate via `ValidateGObjects()` / `ValidateGNames()`:
 
 ```cpp
 // RIP-relative resolution pattern
