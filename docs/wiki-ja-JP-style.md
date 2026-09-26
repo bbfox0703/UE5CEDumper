@@ -96,6 +96,16 @@ these rules, an independent reviewer agent per batch, and textlint. Keep all thr
 | Recycle Bin | ごみ箱 | Windows ja UI name |
 | "our" proxy / DLL | 本ツールのプロキシ / DLL | not 私たちの |
 | idempotent | 「すでに ON なら何もしません」 | describe it; no single word |
+| xref / cross-reference | 相互参照 | |
+| reverse lookup | 逆引き | |
+| client-side (filter) | UI 側 | |
+| breadcrumb | パンくずリスト | |
+| spawn / spawned | 生成する / 生成済み | |
+| heuristic | 推定 | |
+| live instance / object | 生存中のインスタンス / オブジェクト | |
+| seed / starting object | 起点のオブジェクト | |
+| back-reference | たどってきた側を指し返す参照 | ❌ 逆参照 (reads as *dereference*) |
+| amber / teal | 琥珀色 / 青緑色 | |
 
 ## Checking a page
 
