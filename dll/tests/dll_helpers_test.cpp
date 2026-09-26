@@ -8080,6 +8080,97 @@ static void Test_Macht_ParsePattern_Nibble() {
     EXPECT("rejects empty", !Macht::ParsePattern("", p));
 }
 
+// ----- GNames on non-Shipping UE 5.4+ [GNAMES-NONSHIP-LLM54] ------------------
+// UE 5.4 added LLM(FLowLevelMemTracker::Get().FinishInitialise()) to GetNamePool()'s one-time
+// init (UnrealNames.cpp). LLM is compiled out of Shipping, so only Development / DebugGame
+// codegen changed -- and every GNames pattern but the 4-byte GNAM_V1 stopped reaching
+// NamePoolData there, after ~2,200-2,400 rejected candidates (tools/ghidra/GROUND-TRUTH.md).
+// The fixtures are REAL bytes cut from PDB-paired binaries (out/gnames_mine, 2026-09-26), and
+// each resolution is checked against that binary's PDB truth, not against the pattern's own
+// description: the RIP arithmetic is the DLL's (target = site + io + tot + disp32 + adj).
+static const AobSignature* FindGNamesSig(const char* id) {
+    for (const auto& s : Sig::GNAMES_PATTERNS)
+        if (std::strcmp(s.id, id) == 0) return &s;
+    return nullptr;
+}
+
+static void Test_Himmel_GNames_NonShipping54() {
+    std::printf("Test_Himmel_GNames_NonShipping54\n");
+    const AobSignature* llm = FindGNamesSig("GNAM_LLM54_1");
+    const AobSignature* iwb = FindGNamesSig("GNAM_IWB_1");
+    EXPECT("GNAM_LLM54_1 is in GNAMES_PATTERNS", llm != nullptr);
+    EXPECT("GNAM_IWB_1 is in GNAMES_PATTERNS",   iwb != nullptr);
+    if (!llm || !iwb) return;
+
+    auto matchesAndResolves = [](const AobSignature& sig, const uint8_t* b, size_t n,
+                                 uint64_t siteVa, uint64_t truthVa, const char* what) {
+        Macht::ParsedPattern p;
+        EXPECT(what, Macht::ParsePattern(sig.pattern, p));
+        EXPECT(what, PatMatchAt(p, b, n, 0));
+        int32_t disp = 0;
+        std::memcpy(&disp, b + sig.instrOffset + sig.opcodeLen, sizeof(disp));
+        const int64_t rel = int64_t(sig.instrOffset) + sig.totalLen + disp + sig.adjustment;
+        EXPECT(what, rel == int64_t(truthVa - siteVa));
+    };
+
+    // UE 5.4.4 ThirdPerson Development, FName::GetEntry's inlined GetNamePool() init; the pool
+    // pointer lands in rsi (48 8B F0). PDB truth NamePoolData = 0x14FBFA7C0.
+    static const uint8_t k54Dev[] = {
+        0x48, 0x8D, 0x0D, 0x1D, 0x56, 0x57, 0x0E, 0xE8, 0xE8, 0x4D, 0x00, 0x00, 0x48, 0x8B, 0xF0,
+        0xC6, 0x05, 0x4C, 0x8D, 0x54, 0x0E, 0x01, 0x48, 0x8B, 0x05, 0x7F, 0xD8, 0x4D, 0x0E, 0x48,
+        0x85, 0xC0, 0x75, 0x05, 0xE8, 0x2D, 0xBD, 0xBE, 0xFF, 0x48, 0x8B, 0xC8, 0xE8 };
+    matchesAndResolves(*llm, k54Dev, sizeof(k54Dev), 0x14168519CULL, 0x14FBFA7C0ULL,
+                       "LLM54_1 on 5.4 Dev (rsi) -> NamePoolData");
+    // UE 5.8.3 DumperTest58 Development: same site shape, the pool in r15 (4C 8B F8).
+    static const uint8_t k583Dev[] = {
+        0x48, 0x8D, 0x0D, 0xB9, 0x55, 0x2A, 0x11, 0xE8, 0x04, 0x0D, 0x02, 0x00, 0x4C, 0x8B, 0xF8,
+        0xC6, 0x05, 0x14, 0x32, 0x2A, 0x11, 0x01, 0x48, 0x8B, 0x05, 0x9B, 0x12, 0x23, 0x11, 0x48,
+        0x85, 0xC0, 0x75, 0x05, 0xE8, 0x09, 0x01, 0xC1, 0xFF, 0x48, 0x8B, 0xC8, 0xE8 };
+    matchesAndResolves(*llm, k583Dev, sizeof(k583Dev), 0x141ACE680ULL, 0x152D73C40ULL,
+                       "LLM54_1 on 5.8.3 Dev (r15) -> NamePoolData");
+    // Negative control: UE 5.3 Development's init has no LLM tail -- mov rdx,rax then straight
+    // into the FName math. LLM54_1 must not claim it (5.3 is served by GNAM_ES53_1).
+    {
+        static const uint8_t k53Dev[] = {
+            0x48, 0x8D, 0x0D, 0xA2, 0xB2, 0x52, 0x0D, 0xE8, 0xDD, 0x6A, 0xFF, 0xFF, 0x48, 0x8B, 0xD0,
+            0xC6, 0x05, 0x6D, 0x6E, 0x50, 0x0D, 0x01, 0x0F, 0xB7, 0xC3, 0x8B, 0xCB, 0xC1, 0xE9, 0x10,
+            0x89, 0x44, 0x24, 0x7C, 0x89, 0x4C, 0x24, 0x78, 0x48, 0x8B, 0x44, 0x24, 0x78 };
+        Macht::ParsedPattern p;
+        EXPECT("parse LLM54_1", Macht::ParsePattern(llm->pattern, p));
+        EXPECT("LLM54_1 does not match 5.3 Dev's init", !PatMatchAt(p, k53Dev, sizeof(k53Dev), 0));
+    }
+
+    // FName::IsWithinBounds reads Pool.Entries.CurrentBlock = NamePoolData+8, identical bytes from
+    // 4.23 to 5.8.3 in every config. The -8 is load-bearing: Pool+8 alone still passes
+    // ValidateGNames (its +0x08 alias reaches Blocks) and would publish a base 8 bytes too high.
+    static const uint8_t kIwb54Dev[] = {
+        0x8B, 0x05, 0x72, 0xCA, 0x54, 0x0E, 0xFF, 0xC0, 0xC1, 0xE9, 0x10, 0x3B, 0xC8, 0x0F, 0x92,
+        0xC0, 0xC3 };
+    matchesAndResolves(*iwb, kIwb54Dev, sizeof(kIwb54Dev), 0x1416ADD50ULL, 0x14FBFA7C0ULL,
+                       "IWB_1 on 5.4 Dev -> NamePoolData (after -8)");
+    static const uint8_t kIwb583Ship[] = {
+        0x8B, 0x05, 0x72, 0x71, 0x22, 0x08, 0xFF, 0xC0, 0xC1, 0xE9, 0x10, 0x3B, 0xC8, 0x0F, 0x92,
+        0xC0, 0xC3 };
+    matchesAndResolves(*iwb, kIwb583Ship, sizeof(kIwb583Ship), 0x1414108D0ULL, 0x149637A40ULL,
+                       "IWB_1 on 5.8.3 Shipping -> NamePoolData (after -8)");
+    EXPECT("IWB_1 keeps its -8", iwb->adjustment == -8);
+
+    // Priority (the maintainer's call, 2026-09-26): few games ship non-Shipping builds, so both
+    // sit BELOW the bands every 4.23+ Shipping build in the corpus resolves in (they end with
+    // GNAM_PS2 at 620) and only need to come before the V-series, whose ~1,200 decoys per
+    // pattern are what made non-Shipping expensive. Pre-4.23 titles cross them at zero hits:
+    // there is no FNamePool before 4.23.
+    const AobSignature* ps2 = FindGNamesSig("GNAM_PS2");
+    const AobSignature* v5  = FindGNamesSig("GNAM_V5");
+    EXPECT("GNAM_PS2 and GNAM_V5 still exist", ps2 && v5);
+    if (ps2 && v5) {
+        EXPECT("LLM54_1 below the 4.23+ Shipping bands", llm->priority > ps2->priority);
+        EXPECT("LLM54_1 before the V-series",       llm->priority < v5->priority);
+        EXPECT("IWB_1 after LLM54_1",               iwb->priority > llm->priority);
+        EXPECT("IWB_1 before the V-series",         iwb->priority < v5->priority);
+    }
+}
+
 
 // ============================================================
 // DynOff — FFieldClass::Name offset probe (the UE 5.8 drill-down fix)
@@ -9103,6 +9194,7 @@ int main() {
     RUN(Test_Radar_RefineContainerAnchor);
     RUN(Test_Radar_LeafAnchor);
     RUN(Test_Macht_ParsePattern_Nibble);
+    RUN(Test_Himmel_GNames_NonShipping54);
 
     // Tot — per-command cancel immunity is independent of "is a background worker"
     RUN(Test_Tot_CancelImmunityVsBackgroundWorker);
