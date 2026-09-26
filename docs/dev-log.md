@@ -27,6 +27,28 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (build 3568) — Live Walker: Back / Forward / breadcrumbs / bookmarks restore the view you left `[LW-BACK-SCROLL]`
+
+- **The maintainer's report:** after drilling into a row and pressing Back, the row was not on screen — you had
+  to scroll down to find it. Reproduced on 3567. The restore replayed the saved TOP row with `ScrollIntoView`,
+  which from the top of a rebuilt grid lands a row on the BOTTOM edge, so the view never came back and the
+  drilled row sat below it — since `7cc3d5e2` (build 2550), and before that a dead View callback (fixed in 3034)
+  restored nothing at all.
+- **Fix:** scroll to the end first, so the saved top row is above the viewport and returns as the FIRST row —
+  the exact view — then make sure the drilled row is on screen (Back passes its popped crumb, a breadcrumb jump
+  the target's child on the old spine). Forward and bookmark loads take the same exact-position restore. A
+  bookmark whose rows are gone later falls back to the first selected row still there, or stays at the top.
+- **The maintainer's other question — Auto Refresh while a cell is being edited (`[LW-EDIT-UNDER-REFRESH]`,
+  recorded, no code change):** measured, the edit pauses Auto (*paused (editing)*, the value held for 15 s), and
+  Refresh with the editor open closes it, writes nothing and resumes Auto. The narrower races a code-read
+  predicted need a real keyboard to reproduce: on this rig computer-use typing never reaches the editor binding.
+- Tests: `LiveWalkerForwardNavTests` pin the row the VM hands the View. UI suite 5,645 run, 0 failed. Gates 28
+  run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,208,768 B `83e699018eda`, `UE5Dumper.dll` `355af731e422` (unchanged
+  source); proxies version `8c402112eee6`, dinput8 `a798e4845a2e`, dxgi `97e4b2610f32`, winmm `437663780d7d`.
+  ✅ Live-checked on DumperTest 5.4 Shipping: Back, Back into the GWorld list, Forward, a two-level breadcrumb
+  jump and a bookmark load each returned the exact view.
+
 ## 2026-09-26 (build 3567) — Auto snapshot stopped by hand says so `[AUTOSNAP-STOP-STALE-STATUS]`
 
 - Found by 3566's live check: turning Auto snapshot OFF left its status frozen on *"Auto: next snapshot in 28s ·
