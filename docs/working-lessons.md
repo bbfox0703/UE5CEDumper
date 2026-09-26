@@ -8,8 +8,9 @@
 > **Sync rule (changed 2026-08-15): this file is now the SOLE copy — it is no longer mirrored.**
 > The assistant's memory folder used to carry a near-identical duplicate of every section below, and
 > the "edit both" tax was paid unevenly: the copies drifted, and the folder does not travel with git
-> anyway. Those 15 memory files were deleted; `MEMORY.md` now carries a pointer to this file plus the
-> section map. **Write new working-lessons here, not into memory.** Memory keeps only what is
+> anyway. Those 15 memory files were deleted; `MEMORY.md` now carries a pointer to this file (the
+> section map it also carried was dropped on 2026-08-22, when the index was cut to pointers only).
+> **Write new working-lessons here, not into memory.** Memory keeps only what is
 > genuinely machine-local (paths, in-flight project state, session preferences).
 >
 > Every claim here was true at the build named beside it, and code moves — re-verify against the code
@@ -488,34 +489,34 @@ lands**, not only before. If the two disagree, one of them is measuring the writ
 channel"* returned **17 findings, 8 of them HIGH**. A refute-mandated pass killed **14**.
 
 ⛔ **AND I HAD HAND-VERIFIED FOUR OF THE FOURTEEN BEFORE THE SKEPTICS RAN.** Every structural claim I
-checked was TRUE: `Dunste.cpp:830` really does `return 0` and really does skip the
-`modeRestoreFailed` check below it; `Schlacht.cpp:366` really is `Invoke(actor, fi, buf); return
-true;` with two siblings in the same file that DO check their result; `Solide.cpp:265` really returns
-success without restoring. I read the code, confirmed the mechanism, and concluded the defect.
+checked was TRUE: `Dunste::SetEnabled`'s collision branch really does `return 0` and really does skip
+the `modeRestoreFailed` check below it; `Schlacht.cpp`'s `InvokeSetHidden` really was `Invoke(actor, fi,
+buf); return true;` with two siblings in the same file that DO check their result; `Solide.cpp`'s
+`ApplyToInstance` really returns success without restoring. I read the code, confirmed the mechanism, and concluded the defect.
 **All four verdicts were wrong.**
 
 ⭐ **THE DISCRIMINATOR, and it is not subtle once named**: a discarded return is a defect only if the
 CONSEQUENCE survives too. Each of those four died on the consequence, never on the structure:
 
-- `Dunste.cpp:830` — the collision branch is **PENDING, not failed**: `StartPendingLocked()` is
+- `Dunste::SetEnabled` — the collision branch is **PENDING, not failed**: `StartPendingLocked()` is
   called and the record deliberately kept, so `return 0` means *"fly is off and the restore is in
-  hand"*, which is true. `Dunste.cpp:604-612` records that this is the **COMMON** path, because the
+  hand"*, which is true. Dunste.cpp's `deferred collision restore (B8)` block records that this is the **COMMON** path, because the
   click that disables Fly is what backgrounds the game. Escalating would false-alarm on nearly every
   Noclip disable, about a state that self-heals on the user's very next action.
-- `Schlacht.cpp:366` — `Invoke() == 0` means *ProcessEvent dispatched without faulting*, **not** that
+- `Schlacht.cpp`'s `InvokeSetHidden` — `Invoke() == 0` means *ProcessEvent dispatched without faulting*, **not** that
   `bHidden` moved. The repo answers the real question with the published actor **addresses**
-  (`Fern.cpp:6062-6069`, consumed by four rigs) so a verifier re-reads each bit. Gating `applied` on
+  (the see-through state's `hidden_actors`, consumed by four rigs) so a verifier re-reads each bit. Gating `applied` on
   the return code would reproduce audit #4's own root cause — the report and the reality computed by
   the same code path.
-- `Solide.cpp:265` — the irreversibility of an object-null hold is static, documented in
-  `Solide.h:181-184`, and **confirmed by the user before the act**.
+- `Solide.cpp`'s `ApplyToInstance` — the irreversibility of an object-null hold is static, documented
+  on `Solide::AddForce`, and **confirmed by the user before the act**.
 
 ⚠ **So "I read the code myself" is NOT the check.** Reading the code verifies the MECHANISM. What
 decides a defect is *what does the user end up believing, and is it false* — and that needs the
 consumer, the sibling channels, and the module's stated design, not just the site.
 
 ⛔⛔ **AND ONE OF THE 17 WAS ON THIS REPO'S OWN "Refuted (8) — do not re-raise" LIST, TWICE** —
-`docs/todo.md:1183` and `:1302`, both naming `Schlacht.cpp:366`, each killed on ≥4 routes. §1.w2 was
+both copies of that list in [todo.md](todo.md) name it (as `Schlacht.cpp:366`), each killed on ≥4 routes. §1.w2 was
 written about a **mechanical scanner** doing exactly this. **It generalises to LLM agents, for the
 same structural reason: the refutation lives in prose and the code is left deliberately unchanged, so
 anything that reads code and not history re-derives the same plausible finding forever.**
@@ -782,7 +783,7 @@ one session is the evidence that it is **the** shape to hunt, not one of many.*
 | 1 | `70d28548`: "build: zero warnings on a CLEAN publish" | `_wfopen`→`_wfopen_s` also made every live log **unreadable to every process** (`fopen_s` opens exclusively), deleting the DLL-side half of every acceptance test in the repo |
 | 2 | A2's row: "`VALIDATION FAILED` must be ABSENT" | on the pattern path a zero-fire hook logs a **different** line, so the absence is satisfied **by construction** — a wrong slot passes |
 | 3 | todo + register: "A7's live half CLOSED" | the test block drives `Aura::ForEach`; A7 fixed `FindByAddress`, which hand-rolls its own loop. `grep FindByAddress dll/tests/ tools/verify/` = **0 hits** |
-| 4 | `Ubel.h:435`: "`softArrayFNameSize` — sizeof(FName): 8 or **12**" | both writers set **`0x10`**, and six sibling sites did the same |
+| 4 | `LiveFieldValue` (Ubel.h): "`softArrayFNameSize` — sizeof(FName): 8 or **12**" | both writers set **`0x10`**, and six sibling sites did the same |
 
 **What they share, and it is the thing to look for:** in each case the *checker* and the *checked*
 were separated by a step nobody re-derived — a share mode not visible in the diff, a log line whose
@@ -1827,7 +1828,7 @@ exhaustion:
 | `IPlatformService.CopyToClipboardAsync` | 57 | **2** | **29 (51%)** | 26 |
 | `IAobMakerBridge` (7 methods) | 55 | **42** | **0** | 13 |
 
-Same layer. Same files. Frequently **the same method** — at `LiveWalkerViewModel.cs:6306` the code
+Same layer. Same files. Frequently **the same method** — in `LiveWalkerViewModel.CopyBakedScriptAsync` the code
 captures and tests the AOBMaker bool, then drops the clipboard bool eleven lines later and claims
 success on it. Any predictor based on *where* the code lives, how old it is, or how many lines it has
 gives these two the same score.
@@ -1839,7 +1840,7 @@ choose a branch. Testing it was load-bearing, so it was tested: 42/55, zero defe
 only a more honest message — never a different action — so it was skipped 55 times out of 57.
 
 ⭐ **The predictor: a TERMINAL call — no fallback branch — whose contract makes the return the ONLY
-failure signal.** `IPlatformService.cs:30-49` states both halves in writing (*"Returns true only when
+failure signal.** `IPlatformService.CopyToClipboardAsync`'s doc states both halves in writing (*"Returns true only when
 the text actually reached the clipboard"*, *"Never throws for an ordinary clipboard failure ... and
 that is the contract"*), which is also why every `catch (Exception ex)` wrapped around those 57 calls
 is **dead code for a real clipboard failure**. In all of `ui/UE5DumpUI` exactly one interface method
@@ -2227,7 +2228,7 @@ std::atomic<int> ran{0};                 // this function's stack frame
 {
     Routine::SafeThread t;
     t = std::thread([&] { for (int i = 0; i < 50; ++i) { ran.fetch_add(1); sleep_for(1ms); } });
-}   // ~SafeThread DETACHES (Routine.h:82) -- that is the behaviour under test
+}   // ~SafeThread DETACHES (Routine.h) -- that is the behaviour under test
 ```
 
 `sleep_for(1ms)` is quantised to Windows' ~15.6 ms tick (§4.2 has the same fact for CE's `sleep`), so
@@ -2425,7 +2426,7 @@ in the run that was quiet.
 The C4190 itself is worth knowing as a shape: `Frieren.cpp` wraps ~2,200 lines in one
 `extern "C" {` for the `UE5_*` exports, so a `static inline` helper declared inside it inherits **C
 language linkage** and returning `std::vector<FunctionInfo>` trips C4190. ⭐ **The diagnosis was the
-asymmetry**: `Mimic.cpp:529` holds a byte-identical twin that does *not* warn, because Mimic uses
+asymmetry**: Mimic.cpp's `ChainListFuncs` is a byte-identical twin that does *not* warn, because Mimic uses
 per-declaration `extern "C"` and never opens a block. Fixed with `extern "C++" { … }` around the two
 adapters; negative-controlled in both directions.
 
@@ -3205,8 +3206,8 @@ for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-valu
 ## 7. Operational notes for two-machine development
 
 - **`build_number.txt` auto-increments on every `build.ps1` run** (MSBuild only reads it), so doc and
-  commit build references drift. Cite the build as of commit time. The bump is unconditional at
-  `build.ps1:446`, **before** any `-Mode` / `-Target` branch; `-NoBumpBuildNumber` suppresses it.
+  commit build references drift. Cite the build as of commit time. The bump is unconditional in
+  `build.ps1`'s "Increment build number" block, **before** any `-Mode` / `-Target` branch; `-NoBumpBuildNumber` suppresses it.
   ⚠ **"only `-Mode Publish` bumps it" is a persistent and wrong belief** — it was in the project
   memory index for months and cost the 2026-08-19 closing session a build-number collision. A
   `-Target DLL` run bumps it exactly as hard as a publish does.
@@ -3258,7 +3259,8 @@ so it exists on one machine at a time. Between 2026-08-14 and 2026-08-15 every s
 also existed there as a `feedback_*.md` twin, on an "edit both" rule. That rule failed in the ordinary
 way: the copies drifted, several twins were staler than this file, and the machine that needed them
 most — the other one — never had them at all. **Fifteen duplicate memory files (~48 KB) were deleted
-on 2026-08-15**; `MEMORY.md` now carries a pointer here plus the section map above.
+on 2026-08-15**; `MEMORY.md` now carries a pointer here, and since 2026-08-22 nothing more (it was
+being silently truncated past ~140 lines, so the section map went too).
 
 **How to route a new fact:**
 
