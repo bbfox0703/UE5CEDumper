@@ -7,24 +7,38 @@ r"""Local Ollama helper for Claude Code sessions: opt-in per machine, a no-op ev
     py tools/llm/ollama_local.py unload [--wait S]    # free the VRAM now (PENDING if a request is in flight)
     py tools/llm/ollama_local.py reserve [--wait S]   # reserve the GPU for a game, machine-wide, then unload
     py tools/llm/ollama_local.py release              # clear a reservation (an abandoned launch)
-    py tools/llm/ollama_local.py setup --model TAG    # opt THIS machine in
-    py tools/llm/ollama_local.py setup --remove       # opt it back out
+    py tools/llm/ollama_local.py install --model TAG  # install / update THE machine copy (from a source checkout)
+    py tools/llm/ollama_local.py uninstall [--leave-all]
+    py tools/llm/ollama_local.py join [--repo PATH]   # a repo joins: it receives the skill, nothing else
+    py tools/llm/ollama_local.py leave [--repo PATH]  # ...and leaves by losing it
+    py tools/llm/ollama_local.py repos                # joined repos, and whether their skill is current
     py tools/llm/ollama_local.py hook                 # the PreToolUse hook body (hook JSON on stdin)
     py tools/llm/ollama_local.py --selftest           # pure-logic controls: no network, no processes
 
-WHEN to use it is the skill's business: .claude/skills/local-llm/SKILL.md. This file is the
-mechanism and the guard.
+After `install`, every command above also runs as the MACHINE copy, from any repo:
+    py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" status        (PowerShell: $env:LOCALAPPDATA)
+`setup --model TAG` / `setup --remove` are the version-1 names of install / uninstall.
+
+WHEN to use it is the skill's business: .claude/skills/local-llm/SKILL.md. How ANOTHER repo adopts it
+is tools/llm/README.md. This file is the mechanism and the guard.
+
+ONE INSTALL PER MACHINE, ANY NUMBER OF REPOS (version 2). `install` copies this file and the skill to
+%LOCALAPPDATA%\claude-local-llm\, writes the machine config there, and points ONE user-level hook at
+that copy. A repo JOINS by receiving the skill file only (`join`), which calls the machine copy through
+$LOCALAPPDATA and so carries no machine fact; it LEAVES by losing it (`leave`). So every repo, every
+session and the hook run the same code against the same config, leases and reservation -- there is no
+per-repo copy to drift, and no repo can remove another's guard. The source checkout (this repo) is where
+the helper is developed; re-running `install` there updates the machine copy for every joined repo.
 
 Exit codes: 0 done / ready, 2 not available here (disabled, absent, no model), 3 refused (a
 commercial game holds the GPU, a reservation, or too little VRAM free), 4 input too large,
 5 unload still pending (a request in flight), 1 anything else.
 
-⭐ OPT-IN, BECAUSE THE REPO IS PUBLIC. Nothing machine-specific is committed. A machine opts in with
-`setup`, which writes `.claude/local-llm.json` (the model tag; gitignored by `.claude/*`) and puts the
-PreToolUse hook in the USER-level ~/.claude/settings.json, so it guards every session on the machine,
-in every repo. Without the opt-in file every subcommand answers `disabled` WITHOUT touching the
-network, so a clone on the other PC, or a stranger's, is unaffected even if it runs Ollama with the
-same model -- and the hook itself returns at once.
+⭐ OPT-IN, BECAUSE THE REPO IS PUBLIC. Nothing machine-specific is committed -- not by this repo and not
+by a joined one: the model tag, URL, local paths, the joined-repo list and the leases live only in the
+machine dir, and the hook only in the user-level ~/.claude/settings.json. Without the install every
+subcommand answers `disabled` WITHOUT touching the network, so a clone on another PC, or a stranger's,
+is unaffected even if it runs Ollama with the same model -- and the hook itself returns at once.
 
 ⛔ GAMES AND VRAM. A 12B Q8 model holds ~14 GB of VRAM; a commercial game under test must not share
 the card with it. Layered, because a rule the model has to remember is not a rule:
@@ -106,10 +120,16 @@ sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 # ── Magic values, all in one place ───────────────────────────────────────────────────────────────
 SCRIPT = pathlib.Path(__file__).resolve()
-ROOT = SCRIPT.parents[2]
-CONFIG_REL = pathlib.Path(".claude") / "local-llm.json"
+ROOT = SCRIPT.parents[2]               # a SOURCE checkout: <repo>/tools/llm/ollama_local.py
+# Bump when behaviour changes: the machine config records the version installed, and `status` run from
+# a newer source checkout says so -- every repo on the machine runs the ONE installed copy.
+HELPER_VERSION = 2
+CONFIG_REL = pathlib.Path(".claude") / "local-llm.json"          # legacy per-repo opt-in (version 1)
 SETTINGS_REL = pathlib.Path(".claude") / "settings.local.json"
-DISABLE_ENV = "UE5CE_LLM"              # =off disables this machine, opt-in file or not
+SKILL_REL = pathlib.Path(".claude") / "skills" / "local-llm" / "SKILL.md"
+DISABLE_ENV = "UE5CE_LLM"              # =off disables this machine for one shell (legacy name)
+DISABLE_ENVS = ("CLAUDE_LOCAL_LLM", DISABLE_ENV)
+HOME_ENV = "CLAUDE_LOCAL_LLM_HOME"     # overrides the machine state dir -- the selftest and rigs only
 DEFAULT_URL = "http://127.0.0.1:11434"
 PROBE_TIMEOUT = 0.4                    # s -- a closed loopback port costs the whole timeout
 UNLOAD_TIMEOUT = 10
@@ -129,10 +149,17 @@ HOOK_MATCHER = "Bash|PowerShell"
 HOOK_BOOTSTRAP = ("import os,sys,runpy;p=sys.argv[1];sys.argv=[p]+sys.argv[2:];"
                   "os.path.isfile(p) and runpy.run_path(p,run_name='__main__')")
 USER_SETTINGS = pathlib.Path.home() / ".claude" / "settings.json"
+USER_SETTINGS_ENV = "CLAUDE_LOCAL_LLM_USER_SETTINGS"   # the selftest and rigs only
 USER_SETTINGS_BACKUP_SUFFIX = ".before-local-llm"
-# Cross-session state is MACHINE-wide (every session, every repo), so it lives outside any checkout --
-# and outside %LOCALAPPDATA%\UE5CEDumper, which is the UI app's own data (CLAUDE.md "App-data layout").
+# Everything machine-specific lives HERE and nowhere else: the installed copy, its config (model tag,
+# URL), the joined-repo list, leases, the GPU reservation. It is MACHINE-wide (every session, every repo),
+# outside every checkout -- so nothing machine-specific can reach a public repo -- and outside
+# %LOCALAPPDATA%\UE5CEDumper, which is the UI app's own data (CLAUDE.md "App-data layout").
 STATE_DIRNAME = "claude-local-llm"
+MACHINE_SCRIPT_FILE = "ollama_local.py"
+MACHINE_SKILL_FILE = "SKILL.md"
+MACHINE_CONFIG_FILE = "config.json"
+JOINED_FILE = "repos.json"
 LEASE_DIRNAME = "leases"
 RESERVATION_FILE = "gpu-reserved.json"
 LEASE_MAX_AGE_S = GENERATE_TIMEOUT * 3  # older than any request can run: stale even if its pid was reused
@@ -154,7 +181,9 @@ OVERFLOW_RE = re.compile(r"request \((\d+) tokens\) exceeds", re.I)
 EXE_TAIL = r"-(?:Win64|WinGDK|WinGRDK)-(?:Shipping|Test|DebugGame)\.exe"
 PROCESS_EXE_RE = re.compile(r"(.+)" + EXE_TAIL, re.I)
 COMMAND_EXE_RE = re.compile(r"([^\\/\"'\s]+)" + EXE_TAIL + r"\b", re.I)
-EXEMPT_STEM_PREFIX = "dumpertest"
+# Test fixtures that may share the GPU with the model: this repo's DumperTest projects (DumperTest,
+# DumperTest51, ...). A machine adds its own with `install --exempt PREFIX` (config `exempt_prefixes`).
+DEFAULT_EXEMPT_PREFIXES = ("dumpertest",)
 # UE-shaped helper processes that are never the game. EOSOverlayRenderer is the Epic Online Services
 # overlay: measured 2026-09-26 running under the Epic Games Launcher with NO game open, which made the
 # guard refuse the LLM for as long as the launcher was up. An EOS game still has its own shipping exe
@@ -165,8 +194,10 @@ NON_GAME_STEMS = frozenset({"eosoverlayrenderer"})
 STEAM_LAUNCH_RE = re.compile(r"steam(?:\.exe)?[\\\"']*\s+(?:\S+\s+)*?-applaunch\s+\d+"
                              r"|steam://(?:rungameid|run)/\d+", re.I)
 
+# Neutral, because every joined repo uses the one installed copy; a machine can override it with the
+# config key `system_prompt`.
 SYSTEM_PROMPT = (
-    "You are a careful assistant working on an Unreal Engine reverse-engineering codebase. "
+    "You are a careful assistant helping with a software project. "
     "Answer only from the provided input. If the input does not contain the answer, say so plainly. "
     "Never invent function names, offsets, addresses, APIs or file paths. Be concise."
 )
@@ -187,17 +218,27 @@ def find_model(tags: dict, wanted: str):
     return None
 
 
-def _is_game_stem(stem: str) -> bool:
+def exempt_of(cfg) -> tuple:
+    """The machine's exempt fixture prefixes (lower-case); the defaults when the config names none."""
+    got = [str(x).strip().lower() for x in ((cfg or {}).get("exempt_prefixes") or []) if str(x).strip()]
+    return tuple(got) or DEFAULT_EXEMPT_PREFIXES
+
+
+def system_prompt_of(cfg) -> str:
+    return str((cfg or {}).get("system_prompt") or SYSTEM_PROMPT)
+
+
+def _is_game_stem(stem: str, exempt=DEFAULT_EXEMPT_PREFIXES) -> bool:
     s = stem.lower()
-    return not s.startswith(EXEMPT_STEM_PREFIX) and s not in NON_GAME_STEMS
+    return not s.startswith(tuple(exempt)) and s not in NON_GAME_STEMS
 
 
-def is_commercial_process(image: str) -> bool:
+def is_commercial_process(image: str, exempt=DEFAULT_EXEMPT_PREFIXES) -> bool:
     m = PROCESS_EXE_RE.fullmatch((image or "").strip())
-    return bool(m) and _is_game_stem(m.group(1))
+    return bool(m) and _is_game_stem(m.group(1), exempt)
 
 
-def command_launches_commercial(command: str) -> str | None:
+def command_launches_commercial(command: str, exempt=DEFAULT_EXEMPT_PREFIXES) -> str | None:
     """What in this shell command looks like a commercial game launch, or None.
 
     Errs toward yes: `taskkill /IM Elliot-Win64-Shipping.exe` also matches. That costs nothing
@@ -208,7 +249,7 @@ def command_launches_commercial(command: str) -> str | None:
     for m in COMMAND_EXE_RE.finditer(command or ""):
         if re.search(r"/im\s+[\"']?$", command[max(0, m.start() - 8):m.start()], re.I):
             continue                                 # `taskkill /IM <exe>` names it to KILL it
-        if _is_game_stem(m.group(1)):
+        if _is_game_stem(m.group(1), exempt):
             return m.group(0)
     return None
 
@@ -255,8 +296,8 @@ def reservation_state(marker, now: float, game_running: bool) -> str:
     return "active" if 0 <= now - float(marker.get("set_at") or 0) < grace else "expired"
 
 
-def commercial_games(images) -> list[str]:
-    return sorted({i for i in images if is_commercial_process(i)}, key=str.lower)
+def commercial_games(images, exempt=DEFAULT_EXEMPT_PREFIXES) -> list[str]:
+    return sorted({i for i in images if is_commercial_process(i, exempt)}, key=str.lower)
 
 
 def estimate_tokens(text: str, cpt: float = ASCII_CHARS_PER_TOKEN) -> int:
@@ -321,9 +362,29 @@ def main_checkout(root: pathlib.Path) -> pathlib.Path:
     return config_candidates(root)[-1].parent.parent
 
 
+_OUR_SCRIPT_SUFFIXES = ("tools/llm/ollama_local.py",                 # a source checkout (version 1)
+                        f"{STATE_DIRNAME}/{MACHINE_SCRIPT_FILE}")       # the machine copy (version 2+)
+
+
 def _is_our_hook(h: dict) -> bool:
+    """Ours = runs this helper's `hook`, from ANY checkout or the machine copy. Matching them all is what
+    keeps the machine at exactly ONE entry however many repos ever ran setup."""
     args = [str(a) for a in (h.get("args") or [])]
-    return any(a.replace("\\", "/").endswith("tools/llm/ollama_local.py") for a in args) and "hook" in args
+    if "hook" not in args:
+        return False
+    mine = machine_script().as_posix().lower()
+    return any(a.replace("\\", "/").lower().endswith(_OUR_SCRIPT_SUFFIXES) or a.replace("\\", "/").lower() == mine
+               for a in args)
+
+
+def hook_target(settings) -> str | None:
+    """The script our hook entry runs, or None when the settings hold no entry of ours."""
+    for g in ((settings or {}).get("hooks") or {}).get("PreToolUse") or []:
+        for h in g.get("hooks") or []:
+            if _is_our_hook(h):
+                args = [str(a) for a in h.get("args") or []]
+                return args[args.index("hook") - 1] if args.index("hook") > 0 else None
+    return None
 
 
 def remove_hook(settings: dict) -> dict:
@@ -376,7 +437,7 @@ def newline_of(original) -> str:
 
 
 def disabled_by_env(env) -> bool:
-    return (env.get(DISABLE_ENV) or "").strip().lower() in ("off", "0", "false", "no")
+    return any((env.get(k) or "").strip().lower() in ("off", "0", "false", "no") for k in DISABLE_ENVS)
 
 
 # ── I/O ──────────────────────────────────────────────────────────────────────────────────────────
@@ -465,8 +526,153 @@ def running_images() -> list[str]:
 
 # ── Cross-session state (machine-wide; every write is best-effort and never fails the caller) ───────
 def state_dir() -> pathlib.Path:
+    if os.environ.get(HOME_ENV):
+        return pathlib.Path(os.environ[HOME_ENV])
     base = os.environ.get("LOCALAPPDATA") or str(pathlib.Path.home() / ".cache")
     return pathlib.Path(base) / STATE_DIRNAME
+
+
+def user_settings_path() -> pathlib.Path:
+    return pathlib.Path(os.environ[USER_SETTINGS_ENV]) if os.environ.get(USER_SETTINGS_ENV) else USER_SETTINGS
+
+
+def machine_script() -> pathlib.Path:
+    return state_dir() / MACHINE_SCRIPT_FILE
+
+
+def machine_skill() -> pathlib.Path:
+    return state_dir() / MACHINE_SKILL_FILE
+
+
+def machine_config_path() -> pathlib.Path:
+    return state_dir() / MACHINE_CONFIG_FILE
+
+
+def registry_path() -> pathlib.Path:
+    return state_dir() / JOINED_FILE
+
+
+def _same_path(a: pathlib.Path, b: pathlib.Path) -> bool:
+    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+
+
+def is_machine_copy() -> bool:
+    """True when THIS file is the installed machine copy rather than a source checkout's."""
+    return _same_path(SCRIPT, machine_script())
+
+
+# ── Machine install, and repos joining / leaving it ──────────────────────────────────────────────────
+# A repo JOINS by receiving the skill file -- nothing else: the skill calls the machine copy through
+# $LOCALAPPDATA, so the file carries no machine fact and can be committed to a public repo. It LEAVES by
+# losing that file. The helper, its config and the hook are installed ONCE per machine; every joined
+# repo, and every session anywhere (the hook), shares them.
+def repo_skill_path(repo: pathlib.Path) -> pathlib.Path:
+    return pathlib.Path(repo) / SKILL_REL
+
+
+def _is_source_repo(repo: pathlib.Path) -> bool:
+    """A checkout that ships the helper itself: its skill is part of its source, never `leave`d."""
+    return (pathlib.Path(repo) / "tools" / "llm" / MACHINE_SCRIPT_FILE).is_file()
+
+
+def _registry() -> dict:
+    data = _read_json(registry_path())
+    repos = (data or {}).get("repos") if isinstance(data, dict) else None
+    return {"schema": 1, "repos": repos if isinstance(repos, dict) else {}}
+
+
+def _registry_key(repo: pathlib.Path) -> str:
+    return os.path.normcase(os.path.abspath(repo))
+
+
+def register_repo(repo: pathlib.Path) -> None:
+    reg = _registry()
+    reg["repos"][_registry_key(repo)] = {"path": str(pathlib.Path(repo)), "joined_at": time.time()}
+    _write_json(registry_path(), reg)
+
+
+def unregister_repo(repo: pathlib.Path) -> bool:
+    reg = _registry()
+    had = reg["repos"].pop(_registry_key(repo), None) is not None
+    if had:
+        _write_json(registry_path(), reg)
+    return had
+
+
+def join_repo(repo: pathlib.Path, skill_text: str) -> str:
+    """joined | updated | current. Writes the skill (LF, as the installed copy has it) and registers."""
+    path = repo_skill_path(repo)
+    old = path.read_text(encoding="utf-8") if path.is_file() else None
+    if old != skill_text:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(skill_text, encoding="utf-8", newline="\n")
+    register_repo(repo)
+    return "joined" if old is None else ("current" if old == skill_text else "updated")
+
+
+def leave_repo(repo: pathlib.Path) -> str:
+    """left | not-joined | refused-source. Removes the skill and the dirs it emptied; nothing else."""
+    repo = pathlib.Path(repo)
+    if _is_source_repo(repo):
+        return "refused-source"
+    path = repo_skill_path(repo)
+    had = path.is_file()
+    if had:
+        path.unlink()
+        for d in (path.parent, path.parent.parent, repo / ".claude"):      # local-llm/, skills/, .claude/
+            try:
+                d.rmdir()                                                    # only if empty
+            except OSError:
+                break
+    return "left" if (unregister_repo(repo) or had) else "not-joined"
+
+
+def joined_repos() -> list[dict]:
+    """[{path, status}] with status current | outdated | missing against the installed skill."""
+    want = machine_skill().read_text(encoding="utf-8") if machine_skill().is_file() else None
+    out = []
+    for rec in _registry()["repos"].values():
+        p = repo_skill_path(pathlib.Path(rec.get("path") or ""))
+        have = p.read_text(encoding="utf-8") if p.is_file() else None
+        status = "missing" if have is None else ("current" if want is None or have == want else "outdated")
+        out.append({"path": rec.get("path"), "status": status})
+    return sorted(out, key=lambda r: str(r["path"]).lower())
+
+
+def install_machine(src_script: pathlib.Path, skill_text: str | None, cfg: dict) -> None:
+    """Copy the helper (and its skill) to the machine dir and write the machine config."""
+    d = state_dir()
+    d.mkdir(parents=True, exist_ok=True)
+    if not _same_path(src_script, machine_script()):
+        shutil.copyfile(src_script, machine_script())
+    if skill_text is not None:
+        machine_skill().write_text(skill_text, encoding="utf-8", newline="\n")
+    machine_config_path().write_text(json.dumps({**cfg, "version": HELPER_VERSION}, indent=2) + "\n",
+                                     encoding="utf-8", newline="\n")
+
+
+def uninstall_machine() -> None:
+    """Remove the machine copy, skill and config. Leases / reservation / the repo list stay: the list is
+    what a later `install` or `repos` reports as joined."""
+    for p in (machine_script(), machine_skill(), machine_config_path()):
+        try:
+            p.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def resolve_repo(path) -> pathlib.Path:
+    """--repo, else the git top level of the working directory, else the working directory."""
+    if path:
+        return pathlib.Path(path).resolve()
+    try:
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        if top:
+            return pathlib.Path(top).resolve()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return pathlib.Path.cwd().resolve()
 
 
 def _read_json(path: pathlib.Path):
@@ -570,11 +776,22 @@ def gpu_free_mb():
     return total - used
 
 
-def load_config():
-    """(config, where-or-why). Reads no network: a machine without the file stays untouched."""
+def load_config(root=None):
+    """(config, where-or-why). Reads no network: a machine without the install stays untouched.
+
+    The MACHINE config (written by `install`) is the one every joined repo and the hook share. A
+    source checkout's legacy `.claude/local-llm.json` (version 1) is read only when there is none."""
     if disabled_by_env(os.environ):
-        return None, f"{DISABLE_ENV}=off"
-    for p in config_candidates(ROOT):
+        return None, "disabled for this shell (CLAUDE_LOCAL_LLM=off)"
+    mc = machine_config_path()
+    if mc.is_file():
+        cfg = _read_json(mc)
+        if not isinstance(cfg, dict) or not str(cfg.get("model") or "").strip():
+            return None, f'{mc.name} (the machine install) has no "model"; re-run install'
+        return cfg, str(mc)
+    if is_machine_copy():
+        return None, "this machine has not installed it (install --model TAG)"
+    for p in config_candidates(pathlib.Path(root) if root else ROOT):
         if p.is_file():
             try:
                 cfg = json.loads(p.read_text(encoding="utf-8"))
@@ -583,7 +800,7 @@ def load_config():
             if not isinstance(cfg, dict) or not str(cfg.get("model") or "").strip():
                 return None, f'{p.name} has no "model"'
             return cfg, str(p)
-    return None, "this machine has not opted in (setup --model TAG)"
+    return None, "this machine has not installed it (install --model TAG)"
 
 
 class Probe:
@@ -592,6 +809,7 @@ class Probe:
         self.url = str(self.cfg.get("url") or DEFAULT_URL).rstrip("/")
         self.num_ctx = int(self.cfg.get("num_ctx") or NUM_CTX)
         self.keep_alive = str(self.cfg.get("keep_alive") or KEEP_ALIVE)
+        self.system_prompt, self.exempt = system_prompt_of(self.cfg), exempt_of(self.cfg)
         self.state, self.reason, self.entry, self.loaded = "disabled", "", None, False
 
     @property
@@ -668,7 +886,7 @@ def guard(p: Probe):
     Checked before EVERY request (each --chunked slice too), which is what closes the cross-session
     gap: another session reserves the GPU before its game's process exists, and this session's next
     request sees the reservation instead of loading the model back."""
-    games = commercial_games(running_images())
+    games = commercial_games(running_images(), p.exempt)
     if games:
         reserve_gpu("running", f"running: {', '.join(games)}")
         if p.loaded:
@@ -699,18 +917,40 @@ def cmd_status(args) -> int:
         info = {"state": p.state, "reason": p.reason, "model": p.name, "url": p.url,
                 "num_ctx": p.num_ctx, "loaded": p.loaded}
         if p.state == "ready":
-            games = commercial_games(running_images())
+            games = commercial_games(running_images(), p.exempt)
             marker = active_reservation(games)
             info["commercial_games"] = games
             info["gpu_reserved"] = marker.get("reason") if marker else None
             leases = other_leases()
             info["in_use_by"] = ([{k: r.get(k) for k in ("pid", "action", "cwd", "started")} for r in leases]
                                  if args.json else (describe_leases(leases) or None))
+    info.update(install_health())
     if args.json:
         print(json.dumps(info))
     else:
         print("  ".join(f"{k}={v}" for k, v in info.items() if v not in ("", None)))
     return 0 if info["state"] == "ready" else 2
+
+
+def install_health() -> dict:
+    """What `status` adds about the machine install: where the config came from, the installed version,
+    whether the ONE hook points at the machine copy, and -- run from a source checkout -- whether the
+    installed copy is behind this one."""
+    out = {"install": None, "version": None, "hook": None, "update": None}
+    if machine_config_path().is_file():
+        out["install"] = "machine"
+        out["version"] = (_read_json(machine_config_path()) or {}).get("version")
+    elif not is_machine_copy() and any(p.is_file() for p in config_candidates(ROOT)):
+        out["install"] = "repo (version 1: run install)"
+    settings, _ = _load_settings(user_settings_path())
+    target = hook_target(settings or {})
+    if out["install"] == "machine":
+        out["hook"] = ("ok" if target and _same_path(pathlib.Path(target), machine_script())
+                       else "MISSING -- run install" if not target else f"points at {target} -- run install")
+    if (out["install"] == "machine" and not is_machine_copy() and machine_script().is_file()
+            and machine_script().read_bytes() != SCRIPT.read_bytes()):
+        out["update"] = "this checkout's helper differs from the installed copy -- run install to update"
+    return out
 
 
 def cmd_warm(args) -> int:
@@ -788,7 +1028,7 @@ def _chat(p: Probe, user: str, think: bool) -> dict:
         return _post_with_retry(p.url + "/api/chat", {
             "model": p.name, "stream": False, "think": bool(think), "keep_alive": p.keep_alive,
             "truncate": False,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT},
+            "messages": [{"role": "system", "content": p.system_prompt},
                          {"role": "user", "content": user}],
             "options": {"num_ctx": p.num_ctx, "temperature": TEMPERATURE, "num_predict": OUTPUT_RESERVE},
         }, GENERATE_TIMEOUT)
@@ -820,7 +1060,7 @@ def _answer_slices(p: Probe, prompt: str, name: str, first: int, last: int, text
             raise
         measured = len(request) / e.tokens if e.tokens > 0 else cpt / 2
         cpt = min(cpt, measured) * RESPLIT_SAFETY
-        budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(SYSTEM_PROMPT + prompt, cpt) - CHUNK_SLACK_TOKENS
+        budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(p.system_prompt + prompt, cpt) - CHUNK_SLACK_TOKENS
         subs = split_lines(text, max(budget, 256), cpt)
         if len(subs) < 2:                            # never retry the same slice unchanged
             half = max(1, len(text) // 2)
@@ -853,7 +1093,7 @@ def cmd_ask(args) -> int:
 
 
 def _ask(p: Probe, args, prompt: str, files) -> int:
-    budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(SYSTEM_PROMPT + prompt) - CHUNK_SLACK_TOKENS
+    budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(p.system_prompt + prompt) - CHUNK_SLACK_TOKENS
 
     if not args.chunked:
         whole = build_request(prompt, [(f"FILE: {name}", text) for name, text in files])
@@ -901,7 +1141,7 @@ def cmd_hook(args) -> int:
         cfg, _ = load_config()
         if cfg is None:
             return 0
-        launch = command_launches_commercial(command)
+        launch = command_launches_commercial(command, exempt_of(cfg))
         if launch:                                   # reserve FIRST: other sessions must not reload it
             reserve_gpu("launch", f"launch in a command: {launch}")
         p = Probe(cfg)
@@ -915,7 +1155,7 @@ def cmd_hook(args) -> int:
         if launch:
             why = f"launch in this command: {launch}"
         else:
-            games = commercial_games(running_images())
+            games = commercial_games(running_images(), exempt_of(cfg))
             if not games:
                 return 0
             reserve_gpu("running", f"running: {', '.join(games)}")
@@ -960,61 +1200,158 @@ def _save_settings(path: pathlib.Path, before: dict, after: dict, backup: bool) 
     path.write_text(settings_text(after), encoding="utf-8", newline=newline_of(original))
 
 
-def cmd_setup(args) -> int:
-    """The hook goes to the USER-level settings, so it guards every session on this machine, in every
-    repo; the one this used to write into the project's settings.local.json is migrated out, or it
-    would fire twice here."""
-    main = main_checkout(ROOT)
-    cfg_path, local_path = main / CONFIG_REL, main / SETTINGS_REL
-    user_before, err = _load_settings(USER_SETTINGS)
-    local_before, err2 = _load_settings(local_path)
-    if err or err2:
-        print(f"local-llm: {err or err2}", file=sys.stderr)
-        return 1
-
-    if args.remove:
-        cfg_path.unlink(missing_ok=True)
-        _save_settings(USER_SETTINGS, user_before, remove_hook(user_before), backup=True)
+def _cleanup_legacy_repo_optin(main: pathlib.Path) -> None:
+    """Version 1 kept the opt-in in the checkout (.claude/local-llm.json) and, before that, the hook in
+    its settings.local.json. The machine install replaces both."""
+    (main / CONFIG_REL).unlink(missing_ok=True)
+    local_path = main / SETTINGS_REL
+    local_before, err = _load_settings(local_path)
+    if not err:
         _save_settings(local_path, local_before, remove_hook(local_before), backup=False)
-        print(f"local-llm: opted out -- removed {CONFIG_REL.as_posix()} and the hook "
-              f"(user-level settings and this repo's {SETTINGS_REL.as_posix()})")
-        return 0
 
-    if not args.model:
-        print("local-llm: setup needs --model TAG (or --remove)", file=sys.stderr)
+
+def _print_joined(prefix: str = "") -> None:
+    repos = joined_repos()
+    if not repos:
+        print(f"{prefix}joined repos: none")
+        return
+    print(f"{prefix}joined repos ({len(repos)}):")
+    for r in repos:
+        hint = {"outdated": "  <- run `join` there to refresh the skill",
+                "missing": "  <- its skill file is gone: `join` there, or `leave` it"}.get(r["status"], "")
+        print(f"  {r['status']:8} {r['path']}{hint}")
+
+
+def cmd_install(args) -> int:
+    """Install (or update) THE machine copy: helper + skill + config in the machine dir, one hook in the
+    user-level settings pointing at it. Run from a source checkout to install or update the helper; run
+    from the machine copy to change the model / URL / window only."""
+    source = None if is_machine_copy() else main_checkout(ROOT)
+    old, _ = load_config(root=source)
+    old = old or {}
+    model = args.model or old.get("model")
+    if not model:
+        print("local-llm: install needs --model TAG", file=sys.stderr)
         return 1
-    url = (args.url or DEFAULT_URL).rstrip("/")
+    url = (args.url or old.get("url") or DEFAULT_URL).rstrip("/")
     try:
         tags = http_json(url + "/api/tags", timeout=SETUP_TIMEOUT)
     except Exception as e:                           # noqa: BLE001
         print(f"local-llm: no Ollama answers at {url} ({type(e).__name__})", file=sys.stderr)
         return 2
-    entry = find_model(tags, args.model)
+    entry = find_model(tags, model)
     if not entry:
         have = ", ".join(m.get("name", "?") for m in tags.get("models") or []) or "none"
-        print(f"local-llm: {args.model} is not pulled here (have: {have})", file=sys.stderr)
+        print(f"local-llm: {model} is not pulled here (have: {have})", file=sys.stderr)
         return 2
+    user_path = user_settings_path()
+    user_before, err = _load_settings(user_path)
+    if err:
+        print(f"local-llm: {err}", file=sys.stderr)
+        return 1
 
-    cfg = {"model": entry["name"]}
-    if args.url:
+    cfg = {k: v for k, v in old.items() if k not in ("version",)}
+    cfg["model"] = entry["name"]
+    if url != DEFAULT_URL:
         cfg["url"] = url
+    else:
+        cfg.pop("url", None)
     if args.num_ctx:
         cfg["num_ctx"] = args.num_ctx
-    cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8", newline="\n")
+    if args.exempt:
+        cfg["exempt_prefixes"] = sorted({*exempt_of(cfg), *(x.strip().lower() for x in args.exempt if x.strip())})
+    skill_src = (source / SKILL_REL) if source else machine_skill()
+    skill_text = skill_src.read_text(encoding="utf-8").replace("\r\n", "\n") if skill_src.is_file() else None
+    install_machine(SCRIPT, skill_text, cfg)
     python = shutil.which("py") or sys.executable
-    script = (main / "tools" / "llm" / "ollama_local.py").as_posix()
-    _save_settings(USER_SETTINGS, user_before, merge_hook(user_before, python, script), backup=True)
-    _save_settings(local_path, local_before, remove_hook(local_before), backup=False)
-    print(f"local-llm: opted in -- {CONFIG_REL.as_posix()} = {json.dumps(cfg)} (gitignored).\n"
-          f"PreToolUse hook ({HOOK_MATCHER}) written to the USER-level Claude Code settings, so it guards "
-          f"every session on this machine, in every repo (the file was backed up once, as "
-          f"*{USER_SETTINGS_BACKUP_SUFFIX}). It points at {script}: after moving this checkout, re-run "
-          f"setup. The hook takes effect in a NEW session (or after opening /hooks once).")
+    _save_settings(user_path, user_before, merge_hook(user_before, python, machine_script().as_posix()),
+                   backup=True)
+    if source:
+        _cleanup_legacy_repo_optin(source)
+        register_repo(source)
+    shown = {k: v for k, v in cfg.items() if k != "system_prompt"}
+    print(f"local-llm: installed version {HELPER_VERSION} for this machine -- {json.dumps(shown)}\n"
+          f"  helper, skill and config: {state_dir()}\n"
+          f"  PreToolUse hook ({HOOK_MATCHER}) in the USER-level Claude Code settings -> the machine copy, "
+          f"so it guards every session here, in every repo (backed up once as *{USER_SETTINGS_BACKUP_SUFFIX}).\n"
+          f"  The hook takes effect in a NEW session (or after opening /hooks once).\n"
+          f"  A repo joins with `join` (run in it), leaves with `leave`.")
+    _print_joined("  ")
     return 0
 
 
-# ── Self-test ────────────────────────────────────────────────────────────────────────────────────
+def cmd_uninstall(args) -> int:
+    """Remove the machine install and its hook. Joined repos keep their skill, which is inert without the
+    install (it answers "not installed"); `--leave-all` removes those too."""
+    user_path = user_settings_path()
+    user_before, err = _load_settings(user_path)
+    if err:
+        print(f"local-llm: {err}", file=sys.stderr)
+        return 1
+    if args.leave_all:
+        for r in joined_repos():
+            print(f"  leave {r['path']}: {leave_repo(pathlib.Path(r['path']))}")
+    _save_settings(user_path, user_before, remove_hook(user_before), backup=True)
+    uninstall_machine()
+    if not is_machine_copy():
+        _cleanup_legacy_repo_optin(main_checkout(ROOT))
+    print("local-llm: uninstalled -- the machine copy, its config and the user-level hook are gone.")
+    _print_joined("  ")
+    return 0
+
+
+def cmd_setup(args) -> int:
+    """Version-1 name, kept: `setup --model TAG` installs, `setup --remove` uninstalls."""
+    if args.remove:
+        args.leave_all = False
+        return cmd_uninstall(args)
+    return cmd_install(args)
+
+
+def _skill_to_hand_out():
+    """The skill a repo joins with: the installed copy's; from a source checkout before any install, its own."""
+    if machine_skill().is_file():
+        return machine_skill().read_text(encoding="utf-8")
+    if not is_machine_copy() and (ROOT / SKILL_REL).is_file():
+        return (ROOT / SKILL_REL).read_text(encoding="utf-8").replace("\r\n", "\n")
+    return None
+
+
+def cmd_join(args) -> int:
+    repo = resolve_repo(args.repo)
+    if not machine_script().is_file():
+        print("local-llm: this machine has no install yet -- run `install --model TAG` from a source "
+              "checkout first", file=sys.stderr)
+        return 2
+    skill = _skill_to_hand_out()
+    if skill is None:
+        print("local-llm: the machine install carries no skill; re-run `install` from a source checkout",
+              file=sys.stderr)
+        return 1
+    result = join_repo(repo, skill)
+    print(f"local-llm: {result} -- {repo}\n"
+          f"  wrote {SKILL_REL.as_posix()} (no machine facts: it calls the machine copy through "
+          f"$LOCALAPPDATA). Commit it to share it -- it is inert on a machine without the install.\n"
+          f"  To leave: `leave` in that repo.")
+    return 0
+
+
+def cmd_leave(args) -> int:
+    repo = resolve_repo(args.repo)
+    result = leave_repo(repo)
+    if result == "refused-source":
+        print(f"local-llm: {repo} ships the helper itself; its skill is source, not a join. To stop using "
+              f"the helper on this machine: `uninstall`.", file=sys.stderr)
+        return 1
+    print(f"local-llm: {result} -- {repo}" + (f" (removed {SKILL_REL.as_posix()})" if result == "left" else ""))
+    return 0
+
+
+def cmd_repos(args) -> int:
+    _print_joined()
+    return 0
+
+
 def selftest() -> int:
     checks = []
 
@@ -1247,7 +1584,7 @@ def _selftest_cooperative(ok) -> None:
 
     saved = os.environ.get(HOME_ENV)
     with tempfile.TemporaryDirectory() as td:
-        os.environ[HOME_ENV] = str(pathlib.Path(td) / "state")
+        os.environ[HOME_ENV] = str(pathlib.Path(td) / "state")         # NOT named claude-local-llm, on purpose
         try:
             src = pathlib.Path(td) / "Src"
             (src / "tools" / "llm").mkdir(parents=True)
@@ -1326,14 +1663,28 @@ def main(argv) -> int:
     a.add_argument("--file", action="append", help="read by this script, so the text never enters the caller's context")
     a.add_argument("--chunked", action="store_true", help="ask once per window-sized slice of the files")
     a.add_argument("--think", action="store_true")
-    u = sub.add_parser("setup")
-    u.add_argument("--model")
-    u.add_argument("--url")
-    u.add_argument("--num-ctx", type=int)
-    u.add_argument("--remove", action="store_true")
+    for name, hlp in (("install", "install / update THE machine copy + config + user-level hook"),
+                      ("setup", "version-1 name of install (--remove = uninstall)")):
+        u = sub.add_parser(name, help=hlp)
+        u.add_argument("--model")
+        u.add_argument("--url")
+        u.add_argument("--num-ctx", type=int)
+        u.add_argument("--exempt", action="append", help="a test-fixture exe prefix that may share the GPU")
+        u.add_argument("--remove", action="store_true", help=argparse.SUPPRESS if name == "install" else None)
+    un2 = sub.add_parser("uninstall", help="remove the machine install and its hook")
+    un2.add_argument("--leave-all", action="store_true", help="also remove the skill from every joined repo")
+    for name, hlp in (("join", "give a repo the skill (default: the repo you are in)"),
+                      ("leave", "take the skill back out of a repo")):
+        j = sub.add_parser(name, help=hlp)
+        j.add_argument("--repo")
+    sub.add_parser("repos", help="list the joined repos and whether their skill is current")
     args = ap.parse_args(argv)
+    if args.cmd == "install" and args.remove:
+        args.cmd = "setup"
     return {"status": cmd_status, "warm": cmd_warm, "unload": cmd_unload, "reserve": cmd_reserve,
-            "release": cmd_release, "hook": cmd_hook, "ask": cmd_ask, "setup": cmd_setup}[args.cmd](args)
+            "release": cmd_release, "hook": cmd_hook, "ask": cmd_ask, "setup": cmd_setup,
+            "install": cmd_install, "uninstall": cmd_uninstall, "join": cmd_join, "leave": cmd_leave,
+            "repos": cmd_repos}[args.cmd](args)
 
 
 if __name__ == "__main__":
