@@ -84,6 +84,18 @@ these rules, an independent reviewer agent per batch, and textlint. Keep all thr
 | anti-tamper / anti-cheat | 改ざん防止 / アンチチート | |
 | launcher | ランチャー | |
 | Steam library | Steam ライブラリ | Steam's own ja UI |
+| container | コンテナー | Microsoft -er rule |
+| slider / radio button / badge | スライダー / ラジオボタン / バッジ | |
+| leaf (node) / hop | リーフ / ホップ | |
+| breadth-first search | 幅優先探索 | |
+| disassembler / memory viewer | 逆アセンブラー / メモリビューアー | |
+| hex view | 16 進表示 | |
+| loader lock / shim | ローダーロック / シム | |
+| cooked (UE) | クック済み | |
+| CDO | クラスのデフォルトオブジェクト（CDO） | spell out on first use per page |
+| Recycle Bin | ごみ箱 | Windows ja UI name |
+| "our" proxy / DLL | 本ツールのプロキシ / DLL | not 私たちの |
+| idempotent | 「すでに ON なら何もしません」 | describe it; no single word |
 
 ## Checking a page
 
