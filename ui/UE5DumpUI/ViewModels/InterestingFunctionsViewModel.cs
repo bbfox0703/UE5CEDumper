@@ -185,11 +185,6 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     public event Action<string /*defaultFileName*/, string /*ctXml*/>? RequestSaveCheatTable;
 
     /// <summary>
-    /// Raised when a row's "Name" button is clicked. MainWindow handler
-    /// hands the string to the platform clipboard service. Keeps this VM
-    /// free of an IPlatformService dependency so the test stubs stay tiny.
-    /// </summary>
-    /// <summary>
     /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
     /// arrived, so the raiser can decide what to claim.
     ///

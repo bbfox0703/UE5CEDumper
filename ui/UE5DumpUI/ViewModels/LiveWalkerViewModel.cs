@@ -2085,10 +2085,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             or "StructProperty";
 
     /// <summary>
-    /// Detect fields whose container element count exceeds the loaded element count.
-    /// Returns a warning string listing the truncated fields, or null if none.
-    /// </summary>
-    /// <summary>
     /// Record a spine re-root in the log. The user-facing note goes to
     /// <see cref="StatusText"/> only, which reaches no log and is gone the moment the
     /// next status replaces it — so a session's logs showed the re-anchor solely as a
@@ -3589,16 +3585,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Drill the container chain of <paramref name="match"/> hop-by-hop from the
-    /// currently-displayed owning object, landing on the value. Each hop:
-    /// navigate any intermediate DIRECT struct segments (dotted name) → drill the
-    /// container → select element [N]; nested hops then drill INTO the struct
-    /// element to continue. The deepest hop scrolls to the value (a field of the
-    /// struct element at its intra-offset, or the leaf element itself). Returns
-    /// the number of hops drilled; stops early (and reports) if a hop can't be
-    /// matched in the live view.
-    /// </summary>
-    /// <summary>
     /// Flatten a container match into the ordered drill path, outermost-first:
     /// the match's own (outermost) container hop followed by each nested-chain
     /// hop. Each entry is (container field dotted-name, element index, intra
@@ -3616,6 +3602,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return hops;
     }
 
+    /// <summary>
+    /// Drill the container chain of <paramref name="match"/> hop-by-hop from the
+    /// currently-displayed owning object, landing on the value. Each hop:
+    /// navigate any intermediate DIRECT struct segments (dotted name) → drill the
+    /// container → select element [N]; nested hops then drill INTO the struct
+    /// element to continue. The deepest hop scrolls to the value (a field of the
+    /// struct element at its intra-offset, or the leaf element itself). Returns
+    /// the number of hops drilled; stops early (and reports) if a hop can't be
+    /// matched in the live view.
+    /// </summary>
     private async Task<int> DrillContainerChainAsync(ContainerMatch match)
     {
         var hops = BuildContainerDrillPath(match);
@@ -3695,17 +3691,6 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// Parse a Value Search / SPC candidate display name into an ordered drill
-    /// path of segments, each either a DIRECT struct field ("Name", index -1) or
-    /// a CONTAINER element ("Name", index N from "Name[N]"). Returns true only
-    /// when the path contains at least one "[N]" element (so it needs container
-    /// drilling); a plain field ("Health"), an empty/malformed name, or a bracket
-    /// not at a segment's end returns false so the caller falls back to the
-    /// single-offset scroll. Handles arbitrary depth, e.g.
-    /// "SaveSlotList[0].MsTuneData.MsTunes[0].WeaponTuneList[0].Tunes[2]". Pure —
-    /// unit-tested. Generalises the former single-"[N]" struct-array parser.
-    /// </summary>
-    /// <summary>
     /// Resolve the field row a byte-offset scroll hint should land on: the field
     /// at <paramref name="wantOffset"/> exactly, or — when none exists because the
     /// leaf lives inside a nested struct (a GAS <c>FGameplayAttributeData.CurrentValue</c>
@@ -3750,6 +3735,17 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return true;
     }
 
+    /// <summary>
+    /// Parse a Value Search / SPC candidate display name into an ordered drill
+    /// path of segments, each either a DIRECT struct field ("Name", index -1) or
+    /// a CONTAINER element ("Name", index N from "Name[N]"). Returns true only
+    /// when the path contains at least one "[N]" element (so it needs container
+    /// drilling); a plain field ("Health"), an empty/malformed name, or a bracket
+    /// not at a segment's end returns false so the caller falls back to the
+    /// single-offset scroll. Handles arbitrary depth, e.g.
+    /// "SaveSlotList[0].MsTuneData.MsTunes[0].WeaponTuneList[0].Tunes[2]". Pure —
+    /// unit-tested. Generalises the former single-"[N]" struct-array parser.
+    /// </summary>
     internal static bool TryParseContainerPath(string? fieldName,
                                                out List<(string name, int index)> segments,
                                                bool requireIndex = true)

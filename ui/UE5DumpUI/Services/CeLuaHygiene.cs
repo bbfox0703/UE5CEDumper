@@ -3,30 +3,6 @@ using System.Text;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Shared CE-Lua "hygiene" emit helpers so every generated AA Script follows one
-/// rule set:
-/// <list type="bullet">
-///   <item><b>Quiet by default.</b> Diagnostic <c>print()</c> is replaced by
-///     <c>dbg()</c>, which only prints when the <c>DEBUG</c> flag is set. This
-///     stops the CE Lua Engine window from popping over Cheat Engine on every
-///     enable/disable.</item>
-///   <item><b>Errors always surface.</b> Real failures keep using bare
-///     <c>print()</c> / <c>showMessage()</c> so the user still sees them, and the
-///     success-close is skipped so the window stays readable.</item>
-///   <item><b>Auto-close on clean success.</b> When <c>DEBUG == 0</c> and the
-///     block finished without error, the Lua Engine window closes itself.</item>
-/// </list>
-///
-/// The flag is a single global master switch with a per-script override:
-/// <c>local DEBUG = UE5_DEBUG or 0</c>. Set <c>UE5_DEBUG=1</c> once in CE's Lua
-/// console to make every script verbose (and keep every window open), or edit a
-/// single script's line to debug just that one. Default (unset) = quiet.
-///
-/// The emitted <c>dbg</c> definition is byte-identical everywhere so the
-/// convention can't drift between generators; each generator places its own
-/// success-close (<see cref="AppendCloseOnSuccess"/>) where its lifecycle allows.
-/// </summary>
-/// <summary>
 /// How a generated block ends when its mailbox round-trip times out. The modes are NOT
 /// interchangeable — they exist because the repo has several script shapes:
 /// <list type="bullet">
@@ -83,6 +59,30 @@ public enum MailboxTimeout
     RaiseError,
 }
 
+/// <summary>
+/// Shared CE-Lua "hygiene" emit helpers so every generated AA Script follows one
+/// rule set:
+/// <list type="bullet">
+///   <item><b>Quiet by default.</b> Diagnostic <c>print()</c> is replaced by
+///     <c>dbg()</c>, which only prints when the <c>DEBUG</c> flag is set. This
+///     stops the CE Lua Engine window from popping over Cheat Engine on every
+///     enable/disable.</item>
+///   <item><b>Errors always surface.</b> Real failures keep using bare
+///     <c>print()</c> / <c>showMessage()</c> so the user still sees them, and the
+///     success-close is skipped so the window stays readable.</item>
+///   <item><b>Auto-close on clean success.</b> When <c>DEBUG == 0</c> and the
+///     block finished without error, the Lua Engine window closes itself.</item>
+/// </list>
+///
+/// The flag is a single global master switch with a per-script override:
+/// <c>local DEBUG = UE5_DEBUG or 0</c>. Set <c>UE5_DEBUG=1</c> once in CE's Lua
+/// console to make every script verbose (and keep every window open), or edit a
+/// single script's line to debug just that one. Default (unset) = quiet.
+///
+/// The emitted <c>dbg</c> definition is byte-identical everywhere so the
+/// convention can't drift between generators; each generator places its own
+/// success-close (<see cref="AppendCloseOnSuccess"/>) where its lifecycle allows.
+/// </summary>
 public static class CeLuaHygiene
 {
     /// <summary>The exact Lua expression that closes the CE Lua Engine window.
@@ -293,27 +293,6 @@ public static class CeLuaHygiene
     }
 
     /// <summary>
-    /// Escape arbitrary text for a Lua SINGLE-quoted literal. The one escaper new
-    /// code should call — there are four divergent private copies in this repo
-    /// (BakedScriptGenerator, FreezeScriptGenerator, InvokeScriptGenerator, plus
-    /// EscapeLuaComment) and the weakest of them, InvokeScriptGenerator's, handles
-    /// neither <c>\r</c> nor <c>\t</c> nor <c>]</c>.
-    ///
-    /// Handles backslash, single quote, LF, CR, TAB — and any closing long bracket
-    /// (<c>]]</c>, <c>]=]</c>, <c>]==]</c>, …). That last one is not about Lua: the
-    /// AOBMaker CE plugin wraps the WHOLE submitted script in <c>[==[ … ]==]</c> at a
-    /// hardcoded level and does not escape the body, so the byte sequence must not
-    /// appear anywhere in an emitted script — even inside a quoted string, where Lua
-    /// itself would be perfectly happy. The leading <c>]</c> becomes the decimal
-    /// escape <c>\093</c>: same runtime value, different source bytes. Three digits
-    /// because <c>\ddd</c> greedily takes three (by construction the next emitted
-    /// char here is <c>=</c> or <c>]</c>, never a digit, so it is belt-and-braces).
-    ///
-    /// A NUL cannot be escaped at all — <c>luaL_dostring</c> measures with
-    /// <c>strlen</c> — so callers must reject it upstream (see
-    /// <see cref="Models.CoordText.HasBlockedChars"/>).
-    /// </summary>
-    /// <summary>
     /// Fold a Lua payload to LF before it is handed to CE as a table file.
     ///
     /// WHY THIS EXISTS (<c>[FREEZEINJECT-CRLF-2026-08-20]</c>)
@@ -371,6 +350,27 @@ public static class CeLuaHygiene
         return sb.ToString();
     }
 
+    /// <summary>
+    /// Escape arbitrary text for a Lua SINGLE-quoted literal. The one escaper new
+    /// code should call — there are four divergent private copies in this repo
+    /// (BakedScriptGenerator, FreezeScriptGenerator, InvokeScriptGenerator, plus
+    /// EscapeLuaComment) and the weakest of them, InvokeScriptGenerator's, handles
+    /// neither <c>\r</c> nor <c>\t</c> nor <c>]</c>.
+    ///
+    /// Handles backslash, single quote, LF, CR, TAB — and any closing long bracket
+    /// (<c>]]</c>, <c>]=]</c>, <c>]==]</c>, …). That last one is not about Lua: the
+    /// AOBMaker CE plugin wraps the WHOLE submitted script in <c>[==[ … ]==]</c> at a
+    /// hardcoded level and does not escape the body, so the byte sequence must not
+    /// appear anywhere in an emitted script — even inside a quoted string, where Lua
+    /// itself would be perfectly happy. The leading <c>]</c> becomes the decimal
+    /// escape <c>\093</c>: same runtime value, different source bytes. Three digits
+    /// because <c>\ddd</c> greedily takes three (by construction the next emitted
+    /// char here is <c>=</c> or <c>]</c>, never a digit, so it is belt-and-braces).
+    ///
+    /// A NUL cannot be escaped at all — <c>luaL_dostring</c> measures with
+    /// <c>strlen</c> — so callers must reject it upstream (see
+    /// <see cref="Models.CoordText.HasBlockedChars"/>).
+    /// </summary>
     public static string EscapeLuaString(string? s)
     {
         if (string.IsNullOrEmpty(s)) return "";

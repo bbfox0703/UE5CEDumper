@@ -3,12 +3,6 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Core;
 
 /// <summary>
-/// SQLite-backed persistence for experimental snapshots. A snapshot is created
-/// once (returning its id), streamed in chunks (so neither the game process nor
-/// the UI holds the whole capture), then finalised with its totals. Raw ADO.NET
-/// only — no EF Core (reflection-based query breaks trim/AOT).
-/// </summary>
-/// <summary>
 /// A bulk-capture write session (one connection + bulk pragmas + a transaction committed
 /// every N chunks). <see cref="WriteChunk"/> runs SYNCHRONOUSLY — call it from a background
 /// consumer task, never the UI thread. Disposing commits the tail + restores durability
@@ -47,6 +41,12 @@ public interface ICaptureSession : IAsyncDisposable
                                bool isUsable = true, string partialReason = "", CancellationToken ct = default);
 }
 
+/// <summary>
+/// SQLite-backed persistence for experimental snapshots. A snapshot is created
+/// once (returning its id), streamed in chunks (so neither the game process nor
+/// the UI holds the whole capture), then finalised with its totals. Raw ADO.NET
+/// only — no EF Core (reflection-based query breaks trim/AOT).
+/// </summary>
 public interface ISnapshotStore
 {
     /// <summary>Absolute path of the SQLite database file for the active game.</summary>

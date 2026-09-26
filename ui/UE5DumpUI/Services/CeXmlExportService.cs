@@ -346,18 +346,6 @@ public static class CeXmlExportService
     // ========================================
 
     /// <summary>
-    /// Pre-resolve all StructProperty fields by walking their inner structure via the DLL.
-    /// Returns a dictionary keyed by field offset, containing flattened inner fields
-    /// with relative offsets from the struct start and dot-prefixed names for nested structs.
-    ///
-    /// Example: StructA at offset 0x100 with inner StructB at +0x10 containing X at +0x0
-    ///   -> resolvedStructs[0x100] = [
-    ///        LiveFieldValue { Name="IntField", Offset=0x0 },
-    ///        LiveFieldValue { Name="StructB.X", Offset=0x10 },
-    ///        LiveFieldValue { Name="StructB.Y", Offset=0x14 },
-    ///      ]
-    /// </summary>
-    /// <summary>
     /// Pre-resolve ObjectProperty / ClassProperty / WeakObjectProperty / Soft* / Lazy* /
     /// Interface* targets so the CE XML emitter can drop GroupHeader+Offsets=[0] children
     /// onto the pointer leaf, mirroring the same drilldown the CSX exporter ships
@@ -1851,17 +1839,6 @@ public static class CeXmlExportService
     // ========================================
 
     /// <summary>
-    /// Remove cycles from the breadcrumb navigation path before XML generation.
-    ///
-    /// A cycle occurs when the user navigates away from an object and later returns to
-    /// the same address (e.g., Child -> Parent -> Child again). The intermediate entries
-    /// (the detour) are removed, keeping only the shortest path.
-    ///
-    /// Example: [A, B, C, A, B] -> A appears at 0 and 3 -> remove [1..3] -> [A, B]
-    /// This gives the clean CE pointer chain: Root(A) -> field(B) instead of
-    /// Root(A) -> field(B) -> Outer(C) -> field(A) -> field(B).
-    /// </summary>
-    /// <summary>
     /// Collapse runs of CONSECUTIVE breadcrumb crumbs that resolve to the exact
     /// same deref step — same field offset, same resolved address, same name, and
     /// same container/pointer kind. Such a pair is always redundant (you can't move
@@ -1934,6 +1911,17 @@ public static class CeXmlExportService
         return spine;
     }
 
+    /// <summary>
+    /// Remove cycles from the breadcrumb navigation path before XML generation.
+    ///
+    /// A cycle occurs when the user navigates away from an object and later returns to
+    /// the same address (e.g., Child -> Parent -> Child again). The intermediate entries
+    /// (the detour) are removed, keeping only the shortest path.
+    ///
+    /// Example: [A, B, C, A, B] -> A appears at 0 and 3 -> remove [1..3] -> [A, B]
+    /// This gives the clean CE pointer chain: Root(A) -> field(B) instead of
+    /// Root(A) -> field(B) -> Outer(C) -> field(A) -> field(B).
+    /// </summary>
     internal static IReadOnlyList<BreadcrumbItem> CleanBreadcrumbs(IReadOnlyList<BreadcrumbItem> breadcrumbs)
     {
         if (breadcrumbs.Count <= 1) return breadcrumbs;
@@ -2411,12 +2399,6 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Emit a StructProperty with pre-resolved inner fields as a CE group.
-    /// Struct is inline (not a pointer), so Address=+{structOffset}, no Offsets.
-    /// Children are flattened (nested structs already expanded with dot-prefixed names).
-    /// Each child's Offset is relative to the struct start.
-    /// </summary>
-    /// <summary>
     /// Emit an ObjectProperty / Class / Weak / Soft / Lazy / Interface field whose
     /// pointer target was pre-resolved by ResolvePointerInstancesAsync. The leaf
     /// becomes a GroupHeader with Address=+{fieldOffset}, Offsets=[0] (CE
@@ -2525,6 +2507,12 @@ public static class CeXmlExportService
         EmitGroupClose(sb, indent);
     }
 
+    /// <summary>
+    /// Emit a StructProperty with pre-resolved inner fields as a CE group.
+    /// Struct is inline (not a pointer), so Address=+{structOffset}, no Offsets.
+    /// Children are flattened (nested structs already expanded with dot-prefixed names).
+    /// Each child's Offset is relative to the struct start.
+    /// </summary>
     private static void EmitResolvedStruct(StringBuilder sb, string indent,
         LiveFieldValue structField, List<LiveFieldValue> children)
     {
@@ -3996,18 +3984,6 @@ public static class CeXmlExportService
     }
 
     /// <summary>
-    /// Map UE property type + field metadata to CE field info.
-    /// Returns null for unsupported/unknown types (struct, array, delegate, etc.).
-    ///
-    /// Signedness rules:
-    /// - Signed: IntProperty (int32), Int8Property, Int16Property, Int64Property
-    /// - Unsigned: UInt32Property, UInt16Property, UInt64Property, ByteProperty
-    ///
-    /// BoolProperty rules:
-    /// - If BoolBitIndex >= 0: Binary type with BitStart/BitLength (CE bit field)
-    /// - Otherwise: Byte type (fallback for bool without bit info)
-    /// </summary>
-    /// <summary>
     /// CE integer-width keyword for a property's byte size. UE enums/bytes can be
     /// 1/2/4/8 bytes wide; emitting the wrong width makes CE read neighbouring
     /// fields — e.g. a 1-byte enum read as "4 Bytes" pulls in the next 3 bytes
@@ -4022,6 +3998,18 @@ public static class CeXmlExportService
         _ => "4 Bytes",   // unknown / unreported size → legacy default
     };
 
+    /// <summary>
+    /// Map UE property type + field metadata to CE field info.
+    /// Returns null for unsupported/unknown types (struct, array, delegate, etc.).
+    ///
+    /// Signedness rules:
+    /// - Signed: IntProperty (int32), Int8Property, Int16Property, Int64Property
+    /// - Unsigned: UInt32Property, UInt16Property, UInt64Property, ByteProperty
+    ///
+    /// BoolProperty rules:
+    /// - If BoolBitIndex >= 0: Binary type with BitStart/BitLength (CE bit field)
+    /// - Otherwise: Byte type (fallback for bool without bit info)
+    /// </summary>
     private static CeFieldInfo? MapCeField(LiveFieldValue field)
     {
         return field.TypeName switch
@@ -4153,12 +4141,6 @@ public static class CeXmlExportService
     };
 
     /// <summary>
-    /// Map an array inner type name to CE field info.
-    /// Similar to MapCeField but takes a type name string (for array element types).
-    /// BoolProperty in arrays = full byte (no bitfield).
-    /// Returns null for non-scalar types (StructProperty, ObjectProperty, etc.).
-    /// </summary>
-    /// <summary>
     /// Map a container element / struct sub-field type to a CE record type.
     ///
     /// <para><b><paramref name="elemSize"/> is required, not optional.</b> For most types the name
@@ -4176,6 +4158,12 @@ public static class CeXmlExportService
     /// <para>Deliberately NOT size-driven: <c>NameProperty</c> stays 4 bytes because the record
     /// shows the FName ComparisonIndex (paired with a DropDownList of names) rather than the whole
     /// 8- or 16-byte FName, and the pointer flavours stay 8 regardless of stride.</para>
+    ///
+    /// <para>The earlier summary, kept: Map an array inner type name to CE field info.
+    /// Similar to MapCeField but takes a type name string (for array element types).
+    /// BoolProperty in arrays = full byte (no bitfield).
+    /// Returns null for non-scalar types (StructProperty, ObjectProperty, etc.).
+    /// </para>
     /// </summary>
     private static CeFieldInfo? MapInnerTypeToCeField(string innerTypeName, int elemSize)
     {
