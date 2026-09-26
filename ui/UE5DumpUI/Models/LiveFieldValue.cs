@@ -662,8 +662,9 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>Static options for BoolProperty dropdown.</summary>
     public static string[] BoolOptions { get; } = ["true", "false"];
 
-    /// <summary>Mutable value for DataGrid edit binding. Set stores the pending value; get returns
-    /// it while there is one, else the editable string form of the live value.</summary>
+    /// <summary>Mutable value for DataGrid edit binding. Set stores the pending value; once the
+    /// editor has written in this edit, get returns exactly that (even ""), else the editable
+    /// string form of the live value.</summary>
     public string EditableValue
     {
         get
@@ -673,8 +674,11 @@ public sealed partial class LiveFieldValue : ObservableObject
             // what it last read. Returning the LIVE value here made retyping the value on screen
             // lose its final keystroke -- typing 1234568 over 1234568 wrote 123456 (measured,
             // build 3568) -- and let a refresh repaint the box under the user's typing.
-            // ResetPendingEdit at edit begin empties it, so the editor still opens on the live value.
-            if (_editableValue.Length > 0)
+            // Keyed on "the editor has written", not on the text being non-empty: falling back to
+            // the live value for "" refilled the box the moment the user deleted its last
+            // character (measured on build 3569). ResetPendingEdit at edit begin clears the flag,
+            // so the editor still opens on the live value.
+            if (_editTouched)
                 return _editableValue;
             if (TypeName == "BoolProperty")
             {
@@ -691,9 +695,19 @@ public sealed partial class LiveFieldValue : ObservableObject
                 return DecodeHexAsNumeric(TypeName, HexValue) ?? TypedValue;
             return TypedValue;
         }
-        set => _editableValue = value;
+        set
+        {
+            // A null can only come from the editing template's hidden ComboBox failing to match a
+            // non-bool value; it is not something the user entered, so it must not claim the edit.
+            if (value is null) return;
+            _editableValue = value;
+            _editTouched = true;
+        }
     }
     private string _editableValue = "";
+    // The editor has written since this edit began -- an empty string included, which is the user
+    // clearing the box and must read back as empty.
+    private bool _editTouched;
 
     /// <summary>The pending edit value: the editor's last write since the edit began, or "" when
     /// nothing was entered (<see cref="ResetPendingEdit"/> runs at edit begin). It does NOT fall
@@ -718,7 +732,11 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// the Escape variant and would drop text typed while a refresh lands mid-edit. And not by
     /// comparing against the current value, which would silently drop a deliberate re-type.</para>
     /// </remarks>
-    internal void ResetPendingEdit() => _editableValue = "";
+    internal void ResetPendingEdit()
+    {
+        _editableValue = "";
+        _editTouched = false;
+    }
 
     private string FormatArrayDisplay()
     {
