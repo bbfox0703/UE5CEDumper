@@ -21,7 +21,7 @@ public class SolideTruncationWireTests
     private readonly MockPipeClient _pipe = new();
     private readonly MockLoggingService _log = new();
 
-    private DumpService CreateService() => new(_pipe, _log);
+    private DumpService CreateService() => new(_pipe, _log, UE5DumpUI.Core.IdentityCodePage.Instance);
 
     [Theory]
     [InlineData(true)]

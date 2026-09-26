@@ -131,6 +131,16 @@ struct FakePool {
     uintptr_t Addr() const { return reinterpret_cast<uintptr_t>(header.data()); }
 };
 
+// [SCAN-EARLY-TRIGGER-CONTAINED] AOBScanAll on a module base, run under SEH so a fault is a FAIL line, not a dead
+// test process. The vector lives in its own function: a __try frame cannot hold objects that need unwinding.
+static size_t ScanCountAt(const char* pattern, uintptr_t base) {
+    return Macht::AOBScanAll(pattern, base).size();
+}
+static bool ScanFaultsAt(const char* pattern, uintptr_t base, size_t* count) {
+    __try { *count = ScanCountAt(pattern, base); return false; }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return true; }
+}
+
 // Tot's cancel flag is a per-command atomic in a header. Reset it explicitly between
 // cases: it is process-global and a leaked `true` would make every later walk look
 // cancelled — the exact shape that would turn this whole file into a false pass.
@@ -3073,6 +3083,40 @@ int main() {
         check("WALKUNREADABLE control: a readable instance is not marked", !wl.unreadable);
     }
 
+    // -- SPARSEVALIDATE-2026-09-25 -- the sparse-storage validator accepts a vtable in ANY mapped module ---------------
+    //
+    // [R7-X3] ValidateSparseDelegates' content check accepted a key only when its vtable lay inside the MAIN module.
+    // On a modular build (the UE 4.27 editor, measured 2026-09-25) every UObject vtable lives in a UE4Editor-*.dll,
+    // so the real storage was refused ("1 live element(s) but none has a UObject-shaped key") and sparse delegates
+    // went unread. kernel32's image stands in for the engine DLL; a VirtualAlloc page stands in for heap garbage.
+    {
+        blk("SPARSEVALIDATE - the sparse-storage validator accepts a vtable in any mapped module, not heap");
+        const uintptr_t k32 = reinterpret_cast<uintptr_t>(GetModuleHandleW(L"kernel32.dll"));
+        uint8_t* heapVt = static_cast<uint8_t*>(VirtualAlloc(nullptr, 0x1000, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE));
+        alignas(8) static uint8_t svObj[0x40] = {};
+        alignas(8) static uint8_t svSlot[0x60] = {};
+        alignas(8) static uint8_t svMap[0x50] = {};
+        const uintptr_t objAddr = reinterpret_cast<uintptr_t>(svObj);
+        memcpy(svSlot, &objAddr, 8);
+        const uintptr_t slotAddr = reinterpret_cast<uintptr_t>(svSlot);
+        memcpy(svMap + 0x00, &slotAddr, 8);
+        const int32_t one = 1;
+        memcpy(svMap + 0x08, &one, 4);
+        memcpy(svMap + 0x0C, &one, 4);
+        const auto withVtable = [&](uintptr_t vt) {
+            memcpy(svObj, &vt, 8);
+            return Genau::ValidateSparseDelegates(reinterpret_cast<uintptr_t>(svMap));
+        };
+        check("SPARSEVALIDATE setup: kernel32 and a private page are both available", k32 != 0 && heapVt != nullptr);
+        check("SPARSEVALIDATE control: a vtable in the main module is accepted",
+              withVtable(reinterpret_cast<uintptr_t>(&Genau::FindSparseDelegateStorage)));
+        check("SPARSEVALIDATE ⭐ R7-X3: a vtable in ANOTHER mapped module (a modular build's engine DLL) is accepted",
+              withVtable(k32 + 0x1000));
+        check("SPARSEVALIDATE control: a vtable on a private (heap) page is still refused",
+              !withVtable(reinterpret_cast<uintptr_t>(heapVt)));
+        VirtualFree(heapVt, 0, MEM_RELEASE);
+    }
+
     // -- SPARSEREFS-2026-09-12 -- Find References counts the sparse delegates it could not read ----------------------
     //
     // ⛔ POOL-FAKING (own pool, last). [P1-SPARSEDELEGATE-REFS] A sparse delegate whose InvocationList cannot be located
@@ -3119,6 +3163,9 @@ int main() {
         }
         // The outer map: one 0x60 slot holding the owner, then the inner map's header at +0x08 (inline bits at +0x10).
         alignas(8) static uint8_t spOwner[0x40] = {};
+        // [R7-S2] The storage key probe asks for a UObject (8-aligned, a ClassPrivate pointer at +0x10): give the
+        // owner one, as every real key has.
+        spPutP(spOwner, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(spOwner));
         alignas(8) static uint8_t spOuterSlot[0x60] = {};
         spPutP(spOuterSlot, 0x00, reinterpret_cast<uintptr_t>(spOwner));
         spPutP(spOuterSlot, 0x08, reinterpret_cast<uintptr_t>(spInner));
@@ -3141,6 +3188,75 @@ int main() {
               std::to_string(st.objectsTotal).c_str());
         check("SPARSEREFS ⭐: the sweep counts the two unreadable sparse delegates, not the readable one",
               st.sparseUnlocated == 2, std::to_string(st.sparseUnlocated).c_str());
+
+        // [R7-A-01] The same storage on a compact-set build: its global TMap is a 16-byte TCompactSet too, which the
+        // sparse readers would read past. The sweep must say the pass was skipped, and the Live Walker's reader must
+        // refuse instead of reporting "owner not in storage".
+        const bool savedCompactSp = DynOff::bCompactSets.load();
+        DynOff::bCompactSets.store(true);
+        Aura::ContainerScanStats stC;
+        const auto spRefsC = Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stC);
+        check("SPARSEREFS ⭐ R7-A-01: compact sets -> the sparse pass is reported SKIPPED, and nothing was read",
+              spRefsC.empty() && stC.sparseSkipped && stC.sparseUnlocated == 0,
+              std::to_string(stC.sparseUnlocated).c_str());
+        const Aura::SparseDelegateResult srC =
+            Aura::WalkSparseDelegateBindings(reinterpret_cast<uintptr_t>(spOwner), "OnHit", 8);
+        check("SPARSEREFS ⭐ R7-A-01: compact sets -> the Live Walker reader refuses (resolved, not supported)",
+              srC.resolved && !srC.supported && !srC.ownerFound && srC.bindings.empty());
+        DynOff::bCompactSets.store(savedCompactSp);
+        Aura::ContainerScanStats stS;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stS);
+        check("SPARSEREFS control: a sparse-set build reads the storage and skips nothing",
+              !stS.sparseSkipped && stS.sparseUnlocated == 2);
+
+        // [R7-S2] Sparse delegates exist from UE 4.23, and 4.27 keys the storage by a raw pointer (the walker reads it):
+        // the pass must run there too, not skip silently behind a ">= 5.0" gate.
+        g_cachedUEVersion = 427;
+        Aura::ContainerScanStats st4;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &st4);
+        check("SPARSEREFS ⭐ R7-S2: on UE 4.27 the sparse pass runs (the two unreadable delegates are counted)",
+              st4.sparseUnlocated == 2 && !st4.sparseSkipped, std::to_string(st4.sparseUnlocated).c_str());
+        // ...and a key that is not a pointer (an FObjectKey-keyed 4.23-4.26 build) is refused and REPORTED, the way
+        // WalkSparseDelegateBindings refuses it -- not walked as if it were one.
+        uintptr_t svKeySp = 0;
+        memcpy(&svKeySp, spOuterSlot, 8);
+        const uintptr_t fobjectKey = 0x0000000500000003ull;   // { ObjectIndex 3, SerialNumber 5 }
+        memcpy(spOuterSlot, &fobjectKey, 8);
+        Aura::ContainerScanStats stK;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stK);
+        check("SPARSEREFS ⭐ R7-S2: a non-pointer outer key is refused and reported skipped, nothing read",
+              stK.sparseSkipped && stK.sparseUnlocated == 0, std::to_string(stK.sparseUnlocated).c_str());
+        memcpy(spOuterSlot, &svKeySp, 8);
+
+        // [R7-S4] An implausible storage header (ArrayNum past SANITY_MAX_CONTAINER_NUM -- a mis-resolved storage)
+        // is refused by ReadTMapHeader, which still FILLS the header before saying no: the pass must not walk it.
+        int32_t svNumSp = 0;
+        memcpy(&svNumSp, spOuter + 0x08, 4);
+        const int32_t hugeNum = Grimoire::SANITY_MAX_CONTAINER_NUM + 1;
+        memcpy(spOuter + 0x08, &hugeNum, 4);
+        Aura::ContainerScanStats stH;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stH);
+        check("SPARSEREFS ⭐ R7-S4: an implausible storage header is not walked, and the pass is reported skipped",
+              stH.sparseUnlocated == 0 && stH.sparseSkipped, std::to_string(stH.sparseUnlocated).c_str());
+        memcpy(spOuter + 0x08, &svNumSp, 4);
+
+        // [R7-X2] The storage was never located (the AOB scan failed, or -- measured on the 4.27 editor -- the
+        // validator refused it): the pass cannot run, and "none found" is then not a negative. Before the fix the
+        // sweep said nothing, so the UI blamed the game.
+        Genau::s_sparseDelegatesCache.store(0);
+        Genau::s_sparseDelegatesScanned.store(true);
+        Aura::ContainerScanStats stU;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stU);
+        check("SPARSEREFS ⭐ R7-X2: an unlocated sparse storage is reported skipped, nothing read",
+              stU.sparseSkipped && stU.sparseUnlocated == 0, std::to_string(stU.sparseUnlocated).c_str());
+        // ...but not before 4.23, where no sparse delegate exists to miss.
+        g_cachedUEVersion = 422;
+        Aura::ContainerScanStats stP;
+        Aura::FindReferencesToUObject(reinterpret_cast<uintptr_t>(spTarget), 32, &stP);
+        check("SPARSEREFS R7-X2 control: pre-4.23 with no storage reports no gap",
+              !stP.sparseSkipped && stP.sparseUnlocated == 0);
+        Genau::s_sparseDelegatesCache.store(reinterpret_cast<uintptr_t>(spOuter));
+        g_cachedUEVersion = 505;
 
         Genau::s_sparseDelegatesCache.store(savedStoreSp);
         Genau::s_sparseDelegatesScanned.store(savedScannedSp);
@@ -4271,9 +4387,20 @@ int main() {
         static uint8_t wkNameEntry[0x40] = {};
         memcpy(wkTypeEntry + 0x10, "WeakObjectProperty", sizeof("WeakObjectProperty"));
         memcpy(wkNameEntry + 0x10, "Wk", sizeof("Wk"));
-        static uintptr_t wkChunk[4] = {};
+        static uint8_t wkOptEntry[0x40] = {};
+        memcpy(wkOptEntry + 0x10, "OptionalProperty", sizeof("OptionalProperty"));
+        // [R7-S1] a soft pointer type and an asset path (package, asset) for the soft-optional case
+        static uint8_t wkSoftEntry[0x40] = {}, wkPkgEntry[0x40] = {}, wkAssetEntry[0x40] = {};
+        memcpy(wkSoftEntry + 0x10, "SoftObjectProperty", sizeof("SoftObjectProperty"));
+        memcpy(wkPkgEntry + 0x10, "/Game/T_Foo", sizeof("/Game/T_Foo"));
+        memcpy(wkAssetEntry + 0x10, "T_Foo", sizeof("T_Foo"));
+        static uintptr_t wkChunk[8] = {};
         wkChunk[1] = reinterpret_cast<uintptr_t>(wkTypeEntry);
         wkChunk[2] = reinterpret_cast<uintptr_t>(wkNameEntry);
+        wkChunk[3] = reinterpret_cast<uintptr_t>(wkOptEntry);
+        wkChunk[4] = reinterpret_cast<uintptr_t>(wkSoftEntry);
+        wkChunk[5] = reinterpret_cast<uintptr_t>(wkPkgEntry);
+        wkChunk[6] = reinterpret_cast<uintptr_t>(wkAssetEntry);
         static uintptr_t wkChunks[2] = { reinterpret_cast<uintptr_t>(wkChunk), 0 };
         Serie::InitUE4(reinterpret_cast<uintptr_t>(wkChunks), 0x10);
         const bool svFPropW = DynOff::bUseFProperty;
@@ -4321,6 +4448,89 @@ int main() {
             const auto staleW = weakField("stale", Ubel::WalkInstance(winst, makeClass(1, 0x200), 64, 2, false));
             check("WEAKLABEL ⭐: {1, wrong serial} says null (stale)", staleW.typedValue == "null (stale)",
                   staleW.typedValue.c_str());
+
+            // [R7-B-02] A SET TOptional<TWeakObjectPtr> (12 bytes: the pointer, then bIsSet at +8) whose pointer does
+            // not resolve takes the same null / null (stale) rule as every other weak reader -- it said "(stale)"
+            // for both, including a pointer explicitly set to null.
+            static uint8_t wkOptFC[0x20] = {};
+            *reinterpret_cast<int32_t*>(wkOptFC + DynOff::FFIELDCLASS_NAME) = 3;
+            static uint8_t wkOptInner[0x80] = {};
+            *reinterpret_cast<uintptr_t*>(wkOptInner + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkFieldClass);
+            *reinterpret_cast<int32_t*>(wkOptInner + DynOff::FFIELD_NAME)         = 2;
+            *reinterpret_cast<int32_t*>(wkOptInner + DynOff::FPROPERTY_ELEMSIZE)  = 8;
+            *reinterpret_cast<int32_t*>(wkOptInner + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+            static uint8_t wkOptProp[6][0x80] = {};
+            static uint8_t wkOptCls[6][0x100] = {};
+            auto makeOptClass = [&](int i, int32_t fieldOffset) {
+                *reinterpret_cast<uintptr_t*>(wkOptProp[i] + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkOptFC);
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FFIELD_NAME)           = 2;
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FPROPERTY_OFFSET)      = fieldOffset;
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FPROPERTY_ELEMSIZE)    = 12;
+                *reinterpret_cast<int32_t*>(wkOptProp[i] + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                *reinterpret_cast<uintptr_t*>(wkOptProp[i] + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(wkOptInner);
+                *reinterpret_cast<int32_t*>(wkOptCls[i] + DynOff::USTRUCT_PROPSSIZE)      = 0x2000;
+                *reinterpret_cast<uintptr_t*>(wkOptCls[i] + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(wkOptProp[i]);
+                return reinterpret_cast<uintptr_t>(wkOptCls[i]);
+            };
+            auto optField = [&](const char* who, const Ubel::InstanceWalkResult& r) -> Ubel::LiveFieldValue {
+                check((std::string("WEAKLABEL control: ") + who + " -- the fake class produced exactly one field").c_str(),
+                      r.fields.size() == 1, std::to_string(r.fields.size()).c_str());
+                for (const auto& f : r.fields)
+                    if (f.typeName == "OptionalProperty") return f;
+                return Ubel::LiveFieldValue{};
+            };
+            *reinterpret_cast<int32_t*>(wpage + 0x600) = 0;
+            *reinterpret_cast<int32_t*>(wpage + 0x604) = 0;
+            wpage[0x608] = 1;                                          // bIsSet
+            const auto optNull = optField("optional weak set-null", Ubel::WalkInstance(winst, makeOptClass(0, 0x600), 64, 2, false));
+            check("WEAKLABEL ⭐ R7-B-02: a SET TOptional<weak> holding {0, 0} says null, not (stale)",
+                  optNull.typedValue == "null", optNull.typedValue.c_str());
+            *reinterpret_cast<int32_t*>(wpage + 0x620) = 1;
+            *reinterpret_cast<int32_t*>(wpage + 0x624) = 0x7777;
+            wpage[0x628] = 1;
+            const auto optStale = optField("optional weak stale", Ubel::WalkInstance(winst, makeOptClass(1, 0x620), 64, 2, false));
+            check("WEAKLABEL ⭐ R7-B-02: a SET TOptional<weak> with a dead serial says null (stale)",
+                  optStale.typedValue == "null (stale)", optStale.typedValue.c_str());
+            wpage[0x648] = 0;                                          // bIsSet clear
+            const auto optUnset = optField("optional weak unset", Ubel::WalkInstance(winst, makeOptClass(2, 0x640), 64, 2, false));
+            check("WEAKLABEL control R7-B-02: an unset TOptional<weak> is still (unset)",
+                  optUnset.typedValue == "(unset)", optUnset.typedValue.c_str());
+
+            // [R7-S1] A SET TOptional<TSoftObjectPtr> whose asset is not loaded: its embedded weak pair is {0, 0}
+            // (TPersistentObjectPtr fills it only on Get()), and its value is the PATH -- not "null", which says
+            // the optional holds nothing. 0x28-byte soft pointer (5.3+), so the optional is 0x30 with bIsSet at +0x28.
+            {
+                const uint32_t svVerS = g_cachedUEVersion;
+                const int svSoftLatch = DynOff::SOFTPTR_PATH;   // [R7-S5] SoftPathOffset latches its measurement
+                g_cachedUEVersion = 504;
+                static uint8_t wkSoftFC[0x20] = {};
+                *reinterpret_cast<int32_t*>(wkSoftFC + DynOff::FFIELDCLASS_NAME) = 4;
+                static uint8_t wkSoftInner[0x80] = {};
+                *reinterpret_cast<uintptr_t*>(wkSoftInner + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkSoftFC);
+                *reinterpret_cast<int32_t*>(wkSoftInner + DynOff::FFIELD_NAME)         = 2;
+                *reinterpret_cast<int32_t*>(wkSoftInner + DynOff::FPROPERTY_ELEMSIZE)  = 0x28;
+                *reinterpret_cast<int32_t*>(wkSoftInner + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                static uint8_t wkSoftOptProp[0x80] = {};
+                static uint8_t wkSoftOptCls[0x100] = {};
+                *reinterpret_cast<uintptr_t*>(wkSoftOptProp + DynOff::FFIELD_CLASS) = reinterpret_cast<uintptr_t>(wkOptFC);
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FFIELD_NAME)           = 2;
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FPROPERTY_OFFSET)      = 0x680;
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FPROPERTY_ELEMSIZE)    = 0x30;
+                *reinterpret_cast<int32_t*>(wkSoftOptProp + DynOff::FPROPERTY_ELEMSIZE - 4) = 1;
+                *reinterpret_cast<uintptr_t*>(wkSoftOptProp + DynOff::FARRAYPROP_INNER) = reinterpret_cast<uintptr_t>(wkSoftInner);
+                *reinterpret_cast<int32_t*>(wkSoftOptCls + DynOff::USTRUCT_PROPSSIZE)      = 0x2000;
+                *reinterpret_cast<uintptr_t*>(wkSoftOptCls + DynOff::USTRUCT_CHILDPROPS)   = reinterpret_cast<uintptr_t>(wkSoftOptProp);
+                memset(wpage + 0x680, 0, 0x30);
+                *reinterpret_cast<int32_t*>(wpage + 0x688) = 5;       // FSoftObjectPath: PackageName "/Game/T_Foo"
+                *reinterpret_cast<int32_t*>(wpage + 0x690) = 6;       //                  AssetName   "T_Foo"
+                wpage[0x680 + 0x28] = 1;                              // bIsSet
+                const auto optSoft = optField("optional soft set, not loaded",
+                    Ubel::WalkInstance(winst, reinterpret_cast<uintptr_t>(wkSoftOptCls), 64, 2, false));
+                check("WEAKLABEL ⭐ R7-S1: a SET TOptional<soft> not loaded shows its asset path, not null",
+                      optSoft.typedValue == "/Game/T_Foo.T_Foo", optSoft.typedValue.c_str());
+                g_cachedUEVersion = svVerS;
+                DynOff::SOFTPTR_PATH = svSoftLatch;
+            }
 
             // Across the page edge: ObjectIndex reads, SerialNumber faults.
             *reinterpret_cast<int32_t*>(wpage + 0xFFC) = 0;
@@ -4378,6 +4588,45 @@ int main() {
                 check("WEAKLABEL control VND583-06: the same item bit on UE5 is not PendingKill -> no label",
                       c5.ptrValue == o1 && c5.typedValue.empty(), c5.typedValue.c_str());
 
+                // [R7-B-04] The three weak display sites that never showed the tag, on a UE5 Garbage target. The
+                // target gets a name ("Wk", pool index 2) so the readers that print a NAME print one.
+                int32_t svName1 = 0;
+                memcpy(&svName1, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), 4);
+                const int32_t wkNameIdx = 2;
+                memcpy(reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), &wkNameIdx, 4);
+                uint32_t svObjF = 0, svItemF = 0;   // the UE4 PendingKill state the array case below relies on
+                memcpy(&svObjF, reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_FLAGS), 4);
+                memcpy(&svItemF, item1 + 8, 4);
+                setFlags(0x40000000u, 0);
+                // (1) A SET TOptional<TWeakObjectPtr>: the tag it added was overwritten by the display builder.
+                *reinterpret_cast<int32_t*>(wpage + 0x660) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x664) = Aura::GetSerialNumber(1);
+                wpage[0x668] = 1;
+                const auto optG = optField("optional weak garbage", Ubel::WalkInstance(winst, makeOptClass(3, 0x660), 64, 2, false));
+                check("WEAKLABEL ⭐ R7-B-04: a SET TOptional<weak> to a Garbage target shows [garbage]",
+                      optG.ptrValue == o1 && optG.typedValue.find("[garbage]") != std::string::npos, optG.typedValue.c_str());
+                // (2) The delegate-binding label every reader uses (the sparse-binding loop did not add the tag).
+                const std::string dbG = Ubel::DescribeDelegateBinding(o1, "Obj", 1, Aura::GetSerialNumber(1), "OnHit");
+                check("WEAKLABEL ⭐ R7-B-04: a delegate binding to a Garbage target shows [garbage]",
+                      dbG == "Obj::OnHit [garbage]", dbG.c_str());
+                // (3) The Property Search soft preview's fallback: no asset path, a weak pointer that resolves.
+                std::vector<Aura::PropertyMatch> spRows(1);
+                spRows[0].classAddr  = 0xE100;
+                spRows[0].propType   = "SoftObjectProperty";
+                spRows[0].propOffset = 0x700;
+                spRows[0].propSize   = 0x28;
+                *reinterpret_cast<int32_t*>(wpage + 0x700) = 1;
+                *reinterpret_cast<int32_t*>(wpage + 0x704) = Aura::GetSerialNumber(1);
+                std::unordered_map<uintptr_t, uintptr_t> spMap{ { 0xE100, winst } };
+                Ubel::ResolvePropertyPreviews(spRows, spMap);
+                check("WEAKLABEL ⭐ R7-B-04: the soft preview's resolved fallback shows [garbage]",
+                      spRows[0].preview.find("[garbage]") != std::string::npos, spRows[0].preview.c_str());
+                setFlags(0, 0);
+                const std::string dbLive = Ubel::DescribeDelegateBinding(o1, "Obj", 1, Aura::GetSerialNumber(1), "OnHit");
+                check("WEAKLABEL control R7-B-04: a live target's binding has no tag", dbLive == "Obj::OnHit", dbLive.c_str());
+                memcpy(reinterpret_cast<void*>(o1 + Grimoire::OFF_UOBJECT_NAME), &svName1, 4);
+                setFlags(svObjF, svItemF);
+
                 // The array reader, through the same tag: [{1, serial}, {0, 0}] on UE4 with PendingKill.
                 g_cachedUEVersion = 427;
                 *reinterpret_cast<uintptr_t*>(wpage + 0x400) = winst + 0x500;   // TArray Data*
@@ -4424,6 +4673,102 @@ int main() {
             VirtualFree(wpage, 0, MEM_RELEASE);
         }
         DynOff::bUseFProperty = svFPropW;
+    }
+
+    {   blk("SCAN-EARLY — AOBScanAll on a module that was unloaded after the module list was taken");
+        // [SCAN-EARLY-TRIGGER-CONTAINED] Measured on build 3555: a trigger_scan ~1 s after launch died with an
+        // uncaught non-standard exception in FindGObjects' multi-module fallback. AOBScanAllModules snapshots
+        // EnumProcessModules and then reads each module's headers and code with no guard; a DLL the booting engine
+        // frees in between is read after it is unmapped. This case frees a real module, then scans its old base.
+        const wchar_t* candidates[] = { L"wtsapi32.dll", L"srvcli.dll", L"dsreg.dll", L"wevtapi.dll", L"mscms.dll" };
+        // (eleventh review, R11-04) The DLL is QUALIFIED with no scan at all: loaded and freed, it must unmap on its
+        // own. Only that is the environment's business; everything after it is the scan's. Before, a scan that leaked
+        // its reference made every candidate fail the "unmapped" filter here and read as "no usable DLL".
+        // (twelfth review, R12-03) Whether the DLL HAS a code section to cut a pattern from is the environment's too,
+        // so it is part of the qualification, as it was before R11-04 split this.
+        auto firstCode = [](uintptr_t b) -> const uint8_t* {
+            auto* dos = reinterpret_cast<IMAGE_DOS_HEADER*>(b);
+            auto* nt  = reinterpret_cast<IMAGE_NT_HEADERS64*>(b + dos->e_lfanew);
+            IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+            for (WORD i = 0; i < nt->FileHeader.NumberOfSections; ++i, ++sec)
+                if ((sec->Characteristics & IMAGE_SCN_MEM_EXECUTE) && sec->Misc.VirtualSize >= 64)
+                    return reinterpret_cast<const uint8_t*>(b + sec->VirtualAddress);
+            return nullptr;
+        };
+        const wchar_t* used = nullptr;
+        for (const wchar_t* name : candidates) {
+            if (GetModuleHandleW(name)) continue;                       // must not be loaded by anyone else
+            HMODULE q = LoadLibraryExW(name, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            if (!q) continue;
+            const uintptr_t qb = reinterpret_cast<uintptr_t>(q);
+            const bool hasCode = firstCode(qb) != nullptr;
+            FreeLibrary(q);
+            if (!hasCode) continue;
+            MEMORY_BASIC_INFORMATION qm{};
+            if (GetModuleHandleW(name)
+                || VirtualQuery(reinterpret_cast<void*>(qb), &qm, sizeof(qm)) != sizeof(qm) || qm.State != MEM_FREE)
+                continue;                                               // something keeps it mapped: try the next
+            used = name;
+            break;
+        }
+        check("SCAN-EARLY precondition: a System32 DLL with a code section that unmaps when freed (qualified with no scan)",
+              used != nullptr);
+        uintptr_t base = 0;
+        char pattern[16 * 3 + 1] = {};
+        HMODULE h = used ? LoadLibraryExW(used, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32) : nullptr;
+        const uint8_t* code = nullptr;
+        if (h) {
+            base = reinterpret_cast<uintptr_t>(h);
+            code = firstCode(base);
+            if (!code) { FreeLibrary(h); h = nullptr; }   // (R12-03) never leave the test's reference behind
+        }
+        if (used)
+            check("SCAN-EARLY precondition: it loads again and has a code section to cut a pattern from", h && code);
+        if (h && code) {
+            // Positive control: 16 bytes from the start of its first code section, as a pattern, are found while
+            // it is loaded -- so a later "0 matches" means "gone", not "this scan never finds anything here".
+            for (int i = 0; i < 16; ++i) snprintf(pattern + i * 3, 4, i == 15 ? "%02X" : "%02X ", code[i]);
+            const size_t liveHits = Macht::AOBScanAll(pattern, base).size();
+            // (tenth review, R10-02) The scan released ONLY its own reference: the module is still ours to free.
+            const bool stillLoadedAfterScan = GetModuleHandleW(used) == h;
+            const bool ownFreeOk = FreeLibrary(h) != FALSE;
+            // (R11-04) ...and released it at ALL: after the owner's free nothing else holds it, so it unmaps.
+            MEMORY_BASIC_INFORMATION mbi{};
+            const bool unmappedAfter = !GetModuleHandleW(used)
+                && VirtualQuery(reinterpret_cast<void*>(base), &mbi, sizeof(mbi)) == sizeof(mbi)
+                && mbi.State == MEM_FREE;
+            check("SCAN-EARLY control: while loaded, a pattern cut from its own code is found in it", liveHits >= 1,
+                  std::to_string(liveHits).c_str());
+            check("SCAN-EARLY R10-02: after a scan the module is still loaded -- the pin released only its own reference",
+                  stillLoadedAfterScan);
+            check("SCAN-EARLY R10-02: ...and the owner's own FreeLibrary still succeeds", ownFreeOk);
+            check("SCAN-EARLY R11-04: ...and then it unmaps -- the scan released its reference (no leak)", unmappedAfter);
+            size_t n = 999;
+            const bool faulted = ScanFaultsAt(pattern, base, &n);
+            check("SCAN-EARLY ⭐ scanning a module that is gone does NOT fault", !faulted);
+            check("SCAN-EARLY ⭐ ...and finds nothing there", !faulted && n == 0, std::to_string(n).c_str());
+
+            // (tenth review, R10-02) The race the fix is for, forced: the owner frees the module DURING the scan (the
+            // seam runs between the pin and the reads). The pin must keep the image mapped -- the scan neither faults
+            // nor misses -- and, released on return, must be the LAST reference, so the image is gone afterwards.
+            HMODULE h2 = LoadLibraryExW(used, nullptr, LOAD_LIBRARY_SEARCH_SYSTEM32);
+            check("SCAN-EARLY R10-02 precondition: the DLL loads again", h2 != nullptr);
+            if (h2) {
+                const uintptr_t b2 = reinterpret_cast<uintptr_t>(h2);
+                Macht::g_afterModulePinForTest = [](uintptr_t mod) { FreeLibrary(reinterpret_cast<HMODULE>(mod)); };
+                size_t n2 = 999;
+                const bool faulted2 = ScanFaultsAt(pattern, b2, &n2);
+                Macht::g_afterModulePinForTest = nullptr;
+                MEMORY_BASIC_INFORMATION mbi2{};
+                const bool gone = !GetModuleHandleW(used)
+                    && VirtualQuery(reinterpret_cast<void*>(b2), &mbi2, sizeof(mbi2)) == sizeof(mbi2)
+                    && mbi2.State == MEM_FREE;
+                check("SCAN-EARLY R10-02 ⭐ freed by its owner mid-scan, the pinned image does NOT fault", !faulted2);
+                check("SCAN-EARLY R10-02 ⭐ ...and is still scanned whole (the pattern is found)", !faulted2 && n2 >= 1,
+                      std::to_string(n2).c_str());
+                check("SCAN-EARLY R10-02 ⭐ ...and the pin, released on return, was the last reference: unmapped", gone);
+            }
+        }
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

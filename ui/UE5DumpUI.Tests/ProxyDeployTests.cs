@@ -568,7 +568,7 @@ public class ProxyDeployTests
     {
         var values = Enum.GetValues<ProxyDeployStatus>();
 
-        Assert.Equal(7, values.Length);
+        Assert.Equal(8, values.Length);   // 8th: Unreadable, [PROXY-PRODUCTNAME-UNREADABLE]
         Assert.Contains(ProxyDeployStatus.NotDeployed, values);
         Assert.Contains(ProxyDeployStatus.DeployedCurrent, values);
         Assert.Contains(ProxyDeployStatus.DeployedOutdated, values);
@@ -576,6 +576,7 @@ public class ProxyDeployTests
         Assert.Contains(ProxyDeployStatus.DeployedOtherType, values);
         Assert.Contains(ProxyDeployStatus.ErrorLocked, values);
         Assert.Contains(ProxyDeployStatus.ErrorOther, values);
+        Assert.Contains(ProxyDeployStatus.Unreadable, values);
     }
 
     // ────────────────────────────────────────────────────────────────
@@ -984,6 +985,73 @@ public class ProxyDeployTests
         }
     }
 
+    // [PROXY-CONFIRM-SHARED-EXE] (maintainer's call, 2026-09-25: mark it ambiguous) The confirmed-working and injected
+    // records are keyed by the bare exe name, so they survive a reinstall -- but two games that ship the same exe name
+    // shared one record, and one game's proxy type was suggested (and, with "Use confirmed", deployed) for the other.
+    [Fact]
+    public async Task ApplyProxySuggestions_ASharedExeName_UsesNeitherRecord_AndSaysWhy()
+    {
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-shared-exe-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            DetectedGame Make(string folder, string exe)
+            {
+                string bin = Path.Combine(dir, folder, "Binaries", "Win64");
+                Directory.CreateDirectory(bin);
+                string path = Path.Combine(bin, exe);
+                File.WriteAllBytes(path, new byte[] { 1, 2, 3 });   // not a PE: no import hint, isolates the records
+                return new DetectedGame { Name = folder, ExePath = path, BinariesDir = bin };
+            }
+            var a = Make("GameA", "Shared-Win64-Shipping.exe");
+            var b = Make("GameB", "Shared-Win64-Shipping.exe");
+            var c = Make("GameC", "Unique-Win64-Shipping.exe");
+            var d = Make("GameD", "Injected-Win64-Shipping.exe");
+            var e = Make("GameE", "Injected-Win64-Shipping.exe");
+            var f = Make("GameF", "Plain-Win64-Shipping.exe");                    // shared, no record at all
+            var g2 = Make("GameG", "Plain-Win64-Shipping.exe");
+            var h = Make("GameH", "Both-Win64-Shipping.exe");                     // shared, both records
+            var i = Make("GameI", "Both-Win64-Shipping.exe");
+            var confirmed = new Dictionary<string, ProxyType>(StringComparer.OrdinalIgnoreCase)
+            {
+                ["shared-win64-shipping.exe"] = ProxyType.Winmm,
+                ["Unique-Win64-Shipping.exe"] = ProxyType.Winmm,
+                ["Both-Win64-Shipping.exe"] = ProxyType.Dinput8,
+            };
+            var injected = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
+            {
+                "Injected-Win64-Shipping.exe", "Both-Win64-Shipping.exe",
+            };
+            // (fifth review, R5-T-SUGGEST-REMEMBERED-DROPPED) The per-game pick is keyed by the FOLDER: never ambiguous.
+            var remembered = new Dictionary<string, ProxyType>(StringComparer.OrdinalIgnoreCase) { ["GameA"] = ProxyType.Dxgi };
+            var svc = new ProxyDeployService(new NoopLog(), new NoopPlatform());
+
+            await svc.ApplyProxySuggestionsAsync(new List<DetectedGame> { a, b, c, d, e, f, g2, h, i }, confirmed,
+                remembered, injected, enabled: true, TestContext.Current.CancellationToken);
+
+            // (fifth review, R5-01) Exact texts: the note names the record that EXISTS and is not used.
+            // (sixth review, R6-03) The "shared · " tag LEADS: the column shows ~28 characters, and a mark at the end
+            // was clipped away. The header's tooltip says what the tag means.
+            const string NoConfirmed = "the confirmed-working record is not used";
+            Assert.Equal(ProxyType.Dxgi, a.SuggestedProxyType);                    // its own last-used pick survives
+            Assert.Equal($"shared · dxgi.dll · last used · {NoConfirmed}", a.SuggestedProxy);
+            Assert.Equal(ProxyType.Version, b.SuggestedProxyType);                 // the safe default, not winmm
+            Assert.Equal($"shared · version · default · {NoConfirmed}", b.SuggestedProxy);
+            Assert.Equal(ProxyType.Winmm, c.SuggestedProxyType);                   // a unique name keeps its record
+            Assert.Equal("winmm.dll · confirmed working", c.SuggestedProxy);
+            foreach (var g in new[] { d, e })
+            {
+                Assert.Equal(ProxyType.Version, g.SuggestedProxyType);             // not "injection · no proxy"
+                Assert.Equal("shared · version · default · the injection record is not used", g.SuggestedProxy);
+            }
+            foreach (var g in new[] { f, g2 })                                      // no record: nothing to say
+                Assert.Equal("version · default", g.SuggestedProxy);
+            foreach (var g in new[] { h, i })
+                Assert.Equal("shared · version · default · the confirmed-working and injection records are not used",
+                             g.SuggestedProxy);
+        }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best effort */ } }
+    }
+
     [Fact]
     public async Task FindUeGames_MonolithicLayout_StillPicksGameExeNotEngineSide()
     {
@@ -1175,6 +1243,62 @@ public class ProxyDeployTests
 
             Assert.StartsWith("loaded ", ran.LoadObservation);    // folder present + fresh
             Assert.Equal("not observed", never.LoadObservation);  // no folder → honest unknown
+        }
+        finally
+        {
+            Directory.Delete(appData, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task RefreshDeployStatus_ASharedLogFolder_SaysTheLoadMayBeAnotherGames()
+    {
+        // (fifth review, R5-03 -- the maintainer's "mark it ambiguous" carried to the third exe-keyed signal) The Load
+        // column reads Logs\<exe stem>: games in different folders that ship the same exe name share that folder, so
+        // one game's load was credited to all of them while the Suggested column said the name cannot be attributed.
+        string appData = MakeTempDir();
+        try
+        {
+            string logs = Path.Combine(appData, Constants.LogFolderName, Constants.LogSubFolder);
+            Directory.CreateDirectory(Path.Combine(logs, "Shared-Win64-Shipping"));
+            File.WriteAllText(Path.Combine(logs, "Shared-Win64-Shipping", "init-0.log"), "x");
+            Directory.CreateDirectory(Path.Combine(logs, "Unique-Win64-Shipping"));
+            File.WriteAllText(Path.Combine(logs, "Unique-Win64-Shipping", "init-0.log"), "x");
+            DetectedGame G(string name, string exe)
+            {
+                string bin = Path.Combine(appData, name);
+                Directory.CreateDirectory(bin);
+                return new DetectedGame { Name = name, ExePath = Path.Combine(bin, exe), BinariesDir = bin };
+            }
+            var a = G("A", "Shared-Win64-Shipping.exe");
+            var b = G("B", "Shared-Win64-Shipping.exe");
+            var c = G("C", "Unique-Win64-Shipping.exe");
+            var d = G("D", "NeverRan-Win64-Shipping.exe");
+            var e = G("E", "NeverRan-Win64-Shipping.exe");
+            // (sixth review, R6-05) The key is the LOG folder: 'Game .exe' and 'Game.exe' both log into Logs\Game.
+            Directory.CreateDirectory(Path.Combine(logs, "Game"));
+            File.WriteAllText(Path.Combine(logs, "Game", "init-0.log"), "x");
+            var f = G("F", "Game .exe");
+            var g2 = G("G", "Game.exe");
+            // ...and the same folder listed twice is ONE game: no tag.
+            Directory.CreateDirectory(Path.Combine(logs, "Twice-Win64-Shipping"));
+            File.WriteAllText(Path.Combine(logs, "Twice-Win64-Shipping", "init-0.log"), "x");
+            var t1 = G("T", "Twice-Win64-Shipping.exe");
+            var t2 = new DetectedGame { Name = "T (again)", ExePath = t1.ExePath, BinariesDir = t1.BinariesDir };
+
+            var svc = new ProxyDeployService(new NoopLog(), new AppDataPlatform(appData));
+            await svc.RefreshDeployStatusAsync(new List<DetectedGame> { a, b, c, d, e, f, g2, t1, t2 }, @"X:\missing.dll",
+                ProxyType.Version, ct: TestContext.Current.CancellationToken);
+
+            // (sixth review, R6-03) The tag LEADS: the Load column shows ~18 characters, and a mark appended after
+            // "loaded <date>" was clipped away. The header's tooltip says what it means.
+            foreach (var g in new[] { a, b, f, g2 })
+                Assert.StartsWith("shared · loaded ", g.LoadObservation);
+            foreach (var g in new[] { t1, t2 })
+                Assert.StartsWith("loaded ", g.LoadObservation);
+            Assert.DoesNotContain("shared", c.LoadObservation);          // a unique name: its own load
+            Assert.Equal("not observed", d.LoadObservation);              // nobody ran: nothing to attribute
+            Assert.Equal("not observed", e.LoadObservation);
         }
         finally
         {

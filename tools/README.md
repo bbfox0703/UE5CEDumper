@@ -280,6 +280,19 @@ lua scripts/tests/freeze_helper_test.lua
 
 `luac -p <file>` also syntax-checks any `.lua` without running it.
 
+## `llm/` — an opt-in local Ollama model, and the guard that keeps it off a game's GPU
+
+[`llm/ollama_local.py`](llm/ollama_local.py) lets a session hand bulk text work (large logs, dumps,
+translation drafts) to a local model, reading the files itself so they never enter the session's
+context. It is **opt-in per machine**: without the gitignored `.claude/local-llm.json` every
+subcommand answers `disabled` and touches nothing. Its PreToolUse hook unloads the model before a
+commercial game launches; the DumperTest fixtures are exempt. **When** to use it is the skill's job:
+[`.claude/skills/local-llm/SKILL.md`](../.claude/skills/local-llm/SKILL.md).
+
+```bash
+py tools/llm/ollama_local.py status
+```
+
 ## External (not vendored)
 
 - **[patternsleuth](https://github.com/trumank/patternsleuth)** (`cargo run -p patternsleuth_cli -- scan --path <exe> --resolver <name>`) — confirm whether the standard resolvers match, and get string-anchored candidate functions. Clone on demand; do not vendor (large + rebuilds).

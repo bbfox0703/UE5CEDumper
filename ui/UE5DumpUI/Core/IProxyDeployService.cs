@@ -182,7 +182,8 @@ public interface IProxyDeployService
     /// file name) and never deployed a proxy; (3) the safe <c>version.dll</c>
     /// default, with the .exe import table only annotating which proxies are
     /// importable. When <paramref name="enabled"/> is false the suggestion fields
-    /// are cleared. Advisory only — never changes the selected proxy type, never deploys.
+    /// are cleared. Advisory only — never changes the selected proxy type, never deploys. (The view model's
+    /// "Use confirmed-working proxy" acts on the confirmed record itself. [PROXY-USE-CONFIRMED])
     /// </summary>
     Task ApplyProxySuggestionsAsync(
         IReadOnlyList<DetectedGame> games,
@@ -196,6 +197,11 @@ public interface IProxyDeployService
     /// Check if a DLL at the given path is ours (ProductName == "UE5CEDumper").
     /// </summary>
     bool IsOurProxyDll(string dllPath);
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] True for a file that exists and cannot be read at all -- not the same as
+    /// "not ours": it may BE ours. Callers treat it conservatively (never write it, never join it with a second
+    /// proxy, say so). Required, not a default: a wrapper that forgot it would silently disable every guard.</summary>
+    bool IsUnreadableDll(string dllPath);
 
     /// <summary>
     /// Get the file version string from a DLL's PE version info.

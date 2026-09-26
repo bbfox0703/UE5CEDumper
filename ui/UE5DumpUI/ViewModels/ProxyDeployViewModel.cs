@@ -1,9 +1,10 @@
-﻿using System.Collections.ObjectModel;
+using System.Collections.ObjectModel;
 using System.IO;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
+using UE5DumpUI.Services;
 
 namespace UE5DumpUI.ViewModels;
 
@@ -32,8 +33,8 @@ public partial class ProxyDeployViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private string _sourceDllPath = "";
     [ObservableProperty] private string? _sourceDllVersion;
-    /// <summary>Redeploy over OUR proxy even at the same version. Persisted
-    /// (<c>ui-options.json</c>) — it is benign and reversible.</summary>
+    /// <summary>Redeploy over OUR proxy even at the same version -- in Deploy AND Update All
+    /// ([PROXY-FORCE-UPDATEALL]). Persisted (<c>ui-options.json</c>) — it is benign and reversible.</summary>
     [ObservableProperty] private bool _forceOverwrite;
 
     /// <summary>
@@ -51,12 +52,47 @@ public partial class ProxyDeployViewModel : ViewModelBase
     /// </summary>
     [ObservableProperty] private bool _allowForeignOverwrite;
 
+    /// <summary>
+    /// [PROXY-USE-CONFIRMED] Deploy the proxy type recorded as CONFIRMED WORKING for a game
+    /// (<see cref="ConfirmedProxyByExe"/>) instead of the selected radio -- only into a folder that holds none of
+    /// our proxies (a reinstall, say). Maintainer request. Not for an exe name games in different folders ship: the
+    /// record cannot say which one it came from, so the radio's type is used and the row says why
+    /// ([PROXY-CONFIRM-SHARED-EXE]). <b>Not persisted</b>, like
+    /// <see cref="AllowForeignOverwrite"/>: it changes WHAT is written, so it is tied to the session the user is
+    /// looking at. Read once per run.
+    /// </summary>
+    [ObservableProperty] private bool _useConfirmedProxy;
+
+    /// <summary>The proxy sources this UI ships: &lt;exeDir&gt;/proxy/&lt;type&gt;.dll, the files that exist.
+    /// Shared by Update All and "Use confirmed-working proxy"; replaceable for tests (a missing source must not be
+    /// simulated by deleting the shared fixture).</summary>
+    internal Func<IReadOnlyDictionary<ProxyType, string>> ResolveSources { get; set; } = DefaultSources;
+
+    private static string ProxySourceDir =>
+        Path.Combine(Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory, "proxy");
+
+    private static IReadOnlyDictionary<ProxyType, string> DefaultSources() =>
+        Enum.GetValues<ProxyType>()
+            .Select(t => (Type: t, Path: Path.Combine(ProxySourceDir, t.GetDllName())))
+            .Where(s => File.Exists(s.Path))
+            .ToDictionary(s => s.Type, s => s.Path);
+
+    /// <summary>[PROXY-USE-CONFIRMED] Which type Deploy writes for one game. The confirmed type replaces the radio
+    /// only when the box is ticked, a record exists and differs from the radio, and the folder holds NONE of our
+    /// proxies (a folder with the radio's type keeps it; one with another of ours is skipped by the double guard).
+    /// Pure, so the rule is a truth table.</summary>
+    internal static (ProxyType Type, bool Substituted) PickDeployType(ProxyType radio, bool useConfirmed,
+                                                                     ProxyType? confirmed, int oursPresentCount) =>
+        useConfirmed && confirmed is { } c && c != radio && oursPresentCount == 0 ? (c, true) : (radio, false);
+
     [ObservableProperty] private string? _lastOperationResult;
 
     /// <summary>
     /// Opt-in (default ON): show a per-game suggested proxy in the grid, derived
     /// from the .exe import table + the proxy the user last deployed for that game.
-    /// Advisory only — never changes the selected proxy radio, never auto-deploys.
+    /// Advisory only — never changes the selected proxy radio, never auto-deploys. (Deploy acts on a CONFIRMED
+    /// record only through <see cref="UseConfirmedProxy"/>, and reads <see cref="ConfirmedProxyByExe"/>, not this
+    /// column. [PROXY-USE-CONFIRMED])
     /// </summary>
     [ObservableProperty] private bool _lkgSuggestEnabled = true;
 
@@ -510,6 +546,9 @@ public partial class ProxyDeployViewModel : ViewModelBase
     public void RecordConfirmedProxy(string? exeName, string? proxyDllName)
     {
         if (string.IsNullOrEmpty(exeName)) return;
+        // [PATH-UI-LEGACY-QMARK] A name no file can have ('?' from a DLL older than [PATH-MODULE-NAME-UTF8]) would be
+        // a record that never matches Path.GetFileName(game.ExePath) -- and a dead key in ui-options.json forever.
+        if (exeName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0) return;
         if (ProxyTypeExtensions.FromDllName(proxyDllName) is not ProxyType type) return;
 
         if (!ConfirmedProxyByExe.TryGetValue(exeName, out var prev) || prev != type)
@@ -1396,9 +1435,26 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
 
         ClearError();
-        int ok = 0, fail = 0;
+        int ok = 0, fail = 0, current = 0, skipped = 0;
+        int cannotReadSkipped = 0;   // [PROXY-PRODUCTNAME-UNREADABLE] counted apart from the double guard
         bool pickChanged = false;
         var failedDirs = NewBinariesDirSet();
+        // [PROXY-DOUBLE-GUARD] Why each skipped game was skipped. Written to its Details AFTER the refresh, which
+        // rewrites every row outside failedDirs from disk -- so the row keeps its true Status and Load, plus this.
+        var rowNotes = new List<(DetectedGame Game, string Note, bool KeepRefreshDetail)>();
+        // [PROXY-PRODUCTNAME-UNREADABLE] Rows the unreadable guard skipped; their note is decided after the refresh.
+        var unreadableSkips = new List<(DetectedGame Game, IReadOnlyList<string> Names)>();
+        // Read once, as Update All does: the checkbox stays live during a run. [PROXY-FORCE-UPDATEALL]
+        bool force = ForceOverwrite;
+        string? srcVer = force ? null : _deploy.GetDllVersion(SourceDllPath);
+        // [PROXY-USE-CONFIRMED] Also read once; the record and the sources are snapshotted with it.
+        bool useConfirmed = UseConfirmedProxy;
+        var confirmedByExe = new Dictionary<string, ProxyType>(ConfirmedProxyByExe, StringComparer.OrdinalIgnoreCase);
+        var sources = useConfirmed ? ResolveSources() : new Dictionary<ProxyType, string>();
+        int usedConfirmed = 0;
+        // [PROXY-CONFIRM-SHARED-EXE] Exe names games in different folders ship: a record there is not used.
+        var sharedExes = ProxyDeployService.SharedExeNames(Games);
+        int sharedNotUsed = 0;
 
         try
         {
@@ -1407,24 +1463,135 @@ public partial class ProxyDeployViewModel : ViewModelBase
                 ct.ThrowIfCancellationRequested();
                 StatusText = $"Deploying to {game.Name}...";
 
-                bool success = await _deploy.DeployAsync(SourceDllPath, game, SelectedProxyType,
-                    new DeployOptions(ForceSameVersion: ForceOverwrite,
-                                      ForeignConsent:   AllowForeignOverwrite), ct);
+                string target = Path.Combine(game.BinariesDir, SelectedProxyType.GetDllName());
+
+                // [PROXY-DOUBLE-GUARD] Never add a second of our proxy types (maintainer request): a Select-All Deploy
+                // over games that already carry ANOTHER of ours made doubles to be fixed game by game -- and Undeploy
+                // removes both, so the user had to remember which one worked. Skipped even with Force Overwrite, and
+                // foreign consent is not consumed; the type that is already ours here still follows the Force rules.
+                var ours = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsOurProxyDll);
+                var others = ours
+                    .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                if (others.Count > 0)
+                {
+                    bool exists = File.Exists(target);
+                    if (ProxyDeployService.PlanDeploy(exists, exists && _deploy.IsOurProxyDll(target), sameVersion: false,
+                            new DeployOptions(ForceSameVersion: force, ForeignConsent: AllowForeignOverwrite),
+                            otherOfOursPresent: true) == DeployVerdict.OtherProxyOfOurs)
+                    {
+                        skipped++;
+                        // An ALREADY-doubled folder keeps the refresh's "Multiple proxy DLLs deployed …" warning --
+                        // on exactly the folder this guard exists for, it is the one line that says so.
+                        rowNotes.Add((game, ProxyDeployService.DescribeOtherTypeSkip(others), others.Count > 1));
+                        continue;
+                    }
+                }
+
+                // [PROXY-PRODUCTNAME-UNREADABLE] A proxy-named file here we cannot read may be one of ours: the same
+                // guard, conservatively -- skipped, and said why. (Its own name, the radio's, is the service's refusal.)
+                var unreadable = ProxyDeployService.OursPresent(game.BinariesDir, _deploy.IsUnreadableDll);
+                var unreadableOthers = unreadable
+                    .Where(n => !n.Equals(SelectedProxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                // (second review) Through PlanDeploy, like the guard above: the selected type already ours there follows
+                // the same-type rules (as the service backstop and Update All do), and the refresh's own note stays.
+                if (unreadableOthers.Count > 0)
+                {
+                    bool exists = File.Exists(target);
+                    if (ProxyDeployService.PlanDeploy(exists, exists && _deploy.IsOurProxyDll(target), sameVersion: false,
+                            new DeployOptions(ForceSameVersion: force, ForeignConsent: AllowForeignOverwrite),
+                            otherOfOursPresent: true) == DeployVerdict.OtherProxyOfOurs)
+                    {
+                        cannotReadSkipped++;
+                        unreadableSkips.Add((game, unreadableOthers));
+                        continue;
+                    }
+                }
+
+                // [PROXY-USE-CONFIRMED] A clean folder with a confirmed-working record takes that type. Its source must
+                // exist: a missing one fails THIS row -- never a silent fallback to the radio's type.
+                string exeName = Path.GetFileName(game.ExePath);
+                ProxyType? record = confirmedByExe.TryGetValue(exeName, out var c) ? c : null;
+                int oursHere = ours.Count + unreadable.Count;   // a folder with an unreadable proxy-named file is not clean
+                // [PROXY-CONFIRM-SHARED-EXE] A record for an exe name another listed game ships cannot say which game
+                // it came from: the radio's type, and the row says why (never a silent fallback).
+                if (sharedExes.Contains(exeName) && PickDeployType(SelectedProxyType, useConfirmed, record, oursHere).Substituted)
+                {
+                    record = null;
+                    sharedNotUsed++;
+                    rowNotes.Add((game, $"{char.ToUpperInvariant(ProxyDeployService.SharedExeNote[0])}"
+                                        + $"{ProxyDeployService.SharedExeNote[1..]} ({exeName} is in more than one "
+                                        + $"game's folder) — {SelectedProxyType.GetDllName()} instead", true));
+                }
+                var (type, substituted) = PickDeployType(SelectedProxyType, useConfirmed, record, oursHere);
+                string source = SourceDllPath;
+                if (substituted)
+                {
+                    if (!sources.TryGetValue(type, out var confirmedSource))
+                    {
+                        fail++;
+                        failedDirs.Add(game.BinariesDir);   // preserved by the refresh, so the reason stays visible
+                        game.StatusDetail = $"Source {type.GetDllName()} not found in {ProxySourceDir} — the "
+                                            + "confirmed-working type could not be deployed";
+                        continue;
+                    }
+                    source = confirmedSource;
+                    // Another program's file at the confirmed name: a switched row never replaces it, so say so here
+                    // -- the service's own refusal would read as a refusal of the radio's type.
+                    string confirmedTarget = Path.Combine(game.BinariesDir, type.GetDllName());
+                    if (File.Exists(confirmedTarget) && !_deploy.IsOurProxyDll(confirmedTarget))
+                    {
+                        fail++;
+                        failedDirs.Add(game.BinariesDir);
+                        game.StatusDetail = $"{type.GetDllName()} (confirmed working) is another program's file here — "
+                                            + $"not replaced. Untick \"Use confirmed-working proxy\" to deploy "
+                                            + $"{SelectedProxyType.GetDllName()} instead";
+                        continue;
+                    }
+                }
+
+                // [PROXY-DEPLOY-NOOP-COUNT] OUR proxy already at the source's version, with Force off: the service
+                // would answer AlreadyCurrent and return TRUE without writing, and this loop counted it as deployed.
+                // Counted here as already current instead. A foreign DLL still goes to the service (consent).
+                if (!substituted && srcVer != null && File.Exists(target) && _deploy.IsOurProxyDll(target)
+                    && _deploy.GetDllVersion(target) == srcVer)
+                {
+                    current++;
+                    RememberPick(game, SelectedProxyType);
+                    continue;
+                }
+
+                // A switched row never passes foreign consent: the user ticked it for the radio's name, not this one.
+                // [PROXY-RISKNOTE-WIPED] Cleared first: on success the service writes its one-shot import-risk note here
+                // (or nothing), and a detail left from before must not be taken for it.
+                game.StatusDetail = null;
+                bool success = await _deploy.DeployAsync(source, game, type,
+                    new DeployOptions(ForceSameVersion: force,
+                                      ForeignConsent:   !substituted && AllowForeignOverwrite), ct);
                 if (success)
                 {
                     ok++;
-                    // Remember what the user deployed for this game (mini "last known
-                    // good"), keyed by the stable folder name so it survives reinstall.
-                    if (!string.IsNullOrEmpty(game.Name))
+                    string? riskNote = game.StatusDetail;
+                    RememberPick(game, type);
+                    if (substituted)
                     {
-                        if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != SelectedProxyType)
-                        {
-                            LastManualProxyByGame[game.Name] = SelectedProxyType;
-                            pickChanged = true;
-                        }
+                        usedConfirmed++;
+                        rowNotes.Add((game, $"Deployed {type.GetDllName()} (confirmed working) instead of "
+                                             + $"{SelectedProxyType.GetDllName()}", false));
                     }
+                    // [PROXY-RISKNOTE-WIPED] The refresh below rewrites this row from disk, which erased the note the
+                    // moment it was shown; it is written back after it (appended, so a switch note above stays).
+                    if (!string.IsNullOrEmpty(riskNote)) rowNotes.Add((game, riskNote!, true));
                 }
-                else { fail++; failedDirs.Add(game.BinariesDir); }
+                else
+                {
+                    fail++;
+                    failedDirs.Add(game.BinariesDir);
+                    // The row's reason came from the service about THIS type; say it was the confirmed one.
+                    if (substituted)
+                        game.StatusDetail = $"{type.GetDllName()} (confirmed working): {game.StatusDetail ?? "deploy failed"}";
+                }
             }
 
             // Refresh status from disk to ensure DataGrid reflects actual state — EXCEPT for the
@@ -1435,8 +1602,30 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // Reflect the just-recorded pick in the Suggested column immediately.
             await ApplyProxySuggestionsAsync(ct);
             if (pickChanged) RequestOptionSave?.Invoke();
+            WriteNotes();
 
-            SetOperationResult($"Deployed: {ok} success, {fail} failed", fail);
+            string currentNote = current > 0
+                ? $", already current: {current} (tick Force Overwrite to rewrite them)"
+                : "";
+            string skippedNote = skipped > 0
+                ? $", skipped: {skipped} (another of our proxies is already deployed — see Details)"
+                : "";
+            string confirmedNote = (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed} (see Details)" : "")
+                                   + (sharedNotUsed > 0
+                                       ? $", confirmed record not used: {sharedNotUsed} (shared exe name — see Details)"
+                                       : "");
+            string cannotReadNote = cannotReadSkipped > 0
+                ? $", cannot read: {cannotReadSkipped} (a proxy-named file there cannot be read — see Details)"
+                : "";
+            SetOperationResult($"Deployed: {ok} success, {fail} failed{currentNote}{skippedNote}{cannotReadNote}"
+                               + confirmedNote, fail);
+            if (ok == 0 && fail == 0)
+            {
+                // Nothing was written: neutral, as Update All's "already up-to-date" -- the success colour on a
+                // no-op run was the other half of the green "Deployed" this row removed.
+                StatusColor = StatusNeutral;
+                LastOperationColor = StatusNeutral;
+            }
         }
         catch (OperationCanceledException)
         {
@@ -1447,7 +1636,42 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // and bring the grid back in line WITHOUT the cancelled token (it would throw again).
             if (pickChanged) RequestOptionSave?.Invoke();
             await RefreshAfterCancelAsync(failedDirs);
-            SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}", fail);
+            WriteNotes();
+            SetOperationResult($"Deploy cancelled — deployed: {ok}, failed: {fail}"
+                               + (current > 0 ? $", already current: {current}" : "")
+                               + (skipped > 0 ? $", skipped: {skipped}" : "")
+                               + (cannotReadSkipped > 0 ? $", cannot read: {cannotReadSkipped}" : "")
+                               + (usedConfirmed > 0 ? $", confirmed type used: {usedConfirmed}" : "")
+                               + (sharedNotUsed > 0 ? $", confirmed record not used: {sharedNotUsed}" : ""), fail);
+        }
+
+        // After the refresh, which rewrote every row outside failedDirs from disk: the row keeps its true Status and
+        // Load column, plus the reason. [PROXY-DOUBLE-GUARD] [PROXY-USE-CONFIRMED]
+        void WriteNotes()
+        {
+            foreach (var (g, note, keep) in rowNotes)
+                g.StatusDetail = keep && !string.IsNullOrEmpty(g.StatusDetail) ? JoinDetail(g.StatusDetail!, note) : note;
+            // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) The refresh already names an unreadable file at any proxy
+            // name, so a refreshed row gets only the skip; a row it did not rewrite gets the whole sentence.
+            foreach (var (g, names) in unreadableSkips)
+            {
+                string note = ProxyDeployService.DetailNamesUnreadable(g.StatusDetail, names)
+                    ? ProxyDeployService.UnreadableSkipReason(names.Count)
+                    : ProxyDeployService.DescribeUnreadableSkip(names);
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
+            }
+        }
+
+        // Remember what the user deployed for this game (mini "last known good"), keyed by the stable folder name
+        // so it survives reinstall. An already-current proxy is the user's pick too.
+        void RememberPick(DetectedGame game, ProxyType type)
+        {
+            if (string.IsNullOrEmpty(game.Name)) return;
+            if (!LastManualProxyByGame.TryGetValue(game.Name, out var prev) || prev != type)
+            {
+                LastManualProxyByGame[game.Name] = type;
+                pickChanged = true;
+            }
         }
     }
 
@@ -1525,6 +1749,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
         }
     }
 
+    /// <summary>Appends a note to a row's Details: one space after a sentence that already ends in a full stop, ". "
+    /// otherwise -- never "..".</summary>
+    private static string JoinDetail(string detail, string note) =>
+        detail.TrimEnd().EndsWith('.') ? $"{detail.TrimEnd()} {note}" : $"{detail}. {note}";
+
     [RelayCommand]
     private async Task UpdateAllAsync(CancellationToken ct)
     {
@@ -1539,21 +1768,33 @@ public partial class ProxyDeployViewModel : ViewModelBase
         // of the selected radio button. So a new dxgi.dll replaces an old
         // dxgi.dll, a new version.dll replaces an old version.dll, etc. Adding
         // a 4th proxy type needs no change here (iterates the enum).
-        var exeDir = Path.GetDirectoryName(Environment.ProcessPath) ?? AppContext.BaseDirectory;
-        var sources = Enum.GetValues<ProxyType>()
-            .Select(t => (Type: t, Path: Path.Combine(exeDir, "proxy", t.GetDllName())))
-            .Where(s => File.Exists(s.Path))
+        var sources = ResolveSources()
+            .OrderBy(kv => kv.Key)                     // enum order, as before
+            .Select(kv => (Type: kv.Key, Path: kv.Value))
             .ToList();
 
         if (sources.Count == 0)
         {
-            SetError($"No source proxy DLLs found in {Path.Combine(exeDir, "proxy")}");
+            SetError($"No source proxy DLLs found in {ProxySourceDir}");
             return;
         }
 
         ClearError();
-        int updated = 0, fail = 0, upToDate = 0;
+        int updated = 0, fail = 0, upToDate = 0, forcedSame = 0, cannotRead = 0;
         var failedDirs = NewBinariesDirSet();
+        // [PROXY-RISKNOTE-WIPED] The import-risk notes this run's deploys wrote -- and [PROXY-PRODUCTNAME-UNREADABLE]
+        // the proxies it could not read -- re-applied after the refresh erases them.
+        var riskNotes = new List<(DetectedGame Game, string Note)>();
+        // [PROXY-PRODUCTNAME-UNREADABLE] Proxy files Update All could not read; their note is decided after the refresh.
+        var unreadableNotes = new List<(DetectedGame Game, string Name)>();
+        // A folder can carry two of our types. Once one failed, a later one's success must not overwrite the failure on a
+        // row the refresh preserves (second review: the grid showed DeployedCurrent beside "failed: 1").
+        var failedState = new Dictionary<string, (ProxyDeployStatus Status, string? Detail)>(StringComparer.OrdinalIgnoreCase);
+        // [PROXY-FORCE-UPDATEALL] Force Overwrite means rewrite OUR proxy whatever its version -- in Update All as in
+        // Deploy (maintainer, 2026-09-25: no hash or timestamp second check; whoever ticks it knows what they want).
+        // Read ONCE: the checkbox stays live during a run, and an untick half-way must not split one Update All
+        // into two policies.
+        bool force = ForceOverwrite;
 
         // Snapshot. This used to enumerate the live bound ObservableCollection across an await,
         // so a Scan completing mid-loop (Games.Clear() + re-Add) invalidated the enumerator and
@@ -1574,12 +1815,26 @@ public partial class ProxyDeployViewModel : ViewModelBase
 
                     // Only update a proxy that is ALREADY deployed (and ours) for
                     // this game — never push a fresh type the user didn't choose.
-                    if (!File.Exists(targetDll) || !_deploy.IsOurProxyDll(targetDll))
+                    if (!File.Exists(targetDll)) continue;
+                    if (!_deploy.IsOurProxyDll(targetDll))
+                    {
+                        // [PROXY-PRODUCTNAME-UNREADABLE] Not updated either way -- but a file we cannot read is said,
+                        // not skipped silently as if it were another program's.
+                        if (_deploy.IsUnreadableDll(targetDll))
+                        {
+                            cannotRead++;
+                            unreadableNotes.Add((game, type.GetDllName()));
+                        }
                         continue;
+                    }
 
                     string? srcVer = _deploy.GetDllVersion(srcPath);
                     string? tgtVer = _deploy.GetDllVersion(targetDll);
-                    if (srcVer != null && srcVer == tgtVer)
+                    // The version is FileVersion = 1.0.0.<build_number>: a rebuild that kept its build number reads
+                    // the same, which is exactly when Force is needed. Decided HERE, not by PlanDeploy: its
+                    // AlreadyCurrent returns true without writing, and would be counted as updated.
+                    bool sameVersion = srcVer != null && srcVer == tgtVer;
+                    if (sameVersion && !force)
                     {
                         upToDate++;
                         continue;
@@ -1589,22 +1844,41 @@ public partial class ProxyDeployViewModel : ViewModelBase
                     // ForeignConsent stays FALSE: the loop above already refuses anything
                     // that is not our proxy, so Update All never needs it and must not
                     // acquire it by 'simplification'.
+                    game.StatusDetail = null;   // [PROXY-RISKNOTE-WIPED] see DeploySelectedAsync
                     bool success = await _deploy.DeployAsync(srcPath, game, type,
                         new DeployOptions(ForceSameVersion: true, ForeignConsent: false), ct: ct);
-                    if (success) updated++;
-                    else { fail++; failedDirs.Add(game.BinariesDir); }
+                    if (success)
+                    {
+                        updated++;
+                        if (sameVersion) forcedSame++;
+                        if (!string.IsNullOrEmpty(game.StatusDetail)) riskNotes.Add((game, game.StatusDetail!));
+                        if (failedState.TryGetValue(game.BinariesDir, out var earlier))
+                        {
+                            game.Status = earlier.Status;
+                            game.StatusDetail = earlier.Detail;
+                        }
+                    }
+                    else
+                    {
+                        fail++;
+                        failedDirs.Add(game.BinariesDir);
+                        failedState.TryAdd(game.BinariesDir, (game.Status, game.StatusDetail));
+                    }
                 }
             }
 
             // Refresh status from disk for the currently-selected type's view, keeping the reason
             // on any game this run failed to update (see DeploySelectedAsync).
             await _deploy.RefreshDeployStatusAsync(Games, SourceDllPath, SelectedProxyType, failedDirs, ct);
+            WriteRiskNotes();
 
             if (updated == 0 && fail == 0)
             {
-                string msg = upToDate > 0
-                    ? $"All {upToDate} deployed proxy DLL(s) already up-to-date"
-                    : "No deployed proxy DLLs to update";
+                string msg = (upToDate > 0
+                    ? $"All {upToDate} deployed proxy DLL(s) already up-to-date (tick Force Overwrite to rewrite them "
+                      + "anyway)"
+                    : "No deployed proxy DLLs to update")
+                    + (cannotRead > 0 ? $", cannot read: {cannotRead} (see Details)" : "");
                 LastOperationResult = msg;
                 StatusText = msg;
                 StatusColor = StatusNeutral;
@@ -1613,7 +1887,11 @@ public partial class ProxyDeployViewModel : ViewModelBase
             }
             else
             {
-                SetOperationResult($"Updated: {updated}, up-to-date: {upToDate}, failed: {fail}", fail);
+                string forcedNote = forcedSame > 0
+                    ? $" ({forcedSame} rewritten at the same version — Force Overwrite)"
+                    : "";
+                SetOperationResult($"Updated: {updated}{forcedNote}, up-to-date: {upToDate}, failed: {fail}"
+                                   + (cannotRead > 0 ? $", cannot read: {cannotRead} (see Details)" : ""), fail);
             }
         }
         catch (OperationCanceledException)
@@ -1623,6 +1901,7 @@ public partial class ProxyDeployViewModel : ViewModelBase
             // [A3-DEPLOY-CANCEL] And bring the grid back in line with the disk, as Deploy / Remove
             // do: without it the rows kept the old versions for the games this run HAD written.
             await RefreshAfterCancelAsync(failedDirs);
+            WriteRiskNotes();
             SetOperationResult($"Update All cancelled — updated: {updated}, failed: {fail}", fail);
         }
         catch (Exception ex)
@@ -1633,6 +1912,23 @@ public partial class ProxyDeployViewModel : ViewModelBase
             SetOperationResult($"Update All failed — updated: {updated}, failed: {fail}", fail + 1);
             SetError(ex);
             _log.Error("ProxyDeploy", $"Update All failed: {ex.Message}");
+        }
+
+        // Appended to what the refresh wrote, one per deployed type (a doubled folder can carry two).
+        void WriteRiskNotes()
+        {
+            foreach (var (g, note) in riskNotes)
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
+            // (third review, UNREAD-NOTE-DOUBLED-OTHERNAME) A refreshed row already names an unreadable file at any
+            // proxy name (the second review's selected-name-only rule said it twice for the others); a PRESERVED row
+            // -- a failure in the same folder -- was never refreshed, so there the note names the file itself.
+            foreach (var (g, name) in unreadableNotes)
+            {
+                string note = ProxyDeployService.DetailNamesUnreadable(g.StatusDetail, new[] { name })
+                    ? $"Not updated: {name}."
+                    : ProxyDeployService.DescribeUnreadable(new[] { name }) + " Not updated.";
+                g.StatusDetail = string.IsNullOrEmpty(g.StatusDetail) ? note : JoinDetail(g.StatusDetail!, note);
+            }
         }
     }
 

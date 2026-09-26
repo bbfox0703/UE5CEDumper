@@ -1,4 +1,4 @@
-﻿using System.Diagnostics;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using Microsoft.Win32;
@@ -844,7 +844,7 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// error degrades to "not observed". The join key + classification are the pure, tested
     /// <c>ProxyImportAnalyzer.ProcessLogFolderName</c> / <c>ClassifyLoad</c>.
     /// </summary>
-    private string ComputeLoadObservation(string exePath)
+    private string ComputeLoadObservation(string exePath, IReadOnlySet<string> sharedLogFolders)
     {
         DateTime now = DateTime.Now;
         try
@@ -858,7 +858,10 @@ public sealed class ProxyDeployService : IProxyDeployService
 
             bool present = Directory.Exists(procDir);
             DateTime? lastWrite = present ? NewestLogWrite(procDir) : null;
-            return ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
+            string display = ProxyImportAnalyzer.ClassifyLoad(present, lastWrite, now, Constants.LogMaxAgeDays).Display;
+            // [PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) A log folder games in different folders share: the load
+            // it shows may be another game's. Said only where there IS a load to attribute, by the leading tag.
+            return present && sharedLogFolders.Contains(folderName) ? SharedTag + display : display;
         }
         catch (Exception ex)
         {
@@ -905,6 +908,7 @@ public sealed class ProxyDeployService : IProxyDeployService
 
             string selectedDllName = proxyType.GetDllName();
             string[] allProxyNames = AllProxyDllNames();
+            var sharedLogFolders = SharedLogFolders(targets);
 
             foreach (var game in targets)
             {
@@ -939,6 +943,12 @@ public sealed class ProxyDeployService : IProxyDeployService
                     status = absentStatus;
                     errorMessage = message;
                 }
+                else if (OwnerProbe(targetDll) == DllOwner.Unreadable)
+                {
+                    // [PROXY-PRODUCTNAME-UNREADABLE] Not "another program's": whose it is cannot be told.
+                    status = ProxyDeployStatus.Unreadable;
+                    errorMessage = DescribeUnreadable(new[] { selectedDllName });
+                }
                 else if (!IsOurProxyDll(targetDll))
                 {
                     status = ProxyDeployStatus.OtherProxy;
@@ -966,6 +976,20 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // not warn (otherwise switching tabs falsely flags every game
                 // that has a different single proxy installed). N-proxy-safe: no
                 // hardcoded type pair. deployedProxyNames was computed up front.
+                // [PROXY-PRODUCTNAME-UNREADABLE] (second review) A proxy-named file at ANOTHER name that cannot be read:
+                // said on the row, and a folder that is otherwise clean is Unreadable, not a clean NotDeployed -- it is
+                // the folder Deploy will skip.
+                var unreadableOthers = allProxyNames
+                    .Where(name => !name.Equals(selectedDllName, StringComparison.OrdinalIgnoreCase)
+                                   && IsUnreadableDll(Path.Combine(game.BinariesDir, name)))
+                    .ToList();
+                if (unreadableOthers.Count > 0)
+                {
+                    string note = DescribeUnreadable(unreadableOthers);
+                    errorMessage = string.IsNullOrEmpty(errorMessage) ? note : $"{errorMessage} {note}";
+                    if (status == ProxyDeployStatus.NotDeployed) status = ProxyDeployStatus.Unreadable;
+                }
+
                 string? conflictMsg = BuildConflictMessage(deployedProxyNames);
                 if (conflictMsg != null)
                 {
@@ -977,7 +1001,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 // "Did it actually load?" — orthogonal to the disk status above, so it is set on
                 // EVERY refresh regardless of that status ([PROXYLOAD-2026-08-17]). Cheap: a
                 // Directory.Exists + a mtime read, no PE parse.
-                string loadObservation = ComputeLoadObservation(game.ExePath);
+                string loadObservation = ComputeLoadObservation(game.ExePath, sharedLogFolders);
 
                 results.Add(new GameStatusUpdate(game, status, installedVersion, errorMessage,
                     LoadObservation: loadObservation, SetLoadObservation: true));
@@ -1034,8 +1058,17 @@ public sealed class ProxyDeployService : IProxyDeployService
     };
 
     public static DeployVerdict PlanDeploy(bool targetExists, bool targetIsOurs,
-                                           bool sameVersion, DeployOptions options)
+                                           bool sameVersion, DeployOptions options,
+                                           bool otherOfOursPresent = false, bool targetUnreadable = false)
     {
+        // [PROXY-PRODUCTNAME-UNREADABLE] Whose it is cannot be told: never replaced, Force and consent included.
+        if (targetExists && targetUnreadable) return DeployVerdict.TargetUnreadable;
+
+        // [PROXY-DOUBLE-GUARD] Ranked above everything else, consent included: a missing or foreign target in a
+        // folder that already holds another of OUR proxies would become a double. Only redeploying the type that
+        // is already ours there adds nothing, so that one falls through to the same-type rules below.
+        if (otherOfOursPresent && !(targetExists && targetIsOurs)) return DeployVerdict.OtherProxyOfOurs;
+
         if (!targetExists) return DeployVerdict.Proceed;
 
         if (!targetIsOurs)
@@ -1147,7 +1180,8 @@ public sealed class ProxyDeployService : IProxyDeployService
                 string targetDll = Path.Combine(game.BinariesDir, proxyType.GetDllName());
 
                 bool exists   = File.Exists(targetDll);
-                bool isOurs   = exists && IsOurProxyDll(targetDll);
+                var owner     = exists ? OwnerProbe(targetDll) : DllOwner.NotOurs;
+                bool isOurs   = exists && owner == DllOwner.Ours;
                 string? srcVer = null, tgtVer = null;
                 if (exists && isOurs)
                 {
@@ -1155,9 +1189,32 @@ public sealed class ProxyDeployService : IProxyDeployService
                     tgtVer = GetDllVersion(targetDll);
                 }
                 bool sameVersion = srcVer != null && srcVer == tgtVer;
+                // [PROXY-DOUBLE-GUARD] The backstop for any caller: the view model pre-checks, this refuses anyway.
+                var others = OursPresent(game.BinariesDir, IsOurProxyDll)
+                    .Where(n => !n.Equals(proxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
+                // [PROXY-PRODUCTNAME-UNREADABLE] A proxy-named file we cannot read may be one of ours: the same guard.
+                var unreadableOthers = OursPresent(game.BinariesDir, IsUnreadableDll)
+                    .Where(n => !n.Equals(proxyType.GetDllName(), StringComparison.OrdinalIgnoreCase))
+                    .ToList();
 
-                switch (PlanDeploy(exists, isOurs, sameVersion, options))
+                switch (PlanDeploy(exists, isOurs, sameVersion, options,
+                            otherOfOursPresent: others.Count > 0 || unreadableOthers.Count > 0,
+                            targetUnreadable: owner == DllOwner.Unreadable))
                 {
+                    case DeployVerdict.TargetUnreadable:
+                        return (false, new GameStatusUpdate(game, ProxyDeployStatus.Unreadable,
+                            StatusDetail: DescribeUnreadable(new[] { proxyType.GetDllName() }) + " Not replaced.",
+                            SetInstalledVersion: false));
+
+                    case DeployVerdict.OtherProxyOfOurs:
+                        // An unreadable-only skip is Unreadable: DeployedOtherType would claim a type of OURS is there.
+                        return (false, new GameStatusUpdate(game,
+                            others.Count > 0 ? ProxyDeployStatus.DeployedOtherType : ProxyDeployStatus.Unreadable,
+                            StatusDetail: others.Count > 0 ? DescribeOtherTypeSkip(others)
+                                                           : DescribeUnreadableSkip(unreadableOthers),
+                            SetInstalledVersion: false));
+
                     case DeployVerdict.NeedsForeignConsent:
                         return (false, new GameStatusUpdate(game, ProxyDeployStatus.OtherProxy,
                             StatusDetail: "Refused: another program's proxy DLL",
@@ -1225,6 +1282,24 @@ public sealed class ProxyDeployService : IProxyDeployService
         return ok;
     }
 
+    /// <summary>[PROXY-DOUBLE-GUARD] OUR proxy DLLs present in <paramref name="binariesDir"/>: one of our four
+    /// names, on disk, and ours by <paramref name="isOurs"/> (ProductName). Another program's file at one of those
+    /// names is AC1's business, not a double.</summary>
+    internal static IReadOnlyList<string> OursPresent(string binariesDir, Func<string, bool> isOurs) =>
+        AllProxyDllNames()
+            .Where(name =>
+            {
+                string p = Path.Combine(binariesDir, name);
+                return File.Exists(p) && isOurs(p);
+            })
+            .ToList();
+
+    /// <summary>[PROXY-DOUBLE-GUARD] The Details text for a game Deploy skipped. It names what is there and how to
+    /// switch type, and says nothing about whether a flavour CAN load (working-lessons §6).</summary>
+    internal static string DescribeOtherTypeSkip(IReadOnlyList<string> others) =>
+        $"Skipped: {string.Join(", ", others)} (ours) {(others.Count == 1 ? "is" : "are")} already deployed here — "
+        + "Deploy never adds a second of our proxies. Undeploy first to switch type.";
+
     /// <summary>All distinct proxy DLL file names we ship. <c>Distinct</c> guards
     /// against a future enum value whose switch arm falls back to the default.</summary>
     public static string[] AllProxyDllNames() =>
@@ -1268,15 +1343,28 @@ public sealed class ProxyDeployService : IProxyDeployService
     /// otherwise it is a note on an otherwise successful clean-up.
     /// </summary>
     public static (ProxyDeployStatus Status, string? Message, bool Success) ResolveUndeployOutcome(
-        int removed, IReadOnlyList<string> foreignSkipped, IReadOnlyList<string> locked)
+        int removed, IReadOnlyList<string> foreignSkipped, IReadOnlyList<string> locked,
+        IReadOnlyList<string>? unreadable = null)
     {
+        // [PROXY-PRODUCTNAME-UNREADABLE] A file we cannot read is left in place, and named as unreadable -- never as
+        // "not our proxy" / "another program's", which it may not be.
+        string? cannotRead = unreadable is { Count: > 0 } ? DescribeUnreadable(unreadable) + " Left in place." : null;
+        string With(string? main) => cannotRead == null ? main ?? "" : main == null ? cannotRead : $"{main}; {cannotRead}";
+
         if (locked.Count > 0)
             return (ProxyDeployStatus.ErrorLocked,
-                    $"File locked (game running?): {string.Join(", ", locked)}", false);
+                    With($"File locked (game running?): {string.Join(", ", locked)}"), false);
 
         if (removed == 0 && foreignSkipped.Count > 0)
             return (ProxyDeployStatus.OtherProxy,
-                    $"Refused: not our proxy DLL ({string.Join(", ", foreignSkipped)})", false);
+                    With($"Refused: not our proxy DLL ({string.Join(", ", foreignSkipped)})"), false);
+
+        // Not a success while an unreadable file is left: it may be ours (the contract is "true when nothing of ours
+        // is left behind"), and a success let the view model's refresh wipe this very note (second review).
+        if (cannotRead != null)
+            return (ProxyDeployStatus.Unreadable,
+                    foreignSkipped.Count > 0 ? With($"Left another program's {string.Join(", ", foreignSkipped)}")
+                                             : cannotRead, false);
 
         if (foreignSkipped.Count > 0)
             return (ProxyDeployStatus.NotDeployed,
@@ -1304,6 +1392,10 @@ public sealed class ProxyDeployService : IProxyDeployService
                     bool exists = File.Exists(p);
                     return (name, exists, exists && IsOurProxyDll(p));
                 }));
+                // [PROXY-PRODUCTNAME-UNREADABLE] Left in place like a foreign DLL -- but reported as what it is.
+                var unreadable = plan.ForeignSkipped
+                    .Where(n => IsUnreadableDll(Path.Combine(game.BinariesDir, n))).ToList();
+                var foreign = plan.ForeignSkipped.Except(unreadable, StringComparer.OrdinalIgnoreCase).ToList();
 
                 var locked = new List<string>();
                 int removed = 0;
@@ -1332,7 +1424,7 @@ public sealed class ProxyDeployService : IProxyDeployService
                 }
 
                 var (status, message, success) =
-                    ResolveUndeployOutcome(removed, plan.ForeignSkipped, locked);
+                    ResolveUndeployOutcome(removed, foreign, locked, unreadable);
                 // InstalledVersion is only cleared when something was actually removed.
                 return (success, new GameStatusUpdate(game, status,
                     StatusDetail: message, SetInstalledVersion: removed > 0));
@@ -1957,6 +2049,51 @@ public sealed class ProxyDeployService : IProxyDeployService
     // Proxy Suggestion (import-table + remembered pick)
     // ────────────────────────────────────────────────────────────────
 
+    /// <summary>[PROXY-CONFIRM-SHARED-EXE] Exe file names that games in DIFFERENT folders ship. The confirmed-working
+    /// and injected records are keyed by the bare exe name -- so a record survives a reinstall -- and for such a name
+    /// a record cannot say which game it came from: it is used for none of them (maintainer's call, 2026-09-25: mark
+    /// it ambiguous, never apply one game's proxy type to another). Only the detected games can show it: a record
+    /// from a game not listed here still applies to a listed one of the same name.</summary>
+    internal static HashSet<string> SharedExeNames(IEnumerable<DetectedGame> games) =>
+        games.Where(g => !string.IsNullOrEmpty(g.ExePath))
+             .GroupBy(g => Path.GetFileName(g.ExePath), StringComparer.OrdinalIgnoreCase)
+             .Where(grp => grp.Select(g => g.BinariesDir).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+             .Select(grp => grp.Key)
+             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>[PROXY-CONFIRM-SHARED-EXE] (fifth review, R5-03) The per-process LOG folder names (Sein::ProcessFolderName
+    /// of the exe) that games in DIFFERENT folders share -- the Load column's key, the third exe-keyed signal. By the
+    /// folder name, not the exe name: 'Game .exe' and 'Game.exe' log into the same 'Game'.</summary>
+    internal static HashSet<string> SharedLogFolders(IEnumerable<DetectedGame> games) =>
+        games.Where(g => !string.IsNullOrEmpty(g.ExePath))
+             .GroupBy(g => ProxyImportAnalyzer.ProcessLogFolderName(g.ExePath), StringComparer.OrdinalIgnoreCase)
+             .Where(grp => grp.Key.Length > 0
+                           && grp.Select(g => g.BinariesDir).Distinct(StringComparer.OrdinalIgnoreCase).Count() > 1)
+             .Select(grp => grp.Key)
+             .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+    /// <summary>The tag that LEADS a Load or Suggested text whose exe-keyed signal another listed game shares
+    /// (<see cref="SharedLogFolders"/>, <see cref="SharedExeNames"/>). Leading, not trailing: a DataGrid column clips
+    /// the END of its text, and a trailing mark was clipped away (sixth review, R6-03). The Load column is sized for its
+    /// longest text, "shared · stale · loaded yyyy-MM-dd" (280 px, pinned by LoadColumn_HoldsTheLongestLoadText;
+    /// tenth review, R10-06). The columns' header tooltips say what the marks mean.</summary>
+    internal const string SharedTag = "shared · ";
+
+    /// <summary>What a row says when its exe name's confirmed-working record is not used (<see cref="SharedExeNames"/>).
+    /// Deploy's "Use confirmed" note: that record is the only one Deploy reads.</summary>
+    internal const string SharedExeNote = "shared exe name: the confirmed-working record is not used";
+
+    /// <summary>The Suggested column's note for a shared exe name: it names the record(s) that EXIST and are not used --
+    /// an injection-only name must not claim a confirmed-working record (fifth review, R5-01). Null when neither
+    /// exists: then there is nothing to say.</summary>
+    internal static string? SharedExeNoteFor(bool hasConfirmed, bool hasInjected) => (hasConfirmed, hasInjected) switch
+    {
+        (true, true) => "the confirmed-working and injection records are not used",
+        (true, false) => "the confirmed-working record is not used",
+        (false, true) => "the injection record is not used",
+        _ => null,
+    };
+
     public async Task ApplyProxySuggestionsAsync(
         IReadOnlyList<DetectedGame> games,
         IReadOnlyDictionary<string, ProxyType> confirmedByExe,
@@ -1966,6 +2103,7 @@ public sealed class ProxyDeployService : IProxyDeployService
         CancellationToken ct = default)
     {
         var targets = games.ToList();
+        var shared = SharedExeNames(targets);
 
         var suggestions = await Task.Run(() =>
         {
@@ -1982,16 +2120,24 @@ public sealed class ProxyDeployService : IProxyDeployService
                 }
 
                 string exeName = Path.GetFileName(game.ExePath);
+                // [PROXY-CONFIRM-SHARED-EXE] An exe name another listed game ships: neither exe-keyed record is its.
+                bool ambiguous = shared.Contains(exeName);
                 ProxyType? confirmed =
-                    confirmedByExe.TryGetValue(exeName, out var c) ? c : null;
+                    !ambiguous && confirmedByExe.TryGetValue(exeName, out var c) ? c : null;
                 ProxyType? remembered =
                     rememberedByGame.TryGetValue(game.Name, out var p) ? p : null;
-                bool injected = injectedExes.Contains(exeName);
+                bool injected = !ambiguous && injectedExes.Contains(exeName);
 
                 var imports = ReadProxyImports(game.ExePath);
                 var suggestion = ProxyImportAnalyzer.Recommend(imports, confirmed, remembered, injected);
+                string? display = suggestion.Display;
+                string? note = ambiguous
+                    ? SharedExeNoteFor(confirmedByExe.ContainsKey(exeName), injectedExes.Contains(exeName))
+                    : null;
+                if (note != null)   // the tag leads (sixth review, R6-03); what was not used follows
+                    display = SharedTag + (string.IsNullOrEmpty(display) ? note : $"{display} · {note}");
 
-                results.Add((game, suggestion.Type, suggestion.Display));
+                results.Add((game, suggestion.Type, display));
             }
 
             return results;
@@ -2100,7 +2246,77 @@ public sealed class ProxyDeployService : IProxyDeployService
         }
     }
 
-    public bool IsOurProxyDll(string dllPath) => DllProductIsOurs(dllPath);
+    public bool IsOurProxyDll(string dllPath) => OwnerProbe(dllPath) == DllOwner.Ours;
+
+    public bool IsUnreadableDll(string dllPath) => File.Exists(dllPath) && OwnerProbe(dllPath) == DllOwner.Unreadable;
+
+    /// <summary>The ownership read behind <see cref="IsOurProxyDll"/> / <see cref="IsUnreadableDll"/>. Replaceable for
+    /// tests only: a fabricated PE with a version resource would test the fixture, not the wiring
+    /// ([PROXY-DOUBLE-GUARD]'s service backstop is tested through it).</summary>
+    internal Func<string, DllOwner> OwnerProbe { get; init; } = ReadOwner;
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] Whose <paramref name="dllPath"/> is: our ProductName -> Ours; another
+    /// ProductName -> NotOurs; no ProductName -> open it: readable (no version resource, which ours always carry) is
+    /// NotOurs, not readable (access denied, sharing violation) is Unreadable. The open is needed because
+    /// FileVersionInfo answers null for both, with no exception -- measured on .NET 10.</summary>
+    internal static DllOwner ReadOwner(string dllPath)
+    {
+        string? product = null;
+        try { product = FileVersionInfo.GetVersionInfo(dllPath).ProductName; }
+        catch { /* a folder we cannot list reads as absent: decided by the open below */ }
+        if (string.Equals(product, Constants.ProxyProductName, StringComparison.OrdinalIgnoreCase)) return DllOwner.Ours;
+        if (product != null) return DllOwner.NotOurs;
+        try
+        {
+            // Read|Delete sharing -- NOT Write: a file someone holds open for writing (a hex editor, a mod manager, a
+            // copy in flight) is not one we can vouch for, and FileVersionInfo returned null for it too (second
+            // review, measured). A mapped image (a running game's proxy) still opens.
+            using var fs = new FileStream(dllPath, FileMode.Open, FileAccess.Read, FileShare.Read | FileShare.Delete);
+            return DllOwner.NotOurs;
+        }
+        catch (FileNotFoundException) { return DllOwner.NotOurs; }       // gone: nothing to claim
+        catch (DirectoryNotFoundException) { return DllOwner.NotOurs; }
+        catch (UnauthorizedAccessException) { return DllOwner.Unreadable; }
+        catch (IOException) { return DllOwner.Unreadable; }               // sharing violation, and the like
+    }
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The Details text for a proxy-named file that cannot be read.</summary>
+    internal static string DescribeUnreadable(IReadOnlyList<string> names) =>
+        $"Cannot read {string.Join(", ", names)} here (access denied, or held open by another program) — cannot "
+        + "tell whose it is.";
+
+    /// <summary>[PROXY-PRODUCTNAME-UNREADABLE] The Details text for a game Deploy skipped because a proxy-named file
+    /// there cannot be read: it may be one of ours, and a second proxy next to it could make a double.</summary>
+    internal static string DescribeUnreadableSkip(IReadOnlyList<string> names) =>
+        $"Skipped: {string.Join(", ", names)} here cannot be read (access denied, or held open by another program) — "
+        + $"cannot tell whether {(names.Count == 1 ? "it is" : "they are")} one of ours, so Deploy does not add a "
+        + "second proxy next to it.";
+
+    /// <summary>(third review, UNREAD-NOTE-DOUBLED-OTHERNAME) <see cref="DescribeUnreadableSkip"/> for a row that
+    /// already names the files as unreadable: only the skip.</summary>
+    internal static string UnreadableSkipReason(int count) =>
+        $"Skipped: Deploy does not add a second proxy next to {(count == 1 ? "a file that" : "files that")} may be ours.";
+
+    /// <summary>(third review, UNREAD-NOTE-DOUBLED-OTHERNAME) Whether <paramref name="detail"/> already says that every
+    /// one of <paramref name="names"/> cannot be read. The refresh writes <see cref="DescribeUnreadable"/> for such a
+    /// file at ANY proxy name on a row it rewrites -- and nothing on a row it preserves -- so a note appended after the
+    /// refresh must decide from the row itself whether to name the files.</summary>
+    internal static bool DetailNamesUnreadable(string? detail, IReadOnlyList<string> names)
+    {
+        if (string.IsNullOrEmpty(detail)) return false;
+        const string Head = "Cannot read ", Tail = " here (";
+        var said = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        int i = 0;
+        while ((i = detail.IndexOf(Head, i, StringComparison.Ordinal)) >= 0)
+        {
+            int start = i + Head.Length;
+            int end = detail.IndexOf(Tail, start, StringComparison.Ordinal);
+            if (end < 0) break;
+            foreach (var n in detail[start..end].Split(", ")) said.Add(n.Trim());
+            i = end;
+        }
+        return names.All(said.Contains);
+    }
 
     /// <summary>Static twin of <see cref="IsOurProxyDll"/> so the staged-copy helper
     /// (which must stay static to be unit-testable against a temp folder) can apply the

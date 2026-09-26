@@ -342,6 +342,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string AppVersion { get; } = GetAppVersion();
 
+    /// <summary>[PATH-UI-LEGACY-QMARK] A Save-dialog file name from the module name: the stem, with every character
+    /// a file name cannot hold made '_'. An older DLL reports non-ASCII characters as '?', which the Windows dialog
+    /// reads as a wildcard, so Save did nothing until the user retyped the name. Spaces are legal and kept.</summary>
+    internal static string SuggestedExportStem(string? moduleName, string fallback)
+    {
+        string stem = string.IsNullOrEmpty(moduleName) ? "" : Path.GetFileNameWithoutExtension(moduleName);
+        if (string.IsNullOrWhiteSpace(stem)) return fallback;
+        var invalid = Path.GetInvalidFileNameChars();
+        var sb = new System.Text.StringBuilder(stem.Length);
+        foreach (char c in stem) sb.Append(Array.IndexOf(invalid, c) >= 0 ? '_' : c);
+        return sb.ToString();
+    }
+
     private static string GetAppVersion()
     {
         var ver = Assembly.GetEntryAssembly()?.GetName().Version;
@@ -1768,7 +1781,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     // Sync VM-level state so InterestingFunctions tab's Notes
                     // column reflects post-send reality.
                     if (_aobMaker != null)
-                        InterestingFunctions.IsAobMakerAvailable = _aobMaker.IsAvailable;
+                        InterestingFunctions.ApplyAobMakerProbe(_aobMaker.IsAvailable);   // [R7-S7]
                     StatusText = sentToCe
                         ? $"AA Script created in CE: {funcName}"
                         : wasAvailable
@@ -2790,6 +2803,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         InstanceFinder.SetEngineState(state);
         ValueSearch.SetEngineState(state);
         Teleport.SetConnected(true);   // refresh markers once the DLL is scanned
+        PropertySearch.OnConnected();  // [R7-D-08] ...and the force-holds that survived the reconnect
         Teleport.SetEngineState(state);
         Teleport.LoadCoordLibraryForGame(state.ModuleName);
         Snapshot?.SetEngineState(state);
@@ -3107,8 +3121,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             var ok = await _aobMaker.CheckAvailabilityAsync();
             IsAobMakerAvailable = ok;
-            LiveWalker.IsAobMakerAvailable = ok;
-            Pointers.IsAobMakerAvailable = ok;
+            // [R7-S7] [R7-S12] Every panel that shows WHY it is unreachable repaints, even when its flag is unchanged.
+            LiveWalker.ApplyAobMakerProbe(ok);
+            Pointers.ApplyAobMakerProbe(ok);
+            InterestingFunctions.ApplyAobMakerProbe(ok);
+            Teleport.ApplyAobMakerProbe(ok);
             // [W1-PIPEBUSY-STATUS] The remedy depends on WHY: a busy pipe is not "open Cheat Engine".
             StatusText = ok
                 ? "AOBMaker plugin connected"
@@ -3487,7 +3504,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game.exe";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
                 $"{safeModule}_symbols", filterName, filterExtension);
@@ -3525,7 +3542,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
                 $"{safeModule}_SDK", "C++ Header (*.h)", ".h");
@@ -3571,13 +3588,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // the chosen name only after GenerateAsync returns (which happens only after
         // the trailing summary line is written), so an abort/disconnect/crash never
         // leaves a truncated .jsonl at the final name (X11).
+        var progress = new Helpers.StatusProgress(msg => StatusText = msg);
         string? tempPath = null;
         try
         {
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
             var stamp = DateTime.Now.ToString("yyyyMMdd-HHmmss");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
@@ -3585,13 +3603,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (string.IsNullOrEmpty(filePath)) return;
 
             StatusText = "Dumping classes...";
-            var progress = new Progress<DumpProgress>(p =>
-                Avalonia.Threading.Dispatcher.UIThread.Post(() =>
-                {
-                    StatusText = p.Total > 0
-                        ? $"{p.Phase} ({p.Done}/{p.Total})"
-                        : $"{p.Phase} ({p.Done})";
-                }));
+            // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post queued every report
+            // twice, and the service's last one ("Done — N classes") replaced the final status below on every run.
+            var dumpProgress = progress.For<DumpProgress>(p => p.Total > 0
+                ? $"{p.Phase} ({p.Done}/{p.Total})"
+                : $"{p.Phase} ({p.Done})");
 
             var options = new DumpOptions(
                 GameOnly: false,                           // Capture engine too; analysis can filter
@@ -3610,7 +3626,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             await using (var fs = new FileStream(
                 tempPath, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true))
             {
-                result = await DumpAllService.GenerateAsync(_dump, _engineState, fs, options, progress, ct);
+                result = await DumpAllService.GenerateAsync(_dump, _engineState, fs, options, dumpProgress, ct);
             }   // fs flushed + closed here, so File.Move below can take the file
 
             File.Move(tempPath, filePath, overwrite: true);
@@ -3619,8 +3635,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var byteLength = new FileInfo(filePath).Length;
             // Report from what the dump ACTUALLY produced (class/error counts), not
             // from the file's byte length, and format the size in floating point (X4).
-            StatusText = Helpers.DumpCompletionFormatter.Format(
-                result, byteLength, Path.GetFileName(filePath));
+            progress.Complete(Helpers.DumpCompletionFormatter.Format(
+                result, byteLength, Path.GetFileName(filePath)));
             _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
                       $"{result.ClassesEmitted} classes, {result.Errors} errors)");
 
@@ -3630,13 +3646,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         }
         catch (OperationCanceledException)
         {
-            StatusText = "Dump cancelled (disconnected)";
+            progress.Complete("Dump cancelled (disconnected)");
             _log.Info("DumpAll export cancelled");
             TryDeletePartial(tempPath);
         }
         catch (Exception ex)
         {
-            StatusText = "Dump failed";
+            progress.Complete("Dump failed");
             SetError(ex);
             _log.Error("DumpAll export failed", ex);
             TryDeletePartial(tempPath);
@@ -3674,7 +3690,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             ClearError();
             var moduleName = _engineState.ModuleName;
             if (string.IsNullOrEmpty(moduleName)) moduleName = "game";
-            var safeModule = Path.GetFileNameWithoutExtension(moduleName);
+            var safeModule = SuggestedExportStem(moduleName, "game");
 
             var filePath = await _platform.ShowSaveFileDialogAsync(
                 $"{safeModule}", "USMAP (*.usmap)", ".usmap");

@@ -63,13 +63,14 @@
     {$lua}
     if syntaxcheck then return end
     -- On disable the record is going inactive regardless; still guard the call so a
-    -- mailbox failure surfaces instead of raising out of the [DISABLE] block.
+    -- mailbox failure does not raise out of the [DISABLE] block. An untick never puts a
+    -- modal over the game: the reason goes to a DEBUG session only. [R7-C-04]
     local ok, err = pcall(setDebugCamera, 0)
-    if not ok then showMessage('[Debug Camera] disable error: ' .. tostring(err)) end
+    if not ok and (UE5_DEBUG or 0) ~= 0 then print('[Debug Camera] disable error: ' .. tostring(err)) end
     {$asm}
 
   Constants exposed:
-    UE5_INVOKE_HELPER_VERSION  = '1.3'
+    UE5_INVOKE_HELPER_VERSION  = '1.4'  (a newer copy re-loaded into a session replaces the resident one)
     UE5_INVOKE_PARAMS_OFFSET   = 0x328  (params_data offset within mailbox)
 ]]
 
@@ -77,8 +78,32 @@
 -- Version (callers can sanity-check after load)
 -- ============================================================
 
-if not UE5_INVOKE_HELPER_VERSION then
-  UE5_INVOKE_HELPER_VERSION = '1.3'
+-- Re-load semantics [R7-X5] -- the freeze helper's AA30 shape, which this file never got. CE keeps ONE Lua
+-- state per session and the generated scripts re-load this file on every [ENABLE]. The bare `if not X then`
+-- guards preserved state across a concurrent load, but also kept the FIRST copy a session loaded for the rest
+-- of it: R7-S3's latch release never reached a table opened before the update. The public functions below are
+-- therefore gated on VERSION: redefined only when this chunk is NEWER than the resident one, so an update takes
+-- effect while a same/older re-load stays a no-op that preserves state (the shared flags keep their own nil-init).
+local THIS_HELPER_VERSION = '1.4'   -- 1.4: this gate [R7-X5], and R7-S3's latch release on a reset mailbox
+-- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
+local function versionLess(a, b)
+  if not a then return true end
+  local function parts(v)
+    local t = {}
+    for n in tostring(v):gmatch('%d+') do t[#t + 1] = tonumber(n) end
+    return t
+  end
+  local pa, pb = parts(a), parts(b)
+  for i = 1, math.max(#pa, #pb) do
+    local x, y = pa[i] or 0, pb[i] or 0
+    if x ~= y then return x < y end
+  end
+  return false
+end
+-- Captured ONCE, before the version global is bumped, so every guard below sees the same verdict.
+local _invokeOutdated = versionLess(UE5_INVOKE_HELPER_VERSION, THIS_HELPER_VERSION)
+if _invokeOutdated then
+  UE5_INVOKE_HELPER_VERSION = THIS_HELPER_VERSION
 end
 
 -- ============================================================
@@ -527,7 +552,7 @@ end
 -- ============================================================
 -- Re-declaration guard so multiple AA scripts loading this helper
 -- don't redefine functions and lose state.
-if not invokeUFunction then
+if not invokeUFunction or _invokeOutdated then
 
   --- Invoke a UFunction by class name + function name with baked params.
   ---
@@ -569,10 +594,12 @@ if not invokeUFunction then
     -- the command and not finished, so the mailbox was still its. Ask the DLL whether
     -- it has finished since, rather than latching this Lua-local boolean for the rest
     -- of the session -- it publishes status and cmd itself. (audit #5 AA19)
+    -- [R7-S3] Released on cmd IDLE whatever the status: the DLL clears cmd only after finishing, and a re-inject /
+    -- re-enable memsets the mailbox (status 0, cmd 0), which a DONE-only test never released. An unreadable
+    -- mailbox (gone) is released too.
     if _ue5_invoke_busy and _ue5_invoke_stale_mb then
-      local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
       local cmd = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
-      if st == STATUS_DONE and cmd == CMD_IDLE then
+      if cmd == nil or cmd == CMD_IDLE then
         _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
       end
     end
@@ -680,7 +707,7 @@ end
 -- ============================================================
 -- Public API: readUFunctionReturn
 -- ============================================================
-if not readUFunctionReturn then
+if not readUFunctionReturn or _invokeOutdated then
 
   --- Read a return value (or out-param) from the params buffer
   --- after a successful invokeUFunction call.
@@ -758,7 +785,7 @@ end
 -- ============================================================
 -- Public API: freeInvokeStringBuffers
 -- ============================================================
-if not freeInvokeStringBuffers then
+if not freeInvokeStringBuffers or _invokeOutdated then
 
   --- Free every target-process buffer allocated for FString/FUtf8String/
   --- FAnsiString INPUT params by prior invokeUFunction calls.
@@ -800,10 +827,11 @@ end
 local function simpleMailboxCall(cmd, prepare)
   -- The latch clears itself once the DLL says it is done -- ask it, rather than holding a Lua-local
   -- boolean for the rest of the session (the shape invokeUFunction uses).
+  -- [R7-S3] cmd IDLE releases it whatever the status (a re-inject's memset leaves status 0), and so does an
+  -- unreadable mailbox.
   if _ue5_invoke_busy and _ue5_invoke_stale_mb then
-    local st  = readInteger(_ue5_invoke_stale_mb + OFF_STATUS)
     local cmd_ = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
-    if st == STATUS_DONE and cmd_ == CMD_IDLE then
+    if cmd_ == nil or cmd_ == CMD_IDLE then
       _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
     end
   end
@@ -851,7 +879,7 @@ end
 -- fallback, so the UI (pipe) and CE Lua (here) share one implementation.
 -- Returns the resulting state: 1 = ON, 0 = OFF, -1 = error/unknown, -5 = the toggle
 -- is QUEUED (it will run when the game thread is free -- never re-send it). [W3-DEBUGCAM-QUEUED]
-if not setDebugCamera then
+if not setDebugCamera or _invokeOutdated then
 
   local CMD_SET_DEBUG_CAMERA = 7
 
@@ -896,7 +924,7 @@ end
 --- [A1-VERDICT-STALEMB] On such a DLL the command is not init-exempt either, so an UNINITIALISED one
 --- answers -10 ("DLL not initialized") first -- reported as 'dll-not-initialised', because telling the
 --- user to update a current DLL is the wrong instruction.
-if not getOffsetsVerdict then
+if not getOffsetsVerdict or _invokeOutdated then
 
   function getOffsetsVerdict()
     local code, mb = simpleMailboxCall(CMD_OFFSETS_VERDICT)

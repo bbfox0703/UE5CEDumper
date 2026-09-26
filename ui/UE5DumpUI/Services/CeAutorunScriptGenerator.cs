@@ -1,4 +1,5 @@
 using System.Text;
+using UE5DumpUI.Core;
 
 namespace UE5DumpUI.Services;
 
@@ -43,7 +44,9 @@ public static class CeAutorunScriptGenerator
     /// <param name="dllPath">Absolute path to <c>UE5Dumper.dll</c>, baked in — CE
     /// has no way to find our install on its own, and a run-time directory search
     /// from autorun would be both slow and fragile.</param>
-    public static string Generate(string dllPath)
+    /// <param name="codePage">[PATH-CE-INJECT-ANSI] Gives the path's ANSI bytes for a non-ASCII folder (see
+    /// <see cref="CeInjectPathLua"/>). Omitted = the system's.</param>
+    public static string Generate(string dllPath, ISystemCodePage? codePage = null)
     {
         var sb = new StringBuilder(6144);
 
@@ -70,7 +73,7 @@ public static class CeAutorunScriptGenerator
         // console") impossible to follow. (B23)
         CeLuaHygiene.AppendLateBoundDebugPreamble(sb);
         Line(sb);
-        Line(sb, $"local DLL_PATH = '{CeLuaHygiene.EscapeLuaString(dllPath)}'");
+        CeInjectPathLua.AppendLocals(sb, dllPath, codePage ?? new WindowsSystemCodePage());
         Line(sb);
 
         // Emitted INSIDE each function, not hoisted to file scope. The helper's body
@@ -140,11 +143,12 @@ public static class CeAutorunScriptGenerator
         Line(sb, "  end");
         Line(sb);
         Line(sb, "  if not alreadyLoaded then");
-        Line(sb, "    dbg('[UE5CEDumper] injecting ' .. DLL_PATH)");
+        CeInjectPathLua.AppendRefusal(sb, "    ", "      return false");   // [PATH-CE-INJECT-ANSI]
+        Line(sb, "    dbg('[UE5CEDumper] injecting ' .. DLL_PATH_SHOWN)");
         Line(sb, "    if not injectDLL(DLL_PATH) then");
         Line(sb, "      showMessage('[UE5CEDumper] injectDLL failed.\\n\\n' ..");
         Line(sb, "        'Possible causes:\\n' ..");
-        Line(sb, "        '  1. The DLL was moved -- expected at:\\n     ' .. DLL_PATH .. '\\n' ..");
+        Line(sb, "        '  1. The DLL was moved -- expected at:\\n     ' .. DLL_PATH_SHOWN .. '\\n' ..");
         Line(sb, "        '  2. Anti-cheat is blocking injection\\n' ..");
         Line(sb, "        '  3. Cheat Engine needs to run as administrator')");
         Line(sb, "      return false");

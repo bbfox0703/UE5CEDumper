@@ -101,8 +101,8 @@ public class CtDllDiscoveryTests
     {
         // A UE5Dumper.dll in CE's own folder can only have been hand-placed, and is
         // most likely a stale build. Silently loading it is worse than failing.
-        var s = Ct();
-        int crumb = s.IndexOf("io.open(_appData", StringComparison.Ordinal);
+        var s = CodeOnly(Ct());   // (seventh review, R7-01) comments out: a commented-out call is not a call
+        int crumb = s.IndexOf("ue5_breadcrumbSlots(_appData)", StringComparison.Ordinal);   // the call (sixth review: a function)
         int ceDir = s.IndexOf("getCheatEngineDir", StringComparison.Ordinal);
         Assert.True(crumb > 0 && ceDir > 0);
         Assert.True(crumb < ceDir, "the UI breadcrumb must be probed before CE's install folder");
@@ -121,7 +121,9 @@ public class CtDllDiscoveryTests
         var s = Ct();
         Assert.Contains("function ue5_renderDllSearch()", s, StringComparison.Ordinal);
         Assert.Contains("function ue5_pickDllManually()", s, StringComparison.Ordinal);
-        Assert.Contains("DLL_PATH = ue5_pickDllManually()", s, StringComparison.Ordinal);
+        // [PATH-CT-INJECT-ANSI] The pick sets both encodings of the path (injectDLL needs the ANSI one).
+        Assert.Contains("DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(ue5_pickDllManually(), false)", s,
+            StringComparison.Ordinal);
     }
 
     [Fact]

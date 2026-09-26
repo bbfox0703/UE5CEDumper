@@ -1289,7 +1289,7 @@
         </StackPanel>
       </Border>
 
-      <!-- ── Gravity Direction (Laufen — UE5.4+ GravityDirection vector) ── -->
+      <!-- ── Gravity Direction (Laufen — UE5.3+ GravityDirection vector) ── -->
       <Border Background="#252526" BorderBrush="#3E3E42" BorderThickness="1"
               CornerRadius="4" Padding="10">
         <StackPanel Spacing="8">

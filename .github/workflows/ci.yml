@@ -183,6 +183,36 @@ jobs:
           # differs from the maintainer's must not redden an unrelated PR. Stdlib-only, <1s.
           & $py tools/check_proxy_exports.py
           if ($LASTEXITCODE -ne 0) { throw "check_proxy_exports FAILED ($LASTEXITCODE) - a dll/src/Proxy*.def omits a real export or fails to pin its real ordinal. The failure names each one. Remember a .def line exports nothing on its own; it needs an implementation in the matching Lugner_*.cpp/.asm." }
+          # [CI-GATE-DRIFT-2026-09-25] The nine gates below ran in tools/check_all.py only: each was appended
+          # there after 854cd406 closed the previous drift, and none reached this file. check_ci_gate_parity
+          # (last) now fails whenever the two lists differ.
+          & $py tools/verify/crc_authority_survey.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "crc_oracle_selftest FAILED ($LASTEXITCODE) - the CRC oracle merge self-test failed" }
+          & $py tools/check_processevent_slots.py
+          if ($LASTEXITCODE -ne 0) { throw "check_processevent_slots FAILED ($LASTEXITCODE) - Grimoire.h's ProcessEvent vtable slot table disagrees with the vendored RE-UE4SS templates it was transcribed from. It is DERIVED data -- run 'py tools/check_processevent_slots.py --list'. ⚠ The runtime pattern scan is still primary and a per-BUILD difference is not a bug; this only pins the fallback table against its own source" }
+          & $py tools/check_property_family.py
+          if ($LASTEXITCODE -ne 0) { throw "check_property_family FAILED ($LASTEXITCODE) - somebody assigned a DynOff sizeof(FProperty) family member directly instead of going through ApplyPropertyFamily. A split family does NOT crash -- struct reads stay correct while TArray element descriptors and every enum name read 8 bytes off -- which is why audit #5 G12 found it late and why its own fix missed a third writer. Run 'py tools/check_property_family.py --list'" }
+          & $py tools/check_ce_untick_placement.py
+          if ($LASTEXITCODE -ne 0) { throw "check_ce_untick_placement FAILED ($LASTEXITCODE) - a CE Lua bail-out unticks its record with an IMMEDIATE 'memrec.Active = false' inside [ENABLE], which CE silently ignores -- setActive early-exits while autoassemble is still running, so the row ends up TICKED over a cheat that applied nothing. Use the deferred form (CeLuaHygiene.AppendDeferredUntick). Run 'py tools/check_ce_untick_placement.py --list' for every site and its verdict, or '--selftest' for the negative controls" }
+          & $py tools/check_badge_prime_symmetry.py
+          if ($LASTEXITCODE -ne 0) { throw "check_badge_prime_symmetry FAILED ($LASTEXITCODE) - a gameplay card's badge is reset to Unknown on disconnect and primed by NOTHING on connect, so after a UI reconnect it reads 'never asked' over state the DLL is still holding -- a live Fly or Move Speed hold with no sign the game is modified. Add the read to TeleportViewModel.PrimeHeldBadgesAsync, quietly (no IsBusy, no StatusText). It counts Apply*State SYMBOLS, so the two time lanes are one entry. Run 'py tools/check_badge_prime_symmetry.py --list' or '--selftest'" }
+          & $py tools/check_ce_idlewait_scope.py
+          if ($LASTEXITCODE -ne 0) { throw "check_ce_idlewait_scope FAILED ($LASTEXITCODE) - a CE mailbox emitter's bounded wait-for-IDLE is conditioned on the enable/disable discriminator, so only ONE of the two blocks gets it -- while the cmd store below is emitted for both. The unguarded block then writes operands, clears status and stores cmd while another command may still be in flight (the AA10 hazard). Emit the call unconditionally and pass 'enable ? MailboxTimeout.UntickAndReturn : MailboxTimeout.SilentReturn'. It deliberately does NOT flag a guard that is not the enable discriminator (if (dll), if (verifyReturn)) -- that split is what keeps the check baseline-free. Run 'py tools/check_ce_idlewait_scope.py --list' or '--selftest'" }
+          & $py tools/check_clipboard_delivery.py
+          if ($LASTEXITCODE -ne 0) { throw "check_clipboard_delivery FAILED ($LASTEXITCODE) - a DELIVERY clipboard copy (the payload is a generated CE script / memory-record XML) discards CopyToClipboardAsync's result, so the status can claim a paste-able script the clipboard never took -- and the user then pastes the PREVIOUS script into Cheat Engine and runs it. Route it through Helpers/ClipboardDelivery. Convenience copies (an address, a name) are deliberately NOT flagged: that split is what keeps this check baseline-free. Run 'py tools/check_clipboard_delivery.py --list' or '--selftest'" }
+          & $py tools/check_json_default_ignore.py
+          if ($LASTEXITCODE -ne 0) { throw "check_json_default_ignore FAILED ($LASTEXITCODE) - a value-type property whose initializer differs from default(T) is serialized under WhenWritingDefault, so a user choosing the type-default (0 / false) has the key OMITTED and the next load silently re-runs the initializer -- [W1-QUOTA-UNLIMITED] deleted snapshots that way. Drop WhenWritingDefault from the context (the spec rule), or mark a property that can never take default(T) [JsonIgnore(Condition = JsonIgnoreCondition.Never)]. Run 'py tools/check_json_default_ignore.py --list' or '--selftest'" }
+          & $py tools/check_session_gate.py
+          if ($LASTEXITCODE -ne 0) { throw "check_session_gate FAILED ($LASTEXITCODE) - a command hands a STORED snapshot's address (Live Walker / Locate / Copy) to the running game with nothing enabling it that reaches the game session (GameSessionId / _currentSessionId), so a previous launch's address is walked in this one. Gate it the way Snapshot Diff and SPC do ([W1-PIVOT-SESSION]). Run 'py tools/check_session_gate.py --list' or '--selftest'" }
+          # [PATH-SHAPE-2026-09-25] (skeptic T11) The Lua suites on CE's own VM. The runner has no Cheat Engine, so
+          # this reports SKIPPED here; it runs and can fail wherever out/ce_lua53 is built.
+          & $py tools/check_lua_suites.py
+          if ($LASTEXITCODE -ne 0) { throw "check_lua_suites FAILED ($LASTEXITCODE) - a scripts/tests/*.lua suite failed on Cheat Engine's own Lua VM. Run 'py tools/check_lua_suites.py'." }
+          & $py tools/llm/ollama_local.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "ollama_local selftest FAILED ($LASTEXITCODE) - tools/llm/ollama_local.py's controls failed: the commercial-game / DumperTest classification, the model tag match, the chunker or the settings.local.json hook merge regressed. Run 'py tools/llm/ollama_local.py --selftest' for the failing control." }
+          # The two gate lists are one list kept in two places: check_all.GATES and this file.
+          & $py tools/check_ci_gate_parity.py
+          if ($LASTEXITCODE -ne 0) { throw "check_ci_gate_parity FAILED ($LASTEXITCODE) - a gate runs in tools/check_all.py but not here, or here but not there. Add it to BOTH lists with the same arguments; the failure names each one." }
 
       - name: Build + test + AOT publish (the gate)
         shell: pwsh

@@ -18,8 +18,9 @@ namespace UE5DumpUI.Helpers;
 /// <para>The caller's rule: create it before the <c>try</c>. Once the service holds it, set every status through
 /// it: <see cref="Report"/> for an intermediate one, and <see cref="Complete"/> for the final one on EVERY exit,
 /// the catch blocks included (a queued report replaces "Export failed" just as well). A bare
-/// <c>StatusText =</c> after that point can be overtaken. <c>UsmapExportServiceTests</c> pins the three Export
-/// actions (Symbols, SDK Header, USMAP) to this rule.</para>
+/// <c>StatusText =</c> after that point can be overtaken. <c>UsmapExportServiceTests</c> pins the four Export
+/// actions (Symbols, SDK Header, USMAP, Dump All) and the Dump Explorer parse to this rule; a service that reports a
+/// record rather than a string takes <see cref="For{T}"/>. [R7-D-02]</para>
 /// </summary>
 internal sealed class StatusProgress : IProgress<string>
 {
@@ -49,5 +50,19 @@ internal sealed class StatusProgress : IProgress<string>
     {
         _completed = true;   // before the assignment, so no queued report can follow it
         _setStatus(finalStatus);
+    }
+
+    /// <summary>[R7-D-02] A sink for a service that reports a record rather than a string. Each report is formatted
+    /// and handed to <see cref="Report"/> at once, so it is still queued once and still dropped after
+    /// <see cref="Complete"/>.</summary>
+    internal IProgress<T> For<T>(Func<T, string> format)
+        => new Mapped<T>(this, format ?? throw new ArgumentNullException(nameof(format)));
+
+    private sealed class Mapped<T> : IProgress<T>
+    {
+        private readonly StatusProgress _owner;
+        private readonly Func<T, string> _format;
+        internal Mapped(StatusProgress owner, Func<T, string> format) { _owner = owner; _format = format; }
+        public void Report(T value) => _owner.Report(_format(value));
     }
 }

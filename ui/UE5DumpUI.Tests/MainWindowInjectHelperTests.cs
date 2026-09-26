@@ -125,6 +125,87 @@ public class MainWindowInjectHelperTests
     }
 
     [Fact]
+    public async Task RefreshAobMaker_ReasonChangesWhileOffline_TheSystemTabLineRepaints()
+    {
+        // [R7-S7] The System tab's offline line is computed from the shared bridge's LastFailure, but the toolbar ⟳ only
+        // SET Pointers.IsAobMakerAvailable: false -> false raises nothing, so the line kept "not connected -- open Cheat
+        // Engine" after ⟳ had found the pipe busy. (true -> false raised nothing for it either: no change hook.)
+        bool exists = false;
+        using var bridge = new AobMakerBridgeService(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150,
+                                                     _ => exists);
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.Pointers.CheckAobMakerAsync();                 // the System tab's own probe: absent
+        Assert.Contains("not connected", vm.Pointers.AobMakerOfflineText, StringComparison.Ordinal);
+
+        exists = true;                                           // another client now holds the pipe
+        var raised = new List<string?>();
+        vm.Pointers.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.False(vm.Pointers.IsAobMakerAvailable);
+        Assert.Contains(nameof(PointerPanelViewModel.AobMakerOfflineText), raised);
+        Assert.Contains("busy", vm.Pointers.AobMakerOfflineText, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task RefreshAobMaker_ReasonChangesWhileOffline_LiveWalkerAndTeleportNotesRepaint()
+    {
+        // [R7-S12] Live Walker's note IS bound (LiveWalkerPanel.axaml) and, since R7-S7, reasoned -- but the toolbar ⟳
+        // still set its flag plainly, so false -> false with a new reason repainted nothing there; Teleport's note was
+        // never touched by ⟳ at all.
+        bool exists = false;
+        using var bridge = new AobMakerBridgeService(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150,
+                                                     _ => exists);
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.LiveWalker.CheckAobMakerAsync();               // absent
+        await vm.Teleport.CheckAobMakerAsync();
+        Assert.Contains("not connected", vm.LiveWalker.AobMakerNote, StringComparison.Ordinal);
+
+        exists = true;
+        var walker = new List<string?>();
+        var teleport = new List<string?>();
+        vm.LiveWalker.PropertyChanged += (_, e) => walker.Add(e.PropertyName);
+        vm.Teleport.PropertyChanged += (_, e) => teleport.Add(e.PropertyName);
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.Contains(nameof(LiveWalkerViewModel.AobMakerNote), walker);
+        Assert.Contains("busy", vm.LiveWalker.AobMakerNote, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(nameof(TeleportViewModel.AobMakerNote), teleport);
+    }
+
+    [Fact]
+    public async Task LiveWalkerProbe_ReasonChangesWhileOffline_TheNoteRepaints()
+    {
+        // [R7-S12] ...and Live Walker's own tab-activation probe had the same false -> false gap.
+        bool exists = false;
+        using var bridge = new AobMakerBridgeService(new NoopLog(), "UE5DumpUITest_" + Guid.NewGuid().ToString("N"), 150,
+                                                     _ => exists);
+        var vm = BuildVm(aobMaker: bridge);
+        await vm.LiveWalker.CheckAobMakerAsync();               // absent
+
+        exists = true;
+        var raised = new List<string?>();
+        vm.LiveWalker.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        await vm.LiveWalker.CheckAobMakerAsync();               // still false, now busy
+
+        Assert.Contains(nameof(LiveWalkerViewModel.AobMakerNote), raised);
+    }
+
+    [Fact]
+    public void PointersAvailabilityFlip_RepaintsTheOfflineLineAndTheButtons()
+    {
+        // [R7-S7] ...and a plain flip (connected -> not) repaints the line and the CE buttons that read the flag.
+        var vm = new PointerPanelViewModel(new MockPlatformService(Path.GetTempPath())) { IsAobMakerAvailable = true };
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        vm.IsAobMakerAvailable = false;
+
+        Assert.Contains(nameof(PointerPanelViewModel.AobMakerOfflineText), raised);
+        Assert.Contains(nameof(PointerPanelViewModel.CanHexGObjects), raised);
+    }
+
+    [Fact]
     public async Task RefreshAobMaker_AbsentPipe_StillSaysOpenCheatEngine()
     {
         // The control, green both ways: nothing listening keeps the old remedy.

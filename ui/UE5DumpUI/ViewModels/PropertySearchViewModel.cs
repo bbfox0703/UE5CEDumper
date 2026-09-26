@@ -220,11 +220,22 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
         _isAobMakerAvailable = aobMaker?.IsAvailable ?? false;
     }
 
+    /// <summary>[R7-D-08] The re-read <see cref="OnConnected"/> started. A test seam, like
+    /// <c>TeleportViewModel.ConnectPrime</c>: production code never awaits it.</summary>
+    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
+
+    /// <summary>[R7-D-08] Called once a (re)connected session's DLL is scanned. The DLL's force-holds survive a pipe drop
+    /// and a UI restart, and <see cref="ClearOnDisconnect"/> emptied the mirror, so without this the Forced fields strip
+    /// (and its Release / Clear all) stayed hidden while the DLL kept writing -- only the Teleport Stealth card re-read
+    /// its hold on connect. Fire-and-forget: RefreshForcedFieldsAsync logs its own failure.</summary>
+    public void OnConnected() => ConnectPrime = RefreshForcedFieldsAsync();
+
     /// <summary>Drop search results + the forced-fields mirror so a reconnect never
     /// shows rows (and live UClass* addresses) from the previous game (audit X5).
     /// Client-side ONLY: this clears the mirror without calling the (gone) pipe — do NOT reset holds here. The DLL's
     /// force-holds SURVIVE a pipe drop for as long as the game lives (they die only with the process), which is why
-    /// the Stealth card re-reads them on connect. [A4-STEALTH-PRIME]</summary>
+    /// the Stealth card re-reads them on connect [A4-STEALTH-PRIME], and <see cref="OnConnected"/> re-reads this
+    /// panel's list [R7-D-08].</summary>
     public void ClearOnDisconnect()
     {
         _xrefBatchCts?.Cancel();

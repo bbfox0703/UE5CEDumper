@@ -58,6 +58,7 @@ local function resetWorld()
   -- The helper's own globals. The re-declaration guards mean the chunk cannot be
   -- reloaded, so these are reset by hand -- missing one leaks state between cases.
   _ue5_invoke_busy = false
+  _ue5_invoke_stale_mb = nil   -- [R7-S3] the latch is shared session state too: one case's timeout must not leak
   _ue5_invoke_str_bufs = {}
   -- A live DLL: takes the command and answers success immediately.
   DLL = function() I32[MB + OFF_RESULT] = 0; I32[MB + OFF_STATUS] = 1 end
@@ -440,6 +441,31 @@ do
   eq(e2, nil, 'with no error')
 end
 
+case('R7-S3: a latch on a RESET mailbox (re-inject memsets it: status 0, cmd 0) is released')
+do
+  -- The latch's own message says "re-inject if it never does". A re-inject memsets the mailbox, which then
+  -- reads status 0 -- never DONE -- so a DONE-only release test refused every later call for the session.
+  resetWorld()
+  DLL = function() I32[MB + OFF_STATUS] = 2 end
+  eq(invokeUFunction('C', 'F', 0, nil), false, 'first times out')
+  I32[MB + OFF_STATUS], I32[MB + OFF_CMD] = 0, 0            -- the re-inject's memset
+  DLL = function() I32[MB + OFF_RESULT] = 0; I32[MB + OFF_STATUS] = 1 end
+  local ok2, e2 = invokeUFunction('C', 'G', 0, nil)
+  eq(ok2, true, 'the next invoke runs')
+  eq(e2, nil, 'with no error')
+end
+
+case('R7-S3: simpleMailboxCall (setDebugCamera) releases a latch on a reset mailbox too')
+do
+  resetWorld()
+  DLL = function() I32[MB + OFF_STATUS] = 2 end
+  eq((pcall(setDebugCamera, 1)), false, 'the first call times out (raises)')
+  eq(_ue5_invoke_busy, true, 'latched')
+  I32[MB + OFF_STATUS], I32[MB + OFF_CMD] = 0, 0
+  DLL = function() I32[MB + OFF_RESULT] = 1; I32[MB + OFF_STATUS] = 1 end
+  eq((pcall(setDebugCamera, 1)), true, 'the next call runs')
+end
+
 case('AA19: a normal SUCCESS still leaves the helper ready for the next call')
 do
   resetWorld()
@@ -726,6 +752,74 @@ do
   })
   eq(ok, true, 'the invoke reports success')
   eq(BYTES[MB + OFF_PARAMS], 1, 'a native bool is written as 0x01')
+end
+
+-- ============================================================
+-- R7-X5: an UPDATED helper must take effect on re-load; a same/older one must not.
+-- ============================================================
+-- The freeze helper's AA30 contract, which this file never got: its public functions sat behind bare
+-- `if not X then` guards, so a CE session that had loaded one copy kept it however often a newer copy was
+-- re-loaded -- R7-S3's latch release never reached a table opened before the update. Found by R7-S3's live
+-- check, whose red arms each needed a fresh CE process for exactly this reason. Versions are DERIVED from
+-- the file under test, never typed (the lesson freeze_helper_test.lua's AA30 block records).
+local CUR = UE5_INVOKE_HELPER_VERSION
+local function bump(v, d)
+  local a, b = v:match('^(%d+)%.(%d+)$')
+  return string.format('%s.%d', a, tonumber(b) + d)
+end
+local OLDER, NEWER = bump(CUR, -1), bump(CUR, 1)
+local PUBLIC = { 'invokeUFunction', 'readUFunctionReturn', 'freeInvokeStringBuffers', 'setDebugCamera',
+                 'getOffsetsVerdict' }
+
+local function plantSentinels()
+  local s = {}
+  for _, n in ipairs(PUBLIC) do s[n] = function() return 'RESIDENT' end; _G[n] = s[n] end
+  return s
+end
+
+case('R7-X5: a newer helper REPLACES every public function of a resident older one on re-load')
+do
+  resetWorld()
+  local s = plantSentinels()
+  UE5_INVOKE_HELPER_VERSION = OLDER
+  assert(loadfile(HELPER))()
+  for _, n in ipairs(PUBLIC) do
+    check(type(_G[n]) == 'function' and _G[n] ~= s[n], 'R7-X5: the newer helper redefined ' .. n)
+  end
+  eq(UE5_INVOKE_HELPER_VERSION, CUR, 'R7-X5: and bumped the resident version')
+end
+
+case('R7-X5: the SAME version is a no-op -- the resident functions and the shared latch are kept')
+do
+  resetWorld()
+  local s = plantSentinels()
+  UE5_INVOKE_HELPER_VERSION = CUR
+  _ue5_invoke_busy, _ue5_invoke_stale_mb = true, MB   -- an in-flight call that a re-load must not clear
+  assert(loadfile(HELPER))()
+  for _, n in ipairs(PUBLIC) do eq(_G[n], s[n], 'R7-X5: same version keeps ' .. n) end
+  eq(_ue5_invoke_busy, true, 'R7-X5: and the busy flag')
+  eq(_ue5_invoke_stale_mb, MB, 'R7-X5: and the stale-mailbox latch')
+end
+
+case('R7-X5: an OLDER file re-added does not downgrade a newer resident helper')
+do
+  resetWorld()
+  local s = plantSentinels()
+  UE5_INVOKE_HELPER_VERSION = NEWER
+  assert(loadfile(HELPER))()
+  for _, n in ipairs(PUBLIC) do eq(_G[n], s[n], 'R7-X5: the newer resident keeps ' .. n) end
+  eq(UE5_INVOKE_HELPER_VERSION, NEWER, 'R7-X5: and the resident version is not downgraded')
+end
+
+case('R7-X5: the version moved past 1.3, the last one before R7-S3 changed invokeUFunction')
+do
+  local a, b = CUR:match('^(%d+)%.(%d+)$')
+  check(tonumber(a) > 1 or tonumber(b) > 3, 'R7-X5: a 1.3 resident must be replaced by this file, so it cannot be 1.3')
+  -- Leave real functions resident for anything that runs after this block.
+  for _, n in ipairs(PUBLIC) do _G[n] = nil end
+  UE5_INVOKE_HELPER_VERSION = nil
+  resetWorld()
+  assert(loadfile(HELPER))()
 end
 
 -- ============================================================

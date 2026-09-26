@@ -372,7 +372,7 @@ public class WalkInstanceLeanTests
             seen.Add(req);
             return new JsonObject { ["ok"] = true, ["addr"] = "0xA1", ["fields"] = new JsonArray() };
         });
-        var svc = new DumpService(pipe, new MockLoggingService());
+        var svc = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
         await svc.WalkInstanceAsync("0xA1", ct: TestContext.Current.CancellationToken);
         await svc.WalkInstanceAsync("0xA1", lean: true, ct: TestContext.Current.CancellationToken);
@@ -396,7 +396,7 @@ public class WalkInstanceLeanTests
                 arr.Add((JsonNode)new JsonObject { ["addr"] = "0xA1", ["fields"] = new JsonArray() });
             return new JsonObject { ["ok"] = true, ["instances"] = arr };
         });
-        var svc = new DumpService(pipe, new MockLoggingService());
+        var svc = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
         var items = new[] { ("0xA1", (string?)null) };
 
         await svc.WalkInstanceBatchAsync(items, ct: TestContext.Current.CancellationToken);
@@ -420,7 +420,7 @@ public class WalkInstanceLeanTests
                 throw new InvalidOperationException("simulated older DLL");
             return new JsonObject { ["ok"] = true, ["addr"] = "0xA1", ["fields"] = new JsonArray() };
         });
-        var svc = new DumpService(pipe, new MockLoggingService());
+        var svc = new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
         await svc.WalkInstanceBatchAsync(new[] { ("0xA1", (string?)null) }, lean: true,
                                         ct: TestContext.Current.CancellationToken);

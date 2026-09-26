@@ -188,6 +188,20 @@ inline std::string EncodeUtf16(const wchar_t* data, size_t len) {
     return result;
 }
 
+// [PATH-MODULE-NAME-UTF8] The last component of a wide path ('\' or '/' separated), as exact UTF-8. The
+// module / exe name the DLL reports (module_name, load_mode, get_ce_pointer_info) was built by turning every
+// UTF-16 unit >= 128 into '?', so a non-ASCII exe name reached the UI as a name no file has, and every key built
+// on it (the confirmed-working proxy, the teleport library, the log mirror folder) was wrong. A trailing
+// separator gives "" (no leaf). Stops at a NUL inside len, as EncodeUtf16 does.
+inline std::string LeafUtf8(const wchar_t* path, size_t len) {
+    if (!path || len == 0) return {};
+    size_t start = 0;
+    for (size_t i = 0; i < len && path[i] != 0; ++i)
+        if (path[i] == L'\\' || path[i] == L'/') start = i + 1;
+    if (start >= len) return {};
+    return EncodeUtf16(path + start, len - start);
+}
+
 // Cheap "did this decode to real text?" guard for DecodeFStringBuffer. A buffer
 // decoded at the WRONG element width is dominated by Sanitize's '?' replacement
 // marker; genuine text is not. Counts decoded CHARACTERS (skipping UTF-8

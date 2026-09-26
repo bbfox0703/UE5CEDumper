@@ -539,6 +539,9 @@ public class InterestingFunctionsViewModelTests
         public bool IsAvailable { get; set; }
         public bool NextCheckResult { get; set; }
         public int CheckCallCount { get; private set; }
+        /// <summary>[R7-S7] WHY the last probe failed; null keeps the interface default (absent when unavailable).</summary>
+        public AobMakerFailure? Failure { get; set; }
+        public AobMakerFailure LastFailure => Failure ?? (IsAvailable ? AobMakerFailure.None : AobMakerFailure.Absent);
 
         /// <summary>When set, CheckAvailabilityAsync blocks on this instead of
         /// completing synchronously — a deterministic stand-in for the real
@@ -804,7 +807,31 @@ public class InterestingFunctionsViewModelTests
         await vm.CheckAobMakerAsync();
 
         Assert.False(vm.IsAobMakerAvailable);
-        Assert.Contains("AOBMaker plugin not found", vm.AobMakerNote);
+        // [R7-S7] The shared sentence (headless: its literal fallback), plus what still works.
+        Assert.Contains("not connected", vm.AobMakerNote);
+        Assert.Contains("clipboard", vm.AobMakerNote);
+    }
+
+    [Fact]
+    public async Task AobMakerNote_ABusyPipe_SaysBusy_AndRepaintsWhenOnlyTheReasonChanged()
+    {
+        // [R7-S7] "AOBMaker plugin not found" for a pipe another program holds sent the user to reinstall a plugin that
+        // is there -- the W1-PIPEBUSY-STATUS defect, on a surface its fix missed. And the reason can change while the
+        // flag stays false, which raises nothing by itself.
+        var bridge = new FakeAobMakerBridge { NextCheckResult = false };
+        var vm = new InterestingFunctionsViewModel(
+            new FakeDumpService { NextResult = BuildResult(BuildSampleEntries()) },
+            new NoopLogger(), bridge);
+        await vm.CheckAobMakerAsync();                            // absent
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        bridge.Failure = AobMakerFailure.Busy;
+        await vm.CheckAobMakerAsync();                            // still false, now busy
+
+        Assert.Contains(nameof(InterestingFunctionsViewModel.AobMakerNote), raised);
+        Assert.Contains("busy", vm.AobMakerNote, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("not found", vm.AobMakerNote, StringComparison.Ordinal);
     }
 
     [Fact]

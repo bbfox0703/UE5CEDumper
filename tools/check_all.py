@@ -4,6 +4,7 @@
     py tools/check_all.py            # every pre-build gate
     py tools/check_all.py --quick    # skip the two that need a Ghidra-pattern re-extract
     py tools/check_all.py --list     # print the sequence and exit
+    py tools/check_all.py --selftest # the result classifier's controls only (every run does them first)
 
 WHY THIS EXISTS. The gates lived only as inline `pwsh` lines inside
 `.github/workflows/ci.yml`, each with its own `throw` -- and a session that knows
@@ -16,14 +17,16 @@ the list held 13, and `CONTRIBUTING.md` said "All 13 gates" for the same reason:
 number in prose does not move when someone appends a tuple. `--list` prints it, and the
 run's own final line reports "N gate(s) run".
 
-⚠ ADDING A GATE MEANS ADDING IT TO BOTH LISTS, and nothing enforces that. This file
-and `ci.yml` had silently drifted -- `check_evidence_index` and `check_inert_trimming`
-ran here and were absent from CI from the day they were added until 2026-09-06, so a
-PR could break either and redden nothing. Both sequences are 1:1 again as of that
-date (CI additionally runs `check_proxy_exports --artifacts` post-build, which needs a
-build and is deliberately not here). Compare them with:
-    grep -oE 'py tools/[a-z_/]+[.]py' .github/workflows/ci.yml
-    py tools/check_all.py --list
+⚠ ADDING A GATE MEANS ADDING IT TO BOTH LISTS -- enforced since 2026-09-25 by the
+`check_ci_gate_parity` gate, which also requires each CI line's exit check. This file
+and `ci.yml` had silently drifted twice: `check_evidence_index` and
+`check_inert_trimming` until 2026-09-06, then nine gates appended after that date
+([CI-GATE-DRIFT-2026-09-25]). CI additionally runs `check_proxy_exports --artifacts`
+post-build, which needs a build and is deliberately not here. Compare them with:
+    py tools/check_ci_gate_parity.py --list
+
+⚠ A GATE THAT CANNOT RUN HERE says so on its LAST line ("SKIPPED: ...", "SKIP: ...", or
+"<gate>: SKIP -- ...") and exits 0; it is counted as skipped, not run (classify below).
 
 ⚠ ORDER MATTERS. `aob_specificity` reads the TSV that `extract_patterns --check`
 writes, so it cannot run first. The sequence below is CI's, not alphabetical.
@@ -40,6 +43,7 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import subprocess
 import sys
 import time
@@ -218,7 +222,77 @@ GATES = [
      "with nothing enabling it that reaches the game session (GameSessionId / _currentSessionId), so a "
      "previous launch's address is walked in this one. Gate it the way Snapshot Diff and SPC do "
      "([W1-PIVOT-SESSION]). Run 'py tools/check_session_gate.py --list' or '--selftest'", False),
+
+    # [CI-GATE-DRIFT-2026-09-25] Enforces what the docstring above used to only ask for: every gate here also runs in
+    # ci.yml, with the same arguments, and CI runs no pre-build gate this list lacks. Nine had drifted out again.
+    ("check_ci_gate_parity",
+     ["tools/check_ci_gate_parity.py"],
+     "a gate runs in tools/check_all.py but not in .github/workflows/ci.yml, or the other way round -- add it to "
+     "BOTH lists with the same arguments. Run 'py tools/check_ci_gate_parity.py --list'", False),
+
+    # [PATH-SHAPE-2026-09-25] (skeptic T11) The Lua suites -- the only behavioural tests of the .CT and of the Lua the
+    # UI emits -- on CE's own VM. SKIPS (exit 0, counted as skipped) where out/ce_lua53 is not built, e.g. CI: building it needs a local
+    # Cheat Engine, which a gate must not reach for. Machine-bound suites are excluded (the script says which).
+    ("check_lua_suites",
+     ["tools/check_lua_suites.py"],
+     "a scripts/tests/*.lua suite failed on Cheat Engine's own Lua VM -- the .CT or an emitted CE script regressed. "
+     "Run 'py tools/check_lua_suites.py' (and --list for what runs and what is excluded)", False),
+
+    # The local-LLM helper's pure logic -- above all the game guard, whose regression would leave a ~14 GB model
+    # on the GPU while a commercial game runs. No network and no processes, so it runs identically in CI.
+    ("ollama_local --selftest",
+     ["tools/llm/ollama_local.py", "--selftest"],
+     "tools/llm/ollama_local.py's controls failed -- the commercial-game / DumperTest classification, the model "
+     "tag match, the chunker or the settings.local.json hook merge regressed. Run "
+     "'py tools/llm/ollama_local.py --selftest' for the failing control", False),
 ]
+
+
+def last_line(stdout: str) -> str:
+    return ([ln for ln in (stdout or "").splitlines() if ln.strip()][-1:] or [""])[0]
+
+
+def classify(name: str, returncode: int, stdout: str) -> str:
+    """ok / skip / warn / fail for one gate's result."""
+    if returncode == 0:
+        # "SKIPPED: ..." / "SKIP: ...", or "<gate>: SKIP -- ..." (check_processevent_slots). Upper case only: a
+        # summary's "skipped 0" or prose is not a skip.
+        return "skip" if re.match(r"\s*(?:[\w.-]+:\s*)?SKIP(?:PED)?\b", last_line(stdout)) else "ok"
+    return "warn" if name in ADVISORY else "fail"
+
+
+# (second review, LUAGATE-SKIP-HIDDEN) A gate that cannot run here says so and exits 0 (check_lua_suites without its
+# CE host: "SKIPPED: ..."; check_ue_sample_values without its sample: "SKIP: ..."). Counting that as a pass made the
+# summary say "25 gate(s) run, 0 skipped" on a machine where the Lua suites never ran.
+_CLASSIFY_SELFTEST = [
+    ("a pass", ("g", 0, "  ok  x\nCHECK OK: all fine\n"), "ok"),
+    ("a failure", ("g", 1, "CHECK FAILED\n"), "fail"),
+    ("a gate that could not run and said SKIPPED", ("g", 0, "SKIPPED: the host is not built here.\n"), "skip"),
+    ("the SKIP: spelling too", ("g", 0, "SKIP: tools/ue-sample not present\n\n"), "skip"),
+    ("a skip line that is not the LAST line is not a skip", ("g", 0, "SKIPPED: one part\nCHECK OK: the rest\n"), "ok"),
+    ("a failure that printed SKIPPED is still a failure", ("g", 2, "SKIPPED: x\n"), "fail"),
+    # (third review, CHECKALL-PESLOTS-SKIP-COUNTED-OK) check_processevent_slots names itself first -- and skips on
+    # every fresh clone and on CI, where vendor/RE-UE4SS/ is gitignored.
+    ("a gate that names itself before SKIP",
+     ("g", 0, "check_processevent_slots: SKIP -- no vendored templates under vendor\\RE-UE4SS\n"), "skip"),
+    ("a summary that counts skipped rows is not a skip", ("g", 0, "blocks 340   ok 340   FAIL 0   skipped 0\n"), "ok"),
+    ("a lower-case 'skip' in prose is not a skip", ("g", 0, "check_x: skip list empty, all checked\n"), "ok"),
+    # (fourth review, R4-CLASSIFY-NEGCTRL-CASE-ONLY) Upper case too: SKIP must START the line (after an optional
+    # '<gate>:'), and be a whole word -- re.search, a dropped \b or a '.*' prefix would take these.
+    ("an upper-case SKIPPED count later in a summary is not a skip", ("g", 0, "blocks 3   ok 3   SKIPPED 0\n"), "ok"),
+    ("SKIPPING is not SKIP", ("g", 0, "check_x: SKIPPING nothing, all checked\n"), "ok"),
+]
+
+
+def selftest(verbose: bool) -> bool:
+    ok_all = True
+    for what, args_, want in _CLASSIFY_SELFTEST:
+        got = classify(*args_)
+        ok_all &= got == want
+        if verbose or got != want:
+            print("  %s  %s%s" % ("PASS" if got == want else "FAIL", what,
+                                  "" if got == want else "   want %s, got %s" % (want, got)))
+    return ok_all
 
 
 def main() -> int:
@@ -227,7 +301,15 @@ def main() -> int:
     ap.add_argument("--quick", action="store_true",
                     help="skip the two gates that re-extract the Ghidra pattern TSV")
     ap.add_argument("--list", action="store_true", help="print the sequence and exit")
+    ap.add_argument("--selftest", action="store_true", help="run the result classifier's controls and exit")
     args = ap.parse_args()
+
+    if not selftest(args.selftest):
+        print("check_all: its result classifier misses its own controls (above) -- the summary would lie.")
+        return 1
+    if args.selftest:
+        print("selftest: PASS")
+        return 0
 
     if args.list:
         for i, (name, argv, _, slow) in enumerate(GATES, 1):
@@ -249,10 +331,13 @@ def main() -> int:
                            capture_output=True, text=True,
                            encoding="utf-8", errors="replace")
         dt = time.time() - t
-        tail = [ln for ln in (r.stdout or "").splitlines() if ln.strip()][-1:] or [""]
-        if r.returncode == 0:
-            print("  ok    %-28s %5.1fs  %s" % (name, dt, tail[0][:96]))
-        elif name in ADVISORY:
+        verdict = classify(name, r.returncode, r.stdout)
+        if verdict == "ok":
+            print("  ok    %-28s %5.1fs  %s" % (name, dt, last_line(r.stdout)[:96]))
+        elif verdict == "skip":
+            skipped.append(name)
+            print("  SKIP  %-28s %5.1fs  %s" % (name, dt, last_line(r.stdout).strip()[:96]))
+        elif verdict == "warn":
             advisory.append((name, why, r))
             print("  warn  %-28s %5.1fs  exit=%d  (advisory -- does not fail the run)"
                   % (name, dt, r.returncode))

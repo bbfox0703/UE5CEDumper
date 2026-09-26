@@ -4398,6 +4398,24 @@ public class CeXmlExportServiceTests
     }
 
     [Fact]
+    public void GenerateAobWrappedXml_TheModuleArgument_IsNeverBaked()
+    {
+        // (second review, T-WALKER-PIN-DROPPED) The script scans CE's own name for the main module (`process`: the
+        // ANSI bytes enumModules compares), so moduleName is deliberately unused -- a baked Unicode name is not what
+        // CE knows for a non-ASCII exe ([PATH-CE-MODULE-VIEW]). If a change starts baking it, bake CE's view
+        // (EngineState.CeModuleName) as escaped bytes, and replace this sentinel with a test of THAT.
+        var xml = CeXmlExportService.GenerateAobWrappedXml(
+            "World", new[] { MakeBc("0xA", "World") },
+            new List<LiveFieldValue> { new() { Name = "X", TypeName = "FloatProperty", Offset = 0, Size = 4 } },
+            aob: "48 8B 1D ?? ?? ?? ??", aobPos: 3, aobLen: 7,
+            moduleName: "SENTINEL-ゲーム-Win64-Shipping.exe");
+
+        Assert.DoesNotContain("SENTINEL", xml);
+        Assert.DoesNotContain("ゲーム", xml);
+        Assert.Contains("local module_name = process", xml);
+    }
+
+    [Fact]
     public void GenerateAobWrappedXml_SymbolHas6HexSuffix()
     {
         var breadcrumbs = new[] { MakeBc("0xA", "World") };

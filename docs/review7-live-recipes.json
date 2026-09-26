@@ -1,0 +1,583 @@
+[
+ {
+  "id": "R7-C-01",
+  "live": "yes",
+  "why": "The Lua test fakes CE memory. Live shows the two helpers really share _ue5_invoke_busy in CE's one Lua state, and that the DLL runs the kept LIST_INSTANCES instead of an invoke that overwrote it. The row's natural trigger (an init scan over 5 s, status PROCESSING) cannot be produced on demand. Suspending the whole process before pickup gives the same Lua-side state: cmd is still set and the DLL runs it later. The fixed code tests only cmd, never status, so the two states are equivalent for this check. No pre-fix DLL is needed: the fix is Lua-only, and Mimic.h (the contract) is unchanged from c88ca562 to HEAD.",
+  "host": "DumperTest 5.4 Shipping (launch_dumpertest.py shipping), dist DLL 3550 injected by inject.py --pid <out/host.pid>. CE attached, Lua Engine. UI closed.",
+  "needs": [
+   "ce",
+   "new-rig"
+  ],
+  "setup": "(1) launch_dumpertest.py shipping; inject.py --pid $(cat out/host.pid); pipe_client.py get_pointers must assert build 3550, trigger the scan and show objects > 0. The UI stays closed. (2) Pre-fix Lua, no build: git show c88ca562:scripts/ue5_freeze_helper.lua and :scripts/ue5_invoke_helper.lua > out/review7/latch/c88ca562/ (freeze helper 1.5 with the AA19-only invoke helper). (3) New rig tools/verify/ce/r7_mailbox_latch.lua (commit it before the first run: Bitdefender). R7.load(dir) dofiles the invoke helper, then the freeze helper. R7.state(tag) logs _ue5_invoke_busy, _ue5_invoke_stale_mb, and g_invokeMailbox cmd(+0) / status(+4) / class(+0x28) / func(+0x128). R7.freeze(cls, keep) calls freezeProperty{className=cls, derived=true, valueType='int32', propOffset=any, value=0, filter=function(a) n=n+1 return false end, refreshIntervalSec = keep and 2 or 3600}, then start(), then stop() unless keep. The filter drops every address before caching, so tick() never writes. R7.invoke() calls invokeUFunction('DumperTestActor','Spawn_CountHolders',4,{}) (const, read-only). Everything is appended with getTickCount to out/review7/latch/lua.log. (4) CE attaches to DumperTest-Win64-Shipping.exe. In the Lua Engine: dofile the rig; R7.load([[D:\\Github\\UE5CEDumper\\scripts]]).",
+  "steps": "1. R7.state('pre'): expect busy=false, cmd=0. 2. py tools/verify/suspend.py suspend DumperTest-Win64-Shipping. 3. R7.freeze('WorldSettings'): blocks about 5 s and returns 'Mailbox timeout after ~5000ms -- the DLL never picked this up'. 4. R7.state('after-freeze'). 5. R7.invoke(); R7.state('after-invoke'). 6. suspend.py resume DumperTest-Win64-Shipping; wait 3 s; tail %LOCALAPPDATA%\\UE5CEDumper\\Logs\\DumperTest-Win64-Shipping\\pipe-0.log. 7. R7.invoke() again. This checks that the latch releases once the DLL has finished.",
+  "green": "Step 4: busy=true, stale=<mailbox address>, cmd=6, class=WorldSettings. Step 5 returns at once with '[ue5_invoke] the previous invoke timed out and the DLL is STILL holding the mailbox ...', and the mailbox is unchanged (cmd=6, class=WorldSettings). After the resume, pipe-0.log shows 'Mailbox: received cmd=6', then 'Mailbox: LIST_INSTANCES class='WorldSettings' page=0 scope=derived' and '... returned N/N'. Step 7 gives ok=true, and the log shows 'received cmd=4' ... 'INVOKE_BY_NAME complete, result=0'.",
+  "red": "Kill cheatengine-x86_64-SSE4-AVX2.exe and restart CE: invokeUFunction is re-declaration-guarded, and the version gate will not load 1.5 over a resident 1.6. Re-attach to the same game, R7.load(out/review7/latch/c88ca562), and repeat steps 1-6. Step 4: busy=false, stale=nil. Step 5 blocks about 10 s and returns 'Mailbox timeout after ~10000ms -- the DLL never picked this up'. The mailbox now reads cmd=4, class=DumperTestActor, func=Spawn_CountHolders, so the freeze's LIST_INSTANCES was overwritten. After the resume, pipe-0.log has only 'received cmd=4' / INVOKE_BY_NAME, with no LIST_INSTANCES line for WorldSettings.",
+  "rig": "Existing: launch_dumpertest.py, inject.py, pipe_client.py get_pointers, suspend.py suspend|resume. New: tools/verify/ce/r7_mailbox_latch.lua, the CE-side driver described in setup; R7-C-03 and R7-S3 reuse it.",
+  "risks": "The game stays frozen until the resume: always run suspend.py resume, even after a failure. CE's GUI blocks 5-10 s during each wait, so do not click. Keep the CE table free of other invoke/freeze scripts, because they share the flag. The UI and pipe_client must not run while the game is suspended; their pipe calls hang. suspend.py matches by substring, so pass the full stem. Commit the evidence after the row (laptop crash risk).",
+  "minutes": 40
+ },
+ {
+  "id": "R7-C-03",
+  "live": "yes",
+  "why": "This is the reverse direction: an invoke-helper timeout that the DLL finishes later. The unit test simulates CE memory. Live shows that a freeze started after the DLL finished actually rescans, where pre-fix it refused three times and abandoned itself (with a modal). Same session and rig as R7-C-01; run it after C-01 in each CE session.",
+  "host": "Same as R7-C-01: DumperTest 5.4 Shipping + dist 3550 via inject.py, CE Lua Engine with r7_mailbox_latch.lua, UI closed.",
+  "needs": [
+   "ce",
+   "new-rig"
+  ],
+  "setup": "R7-C-01's setup and the pre-fix pair at out/review7/latch/c88ca562/. Add R7.check() to the rig: it logs h.isAbandoned(), h.lastError() and the filter count. Add R7.stop().",
+  "steps": "1. R7.state('pre'): expect busy=false, cmd=0. 2. suspend.py suspend DumperTest-Win64-Shipping. 3. R7.invoke(): about 10 s, then 'Mailbox timeout ... never picked this up'. R7.state shows busy=true, stale=mb, cmd=4. 4. suspend.py resume; wait for pipe-0.log 'INVOKE_BY_NAME complete'. R7.state shows cmd=0, status=1. Do NOT call any helper before step 5: the invoke helper's own entry would release the latch and mask the red. 5. R7.freeze('WorldSettings', true), which keeps the handle rescanning every 2 s. Wait about 10 s; R7.check(); R7.stop().",
+  "green": "start returns ok=true, err=nil, and the filter saw at least 1 instance. After it, busy=false and stale=nil. pipe-0.log shows 'LIST_INSTANCES class='WorldSettings'' about every 2 s. At about 10 s: isAbandoned=false and lastError=nil. No dialog appears.",
+  "red": "Restart CE, re-attach, R7.load(c88ca562) and repeat. start returns false with 'mailbox busy (concurrent invoke or rescan)', and pipe-0.log has no LIST_INSTANCES line. About 4 s later the Lua log has '[ue5_freeze] WorldSettings: 3 consecutive rescans failed -- freeze STOPPED writing (first error: mailbox busy (concurrent invoke or rescan))', CE shows a modal with the same text (copy it with ctrl+C), and isAbandoned=true.",
+  "rig": "Same as R7-C-01: suspend.py + tools/verify/ce/r7_mailbox_latch.lua. No UI, no prefix binary.",
+  "risks": "The red arm pops the abandon modal by design: click OK in CE. Stop the kept handle, or its timers keep firing. Same suspension and CE-blocking risks as C-01.",
+  "minutes": 25
+ },
+ {
+  "id": "R7-S3",
+  "live": "yes",
+  "why": "MED. The reset is a real user flow: the timeout text says 're-inject, or re-enable the table', and unticking the table's inject record runs UE5_Shutdown, whose Mimic::StopThread memsets the mailbox. The unit tests only poke status and cmd back to 0. Live shows the memset really leaves status 0 / cmd 0, and that after re-enable both helpers work instead of refusing for the rest of the session. The freeze helper's 'mailbox moved' branch (a stale address that is readable with a non-zero cmd) cannot be produced on purpose, so it stays on the unit tests.",
+  "host": "DumperTest 5.4 Shipping, a FRESH un-injected process for each arm. The DLL is injected by CE's own table (dist\\UE5CEDumper.CT, record 'Inject DLL + Start Pipe Server'), so that record owns the DLL and its untick runs UE5_Shutdown. The B30 guard skips the shutdown for a DLL injected by inject.py, which would make the check vacuous.",
+  "needs": [
+   "ce",
+   "new-rig"
+  ],
+  "setup": "launch_dumpertest.py shipping, with NO inject.py. CE: File > Open dist\\UE5CEDumper.CT, then attach. The record is a hidden child of 'init', so drive it from Lua: R=getAddressList().getMemoryRecordByDescription('Inject DLL + Start Pipe Server'); R.Active=true. Confirm the CT log shows DLL_PATH = D:\\Github\\UE5CEDumper\\dist\\UE5Dumper.dll, and pipe_client.py get_pointers shows build 3550 with objects > 0. dofile the rig; R7.load(scripts). Pre-fix pair: git show 511ceb35:scripts/ue5_invoke_helper.lua and :scripts/ue5_freeze_helper.lua > out/review7/latch/511ceb35/. 511ceb35 = c71a96d7^: freeze helper 1.6 and the invoke helper, both releasing only on DONE+IDLE.",
+  "steps": "1. suspend.py suspend DumperTest-Win64-Shipping; R7.invoke(): 10 s timeout. R7.state shows busy=true, cmd=4. 2. suspend.py resume; wait for pipe-0.log 'INVOKE_BY_NAME complete'. R7.state shows cmd=0, status=1. Call no helper. 3. R.Active=false. The CT [DISABLE] calls UE5_Shutdown; the logs show 'UE5_Shutdown: Cleaning up...' and 'Mailbox: polling thread stopped'. R7.state shows cmd=0, status=0 (the memset), with busy still true. 4. R.Active=true: ue5_inject revives the parked DLL. get_pointers answers again. 5. R7.invoke() twice, then R7.freeze('WorldSettings'). Optional second route, re-inject by restart: with the latch set by steps 1-2, kill the game, relaunch, inject.py, re-attach CE and answer Keep list: Yes (the Lua globals survive), then step 5.",
+  "green": "Both invokes in step 5 return ok=true; busy=false, stale=nil. pipe-0.log after the revive shows 'Mailbox: received cmd=4', 'INVOKE_BY_NAME complete, result=0' and 'LIST_INSTANCES class='WorldSettings''. The freeze start returns ok=true. The restart route behaves the same.",
+  "red": "Kill the game and CE. Start a fresh game and repeat the setup with R7.load(511ceb35). In step 5, every invoke returns at once with '[ue5_invoke] the previous invoke timed out and the DLL is STILL holding the mailbox -- ... or re-inject if it never does.', although the re-enable it advises has just been done. The freeze start returns 'mailbox busy (concurrent invoke or rescan)'. pipe-0.log has no mailbox line after the revive, and a third try a minute later still refuses. On the restart route, the pre-fix check reads the fresh mailbox (status 0) or nil and also refuses.",
+  "rig": "dist\\UE5CEDumper.CT (the real reset path), suspend.py, pipe_client.py get_pointers, tools/verify/ce/r7_mailbox_latch.lua (new, shared with C-01/C-03).",
+  "risks": "If this CE session did not inject the DLL, ue5_shutdown logs 'This record did not start the pipe server' and resets nothing: the check is then vacuous, so read the CT log. Each arm therefore needs a fresh game injected by the CT. UE5_Shutdown also stops the pipe, so no UI. Use CE's normal injection, not manual map. Same suspension and CE-blocking risks as C-01. Kill the game and CE between arms.",
+  "minutes": 60
+ },
+ {
+  "id": "R7-C-02",
+  "live": "yes",
+  "why": "The unit tests pin the emitted Bytesize. Only CE shows the fix's premise: its Structure Dissect reads a 'Unicode String' Bytesize as BYTES, so it determines how many characters appear. The narrow 'String' control (FUtf8String / FAnsiString, Bytesize = String Len) cannot be reached: no fixture has a Utf8Str or AnsiStr UPROPERTY (the DumperTest56/58 sources declare none), so that half rests on the unit test.",
+  "host": "DumperTest 5.4 Shipping, dist 3550 injected, AOT UI 3550 connected. CE (AOBMaker not required).",
+  "needs": [
+   "ui",
+   "ce",
+   "prefix-ui"
+  ],
+  "setup": "Back up %LOCALAPPDATA%\\UE5CEDumper\\ui-options.json. In the Options flyout, move the String Len slider to 16 (exponent 4) so truncation is visible. Fields on DumperTestActor_0: Str_Even22_TwoNull (22 CJK characters, 統一言語日本語テスト日本語テスト日本語テスト), InvokeGate_LogPath (a long absolute path), and PayloadString (4 characters, the fully-shown control). Pre-fix UI (shared with R7-C-04): git archive 09896ca5 (= d8b855fb^, also = 511ceb35^^; the CSX and generator files differ from HEAD only by the two fixes), then dotnet build as a self-contained JIT build into out/review7/prefix_ui_09896ca5, as L42 built out\\s12_prefix_ui.",
+  "steps": "1. Instance Finder: DumperTestActor, then open DumperTestActor_0 in Live Walker; note its address. 2. Export CSX > 'CSX — Pre-CE 7.7 (Byte)', saved to out/review7/c02/green.CSX. view-0.log: 'CSX (Pre-CE 7.7) exported to ... for DumperTestActor'. 3. Offline: the three string Elements are Vartype Pointer with a child Element Vartype='Unicode String'. Read its Bytesize with a one-line ElementTree or a small new r7c02_csx_bytesize.py. 4. CE: Memory View > Tools > Dissect data/structures > File > Import green.CSX; set the address to the actor; expand each string pointer. 5. Control: Live Walker 'Copy CE XML' at the same String Len; paste into CE's address list and read the same three strings.",
+  "green": "Bytesize='32'. CE shows 16 characters for Str_Even22_TwoNull (統一言語日本語テスト日本語テスト), the first 16 characters of InvokeGate_LogPath, and PayloadString whole (統一言語). The CE XML records show the same 16 characters, so the CSX and CE XML now agree.",
+  "red": "Kill the game and UI. dist_swap.py backup, then install out/review7/prefix_ui_09896ca5. Relaunch and inject (the DLL is unchanged). Repeat steps 1-5 into red.CSX. Bytesize='16'. CE shows 8 characters (統一言語日本語テ) and the path cut at 8, while CE XML still shows 16: the halving. Then kill everything, dist_swap.py restore (it verifies the manifest), and restore ui-options.json.",
+  "rig": "Existing: launch_dumpertest.py, inject.py, dist_swap.py; l42_csx_check.py as a CSX-parse template. Optional new: r7c02_csx_bytesize.py <csx> --string-len 16, which asserts Unicode String = 2 x len.",
+  "risks": "String Len is persisted, so restore ui-options.json. dist_swap refuses while DumperTest* or UE5DumpUI runs (the game holds dist\\UE5Dumper.dll): kill them before install and before restore. The red UI is JIT, not AOT; never hand it over. Run front_window.py before clicks (the game steals focus). Save uses a native dialog. The UI holds 2 pipe lanes, so do not run pipe_client alongside it.",
+  "minutes": 45
+ },
+ {
+  "id": "R7-C-04",
+  "live": "yes",
+  "why": "The unit tests read the emitted text. Only CE shows the behaviour: a failed tick's deferred untick really re-runs [DISABLE] (pre-fix: a second dialog), and an untick whose mailbox wait times out does or does not put a modal over the game. L77 proved this shape live for GodMode and Debug Camera; Fly, KeepForeground and SeeThrough never had a live arm. Not reached: the [DISABLE] contract-check bail (needs a DLL outside the script's contract range) and the result-error bails (no fixture state makes an OFF fail); those stay on the generator tests.",
+  "host": "DumperTest 5.4 Shipping. dist 3550 AOT UI + DLL. CE with AOBMaker Connected. experimental.json enabled, because the Fly and See-through cards are gated on it.",
+  "needs": [
+   "ui",
+   "ce",
+   "aobmaker",
+   "prefix-ui"
+  ],
+  "setup": "launch shipping, inject, UI Connect. Teleport tab: Keep Foreground card 'Add to CE'; See-through card 'Add to CE'; bottom CE section 'Add action records to CE'. The last pushes 'Fly: no-gravity 3D flight (WASD/Numpad/Arrows)' and 'Fly: Noclip (through walls)' among the other rows. Then close the UI: a suspended game hangs its pipe calls. In the CE Lua Engine set UE5_DEBUG = 1 before any tick (each chunk captures it at its start) and wrap print to append to out/review7/c04/lua.log (L77's capture). Pre-fix UI: out/review7/prefix_ui_09896ca5 from R7-C-02. 09896ca5..HEAD touches the three generators and CeLuaHygiene/CeMailboxLayout only in 511ceb35.",
+  "steps": "ARM B, untick under a stalled mailbox (the modal-over-the-game case). 1. From the address list, tick 'Fly: ... (WASD)', 'Keep Foreground (toggle)' and the See-through record. Each stays ticked; pipe-0.log shows 'Mailbox: received cmd=11 / 12 / 14' with state 1. 2. For each record in turn: suspend.py suspend DumperTest-Win64-Shipping; untick it from the address list; wait about 10 s without clicking (CE only repaints); note any dialog; suspend.py resume. pipe-0.log then shows the queued OFF landing, so the state converges. ARM A, a failed tick whose deferred untick re-runs [DISABLE] (the double-dialog case). 3. Kill the game. Relaunch shipping WITHOUT inject. Re-attach CE and answer Keep list: Yes. 4. Tick each of the four records (Fly WASD, Fly Noclip, Keep Foreground, See-through) from the address list and count the dialogs; copy each with ctrl+C.",
+  "green": "Arm B: no dialog for any record; each record ends unticked. lua.log has '[Fly] timed out and the DLL never saw this command. ...', and the same for [KeepForeground] and [SeeThrough]. Arm A: exactly ONE dialog per record, '[Fly] g_invokeMailbox not found -- is UE5Dumper.dll injected?' (resp. [Fly Noclip], [KeepForeground], [SeeThrough]). After OK the record unticks, and lua.log gets '[<Tag>] g_invokeMailbox not found -- nothing to turn off' from [DISABLE].",
+  "red": "Kill everything. dist_swap.py backup, then install prefix_ui_09896ca5. Delete the green records from CE, or start a fresh CE. Relaunch, inject, push the records from the pre-fix UI, and repeat arms B and A. Arm B: a CE modal '[Fly] timed out and the DLL never saw this command...' over the suspended game, and likewise for KeepForeground and SeeThrough (SeeThrough's mailbox-wait bail was UntickAndReturn pre-fix; only its idle-wait bail was already silent). Arm A: a SECOND identical dialog after OK, from the deferred untick's [DISABLE]. Afterwards dist_swap.py restore (verified) and set UE5_DEBUG = nil.",
+  "rig": "Existing: suspend.py (arm B). Optional: sw3_mailbox_busy.py arm|disarm, a busy cmd on a suspended game, as an idle-wait discriminator for Fly and KeepForeground. fp3_seethrough_untick.py arm|restore is only a no-change control for SeeThrough, whose idle bail was already silent. Both leave the feature ON after a silent untick, so turn it off afterwards. dist_swap.py for the red UI. No new rig.",
+  "risks": "Always resume after a suspend. Each suspended untick blocks CE about 10 s. The red modals appear over a frozen game; click OK in CE. Dialogs are modal and block a Lua-driven Active=, so tick and untick from the address list; front_window.py front cheatengine before each click, since game windows steal focus. Fly ON moves the pawn and reads keys in-game, so keep the game unfocused. dist_swap refuses while the game or UI runs. Commit after the row.",
+  "minutes": 90
+ },
+ {
+  "id": "R7-D-02",
+  "live": "yes",
+  "why": "The defect is an ordering problem on the real Avalonia dispatcher. Three things race: Progress<T>'s SynchronizationContext hop, the handler's own Dispatcher.Post, and the export's continuation. The unit tests model this with a fake sink. For Dump All, the commit says the overwrite is deterministic, because the last report comes after the last real await. So one red/green pair discriminates, unlike L90's racy USMAP. Only the normal final line can be reached: DumperTest dumps cleanly, so the error-count and 'Dump wrote no classes' wordings do not appear. The Dump Explorer half really is a race, so it gets a rate only.",
+  "host": "DumperTest 5.4 Shipping (launch_dumpertest.py shipping), with dist\\UE5Dumper.dll build 3550 injected. The UI always runs from dist\\ (the computer-use grant is by path); the pre-fix UI is swapped in with dist_swap.py.",
+  "needs": [
+   "ui",
+   "prefix-ui"
+  ],
+  "rig": "No new rig. Existing: dist_swap.py, launch_dumpertest.py, inject.py, front_window.py, plus computer-use for the UI.",
+  "setup": "S0 (shared by all five rows; do it once). (1) Back up %LOCALAPPDATA%\\UE5CEDumper\\ui-options.json and experimental.json: the pre-fix UI can drop keys (L41/L90). Confirm experimental.json has enabled=true and snapshotQuotaMb=0 (Unlimited). (2) With no UE5DumpUI or DumperTest running, build the JIT UIs: `git archive c88ca562 | tar -x -C out/r7_prefix_src`, then `dotnet build out/r7_prefix_src/ui/UE5DumpUI/UE5DumpUI.csproj -c Release -o out/r7_prefix_ui`. This is build 3549's source; its ui/ tree is byte-identical to 80474680^ and lacks D-02/D-01/D-06/D-08/S8. Build the same from `1627fdf7` (= 0df1e792^: has D-06, lacks S8) into out/r7s8_prefix_ui. Optional same-flavor green: 1c514220 into out/r7_fix_ui. Commit the new rigs before running anything (Bitdefender). (3) Check that dist\\ is the 3550 AOT build (build_number.txt 3550, UE5DumpUI.exe 57,771,520 B), then run `py tools/verify/dist_swap.py backup`. (4) Three sessions, each with its own game launch, because dist_swap refuses while DumperTest or UE5DumpUI is running. A = `dist_swap.py install out\\r7_prefix_ui` (reds). B = `install out\\r7s8_prefix_ui` (S8 red). C = `dist_swap.py restore`, which must print mismatches: 0 and the AOT sha (all greens). Each session: `py tools/verify/launch_dumpertest.py shipping`, `py tools/verify/inject.py --name DumperTest-Win64-Shipping`, start dist\\UE5DumpUI.exe, `py tools/verify/front_window.py front UE5DumpUI`, Connect, and confirm 24,516 objects before trusting anything (handover §3). Commit after each closed row.",
+  "steps": "1. Session A: toolbar Export > Dump All Metadata (.jsonl) > save as out\\r7_live\\d02_A1.jsonl. Wait for the view-0.log line `DumpAll exported to ...d02_A1.jsonl (N bytes, C classes, E errors)`. Then hover the toolbar status and read its tooltip (the toolbar truncates the status).\n2. Close and relaunch the UI, Connect, and export d02_A2. Then export d02_A3 in the same session. This covers both a first export and a later one in a session (the L90 pattern).\n3. Dump Explorer half: toolbar Disconnect, then Dump Explorer tab > '⤓ Last export'. After view-0.log shows `DumpExplorer loaded ...`, read the tab's status. Do this 3 times.\n4. Session C (AOT): repeat steps 1-3 as d02_C1..C3. Optionally repeat with out\\r7_fix_ui for a same-flavor JIT green.",
+  "green": "Every AOT Dump All ends on `Dumped C classes (X.X MB) to d02_C#.jsonl`, where C matches the log's `C classes`. An `, E errors` suffix appears only if E > 0. Every offline Last-export load ends on `Loaded. Connect a game and click “Re-check live” to split by what's in the current game.`",
+  "red": "On the c88ca562 UI, the final status is the service's last report, `Done — C classes (C/C)`, instead of the formatter's line. Expect this on 3 of 3 runs. Dump Explorer: a final `Parsing dump… N rows` is a race, so record k/3 and claim nothing if it is 0/3 (the UsmapExportServiceTests pins still stand).",
+  "minutes": 30,
+  "risks": "The file dialog and the game steal focus. Read the status only after the log line: a dump still running reads like a red. Each Dump All takes about 30-60 s. The pre-fix UI shows a build-mismatch badge against the 3550 DLL, which is harmless. If the red is not 3/3, record the rate as L90 did: that contradicts the commit's 'every run' and should be reported. Restore ui-options.json from S0's backup at the end."
+ },
+ {
+  "id": "R7-D-01",
+  "live": "yes",
+  "why": "This is an AXAML binding change. The unit tests pin the AXAML text and the VM property. Live adds the rendered text of both SPC grids on the AOT (trimmed) binary; bindings are where this repo's AOT bugs have come from. It needs a real partial row, which R7-D-06's cap arm creates, so it adds about 10 minutes to that session. Marginal value is low but so is the cost.",
+  "host": "Same session and fixture as R7-D-06: DumperTest 5.4 Shipping with dist DLL 3550 and the padded per-game DB.",
+  "needs": [
+   "ui",
+   "prefix-ui",
+   "new-rig"
+  ],
+  "rig": "snapshot_db_pad.py from R7-D-06 (the fixture and its `rows` oracle), plus computer-use. No-new-rig fallback: the L66 inflation described in R7-D-06.",
+  "setup": "S0 (see R7-D-02) and R7-D-06's pad precondition. The rows used are R1 and R2 from session A, and G1, C1, G2 and C2 from session C. Use 2-character labels so the marker fits the 260-px SPC Label column; otherwise widen the column by dragging the header edge.",
+  "steps": "1. Session A, after R7-D-06's A1 (R1 is stored as 'cap'): confirm the Snapshot tab grid reads `R1  (partial: stopped at the size cap)`. Then open the SPC Query tab > Refresh, and read R1 in the single-field grid's Label column. Set Mode: Group (Multiple Values) and read R1 in the group grid's Label column. Zoom and screenshot both.\n2. Session C, after R7-D-06's G1/C1/C2 and R7-S8's G2: SPC Query > Refresh, then read R1, R2, C1, C2, G1 and G2 in both grids.",
+  "green": "On the AOT build, both SPC grids show `R1  (partial: stopped at the size cap)`, `C1  (partial: stopped at the size cap)`, and `R2  (partial: stopped on low disk)` / `C2  (partial: stopped on low disk)`. This is the same text as the Snapshot grid. The complete captures G1 and G2 have no marker.",
+  "red": "On the c88ca562 UI, both SPC grids show a bare `R1`, while the Snapshot grid in the same session marks it. That within-session contrast is the discriminator. L66 already saw the bare label on b1ea2660.",
+  "minutes": 15,
+  "risks": "The 260-px column truncates the marker (L66 lost its ending this way). SPC lists only usable snapshots; all of these are usable. SPC needs Refresh after each capture. Rows are per PE hash, so it must be the same DumperTest build as the one that captured them."
+ },
+ {
+  "id": "R7-D-06",
+  "live": "yes",
+  "why": "The defect lives in real producer/consumer timing against real DB file sizes, and the unit test fakes both. DumperTest has 24,516 objects, which is 3 chunks of 8,192. With Game objects only, every captured object sits in chunk 3 (indices 19,510-24,515, per L66). The consumer polls only after non-empty chunks, so its first size/disk poll comes after the LAST chunk. If the DB is already over Max size, the stop therefore always fires after fetchedAll: deterministic. L66 measured the status half of this red on 025dc031^ (`first 24,516 of 24,516`). The persisted 'cap' that build 3549 adds was only code-read.",
+  "host": "DumperTest 5.4 Shipping with dist DLL 3550. The per-game DB is %LOCALAPPDATA%\\UE5CEDumper\\Snapshots\\snapshots.<PE>.db; <PE> is expected to be 5D525EA8081DA000 (from today's scan-0.log), and no DB exists for it yet. The old DB 87824811081DA000, which holds L66's id 9 'cap' row, belongs to a previous DumperTest build and cannot be reached.",
+  "needs": [
+   "ui",
+   "prefix-ui",
+   "new-rig"
+  ],
+  "rig": "NEW tools/verify/snapshot_db_pad.py, with three verbs:\n- `rows <PE>`: a mode=ro read of db+wal size, user_version, and the last 8 rows (id/label/object_count/field_count/is_usable/partial_reason). It uses mode=ro, not immutable, because immutable ignores the -wal.\n- `pad <PE> --mb 600`: refuses while UE5DumpUI runs, if the DB is missing, or if user_version ≠ 4. Adds a table zz_verify_pad of zeroblob rows, then runs wal_checkpoint(TRUNCATE).\n- `unpad <PE>`: with the UI closed, DROP TABLE + VACUUM.\nAlso NEW: disk_squeeze.py, for the low-disk half (see R7-S8). Existing: suspend.py, dist_swap.py, launch_dumpertest.py, inject.py.\nNo-new-rig fallback: inflate as in L66 step 1. Call Spawn_ManyComponents(20000) k times via pipe_client + ad4_contested.invoke with the UI disconnected, then capture with Game objects only OFF and Max size Off until 'Used:' > 512 MB. Then relaunch DumperTest un-inflated before the arms, because spawned components are game objects and would fill every later chunk.",
+  "setup": "S0 (see R7-D-02). In session A's first Connect, read <PE> from view-0.log `SnapshotStore: active DB -> ...snapshots.<PE>.db`. Close the UI (the game can stay), run `snapshot_db_pad.py pad <PE> --mb 600`, and check `rows <PE>` shows at least 600 MB. Relaunch the UI and Connect. Record the persisted Snapshot settings (today: Game objects only ON, Auto detect noise OFF, Max size Off, Min free disk 10 % / 50 GB). Keep Auto snapshot Off.",
+  "steps": "Session A (c88ca562 UI):\n1. A1, cap red: set Max size: 512 MB, Game objects only ON, Label R1, then Capture Snapshot. Read the Snapshot tab status (it wraps, so nothing is truncated) and the view-0.log `Capture done: N objects` line. Run `rows <PE>`. Read R1's grid Label and its Diff Old: picker entry.\n2. A2, low-disk red: set Max size: Off, Game objects only ON, Label R2, and run R7-S8's sequence Q. Record the status and `rows`.\nSession C (AOT):\n3. G1: repeat A1 with label G1.\n4. C1, cap control: Max size 512 MB, Game objects only OFF, Auto detect Engine/System noise ON, label C1. This is L66's id 9 config: chunk 1 holds a single CDO, so the stop comes while chunk 2 is still in flight.\n5. G2 is R7-S8's green capture.\n6. C2, low-disk control: Max size Off, Game objects only OFF, noise ON, label C2, sequence Q.\n7. After each capture: status, `rows <PE>`, grid label.\nCleanup, with the UI closed: `snapshot_db_pad.py unpad <PE>`, then restore ui-options.json and experimental.json from S0's backup.",
+  "green": "- G1: the status is exactly `Captured ≈717 objects, ≈16,9xx fields`, with no `stopped at … cap`. Its row has partial_reason='' and is_usable=1, and it has no marker in the grid, Diff, Pivot or SPC.\n- G2: partial_reason='' (its status is R7-S8's check).\n- The controls are still partial. C1: `… — stopped at ~600 MB cap (partial: first 16,384 of 24,516 objects)`, stored 'cap', marker `(partial: stopped at the size cap)`. C2: `… — ⚠ low disk space at …; kept partial (first 16,384 of 24,516 objects)`, stored 'disklow', marker `(partial: stopped on low disk)`.",
+  "red": "On the c88ca562 UI:\n- R1: `Captured ≈717 objects, … — stopped at ~600 MB cap (partial: first 24,516 of 24,516 objects)`, row partial_reason='cap', grid `R1  (partial: stopped at the size cap)`, and the Diff pickers marked too.\n- R2: `… — ⚠ low disk space at …; kept partial (first 24,516 of 24,516 objects)`, stored 'disklow'.\n'N of N' is the proof that the stop fired after the producer's natural end.",
+  "minutes": 60,
+  "risks": "- The quota must stay Unlimited (snapshotQuotaMb 0 today). Otherwise the post-capture FIFO eviction deletes every older snapshot trying to fit the padded DB.\n- The pad is a foreign table in a per-game DB. Unpad with the UI closed, and never pad another game's DB.\n- A control that reads complete (no cut) means the producer finished first on a 3-chunk fixture. That is not a regression: rerun, or inflate.\n- The red rows persist into session C; read everything by label.\n- If the G1 capture is not ≈717 objects, the premise that everything sits in chunk 3 is broken. Stop and re-derive it before claiming anything."
+ },
+ {
+  "id": "R7-S8",
+  "live": "yes",
+  "why": "The guard reads real free space through IPlatformService, which the unit test stubs. Live shows a real GetFreeDiskSpace trip on the last write that produces the warning while the snapshot stays complete and unmarked. The discriminating red (no warning at all) exists only in the never-shipped 07a4b8ac..1627fdf7 range; a JIT build of 1627fdf7 reaches it. What shipped build 3549 does instead (a false 'kept partial') is R7-D-06's R2.",
+  "host": "DumperTest 5.4 Shipping with dist DLL 3550. The snapshot DB lives on C: (%LOCALAPPDATA%), which has about 598 GB free of 1.9 TB today. The repo is on D:, so the filler must NOT go there.",
+  "needs": [
+   "ui",
+   "prefix-ui",
+   "new-rig"
+  ],
+  "rig": "NEW tools/verify/disk_squeeze.py, which takes the Snapshots dir as an argument:\n- `plan`: prints the volume, the free bytes, and N = floor(free GiB) − 1.\n- `arm --need-gb N [--margin-mb 64]`: creates or resizes a filler on that volume (e.g. under %LOCALAPPDATA%\\Temp) so that free = N GiB + 64 MiB. NTFS SetEndOfFile allocates non-sparse clusters; the rig re-reads free space until it matches.\n- `drop`: grows the filler so that free = N GiB − 64 MiB.\n- `release`: deletes the filler.\nEvery verb prints free − need, and the rig refuses a filler over 3 GiB.\nExisting: suspend.py. A game-only DumperTest capture takes about 0.3-0.6 s, too short to hit by hand. Suspending the game parks the UI after its pre-capture guard and before the first chunk, and PipeClient has no request timeout. Also snapshot_db_pad.py `rows` (from R7-D-06).",
+  "setup": "S0 (see R7-D-02), including out\\r7s8_prefix_ui built from 1627fdf7. Max size must be Off: R7-D-06's pad may stay, but the cap must not fire first. Game objects only ON, so the only poll is after the last chunk and fetchedAll is already set. Auto snapshot Off.",
+  "steps": "Sequence Q (R7-D-06 uses it too):\n1. Snapshot tab: Max size Off, Game objects only ON, Label <L>.\n2. `py tools/verify/disk_squeeze.py plan <Snapshots dir>` → N.\n3. Min free disk: % = 0 (otherwise the 10 % term, about 190 GB, wins) and GB = N.\n4. `disk_squeeze.py arm --need-gb N` (+64 MiB).\n5. `py tools/verify/suspend.py suspend DumperTest`.\n6. `front_window.py front UE5DumpUI`, then click Capture Snapshot. The guard passes and the UI waits on the frozen DLL.\n7. `disk_squeeze.py drop` (−64 MiB).\n8. `suspend.py resume DumperTest`, then wait for view-0.log `Capture done: ≈717 objects`.\n9. Read the status, run `snapshot_db_pad.py rows <PE>`, and read the grid label.\n10. Click Capture Snapshot again; it must be refused.\n11. `disk_squeeze.py release`, then set Min free disk back to 10 % / 50 GB.\nSession B (1627fdf7 UI): run Q with label S8R. Session C (AOT): run Q with label G2.",
+  "green": "G2's status reads `Captured ≈717 objects, ≈16,9xx fields — ⚠ low disk space at <DB footprint, about 600 MB with the pad>; the capture is complete, but free space before the next one`, with no `kept partial`. The row has partial_reason='' and is_usable=1, and the grid shows `G2` unmarked. Step 10 shows `Low disk space on C:\\: … free, needs ≥ N GB. Capture skipped.`",
+  "red": "On the 1627fdf7 UI, S8R's status is just `Captured ≈717 objects, ≈16,9xx fields`. The row is identical ('' / usable), and the next capture is refused all the same, so the user got no warning. For comparison, shipped 3549 (session A's R2 in R7-D-06) shows a false `kept partial (first 24,516 of 24,516 objects)` and stores 'disklow'.",
+  "minutes": 35,
+  "risks": "- Keep the game suspended under 10 s. A 'Not Responding' ghost window is harmless; always resume even if a step fails (resume is idempotent).\n- A crash leaves the filler on C:, so run `release` first thing next session.\n- Nothing else should write large files to C: between arm and drop (the margin is only 64 MiB).\n- Restore the persisted Min free disk values (10 / 50).\n- `low disk space at X` prints the DB footprint, not the free space. That is the intended wording, not a bug."
+ },
+ {
+  "id": "R7-D-08",
+  "live": "yes",
+  "why": "The claim is that DLL-side Solide holds survive a real pipe drop and a real UI restart, and that the connect path (ApplyEngineState) re-reads them. The unit tests use a stub DLL and a source pin. Live proves the whole loop on the AOT binary while the DLL is actually writing.",
+  "host": "DumperTest 5.4 Shipping with dist DLL 3550. The target field is DumperTestActor::TickCount, which the game raises every tick, so the hold is a live contest. FrozenInt is the untouched alternative.",
+  "needs": [
+   "ui",
+   "pipe",
+   "prefix-ui"
+  ],
+  "rig": "pipe_client.py for get_forced_fields and reset_all_fields. It uses the third pipe slot, since the UI holds two. Plus computer-use.",
+  "setup": "S0 (see R7-D-02). Session A uses the c88ca562 UI; session C uses the AOT build.",
+  "steps": "1. Property Search: search `TickCount`, right-click DumperTestActor::TickCount > Force field (hold across instances) > Force value… > 7 > OK. Expect the status `✓ Holding DumperTestActor::TickCount = 7 on N instance(s).` and the strip `Forced fields:` listing `DumperTestActor :: TickCount (N held)`.\n2. Reconnect arm: toolbar Disconnect. The strip clears, by design. Run `py tools/verify/pipe_client.py get_forced_fields`; it must list TickCount held N. Then toolbar Connect, open Property Search, and screenshot the bottom strip without issuing any Force.\n3. Restart arm: close the UI window and run get_forced_fields again (still held). Relaunch dist\\UE5DumpUI.exe, Connect, open Property Search, and screenshot.\n4. Release. AOT: Clear all → `Released all forced fields.`, the strip hides, and get_forced_fields returns []. Pre-fix: run `pipe_client.py reset_all_fields`, then get_forced_fields returns [].\nOptional: Live Walker on the DumperTestActor instance shows TickCount pinned at 7 while held, and climbing after release.",
+  "green": "On the AOT build, the strip is visible after step 2's Connect and again after step 3's relaunch and Connect. It shows `DumperTestActor :: TickCount (N held)` with a working Clear all, and get_forced_fields reports the same N.",
+  "red": "On the c88ca562 UI, the strip stays hidden after both the reconnect and the relaunch, while get_forced_fields still reports the hold with held N. The DLL keeps writing and the UI shows nothing. view-0.log has only the startup `PropertySearch RefreshForcedFields failed` (the re-read before Connect) and nothing after Connect.",
+  "minutes": 25,
+  "risks": "The restart red depends on the panel's DataContextChanged re-read firing before Connect. The content is inline TabItem content, so this should happen at window load. If the pre-fix restart arm shows the strip, that premise failed; the reconnect arm is the robust red. Release every hold before killing the game (holds die with the game anyway). pipe_client needs the free third slot. The game steals focus: run front_window.py before each click."
+ },
+ {
+  "id": "R7-D-03",
+  "live": "no",
+  "why": "Superseded inside the shipped build. R7-S6 (6b11b861) replaced D-03's rule that the notice always names the Array Limit, so build 3550 no longer has D-03's behaviour to check. What D-03 got right is that the notice never names Collapse Pointer Nodes or the DropDown Limit. That still ships, and R7-S6 arm A4 checks it live. The red arm, the old Collapse/DropDown text, is already recorded by L63 on 2026-09-23 (UI b1ea2660, whose InstanceFinderViewModel is the same as 3549's c88ca562).",
+  "host": "none; covered by R7-S6's DumperTest Shipping session",
+  "needs": [],
+  "steps": "No steps of its own. When R7-S6 arm A4 passes, close this row too.",
+  "green": "R7-S6 A4: the TRUNCATED notice contains neither 'Collapse Pointer Nodes' nor 'DropDown Limit'.",
+  "red": "Already recorded: L63, 12:09:04, 2026-09-23, '... tick Collapse Pointer Nodes or lower the DropDown Limit' on 61,870 entries.",
+  "minutes": 0,
+  "rig": "none",
+  "risks": "none"
+ },
+ {
+  "id": "R7-S6",
+  "live": "partial",
+  "why": "The advice now comes from real walk replies: the returned element count against the total, the DLL's 4,096-per-fetch array cap and the Array Limit. Only a live walk shows these combine the way the unit stubs assume. Four arms are reachable on stock DumperTest. The discriminating arm, a truncation with nothing bound that must name no lever, is NOT reachable. The only lever above 4,096 elements, V1a_GrowContainers, grows Map_Churn and Arr_Churn together, and an Arr_Churn over 4,096 is always 'bound'. An unbound map stops at 16,383 pairs (about 49k entries), and holders at or below 4,095 add about 8k, so the total stays under 60,000. That arm needs the fixture addition in R7-S11 step F.",
+  "host": "DumperTest Shipping 5.4, DLL + AOT UI build 3550",
+  "setup": "Back up %LOCALAPPDATA%\\UE5CEDumper\\ui-options.json. Check the build: dist\\build_number.txt = 3550 and UE5DumpUI.exe = 57,771,520 B. `py tools/verify/launch_dumpertest.py shipping`, then `py tools/verify/inject.py --pid <out/host.pid>`. Start dist\\UE5DumpUI.exe, run `py tools/verify/front_window.py front UE5DumpUI` and Connect. The status must show a non-zero object count.",
+  "rig": "launch_dumpertest.py, inject.py, front_window.py, l63_instexport.py (grow / spawn / counts / clip)",
+  "needs": [
+   "pipe",
+   "ui"
+  ],
+  "steps": "1. Instances tab: class 'DumperTestActor', Exact match ON, Search. Select the live actor (not Default__) and wait for its fields.\n2. A1: set the Array Limit to 64 with the slider in the Options flyout (the setter re-walks the selection), then Copy CE XML.\n3. A2 (control): set the Array Limit to 256, then Copy CE XML.\n4. Set the Array Limit to 16384. Run `py tools/verify/l63_instexport.py grow`, re-select the actor, then Copy CE XML (A3, the near-miss). Run `clip` to count entries.\n5. Run `py tools/verify/l63_instexport.py spawn`. `counts` must show Map_Churn 16,390 (16,384 returned), Arr_Churn 16,388 (4,096), SpawnedHolders 4,096 (4,096) and Children 4,099 (4,096). Re-select, Copy CE XML (A4), then `clip`.\n6. A5: set the Array Limit back to 64 and Copy CE XML.\nRead each status line from a zoomed screenshot, because status lines are not logged. Take the log lines from Logs\\UE5DumpUI\\view-0.log.",
+  "green": "A1: 'Copied; only part of these containers was exported: ... Set_Big (64 of 199) ...'. The log line has no TRUNCATED.\nA2: blank status.\nA3: about 53,799 entries and 'Copied; only part of these containers was exported: Map_Churn (16,384 of 16,390), Arr_Churn (4,096 of 16,388)'.\nA4: '⚠ Copied, but TRUNCATED at the 60,000-entry export cap — the CE table is incomplete; lower the Array Limit to shrink it (Map_Churn, Arr_Churn, Children then export only their first elements)'. Exactly those three names in walk order: SpawnedHolders at 4,096 of 4,096 is not bound. No Collapse and no DropDown. The log ends with '— TRUNCATED at the entry cap', and clip shows about 61,870.\nA5: about 797 entries and a disclosure listing 3 names plus '+2 more'.",
+  "red": "Already recorded, so no rebuild is needed. L63 on b1ea2660 (same InstanceFinderViewModel as 3549): A3 had a blank status at 53,799 entries; A4 read '...tick Collapse Pointer Nodes or lower the DropDown Limit'; A5 was blank at 797 entries with Map_Churn at 64 of 16,390. A1 has no record. For a fresh A1 red: `git archive c88ca562 | tar -x -C out/r7/pre3549`, then `dotnet build out/r7/pre3549/ui/UE5DumpUI/UE5DumpUI.csproj -c Release -o out/r7/pre3549/bin`, then dist_swap.py backup and install. Use a fresh game with the 3550 DLL injected from a byte copy in out\\. A1 is then blank. Close the UI and the game, then dist_swap restore.",
+  "risks": "A4's margin over the cap is only about 2k entries, so check `counts` before copying. The '⚠ High memory usage' flyout warning at 256 and above is expected. The clipboard holds about 17 MB. Inflate last, because the inflation dies with the game. Restore ui-options.json. The game window steals focus. The UI holds 2 of the 3 pipe slots, so run only one l63 verb at a time.",
+  "minutes": 45
+ },
+ {
+  "id": "R7-S11",
+  "live": "partial",
+  "why": "Only a live run shows that the struct resolve (the lean walk_instance_batch) actually carries a nested container's elements into the flattened list the status reads. DumperTest has no StructProperty field that holds a container: its struct fields are FDumperTestAttribute and FDumperTestBracketPayload, and FDumperTestDeepMid / FDumperTestTuneBlock appear only as ARRAY ELEMENTS, which the resolve does not visit. DumperTest58's TOptional<FDumperTest58OptInner>.Objs holds one element and has no grow lever. So the disclosure arm needs an engine struct found by a pre-flight, and the truncation arm needs a fixture addition. The secondary claim, that Fields and the Array Limit were re-read after the clipboard await, is a race with no live lever and stays unit-only.",
+  "host": "DumperTest Shipping 5.4. Can share R7-S6's session, before its inflation. Step F needs the fixture repackaged.",
+  "setup": "Same as R7-S6.",
+  "rig": "NEW tools/verify/s11_nested_scan.py (about 60 lines, uses the third pipe slot). For each class argument it runs find_instances, then walk_instance(addr, array_limit=16384, preview_limit=2, lean=true), the same parameters the export uses. It records every top-level Array/Map/Set total. For each field that has struct_data_addr and struct_class_addr, it recurses walk_instance(addr=struct_data_addr, class_addr=struct_class_addr) down to depth 5 and records nested container paths (for example BodyInstance.CollisionResponses.ResponseArray) with their totals. It prints the largest top-level total, the nested totals, and the smallest L = 2^k (k >= 1) with max_top <= L < nested_total. Also uses dist_swap.py, and repackage.py for step F.",
+  "needs": [
+   "pipe",
+   "ui",
+   "prefix-ui",
+   "new-rig"
+  ],
+  "steps": "P. Run `py tools/verify/s11_nested_scan.py SkeletalMeshComponent CapsuleComponent CharacterMovementComponent CameraComponent SpringArmComponent StaticMeshComponent PlayerCameraManager <the pawn's AnimInstance class>`. Candidates: FBodyInstance.CollisionResponses.ResponseArray, FPostProcessSettings.WeightedBlendables.Array, and anim-node TArrays. Pick an instance X and a limit L.\n1. Set the Array Limit to L (slider, or main.arrayLimitExponent in ui-options.json with the UI closed). In the Instances tab, search X's class with Exact ON, select X, then Copy CE XML.\n2. Control: raise the Array Limit to at least nested_total and Copy CE XML again.\nF (optional, full claim). Add to ADumperTestActor: USTRUCT FDumperTestNestedBag { TMap<int32,int32> PairsA, PairsB; }, UPROPERTY() NestedBag, and UFUNCTION S11_GrowNestedBag(int32 Count), unclamped. Repackage with `py tools/ue-sample/repackage.py --engine 5.4 --project DumperTest --configs Shipping` and record the change in tools/ue-sample/README.md. Invoke S11_GrowNestedBag(20000) the way l63_instexport.py invokes (walk_functions gives parms_size). Set the Array Limit to 16384 and Copy CE XML. Then, in a fresh game, repeat with Count 16000: nothing is bound, which is R7-S6's no-lever arm.",
+  "green": "Step 1: 'Copied; only part of these containers was exported: <struct path>.<name> (L of N)'. The view-0.log line has no TRUNCATED. Step 2: blank status.\nF with 20000: '⚠ Copied, but TRUNCATED ... lower the Array Limit to shrink it (NestedBag.PairsA, NestedBag.PairsB then export only their first elements)'.\nF with 16000: '..., and no toolbar setting shrinks this export; use Open in Live Walker → Copy CE Field for the part you need'.",
+  "red": "Build the UI from 2258d8f8 (= e2f23e4b^, which has S6's top-level-only status): `git archive 2258d8f8 | tar -x`, `dotnet build`, then dist_swap install, and restore afterwards. Step 1 is then blank. F-20000 reads '... no toolbar setting shrinks this export ...'. For F-16000, the S6 red uses a UI built from 3f2e2b80, which reads 'lower the Array Limit' although nothing is bound.",
+  "risks": "The pre-flight may find no vehicle: engine arrays are often empty, and ResponseArray lists only channels that differ from the defaults. Then only route F remains. The Array Limit minimum is 2 (exponent 1). The status lists at most 3 names, so choose an X with no clipped top-level container, or the nested name is hidden in '+N more'. Route F re-cooks the Shipping package that other rows use, which shifts L63's baseline of 573.",
+  "minutes": 50
+ },
+ {
+  "id": "R7-S13",
+  "live": "yes",
+  "why": "The race needs a resolve that is really in flight. Suspending the whole game process freezes the DLL's pipe server, so the export's walk_instance_batch waits there (the UI puts no timeout on it), exactly as the unit test's gated stub does. The Instances grid stays clickable in the meantime.",
+  "host": "DumperTest Shipping 5.4, DLL + AOT UI 3550",
+  "setup": "Same as R7-S6. Array Limit 64.",
+  "rig": "suspend.py, l63_instexport.py clip, front_window.py, dist_swap.py (red)",
+  "needs": [
+   "ui",
+   "prefix-ui"
+  ],
+  "steps": "1. Instances tab: class 'DumperTest', Exact match OFF, Search. The list includes DumperTestActor_* and DumperTestHolder_*. Select A, the live DumperTestActor (not Default__), and wait for its fields. Note A's address and the address of one holder B.\n2. Seed the clipboard with the text S13-SENTINEL.\n3. Run `py tools/verify/suspend.py suspend DumperTest-Win64-Shipping` and check the printed state. Front the UI.\n4. Click Copy CE XML. The status should stay on 'Resolving struct fields...'.\n5. Click B in the instance grid. A progress bar appears, and A's rows are still shown.\n6. Run `py tools/verify/suspend.py resume DumperTest-Win64-Shipping` and wait about 3 s.\n7. Run `py tools/verify/l63_instexport.py clip --save out/review7/s13/green.xml`. Read the root entry's Description and Address, and tail view-0.log.",
+  "green": "view-0.log: 'CE XML copied to clipboard for instance DumperTestActor_... (N structs resolved)'. The XML root has A's name and A's address, with the actor's roughly 573 entries. The grid then shows B's fields.",
+  "red": "Build the UI from 4e6e374c (= bc1839fd^): `git archive` + `dotnet build` into out/r7/pre_s13/bin, then dist_swap backup / install, a fresh game with the 3550 DLL injected from a copy in out\\, and restore afterwards. The same steps then log '... for instance DumperTestHolder_...', and the XML root is B's address carrying the actor's roughly 573-entry layout. The same build serves R7-S14's red.",
+  "risks": "The suspended game window shows Not Responding: never click it, and keep the UI in front. Keep the suspension under a minute. If the status leaves 'Resolving...' before step 5, the process was not suspended, so redo the run. Always resume before killing the game. suspend.py does not use the pipe.",
+  "minutes": 25
+ },
+ {
+  "id": "R7-S14",
+  "live": "yes",
+  "why": "'A newer walk in flight while Copy CE XML is clicked' can be made on demand with a whole-process suspend. The instance walk has no UI timeout, the grid keeps the previous rows (HasFields), and Copy CE XML stays enabled. That is exactly the refusal's precondition. One sub-claim stays unit-only: a walk started DURING the export keeps its loading flag. Both requests resume together, so the difference lasts milliseconds.",
+  "host": "DumperTest Shipping 5.4. Same session as R7-S13.",
+  "rig": "suspend.py, l63_instexport.py clip, dist_swap.py (red)",
+  "needs": [
+   "ui",
+   "prefix-ui"
+  ],
+  "steps": "Arm A (a new selection is in flight):\n1. List instances with 'DumperTest', Exact OFF. Select A (the live actor) and wait for its fields. Seed the clipboard with S14-SENTINEL.\n2. Suspend the game (suspend.py suspend DumperTest-Win64-Shipping).\n3. Click holder B. The progress bar appears and A's rows stay.\n4. Click Copy CE XML and read the status at once.\n5. Resume. Wait until B's fields land, then Copy CE XML again as a control.\nArm B (an Array Limit re-walk is in flight):\n6. Select A and wait for it. Suspend.\n7. In the Options flyout, move the Array Limit slider one notch (64 to 128). If a synthetic drag is ignored, click the thumb and press Right. Then Copy CE XML.\n8. Resume, wait, then Copy CE XML.",
+  "green": "Steps 4 and 7 show at once: 'The fields shown are not this selection's — copy again once they have loaded (if loading failed, re-select the instance).' No 'CE XML copied' line is logged, and `clip` still shows the sentinel. Step 5 logs '... for instance DumperTestHolder_...' with the holder's own small entry count. Step 8 exports normally. Together these show the refusal is not a latch.",
+  "red": "The same 4e6e374c UI as R7-S13. Arm A: step 4 stays on 'Resolving struct fields...'. After resume the log reads '... for instance DumperTestHolder_... (N structs resolved)' and `clip` counts the actor's roughly 573 entries under the holder's root. Arm B's red is not visibly discriminating, so skip it.",
+  "risks": "Same as R7-S13. The flyout may close when focus moves. Restore the Array Limit and ui-options.json afterwards.",
+  "minutes": 20
+ },
+ {
+  "id": "R7-D-04",
+  "live": "yes",
+  "why": "The System tab's line is bound to AobMakerOfflineText and repainted by the panel's own probe. The busy/absent/denied reasons come from the real bridge's PipeExists and ConnectAsync, which the unit tests replace through a seam. The line sits inside the HasData block, so a connected game is required.",
+  "host": "DumperTest Shipping 5.4, DLL + AOT UI 3550. NO Cheat Engine running.",
+  "setup": "`tasklist | findstr /I cheatengine` must print nothing. Then the R7-S6 setup, including Connect. Each probe is isolated by its line offset in Logs\\UE5DumpUI\\init-0.log.",
+  "rig": "aobmaker_pipe_busy.py, ac3_denied_pipe.py, front_window.py, dist_swap.py (red)",
+  "needs": [
+   "ui",
+   "prefix-ui"
+  ],
+  "steps": "1. Open the System tab. Each activation runs Pointers.CheckAobMakerAsync, with no cooldown. Read the AOBMaker plugin line (absent).\n2. Start `py tools/verify/aobmaker_pipe_busy.py --seconds 90` in the background; it must print HOLDING. Switch to another tab and back to System, then wait 3 s.\n3. After the rig releases, re-activate System.\n4. Optional: `py tools/verify/ac3_denied_pipe.py --seconds 60`, then re-activate System.",
+  "green": "Step 1: '○ AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded', plus a DBUG 'no server on \\\\.\\pipe\\AOBMakerCEBridge within 2000 ms' line.\nStep 2: '○ AOBMaker pipe busy — it exists, but another program holds its only connection. Close that program, then press ⟳ (starting another Cheat Engine will not help)', plus a WARN '... EXISTS but no instance was free within 2000 ms ...' line.\nStep 3: back to 'not connected', so it is not a latch.\nStep 4: '○ AOBMaker pipe refused this app (access denied) — ...'.",
+  "red": "UI from c88ca562 (3549) via git archive + dotnet build + dist_swap: every step reads '○ Not reachable — check CE plugin installation'.",
+  "risks": "aobmaker_pipe_busy.py exits 2 if any Cheat Engine with AOBMaker owns the pipe name. The game steals focus. Restore dist\\ and check the manifest after the red arm.",
+  "minutes": 20
+ },
+ {
+  "id": "R7-S7",
+  "live": "yes",
+  "why": "The defect is a repaint path, not a text: the toolbar ⟳ changes the flag from false to false with a new reason. Only the real bound view shows whether the line and the gated buttons repaint. Part (b) is the Interesting Funcs note, reached through the real bridge.",
+  "host": "DumperTest Shipping 5.4, AOT UI 3550. Same session as R7-D-04. Cheat Engine with AOBMaker only for arm a2.",
+  "setup": "As in R7-D-04.",
+  "rig": "aobmaker_pipe_busy.py, front_window.py, dist_swap.py (red)",
+  "needs": [
+   "ui",
+   "ce",
+   "aobmaker",
+   "prefix-ui"
+  ],
+  "steps": "a1. Stay ON the System tab. With the holder off, press the toolbar ⟳ and read the line. Start the holder, then press ⟳ again WITHOUT leaving the tab.\na2. Launch Cheat Engine with AOBMaker once. Press ⟳: the toolbar reads 'AOBMaker plugin connected', System shows '● Connected', and the GWorld/GEngine 'SYM' buttons are enabled. Kill CE with taskkill, start the holder, and press ⟳ while on System.\nb. Open Interesting Funcs and Load it once, then wait at least 5 s (its cooldown). Holder off: press ⟳. Holder on: press ⟳. Then leave the tab for more than 5 s and come back with the holder still on, which runs the panel's own probe.",
+  "green": "a1: the line changes to '○ AOBMaker pipe busy — ...', and the toolbar status gives the busy text.\na2: the line reads busy, not the text computed before connecting, and the SYM buttons are disabled.\nb: absent reads 'AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded — AA Script export will fall back to clipboard'. Busy reads 'AOBMaker pipe busy — ... (starting another Cheat Engine will not help) — AA Script export will fall back to clipboard'.",
+  "red": "UI from fc92cc06 (D-04 applied, S7 not). a1: the line stays '○ AOBMaker not connected ...' after ⟳. a2: the line is stale and the SYM buttons stay enabled. b: 'AOBMaker plugin not found — AA Script export will fall back to clipboard' for a busy pipe too.",
+  "risks": "Use open_application for CE ONCE, because a second call starts another CE. Front windows with front_window.py. CE on exit may show a modal, so taskkill it. ⟳ moves when the status text widens (L64 observation b), so take a fresh screenshot before each click. The tooltip can swallow a click. Interesting Funcs has a 5 s cooldown.",
+  "minutes": 30
+ },
+ {
+  "id": "R7-S12",
+  "live": "yes",
+  "why": "Live Walker's note is bound (LiveWalkerPanel.axaml:900, in the Functions expander) and Teleport's note is in the Trainer card. Whether ⟳ and Live Walker's own probe repaint them, with the flag unchanged and the reason moved, is a view-level fact.",
+  "host": "DumperTest Shipping 5.4, AOT UI 3550. Same session as R7-D-04 and R7-S7, with no CE.",
+  "setup": "As in R7-D-04.",
+  "rig": "aobmaker_pipe_busy.py, front_window.py, dist_swap.py (red)",
+  "needs": [
+   "ui",
+   "prefix-ui"
+  ],
+  "steps": "1. Live Walker: open DumperTestActor_0 and expand 'Functions'. Holder off: press ⟳. Holder on: press ⟳ while staying on the tab.\n2. Own probe: with the holder on, leave Live Walker for more than 5 s and return. Then, with the holder off, leave for more than 5 s and return.\n3. Teleport tab: scroll to 'Standalone Trainer (no DLL)'. Holder off: press ⟳. Holder on: press ⟳.",
+  "green": "Live Walker: absent reads 'AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded — AA Script export will fall back to clipboard'. Busy reads 'AOBMaker pipe busy — ... — AA Script export will fall back to clipboard' after both ⟳ and the own probe. Teleport: 'AOBMaker not connected — ....' turns into 'AOBMaker pipe busy — ... (starting another Cheat Engine will not help).'",
+  "red": "UI from 1627fdf7 (S7 applied, S12 not). The Live Walker note stays 'AOBMaker not connected ...' after both ⟳ and its own probe with the holder on. Teleport stays 'not connected' after ⟳. The Teleport arm is also red on c88ca562, so a D-04 red build covers it.",
+  "risks": "The Functions expander is visible only for an object that has UFunctions. Live Walker has a 5 s cooldown. ⟳ moves as the status widens. The holder must not overlap a running CE.",
+  "minutes": 15
+ },
+ {
+  "id": "R7-D-07",
+  "live": "yes",
+  "why": "This row can be done live, contrary to 'hard to provoke'. The drill's re-read and the slider's refresh both have a 10 s hard deadline (Constants.LiveWalkerRefreshTimeoutMs). A whole-process suspend therefore makes both fail while the grid keeps the last walk, which is suspend.py's documented V7 lever. 3550 shows R7-S10's wording on this path, so D-07's own 'Array Limit advice' text no longer ships. What is verified is D-07's defect: the false 'capped at N per fetch'.",
+  "host": "DumperTest Shipping 5.4, DLL + AOT UI 3550",
+  "setup": "As in R7-S6. Array Limit 64. Live Walker Auto refresh OFF.",
+  "rig": "l63_instexport.py spawn/counts, suspend.py, front_window.py, dist_swap.py (red)",
+  "needs": [
+   "pipe",
+   "ui",
+   "prefix-ui"
+  ],
+  "steps": "1. Run `py tools/verify/l63_instexport.py spawn --count 200` (SpawnedHolders becomes 200).\n2. Live Walker: DumperTestActor_0, then Refresh. The SpawnedHolders row reads [200 x ...] with a 64-element preview.\n3. Suspend DumperTest-Win64-Shipping and front the UI.\n4. In the Options flyout, set the Array Limit from 64 to 256. Its Refresh fails after about 10 s and the grid is kept.\n5. Click SpawnedHolders' container drill, then wait 11 s.\n6. Read the status and the crumb, then run `grep 'Drill: re-read' view-0.log`.\n7. Resume, Back, and drill again.",
+  "green": "Step 5 status: 'Showing the first 64 of 200 entries — re-open this container to re-read it. — ⚠ Could not re-read 'SpawnedHolders' before opening it — showing the values from the last refresh.' It must not contain 'per fetch'. The crumb reads '⚠ showing 64 of 200'. The log reads \"Drill: re-read of 'SpawnedHolders' at 0x... timed out — opening the last-read values\". Step 7 shows 200 of 200 with no truncation line.",
+  "red": "UI from c88ca562 (3549): 'Showing the first 64 of 200 elements — this view is capped at 64 per fetch. — ⚠ Could not re-read ...'.",
+  "risks": "Never click the Not Responding game window. The slider may need thumb + arrow keys. If a step-5 status appears within 10 s, the re-read landed and the arm tested nothing. Resume before killing the game. Restore ui-options.json.",
+  "minutes": 30
+ },
+ {
+  "id": "R7-S10",
+  "live": "yes",
+  "why": "This is the same lever as R7-D-07. SpawnedHolders is a pointer array, so its inline preview is capped at 4,096 by the DLL even at Array Limit 16384. A suspended re-read then gives exactly the row's case: a last-refresh preview that is DLL-capped.",
+  "host": "DumperTest Shipping 5.4. Same session as R7-D-07, after it.",
+  "rig": "l63_instexport.py spawn/counts, suspend.py, dist_swap.py (red)",
+  "needs": [
+   "pipe",
+   "ui",
+   "prefix-ui"
+  ],
+  "steps": "1. Resume the game. Run `py tools/verify/l63_instexport.py spawn --count 4800` (SpawnedHolders becomes 5,000). Set the Array Limit to 16384 with the game running.\n2. Live Walker: go to the DumperTestActor_0 root and Refresh. `counts` must show SpawnedHolders at 5,000 with 4,096 returned.\n3. Suspend, click SpawnedHolders' drill, wait 11 s, and read the status.\n4. Resume, Back, and drill again as a control.",
+  "green": "Step 3: 'Showing the first 4,096 of 5,000 entries — re-open this container to re-read it. — ⚠ Could not re-read 'SpawnedHolders' ...'. It contains neither 'Array Limit' nor 'per fetch'. Step 4: 'Showing the first 4,096 of 5,000 elements — this view is capped at 4,096 per fetch.'",
+  "red": "UI from bc46fea8 (= 2258d8f8^, D-07 applied, S10 not): 'Showing the first 4,096 of 5,000 entries — raise the \"Array Limit\" slider in the toolbar and re-open this container to read more.'",
+  "risks": "As in R7-D-07. The flyout shows '⚠ High memory usage' at 16384, which is expected. 5,000 spawned actors change Instances counts, so run this after the other DumperTest rows.",
+  "minutes": 15
+ },
+ {
+  "id": "R7-D-05",
+  "live": "no",
+  "why": "Test-only. It changes only the persist-symmetry checker in ClassListCapTests.cs, and no shipped code changed. It was checked by a synthetic source and a mutation of the real MainPersist. A running game or UI adds nothing.",
+  "host": "none",
+  "needs": [],
+  "steps": "None.",
+  "green": "n/a",
+  "red": "n/a",
+  "minutes": 0,
+  "rig": "none",
+  "risks": "none"
+ },
+ {
+  "id": "R7-X1",
+  "live": "no",
+  "why": "Test-only. It fixes a flake in ClassPivotViewModelTests: the test now settles PendingLoad instead of awaiting it a fixed number of times. No product code changed, and the flake cannot be reproduced on demand.",
+  "host": "none",
+  "needs": [],
+  "steps": "None.",
+  "green": "n/a",
+  "red": "n/a",
+  "minutes": 0,
+  "rig": "none",
+  "risks": "none"
+ },
+ {
+  "id": "R7-A-01",
+  "live": "partial",
+  "why": "The branch that was fixed (DynOff::bCompactSets true) only fires on a UE_USE_COMPACT_SET_AS_DEFAULT source-engine build. There is none on this machine (the VND583-13 row says so). Three smaller things can be checked. (1) No regression on the one stock version where the latch could misfire: 5.7+, i.e. DumperTest58 5.8 Shipping. The sparse pass must still run and return hits, and bCompactSets must not latch. (2) The additive scan.sparse_skipped field, the UI gap and the IsComplete plumbing that A-01 added. These fire on ANY sparse_skipped=true, so R7-X2's UI arm covers them. (3) The walker relabel 'storage layout not decoded on this build'. The only live path to it is R7-S2's key-poke arm. The 5.4 no-regression is already on record: out\\review7\\live_ship\\live_check.txt, DLL 8919074b, sparse_skipped false.",
+  "host": "DumperTest58 (UE 5.8) Shipping. dist\\UE5Dumper.dll build 3550 (sha256 a32cb03d...).",
+  "needs": [
+   "pipe",
+   "new-rig"
+  ],
+  "rig": "fixture_smoke.py (launch + inject + boot check), plus a NEW tools/verify/r7_sparse_refs.py promoted from out\\review7\\live_check.py (which hardcodes assert_build('3549')). Arguments: --build N; --refs-class C or --refs-name N (exact match, non-CDO); --walk-class W; --out DIR; --poke-header INT32; --poke-keys. It prints get_pointers.sparse_delegates/_method, the whole scan{} object, each hit's field_type/owner_name/field_name, and every sparse field's walk label. The pokes go through mailbox_poke.Mem (WPM), with the original value recorded, restored in a finally and read back. S2, S4 and X2 reuse it.",
+  "setup": "No UI connected, one game only. Before starting, check with ListAgents and git log that no peer session holds dist\\ or a game.",
+  "steps": "1. py tools/verify/fixture_smoke.py shipping58 --out out\\r7live\\a01_58 --keep. It launches, injects dist and waits for 'UE5_Init: Complete'. The object count must be >= 1000.\n2. py tools/verify/r7_sparse_refs.py --build 3550 --walk-class CapsuleComponent --refs-class CharacterMovementComponent --out out\\r7live\\a01_58. If no Character is possessed, use as the refs target the object that the capsule's bound sparse fields name.\n3. grep Logs\\DumperTest58-Win64-Shipping\\{walk,scan}-0.log for 'compact'.\n4. Kill the fixture.",
+  "green": "get_pointers.sparse_delegates != 0x0. find_refs_to_uobject(CharMoveComp) returns >= 1 hit with field_type MulticastSparseDelegateProperty, owner CollisionCylinder, field PhysicsVolumeChangedDelegate or OnComponentBeginOverlap. scan.sparse_skipped is false and sparse_unlocated is 0. The capsule's bound sparse fields name CharMoveComp functions, and none reads 'storage layout not decoded'. No 'compact TSet' or 'uses compact sets' line appears in any log.",
+  "red": "None for the guard. A pre-fix DLL behaves the same on a stock engine (the storage really is sparse), and no compact-set build exists. The SPARSEREFS compact arm in dll_core_test stays the only red. The wire and label halves get their live arms under R7-X2 (UI) and R7-S2 (key poke).",
+  "minutes": 20,
+  "risks": "A 5.8 sparse read may surface sparse_unlocated > 0 (a delegate-pad layout issue). File that as its own finding, not as an A-01 failure. Pipe only, so focus stealing is irrelevant. Record DLL sha + object count with the result."
+ },
+ {
+  "id": "R7-S2",
+  "live": "yes",
+  "why": "The main claim, that Find References' sparse pass runs on UE 4.23-4.27, has a clean red/green on UE427_3rdPerson Shipping. That package is monolithic, so R7-X3 does not affect it, and its storage validated on a live raw-pointer key on 2026-09-16. The strict probe must also ACCEPT real keys, which is green on 4.27 and 5.4, and optionally on 4.23. The refusal half has no natural host. The installed UE 4.23 header (C:\\Program Files\\Epic Games\\UE_4.23\\Engine\\Source\\Runtime\\CoreUObject\\Public\\UObject\\SparseDelegate.h:91) declares TMap<const UObjectBase*, FSparseDelegateMap>, a raw pointer exactly as on 4.27. So the 'FObjectKey on 4.23-4.26' worry is refuted for 4.23, and the refusal is reachable only by poking the live keys. That arm is green-only: b12d0811 fails git apply -R --check at HEAD.",
+  "host": "Arm A: UE427_3rdPerson Shipping (packaged). Arm B: DumperTest 5.4 Shipping. Arm C (optional): UE423_Flying Shipping.",
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ],
+  "rig": "sw9_ue4_delegate_read.py as the UE4 launcher (--keep/--dll; it guards against the stub exe and a second instance, and injects by PID), r7_sparse_refs.py (new, see A-01) and stage_dll.py.",
+  "setup": "Stage the red DLL with tools/verify/staging/r7-s2-era500.json. It is HEAD with one substitution in dll/src/Aura.cpp: 'const bool sparseEra = ::g_cachedUEVersion == 0 || ::g_cachedUEVersion >= 423;' becomes 'const bool sparseEra = ::g_cachedUEVersion >= 500;   // STAGING: pre-R7-S2 gate'. Build it with py tools/verify/stage_dll.py <spec>, which writes out\\staged\\r7-s2-era500\\UE5Dumper.dll. It reports 3550, so identify it by the sha in STAGED.txt. No UI.",
+  "steps": "Arm A, green: py tools/verify/sw9_ue4_delegate_read.py --engine 427 --config Shipping --keep. Ignore its SW9 verdict (its DelegatePadFixture Summon is harmless). Then r7_sparse_refs.py --build 3550 --refs-class CharacterMovementComponent --walk-class CapsuleComponent --out out\\r7live\\s2_427_green. Kill the game.\nArm A, red: the same with sw9 ... --dll out\\staged\\r7-s2-era500\\UE5Dumper.dll, then kill.\nArm B (refusal, green only; share S4's launch 1): launch_dumpertest.py shipping, then inject.py --pid <out\\host.pid>. Run r7_sparse_refs.py --build 3550 --refs-name DumperTestSparseListener --walk-class DumperTestActor as the baseline. Repeat with --poke-keys: every occupied outer key in the first 64 slots becomes 0x0000000500000003; the rig runs find_refs + walk, then restores and reads back. Run the baseline once more.\nArm C (optional; the first 4.23 sparse read): sw9 --engine 423 --config Shipping --keep. Call pipe_client.py invoke_function with {instance_addr: <live non-CDO CheatManager>, func_name: 'Summon', parms_size: 16, str_params: [{off: 0, wide: true, text: 'DefaultPawn'}]} and wait 2 s. Then r7_sparse_refs.py --refs-class FloatingPawnMovement --walk-class SphereComponent. Red: the era500 stage.",
+  "green": "Arm A: >= 1 hit (2 expected) with field_type MulticastSparseDelegateProperty, owner CollisionCylinder, fields PhysicsVolumeChangedDelegate and OnComponentBeginOverlap. scan.sparse_skipped is false and sparse_unlocated is 0. Logs\\UE427_3rdPerson-Win64-Shipping\\walk-0.log has no 'key does not look like a raw pointer'.\nArm B under the poke: scan.sparse_skipped is true, and the listener hit (owner DumperTestActor, OnActorBeginOverlap) is gone. The log has the WARN 'the sparse-delegate storage key does not look like a raw pointer (UE=504, possibly FObjectKey-keyed)'. DumperTestActor.OnActorBeginOverlap walks as '(sparse, bound — storage layout not decoded on this build)', which is A-01's relabel. The baselines on both sides show the hit, and the readback matches.\nArm C: a MulticastSparse hit on CollisionComponent.PhysicsVolumeChangedDelegate.",
+  "red": "Arm A with era500: zero MulticastSparseDelegateProperty hits, the other field refs identical, sparse_skipped false. That is the pre-fix state where 'none found' blames the game. Arm B has no red: the pre-S2 Find References had no key probe, and the commit does not reverse at HEAD.",
+  "minutes": 50,
+  "risks": "The key poke makes the engine's hash lookups miss for up to 64 owners for about 0.3 s. If the fixture binds, spawns or destroys a sparse owner inside that window, the restored map can dangle: discard that process. Keep the fixture idle and restore in the finally. Arm C: the 4.23 storage has only ever validated EMPTY (no 'accepted' line in any UE423 log), so the latched address may be a decoy. Owner-not-found there is a locator finding, not an S2 failure. One game at a time; kill between arms (a fresh process per DLL)."
+ },
+ {
+  "id": "R7-S4",
+  "live": "yes",
+  "why": "No real storage has a header that ReadTMapHeader refuses. Poking the live outer ArrayNum (sparse_delegates+0x08) produces both refusal shapes on the REAL address. -1: the pre-fix code skipped it silently, with no report. 0x100001 (> SANITY_MAX_CONTAINER_NUM 0x100000): the pre-fix code walked it with no bound. 621e9ef1 passes git apply -R --check at HEAD, so a same-source red exists. The unreadable-+0x34 shape is out of reach, because the TMap is a static in .data.",
+  "host": "DumperTest 5.4 Shipping (it has the DumperTestSparseListener cross-object binding). dist 3550 for green; the staged prefix DLL for red.",
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ],
+  "rig": "r7_sparse_refs.py --poke-header (new, see A-01), stage_dll.py, launch_dumpertest.py, inject.py.",
+  "setup": "tools/verify/staging/r7-s4-prefix.json = {\"name\":\"r7-s4-prefix\",\"reverse_commit\":\"621e9ef1\",\"paths\":[\"dll/src\"]}. Build it with stage_dll.py, which writes out\\staged\\r7-s4-prefix\\UE5Dumper.dll. No UI.",
+  "steps": "Launch 1, dist (shared with S2 arm B): launch_dumpertest.py shipping, then inject.py --pid <out\\host.pid>. Run r7_sparse_refs.py --build 3550 --refs-name DumperTestSparseListener as the baseline, then with --poke-header -1, then the baseline, then --poke-header 0x100001, then the baseline. Kill.\nLaunch 2: inject out\\staged\\r7-s4-prefix\\UE5Dumper.dll and check the sha with inject.py --modules. Run the baseline, then --poke-header -1, then the baseline. Optionally, and LAST, --poke-header 0x100001. Kill.",
+  "green": "Under either poke: scan.sparse_skipped is true and the listener's MulticastSparseDelegateProperty hit (owner DumperTestActor, OnActorBeginOverlap) is absent. duration_ms stays close to the baseline. walk-0.log has the WARN 'the sparse-delegate storage header at 0x<sparse_delegates> is unreadable or implausible -- not read'. Every baseline shows 1 sparse hit with sparse_skipped false. The readback of ArrayNum equals the original.",
+  "red": "Prefix DLL with -1: sparse_skipped false, no WARN and no sparse hit (a silent skip, so 'none found' blames the game). With 0x100001: the pass walks, sparse_skipped is false and duration_ms is far above the baseline, possibly with deadline_hit and garbage hits. That matches the unit red ('walked, 2 counted').",
+  "minutes": 35,
+  "risks": "While ArrayNum is poked, an engine sparse Add with no free index writes past the allocation. Keep the window to one find_refs (about 0.3 s) on an idle fixture, restore in the finally, and discard the process after the pokes. The 0x100001 red holds the corrupted header for up to the 30 s deadline while the pre-fix code SEH-reads up to 1M slots. Keep it optional and last, and kill immediately. Run pipe steps with no UI connected."
+ },
+ {
+  "id": "R7-X2",
+  "live": "yes",
+  "why": "This row needs a storage the DLL cannot locate. On 3550 the 4.27 editor now locates it (R7-X3), so the host is that editor with X3 reversed. 126a726a passes git apply -R --check at HEAD, which recreates exactly the state where X2 was seen. The red is already on record from the same host: out\\review7\\live_427\\live_check.txt, DLL out\\review7\\dll\\UE5Dumper.dll (sha 8919074b..., built before X2 and X3, reports 3549). It shows sparse_delegates 0x0 with sparse_skipped false on 3 CharMoveComps. The UI half (the new gap text) needs the 3550 UI. It also exercises A-01's parse/gap plumbing.",
+  "host": "UE 4.27 editor running the project with -game (modular, case-preserving): \"C:\\Program Files\\Epic Games\\UE_4.27\\Engine\\Binaries\\Win64\\UE4Editor.exe\" \"D:\\Unreal Projects\\UE427_3rdPerson\\UE427_3rdPerson.uproject\" -game -windowed. Plus dist\\UE5DumpUI.exe (3550 AOT). Logs go to Logs\\UE4Editor\\.",
+  "needs": [
+   "pipe",
+   "ui",
+   "prefix-dll",
+   "new-rig"
+  ],
+  "rig": "stage_dll.py, inject.py, r7_sparse_refs.py (new, see A-01), front_window.py. Computer-use drives the UI.",
+  "setup": "tools/verify/staging/r7-x2-x3reversed.json = {\"name\":\"r7-x2-x3reversed\",\"reverse_commit\":\"126a726a\",\"paths\":[\"dll/src\"]}. Build it with stage_dll.py, which writes out\\staged\\r7-x2-x3reversed\\UE5Dumper.dll. Call list_granted_applications and request the dist\\UE5DumpUI.exe grant if it is missing (batches of 7 or fewer).",
+  "steps": "1. Launch the editor host with py -c 'subprocess.Popen([...])' (no PowerShell) and wait about 60 s (shaders are cached from 09-24/25). Get the UE4Editor PID with inject.py --list. Run inject.py --pid <pid> --dll out\\staged\\r7-x2-x3reversed\\UE5Dumper.dll, then check the path and sha with inject.py --pid <pid> --modules.\n2. Precondition: init-0.log shows 'UE5_Init: Complete' with Objects about 24k. scan-0.log shows 'ValidateSparseDelegates: ... rejected — 1 live element(s) but none has a UObject-shaped key' and 'FindSparseDelegateStorage: All patterns failed'.\n3. r7_sparse_refs.py --build 3550 --refs-class CharacterMovementComponent --walk-class CharacterMovementComponent --out out\\r7live\\x2_427.\n4. UI: start dist\\UE5DumpUI.exe, run front_window.py front UE5DumpUI, click Connect. In Live Walker, paste a CharMoveComp address into 'Address (hex or module.exe+offset)', click Go, then Find Refs. Screenshot the header and the status bar. Optionally run Find Refs on a zero-ref object.\n5. Disconnect, close the UI, kill the editor.\nOptional same-session red: repeat 1-4 with --dll out\\review7\\dll\\UE5Dumper.dll, asserting build 3549.",
+  "green": "get_pointers.sparse_delegates is 0x0. Every find_refs has scan.sparse_skipped true and sparse_unlocated 0. walk-0.log has the WARN 'FindReferencesToUObject: the sparse-delegate storage was not located (UE=427) -- not read, so bindings held there are MISSING'. The UI header reads 'References to CharMoveComp (N)  [sparse-delegate bindings not read — their storage was not located or decoded on this build]', with the same suffix in the status bar. A zero-ref target shows 'No references found in what was read — sparse-delegate bindings were not read (their storage was not located or decoded on this build). That is not evidence that nothing points here.'",
+  "red": "Already recorded in out\\review7\\live_427 (8919074b): sparse_delegates 0x0 but sparse_skipped false, and no WARN. If re-run with the UI: a header with no suffix, and for a zero-ref target the game-blaming 'likely held by a non-reflected pointer' hint.",
+  "minutes": 45,
+  "risks": "The editor window steals focus: run front_window.py before every click. The UI takes 2 of the 3 pipe slots, so do the pipe steps first. The staged DLL reports 3550 like dist, so identify it by sha. Optional natural host: DQ I&II HD-2D Remake (4.27; its sparse AOB failed 2026-09-24). Launch it with steam.exe -applaunch 2893570 and inject Game\\Binaries\\Win64\\DQIandIIHD2DRemake.exe, not the same-named top-level shim. Assert sparse_delegates 0x0 first. If 3550 instead LOCATES the candidate the pre-X3 validator rejected there (0x7FF62C160AB0-like, key not UObject-shaped), X3's any-image validator accepted a decoy. Record that as a new finding, not as an X2 result."
+ },
+ {
+  "id": "R7-C-05",
+  "live": "yes",
+  "why": "Fern.cpp, Frieren.cpp and Mimic.cpp reach no test target, so BeginApply/EndApply and UE5_Init's new wait branch have never EXECUTED. The only test is a source pin. No host misses GObjects at init: the Satisfactory 'fixture' was a corpse (G3-VOID). So the apply window is staged the way G3-STAGE did it: a forced init miss, then Extra Scan and Apply for real, with a flag-gated sleep inside the apply to make the window deterministic (the slow-walk.json pattern). A free no-deadlock smoke on the shipped DLL comes first.",
+  "host": "DumperTest 5.4 Shipping (launch_dumpertest.py shipping).",
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ],
+  "rig": "NEW tools/verify/r7_apply_fence.py. It builds on l54_init_fastpath.py (mailbox_poke as a library: MP.Mem, mailbox_addr, poke(CMD_QUERY_PTR)) and g3_rescan_apply.py (rescan, rescan_status, apply_rescan, log deltas). It runs apply_rescan on one thread and a mailbox poke loop on another, records (t_issue, t_done, result) against (t_send, t_reply), and tails pipe/init/offsets-0.log. stage_dll.py builds the DLLs.",
+  "setup": "Stagings, built with stage_dll.py. r7-fence-green.json = HEAD with three substitutions:\n(a) Genau.cpp FindAll: after 'out.GObjects = FindGObjects(... hints.gobjectsPatternId.c_str());' add 'out.GObjects = 0;   // STAGING'.\n(b) Fern.cpp CMD_APPLY_RESCAN: after 'Aura::Init(g_cachedGObjects);' add a Sleep(2000) gated on %TEMP%\\ue5dump_apply_widen.flag, logging 'STAGING apply-widen'.\n(c) Mimic.cpp EnsureInitialized: after 'LOG_INFO(\"Mailbox: auto-initializing (UE5_Init)...\");\\n    UE5_Init();' add a Sleep(1500) gated on %TEMP%\\ue5dump_ensure_widen.flag. This one is for S9.\nr7-c05-red.json = the same subs, plus deleting the 4-line 'struct ApplyFence {...} applyFence;'. A whole reversal is not possible: 5b00729d fails git apply -R --check at HEAD.",
+  "steps": "0. Shipped bytes, no stage: launch shipping and inject dist. Run pipe_client.py apply_rescan, then mailbox_poke.py DumperTest-Win64-Shipping --repeat 5, then apply_rescan again. Kill.\n1. Green: fresh launch, inject r7-fence-green, then r7_apply_fence.py --mode c05 --process DumperTest-Win64-Shipping --dll <staged>. The rig:\n- asserts the precondition: init-0.log 'UE5_Init: Complete (UE504, GObjects=0x0', get_pointers gobjects 0x0 and gnames != 0;\n- sends a baseline QUERY_PTR and expects -10 fast;\n- sends rescan and polls rescan_status to phase 3 with found_gobjects true;\n- touches apply_widen.flag;\n- thread A sends apply_rescan; thread B pokes QUERY_PTR in a loop from t_send+100 ms to t_reply+500 ms.\nKill, and delete the flags.\n2. Red: the same with r7-c05-red.",
+  "green": "Step 0: both apply_rescan calls return applied:false in under 1 s, and QUERY_PTR is still served (no hang).\nStep 1:\n- The first poke inside the window has elapsed >= 1 s and t_done >= t_reply - 50 ms.\n- No served poke (result != -10) completes between the 'STAGING apply-widen' line and t_reply.\n- pipe-0.log shows 'Mailbox: auto-initializing'. init-0.log gains 'UE5_Init: Already initialized' timestamped after the apply's last line.\n- The apply reply has applied:true and object_count > 20k.\n- Exactly one 'ValidateAndFixOffsets: Starting' (the G3 gate still holds).",
+  "red": "r7-c05-red: pokes inside the 2 s window are served in about 5-20 ms each (result != -10, the fast path, no auto-initializing line). Their t_done lands >= 1 s before t_reply, so commands were served on the half-applied pool.",
+  "minutes": 75,
+  "risks": "Extra Scan must find GObjects on DumperTest Shipping. Assert found_gobjects. If it misses, add a substitution that stashes init's real FindGObjects result and returns it from ExtraScanGObjects. The apply is one-shot per process (GObjects applies once), so each arm needs a fresh launch. Never call pipe_client.ensure_scanned: it sends trigger_scan when gobjects_method is not_found. Staged DLLs report 3550, so check the sha. A 10 s MP.poke TIMEOUT or a stuck apply reply is itself the deadlock finding: capture it with hang_dump.py before killing. Commit evidence after each arm (the laptop can crash)."
+ },
+ {
+  "id": "R7-S9",
+  "live": "partial",
+  "why": "Window (1): UE5_Init returned before the fence rose, then EnsureInitialized re-read the globals mid-apply. The real gap is microseconds wide, but a flag-gated sleep after UE5_Init() in EnsureInitialized widens it deterministically, and bc46fea8 passes git apply -R --check at HEAD, so a red exists. Window (2), argument evaluation order and the seq_cst fence against hoisting the GObjects publish, is compiler/CPU-level and cannot be observed live. Only the unit source pin covers it. The staging and rig are shared with C-05.",
+  "host": "DumperTest 5.4 Shipping.",
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ],
+  "rig": "r7_apply_fence.py --mode s9 (new, see C-05), stage_dll.py.",
+  "setup": "Green: r7-fence-green (from C-05, including sub (c)). Red: r7-s9-red.json = {\"reverse_commit\":\"bc46fea8\",\"paths\":[\"dll/src\"]} plus the same subs (a)(b)(c). Anchor (c) exists exactly once both before and after S9.",
+  "steps": "For each arm: fresh launch, then inject the staged DLL and check its sha. Run r7_apply_fence.py --mode s9:\n1. Check the precondition as in C-05, then rescan until found_gobjects.\n2. Touch both apply_widen.flag and ensure_widen.flag.\n3. At t0, poke QUERY_PTR. GObjects is still 0, so UE5_Init returns at once and the staged 1500 ms sleep starts.\n4. At t0+200 ms, thread A sends apply_rescan, which holds the fence for >= 2 s.\n5. Record the poke's t_done and result against t_reply.\nKill and delete the flags.",
+  "green": "The poke is served (result != -10) with t_done >= t_reply - 50 ms (about t0+2.2 s or later). init-0.log has a SECOND 'UE5_Init: Already initialized' (the re-check loop's) timestamped after the apply's last line. There is no hang: the loop is bounded to 4.",
+  "red": "r7-s9-red: the poke is served at about t0+1.5 s, roughly 0.7 s BEFORE t_reply, while the apply still holds the fence.",
+  "minutes": 35,
+  "risks": "The discriminator is a timing margin (1.5 s against 2 s sleeps). Widen both if the rig's jitter exceeds 100 ms. With the flags absent the stage behaves as HEAD, so check that the flag files exist before each arm and delete them afterwards. One-shot per process, so one fresh launch per arm."
+ },
+ {
+  "id": "R7-B-01",
+  "live": "yes",
+  "why": "The fix is a flag predicate for a state that only a running 5.0-5.3 engine produces. Under the default gc.PendingKillEnabled=True (UE_5.1 BaseEngine.ini:1302; DumperTest51's Config does not override it), MarkAsGarbage takes MarkPendingKillOnlyInternal, which sets RF_PendingKill 0x20000000 and item bit 29, and neither Garbage bit (UE_5.1 UObjectBaseUtility.h:60-64,264-275). The unit test only feeds synthetic flags. DumperTest51 is a stock 5.1.1 build: detected version 501, classic item layout (24 bytes Shipping, 32 bytes Development), sparse storage located (SPARSE_ES2_1). It has no WeakToGarbage lever, and AController::StartSpot is not a UPROPERTY in 5.1. The pawn's capsule does carry two engine-made sparse bindings to CharMoveComp: OnComponentBeginOverlap->CapsuleTouched and PhysicsVolumeChangedDelegate->PhysicsVolumeChanged, both added in SetUpdatedComponent. Neither is removed when the actor is destroyed, and FSparseDelegateStorage drops an entry only when GC deletes the object. So destroying the pawn leaves bindings whose target is a PendingKill object for up to 61.1 s. The sparse reader is tagged since R7-B-04. 5.0, 5.2 and 5.3 are not reachable: no such engine is installed.",
+  "host": "DumperTest51 Shipping (shipping51), stock template, no switches. Then dev51 as the check in the other direction (32-byte FUObjectItem).",
+  "rig": "Existing: fixture_smoke.py (shipping51/dev51, --keep, --dll), pipe_client.py, read_mem.py, stage_dll.py. New and small: tools/verify/r7_destroy_then_walk.py, shared with R7-B-04. It runs PipeClient assert_build + ensure_scanned, resolves the objects, walks them before the destroy, calls invoke_function K2_DestroyActor, then does 3 rounds of walk_instance + a UObject+0x08 read, 2 s apart, and tees everything to --out. Plain pipe_client CLI calls also work, but the GC window favours a script.",
+  "setup": "1) Confirm the green binary: dist/build_number.txt = 3550, dist/UE5Dumper.dll dated 2026-09-25 01:11, and record its sha256. 2) Red DLL = HEAD minus B-01 only. Write tools/verify/staging/r7b01-prefix.json with one sub in dll/src/Grimoire.h that deletes exactly the two lines 'if (ueVersion >= 500 && ueVersion <= 503 && (objectFlags & 0x20000000u)' / '&& (!itemFlagsOk || (itemFlags & (1u << 29)))) return true;' (count 1). Run py tools/verify/stage_dll.py tools/verify/staging/r7b01-prefix.json, which writes out/staged/r7b01-prefix/UE5Dumper.dll and a STAGED.txt with the sha. Do NOT use 1d0cfaba^ (29114cfb): it also lacks R7-B-04's sparse-site tag, so it would go red for the wrong reason.",
+  "steps": "1) py tools/verify/fixture_smoke.py shipping51 --out out/r7b01/green --keep. Require object count ~19k (booted), get_pointers ue_version 501 and sparse_delegates != 0x0. 2) Resolve the live pawn: find_instances class_name=BP_ThirdPersonCharacter_C, non-CDO. Fallback: class_name=Character exact_match=false, filtered to ThirdPerson. Walk it (P) and take the ptrs CharacterMovement = M and CapsuleComponent = C. Never pick 'CharMoveComp' by name: CDO subobjects share that name. 3) Walk C before the destroy and read M+0x08 (4 bytes) with py tools/verify/read_mem.py DumperTest51-Win64-Shipping <M> 4. 4) invoke_function instance_addr=P func_name=K2_DestroyActor (direct_call false) and require ok. 5) Immediately walk C (and M) 3 times, 2 s apart, and read M+0x08 and C+0x08. 6) Kill the game and commit the evidence. 7) Red: fixture_smoke.py shipping51 --dll out/staged/r7b01-prefix/UE5Dumper.dll --out out/r7b01/red --keep, then steps 2-6 unchanged. 8) Green again on dev51 into out/r7b01/dev51. 9) Update the todo.md R7-B-01 row and commit.",
+  "green": "Before the destroy: C.OnComponentBeginOverlap reads '[CharMoveComp::CapsuleTouched]' and C.PhysicsVolumeChangedDelegate reads '[CharMoveComp::PhysicsVolumeChanged]', with no '[garbage]' anywhere. After the destroy: M's ObjectFlags have 0x20000000 set and 0x40000000 clear, which is the PendingKill path this row is about, now shown live. Both bindings read '... [garbage]' on all 3 reads. A green tag also shows that item bit 29 agreed, because the classic item flags do read here. Any weak field still resolving to a live object (for example the capsule's PhysicsVolume -> DefaultPhysicsVolume) carries no tag. The same holds on dev51.",
+  "red": "With r7b01-prefix: the same flags on M (0x2000000x), invoke ok, and both bindings read 'CharMoveComp::CapsuleTouched' / '::PhysicsVolumeChanged' with NO '[garbage]' on all 3 reads. That is exactly the pre-fix miss.",
+  "risks": "1) If a GC purge lands inside the window (0-61 s after the destroy, depending on phase), the post-destroy walk fails or reads other names. Relaunch in that case: the pawn is gone, so each attempt is one launch. 2) The template does not respawn, so the game stays up without a pawn; that is harmless. 3) If sparse_delegates is 0x0 on a run, the witness is gone. Fallback: on dev51, set_debug_camera enable=true, then front_window.py and a left click in the game window (DebugCamera_Select) to fill ADebugCameraController.SelectedActor / SelectedComponent / SelectedHitPoint, which are weak UPROPERTYs; then K2_DestroyActor on the selected actor. That route needs a computer-use click and works in Development only, because 5.1 Shipping compiles the CheatManager out. 4) shipping51 runs uncapped (see the launcher note), which loads the laptop. Keep each arm short and commit after each one. 5) A staged DLL reports the same build number as HEAD, so identify it by the sha in STAGED.txt.",
+  "minutes": 35,
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ]
+ },
+ {
+  "id": "R7-B-02",
+  "live": "yes",
+  "why": "The delegate half is a UE4-only state. On UE_4.23 and UE_4.27, FWeakObjectPtr::Reset writes {INDEX_NONE,0} (WeakObjectPtr.h:50/52). On 5.1+ it writes {0,0} (UE_WEAKOBJECTPTR_ZEROINIT_FIX). So every default-constructed DelegateProperty on a UE4 native CDO is in exactly that state. Examples: the fixture's Default__DelegatePadFixture.Del_Unicast (bound only in BeginPlay), and UMG's Default__TextBlock / UWidget delegates (LaunchEngineLoop loads UMG). A live walk runs the real FProperty path (4.27) or UProperty path (4.23) end to end. The TOptional half has no host today: no fixture or engine class declares a TOptional<TWeakObjectPtr>. It needs the R7-OPT fixture extension below, which is shared with R7-B-04 and R7-S1. UE 5.0 (the other {-1,0} engine) is not installed.",
+  "host": "Delegate half: UE427_3rdPerson Shipping package (the DelegatePadFixture byte-scan gives 2 UTF-16 hits), optionally UE423_Flying Shipping. TOptional half: DumperTest 5.4 Shipping after R7-OPT.",
+  "rig": "Existing: sw9_ue4_delegate_read.py (--engine 427|423 --config Shipping --keep --dll), pipe_client.py, read_mem.py, stage_dll.py, launch_dumpertest.py, inject.py, repackage.py. New: R7-OPT, a fixture-source extension (below).",
+  "setup": "1) Red DLL: tools/verify/staging/r7b02-prefix.json, two subs. (a) In dll/src/Ubel.h, replace '(void)objIdx;' + 'if (!named && serial == 0) return \"(unbound)\";' with 'if (!named && objIdx == 0 && serial == 0) return \"(unbound)\";'. (b) In dll/src/Ubel.cpp, replace 'fv.typedValue = optWeakRead ? UnresolvedWeakLabel(optWeakIdx, optWeakSerial)' + its ': DescribeUnreadableField(\"optional\", fi.Offset);' line with 'fv.typedValue = \"(stale)\";'. Then run stage_dll.py, which writes out/staged/r7b02-prefix/. 2) R7-OPT, needed only for the TOptional half. Edit the in-repo mirror tools/ue-sample/DumperTest/Source/DumperTest/DumperTestActor.{h,cpp}. Append the new fields AFTER the last UPROPERTY of ADumperTestActor so no existing offset moves: Opt_Weak_Null (TOptional<TWeakObjectPtr<AActor>>, BeginPlay Emplace(nullptr)); Opt_Weak_Live (Emplace(this), control); Opt_Weak_Garbage (re-pointed with WeakToGarbage in the -DumperTestWeakGarbage block); Opt_Weak_Stale (set ONCE to the first garbage target, never re-pointed); Opt_Soft (TOptional<TSoftObjectPtr<UStaticMesh>> Emplace(FSoftObjectPath(\"/Engine/BasicShapes/Cylinder.Cylinder\")), never Get()); Opt_SoftClass (TOptional<TSoftClassPtr<AActor>> from FSoftObjectPath(\"/Script/Engine.Pawn\")); Opt_Lazy (TOptional<TLazyObjectPtr<AActor>> assigned FUniqueObjectGuid(FGuid(0x11111111,0x22222222,0x33333333,0x44444444))); Opt_Soft_Unset (left unset). Commit, then run py tools/ue-sample/repackage.py --engine 5.4 --project DumperTest --compile-only --sync-mirror (the UHT legality gate, ~20 s), then --configs Shipping,Development,DebugGame --sync-mirror (~5 min; VND583-06's took 2.5 min for two configs). The pe_hash changes, as usual.",
+  "steps": "Delegate half: 1) py tools/verify/sw9_ue4_delegate_read.py --engine 427 --config Shipping --keep. Require 'SW9: PASS' (dist 3550 injected, fixture summoned). 2) find_instances class_name=DelegatePadFixture limit=16, take Default__DelegatePadFixture, walk_instance it with array_limit=8 and read Del_Unicast. Also walk the summoned DelegatePadFixture_N as the bound control. 3) find_instances class_name=TextBlock, take Default__TextBlock, walk it and read every DelegateProperty (TextDelegate, ToolTipTextDelegate, VisibilityDelegate, ...). 4) Optional raw witness: read_mem.py UE427_3rdPerson-Win64-Shipping <CDO+Del_Unicast offset> 16. 5) Kill with taskkill on the pid, then run the red arm: the same command with --dll out/staged/r7b02-prefix/UE5Dumper.dll. 6) Optionally repeat with --engine 423 for the UProperty path. TOptional half (after R7-OPT): 7) launch_dumpertest.py shipping --extra -DumperTestWeakGarbage, then inject.py --pid <pid>, then ensure_scanned. Wait at least 75 s (first garbage target at 5 s, first purge at ~61 s). find_instances DumperTestActor, walk_instance it and read Opt_Weak_Null / Opt_Weak_Stale / Opt_Weak_Live. Kill, then red with the r7b02-prefix DLL.",
+  "green": "The CDO's Del_Unicast reads '(unbound)'. Every Default__TextBlock / UWidget DelegateProperty reads '(unbound)'. The raw bytes are FFFFFFFF 00000000 + FName 0. The summoned instance still reads 'DelegatePadFixture_N::DPad_OnPingProbe', and SW9 still passes. TOptional half: Opt_Weak_Null = 'null', Opt_Weak_Stale = 'null (stale)' after the purge, Opt_Weak_Live = 'DumperTestActor (DumperTestActor)'.",
+  "red": "With r7b02-prefix, the same CDO / TextBlock fields read '(stale)': the claim 'it was bound and has since been collected', for delegates nothing ever bound. The bound control is unchanged. TOptional half: Opt_Weak_Null and Opt_Weak_Stale both read '(stale)'.",
+  "risks": "1) sw9 refuses while any other fixture game runs and refuses an exe without the fixture. It waits 70 s for the level; the CheatManager Summon needs a live PlayerController. 2) If walk_instance declines a CDO, read the same field in the Live Walker UI instead (that is a UI arm). 3) Opt_Weak_Stale depends on the GC phase: re-read until it turns stale. WeakToGarbage also shows 'null (stale)' briefly after each purge, which is a second witness. 4) R7-OPT changes DumperTest's pe_hash and appends fields. Keep the edit to appends only, so the offsets that earlier rows recorded stay valid.",
+  "minutes": 30,
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ]
+ },
+ {
+  "id": "R7-B-04",
+  "live": "partial",
+  "why": "The sparse-binding site is reachable with no rebuild. Destroying ADumperTestActor on 5.4 Shipping marks it Garbage (RF_MirroredGarbage). Its D4 OnActorHit sparse binding targets itself, and EndPlay does not remove it: EndPlay only removes OnActorBeginOverlap's SparseListener binding, and sparse storage is cleared only at GC delete. The actor's four other self-bound delegate readers (Del_Unicast, the Multicast_Inline preview, Arr_Delegates[1], Arr_MulticastDelegates[1]) have been tagged since VND583-06. They serve as in-walk proof that the DLL sees the target as garbage, so only the sparse element differs between red and green. The TOptional site needs R7-OPT (Opt_Weak_Garbage). Two parts cannot be reached by any engine code path: the Property Search soft-preview fallback (an empty asset path with a resolved weak pair) and the resolved-but-unnamed weak optional '(set)'. Hence partial.",
+  "host": "DumperTest 5.4 Shipping (launch_dumpertest.py shipping). With R7-OPT packaged, add --extra -DumperTestWeakGarbage for the TOptional part.",
+  "rig": "Existing: launch_dumpertest.py, inject.py, pipe_client.py, read_mem.py, stage_dll.py. New: r7_destroy_then_walk.py (from R7-B-01), pointed at DumperTestActor. Optionally R7-OPT (see R7-B-02).",
+  "setup": "Red DLL: tools/verify/staging/r7b04-prefix.json, two subs in dll/src/Ubel.cpp. (a) In the sparse loop, change 'elem.value = DescribeDelegateBinding(b.targetObj, b.targetName,' to 'elem.value = DescribeScriptDelegate(b.targetObj != 0, b.targetName,'; the remaining three arguments are identical. (b) Change ': fv.ptrName + \" (\" + fv.ptrClassName + \")\") + optWeakTag;   // [R7-B-04]' to ': fv.ptrName + \" (\" + fv.ptrClassName + \")\");'. That is the pre-fix state, where the tag was set and then overwritten. Run stage_dll.py, which writes out/staged/r7b04-prefix/.",
+  "steps": "1) launch_dumpertest.py shipping (add --extra -DumperTestWeakGarbage if R7-OPT is packaged), then inject.py --pid <pid>, then ensure_scanned. Require ue 504, about 24.5k objects, sparse_delegates != 0. 2) R7-OPT only: find_instances DumperTestActor, then walk_instance 3 times, 2 s apart, reading Opt_Weak_Garbage, WeakToGarbage and Opt_Weak_Live. Count the fields carrying '[garbage]' (VND583-06's false-positive check). 3) Walk the actor before the destroy: OnActorHit should read '(1 sparse binding) [DumperTestActor::D4_OnActorHitProbe]', with no '[garbage]' anywhere. 4) invoke_function instance_addr=<actor> func_name=K2_DestroyActor, and require ok. Within 2 s, walk the saved address 3 times, 2 s apart. Run read_mem.py DumperTest-Win64-Shipping <actor> 16 and check +0x08. 5) Kill the game and commit. 6) Red: the same steps with inject.py --dll out/staged/r7b04-prefix/UE5Dumper.dll.",
+  "green": "After the destroy, +0x08 has 0x40000000 set. OnActorHit's element and preview read 'DumperTestActor::D4_OnActorHitProbe [garbage]'. The four controls carry '[garbage]' too. With R7-OPT: Opt_Weak_Garbage = 'Actor_N (Actor) [garbage]', with the same Actor_N as WeakToGarbage on the same read. Opt_Weak_Live is untagged, and exactly those two fields are tagged.",
+  "red": "With r7b04-prefix: the four controls are tagged, but OnActorHit's binding is NOT, so the sparse reader alone misses it. With R7-OPT: Opt_Weak_Garbage reads 'Actor_N (Actor)' untagged, while WeakToGarbage in the same walk reads '[garbage]'.",
+  "risks": "1) Destroying the fixture actor ends the fixture for that launch, so each arm is one launch. Walk the address captured before the destroy: find_instances may drop the actor. 2) The GC purge window is up to 61 s, so walk at once. 3) The HUD's weak Sample goes null, which is harmless. 4) If the invoke fails, the actor is intact and the arm yields no evidence; re-check the result code. 5) The soft-preview fallback and '(set)' stay unit-only; say so in the row.",
+  "minutes": 35,
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ]
+ },
+ {
+  "id": "R7-S1",
+  "live": "yes",
+  "why": "No host today holds a TOptional of a soft, soft-class or lazy pointer. DumperTest 5.4 and 5.8 declare optionals of int/float/string/text/name/struct/array/object only. The only engine TOptional<FSoftObjectPath> is an editor-only Metasound struct, and a StructProperty besides, not a SoftObjectProperty. With R7-OPT, a live walk checks the real FOptionalProperty layout (a trailing bIsSet after the 40-byte 5.4 TSoftObjectPtr, SoftPathOffset / LazyGuidOffset on the inner size). It also checks the real 'not loaded' state that TPersistentObjectPtr leaves ({0,0} until Get()), which the unit test only simulates. UE 5.4 UHT accepts weak, soft and lazy inners in a TOptional: its only rule is CanBeContainerValue, and none of the three removes it. Without R7-OPT this row has no host.",
+  "host": "DumperTest 5.4 Shipping after R7-OPT (see R7-B-02: Opt_Soft, Opt_SoftClass, Opt_Lazy, Opt_Soft_Unset).",
+  "rig": "Existing: launch_dumpertest.py, inject.py, pipe_client.py, read_mem.py, stage_dll.py, repackage.py. New: R7-OPT (shared).",
+  "setup": "R7-OPT packaged, as in R7-B-02. Red DLL: tools/verify/staging/r7s1-prefix.json, one sub in dll/src/Ubel.cpp that deletes the two 'else if' arms 9ea4bb2f added. The block starts at '} else if (innerTn == \"SoftObjectProperty\" || innerTn == \"SoftClassProperty\") {' and runs through the LazyObjectProperty arm, up to but not including '} else if (isWeakLike) {'. Copy the exact text from git show 9ea4bb2f -- dll/src/Ubel.cpp. That gives the 511ceb35 behaviour. Run stage_dll.py, which writes out/staged/r7s1-prefix/.",
+  "steps": "1) launch_dumpertest.py shipping, then inject.py --pid <pid>, then ensure_scanned. 2) find_instances DumperTestActor, then walk_instance with array_limit=8. Read Opt_Soft, Opt_SoftClass, Opt_Lazy and Opt_Soft_Unset, plus the top-level Soft_Mesh as a format control. 3) read_mem.py DumperTest-Win64-Shipping <actor+Opt_Soft offset> 8 should give 00000000 00000000, the unloaded weak cache that is the state under test. 4) Optional UI arm: the Live Walker Value tooltip shows the same text. 5) Kill, then the red arm with inject.py --dll out/staged/r7s1-prefix/UE5Dumper.dll. 6) Commit the evidence (out/r7s1/{green,red}) and update the row.",
+  "green": "Opt_Soft = '/Engine/BasicShapes/Cylinder.Cylinder', in the same format as Soft_Mesh's path. Opt_SoftClass = '/Script/Engine.Pawn'. Opt_Lazy = '{11111111-22222222-33333333-44444444}'. Opt_Soft_Unset = '(unset)'. The raw weak cache is {0,0}.",
+  "red": "With r7s1-prefix, Opt_Soft, Opt_SoftClass and Opt_Lazy all read 'null' ('holds nothing'). The unset control and Soft_Mesh are unchanged.",
+  "risks": "1) If anything calls Get() on the soft pointer (async load of a referenced asset), the weak cache fills and the name path is taken instead. Pick a path nothing loads; a non-existent '/Game/R7S1/NotCooked.NotCooked' is fine, because only the path is displayed. 2) The GUID prints as four uint32 in memory order, and FGuid(A,B,C,D) stores A,B,C,D, so it should match. If it does not, note the order rather than calling it a failure. 3) A UHT refusal at --compile-only means the host cannot be built on 5.4; then try DumperTest58.",
+  "minutes": 25,
+  "needs": [
+   "pipe",
+   "prefix-dll",
+   "new-rig"
+  ]
+ },
+ {
+  "id": "R7-S5",
+  "live": "no",
+  "why": "Test-only. 7e4ccd54 touches only dll/tests/dll_core_test.cpp (WEAKLABEL now saves and restores DynOff::SOFTPTR_PATH) and docs/todo.md. No shipped byte changed, so the DLL is identical before and after, and no running host can show a difference. The evidence is the unit suite (core 448/0).",
+  "host": "none",
+  "rig": "none",
+  "setup": "none",
+  "steps": "None. Optionally re-run the core test target with build_dll.py --targets dll_core_test to confirm it still passes. That is not a live check.",
+  "green": "n/a (unit: core 448/0)",
+  "red": "None: the ledger says nothing failed before the fix; the latch leak only mattered to a later test case.",
+  "risks": "none",
+  "minutes": 0,
+  "needs": []
+ },
+ {
+  "id": "R7-A-03",
+  "live": "no",
+  "why": "Comment-only. a1798cc3 changes three comment lines in dll/src/Grimoire.h, the FField / FProperty default headers and the UE4 summary, now reading 5.0-5.2, plus docs/todo.md. No code path changed. The one live-facing fact behind the comment (5.1 keeps the 16-byte untagged FFieldVariant, FField::Next +0x20, Offset_Internal +0x4C) was already measured live on DumperTest51 Shipping and Development at build 3547 (tools/ue-sample/README.md, DumperTest51 table). 5.0 and 5.2 have no installed engine.",
+  "host": "none",
+  "rig": "none",
+  "setup": "none",
+  "steps": "None. Optional grep confirmation only: git grep 'defaults for UE5.0-5.1.0' returns nothing.",
+  "green": "n/a",
+  "red": "n/a",
+  "risks": "none",
+  "minutes": 0,
+  "needs": []
+ }
+]

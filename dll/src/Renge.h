@@ -117,7 +117,7 @@ constexpr const char* CMD_GET_FOREGROUND_LOCK      = "get_foreground_lock";
 constexpr const char* CMD_GET_MOVEMENT_PARAMS      = "get_movement_params";
 constexpr const char* CMD_SET_MOVEMENT_MULTIPLIER  = "set_movement_multiplier";
 constexpr const char* CMD_RESET_MOVEMENT           = "reset_movement";
-// Gravity DIRECTION vector (UE5.4+ GravityDirection); x/y/z normalized DLL-side.
+// Gravity DIRECTION vector (UE5.3+ GravityDirection); x/y/z normalized DLL-side.
 constexpr const char* CMD_SET_GRAVITY_DIRECTION    = "set_gravity_direction";
 constexpr const char* CMD_RESET_GRAVITY_DIRECTION  = "reset_gravity_direction";
 
@@ -186,6 +186,16 @@ constexpr const char* EVT_WATCH            = "watch";
 inline std::string AddrToStr(uintptr_t addr) {
     std::ostringstream oss;
     oss << "0x" << std::uppercase << std::hex << addr;
+    return oss.str();
+}
+
+// [PATH-MODULE-NAME-UTF8] A CE module-relative address, "\"<module file>\"+<RVA hex>". Built as a std::string:
+// the char[128] snprintf it replaces cut a long name's closing quote and RVA silently, and once the name is UTF-8
+// a cut could split a sequence that json::dump then throws on. Pass CE's OWN name for the module (the ANSI round
+// trip), not the Unicode one -- CE never sees the latter.
+inline std::string CeModuleRelative(const std::string& moduleFile, uint64_t rva) {
+    std::ostringstream oss;
+    oss << '"' << moduleFile << "\"+" << std::uppercase << std::hex << rva;
     return oss.str();
 }
 

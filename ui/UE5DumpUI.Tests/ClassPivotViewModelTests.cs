@@ -56,6 +56,19 @@ public class ClassPivotViewModelTests : IDisposable
         await _store.FinalizeSnapshotAsync(id, 3, 6, ct);
     }
 
+    /// <summary>[R7-X1] Await until PendingLoad stops changing -- ClassPivotViewModel.SettleLoadsAsync's rule. A load
+    /// can start the next one, so a fixed count of awaits races the chain.</summary>
+    private static async Task SettleLoadsAsync(ClassPivotViewModel vm)
+    {
+        for (int i = 0; i < 8; i++)
+        {
+            var pending = vm.PendingLoad;
+            if (pending == null) return;
+            await pending;
+            if (ReferenceEquals(pending, vm.PendingLoad)) return;
+        }
+    }
+
     private ClassPivotViewModel NewVm()
         => new ClassPivotViewModel(_store, new MockLoggingService());
 
@@ -976,8 +989,11 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains(vm.Classes, c => c.ClassName == "PlayerState");
 
         vm.SelectedClass = vm.Classes.First(c => c.ClassName == "PlayerState");
-        await vm.PendingLoad!;   // LoadArrayFieldsAsync (auto-selects the array field)
-        await vm.PendingLoad!;   // LoadArrayPropsAsync
+        // [R7-X1] Not two fixed awaits: the array-field load clears SelectedArrayField (which can start a props load)
+        // and then auto-selects one (which starts another), so how often PendingLoad is replaced, and when, is not
+        // fixed. Under full-suite load the second await caught the finished FIRST task and the assertions below ran
+        // before the props arrived. Settle the way the VM's own SettleLoadsAsync does.
+        await SettleLoadsAsync(vm);
 
         var cargo = Assert.Single(vm.ArrayFields);
         Assert.Equal("Cargo", cargo.ArrayField);

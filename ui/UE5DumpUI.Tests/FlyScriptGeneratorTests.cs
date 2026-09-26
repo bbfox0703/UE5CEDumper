@@ -100,4 +100,32 @@ public class FlyScriptGeneratorTests
         Assert.Contains(rows, r => r.Description.Contains("Arrows"));
         Assert.Contains(rows, r => r.Description.Contains("Noclip"));
     }
+
+    // [R7-C-04] GodMode's [W2-CEGEN-MODAL] shape: an untick never puts a modal over the game, and a failed tick's
+    // deferred untick (which runs [DISABLE]) no longer shows a SECOND dialog.
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("fly-preset")]
+    [InlineData("noclip")]
+    public void Disable_block_never_pops_a_modal(string which)
+    {
+        var s = which switch { "noclip" => FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip), "fly-preset" => FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled, 0), _ => FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled) };
+        var disable = s[s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)..];
+        Assert.DoesNotContain("showMessage", disable);
+        Assert.Contains("dbg('[Fly", disable);   // a DEBUG session still sees why it gave up
+    }
+
+    // The control: ticking still announces and unticks its bails -- the fix is [DISABLE]-only.
+    [Theory]
+    [InlineData("fly")]
+    [InlineData("fly-preset")]
+    [InlineData("noclip")]
+    public void Enable_block_still_announces_and_unticks_its_bails(string which)
+    {
+        var s = which switch { "noclip" => FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip), "fly-preset" => FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled, 0), _ => FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled) };
+        var enable = s[..s.IndexOf("[DISABLE]", System.StringComparison.Ordinal)];
+        Assert.Contains("g_invokeMailbox not found", enable);
+        Assert.Contains("showMessage", enable);
+        Assert.Contains("memrec.Active = false", enable);
+    }
 }

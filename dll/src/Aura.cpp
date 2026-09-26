@@ -3753,6 +3753,27 @@ struct TMapHeader {
     uintptr_t bitArrayBase   = 0;
 };
 
+// [R7-S2] The outer storage key's SHAPE, probed on the first occupied slots: a raw UObjectBase* on UE 5.x and 4.27
+// (PDB-verified), possibly an FObjectKey (two small int32s) on 4.23-4.26, which no symbol here has confirmed. False
+// only when a slot was read and none looked like a pointer. Shared by WalkSparseDelegateBindings and Find References'
+// sparse pass, so the two readers of the storage cannot disagree about whether they can read it.
+static bool SparseOuterKeysLookLikePointers(const TMapHeader& outerHdr, int32_t outerStride) {
+    bool sawSlot = false;
+    for (int32_t i = 0; i < outerHdr.arrayNum && i < 64; ++i) {
+        if (!TMapBitSet(outerHdr.bitArrayBase, i)) continue;
+        uintptr_t k = 0;
+        if (!Macht::ReadSafe(outerHdr.arrayData + static_cast<uintptr_t>(i) * outerStride, k)) continue;
+        sawSlot = true;
+        // A UObjectBase*: in range, 8-aligned, and its ClassPrivate is a pointer too. The range test alone
+        // passes an FObjectKey whose serial lands it in userspace, e.g. {3, 5} = 0x0000000500000003.
+        uintptr_t cls = 0;
+        if (Grimoire::IsUserspacePointer(k) && (k & 7) == 0
+            && Macht::ReadSafe(k + Grimoire::OFF_UOBJECT_CLASS, cls) && Grimoire::IsUserspacePointer(cls))
+            return true;
+    }
+    return !sawSlot;
+}
+
 static bool ReadTMapHeader(uintptr_t mapAddr, TMapHeader& out) {
     if (!Macht::ReadSafe(mapAddr + 0x00, out.arrayData))      return false;
     if (!Macht::ReadSafe(mapAddr + 0x08, out.arrayNum))       return false;
@@ -4084,6 +4105,12 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // [P1-SPARSEDELEGATE-REFS] Sparse delegates the pass below found but could not read. Reported, because a sweep that
     // skipped any is not complete, and the UI must not blame the game for what we missed.
     int32_t sparseUnlocated = 0;
+    // [R7-S2] Sparse delegates exist from UE 4.23; an unknown version is let through, the key probe below decides.
+    const bool sparseEra = ::g_cachedUEVersion == 0 || ::g_cachedUEVersion >= 423;
+    // [R7-A-01] The sparse pass reads the global storage as a sparse TMap; on a compact-set build it is a 16-byte
+    // TCompactSet, so the pass does not run and the stats say so. A "none found" is then not a negative.
+    // [R7-S2] Neither does it when the outer key is not a raw pointer (an FObjectKey-keyed build) -- same report.
+    bool sparseSkipped = sparseEra && DynOff::bCompactSets.load(std::memory_order_relaxed);
 
     // Serial pushMatch for the single-pass sparse-delegate walk below (appends
     // to the already-merged `matches`).
@@ -4099,13 +4126,27 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
     // FWeakObjectPtr against `target`. Skipped silently when AOB scan
     // failed or UE version is unsupported.
     if (static_cast<int>(matches.size()) < maxResults && !deadlineHit &&
-        ::g_cachedUEVersion >= 500)
+        sparseEra && !sparseSkipped)   // [R7-S2] was `>= 500`: 4.23-4.27 have sparse delegates too
     {
         uintptr_t storage = Genau::FindSparseDelegateStorage();
         if (storage) {
             TMapHeader outerHdr{};
-            if (ReadTMapHeader(storage, outerHdr) && outerHdr.arrayData &&
-                outerHdr.arrayNum > 0)
+            // [R7-S4] ReadTMapHeader fills the header BEFORE it can refuse it (an ArrayNum past the sanity cap, an
+            // unreadable +0x34), so every branch below keys on its verdict, never on the fields alone. A refused
+            // header is a storage we cannot read -- reported, like a refused key.
+            const bool hdrRead = ReadTMapHeader(storage, outerHdr);
+            if (!hdrRead) {
+                sparseSkipped = true;
+                LOG_WARN("FindReferencesToUObject: the sparse-delegate storage header at 0x%llX is unreadable or "
+                         "implausible -- not read, so bindings held there are MISSING",
+                         static_cast<unsigned long long>(storage));
+            } else if (outerHdr.arrayData && outerHdr.arrayNum > 0
+                       && !SparseOuterKeysLookLikePointers(outerHdr, 0x60)) {
+                sparseSkipped = true;   // [R7-S2]
+                LOG_WARN("FindReferencesToUObject: the sparse-delegate storage key does not look like a raw pointer "
+                         "(UE=%u, possibly FObjectKey-keyed) -- not read, so bindings held there are MISSING",
+                         ::g_cachedUEVersion);
+            } else if (outerHdr.arrayData && outerHdr.arrayNum > 0)
             {
                 constexpr int32_t kOuterStride = 0x60;
                 constexpr int32_t kOuterValueOffset = 0x08;
@@ -4209,6 +4250,12 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
                     }
                 }
             }
+        } else {
+            // [R7-X2] Never located: the AOB scan failed, or the validator refused what it found. The bindings held
+            // there are unread, exactly as for a refused header -- reported, so "none found" is not taken as a negative.
+            sparseSkipped = true;
+            LOG_WARN("FindReferencesToUObject: the sparse-delegate storage was not located (UE=%u) -- not read, so "
+                     "bindings held there are MISSING", ::g_cachedUEVersion);
         }
     }
 
@@ -4220,7 +4267,11 @@ std::vector<ReferenceMatch> FindReferencesToUObject(uintptr_t target,
         stats->durationMs     = static_cast<int64_t>(dt);
         stats->deadlineHit    = deadlineHit;
         stats->sparseUnlocated = sparseUnlocated;
+        stats->sparseSkipped   = sparseSkipped;
     }
+    if (sparseSkipped && DynOff::bCompactSets.load(std::memory_order_relaxed))
+        LOG_WARN("FindReferencesToUObject: this build uses compact sets -- the sparse-delegate storage was NOT read, "
+                 "so bindings held there are MISSING from these results");
     if (sparseUnlocated > 0)
         LOG_WARN("FindReferencesToUObject: %d sparse delegate(s) had no readable InvocationList — "
                  "their bindings are MISSING from these results", sparseUnlocated);
@@ -6679,6 +6730,15 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     SparseDelegateResult result{};
     if (!ownerObj || fieldName.empty()) return result;
 
+    // [R7-A-01] On a compact-set build (DynOff::bCompactSets) the global storage TMap is a 16-byte TCompactSet too,
+    // and everything below reads it as a sparse set: NumFreeIndices at +0x34, the allocation bits, a 0x60 stride.
+    // Refuse the way Macht::ReadTSparseArray does -- resolved, not supported, nothing read.
+    if (DynOff::bCompactSets.load(std::memory_order_relaxed)) {
+        result.resolved  = true;
+        result.supported = false;
+        return result;
+    }
+
     // Layout gate. This USED to be a version check (`UEVersion < 500 -> unsupported`) on the
     // premise that "UE 4.23-4.27 keys the outer TMap by FObjectKey, not a raw pointer".
     // That premise is wrong for 4.27: the DropIn 4.27.2 PDB gives the global's type as
@@ -6706,16 +6766,7 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     constexpr int32_t kOuterValueOffset = 0x08;  // TPair value (inner TMap) starts after key
 
     {
-        bool sawSlot = false, keyLooksLikePointer = false;
-        for (int32_t i = 0; i < outerHdr.arrayNum && i < 64; ++i) {
-            if (!TMapBitSet(outerHdr.bitArrayBase, i)) continue;
-            uintptr_t k = 0;
-            if (!Macht::ReadSafe(outerHdr.arrayData + static_cast<uintptr_t>(i) * kOuterStride, k))
-                continue;
-            sawSlot = true;
-            if (Grimoire::IsUserspacePointer(k)) { keyLooksLikePointer = true; break; }
-        }
-        if (sawSlot && !keyLooksLikePointer) {
+        if (!SparseOuterKeysLookLikePointers(outerHdr, kOuterStride)) {   // [R7-S2] shared with Find References
             LOG_WARN("WalkSparseDelegateBindings: outer key does not look like a raw pointer "
                      "(UE=%u) — refusing to walk (possible FObjectKey-keyed build)",
                      ::g_cachedUEVersion);

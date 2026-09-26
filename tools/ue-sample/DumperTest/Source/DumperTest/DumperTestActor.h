@@ -233,6 +233,17 @@ public:
 	void OnPeerBeginOverlap(AActor* OverlappedActor, AActor* OtherActor);
 };
 
+/// [R7-S11] A container NESTED in a struct field: the Instance Finder's CE XML export resolves it at the Array
+/// Limit through the struct, and its truncation / clipping notice must see it. Filled by S11_SetNestedBag.
+USTRUCT()
+struct FDumperTestNestedBag
+{
+	GENERATED_BODY()
+
+	UPROPERTY() TMap<int32, int32> PairsA;
+	UPROPERTY() TMap<int32, int32> PairsB;
+};
+
 UCLASS()
 class DUMPERTEST_API ADumperTestActor : public AActor
 {
@@ -1040,7 +1051,8 @@ public:
 	// ⚠ It must be called within ~40 s of launch (8 attempts x 5 s cooldown) or the retry ladder
 	// is already exhausted and `hook RECOVERED on attempt N` can never appear.
 	/// @return the number of reserved regions actually freed.
-	/// Reserve address space in the ±2 GB window MinHook needs for a trampoline, so
+	/// Reserve address space around this module so MinHook finds no room for a trampoline (it
+	/// searches only +-1 GB, MAX_MEMORY_RANGE in vendor/minhook/src/buffer.c; the sweep covers +-2 GB), so
 	/// MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC. Driven by -DumperTestStarveVM, which is a
 	/// COMMAND-LINE switch and not a UFUNCTION -- see Hook_ReleaseTrampolineVM for why.
 	/// @return how many blocks were actually reserved.
@@ -1153,4 +1165,39 @@ private:
 	/// Regions reserved by -DumperTestStarveVM, freed by Hook_ReleaseTrampolineVM (and
 	/// unconditionally in EndPlay, so a crashed run cannot leave the address space starved).
 	TArray<void*> ReservedVmBlocks;
+
+public:
+	// ========================================================
+	// Review 7 live hosts (2026-09-25) -- APPENDED, so no existing field moves.
+	// docs/review7-live-plan.md: R7-B-02 / R7-B-04 / R7-S1 (the TOptional weak / soft / lazy
+	// arms) and R7-S11 (a container nested in a struct).
+	// ========================================================
+
+	/// [R7-B-02] A SET optional whose weak pointer is null: {0, 0} on 5.1+. Reads "null".
+	UPROPERTY() TOptional<TWeakObjectPtr<AActor>> Opt_Weak_Null;
+	/// Control: a set optional pointing at this live actor. Reads "Name (Class)", untagged.
+	UPROPERTY() TOptional<TWeakObjectPtr<AActor>> Opt_Weak_Live;
+	/// [R7-B-04] Re-pointed with WeakToGarbage under -DumperTestWeakGarbage: resolves to a GARBAGE
+	/// actor, so it reads "Name (Class) [garbage]" like WeakToGarbage. Unset without the switch.
+	UPROPERTY() TOptional<TWeakObjectPtr<AActor>> Opt_Weak_Garbage;
+	/// [R7-B-02] Set ONCE, to the first garbage target, never re-pointed: after the next GC purge
+	/// its serial is dead, so it reads "null (stale)". Unset without the switch.
+	UPROPERTY() TOptional<TWeakObjectPtr<AActor>> Opt_Weak_Stale;
+	/// [R7-S1] A soft pointer's value is its PATH; its embedded weak cache stays {0, 0} because
+	/// nothing ever calls Get() on it (and the asset is not cooked). Reads the path, never "null".
+	UPROPERTY() TOptional<TSoftObjectPtr<UStaticMesh>> Opt_Soft;
+	/// [R7-S1] The soft-CLASS twin, pointing at a loaded engine class.
+	UPROPERTY() TOptional<TSoftClassPtr<AActor>> Opt_SoftClass;
+	/// [R7-S1] A lazy pointer's value is its GUID: a fixed, recognisable one.
+	UPROPERTY() TOptional<TLazyObjectPtr<AActor>> Opt_Lazy;
+	/// Control: left unset. Reads "(unset)".
+	UPROPERTY() TOptional<TSoftObjectPtr<UStaticMesh>> Opt_Soft_Unset;
+
+	/// [R7-S11] See FDumperTestNestedBag.
+	UPROPERTY() FDumperTestNestedBag NestedBag;
+
+	/// [R7-S11] SET semantics: empty both maps, then fill each to Count pairs. Unclamped on purpose
+	/// (20000 pairs push a CE XML export past its 60,000-entry cap). Count 0 empties them.
+	UFUNCTION(BlueprintCallable, Category = "DumperTest|R7")
+	void S11_SetNestedBag(int32 Count);
 };

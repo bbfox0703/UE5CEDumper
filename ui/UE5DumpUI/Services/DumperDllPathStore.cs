@@ -47,6 +47,12 @@ public sealed class DumperDllPathStore
     /// <summary>Full path of the breadcrumb file (for logging / tests).</summary>
     public string FilePath => _path;
 
+    /// <summary>(sixth review, R6-01 -- measured) A drive ROOT keeps its separator: trimmed to a bare 'E:' it is
+    /// drive-relative, and Load (and the .CT) dropped it -- UE5DumpUI started from E:\ rewrote the file on every start.
+    /// A legacy bare 'X:' line, which this class and the .CT wrote until this fix, reads as that drive's root.</summary>
+    internal static string DriveRootFix(string path) =>
+        path.Length == 2 && char.IsAsciiLetter(path[0]) && path[1] == ':' ? path + @"\" : path;
+
     /// <summary>Recorded folders, newest first. Never throws; an unreadable file reads
     /// as empty, which leaves the <c>.CT</c> on its previous behaviour.</summary>
     public IReadOnlyList<string> Load()
@@ -59,6 +65,10 @@ public sealed class DumperDllPathStore
             {
                 var line = raw.Trim('﻿').Trim();
                 if (line.Length == 0 || line[0] == '#') continue;
+                line = DriveRootFix(line);
+                // (fifth review, R5-04) A RELATIVE line (an older UE5CEDumper.CT's self-heal could write one) is not a
+                // folder anyone can find again: the .CT would probe it against Cheat Engine's current folder.
+                if (!Path.IsPathFullyQualified(line)) continue;
                 list.Add(line);
                 if (list.Count >= MaxEntries) break;
             }
@@ -84,8 +94,10 @@ public sealed class DumperDllPathStore
         // for the Lua reader. Win32 forbids 0x00-0x1F in a path component, so reaching
         // this is a caller bug, not user input.
         if (dllDirectory.IndexOf('\r') >= 0 || dllDirectory.IndexOf('\n') >= 0) return;
+        // (fifth review, R5-04) Only a fully qualified folder ('sub', 'C:rel' and '\x' depend on a current folder).
+        if (!Path.IsPathFullyQualified(dllDirectory)) return;
 
-        var dir = dllDirectory.TrimEnd('\\', '/');
+        var dir = DriveRootFix(dllDirectory.TrimEnd('\\', '/'));
         try
         {
             var existing = Load();

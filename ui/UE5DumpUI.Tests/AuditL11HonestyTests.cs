@@ -119,10 +119,37 @@ public class AuditL11HonestyTests
         return vm;
     }
 
-    private static ContainerScanStats RefScan(bool deadline = false, int unlocated = 0) => new()
+    private static ContainerScanStats RefScan(bool deadline = false, int unlocated = 0, bool skipped = false) => new()
     {
         ObjectsScanned = 10, ObjectsTotal = 10, DurationMs = 5, DeadlineHit = deadline, SparseUnlocated = unlocated,
+        SparseSkipped = skipped,
     };
+
+    [Fact]
+    public async Task FindRefs_None_WithTheSparsePassSkipped_DoesNotBlameTheGame()
+    {
+        // [R7-A-01] A compact-set build: the sparse pass never ran, so "none found" is not a negative.
+        var vm = RefsWalker(new FindReferencesResult { Scan = RefScan(skipped: true) });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("non-reflected", vm.StatusText);
+        Assert.Contains("sparse-delegate bindings were not read", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FindRefs_Found_WithTheSparsePassSkipped_SaysSomeMayBeMissing()
+    {
+        var vm = RefsWalker(new FindReferencesResult
+        {
+            References = new List<ReferenceMatch> { new() { OwnerAddress = "0x2000", OwnerName = "Owner", FieldName = "Target" } },
+            Scan = RefScan(skipped: true),
+        });
+
+        await vm.FindReferencesCommand.ExecuteAsync(null);
+
+        Assert.Contains("sparse-delegate bindings not read", vm.StatusText);
+    }
 
     [Theory]
     [InlineData(false, 0, true)]
@@ -245,10 +272,17 @@ public class AuditL11HonestyTests
 
     private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWith(int fieldCount)
     {
-        var dump = new StubDumpService();
         var fields = new List<LiveFieldValue>();
         for (int i = 0; i < fieldCount; i++)
             fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
+        return FinderWithFields(fields);
+    }
+
+    private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWithFields(
+        List<LiveFieldValue> fields, Action<StubDumpService>? setup = null)
+    {
+        var dump = new StubDumpService();
+        setup?.Invoke(dump);
         dump.RegisterStruct("0x10000000", new InstanceWalkResult
         {
             Address = "0x10000000", Name = "Big_0", ClassName = "Big", Fields = fields,
@@ -260,7 +294,7 @@ public class AuditL11HonestyTests
     }
 
     [Fact]
-    public async Task InstanceFinder_CeXmlExport_TruncatedAtTheEntryCap_SaysSo_WithThisPanelsLevers()
+    public async Task InstanceFinder_CeXmlExport_TruncatedByScalars_SaysSo_AndNamesNoToolbarLever()
     {
         var (vm, platform) = FinderWith(61_000);   // past the 60,000-entry cap: one entry per int field
         Assert.Equal(61_000, vm.Fields.Count);    // the walk landed
@@ -269,8 +303,324 @@ public class AuditL11HonestyTests
 
         Assert.NotNull(platform.LastClipboard);                     // it WAS copied...
         Assert.Contains("TRUNCATED", vm.StatusText);                // ...and the status says it is incomplete
-        Assert.Contains("Collapse Pointer Nodes", vm.StatusText);   // a lever THIS panel has
+        // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] No toolbar setting changes THIS export's entry count: there is no container
+        // for the Array Limit to clip, Collapse Pointer Nodes only folds groups and the DropDown Limit only decides
+        // whether a dropdown is attached. R7-D-03 named the Array Limit here -- the same wrong advice with another
+        // lever. What does work is exporting the part that is needed.
+        Assert.DoesNotContain("Array Limit", vm.StatusText);
+        Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
+        Assert.DoesNotContain("DropDown Limit", vm.StatusText);
         Assert.DoesNotContain("Drill Depth", vm.StatusText);        // not Live Walker's
+        Assert.Contains("Copy CE Field", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByAClippedContainer_NamesTheArrayLimit_AndWhatItCosts()
+    {
+        // [INSTEXPORT-TRUNC-ADVICE] A container the walk clipped (61,000 of 70,000 elements back): lowering the Array
+        // Limit really shrinks the export, and the notice says what that trades away.
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < 61_000; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        var (vm, platform) = FinderWithFields(new List<LiveFieldValue>
+        {
+            new() { Name = "Big", TypeName = "ArrayProperty", Offset = 0x28, Size = 0x10,
+                    ArrayCount = 70_000, ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
+            // The cap is tested between fields, so the field after the one that crosses it is the one dropped.
+            new() { Name = "Tail", TypeName = "IntProperty", Offset = 0x38, Size = 4 },
+        });
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("Array Limit", vm.StatusText);
+        Assert.Contains("Big", vm.StatusText);                       // which container pays for it
+        Assert.DoesNotContain("Collapse Pointer Nodes", vm.StatusText);
+        Assert.DoesNotContain("DropDown Limit", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByCompleteContainersUnderTheLimit_StillNamesTheArrayLimit()
+    {
+        // [R7-X8] Found live (DumperTest's NestedBag, 16,000 pairs at Array Limit 16384): every container came back
+        // whole and under the limit, so none was "bound", and the notice said no toolbar setting shrinks the export --
+        // but the same copy at 8192 was complete. Lowering the limit shrinks every container LONGER than the new
+        // limit, not only one sitting at the current one. Four whole 16,000-element arrays: 64,000 entries.
+        var fields = new List<LiveFieldValue>();
+        foreach (var name in new[] { "PairsA", "PairsB", "PairsC", "PairsD" })
+        {
+            var elems = new List<ArrayElementValue>();
+            for (int i = 0; i < 16_000; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+            fields.Add(new LiveFieldValue { Name = name, TypeName = "ArrayProperty", Offset = 0x28 + fields.Count * 0x10,
+                                           Size = 0x10, ArrayCount = 16_000, ArrayInnerType = "IntProperty",
+                                           ArrayElemSize = 4, ArrayElements = elems });
+        }
+        var (vm, platform) = FinderWithFields(fields);
+        vm.ArrayLimit = 16_384;   // above every container: none is clipped, none sits at the limit
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("lower the Array Limit", vm.StatusText);
+        Assert.Contains("PairsA", vm.StatusText);
+        Assert.DoesNotContain("no toolbar setting", vm.StatusText);
+    }
+
+    // [R7-X8] The X8 skeptic: a truncation driven by scalars, with only a small container beside them. Lowering the
+    // limit shrinks that container a little and the export stays truncated, so the advice that does work -- export the
+    // part you need -- must still be there.
+    private static List<LiveFieldValue> ScalarsPlus(LiveFieldValue extra)
+    {
+        var fields = new List<LiveFieldValue>();
+        for (int i = 0; i < 61_000; i++)
+            fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
+        fields.Insert(0, extra);   // first, so it is emitted before the cap
+        return fields;
+    }
+
+    private static List<ArrayElementValue> Elems(int n)
+    {
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < n; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        return elems;
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByScalarsBesideASmallContainer_StillOffersCopyCeField()
+    {
+        var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
+        {
+            Name = "Tiny", TypeName = "ArrayProperty", Offset = 0x10, Size = 0x10, ArrayCount = 3,
+            ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = Elems(3),
+        }));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("Copy CE Field", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData("MulticastSparseDelegateProperty", "")]   // EmitFields never sends it to the array emitter: one entry
+    [InlineData("ArrayProperty", "FieldPathProperty")]    // no CE type for the element: one placeholder entry
+    public async Task InstanceFinder_CeXmlExport_AContainerEmittedAsOneEntry_IsNoLever(string type, string inner)
+    {
+        // [R7-X8] The X8 skeptic's INFO: the DLL fills these elements up to the Array Limit, but the export writes
+        // the field as a single entry at any limit, so lowering the limit shrinks nothing.
+        var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
+        {
+            Name = "OneEntry", TypeName = type, Offset = 0x10, Size = 0x10, ArrayCount = 5_000,
+            ArrayInnerType = inner, ArrayElemSize = 0x20, ArrayElements = Elems(5_000),
+        }));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.DoesNotContain("OneEntry", vm.StatusText);
+        Assert.Contains("no toolbar setting", vm.StatusText);
+    }
+
+    // [R7-S11] A container inside a STRUCT field is resolved at the Array Limit too, and emitted through the resolved
+    // struct -- but the status looked at the top-level fields only, where the struct has no elements of its own.
+    private static List<LiveFieldValue> TuneStruct() => new()
+    {
+        new() { Name = "Tune", TypeName = "StructProperty", Offset = 0x28, Size = 0x10,
+                StructTypeName = "FTuneData", StructDataAddr = "0x5000", StructClassAddr = "0x6000" },
+        new() { Name = "Tail", TypeName = "IntProperty", Offset = 0x40, Size = 4 },
+    };
+
+    private static Action<StubDumpService> NestedArray(int total, int loaded) => dump =>
+    {
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < loaded; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        dump.RegisterStruct("0x5000", new InstanceWalkResult
+        {
+            Fields = new List<LiveFieldValue>
+            {
+                new() { Name = "Tunes", TypeName = "ArrayProperty", Offset = 0, Size = 0x10, ArrayCount = total,
+                        ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
+            },
+        });
+    };
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_TruncatedByAContainerInAStruct_NamesTheArrayLimit()
+    {
+        var (vm, platform) = FinderWithFields(TuneStruct(), NestedArray(total: 70_000, loaded: 61_000));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("TRUNCATED", vm.StatusText);
+        Assert.Contains("Array Limit", vm.StatusText);
+        Assert.Contains("Tunes", vm.StatusText);
+        Assert.DoesNotContain("no toolbar setting", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_CompleteButAStructsContainerClipped_DisclosesIt()
+    {
+        var (vm, platform) = FinderWithFields(TuneStruct(), NestedArray(total: 16_390, loaded: 64));
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.DoesNotContain("TRUNCATED", vm.StatusText);
+        Assert.Contains("Tunes", vm.StatusText);
+        Assert.Contains("64 of 16,390", vm.StatusText);
+    }
+
+    // [R7-S13] The struct resolve is awaited, and nothing stops the user picking another instance meanwhile. R7-S11
+    // snapshotted the fields but not the instance, so A's layout went out under B's root address and name.
+    private sealed class GatedStructStub : StubDumpService
+    {
+        public readonly TaskCompletionSource Gate = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        /// <summary>The address whose walk parks on <see cref="Gate"/>: the struct resolve by default.</summary>
+        public string GatedAddr = "0x5000";
+        /// <summary>A second, independent parking spot: a walk that must still be running when the first is released.</summary>
+        public readonly TaskCompletionSource Gate2 = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        public string GatedAddr2 = "";
+        public override async Task<InstanceWalkResult> WalkInstanceAsync(string addr, string? classAddr = null,
+            int arrayLimit = 64, int previewLimit = 2, bool fillGaps = false, bool lean = false,
+            CancellationToken ct = default)
+        {
+            if (addr == GatedAddr) await Gate.Task;
+            if (addr == GatedAddr2) await Gate2.Task;
+            return await base.WalkInstanceAsync(addr, classAddr, arrayLimit, previewLimit, fillGaps, lean, ct);
+        }
+    }
+
+    private static (GatedStructStub dump, InstanceFinderViewModel vm, MockPlatformService platform) AlphaBetaFinder()
+    {
+        var dump = new GatedStructStub { GatedAddr = "" };
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha",
+            Fields = new List<LiveFieldValue> { new() { Name = "Mine", TypeName = "IntProperty", Offset = 0x28, Size = 4 } },
+        });
+        dump.RegisterStruct("0x20000000", new InstanceWalkResult
+        {
+            Address = "0x20000000", Name = "Beta_0", ClassName = "Beta",
+            Fields = new List<LiveFieldValue> { new() { Name = "Other", TypeName = "IntProperty", Offset = 0x30, Size = 4 } },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
+        return (dump, vm, platform);
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_WhileANewSelectionsWalkIsInFlight_IsRefused()
+    {
+        // [R7-S14] The other ordering of R7-S13: B is picked FIRST and its walk is still running, so Fields still holds
+        // A's rows and the button is still live. The export must not send A's layout out under B.
+        var (dump, vm, platform) = AlphaBetaFinder();
+        dump.GatedAddr = "0x20000000";
+        vm.SelectedInstance = new InstanceResult { Address = "0x20000000", Name = "Beta_0", ClassName = "Beta" };
+        Assert.True(vm.IsLoadingFields);                               // B's walk is parked
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Contains("loaded", vm.StatusText);
+        Assert.True(vm.IsLoadingFields);                               // B's walk still owns the loading flag
+        dump.Gate.SetResult();
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_AWalkStartedDuringTheExport_KeepsItsLoadingFlag()
+    {
+        // [R7-S14] The export's finally cleared IsLoadingFields unconditionally, so a walk started DURING the export
+        // (the user picked B while the structs resolved) lost its progress bar while it was still running.
+        var (dump, vm, platform) = AlphaBetaFinder();
+        vm.SelectedInstance = null;                                     // re-load A with a struct field
+        var alpha = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha", Fields = TuneStruct(),
+        });
+        vm.SelectedInstance = alpha;                                    // A with a struct: the resolve will park
+        dump.GatedAddr = "0x5000";
+        dump.GatedAddr2 = "0x20000000";
+
+        var export = vm.ExportCeXmlCommand.ExecuteAsync(null);         // parked in the struct resolve
+        vm.SelectedInstance = new InstanceResult { Address = "0x20000000", Name = "Beta_0", ClassName = "Beta" };
+        dump.Gate.SetResult();                                          // the export finishes...
+        await export;
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.True(vm.IsLoadingFields);                                // ...while B's walk is still running
+        dump.Gate2.SetResult();
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_WhileTheArrayLimitsReWalkIsInFlight_IsRefused()
+    {
+        // [R7-S14] ...and for a new Array Limit: Fields is still the old limit's walk, so struct fields would be resolved
+        // at one limit and the top level exported at another, and the status would judge "bound" against the wrong one.
+        var (dump, vm, platform) = AlphaBetaFinder();
+        dump.GatedAddr = "0x10000000";
+        vm.ArrayLimit = 64;                                            // re-walks A; parked
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.Null(platform.LastClipboard);
+        Assert.Contains("loaded", vm.StatusText);
+        dump.Gate.SetResult();
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_ASelectionChangeDuringTheResolve_ExportsTheInstanceClicked()
+    {
+        var dump = new GatedStructStub();
+        dump.RegisterStruct("0x10000000", new InstanceWalkResult
+        {
+            Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha", Fields = TuneStruct(),
+        });
+        dump.RegisterStruct("0x20000000", new InstanceWalkResult
+        {
+            Address = "0x20000000", Name = "Beta_0", ClassName = "Beta",
+            Fields = new List<LiveFieldValue> { new() { Name = "Other", TypeName = "IntProperty", Offset = 0x30, Size = 4 } },
+        });
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = new InstanceFinderViewModel(dump, new MockLoggingService(), platform);
+        vm.SelectedInstance = new InstanceResult { Address = "0x10000000", Name = "Alpha_0", ClassName = "Alpha" };
+        Assert.Equal(2, vm.Fields.Count);
+
+        var export = vm.ExportCeXmlCommand.ExecuteAsync(null);          // parked in the struct resolve
+        vm.SelectedInstance = new InstanceResult { Address = "0x20000000", Name = "Beta_0", ClassName = "Beta" };
+        dump.Gate.SetResult();
+        await export;
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("Alpha_0", platform.LastClipboard);             // the instance whose layout this is
+        Assert.DoesNotContain("Beta_0", platform.LastClipboard);
+        Assert.DoesNotContain("20000000", platform.LastClipboard);      // ...on its own root, not B's
+    }
+
+    [Fact]
+    public async Task InstanceFinder_CeXmlExport_CompleteButClipped_DisclosesTheClipping()
+    {
+        // [INSTEXPORT-TRUNC-ADVICE] Under the cap, but a container came back clipped (64 of 16,390): the copy is not the
+        // whole container, and the status said nothing. Disclosed the way Live Walker does, naming no lever -- the
+        // array half is also bound by the DLL's per-fetch cap, which no slider raises.
+        var elems = new List<ArrayElementValue>();
+        for (int i = 0; i < 64; i++) elems.Add(new ArrayElementValue { Index = i, Value = "0" });
+        var (vm, platform) = FinderWithFields(new List<LiveFieldValue>
+        {
+            new() { Name = "Churn", TypeName = "ArrayProperty", Offset = 0x28, Size = 0x10,
+                    ArrayCount = 16_390, ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
+        });
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.DoesNotContain("TRUNCATED", vm.StatusText);
+        Assert.Contains("Churn", vm.StatusText);
+        Assert.Contains("64 of 16,390", vm.StatusText);
     }
 
     [Fact]

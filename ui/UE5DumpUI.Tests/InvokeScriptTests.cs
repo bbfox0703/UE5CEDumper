@@ -741,7 +741,7 @@ public class InvokeScriptTests
         Assert.Contains("t == 'fstring'", content);
         Assert.Contains("t == 'fstringn'", content);
         Assert.Contains("t == 'fstruct'", content);               // by-value struct param support
-        Assert.Contains("UE5_INVOKE_HELPER_VERSION = '1.3'", content);
+        Assert.Contains("THIS_HELPER_VERSION = '1.4'", content);   // [R7-X5] the version gate; 1.4 replaces a resident 1.3
     }
 
     // --- InputParams property ---
@@ -1205,8 +1205,9 @@ public class InvokeScriptTests
         // The two functions the generator's output depends on
         Assert.Contains("function invokeUFunction(", content);
         Assert.Contains("function readUFunctionReturn(", content);
-        // Re-declaration guard pattern
-        Assert.Contains("if not invokeUFunction then", content);
+        // Re-declaration guard, version-gated [R7-X5]: a same/older re-load keeps the resident copy, a newer one
+        // replaces it (the freeze helper's AA30 shape; invoke_helper_test.lua runs all three directions).
+        Assert.Contains("if not invokeUFunction or _invokeOutdated then", content);
         Assert.Contains("registerLuaFunctionHighlight('invokeUFunction')", content);
     }
 
@@ -2058,7 +2059,8 @@ public class InvokeScriptTests
         Assert.True(lockAt >= 0 && scopeAt > lockAt && findAllAt > scopeAt,
                     "UE5_Init must raise g_initInProgress under s_initMutex, before FindAll publishes the globals");
         var mimic = DllSource("Mimic.cpp");
-        Assert.Contains("Mimic::InitFastPathOk(g_cachedGObjects != 0, g_cachedGNames != 0,", mimic, StringComparison.Ordinal);
+        // [R7-S9] ...through InitSettled, which reads the globals into locals first and the flag last.
+        Assert.Contains("Mimic::InitFastPathOk(haveGObjects, haveGNames, inProgress)", mimic, StringComparison.Ordinal);
         Assert.Contains("g_initInProgress.load(std::memory_order_acquire)", mimic, StringComparison.Ordinal);
     }
 
@@ -2143,6 +2145,97 @@ public class InvokeScriptTests
         // [P1-SPARSEDELEGATE-REFS] The count rides the scan object every Find References reply already sends. Fern.cpp
         // reaches no test target.
         Assert.Contains("scanInfo[\"sparse_unlocated\"] = stats.sparseUnlocated;", DllSource("Fern.cpp"),
+                        StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void DelegateBindingLabels_AllGoThroughOneHelper()
+    {
+        // [R7-B-04] Five readers render a delegate binding; the [garbage] tag was appended by hand at four. The one
+        // label function adds it, so DescribeScriptDelegate must be called from that function alone.
+        var src = DllSource("Ubel.cpp");
+        int n = 0;
+        for (int i = src.IndexOf("DescribeScriptDelegate(", StringComparison.Ordinal); i >= 0;
+             i = src.IndexOf("DescribeScriptDelegate(", i + 1, StringComparison.Ordinal))
+            n++;
+        Assert.Equal(1, n);
+        Assert.True(src.Split("DescribeDelegateBinding(").Length - 1 >= 6,   // the definition + the five readers
+                    "fewer than five readers go through DescribeDelegateBinding");
+    }
+
+    [Fact]
+    public void ApplyRescan_ReinitialisesUnderTheInitFence_AndTheMailboxWaitsItOut()
+    {
+        // [R7-C-05] apply_rescan publishes g_cachedGObjects, then runs Aura::Init and (first time) ValidateAndFixOffsets.
+        // With no fence the mailbox fast path (GObjects && GNames && !g_initInProgress) ran a CE command on the
+        // half-applied pool -- the window [A3-MIMIC-INIT-FASTPATH] closed for UE5_Init. Fern.cpp / Frieren.cpp reach no
+        // test target, so the fence is pinned in source.
+        var fern = DllSource("Fern.cpp").Replace("\r\n", "\n");
+        int apply = fern.IndexOf("if (cmd == Renge::CMD_APPLY_RESCAN)", StringComparison.Ordinal);
+        Assert.True(apply >= 0, "CMD_APPLY_RESCAN not found");
+        int begin = fern.IndexOf("FrierenInit::BeginApply()", apply, StringComparison.Ordinal);
+        int publish = fern.IndexOf("g_cachedGObjects = m_rescan.foundGObjects", apply, StringComparison.Ordinal);
+        Assert.True(begin > apply && begin < publish, "the fence is not raised before GObjects is published");
+
+        // ...and a caller that finds the process already initialised waits for the fence instead of returning at once.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int init = frieren.IndexOf("bool UE5_Init() {", StringComparison.Ordinal);
+        int already = frieren.IndexOf("UE5_Init: Already initialized", init, StringComparison.Ordinal);
+        Assert.Contains("std::lock_guard<std::mutex> wait(s_initMutex);", frieren[init..already]);
+    }
+
+    [Fact]
+    public void InitVersionMarker_IsTheCmcFunction_NotTheProperty()
+    {
+        // [R7-X4] Stock UE 5.3 already reflects CharacterMovementComponent::GravityDirection, so the property marker
+        // raised every stock 5.3 title with a CMC to 504 (ThirdPerson53, DragonSword, Avowed) -- and switched off the
+        // 5.0-5.3 PendingKill tag there. The rule lives in DynOff::CmcMarkerVersion (dll_helpers_test); Frieren.cpp
+        // reaches no test target, so the wiring is pinned in source.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        Assert.Contains("DynOff::CmcMarkerVersion(", frieren);
+        Assert.Contains("\"SetGravityDirection\"", frieren);
+        Assert.DoesNotContain("property marker (CMC::GravityDirection) = UE5.4+", frieren);
+    }
+
+    [Fact]
+    public void MailboxInitCheck_ReadsTheFenceLast_AndReChecksAfterUE5Init()
+    {
+        // [R7-S9] Two windows R7-C-05 left open. (1) EnsureInitialized passed `g_cachedGObjects != 0` and the flag load as
+        // ARGUMENTS, whose evaluation order C++ leaves unspecified: the flag could be read before an apply raised it and
+        // GObjects after the apply published it -- the fast path, on a half-applied pool. (2) With GObjects still 0 it
+        // called UE5_Init, which returned at once (initialised, no fence up YET), then re-read the globals as the apply
+        // published them. Mimic.cpp reaches no test target, so the order is pinned in source.
+        var mimic = DllSource("Mimic.cpp").Replace("\r\n", "\n");
+        int settled = mimic.IndexOf("static bool InitSettled()", StringComparison.Ordinal);
+        Assert.True(settled >= 0, "InitSettled not found");
+        int settledEnd = mimic.IndexOf("\n}\n", settled, StringComparison.Ordinal);
+        var body = mimic[settled..settledEnd];
+        int readGObjects = body.IndexOf("g_cachedGObjects", StringComparison.Ordinal);
+        int fence = body.IndexOf("std::atomic_thread_fence(std::memory_order_acquire)", StringComparison.Ordinal);
+        int readFlag = body.IndexOf("g_initInProgress.load", StringComparison.Ordinal);
+        Assert.True(readGObjects >= 0 && fence > readGObjects && readFlag > fence,
+                    "the globals must be read first, then an acquire fence, then the flag");
+
+        int ensure = mimic.IndexOf("static bool EnsureInitialized() {", StringComparison.Ordinal);
+        int ensureEnd = mimic.IndexOf("\n}\n", ensure, StringComparison.Ordinal);
+        var ensureBody = mimic[ensure..ensureEnd];
+        int call = ensureBody.IndexOf("UE5_Init();", StringComparison.Ordinal);
+        Assert.True(call >= 0 && ensureBody.IndexOf("InitSettled()", call, StringComparison.Ordinal) > call,
+                    "the result after UE5_Init must be the same settled check, not a bare re-read of the globals");
+        Assert.DoesNotContain("return (g_cachedGObjects != 0 && g_cachedGNames != 0);", ensureBody);
+
+        // ...and the writer orders the flag before the publish that follows it in Fern.cpp.
+        var frieren = DllSource("Frieren.cpp").Replace("\r\n", "\n");
+        int begin = frieren.IndexOf("void BeginApply()", StringComparison.Ordinal);
+        Assert.Contains("std::atomic_thread_fence(std::memory_order_seq_cst)",
+                        frieren[begin..frieren.IndexOf('\n', begin)]);
+    }
+
+    [Fact]
+    public void FindRefsReply_CarriesSparseSkipped()
+    {
+        // [R7-A-01] Same object, additive: the sparse pass did not run on a compact-set build.
+        Assert.Contains("scanInfo[\"sparse_skipped\"] = stats.sparseSkipped;", DllSource("Fern.cpp"),
                         StringComparison.Ordinal);
     }
 

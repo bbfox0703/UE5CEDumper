@@ -555,7 +555,7 @@
             <TextBlock Grid.Column="1" Text="{StaticResource str.System.AobMakerConnected}"
                        Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"
                        IsVisible="{Binding IsAobMakerAvailable}"/>
-            <TextBlock Grid.Column="1" Text="{StaticResource str.System.AobMakerOffline}"
+            <TextBlock Grid.Column="1" Text="{Binding AobMakerOfflineText}"
                        Foreground="#888" FontSize="12" VerticalAlignment="Center"
                        TextWrapping="Wrap">
               <TextBlock.IsVisible>

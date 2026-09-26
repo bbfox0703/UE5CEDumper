@@ -18,6 +18,7 @@
 #include "Grimoire.h"
 #include "Sein.h"
 #include "Utf8Helpers.h"   // [A2-CRC-PATH-LS] a wide string is logged as UTF-8, never through a wide format
+#include "Methode.h"       // CeModuleNameUtf8 -- CE's own name for a module (ce_base), [PATH-MODULE-NAME-UTF8]
 #include "Macht.h"
 #include "Genau.h"
 #include "Aura.h"
@@ -61,6 +62,7 @@ using json = nlohmann::json;
 // mis-attributes when two proxies coexist because they share the PE ProductName.
 extern HMODULE g_hDllModule;
 
+
 // Forward declare ExportAPI functions (extern "C" must be at global scope)
 extern "C" bool      UE5_Init();
 extern "C" uintptr_t UE5_FindInstanceOfClass(const char* className);
@@ -79,6 +81,9 @@ extern "C" int32_t   UE5_CallProcessEventEx(uintptr_t instance, uintptr_t ufunc,
 extern "C" bool      UE5_EnsureGameThreadHook();
 extern "C" bool      UE5_IsGameThreadHookActive();
 extern "C" int       UE5_GetProcessEventOffset();
+
+// [R7-C-05] Frieren.cpp: the init fence apply_rescan holds (see FrierenInit there).
+namespace FrierenInit { void BeginApply(); void EndApply(); }
 
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
@@ -1381,15 +1386,10 @@ static void FillPointerSnapshot(json& data) {
     data["module_base"] = Renge::AddrToStr(moduleBase);
     wchar_t moduleNameW[MAX_PATH] = {};
     GetModuleFileNameW(reinterpret_cast<HMODULE>(moduleBase), moduleNameW, MAX_PATH);
-    std::wstring modulePath(moduleNameW);
-    auto lastSlash = modulePath.find_last_of(L"\\/");
-    std::wstring moduleFileName = (lastSlash != std::wstring::npos)
-        ? modulePath.substr(lastSlash + 1) : modulePath;
-    std::string moduleName;
-    for (wchar_t wc : moduleFileName) {
-        moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
-    }
-    data["module_name"] = moduleName;
+    // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8. It used to turn every character >= 128 into '?', so the UI
+    // keyed the confirmed-working proxy, the teleport library and its log folder on a name no file has. The UI
+    // derives CE's own (ANSI) view of the name itself for anything it hands to Cheat Engine.
+    data["module_name"] = Utf8Helpers::LeafUtf8(moduleNameW, wcslen(moduleNameW));
     // The ONLY unambiguous answer to "which process is this pipe talking to". The pipe name
     // is a single global, so two injected games both serve it and a connecting client lands on
     // whichever instance is free -- the UI cannot otherwise tell it attached to the wrong game.
@@ -1407,8 +1407,10 @@ static void FillPointerSnapshot(json& data) {
             std::wstring selfPath(selfPathW);
             auto ss = selfPath.find_last_of(L"\\/");
             std::wstring selfFile = (ss != std::wstring::npos) ? selfPath.substr(ss + 1) : selfPath;
-            for (wchar_t wc : selfFile)
-                selfName += (wc < 128) ? static_cast<char>(towlower(wc)) : '?';
+            // [PATH-MODULE-NAME-UTF8] Lower-cased, then UTF-8 (was '?' per non-ASCII character): the proxy names
+            // it is compared with are ASCII, and a "loaded:<name>" report now carries the real name.
+            for (wchar_t& wc : selfFile) wc = static_cast<wchar_t>(towlower(wc));
+            selfName = Utf8Helpers::EncodeUtf16(selfFile.c_str(), selfFile.size());
         }
         std::string loadMode;
         // [W1-WINMM-LOADMODE] All four proxies we ship (Methode.cpp's kProxyDllNames; InvokeScriptTests pins the
@@ -4538,6 +4540,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             scanInfo["duration_ms"]     = stats.durationMs;
             scanInfo["deadline_hit"]    = stats.deadlineHit;
             scanInfo["sparse_unlocated"] = stats.sparseUnlocated;   // [P1-SPARSEDELEGATE-REFS]
+            scanInfo["sparse_skipped"] = stats.sparseSkipped;       // [R7-A-01]
             data["scan"] = scanInfo;
 
             json arr = json::array();
@@ -5008,11 +5011,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             std::wstring moduleNameNoExt = (dotPos != std::wstring::npos)
                 ? moduleFileName.substr(0, dotPos) : moduleFileName;
 
-            // Convert to narrow string
-            std::string moduleName;
-            for (wchar_t wc : moduleNameNoExt) {
-                moduleName += (wc < 128) ? static_cast<char>(wc) : '?';
-            }
+            // [PATH-MODULE-NAME-UTF8] The real name, as UTF-8 (was '?' per non-ASCII character).
+            std::string moduleName = Utf8Helpers::EncodeUtf16(moduleNameNoExt.c_str(), moduleNameNoExt.size());
 
             json data;
             data["module"]         = moduleName;
@@ -5082,11 +5082,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             data["ce_offsets"] = offsets;
 
-            // CE base address string: "Module.exe+RVA"
-            char ceBase[128];
-            snprintf(ceBase, sizeof(ceBase), "\"%s.exe\"+%llX",
-                     moduleName.c_str(), static_cast<unsigned long long>(gobjectsRVA));
-            data["ce_base"] = ceBase;
+            // CE base address string: "Module.exe"+RVA, in CE's OWN name for the module (Methode::CeModuleNameUtf8:
+            // what ANSI Module32First gives, 0x5C cut included). A std::string: the char[128] it replaces cut a long
+            // name's quote and RVA silently. [PATH-MODULE-NAME-UTF8]
+            data["ce_base"] = Renge::CeModuleRelative(Methode::CeModuleNameUtf8(moduleFileName.c_str(),
+                                                                                moduleFileName.size(), CP_ACP),
+                                                      static_cast<uint64_t>(gobjectsRVA));
 
             return Renge::MakeResponse(id, data).dump();
         }
@@ -5310,6 +5311,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 return Renge::MakeError(id, "Unsupported engine — nothing to apply; the scan was "
                                             "skipped by design").dump();
             }
+
+            // [R7-C-05] The init fence for the whole apply: GObjects is published below and Aura::Init /
+            // ValidateAndFixOffsets follow, and until they finish the mailbox must not take its fast path.
+            struct ApplyFence {
+                ApplyFence()  { FrierenInit::BeginApply(); }
+                ~ApplyFence() { FrierenInit::EndApply(); }
+            } applyFence;
 
             bool applied = false;
 
@@ -5833,7 +5841,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             knobs["gravity"]    = knobJson(snap.knobs[Laufen::KNOB_GRAVITY]);
             knobs["jump"]       = knobJson(snap.knobs[Laufen::KNOB_JUMP]);
             data["knobs"] = knobs;
-            // Gravity DIRECTION (UE5.4+); resolved=false on pre-5.4 games.
+            // Gravity DIRECTION (UE5.3+); resolved=false on pre-5.3 games.
             json gd;
             gd["resolved"] = snap.gravDir.resolved;
             gd["x"] = snap.gravDir.x; gd["y"] = snap.gravDir.y; gd["z"] = snap.gravDir.z;

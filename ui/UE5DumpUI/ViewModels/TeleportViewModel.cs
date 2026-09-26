@@ -233,6 +233,14 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Push the latest engine state (GWorld AOB / module) for trainer bake.</summary>
     public void SetEngineState(Models.EngineState state) => _engineState = state;
 
+    /// <summary>[R7-S12] Publish a probe the toolbar ⟳ ran on the shared bridge: set the flag and repaint the note even
+    /// when the flag is unchanged -- the same repaint <see cref="CheckAobMakerAsync"/> does after its own probe.</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        OnPropertyChanged(nameof(AobMakerNote));
+    }
+
     /// <summary>Probe AOBMaker availability (the delivery channel for trainer export).</summary>
     public async Task CheckAobMakerAsync()
     {
@@ -776,7 +784,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// <summary>Tracks whether see-through is engaged (for the toggle hotkey/button).</summary>
     private bool _seeThroughActive;
 
-    // ── Gravity Direction (Laufen, UE5.4+ GravityDirection vector) ─────
+    // ── Gravity Direction (Laufen, UE5.3+ GravityDirection vector) ─────
     /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.4 / no
     /// reflected GravityDirection).</summary>
     [ObservableProperty] private string _gravDirState = "Unknown";
@@ -3210,7 +3218,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.4+) ──
 
-    // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.4).
+    // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.3).
     // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
     // which is what the connect/disconnect reset's own comment always said it did.
     private const int GravDirUnavailable = -2;
@@ -3232,7 +3240,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var g = mp.GravityDirection;
         // [W2-GRAVDIR-VERDICT] Two different answers, and only one is about the engine. No CMC at this
         // instant (menu, loading, cutscene, spectator, vehicle pawn) is transient; a CMC WITHOUT a
-        // reflected GravityDirection is the pre-5.4 verdict.
+        // reflected GravityDirection is the pre-5.3 verdict.
         if (!mp.HasCmc)
         {
             GravDirCurrentText = "Current: — (no pawn / no CharacterMovement right now; enter gameplay).";
@@ -3241,7 +3249,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         if (!g.Resolved)
         {
-            GravDirCurrentText = "Current: unavailable (needs UE5.4+ with a reflected GravityDirection).";
+            GravDirCurrentText = "Current: unavailable (needs UE5.3+ with a reflected GravityDirection).";
             ApplyGravDirState(GravDirUnavailable);
             return;
         }
@@ -3265,7 +3273,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
                 : mp.GravityDirection.Resolved
                     ? "Read gravity direction."
-                    : "Gravity direction unavailable (needs UE5.4+ with a reflected GravityDirection).";   // [W2-GRAVDIR-VERDICT]
+                    : "Gravity direction unavailable (needs UE5.3+ with a reflected GravityDirection).";   // [W2-GRAVDIR-VERDICT]
         }
         catch (Exception ex)
         {
@@ -3507,6 +3515,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     internal bool HasCoordStore => _coordStore != null;
 
     private string _activeCoordKey = "";
+
+    /// <summary>[PATH-UI-LEGACY-QMARK] The module name that gave no library key (a lossy '?' name from an older
+    /// DLL), or "". While set, adding to the library is refused with <see cref="CoordLibraryUnavailableText"/>
+    /// instead of adding a row that is never saved.</summary>
+    private string _coordUnusableModule = "";
+    /// <summary>(skeptic QM-1) Under an older DLL: the file name of a library that name saved earlier, named in the
+    /// refusal, or "".</summary>
+    private string _coordLegacyFile = "";
+    /// <summary>(skeptic QM-2) CoordStatus holds a refusal: the next usable load clears it.</summary>
+    private bool _coordStatusIsRefusal;
     private bool _suppressCoordPersist;
     // Set only while ApplyCoordFilter re-selects the equivalent row after rebuilding
     // CoordResults, so the editor fields are not rewritten from the stored entry. (B20)
@@ -3628,6 +3646,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
         if (_coordStore == null) return;
         _activeCoordKey = CoordinateLibraryStore.KeyFor(moduleName);
+        _coordUnusableModule = !string.IsNullOrWhiteSpace(moduleName) && string.IsNullOrEmpty(_activeCoordKey)
+            ? moduleName! : "";
+        // [PATH-UI-LEGACY-QMARK] (skeptic QM-1) The key an older DLL's '?' report of this game keyed to.
+        string legacyKey = CoordinateLibraryStore.LegacyKeyFor(moduleName);
+        _coordLegacyFile = _coordUnusableModule.Length > 0 && _coordStore.Exists(legacyKey)
+            ? Path.GetFileName(_coordStore.FilePathFor(legacyKey)) : "";
+        bool wasRefusal = _coordStatusIsRefusal;
+        _coordStatusIsRefusal = false;
+        if (_coordUnusableModule.Length > 0)
+        {
+            CoordStatus = CoordLibraryUnavailableText();
+            _coordStatusIsRefusal = true;
+        }
         _suppressCoordPersist = true;
         try
         {
@@ -3636,9 +3667,35 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (!string.IsNullOrEmpty(_activeCoordKey))
             {
                 var file = _coordStore.Load(_activeCoordKey);
+                // (skeptic QM-1 / T6) Nothing saved under the real name yet, but the older DLL's key holds a library:
+                // carry it over, and leave the old file as it was -- that key can be shared by another game whose
+                // name the old DLL mangled the same way, so it is copied, never moved.
+                string carriedFrom = "";
+                // Only into a key that NEVER held a library: after Clear all (main file deleted, backups kept) the
+                // rows must stay gone, not be carried over again on the next connect (second review).
+                if (!_coordStore.EverHadLibrary(_activeCoordKey) && legacyKey.Length > 0 && legacyKey != _activeCoordKey
+                    && _coordStore.Exists(legacyKey))
+                {
+                    var legacy = _coordStore.Load(legacyKey);
+                    if (legacy.Entries.Count > 0) { file = legacy; carriedFrom = legacyKey; }
+                }
                 foreach (var e in file.Entries) _coordAll.Add(e);
                 CoordZTolerance = file.ZTolerance;
-                _log.Info($"Coordinate library: loaded {_coordAll.Count} entries for '{_activeCoordKey}'");
+                _log.Info($"Coordinate library: loaded {_coordAll.Count} entries for '{_activeCoordKey}'"
+                          + (carriedFrom.Length > 0 ? $" (carried over from '{carriedFrom}')" : ""));
+                if (carriedFrom.Length > 0)
+                {
+                    _coordStore.Save(_activeCoordKey, CurrentCoordFile());
+                    CoordStatus = $"Loaded {_coordAll.Count} coordinate(s) from "
+                        + $"{Path.GetFileName(_coordStore.FilePathFor(carriedFrom))}, which an older UE5Dumper.dll saved "
+                        + "for this game (it reported non-ASCII characters as '?'). They are now kept under this "
+                        + "game's real name; the old file was left as it was. If they belong to another game, use "
+                        + "Clear all.";
+                }
+                else if (wasRefusal)
+                {
+                    CoordStatus = "";   // (skeptic QM-2) the refusal's cause is gone
+                }
             }
             RebuildCoordGroups();
             ApplyCoordFilter();
@@ -3803,7 +3860,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             }
             ApplyPoseAndMovement(p);
             var entry = FromPose(p, NextCoordLabel(p.Map));
-            AddCoordEntry(entry);
+            if (!AddCoordEntry(entry)) return;
             CoordStatus = $"Saved '{entry.Label}' ({CoordPrecision.Text(entry.X)}, " +
                           $"{CoordPrecision.Text(entry.Y)}, {CoordPrecision.Text(entry.Z)}).";
             CoordLibraryExpanded = true;
@@ -3861,9 +3918,39 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
     }
 
-    /// <summary>Insert an entry, assigning a unique uid and normalising its text.</summary>
-    private void AddCoordEntry(CoordEntry entry)
+    /// <summary>[PATH-UI-LEGACY-QMARK] Says why the library cannot be used for this game, and that nothing was
+    /// saved. Before this, a row was added in memory with an "Added" status and lost on the next launch.</summary>
+    /// (skeptic QM-5) The remedy is complete: a running game holds its proxy (Update All cannot replace it) and a
+    /// re-inject into it reattaches to the old DLL, so the game must be closed first. (QM-1) A library the old name
+    /// saved is named: it is carried over after the update.
+    private string CoordLibraryUnavailableText() =>
+        $"Coordinate library unavailable: the connected DLL reports this game as '{_coordUnusableModule}', which "
+        + "names no file (a UE5Dumper.dll older than this UI turns non-ASCII characters into '?'). Close the game, "
+        + "update its proxy DLL (Proxy Deploy > Update All) or inject the current UE5Dumper.dll into a freshly "
+        + "started game, then reconnect."
+        + (_coordLegacyFile.Length > 0
+            ? $" The library saved earlier under that name ({_coordLegacyFile}) is carried over then."
+            : "")
+        + " Nothing was saved.";
+
+    /// <summary>True, with the reason in <see cref="CoordStatus"/>, when the library cannot be written: a lossy
+    /// name, or (skeptic QM-4) no game yet -- entries are kept per game, so a row added before the first connect
+    /// was reported "Added", never saved, and cleared by that connect.</summary>
+    private bool CoordLibraryRefused()
     {
+        if (_coordStore == null || _activeCoordKey.Length > 0) return false;
+        CoordStatus = _coordUnusableModule.Length > 0
+            ? CoordLibraryUnavailableText()
+            : "Coordinate library: connect to a game first -- entries are kept per game. Nothing was saved.";
+        _coordStatusIsRefusal = true;
+        return true;
+    }
+
+    /// <summary>Insert an entry, assigning a unique uid and normalising its text. False (nothing added) when the
+    /// library is unavailable -- the caller must not report the row as added.</summary>
+    private bool AddCoordEntry(CoordEntry entry)
+    {
+        if (CoordLibraryRefused()) return false;
         // Re-mint when the uid is EMPTY or ALREADY TAKEN. "Only when empty" trusted an
         // incoming uid to be unique, and an imported file need not be: duplicate a row in
         // Excel and rename it, and the merge diff commits it as Added (the uid match is
@@ -3881,6 +3968,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         RebuildCoordGroups();
         ApplyCoordFilter();
         SelectedCoord = CoordResults.FirstOrDefault(r => r.Entry.Uid == entry.Uid);
+        return true;
     }
 
     /// <summary>Add an entry from the "TP to coords" fields (manual entry).</summary>
@@ -3902,7 +3990,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             Yaw = CoordPrecision.Round(CoordYaw),
             Roll = CoordPrecision.Round(CoordRoll),
         };
-        AddCoordEntry(entry);
+        if (!AddCoordEntry(entry)) return;
         CoordStatus = string.IsNullOrEmpty(entry.Map)
             ? $"Added '{entry.Label}' from the coordinate fields — with NO map: the current map is not "
               + "known right now (connect, or enter gameplay and press Refresh first)."
@@ -3977,7 +4065,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         var copy = row.Entry.Clone();
         copy.Uid = "";
         copy.Label = CoordText.Normalize(row.Entry.Label + " (copy)", CoordText.MaxLabelLength);
-        AddCoordEntry(copy);
+        if (!AddCoordEntry(copy)) return;
         CoordStatus = $"Duplicated as '{copy.Label}'.";
     }
 
@@ -4244,7 +4332,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         if (parsed.Issues.Count > 0)
             sb.Append("\nSkipped / adjusted:\n").Append(FormatIssues(parsed.Issues));
 
-        sb.Append("\nPress Apply to commit (a .preimport.bak is written first).");
+        // (skeptic QM-6) Say so up front when Apply can only be refused.
+        if (_coordStore != null && _activeCoordKey.Length == 0)
+            sb.Append("\nApply is unavailable: ").Append(_coordUnusableModule.Length > 0
+                ? "the coordinate library cannot be used for this game -- see the status line."
+                : "connect to a game first -- entries are kept per game.");
+        else
+            sb.Append("\nPress Apply to commit (a .preimport.bak is written first).");
         CoordImportPreview = sb.ToString();
         OnPropertyChanged(nameof(HasPendingCoordImport));
     }
@@ -4261,6 +4355,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private void ApplyCoordImport()
     {
         if (_pendingImport == null || _pendingChanges == null) return;
+        // [PATH-UI-LEGACY-QMARK] Refused while the library cannot be written. (skeptic QM-6) The preview cannot outlive
+        // the fix: the reconnect it needs drops it (LoadCoordLibraryForGame), so it is previewed again after.
+        if (CoordLibraryRefused()) return;
 
         var bak = _coordStore?.SavePreImportBackup(_activeCoordKey, CurrentCoordFile()) ?? "";
 
@@ -5003,7 +5100,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 if (await _aobMaker!.CreateAAScriptAsync(s.Desc, script, autoActivate: false, group: CeGroupDll))
                     ok++;
             }
-            // Gravity Direction vector (UE5.4+) baked at the current sliders.
+            // Gravity Direction vector (UE5.3+) baked at the current sliders.
             string gdDesc = string.Format(CultureInfo.InvariantCulture,
                 "Movement: Gravity Direction ({0:0.0#}, {1:0.0#}, {2:0.0#})", GravDirX, GravDirY, GravDirZ);
             string gdScript = MovementScriptGenerator.GenerateGravityDirection(GravDirX, GravDirY, GravDirZ);

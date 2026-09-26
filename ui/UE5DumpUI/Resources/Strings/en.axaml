@@ -418,7 +418,6 @@
     <sys:String x:Key="str.System.BuildUnknown">&#x26A0; DLL pre-dates build-number probe — assume stale</sys:String>
     <sys:String x:Key="str.System.AobMakerStatus">AOBMaker plugin</sys:String>
     <sys:String x:Key="str.System.AobMakerConnected">&#x25CF; Connected</sys:String>
-    <sys:String x:Key="str.System.AobMakerOffline">&#x25CB; Not reachable — check CE plugin installation</sys:String>
     <!-- Always-visible top-toolbar mirror of the System-tab AOBMaker indicator -->
     <sys:String x:Key="str.Toolbar.AobMakerLabel">AOBMaker</sys:String>
     <sys:String x:Key="str.Toolbar.AobMakerConnected">Connected</sys:String>
@@ -737,7 +736,8 @@
     <sys:String x:Key="str.Pivot.Discover.Pick">Snapshots (tick 2-4, oldest → newest = Before … After):</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Run">🔍 Discover</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Use">Use → (pivot this)</sys:String>
-    <!-- Usage limits, shown on the tab so expectations are clear up front. -->
+    <!-- Usage limits, one click away: the toggle's label, then the text it shows. -->
+    <sys:String x:Key="str.Pivot.Discover.LimitsToggle">ⓘ How it works &amp; limits</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Limits">How it works &amp; limits:&#10;• Capture 2-4 snapshots around the action you want to isolate (Before … After).&#10;• Use 3-4 to separate a one-time change from constant per-frame noise (rotation, timers, positions); with only 2, both just look "changed".&#10;• Only fields that MOVED appear — a value that never changed between your captures will not show.&#10;• Across a game restart, only objects that re-appear with a stable identity (GameInstance / PlayerState / Pawn / components / GAS) re-join reliably; randomly-spawned actors may not.&#10;• The scan covers the numeric fields captured in the snapshot and runs server-side; on a large capture it can take several seconds (cancellable).</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Class">Class</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Prop">Property</sys:String>
@@ -763,6 +763,7 @@
     <sys:String x:Key="str.ProxyDeploy.UpdateAll">Update All</sys:String>
     <sys:String x:Key="str.ProxyDeploy.Force">Force Overwrite</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ForeignOverwrite">Replace other tools' DLLs</sys:String>
+    <sys:String x:Key="str.ProxyDeploy.UseConfirmed">Use confirmed-working proxy</sys:String>
     <sys:String x:Key="str.ProxyDeploy.SelectAll">All</sys:String>
     <sys:String x:Key="str.ProxyDeploy.UnselectAll">None</sys:String>
     <sys:String x:Key="str.ProxyDeploy.InvertSel">Invert</sys:String>
@@ -772,6 +773,8 @@
     <sys:String x:Key="str.ProxyDeploy.ColStatus">Status</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColLoad">Loaded?</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColSuggested">Suggested proxy</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.ColLoad">Whether UE5Dumper was SEEN to load: its per-process log folder under %LOCALAPPDATA%\UE5CEDumper\Logs. "shared · " -- another listed game logs into the same folder (the same exe name, or one Windows trims to it), so the load shown may be that game's. "stale · " -- the newest log there is older than the retention window: an old load, not a recent one.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.ColSuggested">The proxy to deploy, in this order: a proxy confirmed working for this exe, your last pick for this game, "injection" if you only ever injected it (no proxy), else the version.dll default -- the import table only annotates the alternatives, and flags a version.dll the game imports directly. "shared · " -- another listed game ships the same exe name, so that exe's confirmed-working / injection record cannot say which game it came from and is not used.</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColVersion">Version</sys:String>
     <sys:String x:Key="str.ProxyDeploy.ColDetails">Details</sys:String>
     <sys:String x:Key="str.ProxyDeploy.SuggestToggle">Suggest proxy</sys:String>
@@ -1224,9 +1227,9 @@
     <sys:String x:Key="str.Tip.TP.SeeThroughAddCe">Push a self-contained CE toggle script (tick = ON / untick = OFF) straight into Cheat Engine via AOBMaker. It drives the DLL's See-through through the mailbox, so no pipe connection is needed once added. Disabled when the AOBMaker CE plugin isn't detected.</sys:String>
 
     <!-- Gravity Direction (Laufen — UE5.4+ UCharacterMovementComponent.GravityDirection) -->
-    <sys:String x:Key="str.TP.GdHeader">Gravity Direction (UE5.4+)</sys:String>
+    <sys:String x:Key="str.TP.GdHeader">Gravity Direction (UE5.3+)</sys:String>
     <sys:String x:Key="str.TP.GdState">State:</sys:String>
-    <sys:String x:Key="str.TP.GdHint">Tilt gravity to any direction by setting the per-axis components (each −100%…+100%, i.e. −1.0…+1.0). This is DIRECTION only — the DLL normalizes to a unit vector, so a single-axis setting like (0,0,−62%) collapses to (0,0,−1): it only re-aims gravity, it does NOT change strength (use the Gravity card for strength). To tilt you must mix axes, e.g. X=+100%, Z=−100% → diagonal. Default (0,0,−100%) = straight down; X=+100%, Z=0 makes gravity pull along +X (walk on a wall). Apply holds the direction; Reset restores the game's captured default and snaps the sliders back to down. Needs UE5.4+ with a reflected GravityDirection (pre-5.4 games show Unavailable). Single-player only.</sys:String>
+    <sys:String x:Key="str.TP.GdHint">Tilt gravity to any direction by setting the per-axis components (each −100%…+100%, i.e. −1.0…+1.0). This is DIRECTION only — the DLL normalizes to a unit vector, so a single-axis setting like (0,0,−62%) collapses to (0,0,−1): it only re-aims gravity, it does NOT change strength (use the Gravity card for strength). To tilt you must mix axes, e.g. X=+100%, Z=−100% → diagonal. Default (0,0,−100%) = straight down; X=+100%, Z=0 makes gravity pull along +X (walk on a wall). Apply holds the direction; Reset restores the game's captured default and snaps the sliders back to down. Needs UE5.3+ with a reflected GravityDirection (older games show Unavailable). Single-player only.</sys:String>
     <sys:String x:Key="str.TP.GdApply">Apply</sys:String>
     <sys:String x:Key="str.TP.GdReset">Reset</sys:String>
     <sys:String x:Key="str.TP.GdRefresh">↻</sys:String>
@@ -1504,16 +1507,17 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ProxyDeploy.Inject">Route ② of 4 — use this when the game is already running and you did not deploy a proxy (① Deploy is better when you can restart the game: it loads with it and survives restarts). Inject UE5Dumper.dll into an already-running UE game (CreateRemoteThread + LoadLibraryW) — no Cheat Engine or pre-deployed proxy needed. Pick the process, then auto-connect. If the game runs as Administrator you'll get a UAC prompt to inject elevated (no manual restart). x64 games only; single-player / offline use only (anti-cheat may block).</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Refresh">Refresh deploy status for detected games</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.CancelOperation">Stop the long operation currently running in this panel — Scan, Scan Drives, Refresh Drives, Find leftovers, Delete checked, Refresh, Deploy, Undeploy or Update All. Only one runs at a time, so this is unambiguous. It stops at the next unit of work (one game, one leftover chain, one library folder), so whatever is already in flight finishes and the result line reports what actually happened rather than pretending nothing did.</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.Deploy">Route ① of 4 — the best one when you can restart the game: the proxy loads with it, survives restarts, and needs no Cheat Engine. Deploy the selected proxy DLL to the ticked games.</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.Undeploy">Remove OUR proxy DLLs from the selected games — every flavour (version / dinput8 / dxgi), not just the one selected above: that radio governs deploying, while this is a clean-up. A version.dll or dxgi.dll belonging to another program (a mod loader, another tool) is always left alone, and is reported rather than deleted.</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.UpdateAll">Update all deployed games to latest version</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.Force">Redeploy over OUR proxy even when the version already matches. Does not touch another program's DLL. Remembered between sessions.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Deploy">Route ① of 4 — the best one when you can restart the game: the proxy loads with it, survives restarts, and needs no Cheat Engine. Deploy the selected proxy DLL to the ticked games. A game that already has a DIFFERENT proxy of ours is skipped (see Details), even with Force Overwrite — two of ours in one folder never helps. To switch type, Undeploy first.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Undeploy">Remove OUR proxy DLLs from the selected games — every flavour (version / dinput8 / dxgi / winmm), not just the one selected above: that radio governs deploying, while this is a clean-up. A version.dll or dxgi.dll belonging to another program (a mod loader, another tool) is always left alone, and is reported rather than deleted.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.UpdateAll">Replace each game's already-deployed proxy of OURS with this build's DLL of the same type. A proxy already at this version is skipped unless Force Overwrite is ticked. Never adds a type that is not deployed, and never replaces another program's DLL (not even with "Replace other tools' DLLs" ticked).</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.UseConfirmed">Deploy only: for a ticked game with NONE of our proxies (after a reinstall, say), deploy the type recorded as 'confirmed working' for it instead of the one selected above. Games without a record get the selected type; a game that already has one of our proxies keeps it. The confirmed type never replaces another program's DLL, even with "Replace other tools' DLLs" ticked (that row fails and says so). Keyed by the .exe name. Resets to off every time the app starts.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.Force">Rewrite OUR proxy even when its version already matches — in Deploy and in Update All. Use it when a rebuilt DLL kept the same version number. Never adds a second proxy type to a game that already has one of ours. Does not touch another program's DLL. Remembered between sessions.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.ForeignOverwrite">Allow replacing a DLL that is NOT ours (ReShade, Special K, ASI loaders, a wrapper the game shipped). IRREVERSIBLE - there is no backup, and the replaced file is gone. Resets to off every time the app starts.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Version">Hijack version.dll — broadest game compatibility (loaded by virtually every Windows process)</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Dinput8">Hijack dinput8.dll — fallback when version.dll conflicts with installer or anti-tamper shim</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Dxgi">Hijack dxgi.dll — for D3D11/D3D12 games whose EXE imports neither version.dll nor dinput8.dll (most UE games on Windows)</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Type.Winmm">Hijack winmm.dll — measured importable by 24/24 installed UE games, exactly the same set as dxgi. Use it when the dxgi.dll or version.dll slot is already TAKEN by something else: ReShade commonly installs itself as dxgi.dll, and some games ship their own version.dll. A proxy only works if its filename is free, so this is the spare universally-viable slot (dinput8 is only 2/24). It reaches no game that dxgi cannot.</sys:String>
-    <sys:String x:Key="str.Tip.ProxyDeploy.SuggestToggle">Show a per-game 'Suggested proxy' column: the proxy you last deployed for that game (remembered by name, survives reinstall); or 'injection' if you've only ever loaded it via Inject; else version.dll (the safe default) with the proxies the EXE can actually load. Advisory only — never changes your selection or auto-deploys.</sys:String>
+    <sys:String x:Key="str.Tip.ProxyDeploy.SuggestToggle">Show a per-game 'Suggested proxy' column: the proxy confirmed working for that game (it loaded and stayed connected); else the proxy you last deployed for it (remembered by name, survives reinstall); or 'injection' if you've only ever loaded it via Inject; else version.dll (the safe default) with the proxies the EXE can actually load. The column itself never changes your selection; only "Use confirmed-working proxy" acts on a confirmed record.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.Source">Steam = detect Steam-installed games; Scan Drives = search chosen drives for UE games installed anywhere (Epic, GOG, manual, etc.)</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.ScanDrives">Scan the selected drives for non-Steam UE games. Partitions on one physical disk are scanned sequentially; different disks scan in parallel. Steam libraries and system folders are skipped.</sys:String>
     <sys:String x:Key="str.Tip.ProxyDeploy.RefreshDrives">Re-enumerate available drives</sys:String>

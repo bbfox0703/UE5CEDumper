@@ -77,7 +77,7 @@ enum Cmd : int32_t {
                               //   gravity DIRECTION vector (knobId 3).
                               //   Input:  instanceAddr = knobId (0 MaxWalkSpeed /
                               //             1 GravityScale / 2 JumpZVelocity /
-                              //             3 GravityDirection, UE5.4+)
+                              //             3 GravityDirection, UE5.3+)
                               //           knob 0-2: paramsData[0..7] = double percent
                               //             (user slider %; 100 = off. knob 2 = jump
                               //             HEIGHT %, DLL applies sqrt).

@@ -87,7 +87,7 @@
                                      -- return true to include, false to skip
 
   Constants exposed:
-    UE5_FREEZE_HELPER_VERSION = '1.5'   -- 1.1 added cfg.boolMask (packed bitfield bools)
+    UE5_FREEZE_HELPER_VERSION = '1.6'   -- 1.1 added cfg.boolMask (packed bitfield bools)
                                         -- 1.2 start() returns (ok, err, count)
                                         -- 1.3 cfg.derived + cfg.memrec; start() also
                                         --     returns `capped`
@@ -98,6 +98,10 @@
                                         --     error of the streak, not the busy-guard
                                         --     consequence of it. MUST bump: 1.4 is
                                         --     resident in tables already in the wild
+                                        -- 1.6 the shared mailbox latch: a fetch timeout
+                                        --     latches it, and a latch the DLL has
+                                        --     released no longer blocks a rescan
+                                        --     [R7-C-01] [R7-C-03]
                                         --     and a same-version re-load is a no-op
 
   =========================================================================
@@ -274,7 +278,7 @@
 -- and re-added it kept running the OLD code. Gate the definitions on VERSION instead
 -- -- redefine only when this chunk is NEWER than the resident one -- so an update
 -- takes effect while a same/older re-load stays a no-op that preserves state.
-local THIS_HELPER_VERSION = '1.5'
+local THIS_HELPER_VERSION = '1.6'   -- 1.6: the shared mailbox latch [R7-C-01] [R7-C-03]
 -- Compare dotted versions: true iff a < b. nil (nothing resident) is the oldest.
 local function versionLess(a, b)
   if not a then return true end
@@ -642,6 +646,21 @@ local function fetchInstancePage(className, pageIndex, derived)
   local mb, ferr = findMailbox()
   if not mb then return nil, 0, ferr end
 
+  -- [R7-C-03] The busy flag is SHARED with ue5_invoke_helper.lua, whose timeout latches it together with
+  -- _ue5_invoke_stale_mb until the DLL reports done. Only that helper's own entry used to release it, so
+  -- after an invoke timeout every rescan here refused and the freeze abandoned itself, although the DLL had
+  -- long finished. Release it the same way here: the DLL says DONE and IDLE.
+  -- [R7-S3] Released on cmd 0 whatever the status: the DLL clears cmd only after SetDone / SetError, and a
+  -- re-inject or re-enable (UE5_Shutdown memsets the mailbox) also leaves it 0 -- with status 0, which a DONE-only
+  -- test never saw, so the latch then outlived the session. Also released when the latched mailbox has gone
+  -- (unreadable) or moved (a re-inject at a new base).
+  if _ue5_invoke_busy and _ue5_invoke_stale_mb then
+    local c = readInteger(_ue5_invoke_stale_mb + OFF_CMD)
+    if c == nil or c == 0 or _ue5_invoke_stale_mb ~= mb then
+      _ue5_invoke_busy, _ue5_invoke_stale_mb = false, nil
+    end
+  end
+
   if _ue5_invoke_busy then
     -- Don't corrupt a concurrent invoke. Caller (rescan) treats this
     -- as "skip this cycle"; tick keeps writing the existing cache.
@@ -666,6 +685,7 @@ local function fetchInstancePage(className, pageIndex, derived)
   end
 
   _ue5_invoke_busy = true
+  local timedOut = false
   local pok, page, totalPages, err, classPtr, classOff, capped = pcall(function()
     writeMbStr(mb, OFF_CLASS, className)
     -- Page index goes in paramsData[0..3].
@@ -680,7 +700,14 @@ local function fetchInstancePage(className, pageIndex, derived)
     writeInteger(mb + OFF_CMD, CMD_LIST_INSTANCES)
 
     local wok, werr = waitDone(mb, DEFAULT_TIMEOUT_MS)
-    if not wok then return nil, 0, werr end
+    if not wok then
+      -- [R7-C-01] The DLL may still own the mailbox (an init scan can outlast the 5 s wait). Latch the
+      -- shared flag -- AA19's shape, as ue5_invoke_helper.lua does -- so no invoke-helper call writes
+      -- over the command in flight. The entry re-test above releases it once the DLL reports done.
+      _ue5_invoke_stale_mb = mb
+      timedOut = true
+      return nil, 0, werr
+    end
 
     local result = readInteger(mb + OFF_RESULT, true)   -- signed: rc is int32
     if result ~= 0 then
@@ -752,7 +779,7 @@ local function fetchInstancePage(className, pageIndex, derived)
 
     return out, totalPagesLocal, nil, cPtr, cOff, wasCapped
   end)
-  _ue5_invoke_busy = false
+  if not timedOut then _ue5_invoke_busy = false end   -- [R7-C-01] a timeout stays latched
 
   if not pok then
     -- Body raised; pcall captured the error in the first slot.

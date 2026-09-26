@@ -3101,6 +3101,15 @@ const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
     return DynOff::IsWeakTargetGarbage(g_cachedUEVersion, objectFlags, itemOk, itemFlags) ? " [garbage]" : "";
 }
 
+// [R7-B-04] ONE delegate-binding label: DescribeScriptDelegate's ladder PLUS the [garbage] tag. Five readers render a
+// binding, and the tag was appended at four of them by hand -- the sparse-binding element loop was the fifth, the
+// exact "repaired two of them" shape DescribeScriptDelegate's own header warns about. Every site calls this.
+std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
+                                    int32_t objIdx, int32_t serial, const std::string& funcName) {
+    return DescribeScriptDelegate(target != 0, targetName, objIdx, serial, funcName)
+         + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
+}
+
 // ============================================================
 // IsWeakPointerArrayType — check if inner type is a weak-pointer type
 // (Phase E). Currently only WeakObjectProperty.
@@ -4058,8 +4067,7 @@ ReadArrayResult ReadDelegateArrayElements(
         // `ReadFName` resolves index 0 to the STRING "None" -- which is not empty, so the
         // `!funcName.empty()` arm below claimed `(stale)::None` for a slot nothing had ever
         // touched. The multicast element loop has an explicit unbound branch; this one did not.
-        elem.value = DescribeScriptDelegate(target != 0, elem.ptrName, objIdx, serial, funcName)
-                   + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
+        elem.value = DescribeDelegateBinding(target, elem.ptrName, objIdx, serial, funcName);   // [R7-B-04]
 
         result.elements.push_back(std::move(elem));
     }
@@ -4226,10 +4234,9 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
                 // ⚠ Only NAMED bindings go into the preview, as before -- but "named" is now
                 // the shared test, so an untouched slot (FunctionName == NAME_None, which
                 // reads back as "None") is skipped instead of listed as "(stale)::None".
-                std::string bdesc = DescribeScriptDelegate(
-                    btarget != 0, btarget ? GetName(btarget) : std::string(),
-                    bobjIdx, bserial, bfunc);
-                bdesc += WeakTargetGarbageTag(btarget, bobjIdx);   // [VND583-06]
+                std::string bdesc = DescribeDelegateBinding(
+                    btarget, btarget ? GetName(btarget) : std::string(),
+                    bobjIdx, bserial, bfunc);   // [R7-B-04]
                 if (IsNamedDelegateBinding(bdesc)) bindings.push_back(std::move(bdesc));
             }
 
@@ -6502,9 +6509,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     fv.ptrClassAddr = cls;
                 }
             }
-            fv.typedValue = DescribeScriptDelegate(target != 0, targetName,
-                                                   objIdx, serial, funcName)
-                          + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
+            fv.typedValue = DescribeDelegateBinding(target, targetName, objIdx, serial, funcName);   // [R7-B-04]
 
             // Hex: FWeakObjectPtr + FName raw bytes
             int delegateSize = 8 + fnameSize;
@@ -6623,6 +6628,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 refusal = "(optional: the unset state of an intrusive " + innerTn + " is not decoded)";
             }
 
+            // [R7-B-02] The weak value's raw pair, kept for the null / null (stale) label below.
+            int32_t optWeakIdx = 0, optWeakSerial = 0;
+            bool optWeakRead = false;
+            // [R7-B-04] ...and its [garbage] tag, which the display builder below appends (setting typedValue here
+            // was dead: that builder overwrote it for every resolved target).
+            const char* optWeakTag = "";
+
             // Decode the value only for a SET optional whose discriminator was read -- never a
             // reset optional's leftover bytes.
             if (refusal.empty() && okProbe && isSet) {
@@ -6640,13 +6652,13 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (Macht::ReadSafe(fieldAddr, ptr) && ptr) fillPtr(ptr);
                 } else if (isWeakLike) {
                     // Embedded FWeakObjectPtr at field+0.
-                    int32_t objIdx = 0, serial = 0;
+                    int32_t& objIdx = optWeakIdx;
+                    int32_t& serial = optWeakSerial;
                     if (Macht::ReadSafe(fieldAddr, objIdx) && Macht::ReadSafe(fieldAddr + 4, serial)) {
+                        optWeakRead = true;
                         if (uintptr_t resolved = ResolveWeakObjectPtr(objIdx, serial)) {
                             fillPtr(resolved);
-                            if (const char* tag = WeakTargetGarbageTag(resolved, objIdx); *tag)   // [VND583-06]
-                                fv.typedValue = fv.ptrName + (fv.ptrClassName.empty() ? std::string()
-                                                                                     : " (" + fv.ptrClassName + ")") + tag;
+                            optWeakTag = WeakTargetGarbageTag(resolved, objIdx);   // [VND583-06] [R7-B-04]
                         }
                     }
                 } else if (isStrInner) {
@@ -6750,11 +6762,36 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 fv.typedValue = "(unset)";
             } else if (isObjectLike || isWeakLike) {
                 if (!fv.ptrName.empty()) {
-                    fv.typedValue = fv.ptrClassName.empty()
+                    fv.typedValue = (fv.ptrClassName.empty()
                         ? fv.ptrName
-                        : fv.ptrName + " (" + fv.ptrClassName + ")";
+                        : fv.ptrName + " (" + fv.ptrClassName + ")") + optWeakTag;   // [R7-B-04]
+                } else if (isWeakLike && fv.ptrValue) {
+                    // [R7-B-04] Resolved, but the name did not read: set, and still tagged -- not "null".
+                    fv.typedValue = std::string("(set)") + optWeakTag;
+                } else if (innerTn == "SoftObjectProperty" || innerTn == "SoftClassProperty") {
+                    // [R7-S1] A soft pointer's value is its PATH. The embedded weak pair is only a cache that
+                    // TPersistentObjectPtr fills on Get(), so {0, 0} means "not loaded", not "null" -- the same
+                    // path-first display the top-level soft reader uses.
+                    const std::string path = ReadSoftObjectPath(fieldAddr + SoftPathOffset(innerSize));
+                    fv.typedValue = path.empty() ? "(none)" : path;
+                } else if (innerTn == "LazyObjectProperty") {
+                    // [R7-S1] Likewise a lazy pointer's value is its GUID.
+                    const uintptr_t g = fieldAddr + LazyGuidOffset(innerSize);
+                    uint32_t ga = 0, gb = 0, gc = 0, gd = 0;
+                    if (Macht::ReadSafe(g, ga) && Macht::ReadSafe(g + 4, gb) && Macht::ReadSafe(g + 8, gc)
+                        && Macht::ReadSafe(g + 12, gd)) {
+                        char gs[48];
+                        snprintf(gs, sizeof(gs), "{%08X-%08X-%08X-%08X}", ga, gb, gc, gd);
+                        fv.typedValue = gs;
+                    } else {
+                        fv.typedValue = DescribeUnreadableField("optional", fi.Offset);
+                    }
                 } else if (isWeakLike) {
-                    fv.typedValue = "(stale)";
+                    // [R7-B-02] A WEAK pointer (soft / lazy took their own arms above): the rule every weak
+                    // reader uses -- serial 0 is null, a dead serial is null (stale). It said "(stale)" for both,
+                    // including a pointer explicitly set to null.
+                    fv.typedValue = optWeakRead ? UnresolvedWeakLabel(optWeakIdx, optWeakSerial)
+                                                : DescribeUnreadableField("optional", fi.Offset);
                 } else {
                     // A TOptional<UObject*> can be SET to null; that is not "(unset)".
                     fv.typedValue = fv.ptrValue ? "(set)" : "(set: null)";
@@ -6863,7 +6900,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Couldn't resolve — surface the original bound-flag string so
                 // the user still knows the field is bound, just opaque.
                 if (!sr.supported) {
-                    fv.typedValue = "(sparse, bound — UE < 5.0 unsupported)";
+                    // A key shape we cannot read (an FObjectKey-keyed 4.23-4.26 build), or a compact-set
+                    // build [R7-A-01]: either way the storage is not decoded here.
+                    fv.typedValue = "(sparse, bound — storage layout not decoded on this build)";
                 } else if (!sr.resolved) {
                     fv.typedValue = "(sparse, bound — FSparseDelegateStorage AOB not found)";
                 } else if (!sr.ownerFound) {
@@ -6897,9 +6936,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     elem.ptrName      = b.targetName;
                     elem.ptrClassName = b.targetClassName;
                 }
-                elem.value = DescribeScriptDelegate(b.targetObj != 0, b.targetName,
-                                                    b.objectIndex, b.serialNumber,
-                                                    b.functionName);
+                // [R7-B-04] Through the one label, so a Garbage target is tagged here too (it was the one
+                // reader of five without the tag).
+                elem.value = DescribeDelegateBinding(b.targetObj, b.targetName,
+                                                     b.objectIndex, b.serialNumber,
+                                                     b.functionName);
                 if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
                     previewNames.push_back(elem.value);
                 fv.arrayElements.push_back(std::move(elem));
@@ -7046,9 +7087,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     if (cls) elem.ptrClassName = GetName(cls);
                 }
 
-                elem.value = DescribeScriptDelegate(target != 0, elem.ptrName,
-                                                    objIdx, serial, funcName)
-                           + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
+                elem.value = DescribeDelegateBinding(target, elem.ptrName, objIdx, serial, funcName);   // [R7-B-04]
                 if (IsNamedDelegateBinding(elem.value) && previewNames.size() < 8)
                     previewNames.push_back(elem.value);
 
@@ -7403,7 +7442,8 @@ void ResolvePropertyPreviews(
             Macht::ReadSafe(inst + off + 4, serial);
             uintptr_t target = ResolveWeakObjectPtr(objIdx, serial);
             std::string name = target ? GetName(target) : std::string();
-            m.preview = name.empty() ? "(none)" : name;
+            // [R7-B-04] Tagged like WalkInstance's soft reader and the weak preview above it.
+            m.preview = name.empty() ? "(none)" : name + WeakTargetGarbageTag(target, objIdx);
             continue;
         }
 

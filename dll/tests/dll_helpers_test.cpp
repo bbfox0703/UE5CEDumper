@@ -43,6 +43,7 @@
 #include "../src/Stark.h"      // ShouldUseTrampoline / ShouldDrainQueue (header-inline, pure)
 #include "../src/Genau.h"      // AdmitMultiModuleCandidate (constexpr, pure) — Pass-2 scan admission
 #include "../src/Voll.h"       // Pipe-accept capacity logging policy (OnCreateFailure/Success, [PIPEBUSY])
+#include "../src/Methode.h"    // NarrowForAnsiLoad (header-inline, pure) -- the CE-plugin inject path, [PATH-METHODE-NO8DOT3]
 #include "../src/Flamme.h"     // ShouldPublishAtomicWrite (constexpr, pure) — hint-cache publish gate
 
 #include <Windows.h>
@@ -6374,6 +6375,23 @@ static void Test_UnresolvedWeakLabel() {
     EXPECT("VND583-08: a negative index is null",           std::string(Ubel::UnresolvedWeakLabel(-1, 77)) == "null");
 }
 
+// [R7-X4] Which CharacterMovementComponent marker means which engine, as measured 2026-09-25 on stock builds: the
+// reflected GravityDirection PROPERTY is already in 5.3 (Release-5.3-CL-29314046), the SetGravityDirection UFUNCTION
+// only from 5.4. The property alone used to raise a stock 5.3 title to 504.
+static void Test_CmcMarkerVersion() {
+    std::printf("\n--- R7-X4: CMC version markers ---\n");
+    using DynOff::CmcMarkerVersion;
+    EXPECT("R7-X4 ⭐ stock 5.3 (property, no function) stays 503", CmcMarkerVersion(503, true, true, false) == 503);
+    EXPECT("R7-X4 ⭐ 5.4 (property + function) is raised to 504", CmcMarkerVersion(503, true, true, true) == 504);
+    EXPECT("R7-X4: the function alone is 5.4 too", CmcMarkerVersion(501, true, false, true) == 504);
+    EXPECT("R7-X4: a stripped build floored below 5.3 with the property is raised to 503 only",
+           CmcMarkerVersion(501, true, true, false) == 503);
+    EXPECT("R7-X4: no marker changes nothing", CmcMarkerVersion(502, true, false, false) == 502);
+    EXPECT("R7-X4: never lowers a 5.4+ detection", CmcMarkerVersion(506, true, true, false) == 506);
+    EXPECT("R7-X4: never raises UE4 (UProperty mode)", CmcMarkerVersion(427, false, true, true) == 427);
+    EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
 static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
@@ -6393,6 +6411,22 @@ static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE4 never sets RF 0x40000000 -> ignored", !DynOff::IsWeakTargetGarbage(427, 0x40000000u, true, 0));
     EXPECT("VND583-06: unknown version: the object flag only",
            DynOff::IsWeakTargetGarbage(0, 0x40000000u, true, 0) && !DynOff::IsWeakTargetGarbage(0, 0, true, 1u << 29));
+    // [R7-B-01] UE 5.0-5.3 ship gc.PendingKillEnabled=True, so MarkAsGarbage sets RF_PendingKill (0x20000000) and
+    // item PendingKill (1<<29) -- not the Garbage bits -- and Get() refuses the target.
+    EXPECT("R7-B-01: 5.1 default PendingKill (RF 0x20000000 + item 1<<29) -> garbage",
+           DynOff::IsWeakTargetGarbage(501, 0x20000000u, true, 1u << 29));
+    EXPECT("R7-B-01: 5.3 default PendingKill -> garbage", DynOff::IsWeakTargetGarbage(503, 0x20000001u, true, 1u << 29));
+    EXPECT("R7-B-01: 5.2 RF_PendingKill with the item flags unread -> garbage",
+           DynOff::IsWeakTargetGarbage(502, 0x20000000u, false, 0));
+    EXPECT("R7-B-01 control: 5.4 0x20000000 is RF_HasPlaceholderType, bit 29 unused -> live",
+           !DynOff::IsWeakTargetGarbage(504, 0x20000000u, true, 1u << 29));
+    EXPECT("R7-B-01 control: 5.8 0x20000000 is RF_MigratingAsset, bit 29 RefCounted -> live",
+           !DynOff::IsWeakTargetGarbage(508, 0x20000000u, true, 1u << 29));
+    EXPECT("R7-B-01 control: 5.1 item bit 29 without RF_PendingKill -> live (both must agree)",
+           !DynOff::IsWeakTargetGarbage(501, 0, true, 1u << 29));
+    EXPECT("R7-B-01 control: 5.1 RF_PendingKill while the readable item says no -> live",
+           !DynOff::IsWeakTargetGarbage(501, 0x20000000u, true, 0));
+    EXPECT("R7-B-01 control: unknown version ignores 0x20000000", !DynOff::IsWeakTargetGarbage(0, 0x20000000u, true, 1u << 29));
 }
 
 static void Test_ProcessEventVTableSlot() {
@@ -7232,6 +7266,12 @@ static void Test_Ubel_DescribeScriptDelegate() {
            DescribeScriptDelegate(false, "", 0, 0, "None") == "(unbound)");
     EXPECT("stale: an empty FunctionName is the same case",
            DescribeScriptDelegate(false, "", 0, 0, "") == "(unbound)");
+    // [R7-B-02] UE4 / 5.0 FWeakObjectPtr::Reset() writes {INDEX_NONE, 0}, and TScriptDelegate() / Unbind() go
+    // through it: every never-bound C++ delegate on those engines holds {-1, 0} + NAME_None. Serial 0 is null.
+    EXPECT("R7-B-02: a UE4 / 5.0 reset delegate {INDEX_NONE, 0} is unbound",
+           DescribeScriptDelegate(false, "", -1, 0, "None") == "(unbound)");
+    EXPECT("R7-B-02: any index with serial 0 is null, so unbound",
+           DescribeScriptDelegate(false, "", 5, 0, "None") == "(unbound)");
 
     // ⭐ THE CONTROL. A genuinely stale binding must STILL say so -- the repair is only an
     // improvement if it did not simply delete the state it was meant to narrow.
@@ -8688,6 +8728,154 @@ static void Test_Serie_UE4NameIndexInBounds() {
 static bool g_trace = false;
 #define RUN(fn) do { if (g_trace) std::printf("[run] %s\n", #fn); fn(); } while (0)
 
+// [PATH-MODULE-NAME-UTF8] get_ce_pointer_info's ce_base was snprintf'd into char[128]: a long stem lost the closing
+// quote and the RVA silently, and once the name is UTF-8 a cut can split a sequence that json::dump throws on.
+static void Test_Renge_CeModuleRelative_NeverTruncates() {
+    EXPECT_EQ_STR("short", Renge::CeModuleRelative("Game-Win64-Shipping.exe", 0x8A12340ull),
+                  "\"Game-Win64-Shipping.exe\"+8A12340");
+    std::string longStem(110, 'A');
+    EXPECT_EQ_STR("110-char stem keeps its +RVA",
+                  Renge::CeModuleRelative(longStem + ".exe", 0x8A12340ull),
+                  "\"" + longStem + ".exe\"+8A12340");
+    std::string cjk;
+    for (int i = 0; i < 40; ++i) cjk += "\xE9\x81\x8A";   // 40 x 遊 = 120 bytes
+    std::string out = Renge::CeModuleRelative(cjk + ".exe", 0x1234ull);
+    EXPECT("40 CJK chars keep the suffix", out.size() >= 6 && out.compare(out.size() - 6, 6, "\"+1234") == 0);
+    EXPECT_EQ_STR("zero rva", Renge::CeModuleRelative("G.exe", 0), "\"G.exe\"+0");
+}
+
+// [PATH-METHODE-NO8DOT3] The CE-plugin inject path (Methode.cpp) narrowed the long path with WC_NO_BEST_FIT_CHARS and
+// fell back to the 8.3 alias -- but re-narrowed THAT with flags 0 and no used-default check. On a volume without 8.3
+// names (D: here) GetShortPathNameW returns the long path, so a '?'-bearing string went to CE's InjectDLL
+// (LoadLibraryA) and the user saw the generic "32-bit / anti-cheat / administrator" failure.
+// [PATH-MODULE-NAME-UTF8] (skeptic MODVIEW-5C-TRAIL / T3) CE's own name for a module, as UTF-8: what ANSI Module32First
+// puts in szModule -- best fit, then cut after the ANSI path's last 0x5C byte (a DBCS trail byte can be 0x5C).
+// get_ce_pointer_info's ce_base is built from it. Was AnsiViewUtf8, file-static in Fern.cpp, untested.
+static void Test_Methode_CeModuleNameUtf8() {
+    auto n = [](const wchar_t* w, unsigned cp) { return Methode::CeModuleNameUtf8(w, std::wcslen(w), cp); };
+    EXPECT_EQ_STR("kana on 950 -> ???", n(L"\u30B2\u30FC\u30E0-Win64-Shipping.exe", 950), "???-Win64-Shipping.exe");
+    EXPECT_EQ_STR("e-acute best fit on 950 -> e", n(L"Caf\u00E9-Win64-Shipping.exe", 950), "Cafe-Win64-Shipping.exe");
+    EXPECT_EQ_STR("TM on 950 -> ?", n(L"Game\u2122-Win64-Shipping.exe", 950), "Game?-Win64-Shipping.exe");
+    EXPECT_EQ_STR("Big5-held name kept (UTF-8)", n(L"\u904A\u6232-Win64-Shipping.exe", 950),
+                  "\xE9\x81\x8A\xE6\x88\xB2-Win64-Shipping.exe");
+    EXPECT_EQ_STR("0x5C trail byte on 950: gong-fu -> fu", n(L"\u529F\u592B-Win64-Shipping.exe", 950),
+                  "\xE5\xA4\xAB-Win64-Shipping.exe");
+    EXPECT_EQ_STR("0x5C trail byte on 932: so-do -> do", n(L"\u30BD\u30FC\u30C9-Win64-Shipping.exe", 932),
+                  "\xE3\x83\xBC\xE3\x83\x89-Win64-Shipping.exe");
+    EXPECT_EQ_STR("ASCII unchanged", n(L"Tony's-Win64-Shipping.exe", 950), "Tony's-Win64-Shipping.exe");
+    EXPECT_EQ_STR("empty", n(L"", 950), "");
+}
+
+static void Test_Methode_NarrowForAnsiLoad() {
+    const wchar_t* tm = L"D:\\Tools\\CE\u2122\\UE5Dumper.dll";
+    EXPECT_EQ_STR("TM, no 8.3 alias (short == long): refused",
+                  Methode::NarrowForAnsiLoad(tm, tm, 950), "");
+    EXPECT_EQ_STR("TM, no short path at all: refused",
+                  Methode::NarrowForAnsiLoad(tm, nullptr, 950), "");
+    const wchar_t* kana = L"D:\\\u30C4\u30FC\u30EB\\UE5Dumper.dll";
+    EXPECT_EQ_STR("katakana, short == long: refused", Methode::NarrowForAnsiLoad(kana, kana, 950), "");
+    EXPECT_EQ_STR("TM, ASCII 8.3 alias: the alias",
+                  Methode::NarrowForAnsiLoad(tm, L"D:\\Tools\\CE~1\\UE5Dumper.dll", 950),
+                  "D:\\Tools\\CE~1\\UE5Dumper.dll");
+    const wchar_t* gongju = L"D:\\\u5DE5\u5177\\UE5Dumper.dll";   // 工具: Big5 A4 75 A8 E3
+    EXPECT_EQ_STR("Big5-representable: its exact bytes",
+                  Methode::NarrowForAnsiLoad(gongju, gongju, 950), "D:\\\xA4u\xA8\xE3\\UE5Dumper.dll");
+    const wchar_t* bjork = L"D:\\Bj\u00F6rk\\UE5Dumper.dll";
+    EXPECT_EQ_STR("best fit is never taken (Bjork is not Bj\\xF6rk's folder)",
+                  Methode::NarrowForAnsiLoad(bjork, bjork, 950), "");
+    EXPECT_EQ_STR("1252 holds o-umlaut exactly",
+                  Methode::NarrowForAnsiLoad(bjork, bjork, 1252), "D:\\Bj\xF6rk\\UE5Dumper.dll");
+    EXPECT_EQ_STR("ASCII is itself", Methode::NarrowForAnsiLoad(L"C:\\CE\\UE5Dumper.dll", nullptr, 950),
+                  "C:\\CE\\UE5Dumper.dll");
+    EXPECT_EQ_STR("UTF-8 ANSI code page: UTF-8 as is",
+                  Methode::NarrowForAnsiLoad(tm, tm, CP_UTF8), "D:\\Tools\\CE\xE2\x84\xA2\\UE5Dumper.dll");
+    // (skeptic CEINJ-4) An ASCII alias is preferred even when the long path narrows exactly: the bytes are made in
+    // CE's code page but decoded in the GAME's (Locale Emulator gives it another).
+    EXPECT_EQ_STR("ASCII alias preferred over an exact non-ASCII narrowing",
+                  Methode::NarrowForAnsiLoad(gongju, L"D:\\5DE5~1\\UE5Dumper.dll", 950), "D:\\5DE5~1\\UE5Dumper.dll");
+    // (second review, T-ALIAS-LEAF-PLUGIN, HIGH -- measured) A REAL 8.3 alias of the FILE shortens the leaf too
+    // (UE5DUM~1.DLL), and the game then maps our DLL under that name: the plugin's own post-inject name check missed
+    // it and called every successful inject a manual map. An ASCII path is never aliased; an alias whose leaf is not
+    // the DLL's own name is never used.
+    EXPECT_EQ_STR("an ASCII path is never aliased",
+                  Methode::NarrowForAnsiLoad(L"C:\\Program Files\\CE\\UE5Dumper.dll",
+                                             L"C:\\PROGRA~1\\CE\\UE5Dumper.dll", 950),
+                  "C:\\Program Files\\CE\\UE5Dumper.dll");
+    EXPECT_EQ_STR("a file alias (leaf UE5DUM~1.DLL) is never used: the exact narrowing instead",
+                  Methode::NarrowForAnsiLoad(gongju, L"D:\\5DE5~1\\UE5DUM~1.DLL", 950),
+                  "D:\\\xA4u\xA8\xE3\\UE5Dumper.dll");
+    EXPECT_EQ_STR("a file alias for an unrepresentable path: refused, not a renamed load",
+                  Methode::NarrowForAnsiLoad(tm, L"D:\\Tools\\CE~1\\UE5DUM~1.DLL", 950), "");
+}
+
+// (third review, T3-METHODE-FOLDER-ALIAS-UNTESTED) The alias the plugin hands NarrowForAnsiLoad: the FOLDER's 8.3 form
+// plus the DLL's own long name. It was built inline in Methode.cpp, which no test target compiles, so a revert to the
+// FILE's alias (UE5DUM~1.DLL -- discarded by the leaf guard, which silently loses the CEINJ-4 ASCII alias) passed.
+// The maintainer's path shapes (tools/verify/path_shape_folders.py): a folder no ANSI code page holds is refused
+// without an alias and injects through an ASCII folder alias; CE's name for such an exe is its best-fit view.
+static void Test_Methode_MaintainersShapes() {
+    const wchar_t* letterlike = L"D:\\™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ\\UE5Dumper.dll";
+    const wchar_t* signs = L"D:\\™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ\\UE5Dumper.dll";
+    const wchar_t* emoji = L"D:\\\U0001F600 smile\\UE5Dumper.dll";
+    for (const wchar_t* p : { letterlike, signs, emoji }) {
+        EXPECT("no ANSI form and no alias: refused", Methode::NarrowForAnsiLoad(p, p, 950).empty());
+        EXPECT("  ...but an ASCII folder alias injects",
+               Methode::NarrowForAnsiLoad(p, L"D:\\PATHSH~1\\UE5Dumper.dll", 950) == "D:\\PATHSH~1\\UE5Dumper.dll");
+    }
+    const std::wstring exe = L"™ ℣ ℤ ℥ Ω ℧ ℨ ℩ K Å ℬ ℭ ℮ ℯ ℰ ℱ Ⅎ ℳ ℴ ℵ.exe";
+    EXPECT_EQ_STR("CE's name for the letterlike exe: its best-fit view",
+                  Methode::CeModuleNameUtf8(exe.c_str(), exe.size(), 950),
+                  "? ? ? ? \xCE\xA9 ? ? ? K A ? ? ? ? ? ? ? ? ? ?.exe");
+}
+
+static void Test_Methode_FolderAliasOf() {
+    std::wstring asked;
+    auto fake = [&asked](const std::wstring& p) -> std::wstring {
+        asked = p;
+        return p == L"D:\\\u5DE5\u5177\\UE5CEDumper" ? std::wstring(L"D:\\5DE5~1\\UE5CED~1") : std::wstring();
+    };
+    const std::wstring gongju = L"D:\\\u5DE5\u5177\\UE5CEDumper\\UE5Dumper.dll";   // D:\工具\UE5CEDumper\UE5Dumper.dll
+    EXPECT("the folder's alias plus the DLL's own name",
+           Methode::FolderAliasOf(gongju, fake) == L"D:\\5DE5~1\\UE5CED~1\\UE5Dumper.dll");
+    EXPECT("  ...the lookup is asked about the FOLDER, never the file", asked == L"D:\\\u5DE5\u5177\\UE5CEDumper");
+    EXPECT("no alias when the lookup fails", Methode::FolderAliasOf(L"D:\\x\\UE5Dumper.dll", fake).empty());
+    EXPECT("no alias for a bare name", Methode::FolderAliasOf(L"UE5Dumper.dll", fake).empty());
+    // The production lookup on a real folder (%TEMP%): whatever the volume's 8.3 setting, the DLL keeps its name and
+    // the folder part exists.
+    wchar_t tmp[MAX_PATH] = {};
+    GetTempPathW(MAX_PATH, tmp);
+    const std::wstring leaf = L"\\UE5Dumper.dll";
+    std::wstring dir(tmp);
+    while (!dir.empty() && dir.back() == L'\\') dir.pop_back();
+    const std::wstring a = Methode::FolderAliasOf(dir + leaf, Methode::ShortDirOf);
+    EXPECT("the real lookup answers for %TEMP%", !a.empty());
+    EXPECT("  ...and keeps the DLL's own name",
+           a.size() > leaf.size() && a.compare(a.size() - leaf.size(), leaf.size(), leaf) == 0);
+    EXPECT("  ...under a folder that exists",
+           a.size() > leaf.size() && GetFileAttributesW(a.substr(0, a.size() - leaf.size()).c_str()) != INVALID_FILE_ATTRIBUTES);
+    // (fourth review, R4-SHORTDIROF-IDENTITY-PASSES) %TEMP% here is already 8.3-legal, so a ShortDirOf that returned its
+    // input passed the three checks above. A folder whose name is NOT 8.3-legal: where the volume keeps 8.3 names, the
+    // alias must be exactly the independent GetShortPathNameW answer plus the DLL's name.
+    const std::wstring odd = dir + L"\\ue5 alias \U0001F600 " + std::to_wstring(GetCurrentProcessId());
+    if (CreateDirectoryW(odd.c_str(), nullptr) || GetLastError() == ERROR_ALREADY_EXISTS) {
+        wchar_t sb[MAX_PATH] = {};
+        const DWORD n = GetShortPathNameW(odd.c_str(), sb, MAX_PATH);
+        const std::wstring independent = (n > 0 && n < MAX_PATH) ? std::wstring(sb, n) : std::wstring();
+        const std::wstring got = Methode::FolderAliasOf(odd + leaf, Methode::ShortDirOf);
+        if (!independent.empty() && independent != odd) {
+            EXPECT("a non-8.3 folder: the alias is GetShortPathNameW's answer plus the DLL's name",
+                   got == independent + leaf);
+            EXPECT("  ...which differs from the long path", got != odd + leaf);
+        } else {
+            printf("  (note) %%TEMP%%'s volume makes no 8.3 names: the non-8.3 alias case cannot run here\n");
+            EXPECT("no 8.3 names: the folder comes back unchanged", got == odd + leaf);
+        }
+        RemoveDirectoryW(odd.c_str());
+    } else {
+        EXPECT("could create the non-8.3 test folder under %TEMP%", false);
+    }
+}
+
 int main() {
     // UNBUFFERED, and this is not a style choice. When this exe died on CI with
     // 0xC0000409 (STATUS_STACK_BUFFER_OVERRUN) the log contained NOT ONE LINE of its
@@ -8706,6 +8894,11 @@ int main() {
     std::printf("dll_helpers_test (Renge + Scharf + Radar)\n");
     std::printf("------------------------------------------\n");
 
+    RUN(Test_Renge_CeModuleRelative_NeverTruncates);
+    RUN(Test_Methode_NarrowForAnsiLoad);
+    RUN(Test_Methode_FolderAliasOf);
+    RUN(Test_Methode_MaintainersShapes);
+    RUN(Test_Methode_CeModuleNameUtf8);
     RUN(Test_TryStrToAddr_AcceptsValidHex);
     RUN(Test_TryStrToAddr_RejectsCePlaceholder);
     RUN(Test_TryStrToAddr_RejectsTrailingGarbage);
@@ -8887,6 +9080,7 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
+    RUN(Test_CmcMarkerVersion);
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);

@@ -1,0 +1,6 @@
+{
+ "name": "r7-b01-red",
+ "why": "R7-B-01 red: HEAD with only 1d0cfaba reversed -- IsWeakTargetGarbage loses the UE 5.0-5.3 PendingKill branch (RF_PendingKill 0x20000000 + item bit 29), so a binding to a destroyed-but-not-purged object on a 5.1 host is shown without [garbage]. Everything else (R7-B-04's delegate-site tagging included) stays HEAD.",
+ "reverse_commit": "1d0cfaba",
+ "paths": ["dll/src"]
+}

@@ -60,4 +60,15 @@ public static class ContainerTruncation
         IsTruncated(received, total)
             ? $"Showing the first {received:N0} of {total:N0} {unit} — this view is capped at {received:N0} per fetch."
             : "";
+
+    /// <summary>
+    /// [R7-S10] Status line for a preview whose BOUND is unknown: values from the last refresh, walked at the slider's
+    /// value THEN or cut by the DLL's per-fetch cap -- the reply alone cannot tell which, so naming either control
+    /// would be the false statement <see cref="FixedCapStatusLine"/> exists to avoid. It names none; a re-open
+    /// re-reads at the current value. Empty when not truncated, same as its siblings.
+    /// </summary>
+    public static string UnknownBoundStatusLine(int received, int total) =>
+        IsTruncated(received, total)
+            ? $"Showing the first {received:N0} of {total:N0} entries — re-open this container to re-read it."
+            : "";
 }

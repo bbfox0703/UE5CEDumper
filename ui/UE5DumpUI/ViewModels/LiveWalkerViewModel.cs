@@ -387,10 +387,19 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     public string AobMakerNote => IsAobMakerAvailable
         ? ""
-        : "AOBMaker plugin not found — AA Script export will fall back to clipboard";
+        : AobMakerUnavailable.Text(_aobMaker) + " — AA Script export will fall back to clipboard";   // [R7-S7]
 
     partial void OnIsAobMakerAvailableChanged(bool value)
         => OnPropertyChanged(nameof(AobMakerNote));
+
+    /// <summary>[R7-S12] Publish a probe of the SHARED bridge -- this panel's own, the toolbar ⟳, or the state a send
+    /// left -- repainting the note even when the flag is unchanged: the reason may have moved (absent -> busy), and
+    /// the note is bound (LiveWalkerPanel.axaml).</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        OnPropertyChanged(nameof(AobMakerNote));
+    }
 
     // AOB Symbol toggle for CE XML export. The AOB anchor only makes sense when
     // the Live Walker root is GWorld (the AOB symbol resolves GWorld); from any
@@ -1238,7 +1247,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else if (field.ArrayCount > 0 && !string.IsNullOrEmpty(field.ArrayInnerType))
             {
-                await NavigateToArrayContainerAsync(field);
+                await NavigateToArrayContainerAsync(field, inlineIsCurrent: reread);   // [R7-D-07]
             }
             else if (field.MapCount > 0 && !string.IsNullOrEmpty(field.MapKeyType))
             {
@@ -1333,7 +1342,9 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         return false;
     }
 
-    private async Task NavigateToArrayContainerAsync(LiveFieldValue field)
+    /// <param name="inlineIsCurrent">[R7-D-07] The drill's re-read landed, so an inline preview was walked at the slider's
+    /// CURRENT value. False when it fell back to the last refresh's values, walked at some earlier value.</param>
+    private async Task NavigateToArrayContainerAsync(LiveFieldValue field, bool inlineIsCurrent = true)
     {
         var typeLabel = !string.IsNullOrEmpty(field.ArrayStructType)
             ? field.ArrayStructType : field.ArrayInnerType;
@@ -1363,7 +1374,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Pointer/struct arrays: use inline elements (Phase D/E/F resolved names).
             // read_array_elements is scalar-only and cannot resolve pointer names.
             elements = field.ArrayElements;
-            requested = Math.Min(ArrayLimit, field.ArrayCount);
+            // [R7-D-07] Only a CURRENT preview was asked for at the slider's value. The last refresh's may have been
+            // walked lower, and then a short reply is the old slider value, not the DLL's cap.
+            // [R7-S10] ...or it IS the DLL's cap (a large array at a high slider): unknown, marked -1, names no lever.
+            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1;
         }
         else if (!string.IsNullOrEmpty(field.ArrayInnerAddr) && !string.IsNullOrEmpty(parentAddr))
         {
@@ -1377,7 +1391,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         else
         {
             elements = field.ArrayElements ?? new();
-            requested = Math.Min(ArrayLimit, field.ArrayCount);
+            requested = inlineIsCurrent ? Math.Min(ArrayLimit, field.ArrayCount) : -1;   // [R7-D-07] [R7-S10]
         }
 
         // Only add breadcrumb after successful element retrieval — and only if the
@@ -1393,9 +1407,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // Scalar arrays are re-fetched in full above -- up to the DLL's per-request cap; pointer/struct arrays fall back
         // to the capped inline preview. Compare the elements actually shown against the true count.
         label += ContainerTruncation.BadgeSuffix(elements.Count, field.ArrayCount);
-        var arrTruncStatus = elements.Count < requested
-            ? ContainerTruncation.FixedCapStatusLine(elements.Count, field.ArrayCount, "elements")   // [A3-CONTAINER-4096-ADVICE]
-            : ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
+        var arrTruncStatus = requested < 0
+            ? ContainerTruncation.UnknownBoundStatusLine(elements.Count, field.ArrayCount)           // [R7-S10]
+            : elements.Count < requested
+                ? ContainerTruncation.FixedCapStatusLine(elements.Count, field.ArrayCount, "elements")   // [A3-CONTAINER-4096-ADVICE]
+                : ContainerTruncation.StatusLine(elements.Count, field.ArrayCount);
         if (arrTruncStatus.Length > 0) StatusText = arrTruncStatus;
 
         Breadcrumbs.Add(new BreadcrumbItem
@@ -2875,6 +2891,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             {
                 if (result.Scan is { SparseUnlocated: > 0 } su)   // [P1-SPARSEDELEGATE-REFS] these may not be all
                     scanSuffix += $"  [{su.SparseUnlocated} sparse delegate(s) unreadable — their bindings are missing]";
+                if (result.Scan is { SparseSkipped: true })        // [R7-A-01]
+                    scanSuffix += "  [sparse-delegate bindings not read — their storage was not located or decoded on this build]";
                 ReferencesHeader = $"References to {scanName} ({References.Count})" + scanSuffix;
                 StatusText = $"Found {References.Count} reference(s)" + scanSuffix;
                 _log.Info($"FindReferences: {scanAddr} -> {References.Count} matches{scanSuffix}");
@@ -2909,6 +2927,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             gaps.Add("the scan did not finish");
         if (scan is { SparseUnlocated: > 0 } s)
             gaps.Add($"{s.SparseUnlocated} sparse delegate(s) could not be read, so their bindings are missing");
+        if (scan is { SparseSkipped: true })   // [R7-A-01]
+            gaps.Add("sparse-delegate bindings were not read (their storage was not located or decoded on this build)");
         return gaps.Count == 0
             ? "No references found — likely held by a non-reflected pointer (TUniquePtr / raw pointer / non-UObject struct)"
             : "No references found in what was read — " + string.Join("; ", gaps)
@@ -4617,7 +4637,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateAobWrappedXml(
                     rootBc.Label, breadcrumbsForXml, fieldsForXml,
                     _engineState!.GWorldAob, _engineState.GWorldAobPos, _engineState.GWorldAobLen,
-                    _engineState.ModuleName,
+                    _engineState.CeModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
@@ -4639,7 +4659,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 var rootAddress = AddressHelper.FormatAddress(
-                    rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                    rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
@@ -4974,7 +4994,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 xml = CeXmlExportService.GenerateAobWrappedXml(
                     rootBc.Label, breadcrumbsForXml, fieldsForXml,
                     _engineState!.GWorldAob, _engineState.GWorldAobPos, _engineState.GWorldAobLen,
-                    _engineState.ModuleName,
+                    _engineState.CeModuleName,
                     resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
                     maxDropDownEntries: DropDownLimit,
@@ -4998,7 +5018,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 var rootAddress = AddressHelper.FormatAddress(
-                    rootBc.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                    rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
                     collapsePointerNodes: CollapsePointerNodes,
@@ -5128,7 +5148,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 }
             }
 
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
             if (!_aobMaker.IsAvailable && ok == 0)
             {
                 StatusText = AobMakerUnavailable.Text(_aobMaker);   // [W1-PIPEBUSY-STATUS] busy ≠ "open CE"
@@ -5155,7 +5175,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         var addr = Convert.ToUInt64(hexAddr.Replace("0x", "").Replace("0X", ""), 16);
         var moduleBase = Convert.ToUInt64(_engineState!.ModuleBase.Replace("0x", "").Replace("0X", ""), 16);
         var rva = addr - moduleBase;
-        return $"\"{_engineState.ModuleName}\"+{rva:X}";
+        return $"\"{_engineState.CeModuleName}\"+{rva:X}";
     }
 
     [RelayCommand]
@@ -5188,7 +5208,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 if (!string.IsNullOrEmpty(script))
                     sentToCe = await _aobMaker.CreateAAScriptAsync(
                         $"\"{symbolName}\"", script, autoActivate: false);
-                IsAobMakerAvailable = _aobMaker.IsAvailable;
+                ApplyAobMakerProbe(_aobMaker.IsAvailable);
             }
 
             if (sentToCe)
@@ -5276,7 +5296,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             ? "hardcoded address (GWorld path not forward-walkable)"
             : "hardcoded address (not a GWorld-rooted path)";
         var formattedAddr = AddressHelper.FormatAddress(
-            CurrentAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+            CurrentAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
         return (CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr), note);
     }
 
@@ -5599,7 +5619,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else return;
 
             var formatted = AddressHelper.FormatAddress(
-                hexAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -5643,7 +5663,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                field.PtrAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                field.PtrAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -5659,11 +5679,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (_aobMaker == null) return;
         _lastAobMakerCheck = DateTime.UtcNow;
+        bool ok;
         try
         {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
+            ok = await _aobMaker.CheckAvailabilityAsync();
         }
-        catch { IsAobMakerAvailable = false; }
+        catch { ok = false; }
+        ApplyAobMakerProbe(ok);   // [R7-S12]
     }
 
     /// <summary>
@@ -5882,7 +5904,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             var ok = await _aobMaker!.CreateMemoryRecordAsync(
                 Services.PackedLayoutNotice.RecordNamePrefix + name,
                 StripHexPrefix(address), t.ValueType, t.IsSigned, t.ShowAsHex);
-            IsAobMakerAvailable = _aobMaker.IsAvailable;
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
             StatusText = ok
                 ? $"Added to CE: {name}"
                 : (_aobMaker.IsAvailable
@@ -5904,7 +5926,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                CurrentAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                CurrentAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -5951,7 +5973,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                CurrentOuterAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                CurrentOuterAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -6682,7 +6704,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 {
                     _log.Info($"Invoke script sent to CE: {description}");
                     StatusText = $"Invoke script created in CE: {func.Name}";
-                    if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                    if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
                     return;
                 }
             }
@@ -6694,13 +6716,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (!await Helpers.ClipboardDelivery.TryAsync(_platform,
                     Services.CheatTableBuilder.WrapAaScriptXml(description, script)))
             {
-                if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
                 SetError(Helpers.ClipboardDelivery.FailureText("the invoke script"));
                 _log.Warn($"Invoke script for {func.Name} could not be delivered - AOBMaker " +
                           "did not take it AND the clipboard refused the write");
                 return;
             }
-            if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+            if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
             StatusText = wasAvailable
                 ? $"⚠ AOBMaker pipe broke (CE closed?) — invoke script copied as CE XML (paste into CE's address list)"
                 : $"Invoke script copied as CE XML — paste into CE's address list ({func.Name})";
@@ -6810,7 +6832,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 // Sync the VM-level flag from whatever the bridge ended up at,
                 // so the Notes column reflects post-send reality on the next
                 // repaint.
-                if (_aobMaker != null) IsAobMakerAvailable = _aobMaker.IsAvailable;
+                if (_aobMaker != null) ApplyAobMakerProbe(_aobMaker.IsAvailable);
 
                 StatusText = sentToCe
                     ? $"AA Script created in CE: {func.Name}"

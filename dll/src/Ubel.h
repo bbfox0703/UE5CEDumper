@@ -1220,10 +1220,16 @@ inline const char* UnresolvedWeakLabel(int32_t objIdx, int32_t serial) {
 }
 
 // [VND583-06] " [garbage]" when UE's FWeakObjectPtr::Get() would refuse this RESOLVED target -- Garbage
-// (UE5) / PendingKill (UE4) or Unreachable, per DynOff::IsWeakTargetGarbage -- else "". Such an object
+// (UE5; PendingKill on 5.0-5.3's default config) / PendingKill (UE4) or Unreachable, per
+// DynOff::IsWeakTargetGarbage -- else "". Such an object
 // stays resolvable until the next GC (~61 s by default); the readers keep resolving it, because the object
 // is really there, and append this tag to the text they DISPLAY. Never to ptrName, which navigation uses.
 const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);
+
+// [R7-B-04] A delegate binding's display text: DescribeScriptDelegate + WeakTargetGarbageTag. Every reader that renders
+// a binding goes through this one function.
+std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
+                                    int32_t objIdx, int32_t serial, const std::string& funcName);
 
 // Phase E: check if inner type is a weak-pointer type
 bool IsWeakPointerArrayType(const std::string& innerTypeName);
@@ -1317,7 +1323,10 @@ inline std::string DescribeScriptDelegate(bool hasTarget, const std::string& tar
                                           const std::string& funcName) {
     // NAME_None reads back as the STRING "None", not as an empty string.
     const bool named = !funcName.empty() && funcName != "None";
-    if (!named && objIdx == 0 && serial == 0) return "(unbound)";
+    // [R7-B-02] Serial 0 is UE's null whatever the index (VND583-08): UE4 / 5.0 Reset() writes {INDEX_NONE, 0},
+    // and TScriptDelegate() / Unbind() go through it, so {-1, 0} is every never-bound C++ delegate there.
+    (void)objIdx;
+    if (!named && serial == 0) return "(unbound)";
     if (named && hasTarget)
         return (targetName.empty() ? std::string("?") : targetName) + "::" + funcName;
     if (named) return "(stale)::" + funcName;

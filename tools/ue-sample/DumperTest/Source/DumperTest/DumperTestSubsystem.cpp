@@ -158,7 +158,8 @@ void UDumperTestSubsystem::OnWorldBeginPlay(UWorld& InWorld)
 	ApplyMaxFPS();
 	ApplyIdleWhenNotForeground();
 
-	// ⭐ -DumperTestStarveVM: reserve the ±2 GB window MinHook needs for a trampoline, so
+	// ⭐ -DumperTestStarveVM: reserve the window MinHook searches for a trampoline (+-1 GB,
+	// MAX_MEMORY_RANGE; the sweep covers +-2 GB), so
 	// MH_CreateHook fails with MH_ERROR_MEMORY_ALLOC. Four shipped behaviours depend on that
 	// failure and NOT ONE has ever been observed, because it only happens intermittently in
 	// the wild.

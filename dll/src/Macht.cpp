@@ -105,6 +105,14 @@ bool LooksLikeCodePointer(uintptr_t addr) {
     return (mbi.Protect & execMask) != 0;
 }
 
+bool LooksLikeImagePointer(uintptr_t addr) {
+    if (addr < 0x10000) return false;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(addr), &mbi, sizeof(mbi)) == 0) return false;
+    if (mbi.State != MEM_COMMIT || mbi.Type != MEM_IMAGE) return false;
+    return (mbi.Protect & (PAGE_GUARD | PAGE_NOACCESS)) == 0;
+}
+
 bool GetFunctionExtent(uintptr_t addr, uintptr_t& begin, uintptr_t& end) {
     begin = end = 0;
     if (!addr) return false;
@@ -433,6 +441,12 @@ static void ScanRegionAll(
 // Public: AOBScanAll
 // ============================================================
 
+// (tenth review, R10-02) Test seam: called after AOBScanAll has pinned a non-main module and before it reads it. Null
+// in the product. dll_core_test, which #includes this file, sets it to drop the test's own reference mid-scan -- the
+// only way to prove the pin HOLDS the image and is released exactly once. Not declared in Macht.h, so nothing outside
+// this translation unit can set it.
+static void (*g_afterModulePinForTest)(uintptr_t moduleBase) = nullptr;
+
 std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
     std::vector<uintptr_t> results;
 
@@ -442,10 +456,38 @@ std::vector<uintptr_t> AOBScanAll(const char* pattern, uintptr_t moduleBase) {
         return results;
     }
 
-    if (!moduleBase) moduleBase = GetModuleBase(nullptr);
+    const uintptr_t mainBase = GetModuleBase(nullptr);
+    if (!moduleBase) moduleBase = mainBase;
     if (!moduleBase) {
         LOG_ERROR("AOBScanAll: Cannot get module base");
         return results;
+    }
+
+    // [SCAN-EARLY-TRIGGER-CONTAINED] Hold a reference on any module other than the exe for the length of the scan.
+    // AOBScanAllModules takes its module list from EnumProcessModules and scans afterwards; a DLL the process frees
+    // in between (a booting engine loads and frees many) was read after it was unmapped -- an access violation that
+    // only RunThreadGuarded's catch(...) stopped, ending the scan (measured on 3555, a trigger_scan ~1 s after launch).
+    // GetModuleHandleExW from the base adds a reference, so the image stays mapped until FreeLibrary below; if the
+    // module is already gone the call fails, and if another module now sits at that address its handle differs from
+    // the base -- either way this module has nothing left to scan.
+    // (tenth review, R10-03) The trade, measured: while pinned, the owner's own FreeLibrary returns without unloading,
+    // so OUR FreeLibrary may be the last one -- the module's DLL_PROCESS_DETACH then runs on this scan thread, and its
+    // unload waits one module scan. A module already part-way through unloading is not pinnable (GetModuleHandleExW
+    // fails at once, error 126) and takes the skip above. An SEH guard alone would not do instead: it cannot tell an
+    // unmapped module's range that has since been reused, and would read someone else's bytes as this module's.
+    struct ModulePin {
+        HMODULE h = nullptr;
+        ~ModulePin() { if (h) FreeLibrary(h); }
+    } pin;
+    if (moduleBase != mainBase) {
+        if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
+                                reinterpret_cast<LPCWSTR>(moduleBase), &pin.h)
+            || reinterpret_cast<uintptr_t>(pin.h) != moduleBase) {
+            LOG_DEBUG("AOBScanAll: module at 0x%llX is no longer loaded -- skipped",
+                      static_cast<unsigned long long>(moduleBase));
+            return results;
+        }
+        if (g_afterModulePinForTest) g_afterModulePinForTest(moduleBase);
     }
 
     auto sections = GetExecutableSections(moduleBase);

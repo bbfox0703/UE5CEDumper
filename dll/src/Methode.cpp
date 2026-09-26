@@ -16,6 +16,7 @@
 #include <Windows.h>
 #include <Psapi.h>   // EnumProcessModulesEx, GetModuleFileNameExW
 #include <vector>
+#include "Methode.h"      // NarrowForAnsiLoad -- [PATH-METHODE-NO8DOT3]
 #include "Utf8Helpers.h"
 #include <cstddef>   // offsetof
 #include <cstring>
@@ -329,28 +330,28 @@ static void __stdcall OnInjectAndConnect()
             "UE5CEDumper: Failed to resolve DLL path."));
         return;
     }
-    // InjectDLL takes a narrow (char*) path. Narrow the long path with the system
-    // ANSI code page first; if any character is unrepresentable (lpUsedDefaultChar),
-    // fall back to the 8.3 SHORT path, which is pure ASCII and survives the narrowing
-    // (best-effort — only when the volume keeps 8.3 names). ASCII paths narrow to the
-    // exact old bytes, so only the non-ASCII case this fixes changes behaviour.
+    // InjectDLL takes a narrow (char*) path, which CE hands to LoadLibraryA in the game. An ASCII path goes as it is.
+    // Otherwise: the 8.3 alias of the FOLDER plus the DLL's own long name (never the file's alias -- that renames the
+    // loaded module to UE5DUM~1.DLL, and every name check after the inject misses it; second review, measured) when
+    // it is ASCII, else the EXACT narrowing in the system ANSI code page, else that alias's exact narrowing, else
+    // nothing: best fit names another folder and '?' names none. The order is Methode::NarrowForAnsiLoad's.
+    // Aliases exist only where the volume keeps 8.3 names (C: here, not D:). [PATH-METHODE-NO8DOT3]
+    const std::wstring aliasW = Methode::FolderAliasOf(std::wstring(dllPathW), Methode::ShortDirOf);
+    const std::string narrow = Methode::NarrowForAnsiLoad(dllPathW, aliasW.empty() ? nullptr : aliasW.c_str(), CP_ACP);
     char dllPath[MAX_PATH] = {};
-    BOOL usedDefault = FALSE;
-    int narrowed = WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, dllPathW, -1,
-                                       dllPath, sizeof(dllPath), nullptr, &usedDefault);
-    if (narrowed == 0 || usedDefault) {
-        wchar_t shortW[MAX_PATH] = {};
-        if (GetShortPathNameW(dllPathW, shortW, MAX_PATH) > 0)
-            narrowed = WideCharToMultiByte(CP_ACP, 0, shortW, -1,
-                                           dllPath, sizeof(dllPath), nullptr, nullptr);
-    }
-    if (narrowed == 0 || dllPath[0] == '\0') {
-        LOG_ERROR("CEPlugin: could not narrow DLL path to a loadable ANSI form (err=%lu)",
-                  GetLastError());
+    if (narrow.empty() || narrow.size() >= sizeof(dllPath)) {
+        const std::string whereU8 = Utf8Helpers::EncodeUtf16(dllPathW, wcslen(dllPathW));
+        LOG_ERROR("CEPlugin: this DLL's path has no ANSI form (no exact narrowing, no usable 8.3 alias), so CE's "
+                  "InjectDLL (LoadLibraryA) cannot load it: %s", whereU8.c_str());
         g_CE.ShowMessage(const_cast<char*>(
-            "UE5CEDumper: Failed to resolve a loadable DLL path."));
+            "UE5CEDumper: Cheat Engine cannot inject this UE5Dumper.dll from its folder.\n\n"
+            "The folder's path has characters the Windows code page (ANSI) cannot represent, and there is no\n"
+            "short (8.3) name for it. CE's InjectDLL hands the path to LoadLibraryA, so the DLL would not load.\n\n"
+            "Move the plugin DLL to a folder whose path has only plain English letters, or use\n"
+            "UE5DumpUI > Proxy Deploy > Inject into running game, which does not go through Cheat Engine."));
         return;
     }
+    memcpy(dllPath, narrow.c_str(), narrow.size() + 1);
 
     // Log the EXACT path (UTF-8 of the wide form): the narrow dllPath may be an 8.3
     // alias or otherwise lossy, so the human-readable log uses the wide path.

@@ -593,6 +593,26 @@ long enough to walk it, and VND583-06 is exactly that state.
 the rows that measure exactly those (`Spawn_RecycleChurn`, `Spawn_LastRecycledAddr`). Launch with
 `py tools/verify/launch_dumpertest.py shipping --idle --extra=-DumperTestWeakGarbage`.
 
+### Review 7 hosts (2026-09-25) — TOptional weak / soft / lazy, and a container nested in a struct
+
+Appended to `ADumperTestActor` (after every existing member, so no earlier field moved) for the Review 7 live checks
+(`docs/review7-live-plan.md`). UHT accepted every `TOptional` below on 5.4 (the container optional stays refused).
+
+| field | value | check |
+|---|---|---|
+| `Opt_Weak_Null` | set, `{0, 0}` (Emplace(nullptr)) | **R7-B-02**: reads `null` (a pre-fix build said `(stale)`) |
+| `Opt_Weak_Live` | set, this actor | control: `DumperTestActor_… (DumperTestActor)`, untagged |
+| `Opt_Weak_Garbage` | with **`-DumperTestWeakGarbage`**, re-pointed with `WeakToGarbage` every 5 s; unset without it | **R7-B-04**: `Actor_N (Actor) [garbage]`, the same N as `WeakToGarbage` |
+| `Opt_Weak_Stale` | with the switch, set ONCE to the first garbage target | **R7-B-02**: `null (stale)` after the first GC purge (~61 s) |
+| `Opt_Soft` | set, `/Game/R7S1/NotCooked.NotCooked` (never loaded, never `Get()`) | **R7-S1**: reads the path, never `null` |
+| `Opt_SoftClass` | set, `/Script/Engine.Pawn` | **R7-S1**: reads the path |
+| `Opt_Lazy` | set, GUID `{11111111-22222222-33333333-44444444}` | **R7-S1**: reads the GUID |
+| `Opt_Soft_Unset` | unset | control: `(unset)` |
+| `NestedBag` → `PairsA` / `PairsB` (`TMap<int32,int32>` in `FDumperTestNestedBag`) | empty until **`S11_SetNestedBag(Count)`** (SET semantics, unclamped; 0 empties) | **R7-S11**: an Instance Finder CE XML export resolves them through the struct at the Array Limit (300 pairs at 256 → `PairsA (256 of 300), PairsB (256 of 300)` disclosed); 20000 pairs at 16384 push the export past its 60,000-entry cap -- ⚠ only since **R7-X6**: before it the map emitter never checked the cap and copied 98,890 entries unflagged |
+
+Package identity recaptured the same day (`package-identity.json`); the PE hash changed, so snapshot, bookmark and
+teleport-coordinate data keyed by the old hash is orphaned, as after every repackage.
+
 ### DumperTest58 (2026-09-16) — the 5.5+ half of the optional family, and ONLY that
 
 ⛔ **`DumperTest58` is NOT a copy of this zoo, deliberately.** Two copies of every acceptance value

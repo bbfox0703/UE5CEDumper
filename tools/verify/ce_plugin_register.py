@@ -9,6 +9,11 @@ r"""Register / unregister UE5Dumper.dll as a Cheat Engine plugin, reversibly.
 artifact under test, never a copy, and `unregister` removes it like any UE5Dumper.dll entry (it matches
 on the file name). Only one UE5Dumper.dll entry is ever allowed: register refuses while one exists.
 
+⚠⚠ A WRITE THAT READS BACK IS NOT A WRITE CE SEES (2026-09-26, working-lessons 3.wc). From the desktop app's shell
+this rig registered an entry, `status` showed it, and CE never loaded it: the shell's HKCU view of Plugins64 had
+diverged from the one CE and regedit read. After `register`, start CE and confirm in the DLL's own init log
+(Logs\cheatengine-x86_64-SSE4-AVX2, "Module identity ... path:"). If it did not take, use CE's Settings > Plugins.
+
 WHY THIS EXISTS. Some rows can only be reached through the CE-plugin surface — the
 `Methode.cpp` `OnInjectAndConnect` callback and everything it logs (`B29`, and the
 `CEPlugin:` lines generally). CE loads plugins listed under
@@ -105,6 +110,10 @@ def is_ours(path):
     return pathlib.Path(path).name.lower() == "ue5dumper.dll"
 
 
+CONFIRM = ("  !! this shows THIS shell's view of the key. CE may read a different one (working-lessons 3.wc):\n"
+           "     start CE and check the DLL's init log for 'Module identity ... path:' before trusting it")
+
+
 def status():
     say("plugin DLL : %s" % DLL)
     say("  exists   : %s%s" % (DLL.is_file(),
@@ -116,6 +125,7 @@ def status():
         say("  [%s] enabled=%d  %s%s" % (idx, en, path, mark))
     if not any(is_ours(p) for _i, p, _e in ents):
         say("  -> UE5Dumper.dll is NOT registered")
+    say(CONFIRM)
     return 0
 
 

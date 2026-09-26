@@ -281,6 +281,72 @@ int main() {
         check("T12b and the sweep still did its work", !Exists(fx.root / "Game0"));
     }
 
+    {   // ---- [PATH-SEIN-TRAILING-SPACE] the per-process folder name ----
+        //
+        // A stem ending in a space or in 2+ dots ("Game .exe", "Game...exe") gave Logs\Game \: create_directories
+        // succeeds -- Win32 trims the LAST segment and creates "Game" -- but every file opened INSIDE "Game " fails,
+        // because an intermediate segment is not trimmed. The whole session then went unlogged, with no notice.
+        Fixture fx;
+        blk("the process folder name");
+        check("P1 'Game .exe' -> 'Game'", Sein::ProcessFolderName(L"Game .exe") == L"Game");
+        check("P2 'Game...exe' -> 'Game'", Sein::ProcessFolderName(L"Game...exe") == L"Game");
+        check("P3 'My Game  .exe' -> 'My Game'", Sein::ProcessFolderName(L"My Game  .exe") == L"My Game");
+        check("P4 interior double space kept", Sein::ProcessFolderName(L"DragonSword  Awakening.exe")
+                                                   == L"DragonSword  Awakening");
+        check("P5 leading space kept (Win32 keeps it)", Sein::ProcessFolderName(L" Game.exe") == L" Game");
+        check("P6 '.exe' (empty stem) -> 'unknown', never loose files in Logs\\",
+              Sein::ProcessFolderName(L".exe") == L"unknown");
+        check("P7 the nine characters still map to '_'", Sein::ProcessFolderName(L"a?b:c.exe") == L"a_b_c");
+        check("P8 a single trailing dot of the stem is trimmed too", Sein::ProcessFolderName(L"Game..exe") == L"Game");
+        // The maintainer's letterlike folder name as an exe stem (tools/verify/path_shape_folders.py): kept as is.
+        check("P12 a letterlike-symbol stem is kept",
+              Sein::ProcessFolderName(L"\u2122 \u2123 \u2124 \u2125 \u03A9 \u2127 \u2128 \u2129 K \u00C5 \u212C \u212D \u212E \u212F \u2130 \u2131 \u2132 \u2133 \u2134 \u2135.exe") == L"\u2122 \u2123 \u2124 \u2125 \u03A9 \u2127 \u2128 \u2129 K \u00C5 \u212C \u212D \u212E \u212F \u2130 \u2131 \u2132 \u2133 \u2134 \u2135");
+        check("P11 Win32 trims ASCII space and dot only: an ideographic-space stem is kept",
+              Sein::ProcessFolderName(L"\u3000.exe") == L"\u3000");
+
+        // The trap itself, measured through the same calls Sein makes.
+        std::error_code ec;
+        fs::create_directories(fx.root / L"Game ", ec);
+        FILE* bad = _wfsopen((fx.root / L"Game " / L"init-0.log").c_str(), L"ab", _SH_DENYNO);
+        check("P9 (the trap) a file inside 'Game ' cannot be opened", bad == nullptr);
+        if (bad) fclose(bad);
+        const fs::path good = fx.root / Sein::ProcessFolderName(L"Game .exe");
+        fs::create_directories(good, ec);
+        FILE* ok = _wfsopen((good / L"init-0.log").c_str(), L"ab", _SH_DENYNO);
+        check("P10 inside the sanitised folder it can", ok != nullptr);
+        if (ok) fclose(ok);
+    }
+
+    {   // ---- (second review, T-SEIN-MIRROR-UNTESTED) InitProcessMirror ITSELF, on the trap name ----
+        //
+        // P1-P10 pin the name function and the trap, but nothing ran the function that USES the name: a revert of
+        // InitProcessMirror to the raw stem passed them all. This drives it and reads back what it wrote.
+        // ⚠ LAST CASE ON PURPOSE: Sein::Shutdown (needed to close the five files before the fixture removes them)
+        // ends buffering for the rest of the process.
+        Fixture fx;
+        blk("InitProcessMirror logs into the sanitised folder");
+        fx.AssertSafe("pre-mirror");
+        // (third review, T3-SEIN-M2-PRESET) Undo what Fixture() presets, so M1-M3 read what InitProcessMirror set --
+        // with s_processDirReady left true, deleting its assignment (retention then never runs) passed M2.
+        Sein::s_processDir.clear();
+        Sein::s_processDirReady = false;
+        Sein::s_filesOpen = false;
+        Sein::InitProcessMirror(L"Game .exe");
+        check("M1 the process folder is <root>\\Game", Sein::s_processDir == fx.root / L"Game");
+        check("M2 the folder is ready", Sein::s_processDirReady);
+        check("M3 the category files opened", Sein::s_filesOpen);
+        Sein::Info("TEST", "sein_retention_test mirror probe %d", 4242);   // an unmapped category goes to init
+        Sein::Shutdown();
+        std::string text;
+        if (FILE* f = _wfsopen((fx.root / L"Game" / L"init-0.log").c_str(), L"rb", _SH_DENYNO)) {
+            char buf[4096]; size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), f)) > 0) text.append(buf, n);
+            fclose(f);
+        }
+        check("M4 the line reached <root>\\Game\\init-0.log",
+              text.find("mirror probe 4242") != std::string::npos);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

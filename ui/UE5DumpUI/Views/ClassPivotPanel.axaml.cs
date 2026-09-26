@@ -1,3 +1,4 @@
+using System;
 using System.Collections;
 using System.Collections.Generic;
 using Avalonia.Controls;
@@ -36,10 +37,18 @@ public partial class ClassPivotPanel : UserControl
             ["KeyScore"] = DataGridSortComparers.Double<PivotFieldPick>(r => r.KeyScore),
         };
 
+    // [UI-SPACE-2026-09-25] Discover and the pivot target are SETUP; the field picker and the results below them are
+    // the work. On a 4K screen at 225 % (1067 DIP high) the setup alone was taller than the window, so the results
+    // were never on screen. It may now take at most SetupShare of the panel's height and scrolls beyond that.
+    private const double SetupShare = 0.5;
+    private const double SetupMinHeight = 160;
+
     public ClassPivotPanel()
     {
         InitializeComponent();
         this.FindControl<DataGrid>("DiscoverGrid")?.WireSortComparers(DiscoverSortComparers);
         this.FindControl<DataGrid>("FieldPickGrid")?.WireSortComparers(FieldPickSortComparers);
+        if (this.FindControl<ScrollViewer>("SetupScroller") is { } setup)
+            SizeChanged += (_, e) => setup.MaxHeight = Math.Max(SetupMinHeight, e.NewSize.Height * SetupShare);
     }
 }

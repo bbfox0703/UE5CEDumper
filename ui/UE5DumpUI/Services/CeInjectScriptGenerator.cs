@@ -1,4 +1,5 @@
 using System.Text;
+using UE5DumpUI.Core;
 
 namespace UE5DumpUI.Services;
 
@@ -98,15 +99,17 @@ public static class CeInjectScriptGenerator
     /// <param name="dllPath">Absolute path to <c>UE5Dumper.dll</c>. Baked into the
     /// script, so — unlike the standalone <c>.CT</c> — no directory search is
     /// needed at run time: the UI already knows where its own DLL lives.</param>
-    public static string Generate(string dllPath)
+    /// <param name="codePage">[PATH-CE-INJECT-ANSI] Gives the path's ANSI bytes for a non-ASCII folder (see
+    /// <see cref="CeInjectPathLua"/>). Omitted = the system's.</param>
+    public static string Generate(string dllPath, ISystemCodePage? codePage = null)
     {
         var sb = new StringBuilder(4096);
-        EmitEnable(sb, dllPath);
+        EmitEnable(sb, dllPath, codePage ?? new WindowsSystemCodePage());
         EmitDisable(sb);
         return sb.ToString();
     }
 
-    private static void EmitEnable(StringBuilder sb, string dllPath)
+    private static void EmitEnable(StringBuilder sb, string dllPath, ISystemCodePage codePage)
     {
         Line(sb, "[ENABLE]");
         Line(sb, "{$lua}");
@@ -203,13 +206,15 @@ public static class CeInjectScriptGenerator
         Line(sb);
 
         // ── 1. Inject (only when it is not already mapped) ──
-        Line(sb, $"local DLL_PATH = '{CeLuaHygiene.EscapeLuaString(dllPath)}'");
+        CeInjectPathLua.AppendLocals(sb, dllPath, codePage);
         Line(sb, "if not alreadyLoaded then");
-        Line(sb, "  dbg('[UE5CEDumper] injecting ' .. DLL_PATH)");
+        // [PATH-CE-INJECT-ANSI] Applied nothing: untick, as every bail-out here does.
+        CeInjectPathLua.AppendRefusal(sb, "  ", CeLuaHygiene.DeferredUntickLua("    ") + "\n    return");
+        Line(sb, "  dbg('[UE5CEDumper] injecting ' .. DLL_PATH_SHOWN)");
         Line(sb, "  if not injectDLL(DLL_PATH) then");
         Line(sb, "    showMessage('[UE5CEDumper] injectDLL failed.\\n\\n' ..");
         Line(sb, "      'Possible causes:\\n' ..");
-        Line(sb, "      '  1. The DLL was moved -- expected at:\\n     ' .. DLL_PATH .. '\\n' ..");
+        Line(sb, "      '  1. The DLL was moved -- expected at:\\n     ' .. DLL_PATH_SHOWN .. '\\n' ..");
         Line(sb, "      '  2. Anti-cheat is blocking injection\\n' ..");
         Line(sb, "      '  3. Cheat Engine needs to run as administrator')");
         Line(sb, CeLuaHygiene.DeferredUntickLua("    "));

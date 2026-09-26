@@ -103,7 +103,7 @@ public class DumpServiceTests
     private readonly MockPipeClient _pipe = new();
     private readonly MockLoggingService _log = new();
 
-    private DumpService CreateService() => new(_pipe, _log);
+    private DumpService CreateService() => new(_pipe, _log, UE5DumpUI.Core.IdentityCodePage.Instance);
 
     // Audit #5 AD4 — get_protect_state parsing.
     //
@@ -1384,6 +1384,27 @@ public class DumpServiceTests
         var r = await CreateService().FindReferencesToUObjectAsync("0x100", ct: TestContext.Current.CancellationToken);
 
         Assert.Equal(3, r.Scan!.SparseUnlocated);
+        Assert.False(r.Scan.IsComplete);
+    }
+
+    [Fact]
+    public async Task FindReferencesToUObjectAsync_ParsesSparseSkipped()
+    {
+        // [R7-A-01] An additive key (false from an older DLL): on a compact-set build the sparse pass did not run.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["query_addr"] = "0x100",
+            ["scan"] = new JsonObject
+            {
+                ["objects_scanned"] = 5, ["objects_total"] = 5, ["deadline_hit"] = false, ["sparse_unlocated"] = 0,
+                ["sparse_skipped"] = true,
+            },
+            ["references"] = new JsonArray(),
+        });
+
+        var r = await CreateService().FindReferencesToUObjectAsync("0x100", ct: TestContext.Current.CancellationToken);
+
+        Assert.True(r.Scan!.SparseSkipped);
         Assert.False(r.Scan.IsComplete);
     }
 

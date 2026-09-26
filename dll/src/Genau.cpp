@@ -2644,6 +2644,8 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
     // so the first 8 bytes of an occupied element are a real UObject pointer, and
     // *that* pointer's first qword is a vtable inside a loaded module. A TMap keyed
     // by FName/int/FString cannot satisfy both.
+    // [R7-X3] ANY loaded module, not the main one: a modular build (the UE 4.27 editor, measured) keeps every UObject
+    // vtable in a UE4Editor-*.dll, and the main-module test refused the real storage there.
     //
     // Deliberately NOT applied when the map is empty: FindAll can legitimately run
     // before anything binds a sparse delegate, and rejecting there would lose the
@@ -2666,10 +2668,8 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
         uintptr_t vt = 0;
         if (!Macht::ReadSafe(key, vt)) continue;
         if (!Grimoire::IsUserspacePointer(vt)) continue;
-        // A UObject's vtable lives in the module image; a heap/garbage value does not.
-        uintptr_t modBase = Macht::GetModuleBase(nullptr);
-        uintptr_t modSize = Macht::GetModuleSize(nullptr);
-        if (modBase && modSize && vt >= modBase && vt < modBase + modSize) {
+        // A UObject's vtable lives in a module image; a heap/garbage value does not.
+        if (Macht::LooksLikeImagePointer(vt)) {
             Sein::Info("SCAN:Sparse",
                        "ValidateSparseDelegates: 0x%llX num=%d — slot %d key=0x%llX has a "
                        "module vtable, accepted", (unsigned long long)addr, elemNum, i,
@@ -2956,10 +2956,11 @@ static uint32_t DetectVersionFromPEResource() {
 // CrashReportClient says 4.27.2.0.
 //
 // ⚠ It is a build-provenance signal, so it ranks with the static detectors and NOT above the
-// runtime ladder in Frieren.cpp. Measured on DragonSword: CrashReportClient 5.3.2.0 -> 503,
-// detection 503, and the CMC::GravityDirection marker then raises to 504 at init. That is not a
-// conflict — the two answer different questions ("built from which engine" vs "has which engine
-// features"), and a licensee fork backports features. The ladder must keep the last word.
+// runtime ladder in Frieren.cpp. Measured on DragonSword: CrashReportClient 5.3.2.0 -> 503 and
+// detection 503. The CMC marker then raised it to 504 at init, and that was read here as a licensee
+// backport; it was not. Stock 5.3 already reflects GravityDirection, so the marker was wrong, and it
+// now keys on the 5.4-only SetGravityDirection UFUNCTION [R7-X4] -- DragonSword has only the
+// property. The ladder still keeps the last word; its 5.4 marker just has to BE a 5.4 marker.
 //
 // ⚠ Absence is the COMMON case, not an error: 8 of 66 folders on the maintainer's machine ship
 // one, and Avowed / DQ XI S / OCTOPATH / DumperTest ship none.

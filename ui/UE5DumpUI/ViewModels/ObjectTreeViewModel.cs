@@ -249,7 +249,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
     {
         if (node == null || string.IsNullOrEmpty(node.Address)) return;
         var formatted = AddressHelper.FormatAddress(
-            node.Address, _engineState?.ModuleName, _engineState?.ModuleBase,
+            node.Address, _engineState?.CeModuleName, _engineState?.ModuleBase,
             (AddressFormat)SelectedAddressFormatIndex);
         await _platform.CopyToClipboardAsync(formatted);
     }

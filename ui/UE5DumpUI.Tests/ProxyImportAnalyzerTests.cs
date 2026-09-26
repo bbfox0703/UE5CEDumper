@@ -629,8 +629,41 @@ public class ProxyImportAnalyzerTests
         var now = new DateTime(2026, 8, 18);
         var (sig, disp) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-30), now, 21);
         Assert.Equal(ProxyImportAnalyzer.ProxyLoadSignal.ObservedStale, sig);
-        Assert.Contains("(stale)", disp);
-        Assert.Contains("2026-07-19", disp);
+        // (eighth review, R8-01) The mark LEADS: the Load column clips the END of its text (measured at Inter 15 px, a
+        // trailing "(stale)" never showed), so an old load read as a recent one.
+        Assert.Equal("stale · loaded 2026-07-19", disp);
+    }
+
+    /// <summary>
+    /// (ninth review, R9-02) The Load column must hold its LONGEST text: a shared folder whose newest log is stale,
+    /// "shared · stale · loaded 2026-07-19". Measured from the Inter Regular in Avalonia.Fonts.Inter 12.1.3 at the
+    /// cell's 15 px: ~248 px of text + 12 px margins each side = ~272 px, so the 240 px of R8-01 cut the date again.
+    /// The exact string is pinned too: if the text grows, the width must be re-measured.
+    /// </summary>
+    [Fact]
+    public void LoadColumn_HoldsTheLongestLoadText()
+    {
+        var now = new DateTime(2026, 8, 18);
+        var (_, stale) = ProxyImportAnalyzer.ClassifyLoad(true, now.AddDays(-30), now, 21);
+        Assert.Equal("shared · stale · loaded 2026-07-19", ProxyDeployService.SharedTag + stale);
+
+        string axaml = File.ReadAllText(RepoFileForWidth("ui/UE5DumpUI/Views/ProxyDeployPanel.axaml"));
+        var m = System.Text.RegularExpressions.Regex.Match(axaml,
+            @"<DataGridTextColumn\b[^>]*Binding=""\{Binding LoadObservation\}""[^>]*\bWidth=""(\d+)""");
+        Assert.True(m.Success, "no Load column (Binding LoadObservation) with a Width in ProxyDeployPanel.axaml");
+        Assert.True(int.Parse(m.Groups[1].Value) >= 280,
+            $"Load column is {m.Groups[1].Value} px; its longest text needs ~272 (see this test's summary)");
+    }
+
+    private static string RepoFileForWidth(string relative)
+    {
+        var dir = AppContext.BaseDirectory;
+        for (var i = 0; i < 8 && dir is not null; i++, dir = Path.GetDirectoryName(dir))
+        {
+            var candidate = Path.Combine(dir, relative.Replace('/', Path.DirectorySeparatorChar));
+            if (File.Exists(candidate)) return candidate;
+        }
+        throw new FileNotFoundException($"could not locate {relative} from {AppContext.BaseDirectory}");
     }
 
     [Fact]
@@ -654,6 +687,39 @@ public class ProxyImportAnalyzerTests
     {
         Assert.Equal(expected, ProxyImportAnalyzer.ProcessLogFolderName(input));
     }
+
+    // [PATH-SEIN-TRAILING-SPACE] A stem ending in a space or dots: Win32 creates "Game" for "Game ", and a file INSIDE
+    // "Game " cannot be opened -- so the DLL's session went unlogged. The DLL now trims them (Sein::ProcessFolderName),
+    // and this key, which finds the DLL's folder for the Load column, must trim them identically.
+    [Theory]
+    [InlineData("Game .exe", "Game")]
+    [InlineData("Game...exe", "Game")]
+    [InlineData("Game..exe", "Game")]
+    [InlineData("My Game  .exe", "My Game")]
+    [InlineData("DragonSword  Awakening.exe", "DragonSword  Awakening")]   // interior spaces are kept
+    [InlineData(" Game.exe", " Game")]                                       // a leading space is legal and kept
+    [InlineData(".exe", "unknown")]                                          // never loose files in Logs\
+    [InlineData("a?b:c.exe", "a_b_c")]
+    [InlineData("\u3000.exe", "\u3000")]                                      // Win32 trims ASCII space and dot only
+    [InlineData("\u00A0.exe", "\u00A0")]
+    public void ProcessLogFolderName_TrimsWhatWin32Trims(string input, string expected)
+        => Assert.Equal(expected, ProxyImportAnalyzer.ProcessLogFolderName(input));
+
+    // The UI's own mirror folder must land in the SAME folder as the DLL's.
+    [Theory]
+    [InlineData("Game .exe", "Game")]
+    [InlineData("Game...exe", "Game")]
+    [InlineData("My Game  .exe", "My Game")]
+    [InlineData("DragonSword  Awakening.exe", "DragonSword  Awakening")]
+    [InlineData(".exe", "unknown")]
+    [InlineData("Octopath_Traveler-Win64-Shipping.exe", "Octopath_Traveler-Win64-Shipping")]
+    // (second review, MIRROR-WS-DIVERGE) A stem that is only Unicode white space is a legal folder name, and the DLL
+    // logs into it; the mirror's extra IsNullOrWhiteSpace -> "unknown" split the session across two folders.
+    [InlineData("\u3000.exe", "\u3000")]
+    [InlineData("\u00A0.exe", "\u00A0")]
+    [InlineData("", "unknown")]                                                // no name at all: never Logs\ itself
+    public void UiMirrorFolder_MatchesTheDllFolder(string process, string expected)
+        => Assert.Equal(expected, UE5DumpUI.Services.LoggingService.SanitizeFolderName(process));
 
     [Fact]
     public void ProcessLogFolderName_EmptyInput_IsEmpty()

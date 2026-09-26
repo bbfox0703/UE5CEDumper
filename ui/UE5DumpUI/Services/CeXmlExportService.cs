@@ -1359,12 +1359,14 @@ public static class CeXmlExportService
         sb.AppendLine($"      <AssemblerScript>");
 
         sb.AppendLine("[ENABLE]");
-        sb.AppendLine($"define({symbolName},{formattedAddress})");
-        sb.AppendLine($"registersymbol({symbolName})");
+        // [PATH-CEXML-AMP] XML-escaped: an exe name may hold '&' ("Tom&Jerry-Win64-Shipping.exe"+RVA). CE, and
+        // ExtractAssemblerScript for the AOBMaker push, un-escape it back to the raw script.
+        sb.AppendLine($"define({EscapeXmlContent(symbolName)},{EscapeXmlContent(formattedAddress)})");
+        sb.AppendLine($"registersymbol({EscapeXmlContent(symbolName)})");
         sb.AppendLine();
 
         sb.AppendLine("[DISABLE]");
-        sb.AppendLine($"unregistersymbol({symbolName})");
+        sb.AppendLine($"unregistersymbol({EscapeXmlContent(symbolName)})");
 
         sb.AppendLine($"      </AssemblerScript>");
         sb.AppendLine($"    </CheatEntry>");
@@ -1405,6 +1407,9 @@ public static class CeXmlExportService
     /// The script scans for the GWorld AOB pattern at runtime, registers a unique CE symbol,
     /// and a "base" pointer entry dereferences it. All breadcrumb/field children nest under base.
     /// This format survives game restarts (re-scans AOB on script activation).
+    /// <para>The <c>moduleName</c> argument is NOT used: the script scans CE's own name for the main module
+    /// (<c>process</c>), which is the ANSI bytes <c>enumModules</c> compares -- a baked name is not, for a non-ASCII
+    /// exe. Kept only so callers need not change. [PATH-CE-MODULE-VIEW] (skeptic T10)</para>
     /// </summary>
     public static string GenerateAobWrappedXml(
         string rootName,
@@ -1493,7 +1498,7 @@ public static class CeXmlExportService
         sb.AppendLine($"{baseIndent}  <ShowAsHex>1</ShowAsHex>");
         sb.AppendLine($"{baseIndent}  <ShowAsSigned>0</ShowAsSigned>");
         sb.AppendLine($"{baseIndent}  <VariableType>8 Bytes</VariableType>");
-        sb.AppendLine($"{baseIndent}  <Address>{symbolName}</Address>");
+        sb.AppendLine($"{baseIndent}  <Address>{EscapeXmlContent(symbolName)}</Address>");
         sb.AppendLine($"{baseIndent}  <Offsets>");
         sb.AppendLine($"{baseIndent}    <Offset>0</Offset>");
         sb.AppendLine($"{baseIndent}  </Offsets>");
@@ -1631,7 +1636,9 @@ public static class CeXmlExportService
         sb.AppendLine("      modList = enumModules()");
         sb.AppendLine("    end)");
         sb.AppendLine("    for _, mod in ipairs(modList) do");
-        sb.AppendLine("      if string.lower(mod.Name) == string.lower(moduleName) then");
+        // [PATH-CE-MODULE-VIEW] Name is ANSI bytes; a caller may hold CE's UTF-8 name (the symbol handler's).
+        sb.AppendLine("      if string.lower(mod.Name) == string.lower(moduleName)");
+        sb.AppendLine("         or string.lower(ansiToUTF8(mod.Name) or '') == string.lower(moduleName) then");
         sb.AppendLine("        baseAddr = mod.Address");
         sb.AppendLine("        maxAddr = baseAddr + mod.Size");
         sb.AppendLine("        break");
@@ -2731,6 +2738,7 @@ public static class CeXmlExportService
             {
                 foreach (var elem in field.ArrayElements)
                 {
+                    if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
                     int elemByteOffset = elem.Index * field.ArrayElemSize;
                     EmitGroupPlaceholder(sb, elemIndent,
                         DecorateDesc($"[{elem.Index}]", elemByteOffset, field.ArrayStructType),
@@ -2792,6 +2800,7 @@ public static class CeXmlExportService
             var strIndent = indent + "  ";
             foreach (var elem in field.ArrayElements)
             {
+                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
                 int elemByteOffset = elem.Index * field.ArrayElemSize;
                 EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{elem.Index}]", elemByteOffset, null),
                     $"+{elemByteOffset:X}", field.ArrayInnerType);
@@ -2931,6 +2940,8 @@ public static class CeXmlExportService
         int elemPad = ElemDelegatePad(field);
         foreach (var elem in field.ArrayElements)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+
             // Element: simple offset from the already-dereferenced Data pointer.
             int elemByteOffset = elem.Index * field.ArrayElemSize;
 
@@ -3140,6 +3151,8 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements ?? new List<ArrayElementValue>())
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // The soft-path string is a meaningful asset identity (not an object
             // instance name), so it's kept as the element's name. +Offset annotates;
@@ -3215,6 +3228,8 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements!)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // Bare index for the synth field (EmitResolvedStruct re-decorates it via
             // EmitFields); a separately-decorated form for the shallow placeholder paths.
@@ -3396,6 +3411,10 @@ public static class CeXmlExportService
 
         foreach (var elem in field.MapElements)
         {
+            // [R7-X6] The budget is checked per element here too: EmitFields only checks BETWEEN fields, so a big
+            // map emitted last ran past the ceiling unflagged (98,890 entries, measured on DumperTest's NestedBag).
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+
             int elemByteOffset = elem.Index * stride;
 
             // Record / primitive-leaf flatten: when the map VALUE is a struct whose entire subtree
@@ -3548,6 +3567,8 @@ public static class CeXmlExportService
 
         foreach (var elem in field.SetElements)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+
             int elemByteOffset = elem.Index * stride;
             // An object element's instance name is dropped (its class returns via +Type
             // downstream); a scalar/string element value is its identity, kept as the name.
@@ -3613,6 +3634,8 @@ public static class CeXmlExportService
 
         foreach (var row in field.DataTableRowData)
         {
+            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+
             // Level 2: Row — deref uint8* at sparseIndex*stride+fnameSize. The row's
             // FName key is its identity, kept as the name; +Offset annotates.
             int rowPtrOffset = row.SparseIndex * field.DataTableStride + field.DataTableFNameSize;
@@ -3703,7 +3726,7 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
         if (varType != null)
             sb.AppendLine($"{indent}  <VariableType>{varType}</VariableType>");
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}  <CheatEntries>");
     }
@@ -3735,7 +3758,7 @@ public static class CeXmlExportService
         // excluded — its address is absolute, not "+...".
         if (_collapsePointerNodes && address.StartsWith("+"))
             sb.AppendLine($"{indent}  <Options moHideChildren=\"1\" moDeactivateChildrenAsWell=\"1\"/>");
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
@@ -3768,7 +3791,7 @@ public static class CeXmlExportService
             sb.AppendLine($"{indent}  <BitLength>{ceField.BitLength}</BitLength>");
             sb.AppendLine($"{indent}  <ShowAsBinary>0</ShowAsBinary>");
         }
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }
@@ -3808,7 +3831,7 @@ public static class CeXmlExportService
         sb.AppendLine($"{indent}  <Unicode>{(unicode ? 1 : 0)}</Unicode>");
         sb.AppendLine($"{indent}  <CodePage>{(codepage ? 1 : 0)}</CodePage>");
         sb.AppendLine($"{indent}  <ZeroTerminate>1</ZeroTerminate>");
-        sb.AppendLine($"{indent}  <Address>{address}</Address>");
+        sb.AppendLine($"{indent}  <Address>{EscapeXmlContent(address)}</Address>");   // [PATH-CEXML-AMP]
         EmitOffsets(sb, indent, offsets);
         sb.AppendLine($"{indent}</CheatEntry>");
     }

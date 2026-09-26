@@ -547,7 +547,7 @@ public interface IDumpService
     Task<MovementSetResult> ResetMovementAsync(string knob, CancellationToken ct = default);
 
     /// <summary>
-    /// Set the pawn's gravity DIRECTION (UE5.4+ GravityDirection) to (x,y,z)
+    /// Set the pawn's gravity DIRECTION (UE5.3+ GravityDirection) to (x,y,z)
     /// (normalized DLL-side, held by the re-assert worker). (0,0,0) = OFF (restore
     /// the captured default). State 1 = active, 0 = off, negative = not reflected
     /// (pre-5.4) / no pawn.

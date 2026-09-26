@@ -407,7 +407,17 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// </summary>
     public string AobMakerNote => IsAobMakerAvailable
         ? ""
-        : "AOBMaker plugin not found — AA Script export will fall back to clipboard";
+        // [R7-S7] WHY it is not reachable, in the sentence every other surface shows: "plugin not found" sent a user
+        // whose pipe was merely busy to reinstall the plugin.
+        : AobMakerUnavailable.Text(_aobMaker) + " — AA Script export will fall back to clipboard";
+
+    /// <summary>[R7-S7] Publish a probe run elsewhere on the shared bridge, repainting the note even when the flag is
+    /// unchanged -- the reason may have moved (absent -> busy).</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        OnPropertyChanged(nameof(AobMakerNote));
+    }
 
     // Filter inputs all funnel into a single ApplyFilter pass. Each
     // partial method fires once per ObservableProperty change.
@@ -437,14 +447,16 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     {
         if (_aobMaker == null) { IsAobMakerAvailable = false; return; }
         _lastAobMakerCheck = DateTime.UtcNow;
+        bool ok;
         try
         {
-            IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
+            ok = await _aobMaker.CheckAvailabilityAsync();
         }
         catch
         {
-            IsAobMakerAvailable = false;
+            ok = false;
         }
+        ApplyAobMakerProbe(ok);   // [R7-S7]
     }
 
     /// <summary>

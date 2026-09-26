@@ -115,6 +115,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private int _gworldAobLen;
     [ObservableProperty] private string _moduleName = "";
 
+    /// <summary>[PATH-CE-MODULE-VIEW] CE's name for the module (<see cref="EngineState.CeModuleName"/>), for the
+    /// AOBMaker symbol scripts: CE matches them against its own ANSI view. <see cref="ModuleName"/> stays the
+    /// displayed, real name.</summary>
+    private string _ceModuleName = "";
+
     // --- GEngine (&GEngine slot) + its AOB metadata, same contract as GWorld's ---
     [ObservableProperty] private string _gEngineAddress = "";
     [ObservableProperty] private string _gEngineMethod = "not_found";
@@ -126,6 +131,23 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     // --- AOBMaker CE Plugin bridge ---
     [ObservableProperty] private bool _isAobMakerAvailable;
+    /// <summary>[R7-D-04] The System tab's "not reachable" line, by WHY the last probe failed: the
+    /// <see cref="Helpers.AobMakerUnavailable"/> sentence the toolbar, the injects, Live Walker and Teleport already show.
+    /// It was a fixed "check CE plugin installation", which told a user whose pipe was merely BUSY (a second Cheat
+    /// Engine holds the single-instance server) to reinstall the plugin.</summary>
+    public string AobMakerOfflineText => "\u25CB " + Helpers.AobMakerUnavailable.Text(_aobMaker);
+
+    /// <summary>[R7-S7] Any setter of the flag -- the toolbar ⟳ sets it directly -- repaints the line and the buttons that
+    /// read it. A change hook alone misses false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
+    partial void OnIsAobMakerAvailableChanged(bool value) => NotifyAobMakerProperties();
+
+    /// <summary>[R7-S7] Publish a probe another panel ran on the SHARED bridge: set the flag AND repaint, even when the
+    /// flag is unchanged, because the reason behind "not reachable" may have moved (absent -> busy).</summary>
+    public void ApplyAobMakerProbe(bool available)
+    {
+        IsAobMakerAvailable = available;
+        NotifyAobMakerProperties();
+    }
 
     // --- Extra Scan state ---
     [ObservableProperty] private bool _isScanning;
@@ -624,6 +646,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GengineAobPos = state.GEngineAobPos;
         GengineAobLen = state.GEngineAobLen;
         ModuleName = state.ModuleName;
+        _ceModuleName = state.CeModuleName;
         PeHash = state.PeHash;
         DllBuildNumber = state.DllBuildNumber;
         // Re-sync the invoke timeout from the DLL (already-applied per-game override or default).
@@ -648,7 +671,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             IsAobMakerAvailable = await _aobMaker.CheckAvailabilityAsync();
             NotifyAobMakerProperties();
         }
-        catch { IsAobMakerAvailable = false; }
+        catch { IsAobMakerAvailable = false; OnPropertyChanged(nameof(AobMakerOfflineText)); }
     }
 
     /// <summary>Hide the stale pointer block + all HasData-gated badges/actions on
@@ -794,6 +817,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAsmGWorldScan));
         OnPropertyChanged(nameof(CanRegisterGWorldSymbol));
         OnPropertyChanged(nameof(CanRegisterGEngineSymbol));
+        OnPropertyChanged(nameof(AobMakerOfflineText));   // [R7-D-04] the reason moves with every probe
     }
 
     private bool _suppressOverrideSelectionEvent;
@@ -1116,7 +1140,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         if (_aobMaker == null || string.IsNullOrEmpty(GworldAob)) return;
 
         string symbolName = "gworld_addr";
-        string module = !string.IsNullOrEmpty(ModuleName) ? ModuleName : "game.exe";
+        string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
 
         // Send CreateSymbolScript — the CE Plugin's BuildSymbolScanScript() generates
         // a full AA script that: AOBScanModule for the pattern, reads the RIP-relative
@@ -1148,7 +1172,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         if (_aobMaker == null || string.IsNullOrEmpty(GengineAob)) return;
 
         string symbolName = "gengine_addr";
-        string module = !string.IsNullOrEmpty(ModuleName) ? ModuleName : "game.exe";
+        string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
 
         bool success = await _aobMaker.CreateSymbolScriptAsync(
             name: $"&GEngine → {symbolName}",

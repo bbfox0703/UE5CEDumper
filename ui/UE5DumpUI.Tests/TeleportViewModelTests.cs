@@ -2824,7 +2824,7 @@ public class TeleportViewModelTests
             return new System.Text.Json.Nodes.JsonObject
                 { ["ok"] = true, ["code"] = 0, ["map"] = "", ["source"] = "raw" };
         });
-        var svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService());
+        var svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
         var rel = await svc.TeleportRelativeAsync(100, true, TestContext.Current.CancellationToken);
         var pose = await svc.TeleportGetPoseAsync(TestContext.Current.CancellationToken);
@@ -2882,6 +2882,30 @@ public class TeleportViewModelTests
         vm.AddCoordFromFieldsCommand.Execute(null);
 
         Assert.Equal("Map01", Assert.Single(vm.CoordEntries).Map);
+    }
+
+    [Fact]
+    public async Task SaveCurrentPos_is_refused_while_the_library_is_unavailable()
+    {
+        // [PATH-UI-LEGACY-QMARK] (skeptic T5) The save-pose path of the refusal, which no test reached.
+        string dir = Path.Combine(Path.GetTempPath(), "ue5-qmark-pose", Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var platform = new MockPlatformService(dir);
+            var fake = new FakeDumpService { NextPose = new() { Code = 0, Map = "Map01" } };
+            var vm = new TeleportViewModel(fake, new NoopLogger(), platform,
+                coordStore: new CoordinateLibraryStore(platform));
+            vm.IsConnected = true;
+            vm.LoadCoordLibraryForGame("???-Win64-Shipping.exe");
+
+            await vm.SaveCurrentPosToLibraryCommand.ExecuteAsync(null);
+
+            Assert.Empty(vm.CoordEntries);
+            Assert.Contains("Nothing was saved", vm.CoordStatus);
+            Assert.Empty(Directory.GetFiles(dir, "*.json", SearchOption.AllDirectories));
+        }
+        finally { try { Directory.Delete(dir, true); } catch { /* best effort */ } }
     }
 
     [Fact]

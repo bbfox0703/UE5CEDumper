@@ -60,12 +60,13 @@ extern "C" void UE5_Shutdown();
 
 #ifdef UE5_PROXY_BUILD
 // ── Proxy mutual exclusion ─────────────────────────────────────────────────
-// When the user has both proxy DLLs (version.dll + dinput8.dll) sitting in
-// the game folder, both will be loaded by the OS. Only the first to attach
-// runs full init (pipe server, mailbox, AOB scan); the second becomes a
-// passive forwarder — its OS-API stubs still work, but it skips all
-// UE5CEDumper-side init so we don't get duplicate pipe servers, log files,
-// or background threads.
+// When two or more of our proxy DLLs (any of version / dinput8 / dxgi / winmm) sit in
+// the game folder, the OS loads each one the game or its imports name. Only the FIRST
+// to attach runs full init (pipe server, mailbox, AOB scan); every later one becomes a
+// passive forwarder — its OS-API stubs still work, but it skips all UE5CEDumper-side
+// init so we don't get duplicate pipe servers, log files, or background threads.
+// Which one wins is load order, not the user's choice: a statically imported flavour
+// (winmm, dxgi) usually attaches before a late-loaded version.dll. [HEITER-PAIRING-COMMENT]
 //
 // The mutex handle is intentionally never closed — its lifetime spans the
 // whole process. The OS reclaims it on process exit.
@@ -329,8 +330,13 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD reason, LPVOID /*reserved*/) {
             if (g_primaryProxyMutex != nullptr &&
                 mutexErr == ERROR_ALREADY_EXISTS) {
                 // Cannot log — Sein is deliberately not initialized in passive mode, and
-                // initializing it is exactly what this branch must avoid. The first
-                // instance records the pairing from its own side instead (below).
+                // initializing it is exactly what this branch must avoid. NOTHING records
+                // the pairing at run time: the first instance does not know a second one
+                // attached, so a double leaves no trace in the logs. (An earlier comment
+                // here said the first instance records it "below" -- no such code exists;
+                // [HEITER-PAIRING-COMMENT].) Doubles are handled on DISK instead: the Proxy
+                // Deploy grid warns "Multiple proxy DLLs deployed", and Deploy refuses to
+                // add a second of ours ([PROXY-DOUBLE-GUARD]).
                 return TRUE;
             }
             // A NULL handle means the guard is not armed at all. Record it once we have

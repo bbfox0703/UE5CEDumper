@@ -33,9 +33,24 @@ if syntaxcheck then return end
 -- table's filename. Never from a folder that merely happened to win the probe --
 -- pinning, say, a stale copy left in CE's install folder would silently load a
 -- mismatched build on every future run, which is worse than failing loudly.
+-- (fourth review, R4-MRU-RELATIVE-SUBFOLDER-SHADOWS) An ABSOLUTE path: a drive (X:\ or X:/) or UNC (\\). A relative
+-- one (a recent-files entry CE stored for `cheatengine.exe sub\UE5CEDumper.CT`) reads CE's CURRENT folder, which is
+-- not where that table was -- never probed, never recorded.
+function ue5_isAbsolutePath(p)
+    return type(p) == "string" and (p:find("^%a:[\\/]") ~= nil or p:find("^[\\/][\\/]") ~= nil)
+end
+
+-- (sixth review, R6-01 -- measured) A drive ROOT keeps its separator: stripped to a bare 'E:' it is drive-relative, and
+-- every reader drops it. A legacy bare 'X:' line (both writers wrote that until this fix) is read as that root.
+function ue5_driveRootFix(p)
+    if type(p) == "string" and p:match("^%a:$") then return p .. "\\" end
+    return p
+end
+
 function ue5_recordDllDir(dir)
     if type(dir) ~= "string" or dir == "" then return end
-    dir = dir:gsub("[\\/]+$", "")
+    if not ue5_isAbsolutePath(dir) then return end
+    dir = ue5_driveRootFix((dir:gsub("[\\/]+$", "")))
     pcall(function()
         local ad = os.getenv("LOCALAPPDATA") or ""
         if ad == "" then return end
@@ -45,8 +60,9 @@ function ue5_recordDllDir(dir)
         local h = io.open(p, "r")
         if h then
             for line in h:lines() do
-                line = line:gsub("^\239\187\191", ""):gsub("^%s+", ""):gsub("%s+$", "")
-                if line ~= "" and line:sub(1, 1) ~= "#"
+                line = ue5_driveRootFix((line:gsub("^\239\187\191", ""):gsub("^%s+", ""):gsub("%s+$", "")))
+                -- (fifth review, R5-04) An older .CT's self-heal could write a RELATIVE line: not carried forward.
+                if line ~= "" and line:sub(1, 1) ~= "#" and ue5_isAbsolutePath(line)
                    and line:lower() ~= dir:lower() and #keep &lt; 3 then
                     keep[#keep + 1] = line
                 end
@@ -64,6 +80,27 @@ function ue5_recordDllDir(dir)
     end)
 end
 
+-- The folders dll-path.txt records, newest first -- ABSOLUTE ones only (fifth review, R5-04): a relative line, which
+-- an older .CT's self-heal could write, would be probed against CE's current folder. A function so the Lua suite can
+-- run it; any I/O error reads as an empty list.
+function ue5_readBreadcrumbs(path)
+    local out, dropped = {}, 0
+    pcall(function()
+        local h = io.open(path, "r")
+        if not h then return end
+        for line in h:lines() do
+            line = line:gsub("^\239\187\191", "")            -- UTF-8 BOM, if an editor added one
+            line = ue5_driveRootFix((line:gsub("^%s+", ""):gsub("%s+$", "")))    -- also eats the CR of a CRLF
+            if line ~= "" and line:sub(1, 1) ~= "#" then
+                if ue5_isAbsolutePath(line) then out[#out + 1] = line else dropped = dropped + 1 end
+            end
+        end
+        h:close()
+    end)
+    -- (sixth review, R6-02) The count of relative lines dropped: the slot says so instead of "nothing recorded".
+    return out, dropped
+end
+
 -- Report the RESOLVED DLL's size beside the path it chose, so a stale build is
 -- visible. This table cannot read the DLL's real build stamp here: it is not a C ABI
 -- export (only logged to init-0.log and carried on the pipe), the DLL is not injected
@@ -72,9 +109,65 @@ end
 -- Feb-2026 build in CE's install folder was ~0.5 MB. See docs/todo.md
 -- [STALEDLL-2026-08-18]. A global so both the inject [ENABLE] chunk and the startup
 -- replay (different Lua chunks) can call it.
+-- [PATH-CT-INJECT-ANSI] One path in BOTH encodings: returns ansi, utf8. injectDLL hands its string to
+-- LoadLibraryA and Lua's io.open is fopen -- both read the ANSI code page -- while showMessage, fileExists and
+-- CE's dialogs speak UTF-8. A found path arrives in either (fromAnsi = io.open found it, so it IS ansi bytes).
+-- ansi is nil when the code page cannot hold the path: the round trip through CE's UTF8ToAnsi / ansiToUTF8 must
+-- give the path back, or the bytes would name another folder (best fit turns an accented e into e) or none ('?').
+function ue5_pathForms(p, fromAnsi)
+    if type(p) ~= "string" or p == "" then return nil, nil end
+    if not p:find("[\128-\255]") then return p, p end
+    if fromAnsi then
+        local ok, u = pcall(ansiToUTF8, p)
+        if ok and type(u) == "string" and u ~= "" then return p, u end
+        return p, p
+    end
+    local ok, a = pcall(UTF8ToAnsi, p)
+    if not ok or type(a) ~= "string" or a == "" then return nil, p end
+    local ok2, back = pcall(ansiToUTF8, a)
+    if not ok2 or back ~= p then return nil, p end
+    return a, p
+end
+
+-- [PATH-CT-MRU-ZERO] reg.exe prints a REG_MULTI_SZ with the LITERAL two characters \0 between entries -- and a path
+-- holds the same two characters wherever a folder name starts with 0 (D:\0Games\...), so a blind split on every one
+-- turned such an entry into 'D:' plus a RELATIVE path (measured on CE's VM). A separator is a \0 that the next
+-- ABSOLUTE path follows (X:\ or \\), or the end. Entries are trimmed. A global so the Lua suite can lift it.
+function ue5_splitRegMultiSz(data)
+    local out = {}
+    if type(data) ~= "string" or data == "" then return out end
+    local pos = 1
+    while true do
+        local cut, from = nil, pos
+        while true do
+            local a, b = data:find("\\0", from, true)
+            if not a then break end
+            local rest = data:sub(b + 1)
+            -- (second review, MRU-REL-MERGE) ...or where the entry before it already ends in a table's extension:
+            -- CE can store a RELATIVE entry (started with a relative table argument, then saved), and gluing it onto
+            -- the entry before wrecked that one too.
+            local before = data:sub(pos, a - 1):lower()
+            if rest == "" or rest:find("^%s*%a:[\\/]") or rest:find("^%s*\\\\")
+               or before:find("%.ct%s*$") or before:find("%.cetrainer%s*$") then cut = a break end
+            from = b + 1
+        end
+        local entry = (cut and data:sub(pos, cut - 1) or data:sub(pos)):gsub("^%s+", ""):gsub("%s+$", "")
+        if entry ~= "" then out[#out + 1] = entry end
+        if not cut then break end
+        pos = cut + 2
+    end
+    return out
+end
+
 function ue5_dllFileSize(path)
     if type(path) ~= "string" or path == "" then return nil end
     local f = io.open(path, "rb")
+    -- [PATH-CT-INJECT-ANSI] fopen reads ANSI bytes: a UTF-8 path (the breadcrumb, a dialog) opens only as its
+    -- ANSI form. Guarded, so the function still works where it is lifted on its own (dll_size_text_test).
+    if not f and ue5_pathForms then
+        local a = ue5_pathForms(path, false)
+        if a and a ~= path then f = io.open(a, "rb") end
+    end
     if not f then return nil end
     local ok, sz = pcall(function() return f:seek("end") end)
     f:close()
@@ -187,29 +280,26 @@ _slot("folder of the running script", _scriptDir,
 local _appData = ""
 pcall(function() _appData = os.getenv("LOCALAPPDATA") or "" end)
 
-local _crumbs = {}
-if _appData ~= "" then
-    pcall(function()
-        local h = io.open(_appData .. "\\UE5CEDumper\\dll-path.txt", "r")
-        if not h then return end
-        for line in h:lines() do
-            line = line:gsub("^\239\187\191", "")            -- UTF-8 BOM, if an editor added one
-            line = line:gsub("^%s+", ""):gsub("%s+$", "")    -- also eats the CR of a CRLF
-            if line ~= "" and line:sub(1, 1) ~= "#" then _crumbs[#_crumbs + 1] = line end
+-- (sixth review, R6-02 / R6-06) A global function so the Lua suite runs the slots themselves; called once, right
+-- below. A file whose every line was dropped (relative lines an older .CT wrote) says so: "no folder recorded yet"
+-- would be false then.
+function ue5_breadcrumbSlots(appData)
+    local crumbs, dropped = {}, 0
+    if appData ~= "" then crumbs, dropped = ue5_readBreadcrumbs(appData .. "\\UE5CEDumper\\dll-path.txt") end
+    if #crumbs == 0 then
+        _slot("folder recorded by UE5DumpUI", "",
+              (dropped or 0) > 0
+                  and "dll-path.txt holds only relative folders -- not probed (they would read CE's current folder)"
+                  or "no folder recorded yet - UE5DumpUI writes this file at startup")
+    else
+        for i = 1, #crumbs do
+            _slot(i == 1 and "folder recorded by UE5DumpUI"
+                          or "folder recorded by UE5DumpUI (older entry)",
+                  crumbs[i], "")
         end
-        h:close()
-    end)
-end
-if #_crumbs == 0 then
-    _slot("folder recorded by UE5DumpUI", "",
-          "no folder recorded yet - UE5DumpUI writes this file at startup")
-else
-    for i = 1, #_crumbs do
-        _slot(i == 1 and "folder recorded by UE5DumpUI"
-                      or "folder recorded by UE5DumpUI (older entry)",
-              _crumbs[i], "")
     end
 end
+ue5_breadcrumbSlots(_appData)
 
 -- 8. CE's own folder. Unrelated to this table: a DLL here can only have been
 --    hand-placed, so it must stay below every table-derived slot above --
@@ -231,13 +321,14 @@ local function _dllAt(dir)
     if dir == "" then return nil end
     local p = dir .. "UE5Dumper.dll"
     local f = io.open(p, "rb")
-    if f then f:close() return p end
+    if f then f:close() return p, true end     -- fopen opened it: p is ANSI bytes
     local ok, hit = pcall(fileExists, p)
-    if ok and hit then return p end
+    if ok and hit then return p, false end     -- CE's fileExists: p is UTF-8
     return nil
 end
 
 DLL_PATH = nil
+DLL_PATH_ANSI = nil   -- [PATH-CT-INJECT-ANSI] the same path for injectDLL / io.open; nil = it has no ANSI form
 _DLL_FOUND_SLOT = nil
 local _dllFoundIn = nil
 local _dllFoundLabel = ""
@@ -248,9 +339,10 @@ local function _probeSlots(from)
         if s.dir == "" then
             s.state = "NOT SEARCHED"
         else
-            local hit = _dllAt(s.dir)
+            local hit, fromAnsi = _dllAt(s.dir)
             if hit then
-                DLL_PATH, _dllFoundIn, _DLL_FOUND_SLOT = hit, s.dir, i
+                DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(hit, fromAnsi)
+                _dllFoundIn, _DLL_FOUND_SLOT = s.dir, i
                 _dllFoundLabel = s.label
                 s.state = "FOUND"
                 return true
@@ -276,46 +368,60 @@ _probeSlots(1)
 --
 -- reg.exe renders a REG_MULTI_SZ with the LITERAL two characters \0 between
 -- entries, so the split is on that, not on a real NUL.
-if not DLL_PATH then
+-- A global so the Lua suite can run it (second review, T-MRU-UTF8-SELFHEAL); called once, right below.
+function ue5_probeRecentFiles()
     local _mruFirst = #_slots + 1
     local _mru = {}
+    -- [PATH-CT-INJECT-ANSI] (skeptic CEINJ-1, measured) Plain reg.exe writes the console code page WITH best fit:
+    -- a folder named Cafe-acute came back as 'Cafe' and one with a trade mark as '?', so neither probe could ever
+    -- find it (and where the OEM and ANSI code pages differ, no non-ASCII folder at all). 'chcp 65001' first makes
+    -- every entry exact UTF-8, which _dllAt's fileExists branch and ue5_pathForms then handle -- and the
+    -- self-heal records UTF-8, as dll-path.txt's header says it holds.
     pcall(function()
-        local h = io.popen('reg query "HKCU\\Software\\Cheat Engine" /v "Recent Files" 2&gt;nul')
+        local h = io.popen('chcp 65001&gt;nul &amp; reg query "HKCU\\Software\\Cheat Engine" /v "Recent Files" 2&gt;nul')
         if not h then return end
         local out = h:read("*a") or ""
         h:close()
         local data = out:match("REG_MULTI_SZ%s+([^\r\n]*)")
         if not data or data == "" then return end
-        for entry in (data .. "\\0"):gmatch("(.-)\\0") do
-            entry = entry:gsub("^%s+", ""):gsub("%s+$", "")
-            if entry ~= "" then _mru[#_mru + 1] = entry end
-        end
+        -- [PATH-CT-MRU-ZERO] Not a blind split on \0: a folder that starts with 0 holds those two characters too.
+        for _, entry in ipairs(ue5_splitRegMultiSz(data)) do _mru[#_mru + 1] = entry end
     end)
 
     -- The entry whose FILENAME is this table's own name. That check is what makes
     -- the list safe to trust: it cannot bind to a stale UE5Dumper.dll sitting
     -- beside some unrelated game's table. (Measured: this .CT has been seen at
     -- both position 1 and position 2 of that list, so never take entry 1 blindly.)
-    local _mruSelf = ""
+    -- A RELATIVE entry of this name (CE started with a relative table argument) is skipped, with or without a
+    -- folder, or it shadows a later absolute one (third review, MRU-RELATIVE-SELF-MATCH-SHADOWS; fourth review).
+    local _mruSelf, _mruSelfRelative = "", false
     for i = 1, #_mru do
         local leaf = ""
         pcall(function() leaf = (extractFileName(_mru[i]) or ""):lower() end)
         if leaf == "ue5cedumper.ct" then
-            pcall(function() _mruSelf = extractFilePath(_mru[i]) or "" end)
-            break
+            local f = ""
+            pcall(function() f = extractFilePath(_mru[i]) or "" end)
+            -- (fourth review) Only an ABSOLUTE folder: a relative one is CE's current folder, not the table's.
+            if ue5_isAbsolutePath(f) then _mruSelf = f break end
+            _mruSelfRelative = true
         end
     end
+    -- (fifth review, R5-02) A dropped relative entry says so: "has no UE5CEDumper.CT" would be false.
     _slot("folder of the most recent UE5CEDumper.CT in CE's recent-files list", _mruSelf,
           (#_mru == 0) and "could not read CE's recent-files list"
-                        or "CE's recent-files list has no UE5CEDumper.CT in it")
+          or _mruSelfRelative and "CE's recent-files entry for UE5CEDumper.CT is a relative path -- not probed (it "
+                                  .. "would read CE's current folder, not the table's)"
+          or "CE's recent-files list has no UE5CEDumper.CT in it")
 
     -- The single most recently opened table, whatever it is called -- the same
     -- answer when the user has RENAMED this .CT. Entry 1 only: the rest of the
     -- list is other games' tables, and probing those invites a stale hit.
     local _mruTop = ""
     if _mru[1] then pcall(function() _mruTop = extractFilePath(_mru[1]) or "" end) end
+    if not ue5_isAbsolutePath(_mruTop) then _mruTop = "" end
     _slot("folder of the most recently opened cheat table", _mruTop,
-          "CE reported no recent files")
+          _mru[1] and "the most recent table's path is relative -- not probed (it would read CE's current folder)"
+          or "CE reported no recent files")
 
     if _probeSlots(_mruFirst) and _dllFoundLabel:find("UE5CEDumper.CT", 1, true) then
         -- Self-heal: this folder was proven to hold the DLL *and* proven to be
@@ -325,6 +431,7 @@ if not DLL_PATH then
         pcall(function() ue5_recordDllDir(_dllFoundIn) end)
     end
 end
+if not DLL_PATH then ue5_probeRecentFiles() end
 
 -- Rendered on demand so the failure dialog, the log file and the debug dump all
 -- show the SAME list -- a user's screenshot can never disagree with the log.
@@ -542,6 +649,10 @@ function ue5_pickDllManually()
                 if f then
                     f:close()
                     picked = fn
+                elseif fileExists(fn) then
+                    -- [PATH-CT-INJECT-ANSI] The dialog's name is UTF-8, which fopen cannot open for a non-ASCII
+                    -- folder -- so every such pick was dropped, and the error said to pick again.
+                    picked = fn
                 end
             end
         end)
@@ -587,7 +698,7 @@ function ue5_inject()
     -- WITHOUT aborting on a miss. Here is where a miss actually matters, and
     -- where returning false unticks the record.
     if not DLL_PATH then
-        DLL_PATH = ue5_pickDllManually()
+        DLL_PATH_ANSI, DLL_PATH = ue5_pathForms(ue5_pickDllManually(), false)
     end
     if not DLL_PATH then
         ue5_logError("UE5Dumper.dll not found in any searchable folder.")
@@ -681,7 +792,22 @@ function ue5_inject()
     -- internally — no executeCodeEx calls needed or possible (remote threads may
     -- be blocked by the game; executeCodeEx relies on CreateRemoteThread).
     if not revived then
-        if not injectDLL(DLL_PATH) then
+        -- [PATH-CT-INJECT-ANSI] injectDLL copies its string into the game for LoadLibraryA, which reads ANSI bytes.
+        -- A UTF-8 path from a non-ASCII folder failed there, and CE then manual-mapped the DLL (no TLS, no .pdata).
+        if not DLL_PATH_ANSI then
+            ue5_logError("UE5Dumper.dll's path has no ANSI form, so injectDLL (LoadLibraryA) cannot load it: %s", DLL_PATH)
+            showMessage("UE5 Dumper Error:\n\nCheat Engine cannot load UE5Dumper.dll from this folder:\n  " .. DLL_PATH ..
+                "\n\nThe path has characters the Windows code page (ANSI) cannot represent, and CE's injectDLL\n" ..
+                "hands the path to LoadLibraryA, so the DLL would not load.\n\n" ..
+                "Move the UE5CEDumper folder to a path of plain English letters, then tick this record again and\n" ..
+                "choose UE5Dumper.dll in the file picker that opens --\n" ..
+                "or use UE5DumpUI &gt; Proxy Deploy &gt; Inject into running game, which does not go through Cheat Engine.")
+            -- (skeptic CEINJ-3) Forget this path: it came from the init record's probe, and ue5_inject re-probes
+            -- (the picker) only when DLL_PATH is nil -- otherwise every re-tick after the move refused again.
+            DLL_PATH, DLL_PATH_ANSI = nil, nil
+            return false
+        end
+        if not injectDLL(DLL_PATH_ANSI) then
             ue5_logError("injectDLL failed! Is CE attached to the game? DLL_PATH: %s", DLL_PATH)
             showMessage("UE5 Dumper Error:\n\ninjectDLL failed.\n\nPossible causes:\n1. CE is not attached to a game process\n2. DLL file not found: " .. DLL_PATH .. "\n3. Anti-cheat blocking injection")
             return false

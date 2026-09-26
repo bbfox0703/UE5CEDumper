@@ -111,6 +111,59 @@ public class DumperDllPathStoreTests : IDisposable
         Assert.Equal(new[] { @"D:\good" }, _store.Load().ToArray());
     }
 
+    // (fifth review, R5-04) A RELATIVE line -- an older UE5CEDumper.CT's self-heal could write one -- is neither read nor
+    // carried forward, and none is written: the .CT would probe it against Cheat Engine's current folder.
+    [Fact]
+    public void A_relative_line_is_not_read_and_not_carried_forward()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_store.FilePath)!);
+        File.WriteAllLines(_store.FilePath, new[] { "# header", "sub", @"D:\old", @"C:rel", @"\x" , @"\\srv\share" });
+        Assert.Equal(new[] { @"D:\old", @"\\srv\share" }, _store.Load());
+
+        _store.Record(@"D:\new");
+        var lines = File.ReadAllLines(_store.FilePath).Where(l => l.Length > 0 && l[0] != '#').ToArray();
+        Assert.Equal(new[] { @"D:\new", @"D:\old", @"\\srv\share" }, lines);
+    }
+
+    // (sixth review, R6-01 -- measured) A DLL folder at a DRIVE ROOT: Record trimmed 'E:\' to a bare 'E:', which Load
+    // then skipped as relative -- UE5DumpUI started from E:\ rewrote the file on every start, and the .CT ignored it.
+    [Theory]
+    [InlineData(@"E:\")]
+    [InlineData(@"e:\")]      // (seventh review, R7-04) lower case: the .CT's rule agrees
+    public void A_drive_root_round_trips_as_the_root(string root)
+    {
+        _store.Record(root);
+        // (seventh review, R7-03) The WRITER's half: the line on disk keeps its separator -- Load's own fix alone would
+        // pass a round trip with 'E:' written.
+        Assert.Equal(new[] { root }, File.ReadAllLines(_store.FilePath).Where(l => l.Length > 0 && l[0] != '#').ToArray());
+        Assert.Equal(new[] { root }, _store.Load());
+        // Already the head: no rewrite. The stamp is moved back first, as the neighbouring test does, so a rewrite
+        // inside the same clock tick cannot pass as none.
+        var before = File.GetLastWriteTimeUtc(_store.FilePath);
+        File.SetLastWriteTimeUtc(_store.FilePath, before.AddDays(-1));
+        var stamped = File.GetLastWriteTimeUtc(_store.FilePath);
+        _store.Record(root);
+        Assert.Equal(stamped, File.GetLastWriteTimeUtc(_store.FilePath));
+    }
+
+    [Fact]
+    public void A_legacy_bare_drive_line_reads_as_that_drives_root()
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(_store.FilePath)!);
+        File.WriteAllLines(_store.FilePath, new[] { "# header", "E:", "e:", @"D:\old" });
+        Assert.Equal(new[] { @"E:\", @"e:\", @"D:\old" }, _store.Load());
+    }
+
+    [Theory]
+    [InlineData("sub")]
+    [InlineData(@"C:rel")]
+    [InlineData(@"\x")]
+    public void Record_refuses_a_relative_folder(string relative)
+    {
+        _store.Record(relative);
+        Assert.False(File.Exists(_store.FilePath));
+    }
+
     [Fact]
     public void Comments_and_blank_lines_are_ignored_by_the_reader()
     {

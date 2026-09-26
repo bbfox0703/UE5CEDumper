@@ -11,7 +11,7 @@
          "latest" with the rest of the dependencies:
 
            py -c "import json;d=json.load(open('obj/project.assets.json'));t=list(d['targets'].values())[0];
-                  print(t['Avalonia.Skia/12.1.1']['dependencies'])"
+                  print(t['Avalonia.Skia/12.1.3']['dependencies'])"
 
          NuGet cannot protect this. Avalonia declares an open-ended minimum
          (SkiaSharp >= 3.119.4), so a major-version jump SATISFIES the constraint —
@@ -89,16 +89,16 @@
          instead of the Avalonia.Desktop meta-package, which also pulls in the
          X11 / macOS-Native / FreeDesktop backends we never run. Dropping them
          removes their "will always throw" Native-AOT ILC warnings. -->
-    <PackageReference Include="Avalonia" Version="12.1.1" />
+    <PackageReference Include="Avalonia" Version="12.1.3" />
     <PackageReference Include="Avalonia.Angle.Windows.Natives" Version="2.1.27548.20260419" />
-    <PackageReference Include="Avalonia.Win32" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Skia" Version="12.1.1" />
+    <PackageReference Include="Avalonia.Win32" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Skia" Version="12.1.3" />
     <!-- Text shaping. UsePlatformDetect() wired this automatically; with the
          explicit Win32+Skia backend it must be added by hand, else AppBuilder
          throws "No text shaping system configured" at startup. -->
-    <PackageReference Include="Avalonia.HarfBuzz" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.1" />
-    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.1" />
+    <PackageReference Include="Avalonia.HarfBuzz" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="12.1.3" />
+    <PackageReference Include="Avalonia.Fonts.Inter" Version="12.1.3" />
     <PackageReference Include="Avalonia.Controls.DataGrid" Version="12.1.2" />
     <PackageReference Include="HarfBuzzSharp.NativeAssets.Linux" Version="$(HarfBuzzSharpVersion)" />
     <PackageReference Include="HarfBuzzSharp.NativeAssets.WebAssembly" Version="$(HarfBuzzSharpVersion)" />

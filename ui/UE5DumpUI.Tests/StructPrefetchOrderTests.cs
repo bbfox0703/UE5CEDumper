@@ -71,7 +71,7 @@ public class StructPrefetchOrderTests
             });
         }
 
-        public DumpService Service => new(Pipe, new NoopLog());
+        public DumpService Service => new(Pipe, new NoopLog(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
         /// <summary>One node: a scalar leaf plus a StructProperty per child.</summary>
         private static JsonObject Node(string addr)

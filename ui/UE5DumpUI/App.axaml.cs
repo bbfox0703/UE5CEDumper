@@ -78,7 +78,7 @@ public class App : Application
             // Two-connection lane router (interactive + bulk) — see
             // LaneRoutingPipeClient / docs/multipipe-eval.md §9.
             _pipeClient = new LaneRoutingPipeClient(_logging);
-            _dumpService = new DumpService(_pipeClient, _logging);
+            _dumpService = new DumpService(_pipeClient, _logging, new WindowsSystemCodePage());
             _aobUsage = new AobUsageService(_platform, _logging);
             _aobMakerBridge = new AobMakerBridgeService(_logging);
             _proxyDeploy = new ProxyDeployService(_logging, _platform);

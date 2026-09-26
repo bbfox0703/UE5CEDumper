@@ -146,39 +146,44 @@ public sealed class LoggingService : ILoggingService, IDisposable
     // Category-aware methods
     // ================================================================
 
+    /// <summary>[PATH-SERILOG-BRACES] The one message template every category method uses: the text is a PROPERTY,
+    /// written as-is (:l = no quotes). Passed as the template itself, Serilog parsed it -- a doubled brace in a path
+    /// ("A{{B}}") was logged single, and the leftover finder recovers deploy paths from this log.</summary>
+    private const string Verbatim = "{Message:l}";
+
     public void Info(string category, string message)
     {
-        ResolveLogger(category).Information(message);
-        _consoleLogger.Information(message);
-        ResolveMirrorLogger(category)?.Information(message);
+        ResolveLogger(category).Information(Verbatim, message);
+        _consoleLogger.Information(Verbatim, message);
+        ResolveMirrorLogger(category)?.Information(Verbatim, message);
     }
 
     public void Warn(string category, string message)
     {
-        ResolveLogger(category).Warning(message);
-        _consoleLogger.Warning(message);
-        ResolveMirrorLogger(category)?.Warning(message);
+        ResolveLogger(category).Warning(Verbatim, message);
+        _consoleLogger.Warning(Verbatim, message);
+        ResolveMirrorLogger(category)?.Warning(Verbatim, message);
     }
 
     public void Error(string category, string message)
     {
-        ResolveLogger(category).Error(message);
-        _consoleLogger.Error(message);
-        ResolveMirrorLogger(category)?.Error(message);
+        ResolveLogger(category).Error(Verbatim, message);
+        _consoleLogger.Error(Verbatim, message);
+        ResolveMirrorLogger(category)?.Error(Verbatim, message);
     }
 
     public void Error(string category, string message, Exception ex)
     {
-        ResolveLogger(category).Error(ex, message);
-        _consoleLogger.Error(ex, message);
-        ResolveMirrorLogger(category)?.Error(ex, message);
+        ResolveLogger(category).Error(ex, Verbatim, message);
+        _consoleLogger.Error(ex, Verbatim, message);
+        ResolveMirrorLogger(category)?.Error(ex, Verbatim, message);
     }
 
     public void Debug(string category, string message)
     {
-        ResolveLogger(category).Debug(message);
-        _consoleLogger.Debug(message);
-        ResolveMirrorLogger(category)?.Debug(message);
+        ResolveLogger(category).Debug(Verbatim, message);
+        _consoleLogger.Debug(Verbatim, message);
+        ResolveMirrorLogger(category)?.Debug(Verbatim, message);
     }
 
     // ================================================================
@@ -524,16 +529,16 @@ public sealed class LoggingService : ILoggingService, IDisposable
         return parts.Length == 2 || parts[2].All(char.IsAsciiDigit);
     }
 
-    private static string SanitizeFolderName(string name)
+    /// <summary>The mirror folder for a game process: the SAME folder the DLL logs into (Sein::ProcessFolderName), so
+    /// one session's logs are not split. It used to be its own rule (".exe" only, no trim), which for a stem ending in
+    /// a space or dots named a folder the DLL never uses. [PATH-SEIN-TRAILING-SPACE]
+    /// "unknown" only for an EMPTY name (no name given: never Logs\ itself). Not for white space: a stem of only
+    /// U+3000 / U+00A0 is a legal folder the DLL logs into, and treating it as blank split the session.
+    /// (second review, MIRROR-WS-DIVERGE)</summary>
+    internal static string SanitizeFolderName(string name)
     {
-        if (name.EndsWith(".exe", StringComparison.OrdinalIgnoreCase))
-            name = name[..^4];
-
-        var invalid = Path.GetInvalidFileNameChars();
-        foreach (var c in invalid)
-            name = name.Replace(c, '_');
-
-        return string.IsNullOrWhiteSpace(name) ? "unknown" : name;
+        string folder = ProxyImportAnalyzer.ProcessLogFolderName(name);
+        return folder.Length == 0 ? "unknown" : folder;
     }
 
     /// <summary>

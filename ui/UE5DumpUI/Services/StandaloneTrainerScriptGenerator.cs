@@ -106,11 +106,18 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
-        Line(sb, "local mod = UE5T.module");
-        Line(sb, "if mod == nil or mod == '' then mod = process end");
+        // [PATH-CE-MODULE-VIEW] Scan CE's OWN name for the main module. `process` and enumModules' Name are the
+        // same ANSI bytes; the baked UE5T.module is the Unicode name, which CE does not know for a non-ASCII exe
+        // (ゲーム-… is ???-… to CE on code page 950). UE5T.module stays in the table as information only.
+        Line(sb, "local mod = process");
+        Line(sb, "if mod == nil or mod == '' then");
+        Line(sb, "  showMessage('[UE5 Trainer] No process is opened in Cheat Engine. Attach CE to the game, then tick Setup again.')");
+        Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
+        Line(sb, "  return");
+        Line(sb, "end");
         Line(sb, "local hit = AOBScanModuleUE(mod, UE5T.aob)");
         Line(sb, "if not hit then");
-        Line(sb, "  showMessage('[UE5 Trainer] GWorld AOB scan FAILED in '..tostring(mod)..'. Baked for one game+version; aborting (no fallback).')");
+        Line(sb, "  showMessage('[UE5 Trainer] GWorld AOB scan FAILED in '..tostring(ansiToUTF8(mod) or mod)..'. Baked for one game+version; aborting (no fallback).')");
         Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
         Line(sb, "  return");
         Line(sb, "end");
@@ -528,7 +535,9 @@ public static class StandaloneTrainerScriptGenerator
         Line(sb, "    local modList");
         Line(sb, "    synchronize(function() modList = enumModules() end)");
         Line(sb, "    for _, mod in ipairs(modList) do");
-        Line(sb, "      if string.lower(mod.Name) == string.lower(moduleName) then");
+        // [PATH-CE-MODULE-VIEW] Name is ANSI bytes; a caller may hold CE's UTF-8 name (the symbol handler's).
+        Line(sb, "      if string.lower(mod.Name) == string.lower(moduleName)");
+        Line(sb, "         or string.lower(ansiToUTF8(mod.Name) or '') == string.lower(moduleName) then");
         Line(sb, "        baseAddr = mod.Address");
         Line(sb, "        maxAddr = baseAddr + mod.Size");
         Line(sb, "        break");
@@ -556,7 +565,9 @@ public static class StandaloneTrainerScriptGenerator
     }
 
     private static string LuaModule(string? module) =>
-        string.IsNullOrWhiteSpace(module) ? "nil" : $"'{module}'";
+        // [PATH-TRAINER-APOSTROPHE] Escaped like every other name-derived literal: an apostrophe in the exe name
+        // (Tony's-Win64-Shipping.exe) made this a Lua syntax error, so Setup could never enable.
+        string.IsNullOrWhiteSpace(module) ? "nil" : $"'{CeLuaHygiene.EscapeLuaString(module)}'";
 
     private static string Hex(int v) =>
         v < 0 ? "-1" : "0x" + v.ToString("X", CultureInfo.InvariantCulture);

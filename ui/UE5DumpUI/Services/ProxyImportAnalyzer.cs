@@ -470,15 +470,18 @@ internal static class ProxyImportAnalyzer
         if (lastWrite is not DateTime ts) return (ProxyLoadSignal.Observed, "loaded");
         string date = ts.ToString("yyyy-MM-dd");
         return (now - ts).TotalDays > staleAfterDays
-            ? (ProxyLoadSignal.ObservedStale, $"loaded {date} (stale)")
+            // (eighth review, R8-01) The mark LEADS: the Load column clips the end of its text, and a trailing
+            // "(stale)" never showed -- an old load read as a recent one.
+            ? (ProxyLoadSignal.ObservedStale, $"stale · loaded {date}")
             : (ProxyLoadSignal.Observed, $"loaded {date}");
     }
 
     /// <summary>
     /// The per-process log SUBFOLDER name the DLL creates for a host executable — the join key
     /// between a <c>DetectedGame</c> and its <c>%LOCALAPPDATA%\UE5CEDumper\Logs\&lt;name&gt;</c>
-    /// folder. Mirrors <c>dll/src/Sein.cpp InitProcessMirror</c> EXACTLY: take the file leaf, drop the
-    /// last extension, then replace each Windows-invalid path character with '_'. Kept a pure string
+    /// folder. Mirrors <c>dll/src/Sein.cpp Sein::ProcessFolderName</c> EXACTLY: take the file leaf, drop the
+    /// last extension, replace each Windows-invalid path character with '_', trim trailing ASCII spaces and
+    /// dots (what Win32 trims), and name an empty result "unknown". An empty INPUT gives "". Kept a pure string
     /// transform (no IO) so a test can pin it against that C++ rule — a drift there silently makes
     /// every load probe miss its folder.
     /// </summary>
@@ -499,7 +502,10 @@ internal static class ProxyImportAnalyzer
             if (c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|')
                 buf[i] = '_';
         }
-        return new string(buf);
+        // [PATH-SEIN-TRAILING-SPACE] Trailing spaces and dots trimmed, empty -> "unknown": Sein::ProcessFolderName.
+        // Win32 trims them from the last path segment only, so the DLL's folder for "Game .exe" is "Game".
+        string folder = new string(buf).TrimEnd(' ', '.');
+        return folder.Length == 0 ? "unknown" : folder;
     }
 
     private static readonly char[] s_pathSeparators = { '/', '\\' };

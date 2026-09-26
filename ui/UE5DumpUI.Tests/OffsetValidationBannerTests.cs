@@ -33,7 +33,7 @@ public class OffsetValidationBannerTests
                 return offsetsResponse ?? new JsonObject { ["error"] = "unknown command" };
             return new JsonObject { ["ok"] = true, ["gobjects"] = "0x1000", ["ue_version"] = 505 };
         });
-        return (new DumpService(pipe, new MockLoggingService()), pipe);
+        return (new DumpService(pipe, new MockLoggingService(), UE5DumpUI.Core.IdentityCodePage.Instance), pipe);
     }
 
     [Fact]

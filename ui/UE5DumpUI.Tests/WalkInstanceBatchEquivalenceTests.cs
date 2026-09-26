@@ -68,7 +68,7 @@ public class WalkInstanceBatchEquivalenceTests
             });
         }
 
-        public DumpService Service => new(Pipe, new NoopLog());
+        public DumpService Service => new(Pipe, new NoopLog(), UE5DumpUI.Core.IdentityCodePage.Instance);
 
         /// <summary>One instance's wire shape - deliberately exercising the OPTIONAL
         /// keys (stale / props_size present, is_definition absent), since those are

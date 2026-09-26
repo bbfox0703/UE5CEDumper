@@ -299,6 +299,12 @@
                     IsChecked="{Binding AllowForeignOverwrite}"
                     ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.ForeignOverwrite}"
                     Foreground="#E0A050" VerticalAlignment="Center" Margin="8,0"/>
+          <!-- [PROXY-USE-CONFIRMED] Not persisted, like the foreign box: it changes WHAT is written. Stays
+               clickable during a run (read once per run), as Force and the foreign box do. -->
+          <CheckBox Content="{StaticResource str.ProxyDeploy.UseConfirmed}"
+                    IsChecked="{Binding UseConfirmedProxy}"
+                    ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.UseConfirmed}"
+                    Foreground="#CCCCCC" VerticalAlignment="Center" Margin="8,0"/>
           <TextBlock Text="{Binding LastOperationResult}"
                      Foreground="{Binding LastOperationColor}" VerticalAlignment="Center" FontSize="11"
                      FontWeight="SemiBold" Margin="8,0"
@@ -366,15 +372,30 @@
         <!-- Load observation: whether the DLL was actually SEEN to load (per-process log folder),
              NOT the disk state in Status. "DeployedCurrent" + "not observed" is the silent-failure
              the [PROXYLOAD] fix surfaces; "not observed" is honest unknown, never a failure claim. -->
-        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColLoad}"
-                            Binding="{Binding LoadObservation}" SortMemberPath="LoadObservation"
-                            Width="150" MinWidth="100" IsReadOnly="True"/>
+        <!-- (sixth review, R6-03) The header's tooltip explains the leading "shared · " tag, which the column's
+             width keeps visible where a trailing mark was clipped. The header is a TextBlock; the column stays a
+             text column (Binding == SortMemberPath), so sorting stays compiled-binding safe under AOT. -->
+        <!-- (seventh review, R7-05; eighth, R8-01) 240: the cell font is the DataGrid theme's 15 px Inter, not the
+             grid's 12, with 12 px margins each side. 'shared · loaded 2026-09-25' measures about 201 px, so 210 still
+             cut the day. Marks (shared, stale) lead the text, so only a date can be clipped.
+             (ninth review, R9-02) 280: the LONGEST text is 'shared · stale · loaded <date>', ~248 px + 24 = ~272. -->
+        <DataGridTextColumn Binding="{Binding LoadObservation}" SortMemberPath="LoadObservation"
+                            Width="280" MinWidth="100" IsReadOnly="True">
+          <DataGridTextColumn.Header>
+            <TextBlock Text="{StaticResource str.ProxyDeploy.ColLoad}"
+                       ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.ColLoad}"/>
+          </DataGridTextColumn.Header>
+        </DataGridTextColumn>
 
         <!-- Suggested proxy (import-table + remembered pick; advisory, plain text
              column with Binding==SortMemberPath so it sorts under compiled bindings). -->
-        <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColSuggested}"
-                            Binding="{Binding SuggestedProxy}" SortMemberPath="SuggestedProxy"
-                            Width="220" MinWidth="120" IsReadOnly="True"/>
+        <DataGridTextColumn Binding="{Binding SuggestedProxy}" SortMemberPath="SuggestedProxy"
+                            Width="220" MinWidth="120" IsReadOnly="True">
+          <DataGridTextColumn.Header>
+            <TextBlock Text="{StaticResource str.ProxyDeploy.ColSuggested}"
+                       ToolTip.Tip="{StaticResource str.Tip.ProxyDeploy.ColSuggested}"/>
+          </DataGridTextColumn.Header>
+        </DataGridTextColumn>
 
         <!-- Installed Version -->
         <DataGridTextColumn Header="{StaticResource str.ProxyDeploy.ColVersion}"

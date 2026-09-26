@@ -1,0 +1,31 @@
+{
+ "name": "r7-c05-red",
+ "why": "R7-C-05 RED: r7-fence-green minus the apply_rescan fence (5b00729d does not reverse at HEAD). Init withholds the GObjects it found (a2) so apply_rescan has something to apply, Extra Scan hands it back (a1); the apply sleeps 2 s after Aura::Init (b) and the mailbox's post-UE5_Init path 1.5 s (c), each only while its %TEMP% flag file exists. Without the flags it behaves as the base tree.",
+ "subs": [
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "uintptr_t ExtraScanGObjects() {\n",
+   "new": "static uintptr_t s_r7StagedGObjects = 0;   // STAGING R7-C-05/S9: init's real GObjects, withheld\nuintptr_t ExtraScanGObjects() {\n    if (s_r7StagedGObjects) { Sein::Info(\"SCAN:GObj\", \"STAGING: Extra Scan returns init's GObjects\"); return s_r7StagedGObjects; }\n"
+  },
+  {
+   "file": "dll/src/Genau.cpp",
+   "old": "    out.GObjects = FindGObjects(hints.gobjectsPatternId.empty() ? nullptr\n                                : hints.gobjectsPatternId.c_str());\n",
+   "new": "    out.GObjects = FindGObjects(hints.gobjectsPatternId.empty() ? nullptr\n                                : hints.gobjectsPatternId.c_str());\n    s_r7StagedGObjects = out.GObjects; out.GObjects = 0;   // STAGING R7-C-05/S9: init misses GObjects\n"
+  },
+  {
+   "file": "dll/src/Fern.cpp",
+   "old": "                Aura::Init(g_cachedGObjects);\n",
+   "new": "                Aura::Init(g_cachedGObjects);\n                { char r7tp[MAX_PATH]; DWORD r7n = GetTempPathA(MAX_PATH, r7tp);   /* STAGING */ if (r7n && r7n < MAX_PATH - 40) { strcat_s(r7tp, \"ue5dump_apply_widen.flag\"); if (GetFileAttributesA(r7tp) != INVALID_FILE_ATTRIBUTES) { Sein::Info(\"PIPE:cmd\", \"STAGING apply-widen\"); Sleep(2000); } } }\n"
+  },
+  {
+   "file": "dll/src/Mimic.cpp",
+   "old": "    LOG_INFO(\"Mailbox: auto-initializing (UE5_Init)...\");\n    UE5_Init();\n",
+   "new": "    LOG_INFO(\"Mailbox: auto-initializing (UE5_Init)...\");\n    UE5_Init();\n    { char r7tp[MAX_PATH]; DWORD r7n = GetTempPathA(MAX_PATH, r7tp);   /* STAGING */ if (r7n && r7n < MAX_PATH - 40) { strcat_s(r7tp, \"ue5dump_ensure_widen.flag\"); if (GetFileAttributesA(r7tp) != INVALID_FILE_ATTRIBUTES) { Sein::Info(\"PIPE:cmd\", \"STAGING ensure-widen\"); Sleep(1500); } } }\n"
+  },
+  {
+   "file": "dll/src/Fern.cpp",
+   "old": "            struct ApplyFence {\n                ApplyFence()  { FrierenInit::BeginApply(); }\n                ~ApplyFence() { FrierenInit::EndApply(); }\n            } applyFence;\n",
+   "new": "            // STAGING: R7-C-05 fence removed\n"
+  }
+ ]
+}

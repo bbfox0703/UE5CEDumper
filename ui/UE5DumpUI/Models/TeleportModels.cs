@@ -192,7 +192,7 @@ public sealed class MovementKnob
 }
 
 /// <summary>
-/// Gravity DIRECTION vector (UE5.4+ UCharacterMovementComponent.GravityDirection).
+/// Gravity DIRECTION vector (UE5.3+ UCharacterMovementComponent.GravityDirection).
 /// A unit vector — <see cref="Resolved"/> is false on pre-5.4 games where the
 /// field isn't reflected.
 /// </summary>

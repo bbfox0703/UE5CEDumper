@@ -479,21 +479,36 @@ uintptr_t GetAddress() {
 
 // ---- Auto-initialization ----
 
+// [R7-S9] The globals are published INSIDE the fence (UE5_Init after FindAll, apply_rescan after BeginApply), so read
+// them FIRST and the flag LAST: seeing a published GObjects then guarantees seeing the flag that preceded it. As
+// arguments to one call the reads had no order at all -- C++ leaves argument evaluation unspecified.
+static bool InitSettled() {
+    const bool haveGObjects = g_cachedGObjects != 0;
+    const bool haveGNames   = g_cachedGNames != 0;
+    std::atomic_thread_fence(std::memory_order_acquire);
+    const bool inProgress   = g_initInProgress.load(std::memory_order_acquire);
+    return Mimic::InitFastPathOk(haveGObjects, haveGNames, inProgress);
+}
+
 static bool EnsureInitialized() {
     // UE5_Init is idempotent (checks internal s_initialized flag)
     // Note: extern declarations are at file scope (above namespace)
     // [A3-MIMIC-INIT-FASTPATH] The globals alone are not "initialized": UE5_Init publishes them right after FindAll,
     // 190-445 ms before Serie / Aura init and ValidateAndFixOffsets finish. While an init is scanning, fall through to
     // UE5_Init, which waits on s_initMutex (and logs that it is waiting) and returns the first caller's result.
-    if (Mimic::InitFastPathOk(g_cachedGObjects != 0, g_cachedGNames != 0,
-                              g_initInProgress.load(std::memory_order_acquire))) {
+    if (InitSettled()) {
         return true;  // Already initialized
     }
 
     LOG_INFO("Mailbox: auto-initializing (UE5_Init)...");
     UE5_Init();
+    // [R7-S9] An initialised process returns from UE5_Init at once when no fence was up at ITS check, and an
+    // apply_rescan may raise one right after. Judge the result the same way, and while a fence is up let UE5_Init wait
+    // it out (its already-initialised branch takes s_initMutex). Bounded: a transient "not ready" beats a hang.
+    for (int i = 0; i < 4 && !InitSettled() && g_initInProgress.load(std::memory_order_acquire); ++i)
+        UE5_Init();
 
-    return (g_cachedGObjects != 0 && g_cachedGNames != 0);
+    return InitSettled();
 }
 
 // ---- Command handlers ----
@@ -1439,7 +1454,7 @@ static void HandleMovement() {
     const uint64_t knobId = g_invokeMailbox.instanceAddr;
     int32_t rc;
     if (knobId == 3) {
-        // Gravity direction (UE5.4+): 3 doubles x/y/z in paramsData. (0,0,0) = off.
+        // Gravity direction (UE5.3+): 3 doubles x/y/z in paramsData. (0,0,0) = off.
         double v[3] = {};
         memcpy(v, g_invokeMailbox.paramsData, sizeof(v));
         rc = UE5_SetGravityDirection(v[0], v[1], v[2]);

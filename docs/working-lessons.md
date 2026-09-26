@@ -1312,6 +1312,14 @@ explicitly in the register, since it correspondingly proves nothing about the pa
   367,401 rows over the full 84,387-object pool, zero 1-byte rows, against 81,547 for the opposite
   predicate on the same data type. Same pool, same value, opposite predicate: that pairing is the
   evidence, not either number alone (§1.6).
+- **"Past the cap" has two impostors; rule both out at the moment of the test** (audit #5 X2, 2026-08-18,
+  kept here when its register record was archived on 2026-09-26):
+  - **a class that does not exist.** A misread name (`ES2GameInstance` for `ESGameInstance`) is absent
+    from every list, exactly like a class past the cap. Confirm it EXISTS first; `find_instances`
+    answers that in one call;
+  - **a walk position taken earlier.** While the game streams, the same class sat at index 4412 in one
+    query and 2582 in another minutes later. Re-check at the moment of the test, with the UI's own
+    filter as the witness rather than a stored index. Pausing the game stabilises it.
 
 **And the reason to do this work at all:** running AA4–AA7 step 1 for the first time surfaced
 **AU1** — find-object-by-path had never worked, on any of three APIs that advertised it, because
@@ -1400,6 +1408,16 @@ deliberately not in CI, because a standalone `lua` is not a declared dependency 
 skips quietly is worse than one run on purpose). And a pure helper needs no UI at all — `[STALEDLL]`
 (b)'s size readout was closed by lifting `ue5_dllFileSize`/`ue5_dllSizeText` straight out of
 `dist/UE5CEDumper.CT` and running them against the two real DLLs.
+
+**Run them on CE's Lua VM, not only on the stock `lua` (measured 2026-09-25).** The `lua` on this PC is a stock
+**5.4.6**; the scripts run inside CE's **`lua53-64.dll`**. `py tools/verify/ce_lua53_host.py` builds CE's own `lua.c`
+against an import library generated from the INSTALLED DLL and runs every suite on that exact binary (all 10
+passed the day it was written). Its `--probe` measured what actually differs: `_VERSION` "Lua 5.3"; **none** of the
+5.1/5.2 compat functions (`bit32`, `math.pow`, `unpack`, `loadstring` are nil -- the source tree's Makefile says
+`LUA_COMPAT_5_2`, the shipped DLL was not built with it); no `warn` / `coroutine.close` / `<const>`; and
+**string arithmetic yields a FLOAT** -- `"10"+1` is `11.0` on CE's VM, `11` on 5.4 -- so `tostring` of such a value
+differs. A 5.4-only construct passes the stock run and fails in CE; that is the direction that hides a defect, so
+a change to a CE-side script is not tested until it has passed on the CE VM.
 
 ⛔ **Know what this does NOT cover, and say so on the row.** The stubs are not CE. Anything whose
 question *is* CE's own behaviour stays CE-only — `[FREEZESTUCK]` step 3 asks whether CE's real
@@ -2292,6 +2310,17 @@ Four rules came out of it:
    `.ps1` is for the maintainer to invoke by hand. Same family as the older AMSI finding (a
    `LoadLibrary`/`GetProcAddress` P/Invoke probe is refused as "malicious content").
 
+5. **READING injector source can be enough: a tool's output file is scanned too.** 2026-09-25, a skeptic
+   subagent reviewing `[PATH-PS1-*]` ran `sed -n …p scripts/inject-ue.ps1` over two long ranges. The output was
+   large, so the harness persisted it to `%TEMP%\claude\…\tasks\<id>.output`, and Bitdefender's file scan
+   quarantined that TEXT file as `CMD:Heur.BZC.PZQ.Boxter` within seconds. Its content was our own injector:
+   `OpenProcess` / `VirtualAllocEx` / `WriteProcessMemory` / `CreateRemoteThread` plus a `Start-Process -Verb
+   RunAs` relaunch. Nothing was executed, and the repo copies were untouched; the maintainer saw the alert. **Rule:**
+   read injector-shaped code (`scripts/inject-ue.ps1`, the P/Invoke inject path in `WindowsPlatformService`, the
+   `.CT`'s inject block) in SMALL targeted ranges, or with `grep` for the lines in question -- never dump it in
+   bulk. Put the same instruction in any subagent prompt that has to review it. A quarantined `tasks\*.output` needs
+   no restore; it is only a copy.
+
 **Do not respond by making the script look like something else.** The behaviour genuinely *is*
 persistence; that is what the tool does. The honest fixes are a folder exclusion, a second
 implementation in a less-inspected host, and not running the thing automatically.
@@ -2480,6 +2509,62 @@ which is what made it the chosen host in the first place, is very plausibly the 
 should not be cited as evidence without a Steam-launched re-run.
 
 -----
+
+### 3.wa Driving CE through the AOBMaker bridge: ONE CE, and a busy pipe is not a dead one
+
+The [PATH-SHAPE] live pass (2026-09-25) drove Cheat Engine with no clicking: `tools/verify/ce_bridge_probe.py` and
+`ce_symbol_match_check.py` add an Auto Assembler record through `\\.\pipe\AOBMakerCEBridge` whose `{$lua}` block does
+the work (`openProcess`, `getAddressSafe`, `enumModules`, `loadTable`) and writes its answer to a file under `out/`. It
+is fast and gives exact bytes. Two traps, one of which the maintainer caught on screen:
+
+- ⛔ **Never start CE when one is already running.** A "restart and attach" helper launched `Cheat Engine.exe`
+  without killing the old one -- TWO CE instances, both loading the AOBMaker plugin, both serving the same pipe name.
+  The maintainer saw it ("multiple CE"). `tasklist | grep -ic cheatengine` first; kill ALL
+  `cheatengine-x86_64-SSE4-AVX2.exe` (the shim `Cheat Engine.exe` exits at once) before starting exactly one.
+- ⚠ **`OSError: [Errno 22] Invalid argument` on `open(pipe)` means BUSY, not absent** (absent is errno 2). The plugin
+  serves one request per connection and re-creates the instance, so a second connection right after the first can
+  land in that gap. Retry for a few seconds; do not read it as "the plugin is not loaded".
+- A record whose script calls `showMessage` (every refusal we emit) BLOCKS the enabling Lua until the dialog is
+  closed -- run such a probe in the background, screenshot the dialog (it is the evidence), then click OK.
+- The UI copies staged under `out/pathshape/` are different exe PATHS, so computer-use needs `request_access` for each
+  (`ue5dumpui.exe` resolves to the running copy), and they reopen with the saved window state -- restore / maximize by
+  pid before clicking.
+- ⚠ Bash heredocs collapse `\\` -- a pipe path written in a heredoc became `\.\pipe…` and every open failed. Put
+  pipe-path Python in a file.
+
+### 3.wb A hover that fails at one spot: move the control before blaming it
+
+The S5 pass (2026-09-25) lost an hour to one confounder. The Proxy Deploy header tooltips never showed, and three
+staged builds "confirmed" the header markup was at fault (control content, hit-test background, tip on the header cell)
+because every probe hovered the SAME screen position. Dragging the column left made the untouched original tooltip
+show; a plain ComboBox on another tab failed at the same x. On that screen nothing past ~1138 DIP shows a tooltip
+(`[UI-TOOLTIP-RIGHT-THIRD]`). Before changing code for a hover / tooltip / hit-test failure:
+- try the SAME control at a second screen position (resize a column, move the window), and
+- try a DIFFERENT control at the SAME position.
+Only a failure that follows the control is the control's.
+
+**How it ended (2026-09-26):** the maintainer hovered the same "Per-game quota" box with the real mouse and the tooltip
+showed. The line at ~1138 DIP (physical x ≈ 2560 on the 3840x2400 / 225 % laptop) belongs to computer-use's SYNTHETIC
+hover, not to Avalonia. So on this screen a missing tooltip right of that line is not evidence at all: move the window
+or the control left of it first, or ask the maintainer to hover. Clicks there are unaffected.
+
+### 3.wc A registry write from the shell may never reach CE: confirm it through the consumer
+
+2026-09-26, desktop-app session (`[PATH-METHODE-NO8DOT3]`). `ce_plugin_register.py register` wrote a plugin entry and
+`status` read it back, but CE never saw it. CE kept loading the maintainer's `D:\tmp\UE5Dumper.dll`, an entry the shell
+could not see at all.
+- The maintainer's regedit showed `Plugins64` as CE-Handwire / AOBMaker / `D:\tmp\UE5Dumper.dll`.
+- The shell showed AOBMaker / CE-Handwire plus its own writes, and the key's last-write time was the rig's. This held
+  for Python's `winreg` and `reg.exe` alike, with and without the Bash sandbox flag.
+- The shell is not inside an MSIX package (`GetCurrentPackageFullName` returns 15700). The mechanism is unknown.
+
+The rule:
+- a registry value the shell wrote and read back proves nothing about what another process reads, and the shell's view
+  of a key can also be stale;
+- confirm through the CONSUMER. For a CE plugin, that is the DLL's own init log in
+  `Logs\cheatengine-x86_64-SSE4-AVX2\` ("Module identity ... path:"), or CE's Settings > Plugins;
+- change CE's plugin list through that dialog (it writes the registry CE reads), or ask the maintainer to look in
+  regedit. Cancel leaves it untouched.
 
 ### 3.x `proxy_refresh.py report` cries wolf after ANY local rebuild — do not act on it blindly
 
@@ -3064,6 +3149,11 @@ architecture or UX changes in these areas.
 - **Bookmark expiry sweep** — **rejected**, not pending. `BookmarkStore` passes `maxAgeDays: 0`
   deliberately: a few KB of hand-placed navigation nobody can regenerate ≠ a regenerable multi-GB
   snapshot DB. Do not "finish" it later.
+- **Force Overwrite = rewrite OUR proxy whatever its version, in Deploy AND Update All** (maintainer,
+  2026-09-25, `[PROXY-FORCE-UPDATEALL]`). No hash / timestamp / size second check: whoever ticks it knows
+  what they want, and the proxy's `FileVersion` is only `1.0.0.<build_number>`, so a rebuild that kept its
+  build number is exactly the case Force exists for. Foreign consent stays a SEPARATE, non-persisted box
+  (audit #5 AC1), and Update All never uses it nor reaches a proxy that is not already deployed and ours.
 - **Auto re-scan after a leftover-proxy delete** — rejected. It would re-find every FAILED row with a
   **blank** status, and that status is the only actionable output a failed delete produces.
 - **`docs/evaluations/` subfolder** — rejected. After fixing stale status headers the set of "record of
@@ -3096,6 +3186,15 @@ architecture or UX changes in these areas.
   here because they share a failure mode — all three are the *obvious* fix for their symptom, so a
   fresh session re-invents them. Moved here from the memory index 2026-08-22; that index does not
   travel with git, and this was the only fact in it the repo did not already own.
+- **Two asymmetries found by the 2026-09-09 claims slices and left on purpose** (kept here when
+  `[CLAIMS-SLICE-2026-09-09]` was archived on 2026-09-26):
+  - **Fly OFF with no pawn.** `SetEnabled(false)` returns 0 without restoring anything when `ResolveCtx`
+    fails. There is no pawn to write to, so "Fly OFF." is said over a mode nobody restored. Reporting a
+    failure instead would claim one we cannot tell apart from a legitimately absent pawn: the defect
+    that slice removed, pointed the other way.
+  - **Map / set element sizes cross the wire as 0.** `Fern` gates `array_elem_size` on `> 0` but emits
+    `map_key_size` / `map_value_size` / `set_elem_size` unconditionally. Every consumer gates, and
+    gating the emit would drop a field older UI builds read.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
 for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,

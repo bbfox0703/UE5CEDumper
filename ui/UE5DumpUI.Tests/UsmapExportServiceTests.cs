@@ -511,8 +511,58 @@ public class UsmapExportServiceTests
         Assert.Equal("Export failed", status());
     }
 
+    /// <summary>[R7-D-02] A service that reports a record (Dump All's <c>DumpProgress</c>) goes through the same line:
+    /// queued once, and dropped once the final status is set. Dump All's last report is "Done — N classes", made just
+    /// before the service returns, and it used to replace the final status that carries the error count.</summary>
+    [Fact]
+    public void ExportStatus_AMappedRecordReport_IsQueuedOnceAndDroppedAfterCompletion()
+    {
+        var (progress, queue, status) = HeldStatusLine();
+        IProgress<DumpProgress> sink = progress.For<DumpProgress>(p => $"{p.Phase} ({p.Done}/{p.Total})");
+
+        sink.Report(new DumpProgress("Done \u2014 3 classes", 3, 3));
+        Assert.Single(queue);        // queued, not applied inline
+        Assert.Null(status());
+
+        progress.Complete("Dumped 3 classes (57 errors)");
+        foreach (var run in queue.ToList()) run();
+        Assert.Equal("Dumped 3 classes (57 errors)", status());
+    }
+
+    /// <summary>[R7-D-02] The Dump Explorer parse: its reports go through the helper, the helper is completed as soon
+    /// as the parse returns (before any other status is set), and each catch completes it too.</summary>
+    [Fact]
+    public void ExportStatus_DumpExplorerParse_CompletesTheHelperBeforeAnyOtherStatus()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/DumpExplorerViewModel.cs"))
+            .Replace("\r\n", "\n");
+        Assert.DoesNotContain("new Progress<", src);
+
+        int start = src.IndexOf("public async Task LoadFromPathAsync(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "LoadFromPathAsync not found");
+        int end = src.IndexOf("\n    }\n", start, StringComparison.Ordinal);
+        var body = src[start..end];
+        Assert.Contains("StatusProgress(", body);
+
+        int call = body.IndexOf("DumpJsonlReader.ReadAsync(", StringComparison.Ordinal);
+        Assert.True(call >= 0, "LoadFromPathAsync no longer calls DumpJsonlReader.ReadAsync");
+        var afterParse = body[call..];
+        int complete = afterParse.IndexOf("progress.Complete(", StringComparison.Ordinal);
+        int bare = afterParse.IndexOf("StatusText =", StringComparison.Ordinal);
+        Assert.True(complete >= 0 && (bare < 0 || complete < bare), "a status is set before the helper is completed");
+
+        var catches = afterParse.Split("catch (")[1..];
+        Assert.NotEmpty(catches);
+        foreach (var c in catches)
+        {
+            var block = c.Split("finally")[0];
+            Assert.Contains("progress.Complete(", block);
+            Assert.DoesNotContain("StatusText =", block);
+        }
+    }
+
     /// <summary>
-    /// The three Export actions keep to the helper's rule: no <c>Progress&lt;string&gt;</c> double post, and once the
+    /// The four Export actions keep to the helper's rule: no <c>Progress&lt;T&gt;</c> double post, and once the
     /// service holds the progress sink, no bare <c>StatusText =</c> (the catch blocks too, where a queued report can
     /// replace "Export failed" just as well) — each exit sets its status through <c>progress.Complete</c>.
     /// </summary>
@@ -520,11 +570,12 @@ public class UsmapExportServiceTests
     [InlineData("ExportSymbolsAsync", "SymbolExportService.CollectSymbolsAsync(")]
     [InlineData("ExportFullSdkAsync", "SdkExportService.GenerateFullSdkAsync(")]
     [InlineData("ExportUsmapAsync", "UsmapExportService.GenerateUsmapAsync(")]
+    [InlineData("ExportDumpAllAsync", "DumpAllService.GenerateAsync(")]   // [R7-D-02]
     public void ExportStatus_EachExportAction_SetsEveryStatusAfterItsServiceThroughTheHelper(string method, string serviceCall)
     {
         var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"))
             .Replace("\r\n", "\n");
-        Assert.DoesNotContain("new Progress<string>", src);
+        Assert.DoesNotContain("new Progress<", src);   // [R7-D-02] any T: Progress<DumpProgress> double-posted too
 
         int start = src.IndexOf($"private async Task {method}(", StringComparison.Ordinal);
         Assert.True(start >= 0, $"{method} not found");

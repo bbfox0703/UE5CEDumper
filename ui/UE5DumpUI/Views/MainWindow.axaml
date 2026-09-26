@@ -429,6 +429,14 @@
       <TabControl x:Name="MainTabs" Grid.Column="2" Background="#1E1E1E" Padding="4"
                   SelectedIndex="{Binding SelectedTabIndex}"
                   SelectionChanged="MainTabs_SelectionChanged">
+        <!-- [UI-SPACE-2026-09-25] Fluent's tab headers are 24 px in 48 DIP rows. With 18 tabs that wrapped to THREE
+             rows on a 4K screen at 225 % (1707 DIP wide), ~144 DIP taken from every tab's content. 18 px in 36 DIP rows
+             fits the strip in two rows there and at FullHD. Both keys are read by Fluent's TabItem theme as
+             DynamicResource, so this scope overrides them for these tabs only. -->
+        <TabControl.Resources>
+          <x:Double x:Key="TabItemHeaderFontSize">18</x:Double>
+          <x:Double x:Key="TabItemMinHeight">36</x:Double>
+        </TabControl.Resources>
         <!-- Tag tokens mark tabs whose toolbar/per-row buttons depend on the
              AOBMaker CE plugin. MainWindow.axaml.cs routes the tab-switch
              AOBMaker re-check by Tag (not index) so reordering/inserting tabs

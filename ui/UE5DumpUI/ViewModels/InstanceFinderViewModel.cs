@@ -766,6 +766,12 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>[R7-S14] Which instance, at which Array Limit, the rows in <see cref="Fields"/> were walked for. Set with
+    /// the rows, never before: while a newer walk is in flight Fields still holds the previous one, and the export
+    /// must know that instead of pairing those rows with the new selection or limit.</summary>
+    private InstanceResult? _fieldsInstance;
+    private int _fieldsArrayLimit;
+
     private async Task LoadInstanceFieldsAsync(InstanceResult instance)
     {
         int id = ++_fieldLoadId;
@@ -775,7 +781,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             IsLoadingFields = true;
             ShowCeXml = false;
 
-            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: ArrayLimit, previewLimit: PreviewLimit);
+            int limit = ArrayLimit;   // [R7-S14] the limit this walk is taken at
+            var result = await _dump.WalkInstanceAsync(instance.Address, arrayLimit: limit, previewLimit: PreviewLimit);
             if (id != _fieldLoadId) return;   // a newer selection / limit change superseded us
 
             // Compute base address for FieldAddress calculation
@@ -796,6 +803,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             }
 
             HasFields = Fields.Count > 0;
+            _fieldsInstance = instance;       // [R7-S14]
+            _fieldsArrayLimit = limit;
         }
         catch (Exception ex)
         {
@@ -814,27 +823,48 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private async Task ExportCeXmlAsync()
     {
         if (SelectedInstance == null) return;
+        // [R7-S14] Fields holds the LAST walk that landed. While a newer one is in flight -- another instance picked, or
+        // the Array Limit changed -- those rows belong to the previous selection or limit, and exporting them would
+        // put A's layout under B's root, or resolve the structs at one limit and the top level at another.
+        if (!ReferenceEquals(_fieldsInstance, SelectedInstance) || _fieldsArrayLimit != ArrayLimit)
+        {
+            // A walk that FAILED leaves the previous rows too, with its error shown: then re-selecting is what helps.
+            StatusText = "The fields shown are not this selection's — copy again once they have loaded "
+                         + "(if loading failed, re-select the instance).";
+            return;
+        }
+        // [R7-S14] A walk started DURING the export owns the loading flag: do not clear it under that walk.
+        int loadIdAtStart = _fieldLoadId;
 
         try
         {
             ClearError();
             IsLoadingFields = true;
 
+            // [R7-S11] ONE snapshot of the walk and the limit, taken before the first await: the Array Limit setter
+            // re-walks and clears Fields, so reading them again after an await could describe a different walk from
+            // the one exported.
+            var fields = new List<LiveFieldValue>(Fields);
+            int arrayLimit = _fieldsArrayLimit;
+            // [R7-S13] ...and the instance those fields belong to: the user can pick another one during the resolve,
+            // and A's layout must not go out under B's root address and name.
+            var inst = _fieldsInstance!;
+
             // Pre-resolve StructProperty inner fields via DLL
             StatusText = "Resolving struct fields...";
             // lean: this resolve feeds GenerateInstanceXml (a CE XML export), which
             // reads structure only — see the LEAN contract in Fern.cpp / §10.6.
             var resolvedStructs = await CeXmlExportService.ResolveStructFieldsAsync(
-                _dump, new List<LiveFieldValue>(Fields), arrayLimit: ArrayLimit, lean: true);
+                _dump, fields, arrayLimit: arrayLimit, lean: true);
 
             // Compute root address in user-selected format
             var rootAddress = AddressHelper.FormatAddress(
-                SelectedInstance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                inst.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
 
             StatusText = "Generating CE XML...";
             var xml = CeXmlExportService.GenerateInstanceXml(
-                rootAddress, SelectedInstance.Name, SelectedInstance.ClassName,
-                new List<LiveFieldValue>(Fields), resolvedStructs,
+                rootAddress, inst.Name, inst.ClassName,
+                fields, resolvedStructs,
                 collapsePointerNodes: CollapsePointerNodes,
                 maxDropDownEntries: DropDownLimit,
                 ceStringLength: CeStringLength);
@@ -847,16 +877,18 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 StatusText = "";
                 SetError(Helpers.ClipboardDelivery.FailureText("the CE XML"));
                 _log.Warn($"CE XML export produced {xml.Length} chars but the clipboard " +
-                          $"refused the write for instance {SelectedInstance.Name}");
+                          $"refused the write for instance {inst.Name}");
                 return;
             }
-            // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms. Live
-            // Walker's text names its own levers (Drill Depth, Copy CE Field), which this panel does not have.
-            StatusText = truncated
-                ? $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — the CE table "
-                  + "is incomplete; tick Collapse Pointer Nodes or lower the DropDown Limit"
-                : "";
-            _log.Info($"CE XML copied to clipboard for instance {SelectedInstance.Name} ({resolvedStructs.Count} structs resolved)"
+            // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms.
+            // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] ...naming a lever only when it changes the ENTRY COUNT. Collapse Pointer
+            // Nodes (group folding) and the DropDown Limit (dropdown attached or not) emit the same entries; the Array
+            // Limit shrinks the export only when a walked container is bound by it. Otherwise no toolbar setting helps.
+            // [R7-S11] ...over every field the export emitted: the top level AND the containers the resolved structs
+            // carry, which are walked at the same Array Limit.
+            StatusText = ExportStatus(truncated, fields.Concat(resolvedStructs.Values.SelectMany(v => v)).ToList(),
+                                      arrayLimit);
+            _log.Info($"CE XML copied to clipboard for instance {inst.Name} ({resolvedStructs.Count} structs resolved)"
                       + (truncated ? " — TRUNCATED at the entry cap" : ""));
         }
         catch (Exception ex)
@@ -867,7 +899,70 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         }
         finally
         {
-            IsLoadingFields = false;
+            if (_fieldLoadId == loadIdAtStart) IsLoadingFields = false;   // [R7-S14]
+        }
+    }
+
+    /// <summary>[INSTEXPORT-TRUNC-ADVICE] The status after a SUCCESSFUL copy. Truncated: the Array Limit is named when
+    /// any walked container holds more elements than the slider's minimum -- lowering it shrinks every container longer
+    /// than the new limit, not only one bound by the current limit [R7-X8] -- listing the largest first, with what
+    /// lowering it costs; with no such container (scalars only), no toolbar lever, and the way to export a part instead. Complete: empty, unless a
+    /// container came back clipped -- disclosed, naming no lever, because an array is also bound by the DLL's
+    /// per-fetch cap, which no slider raises.</summary>
+    internal static string ExportStatus(bool truncated, IReadOnlyList<LiveFieldValue> fields, int arrayLimit)
+    {
+        var bound = new List<(string Name, int Loaded, int Total)>();
+        // [R7-X8] Every walked container, for the truncation advice: lowering the slider shrinks EVERY container longer
+        // than the new limit, not only one bound by the current limit. Measured on DumperTest's NestedBag: two whole
+        // 16,000-pair maps at 16384 truncated with "no toolbar setting", and the same copy at 8192 was complete.
+        var containers = new List<(string Name, int Loaded)>();
+        foreach (var f in fields)
+        {
+            if (IsOneEntry(f)) continue;
+            Add(f.Name, f.ArrayElements?.Count ?? 0, f.ArrayCount);
+            Add(f.Name, f.MapElements?.Count ?? 0, f.MapCount);
+            Add(f.Name, f.SetElements?.Count ?? 0, f.SetCount);
+        }
+
+        static string Names(IEnumerable<string> names)
+        {
+            var list = names.Distinct().ToList();
+            return list.Count <= 3 ? string.Join(", ", list) : string.Join(", ", list.Take(3)) + $" +{list.Count - 3} more";
+        }
+
+        if (truncated)
+        {
+            string head = $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — "
+                        + "the CE table is incomplete";
+            var levers = containers.Where(c => c.Loaded > Constants.MinArrayLimit)
+                                   .OrderByDescending(c => c.Loaded)   // the ones that pay most, first
+                                   .Select(c => c.Name).ToList();
+            // Shrinking is not the same as fitting: beside a truncation driven by scalars a small container sheds a
+            // few entries and the copy stays incomplete, so the part-export advice that always works stays too.
+            return levers.Count > 0
+                ? head + $"; lower the Array Limit to shrink it ({Names(levers)} then export only "
+                       + "their first elements), or use Open in Live Walker → Copy CE Field for the part you need"
+                : head + ", and no toolbar setting shrinks this export; use Open in Live Walker → Copy CE Field for "
+                       + "the part you need";
+        }
+
+        var clipped = bound.Where(b => ContainerTruncation.IsTruncated(b.Loaded, b.Total)).ToList();
+        if (clipped.Count == 0) return "";
+        var shown = clipped.Take(3).Select(c => $"{c.Name} ({c.Loaded:N0} of {c.Total:N0})");
+        return "Copied; only part of these containers was exported: " + string.Join(", ", shown)
+               + (clipped.Count > 3 ? $" +{clipped.Count - 3} more" : "");
+
+        // [R7-X8] Written as ONE entry at any length, so the Array Limit shrinks neither: a sparse delegate (EmitFields
+        // sends only ArrayProperty / MulticastInline / Multicast to the array emitter) and a TArray<TFieldPath> (no CE
+        // type for its element: one placeholder). Neither is a lever, nor a clipped export to disclose.
+        static bool IsOneEntry(LiveFieldValue f) =>
+            f.TypeName == "MulticastSparseDelegateProperty"
+            || (f.TypeName == "ArrayProperty" && f.ArrayInnerType == "FieldPathProperty");
+
+        void Add(string name, int loaded, int total)
+        {
+            if (loaded > 0) containers.Add((name, loaded));
+            if (loaded > 0 && (loaded < total || loaded >= arrayLimit)) bound.Add((name, loaded, total));
         }
     }
 
@@ -884,7 +979,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             var hexAddr = $"0x{absAddr:X}";
 
             var formatted = AddressHelper.FormatAddress(
-                hexAddr, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                hexAddr, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -901,7 +996,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                instance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                instance.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
         }
         catch (Exception ex)
@@ -1043,7 +1138,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         try
         {
             var formatted = AddressHelper.FormatAddress(
-                match.OwnerAddress, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                match.OwnerAddress, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
             await _platform.CopyToClipboardAsync(formatted);
             LookupStatusText = $"Copied {formatted}  ({match.OwnerClassName})";
         }
@@ -1063,7 +1158,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             var symbolName = instance.ClassName.Replace(" ", "_").Replace("-", "_");
 
             var formattedAddr = AddressHelper.FormatAddress(
-                instance.Address, _engineState?.ModuleName, _engineState?.ModuleBase, AddrFormat);
+                instance.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
 
             var xml = CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr);
 

@@ -1106,7 +1106,11 @@ populate `element_index` (otherwise `-1`).
     "objects_total":   1180536,
     "classes_primed":  6234,
     "duration_ms":     224,
-    "deadline_hit":    false
+    "deadline_hit":    false,
+    "sparse_unlocated": 0,    // sparse delegates found but unreadable: their bindings are MISSING
+    "sparse_skipped":  false  // [R7-A-01] [R7-S2] [R7-X2] the sparse-delegate pass did not run: compact sets, a
+                              // storage key that is not a raw pointer, a refused header, or a storage that was
+                              // never located. The pass runs from UE 4.23.
   },
   "references": [
     {

@@ -1,0 +1,6 @@
+{
+ "name": "r7-x2-host",
+ "why": "R7-X2 GREEN host: HEAD with only 126a726a (R7-X3) reversed, so ValidateSparseDelegates refuses the UE 4.27 editor's real storage again (main-module vtables only) and the storage is UNLOCATED -- the state R7-X2 must report as sparse_skipped. Everything else, R7-X2 included, is HEAD.",
+ "reverse_commit": "126a726a",
+ "paths": ["dll/src"]
+}
