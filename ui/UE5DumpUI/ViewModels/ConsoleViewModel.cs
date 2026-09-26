@@ -186,42 +186,36 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>
     /// When the user selects a row, refresh the
-    /// <see cref="SelectedExecHint"/> binding so the cooker-strip
+    /// <see cref="ShowCheatManagerHint"/> binding so the CheatManager
     /// warning footer toggles per-selection. Single notification —
-    /// the hint is computed on demand from <see cref="SelectedResult"/>
+    /// the flag is computed on demand from <see cref="SelectedResult"/>
     /// to keep this side-effect-free.
     /// </summary>
     partial void OnSelectedResultChanged(AllFunctionEntry? value)
-        => OnPropertyChanged(nameof(SelectedExecHint));
+        => OnPropertyChanged(nameof(ShowCheatManagerHint));
 
     /// <summary>
-    /// Footer-line hint shown below the status row when the currently-
-    /// selected exec is likely to be one of the
-    /// <c>#if !UE_BUILD_SHIPPING</c> stripped engine commands
-    /// (UCheatManager::Fly/Ghost/God/Walk/Slomo/ChangeSize/Teleport
-    /// etc., or a game-defined subclass). Empty otherwise — the panel
-    /// binds visibility to non-empty.
+    /// True when the currently-selected exec likely belongs to a
+    /// CheatManager class (the engine's UCheatManager or a game-defined
+    /// subclass). On Shipping there is usually no live instance, so the
+    /// invoke lands on the CDO and does nothing. The panel shows the footer
+    /// warning while this is true; its wording lives in en.axaml
+    /// (<c>str.Con.CheatManagerHint</c>) and is bound there directly,
+    /// so the VM carries only the decision, not the text.
     ///
     /// Detection is a cheap class-name / super-name substring match
     /// against "CheatManager"; catches the canonical engine class +
     /// the typical game-defined subclasses
     /// (<c>MyGameCheatManager</c>, <c>BP_CheatManager_C</c>) without
-    /// needing a full super-chain walk. See memory
-    /// <c>feedback_ucheatmanager_stripped</c> for the diagnostic
-    /// rationale.
+    /// needing a full super-chain walk. It cannot tell the build
+    /// configuration, so it also fires on Development builds, where an
+    /// instance exists and the commands work — the wording is phrased as a
+    /// Shipping caveat for that reason. Why there is no instance, and how
+    /// to tell it from a hook on the wrong slot, is the UCheatManager entry
+    /// in docs/lessons-learned.md.
     /// </summary>
-    public string SelectedExecHint
-    {
-        get
-        {
-            if (SelectedResult is null) return "";
-            return IsLikelyUCheatManagerExec(SelectedResult)
-                ? "⚠ UCheatManager subclasses are often body-stripped in cooked Shipping " +
-                  "(Result=0 + no in-game effect). Try a game-specific exec or BC " +
-                  "function for verification. See memory feedback_ucheatmanager_stripped."
-                : "";
-        }
-    }
+    public bool ShowCheatManagerHint
+        => SelectedResult is not null && IsLikelyUCheatManagerExec(SelectedResult);
 
     /// <summary>
     /// True when <paramref name="entry"/>'s class or immediate super

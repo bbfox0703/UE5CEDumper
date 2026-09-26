@@ -27,6 +27,37 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3564) — the Console's CheatManager warning names the real cause: no live instance, not a compiled-out body `[CONSOLE-CHEATMGR-HINT]`
+
+- **3563's wording was wrong, and this build replaces it.** It said the engine's CheatManager execs are
+  "usually compiled out" on Shipping — the mechanism `lessons-learned.md` (the UCheatManager entry)
+  retracted on 2026-07-29 by measurement: a stock 4.27.2 Shipping EXE keeps the bodies, and the invoke does
+  nothing because no CheatManager instance exists, so it lands on the CDO. The banner now reads *"On a
+  Shipping build there is usually no live CheatManager, only its default object, so the engine's cheat
+  commands report success (Result=0) but have no effect in game. …"*.
+- "Strip" left the names with the theory: `ShowCheatManagerHint`, `str.Con.CheatManagerHint`.
+  `lessons-learned.md`'s scope line and `roadmap.md` stopped calling the no-effect case a cooker strip.
+- Tests: `ConsoleViewModelTests` also pin `compiled out` / `stripped` out of the wording (red on 3563's text,
+  then green). UI suite 5,612 run, 0 failed. Gates 27 run, 0 failed.
+- **AOT publish** (`-Mode Publish`): `UE5DumpUI.exe` 58,180,608 B `38431c284f85` (carries the new wording;
+  the old text and the memory name are absent from it), `UE5Dumper.dll` 3,016,704 B `b5ce88b01e55`; proxies
+  version `e6a5ad898696`, dinput8 `835c4aff1448`, dxgi `a1ef7f11f701`, winmm `2965a7bcf735`. ⬜ The live
+  check moves to this build: 3563's binary still shows the retracted wording.
+
+## 2026-09-26 (build 3563) — the Console's CheatManager warning moves to en.axaml and stops citing a private note `[CONSOLE-CHEATMGR-HINT]`
+
+- **The Console footer warning** for a selected CheatManager exec was a C# literal ending *"See memory
+  feedback_ucheatmanager_stripped."*, a developer's Claude memory note that no user has. Its text is now
+  `str.Con.CheatManagerStripHint` in `en.axaml`, bound by `ConsolePanel.axaml` with `StaticResource`, and
+  the view model keeps only the decision (`ShowCheatManagerStripHint`). The wording is a Shipping caveat:
+  engine CheatManager execs are usually compiled out there (they report success and do nothing), while the
+  game's own exec commands usually still work. Detection is unchanged, so it still shows on Development.
+- Tests: `ConsoleViewModelTests` pin the key's wording, the panel's bindings, and no `See memory` in the VM.
+  UI suite 5,612 run, 0 failed. Gates 25 run, 0 failed.
+- Build 3562 was consumed by the `-Target Test` run; **3563 is the published AOT build** (`UE5DumpUI.exe`
+  55.5 MB `c8c381e5`, `UE5Dumper.dll` `f4bab95a`). ⬜ Live check owed: select a CheatManager exec on the
+  AOT build and read the banner (the `todo.md` row carries it).
+
 ## 2026-09-26 (build 3561, tools only — no rebuild) — the local-LLM helper: 23 review findings fixed, the free-VRAM need computed from the model, live-checked
 
 **No binary changed.** Everything here is `tools/llm/ollama_local.py`, its skill and its docs, after the

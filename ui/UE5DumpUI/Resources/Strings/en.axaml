@@ -966,6 +966,12 @@
     <sys:String x:Key="str.Con.OpenLive">Live</sys:String>
     <sys:String x:Key="str.Con.CopyAaScript">AA(B)</sys:String>
     <sys:String x:Key="str.Con.HistoryHeader">Recent invocations</sys:String>
+    <!-- Footer warning for a selected CheatManager exec. Worded as a Shipping
+         caveat because the UI cannot tell the build configuration: on a
+         Development build these same commands work. The cause is a missing
+         INSTANCE, not a missing body: docs/lessons-learned.md (the UCheatManager
+         entry) measured the bodies intact in a Shipping EXE. -->
+    <sys:String x:Key="str.Con.CheatManagerHint">⚠ On a Shipping build there is usually no live CheatManager, only its default object, so the engine's cheat commands report success (Result=0) but have no effect in game. Exec commands the game defines itself usually still work — use one of those to check that invoking works.</sys:String>
     <sys:String x:Key="str.Tip.Con.Load">Scan every UFunction and surface those marked with UFUNCTION(exec) (FUNC_Exec=0x200). Many games leave these intact in cooked Shipping — they're the cheat surface the developer already curated.</sys:String>
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>

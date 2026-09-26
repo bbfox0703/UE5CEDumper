@@ -1176,14 +1176,14 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
-    public void SelectedExecHint_IsEmpty_WhenNoSelection()
+    public void ShowCheatManagerHint_IsFalse_WhenNoSelection()
     {
         var vm = CreateVm(new FakeDumpService());
-        Assert.Equal("", vm.SelectedExecHint);
+        Assert.False(vm.ShowCheatManagerHint);
     }
 
     [Fact]
-    public void SelectedExecHint_PopulatesForUCheatManager()
+    public void ShowCheatManagerHint_IsTrueForUCheatManager()
     {
         var vm = CreateVm(new FakeDumpService());
         vm.SelectedResult = new AllFunctionEntry
@@ -1192,14 +1192,11 @@ public class ConsoleViewModelTests
             FuncName  = "Fly",
             FunctionFlags = 0x0000_0200,
         };
-        Assert.NotEqual("", vm.SelectedExecHint);
-        Assert.Contains("body-stripped",            vm.SelectedExecHint);
-        Assert.Contains("cooked Shipping",          vm.SelectedExecHint);
-        Assert.Contains("feedback_ucheatmanager_stripped", vm.SelectedExecHint);
+        Assert.True(vm.ShowCheatManagerHint);
     }
 
     [Fact]
-    public void SelectedExecHint_EmptyForUnrelatedClass()
+    public void ShowCheatManagerHint_IsFalseForUnrelatedClass()
     {
         var vm = CreateVm(new FakeDumpService());
         vm.SelectedResult = new AllFunctionEntry
@@ -1208,11 +1205,11 @@ public class ConsoleViewModelTests
             FuncName  = "ClientMessage",
             FunctionFlags = 0x0000_0200,
         };
-        Assert.Equal("", vm.SelectedExecHint);
+        Assert.False(vm.ShowCheatManagerHint);
     }
 
     [Fact]
-    public void SelectedExecHint_RefreshesOnSelectionChange()
+    public void ShowCheatManagerHint_RefreshesOnSelectionChange()
     {
         // Locks the OnSelectedResultChanged partial — the property must
         // re-evaluate when SelectedResult flips. Without the
@@ -1233,16 +1230,52 @@ public class ConsoleViewModelTests
         int changes = 0;
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(vm.SelectedExecHint)) changes++;
+            if (e.PropertyName == nameof(vm.ShowCheatManagerHint)) changes++;
         };
 
         vm.SelectedResult = cheatRow;
-        Assert.True(changes >= 1, "SelectedExecHint must fire PropertyChanged on selection");
-        Assert.NotEqual("", vm.SelectedExecHint);
+        Assert.True(changes >= 1, "ShowCheatManagerHint must fire PropertyChanged on selection");
+        Assert.True(vm.ShowCheatManagerHint);
 
         vm.SelectedResult = normalRow;
         Assert.True(changes >= 2, "PropertyChanged must fire again on subsequent selection");
-        Assert.Equal("", vm.SelectedExecHint);
+        Assert.False(vm.ShowCheatManagerHint);
+    }
+
+    // [CONSOLE-CHEATMGR-HINT] The warning's text used to be a C# literal that ended
+    // "See memory feedback_ucheatmanager_stripped." -- a developer's private note name,
+    // meaningless to every user. The text now lives only in en.axaml and the panel binds
+    // it with StaticResource; these pin the key, its wording and the binding.
+
+    [Fact]
+    public void CheatManagerHint_wording_is_a_Shipping_caveat_without_internal_references()
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        const string open = "x:Key=\"str.Con.CheatManagerHint\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, "str.Con.CheatManagerHint missing from en.axaml");
+        start += open.Length;
+        var text = axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)];
+
+        Assert.Contains("Shipping", text, StringComparison.Ordinal);
+        Assert.DoesNotContain("memory", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("feedback_", text, StringComparison.OrdinalIgnoreCase);
+
+        // The cause is a missing instance, not a missing body: a stock 4.27.2 Shipping EXE
+        // keeps UCheatManager's bodies (docs/lessons-learned.md, the UCheatManager entry).
+        Assert.DoesNotContain("compiled out", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stripped", text, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void CheatManagerHint_panel_binds_the_resource_and_the_flag()
+    {
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml"));
+        Assert.Contains("IsVisible=\"{Binding ShowCheatManagerHint}\"", panel, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{StaticResource str.Con.CheatManagerHint}\"", panel, StringComparison.Ordinal);
+
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/ConsoleViewModel.cs"));
+        Assert.DoesNotContain("See memory", vm, StringComparison.Ordinal);
     }
 
     /// <summary>
