@@ -12,8 +12,8 @@ was stale — six titles, all pre-3263:
     Elliot                                           : dxgi.dll     2,855,936
 
 A proxy auto-loads at game start and OWNS THE PIPE, so a later `inject.py` of the
-current DLL is a no-op (`pipe already exists ... skipping auto-start`, and LoadLibraryW
-just bumps a refcount). Everything then measured is the old binary.
+current DLL is a no-op (it finds its own process already serving the pipe and starts
+nothing, and LoadLibraryW just bumps a refcount). Everything then measured is the old binary.
 `PipeClient.assert_build()` catches it — but only if you run it, and only after you
 have already spent the launch.
 

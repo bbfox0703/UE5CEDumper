@@ -37,9 +37,14 @@ when it means "not measured". Concrete case: `tools/ghidra/scan_patterns.java` s
 
 **Ask "what would this run look like if the change were broken?" before quoting it as evidence.**
 
-The same trap in its most common local form: **`build.ps1 -Target Test` does not compile any `.cpp`.**
-It builds two header-only test executables, so a syntax error in `Fern.cpp` passes it clean. A green
-`-Target Test` after editing a `.cpp` measures nothing about that file.
+The same trap in its most common local form: **`build.ps1 -Target Test` compiles only the `dll/src`
+`.cpp` files a test target pulls in** (`dll/CMakeLists.txt`; CLAUDE.md § Build & Dev Commands carries
+the pinned count). `Fern.cpp` and `Stark.cpp` are not among them, so a syntax error in `Fern.cpp`
+passes it clean. A green `-Target Test` after editing a `.cpp` that no test target compiles measures
+nothing about that file. (Until 2026-09-26 this paragraph said "two header-only test executables". That
+was never exact, since `dll_helpers_test` has compiled `Radar.cpp` and `Denken.cpp` since before this
+file existed, and it went badly stale once `dll_core_test` landed (2026-08-25); `check_derived_counts.py`'s
+`dll_cpp_under_test` entry records the same rot in CLAUDE.md.)
 
 ### 1.1a ⭐ "The call SUCCEEDED" is not "the effect HAPPENED" — validate the instrument in the condition where it MUST work
 
@@ -75,6 +80,15 @@ can carry a countable effect**. ES2's 93 execs are engine ones plus `ESGameInsta
 commands that must not be fired. Any row that needs "the effect happened exactly once" needs a
 **game-specific exec added to DumperTest** first.
 
+ℹ️ **Corrected 2026-09-26: this corollary does not hold on a Development package. See §1.ac.** Its
+mechanism was wrong: the bodies are not stripped. [lessons-learned.md](lessons-learned.md) (2026-07-29,
+stock 4.27.2 Shipping) found full `God`/`Fly`/`Ghost` bodies, and the real gate is whether a
+`UCheatManager` INSTANCE exists. A standalone DumperTest Development package has one: `CheatManager::God`
+toggled `bCanBeDamaged` and closed L15 by parity (§1.ac), and SW9 spawned and counted a fixture through
+`UCheatManager::Summon` (verification-register SW9). Neither needed a new exec. What still holds:
+DumperTest's own classes declare no exec, and its Shipping package has no live `UCheatManager` (CDOs
+only, L15's 2026-09-12 record in todo.md), so a countable exec there still needs one added.
+
 ### 1.2 Prove the assertion FAILS when it should — negative controls
 
 When `extract_patterns.py --check` was added (build 2530) the work did not stop at "it passes":
@@ -86,7 +100,7 @@ degrades to a no-op when its input is reworded is worse than no check.**
 leftover-proxy test predicted "no row appears when the volume has no Recycle Bin", and the first run
 produced exactly that. It looked like a clean confirmation. The control — flip the bin back ON,
 change nothing else, expect the row to appear — **also returned 0 rows**, which is what revealed the
-first run had measured *nothing* (see §2.1). The prediction was right and the measurement was
+first run had measured *nothing* (see §3.1). The prediction was right and the measurement was
 worthless, and only the control could tell those apart.
 
 **Why:** a test whose PASS criterion is *absence* ("no row appears", "no warning fires", "nothing is
@@ -153,8 +167,12 @@ instrument verified against the one case it was written from is not verified eit
 4. **Report the yield split.** "Confirmed findings that came from the list" vs "from hand-grep" is
    the number that tells the next round whether to keep feeding the instrument or abandon it.
 
-Reusable, each keeping its calibration in `main`: `scratchpad/discard_scan.py` (line-based),
-`discard_scan2.py` (+ head peeling), `discard_scan3.py` (statement-based, qualified + multi-line).
+There were three scanners, each keeping its calibration in `main`: `discard_scan.py` (line-based),
+`discard_scan2.py` (+ head peeling) and `discard_scan3.py` (statement-based, qualified + multi-line).
+They were written in a Claude Code session scratchpad (`%TEMP%\claude\…\scratchpad\`) and **never
+committed** (`git log --all -- '*discard_scan*'` is empty), so a copy survives, if at all, only on the
+machine that ran the sweep, and nothing in the repo reproduces them. Rebuild them from the axes above,
+or commit them under `tools/` before relying on them.
 Full write-up with the confirmed findings: [todo.md](todo.md) § *Blind-spot sweep ROUND 1*.
 
 ### 1.3 Green tests do not cover the SEAM
@@ -234,7 +252,7 @@ instructions alone reads as done and is not.
 "This is probably machine-specific" is also a hypothesis, and re-measuring settles it in one run. CE's
 `sleep(1) = 15.47 ms` was re-probed on a 9955HX3D laptop against the 9950X3D desktop and matched to
 **three decimals** — refuting the per-PC-performance explanation and upgrading "our timeout might be
-long here" to "**every user** had a ~155 s timeout" (§3.2).
+long here" to "**every user** had a ~155 s timeout" (§4.2).
 
 ### 1.8 A reported defect is a hypothesis until you reproduce it — including one from a subagent
 
@@ -379,8 +397,10 @@ cost **two** contradictory readings before it. The filing made it three.
 * **The cost is asymmetric.** A false defect is worse than a missed one here, because the prescribed
   fix ("make Avowed report 503") would have deleted a deliberate, correct structural correction —
   the same failure mode as §2.4.
-* **The cheap guard is one command.** `grep -n <subject> docs/todo.md` before writing the filing. The
-  answer was one grep away, in the same file the filing was being written into.
+* **The cheap guard is one command.** `grep -rn <subject> docs/` before writing the filing. The
+  answer was one grep away, in the same file the filing was being written into. ⚠ Grep the whole
+  tree, archive included (§1.ab-2), not `docs/todo.md` alone. That very note has since been archived
+  to `docs/archive/todo-closed-2026-08-23-build-3337.md`, where a todo-only grep no longer finds it.
 * ⚠ **A live reproduction is not evidence that the behaviour is wrong.** Reproducing `UE504` on
   demand felt conclusive and proved only that the feature works every time. Ask "what would this
   look like if it were CORRECT?" before "how do I reproduce it?".
@@ -1176,7 +1196,12 @@ A 40-check Lua rig stubbing CE's globals found 13 real failures in the unfixed f
 - **`lua` is installed on this machine** (`%LOCALAPPDATA%\Programs\Lua\bin\lua`, 5.4.6) and
   `luac -p` syntax-checks any script. Both rigs live in `scripts/tests/` and are documented in
   `scripts/README.md`. They are deliberately **not** in CI — a test step that silently skips when
-  its tool is missing is the AD1/AD2 defect.
+  its tool is missing is the AD1/AD2 defect. *(2026-09-26: no longer so. Since `2448a3f5` (2026-09-25,
+  `[PATH-SHAPE-2026-09-25]`) they are gate `check_lua_suites` in `tools/check_all.py` and CI, run on CE's own
+  Lua VM (`out/ce_lua53/lua53ce.exe`, built by `tools/verify/ce_lua53_host.py`). Where that host is not built,
+  CI included, the gate prints **SKIPPED** and exits 0, and `check_all.py` counts it as a skip, not a pass
+  (`LUAGATE-SKIP-HIDDEN`). So a green CI run still says nothing about them. `dll_size_text_test.lua` is
+  excluded as machine-bound.)*
 - **Write the rig BEFORE the fix and run it against the unfixed file.** The failure list is the
   finding, restated as behaviour. It is also the only honest way to claim a fix works.
 - **Two load-order traps, both measured:** `ue5_dissect.lua` *returns* its table and defines no
@@ -1294,7 +1319,12 @@ explicitly in the register, since it correspondingly proves nothing about the pa
 **Three traps, each of which produces a confident wrong answer:**
 
 - **A game with a deployed proxy IGNORES a fresh injection.** `injectDLL` returns `true`, and then
-  the log says `DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skip`.
+  the log said `DllMain AutoStart: pipe already exists (another UE5Dumper instance running) — skip`.
+  ⚠ *(2026-09-26, read from the code, not yet seen live)* That line is gone since `ac41d059` (2026-08-21,
+  `[RELAUNCHPIPE-2026-08-19]`). The proxy and the injected copy share one PID, so `Voll::DecideStart` answers
+  `AlreadyOurs`, and the injected copy logs `UE5_StartPipeServer: this process already serves the pipe — nothing
+  to do` and then `UE5_AutoStart: pipe server started`. **It now reads as health** while the OLD proxy is still
+  the server, which makes the `build_number` check below the only tell.
   The OLD proxy keeps serving the pipe. On 2026-08-16 that meant a build-**3122** proxy answering
   while the freshly built 3156 DLL sat loaded and inert in the same process — i.e. the batch would
   have "verified" a fix the running code did not contain. **Read `get_pointers.build_number` and
@@ -1370,7 +1400,9 @@ fail on `className[256]`→`[255]`, via its surface hash. What it cannot do is c
 it demands a *decision*, and a developer who bumps the contract version sails through with every
 offset moved. The honest claim is "complementary", not "blind", and the difference took one command
 to establish. The generalisation: **"the existing check misses this" is a claim to test, exactly
-like the defect itself.**
+like the defect itself.** *(2026-09-26: the blind spot has since narrowed. `5374e662` (2026-08-19, audit #5
+AA36) added `check_lua_mirrors` (in `check_mailbox_contract.py`), which COMPUTES every offset from the packed `MailboxData` and fails any Lua /
+`.CT` hand-copy that disagrees. `CeMailboxLayout.cs` is still checked for `ContractVersion` only.)*
 
 **f. Register hygiene — the severity cell must stay a plain severity.** Writing AD6's re-tier as
 `| **AD6** ✅ | MED→**LOW** |` silently dropped the row out of `check_audit_register.py`'s total
@@ -1404,9 +1436,9 @@ claimed success anyway. **Stubbing lets you neuter one primitive and prove the h
 reachable**: make `unregisterSymbol` a no-op and the script must say *"could NOT be unregistered"*
 rather than *"unregistered"*. No amount of source-reading establishes that.
 
-**Two practical notes.** `scripts/tests/*.lua` is the home and the convention (they are manual tools,
-deliberately not in CI, because a standalone `lua` is not a declared dependency and a step that
-skips quietly is worse than one run on purpose). And a pure helper needs no UI at all — `[STALEDLL]`
+**Two practical notes.** `scripts/tests/*.lua` is the home and the convention (manual tools until
+2026-09-25; since `2448a3f5` they are gate `check_lua_suites`, run on CE's own VM where `out/ce_lua53` is
+built and reported SKIPPED where it is not; see below). And a pure helper needs no UI at all — `[STALEDLL]`
 (b)'s size readout was closed by lifting `ue5_dllFileSize`/`ue5_dllSizeText` straight out of
 `dist/UE5CEDumper.CT` and running them against the two real DLLs.
 
@@ -1678,8 +1710,8 @@ sit a few hundred lines apart and go to different files:
 | `Radar: Refine re-anchor:` | `LOG_INFO(...)` — takes the file's `LOG_CAT` | `[OARR]` | `offsets-*.log` |
 | `RefineGroup re-anchor:` | `Sein::Info("SCAN:grp", ...)` — **explicit** | `[SCAN:grp]` | `scan-0.log` |
 
-**`#define LOG_CAT` is a DEFAULT, not the answer. Read the CALL.** `Aura.cpp` alone has 93 `LOG_*`
-calls and 22 explicit `Sein::` calls. `Sein.cpp`'s table resolves a category to a file; it cannot
+**`#define LOG_CAT` is a DEFAULT, not the answer. Read the CALL.** `Aura.cpp` alone had 93 `LOG_*`
+calls and 22 explicit `Sein::` calls on 2026-08-21 (105 and 29 by 2026-09-26; derive, do not quote). `Sein.cpp`'s table resolves a category to a file; it cannot
 tell you which category a given line passes — only the call site can.
 
 ▶ The cheap way to settle it without reading any of this: run the thing once and
@@ -1713,7 +1745,8 @@ sentinel, a shared `AnchorAtLastUnchainableHop` strips such hops before emission
 with the strip removed, the export fails loudly with the hop named, instead of copying a table that
 resolves into the executable image. ⭐ It is also **testable and demonstrably reachable** — removing
 the strip turned it red in the production path, not just in a unit test — so it is an invariant,
-not the `elseif false` kind of dead branch §1.9 warns about.
+not the `elseif false` kind of dead branch that a text assertion passes over (`[FZ6-ENABLE-2026-08-24]` in
+[verification-register.md](verification-register.md)).
 
 ⚠ **Do not "simplify" this to one representation.** `LiveFieldValue.Offset` deliberately stays `0`
 on those rows (bookmarks and the same-layout row-reuse path key on name+offset) while a separate
@@ -2017,19 +2050,28 @@ ways the Avalonia docs do not lead with. Three of the four are invisible at comp
 1. **`SortMemberPath` on every sortable column — mandatory.** Avalonia's DataGrid does NOT derive the
    sort path from a compiled binding, so without it **nothing sorts** (found build 933-934). Use the
    **numeric backing property** for hex offset / size / score columns so they sort numerically, and set
-   `CanUserSort="False"` on action columns. Deliberate exception: `SpcPanel`'s `SnapshotPicks` sets
-   `CanUserSortColumns="False"` — it is chronological on purpose.
+   `CanUserSort="False"` on action columns. Deliberate exceptions set `CanUserSortColumns="False"` —
+   grep it for today's set: `SpcPanel`'s `SnapshotPicks` (chronological on purpose), `PointerPanel`'s
+   `DiagCommands` (arrives pre-ranked) and `ValueSearchPanel`'s `GroupResultsGrid` (sorted server-side).
+   ⚠ **In the AOT-trimmed build that ships, `SortMemberPath` alone is NOT enough** (audit #5 AF16–AF23,
+   build 3263). The default sort reflects on that path, and trimming drops it for every
+   `DataGridTemplateColumn` and every column whose `SortMemberPath` differs from its own `Binding`
+   path — the numeric-backing-property case above. Such a column needs a comparer from
+   `Helpers/DataGridSortComparers.cs`, and `DataGridSortWiringTests` fails a grid that has neither. It
+   sorts fine untrimmed, so only a `-Mode Publish` build shows it.
 2. **Any star column defeats horizontal overflow.** A `DataGrid` with **any** star-sized column fits
    its total width to the viewport, so no horizontal scrollbar can ever appear. The complaint "can't
    drag a column past the window edge" is *always* a star column. `HorizontalScrollBarVisibility`
    already defaults to `Auto`, so a missing attribute is never the cause. Fix: fixed numeric `Width` +
    `MinWidth`, no star anywhere. **Accepted trade-off:** fixed columns leave empty space at the right
    edge of a wide window. **Do NOT "fix"** the intentionally non-scrolling ones
-   (`HorizontalScrollBarVisibility="Disabled"`): ConsolePanel's ScrollViewer and ClassPivot's class
-   list. `MainWindow.axaml`'s `<ColumnDefinition Width="*"/>` is the tab host — correct, leave it.
+   (`HorizontalScrollBarVisibility="Disabled"` — grep it for today's set): ConsolePanel's ScrollViewer,
+   ClassPivot's setup scroller and class list, ProxyDeploy's orphan list and Value Search's per-slot
+   leaves list. `MainWindow.axaml`'s `<ColumnDefinition Width="*"/>` is the tab host — correct, leave it.
 3. **Never bind `ItemsSource` to a non-generic `DataGridCollectionView`** under compiled bindings — the
    column bindings lose row-type inference (AVLN2000). For client-side filtering, rebuild a **typed**
-   `ObservableCollection` (the pattern Value Search uses: `FilterText` → `ApplyFilter`).
+   `ObservableCollection` (the pattern `ConsoleViewModel` / `DetectStatsViewModel` use: `FilterText` →
+   `ApplyFilter`; Value Search left it for a server-side window in V3-C).
 4. **`DataGridCheckBoxColumn` needs select-then-click (2 clicks).** Use a `DataGridTemplateColumn` with
    a TwoWay-bound `CheckBox` for single-click toggle.
 
@@ -2085,7 +2127,8 @@ The user runs the DLL via Proxy mode — copying `dist/UE5Dumper.dll` (or `versi
 happened on build 588 → 589: `-Target Test` was run (which only rebuilds the test exes) and the user
 was asked to test; their game DLL was still build 586.
 
-**How to apply:** after DLL-side changes run `build.ps1` with no `-Target` (or `-Target DLL`), then
+**How to apply:** after DLL-side changes run `build.ps1 -Target DLL` (a plain `build.ps1` refreshes the
+DLL too, but also republishes `dist/UE5DumpUI.exe` NON-trimmed — see the UI half below and §7), then
 check `dist/build_number.txt` shows the expected number AND `dist/UE5Dumper.dll` has a recent mtime.
 Quote the fresh build number in the test instructions.
 
@@ -2268,11 +2311,17 @@ paragraph; these two had nothing, which is how three consecutive bumps walked pa
 truth out of the resolved graph, never from the version you typed:
 
 ```
-py -c "import json;d=json.load(open('ui/UE5DumpUI/obj/project.assets.json'));t=list(d['targets'].values())[0];print(t['Avalonia.Skia/12.1.1']['dependencies'])"
+py -c "import json;d=json.load(open('ui/UE5DumpUI/obj/project.assets.json'));t=list(d['targets'].values())[0];[print(k,t[k]['dependencies']) for k in t if k.startswith(('Avalonia.Skia/','Avalonia.HarfBuzz/'))]"
 ```
 
 Put the version in **one** MSBuild property feeding every reference. Seven scattered references are
 how a bump gets applied to some and not the others — the variant that hides longest.
+
+✅ **Closed in the repo since 2026-08-16:** both versions live once, as `$(SkiaSharpVersion)` /
+`$(HarfBuzzSharpVersion)` in `UE5DumpUI.csproj` (`a2c02875`), and `build.ps1` FAILS the UI build when
+what `Avalonia.Skia` / `Avalonia.HarfBuzz` were built against differs from what resolved (`12792990`;
+read from `project.assets.json`, so an Avalonia upgrade moves the target by itself). The lesson stands
+for any other open-ended native dependency.
 
 ### 3.8 The AV quarantines *collateral*, and it takes uncommitted work with it
 
@@ -2358,8 +2407,9 @@ corrupt". It is neither: it is **objects from one toolset being linked against a
 was never yours. (That is what settled it here.)
 
 ⇒ **Never hardcode a `vcvars64.bat` path.** Resolve with
-`vswhere -latest -prerelease -products * -property installationPath`, which is what
-`tools/verify/build_dll.py` does, and fail loudly rather than falling back to a guess. Related but
+`vswhere -latest -prerelease -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`,
+which is what `tools/verify/build_dll.py` and `build.ps1` both do (the two filters must stay identical —
+both drive `build/`), and fail loudly rather than falling back to a guess. Related but
 *separate*: CLAUDE.md's `msvc_deps_prefix` warning is about **configure**, not build — that one is
 about the console code page, this one is about which VS you entered. Getting the code page right
 does not save you from the wrong toolset.
@@ -2438,8 +2488,8 @@ that half is not obvious until it costs you a measurement.
 The DLL's auto-start refuses to run when the pipe is already owned:
 
 ```
-[WARN] [INIT] DllMain AutoStart: pipe already exists (another UE5Dumper instance running)
-              — skipping auto-start
+[WARN] [INIT] DllMain AutoStart: pipe is held by PID <pid> — deferring auto-start, and watching
+              for it to free
 ```
 
 So the second host **loads the DLL, reports a successful injection, creates its log folder, writes a
@@ -2447,6 +2497,14 @@ So the second host **loads the DLL, reports a successful injection, creates its 
 downstream check on that host then measures an absence that the injection itself caused: no scan, no
 pointers, no `HintCache: Saved results`, no sweep. A rig looking for any of those reports a clean,
 confident FAIL of a working fix.
+
+⚠ **Changed 2026-08-21 (`ac41d059`, `[RELAUNCHPIPE-2026-08-19]`):** the second host no longer gives up
+for good. It logs the `deferring auto-start` line above (when this section was written, 2026-08-19, the
+line read `pipe already exists … — skipping auto-start`), sets `INIT_SKIPPED`, and watches for up to
+5 minutes (`Voll::kClaimWatchMaxTries`); if the holder's pipe frees in that time it runs the whole
+auto-start (`AutoStartWatcher: pipe freed by PID …`). While both hosts live it still does nothing —
+everything below holds — but killing the first host within those 5 minutes now rescues the second
+instead of leaving it dead.
 
 **The tell is in `init-0.log`, not `scan-0.log`** — the skip is an INIT-category line, and the scan
 log looks merely *empty* rather than *skipped*.
@@ -2941,7 +2999,8 @@ values it did set were the two that most code exercises.
 - **If N constants are derived from one measurement, express the derivation ONCE** and make that the
   only way to publish them. A helper that returns the whole family beats N assignments however
   carefully those assignments are commented — this is the "make the helper impossible to bypass"
-  half of §2.3's cluster ④, applied to data rather than to a predicate.
+  half of audit #5's cluster ④ ([audit-2026-08-13-early-code-findings.md](audit-2026-08-13-early-code-findings.md)
+  §4), applied to data rather than to a predicate.
 - **Count the writers before trusting any one of them.** The finding named one site; the fix-time
   grep found four. Two of the extra three were already coherent — which is exactly why they were
   never suspected, and exactly how they drifted from the fourth.
@@ -3102,7 +3161,9 @@ The witness rule lives in `Radar::PickGroupWitnessAssignment`, deliberately besi
 agree with, because while it sat in `Fern.cpp`'s JSON encoder **no test target compiled it** and it kept
 drifting. **Check that a rule you are about to move is somewhere a test can reach.** AB4 was split the
 same way and for the same reason: the verdict logic went into `Radar.cpp` (compiled by
-`dll_helpers_test`) so `Aura.cpp` — compiled by nothing — was left a mechanical substitution.
+`dll_helpers_test`) so `Aura.cpp` — compiled by nothing at the time — was left a mechanical
+substitution. (Since `dll_core_test`, 2026-08-25, `Aura.cpp` IS compiled by a test target; `Fern.cpp`
+still is not — CLAUDE.md's `-Target Test` note says which files are.)
 
 -----
 
@@ -3130,7 +3191,9 @@ architecture or UX changes in these areas.
   client plus a `CeXmlExportService` Emit-layer refactor (there is no tree model today). Per-row `+CE`
   (PR #251) and flat `+CE Fields` (PR #252) **did** ship.
 - **Filter-and-pick UI = TextBox + ListBox.** Do not re-propose `AutoCompleteBox` (`SelectedItem`
-  oscillates) or `ComboBox` (dropdown drops clicks on rebuild).
+  oscillates) or `ComboBox` (dropdown drops clicks on rebuild). This is about PICKERS. The keyword
+  search boxes are a different job and DO use `AutoCompleteBox`, bound to `Text`, never `SelectedItem`
+  (CLAUDE.md's keyword-search rule, `Helpers/KeywordSearchMemory`).
 - **Multi-pipe IPC**: Phase 0 (scan thread-priority guard) and Phase 1 (single-handle worker) were both
   **REVERTED** — Phase 1 deadlocked on the sync pipe, Phase 0 starved scans 20×. The shipped answer is
   Path A, two connections each with its own handle+thread. See [multipipe-eval.md](multipipe-eval.md),
@@ -3172,13 +3235,15 @@ architecture or UX changes in these areas.
   discriminator plus a two-pass relaxed table, both strictly widening.
 - **A single hand-maintained bugs control table** (merging the audit docs / todo / dev-log into one
   tracker) — evaluated 2026-08-17, **rejected**. The audit #5 register (§3c) already IS the single
-  status owner, CI-gated by `check_audit_register.py`, and the other docs' roles (evidence dossiers /
+  status owner (CI-gated by `check_audit_register.py` until 2026-09-03, when the spent fix programme
+  retired the gate; the script stays for `--list`), and the other docs' roles (evidence dossiers /
   append-only history that doubles as the gate's claim source / forward work + the verification
   register) are load-bearing for the gates. The deciding evidence: the six-row re-derivation dossier
   drifted three ways within a day of its own fixes — every extra hand-maintained copy of status is a
   copy that lies. A unified view must be DERIVED, never stored — `check_audit_register.py --list`
   prints the open HIGH/MED tier with segments. The spent dossier is in `docs/archive/`; full
-  rationale in the 2026-08-17 dev-log entry.
+  rationale in the 2026-08-17 dev-log entry (moved on 2026-09-26 to
+  `archive/dev-log-2026-08-pre-build-3263.md`).
 
 - **Three Avalonia fix designs killed BY MEASUREMENT — do not re-propose any of them.** Each was tried
   against the real UI and each failed to do the thing it was proposed for: **(a)** restoring a scroll
@@ -3197,9 +3262,10 @@ architecture or UX changes in these areas.
     `map_key_size` / `map_value_size` / `set_elem_size` unconditionally. Every consumer gates, and
     gating the emit would drop a field older UI builds read.
 
-Evaluations that concluded "do not build" live in the repo rather than here — see CLAUDE.md's docs table
-for `text-translation-eval.md`, `teleport-coord-library-spec.md`, `native-c-value-scan-spec.md`,
-`multipipe-eval.md`, and `Nibble-Mask-Evaluation.md` in the AOBMaker repo.
+Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
+index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the
+AOBMaker repo's `docs/`. (`teleport-coord-library-spec.md` and `native-c-value-scan-spec.md` used to be
+listed here; both SHIPPED, as their status headers say.)
 
 -----
 
@@ -3266,7 +3332,7 @@ being silently truncated past ~140 lines, so the section map went too).
 
 | Fact | Goes to |
 |---|---|
-| A verification method, a trap in our stack, a UE/CE fact, a settled decision | **This file** (§1–§6) |
+| A verification method, a trap in our stack, a UE/CE fact, a settled decision, a comment-style rule | **This file** (§1–§6, §8) |
 | What shipped, when, and why | `dev-log.md` (append-only) |
 | Open work, effort/risk, pending live verification | `todo.md` |
 | What a *game* does differently | `lessons-learned.md` |
