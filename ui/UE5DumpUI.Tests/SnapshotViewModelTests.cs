@@ -307,6 +307,34 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
     }
 
+    // [AUTOSNAP-STOP-STALE-STATUS] Turning Auto OFF by hand cancels the loop mid-countdown, and
+    // the loop left on OperationCanceledException without touching AutoStatusText, so the line
+    // stayed frozen on "Auto: next snapshot in Ns" -- a capture that would never come. (Measured
+    // on build 3566: frozen at 28 s, no capture 30 s later.)
+    [Fact]
+    public async Task AutoSnapshot_StoppedByHand_DoesNotKeepPromisingTheNextSnapshot()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var vm = new SnapshotViewModel(new CaptureStub(), _store, new MockLoggingService())
+        {
+            SelectedScope = "NumericNoByte", GameOnly = true,
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        vm.AutoSnapshotEnabled = true;
+        var loop = vm.AutoLoopTaskForTests;
+        Assert.NotNull(loop);
+        // The first capture runs at once; then the loop counts down to the next one.
+        for (int i = 0; i < 300 && !vm.AutoStatusText.Contains("next snapshot", StringComparison.Ordinal); i++)
+            await Task.Delay(50, ct);
+        Assert.Contains("next snapshot", vm.AutoStatusText, StringComparison.Ordinal);
+
+        vm.AutoSnapshotEnabled = false;                 // the user's toggle
+        await loop!.WaitAsync(TimeSpan.FromSeconds(30), ct);
+
+        Assert.DoesNotContain("next snapshot", vm.AutoStatusText, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Capture_StreamsAllChunks_PersistsWithCorrectCounts()
     {
