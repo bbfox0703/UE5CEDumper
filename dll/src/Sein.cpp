@@ -36,7 +36,7 @@ enum LogFile : uint8_t {
     LF_Scan,        // scan.log    — SCAN:*, MEM
     LF_Offsets,     // offsets.log — DYNO:*, OARR, FNAM
     LF_Pipe,        // pipe.log    — PIPE:*
-    LF_Walk,        // walk.log    — WALK:*
+    LF_Walk,        // walk.log    — WALK:*, FLY
     LF_COUNT
 };
 
@@ -136,7 +136,7 @@ static bool           s_filesOpen   = false;
 static fs::path       s_logDir;                 // base: %LOCALAPPDATA%\UE5CEDumper\Logs
 static fs::path       s_processDir;             // per-process subfolder
 // TRUE only once s_processDir has actually been CREATED. Not derivable from
-// `s_processDir.empty()`: it is assigned at :572 BEFORE create_directories at :574,
+// `s_processDir.empty()`: InitProcessMirror assigns it BEFORE create_directories,
 // so on the create-failure bail it is non-empty and names a directory that does not
 // exist — and PruneStaleProcessFolders' own-folder guard is `fs::equivalent(entry,
 // keep, ec)`, which is INERT against a nonexistent `keep`. Sweeping then could

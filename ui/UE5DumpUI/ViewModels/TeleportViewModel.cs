@@ -82,9 +82,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         for (int i = 0; i < 3; i++)
             Markers.Add(new TeleportMarkerRow { Slot = i });
 
-        // Hotkey rows: Save 1-3, Recall 1-3, then the system Recall-last and the
-        // two BugItGo actions (Force stays UI-button only). Adding a row here is
-        // all it takes — capture, persistence and registration are generic over
+        // Hotkey rows, one per ActionId (BugItGo's Force stays UI-button only).
+        // Adding a row here is all it takes — capture, persistence and registration are generic over
         // ActionId; OnMarkerHotkeyPressed routes the id to the right command.
         for (int i = 0; i < 3; i++)
             HotkeyRows.Add(new TeleportHotkeyRow { ActionId = $"save{i}", DisplayName = $"Save marker {i + 1}",
@@ -5439,10 +5438,12 @@ public partial class TeleportMarkerRow : ObservableObject
     public string Label => $"Marker {Slot + 1}";
 }
 
-/// <summary>One user-settable marker-hotkey row (Save/Recall × slot).</summary>
+/// <summary>One user-settable hotkey row: a marker Save/Recall slot or a gameplay
+/// action, keyed by <see cref="TeleportHotkeyRow.ActionId"/>.</summary>
 public partial class TeleportHotkeyRow : ObservableObject
 {
-    /// <summary>Stable id: "save0".."save2" / "recall0".."recall2".</summary>
+    /// <summary>Stable id, persisted with the combo (e.g. "save0", "recall_last",
+    /// "fly_toggle"); the rows are built in the constructor.</summary>
     public string ActionId { get; init; } = "";
     public string DisplayName { get; init; } = "";
 

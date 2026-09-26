@@ -1712,10 +1712,11 @@ GroupScanResult ScanForValueGroup(
     // scan WARNs when it truncates rather than dropping the extras silently.
     int                                 perSlotCap = Orden::kDefaultPerSlotCap);
 
-// Next scan (P1: exact per slot). Re-reads each candidate's per-slot
-// convergence offsets, keeps those still equal to the slot's NEW target,
-// updates prevValue, and drops the candidate when any slot empties OR no
-// distinct cross-slot assignment survives. `slots` carry the NEW targets.
+// Next scan. Re-reads each candidate's per-slot convergence offsets, keeps
+// those that still satisfy the slot's predicate (SlotSpec::st: a targeted type
+// against the slot's NEW target, a prev-value type against the leaf's stored
+// prevValue), updates prevValue, and drops the candidate when any slot empties
+// OR no distinct cross-slot assignment survives.
 ValueScanStats RefineGroupCandidates(
     const std::vector<Radar::SlotSpec>&        slots,
     std::vector<Radar::GroupCandidate>&        candidates,

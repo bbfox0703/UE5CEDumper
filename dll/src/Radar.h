@@ -1037,7 +1037,7 @@ struct SlotSpec {
 // offset from the owning object to the leaf value (== descriptor.fieldOffset for
 // a direct field; a separate field so containers can carry an element-address
 // offset later). `prevValue` is the last-observed bytes at that leaf so the wire
-// can render it and a future prev-value refine can compare.
+// can render it and a prev-value refine (SlotSpec::st) can compare.
 struct GroupSlotMatch {
     uint32_t  descriptorIdx = 0;   // -> GroupSession::descriptors
     int32_t   elementIndex  = -1;  // -1 = direct field; >=0 = container element index

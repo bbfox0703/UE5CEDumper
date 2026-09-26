@@ -311,15 +311,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// null)</c> (<c>ClassStructViewModel.cs</c>), which is exactly why clicking a
     /// DIFFERENT row always recovered. Nor does it belong in a pointer handler on the tree:
     /// re-raising the event lands back in <c>OnObjectSelected</c>, whose dedupe
-    /// (<c>:358</c>) swallows it, so that buys nothing this does not — and bypassing that
+    /// swallows it, so that buys nothing this does not — and bypassing that
     /// dedupe is pinned against by <c>RepeatedSelectionOfSameNode_WalksOnlyOnce</c>.</para>
     ///
-    /// <para>Order is load-bearing: clear FIRST. <c>OnObjectSelected(null)</c> returns at
-    /// <c>ClassStructViewModel.cs:349</c> before its first await and deliberately takes no
-    /// load ticket, so it cannot supersede the load started on the next line; and if that
+    /// <para>Order is load-bearing: clear FIRST. <c>OnObjectSelected(null)</c> returns
+    /// before its first await and deliberately takes no load ticket, so it cannot supersede the load started on the next line; and if that
     /// load throws, the tree is left honestly unselected rather than pointing at a stale
-    /// node. This is the same bare null write as <see cref="ObjectTreeViewModel.ClearOnDisconnect"/>
-    /// (<c>:496</c>); it touches no collection, so the reentrancy note at
+    /// node. This is the same bare null write as <see cref="ObjectTreeViewModel.ClearOnDisconnect"/>;
+    /// it touches no collection, so the reentrancy note at
     /// <c>ObjectTreeViewModel.cs</c> <c>ApplyFilter</c> — which is about the selection model reacting
     /// to <c>FilteredNodes.Clear()</c> mid-method — does not apply.</para>
     /// </summary>

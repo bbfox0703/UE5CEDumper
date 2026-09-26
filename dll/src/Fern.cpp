@@ -3102,8 +3102,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (m.boolFieldMask != 0)
                         item["bool_mask"] = m.boolFieldMask;
                     // Note: preview omitted intentionally — batch path skips
-                    // Phase-2 instance scan. Interesting Properties tab
-                    // (the only caller) doesn't display previews.
+                    // Phase-2 instance scan; no caller of the batch path
+                    // displays a preview.
                     matches.push_back(item);
                 }
                 json envelope;

@@ -2687,7 +2687,7 @@ static std::atomic<uintptr_t> s_sparseDelegatesCache{0};
 static std::atomic<bool>      s_sparseDelegatesScanned{false};
 // Serialises the SLOW path only. Unlike the other three scans, this one is reachable from
 // PIPE COMMAND threads -- Aura::FindReferencesToUObject (Aura.cpp) and
-// WalkSparseDelegateBindings (Aura.cpp:6284) -- so two clients can enter it at once before
+// WalkSparseDelegateBindings (Aura.cpp) -- so two clients can enter it at once before
 // the latch is set. Both would then run `s_sparseReport = ScanReport{}` and write the same
 // file-static ScanReport, which owns a std::vector: a plain data race, i.e. UB, not merely a
 // confused verdict. Found 2026-09-07 while checking whether the per-connection cancel

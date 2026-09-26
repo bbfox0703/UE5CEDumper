@@ -500,8 +500,8 @@ public partial class ConsoleViewModel : ViewModelBase
                 // while the same command succeeded immediately after a Load cleared the pin.
                 //
                 // ⭐ RETRYING HERE CANNOT RUN THE COMMAND TWICE, and that is not an assumption:
-                // EVERY `ok:false` in the invoke handler is returned at Fern.cpp `Fern::DispatchCommand`, and the
-                // dispatch does not begin until :5718. An `ok:false` therefore always means the
+                // EVERY `ok:false` in Fern.cpp's invoke_function handler is returned before the
+                // dispatch begins. An `ok:false` therefore always means the
                 // function was never dispatched. The queued case -- `ok:true` with result -5 -- is a
                 // RESULT, not a throw, and is still excluded by `!dispatchTimedOut` below.
                 _log.Info($"Console.Run: pinned invoke threw for {entry.ClassName}::{entry.FuncName} " +

@@ -8350,7 +8350,7 @@ ValueScanResult ScanForValue(
 
                 // Bounds keep a single wide object from monopolising the scan:
                 // emitted native candidates and offset probes are both capped per
-                // object (the global maxResults + 15s deadline still apply).
+                // object (the global maxResults + deadline still apply).
                 constexpr int32_t kMaxRawPerObj = 256;
                 constexpr int32_t kMaxRawProbes = 32768;
                 int32_t rawEmitted = 0, probes = 0;
@@ -9748,7 +9748,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
             if (std::chrono::steady_clock::now() - t0 > kDeadline) { result.stats.deadlineHit = true; break; }
         }
         // Newest-first (coupled with native-C in the UI): walk high-index first so
-        // that when the 15s deadline truncates a huge game (FF7 Rebirth ~433K
+        // that when the deadline truncates a huge game (FF7 Rebirth ~433K
         // objects), the survivors are the most-recently-allocated objects — the
         // just-spawned UI widgets / actors that hold native values — rather than
         // low-index CDOs/templates. `idx` is the true GObjects index used everywhere.

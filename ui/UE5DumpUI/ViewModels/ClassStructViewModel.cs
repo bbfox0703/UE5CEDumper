@@ -233,8 +233,9 @@ public partial class ClassStructViewModel : ViewModelBase
 
     /// <summary>
     /// Cross-tab entry point ("show me this class"), bound as
-    /// <c>LoadClassCommand</c> and invoked from five handoff sites in
-    /// MainWindowViewModel as well as from <see cref="OnObjectSelected"/>.
+    /// <c>LoadClassCommand</c> and invoked from every MainWindowViewModel handoff
+    /// (through its <c>ShowClassInClassStructAsync</c>) as well as from
+    /// <see cref="OnObjectSelected"/>.
     /// Signature deliberately unchanged so those callers keep compiling.
     /// </summary>
     [RelayCommand]

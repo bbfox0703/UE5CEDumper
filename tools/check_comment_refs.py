@@ -39,12 +39,14 @@ CODE_EXT = (".cpp", ".h", ".hpp", ".cs", ".lua", ".py", ".CT")
 OTHER_REPOS = re.compile(r"(?i)\b(AOBMaker|cheat-engine|RE-UE4SS|Dumper-?7|UEPseudo|patternsleuth|CrimsonAtomtic|"
                          r"discrete|UnrealEngine|Epic)\b")
 HISTORY = re.compile(r"(?i)\b(until|before|used to|believ\w*)\b")
+LINE_HISTORY = re.compile(r"(?i)\b(?:(?:until|before|prior to)\s+(?:build|commit|v?\d{3,}\b|20\d\d)|used to|"
+                          r"(?:cited|named|quoted) as|believ\w*)")
 # The evaluation doc names the broken tags as examples; it must not count as their record.
 TAG_CORPUS_EXCLUDE = ("docs/comment-integrity-eval.md",)
 
 FILELINE = re.compile(r"\b([A-Za-z_][\w.-]*\.(?:cpp|h|hpp|cs|axaml|lua|py|CT|ps1|md))\s?:(\d{1,5})(?:\s*[-–]\s*\d{1,5})?\b")
 ANYFILE = re.compile(r"\b([A-Za-z_][\w.-]*\.(?:cpp|h|hpp|cs|axaml|lua|py|CT|ps1|md|pas|inc|java|ini|txt))\b")
-BARE = re.compile(r"(?:(?<=\()|(?<=\s)|(?<=,)|(?<=\[)|(?<=/))(:\d{2,5})(?:\s*[-–]\s*\d{2,5})?\b")
+BARE = re.compile(r"(?:(?<=\()|(?<=\s)|(?<=,)|(?<=\[)|(?<=/)|(?<=<c>))(:\d{2,5})(?:\s*[-–]\s*\d{2,5})?\b")
 TESTCLAIM = re.compile(r"(?i)(?:no|not by any|compiled by no|reach(?:es)? no)\s+(?:C\+\+\s+)?test(?:\s+(?:target|executable|binary|TU))?"
                        r"[^.;]{0,40}?\b([A-Z][A-Za-z]+)\.cpp|\b([A-Z][A-Za-z]+)\.cpp\b[^.;]{0,40}?"
                        r"(?:no test target|no test executable|compiled by no test|reaches no test|no test compiles)")
@@ -113,13 +115,16 @@ def scan_line(path, n, c, ctx, prior=""):
     out = []
     by_base, in_tests, md_by_base, doc_text, heads = ctx
     history = bool(HISTORY.search(c))
+    # LINE takes the NARROW history test: "before" / "until" alone is ordinary prose ("assigned at :572 BEFORE
+    # create_directories"), and the broad one let any such line carry a line number past the gate.
+    line_history = bool(LINE_HISTORY.search(c))
     # --- LINE: in-repo file:line, plus bare :NNN that continues an in-repo ref or stands alone (same file)
     last_is_repo = None
     spans = []
     for m in FILELINE.finditer(c):
         base = m.group(1).lower()
         spans.append((m.start(), m.end(), base in by_base))
-        if base in by_base and not base.endswith(".md") and not history:
+        if base in by_base and not base.endswith(".md") and not line_history:
             out.append(("LINE", path, n, m.group(0)))
     for m in BARE.finditer(c):
         if any(s <= m.start() < e for s, e, _ in spans):
@@ -133,7 +138,7 @@ def scan_line(path, n, c, ctx, prior=""):
         else:
             above = list(ANYFILE.finditer(prior))
             inrepo = above[-1].group(1).lower() in by_base if above else True   # none anywhere = this file
-        if inrepo and not history:
+        if inrepo and not line_history:
             out.append(("LINE", path, n, m.group(1)))
     # --- TESTTARGET (history -- "until now", "used to", a claim quoted as someone's belief -- is not a claim)
     for m in TESTCLAIM.finditer(c):
@@ -209,6 +214,10 @@ def selftest():
         ("Genau.cpp:170/:282 hold it", "LINE", True),
         ("see :170/:282 below", "LINE", True),
         ("(Cited as Genau.cpp:246 until build 3262; it drifted)", "LINE", False),
+        ("assigned at :572 BEFORE create_directories at :574", "LINE", True),
+        ("whose dedupe (<c>:358</c>) swallows it", "LINE", True),
+        ("the lock must be taken before WalkSparseDelegateBindings (Genau.cpp:6284) runs", "LINE", True),
+        ("this used to point at Genau.cpp:4410", "LINE", False),
         ("no test target compiles Aura.cpp, so", "TESTTARGET", True),
         ("no test target compiles Stark.cpp, so", "TESTTARGET", False),
         ("Until now no test target compiled Aura.cpp", "TESTTARGET", False),
