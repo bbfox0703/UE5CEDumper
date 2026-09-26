@@ -630,6 +630,13 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 skippedMissingOffset++;
                 continue;
             }
+            // An unresolved bool layout would be frozen with a whole-byte write over up to 7
+            // packed siblings -- and the generator refuses it anyway. [BOOL-NATIVE-SEARCH]
+            if (FreezeScriptGenerator.IsUnresolvedBool(sr.PropType, sr.BoolNative, sr.BoolFieldMask))
+            {
+                skippedUnresolvedBool++;
+                continue;
+            }
 
             var fp = new FreezeScriptParams
             {
@@ -678,7 +685,10 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             StatusText = skippedUnsupported > 0
                 ? $"Selected rows aren't freeze-supported " +
                   $"(struct / array / non-scalar types). 0 entries in batch."
-                : "Selection produced 0 valid rows — nothing to write.";
+                : skippedUnresolvedBool > 0
+                    ? $"Selected bools could not be resolved on this engine ({skippedUnresolvedBool}) — " +
+                      "freezing them whole would stamp neighbouring bools. 0 entries in batch."
+                    : "Selection produced 0 valid rows — nothing to write.";
             return;
         }
 
@@ -691,9 +701,11 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             processName: "InterestingProperties", now);
 
         var skipped = skippedUnsupported + skippedMissingOffset;
-        StatusText = skipped > 0
-            ? $"Generated {rows.Count} entries (skipped {skipped} unsupported / malformed)."
-            : $"Generated {rows.Count} entries.";
+        StatusText = $"Generated {rows.Count} entries"
+            + (skipped > 0 ? $" (skipped {skipped} unsupported / malformed)" : "")
+            + (skippedUnresolvedBool > 0
+                ? $" (skipped {skippedUnresolvedBool} bool(s) whose bit could not be resolved)" : "")
+            + ".";
 
         RequestSaveCheatTable?.Invoke(defaultName, ct);
     }

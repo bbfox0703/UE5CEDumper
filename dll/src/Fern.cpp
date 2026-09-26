@@ -2995,15 +2995,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // instance was found. Emitted ONLY when non-zero, and the DLL
                 // only ever sets it after reading FieldSize == 1 with a
                 // single-bit mask — so "present" means "packed bitfield, and the
-                // bit is in the byte at prop_offset". Absent = native bool =
-                // the whole byte belongs to this property.
+                // bit is in the byte at prop_offset".
                 //
                 // Freeze needs this: without it the generated script wrote a
                 // whole byte over a bit-packed bool, clobbering up to 7 siblings
                 // and — when the mask was not 0x01 — never setting the intended
                 // bool at all. (audit #5 AA1)
+                //
+                // ⚠ ABSENT does not mean native: it is a native whole-byte bool OR
+                // an unresolved layout (the probe missed; the byte may hold up to 8
+                // packed bools). `bool_native` is what tells them apart, exactly as
+                // on walk_instance, and only a native bool may take a whole-byte
+                // write. [A3-BOOL-NATIVE-NOWRITE] [BOOL-NATIVE-SEARCH]
                 if (m.boolFieldMask != 0)
                     item["bool_mask"] = m.boolFieldMask;
+                if (m.boolNative) item["bool_native"] = true;
                 // Deep-mode nested leaf: prop_name carries a dotted path and
                 // there is no class-absolute address. UI gates Copy Offset /
                 // Freeze off this flag and keeps finder + Find Funcs. Omitted
@@ -3096,11 +3102,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     // FProperty* address for find_property_xrefs (set during
                     // the field walk, so available even on this no-preview path).
                     item["field_addr"] = Renge::AddrToStr(m.fieldAddr);
-                    // BoolProperty FieldMask — see the single-query encoder above
-                    // for the full contract. Also set during the field walk, so
-                    // this no-preview path carries it too. (audit #5 AA1)
+                    // BoolProperty FieldMask + native flag — see the single-query
+                    // encoder above for the full contract. Also set during the field
+                    // walk, so this no-preview path carries them too; Interesting
+                    // Properties' batch cheat table freezes from these rows.
+                    // (audit #5 AA1, [BOOL-NATIVE-SEARCH])
                     if (m.boolFieldMask != 0)
                         item["bool_mask"] = m.boolFieldMask;
+                    if (m.boolNative) item["bool_native"] = true;
                     // Note: preview omitted intentionally — batch path skips
                     // Phase-2 instance scan; no caller of the batch path
                     // displays a preview.

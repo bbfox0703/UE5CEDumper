@@ -662,6 +662,10 @@ struct PropertyMatch {
     uint64_t    propertyFlags = 0; // CPF_* reflection flags (SaveGame/BlueprintVisible/EditorOnly/...) — auto-detect scorer gating
     uint8_t     boolFieldMask  = 0; // BoolProperty: FieldMask byte
     uint8_t     boolByteOffset = 0; // BoolProperty: ByteOffset within property
+    // BoolProperty: a NATIVE whole-byte bool (FieldInfo.boolNative). Without it a zero
+    // boolFieldMask is native OR unresolved, and only native may take a whole-byte write.
+    // [BOOL-NATIVE-SEARCH]
+    bool        boolNative     = false;
     uintptr_t   enumAddr    = 0;   // EnumProperty: UEnum* for name resolution
     std::string keyType;           // MapProperty: key type name
     std::string valueType;         // MapProperty: value type name

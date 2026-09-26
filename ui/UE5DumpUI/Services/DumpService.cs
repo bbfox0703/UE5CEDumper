@@ -1793,9 +1793,12 @@ public sealed class DumpService : IDumpService
                     DefiningClassPath = obj["defining_class_path"]?.GetValue<string>() ?? "",
                     InheritedByCount  = obj["inherited_by_count"]?.GetValue<int>() ?? 0,
                     FieldAddr         = obj["field_addr"]?.GetValue<string>() ?? "",
-                    // FBoolProperty FieldMask. Absent for native bools AND for
-                    // pre-AA1 DLLs → 0, which both mean "write the whole byte".
+                    // FBoolProperty FieldMask, sent only for a single-bit packed bool.
+                    // Absent = a native bool OR an unresolved layout; `bool_native`
+                    // tells them apart, and without it (an older DLL too) the row is
+                    // treated as unresolved -- never written whole. [BOOL-NATIVE-SEARCH]
                     BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
+                    BoolNative        = obj["bool_native"]?.GetValue<bool>() ?? false,
                     // Deep-mode synthetic dotted-path leaf (build 1222). Absent
                     // on shallow rows + older DLLs → defaults false.
                     IsNested          = obj["is_nested"]?.GetValue<bool>() ?? false,
@@ -1895,8 +1898,10 @@ public sealed class DumpService : IDumpService
                             // FBoolProperty FieldMask — see the single-query
                             // parser above. Freeze is reachable from the
                             // Interesting Properties rows this path feeds, so it
-                            // needs the mask too. (audit #5 AA1)
+                            // needs the mask and the native flag too. (audit #5 AA1,
+                            // [BOOL-NATIVE-SEARCH])
                             BoolFieldMask     = obj["bool_mask"]?.GetValue<int>() ?? 0,
+                            BoolNative        = obj["bool_native"]?.GetValue<bool>() ?? false,
                         });
                     }
                 }

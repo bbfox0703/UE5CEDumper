@@ -210,8 +210,10 @@ end
 -- rule in four tiers). A UE bool is either a NATIVE bool (its own whole byte) or
 -- a PACKED bitfield (`uint8 bFoo:1`, up to eight sharing a byte, each owning one
 -- bit named by a power-of-two FieldMask). Only the eight single-bit masks are
--- packed; 0 (no mask reported) and 0xFF (UE's native-bool marker, FieldMask=255
--- when bIsNativeBool) both mean the whole byte is this bool's.
+-- packed; 0xFF (UE's native-bool marker, FieldMask=255 when bIsNativeBool) and 0
+-- (no mask reported) are shown as the whole byte. ⚠ Only a native bool truly owns
+-- it: 0 is ALSO an unresolved layout whose byte may hold 8 packed bools, so an edit
+-- of that element in CE can flip its neighbours. [BOOL-NATIVE-SEARCH]
 -- ----------------------------------------------------------------
 local BOOL_BIT_MASKS = {
     [1] = true, [2] = true, [4] = true, [8] = true,

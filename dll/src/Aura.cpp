@@ -5081,6 +5081,7 @@ PropertySearchResult SearchProperties(
             match.fieldAddr      = field.Address;
             match.propertyFlags  = field.PropertyFlags;
             match.boolFieldMask  = field.boolFieldMask;
+            match.boolNative     = field.boolNative;
             match.keyType        = field.keyType;
             match.valueType      = field.valueType;
             // Seed preview source with the iterated class -- guaranteed
@@ -5569,6 +5570,7 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
                 match.fieldAddr      = field.Address;
                 match.propertyFlags  = field.PropertyFlags;
                 match.boolFieldMask  = field.boolFieldMask;
+                match.boolNative     = field.boolNative;
                 match.keyType        = field.keyType;
                 match.valueType      = field.valueType;
                 match.previewClassAddr      = obj;

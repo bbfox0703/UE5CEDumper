@@ -49,8 +49,9 @@ public sealed class FreezeScriptParams
     /// <summary>
     /// FBoolProperty FieldMask (<c>PropertySearchMatch.BoolFieldMask</c>) — the single
     /// bit this bool owns inside the byte at <see cref="PropertyOffset"/>. 0 for every
-    /// non-bool type, for a native bool that owns its whole byte, and for a row that
-    /// came from a DLL older than this field.
+    /// non-bool type, for a native bool that owns its whole byte, for an unresolved
+    /// layout, and for a row that came from a DLL older than this field --
+    /// <see cref="BoolNative"/> is what separates the first from the rest.
     ///
     /// <para><b>Required on purpose</b>, for the same reason as <see cref="PropertySize"/>
     /// and by the same precedent. UE packs <c>uint8 bFoo:1</c> bools eight to a byte, and

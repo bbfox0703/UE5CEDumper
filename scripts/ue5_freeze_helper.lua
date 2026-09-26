@@ -362,8 +362,13 @@ end
 --   * a native bool -- one whole byte, 0 or 1; or
 --   * a packed bitfield (`uint8 bFoo:1`) -- up to 8 bools sharing one byte,
 --     each owning a single bit named by the FProperty's FieldMask.
--- The generated CFG carries `boolMask` for the second kind ONLY, so the
--- absence of a mask is itself the signal that the whole byte is ours. The
+-- The generated CFG carries `boolMask` for the second kind ONLY, and the
+-- generator writes a mask-less bool CFG only for a bool the DLL CONFIRMED
+-- native (`bool_native`): an unresolved layout -- the probe missed, so the
+-- byte may hold 8 packed bools -- is refused before a script exists
+-- ([BOOL-NATIVE-SEARCH]). So here the absence of a mask means the whole byte
+-- is ours. (This helper cannot re-probe; a table generated before that fix
+-- carries no such guarantee.) The
 -- DLL only reports a mask after reading FieldSize == 1, so the bit is always
 -- inside the byte at propOffset -- there is no ByteOffset to apply here.
 --
@@ -375,7 +380,8 @@ end
 -- power-of-two test because the domain IS these eight, and it excludes both
 -- values that must never be treated as a bit mask: 0 (no mask reported) and
 -- 0xFF (UE's own native-bool marker -- SetBoolSize writes FieldMask = 255 when
--- bIsNativeBool). Both of those mean "the whole byte is ours".
+-- bIsNativeBool). Neither is a bit to set; see above for why a mask-less
+-- CFG reaching here means the whole byte is ours.
 local BOOL_BIT_MASKS = {
   [1] = true, [2] = true, [4] = true, [8] = true,
   [16] = true, [32] = true, [64] = true, [128] = true,
