@@ -211,4 +211,28 @@ public class ObjectTreeViewModelFilterTests
         Assert.DoesNotContain("capped", vm.StatusText);
         Assert.Contains("12", vm.StatusText);
     }
+
+    // [OBJTREE-SEARCH-TIP] The top search box suggests a FIXED list of common UE class
+    // names (SearchSuggestions); the remembered-keyword memory belongs to the bottom filter
+    // box. The tooltip promised "recent searches", a feature this box does not have.
+    [Fact]
+    public void SearchFieldTooltip_describes_the_fixed_suggestion_list_the_box_binds()
+    {
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ObjectTreePanel.axaml"));
+        Assert.Contains("ItemsSource=\"{Binding SearchSuggestions}\"", panel, StringComparison.Ordinal);
+
+        var tip = EnString("str.Tip.ObjectTree.SearchField");
+        Assert.DoesNotContain("recent", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("common UE class names", tip, StringComparison.Ordinal);
+    }
+
+    private static string EnString(string key)
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var open = $"x:Key=\"{key}\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{key} missing from en.axaml");
+        start += open.Length;
+        return axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)];
+    }
 }
