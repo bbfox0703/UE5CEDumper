@@ -251,13 +251,13 @@ public class CeMailboxBailoutTests
         yield return new object[] { "Freeze.Int", FreezeScriptGenerator.Generate(new FreezeScriptParams
         {
             ClassName = "DumperTestActor", PropertyName = "TickCount", PropertyOffset = 0x6A8,
-            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "9999",
+            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, BoolNative = false, ValueLiteral = "9999",
         }) };
 
         yield return new object[] { "Freeze.Bool", FreezeScriptGenerator.Generate(new FreezeScriptParams
         {
             ClassName = "Actor", PropertyName = "bCanBeDamaged", PropertyOffset = 0x5A,
-            UeTypeName = "BoolProperty", PropertySize = 1, BoolFieldMask = 0x04, ValueLiteral = "0",
+            UeTypeName = "BoolProperty", PropertySize = 1, BoolFieldMask = 0x04, BoolNative = false, ValueLiteral = "0",
         }) };
 
         yield return new object[] { "Baked.Invoke", BakedScriptGenerator.Generate(
@@ -359,22 +359,6 @@ public class CeMailboxBailoutTests
 
 
     /// <summary>
-    /// Untick lines in a block that are NOT deferred. [FREEZEUNTICK-2026-08-20]
-    ///
-    /// <para>There are TWO legitimate deferred shapes and the detector has to know both, or it
-    /// reports a false positive on working code:</para>
-    /// <list type="number">
-    /// <item>the shared one-liner from <c>CeLuaHygiene.DeferredUntickLua</c>, where
-    /// <c>createTimer</c> and the untick sit on the same line;</item>
-    /// <item>the older hand-written momentary shape (Baked / Invoke / Teleport), where the timer is
-    /// created on one line and the untick sits several lines down inside the
-    /// <c>OnTimer = function(...)</c> body.</item>
-    /// </list>
-    /// <para>A line-only test flags the second as a defect — it did exactly that on
-    /// BakedScriptGenerator's perfectly correct self-untick timer. So an untick counts as deferred
-    /// if its own line creates the timer, or if an <c>OnTimer</c> opened shortly above it.</para>
-    /// </summary>
-    /// <summary>
     /// The trainer keeps BOTH untick shapes, and they are not interchangeable.
     /// [TRAINERUNTICK-2026-08-21]
     ///
@@ -428,6 +412,22 @@ public class CeMailboxBailoutTests
         => line.Contains("memrec.Active = false", StringComparison.Ordinal)
         || line.Contains("mr.Active = false", StringComparison.Ordinal);
 
+    /// <summary>
+    /// Untick lines in a block that are NOT deferred. [FREEZEUNTICK-2026-08-20]
+    ///
+    /// <para>There are TWO legitimate deferred shapes and the detector has to know both, or it
+    /// reports a false positive on working code:</para>
+    /// <list type="number">
+    /// <item>the shared one-liner from <c>CeLuaHygiene.DeferredUntickLua</c>, where
+    /// <c>createTimer</c> and the untick sit on the same line;</item>
+    /// <item>the older hand-written momentary shape (Baked / Invoke / Teleport), where the timer is
+    /// created on one line and the untick sits several lines down inside the
+    /// <c>OnTimer = function(...)</c> body.</item>
+    /// </list>
+    /// <para>A line-only test flags the second as a defect — it did exactly that on
+    /// BakedScriptGenerator's perfectly correct self-untick timer. So an untick counts as deferred
+    /// if its own line creates the timer, or if an <c>OnTimer</c> opened shortly above it.</para>
+    /// </summary>
     private static List<string> ImmediateUnticksIn(string block)
     {
         var lines = block.Split('\n');

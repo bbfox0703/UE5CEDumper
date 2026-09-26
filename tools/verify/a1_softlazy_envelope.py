@@ -91,7 +91,7 @@ def main():
         #                             is 8-aligned (it holds an FString)
         #   LazyGuidOffset  -> 0x0C   FWeakObjectPtr(8) + Tag(4) and NO pad, because
         #                             FUniqueObjectGuid is a bare FGuid (4x uint32, alignof 4)
-        # `Ubel.cpp:426-428` says it out loud: "There is no era in which 0x10 is correct here."
+        # Ubel.cpp's `SoftPathOffset` says it out loud: "There is no era in which 0x10 is correct here."
         # Both collapse to 0x08 from 5.3, where TagAtLastTest was deleted.
         untagged = (ue or 0) >= 503
         expect = {"TSoftObjectPtr": 0x08 if untagged else 0x10,

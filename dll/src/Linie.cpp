@@ -47,7 +47,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
         //
         // ⚠ THE COMPARISON IS >=, NOT >. A reorder is nowMs < s.lastMs. nowMs == s.lastMs is
         // NOT a reorder — it is two fires inside the same millisecond, which is ordinary
-        // (nowMs is steady_clock truncated to ms, Stark.cpp:103-107), and >= excludes the
+        // (nowMs is steady_clock truncated to ms, Stark.cpp `InvokeRequest`), and >= excludes the
         // underflow just as completely while keeping the sample. L5 (below) prescribed
         // "strictly greater" because it was reasoning about REORDERING only; dropping the
         // equal case was collateral. Measured 2026-08-22 on DumperTest at t.MaxFPS 60 over

@@ -13,7 +13,7 @@ public partial class InterestingFunctionsPanel : UserControl
 {
     // AOT-safe sort comparers for the two template data columns (Score /
     // Cat) — they have no column-level Binding so their reflection sort is
-    // trimmed under AOT (aot-pitfalls.md §4.5). Text columns sort out-of-box.
+    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Text columns sort out-of-box.
     private static readonly IReadOnlyDictionary<string, IComparer> ResultsSortComparers =
         new Dictionary<string, IComparer>
         {

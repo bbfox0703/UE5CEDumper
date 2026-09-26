@@ -1,4 +1,5 @@
 using System.Text;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Services;
@@ -31,6 +32,14 @@ public static class FreezeScriptGenerator
     public static string Generate(FreezeScriptParams p)
     {
         var helperType = MapToHelperType(p.UeTypeName, p.PropertySize);
+        // Last line of defence behind both callers' own refusals: an unresolved bool layout
+        // has no safe writer here -- the helper's whole-byte write would stamp up to 7
+        // packed siblings every tick. [BOOL-NATIVE-SEARCH]
+        if (IsUnresolvedBool(p.UeTypeName, p.BoolNative, p.BoolFieldMask))
+            throw new ArgumentException(
+                $"{p.ClassName}::{p.PropertyName} is a bool whose layout is unresolved (not native, "
+                + $"no single-bit mask; mask 0x{p.BoolFieldMask:X2}) -- refusing a whole-byte freeze.",
+                nameof(p));
         var sb = new StringBuilder(2048);
 
         Line(sb, "[ENABLE]");
@@ -216,10 +225,13 @@ public static class FreezeScriptGenerator
         Line(sb, $"  value              = {p.ValueLiteral},");
         // Packed-bitfield bool: emit the FieldMask so the helper does a masked
         // read-modify-write instead of stamping the whole byte. Emitted ONLY for
-        // a real packed bool — a native bool (mask 0) owns its byte and must keep
-        // the plain whole-byte write, and emitting a mask for it would be wrong
-        // in the other direction. See FreezeScriptParams.BoolFieldMask (AA1).
-        if (helperType == "bool" && IsPackedBoolMask(p.BoolFieldMask))
+        // a real packed bool — a NATIVE bool (the DLL's bool_native) owns its byte
+        // and keeps the plain whole-byte write; an unresolved one never gets here
+        // (Generate refuses it). PlanBoolWrite is the one rule, shared with the
+        // Live Walker's editor. (AA1, [BOOL-NATIVE-SEARCH])
+        if (helperType == "bool"
+            && FieldValueConverter.PlanBoolWrite(p.BoolNative, p.BoolFieldMask)
+               == FieldValueConverter.BoolWriteMode.MaskedBit)
         {
             Line(sb, $"  boolMask           = 0x{p.BoolFieldMask:X2}," +
                      "  -- packed bitfield: only this bit is written");
@@ -370,7 +382,9 @@ public static class FreezeScriptGenerator
     /// <para>True only for a single set bit in <c>[0x01 … 0x80]</c>. Everything else is
     /// deliberately false and falls back to the plain whole-byte write:</para>
     /// <list type="bullet">
-    /// <item><c>0</c> — the DLL reports no mask (native bool, or a pre-AA1 DLL).</item>
+    /// <item><c>0</c> — the DLL reports no mask: a native bool, an UNRESOLVED layout, or a
+    /// pre-AA1 DLL. Only the DLL's <c>bool_native</c> makes that a whole-byte write; see
+    /// <see cref="IsUnresolvedBool"/>.</item>
     /// <item><c>0xFF</c> — UE's own marker for a native bool (<c>SetBoolSize</c> sets
     /// <c>FieldMask = 255</c> when <c>bIsNativeBool</c>), which owns its whole byte.</item>
     /// <item>Any multi-bit value — not a shape UE produces for a single bool; treating
@@ -382,6 +396,18 @@ public static class FreezeScriptGenerator
     /// </summary>
     public static bool IsPackedBoolMask(int fieldMask)
         => fieldMask > 0 && fieldMask < 0xFF && (fieldMask & (fieldMask - 1)) == 0;
+
+    /// <summary>
+    /// A BoolProperty with no safe freeze writer: neither the DLL's <c>bool_native</c> nor a
+    /// single-bit mask, so the layout probe missed and the byte may hold up to 8 packed bools.
+    /// <see cref="FieldValueConverter.PlanBoolWrite"/>'s Refuse verdict, applied to freeze.
+    /// Every freeze entry point refuses these; false for every non-bool type.
+    /// [BOOL-NATIVE-SEARCH]
+    /// </summary>
+    public static bool IsUnresolvedBool(string ueTypeName, bool boolNative, int fieldMask)
+        => ueTypeName == "BoolProperty"
+           && FieldValueConverter.PlanBoolWrite(boolNative, fieldMask)
+              == FieldValueConverter.BoolWriteMode.Refuse;
 
     // ------------------------------------------------------------------
     // Lua escaping

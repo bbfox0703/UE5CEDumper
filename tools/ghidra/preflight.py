@@ -635,7 +635,7 @@ def check_project(projs: Path, name: str, glob: str, want_sizes: bool) -> dict:
     # MS-DOS/MZ-loader imports that map only the 1104-byte DOS stub — "scanning … CODE_0
     # size=1104" at image base 0000:0000 — and their scan TSVs are hits=0 on all 151
     # patterns. aggregate_sweep.py already drops them (`exec_mb <= 0` -> "broken import"),
-    # which is why REPORT.md reads "programs scanned: 51" and not 55. So they do NOT
+    # which is why out/sweep/REPORT.md reads "programs scanned: 51" and not 55. So they do NOT
     # double-score truth, do NOT inflate any statistic and do NOT lengthen the run
     # meaningfully. What they DO cost is disk inside a kept project (Ghidra stores the
     # whole original file), and they trip a real output bug — see dup_note() below.

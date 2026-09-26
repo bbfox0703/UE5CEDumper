@@ -7,7 +7,7 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// AOT-safe <see cref="IComparer"/> factories for DataGrid column sorting.
 ///
-/// WHY THIS EXISTS (aot-pitfalls.md §4.5 — the three-layer sort trap):
+/// WHY THIS EXISTS (the three-layer sort trap, explained below):
 /// Avalonia's default column sort reads each row's value by reflecting on
 /// the column's <c>SortMemberPath</c> (<c>Type.GetProperty(path)</c>) and
 /// even decides whether a column is sortable at all by reflecting the

@@ -100,10 +100,10 @@ end
 local realPrint = print
 function print(s) PRINTS[#PRINTS + 1] = tostring(s) end
 
--- A CE structure. Element is 0-BASED (ue5_dissect.lua:294 / :324 both iterate
+-- A CE structure. Element is 0-BASED (ue5_dissect.lua's addFieldsToStruct and fillGaps both iterate
 -- `for i = 0, ceStruct.Count - 1`). removeFromGlobalStructureList/Destroy are
--- called with COLON syntax at :544-545 while addToGlobalStructureList uses DOT
--- at :401, so these are plain closures that ignore any extra self argument.
+-- called with COLON syntax in dissect.clearAll while addToGlobalStructureList uses DOT
+-- in dissect.createFromClass, so these are plain closures that ignore any extra self argument.
 function createStructure(name)
   local s = { Name = name, Count = 0, Element = {}, _begin = 0, _end = 0, _destroyed = false }
   s.addElement = function()
@@ -199,7 +199,7 @@ end
 -- Drive a successful class walk of `fields`, each {name=, typeName=, offset=, size=}.
 -- Mirrors what the real UE5_WalkClassGetField does: it writes the out-param
 -- buffers and returns true (1); on failure it returns false WITHOUT touching
--- them (Frieren.cpp:712-731), which is what makes a mishandled failure look
+-- them (Frieren.cpp), which is what makes a mishandled failure look
 -- like the previous field.
 local function serveWalk(fields, failIndex, failMode)
   RESULTS['UE5_WalkClassBegin'] = function() return #fields end
@@ -341,7 +341,7 @@ end
 case('AA6: a mid-walk field failure does NOT record a duplicate of the previous field')
 do
   -- UE5_WalkClassGetField leaves the out-params untouched when it fails
-  -- (Frieren.cpp:712-731), so `success ~= 0` being true for nil made the
+  -- (Frieren.cpp), so `success ~= 0` being true for nil made the
   -- previous field's buffers read a second time.
   resetWorld(); dissect.clearAll(); injectDll(); serveWalk(THREE, 1, 'nil')
   local ok = pcall(dissect.createFromClass, 0xC1A55, 'MidWalk')

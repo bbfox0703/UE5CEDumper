@@ -134,6 +134,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "EnumProperty",
             PropertySize   = 1,
             BoolFieldMask  = 0,
+            BoolNative     = false,
             ValueLiteral   = "3",
         };
 
@@ -159,6 +160,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "EnumProperty",
             PropertySize   = size,
             BoolFieldMask  = 0,
+            BoolNative     = false,
             ValueLiteral   = "0",
         };
 
@@ -195,6 +197,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "FloatProperty",
             PropertySize   = 4,
             BoolFieldMask  = 0,
+            BoolNative     = false,
             ValueLiteral   = "9999.0",
         };
 
@@ -238,7 +241,8 @@ public class FreezeScriptGeneratorTests
             PropertyOffset = 0x328,
             UeTypeName     = "BoolProperty",
             PropertySize   = 1,
-            BoolFieldMask  = 0,   // native bool: owns its whole byte
+            BoolFieldMask  = 0,
+            BoolNative     = true,  // the DLL's bool_native: owns its whole byte
             ValueLiteral   = "false",
         };
 
@@ -279,6 +283,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "BoolProperty",
             PropertySize   = 1,
             BoolFieldMask  = mask,
+            BoolNative     = false,
             ValueLiteral   = "true",
         };
 
@@ -303,6 +308,8 @@ public class FreezeScriptGeneratorTests
     [InlineData(-1)]
     public void Generate_NonPackedBoolMask_OmitsBoolMask(int mask)
     {
+        // A NATIVE bool (the DLL said bool_native) keeps the whole-byte write whatever mask rides
+        // along. Without bool_native these same masks are refused -- see the theory below.
         var p = new FreezeScriptParams
         {
             ClassName      = "PlayerCharacter",
@@ -311,12 +318,43 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "BoolProperty",
             PropertySize   = 1,
             BoolFieldMask  = mask,
+            BoolNative     = true,
             ValueLiteral   = "false",
         };
 
         var script = FreezeScriptGenerator.Generate(p);
 
         Assert.DoesNotContain("boolMask", script);
+    }
+
+    // ── [BOOL-NATIVE-SEARCH]: no single-bit mask AND no bool_native = an UNRESOLVED layout ──────
+    //
+    // The probe missed, so the byte may hold up to 8 packed bools. A whole-byte freeze stamps 0x01 / 0x00
+    // over the siblings ~20x/sec (the AA1 corruption) and never sets the intended bit unless it is bit 0.
+    // The generator is the last line of defence behind the two callers' own refusals: it throws.
+
+    [Theory]
+    [InlineData(0)]
+    [InlineData(0xFF)]
+    [InlineData(0x03)]
+    [InlineData(0x81)]
+    [InlineData(-1)]
+    public void Generate_BoolNeitherNativeNorSingleBit_Refuses(int mask)
+    {
+        var p = new FreezeScriptParams
+        {
+            ClassName      = "PlayerCharacter",
+            PropertyName   = "bIsInvulnerable",
+            PropertyOffset = 0x328,
+            UeTypeName     = "BoolProperty",
+            PropertySize   = 1,
+            BoolFieldMask  = mask,
+            BoolNative     = false,
+            ValueLiteral   = "true",
+        };
+
+        var ex = Assert.Throws<System.ArgumentException>(() => FreezeScriptGenerator.Generate(p));
+        Assert.Contains("bIsInvulnerable", ex.Message);
     }
 
     [Fact]
@@ -333,6 +371,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "IntProperty",
             PropertySize   = 4,
             BoolFieldMask  = 0x04,
+            BoolNative     = false,
             ValueLiteral   = "42",
         };
 
@@ -511,6 +550,7 @@ public class FreezeScriptGeneratorTests
         UeTypeName     = "FloatProperty",
         PropertySize   = 4,
         BoolFieldMask  = 0,
+        BoolNative     = false,
         ValueLiteral   = "9999.0",
     };
 
@@ -632,6 +672,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "IntProperty",
             PropertySize   = 4,
             BoolFieldMask  = 0,
+            BoolNative     = false,
             ValueLiteral   = "1",
         };
 
@@ -653,6 +694,7 @@ public class FreezeScriptGeneratorTests
             UeTypeName     = "IntProperty",
             PropertySize   = 4,
             BoolFieldMask  = 0,
+            BoolNative     = false,
             ValueLiteral   = "0",
         };
 
@@ -795,7 +837,7 @@ public class FreezeScriptGeneratorTests
     // class with no live instances from a name that matches nothing -- so neither can the
     // script. "Armed, 0 right now" is the honest report; naming a typo would be a GUESS, which
     // is exactly what CLAUDE.md's mailbox rule forbids ("Never report a mailbox failure by
-    // guessing"). ue5_freeze_helper.lua:957 states the rule at the implementation; nothing
+    // guessing"). ue5_freeze_helper.lua `tick` states the rule at the implementation; nothing
     // enforced it, so "class not found -- check the spelling" could be added as an
     // improvement and every test would stay green.
     //
@@ -808,7 +850,7 @@ public class FreezeScriptGeneratorTests
         string script = FreezeScriptGenerator.Generate(new FreezeScriptParams
         {
             ClassName = "NoSuchClassXyzzy", PropertyName = "TickCount", PropertyOffset = 0x6A8,
-            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "1",
+            UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, BoolNative = false, ValueLiteral = "1",
         });
 
         // CHANNEL: the zero branch exists and says what it should.
@@ -846,7 +888,7 @@ public class FreezeScriptGeneratorTests
     internal static FreezeScriptParams FreezeFixtureParams() => new()
     {
         ClassName = "DumperTestActor", PropertyName = "TickCount", PropertyOffset = 0x6A8,
-        UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, ValueLiteral = "9999",
+        UeTypeName = "IntProperty", PropertySize = 4, BoolFieldMask = 0, BoolNative = false, ValueLiteral = "9999",
     };
 
     private static string FindRepoDir()

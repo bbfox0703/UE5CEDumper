@@ -954,8 +954,8 @@ bool CompareFloatScalar(ScanType st, double cur, double a, double b, RoundMode m
 }  // namespace
 
 // Entry-taking overload. The AlwaysTrue verdict is honoured HERE, once, so the
-// scan and refine engines in Aura.cpp — which no test target compiles — need only
-// swap Find() for FindEntry() and pass the entry through. (audit #5 AB4)
+// scan and refine engines in Aura.cpp need only swap Find() for FindEntry() and pass
+// the entry through. (audit #5 AB4)
 bool ComparePredicate(DataType dt, ScanType st,
                       const uint8_t* rawBytes,
                       const NumericTargetSet::Entry* target,

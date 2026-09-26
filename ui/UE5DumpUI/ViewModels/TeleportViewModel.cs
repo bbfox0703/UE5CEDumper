@@ -82,9 +82,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         for (int i = 0; i < 3; i++)
             Markers.Add(new TeleportMarkerRow { Slot = i });
 
-        // Hotkey rows: Save 1-3, Recall 1-3, then the system Recall-last and the
-        // two BugItGo actions (Force stays UI-button only). Adding a row here is
-        // all it takes — capture, persistence and registration are generic over
+        // Hotkey rows, one per ActionId (BugItGo's Force stays UI-button only).
+        // Adding a row here is all it takes — capture, persistence and registration are generic over
         // ActionId; OnMarkerHotkeyPressed routes the id to the right command.
         for (int i = 0; i < 3; i++)
             HotkeyRows.Add(new TeleportHotkeyRow { ActionId = $"save{i}", DisplayName = $"Save marker {i + 1}",
@@ -883,7 +882,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // ⚠ This used to be two calls covering three badges, while the disconnect
             // branch below reset TWELVE — so nine cards read "Unknown" over state the
             // DLL could answer for. Measured live on Shipping, with the two primed
-            // cards as the control. [BADGEPRIME-2026-09-10]; the asymmetry is now held
+            // cards as the control. [BADGEPRIME]; the asymmetry is now held
             // by tools/check_badge_prime_symmetry.py.
             //
             // Deliberately NOT the button-driven RefreshXxxAsync methods: those set
@@ -2380,7 +2379,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// Super Jump and Fly all read "State: Unknown" against a pipe answering
     /// <c>state: 0</c> / <c>has_cmc: true</c> — while God Mode and Time Dilation showed
     /// real values, and those were exactly the two that were primed.
-    /// [BADGEPRIME-2026-09-10].</para>
+    /// [BADGEPRIME].</para>
     ///
     /// <para>It is not cosmetic: a DLL hold SURVIVES a UI reconnect for as long as the game
     /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, added for
@@ -5439,10 +5438,12 @@ public partial class TeleportMarkerRow : ObservableObject
     public string Label => $"Marker {Slot + 1}";
 }
 
-/// <summary>One user-settable marker-hotkey row (Save/Recall × slot).</summary>
+/// <summary>One user-settable hotkey row: a marker Save/Recall slot or a gameplay
+/// action, keyed by <see cref="TeleportHotkeyRow.ActionId"/>.</summary>
 public partial class TeleportHotkeyRow : ObservableObject
 {
-    /// <summary>Stable id: "save0".."save2" / "recall0".."recall2".</summary>
+    /// <summary>Stable id, persisted with the combo (e.g. "save0", "recall_last",
+    /// "fly_toggle"); the rows are built in the constructor.</summary>
     public string ActionId { get; init; } = "";
     public string DisplayName { get; init; } = "";
 
@@ -5461,9 +5462,11 @@ public partial class TeleportHotkeyRow : ObservableObject
     [NotifyPropertyChangedFor(nameof(CaptureButtonText))]
     private bool _isCapturing;
 
-    /// <summary>True when the saved combo could not be registered at startup —
-    /// another app holds it. The label is still shown (so the user knows which
-    /// combo to free or rebind), flagged with a warning.</summary>
+    /// <summary>True when a saved combo could not be registered — another app holds
+    /// it. Set wherever a saved binding is (re)registered, which is not only startup:
+    /// a row held back by the experimental gate registers when the gate turns on.
+    /// The label is still shown (so the user knows which combo to free or rebind),
+    /// flagged with a warning.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplayLabel))]
     private bool _conflicted;

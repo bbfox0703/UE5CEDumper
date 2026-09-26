@@ -538,7 +538,7 @@ void Fern::Stop(bool graceful) {
     //      process — a game that never closes.
     //
     // The OS reclaims the handles, threads and memory. That is the same reasoning
-    // Heiter.cpp:288-301 applies to its own DETACH body and Routine.h:51-56 applies
+    // Heiter.cpp `DllMain` applies to its own DETACH body and Routine.h's `UE5_Shutdown`-is-not-called note applies
     // to every feature worker; Fern::Stop's explicit join()/wait_for calls were
     // simply not on that list.
     //
@@ -1096,7 +1096,7 @@ void Fern::CloseConnOnce(Connection& conn) {
 void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     // Bind THIS thread to THIS connection's cancel flag for the whole handler, teardown
     // included. Safe by ownership: `conn` is a by-value shared_ptr (the accept thread
-    // passes it that way at Fern.cpp:976), so &conn->cancel cannot dangle while bound.
+    // passes it that way at Fern.cpp `Fern::AcceptLoop`), so &conn->cancel cannot dangle while bound.
     // From here on Tot::Requested() on this thread answers for this connection ALONE --
     // a foreign client's death no longer truncates this one's scans.
     Tot::ConnectionCancelScope cancelScope(&conn->cancel);
@@ -1504,10 +1504,10 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     //
     // ⛔⛔ THIS BLOCK USED TO SIT INSIDE `if (fv.arrayCount >= 0)` -> `if (!arrayInnerType...)`.
     // `fv.delegatePad` is set at exactly two sites, and only ONE of them survives that gate:
-    //   * `Ubel.cpp:6004` (MulticastInline) — reports an invocation list, so `arrayCount >= 0`
+    //   * WalkInstance's MulticastInline branch (Ubel.cpp) — reports an invocation list, so `arrayCount >= 0`
     //     and `array_inner_type` is set. It emitted fine, and was never affected.
-    //   * `Ubel.cpp:5507` (scalar `DelegateProperty`) — has NO invocation list, so `arrayCount`
-    //     stays -1 ("not an array", Ubel.h:418) and the emission could never run. It set the
+    //   * WalkInstance's scalar `DelegateProperty` branch (Ubel.cpp) — has NO invocation list, so `arrayCount`
+    //     stays -1 ("not an array", Ubel.h `LiveFieldValue`) and the emission could never run. It set the
     //     value on every checked build and the value never left the process.
     // So the loss was exactly one field KIND, not the whole key. Measured on the wire
     // 2026-09-09 (DumperTest 5.4 Development): `Multicast_Inline` carries `count:1` +
@@ -1828,7 +1828,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // `DynOff::PersistentPtrEnvelopeFor` (Grimoire.h) consults `latched` BEFORE it
                 // ever looks at ueVersion, so a latch taken under the OLD version outranks the
                 // new one for every call that cannot produce a fresh accepted measurement — and
-                // several cannot: `Ubel.cpp:2853` passes a literal 0 elemSize, and a garbage
+                // several cannot: Ubel.cpp's `ReadSoftObjectArrayElements` passes a literal 0 elemSize, and a garbage
                 // FPROPERTY_ELEMSIZE is exactly why the fallback exists. The override then
                 // silently changes the version and NOT the layout it implies, which is the one
                 // thing a version override is for. Clearing them re-derives on the next read
@@ -2995,15 +2995,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // instance was found. Emitted ONLY when non-zero, and the DLL
                 // only ever sets it after reading FieldSize == 1 with a
                 // single-bit mask — so "present" means "packed bitfield, and the
-                // bit is in the byte at prop_offset". Absent = native bool =
-                // the whole byte belongs to this property.
+                // bit is in the byte at prop_offset".
                 //
                 // Freeze needs this: without it the generated script wrote a
                 // whole byte over a bit-packed bool, clobbering up to 7 siblings
                 // and — when the mask was not 0x01 — never setting the intended
                 // bool at all. (audit #5 AA1)
+                //
+                // ⚠ ABSENT does not mean native: it is a native whole-byte bool OR
+                // an unresolved layout (the probe missed; the byte may hold up to 8
+                // packed bools). `bool_native` is what tells them apart, exactly as
+                // on walk_instance, and only a native bool may take a whole-byte
+                // write. [A3-BOOL-NATIVE-NOWRITE] [BOOL-NATIVE-SEARCH]
                 if (m.boolFieldMask != 0)
                     item["bool_mask"] = m.boolFieldMask;
+                if (m.boolNative) item["bool_native"] = true;
                 // Deep-mode nested leaf: prop_name carries a dotted path and
                 // there is no class-absolute address. UI gates Copy Offset /
                 // Freeze off this flag and keeps finder + Find Funcs. Omitted
@@ -3096,14 +3102,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     // FProperty* address for find_property_xrefs (set during
                     // the field walk, so available even on this no-preview path).
                     item["field_addr"] = Renge::AddrToStr(m.fieldAddr);
-                    // BoolProperty FieldMask — see the single-query encoder above
-                    // for the full contract. Also set during the field walk, so
-                    // this no-preview path carries it too. (audit #5 AA1)
+                    // BoolProperty FieldMask + native flag — see the single-query
+                    // encoder above for the full contract. Also set during the field
+                    // walk, so this no-preview path carries them too; Interesting
+                    // Properties' batch cheat table freezes from these rows.
+                    // (audit #5 AA1, [BOOL-NATIVE-SEARCH])
                     if (m.boolFieldMask != 0)
                         item["bool_mask"] = m.boolFieldMask;
+                    if (m.boolNative) item["bool_native"] = true;
                     // Note: preview omitted intentionally — batch path skips
-                    // Phase-2 instance scan. Interesting Properties tab
-                    // (the only caller) doesn't display previews.
+                    // Phase-2 instance scan; no caller of the batch path
+                    // displays a preview.
                     matches.push_back(item);
                 }
                 json envelope;
@@ -3923,7 +3932,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // Optional tie-breaker. One UObject can own MANY candidates: with
             // `deep`, Aura emits one GroupCandidate per container BLOCK and they all
-            // intern to the same InstanceRecord ("blocks share", Aura.cpp:8163), so
+            // intern to the same InstanceRecord ("blocks share", Aura.cpp `ScanForValueGroup`), so
             // instance_addr alone is ambiguous and first-match-wins would answer an
             // expanded deep row with a DIFFERENT block's fields — a silent wrong
             // answer, in precisely the feature meant to end silent wrong answers.
@@ -4039,7 +4048,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int limit = request.value("limit", 5000);
             // Same clamp and ceiling as CMD_FIND_INSTANCES / CMD_SEARCH_PROPERTIES: <1 returns
             // nothing, 50000 bounds one payload. The walk runs to the end of GObjects either way
-            // (CLASSTOTAL) — this bounds only row materialization. [CLASSCAP-2026-08-21]
+            // (CLASSTOTAL) — this bounds only row materialization. [CLASSCAP]
             //
             // ⚠ The DEFAULT stays 5000: it is the wire default for a client that sends no
             // "limit", and the UI now always sends one.
@@ -6110,7 +6119,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // ── fly_set / fly_get_state (Dunste) — no-gravity 3D flight ──
-        // fly_set applies whichever of {enable, speed, preset} are present, then
+        // fly_set applies whichever of the fields read below are present, then
         // returns the live status. Input (WASD/numpad/arrows) is sampled DLL-side
         // by the fly worker (GetAsyncKeyState) — the pipe only toggles + configs,
         // so there is no per-frame IPC.

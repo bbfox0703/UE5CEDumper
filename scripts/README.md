@@ -272,10 +272,11 @@ lua scripts/tests/invoke_helper_test.lua
 
 Exit 0 = all pass, 1 = a failure (with the case named). `luac -p <file>` syntax-checks any script.
 
-**Deliberately not wired into `build.ps1` or CI.** A standalone `lua` is not a declared dependency of
-this repo, and a test step that silently *skips* when its tool is missing is exactly the defect audit
-#5's AD1/AD2 fixed in the C++ test phase. These fail loudly when run rather than passing quietly when
-not — so run them whenever you touch the script they cover.
+**A gate since 2026-09-25** (`check_lua_suites`, `2448a3f5`): the suites run on CE's own Lua VM
+(`out/ce_lua53/lua53ce.exe`, built by `tools/verify/ce_lua53_host.py`). Where that host is not built --
+CI included -- the gate prints SKIPPED and `check_all.py` counts a skip, not a pass (a step that skipped
+quietly was audit #5's AD1/AD2 defect). So a green CI run says nothing about them: run them whenever you
+touch the script they cover.
 
 Four traps, all measured rather than guessed, if you write a fourth rig:
 

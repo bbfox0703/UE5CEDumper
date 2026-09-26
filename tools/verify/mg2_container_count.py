@@ -52,9 +52,9 @@ sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
 from pipe_client import PipeClient           # noqa: E402
 from ad4_contested import find_live_actor, invoke   # noqa: E402
 
-# Seeded by ADumperTestActor::BeginPlay -- DumperTestActor.cpp:136-143.
+# Seeded by ADumperTestActor::BeginPlay -- DumperTestActor.cpp.
 SEEDED_NAMES = {"Alpha", "Beta", "Gamma", "Delta"}
-DEFAULT_LIMIT = 64          # Ubel.cpp:3682 default when the request omits array_limit
+DEFAULT_LIMIT = 64          # Ubel.cpp `WalkInstance` default when the request omits array_limit
 
 
 def field(c, addr, name, **kw):

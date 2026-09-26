@@ -44,7 +44,7 @@ local CONTRACT_MAGIC = 1127564629
 
 local OFF_CMD, OFF_STATUS, OFF_RESULT = 0x000, 0x004, 0x008
 local OFF_CLASS, OFF_FUNC, OFF_ERR, OFF_PARAMS = 0x028, 0x128, 0x228, 0x328
-local PARAMS_BYTES = 1024           -- sizeof(MailboxData::paramsData), Mimic.h:276
+local PARAMS_BYTES = 1024           -- sizeof(MailboxData::paramsData), Mimic.h
 
 local I32, U64, BYTES, STR   -- int32 / qword / byte / string stores, by address
 local ALLOCS, ALLOC_NEXT, ALLOC_FAIL
@@ -335,7 +335,7 @@ end
 
 case('AA17: the WHOLE 1024-byte params buffer is cleared, not just parmsSize')
 do
-  -- Mimic.cpp:585-588 passes sizeof(paramsData) == 1024 to UE5_CallProcessEventEx,
+  -- Mimic.cpp `HandleInvoke` passes sizeof(paramsData) == 1024 to UE5_CallProcessEventEx,
   -- so EnqueueInvoke copies all 1024 bytes into the request it owns. Zeroing only
   -- the caller's parmsSize left every byte past it holding the PREVIOUS command's
   -- data -- and if that parmsSize is smaller than the UFunction's real ParmsSize
@@ -365,7 +365,7 @@ end
 
 case('AA18: a timeout does NOT report the previous command\'s error message')
 do
-  -- Mimic.cpp:253-255 sets status = PROCESSING on pickup and never clears errorMsg;
+  -- Mimic.cpp `PollingThreadBody` sets status = PROCESSING on pickup and never clears errorMsg;
   -- nothing else zeroes it either. So the timeout branch read whatever the LAST
   -- failure left there and presented it as this command's reason -- the guessed
   -- diagnosis CLAUDE.md forbids.

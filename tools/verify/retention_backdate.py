@@ -382,7 +382,7 @@ def csharp():
         fails.append("NOTHING died -- the C# sweep did not run (did a store get "
                      "constructed?), so every LIVE result here is vacuous")
 
-    # Independent witness: PruneAged's own line (AppDataFolderMaintenance.cs:192).
+    # Independent witness: PruneAged's own line (AppDataFolderMaintenance.cs).
     # ⚠ MUST be scoped to THIS run. The first version grepped every log and proudly
     # printed lines from four days earlier, which is a witness that can never fail --
     # exactly the shape this whole rig exists to avoid. Only lines written since the
@@ -440,18 +440,18 @@ def csharp():
 # did. So this verb must run with NO GAME INJECTED -- otherwise a missing folder has two
 # possible authors and nothing here is attributable.
 #
-#   App.axaml.cs:62 -> new LoggingService(...)
-#     LoggingService.cs:105  CleanupOldLogFolders  -- whole folders, dir.Delete(true),
+#   App.axaml.cs `OnFrameworkInitializationCompleted` -> new LoggingService(...)
+#     LoggingService.cs  CleanupOldLogFolders  -- whole folders, dir.Delete(true),
 #                                                     UI's own folder exempt by NAME,
 #                                                     age = NewestWriteUtc = newest file
 #                                                     under "*" (so .txt counts too);
 #                                                     an EMPTY folder falls back to the
 #                                                     folder's OWN mtime -- unlike Sein,
 #                                                     which deletes empty ones outright.
-#     LoggingService.cs:106  PurgeOrphanedLogs     -- then files. In the UI's OWN folder
+#     LoggingService.cs  PurgeOrphanedLogs     -- then files. In the UI's OWN folder
 #                                                     with live={init,pipe,view}-0.log;
 #                                                     in EVERY OTHER folder with NO live
-#                                                     guard at all (:415).
+#                                                     guard at all.
 LOGSVC_FOLDERS = [
     # name,               files [(fname, days)],                     folder must_die
     ("ZZRET-lsstale",     [("zzret-a.log", -30.0), ("zzret-b.txt", -30.0)], True),
@@ -507,7 +507,7 @@ def logsvc():
     folders.append((d, True))
     # ...and its COMPLEMENT, which is what makes the pair discriminating. Without it,
     # "the empty folder died" is equally well explained by "empty folders are always
-    # deleted" -- which is exactly what the C++ side does (Sein.cpp:484, the !sawFile
+    # deleted" -- which is exactly what the C++ side does (Sein.cpp `PruneStaleProcessFolders`, the !sawFile
     # branch removes them outright). Only an empty folder with a FRESH own-mtime
     # surviving shows that C# reaches the dir.LastWriteTimeUtc fallback instead.
     d2 = LOGS / "ZZRET-lsemptyfresh"
@@ -544,7 +544,7 @@ def logsvc():
 
     # Witness, scoped to this run. Unlike Sein, THIS sweep says what it did -- and the
     # line is recent: it used to dereference a null logger and was never once written,
-    # so the folders were deleted silently (LoggingService.cs:101-104).
+    # so the folders were deleted silently (LoggingService.cs).
     since = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(t0))
     hits = []
     for lg in ui.glob("init-*.log"):

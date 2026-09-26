@@ -960,10 +960,10 @@ function ue5_shutdown()
     -- started, ~50 ms after telling the user to go and connect to it.
     --
     -- ⚠ And the untick is what fires it: `memrec.Active = false` RUNS the disable
-    -- block (ue5_freeze_helper.lua:977 says so in as many words), so the enable
+    -- block (ue5_freeze_helper.lua `tick` says so in as many words), so the enable
     -- branch that unticks "so the disable can never run UE5_Shutdown" was calling
     -- the very thing it meant to prevent. Deferring the untick made it automatic
-    -- rather than needing the user. Measured and written up as [B30-REOPEN-2026-09-10].
+    -- rather than needing the user. Measured and written up as [B30-REOPEN].
     --
     -- The untick itself is KEPT — an un-owned record should not stay ticked — and
     -- it is now harmless, because this guard is what decides whether anything is

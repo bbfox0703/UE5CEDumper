@@ -77,7 +77,7 @@ def resolve(src, by_name):
             mem = PeMemory(p)
         except Exception:
             continue
-        # 1e6, NOT 2**20 — build_ngram_index.py:184 records `sum(len(b) for b in bufs) / 1e6`.
+        # 1e6, NOT 2**20 — build_ngram_index.py `main` records `sum(len(b) for b in bufs) / 1e6`.
         # Using MiB here left all 11 sources unresolved and would have been easy to "fix" by
         # widening the tolerance, which silently matches the wrong StackOBot build (three of them
         # share a filename, 110.4 / 119.2 / 124.6 MiB apart). Match the producer's unit instead.

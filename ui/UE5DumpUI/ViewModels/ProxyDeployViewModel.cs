@@ -1052,14 +1052,14 @@ public partial class ProxyDeployViewModel : ViewModelBase
         //
         // ⚠ The finding that reported this claimed `IsRemovingOrphans` was load-bearing because
         // "the leftover card's Cancel binds to it". It does not — that Cancel binds to
-        // `IsScanningOrphans`, and the comment at ProxyDeployPanel.axaml:152 says so in as many
+        // `IsScanningOrphans`, and the comment on that binding in ProxyDeployPanel.axaml says so in as many
         // words ("NOT to the shared IsScanning and NOT to IsRemovingOrphans"). Nothing in any
         // .axaml binds `IsRemovingOrphans` at all. It is kept because it is half of `IsBusy` and
         // the orphan tests assert on it, NOT for the stated reason.
         //
         // Blast radius of now setting the shared flag here, checked rather than assumed: inside
-        // this panel `IsScanning` is bound only by the progress bar (ProxyDeployPanel.axaml:238)
-        // and read at :576 to skip the drive-list auto-load. So the visible change is that a
+        // this panel `IsScanning` is bound only by the progress bar in ProxyDeployPanel.axaml
+        // and read in `OnScanDrivesModeChanged` to skip the drive-list auto-load. So the visible change is that a
         // leftover delete finally SHOWS the busy bar — it showed none before, which is the
         // unreported third half of this defect.
         using var busy = TryBeginExclusive("Delete leftovers");

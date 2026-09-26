@@ -109,7 +109,7 @@ internal static class CeMailboxLayout
     // Mailbox status values (must match Mimic.h MailboxStatus). Emitted into the
     // generated Lua so a timed-out script can say WHICH fault it hit instead of
     // guessing: the DLL sets Processing the instant its poller picks a command up
-    // (Mimic.cpp:246) and Done+cmd=IDLE when it finishes (:1285-1286, :1296-1297),
+    // (Mimic.cpp `PollingThreadBody`) and Done+cmd=IDLE when it finishes,
     // so on timeout the status still distinguishes "never seen" from "wedged".
     public const int StatusIdle       = 0;      // untouched — the DLL never saw it
     public const int StatusDone       = 1;      // finished

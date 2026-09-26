@@ -42,10 +42,11 @@ public partial class PropertySearchMatch : ObservableObject
 
     /// <summary>
     /// FBoolProperty FieldMask — the single bit this bool owns inside the byte
-    /// at <see cref="PropOffset"/>. <b>0 means "not a packed bitfield"</b>: the
+    /// at <see cref="PropOffset"/>. <b>0 means "no single bit known"</b>: the
     /// DLL emits <c>bool_mask</c> only after reading <c>FieldSize == 1</c> with a
-    /// single-bit mask, so a native bool (which owns its whole byte) and an older
-    /// DLL both arrive as 0, and both want the same whole-byte write.
+    /// single-bit mask, so a native bool, an UNRESOLVED layout (the probe missed) and
+    /// an older DLL all arrive as 0. Only <see cref="BoolNative"/> makes a 0 safe to
+    /// write whole. [BOOL-NATIVE-SEARCH]
     ///
     /// <para>Because the mask is only ever reported for a <c>FieldSize == 1</c>
     /// property, the bit is necessarily in the byte at <see cref="PropOffset"/> —
@@ -58,6 +59,12 @@ public partial class PropertySearchMatch : ObservableObject
     /// never set at all. (audit #5 AA1)</para>
     /// </summary>
     public int BoolFieldMask { get; set; }
+
+    /// <summary>The DLL's <c>bool_native</c>: this BoolProperty is a NATIVE bool that owns its
+    /// whole byte, so a whole-byte write is right. False for a packed bool (see
+    /// <see cref="BoolFieldMask"/>), for an unresolved layout, and for a DLL older than the
+    /// key -- all three must not be written whole. [BOOL-NATIVE-SEARCH]</summary>
+    public bool BoolNative { get; set; }
 
     // === Inheritance-aware fields (build 610+) ===
     public string DefiningClassName { get; set; } = "";

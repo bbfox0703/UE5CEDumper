@@ -405,6 +405,7 @@ public class CeLuaQuotingTests
             PropertySize = 4,
 
             BoolFieldMask = 0,
+            BoolNative    = false,
 
             ValueLiteral = value,
 

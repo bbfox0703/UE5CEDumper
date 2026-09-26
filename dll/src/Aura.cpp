@@ -130,7 +130,7 @@ void Aura::SetDecryptFunc(DecryptFunc func) {
 // give each thread its own caches + result buffer, then merge in chunk order
 // so the global result stays ascending-index ordered (matching the serial
 // semantics exactly). Mirrors the discrete dumper's RunParallelScan design
-// (docs reference: Memory-Scanning-Internals.md §16).
+// (discrete's own docs: Memory-Scanning-Internals.md §16, not in this repo).
 namespace {
 
 // Worker thread count for a GObjects walk of `workItems` objects. Leaves
@@ -703,7 +703,11 @@ static bool LooksLikeUObject(uintptr_t obj) {
 
 // Test a candidate stride against a chunk, counting valid UObject items.
 // Returns the number of items that resolved names (strong) and total valid items (weak).
-// NOTE: No early exit — scans all maxItems for fair comparison across strides.
+// NOTE: A stride that has produced even one valid item scans all maxItems, so every plausible
+// stride is compared over the same item count (Lineal::PreferStride's tie rule relies on it).
+// The early exit (the same test after every bad probe) abandons a stride whose bad count passes
+// the give-up threshold with no good item yet, so that stride's `bad` is a capped count, not a
+// full-sample one.
 //
 // reconstructPacked: when true, the object pointer is RECONSTRUCTED from the UE5.7+
 // packed encoding (flags@item+0x00, ptrLow@item+0x08 -> Lineal::Reconstruct) instead
@@ -2517,7 +2521,7 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     //
     // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
     // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
-    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
     // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
     // not walk", and caching anything derived from it would be caching a failure.
     //
@@ -3570,7 +3574,7 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     //
     // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
     // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
-    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
     // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
     // not walk", and caching anything derived from it would be caching a failure.
     //
@@ -5077,6 +5081,7 @@ PropertySearchResult SearchProperties(
             match.fieldAddr      = field.Address;
             match.propertyFlags  = field.PropertyFlags;
             match.boolFieldMask  = field.boolFieldMask;
+            match.boolNative     = field.boolNative;
             match.keyType        = field.keyType;
             match.valueType      = field.valueType;
             // Seed preview source with the iterated class -- guaranteed
@@ -5221,7 +5226,7 @@ PropertySearchResult SearchProperties(
         // showed the Blueprint default forever (Health = 100 while the player is at 37).
         // `obj != cls` only excluded the UClass itself, never its CDO. (audit #5 A5)
         //
-        // Same `Default__` test Solide.cpp:170/:282, Wirbel.cpp:328 and Edel.cpp:94 already
+        // Same `Default__` test Solide.cpp (`ResolveLocalPC`, `ApplyJobLocked`), Wirbel.cpp and Edel.cpp (`ResolveLocalPC`) already
         // apply — a name compare rather than RF_ClassDefaultObject because the flags word is
         // one more unverified offset, and CLAUDE.md's rule is that UObject offsets are probed,
         // not assumed. The name is only resolved for objects whose class we actually want,
@@ -5565,6 +5570,7 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
                 match.fieldAddr      = field.Address;
                 match.propertyFlags  = field.PropertyFlags;
                 match.boolFieldMask  = field.boolFieldMask;
+                match.boolNative     = field.boolNative;
                 match.keyType        = field.keyType;
                 match.valueType      = field.valueType;
                 match.previewClassAddr      = obj;
@@ -8346,7 +8352,7 @@ ValueScanResult ScanForValue(
 
                 // Bounds keep a single wide object from monopolising the scan:
                 // emitted native candidates and offset probes are both capped per
-                // object (the global maxResults + 15s deadline still apply).
+                // object (the global maxResults + deadline still apply).
                 constexpr int32_t kMaxRawPerObj = 256;
                 constexpr int32_t kMaxRawProbes = 32768;
                 int32_t rawEmitted = 0, probes = 0;
@@ -9744,7 +9750,7 @@ GroupScanResult ScanForValueGroup(const std::vector<Radar::SlotSpec>& slots,
             if (std::chrono::steady_clock::now() - t0 > kDeadline) { result.stats.deadlineHit = true; break; }
         }
         // Newest-first (coupled with native-C in the UI): walk high-index first so
-        // that when the 15s deadline truncates a huge game (FF7 Rebirth ~433K
+        // that when the deadline truncates a huge game (FF7 Rebirth ~433K
         // objects), the survivors are the most-recently-allocated objects — the
         // just-spawned UI widgets / actors that hold native values — rather than
         // low-index CDOs/templates. `idx` is the true GObjects index used everywhere.

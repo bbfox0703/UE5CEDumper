@@ -37,19 +37,19 @@ sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 VERBOSE = "--verbose" in sys.argv
 
-# ── Constants.cs:358-362 ────────────────────────────────────────────────
+# ── Constants.cs `SteamRegistryPath` ────────────────────────────────────────────────
 STEAM_REG_PATH = r"SOFTWARE\WOW6432Node\Valve\Steam"
 STEAM_REG_KEY = "InstallPath"
 STEAM_DEFAULT = r"C:\Program Files (x86)\Steam"
 LIBRARYFOLDERS_VDF = r"config\libraryfolders.vdf"
 STEAMAPPS_COMMON = r"steamapps\common"
 
-# ── ProxyDeployService.cs:225 (MaxBinariesSearchDepth) and :232 ─────────
+# ── ProxyDeployService.cs `ScanGameFolder` (MaxBinariesSearchDepth) ─────────────────
 MAX_DEPTH = 3
 SKIP_DIRS = {"binaries", "content", "saved", "intermediate",
              "config", "deriveddatacache", "plugins"}
 
-# ── ProxyDeployService.cs:362-372 (IsKnownStubExe) ─────────────────────
+# ── ProxyDeployService.cs (IsKnownStubExe) ─────────────────────
 STUB_EXES = {"crashreportclient.exe", "unrealeditor.exe",
              "ue4editor.exe", "unrealfrontend.exe"}
 

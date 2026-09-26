@@ -302,6 +302,16 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             StatusText = $"Freeze v1 does not support {match.PropType} (numeric + bool only)";
             return;
         }
+        // A bool with neither the DLL's bool_native nor a single-bit mask has an UNRESOLVED
+        // layout: its byte may hold up to 8 packed bools, and the helper's whole-byte write
+        // would stamp the siblings every tick. Refuse before asking for a value -- the same
+        // rule the Live Walker's editor applies. [BOOL-NATIVE-SEARCH]
+        if (FreezeScriptGenerator.IsUnresolvedBool(match.PropType, match.BoolNative, match.BoolFieldMask))
+        {
+            StatusText = $"Not frozen: {match.PropName}'s bit could not be resolved on this engine — "
+                       + "its byte may hold up to 8 packed bools, and freezing it whole would stamp its neighbours.";
+            return;
+        }
         if (FreezeValuePrompt == null)
         {
             StatusText = "Freeze unavailable — value prompt not wired";
@@ -393,6 +403,7 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // up to 7 sibling bools and, unless the mask was 0x01, never setting the
             // intended one. Same dropped-field shape as PropertySize above.
             BoolFieldMask  = match.BoolFieldMask,
+            BoolNative     = match.BoolNative,
             ValueLiteral   = literal,
         };
 

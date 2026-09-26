@@ -149,6 +149,9 @@ CHECKS = [
             # The header the count is DERIVED FROM — same blind spot as Fern.h above; it
             # claimed "~30" while being the very file the grep counts. (audit #5 AD7)
             ("dll/src/Frieren.h",         r"ExportAPI: (\d+) C ABI exports"),
+            # ...and its .cpp, whose banner repeats the line: it still said "~30" on build 3560, a
+            # year after the .h was pinned. (sampled by [COMMENT-INTEGRITY-2026-09-26])
+            ("dll/src/Frieren.cpp",       r"ExportAPI: (\d+) C ABI exports"),
         ],
     ),
     dict(

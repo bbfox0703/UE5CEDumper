@@ -97,7 +97,7 @@ constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
 
 /// GObjects population -- the number of UObjects in the whole process. Separate magnitude
 /// AND separate meaning. Measured, not guessed: a real title reached 0x800000 (8,388,608).
-/// ⚠ Aura.cpp:2073 bounds an InternalIndex rather than a count; an index lives in the same
+/// ⚠ Aura.cpp `FindByAddress` bounds an InternalIndex rather than a count; an index lives in the same
 /// space as the population and must rise with it, so it belongs here -- but do NOT merge this
 /// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
 constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
@@ -425,12 +425,15 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
 // (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
-// 4.27 while the structural probes have already proved otherwise. The two PURE predicates
-// live here so the tests can pin them; the 503/504 markers walk GObjects and stay in
-// Frieren.
+// 4.27 while the structural probes have already proved otherwise. The PURE predicates
+// live in this header so the tests can pin them (the two below, and the CMC rule as
+// DynOff::CmcMarkerVersion); the live reads that feed them stay in UE5_Init.
 //
-// ⚠ Both are RAISE-ONLY and both are guarded on `ver >= 500`. That guard is not cosmetic:
-// a false positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
+// ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
+// PER RUNG at its UE5_Init call site: a rung whose probe could misfire on a UE4 title must
+// carry the guard, while one keyed on a layout no UE4 build has may go without — lifting a
+// 4.27-fallback title is the 503 rung's whole job. The guard is not cosmetic: a false
+// positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
 // turning a harmless badge fix into a breaking layout change.
 
 // UE 5.7 moved FUObjectItem's Object* to +0x08. The SIZE varies with build configuration
@@ -824,8 +827,8 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // `tools/check_property_family.py` pins all of this — counting writers by hand is what failed
 // the first time.
 //
-// Pure and constexpr, so dll_helpers_test can pin the invariant — which matters because no
-// test target compiles Genau.cpp.
+// Pure and constexpr, so dll_helpers_test can pin the invariant without Genau.cpp's scan
+// machinery.
 struct PropertyFamily {
     int structProp;     // FStructProperty::Struct
     int arrayInner;     // FArrayProperty::Inner
@@ -894,12 +897,12 @@ inline bool bCasePreservingName  = false;
 // wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`
 // and a reader cannot tell from the expression which question it is answering. Measured
 // 2026-09-06: twelve sites used the ternary, four correctly (a TPair value offset) and eight
-// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `Aura.cpp:3755` sat
+// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `FindReferencesToUObject` (Aura.cpp) sat
 // four lines under one of the correct ones getting it right, and `Ubel.h`'s own field comment
 // documented 12 against writers that set 0x10. Prefer these over the literal, always.
 //
 // ⚠ Impact is ZERO on every title measured so far: `bCasePreservingName` has only two writers
-// (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can force it true,
+// (`DetectCasePreservingName` in Genau.cpp, inside a live 20-object vote), no config/preset/UI can force it true,
 // and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
 inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
     // [VND583-07, A9 step 1] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and

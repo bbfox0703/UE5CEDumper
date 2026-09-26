@@ -56,7 +56,7 @@ namespace DumperTestStrings
 
 	// U7. 22 chars (even), exactly TWO low-byte-00 (一 U+4E00, 言 U+8A00).
 	// 66 UTF-8 bytes, and the Property Search preview is cut at 50 BYTES
-	// (Utf8Helpers::TruncateUtf8(s, 50), Ubel.cpp:5950). 50 mod 3 == 2, so byte 50
+	// (Utf8Helpers::TruncateUtf8(s, 50), Ubel.cpp `ResolvePropertyPreviews`). 50 mod 3 == 2, so byte 50
 	// is a CONTINUATION byte and a naive resize(50) splits a 3-byte sequence.
 	// Built from escape groups this file already carries, so the risk is copy-paste
 	// rather than 22 fresh escapes.

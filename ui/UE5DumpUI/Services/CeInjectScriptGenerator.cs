@@ -278,7 +278,7 @@ public static class CeInjectScriptGenerator
         // ⚠ And the untick is what fired it: memrec.Active = false RUNS this block, so
         // the enable branch that unticks "so the disable can never run UE5_Shutdown"
         // was invoking the very thing it meant to prevent; deferring the untick made it
-        // automatic rather than needing the user. [B30-REOPEN-2026-09-10].
+        // automatic rather than needing the user. [B30-REOPEN].
         Line(sb, "-- Only tear down what THIS record started. An enable-path bail-out unticks");
         Line(sb, "-- the record, which RUNS this block -- and a proxy that was already serving");
         Line(sb, "-- exports UE5_StopPipeServer too, so the probe below cannot tell the two");

@@ -111,7 +111,7 @@ constexpr uint32_t kVersionDetectLogicRev = 7;
 // CoreUObject.dll — Satisfactory 4.25 is the reference case).
 // ============================================================
 
-/// Where the anchor (a validated GObjects) lives. Three states, NOT two booleans:
+/// Where the anchor (a validated GObjects) lives. An enum, NOT two booleans:
 /// "we have no anchor yet" is a fact in its own right and must never collapse into
 /// "the anchor is not in the exe" — those demand opposite verdicts.
 enum class AnchorState : uint8_t {
@@ -133,9 +133,9 @@ constexpr AnchorState ClassifyAnchor(bool haveAnchor, bool inAnyModule, bool inM
     return inMainExe ? AnchorState::MainExe : AnchorState::ForeignDll;
 }
 
-/// Verdict for one Pass-2 candidate. Three values because "refused because the build
-/// is monolithic" and "refused because we have no idea what this process is" are
-/// different facts, and the log line must be able to say which.
+/// Verdict for one Pass-2 candidate. One refusal per REASON, not a single Refuse, because
+/// "refused because the build is monolithic" and "refused because we have no idea what
+/// this process is" are different facts, and the log line must be able to say which.
 enum class ModuleAdmission : uint8_t {
     Accept,
     RefuseForeignMonolithic,

@@ -112,7 +112,7 @@ public sealed class EngineState
     // UE-version defaults — every value in Live Walker, every export, silently
     // derived from a guess. (audit #5 U3/X3)
     //
-    // Two flags, not one, and the split is the DLL's (Grimoire.h:243):
+    // Two flags, not one, and the split is the DLL's (Grimoire.h `PickFFieldClassNameOffset`):
     //   ProbeRan  — detection executed and the offsets are settled (success OR give-up)
     //   Validated — the values were actually MEASURED and are trustworthy
 

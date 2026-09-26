@@ -750,7 +750,7 @@ if not readUFunctionReturn or _invokeOutdated then
       -- Int64Property return -- and an 8-byte EnumProperty -- fell through to the signed
       -- FOUR-byte read and came back truncated: 0x0000000123456789 read as 591751049.
       -- That is the same defect build 637 fixed for pointers; its one-line fix
-      -- (BakedScriptGenerator.cs:331) rewrote only "pointer" -> 'qword' and left "int64"
+      -- (BakedScriptGenerator.cs `AppendInvokeAndResultHandler`) rewrote only "pointer" -> 'qword' and left "int64"
       -- to reach here verbatim. UInt64Property was unaffected because it maps to
       -- "pointer". [RETINT64-2026-08-24]
       --

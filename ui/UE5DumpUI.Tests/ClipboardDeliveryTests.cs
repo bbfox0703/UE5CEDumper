@@ -122,7 +122,7 @@ public class ClipboardDeliveryTests
     {
         // ⛔ THE REGRESSION THIS PINS, measured on a live run 2026-09-09
         // ([CLIPELLIPSIS-2026-09-09]): the MainWindow toolbar caps StatusText and
-        // ErrorMessage at MaxWidth=360 with CharacterEllipsis (MainWindow.axaml:41-53) and
+        // ErrorMessage at MaxWidth=360 with CharacterEllipsis (MainWindow.axaml's status bar) and
         // truncated this message at roughly character 50 —
         //   "ERROR: could not write to the clipboard — the inject ..."
         // while "so do not paste" sat at character 135 of 206. The one sentence the message

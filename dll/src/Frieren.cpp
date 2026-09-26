@@ -1,6 +1,6 @@
 ﻿// ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: ~30 C ABI exports for CE Lua bridge
+// ExportAPI: 63 C ABI exports for CE Lua bridge
 // ============================================================
 
 #include "Frieren.h"
@@ -934,7 +934,7 @@ static bool AutoStartWork() {
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
     // UE5_Init CAN fail. The "Always succeeds" comment this replaces was correct
     // when it was written (af7ff3a deleted the old `if (!UE5_Init()) return false;`
-    // for Extra Scan), but audit #4's B49 added a real `return false` at :528 five
+    // for Extra Scan), but audit #4's B49 added a real `return false` to `UE5_Init` five
     // months later — a shutdown landing during the multi-second scan bails with
     // NOTHING latched — and this call site was never revisited. (audit #5 D5/FR1)
     const bool inited = UE5_Init();
@@ -944,7 +944,8 @@ static bool AutoStartWork() {
         // That same shutdown ran Mimic::StopThread(), which memsets the mailbox and
         // joins the poller — and StartThread's only other caller is DllMain, which
         // never runs twice. A CE .CT row would then write commands nobody collects,
-        // leaving status = 0, which CLAUDE.md's own rule tells the user means "stale
+        // leaving status = 0, which the generated CE scripts' timeout message
+        // (CeLuaHygiene.AppendTimeoutReason, UI side) blames on a "stale
         // g_invokeMailbox address" — a confidently WRONG diagnosis.
         //
         // Re-arm only if the shutdown is no longer latched. Reviving the poller
@@ -1131,7 +1132,7 @@ uintptr_t UE5_FindInstanceOfClass(const char* className) {
 // Frieren.cpp only recompiles when it is touched. That is why it looked new after a
 // sync: nothing changed, the object cache had simply been hiding it.
 //
-// The twin of this function in Mimic.cpp:529 is byte-for-byte the same and does NOT
+// The twin of this function in Mimic.cpp `ChainListFuncs` is byte-for-byte the same and does NOT
 // warn, because Mimic uses per-declaration `extern "C"` and never opens a block. That
 // asymmetry between two identical helpers IS the diagnosis.
 //
@@ -1845,7 +1846,9 @@ static std::atomic<int>  s_processEventOffset{Stark::kPeOffsetNotDetected};
 static std::atomic<bool> s_peOffsetFromVersionTable{false};
 
 /// Resolve the actual ProcessEvent function address from any valid UObject's vtable.
-/// Used both for direct calls and for installing the game-thread hook.
+/// The game-thread hook installs on this address. Direct calls do not use it: they read
+/// the slot from the TARGET instance's own vtable, which stays right even for a class
+/// that overrides ProcessEvent.
 ///
 /// Pure resolver: it does NOT detect. The ad-hoc `if (offset == -2) detect;` that
 /// used to sit here was the one detection site outside the serialized path, i.e.

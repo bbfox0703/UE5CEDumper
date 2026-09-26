@@ -255,7 +255,7 @@ static bool IsAlreadyLoadedInTarget(HANDLE hProcess, std::string& outName,
             // Worth logging — it is exactly the case that used to be misread.
             //
             // ⚠ CONVERT FIRST; NEVER `%ls`. [NONASCIILS-2026-08-24] Sein formats with a
-            // NARROW vsnprintf (Sein.cpp:499) and every DLL target is /MT — a static CRT
+            // NARROW vsnprintf (Sein.cpp `WriteLog`) and every DLL target is /MT — a static CRT
             // whose locale is PRIVATE to us and is always "C", so the host cannot change
             // it. UCRT's %ls then returns EILSEQ for any wide value > 0xFF, printf sets
             // _characters_written = -1, and the tail writes buffer[0] = 0: the WHOLE

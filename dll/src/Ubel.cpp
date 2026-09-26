@@ -2021,9 +2021,12 @@ static int FNameSize() {
 
 // --- Live Instance Walking ---
 
-/// Infer the expected element size from a well-known property type name.
-/// Used as a fallback when FPROPERTY_ELEMSIZE reads 0 or garbage (e.g. Inner
-/// FProperty in ArrayProperty where the ELEMSIZE offset doesn't apply).
+/// Infer the expected element size from a well-known property type name; 0 when the
+/// name does not fix the size. ⚠ Not merely a fallback for a 0/garbage FPROPERTY_ELEMSIZE:
+/// callers may override a mismatching engine size with it, and ResolveInnerSize returns it
+/// (for every inner type but LazyObjectProperty) before the engine is read at all, so a
+/// wrong entry here is actively substituted for a right one. Override-on-mismatch versus
+/// backstop-only-when-implausible is decided per caller.
 static int32_t InferScalarSize(const std::string& typeName) {
     // Numeric scalars
     if (typeName == "FloatProperty")  return 4;
@@ -2590,7 +2593,7 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     // StructProperty: byte-blind float hint, LAST RESORT ONLY (audit U3).
     // The whole decode — including the vtable-skip decision that used to drop
     // leading members silently — lives in Ubel.h::InterpretStructBytes so it is
-    // pure and unit-pinned; no target compiles this .cpp. Callers that can
+    // pure and unit-pinned in `dll_helpers_test`. Callers that can
     // resolve the UScriptStruct* must prefer the reflected-layout preview
     // (WalkInstance's "{Name=Value}"), which is width-correct and labelled.
     if (typeName == "StructProperty" && size >= 4) {
@@ -4166,7 +4169,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         const bool okCount = Macht::ReadSafe(listAddr + 8, innerCount);
         if (!okData || !okCount) {
             // UNREAD is not "(0 bindings)". Both reads fail together when the TArray's
-            // Data buffer has been freed -- and Macht::ReadTArray (Macht.h:287-297)
+            // Data buffer has been freed -- and Macht::ReadTArray (Macht.h)
             // validates only Count and Max, never probing Data, so a garbage pointer
             // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
             // told the UI and the CE exporters that a delegate provably HAS no
@@ -7857,7 +7860,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                            fi.TypeName == "AnsiStrProperty") {
                     fv.strValue = ReadFUtf8String(rowPtr, fi.Offset);
                 } else if (fi.TypeName == "TextProperty") {
-                    // Mirrors WalkInstance's TextProperty branch (:5157-5160) on
+                    // Mirrors WalkInstance's TextProperty branch on
                     // purpose, including the "(empty)" typedValue: the two readers
                     // must agree, and this is the pair that did not.
                     //

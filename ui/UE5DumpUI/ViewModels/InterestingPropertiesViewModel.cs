@@ -604,12 +604,14 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
     public static (
         List<CheatTableRow> rows,
         int skippedUnsupported,
-        int skippedMissingOffset) BuildRowsFromSelection(
+        int skippedMissingOffset,
+        int skippedUnresolvedBool) BuildRowsFromSelection(
             IEnumerable<ScoredPropertyRow> selected)
     {
         var rows = new List<CheatTableRow>();
         int skippedUnsupported = 0;
         int skippedMissingOffset = 0;
+        int skippedUnresolvedBool = 0;
         foreach (var sr in selected)
         {
             if (sr is null) continue;
@@ -628,6 +630,13 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 skippedMissingOffset++;
                 continue;
             }
+            // An unresolved bool layout would be frozen with a whole-byte write over up to 7
+            // packed siblings -- and the generator refuses it anyway. [BOOL-NATIVE-SEARCH]
+            if (FreezeScriptGenerator.IsUnresolvedBool(sr.PropType, sr.BoolNative, sr.BoolFieldMask))
+            {
+                skippedUnresolvedBool++;
+                continue;
+            }
 
             var fp = new FreezeScriptParams
             {
@@ -637,6 +646,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 UeTypeName      = sr.PropType,
                 PropertySize    = sr.PropSize,
                 BoolFieldMask   = sr.BoolFieldMask,
+                BoolNative      = sr.BoolNative,
                 ValueLiteral    = DefaultFreezeLiteral(sr.PropType),
             };
             string desc = targetClass == sr.ClassName
@@ -649,7 +659,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
                 FreezeParams = fp,
             });
         }
-        return (rows, skippedUnsupported, skippedMissingOffset);
+        return (rows, skippedUnsupported, skippedMissingOffset, skippedUnresolvedBool);
     }
 
     /// <summary>"Generate Cheat Table from Selection" command. The
@@ -667,7 +677,7 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             return;
         }
 
-        var (rows, skippedUnsupported, skippedMissingOffset) =
+        var (rows, skippedUnsupported, skippedMissingOffset, skippedUnresolvedBool) =
             BuildRowsFromSelection(selected);
 
         if (rows.Count == 0)
@@ -675,7 +685,10 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             StatusText = skippedUnsupported > 0
                 ? $"Selected rows aren't freeze-supported " +
                   $"(struct / array / non-scalar types). 0 entries in batch."
-                : "Selection produced 0 valid rows — nothing to write.";
+                : skippedUnresolvedBool > 0
+                    ? $"Selected bools could not be resolved on this engine ({skippedUnresolvedBool}) — " +
+                      "freezing them whole would stamp neighbouring bools. 0 entries in batch."
+                    : "Selection produced 0 valid rows — nothing to write.";
             return;
         }
 
@@ -688,9 +701,11 @@ public partial class InterestingPropertiesViewModel : ViewModelBase
             processName: "InterestingProperties", now);
 
         var skipped = skippedUnsupported + skippedMissingOffset;
-        StatusText = skipped > 0
-            ? $"Generated {rows.Count} entries (skipped {skipped} unsupported / malformed)."
-            : $"Generated {rows.Count} entries.";
+        StatusText = $"Generated {rows.Count} entries"
+            + (skipped > 0 ? $" (skipped {skipped} unsupported / malformed)" : "")
+            + (skippedUnresolvedBool > 0
+                ? $" (skipped {skippedUnresolvedBool} bool(s) whose bit could not be resolved)" : "")
+            + ".";
 
         RequestSaveCheatTable?.Invoke(defaultName, ct);
     }

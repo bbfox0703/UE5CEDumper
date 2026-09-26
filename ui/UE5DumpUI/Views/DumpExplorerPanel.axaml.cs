@@ -11,7 +11,7 @@ public partial class DumpExplorerPanel : UserControl
 {
     // AOT-safe sort comparers — under trimming the DataGrid can't discover a
     // sortable member by reflection, so header clicks are a silent no-op without
-    // these (see aot-pitfalls.md §4.5). The Offset column displays a hex string
+    // these (see the sort trap explained in Helpers/DataGridSortComparers.cs). The Offset column displays a hex string
     // but sorts on the numeric value.
     private static readonly IReadOnlyDictionary<string, IComparer> DumpSortComparers =
         new Dictionary<string, IComparer>

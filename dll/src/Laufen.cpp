@@ -8,7 +8,8 @@
 // chain, same s_mutex + s_workerMutex two-lock split, same write-on-drift worker
 // — but the target is a FloatProperty scalar on the CharacterMovement sub-object
 // instead of a single FBoolProperty bit on the AActor. Self-contained (Path B):
-// only public Ubel/Aura/Macht + DynOff, no Wirbel coupling.
+// only the public APIs of non-gameplay modules + DynOff, no coupling to Wirbel
+// or any other gameplay feature.
 // ============================================================
 
 #define LOG_CAT "WALK"
@@ -43,8 +44,8 @@ struct KnobDef {
 };
 const KnobDef kKnobs[KNOB_COUNT] = {
     { "MaxWalkSpeed",  "WalkSpeed"     },  // KNOB_WALK_SPEED
-    { "GravityScale",  "GravityScale"  },  // KNOB_GRAVITY (P2)
-    { "JumpZVelocity", "JumpZVelocity" },  // KNOB_JUMP    (P3)
+    { "GravityScale",  "GravityScale"  },  // KNOB_GRAVITY
+    { "JumpZVelocity", "JumpZVelocity" },  // KNOB_JUMP
 };
 
 // Per-knob desired state — survives UI reconnects (the override lives in the
@@ -68,7 +69,7 @@ struct GravDirState {
 GravDirState s_gravDir;
 
 // Serializes whole operations: reachable from the Fern pipe thread AND the
-// re-assert worker (and, in P4, the Mimic mailbox thread).
+// re-assert worker AND the Mimic mailbox thread (CMD_MOVEMENT, through the C ABI).
 std::mutex s_mutex;
 
 // Re-assert worker — separate control mutex so StopWorker()'s join() never runs

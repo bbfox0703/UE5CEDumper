@@ -9,7 +9,7 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// [CLASSCAP-2026-08-21] — the Classes tab's status line has always ended
+/// [CLASSCAP] — the Classes tab's status line has always ended
 /// <c>"… ⚠ STOPPED at the 5,000-row cap — filter to narrow, or raise the cap"</c>, and there was
 /// no cap to raise: the toolbar had no numeric control and <c>ListClassesAsync</c> was called with
 /// no <c>limit</c>, so the wire default of 5,000 always won.

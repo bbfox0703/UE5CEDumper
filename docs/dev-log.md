@@ -27,6 +27,82 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3561, tools only — no rebuild) — the local-LLM helper: 23 review findings fixed, the free-VRAM need computed from the model, live-checked
+
+**No binary changed.** Everything here is `tools/llm/ollama_local.py`, its skill and its docs, after the
+3561 publish (`ffdf203d` .. `0ba57795`). `dist\` is still the 3561 build.
+
+- **Review of the peer session's and this session's LLM work** (workflow `wf_b18865b3-513`: a runtime lens,
+  a cooperative lens, and one skeptic). The skeptic reproduced 23 of 24 findings; all 23 are fixed, red
+  `ffdf203d` -> green `ee32aac5`, selftest 152/152.
+  - **HIGH:** `CLAUDE_LOCAL_LLM=off` disabled the machine-wide hook for that session, so a game it
+    launched booted beside another session's model. The hook now ignores the per-shell switch.
+  - **Guard:**
+    - `guard` re-reads `/api/ps`, so a refusal unloads;
+    - a model resident under a reservation is evicted;
+    - the post-exit grace runs from the last game seen (it was 0 s);
+    - computer-use actions that can launch now run the hook;
+    - no retry past a refusal;
+    - the hook's unload fits its deadline;
+    - state files are written by write-then-rename.
+  - **Cooperative:**
+    - the skill always comes from the same checkout as the helper;
+    - an older checkout cannot downgrade the install (`--force`);
+    - `status` flags a missing interpreter;
+    - `join` refuses the source repo, a missing directory, home, and a foreign skill;
+    - a CJK repo path resolves correctly.
+  - **Privacy:** the selftest no longer carries this machine's model tag or paths.
+- **Free VRAM (the maintainer's ask).**
+  - **Need:** weights + KV cache from the model's own GGUF metadata (any architecture) + compute
+    overhead + a 512 MiB buffer, floored at the machine's `--min-free-vram-mb`.
+  - **Checked against the measured table:** at 8k / 32k / 64k the estimate sits the buffer above the
+    measurement.
+  - **Which GPU:** NVIDIA only, so an integrated GPU is never judged; `CUDA_VISIBLE_DEVICES` is honoured.
+  - **This PC:** need 15,317 MiB for the installed model at 32k; its floor lives only in the machine config.
+- **Live check** (a fresh session after a Claude Code restart), recorded in the helper header (`0ba57795`):
+  - a launch-shaped Bash command reserved the GPU;
+  - with the model resident and a reservation written outside the hook, a computer-use
+    `open_application` alone unloaded it.
+
+## 2026-09-26 (build 3561) — comment integrity (gates + cleanup), a bool Freeze that could stamp packed siblings, the local LLM installed once per machine; published AOT
+
+**3561 = 3560 plus two DLL changes and one UI fix, up to `80764dcf`.**
+- **`[COMMENT-INTEGRITY-2026-09-26]`** (the maintainer's request: comments drift from the code). Items 1 + 2 of
+  `comment-integrity-eval.md`, recorded in its §5.
+  - **Gate `check_comment_refs`** (check_all + CI, 27 gates): no in-repo `File:NNN` in a comment, no false
+    "no test target compiles X", every `.md` / `§` / `[TAG]` must resolve, no stacked C# `<summary>`.
+  - **Cleanup:** 151 line references re-anchored on the symbol they meant (git blame -> the target as of that
+    commit -> the enclosing function), 52 dead references, 13 stacked docs. All 23 sampled stale blocks fixed
+    (workflow `wf_8a72cf58-837`), plus 16 found in passing. Two gate holes closed.
+  - **Prevention:** `tools/verify/comment_impact.py` lists the comments elsewhere that name a symbol a diff
+    touches; working-lessons §8 is the comment-style rule, and CLAUDE.md points at it.
+  - **working-lessons.md:** 28 outdated or incorrect passages fixed (workflow `wf_cf7c8629-2ba`). Its line
+    references now point at symbols.
+- **`[BOOL-NATIVE-SEARCH]` (DLL + UI, MED)**, found as the eval's stale-comment lead. Search rows never carried
+  `bool_native`, so a Freeze from Property Search or Interesting Properties treated an UNRESOLVED packed bool as
+  native. The helper then stamped the whole byte every 50 ms over up to 7 siblings.
+  - **Fix:** `PropertyMatch.boolNative` and both search encoders emit it. `FreezeScriptGenerator.IsUnresolvedBool`
+    refuses it at all three entry points.
+  - Red `85c9e8ed` (10) -> green `2093ea91`. The live check is in the verification register.
+- **Sein.cpp `s_catMap` (DLL):** "sorted longest-first" was false and three prefix lengths were wrong. A
+  `static_assert` now enforces both rules; both negative controls fire.
+- **Local LLM helper.** A peer session added cross-session leases, a machine-wide GPU reservation, unload
+  PENDING, a hook that cannot block, and settings writes that keep key order and line endings.
+  - This session re-reviewed it and made it one install per machine (version 2):
+    `%LOCALAPPDATA%\claude-local-llm\` + one user-level hook.
+  - **Any repo joins or leaves with one command** and receives only a skill file that holds no machine or
+    personal data. The adoption guide is `tools/llm/README.md`, pointed at from the README.
+  - This PC was migrated: the hook path was the only change in the user settings.
+- **`Readme*.md` -> `README*.md`**, the maintainer's call; the three links follow.
+
+**The build.** `build.ps1 -Mode Publish`, one run, bumped 3560 -> 3561.
+- `dist\UE5DumpUI.exe`: AOT, 58,183,168 bytes (sha `2cd744571c08`).
+- `UE5Dumper.dll`: 3,016,704 bytes (sha `d5e31eb1dfda`), FileVersion `1.0.0.3561`.
+- Proxies: version `1b7da35c4095`, dinput8 `9c002a451447`, dxgi `a63bd5072d6b`, winmm `e34d8daf02ff`.
+- Tests: UI 5610/5610. `dll_helpers_test` 2984, `utf8_helpers_test` 273, `dll_core_test` 467,
+  `sein_retention_test` 30, `grausam_window_test` 22. `ollama_local --selftest` 112/112.
+- Gates: 27/27.
+
 ## 2026-09-26 (build 3560) — GNames on non-Shipping UE 5.4+ gets its own pattern; the docs archived; published AOT, released as the v3560 draft
 
 **3560 = 3559 plus one DLL change (two AOB rows), up to `a0047064`.** Everything else since 3559 is docs, tests and rigs.

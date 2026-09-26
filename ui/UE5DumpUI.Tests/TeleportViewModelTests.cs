@@ -1057,7 +1057,7 @@ public class TeleportViewModelTests
         Assert.Equal("OFF", vm.FlyState);
     }
 
-    // ⛔ [SLICEB-2026-09-09] -- BOTH fly status lines were claims from the ATTEMPT.
+    // ⛔ [SLICEB-FLY-2026-09-09] -- BOTH fly status lines were claims from the ATTEMPT.
     //
     // The DLL's SetEnabled writes one byte (UCharacterMovementComponent::MovementMode) and
     // that write IS the effect; everything else is bookkeeping. Macht::WriteBytes returns
@@ -1962,7 +1962,7 @@ public class TeleportViewModelTests
         var vm = CreateVm(fake, out _);
         vm.SetConnected(true);
         // Connect now PRIMES every badge the disconnect branch resets, the cursor
-        // included ([BADGEPRIME-2026-09-10]), so wait for that and start the count from
+        // included ([BADGEPRIME]), so wait for that and start the count from
         // zero. Asserting ">= 1" instead would have hidden the duplicate-call regression
         // this test exists to catch.
         await vm.ConnectPrime;
@@ -3041,7 +3041,7 @@ public class TeleportViewModelTests
         Assert.Empty(vm.CoordEntries);
     }
     /// <summary>
-    /// [BADGEPRIME-2026-09-10] — connect must PRIME every badge the disconnect branch
+    /// [BADGEPRIME] — connect must PRIME every badge the disconnect branch
     /// resets, not three of twelve.
     /// </summary>
     /// <remarks>

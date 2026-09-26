@@ -216,7 +216,7 @@ int main() {
         // had its poll -- it is one of the SIBLINGS A7 was made to match. The audit row says so
         // exactly (docs/audit-2026-08-13-early-code-findings.md:278): "FindByAddress is the ONLY
         // full-GObjects walk in the file with neither a Tot::Requested() poll nor a deadline".
-        // And FindByAddress (Aura.cpp:1867) hand-rolls `for (int32_t i = 0; i < count; ++i)` --
+        // And FindByAddress (Aura.cpp) hand-rolls `for (int32_t i = 0; i < count; ++i)` --
         // it never calls ForEach. Measured 2026-09-06: `grep FindByAddress dll/tests/ tools/verify/`
         // returned ZERO hits, so deleting A7's poll reddened nothing, while both
         // verification-register.md and todo.md `[A7-CORETEST-2026-08-25]` said it was verified.
@@ -231,7 +231,7 @@ int main() {
             reinterpret_cast<uintptr_t>(pool.objects.data() + static_cast<size_t>(kIdx) * 64);
 
         // (a) POSITIVE CONTROL -- the address really is findable, and by the EXACT path.
-        // Exactness matters: an exact hit returns at Aura.cpp:1909 and never enters the backward
+        // Exactness matters: an exact hit returns at Aura.cpp `FindByAddress` and never enters the backward
         // module scan, which the audit deliberately left unpolled.
         ResetCancel();
         auto hit = Aura::FindByAddress(objAddr);
@@ -241,7 +241,7 @@ int main() {
               std::to_string(hit.index).c_str());
 
         // (b) THE CASE A7 FIXED. The exact-match return is unconditional, so the ONLY thing that
-        // can turn this same address into a miss is the poll at Aura.cpp:1891.
+        // can turn this same address into a miss is the poll at Aura.cpp `FindByAddress`.
         ResetCancel();
         Tot::g_perCommand.store(true);
         auto cancelled = Aura::FindByAddress(objAddr);
@@ -677,7 +677,7 @@ int main() {
         // Blind-spot sweep, 2026-09-08. Two array readers fabricated a plausible answer
         // when the element read faulted: the multicast-delegate one published the
         // affirmative "(0 bindings)" and the TLazyObjectPtr one an all-zero FGuid, both
-        // counted in readCount. Macht::ReadTArray (Macht.h:287-297) validates only Count
+        // counted in readCount. Macht::ReadTArray (Macht.h) validates only Count
         // and Max and NEVER probes Data, so a freed buffer reaches the element loop with
         // the header looking perfectly sane -- that is why the fault arm is reachable at
         // all, and it is what these cases pin.

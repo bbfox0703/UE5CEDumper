@@ -104,7 +104,8 @@ from collections import defaultdict
 
 INSTANCE_KEYS = {
     # The export reads `result.Fields` and NOTHING else from a walked instance:
-    # CeXmlExportService.cs:444 / :605 / :866 / :955 all touch `.Fields` only.
+    # CeXmlExportService.cs's ResolvePointerInstancesRecursiveAsync / WalkAndRecurseAsync / PrefetchStructTreeAsync /
+# ResolveStructRecursiveAsync all touch `.Fields` only.
     # The requester already knows the address it asked for, so even `addr` is
     # redundant on the wire (the batch reply is positional).
     "addr":          ("unused", "batch reply is positional; caller already has the addr"),

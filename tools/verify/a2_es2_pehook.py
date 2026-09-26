@@ -153,8 +153,8 @@ def main():
 
     # ⛔ THE ABSENCE OF `VALIDATION FAILED` IS VACUOUS ON THE PATTERN PATH, WHICH IS THE PATH
     # THIS ROW EXPECTS. `Stark::ShouldActOnValidationFailure` returns `offsetFromVersionTable`
-    # (`Stark.h:305-307`), so a PATTERN-derived offset that fires ZERO times takes the early
-    # return at `Frieren.cpp:1951` and logs a line containing neither "VALIDATION FAILED" nor
+    # (`ShouldActOnValidationFailure` in Stark.h), so a PATTERN-derived offset that fires ZERO times takes the early
+    # return in Frieren.cpp's `TryInstallGameThreadHook` and logs a line containing neither "VALIDATION FAILED" nor
     # "FAILED" -- the hook is deliberately KEPT. A mis-detected pattern slot therefore produces
     # exactly the log the naive grep set calls a pass. So the discriminator is the POSITIVE
     # line, not the absent one, and the zero-fire line is a HARD FAIL.

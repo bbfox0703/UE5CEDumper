@@ -90,7 +90,7 @@ public static class DebugCameraScriptGenerator
         Line(sb, $"dbg('[DebugCamera] {label} -> state=' .. tostring(state))");
         // Test against the REQUEST, not against -1. `UE5_SetDebugCamera` re-reads the
         // state after firing ToggleDebugCamera and returns whatever it finds
-        // (Frieren.cpp:1037-1046) — so a toggle that fired cleanly but did not take
+        // (Frieren.cpp) — so a toggle that fired cleanly but did not take
         // returns 0 on an ENABLE, with no error code. Checking only -1 read that as
         // success: no message, window closed, row left ticked on a camera that never
         // turned on.

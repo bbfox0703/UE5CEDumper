@@ -101,13 +101,13 @@ def main():
 
         # ⛔ IT TAKES BOTH CALLS, IN THIS ORDER, AND NEITHER ONE ALONE IS ENOUGH.
         #   * setting the native version restores the IN-PROCESS reads, but writes
-        #     `ueVersionUserOverride` into UE5CEDumper.{Machine}.json -- and `Genau.cpp:4946` checks
+        #     `ueVersionUserOverride` into UE5CEDumper.{Machine}.json -- and Genau.cpp's `FindAll` checks
         #     that field BEFORE the rev-stamped detection cache and is NOT invalidated by a
         #     `kVersionDetectLogicRev` bump. The title would then take the override branch on every
         #     future launch, never re-detect, and be surfaced as `bVersionDetected=true,
         #     bLowConfidence=false` -- the code's own words are "user is the source of truth". So a
         #     "restore" leaves a permanent, confident-looking assertion behind.
-        #   * clearing with 0 removes that record (`Flamme.cpp:33-34` erases both keys) but
+        #   * clearing with 0 removes that record (Flamme.cpp's `SaveUserOverride` erases both keys) but
         #     DELIBERATELY does not touch `g_cachedUEVersion` ("would require re-init",
         #     Fern.cpp's own comment) -- so on its own it leaves the process reading at 422 and the
         #     final survey below would report a degraded rate that is the rig's own doing.

@@ -724,7 +724,7 @@ public class InterestingFunctionsViewModelTests
         gated.Release(1);
         var finished = await Task.WhenAny(
             load, Task.Delay(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken));
-        Assert.Same(load, finished);            // a hang is not a test result (working-lessons §2.7d)
+        Assert.Same(load, finished);            // a hang is not a test result (working-lessons §2.7, item d)
         await load;
 
         // The reconciliation the VM itself decided to run, with the pack ON. Asserted, not `if`-ed:

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
@@ -141,8 +142,82 @@ public class PropertySearchFreezeTests
     }
 
     // ------------------------------------------------------------------
+    // [BOOL-NATIVE-SEARCH] -- a bool with no single-bit mask is native OR unresolved, and only the
+    // DLL's bool_native tells them apart. This path used to freeze both with a whole-byte write,
+    // which on an unresolved PACKED bool stamps 0x01 / 0x00 over up to 7 siblings every tick.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public async Task CopyFreezeScript_UnresolvedBool_RefusesBeforeDialog()
+    {
+        var bridge = new RecordingBridge { NextAvailability = true, NextCreateResult = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge);
+        var promptCalled = false;
+        vm.FreezeValuePrompt = _ => { promptCalled = true; return Task.FromResult<string?>("true"); };
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewBool(native: false, mask: 0));
+
+        Assert.False(promptCalled);
+        Assert.Equal(0, bridge.CreateAaCalls);
+        Assert.Contains("bIsInvulnerable", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task CopyFreezeScript_NativeBool_SendsTheWholeByteScript()
+    {
+        var bridge = new RecordingBridge { NextAvailability = true, NextCreateResult = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge);
+        vm.FreezeValuePrompt = _ => Task.FromResult<string?>("true");
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewBool(native: true, mask: 0));
+
+        Assert.Equal(1, bridge.CreateAaCalls);
+        Assert.Contains("valueType          = 'bool',", bridge.LastScript);
+        Assert.DoesNotContain("boolMask", bridge.LastScript);
+    }
+
+    [Fact]
+    public async Task CopyFreezeScript_PackedBool_SendsItsMask()
+    {
+        var bridge = new RecordingBridge { NextAvailability = true, NextCreateResult = true };
+        var vm = new PropertySearchViewModel(new StubDumpService(), new NoopLog(), bridge);
+        vm.FreezeValuePrompt = _ => Task.FromResult<string?>("true");
+
+        await vm.CopyFreezeScriptCommand.ExecuteAsync(NewBool(native: false, mask: 0x04));
+
+        Assert.Equal(1, bridge.CreateAaCalls);
+        Assert.Contains("boolMask           = 0x04,", bridge.LastScript);
+    }
+
+    /// <summary>The DLL half, pinned by source: Fern.cpp is compiled by no test target and
+    /// SearchProperties needs a live GObjects. Both matchers must carry WalkClassEx's verdict into
+    /// the match, and both search encoders must publish it -- the batch one feeds Interesting
+    /// Properties' "Generate Cheat Table", the single one feeds Property Search's Freeze.</summary>
+    [Fact]
+    public void Dll_BothSearchPaths_PublishBoolNative()
+    {
+        var aura = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Aura.cpp"));
+        var fern = File.ReadAllText(NumericInputCoercionTests.RepoFile("dll/src/Fern.cpp"));
+
+        Assert.Equal(2, Regex.Matches(aura, @"match\.boolNative\s*=\s*field\.boolNative\s*;").Count);
+        Assert.Equal(2, Regex.Matches(fern, @"if \(m\.boolNative\) item\[""bool_native""\] = true;").Count);
+    }
+
+    // ------------------------------------------------------------------
     // Helpers
     // ------------------------------------------------------------------
+
+    private static PropertySearchMatch NewBool(bool native, int mask) => new PropertySearchMatch
+    {
+        ClassName         = "BP_Hero_C",
+        DefiningClassName = "BP_Hero_C",
+        PropName          = "bIsInvulnerable",
+        PropType          = "BoolProperty",
+        PropOffset        = 0x328,
+        PropSize          = 1,
+        BoolFieldMask     = mask,
+        BoolNative        = native,
+    };
 
     private static PropertySearchMatch NewMatch(string propType) => new PropertySearchMatch
     {

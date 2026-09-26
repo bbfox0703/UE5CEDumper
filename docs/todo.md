@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **9 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **10 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -248,6 +248,43 @@ Open work only. **Read this when deciding what to do next.**
 > strike-through — the archive holds the history).
 
 -----
+
+## 🐞 Found by the comment-integrity sample 2026-09-26 — rows behind stale comments `[COMMENT-INTEGRITY-2026-09-26]`
+
+Surfaced while rewriting the sampled stale comments (workflow `wf_8a72cf58-837`: three proposers, one lead
+investigator, one adversarial reviewer). Only `[BOOL-NATIVE-SEARCH]` was re-derived by hand; the rest are LEADS
+from the agents' notes, not yet reproduced (working-lessons §1.8).
+
+| id | sev | status | what | where |
+|---|---|---|---|---|
+| `[BOOL-NATIVE-SEARCH]` | MED | ✅ 2026-09-26 `2093ea91` (red `85c9e8ed`) — live check owed: verification-register `[BOOL-NATIVE-SEARCH]` | **A Freeze built from Property Search or Interesting Properties can whole-byte-write a packed bool whose layout probe missed.** `[A3-BOOL-NATIVE-NOWRITE]` made a bool three-state (Packed / Native / Unresolved) and taught the Live Walker to refuse Unresolved via `FieldValueConverter.PlanBoolWrite`, but only `walk_instance` publishes `bool_native`. `Aura::PropertyMatch` has no `boolNative`, so `SearchProperties` / `SearchPropertiesBatch` drop the `FieldInfo.boolNative` WalkClassEx computed, `search_properties` / `search_properties_batch` emit only `bool_mask`, and every UI consumer reads "no mask" as "native". `FreezeScriptGenerator` then emits no `boolMask`, and `ue5_freeze_helper.lua`'s `writeBool` stamps `0x01` / `0x00` over the whole byte every 50 ms on every instance of the class tree -- the AA1 corruption of up to 7 sibling bools, on exactly the engines where the probe misses (DQ XI S reads every packed bitfield as mask 0, per `[A3-BOOL-NATIVE-NOWRITE]`). Found as the stale `Fern.cpp` comment "Absent = native bool" (the eval's lead). Force ON/OFF is NOT affected: `Solitar::ReadBoolLayout` re-probes and accepts a single bit only. **Fix:** carry `boolNative` through `PropertyMatch` and both encoders (additive pipe key, no mailbox-contract change); UI parses it and routes every bool freeze through `PlanBoolWrite` -- Property Search refuses before the value prompt, the batch CT skips and counts, the generator throws as the last line of defence. The Lua helper's no-mask path stays (a saved table for a native bool keeps working). **Fixed as above** (`2093ea91`): `FreezeScriptGenerator.IsUnresolvedBool` is the shared predicate; 10 red tests (parse x2, Property Search refusal, batch skip+count, generator throw x5, source pin) went green, native / packed controls stayed green; UI 5610/5610. | `Aura.h` `PropertyMatch`; `Aura.cpp` `SearchProperties` / `SearchPropertiesBatch`; `Fern.cpp` search encoders; `DumpService` search parsers; `PropertySearchViewModel.CopyFreezeScriptAsync`; `InterestingPropertiesViewModel.BuildRowsFromSelection`; `FreezeScriptGenerator` |
+| `[HOTKEY-REBIND-DEAD]` | LOW | lead | `TeleportViewModel.ApplyCapturedKey` -> `RegisterMarkerHotkey` disposes the row's existing registration BEFORE trying the new combo and returns early when the new one is taken: the old hotkey is dead, the row still shows the old label, `Conflicted` stays false and no banner appears. | `TeleportViewModel.ApplyCapturedKey` / `RegisterMarkerHotkey` |
+| `[SNAPSHOT-CRASH-PARTIAL]` | LOW | lead | `BeginCaptureSessionAsync` justifies `synchronous=OFF` with "a partial capture is discarded", but no startup cleanup of a row a CRASH left behind was found (`is_usable` defaults to 1; `RemovePartialAsync` runs in-process only). A `[W1-PARTIAL-MARK]` kept partial is also committed while `synchronous` is still OFF. | `ISnapshotStore` / `SnapshotStore.BeginCaptureSessionAsync` |
+| `[SOLIDE-NATIVE-BOOL]` | LOW | lead | Force ON/OFF holds nothing on a NATIVE bool: `Solitar::ReadBoolLayout` accepts only a single-bit FieldMask, so a Blueprint / native bool is refused (`PR_ERR_REFLECT`, 0 held). Safe, but useless there; could accept the `ClassifyBoolLayout` Native verdict and write `0x01` / `0x00`. | `Solitar.cpp` `ReadBoolLayout`; `Solide` K_BOOL |
+| `[GRIMOIRE-507-GUARD]` | INFO | maintainer call | The 507 rung of the UE-version raise ladder (`IsReorderedFUObjectItem57`) carries no `ver >= 500` guard while its comment used to say both rungs did (the comment now states the per-rung rule). Whether `Object@+0x08` is a layout no UE4 build has -- so no guard is needed -- is the open question. | `UE5_Init` version ladder; `Grimoire.h` |
+| `[HIMMEL-PAL51-OFFSETS]` | INFO | lead | Himmel.h's PAL51 note says "its +0x8 / +0x34 int32s are the very fields the validator checks"; `ValidateSparseDelegates` reads +0x0C / +0x2C for its range check (+0x00 / +0x08 for the content check). Needs its history read before rewording. | `Himmel.h` PAL51 note |
+| `[SEIN-UNROUTED-CATS]` | INFO | lead | `LOG_CAT "PROXY"` and `"SEETHRU"` have no `s_catMap` row, so they land in init.log by fallback; intent unrecorded. | `Sein.cpp` `s_catMap` |
+
+## 🔎 Maintainer request 2026-09-26 — code comments drift from the code `[COMMENT-INTEGRITY-2026-09-26]`
+
+**Maintainer's pick: items 1 (prevention) and 2 (mechanical cleanup) -- DONE 2026-09-26**; what each commit
+did is §5 of [comment-integrity-eval.md](comment-integrity-eval.md). **Still open:** the targeted semantic pass
+(one module per session, ≤ 3 agents), version-tagging the 79 external engine / CE line references, and the leads
+filed in the section above. The lead below turned out to be a real code gap: `[BOOL-NATIVE-SEARCH]`, fixed.
+
+The evaluation, as filed:
+- **Measured:** 69% of the 141 in-repo `File:line` references in comments have drifted.
+  - A 90-block sample judged against today's code: 26% of substantive comment blocks are stale (DLL core 33%,
+    DLL features 30%, UI + Lua 13%), roughly 1,600 blocks.
+  - No block was stale because of a UE-version change; the cause is additive drift in comments that enumerate
+    callers / fields / keys, and in "only" claims.
+- **Proposed:** prevention first.
+  - Gates: no in-repo line numbers; "no test target compiles X"; references must resolve.
+  - Asserts beside numbers, a C# doc lint, a change-time "comments naming this symbol" report, and a style rule.
+  - Then a mechanical cleanup (about 200 edits, no agents), then a targeted semantic pass, one module per session
+    with at most 3 agents.
+- **Lead to check:** `Fern.cpp:2992` documents the two-state bool rule after `[A3-BOOL-NATIVE-NOWRITE]` made it
+  three-state; `search_properties` may emit no `bool_native`.
 
 ## 🐞 Maintainer report 2026-09-25 — Update All ignores Force Overwrite `[PROXY-FORCE-UPDATEALL-2026-09-25]`
 

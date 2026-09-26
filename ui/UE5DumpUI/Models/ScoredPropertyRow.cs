@@ -79,6 +79,9 @@ public sealed partial class ScoredPropertyRow : ObservableObject
     /// up to 7 siblings (audit #5 AA1). Exactly the same dropped-field shape as
     /// <see cref="PropSize"/> above, one row down.</summary>
     public int    BoolFieldMask     => Match.BoolFieldMask;
+    /// <summary>The DLL's <c>bool_native</c>, carried through beside the mask
+    /// ([BOOL-NATIVE-SEARCH]).</summary>
+    public bool   BoolNative        => Match.BoolNative;
     public string DefiningClassName => Match.DefiningClassName;
     public int    InheritedByCount  => Match.InheritedByCount;
     public string InheritanceBadge  => Match.InheritanceBadge;

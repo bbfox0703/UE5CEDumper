@@ -562,7 +562,7 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
 
     // `nowData == 0` is NOT missing bookkeeping and must not be grouped with the
     // guards above — it is positive evidence that the buffer is GONE. Both callers
-    // (Aura.cpp:8036 / :9228) `continue` on `!hs.ok`, so a header that could not be
+    // (Aura.cpp's `RefineCandidates` / `RefineGroupCandidates`) `continue` on `!hs.ok`, so a header that could not be
     // read never reaches here: arriving with nowData == 0 means the read SUCCEEDED
     // and returned an empty container, i.e. TArray::Empty()/Reset() released the
     // allocation. Every element candidate then refers to a slot that no longer
@@ -619,8 +619,8 @@ struct LeafAnchor {
 
 /// The depth rule, in ONE place. Leaves are emitted with `depth + 1`, so "the container
 /// header is a direct field of the scanned object" is `leafDepth == 1` — writing that
-/// test at the call site with the walker's own `depth` is an off-by-one nothing can
-/// catch, because no test target compiles `Aura.cpp`.
+/// test at the call site with the walker's own `depth` is an off-by-one that is easy to
+/// write and hard to see, so the rule lives here where `dll_helpers_test` pins it.
 constexpr ValueAnchor AnchorKindForLeaf(bool isSparse, int leafDepth) {
     if (leafDepth != 1) return ValueAnchor::UnverifiableNested;
     return isSparse ? ValueAnchor::SparseElement : ValueAnchor::ArrayElement;
@@ -774,11 +774,11 @@ struct Session {
     std::chrono::steady_clock::time_point lastUse;
 
     // V3-C: cached ordered view (filtered + sorted candidate indices) so pure
-    // paging doesn't re-sort. Recomputed by SessionManager::QueryWith only when
-    // (viewFilter, viewSortKey, viewSortDesc) change, and invalidated
-    // (viewValid=false) after a refine mutates `candidates`. viewSortKey is the
-    // raw SortKey value (stored as uint8_t because the enum is declared after
-    // this struct).
+    // paging doesn't re-sort. Recomputed by SessionManager::QueryWith only when a
+    // query's view parameters differ from those recorded in the view* fields below,
+    // and invalidated (viewValid=false) after a refine mutates `candidates`.
+    // viewSortKey is the raw SortKey value (stored as uint8_t because the enum is
+    // declared after this struct).
     bool                                  viewValid    = false;
     std::string                           viewFilter;
     uint8_t                               viewSortKey  = 0;
@@ -915,8 +915,10 @@ public:
     }
 
     // V3-C server-side window query. Ensures the session's cached ordered view
-    // matches (filter, sortKey, sortDesc) — recomputing via BuildOrderedView
-    // only when those params changed or the view was invalidated by a refine —
+    // was built for this call's view parameters (every argument but sessionId and
+    // fn; the exclude list compared order-insensitively via CanonicalExcludeKey) —
+    // recomputing via BuildOrderedView only when one of them changed or the view
+    // was invalidated by a refine —
     // then calls `fn(const Session&, const std::vector<uint32_t>& order)` under
     // the lock; the caller slices the requested window out of `order`. Returns
     // false if the session doesn't exist. Reads only the DLL's own pools (no
@@ -1035,7 +1037,7 @@ struct SlotSpec {
 // offset from the owning object to the leaf value (== descriptor.fieldOffset for
 // a direct field; a separate field so containers can carry an element-address
 // offset later). `prevValue` is the last-observed bytes at that leaf so the wire
-// can render it and a future prev-value refine can compare.
+// can render it and a prev-value refine (SlotSpec::st) can compare.
 struct GroupSlotMatch {
     uint32_t  descriptorIdx = 0;   // -> GroupSession::descriptors
     int32_t   elementIndex  = -1;  // -1 = direct field; >=0 = container element index
@@ -1106,9 +1108,9 @@ size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candid
 //
 // The proper fix is to intern ownerClass the way V3-A interns the per-candidate metadata
 // (GroupSession already carries `descriptors` and `instances` pools for exactly this).
-// Deliberately NOT done here: the producers live in Aura.cpp and the reader in Fern.cpp,
-// and no test target compiles either file, so it is a change that can only be verified
-// in-game. Tracked in docs/todo.md.
+// Deliberately NOT done here: the producers live in Aura.cpp and the reader in Fern.cpp;
+// Fern.cpp reaches no test target and Aura.cpp only `dll_core_test`'s fake pool, so it is a
+// change that can only be verified end to end in-game. Tracked in docs/todo.md.
 //
 // Derived from sizeof rather than restated as a literal, so it cannot go stale again.
 inline constexpr size_t kGroupSlotMatchBytes = sizeof(GroupSlotMatch);
@@ -1296,8 +1298,8 @@ public:
         return true;
     }
 
-    // V3-C window query — ensures the cached ordered view matches (filter,
-    // sortKey, sortDesc), then `fn(const GroupSession&, const std::vector<uint32_t>&)`.
+    // V3-C window query — same view-cache contract as SessionManager::QueryWith,
+    // then `fn(const GroupSession&, const std::vector<uint32_t>&)`.
     template <typename Fn>
     bool QueryWith(uint64_t sessionId, const std::string& filter,
                    SortKey sortKey, bool sortDesc,
@@ -1396,7 +1398,7 @@ bool ComparePredicate(DataType dt, ScanType st,
 //
 // It exists so the AlwaysTrue verdict is honoured in ONE place, here in Radar,
 // rather than at each consumer. That split is deliberate: `Radar.cpp` is compiled
-// by `dll_helpers_test` and `Aura.cpp` is compiled by no test target at all, so
+// by `dll_helpers_test`, while `Aura.cpp` reaches only `dll_core_test`'s fake pool, so
 // putting the decision here makes it unit-testable and leaves the engines with a
 // mechanical `Find` -> `FindEntry` substitution that has nothing to get wrong.
 //

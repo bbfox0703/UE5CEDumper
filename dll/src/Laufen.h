@@ -6,20 +6,24 @@
 // (MaxWalkSpeed / GravityScale / JumpZVelocity) by a multiplier of their
 // captured base value, held against per-tick game overwrites by a re-assert
 // worker — the same write-on-drift pattern Solitar (GodMode) uses, retargeted
-// from a single FBoolProperty bit to FloatProperty scalars on the CMC.
+// from a single FBoolProperty bit to FloatProperty scalars on the CMC. The
+// UE5.3+ GravityDirection FVector is held by the same capture / re-assert
+// discipline, but set outright to a unit vector rather than scaled.
 //
 // Mechanism: resolve the local pawn (GWorld → OwningGameInstance →
 // LocalPlayers[0] → PlayerController → Pawn), hop to its CharacterMovement
 // sub-object (reflected "CharacterMovement" ObjectProperty), FindField the
 // named float, capture its untouched base once, then write base*multiplier.
 // Pure reflected memory read/write via Macht (SEH) — NO UFunction invoke, NO
-// game thread. Self-contained (Path B): only public Ubel/Aura/Macht + DynOff,
-// no coupling to Wirbel. All offsets resolved by FName (DynOff rule) →
-// UE4/UE5-agnostic. No cached instance pointers — the pawn/CMC is re-resolved
-// every operation and every worker tick (stale-pointer crash class).
+// game thread. Self-contained (Path B): only the public APIs of non-gameplay
+// modules + DynOff — no coupling to Wirbel or any other gameplay feature. All
+// offsets resolved by FName (DynOff rule) → UE4/UE5-agnostic. No cached
+// instance pointers — the pawn/CMC is re-resolved every operation and every
+// worker tick (stale-pointer crash class).
 //
-// P1 wires KNOB_WALK_SPEED; P2 (Gravity) and P3 (Super Jump) reuse the same
-// engine via KNOB_GRAVITY / KNOB_JUMP with no new machinery.
+// The capture / re-assert engine is knob-agnostic: a knob is only the reflected
+// name it resolves (kKnobs, Laufen.cpp); SetKnobPercent owns any per-knob
+// percent mapping.
 // ============================================================
 
 #include <cstdint>
@@ -39,9 +43,11 @@ enum MoveResult : int32_t {
     MR_ERR_WRITE    = -10,  // raw float write failed
 };
 
-// One tunable CMC float. Stable order — also the wire value used by the pipe
-// "knob" string mapping. P1 wires WALK_SPEED only; GRAVITY/JUMP are reserved
-// for P2/P3 (the engine already supports them).
+// One tunable CMC float. Stable order: the values are the knobId of the C ABI
+// and of Mimic's CMD_MOVEMENT, baked into generated CE scripts (the pipe sends
+// "knob" names, mapped onto these in Fern). CMD_MOVEMENT already spends the
+// next knobId on GravityDirection, so appending a knob is a mailbox-contract
+// change, not just an enum edit.
 enum KnobId : int32_t {
     KNOB_WALK_SPEED = 0,    // UCharacterMovementComponent::MaxWalkSpeed
     KNOB_GRAVITY    = 1,    // UCharacterMovementComponent::GravityScale

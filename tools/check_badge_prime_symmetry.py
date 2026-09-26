@@ -9,7 +9,7 @@ back or the card lies by omission: a still-active Fly or Move Speed hold shows a
 asked" and the user has no sign the game is still modified.
 
 Before 2026-09-10 the connect branch primed THREE badges and the disconnect branch reset
-twelve. Nine cards were therefore permanently unprimed, which is `[BADGEPRIME-2026-09-10]`
+twelve. Nine cards were therefore permanently unprimed, which is `[BADGEPRIME]`
 -- observed live on a Shipping fixture, with God Mode and Time Dilation (the two that WERE
 primed) rendering correctly as the control.
 
@@ -166,7 +166,7 @@ def main() -> int:
             print('   %s' % b)
         print('\nThe DLL holds survive a UI reconnect, so these cards show "never asked" '
               'over state\nthe DLL can answer for. Add the read to PrimeHeldBadgesAsync '
-              '-- quietly: no IsBusy,\nno StatusText. [BADGEPRIME-2026-09-10]')
+              '-- quietly: no IsBusy,\nno StatusText. [BADGEPRIME]')
         return 1
 
     print('CHECK OK: %d badge(s) reset on disconnect, all %d primed on connect.'

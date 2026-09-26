@@ -60,7 +60,7 @@ void InitProcessMirror(const std::wstring& processName);
 //
 // ⚠ CALLER OWNS THE THREADING DECISION, and it is not free: AB1 forbids creating a
 // thread in a CE plugin host, where the module is deliberately NOT pinned
-// (Heiter.cpp:399 — CE FreeLibrary's its plugins, and a thread in an unmapped image
+// (Heiter.cpp `DllMain` — CE FreeLibrary's its plugins, and a thread in an unmapped image
 // takes CE down). So DllMain calls this INLINE there and on a thread elsewhere.
 void RunRetentionSweep();
 

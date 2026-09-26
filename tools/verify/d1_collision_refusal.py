@@ -73,7 +73,7 @@ HERE = Path(__file__).resolve().parent
 ROOT = HERE.parent.parent
 CLIENT = HERE / "pipe_client.py"
 SUSPEND = HERE / "suspend.py"
-# ⚠ Dunste's LOG_CAT is "FLY", which Sein.cpp:85 routes to LF_Walk -- walk-0.log, NOT the
+# ⚠ Dunste's LOG_CAT is "FLY", which Sein.cpp `CatMapping` routes to LF_Walk -- walk-0.log, NOT the
 # offsets log its OARR neighbours land in. Grepping the wrong file returns zero for both "the
 # code did not do it" and "I am reading the wrong channel" (working-lessons 2.10).
 LOG = Path(os.environ["LOCALAPPDATA"]) / "UE5CEDumper" / "Logs" / "DumperTest" / "walk-0.log"

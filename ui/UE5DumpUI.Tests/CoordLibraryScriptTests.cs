@@ -345,7 +345,7 @@ public class CoordLibraryScriptTests
     [Fact]
     public void Generate_ReadsTheCurrentMapFromThePoseBlock()
     {
-        // GET_POSE puts a null-terminated map name at params+48 (Mimic.h:42-45);
+        // GET_POSE puts a null-terminated map name at params+48 (Mimic.h `Cmd`);
         // that is what makes the picker's map guard possible at all.
         Assert.Contains("MB_PARAMS + 48", Gen(E("A")));
     }

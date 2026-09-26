@@ -476,7 +476,7 @@ int32_t AddForce(const char* className, const char* fieldName, int32_t kind, dou
         // every one returned plain held=0, and PropertySearch renders that as the
         // positively false "no live instance of {Class} or any subclass exists right
         // now ... will apply as soon as one spawns" -- when instances exist and the
-        // field was refused. [SOLIDE-REFUSAL-2026-09-10]
+        // field was refused. [SOLIDE-REFUSAL]
         if (held == 0 && it->lastRefusal != 0) {
             refusal = it->lastRefusal;
             // A job that was never persisted is dropped, exactly as before; a

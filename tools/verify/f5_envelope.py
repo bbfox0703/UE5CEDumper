@@ -224,7 +224,7 @@ def step2(seconds=60):
                     except ValueError:
                         target = None
                 addr = hex(target) if target else p["gworld"]
-                # NOTE the parameter is `addr`, not `address` (Fern.cpp:4961). Passing the
+                # NOTE the parameter is `addr`, not `address` (Fern.cpp `Fern::DispatchCommand`). Passing the
                 # wrong name is silently accepted as addr="" -- a watch on nothing.
                 r = w.request("watch", addr=addr, size=1024, interval_ms=50)
                 results["watch_started"] = bool(r.get("ok")) and addr not in ("", "0x0")
@@ -237,7 +237,7 @@ def step2(seconds=60):
                         break
                 # Count from the RAW lines, not from a parsed list: the raw record is the
                 # thing under test, and it cannot be thrown off by a bookkeeping slip.
-                # Renge::EVT_WATCH is literally "watch" (Renge.h:183).
+                # Renge::EVT_WATCH is literally "watch" (Renge.h).
                 evts = sum(1 for ln in w.raw_lines if b'"watch"' in ln)
                 results["watch"] = (len(w.raw_lines), list(w.bad))
                 results["events"] = evts

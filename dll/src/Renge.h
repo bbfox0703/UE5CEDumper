@@ -139,9 +139,10 @@ constexpr const char* CMD_RESET_ALL_FIELDS         = "reset_all_fields";
 constexpr const char* CMD_GET_FORCED_FIELDS        = "get_forced_fields";
 constexpr const char* CMD_FIND_STEALTH_METER       = "find_stealth_meter";
 
-// Fly (Dunste) — no-gravity keyboard-driven 3D flight. fly_set applies whichever
-// of {enable, speed, preset} are present and returns the live status; fly_get_state
-// polls it. Input is read DLL-side (GetAsyncKeyState); the UI only toggles/config.
+// Fly (Dunste) — no-gravity keyboard-driven 3D flight. fly_set applies whichever of
+// its optional fields are present (every field the CMD_FLY_SET handler in Fern reads)
+// and returns the live status; fly_get_state polls it. Input is read DLL-side
+// (GetAsyncKeyState); the UI only toggles/config.
 constexpr const char* CMD_FLY_SET                  = "fly_set";
 constexpr const char* CMD_FLY_GET_STATE            = "fly_get_state";
 

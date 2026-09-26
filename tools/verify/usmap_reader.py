@@ -74,7 +74,7 @@ T_MAP = 24
 # Array / Set / Optional all carry exactly ONE inner descriptor.
 ONE_INNER = (8, 25, 28)
 # The slot a descriptor occupies inside its parent -- the four container arms are
-# separate wire keys (inner_enum / elem_enum / key_enum / value_enum, Fern.cpp:2244-2247),
+# separate wire keys (inner_enum / elem_enum / key_enum / value_enum, Fern.cpp `Fern::DispatchCommand`),
 # so a survey that lumps them together cannot see which arm is unexercised.
 SLOT_OF = {8: "Inner", 25: "Elem", 28: "OptInner"}
 

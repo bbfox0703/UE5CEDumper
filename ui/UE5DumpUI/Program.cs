@@ -28,7 +28,7 @@ internal static class Program
         // leave the user with "the exe just closed" and no signal. This
         // top-level catch writes the full exception to
         // %LOCALAPPDATA%\UE5CEDumper\crash.log — the only diagnostic surface
-        // for AOT failures (aot-pitfalls.md §0.17 / §2 / §8.3).
+        // for AOT failures (CLAUDE.md ## Build & Deploy: every AOT bug here surfaced only after trimming).
         //
         // It catches far more than STARTUP: anything the dispatcher rethrows
         // during the message loop unwinds through StartWithClassicDesktopLifetime

@@ -223,10 +223,10 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 // buildHistogram: when true (the pipe `find_instances` path), the scan does NOT
 // stop at the cap — it walks ALL of GObjects so rset.classHistogram counts every
 // matched class even when its instances all sit past the cap (the histogram-vanish
-// fix), and applies excludeClasses before the cap. When false (the cheap internal
-// callers: Wirbel/Edel/Solitar/Mimic/Frieren, which want a bounded first-N scan and
-// ignore the histogram), the loop keeps the old early-exit at maxResults and skips
-// the tally — so those hot paths are not regressed into a full-array walk.
+// fix), and applies excludeClasses before the cap. When false (the default, for
+// callers that want a bounded first-N scan and ignore the histogram), the loop keeps
+// the early exit at maxResults and skips the tally — so those hot paths are not
+// regressed into a full-array walk.
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false);
 
 // LIVE instances of `baseClassName` AND of every class derived from it.
@@ -662,6 +662,10 @@ struct PropertyMatch {
     uint64_t    propertyFlags = 0; // CPF_* reflection flags (SaveGame/BlueprintVisible/EditorOnly/...) — auto-detect scorer gating
     uint8_t     boolFieldMask  = 0; // BoolProperty: FieldMask byte
     uint8_t     boolByteOffset = 0; // BoolProperty: ByteOffset within property
+    // BoolProperty: a NATIVE whole-byte bool (FieldInfo.boolNative). Without it a zero
+    // boolFieldMask is native OR unresolved, and only native may take a whole-byte write.
+    // [BOOL-NATIVE-SEARCH]
+    bool        boolNative     = false;
     uintptr_t   enumAddr    = 0;   // EnumProperty: UEnum* for name resolution
     std::string keyType;           // MapProperty: key type name
     std::string valueType;         // MapProperty: value type name
@@ -825,9 +829,6 @@ struct NoiseClassVerdict {
 // isNoise=false). Order mirrors the input; duplicates de-duped.
 std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::string>& classNames);
 
-// True if `classObj`'s super-chain (itself included) has an FName exactly equal
-// to any entry in `baseNames`. Bounded 64-hop walk with a self-loop break (the
-// reusable generalization of Edel::ClassifyBySuperChain). Pure read-only.
 // ── Where a Property Search row's Preview value came from ───────────────────
 // [CDOSCOPE-2026-08-20]
 //
@@ -842,8 +843,8 @@ std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::strin
 // previewed `0 (CDO default)` while the freeze on that row hit two live instances.
 //
 // The preview now searches derived instances too, so the two halves agree, and says which
-// kind of sample it got. Keeping the rule here rather than in Aura.cpp is deliberate: no
-// test target compiles Aura.cpp, so a decision left there cannot be pinned at all.
+// kind of sample it got. Keeping the rule here rather than in Aura.cpp is deliberate: the light
+// `dll_helpers_test` pins a header rule directly, while Aura.cpp reaches only `dll_core_test`.
 enum class PreviewSource {
     None,          // nothing to preview
     Exact,         // a live instance whose class is exactly the row's class
@@ -897,6 +898,9 @@ inline std::vector<uintptr_t> PreviewAncestorsOf(uintptr_t cls, IsPreviewFn isPr
     return out;
 }
 
+// True if `classObj`'s super-chain (itself included) has an FName exactly equal
+// to any entry in `baseNames`. Bounded 64-hop walk with a self-loop break (the
+// reusable generalization of Edel::ClassifyBySuperChain). Pure read-only.
 bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::string>& baseNames);
 
 // True if `path` (a class full path from Ubel::GetFullName) is in a known UE
@@ -1629,13 +1633,13 @@ ValueScanStats RefineCandidates(
 // numeric-property offsets, in any order. The pure SDR match is
 // Orden::MatchGroup; this layer enumerates each object's numeric leaves
 // (direct fields + depth-capped StructProperty descent, mirroring
-// ScanForValue's reach — numeric containers are P3) and persists per-slot
-// convergence lists so a refine can re-read the located offsets.
+// ScanForValue's reach; numeric containers are walked only under `deep`,
+// below, as separate blocks) and persists per-slot convergence lists so a
+// refine can re-read the located offsets.
 //
-// Runs single-threaded (mirrors CaptureSnapshotChunk): group result sets are
-// small by construction (the AND across slots is highly selective), so the
-// parallel scan machinery isn't warranted for P1. Honors Tot::Requested() + a
-// 15s deadline + maxResults.
+// Runs single-threaded: group result sets are small by construction (the AND
+// across slots is highly selective), so the parallel scan machinery isn't
+// warranted. Honors Tot::Requested() + `deadlineMs` + maxResults.
 struct GroupScanResult {
     std::vector<Radar::GroupCandidate>  candidates;
     std::vector<Radar::FieldDescriptor> descriptors;  // shared via GroupSlotMatch::descriptorIdx
@@ -1685,7 +1689,7 @@ GroupScanResult ScanForValueGroup(
     // EMIT-ON-MATCH (a raw leaf is kept only when its bytes satisfy a slot), bounded
     // to <= 64 matching raw leaves per object. See native-c-value-scan-spec.md §7.
     bool                                nativeC     = false,
-    // Walk GObjects newest-first (high index → low) so a 15s-deadline truncation on
+    // Walk GObjects newest-first (high index → low) so a deadline truncation on
     // a huge game keeps the most-recently-allocated objects (just-spawned UI/actors
     // holding native values) instead of low-index CDOs/templates. The UI couples this
     // on with native-C. Default false (ascending).
@@ -1712,10 +1716,11 @@ GroupScanResult ScanForValueGroup(
     // scan WARNs when it truncates rather than dropping the extras silently.
     int                                 perSlotCap = Orden::kDefaultPerSlotCap);
 
-// Next scan (P1: exact per slot). Re-reads each candidate's per-slot
-// convergence offsets, keeps those still equal to the slot's NEW target,
-// updates prevValue, and drops the candidate when any slot empties OR no
-// distinct cross-slot assignment survives. `slots` carry the NEW targets.
+// Next scan. Re-reads each candidate's per-slot convergence offsets, keeps
+// those that still satisfy the slot's predicate (SlotSpec::st: a targeted type
+// against the slot's NEW target, a prev-value type against the leaf's stored
+// prevValue), updates prevValue, and drops the candidate when any slot empties
+// OR no distinct cross-slot assignment survives.
 ValueScanStats RefineGroupCandidates(
     const std::vector<Radar::SlotSpec>&        slots,
     std::vector<Radar::GroupCandidate>&        candidates,
@@ -1864,8 +1869,8 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 //
 // RAII because the fix is otherwise one `erase` per `return` in a lambda with
 // many early exits, and the first one anybody forgets silently restores the bug.
-// Header-inline and dependency-free so `dll_helpers_test` can compile it — no
-// test target builds Aura.cpp, so this is the only way to pin the semantics.
+// Header-inline and dependency-free so `dll_helpers_test` can compile it: Aura.cpp
+// reaches only `dll_core_test`, whose fake object pool this guard does not need.
 class StructPathGuard {
 public:
     StructPathGuard(std::unordered_set<uintptr_t>& path, uintptr_t node)

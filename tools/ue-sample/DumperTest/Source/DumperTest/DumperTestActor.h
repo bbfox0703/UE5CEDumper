@@ -622,7 +622,7 @@ public:
 	// ========================================================
 
 	/// U7 -- 22 CJK chars = 66 UTF-8 bytes. Property Search cuts previews at
-	/// 50 BYTES (Ubel.cpp:5950), and this is the ONLY field here where that cut
+	/// 50 BYTES (Ubel.cpp `ResolvePropertyPreviews`), and this is the ONLY field here where that cut
 	/// lands mid-sequence: the four Str_* above are 18 bytes at most, so they can
 	/// never reach it.
 	UPROPERTY() FString Str_Even22_TwoNull;
@@ -826,7 +826,7 @@ public:
 
 	// ⛔ NO CONTAINER OPTIONAL HERE, and not by choice: UE 5.4's UHT REFUSES one outright —
 	// `TOptional<TArray<int32>>` fails with *"The type 'TArray<int32>' can not be used as a value
-	// in a TOptional"* (measured 2026-09-16, DumperTestActor.h:754). So L12 step 2 is not merely
+	// in a TOptional"* (measured 2026-09-16, DumperTestActor.h `GetFrameCount`). So L12 step 2 is not merely
 	// behaviourally 5.5+, it is UNDECLARABLE on 5.4, and that host has to come from the 5.8 port.
 
 	/// L29. Three deliberately DIFFERENT texts, so an element read at the wrong stride cannot

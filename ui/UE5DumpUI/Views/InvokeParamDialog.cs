@@ -1137,7 +1137,8 @@ public sealed class InvokeParamDialog : Window
             // enum at the very END of the buffer decoded correctly (the guard
             // failed and it fell through to the size switch) while the same enum
             // mid-buffer did not. This is the READ side of the mistake Y2 fixed on
-            // the write side of this very file — found by the width-family grep.
+            // the write side, in ParamBufferBuilder.WriteParam — found by the
+            // width-family grep.
             "EnumProperty" => DecodeBySize(buf, p.Offset, available, p.Size),
             "Int64Property" when available >= 8
                 => BinaryPrimitives.ReadInt64LittleEndian(span).ToString(),

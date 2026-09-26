@@ -185,7 +185,7 @@ public static class CeAutorunScriptGenerator
     // memory record. If autorun injected and set it, the pushed inject record's
     // enable would then find the DLL SERVING, untick itself, and its disable block
     // would read a flag set by somebody else and tear the pipe down. That is exactly
-    // [B30-REOPEN-2026-09-10] reintroduced through the back door. The flag means
+    // [B30-REOPEN] reintroduced through the back door. The flag means
     // "the inject RECORD's own enable brought this up", and only that enable may set it.
     //
     // ⚠ This function is also NOT the B30 shape: it is reached from the CE menu, i.e.
