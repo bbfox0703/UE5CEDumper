@@ -1123,6 +1123,8 @@ def selftest() -> int:
     ok("merge: the user's key ORDER survives (hooks stays first)", list(merged_user) == list(user))
     ok("settings text keeps non-ASCII literal, not \\u-escaped", "繁體中文" in settings_text(merged_user)
        and json.loads(settings_text(merged_user)) == merged_user)
+    ok("newline: an LF file stays LF, a CRLF one CRLF, a new one LF",
+       newline_of(b'{\n  "a": 1\n}') == "\n" and newline_of(b'{\r\n  "a": 1\r\n}') == "\r\n" and newline_of(None) == "\n")
     ok("merge: runs through the missing-script bootstrap", ours[0]["args"][:2] == ["-c", HOOK_BOOTSTRAP]
        and ours[0]["args"][-2] == "E:/Moved/tools/llm/ollama_local.py")
     legacy = {"hooks": {"PreToolUse": [{"matcher": HOOK_MATCHER, "hooks": [{"type": "command", "command": "py",
