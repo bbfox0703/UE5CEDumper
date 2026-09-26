@@ -249,6 +249,22 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🔎 Maintainer request 2026-09-26 — code comments drift from the code `[COMMENT-INTEGRITY-2026-09-26]`
+
+**Evaluated, awaiting the maintainer's pick:** [comment-integrity-eval.md](comment-integrity-eval.md).
+- **Measured:** 69% of the 141 in-repo `File:line` references in comments have drifted.
+  - A 90-block sample judged against today's code: 26% of substantive comment blocks are stale (DLL core 33%,
+    DLL features 30%, UI + Lua 13%), roughly 1,600 blocks.
+  - No block was stale because of a UE-version change; the cause is additive drift in comments that enumerate
+    callers / fields / keys, and in "only" claims.
+- **Proposed:** prevention first.
+  - Gates: no in-repo line numbers; "no test target compiles X"; references must resolve.
+  - Asserts beside numbers, a C# doc lint, a change-time "comments naming this symbol" report, and a style rule.
+  - Then a mechanical cleanup (about 200 edits, no agents), then a targeted semantic pass, one module per session
+    with at most 3 agents.
+- **Lead to check:** `Fern.cpp:2992` documents the two-state bool rule after `[A3-BOOL-NATIVE-NOWRITE]` made it
+  three-state; `search_properties` may emit no `bool_native`.
+
 ## 🐞 Maintainer report 2026-09-25 — Update All ignores Force Overwrite `[PROXY-FORCE-UPDATEALL-2026-09-25]`
 
 Reported by the maintainer. Mapped by a 3-agent read-only workflow (`wf_d56b3fa7-097`: two maps and one design
