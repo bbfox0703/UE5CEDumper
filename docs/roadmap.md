@@ -259,7 +259,7 @@ InvokeParamDialog FIRE result now shows a 4-column DataGrid (Field / Type / Valu
 
 Console panel surfaces an orange-bordered footer warning when the selected exec's class or super name contains "CheatManager" (case-insensitive substring). Redirects users from the `Result=0 + no in-game effect` failure mode (UE wraps these in `#if !UE_BUILD_SHIPPING` — reflection metadata survives the cook, function bodies don't) to a game-specific verification target.
 
-**Discriminator** (locked in `feedback_ucheatmanager_stripped` memory): `Stark::GetHookFireCount()`:
+**Discriminator** (see [lessons-learned.md](lessons-learned.md), the UCheatManager cooker-strip entry): `Stark::GetHookFireCount()`:
 - `>0 + Result=0 + no effect` = cooker-stripped body (the bug this hint addresses)
 - `==0 + Result=0 + no effect` = hook on wrong vtable slot (closed by build-648 pattern scan)
 

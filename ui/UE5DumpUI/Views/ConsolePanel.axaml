@@ -151,14 +151,14 @@
          something, instead of letting them spend an hour wondering
          why UCheatManager::Fly does nothing. -->
     <Border DockPanel.Dock="Top"
-            IsVisible="{Binding SelectedExecHint, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+            IsVisible="{Binding ShowCheatManagerStripHint}"
             Background="#3A2A14"
             BorderBrush="#E0A050" BorderThickness="0,0,0,2"
             Padding="10,4" Margin="0,0,0,4">
-      <TextBlock Text="{Binding SelectedExecHint}"
+      <TextBlock Text="{StaticResource str.Con.CheatManagerStripHint}"
                  Foreground="#F0CC80" FontSize="11"
                  TextWrapping="Wrap"
-                 ToolTip.Tip="{Binding SelectedExecHint}"/>
+                 ToolTip.Tip="{StaticResource str.Con.CheatManagerStripHint}"/>
     </Border>
 
     <!-- History panel at bottom (collapsible-ish: limited height,
