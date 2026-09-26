@@ -119,5 +119,45 @@ gitignored and machine-local, and the copy is for lookup only, not for redistrib
 | 快閃記憶體 | 閃存 | | 寬頻 | 寬帶 |
 | 儲值 | 充值 | | 輸入鍵（Enter） | 回車鍵 |
 
+### From the Wikibooks computing-term table (English → 臺灣 → 大陸)
+
+Source: Wikibooks〈大陆台湾计算机术语对照表〉,
+<https://zh.wikibooks.org/zh-tw/大陆台湾计算机术语对照表> (CC BY-SA 4.0; 461 terms, keyed by
+the ENGLISH word, with Windows vs macOS wording marked). It is the better lookup while
+translating, because it starts from the English. A local TSV copy may exist at
+`out/wikibooks-cs-terms/wikibooks-cs-terms.tsv` (gitignored, machine-local). The pairs this Wiki
+actually uses:
+
+| English | ✅ Taiwan | ❌ Mainland |
+|---|---|---|
+| thread | 執行緒 | 線程 |
+| pointer / array / string | 指標 / 陣列 / 字串 | 指針 / 數組 / 字符串 |
+| byte / bit | 位元組 / 位元 | 字節 / 位 |
+| stack / heap | 堆疊 / 堆積 | 棧 / 堆 |
+| object / class / instance | 物件 / 類別 / 實例 | 對象 / 類 / 實例 |
+| function / variable | 函式 / 變數 | 函數 / 變量 |
+| parameter / argument | 參數 / 引數 | 參數（形參 / 實參） |
+| enumeration / Boolean | 列舉 / 布林 | 枚舉 / 布爾 |
+| callback / handle | 回呼 / 控制代碼 | 回調 / 句柄 |
+| hash / signature | 雜湊 / 簽章 | 哈希 / 簽名 |
+| module / library / package | 模組 / 程式庫 / 套件 | 模塊 / 程序庫 / 包 |
+| plugin | 外掛程式、外掛 | 插件 |
+| script | 指令碼 | 腳本 |
+| template | 範本 | 模板 |
+| overflow | 溢位 | 溢出 |
+| session | 工作階段 | 會話 |
+| profile (settings) / profiler | 設定檔 / 效能分析工具 | 配置文件 / 分析器 |
+| window / menu / drop-down | 視窗 / 選單 / 下拉式選單 | 窗口 / 菜單 / 下拉菜單 |
+| tab | 分頁、索引標籤 | 標籤頁 |
+| settings / advanced / apply / add | 設定 / 進階 / 套用 / 加入 | 設置 / 高級 / 應用 / 添加 |
+| import / export | 匯入 / 匯出 | 導入 / 導出 |
+| built-in | 內建 | 內置 |
+| algorithm | 演算法 | 算法 |
+
+Conflicts, decided: **runtime** stays 執行階段 (the maintainer's edit; Wikibooks has 執行期);
+**process** stays 處理程序 (Windows Task Manager's zh-TW wording; Wikibooks has 行程); **build**
+stays 建置 (Wikibooks' Windows column). **Script** is 指令碼 even though CE users often say 腳本 —
+Wikibooks lists 腳本 as Mainland, and the existing zh-TW pages already use 指令碼 two to one.
+
 ⚠ **列 / 行 is a trap for tables**: in Taiwan a *row* is 列 and a *column* is 欄 (the Mainland
 reverses 行/列). Every "Status column" is 「Status 欄」, every "row" is 「列」.
