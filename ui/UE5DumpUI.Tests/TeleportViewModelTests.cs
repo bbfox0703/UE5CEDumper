@@ -1657,7 +1657,7 @@ public class TeleportViewModelTests
 
         await vm.RefreshGravDirCommand.ExecuteAsync(null);
 
-        Assert.Equal("Unavailable", vm.GravDirState);   // pre-5.4 / not reflected
+        Assert.Equal("Unavailable", vm.GravDirState);   // pre-5.3 / not reflected
     }
 
     // ---- [W2-GRAVDIR-VERDICT] a transient absence is not a verdict about the engine ----
@@ -1677,12 +1677,12 @@ public class TeleportViewModelTests
         await vm.RefreshGravDirCommand.ExecuteAsync(null);
 
         Assert.Equal("Unknown", vm.GravDirState);
-        Assert.DoesNotContain("UE5.4", vm.GravDirCurrentText);
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.GravDirCurrentText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
     }
 
     [Fact]
-    public async Task ApplyGravDir_without_a_pawn_says_so_not_needs_UE54()
+    public async Task ApplyGravDir_without_a_pawn_says_so_not_needs_UE53()
     {
         var fake = new FakeDumpService
         {
@@ -1694,13 +1694,13 @@ public class TeleportViewModelTests
 
         await vm.ApplyGravDirCommand.ExecuteAsync(null);
 
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
         Assert.Contains("enter gameplay", vm.StatusText);
         Assert.Equal("Unknown", vm.GravDirState);
     }
 
     [Fact]
-    public async Task ApplyGravDir_on_a_pre_UE54_engine_still_says_so()
+    public async Task ApplyGravDir_on_a_pre_UE53_engine_still_says_so()
     {
         // The control, green before and after: a CMC without a reflected GravityDirection.
         var fake = new FakeDumpService
@@ -1716,7 +1716,7 @@ public class TeleportViewModelTests
 
         await vm.ApplyGravDirCommand.ExecuteAsync(null);
 
-        Assert.Contains("UE5.4", vm.StatusText);
+        Assert.Contains("UE5.3", vm.StatusText);
         Assert.Equal("Unavailable", vm.GravDirState);
     }
 
@@ -1724,10 +1724,10 @@ public class TeleportViewModelTests
     [InlineData(-4, false, false)]   // MR_ERR_REFLECT, but the fresh read finds no live CMC: ResolveCtx also
                                      // returns -4 when the pawn / CMC class lookup fails
     [InlineData(-4, true,  true)]    // MR_ERR_REFLECT from a failed vector read: the field IS reflected
-    [InlineData(-3, true,  false)]   // the SET saw no pawn; a (pre-5.4) pawn spawned before the read
-    public async Task ApplyGravDir_says_needs_UE54_only_when_both_signals_agree(int state, bool hasCmc, bool resolved)
+    [InlineData(-3, true,  false)]   // the SET saw no pawn; a (pre-5.3) pawn spawned before the read
+    public async Task ApplyGravDir_says_needs_UE53_only_when_both_signals_agree(int state, bool hasCmc, bool resolved)
     {
-        // -4 alone is not the pre-5.4 verdict (Laufen.cpp ResolveCtx and the ReadVec3At fallback return it
+        // -4 alone is not the pre-5.3 verdict (Laufen.cpp ResolveCtx and the ReadVec3At fallback return it
         // too), and the fresh read alone reports a later instant than the set. The verdict needs both.
         var fake = new FakeDumpService
         {
@@ -1742,7 +1742,7 @@ public class TeleportViewModelTests
 
         await vm.ApplyGravDirCommand.ExecuteAsync(null);
 
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
     }
 
     [Fact]
@@ -1756,12 +1756,12 @@ public class TeleportViewModelTests
 
         await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
 
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
         Assert.Contains("enter gameplay", vm.StatusText);
     }
 
     [Fact]
-    public async Task LocateGravDir_on_a_pre_UE54_engine_still_says_so()
+    public async Task LocateGravDir_on_a_pre_UE53_engine_still_says_so()
     {
         // The control, green before and after: a CMC without a reflected GravityDirection.
         var fake = new FakeDumpService
@@ -1776,7 +1776,7 @@ public class TeleportViewModelTests
 
         await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
 
-        Assert.Contains("UE5.4", vm.StatusText);
+        Assert.Contains("UE5.3", vm.StatusText);
     }
 
     // ---- [W2-MS-PROMISE] a refused apply must not promise a queued override ----
