@@ -206,4 +206,27 @@ public class LiveWalkerSearchHighlightTests
         Assert.False(vm2.HasSearchResults);
         Assert.DoesNotContain(vm2.Fields, f => f.IsSearchMatch);
     }
+
+    // [LW-SEARCH-TIP] MatchesAcrossFieldsNotJustName pins what the matcher does; this pins
+    // the tooltip to it. The tooltip said "fields by name" while the matcher also hits the
+    // type, the value and the class or struct behind the field, and it never mentioned the
+    // 2-character floor that InactiveQueryClearsEveryFlagAndReturnsZero pins.
+    [Fact]
+    public void SearchTooltip_names_what_the_matcher_matches()
+    {
+        var tip = EnString("str.Tip.LiveWalker.Search");
+        foreach (var what in new[] { "name", "type", "value", "2 characters" })
+            Assert.Contains(what, tip, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("by name", tip, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static string EnString(string key)
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var open = $"x:Key=\"{key}\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{key} missing from en.axaml");
+        start += open.Length;
+        return axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)];
+    }
 }
