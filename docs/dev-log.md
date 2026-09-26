@@ -58,7 +58,7 @@ builds ≤696 in
   - **Checked against the measured table:** at 8k / 32k / 64k the estimate sits the buffer above the
     measurement.
   - **Which GPU:** NVIDIA only, so an integrated GPU is never judged; `CUDA_VISIBLE_DEVICES` is honoured.
-  - **This PC:** need 15,317 MiB, floor 16,384 (machine config only).
+  - **This PC:** need 15,317 MiB for the installed model at 32k; its floor lives only in the machine config.
 - **Live check** (a fresh session after a Claude Code restart), recorded in the helper header (`0ba57795`):
   - a launch-shaped Bash command reserved the GPU;
   - with the model resident and a reservation written outside the hook, a computer-use

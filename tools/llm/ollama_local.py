@@ -998,7 +998,10 @@ def active_reservation(games) -> dict | None:
     if state == "expired":
         release_gpu(expected_set_at=marker.get("set_at"))
     elif state == "active" and games:
-        marker["last_game"] = now
+        # The game it waited for is here: from now on it is a RUNNING reservation, so it lapses
+        # RESERVE_GRACE_S["running"] after the game is last seen -- the launch grace is only for
+        # a game that has not appeared yet.
+        marker["last_game"], marker["kind"] = now, "running"
         _write_json(state_dir() / RESERVATION_FILE, marker)
     return marker if state == "active" else None
 
@@ -2107,6 +2110,8 @@ def _selftest_review(ok) -> None:
             m0 = read_reservation()
             active_reservation(["Elliot-Win64-Shipping.exe"])
             ok("[GRACE] seeing a game refreshes last_game", (read_reservation() or {}).get("last_game", 0) >= m0["set_at"])
+            ok("[GRACE] ...and turns a launch reservation into a running one (30 s after exit, not 180)",
+               (read_reservation() or {}).get("kind") == "running")
             world.update(resident=False, posts=[], procs=[(9, "Elliot-Win64-Shipping.exe"), OLL])
             m1 = dict(read_reservation() or {}); m1["last_game"] = time.time() - 100
             _write_json(state_dir() / RESERVATION_FILE, m1)

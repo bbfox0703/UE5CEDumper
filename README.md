@@ -206,7 +206,7 @@ Sessions can hand bulk text work (large logs, dumps, translation drafts) to a lo
 
 ```bash
 py tools/llm/ollama_local.py install --model <tag>                 # once per machine, in this repo (the user names the tag)
-py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" join           # in any repo; `leave` undoes it
+py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" join           # in any other repo; `leave` undoes it
 ```
 
 ---

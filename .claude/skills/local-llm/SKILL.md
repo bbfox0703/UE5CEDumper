@@ -36,8 +36,8 @@ Never install anything, pull a model or start a server to make it ready.
   py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" reserve --wait 120 --reason "<rig name>"
   ```
 
-  The reservation lapses on its own (30 s after the game exits, or 180 s after a launch that never
-  started a game). `release` clears it at once if you abandon the launch.
+  The reservation lapses on its own: 30 s after the game was last seen running, or 180 s after a
+  launch that never started a game. `release` clears it at once if you abandon the launch.
 - ✅ **The machine's exempt test fixtures** may run beside the LLM (by default the DumperTest
   projects: DumperTest, DumperTest51, DumperTest58, ...; a machine adds its own at install time).
 - A game whose exe does not look like a UE shipping build is invisible to the process check. If
@@ -51,8 +51,8 @@ Never install anything, pull a model or start a server to make it ready.
 - `status` lists other sessions with a request in flight (`in_use_by`: pid, action, directory,
   age). It cannot see `ollama run`, other apps or LAN clients.
 - An `unload` while another session's request runs is **deferred by Ollama until that request
-  ends**. `unload` reports this as PENDING (exit 5) and names the holder. `--wait S` blocks until
-  the model is free.
+  ends**. `unload` reports this as PENDING (exit 5) and names the holder. `--wait S` waits up to
+  S seconds (default 5) for it to be freed, and still exits 5 if it was not.
 
 ## 2. Is it worth it? The cost model
 
@@ -98,7 +98,7 @@ py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" unload
 
 - Also `--prompt-file F` for long instructions and `--think` for reasoning-heavy asks (slower).
 - Exit codes: `0` ok · `2` unavailable here · `3` refused (a game holds the GPU, a reservation, or
-  too little VRAM) · `4` input too large (the message carries the **server's** token count) ·
+  too little VRAM) · `4` input too large (when the server refused it, the message carries the **server's** token count; a refusal before any request gives the input's character count, or says the prompt alone nearly fills the window) ·
   `5` unload still pending behind another request.
 - `--chunked` prints `### slice N -- <file> lines a-b` and one answer per slice. A slice that
   overflows is re-split automatically at the measured rate. **Numbers tokenize digit by digit**, so
@@ -111,7 +111,8 @@ py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" unload
 ## 6. Joining, leaving, installing
 
 - **This repo leaves:** `py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" leave` (run in the repo)
-  removes this file and nothing else. **Another repo joins:** the same with `join`. `repos` lists
+  removes this file and nothing else; the source repo (UE5CEDumper) refuses, since its skill is
+  source, and stops with `uninstall` instead. **Another repo joins:** the same with `join`. `repos` lists
   every joined repo and whether its copy of this file is current.
 - **Installing on a machine, or changing the model**, is the user's call, never yours. When the user
   says "I have Ollama, use model `<tag>`", run from a checkout of the source repo (UE5CEDumper):
@@ -120,7 +121,7 @@ py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" unload
   replaced, backed up once). `uninstall` removes them. `CLAUDE_LOCAL_LLM=off` stops one shell from
   USING the model; the machine-wide game guard keeps running regardless.
 - **Changing a setting** (a VRAM floor, the window, an exempt fixture) touches no repo: the user runs
-  the machine copy, e.g. `py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" install --min-free-vram-mb 16384`.
+  the machine copy, e.g. `py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" install --min-free-vram-mb 12000`.
 - ⚠ If the user also runs that model outside the helper (`ollama run`, another app), its default
   window must EQUAL the helper's `num_ctx` (32768 unless `install --num-ctx N` said otherwise). A
   different `num_ctx` reloads the model, so otherwise every switch between the two costs a cold load.

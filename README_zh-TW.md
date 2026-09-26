@@ -204,7 +204,7 @@ Session 可把大量文字工作（大型 log、dump、翻譯草稿）交給本�
 
 ```bash
 py tools/llm/ollama_local.py install --model <tag>                 # 每台 PC 一次，在本 repo 執行（model tag 由使用者指定）
-py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" join           # 在任何 repo 執行；`leave` 可撤銷
+py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" join           # 在其他任何 repo 執行；`leave` 可撤銷
 ```
 
 ---

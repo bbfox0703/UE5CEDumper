@@ -42,7 +42,7 @@ applies from the next session.
 rest of the machine config:
 
 ```bash
-py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" install --min-free-vram-mb 16384
+py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" install --min-free-vram-mb 12000
 ```
 
 `status` shows what the free-VRAM check uses (`vram=`): the GPU, its free MiB, and the need as
