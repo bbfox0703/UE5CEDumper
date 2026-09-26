@@ -29,8 +29,8 @@ Never install anything, pull a model or start a server to make it ready.
   running beside a loaded model. Both also **reserve the GPU machine-wide**, so no other session
   can load the model back while the game starts.
 - ⚠ **The gap the hook cannot close:** a script or rig that *launches* a commercial game inside one
-  command. Run this **before** such a command; it reserves the GPU and waits for any request in
-  flight:
+  command, or a launch you are about to click in a launcher UI (Steam's Play button). Run this
+  **before** it; it reserves the GPU and waits for any request in flight:
 
   ```bash
   py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" reserve --wait 120 --reason "<rig name>"
@@ -41,7 +41,8 @@ Never install anything, pull a model or start a server to make it ready.
 - ✅ **The machine's exempt test fixtures** may run beside the LLM (by default the DumperTest
   projects: DumperTest, DumperTest51, DumperTest58, ...; a machine adds its own at install time).
 - A game whose exe does not look like a UE shipping build is invisible to the process check. If
-  `ask` refuses for low VRAM, that is probably why: unload and tell the user.
+  `ask` refuses for low VRAM, that is probably why: unload and tell the user. `status` shows the
+  arithmetic (`vram=`): free VRAM on the NVIDIA GPU against what a cold load of this model needs.
 
 ### Other sessions share the same model
 
@@ -116,7 +117,10 @@ py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" unload
   says "I have Ollama, use model `<tag>`", run from a checkout of the source repo (UE5CEDumper):
   `py tools/llm/ollama_local.py install --model <tag>`. It writes the machine copy, the machine
   config and ONE PreToolUse hook in the user-level `~/.claude/settings.json` (merged, never
-  replaced, backed up once). `uninstall` removes them; `CLAUDE_LOCAL_LLM=off` disables one shell.
+  replaced, backed up once). `uninstall` removes them. `CLAUDE_LOCAL_LLM=off` stops one shell from
+  USING the model; the machine-wide game guard keeps running regardless.
+- **Changing a setting** (a VRAM floor, the window, an exempt fixture) touches no repo: the user runs
+  the machine copy, e.g. `py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" install --min-free-vram-mb 16384`.
 - ⚠ If the user also runs that model outside the helper (`ollama run`, another app), its default
   window must EQUAL the helper's `num_ctx` (32768 unless `install --num-ctx N` said otherwise). A
   different `num_ctx` reloads the model, so otherwise every switch between the two costs a cold load.
@@ -125,6 +129,7 @@ py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" unload
 
 ## ⛔ This file is public, in every repo that joined
 
-Never write machine facts here or in the helper: model tags, hardware, IPs/URLs, account or computer
-names, tokens, local paths. They belong in the machine config under `%LOCALAPPDATA%\claude-local-llm\`,
-which no repo contains.
+Never write this machine's facts into a repo: model tags, IPs/URLs, account or computer names, tokens,
+local paths, VRAM floors. They belong in the machine config under `%LOCALAPPDATA%\claude-local-llm\`,
+which no repo contains, and no command writes them anywhere else. (The helper's header keeps dated
+measurements of one public model as worked examples; that is documentation, not configuration.)

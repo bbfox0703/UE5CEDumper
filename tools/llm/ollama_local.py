@@ -8,8 +8,10 @@ r"""Local Ollama helper for Claude Code sessions: opt-in per machine, a no-op ev
     py tools/llm/ollama_local.py reserve [--wait S]   # reserve the GPU for a game, machine-wide, then unload
     py tools/llm/ollama_local.py release              # clear a reservation (an abandoned launch)
     py tools/llm/ollama_local.py install --model TAG  # install / update THE machine copy (from a source checkout)
+        [--url U] [--num-ctx N] [--exempt PREFIX] [--min-free-vram-mb N] [--force]
+                                                      # from the machine copy: change settings only
     py tools/llm/ollama_local.py uninstall [--leave-all]
-    py tools/llm/ollama_local.py join [--repo PATH]   # a repo joins: it receives the skill, nothing else
+    py tools/llm/ollama_local.py join [--repo PATH] [--force]   # a repo joins: it receives the skill, nothing else
     py tools/llm/ollama_local.py leave [--repo PATH]  # ...and leaves by losing it
     py tools/llm/ollama_local.py repos                # joined repos, and whether their skill is current
     py tools/llm/ollama_local.py hook                 # the PreToolUse hook body (hook JSON on stdin)
@@ -28,7 +30,11 @@ that copy. A repo JOINS by receiving the skill file only (`join`), which calls t
 $LOCALAPPDATA and so carries no machine fact; it LEAVES by losing it (`leave`). So every repo, every
 session and the hook run the same code against the same config, leases and reservation -- there is no
 per-repo copy to drift, and no repo can remove another's guard. The source checkout (this repo) is where
-the helper is developed; re-running `install` there updates the machine copy for every joined repo.
+the helper is developed; re-running `install` there updates the machine copy for every joined repo. The
+config records the installed revision (commit time), so an OLDER checkout -- a stale worktree, a second
+clone -- is refused rather than silently downgrading the machine (--force to do it on purpose), and the
+skill always comes from the same checkout as the helper. `join` refuses the source repo, a directory that
+does not exist, the home directory, and a skill file at that path that is not this helper's.
 
 Exit codes: 0 done / ready, 2 not available here (disabled, absent, no model), 3 refused (a
 commercial game holds the GPU, a reservation, or too little VRAM free), 4 input too large,
@@ -43,20 +49,29 @@ is unaffected even if it runs Ollama with the same model -- and the hook itself 
 ⛔ GAMES AND VRAM. A 12B Q8 model holds ~14 GB of VRAM; a commercial game under test must not share
 the card with it. Layered, because a rule the model has to remember is not a rule:
   1. `ask` / `warm` REFUSE while a commercial game process is running -- and unload on the way out.
-     The check runs before EVERY request, each --chunked slice included.
-  2. `hook` runs before every Bash / PowerShell tool call, in every session on the machine. It
-     unloads before an explicit launch (steam -applaunch, a *-Win64-Shipping.exe path in the
-     command) and whenever the model is loaded while a commercial game is already running -- which
-     also catches rigs and manual launches, one tool call late.
+     The check runs before EVERY request (each --chunked slice, and before a retry after an HTTP
+     500), and it re-reads /api/ps each time rather than trusting what this process last saw.
+  2. `hook` runs before every Bash / PowerShell call and every computer-use action that can start a
+     game (a click, a key, opening an app), in every session on the machine. It unloads before an
+     explicit launch (steam -applaunch, a *-Win64-Shipping.exe path in the command), whenever the
+     model is loaded while a commercial game is running, and whenever it is loaded under an active
+     reservation -- which also catches rigs and manual launches, one tool call late. The per-shell
+     CLAUDE_LOCAL_LLM=off never turns it off: that switch stops a shell USING the model, not the guard.
   3. A machine-wide GPU RESERVATION (%LOCALAPPDATA%\claude-local-llm\gpu-reserved.json), written by
      the hook on a launch, by (1) when it sees a game, and by `reserve`. Every session refuses while
      it holds -- which is what stops ANOTHER session loading the model back in the gap before the
-     game's process appears. It lapses RESERVE_GRACE_S after the evidence; `release` clears it.
-  4. KEEP_ALIVE is short, so an idle model leaves on its own.
-  The DumperTest fixtures (DumperTest, DumperTest51, DumperTest58, ...) are exempt: the maintainer's
-  rule. ⚠ THE REMAINING GAPS: a rig that LAUNCHES a commercial game inside one tool call starts it
-  after the hook has run -- the skill says `reserve` before such a rig; and a request already in
-  flight is never cut short, so the VRAM frees when it ends (Ollama defers the unload; measured).
+     game's process appears. Once no game runs, it lapses RESERVE_GRACE_S after the LAST time one
+     was seen (every check that sees one stamps `last_game`); `release` clears it.
+  4. Free VRAM: a cold load is refused when the NVIDIA GPU CUDA would use (nvidia-smi: an integrated
+     AMD / Intel GPU is never counted) has less free than the model needs -- weights + the KV cache
+     computed from the model's own GGUF metadata + compute overhead + a buffer, and at least the
+     machine's floor (`install --min-free-vram-mb N`). `status` prints the arithmetic.
+  5. KEEP_ALIVE is short, so an idle model leaves on its own.
+  The DumperTest fixtures (DumperTest, DumperTest51, DumperTest58, ...) are exempt by default: the
+  maintainer's rule; a machine adds its own (`install --exempt PREFIX`). ⚠ THE REMAINING GAPS: a rig
+  that LAUNCHES a commercial game inside one tool call starts it after the hook has run -- the skill
+  says `reserve` before such a rig; and a request already in flight is never cut short, so the VRAM
+  frees when it ends (Ollama defers the unload; measured).
 
 CROSS-SESSION, MEASURED 2026-09-26 with OLLAMA_NUM_PARALLEL=1 (two real processes): a second
 session's request QUEUES behind the first (3.8 s alone -> 7.6 s); an unload sent mid-request is
@@ -127,7 +142,10 @@ HELPER_VERSION = 2
 CONFIG_REL = pathlib.Path(".claude") / "local-llm.json"          # legacy per-repo opt-in (version 1)
 SETTINGS_REL = pathlib.Path(".claude") / "settings.local.json"
 SKILL_REL = pathlib.Path(".claude") / "skills" / "local-llm" / "SKILL.md"
-DISABLE_ENV = "UE5CE_LLM"              # =off disables this machine for one shell (legacy name)
+# =off stops THIS shell from USING the model (ask / warm / status answer `disabled`). It never disables the
+# machine-wide GPU guard: the hook ignores it, or a session that opted out could launch a game beside a
+# model another session loaded.
+DISABLE_ENV = "UE5CE_LLM"              # legacy name
 DISABLE_ENVS = ("CLAUDE_LOCAL_LLM", DISABLE_ENV)
 HOME_ENV = "CLAUDE_LOCAL_LLM_HOME"     # overrides the machine state dir -- the selftest and rigs only
 DEFAULT_URL = "http://127.0.0.1:11434"
@@ -140,9 +158,21 @@ NUM_CTX = 32768                        # fixed: a different value reloads the mo
 OUTPUT_RESERVE = 4096                  # tokens of the window kept for the answer
 KEEP_ALIVE = "10m"
 TEMPERATURE = 0.2
-VRAM_MARGIN_MB = 1536                  # KV cache + runtime on top of the weights
+# VRAM a cold load needs = weights + KV cache (computed from the MODEL'S OWN GGUF metadata, so it holds for any
+# model) + compute/runtime overhead + a safety buffer, and at least the machine's floor (config
+# `min_free_vram_mb`, set with `install --min-free-vram-mb N`; a machine fact, so never in a repo).
+KV_BYTES_PER_ELEM = 2                  # f16 KV cache (Ollama's default); a quantized cache only needs less
+COMPUTE_BASE_MIB = 1152                # compute buffer + CUDA runtime: measured on the 12B below, 8k..64k,
+COMPUTE_PER_TOKEN_KIB = 4              # ...together within ~40 MiB of every measured point
+VRAM_BUFFER_MIB = 512                  # on top of the estimate
+FALLBACK_KV_KIB_PER_TOKEN = 160        # no usable metadata: assume a dense model this heavy per token
 HOOK_TIMEOUT_S = 15
-HOOK_MATCHER = "Bash|PowerShell"
+# The tools that can START a game: shells, and the computer-use actions that click / type / open an app (the
+# handover launches Steam titles through the library UI). Screenshots and reads are left out: they cannot
+# launch anything, and each hook costs a Python spawn.
+HOOK_MATCHER = ("Bash|PowerShell|mcp__computer-use__(?:left_click|double_click|triple_click|left_mouse_up|key|"
+                "type|open_application|computer_batch)")
+HOOK_BUDGET_S = HOOK_TIMEOUT_S - 2     # the hook's own work must end inside Claude Code's timeout
 # The hook runs `python -c HOOK_BOOTSTRAP <script> hook`, never `python <script> hook`: for a missing
 # script python exits 2, and a PreToolUse hook exiting 2 BLOCKS the tool call -- every Bash call, in
 # every repo, once the hook lives in the user-level settings. The bootstrap makes that a silent no-op.
@@ -180,7 +210,7 @@ OVERFLOW_RE = re.compile(r"request \((\d+) tokens\) exceeds", re.I)
 # matched; the shipping exe beside it always runs while the game does.
 EXE_TAIL = r"-(?:Win64|WinGDK|WinGRDK)-(?:Shipping|Test|DebugGame)\.exe"
 PROCESS_EXE_RE = re.compile(r"(.+)" + EXE_TAIL, re.I)
-COMMAND_EXE_RE = re.compile(r"([^\\/\"'\s]+)" + EXE_TAIL + r"\b", re.I)
+COMMAND_EXE_RE = re.compile(r"([^\\/\"'\s=(),;:|<>`]+)" + EXE_TAIL + r"\b", re.I)  # `--exe=X`, `(X)` too
 # Test fixtures that may share the GPU with the model: this repo's DumperTest projects (DumperTest,
 # DumperTest51, ...). A machine adds its own with `install --exempt PREFIX` (config `exempt_prefixes`).
 DEFAULT_EXEMPT_PREFIXES = ("dumpertest",)
@@ -287,17 +317,125 @@ def live_leases(records, now: float, alive_pids, own_pid: int) -> list[dict]:
 
 
 def reservation_state(marker, now: float, game_running: bool) -> str:
-    """none | active | expired. A game seen running keeps it active however old the marker is."""
+    """none | active | expired. A game seen running keeps it active however old the marker is; after that
+    the grace runs from the LAST time a game was seen (`last_game`, refreshed by every check that sees one),
+    not from when the marker was set -- a game that ran for an hour still leaves its 30 s."""
     if not isinstance(marker, dict):
         return "none"
     if game_running:
         return "active"
     grace = RESERVE_GRACE_S.get(marker.get("kind"), max(RESERVE_GRACE_S.values()))
-    return "active" if 0 <= now - float(marker.get("set_at") or 0) < grace else "expired"
+    since = max(float(marker.get("set_at") or 0), float(marker.get("last_game") or 0))
+    return "active" if 0 <= now - since < grace else "expired"
 
 
 def commercial_games(images, exempt=DEFAULT_EXEMPT_PREFIXES) -> list[str]:
     return sorted({i for i in images if is_commercial_process(i, exempt)}, key=str.lower)
+
+
+def ollama_running(images) -> bool:
+    """Is a local Ollama server process up? (`ollama.exe` / `ollama app.exe`)"""
+    return any((i or "").lower() in ("ollama.exe", "ollama app.exe", "ollama") for i in images)
+
+
+def _per_layer(value, n):
+    """A GGUF per-layer field: a list (one per layer) or a scalar for all; None when absent."""
+    if isinstance(value, list):
+        return [value[i] if i < len(value) else value[-1] for i in range(n)] if value else None
+    return [value] * n if value is not None else None
+
+
+def kv_cache_mib(model_info: dict, num_ctx: int):
+    """KV cache in MiB at `num_ctx`, from Ollama /api/show `model_info`; None when the metadata cannot say.
+
+    Per layer: tokens x head_count_kv x (key_length + value_length) x KV_BYTES_PER_ELEM, where a
+    sliding-window layer holds min(num_ctx, sliding_window) tokens with its own *_swa lengths. Works for any
+    architecture that publishes these standard GGUF keys; a model without a sliding pattern is counted at
+    the full window on every layer (an over-, never an under-estimate)."""
+    mi = model_info or {}
+    arch = mi.get("general.architecture")
+    if not arch:
+        return None
+
+    def g(k):
+        return mi.get(f"{arch}.{k}")
+    n = g("block_count")
+    if not isinstance(n, int) or n <= 0:
+        return None
+    heads = g("attention.head_count")
+    kv_heads = _per_layer(g("attention.head_count_kv"), n) or _per_layer(heads, n)
+    if not kv_heads:
+        return None
+    emb = g("embedding_length")
+    head_dim = emb // heads if isinstance(emb, int) and isinstance(heads, int) and heads else None
+    k_len = g("attention.key_length") or head_dim
+    v_len = g("attention.value_length") or k_len
+    if not k_len or not v_len:
+        return None
+    k_swa, v_swa = g("attention.key_length_swa") or k_len, g("attention.value_length_swa") or v_len
+    window, pattern = g("attention.sliding_window"), g("attention.sliding_window_pattern")
+    if isinstance(pattern, list):
+        sliding = [bool(pattern[i]) if i < len(pattern) else False for i in range(n)]
+    elif isinstance(pattern, int) and not isinstance(pattern, bool) and pattern > 1:
+        sliding = [(i + 1) % pattern != 0 for i in range(n)]          # every Nth layer global
+    else:
+        sliding = [False] * n
+    total = 0
+    for i in range(n):
+        if sliding[i] and isinstance(window, int) and window > 0:
+            total += min(num_ctx, window) * int(kv_heads[i] or 0) * (k_swa + v_swa) * KV_BYTES_PER_ELEM
+        else:
+            total += num_ctx * int(kv_heads[i] or 0) * (k_len + v_len) * KV_BYTES_PER_ELEM
+    return total / (1024 * 1024)
+
+
+def vram_need_mib(weights_bytes: int, model_info, num_ctx: int, floor_mib: int = 0) -> tuple[int, str]:
+    """(MiB a cold load needs free, how it was derived). Checked against the measured table in the header:
+    for the 12B there the estimate sits VRAM_BUFFER_MIB (+~40) above the measurement at every window."""
+    weights = (weights_bytes or 0) / (1024 * 1024)
+    kv = kv_cache_mib(model_info, num_ctx)
+    how = "metadata"
+    if kv is None:
+        kv, how = num_ctx * FALLBACK_KV_KIB_PER_TOKEN / 1024, "fallback: no usable metadata"
+    overhead = COMPUTE_BASE_MIB + num_ctx * COMPUTE_PER_TOKEN_KIB / 1024
+    est = int(weights + kv + overhead + VRAM_BUFFER_MIB + 0.5)
+    need = max(est, int(floor_mib or 0))
+    detail = (f"weights {weights:.0f} + KV {kv:.0f} ({how}) + compute {overhead:.0f} + buffer "
+              f"{VRAM_BUFFER_MIB} = {est} MiB" + (f", floor {int(floor_mib)} MiB" if floor_mib else ""))
+    return need, detail
+
+
+def pick_gpu(csv_text: str, visible=None):
+    """(free MiB, name) of the NVIDIA GPU with the most free memory among those CUDA may use; None if none.
+
+    `csv_text` is `nvidia-smi --query-gpu=index,uuid,name,memory.total,memory.used --format=csv,noheader,nounits`,
+    which lists NVIDIA GPUs only -- an integrated AMD / Intel GPU can never be the one judged. `visible` is
+    CUDA_VISIBLE_DEVICES (indices or UUIDs); unset = all."""
+    rows = []
+    for line in (csv_text or "").splitlines():
+        parts = [x.strip() for x in line.split(",")]
+        if len(parts) < 5:
+            continue
+        try:
+            rows.append((parts[0], parts[1], ",".join(parts[2:-2]), int(parts[-2]), int(parts[-1])))
+        except ValueError:
+            continue
+    if visible is not None and visible.strip():
+        want = [v.strip() for v in visible.split(",") if v.strip()]
+        rows = [r for r in rows if r[0] in want or any(r[1] == w or (w.startswith("GPU-") and r[1].startswith(w))
+                                                       for w in want)]
+    if not rows:
+        return None
+    best = max(rows, key=lambda r: r[3] - r[4])
+    return best[3] - best[4], best[2]
+
+
+def compare_revisions(installed, mine) -> str:
+    """newer | older | same | unknown: this checkout's helper revision against the installed one (commit
+    times). It is what stops an old checkout from silently downgrading the machine."""
+    if installed is None or mine is None:
+        return "unknown"
+    return "newer" if mine > installed else "older" if mine < installed else "same"
 
 
 def estimate_tokens(text: str, cpt: float = ASCII_CHARS_PER_TOKEN) -> int:
@@ -489,8 +627,9 @@ def _toolhelp_processes() -> list[tuple[int, str]]:
         k32.CloseHandle(snap)
 
 
-def _post_with_retry(url: str, payload, timeout: float, post=None, sleep=time.sleep):
-    """POST once more after an HTTP 500, never after anything else.
+def _post_with_retry(url: str, payload, timeout: float, post=None, sleep=time.sleep, precheck=None):
+    """POST once more after an HTTP 500, never after anything else -- and never when `precheck` (the guard)
+    now refuses: a game may have started during the delay, and the retry would load the model beside it.
 
     Measured 2026-09-26: a model load returned 500 because llama-server died on "CUDA error: shared
     object initialization failed" (0xc0000409) -- a laptop dGPU waking from idle -- and the next
@@ -503,6 +642,9 @@ def _post_with_retry(url: str, payload, timeout: float, post=None, sleep=time.sl
         if e.code != 500:
             raise
     sleep(LOAD_RETRY_DELAY_S)
+    refusal = precheck() if precheck else None
+    if refusal:
+        raise Refused(refusal)
     return post(url, payload, timeout=timeout)
 
 
@@ -553,7 +695,8 @@ def registry_path() -> pathlib.Path:
 
 
 def _same_path(a: pathlib.Path, b: pathlib.Path) -> bool:
-    return os.path.normcase(os.path.abspath(a)) == os.path.normcase(os.path.abspath(b))
+    """realpath, not abspath: %LOCALAPPDATA% behind a junction or symlink is still the same file."""
+    return os.path.normcase(os.path.realpath(a)) == os.path.normcase(os.path.realpath(b))
 
 
 def is_machine_copy() -> bool:
@@ -599,10 +742,41 @@ def unregister_repo(repo: pathlib.Path) -> bool:
     return had
 
 
+OUR_SKILL_MARK = f"{STATE_DIRNAME}/{MACHINE_SCRIPT_FILE}"     # every version of our skill calls the machine copy
+
+
+def _skill_is_ours(repo: pathlib.Path) -> bool:
+    """The repo's skill file is this helper's: it calls the machine copy, or the repo is on the joined list."""
+    p = repo_skill_path(repo)
+    try:
+        if p.is_file() and OUR_SKILL_MARK in p.read_text(encoding="utf-8", errors="replace"):
+            return True
+    except OSError:
+        pass
+    return _registry_key(repo) in _registry()["repos"]
+
+
+def join_refusal(repo: pathlib.Path, force: bool) -> str | None:
+    """Why `join` must not touch this directory, or None."""
+    repo = pathlib.Path(repo)
+    if not repo.is_dir():
+        return f"{repo} is not an existing directory"
+    if _same_path(repo, pathlib.Path.home()):
+        return "the home directory is not a repo (a skill there would load in EVERY session)"
+    if _is_source_repo(repo):
+        return "this repo ships the helper itself: its skill is source, published by `install`, never joined"
+    if repo_skill_path(repo).is_file() and not _skill_is_ours(repo) and not force:
+        return f"{SKILL_REL.as_posix()} there is not this helper's (it never calls the machine copy); --force replaces it"
+    return None
+
+
 def join_repo(repo: pathlib.Path, skill_text: str) -> str:
     """joined | updated | current. Writes the skill (LF, as the installed copy has it) and registers."""
     path = repo_skill_path(repo)
-    old = path.read_text(encoding="utf-8") if path.is_file() else None
+    try:
+        old = path.read_text(encoding="utf-8") if path.is_file() else None
+    except (OSError, UnicodeDecodeError):
+        old = ""                                     # unreadable: rewrite it
     if old != skill_text:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(skill_text, encoding="utf-8", newline="\n")
@@ -611,11 +785,14 @@ def join_repo(repo: pathlib.Path, skill_text: str) -> str:
 
 
 def leave_repo(repo: pathlib.Path) -> str:
-    """left | not-joined | refused-source. Removes the skill and the dirs it emptied; nothing else."""
+    """left | not-joined | refused-source | refused-foreign. Removes OUR skill and the dirs it emptied;
+    nothing else -- a skill file at that path that is not ours is left alone."""
     repo = pathlib.Path(repo)
     if _is_source_repo(repo):
         return "refused-source"
     path = repo_skill_path(repo)
+    if path.is_file() and not _skill_is_ours(repo):
+        return "refused-foreign"
     had = path.is_file()
     if had:
         path.unlink()
@@ -628,13 +805,26 @@ def leave_repo(repo: pathlib.Path) -> str:
 
 
 def joined_repos() -> list[dict]:
-    """[{path, status}] with status current | outdated | missing against the installed skill."""
-    want = machine_skill().read_text(encoding="utf-8") if machine_skill().is_file() else None
+    """[{path, status}]: current | outdated | missing | unreadable against the installed skill, and
+    source | source-differs for a checkout that ships the helper (it publishes via `install`, never `join`)."""
+    try:
+        want = machine_skill().read_text(encoding="utf-8") if machine_skill().is_file() else None
+    except (OSError, UnicodeDecodeError):
+        want = None
     out = []
     for rec in _registry()["repos"].values():
-        p = repo_skill_path(pathlib.Path(rec.get("path") or ""))
-        have = p.read_text(encoding="utf-8") if p.is_file() else None
-        status = "missing" if have is None else ("current" if want is None or have == want else "outdated")
+        repo = pathlib.Path(rec.get("path") or "")
+        p = repo_skill_path(repo)
+        try:
+            have = p.read_text(encoding="utf-8").replace("\r\n", "\n") if p.is_file() else None
+        except (OSError, UnicodeDecodeError):
+            out.append({"path": rec.get("path"), "status": "unreadable"})
+            continue
+        same = want is None or have == want
+        if _is_source_repo(repo):
+            status = "source" if same else "source-differs"
+        else:
+            status = "missing" if have is None else ("current" if same else "outdated")
         out.append({"path": rec.get("path"), "status": status})
     return sorted(out, key=lambda r: str(r["path"]).lower())
 
@@ -644,11 +834,13 @@ def install_machine(src_script: pathlib.Path, skill_text: str | None, cfg: dict)
     d = state_dir()
     d.mkdir(parents=True, exist_ok=True)
     if not _same_path(src_script, machine_script()):
-        shutil.copyfile(src_script, machine_script())
+        try:
+            shutil.copyfile(src_script, machine_script())
+        except shutil.SameFileError:
+            pass
     if skill_text is not None:
         machine_skill().write_text(skill_text, encoding="utf-8", newline="\n")
-    machine_config_path().write_text(json.dumps({**cfg, "version": HELPER_VERSION}, indent=2) + "\n",
-                                     encoding="utf-8", newline="\n")
+    _write_json(machine_config_path(), {**cfg, "version": HELPER_VERSION}, indent=2)
 
 
 def uninstall_machine() -> None:
@@ -661,18 +853,44 @@ def uninstall_machine() -> None:
             pass
 
 
-def resolve_repo(path) -> pathlib.Path:
-    """--repo, else the git top level of the working directory, else the working directory."""
+def resolve_repo(path):
+    """--repo, else the git top level of the working directory; None when neither names a repo. git prints
+    the path in UTF-8 whatever the console code page -- decoded as cp950 a CJK path became a DIFFERENT path."""
     if path:
         return pathlib.Path(path).resolve()
     try:
-        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, text=True,
-                             timeout=10).stdout.strip()
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], capture_output=True, encoding="utf-8",
+                             errors="strict", timeout=10).stdout
+        top = (top or "").strip()
         if top:
             return pathlib.Path(top).resolve()
-    except (OSError, subprocess.SubprocessError):
+    except (OSError, subprocess.SubprocessError, ValueError, AttributeError):
         pass
-    return pathlib.Path.cwd().resolve()
+    return None
+
+
+def install_skill_source(root: pathlib.Path) -> pathlib.Path:
+    """The skill to install goes with the helper being installed: the SAME checkout's -- a worktree's own,
+    never its main checkout's, or a helper and a skill of different revisions ship together."""
+    return pathlib.Path(root) / SKILL_REL
+
+
+def existing_machine_config() -> dict | None:
+    """The machine config as installed, whatever the shell's CLAUDE_LOCAL_LLM switch says."""
+    cfg = _read_json(machine_config_path())
+    return cfg if isinstance(cfg, dict) else None
+
+
+def helper_revision(root: pathlib.Path):
+    """Commit time of the last change to the helper in `root` (None outside git). Compared at install so an
+    OLDER checkout cannot silently replace a newer installed copy."""
+    try:
+        out = subprocess.run(["git", "-C", str(root), "log", "-1", "--format=%ct", "--",
+                              "tools/llm/ollama_local.py", str(SKILL_REL).replace("\\", "/")],
+                             capture_output=True, encoding="utf-8", errors="replace", timeout=10).stdout
+        return int((out or "").strip()) if (out or "").strip().isdigit() else None
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
 
 
 def _read_json(path: pathlib.Path):
@@ -682,10 +900,14 @@ def _read_json(path: pathlib.Path):
         return None
 
 
-def _write_json(path: pathlib.Path, data) -> bool:
+def _write_json(path: pathlib.Path, data, indent=None) -> bool:
+    """Write-then-rename, so a reader in another session never sees a half-written file (it read as junk,
+    and a junk lease or marker is pruned as dead)."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data), encoding="utf-8", newline="\n")
+        tmp = path.with_name(f"{path.name}.{os.getpid()}.tmp")
+        tmp.write_text(json.dumps(data, indent=indent) + ("\n" if indent else ""), encoding="utf-8", newline="\n")
+        os.replace(tmp, path)
         return True
     except OSError:
         return False
@@ -717,8 +939,10 @@ def other_leases() -> list[dict]:
     """Other processes' live leases; dead or stale lease files are pruned on the way."""
     d = state_dir() / LEASE_DIRNAME
     found = [(f, _read_json(f)) for f in (d.glob("*.json") if d.is_dir() else [])]
-    live = live_leases([r for _, r in found], time.time(), {pid for pid, _ in running_processes()},
-                       os.getpid())
+    alive = {pid for pid, _ in running_processes()}
+    live = live_leases([r for _, r in found], time.time(), alive, os.getpid())
+    if not alive:                                    # no process list = no evidence: never prune on it
+        return live
     for f, r in found:
         if r not in live and not (isinstance(r, dict) and r.get("pid") == os.getpid()):
             try:
@@ -743,9 +967,13 @@ def reserve_gpu(kind: str, reason: str) -> None:
                                                  "pid": os.getpid(), "cwd": os.getcwd()})
 
 
-def release_gpu() -> bool:
+def release_gpu(expected_set_at=None) -> bool:
+    """Delete the marker -- only the one read (`expected_set_at`) when given, so an expiry never deletes a
+    FRESH reservation another session wrote in between."""
     try:
         path = state_dir() / RESERVATION_FILE
+        if expected_set_at is not None and (read_reservation() or {}).get("set_at") != expected_set_at:
+            return False
         existed = path.is_file()
         path.unlink(missing_ok=True)
         return existed
@@ -754,34 +982,41 @@ def release_gpu() -> bool:
 
 
 def active_reservation(games) -> dict | None:
-    """The reservation if it still holds (an expired one is deleted); `games` = running commercial games."""
+    """The reservation if it still holds (an expired one is deleted); `games` = running commercial games.
+    Seeing a game refreshes `last_game`, which the grace after its exit is measured from."""
     marker = read_reservation()
-    state = reservation_state(marker, time.time(), bool(games))
+    now = time.time()
+    state = reservation_state(marker, now, bool(games))
     if state == "expired":
-        release_gpu()
+        release_gpu(expected_set_at=marker.get("set_at"))
+    elif state == "active" and games:
+        marker["last_game"] = now
+        _write_json(state_dir() / RESERVATION_FILE, marker)
     return marker if state == "active" else None
 
 
-def gpu_free_mb():
+def gpu_free():
+    """(free MiB, GPU name) of the NVIDIA GPU CUDA would use with the most free memory; None without
+    nvidia-smi (then the free-VRAM check is skipped, and `status` says so)."""
     exe = shutil.which("nvidia-smi")
     if not exe:
         return None
     try:
-        out = subprocess.run([exe, "--query-gpu=memory.total,memory.used",
+        out = subprocess.run([exe, "--query-gpu=index,uuid,name,memory.total,memory.used",
                               "--format=csv,noheader,nounits"],
-                             capture_output=True, text=True, timeout=15).stdout.strip()
-        total, used = (int(x) for x in out.splitlines()[0].split(","))
-    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
+                             capture_output=True, encoding="utf-8", errors="replace", timeout=15).stdout
+    except (OSError, subprocess.SubprocessError):
         return None
-    return total - used
+    return pick_gpu(out or "", os.environ.get("CUDA_VISIBLE_DEVICES"))
 
 
-def load_config(root=None):
+def load_config(root=None, ignore_env=False):
     """(config, where-or-why). Reads no network: a machine without the install stays untouched.
 
     The MACHINE config (written by `install`) is the one every joined repo and the hook share. A
-    source checkout's legacy `.claude/local-llm.json` (version 1) is read only when there is none."""
-    if disabled_by_env(os.environ):
+    source checkout's legacy `.claude/local-llm.json` (version 1) is read only when there is none.
+    `ignore_env`: the hook's view -- the per-shell switch never turns the machine guard off."""
+    if not ignore_env and disabled_by_env(os.environ):
         return None, "disabled for this shell (CLAUDE_LOCAL_LLM=off)"
     mc = machine_config_path()
     if mc.is_file():
@@ -837,20 +1072,36 @@ class Probe:
             return False
         return find_model(ps, self.name) is not None
 
-    def unload(self, wait_s: float = UNLOAD_WAIT_S) -> str:
+    def model_info(self) -> dict:
+        """GGUF metadata (/api/show `model_info`) -- what the VRAM need is computed from; {} if unavailable."""
+        if getattr(self, "_info", None) is None:
+            try:
+                self._info = http_json(self.url + "/api/show", {"model": self.name}, timeout=SETUP_TIMEOUT).get(
+                    "model_info") or {}
+            except Exception:                        # noqa: BLE001
+                self._info = {}
+        return self._info
+
+    def vram_need(self) -> tuple[int, str]:
+        return vram_need_mib(int((self.entry or {}).get("size") or 0), self.model_info(), self.num_ctx,
+                             int(self.cfg.get("min_free_vram_mb") or 0))
+
+    def unload(self, wait_s: float = UNLOAD_WAIT_S, deadline=None) -> str:
         """unloaded | pending | failed. keep_alive 0, then watch /api/ps (never trust size_vram).
 
         ⚠ `pending` is NOT a failure. Measured 2026-09-26: Ollama DEFERS the unload until any request
         in flight -- another session's -- has finished, then frees the model within ~0.5 s. The old
         code reported that as "STILL LOADED"."""
+        post_timeout = UNLOAD_TIMEOUT if deadline is None else max(0.5, min(UNLOAD_TIMEOUT, deadline - time.monotonic()))
         try:
-            http_json(self.url + "/api/generate", {"model": self.name, "keep_alive": 0},
-                      timeout=UNLOAD_TIMEOUT)
+            http_json(self.url + "/api/generate", {"model": self.name, "keep_alive": 0}, timeout=post_timeout)
         except Exception:                           # noqa: BLE001
             return "failed"
-        deadline = time.monotonic() + wait_s
+        stop = time.monotonic() + wait_s
+        if deadline is not None:
+            stop = min(stop, deadline)
         while self.is_loaded():
-            if time.monotonic() >= deadline:
+            if time.monotonic() >= stop:
                 return "pending"
             time.sleep(0.25)
         self.loaded = False
@@ -886,24 +1137,26 @@ def guard(p: Probe):
     Checked before EVERY request (each --chunked slice too), which is what closes the cross-session
     gap: another session reserves the GPU before its game's process exists, and this session's next
     request sees the reservation instead of loading the model back."""
-    games = commercial_games(running_images(), p.exempt)
-    if games:
+    p.loaded = p.is_loaded()                         # never a cached flag: a request of OURS may have loaded it
+    games = commercial_games(running_images(), p.exempt)   # (an overflowing slice does), another session may
+    if games:                                        # have unloaded it
         reserve_gpu("running", f"running: {', '.join(games)}")
+        active_reservation(games)                    # stamps last_game
         if p.loaded:
             p.unload()
         return f"a commercial game is running ({', '.join(games)}); its VRAM is not ours"
     marker = active_reservation(games)
     if marker:
+        if p.loaded:
+            p.unload()
         return (f"the GPU is reserved for a game ({marker.get('reason')}); `release` clears it if that "
                 f"launch was abandoned")
-    if not p.loaded:                                 # re-ask: an earlier request of OURS may have loaded
-        p.loaded = p.is_loaded()                     # it (an overflowing slice does), and its VRAM is ours
     if not p.loaded:
-        free = gpu_free_mb()
-        need = int((p.entry or {}).get("size") or 0) // (1024 * 1024) + VRAM_MARGIN_MB
-        if free is not None and free < need:
-            return (f"{free} MB VRAM free, the model needs ~{need} MB -- something else holds "
-                    f"the GPU (a game whose exe does not look like a UE shipping build?)")
+        gpu = gpu_free()
+        need, detail = p.vram_need()
+        if gpu is not None and gpu[0] < need:
+            return (f"{gpu[0]} MiB VRAM free on {gpu[1]}, a cold load needs {need} MiB ({detail}) -- something "
+                    f"else holds the GPU (a game whose exe does not look like a UE shipping build?)")
     return None
 
 
@@ -924,6 +1177,10 @@ def cmd_status(args) -> int:
             leases = other_leases()
             info["in_use_by"] = ([{k: r.get(k) for k in ("pid", "action", "cwd", "started")} for r in leases]
                                  if args.json else (describe_leases(leases) or None))
+            gpu = gpu_free()
+            need, detail = p.vram_need()
+            info["vram"] = (f"{gpu[1]}: {gpu[0]} MiB free, a cold load needs {need} MiB ({detail})" if gpu
+                            else f"no nvidia-smi: the free-VRAM check is skipped (a cold load needs ~{need} MiB)")
     info.update(install_health())
     if args.json:
         print(json.dumps(info))
@@ -945,12 +1202,31 @@ def install_health() -> dict:
     settings, _ = _load_settings(user_settings_path())
     target = hook_target(settings or {})
     if out["install"] == "machine":
-        out["hook"] = ("ok" if target and _same_path(pathlib.Path(target), machine_script())
-                       else "MISSING -- run install" if not target else f"points at {target} -- run install")
+        interp = hook_interpreter(settings or {})
+        out["hook"] = ("MISSING -- run install" if not target
+                       else f"points at {target} -- run install" if not _same_path(pathlib.Path(target), machine_script())
+                       else f"interpreter missing ({interp}) -- run install" if not _interpreter_ok(interp)
+                       else "ok")
     if (out["install"] == "machine" and not is_machine_copy() and machine_script().is_file()
             and machine_script().read_bytes() != SCRIPT.read_bytes()):
-        out["update"] = "this checkout's helper differs from the installed copy -- run install to update"
+        rel = compare_revisions((existing_machine_config() or {}).get("source_time"), helper_revision(ROOT))
+        out["update"] = {"newer": "this checkout's helper is NEWER than the installed copy -- run install",
+                         "older": "this checkout is OLDER than the installed copy -- pull; do not install from here",
+                         "same": "differs from the installed copy at the same revision (local edits?)",
+                         }.get(rel, "differs from the installed copy -- run install if this checkout is the newer")
     return out
+
+
+def hook_interpreter(settings) -> str | None:
+    for g in ((settings or {}).get("hooks") or {}).get("PreToolUse") or []:
+        for h in g.get("hooks") or []:
+            if _is_our_hook(h):
+                return str(h.get("command") or "")
+    return None
+
+
+def _interpreter_ok(cmd) -> bool:
+    return bool(cmd) and (os.path.isfile(cmd) or shutil.which(cmd) is not None)
 
 
 def cmd_warm(args) -> int:
@@ -961,8 +1237,13 @@ def cmd_warm(args) -> int:
         return 3
     t0 = time.perf_counter()
     with Lease("warm"):
-        _post_with_retry(p.url + "/api/generate", {"model": p.name, "prompt": "", "keep_alive": p.keep_alive,
-                                                   "options": {"num_ctx": p.num_ctx}}, GENERATE_TIMEOUT)
+        try:
+            _post_with_retry(p.url + "/api/generate", {"model": p.name, "prompt": "", "keep_alive": p.keep_alive,
+                                                       "options": {"num_ctx": p.num_ctx}}, GENERATE_TIMEOUT,
+                             precheck=lambda: guard(p))
+        except Refused as e:
+            print(f"local-llm: refused -- {e}", file=sys.stderr)
+            return 3
     print(f"local-llm: {p.name} loaded (num_ctx={p.num_ctx}, keep_alive={p.keep_alive}) "
           f"in {time.perf_counter() - t0:.1f}s")
     return 0
@@ -1031,7 +1312,7 @@ def _chat(p: Probe, user: str, think: bool) -> dict:
             "messages": [{"role": "system", "content": p.system_prompt},
                          {"role": "user", "content": user}],
             "options": {"num_ctx": p.num_ctx, "temperature": TEMPERATURE, "num_predict": OUTPUT_RESERVE},
-        }, GENERATE_TIMEOUT)
+        }, GENERATE_TIMEOUT, precheck=lambda: guard(p))
     except urllib.error.HTTPError as e:
         tokens = parse_overflow(e.code, e.read().decode("utf-8", errors="replace"))
         if tokens is None:
@@ -1134,17 +1415,28 @@ def _ask(p: Probe, args, prompt: str, files) -> int:
 
 
 def cmd_hook(args) -> int:
-    """Never blocks and never fails the tool call: every path exits 0."""
+    """Never blocks and never fails the tool call: every path exits 0, inside HOOK_BUDGET_S. It ignores the
+    per-shell CLAUDE_LOCAL_LLM switch: that stops a shell USING the model, never the machine's guard."""
+    deadline = time.monotonic() + HOOK_BUDGET_S
     try:
         raw = sys.stdin.buffer.read().decode("utf-8", errors="replace")
         command = hook_command(raw)
-        cfg, _ = load_config()
+        cfg, _ = load_config(ignore_env=True)
         if cfg is None:
             return 0
-        launch = command_launches_commercial(command, exempt_of(cfg))
+        exempt = exempt_of(cfg)
+        launch = command_launches_commercial(command, exempt)
         if launch:                                   # reserve FIRST: other sessions must not reload it
             reserve_gpu("launch", f"launch in a command: {launch}")
+        procs = None
+        if (state_dir() / RESERVATION_FILE).is_file():   # keep the grace measured from the last game seen
+            procs = [n for _, n in running_processes()]
+            active_reservation(commercial_games(procs, exempt))
         p = Probe(cfg)
+        if not launch and p.url.startswith(("http://127.0.0.1", "http://localhost")):
+            procs = procs if procs is not None else [n for _, n in running_processes()]
+            if procs and not ollama_running(procs):  # no local server: nothing can be loaded, skip the probe
+                return 0
         p.entry = {"name": str(cfg["model"])}
         if not p.is_loaded():                        # the common case: one /api/ps round trip
             return 0
@@ -1155,12 +1447,16 @@ def cmd_hook(args) -> int:
         if launch:
             why = f"launch in this command: {launch}"
         else:
-            games = commercial_games(running_images(), exempt_of(cfg))
-            if not games:
+            games = commercial_games(procs if procs is not None else running_images(), exempt)
+            marker = None if games else active_reservation([])
+            if games:
+                reserve_gpu("running", f"running: {', '.join(games)}")
+                why = f"running: {', '.join(games)}"
+            elif marker:                             # resident under a reservation: evict it before the game boots
+                why = f"GPU reserved: {marker.get('reason')}"
+            else:
                 return 0
-            reserve_gpu("running", f"running: {', '.join(games)}")
-            why = f"running: {', '.join(games)}"
-        result = p.unload(HOOK_UNLOAD_WAIT_S)
+        result = p.unload(HOOK_UNLOAD_WAIT_S, deadline=deadline)
         if result == "unloaded":
             msg = f"local-llm: unloaded {p.name} to free VRAM ({why})"
         elif result == "pending":
@@ -1217,18 +1513,30 @@ def _print_joined(prefix: str = "") -> None:
         return
     print(f"{prefix}joined repos ({len(repos)}):")
     for r in repos:
-        hint = {"outdated": "  <- run `join` there to refresh the skill",
-                "missing": "  <- its skill file is gone: `join` there, or `leave` it"}.get(r["status"], "")
-        print(f"  {r['status']:8} {r['path']}{hint}")
+        hint = {"outdated": "  <- run `join` there to take the installed skill",
+                "missing": "  <- its skill file is gone: `join` there, or `leave` it",
+                "unreadable": "  <- its skill file is not UTF-8: `join --force` there rewrites it",
+                "source-differs": "  <- the source's skill differs from the installed one: `install` from it if newer",
+                }.get(r["status"], "")
+        print(f"  {r['status']:14} {r['path']}{hint}")
 
 
 def cmd_install(args) -> int:
     """Install (or update) THE machine copy: helper + skill + config in the machine dir, one hook in the
-    user-level settings pointing at it. Run from a source checkout to install or update the helper; run
-    from the machine copy to change the model / URL / window only."""
-    source = None if is_machine_copy() else main_checkout(ROOT)
-    old, _ = load_config(root=source)
-    old = old or {}
+    user-level settings pointing at it. Run from a source checkout to install or update the helper (its
+    OWN skill goes with it -- a worktree's, not its main checkout's); run from the machine copy to change
+    settings only (model / URL / window / exempt fixtures / VRAM floor). An OLDER source checkout than the
+    installed copy is refused unless --force: it would silently downgrade every joined repo."""
+    source = None if is_machine_copy() else ROOT
+    old = existing_machine_config() or {}
+    if not old and source:
+        legacy, _ = load_config(root=main_checkout(source), ignore_env=True)
+        old = legacy or {}
+    mine = helper_revision(source) if source else None
+    if source and compare_revisions(old.get("source_time"), mine) == "older" and not args.force:
+        print(f"local-llm: refused -- this checkout's helper (commit time {mine}) is OLDER than the installed "
+              f"copy ({old.get('source_time')}); pull first, or --force to downgrade on purpose", file=sys.stderr)
+        return 3
     model = args.model or old.get("model")
     if not model:
         print("local-llm: install needs --model TAG", file=sys.stderr)
@@ -1250,7 +1558,7 @@ def cmd_install(args) -> int:
         print(f"local-llm: {err}", file=sys.stderr)
         return 1
 
-    cfg = {k: v for k, v in old.items() if k not in ("version",)}
+    cfg = {k: v for k, v in old.items() if k != "version"}
     cfg["model"] = entry["name"]
     if url != DEFAULT_URL:
         cfg["url"] = url
@@ -1260,22 +1568,30 @@ def cmd_install(args) -> int:
         cfg["num_ctx"] = args.num_ctx
     if args.exempt:
         cfg["exempt_prefixes"] = sorted({*exempt_of(cfg), *(x.strip().lower() for x in args.exempt if x.strip())})
-    skill_src = (source / SKILL_REL) if source else machine_skill()
+    if args.min_free_vram_mb is not None:
+        if args.min_free_vram_mb > 0:
+            cfg["min_free_vram_mb"] = args.min_free_vram_mb
+        else:
+            cfg.pop("min_free_vram_mb", None)
+    if source:
+        cfg["source_time"] = mine
+    skill_src = install_skill_source(source) if source else machine_skill()
     skill_text = skill_src.read_text(encoding="utf-8").replace("\r\n", "\n") if skill_src.is_file() else None
     install_machine(SCRIPT, skill_text, cfg)
     python = shutil.which("py") or sys.executable
     _save_settings(user_path, user_before, merge_hook(user_before, python, machine_script().as_posix()),
                    backup=True)
     if source:
-        _cleanup_legacy_repo_optin(source)
-        register_repo(source)
-    shown = {k: v for k, v in cfg.items() if k != "system_prompt"}
+        _cleanup_legacy_repo_optin(main_checkout(source))
+        register_repo(main_checkout(source))
+    shown = {k: v for k, v in cfg.items() if k not in ("system_prompt", "source_time")}
     print(f"local-llm: installed version {HELPER_VERSION} for this machine -- {json.dumps(shown)}\n"
           f"  helper, skill and config: {state_dir()}\n"
           f"  PreToolUse hook ({HOOK_MATCHER}) in the USER-level Claude Code settings -> the machine copy, "
           f"so it guards every session here, in every repo (backed up once as *{USER_SETTINGS_BACKUP_SUFFIX}).\n"
           f"  The hook takes effect in a NEW session (or after opening /hooks once).\n"
-          f"  A repo joins with `join` (run in it), leaves with `leave`.")
+          f"  A repo joins with `join` (run in it), leaves with `leave`. Settings change the same way:\n"
+          f"  `install --min-free-vram-mb N` etc., run from the machine copy -- no repo file changes.")
     _print_joined("  ")
     return 0
 
@@ -1309,16 +1625,24 @@ def cmd_setup(args) -> int:
 
 
 def _skill_to_hand_out():
-    """The skill a repo joins with: the installed copy's; from a source checkout before any install, its own."""
-    if machine_skill().is_file():
-        return machine_skill().read_text(encoding="utf-8")
-    if not is_machine_copy() and (ROOT / SKILL_REL).is_file():
-        return (ROOT / SKILL_REL).read_text(encoding="utf-8").replace("\r\n", "\n")
-    return None
+    """The skill a repo joins with: the installed copy's."""
+    try:
+        return machine_skill().read_text(encoding="utf-8") if machine_skill().is_file() else None
+    except (OSError, UnicodeDecodeError):
+        return None
+
+
+def _repo_or_complain(arg):
+    repo = resolve_repo(arg)
+    if repo is None:
+        print("local-llm: not inside a git repo -- run it in the repo, or name it with --repo PATH", file=sys.stderr)
+    return repo
 
 
 def cmd_join(args) -> int:
-    repo = resolve_repo(args.repo)
+    repo = _repo_or_complain(args.repo)
+    if repo is None:
+        return 1
     if not machine_script().is_file():
         print("local-llm: this machine has no install yet -- run `install --model TAG` from a source "
               "checkout first", file=sys.stderr)
@@ -1327,6 +1651,10 @@ def cmd_join(args) -> int:
     if skill is None:
         print("local-llm: the machine install carries no skill; re-run `install` from a source checkout",
               file=sys.stderr)
+        return 1
+    refusal = join_refusal(repo, args.force)
+    if refusal:
+        print(f"local-llm: not joined -- {refusal}", file=sys.stderr)
         return 1
     result = join_repo(repo, skill)
     print(f"local-llm: {result} -- {repo}\n"
@@ -1337,11 +1665,17 @@ def cmd_join(args) -> int:
 
 
 def cmd_leave(args) -> int:
-    repo = resolve_repo(args.repo)
+    repo = _repo_or_complain(args.repo)
+    if repo is None:
+        return 1
     result = leave_repo(repo)
     if result == "refused-source":
         print(f"local-llm: {repo} ships the helper itself; its skill is source, not a join. To stop using "
               f"the helper on this machine: `uninstall`.", file=sys.stderr)
+        return 1
+    if result == "refused-foreign":
+        print(f"local-llm: {SKILL_REL.as_posix()} in {repo} is not this helper's skill -- left untouched.",
+              file=sys.stderr)
         return 1
     print(f"local-llm: {result} -- {repo}" + (f" (removed {SKILL_REL.as_posix()})" if result == "left" else ""))
     return 0
@@ -1358,15 +1692,15 @@ def selftest() -> int:
     def ok(name, cond):
         checks.append((name, bool(cond)))
 
-    tags = {"models": [{"name": "gemma4:latest"}, {"name": "gemma-4-12b-it-Q8_0:latest"},
+    tags = {"models": [{"name": "example4:latest"}, {"name": "example-12b-it-Q8_0:latest"},
                        {"name": "hf.co/org/repo:Q4_K_M"}]}
-    ok("normalize adds :latest", normalize_model("gemma-4-12b-it-Q8_0") == "gemma-4-12b-it-q8_0:latest")
+    ok("normalize adds :latest", normalize_model("example-12b-it-Q8_0") == "example-12b-it-q8_0:latest")
     ok("normalize keeps a tag", normalize_model("qwen:7b") == "qwen:7b")
     ok("normalize: a registry path's colon is the tag", normalize_model("hf.co/org/repo") == "hf.co/org/repo:latest")
-    ok("find: bare tag matches :latest", (find_model(tags, "gemma-4-12b-it-Q8_0") or {}).get("name") == "gemma-4-12b-it-Q8_0:latest")
-    ok("find: case-insensitive", find_model(tags, "GEMMA-4-12B-IT-q8_0:LATEST") is not None)
-    ok("find: gemma4 is not the 12B", (find_model(tags, "gemma4") or {}).get("name") == "gemma4:latest")
-    ok("find: absent -> None", find_model(tags, "gemma-4-12b-it-Q4_0") is None)
+    ok("find: bare tag matches :latest", (find_model(tags, "example-12b-it-Q8_0") or {}).get("name") == "example-12b-it-Q8_0:latest")
+    ok("find: case-insensitive", find_model(tags, "EXAMPLE-12B-IT-q8_0:LATEST") is not None)
+    ok("find: example4 is not the 12B", (find_model(tags, "example4") or {}).get("name") == "example4:latest")
+    ok("find: absent -> None", find_model(tags, "example-12b-it-Q4_0") is None)
     ok("find: no models key", find_model({}, "x") is None)
 
     for image, want in [("Elliot-Win64-Shipping.exe", True), ("FactoryGameSteam-Win64-Shipping.exe", True),
@@ -1382,7 +1716,7 @@ def selftest() -> int:
         ('"C:\\Program Files (x86)\\Steam\\steam.exe" -applaunch 526870', True),
         ("steam -silent -applaunch 3483510", True),
         ("start steam://rungameid/1363080", True),
-        ('start "" "D:\\SteamLibrary\\steamapps\\common\\Elliot\\Binaries\\Win64\\Elliot-Win64-Shipping.exe"', True),
+        ('start "" "C:\\Games\\Elliot\\Binaries\\Win64\\Elliot-Win64-Shipping.exe"', True),
         ("taskkill /IM Elliot-Win64-Shipping.exe", False),  # a kill is not a launch (and now reserves the GPU)
         ("taskkill /f /im Elliot-Win64-Shipping.exe && echo done", False),
         ("py tools/verify/launch_dumpertest.py shipping", False),
@@ -1490,20 +1824,20 @@ def selftest() -> int:
        and json.loads(settings_text(merged_user)) == merged_user)
     # guard() with the world faked in-process: no game, no reservation, 9.5 GB free, and a Probe whose
     # `loaded` flag is stale -- the model it is about to judge was loaded by this same process.
-    saved = (globals()["running_images"], globals()["active_reservation"], globals()["gpu_free_mb"])
+    saved = (globals()["running_images"], globals()["active_reservation"], globals()["gpu_free"])
     try:
         globals().update(running_images=lambda: [], active_reservation=lambda games: None,
-                         gpu_free_mb=lambda: 9579)
+                         gpu_free=lambda: (9579, "GPU"))
         stale = Probe({"model": "m"})
-        stale.entry, stale.loaded = {"name": "m", "size": 13_309_873_056}, False
+        stale.entry, stale.loaded, stale._info = {"name": "m", "size": 13_309_873_056}, False, {}
         stale.is_loaded = lambda: True
         ok("guard: its OWN loaded model is not 'something else holding the GPU'", guard(stale) is None)
         cold = Probe({"model": "m"})
-        cold.entry, cold.loaded = {"name": "m", "size": 13_309_873_056}, False
+        cold.entry, cold.loaded, cold._info = {"name": "m", "size": 13_309_873_056}, False, {}
         cold.is_loaded = lambda: False
         ok("guard: a cold model with too little VRAM free is still refused", guard(cold) is not None)
     finally:
-        globals().update(running_images=saved[0], active_reservation=saved[1], gpu_free_mb=saved[2])
+        globals().update(running_images=saved[0], active_reservation=saved[1], gpu_free=saved[2])
 
     ok("newline: an LF file stays LF, a CRLF one CRLF, a new one LF",
        newline_of(b'{\n  "a": 1\n}') == "\n" and newline_of(b'{\r\n  "a": 1\r\n}') == "\r\n" and newline_of(None) == "\n")
@@ -1892,6 +2226,9 @@ def main(argv) -> int:
         u.add_argument("--url")
         u.add_argument("--num-ctx", type=int)
         u.add_argument("--exempt", action="append", help="a test-fixture exe prefix that may share the GPU")
+        u.add_argument("--min-free-vram-mb", type=int,
+                       help="refuse a cold load with less VRAM free than this (0 clears; a machine setting)")
+        u.add_argument("--force", action="store_true", help="install even from a checkout OLDER than the installed copy")
         u.add_argument("--remove", action="store_true", help=argparse.SUPPRESS if name == "install" else None)
     un2 = sub.add_parser("uninstall", help="remove the machine install and its hook")
     un2.add_argument("--leave-all", action="store_true", help="also remove the skill from every joined repo")
@@ -1899,6 +2236,8 @@ def main(argv) -> int:
                       ("leave", "take the skill back out of a repo")):
         j = sub.add_parser(name, help=hlp)
         j.add_argument("--repo")
+        if name == "join":
+            j.add_argument("--force", action="store_true", help="replace a skill file at that path that is not ours")
     sub.add_parser("repos", help="list the joined repos and whether their skill is current")
     args = ap.parse_args(argv)
     if args.cmd == "install" and args.remove:
