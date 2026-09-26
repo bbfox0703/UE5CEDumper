@@ -161,6 +161,42 @@ public class LiveWalkerForwardNavTests
 
     // ── View state (selection + scroll anchor) ──────────────────────────────
 
+    // [LW-BACK-SCROLL] Back must hand the View the row it drilled through. Replaying the saved
+    // top row alone scrolled that row to the BOTTOM edge ("make visible" from the top of a
+    // rebuilt grid), and the drilled row -- below it -- stayed off screen: measured on build
+    // 3567, DumperTestActor, drill Children [] from mid-list, Back, and Children was not visible.
+    [Fact]
+    public async Task Back_HandsTheViewTheRowItDrilledThrough()
+    {
+        var vm = MakeVm();
+        vm.Breadcrumbs.Add(Crumb("Root", "0x1000"));
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = "0x2000", Label = "Children", FieldName = "Children", FieldOffset = 0x190 });
+        BookmarkFieldRef? drilled = null;
+        vm.RestoreBookmarkView += (_, _, d) => drilled = d;
+
+        await vm.GoBackCommand.ExecuteAsync(null);
+
+        Assert.Equal(new BookmarkFieldRef("Children", 0x190), drilled);
+    }
+
+    [Fact]
+    public async Task BreadcrumbJump_HandsTheViewTheTargetsChildOnTheOldSpine()
+    {
+        var vm = MakeVm();
+        var root = Crumb("Root", "0x1000");
+        vm.Breadcrumbs.Add(root);
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = "0x2000", Label = "Mid", FieldName = "Mid", FieldOffset = 0x40 });
+        vm.Breadcrumbs.Add(new BreadcrumbItem { Address = "0x3000", Label = "Leaf", FieldName = "Leaf", FieldOffset = 0x8 });
+        BookmarkFieldRef? drilled = null;
+        vm.RestoreBookmarkView += (_, _, d) => drilled = d;
+
+        await vm.NavigateToBreadcrumbCommand.ExecuteAsync(root);
+
+        // Two levels up: the row to show in Root is the one that led to Mid, not to Leaf.
+        Assert.Equal(new BookmarkFieldRef("Mid", 0x40), drilled);
+    }
+
+
     [Fact]
     public async Task Back_CapturesTheSelectionOntoTheCrumbItLeaves()
     {
