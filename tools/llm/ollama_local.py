@@ -1110,6 +1110,11 @@ def selftest() -> int:
     ours = [h for g in again["hooks"]["PreToolUse"] for h in g["hooks"] if _is_our_hook(h)]
     ok("merge: idempotent, and a moved checkout replaces the path", len(ours) == 1 and ours[0]["args"][-2].startswith("E:/Moved"))
     ok("merge: exec form, no shell", ours[0]["command"] == "py" and ours[0]["args"][-1] == "hook")
+    user = {"hooks": {"PreToolUse": []}, "enabledPlugins": {}, "language": "繁體中文, English"}
+    merged_user = merge_hook(user, "py", "D:/R/tools/llm/ollama_local.py")
+    ok("merge: the user's key ORDER survives (hooks stays first)", list(merged_user) == list(user))
+    ok("settings text keeps non-ASCII literal, not \\u-escaped", "繁體中文" in settings_text(merged_user)
+       and json.loads(settings_text(merged_user)) == merged_user)
     ok("merge: runs through the missing-script bootstrap", ours[0]["args"][:2] == ["-c", HOOK_BOOTSTRAP]
        and ours[0]["args"][-2] == "E:/Moved/tools/llm/ollama_local.py")
     legacy = {"hooks": {"PreToolUse": [{"matcher": HOOK_MATCHER, "hooks": [{"type": "command", "command": "py",
