@@ -1132,6 +1132,23 @@ def selftest() -> int:
     ok("merge: the user's key ORDER survives (hooks stays first)", list(merged_user) == list(user))
     ok("settings text keeps non-ASCII literal, not \\u-escaped", "繁體中文" in settings_text(merged_user)
        and json.loads(settings_text(merged_user)) == merged_user)
+    # guard() with the world faked in-process: no game, no reservation, 9.5 GB free, and a Probe whose
+    # `loaded` flag is stale -- the model it is about to judge was loaded by this same process.
+    saved = (globals()["running_images"], globals()["active_reservation"], globals()["gpu_free_mb"])
+    try:
+        globals().update(running_images=lambda: [], active_reservation=lambda games: None,
+                         gpu_free_mb=lambda: 9579)
+        stale = Probe({"model": "m"})
+        stale.entry, stale.loaded = {"name": "m", "size": 13_309_873_056}, False
+        stale.is_loaded = lambda: True
+        ok("guard: its OWN loaded model is not 'something else holding the GPU'", guard(stale) is None)
+        cold = Probe({"model": "m"})
+        cold.entry, cold.loaded = {"name": "m", "size": 13_309_873_056}, False
+        cold.is_loaded = lambda: False
+        ok("guard: a cold model with too little VRAM free is still refused", guard(cold) is not None)
+    finally:
+        globals().update(running_images=saved[0], active_reservation=saved[1], gpu_free_mb=saved[2])
+
     ok("newline: an LF file stays LF, a CRLF one CRLF, a new one LF",
        newline_of(b'{\n  "a": 1\n}') == "\n" and newline_of(b'{\r\n  "a": 1\r\n}') == "\r\n" and newline_of(None) == "\n")
     ok("merge: runs through the missing-script bootstrap", ours[0]["args"][:2] == ["-c", HOOK_BOOTSTRAP]
