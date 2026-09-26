@@ -1,6 +1,6 @@
 ﻿// ============================================================
 // Frieren — 芙莉蓮, 葬送のフリーレン (主角 — Protagonist)
-// ExportAPI: ~30 C ABI exports for CE Lua bridge
+// ExportAPI: 63 C ABI exports for CE Lua bridge
 // ============================================================
 
 #include "Frieren.h"
