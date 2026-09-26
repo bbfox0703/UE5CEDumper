@@ -94,6 +94,7 @@ they are the ground truth for tone.
 | memory | 記憶體 | 內存 | |
 | program / software | 程式 / 軟體 | 程序 / 軟件 | |
 | information | 資訊 | 信息 | |
+| occupy / taken (a file name) | 佔用 | 占用 | maintainer's choice 2026-09-26 (MOE lists 占 as standard; this Wiki uses 佔) |
 
 ### From the Ministry of Education cross-strait table
 
