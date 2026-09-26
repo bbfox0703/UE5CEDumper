@@ -39,8 +39,17 @@ behaviours are Ollama's own):
   * cold load ~20 s; unload (keep_alive 0) ~0.35 s, VRAM back within 1 s.
   * ⚠ a DIFFERENT num_ctx RELOADS the model (another cold load), so num_ctx is fixed per machine
     (config key `num_ctx`, default NUM_CTX) and oversized input is refused or chunked, never "fixed"
-    with a bigger window. The window is cheap for this model: 8k -> 13.9 GB, 32k -> 14.4 GB,
-    64k -> ~15.4 GB.
+    with a bigger window.
+  * THE WINDOW IS CHEAP FOR THIS MODEL, and the GGUF header says why. Of its 48 layers, 40 are
+    sliding-window (8 KV heads x 256, capped at 1024 tokens whatever num_ctx is) and only 8 are
+    global -- with ONE KV head of 512. So each extra token of window costs 8 layers x 1 head x
+    (512 K + 512 V) x 2 bytes (f16) = 16 KiB of KV cache. Measured (VRAM over idle, 2026-09-26):
+        num_ctx    8192   16384   32768   65536   131072
+        MiB       14287   14447   14767   15407    16081
+    i.e. ~20 KiB/token (KV + compute buffer) up to 64k. From 64k to 128k it grew by half that,
+    so Ollama's memory fitting changes beyond 64k: measure, never extrapolate. To re-derive for
+    another model, read `<arch>.attention.*` from the GGUF header (head_count_kv, key_length,
+    value_length, sliding_window, sliding_window_pattern).
   * ⚠ /api/ps `size_vram` reported 1.09 GB for a model nvidia-smi measured at 13.9 GB. Never judge
     VRAM from it; "unloaded" means "absent from /api/ps".
   * ⚠ on Windows a connect to a CLOSED loopback port waits out the whole timeout (a 1.5 s timeout
