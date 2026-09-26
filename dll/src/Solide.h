@@ -114,7 +114,6 @@ inline IntWidth IntWidthOf(const std::string& typeName) {
     if (typeName == "Int64Property")  return { 8, true  };
     if (typeName == "Int8Property")   return { 1, true  };   // was read as UNSIGNED
     if (typeName == "ByteProperty")   return { 1, false };
-    if (typeName == "UInt8Property")  return { 1, false };
     return { 0, false };
 }
 
