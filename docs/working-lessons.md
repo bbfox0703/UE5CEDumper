@@ -3303,3 +3303,52 @@ so a paragraph there costs more than a paragraph anywhere else in the repo.
 CANNOT.** A row saying *what a doc contains* has to be re-verified whenever that doc changes, and
 nobody does. A row saying *when you would open it* survives. That is why the rule is phrased as a
 question ("when would I open this?") and capped in bytes.
+
+-----
+
+## 8. Writing code comments
+
+`[COMMENT-INTEGRITY-2026-09-26]`, measured on build 3560 ([comment-integrity-eval.md](comment-integrity-eval.md)):
+**26% of sampled comment blocks were stale** (DLL 30-33%, UI 13%), and **69% of in-repo `File.cpp:NNN`
+references pointed at a line that had moved**. No sampled block was stale because of a UE-version change. The
+dominant cause is **additive drift**: a later commit adds a caller, a field, a pipe key or an enum value, and the
+comment that LISTS them, often in another file, is never opened. Comments tied to a finding tag whose record still
+exists stayed accurate. What rots is the comment that restates the code, and above all the one that counts.
+
+**The rules** (the first four are the ones the sample actually caught):
+
+1. **Say WHY, and state the invariant.** Do not restate what the next line visibly does.
+2. **Do not enumerate** callers, fields, keys, modules or states. State the rule instead ("every non-pipe caller
+   wants a bounded scan"), or name the one symbol that owns the list. `Aura.h` listed five internal callers of
+   `FindInstancesByClass` while nine modules called it.
+3. **No uniqueness or role claims** ("the only caller", "used only for", "both X and Y") unless an assert or a
+   gate enforces them. They go stale the day a second caller appears, and three of the sampled ones were wrong
+   when they were written.
+4. **No plan-phase wording in shipped code** (P1 / P2 / P3, "will", "reserved for"). Rewrite it in the commit that
+   ships the phase. `Laufen.h` still said "P1 wires WALK_SPEED" long after all three knobs shipped.
+5. **No line numbers into this repo.** Cite a function, a constant, a table row or a `[TAG]`: they move with the
+   code. A line in another codebase (UE engine source, CE's Pascal) is fine; name the version beside it.
+   ⛔ Gate: `check_comment_refs` (LINE).
+6. **A number the code depends on becomes an assert** (`static_assert(std::size(TABLE) == N)`, a `Count`
+   sentinel), or a claim in `check_derived_counts`' registry. Otherwise reword so the comment does not count.
+   `Frieren.cpp` said "~30 C ABI exports" over 63 because the registry pinned the `.h` banner and not the `.cpp`.
+7. **History and measurements live in `todo.md` / `dev-log.md` under a `[TAG]`**, and the comment cites the tag.
+   ⛔ Gate: every `[TAG]`, `.md` and `§` a comment names must resolve (REFS). "No test target compiles X" is
+   checked against `dll/tests` (TESTTARGET).
+8. **C#: one `<summary>` per member.** Inserting a type between a doc block and its member silently re-attaches
+   the doc to the new type. ⛔ Gate: CSDOC.
+
+**At change time.** A gate cannot know what a comment should say; the aid puts the comment in front of you at the
+moment it goes stale:
+
+```bash
+py tools/verify/comment_impact.py --staged
+```
+
+It lists every comment block elsewhere that names a symbol the diff touches, in its text or on the declaration
+directly below it. Starred blocks enumerate or claim uniqueness: read those first. Run it before committing a
+change that adds or removes a caller, a field, a pipe key or an enum value. Give its output to a skeptic reviewing a
+diff (`--range A..B`). **Boy-scout rule:** fix a stale comment you read in a file you are already touching.
+
+**Tracking the rate:** re-run `py tools/verify/comment_sample.py` with a new seed at a release. 26% is the baseline
+to push down.
