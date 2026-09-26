@@ -58,7 +58,7 @@ public class FlyExportFollowsExperimentalTests : IDisposable
         Assert.Contains("Movement", ct, StringComparison.Ordinal);
     }
 
-    private sealed class Gate(bool enabled) : IExperimentalGate
+    internal sealed class Gate(bool enabled) : IExperimentalGate
     {
         public bool IsEnabled { get; set; } = enabled;
         public int SnapshotQuotaMb { get; set; } = 1024;
@@ -67,7 +67,7 @@ public class FlyExportFollowsExperimentalTests : IDisposable
         public event EventHandler? Changed { add { } remove { } }
     }
 
-    private sealed class SavingPlatform(string dir) : IPlatformService
+    internal sealed class SavingPlatform(string dir) : IPlatformService
     {
         public string SavedPath { get; } = Path.Combine(dir, "teleport.CT");
         public bool TryAcquireSingleInstance() => true;
@@ -82,7 +82,7 @@ public class FlyExportFollowsExperimentalTests : IDisposable
             => Task.FromResult<string?>(SavedPath);
     }
 
-    private sealed class RecordingBridge : IAobMakerBridge
+    internal sealed class RecordingBridge : IAobMakerBridge
     {
         public List<string> Descriptions { get; } = new();
         public bool IsAvailable => true;

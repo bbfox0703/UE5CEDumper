@@ -14,20 +14,39 @@ public class WikiTooltipAccuracyB3Tests
     private const string TeleportVm = "ui/UE5DumpUI/ViewModels/TeleportViewModel.cs";
 
     [Fact]
-    public void Teleport_export_tips_state_the_record_counts_the_builders_produce()
+    public void Save_CT_tip_states_the_record_counts_the_builders_produce()
     {
-        int teleport = TeleportScriptGenerator.BuildBatchRows().Count;
-        int movement = MovementScriptGenerator.BuildBatchRows(100, 100, 100, 0, 0, -1).Count;
-        int time = TimeDilationScriptGenerator.BuildBatchRows(1.0).Count;
-        int fly = FlyScriptGenerator.BuildBatchRows().Count;
-        foreach (var key in new[] { "str.Tip.TP.AddActions", "str.Tip.TP.SaveCt" })
+        // SaveCtAsync is built from exactly these four builders.
+        var tip = EnString("str.Tip.TP.SaveCt");
+        Assert.Contains($"{TeleportScriptGenerator.BuildBatchRows().Count} teleport", tip, StringComparison.Ordinal);
+        Assert.Contains($"{MovementScriptGenerator.BuildBatchRows(100, 100, 100, 0, 0, -1).Count} movement", tip, StringComparison.Ordinal);
+        Assert.Contains($"{TimeDilationScriptGenerator.BuildBatchRows(1.0).Count} time", tip, StringComparison.Ordinal);
+        Assert.Contains($"{FlyScriptGenerator.BuildBatchRows().Count} Fly", tip, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Add_actions_tip_states_the_record_counts_the_command_sends()
+    {
+        // [WIKI-REVIEW-TESTS] AddActionsToCeAsync does not use the .CT builders -- its lists are its
+        // own -- so count what the command actually sends, with Experimental on (every group present).
+        var dir = Path.Combine(Path.GetTempPath(), $"UE5DumpAddActions_{Guid.NewGuid():N}");
+        Directory.CreateDirectory(dir);
+        try
         {
-            var tip = EnString(key);
-            Assert.Contains($"{teleport} teleport", tip, StringComparison.Ordinal);
-            Assert.Contains($"{movement} movement", tip, StringComparison.Ordinal);
-            Assert.Contains($"{time} time", tip, StringComparison.Ordinal);
-            Assert.Contains($"{fly} Fly", tip, StringComparison.Ordinal);
+            var bridge = new FlyExportFollowsExperimentalTests.RecordingBridge();
+            var vm = new UE5DumpUI.ViewModels.TeleportViewModel(new StubDumpService(), new MockLoggingService(),
+                new FlyExportFollowsExperimentalTests.SavingPlatform(dir), aobMaker: bridge,
+                experimentalGate: new FlyExportFollowsExperimentalTests.Gate(true));
+            await vm.AddActionsToCeCommand.ExecuteAsync(null);
+
+            int Sent(string prefix) => bridge.Descriptions.Count(d => d.StartsWith(prefix, StringComparison.Ordinal));
+            var tip = EnString("str.Tip.TP.AddActions");
+            Assert.Contains($"{Sent("Teleport:")} teleport", tip, StringComparison.Ordinal);
+            Assert.Contains($"{Sent("Movement:")} movement", tip, StringComparison.Ordinal);
+            Assert.Contains($"{Sent("Time:")} time", tip, StringComparison.Ordinal);
+            Assert.Contains($"{Sent("Fly:")} Fly", tip, StringComparison.Ordinal);
         }
+        finally { try { Directory.Delete(dir, recursive: true); } catch { /* best-effort */ } }
     }
 
     [Fact]

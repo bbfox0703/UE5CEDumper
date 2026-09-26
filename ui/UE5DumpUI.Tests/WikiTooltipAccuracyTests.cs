@@ -34,11 +34,15 @@ public class WikiTooltipAccuracyTests
             @"<Slider Value=""\{Binding ScanTimeoutSeconds\}""\s+Minimum=""(\d+)"" Maximum=""(\d+)""");
         Assert.True(slider.Success, "the ScanTimeoutSeconds slider was not found");
 
+        // [WIKI-REVIEW-TESTS] A fresh install takes the default from the persisted options, which
+        // overwrite the VM initializer at startup; pin the initializer to it so neither can drift.
+        int settingsDefault = new UE5DumpUI.Models.UiOptionsSettings().ValueSearch.ScanTimeoutSeconds;
         var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/ValueSearchViewModel.cs"));
         var dflt = Regex.Match(vm, @"_scanTimeoutSeconds = (\d+);");
-        Assert.True(dflt.Success, "the ScanTimeoutSeconds default was not found");
+        Assert.True(dflt.Success, "the ScanTimeoutSeconds initializer was not found");
+        Assert.Equal(settingsDefault.ToString(), dflt.Groups[1].Value);
 
-        var expected = $"{slider.Groups[1].Value}–{slider.Groups[2].Value}s, default {dflt.Groups[1].Value}";
+        var expected = $"{slider.Groups[1].Value}–{slider.Groups[2].Value}s, default {settingsDefault}";
         Assert.Contains(expected, EnString("str.Tip.VS.Timeout"), StringComparison.Ordinal);
         Assert.Contains(expected, EnString("str.Tip.VS.MaxResults"), StringComparison.Ordinal);
     }
