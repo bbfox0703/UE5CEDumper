@@ -105,7 +105,8 @@ GATES = [
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
      "an en.axaml key is referenced-but-undefined (a load-time crash) or "
-     "defined-but-unreferenced (dead). Run 'py tools/check_axaml_strings.py --list'", False),
+     "defined-but-unreferenced (dead), or a view hard-codes a user-visible string. "
+     "Run 'py tools/check_axaml_strings.py --list'", False),
 
     ("check_mailbox_contract",
      ["tools/check_mailbox_contract.py"],

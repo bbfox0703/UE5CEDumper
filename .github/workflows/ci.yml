@@ -97,14 +97,15 @@ jobs:
           # max(SizeOfRawData, VirtualSize) section rule. Stdlib-only, ~1s, no corpus.
           & $py tools/ghidra/pe_scan_selftest.py
           if ($LASTEXITCODE -ne 0) { throw "pe_scan_selftest FAILED ($LASTEXITCODE) - pe_scan_patterns.py/pe_memory.py no longer match the behaviour scan_patterns.java specifies" }
-          # UI string dictionary, both directions (audit #4 R6). DANGLING is the crash case -
+          # UI string dictionary, three directions (audit #4 R6; INLINE added by
+          # [AXAML-INLINE-STRINGS]: a view attribute holding literal English). DANGLING is the crash case -
           # a missing StaticResource raises at load time, taking down whichever panel uses it -
           # and ORPHAN is the honesty case: a dictionary full of unreachable keys misrepresents
           # what is actually localizable, which the translation pass then pays for. 24 orphans
           # had accumulated by the audit, two of them SHADOWED by hardcoded C# computing the
           # same text. Stdlib-only, no Avalonia, <1s.
           & $py tools/check_axaml_strings.py
-          if ($LASTEXITCODE -ne 0) { throw "check_axaml_strings FAILED ($LASTEXITCODE) - an en.axaml key is referenced-but-undefined (a load-time crash) or defined-but-unreferenced (dead). Run 'py tools/check_axaml_strings.py --list' for both sets." }
+          if ($LASTEXITCODE -ne 0) { throw "check_axaml_strings FAILED ($LASTEXITCODE) - an en.axaml key is referenced-but-undefined (a load-time crash) or defined-but-unreferenced (dead), or a view hard-codes a user-visible string. Run 'py tools/check_axaml_strings.py --list' for all three sets." }
           # CE Lua <-> DLL mailbox contract. Every generated script bakes a contract version
           # and checks itself against what the DLL publishes - but that is only worth anything
           # if the version actually moves when the contract does. A FORGOTTEN bump is worse
