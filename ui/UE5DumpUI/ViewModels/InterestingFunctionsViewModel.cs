@@ -860,7 +860,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     {
         if (selected is null || selected.Count == 0)
         {
-            StatusText = "Select 2+ rows first (Ctrl/Shift+click).";
+            StatusText = "Select at least one row first (Ctrl/Shift+click adds more).";
             return;
         }
 
