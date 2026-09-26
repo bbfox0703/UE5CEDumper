@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3567) — Auto snapshot stopped by hand says so `[AUTOSNAP-STOP-STALE-STATUS]`
+
+- Found by 3566's live check: turning Auto snapshot OFF left its status frozen on *"Auto: next snapshot in 28s ·
+  captured 1"* — the loop left on the cancellation without writing it, promising a capture that never came. Both
+  cancellation exits (the toggle, a disconnect) now write *"Auto snapshot stopped · captured N"*; the self-stops
+  keep their own reasons. A new view-model status string, so it is an en.axaml key (`str.Snapshot.Auto.Stopped`,
+  via `Res.Format`), per `[VM-INLINE-STRINGS]`.
+- Test: `SnapshotViewModelTests.AutoSnapshot_StoppedByHand_DoesNotKeepPromisingTheNextSnapshot` (red first). UI
+  suite 5,643 run, 0 failed. Gates 28 run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,206,720 B `97085fcb70e6`, `UE5Dumper.dll` 3,016,192 B `0c2a680e4ec3`
+  (unchanged source; rebuilt with the build number); proxies version `51cfc279fedf`, dinput8 `46e21220e534`, dxgi
+  `06803b971f27`, winmm `71eae26c0cbe`. ✅ Live-checked on DumperTest 5.4 Shipping: OFF mid-countdown shows the
+  stopped line, and it stays.
+
 ## 2026-09-26 (build 3566) — the Wiki check's last batch, two behaviour fixes, and what an adversarial review found in the first two `[WIKI-TIPS-B3]` `[SNAPSHOT-MANUAL-GATE]` `[FLY-EXPORT-EXPERIMENTAL]`
 
 - **Behaviour:** manual Capture / Estimate stand down while Auto Snapshot runs — `CanManualCapture` existed and
