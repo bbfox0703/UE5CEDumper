@@ -762,7 +762,8 @@ def selftest() -> int:
         ("steam -silent -applaunch 3483510", True),
         ("start steam://rungameid/1363080", True),
         ('start "" "D:\\SteamLibrary\\steamapps\\common\\Elliot\\Binaries\\Win64\\Elliot-Win64-Shipping.exe"', True),
-        ("taskkill /IM Elliot-Win64-Shipping.exe", True),   # safe direction: an unneeded unload
+        ("taskkill /IM Elliot-Win64-Shipping.exe", False),  # a kill is not a launch (and now reserves the GPU)
+        ("taskkill /f /im Elliot-Win64-Shipping.exe && echo done", False),
         ("py tools/verify/launch_dumpertest.py shipping", False),
         ("py tools/verify/inject.py --name DumperTest", False),
         ('"D:\\Out\\DumperTest51\\Binaries\\Win64\\DumperTest51-Win64-Shipping.exe" -windowed', False),
@@ -861,6 +862,41 @@ def selftest() -> int:
     ours = [h for g in again["hooks"]["PreToolUse"] for h in g["hooks"] if _is_our_hook(h)]
     ok("merge: idempotent, and a moved checkout replaces the path", len(ours) == 1 and ours[0]["args"][0].startswith("E:/Moved"))
     ok("merge: exec form, no shell", ours[0]["command"] == "py" and ours[0]["args"][-1] == "hook")
+    ok("merge: runs through the missing-script bootstrap", ours[0]["args"][:2] == ["-c", HOOK_BOOTSTRAP]
+       and ours[0]["args"][-2] == "E:/Moved/tools/llm/ollama_local.py")
+    legacy = {"hooks": {"PreToolUse": [{"matcher": HOOK_MATCHER, "hooks": [{"type": "command", "command": "py",
+              "args": ["D:/R/tools/llm/ollama_local.py", "hook"]}]}]}}
+    ok("remove: the pre-bootstrap exec form is still recognised as ours", remove_hook(legacy) == {})
+    saved_argv = sys.argv
+    try:
+        sys.argv = ["-c", "Z:/no/such/dir/tools/llm/ollama_local.py", "hook"]
+        exec(compile(HOOK_BOOTSTRAP, "<bootstrap>", "exec"), {"__name__": "bootstrap"})
+        ran_clean = True
+    except BaseException:                            # noqa: BLE001 -- SystemExit(2) is the failure
+        ran_clean = False
+    finally:
+        sys.argv = saved_argv
+    ok("bootstrap: a missing script is a silent no-op, never exit 2 (which BLOCKS the tool call)", ran_clean)
+
+    procs = parse_tasklist_procs('"Elliot-Win64-Shipping.exe","4242","Console","1","3 K"\r\n"py.exe","77","C","1","9 K"\r\n')
+    ok("tasklist: pid and image", procs == [(4242, "Elliot-Win64-Shipping.exe"), (77, "py.exe")])
+
+    now = 10_000.0
+    leases = [{"pid": 1, "started": now - 5}, {"pid": 2, "started": now - 5},
+              {"pid": 3, "started": now - LEASE_MAX_AGE_S - 1}, {"pid": 99, "started": now - 1}, "junk"]
+    ok("leases: only other LIVE, FRESH processes count",
+       [r["pid"] for r in live_leases(leases, now, alive_pids={1, 3, 99}, own_pid=99)] == [1])
+
+    for marker, running, want in [
+        (None, False, "none"), (None, True, "none"),
+        ({"kind": "launch", "set_at": now - 60}, False, "active"),
+        ({"kind": "launch", "set_at": now - RESERVE_GRACE_S["launch"] - 1}, False, "expired"),
+        ({"kind": "running", "set_at": now - RESERVE_GRACE_S["running"] - 1}, False, "expired"),
+        ({"kind": "running", "set_at": now - 999_999}, True, "active"),
+        ({"kind": "???", "set_at": now - 60}, False, "active"),
+    ]:
+        ok(f"reservation {marker and marker['kind']} game={running} -> {want}",
+           reservation_state(marker, now, running) == want)
     ok("remove: restores the foreign settings exactly", remove_hook(again) == foreign)
     ok("remove: an only-ours file loses the hooks key", remove_hook(merge_hook({}, "py", "D:/R/tools/llm/ollama_local.py")) == {})
     ok("remove: a foreign hook that merely mentions the script is kept",
