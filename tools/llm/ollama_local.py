@@ -4,8 +4,10 @@ r"""Local Ollama helper for Claude Code sessions: opt-in per machine, a no-op ev
     py tools/llm/ollama_local.py status [--json]      # disabled | absent | no-model | ready
     py tools/llm/ollama_local.py warm                 # load the model now (the cold load is the slow part)
     py tools/llm/ollama_local.py ask --prompt TEXT [--file PATH ...] [--chunked] [--think]
-    py tools/llm/ollama_local.py unload               # free the VRAM now
-    py tools/llm/ollama_local.py setup --model TAG    # opt THIS machine in (two gitignored files)
+    py tools/llm/ollama_local.py unload [--wait S]    # free the VRAM now (PENDING if a request is in flight)
+    py tools/llm/ollama_local.py reserve [--wait S]   # reserve the GPU for a game, machine-wide, then unload
+    py tools/llm/ollama_local.py release              # clear a reservation (an abandoned launch)
+    py tools/llm/ollama_local.py setup --model TAG    # opt THIS machine in
     py tools/llm/ollama_local.py setup --remove       # opt it back out
     py tools/llm/ollama_local.py hook                 # the PreToolUse hook body (hook JSON on stdin)
     py tools/llm/ollama_local.py --selftest           # pure-logic controls: no network, no processes
@@ -14,25 +16,40 @@ WHEN to use it is the skill's business: .claude/skills/local-llm/SKILL.md. This 
 mechanism and the guard.
 
 Exit codes: 0 done / ready, 2 not available here (disabled, absent, no model), 3 refused (a
-commercial game holds the GPU, or too little VRAM is free), 4 input too large, 1 anything else.
+commercial game holds the GPU, a reservation, or too little VRAM free), 4 input too large,
+5 unload still pending (a request in flight), 1 anything else.
 
 ⭐ OPT-IN, BECAUSE THE REPO IS PUBLIC. Nothing machine-specific is committed. A machine opts in with
-`setup`, which writes `.claude/local-llm.json` (the model tag) and a PreToolUse hook into
-`.claude/settings.local.json` -- both gitignored by `.claude/*`. Without that file every subcommand
-answers `disabled` WITHOUT touching the network, so a clone on the other PC, or a stranger's, is
-unaffected even if it happens to run Ollama with the same model.
+`setup`, which writes `.claude/local-llm.json` (the model tag; gitignored by `.claude/*`) and puts the
+PreToolUse hook in the USER-level ~/.claude/settings.json, so it guards every session on the machine,
+in every repo. Without the opt-in file every subcommand answers `disabled` WITHOUT touching the
+network, so a clone on the other PC, or a stranger's, is unaffected even if it runs Ollama with the
+same model -- and the hook itself returns at once.
 
 ⛔ GAMES AND VRAM. A 12B Q8 model holds ~14 GB of VRAM; a commercial game under test must not share
-the card with it. Three layers, because a rule the model has to remember is not a rule:
+the card with it. Layered, because a rule the model has to remember is not a rule:
   1. `ask` / `warm` REFUSE while a commercial game process is running -- and unload on the way out.
-  2. `hook` runs before every Bash / PowerShell tool call. It unloads before an explicit launch
-     (steam -applaunch, a *-Win64-Shipping.exe path in the command) and whenever the model is
-     loaded while a commercial game is already running -- which also catches rigs and manual
-     launches, one tool call late.
-  3. KEEP_ALIVE is short, so an idle model leaves on its own.
+     The check runs before EVERY request, each --chunked slice included.
+  2. `hook` runs before every Bash / PowerShell tool call, in every session on the machine. It
+     unloads before an explicit launch (steam -applaunch, a *-Win64-Shipping.exe path in the
+     command) and whenever the model is loaded while a commercial game is already running -- which
+     also catches rigs and manual launches, one tool call late.
+  3. A machine-wide GPU RESERVATION (%LOCALAPPDATA%\claude-local-llm\gpu-reserved.json), written by
+     the hook on a launch, by (1) when it sees a game, and by `reserve`. Every session refuses while
+     it holds -- which is what stops ANOTHER session loading the model back in the gap before the
+     game's process appears. It lapses RESERVE_GRACE_S after the evidence; `release` clears it.
+  4. KEEP_ALIVE is short, so an idle model leaves on its own.
   The DumperTest fixtures (DumperTest, DumperTest51, DumperTest58, ...) are exempt: the maintainer's
-  rule. ⚠ THE KNOWN GAP: a rig that LAUNCHES a commercial game inside one tool call starts it after
-  the hook has already run. The skill says to `unload` before such a rig.
+  rule. ⚠ THE REMAINING GAPS: a rig that LAUNCHES a commercial game inside one tool call starts it
+  after the hook has run -- the skill says `reserve` before such a rig; and a request already in
+  flight is never cut short, so the VRAM frees when it ends (Ollama defers the unload; measured).
+
+CROSS-SESSION, MEASURED 2026-09-26 with OLLAMA_NUM_PARALLEL=1 (two real processes): a second
+session's request QUEUES behind the first (3.8 s alone -> 7.6 s); an unload sent mid-request is
+DEFERRED until it ends. So ask/warm hold a LEASE (leases\<pid>.json beside the reservation) while a
+request is in flight: `status` shows other sessions' as in_use_by, and a PENDING unload names the
+holder. Nothing here sees `ollama run`, another app or a LAN client -- Ollama exposes no in-flight
+requests.
 
 MEASURED 2026-09-25 on the first machine that opted in (the numbers are hardware-bound; the
 behaviours are Ollama's own):

@@ -285,8 +285,10 @@ lua scripts/tests/freeze_helper_test.lua
 [`llm/ollama_local.py`](llm/ollama_local.py) lets a session hand bulk text work (large logs, dumps,
 translation drafts) to a local model, reading the files itself so they never enter the session's
 context. It is **opt-in per machine**: without the gitignored `.claude/local-llm.json` every
-subcommand answers `disabled` and touches nothing. Its PreToolUse hook unloads the model before a
-commercial game launches; the DumperTest fixtures are exempt. **When** to use it is the skill's job:
+subcommand answers `disabled` and touches nothing. Its PreToolUse hook (user-level, so every
+session on the machine) unloads the model and reserves the GPU machine-wide before a commercial game
+launches; the DumperTest fixtures are exempt. `status` shows other sessions with a request in flight.
+**When** to use it is the skill's job:
 [`.claude/skills/local-llm/SKILL.md`](../.claude/skills/local-llm/SKILL.md).
 
 ```bash
