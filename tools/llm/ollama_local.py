@@ -106,6 +106,25 @@ TEMPERATURE = 0.2
 VRAM_MARGIN_MB = 1536                  # KV cache + runtime on top of the weights
 HOOK_TIMEOUT_S = 15
 HOOK_MATCHER = "Bash|PowerShell"
+# The hook runs `python -c HOOK_BOOTSTRAP <script> hook`, never `python <script> hook`: for a missing
+# script python exits 2, and a PreToolUse hook exiting 2 BLOCKS the tool call -- every Bash call, in
+# every repo, once the hook lives in the user-level settings. The bootstrap makes that a silent no-op.
+HOOK_BOOTSTRAP = ("import os,sys,runpy;p=sys.argv[1];sys.argv=[p]+sys.argv[2:];"
+                  "os.path.isfile(p) and runpy.run_path(p,run_name='__main__')")
+USER_SETTINGS = pathlib.Path.home() / ".claude" / "settings.json"
+USER_SETTINGS_BACKUP_SUFFIX = ".before-local-llm"
+# Cross-session state is MACHINE-wide (every session, every repo), so it lives outside any checkout --
+# and outside %LOCALAPPDATA%\UE5CEDumper, which is the UI app's own data (CLAUDE.md "App-data layout").
+STATE_DIRNAME = "claude-local-llm"
+LEASE_DIRNAME = "leases"
+RESERVATION_FILE = "gpu-reserved.json"
+LEASE_MAX_AGE_S = GENERATE_TIMEOUT * 3  # older than any request can run: stale even if its pid was reused
+# How long a GPU reservation outlives its evidence: a launch has until the game's process appears; a
+# game seen running keeps it active, and it lapses shortly after the game exits.
+RESERVE_GRACE_S = {"launch": 180, "running": 30}
+UNLOAD_WAIT_S = 5                      # Ollama DEFERS an unload until any in-flight request ends
+HOOK_UNLOAD_WAIT_S = 5                 # the hook must stay well inside HOOK_TIMEOUT_S
+EXIT_UNLOAD_PENDING = 5
 ASCII_CHARS_PER_TOKEN = 2.0            # planning only; numeric logs measured 1.5-1.7, prose ~4
 HOPELESS_CHARS_PER_TOKEN = 8           # no real text averages more, so len/8 > window can't fit
 CHUNK_SLACK_TOKENS = 256
@@ -170,6 +189,8 @@ def command_launches_commercial(command: str) -> str | None:
     if m:
         return m.group(0)
     for m in COMMAND_EXE_RE.finditer(command or ""):
+        if re.search(r"/im\s+[\"']?$", command[max(0, m.start() - 8):m.start()], re.I):
+            continue                                 # `taskkill /IM <exe>` names it to KILL it
         if _is_game_stem(m.group(1)):
             return m.group(0)
     return None
@@ -187,10 +208,34 @@ def hook_command(raw: str) -> str:
         return raw or ""
 
 
+def parse_tasklist_procs(text: str) -> list[tuple[int, str]]:
+    """(pid, image) from `tasklist /FO CSV /NH`; the "INFO: No tasks" line is dropped."""
+    out = []
+    for row in csv.reader(io.StringIO(text or "")):
+        if len(row) >= 2 and row[0].lower().endswith(".exe") and row[1].strip().isdigit():
+            out.append((int(row[1]), row[0]))
+    return out
+
+
 def parse_tasklist(text: str) -> list[str]:
-    """Image names from `tasklist /FO CSV /NH`; the "INFO: No tasks" line is dropped."""
-    return [row[0] for row in csv.reader(io.StringIO(text or ""))
-            if row and row[0].lower().endswith(".exe")]
+    return [name for _, name in parse_tasklist_procs(text)]
+
+
+def live_leases(records, now: float, alive_pids, own_pid: int) -> list[dict]:
+    """Leases of OTHER processes with a request in flight: pid alive, and younger than any request
+    can run (so a reused pid cannot keep a dead lease alive)."""
+    return [r for r in records if isinstance(r, dict) and r.get("pid") != own_pid
+            and r.get("pid") in alive_pids and 0 <= now - float(r.get("started") or 0) < LEASE_MAX_AGE_S]
+
+
+def reservation_state(marker, now: float, game_running: bool) -> str:
+    """none | active | expired. A game seen running keeps it active however old the marker is."""
+    if not isinstance(marker, dict):
+        return "none"
+    if game_running:
+        return "active"
+    grace = RESERVE_GRACE_S.get(marker.get("kind"), max(RESERVE_GRACE_S.values()))
+    return "active" if 0 <= now - float(marker.get("set_at") or 0) < grace else "expired"
 
 
 def commercial_games(images) -> list[str]:
@@ -290,7 +335,7 @@ def merge_hook(settings: dict, python: str, script: str) -> dict:
     hooks = dict(out.get("hooks") or {})
     hooks["PreToolUse"] = list(hooks.get("PreToolUse") or []) + [{
         "matcher": HOOK_MATCHER,
-        "hooks": [{"type": "command", "command": python, "args": [script, "hook"],
+        "hooks": [{"type": "command", "command": python, "args": ["-c", HOOK_BOOTSTRAP, script, "hook"],
                    "timeout": HOOK_TIMEOUT_S}],
     }]
     out["hooks"] = hooks
@@ -313,8 +358,8 @@ def http_json(url: str, payload=None, timeout: float = PROBE_TIMEOUT):
         return json.loads(r.read().decode("utf-8"))
 
 
-def _toolhelp_images() -> list[str]:
-    """Process image names from a Toolhelp32 snapshot -- milliseconds, where `tasklist` took ~1.6 s.
+def _toolhelp_processes() -> list[tuple[int, str]]:
+    """(pid, image) from a Toolhelp32 snapshot -- milliseconds, where `tasklist` took ~1.6 s.
 
     The hook runs before EVERY Bash call while the model is loaded, so the spawn cost was paid on each
     one (measured 2026-09-25). ctypes, not PowerShell: see the AMSI note in handover section 10."""
@@ -341,11 +386,11 @@ def _toolhelp_images() -> list[str]:
     try:
         entry = PROCESSENTRY32W()
         entry.dwSize = ctypes.sizeof(entry)
-        names, more = [], k32.Process32FirstW(snap, ctypes.byref(entry))
+        procs, more = [], k32.Process32FirstW(snap, ctypes.byref(entry))
         while more:
-            names.append(entry.szExeFile)
+            procs.append((int(entry.th32ProcessID), entry.szExeFile))
             more = k32.Process32NextW(snap, ctypes.byref(entry))
-        return names
+        return procs
     finally:
         k32.CloseHandle(snap)
 
@@ -367,10 +412,10 @@ def _post_with_retry(url: str, payload, timeout: float, post=None, sleep=time.sl
     return post(url, payload, timeout=timeout)
 
 
-def running_images() -> list[str]:
+def running_processes() -> list[tuple[int, str]]:
     if os.name == "nt":
         try:
-            return _toolhelp_images()
+            return _toolhelp_processes()
         except (OSError, AttributeError, ValueError):
             pass                                                  # fall back to tasklist
     try:
@@ -378,7 +423,104 @@ def running_images() -> list[str]:
                              errors="replace", timeout=15).stdout
     except (OSError, subprocess.SubprocessError):
         return []
-    return parse_tasklist(out)
+    return parse_tasklist_procs(out)
+
+
+def running_images() -> list[str]:
+    return [name for _, name in running_processes()]
+
+
+# ── Cross-session state (machine-wide; every write is best-effort and never fails the caller) ───────
+def state_dir() -> pathlib.Path:
+    base = os.environ.get("LOCALAPPDATA") or str(pathlib.Path.home() / ".cache")
+    return pathlib.Path(base) / STATE_DIRNAME
+
+
+def _read_json(path: pathlib.Path):
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def _write_json(path: pathlib.Path, data) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data), encoding="utf-8")
+        return True
+    except OSError:
+        return False
+
+
+class Lease:
+    """Announces, machine-wide, that THIS process has a request in flight -- so `status` / `unload`
+    in any other session can say who the model is busy for. Removed on exit; a crashed holder's
+    lease is dropped once its pid is gone or it outlives LEASE_MAX_AGE_S."""
+
+    def __init__(self, action: str):
+        self.action = action
+        self.path = state_dir() / LEASE_DIRNAME / f"{os.getpid()}.json"
+
+    def __enter__(self):
+        _write_json(self.path, {"pid": os.getpid(), "action": self.action, "cwd": os.getcwd(),
+                                "started": time.time()})
+        return self
+
+    def __exit__(self, *exc):
+        try:
+            self.path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        return False
+
+
+def other_leases() -> list[dict]:
+    """Other processes' live leases; dead or stale lease files are pruned on the way."""
+    d = state_dir() / LEASE_DIRNAME
+    found = [(f, _read_json(f)) for f in (d.glob("*.json") if d.is_dir() else [])]
+    live = live_leases([r for _, r in found], time.time(), {pid for pid, _ in running_processes()},
+                       os.getpid())
+    for f, r in found:
+        if r not in live and not (isinstance(r, dict) and r.get("pid") == os.getpid()):
+            try:
+                f.unlink(missing_ok=True)
+            except OSError:
+                pass
+    return live
+
+
+def describe_leases(leases) -> str:
+    now = time.time()
+    return "; ".join(f"pid {r.get('pid')} {r.get('action')} from {r.get('cwd')} "
+                     f"({now - float(r.get('started') or now):.0f}s)" for r in leases)
+
+
+def read_reservation():
+    return _read_json(state_dir() / RESERVATION_FILE)
+
+
+def reserve_gpu(kind: str, reason: str) -> None:
+    _write_json(state_dir() / RESERVATION_FILE, {"kind": kind, "reason": reason, "set_at": time.time(),
+                                                 "pid": os.getpid(), "cwd": os.getcwd()})
+
+
+def release_gpu() -> bool:
+    try:
+        path = state_dir() / RESERVATION_FILE
+        existed = path.is_file()
+        path.unlink(missing_ok=True)
+        return existed
+    except OSError:
+        return False
+
+
+def active_reservation(games) -> dict | None:
+    """The reservation if it still holds (an expired one is deleted); `games` = running commercial games."""
+    marker = read_reservation()
+    state = reservation_state(marker, time.time(), bool(games))
+    if state == "expired":
+        release_gpu()
+    return marker if state == "active" else None
 
 
 def gpu_free_mb():
@@ -444,19 +586,33 @@ class Probe:
             return False
         return find_model(ps, self.name) is not None
 
-    def unload(self) -> bool:
-        """keep_alive 0, then wait until /api/ps no longer lists it (never trust size_vram)."""
+    def unload(self, wait_s: float = UNLOAD_WAIT_S) -> str:
+        """unloaded | pending | failed. keep_alive 0, then watch /api/ps (never trust size_vram).
+
+        ⚠ `pending` is NOT a failure. Measured 2026-09-26: Ollama DEFERS the unload until any request
+        in flight -- another session's -- has finished, then frees the model within ~0.5 s. The old
+        code reported that as "STILL LOADED"."""
         try:
             http_json(self.url + "/api/generate", {"model": self.name, "keep_alive": 0},
                       timeout=UNLOAD_TIMEOUT)
         except Exception:                           # noqa: BLE001
-            return False
-        for _ in range(20):
-            if not self.is_loaded():
-                self.loaded = False
-                return True
+            return "failed"
+        deadline = time.monotonic() + wait_s
+        while self.is_loaded():
+            if time.monotonic() >= deadline:
+                return "pending"
             time.sleep(0.25)
-        return False
+        self.loaded = False
+        return "unloaded"
+
+
+def pending_note() -> str:
+    """Who the deferred unload is waiting for."""
+    leases = other_leases()
+    if leases:
+        return f"Ollama frees it when the request in flight ends ({describe_leases(leases)})"
+    return ("Ollama frees it when the request in flight ends (not this helper's: `ollama run`, another "
+            "app, or a LAN client)")
 
 
 def available_or_exit(quiet=False) -> Probe:
@@ -474,12 +630,21 @@ def available_or_exit(quiet=False) -> Probe:
 
 
 def guard(p: Probe):
-    """None when the GPU may be used, else the refusal. Unloads if it finds a game."""
+    """None when the GPU may be used, else the refusal. Unloads if it finds a game.
+
+    Checked before EVERY request (each --chunked slice too), which is what closes the cross-session
+    gap: another session reserves the GPU before its game's process exists, and this session's next
+    request sees the reservation instead of loading the model back."""
     games = commercial_games(running_images())
     if games:
+        reserve_gpu("running", f"running: {', '.join(games)}")
         if p.loaded:
             p.unload()
         return f"a commercial game is running ({', '.join(games)}); its VRAM is not ours"
+    marker = active_reservation(games)
+    if marker:
+        return (f"the GPU is reserved for a game ({marker.get('reason')}); `release` clears it if that "
+                f"launch was abandoned")
     if not p.loaded:
         free = gpu_free_mb()
         need = int((p.entry or {}).get("size") or 0) // (1024 * 1024) + VRAM_MARGIN_MB
@@ -499,7 +664,13 @@ def cmd_status(args) -> int:
         info = {"state": p.state, "reason": p.reason, "model": p.name, "url": p.url,
                 "num_ctx": p.num_ctx, "loaded": p.loaded}
         if p.state == "ready":
-            info["commercial_games"] = commercial_games(running_images())
+            games = commercial_games(running_images())
+            marker = active_reservation(games)
+            info["commercial_games"] = games
+            info["gpu_reserved"] = marker.get("reason") if marker else None
+            leases = other_leases()
+            info["in_use_by"] = ([{k: r.get(k) for k in ("pid", "action", "cwd", "started")} for r in leases]
+                                 if args.json else (describe_leases(leases) or None))
     if args.json:
         print(json.dumps(info))
     else:
@@ -514,8 +685,9 @@ def cmd_warm(args) -> int:
         print(f"local-llm: refused -- {refusal}", file=sys.stderr)
         return 3
     t0 = time.perf_counter()
-    _post_with_retry(p.url + "/api/generate", {"model": p.name, "prompt": "", "keep_alive": p.keep_alive,
-                                               "options": {"num_ctx": p.num_ctx}}, GENERATE_TIMEOUT)
+    with Lease("warm"):
+        _post_with_retry(p.url + "/api/generate", {"model": p.name, "prompt": "", "keep_alive": p.keep_alive,
+                                                   "options": {"num_ctx": p.num_ctx}}, GENERATE_TIMEOUT)
     print(f"local-llm: {p.name} loaded (num_ctx={p.num_ctx}, keep_alive={p.keep_alive}) "
           f"in {time.perf_counter() - t0:.1f}s")
     return 0
@@ -526,13 +698,43 @@ def cmd_unload(args) -> int:
     if cfg is None:
         print(f"local-llm: disabled -- {why}")
         return 0
-    p = Probe(cfg).run()
+    return _unload_and_report(Probe(cfg).run(), args.wait)
+
+
+def _unload_and_report(p: Probe, wait_s: float) -> int:
     if p.state != "ready" or not p.loaded:
         print(f"local-llm: nothing to unload ({p.state}{', not loaded' if p.state == 'ready' else ''})")
         return 0
-    ok = p.unload()
-    print(f"local-llm: {p.name} {'unloaded' if ok else 'STILL LOADED -- check `ollama ps`'}")
-    return 0 if ok else 1
+    result = p.unload(wait_s)
+    if result == "unloaded":
+        print(f"local-llm: {p.name} unloaded")
+        return 0
+    if result == "pending":
+        print(f"local-llm: {p.name} unload PENDING after {wait_s:g}s -- {pending_note()}. "
+              f"Re-run with a longer --wait to block until it is free.")
+        return EXIT_UNLOAD_PENDING
+    print(f"local-llm: could not ask Ollama to unload {p.name} -- check `ollama ps`")
+    return 1
+
+
+def cmd_reserve(args) -> int:
+    """Before something that will start a commercial game the hook cannot see coming (a rig): reserve
+    the GPU machine-wide, then unload. Every session's next request is refused until the reservation
+    lapses (RESERVE_GRACE_S after the game's exit) or `release` clears it."""
+    cfg, why = load_config()
+    if cfg is None:
+        print(f"local-llm: disabled -- {why}")
+        return 0
+    reserve_gpu("launch", args.reason or "reserved by `reserve`")
+    print(f"local-llm: GPU reserved for a game ({args.reason or 'reserved by `reserve`'}) -- every "
+          f"session's LLM requests are refused until it lapses or `release`")
+    return _unload_and_report(Probe(cfg).run(), args.wait)
+
+
+def cmd_release(args) -> int:
+    had = release_gpu()
+    print("local-llm: GPU reservation released" if had else "local-llm: no GPU reservation to release")
+    return 0
 
 
 class ContextOverflow(Exception):
@@ -611,6 +813,11 @@ def cmd_ask(args) -> int:
     if refusal:
         print(f"local-llm: refused -- {refusal}", file=sys.stderr)
         return 3
+    with Lease("ask --chunked" if args.chunked else "ask"):
+        return _ask(p, args, prompt, files)
+
+
+def _ask(p: Probe, args, prompt: str, files) -> int:
     budget = p.num_ctx - OUTPUT_RESERVE - estimate_tokens(SYSTEM_PROMPT + prompt) - CHUNK_SLACK_TOKENS
 
     if not args.chunked:
@@ -659,6 +866,9 @@ def cmd_hook(args) -> int:
         cfg, _ = load_config()
         if cfg is None:
             return 0
+        launch = command_launches_commercial(command)
+        if launch:                                   # reserve FIRST: other sessions must not reload it
+            reserve_gpu("launch", f"launch in a command: {launch}")
         p = Probe(cfg)
         p.entry = {"name": str(cfg["model"])}
         if not p.is_loaded():                        # the common case: one /api/ps round trip
@@ -667,35 +877,71 @@ def cmd_hook(args) -> int:
             p.entry = find_model(http_json(p.url + "/api/ps"), p.name) or p.entry
         except Exception:                            # noqa: BLE001
             pass
-        why = command_launches_commercial(command)
-        if why:
-            why = f"launch in this command: {why}"
+        if launch:
+            why = f"launch in this command: {launch}"
         else:
             games = commercial_games(running_images())
-            why = f"running: {', '.join(games)}" if games else None
-        if why and p.unload():
-            print(json.dumps({"systemMessage": f"local-llm: unloaded {p.name} to free VRAM ({why})"}))
+            if not games:
+                return 0
+            reserve_gpu("running", f"running: {', '.join(games)}")
+            why = f"running: {', '.join(games)}"
+        result = p.unload(HOOK_UNLOAD_WAIT_S)
+        if result == "unloaded":
+            msg = f"local-llm: unloaded {p.name} to free VRAM ({why})"
+        elif result == "pending":
+            msg = f"local-llm: unload of {p.name} PENDING ({why}) -- {pending_note()}; GPU reserved"
+        else:
+            msg = f"local-llm: could not unload {p.name} ({why}) -- check `ollama ps`"
+        print(json.dumps({"systemMessage": msg}))
     except Exception:                                # noqa: BLE001
         pass
     return 0
 
 
+def _load_settings(path: pathlib.Path):
+    """(settings, error). A missing file is {}; an unparseable one is an error -- never overwritten."""
+    if not path.is_file():
+        return {}, None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return None, f"{path} is not readable JSON ({e}); fix it first"
+    return (data, None) if isinstance(data, dict) else (None, f"{path} is not a JSON object")
+
+
+def _save_settings(path: pathlib.Path, before: dict, after: dict, backup: bool) -> None:
+    """Write only on a real change; the user-level file is backed up once, before our first edit."""
+    if after == before:
+        return
+    if not after and path.name == SETTINGS_REL.name:
+        path.unlink(missing_ok=True)                 # a settings.local.json that only ever held ours
+        return
+    if backup and path.is_file():
+        bak = path.with_name(path.name + USER_SETTINGS_BACKUP_SUFFIX)
+        if not bak.exists():
+            shutil.copy2(path, bak)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(after, indent=2) + "\n", encoding="utf-8")
+
+
 def cmd_setup(args) -> int:
+    """The hook goes to the USER-level settings, so it guards every session on this machine, in every
+    repo; the one this used to write into the project's settings.local.json is migrated out, or it
+    would fire twice here."""
     main = main_checkout(ROOT)
-    cfg_path, settings_path = main / CONFIG_REL, main / SETTINGS_REL
-    settings = {}
-    if settings_path.is_file():
-        try:
-            settings = json.loads(settings_path.read_text(encoding="utf-8"))
-        except ValueError as e:
-            print(f"local-llm: {settings_path} is not valid JSON ({e}); fix it first", file=sys.stderr)
-            return 1
+    cfg_path, local_path = main / CONFIG_REL, main / SETTINGS_REL
+    user_before, err = _load_settings(USER_SETTINGS)
+    local_before, err2 = _load_settings(local_path)
+    if err or err2:
+        print(f"local-llm: {err or err2}", file=sys.stderr)
+        return 1
 
     if args.remove:
         cfg_path.unlink(missing_ok=True)
-        if settings_path.is_file():
-            settings_path.write_text(json.dumps(remove_hook(settings), indent=2) + "\n", encoding="utf-8")
-        print(f"local-llm: opted out -- removed {CONFIG_REL.as_posix()} and the hook")
+        _save_settings(USER_SETTINGS, user_before, remove_hook(user_before), backup=True)
+        _save_settings(local_path, local_before, remove_hook(local_before), backup=False)
+        print(f"local-llm: opted out -- removed {CONFIG_REL.as_posix()} and the hook "
+              f"(user-level settings and this repo's {SETTINGS_REL.as_posix()})")
         return 0
 
     if not args.model:
@@ -722,11 +968,13 @@ def cmd_setup(args) -> int:
     cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
     python = shutil.which("py") or sys.executable
     script = (main / "tools" / "llm" / "ollama_local.py").as_posix()
-    settings_path.write_text(json.dumps(merge_hook(settings, python, script), indent=2) + "\n",
-                             encoding="utf-8")
-    print(f"local-llm: opted in -- {CONFIG_REL.as_posix()} = {json.dumps(cfg)}; PreToolUse hook "
-          f"({HOOK_MATCHER}) written to {SETTINGS_REL.as_posix()}. Both are gitignored.\n"
-          f"The hook takes effect in a NEW session (or after opening /hooks once).")
+    _save_settings(USER_SETTINGS, user_before, merge_hook(user_before, python, script), backup=True)
+    _save_settings(local_path, local_before, remove_hook(local_before), backup=False)
+    print(f"local-llm: opted in -- {CONFIG_REL.as_posix()} = {json.dumps(cfg)} (gitignored).\n"
+          f"PreToolUse hook ({HOOK_MATCHER}) written to the USER-level Claude Code settings, so it guards "
+          f"every session on this machine, in every repo (the file was backed up once, as "
+          f"*{USER_SETTINGS_BACKUP_SUFFIX}). It points at {script}: after moving this checkout, re-run "
+          f"setup. The hook takes effect in a NEW session (or after opening /hooks once).")
     return 0
 
 
@@ -860,7 +1108,7 @@ def selftest() -> int:
     ok("merge: ours appended once", sum(_is_our_hook(h) for g in merged["hooks"]["PreToolUse"] for h in g["hooks"]) == 1)
     again = merge_hook(merged, "py", "E:/Moved/tools/llm/ollama_local.py")
     ours = [h for g in again["hooks"]["PreToolUse"] for h in g["hooks"] if _is_our_hook(h)]
-    ok("merge: idempotent, and a moved checkout replaces the path", len(ours) == 1 and ours[0]["args"][0].startswith("E:/Moved"))
+    ok("merge: idempotent, and a moved checkout replaces the path", len(ours) == 1 and ours[0]["args"][-2].startswith("E:/Moved"))
     ok("merge: exec form, no shell", ours[0]["command"] == "py" and ours[0]["args"][-1] == "hook")
     ok("merge: runs through the missing-script bootstrap", ours[0]["args"][:2] == ["-c", HOOK_BOOTSTRAP]
        and ours[0]["args"][-2] == "E:/Moved/tools/llm/ollama_local.py")
@@ -921,7 +1169,13 @@ def main(argv) -> int:
     s = sub.add_parser("status")
     s.add_argument("--json", action="store_true")
     sub.add_parser("warm")
-    sub.add_parser("unload")
+    un = sub.add_parser("unload")
+    un.add_argument("--wait", type=float, default=UNLOAD_WAIT_S,
+                    help="seconds to wait for a request in flight (another session's) to finish")
+    rs = sub.add_parser("reserve", help="reserve the GPU for a game launch, machine-wide, then unload")
+    rs.add_argument("--wait", type=float, default=UNLOAD_WAIT_S)
+    rs.add_argument("--reason")
+    sub.add_parser("release", help="clear a GPU reservation (a launch that was abandoned)")
     sub.add_parser("hook")
     a = sub.add_parser("ask")
     a.add_argument("--prompt")
@@ -935,8 +1189,8 @@ def main(argv) -> int:
     u.add_argument("--num-ctx", type=int)
     u.add_argument("--remove", action="store_true")
     args = ap.parse_args(argv)
-    return {"status": cmd_status, "warm": cmd_warm, "unload": cmd_unload, "hook": cmd_hook,
-            "ask": cmd_ask, "setup": cmd_setup}[args.cmd](args)
+    return {"status": cmd_status, "warm": cmd_warm, "unload": cmd_unload, "reserve": cmd_reserve,
+            "release": cmd_release, "hook": cmd_hook, "ask": cmd_ask, "setup": cmd_setup}[args.cmd](args)
 
 
 if __name__ == "__main__":
