@@ -1131,7 +1131,7 @@ public class SnapshotViewModelTests : IDisposable
             // Arm C — the sentence must not be able to lie. It names `cap`; the slot must
             // really have kept exactly that many leaves.
             // ⚠ MatchedOffsets, NOT MatchCount. MatchCount is the DLL's own count and the
-            // snapshot builder leaves it at 0 (ValueScanModels.cs:399-404 and :446) — asserting
+            // snapshot builder leaves it at 0 (ValueScanModels.cs `GroupSlotMatch` and `GroupCandidate`) — asserting
             // it would have read 0 in BOTH arms and compared nothing at all.
             var slot = vm.GroupCandidates[0].Slots[0];
             Assert.Equal(cap, slot.MatchedOffsets.Count);

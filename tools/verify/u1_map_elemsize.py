@@ -208,7 +208,7 @@ def main(argv=None):
             # ⭐ WITNESS THE RESTORE BY VALUE, NOT BY PRESENCE. "elements came back" is also true
             # of a walker reading the right count at the WRONG stride, which is precisely the
             # silent mis-read this row exists to distinguish from a clean refusal. The three
-            # seeded FDumperTestVec3f components are known in advance (DumperTestActor.cpp:131).
+            # seeded FDumperTestVec3f components are known in advance (DumperTestActor.cpp `ADumperTestActor::ADumperTestActor`).
             # Matched against the stringified payload so the check does not depend on the exact
             # JSON shape of map_elements, which this rig has never needed to know.
             blob = json.dumps(f2.get("map_elements"))

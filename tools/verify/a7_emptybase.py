@@ -134,7 +134,7 @@ def main():
 
         # ---- the live value, i.e. the field really is readable at offset 0 --------
         # ⚠ NOT `row["value"]`. `EmptyBasePayload` is a StructProperty and a struct row carries no
-        # scalar value -- `Fern.cpp:1442` only sends `value` when `typedValue` is non-empty, which
+        # scalar value -- Fern.cpp's `SerializeField` only sends `value` when `typedValue` is non-empty, which
         # for a struct it never is. The string lives INSIDE the struct, so walk the struct instance
         # itself: walk_instance takes `addr` = struct_data_addr with `class_addr` = struct_class_addr
         # exactly for this. (This rig checked the struct row first and scored a correct fix as a

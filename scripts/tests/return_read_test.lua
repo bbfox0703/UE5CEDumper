@@ -54,7 +54,7 @@ end
 local MB             = 0x10000000
 local CONTRACT       = 0x20000000
 local CONTRACT_MAGIC = 1127564629
-local OFF_PARAMS     = 0x328          -- ue5_invoke_helper.lua:111
+local OFF_PARAMS     = 0x328          -- ue5_invoke_helper.lua's OFF_PARAMS
 local RET_OFF        = 0              -- return slot at params+0
 
 -- ============================================================
@@ -152,7 +152,7 @@ end
 local ADDR = MB + OFF_PARAMS + RET_OFF
 
 -- The generator's own format specifier for pointer-shaped returns
--- (BakedScriptGenerator.cs:463).
+-- (BakedScriptGenerator.cs `ReturnPrintFormat`).
 local FMT = '0x%X'
 
 local function readBoth(ptr)
@@ -191,8 +191,8 @@ q, p = readBoth(0)
 check('both read 0', q == 0 and p == 0, true)
 
 io.write('\n-- 5. int64 -- the sibling type the b637 fix missed [RETINT64]\n')
--- MapToHelperType maps Int64Property -> "int64" (BakedScriptGenerator.cs:522) and the
--- size-8 EnumProperty case -> "int64" (:519). readType only rewrites "pointer", so
+-- MapToHelperType maps Int64Property -> "int64" (BakedScriptGenerator.cs) and the
+-- size-8 EnumProperty case -> "int64". readType only rewrites "pointer", so
 -- 'int64' reaches the helper VERBATIM. Before the fix there was no 'int64' branch and it
 -- fell through to the signed int32 default -- the same defect build 637 fixed for
 -- pointers, still live for the sibling type. [RETINT64-2026-08-24]

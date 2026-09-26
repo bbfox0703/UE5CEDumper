@@ -1065,13 +1065,13 @@ inline bool IsPlausibleStringCount(int32_t count) {
 // FTextData+0x28 as the canonical EMPTY {nullptr, 0, 0}; TryDecodeFStringAt steps over it
 // correctly (!data, num < 2), and ReadFTextString's layout-agnostic scan then reached
 // FTextData+0x40, whose 16 bytes parse as {data=0x2B52A030000, num=4284, max=16384}. That cleared
-// every gate at Ubel.cpp:463-465 — num in [2, 8192]; max >= num; max <= 4*num+256 (17392, with
+// every gate at Ubel.cpp `TryDecodeFStringAt` — num in [2, 8192]; max >= num; max <= 4*num+256 (17392, with
 // 1008 to spare); data in the user-space range.
 //
 // What happened next is the actual defect. 8568 bytes of a zero-filled heap page were handed to
 // DecodeFStringBuffer. Its UTF-8 hypothesis failed on the interior null, so `utf8Ok` was false —
 // which is exactly what SKIPS the Rule 3a interior-null tie-break. The UTF-16 hypothesis then
-// found its terminator trivially, EncodeUtf16 hit `if (ch == 0) break;` (Utf8Helpers.h:154) at
+// found its terminator trivially, EncodeUtf16 hit `if (ch == 0) break;` (Utf8Helpers.h) at
 // unit index 1, and returned ONE character. LooksLikeDecodedText counts only '?' markers, saw
 // none out of one, and accepted.
 //
@@ -1080,7 +1080,7 @@ inline bool IsPlausibleStringCount(int32_t count) {
 //
 // ⚠ NOT in Utf8Helpers. This is that file's own Rule 3a applied at 25% strength. Rule 3a is gated
 // on utf8Ok DELIBERATELY, and `Test_Decode_TieBreakIsGatedOnUtf8Success`
-// (dll/tests/utf8_helpers_test.cpp:724) exists to pin that gate. The WEAK form below keeps that
+// (dll/tests/utf8_helpers_test.cpp) exists to pin that gate. The WEAK form below keeps that
 // row's answer (1 char decoded, num=4 -> 1*4+8 = 12 >= 3, accepted) and still rejects the
 // measured garbage by 357x. ⛔ Do not strengthen it to "the first null unit must be at Num-1"
 // without re-deciding that test.

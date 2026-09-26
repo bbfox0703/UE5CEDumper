@@ -562,7 +562,7 @@ constexpr RefineAnchorVerdict RefineContainerAnchor(ValueAnchor anchor,
 
     // `nowData == 0` is NOT missing bookkeeping and must not be grouped with the
     // guards above — it is positive evidence that the buffer is GONE. Both callers
-    // (Aura.cpp:8036 / :9228) `continue` on `!hs.ok`, so a header that could not be
+    // (Aura.cpp's `RefineCandidates` / `RefineGroupCandidates`) `continue` on `!hs.ok`, so a header that could not be
     // read never reaches here: arriving with nowData == 0 means the read SUCCEEDED
     // and returned an empty container, i.e. TArray::Empty()/Reset() released the
     // allocation. Every element candidate then refers to a slot that no longer

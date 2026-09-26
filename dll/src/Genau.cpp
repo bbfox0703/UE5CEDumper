@@ -2686,7 +2686,7 @@ static bool ValidateSparseDelegates(uintptr_t addr) {
 static std::atomic<uintptr_t> s_sparseDelegatesCache{0};
 static std::atomic<bool>      s_sparseDelegatesScanned{false};
 // Serialises the SLOW path only. Unlike the other three scans, this one is reachable from
-// PIPE COMMAND threads -- Aura::FindReferencesToUObject (Aura.cpp:3742) and
+// PIPE COMMAND threads -- Aura::FindReferencesToUObject (Aura.cpp) and
 // WalkSparseDelegateBindings (Aura.cpp:6284) -- so two clients can enter it at once before
 // the latch is set. Both would then run `s_sparseReport = ScanReport{}` and write the same
 // file-static ScanReport, which owns a std::vector: a plain data race, i.e. UB, not merely a
@@ -4087,7 +4087,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // Every "keeping default" branch from here on falls THROUGH to the success tail, which
     // used to store bOffsetsValidated = true unconditionally. Per Grimoire.h's contract that
     // flag means "the values were actually MEASURED", so a run that could not find
-    // FField::Next reported validated=yes over a version guess — and Ubel.cpp:4206 documents
+    // FField::Next reported validated=yes over a version guess — and Ubel.cpp `WalkInstance` documents
     // what a blind FPROPERTY_ELEMSIZE then costs downstream (audit #5 U1).
     //
     // A bitmask rather than a bool because the reason string has to name WHICH probe fell
@@ -4382,7 +4382,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // slot and requires it to equal expectedElemSize — a recovery that qualifies as a
         // measurement. Only a still-negative offset means the version guess survives.
         // This is the one that matters most: an ELEMSIZE landing on PropertyFlags is what
-        // Ubel.cpp:4206 documents as a ~1 GiB per-element allocation (audit #5 U1).
+        // Ubel.cpp `WalkInstance` documents as a ~1 GiB per-element allocation (audit #5 U1).
         Sein::Warn("DYNO", "ValidateAndFixOffsets: Cannot find ElementSize, keeping default 0x%02X",
                  DynOff::bUseFProperty ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE);
         unmeasured |= UNMEASURED_PROP_ELEMSIZE;
@@ -4480,7 +4480,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     // A give-up recorded above means at least one DynOff value is a version GUESS, not a
     // measurement — so bOffsetsValidated must be false even though we reached the success
     // tail (audit #5 G1: it used to be stored true here unconditionally, three lines after
-    // "keeping default"). Grimoire.h:243 is the contract; bOffsetsProbeRan stays true either
+    // "keeping default"). Grimoire.h `PickFFieldClassNameOffset` is the contract; bOffsetsProbeRan stays true either
     // way, which is what FindGEngineSlot / ResolveGEngineDeferred actually gate on.
     //
     // The table is indexed by the bitmask so the reason can name EVERY probe that fell back,

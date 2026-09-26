@@ -72,11 +72,11 @@ internal static class ClipboardDelivery
     /// the clipboard still holds something else, so pasting now runs the wrong script.
     /// <para>
     /// ⛔ THE IMPERATIVE COMES FIRST, AND THAT IS NOT A STYLE CHOICE. This message is
-    /// rendered on two kinds of surface. The panels wrap it (LiveWalkerPanel.axaml:519,
-    /// InstanceFinderPanel.axaml:69 — <c>TextWrapping="Wrap"</c>, no MaxWidth) and show
+    /// rendered on two kinds of surface. The panels wrap it (LiveWalkerPanel.axaml,
+    /// InstanceFinderPanel.axaml — <c>TextWrapping="Wrap"</c>, no MaxWidth) and show
     /// all of it. The MainWindow toolbar does not: <c>StatusText</c> and
     /// <c>ErrorMessage</c> are capped at <c>MaxWidth="360"</c> with
-    /// <c>TextTrimming="CharacterEllipsis"</c> (MainWindow.axaml:41-53), deliberately —
+    /// <c>TextTrimming="CharacterEllipsis"</c> (MainWindow.axaml's status bar), deliberately —
     /// the comment there records that an uncapped status line pushes the rest of the
     /// toolbar off-screen.
     /// </para>

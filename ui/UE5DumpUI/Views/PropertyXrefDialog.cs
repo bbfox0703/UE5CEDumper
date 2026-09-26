@@ -462,7 +462,7 @@ public sealed class PropertyXrefDialog : ManagedDialogWindow
         {
             // ⛔ THIS USED TO BE A BARE `return` — a click that did nothing, said nothing, and
             // left the previous status line standing. The button is normally disabled in this
-            // state (:387 gates it on the same cached flag), so the guard reads defensive; but
+            // state (`ShowForClassAsync` gates it on the same cached flag), so the guard reads defensive; but
             // `IsAvailable` is a CACHE refreshed only by user-triggered probes, never a timer,
             // and this dialog is MODAL — so nothing can re-probe while it is open. Kill Cheat
             // Engine with the dialog up and the button stays enabled over a stale true, and the

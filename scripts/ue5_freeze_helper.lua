@@ -722,7 +722,7 @@ local function fetchInstancePage(className, pageIndex, derived)
     -- returned + 65536 end` under the comment "readSmallInteger returns signed". It does
     -- not, and the branch was unreachable. CE's readSmallIntegerEx (LuaHandler.pas:1614)
     -- defaults `signed:=false` when called with one argument and pushes `word(v)`, so the
-    -- range is 0..65535 and `returned < 0` can never hold. ue5_invoke_helper.lua:695-707
+    -- range is 0..65535 and `returned < 0` can never hold. ue5_invoke_helper.lua `readUFunctionReturn`
     -- already documented the same fact correctly and passes `true` explicitly when it
     -- wants a signed read (AA20) -- two files in this repo disagreeing about one CE API is
     -- the part worth removing, not just the dead line.
@@ -983,7 +983,7 @@ if not freezeProperty or _freezeOutdated then
     --                   Nothing is frozen and nothing will be until it is fixed.
     --   true,  nil, 0   ARMED, nothing alive yet. A valid class with no live
     --                   instances is the helper's advertised purpose (header
-    --                   :16-20 -- newly spawned NPCs get picked up), so this must
+    --                   the header -- newly spawned NPCs get picked up), so this must
     --                   never be reported as a failure or the feature IS the bug.
     --   true,  nil, n   frozen on n instances.
     -- Before this, start() returned nothing at all, so the generated script's only

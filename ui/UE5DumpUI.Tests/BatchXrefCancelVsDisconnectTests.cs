@@ -197,7 +197,7 @@ public class BatchXrefCancelVsDisconnectTests
     }
 
     /// <summary>
-    /// The native disassembler stops at 8,192 instructions (<c>Denken.cpp:17</c>) and
+    /// The native disassembler stops at 8,192 instructions (<c>Denken.cpp</c> <c>kInstrBudget</c>) and
     /// reports it as <c>budget_hit</c>. Truncated, the props list is a PREFIX — so a bare
     /// "0" in the Uses column reads as "this function touches no class fields", which is
     /// the conclusion the user acts on. Same cell-level lie Z9 fixed for the scan deadline.

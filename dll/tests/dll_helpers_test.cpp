@@ -4628,8 +4628,8 @@ static void Test_Neu_Legacy_Basic() {
 // value offset, sizeof 0x0C for a step to an adjacent FName / an FScriptDelegate stride -- and
 // it was STILL copied wrongly into eight call sites, because both answers are spelled
 // `bCasePreservingName ? … : 0x08` and the expression does not say which question it answers.
-// Measured 2026-09-06: 12 raw ternaries, 4 right and 8 wrong, with `Aura.cpp:3755` getting it
-// right four lines below one of the wrong ones and `Ubel.h:435` documenting 12 against writers
+// Measured 2026-09-06: 12 raw ternaries, 4 right and 8 wrong, with `FindReferencesToUObject` (Aura.cpp) getting it
+// right four lines below one of the wrong ones and `LiveFieldValue`'s doc (Ubel.h) documenting 12 against writers
 // that set 0x10. All 20 sites now go through the two named helpers; this pins them.
 //
 // ⚠ Impact on every title measured to date is ZERO -- `bCasePreservingName` has two writers
@@ -6834,7 +6834,7 @@ static void Test_Routine_SafeThread() {
 
     // shared_ptr, captured BY VALUE, because the worker MUST outlive this frame.
     //
-    // SafeThread's destructor DETACHES (Routine.h:82) — that is the behaviour under
+    // SafeThread's destructor DETACHES (Routine.h) — that is the behaviour under
     // test — so the thread below keeps running after its scope ends AND after this
     // whole function returns. Its loop is 50 x sleep_for(1ms), but Windows quantises
     // that to the ~15.6 ms timer tick, so it lives ~780 ms while the function returns

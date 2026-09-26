@@ -12,7 +12,7 @@
 --     else                  -> RED     "CE refused the push ... nothing was added"
 -- Only GREEN had ever been seen. The other two need CE to accept one call and refuse the other,
 -- which is not something a user can arrange -- and killing Cheat Engine does NOT produce RED:
--- the button is gated on the cached `IsAvailable` (PropertyXrefDialog.cs:387) and the handler
+-- the button is gated on the cached `IsAvailable` (PropertyXrefDialog.cs `ShowForClassAsync`) and the handler
 -- returns early on it too, so with CE gone the click is a no-op. (That gap was itself a finding;
 -- the handler now reports it, but that is a DIFFERENT message from the RED branch.)
 --

@@ -198,7 +198,7 @@ public class DataGridSortWiringTests
             // "Name (Class)", "{StructType}", array/map/set counts, DataTable row count, raw
             // hex). Only some branches interpolate a number and they are not the same number,
             // so there is no numeric key to sort on; ordinal is the only order that exists.
-            // LiveWalkerPanel.axaml.cs:31 wires Ordinal deliberately. What the scan actually
+            // LiveWalkerPanel.axaml.cs wires Ordinal deliberately. What the scan actually
             // caught is one branch of the chain, not a formatted-number column.
             ["LiveWalkerPanel.axaml|DisplayValue"] =
                 "LiveFieldValue.DisplayValue is a heterogeneous fallback chain; no single " +
@@ -278,7 +278,7 @@ public class DataGridSortWiringTests
     /// the first character.</para>
     ///
     /// <para>The tree already knew the answer: <c>DataGridSortComparers.Hex&lt;T&gt;(ulong)</c>
-    /// exists, and <c>RelatedObjectsPanel.axaml.cs:22</c> was its <b>only</b> user while
+    /// exists, and <c>RelatedObjectsPanel.axaml.cs</c> was its <b>only</b> user while
     /// <c>ObjectInstancePickerDialog.cs</c>'s identically-named "Address" column used
     /// <c>Ordinal</c>. Two panels, one column name, two answers, one of them the documented one.
     /// Fixed 2026-08-22 with <c>[PARAMSSORT-2026-08-22]</c>.</para>

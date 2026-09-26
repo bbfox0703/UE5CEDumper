@@ -87,11 +87,11 @@ inline void MarkCancelImmune() { t_cancelImmune = true; }
 // t_cancelImmune becomes semantically dead (so M4's and B4's distinctions vanish without
 // a line of them being deleted). That is not hypothetical -- the DLL has at least three
 // populations that reach Requested() on threads no connection owns:
-//   * Aura's ParallelIndexRanges workers (Aura.cpp:173) and its cancelWatcher
-//     (Aura.cpp:221) -- and the watcher's ONLY job is to turn a client disconnect into
+//   * Aura's ParallelIndexRanges workers (Aura.cpp) and its cancelWatcher
+//     (Aura.cpp `ParallelGObjectsScan`) -- and the watcher's ONLY job is to turn a client disconnect into
 //     deadlineHit for the parallel path, which is the default path for every real game
-//     (ScanThreadCount, Aura.cpp:129, goes parallel at >= 8192 objects);
-//   * Fern::RunScan / RunRescan (Fern.cpp:5276 / 5114) and Frieren's UE5_AutoStart;
+//     (ScanThreadCount, Aura.cpp, goes parallel at >= 8192 objects);
+//   * Fern::RunScan / RunRescan (Fern.cpp) and Frieren's UE5_AutoStart;
 //   * the CE remote thread entering the Frieren C-ABI exports.
 // Binding those to &conn->cancel is NOT the fix either: the connection can be erased
 // while such a thread still runs, so the pointer would dangle in exactly the disconnect
@@ -104,7 +104,7 @@ inline thread_local std::atomic<bool>* t_connCancel = nullptr;
 
 /// Bind this thread to its connection's cancel flag. The caller MUST own a shared_ptr to
 /// the connection for the whole bound region -- Fern::HandleConnection does, because the
-/// accept thread hands it the shared_ptr BY VALUE (Fern.cpp:976), so the flag cannot
+/// accept thread hands it the shared_ptr BY VALUE (Fern.cpp `Fern::AcceptLoop`), so the flag cannot
 /// outlive the pointer. Use the RAII guard below rather than calling these directly.
 inline void BindConnectionCancel(std::atomic<bool>* flag) { t_connCancel = flag; }
 inline void UnbindConnectionCancel() { t_connCancel = nullptr; }
@@ -121,7 +121,7 @@ inline CancelContext CaptureCancelContext() { return CancelContext{t_connCancel,
 /// Adopt a captured context on THIS thread, restoring the previous one on scope exit.
 ///
 /// ⛔ ONLY safe when the spawning thread OUTLIVES the worker -- i.e. it joins it. That
-/// holds for Aura::ParallelIndexRanges (it joins its pool, Aura.cpp:176) and for the
+/// holds for Aura::ParallelIndexRanges (it joins its pool, Aura.cpp) and for the
 /// ParallelGObjectsScan cancelWatcher, which is why those may adopt a raw
 /// `std::atomic<bool>*`. It does NOT hold for Fern::RunScan / RunRescan, which outlive
 /// the command that started them -- binding those to a connection would be a

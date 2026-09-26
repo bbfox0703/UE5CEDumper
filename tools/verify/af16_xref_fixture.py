@@ -42,7 +42,7 @@ from pipe_client import PipeClient  # noqa: E402
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
-FUNC_NATIVE = 0x0000_0400  # AllFunctionsResult.cs:56 — script-backed means NOT this
+FUNC_NATIVE = 0x0000_0400  # AllFunctionsResult.cs `IsNative` — script-backed means NOT this
 
 
 def _shape_check(tag: str, reply: dict, wanted: list[str]) -> None:
@@ -97,7 +97,7 @@ def main() -> int:
                 # MEASURED 2026-08-23: the other path is `disasm`, the native-disassembly
                 # HEURISTIC (Path 2). Counting it here manufactures fixtures that the dialog
                 # can never show: DOLLCharacter::AutoPossessPlayer came back from 16 disasm
-                # replies and `find_property_xrefs` -- a Kismet BYTECODE xref (Aura.cpp:5541),
+                # replies and `find_property_xrefs` -- a Kismet BYTECODE xref (Aura.cpp `IsWriteContext`),
                 # i.e. a different question -- correctly returned 0 for it, with and without
                 # game_only. Skipping keeps this rig's candidates answerable by the dialog.
                 continue

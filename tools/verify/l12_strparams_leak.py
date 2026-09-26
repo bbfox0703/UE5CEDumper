@@ -119,8 +119,8 @@ def main(argv=None):
               % (a.n, per_kb, a.n * per_kb / 1024.0))
 
         # ⛔ `instance_addr`, NOT `addr`. Fern reads `instance_addr` / `class_name`
-        # (Fern.cpp:5392,5390) and refuses at :5420 when neither is present -- ~83 lines
-        # BEFORE the str_params marshalling loop at :5503 that this rig exists to test.
+        # (Fern.cpp's invoke_function handler) and refuses when neither is present -- well
+        # BEFORE the str_params marshalling loop that this rig exists to test.
         # This call said `addr=` until 2026-09-09, so every one of its requests was
         # rejected at the instance guard and the leak path was NEVER ENTERED. The shared
         # helper two phases above (`ad4_contested.invoke`) had it right all along, which
@@ -135,7 +135,7 @@ def main(argv=None):
                 if not r.get("ok", True):
                     msg = str(r.get("error", ""))
                     # A throw from inside the marshalling loop comes back through the
-                    # dispatch envelope as "Internal error: <what>" (Fern.cpp:6422-6424).
+                    # dispatch envelope as "Internal error: <what>" (Fern.cpp `Fern::DispatchCommand`).
                     # Anything else -- above all the instance-resolution refusal -- means
                     # the loop was never reached.
                     if msg.startswith("Internal error"):

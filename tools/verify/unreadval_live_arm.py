@@ -120,7 +120,7 @@ def main() -> int:
             for res in r.get("instances", []):
                 # ⛔ A DEFINITION WALK IS A SCHEMA VIEW, NOT A VALUE VIEW, and counting it
                 #    here would have been a false alarm. When the walked object IS a UClass or
-                #    UScriptStruct, WalkInstance (Ubel.cpp:4031) takes a separate branch that
+                #    UScriptStruct, WalkInstance (Ubel.cpp) takes a separate branch that
                 #    emits field METADATA and deliberately reads NO values -- its own comment
                 #    says the offsets describe instances of the struct, not the metaobject's
                 #    own memory. It returns before any type handler runs, so these rows can be

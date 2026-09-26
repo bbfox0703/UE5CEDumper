@@ -44,7 +44,7 @@ TAG_CORPUS_EXCLUDE = ("docs/comment-integrity-eval.md",)
 
 FILELINE = re.compile(r"\b([A-Za-z_][\w.-]*\.(?:cpp|h|hpp|cs|axaml|lua|py|CT|ps1|md))\s?:(\d{1,5})(?:\s*[-–]\s*\d{1,5})?\b")
 ANYFILE = re.compile(r"\b([A-Za-z_][\w.-]*\.(?:cpp|h|hpp|cs|axaml|lua|py|CT|ps1|md|pas|inc|java|ini|txt))\b")
-BARE = re.compile(r"(?:(?<=\()|(?<=\s)|(?<=,)|(?<=\[))(:\d{2,5})(?:\s*[-–]\s*\d{2,5})?\b")
+BARE = re.compile(r"(?:(?<=\()|(?<=\s)|(?<=,)|(?<=\[)|(?<=/))(:\d{2,5})(?:\s*[-–]\s*\d{2,5})?\b")
 TESTCLAIM = re.compile(r"(?i)(?:no|not by any|compiled by no|reach(?:es)? no)\s+(?:C\+\+\s+)?test(?:\s+(?:target|executable|binary|TU))?"
                        r"[^.;]{0,40}?\b([A-Z][A-Za-z]+)\.cpp|\b([A-Z][A-Za-z]+)\.cpp\b[^.;]{0,40}?"
                        r"(?:no test target|no test executable|compiled by no test|reaches no test|no test compiles)")
@@ -107,17 +107,19 @@ def headings(text):
     return set(re.findall(r"^#{1,6}\s+§?\s*([0-9]+(?:\.[0-9a-z]+)*)[.)\s]", text, re.M))
 
 
-def scan_line(path, n, c, ctx):
-    """Every finding on one comment line: (check, path, n, detail)."""
+def scan_line(path, n, c, ctx, prior=""):
+    """Every finding on one comment line: (check, path, n, detail). `prior` = the whole comment block above this line, so a
+    bare `:NNN` continuing a file named on an earlier line (an engine header, say) is judged by THAT file."""
     out = []
     by_base, in_tests, md_by_base, doc_text, heads = ctx
+    history = bool(HISTORY.search(c))
     # --- LINE: in-repo file:line, plus bare :NNN that continues an in-repo ref or stands alone (same file)
     last_is_repo = None
     spans = []
     for m in FILELINE.finditer(c):
         base = m.group(1).lower()
         spans.append((m.start(), m.end(), base in by_base))
-        if base in by_base and not base.endswith(".md"):
+        if base in by_base and not base.endswith(".md") and not history:
             out.append(("LINE", path, n, m.group(0)))
     for m in BARE.finditer(c):
         if any(s <= m.start() < e for s, e, _ in spans):
@@ -129,11 +131,11 @@ def scan_line(path, n, c, ctx):
         elif prior_file:
             inrepo = prior_file[-1].group(1).lower() in by_base
         else:
-            inrepo = True          # a bare :NNN with no file before it = this file
-        if inrepo:
+            above = list(ANYFILE.finditer(prior))
+            inrepo = above[-1].group(1).lower() in by_base if above else True   # none anywhere = this file
+        if inrepo and not history:
             out.append(("LINE", path, n, m.group(1)))
     # --- TESTTARGET (history -- "until now", "used to", a claim quoted as someone's belief -- is not a claim)
-    history = bool(HISTORY.search(c))
     for m in TESTCLAIM.finditer(c):
         stem = m.group(1) or m.group(2)
         quoted = c[:m.start()].count('"') % 2 == 1
@@ -177,8 +179,12 @@ def run(root):
         if not (f.startswith(CODE_DIRS) and f.endswith(CODE_EXT)) or f == "tools/check_comment_refs.py":
             continue
         lines = read(os.path.join(root, f)).split("\n")
+        above, last_n = [], -1
         for n, c in comment_text(f, lines):
-            findings += scan_line(f, n, c, ctx)
+            if n != last_n + 1:
+                above = []
+            findings += scan_line(f, n, c, ctx, " ".join(above))
+            above.append(c); last_n = n
         if f.endswith(".cs"):
             prev = None
             for n, l in enumerate(lines, 1):
@@ -200,6 +206,9 @@ def selftest():
         ("see the jump at :528 below", "LINE", True),
         ("CEFuncProc.pas:1346 / :1360 in CE 7.5", "LINE", False),
         ("UnrealNames.cpp@5.4 line 2017", "LINE", False),
+        ("Genau.cpp:170/:282 hold it", "LINE", True),
+        ("see :170/:282 below", "LINE", True),
+        ("(Cited as Genau.cpp:246 until build 3262; it drifted)", "LINE", False),
         ("no test target compiles Aura.cpp, so", "TESTTARGET", True),
         ("no test target compiles Stark.cpp, so", "TESTTARGET", False),
         ("Until now no test target compiled Aura.cpp", "TESTTARGET", False),
@@ -214,6 +223,10 @@ def selftest():
         ("AOBMaker's API-CEPlugin.md says so", "REFS", False),
     ]
     bad = 0
+    got = any(k == "LINE" for k, *_ in scan_line("dll/src/X.cpp", 2, ":85  the mask", ctx, "UObjectArray.h:84 says"))
+    if got:
+        bad += 1
+        print("SELFTEST FAILED: a bare :NNN continuing an engine header on the line above was flagged")
     for text, check, want in cases:
         got = any(k == check for k, *_ in scan_line("dll/src/X.cpp", 1, text, ctx))
         if got != want:
@@ -223,6 +236,7 @@ def selftest():
 
 
 def main():
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if selftest():
         print("check_comment_refs: its own negative controls fail -- the verdict below would lie.")
         return 2

@@ -97,7 +97,7 @@ constexpr int32_t SANITY_MAX_SPARSE_BITS = 0x100000;
 
 /// GObjects population -- the number of UObjects in the whole process. Separate magnitude
 /// AND separate meaning. Measured, not guessed: a real title reached 0x800000 (8,388,608).
-/// ⚠ Aura.cpp:2073 bounds an InternalIndex rather than a count; an index lives in the same
+/// ⚠ Aura.cpp `FindByAddress` bounds an InternalIndex rather than a count; an index lives in the same
 /// space as the population and must rise with it, so it belongs here -- but do NOT merge this
 /// with kMaxElementsCeiling (0x2000000), which was deliberately split from it.
 constexpr int32_t SANITY_MAX_UOBJECTS = 0x800000;
@@ -894,12 +894,12 @@ inline bool bCasePreservingName  = false;
 // wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`
 // and a reader cannot tell from the expression which question it is answering. Measured
 // 2026-09-06: twelve sites used the ternary, four correctly (a TPair value offset) and eight
-// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `Aura.cpp:3755` sat
+// wrongly (steps to an adjacent FName and FScriptDelegate strides) — while `FindReferencesToUObject` (Aura.cpp) sat
 // four lines under one of the correct ones getting it right, and `Ubel.h`'s own field comment
 // documented 12 against writers that set 0x10. Prefer these over the literal, always.
 //
 // ⚠ Impact is ZERO on every title measured so far: `bCasePreservingName` has only two writers
-// (`Genau.cpp:3243/3247`, inside a live 20-object vote), no config/preset/UI can force it true,
+// (`DetectCasePreservingName` in Genau.cpp, inside a live 20-object vote), no config/preset/UI can force it true,
 // and 12 titles have measured false. That is exactly why it rotted — nothing red ever appeared.
 inline int SizeofFName() {          // packed FName[] strides, stepping to an adjacent FName,
     // [VND583-07, A9 step 1] The engine's own size when Ubel has measured it (FNAME_SIZE_MEASURED), and

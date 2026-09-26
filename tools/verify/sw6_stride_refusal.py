@@ -90,8 +90,8 @@ POKE = 32          # neither base nor base+8, for either reader -- see legal_siz
 # reports. ⛔ Deriving the legal set from the LIVE value is wrong and this rig did it that way
 # first: on a checked build the live size is 24, and `{live, live±8}` wrongly admits 32, so the
 # guard refused a poke that the readers do in fact reject. The bases are:
-#   ReadMulticastDelegateArrayElements -> kMcdBaseSize, a literal 16   (Ubel.cpp:3396)
-#   ReadDelegateArrayElements          -> kSdBase = 8 + sizeof(FName)  (Ubel.cpp:3266)
+#   ReadMulticastDelegateArrayElements -> kMcdBaseSize, a literal 16   (Ubel.cpp)
+#   ReadDelegateArrayElements          -> kSdBase = 8 + sizeof(FName)  (Ubel.cpp)
 SUBJECTS = [
     ("Arr_MulticastDelegates", "ReadMulticastDelegateArrayElements", lambda fname: 16),
     ("Arr_Delegates", "ReadDelegateArrayElements", lambda fname: 8 + fname),
@@ -259,7 +259,7 @@ def main() -> int:
                          "the refusal. See the docstring for the numbers.")
     # [P1-UPROP-DELEGATE] (L46) reuses the same poke on a UE4 < 4.25 host: UE423_Flying's summoned
     # DelegatePadFixture, whose Arr_MulticastDelegates inner is a UProperty. get_offsets publishes that
-    # offset as `uproperty_elemsize`, and only when use_fproperty is false (Fern.cpp:5184-5188).
+    # offset as `uproperty_elemsize`, and only when use_fproperty is false (Fern.cpp `Fern::DispatchCommand`).
     ap.add_argument("--class-name", default="DumperTestActor",
                     help="the class whose first non-CDO instance is walked (L46: DelegatePadFixture)")
     ap.add_argument("--elemsize-key", default="fproperty_elemsize",

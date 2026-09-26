@@ -61,7 +61,7 @@ function readInteger(a, _)   return MEM[a] end
 -- Models CE's readSmallIntegerEx (LuaHandler.pas:1614): one argument means UNSIGNED, and
 -- the value is pushed as `word(v)` so the range is 0..65535. The stub used to hand back
 -- MEM[a] raw, which would have let a negative fixture value reach the helper and made the
--- dead sign-fixup AA35 removed look reachable. Same shape as invoke_helper_test.lua:93.
+-- dead sign-fixup AA35 removed look reachable. Same shape as invoke_helper_test.lua `readSmallInteger`.
 function readSmallInteger(a, signed)
   local v = MEM[a]
   if v == nil then return nil end
@@ -453,7 +453,7 @@ end
 --
 -- The distinction that makes this non-trivial: `count == 0` is NOT a failure. A
 -- class-wide freeze armed before its instances spawn is the helper's advertised
--- purpose (header :16-20), so a fix that unticks on zero would break the feature.
+-- purpose (the helper's header), so a fix that unticks on zero would break the feature.
 
 case('AA12: start() reports a HARD failure (no DLL) instead of returning nothing')
 do

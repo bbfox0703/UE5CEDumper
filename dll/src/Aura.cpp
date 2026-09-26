@@ -2517,7 +2517,7 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     //
     // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
     // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
-    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
     // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
     // not walk", and caching anything derived from it would be caching a failure.
     //
@@ -3570,7 +3570,7 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     //
     // The test is the walk's own verdict, not a new heuristic: WalkClassEx returns
     // `s_emptyClassInfo` — default-constructed, so Address == 0 — both when the address is
-    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp:1119), while a
+    // null and when U4's ShouldPublishClassWalk REFUSES the class (Ubel.cpp), while a
     // good walk sets `info.Address = uclassAddr`. So `Address != cls` means "this class did
     // not walk", and caching anything derived from it would be caching a failure.
     //
@@ -5221,7 +5221,7 @@ PropertySearchResult SearchProperties(
         // showed the Blueprint default forever (Health = 100 while the player is at 37).
         // `obj != cls` only excluded the UClass itself, never its CDO. (audit #5 A5)
         //
-        // Same `Default__` test Solide.cpp:170/:282, Wirbel.cpp:328 and Edel.cpp:94 already
+        // Same `Default__` test Solide.cpp (`ResolveLocalPC`, `ApplyJobLocked`), Wirbel.cpp and Edel.cpp (`ResolveLocalPC`) already
         // apply — a name compare rather than RF_ClassDefaultObject because the flags word is
         // one more unverified offset, and CLAUDE.md's rule is that UObject offsets are probed,
         // not assumed. The name is only resolved for objects whose class we actually want,

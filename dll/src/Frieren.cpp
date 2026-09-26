@@ -934,7 +934,7 @@ static bool AutoStartWork() {
     g_invokeMailbox.initState = Mimic::INIT_RUNNING;
     // UE5_Init CAN fail. The "Always succeeds" comment this replaces was correct
     // when it was written (af7ff3a deleted the old `if (!UE5_Init()) return false;`
-    // for Extra Scan), but audit #4's B49 added a real `return false` at :528 five
+    // for Extra Scan), but audit #4's B49 added a real `return false` to `UE5_Init` five
     // months later — a shutdown landing during the multi-second scan bails with
     // NOTHING latched — and this call site was never revisited. (audit #5 D5/FR1)
     const bool inited = UE5_Init();
@@ -1131,7 +1131,7 @@ uintptr_t UE5_FindInstanceOfClass(const char* className) {
 // Frieren.cpp only recompiles when it is touched. That is why it looked new after a
 // sync: nothing changed, the object cache had simply been hiding it.
 //
-// The twin of this function in Mimic.cpp:529 is byte-for-byte the same and does NOT
+// The twin of this function in Mimic.cpp `ChainListFuncs` is byte-for-byte the same and does NOT
 // warn, because Mimic uses per-declaration `extern "C"` and never opens a block. That
 // asymmetry between two identical helpers IS the diagnosis.
 //

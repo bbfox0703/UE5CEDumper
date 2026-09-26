@@ -795,7 +795,7 @@ public class FreezeScriptGeneratorTests
     // class with no live instances from a name that matches nothing -- so neither can the
     // script. "Armed, 0 right now" is the honest report; naming a typo would be a GUESS, which
     // is exactly what CLAUDE.md's mailbox rule forbids ("Never report a mailbox failure by
-    // guessing"). ue5_freeze_helper.lua:957 states the rule at the implementation; nothing
+    // guessing"). ue5_freeze_helper.lua `tick` states the rule at the implementation; nothing
     // enforced it, so "class not found -- check the spelling" could be added as an
     // improvement and every test would stay green.
     //

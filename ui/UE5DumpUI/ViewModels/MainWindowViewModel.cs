@@ -302,13 +302,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// screen. Worse, that lie was unrecoverable by the obvious gesture: an Avalonia
     /// <c>ListBox</c> writes <c>SelectedItem</c> only when it CHANGES, so clicking the
     /// still-highlighted node raised nothing, <see cref="ObjectTreeViewModel.SelectionChanged"/>
-    /// never fired (<c>ObjectTreeViewModel.cs:168</c>) and no walk reached the pipe. Clearing
+    /// never fired (<c>ObjectTreeViewModel.cs</c> <c>OnSelectedNodeChanged</c>) and no walk reached the pipe. Clearing
     /// the selection fixes both at once: the tree stops lying, and the next click on that
     /// node is a real change, so it loads.</para>
     ///
     /// <para>⛔ The fix does NOT belong in <c>ClassStructViewModel</c>, which is already
     /// correct — <c>LoadClassAsync</c> clears its dedupe key via <c>BeginLoad(nodeAddr:
-    /// null)</c> (<c>ClassStructViewModel.cs:250</c>), which is exactly why clicking a
+    /// null)</c> (<c>ClassStructViewModel.cs</c>), which is exactly why clicking a
     /// DIFFERENT row always recovered. Nor does it belong in a pointer handler on the tree:
     /// re-raising the event lands back in <c>OnObjectSelected</c>, whose dedupe
     /// (<c>:358</c>) swallows it, so that buys nothing this does not — and bypassing that
@@ -320,7 +320,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// load throws, the tree is left honestly unselected rather than pointing at a stale
     /// node. This is the same bare null write as <see cref="ObjectTreeViewModel.ClearOnDisconnect"/>
     /// (<c>:496</c>); it touches no collection, so the reentrancy note at
-    /// <c>ObjectTreeViewModel.cs:505-510</c> — which is about the selection model reacting
+    /// <c>ObjectTreeViewModel.cs</c> <c>ApplyFilter</c> — which is about the selection model reacting
     /// to <c>FilteredNodes.Clear()</c> mid-method — does not apply.</para>
     /// </summary>
     private async Task ShowClassInClassStructAsync(string classAddr)

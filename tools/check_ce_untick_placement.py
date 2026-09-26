@@ -75,10 +75,10 @@ SAME_LINE_TIMER = re.compile(r"\bcreateTimer\b", re.I)
 # `<AssemblerScript>[ENABLE]` prefix has to be stripped with it. Both halves were learned
 # from a failing negative control, one after the other:
 #   * a whole-line anchor missed `<AssemblerScript>[ENABLE]`, so the PREVIOUS record's
-#     `[DISABLE]` leaked across every remaining record and hid `UE5CEDumper.CT:879` -- the
+#     `[DISABLE]` leaked across every remaining record and hid the misplaced untick in UE5CEDumper.CT -- the
 #     one live defect this gate exists for;
 #   * relaxing it to "ends with the marker" then matched
-#     `ue5_freeze_helper.lua:163`, a trailing comment reading `-- <-- reachable from
+#     the freeze helper's `_ue5_freeze_handles[KEY] = h`, a trailing comment reading `-- <-- reachable from
 #     [DISABLE]`, which hid `:170` the same way.
 # working-lessons 1.2a, three times inside one 200-line file: each fix passed the cases
 # that existed and broke on the shape nobody had written a case for yet.
@@ -149,7 +149,7 @@ def scan(stream) -> list[tuple[int, str, str]]:
 
         # A Lua LINE comment is prose, not emitted code. Block comments stay in scope
         # (the copy-me samples live in one), but a paragraph ABOUT the untick is not a
-        # site -- ue5_freeze_helper.lua:973 explains the mechanism and is not a defect.
+        # site -- ue5_freeze_helper.lua `tick` explains the mechanism and is not a defect.
         if text.strip().startswith("--"):
             continue
 

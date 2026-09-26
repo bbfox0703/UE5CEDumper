@@ -104,7 +104,7 @@ static fs::path MakeTempPath(const fs::path& path) {
 // no explicit close(). A short write is swallowed by the destructor and the rename
 // publishes the TRUNCATED document over the only good copy. The C# twin
 // structurally cannot do this: `await File.WriteAllTextAsync` throws BEFORE
-// `File.Move` (AobUsageService.cs:141-142).
+// `File.Move` (AobUsageService.cs `SaveFileAsync`).
 //
 // FL2 — `fs::rename(a, b)` is the THROWING overload, and each caller's catch-all
 // logged it and returned, leaking `<file>.tmp.<pid>`. The suffix is the PID, so
@@ -118,7 +118,7 @@ static fs::path MakeTempPath(const fs::path& path) {
 // `dll_helpers_test` can pin it; this file reaches only `dll_core_test`.
 
 // Remove staging files abandoned by earlier failures — ours AND the UI's; both
-// build "<cache>.tmp.<pid>" (AobUsageService.cs:139). Age-guarded rather than
+// build "<cache>.tmp.<pid>" (AobUsageService.cs `SaveFileAsync`). Age-guarded rather than
 // PID-guarded: writing this file is a few KB and lasts milliseconds, so anything an
 // hour old is provably abandoned, whereas a liveness test would race a process
 // that is mid-write right now.

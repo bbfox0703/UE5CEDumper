@@ -45,7 +45,7 @@ static int g_pass = 0, g_fail = 0;
 
 // Print each case as it STARTS, house style (freeze_helper_test does the same). Not
 // decoration: this test drives recursive deletion and can crash, and a crash with no
-// output cannot be located -- build.ps1:305 records that exact shape costing a CI
+// output cannot be located -- build.ps1's `DLL_TEST_TRACE` note records that exact shape costing a CI
 // investigation in dll_helpers_test.
 static void blk(const char* name) { printf("- %s\n", name); }
 

@@ -201,7 +201,7 @@ def main():
     # which they always do, and always will: a direct copy opens the target (SHARING_VIOLATION)
     # while a rename must first delete it (ACCESS_DENIED). That disagreement is an OS fact, not
     # a defect, and the fix accepted it instead of trying to remove it: ProxyDeployService now
-    # catches `Exception ex when (IsTargetUnreplaceable(ex))` (:1188), which maps
+    # catches `Exception ex when (IsTargetUnreplaceable(ex))`, which maps
     # UnauthorizedAccessException AND the sharing-violation IOException to the same locked arm.
     #
     # So the question is no longer 'do the two shapes agree' but 'is each shape's error one the

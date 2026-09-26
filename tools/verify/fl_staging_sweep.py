@@ -69,7 +69,7 @@ def main(logdir_name):
     # ⚠ A FRESH PROCESS IS MANDATORY, and this is the trap that made the first run of
     # this rig report a false FAIL. SweepOrphanTemps holds
     # `static std::atomic<bool> s_swept` and so runs AT MOST ONCE PER PROCESS
-    # (Flamme.cpp:136). In an already-injected game it has therefore already run --
+    # (Flamme.cpp). In an already-injected game it has therefore already run --
     # before you planted anything -- and `trigger_scan` does not re-run it. Worse,
     # `trigger_scan` on an already-scanned process does not even re-save the hint
     # cache, so BOTH the sweep line and the "Saved results" line are legitimately

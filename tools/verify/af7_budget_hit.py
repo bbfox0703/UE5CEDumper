@@ -43,7 +43,7 @@ from pipe_client import PipeClient  # noqa: E402
 EXE = (r"D:\UE_Analyze_data\for testing\DumperTest\Development\Windows"
        r"\DumperTest\Binaries\Win64\DumperTest.exe")
 FUNC_NATIVE = 0x0000_0400
-INSTR_BUDGET = 8192          # Denken.cpp:17 kInstrBudget
+INSTR_BUDGET = 8192          # Denken.cpp kInstrBudget
 PROBE = 400                  # native functions to walk
 
 

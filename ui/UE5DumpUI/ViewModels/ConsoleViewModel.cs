@@ -490,9 +490,9 @@ public partial class ConsoleViewModel : ViewModelBase
             {
                 // [CONSOLE-PIN-THROWS] A dead pin does NOT come back as a failed result, which is
                 // what the retry below was written to catch. The DLL reads the class from the
-                // instance (Fern.cpp:5530) and then the function from that class (:5537), and on
+                // instance (Fern.cpp's invoke_function handler) and then the function from that class, and on
                 // freed-and-reused memory the class read SUCCEEDS with a garbage pointer while the
-                // lookup fails -- so :5539 answers `ok:false, "Function not found"`, and
+                // lookup fails -- so the handler answers `ok:false, "Function not found"`, and
                 // DumpService.CheckResponse THROWS. Control jumped straight to the catch below,
                 // `_stickyInstance.Remove` never ran, and the command stayed broken until the user
                 // pressed Load. Measured 2026-09-17 on DumperTest Development: a level change moved
@@ -500,7 +500,7 @@ public partial class ConsoleViewModel : ViewModelBase
                 // while the same command succeeded immediately after a Load cleared the pin.
                 //
                 // ⭐ RETRYING HERE CANNOT RUN THE COMMAND TWICE, and that is not an assumption:
-                // EVERY `ok:false` in the invoke handler is returned at Fern.cpp:5508-5585, and the
+                // EVERY `ok:false` in the invoke handler is returned at Fern.cpp `Fern::DispatchCommand`, and the
                 // dispatch does not begin until :5718. An `ok:false` therefore always means the
                 // function was never dispatched. The queued case -- `ok:true` with result -5 -- is a
                 // RESULT, not a throw, and is still excluded by `!dispatchTimedOut` below.

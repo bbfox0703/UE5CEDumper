@@ -68,7 +68,7 @@ local DLL_CALL_TIMEOUT_MS = 5000   -- keep in step with CeLuaHygiene.DllCallTime
 -- number", naming a line rather than the DLL call that failed), while
 -- `success ~= 0` is TRUE for nil, so a failed field read counted as a SUCCESS.
 -- Since UE5_WalkClassGetField leaves its out-params untouched when it fails
--- (Frieren.cpp:712-731), that success then re-read the PREVIOUS field's buffers
+-- (Frieren.cpp), that success then re-read the PREVIOUS field's buffers
 -- and recorded it twice -- and with the DLL failing outright, the walk built a
 -- full-size structure of empty-named, offset-0 rows, registered it with CE,
 -- cached it and logged "Struct created". A total failure was reported to the

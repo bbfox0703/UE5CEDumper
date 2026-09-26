@@ -538,7 +538,7 @@ void Fern::Stop(bool graceful) {
     //      process — a game that never closes.
     //
     // The OS reclaims the handles, threads and memory. That is the same reasoning
-    // Heiter.cpp:288-301 applies to its own DETACH body and Routine.h:51-56 applies
+    // Heiter.cpp `DllMain` applies to its own DETACH body and Routine.h's `UE5_Shutdown`-is-not-called note applies
     // to every feature worker; Fern::Stop's explicit join()/wait_for calls were
     // simply not on that list.
     //
@@ -1096,7 +1096,7 @@ void Fern::CloseConnOnce(Connection& conn) {
 void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     // Bind THIS thread to THIS connection's cancel flag for the whole handler, teardown
     // included. Safe by ownership: `conn` is a by-value shared_ptr (the accept thread
-    // passes it that way at Fern.cpp:976), so &conn->cancel cannot dangle while bound.
+    // passes it that way at Fern.cpp `Fern::AcceptLoop`), so &conn->cancel cannot dangle while bound.
     // From here on Tot::Requested() on this thread answers for this connection ALONE --
     // a foreign client's death no longer truncates this one's scans.
     Tot::ConnectionCancelScope cancelScope(&conn->cancel);
@@ -1504,10 +1504,10 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     //
     // ⛔⛔ THIS BLOCK USED TO SIT INSIDE `if (fv.arrayCount >= 0)` -> `if (!arrayInnerType...)`.
     // `fv.delegatePad` is set at exactly two sites, and only ONE of them survives that gate:
-    //   * `Ubel.cpp:6004` (MulticastInline) — reports an invocation list, so `arrayCount >= 0`
+    //   * WalkInstance's MulticastInline branch (Ubel.cpp) — reports an invocation list, so `arrayCount >= 0`
     //     and `array_inner_type` is set. It emitted fine, and was never affected.
-    //   * `Ubel.cpp:5507` (scalar `DelegateProperty`) — has NO invocation list, so `arrayCount`
-    //     stays -1 ("not an array", Ubel.h:418) and the emission could never run. It set the
+    //   * WalkInstance's scalar `DelegateProperty` branch (Ubel.cpp) — has NO invocation list, so `arrayCount`
+    //     stays -1 ("not an array", Ubel.h `LiveFieldValue`) and the emission could never run. It set the
     //     value on every checked build and the value never left the process.
     // So the loss was exactly one field KIND, not the whole key. Measured on the wire
     // 2026-09-09 (DumperTest 5.4 Development): `Multicast_Inline` carries `count:1` +
@@ -1828,7 +1828,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // `DynOff::PersistentPtrEnvelopeFor` (Grimoire.h) consults `latched` BEFORE it
                 // ever looks at ueVersion, so a latch taken under the OLD version outranks the
                 // new one for every call that cannot produce a fresh accepted measurement — and
-                // several cannot: `Ubel.cpp:2853` passes a literal 0 elemSize, and a garbage
+                // several cannot: Ubel.cpp's `ReadSoftObjectArrayElements` passes a literal 0 elemSize, and a garbage
                 // FPROPERTY_ELEMSIZE is exactly why the fallback exists. The override then
                 // silently changes the version and NOT the layout it implies, which is the one
                 // thing a version override is for. Clearing them re-derives on the next read
@@ -3923,7 +3923,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             // Optional tie-breaker. One UObject can own MANY candidates: with
             // `deep`, Aura emits one GroupCandidate per container BLOCK and they all
-            // intern to the same InstanceRecord ("blocks share", Aura.cpp:8163), so
+            // intern to the same InstanceRecord ("blocks share", Aura.cpp `ScanForValueGroup`), so
             // instance_addr alone is ambiguous and first-match-wins would answer an
             // expanded deep row with a DIFFERENT block's fields — a silent wrong
             // answer, in precisely the feature meant to end silent wrong answers.

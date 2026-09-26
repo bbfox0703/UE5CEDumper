@@ -4166,7 +4166,7 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
         const bool okCount = Macht::ReadSafe(listAddr + 8, innerCount);
         if (!okData || !okCount) {
             // UNREAD is not "(0 bindings)". Both reads fail together when the TArray's
-            // Data buffer has been freed -- and Macht::ReadTArray (Macht.h:287-297)
+            // Data buffer has been freed -- and Macht::ReadTArray (Macht.h)
             // validates only Count and Max, never probing Data, so a garbage pointer
             // reaches this loop intact. Publishing the affirmative "(0 bindings)" for it
             // told the UI and the CE exporters that a delegate provably HAS no
@@ -7857,7 +7857,7 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                            fi.TypeName == "AnsiStrProperty") {
                     fv.strValue = ReadFUtf8String(rowPtr, fi.Offset);
                 } else if (fi.TypeName == "TextProperty") {
-                    // Mirrors WalkInstance's TextProperty branch (:5157-5160) on
+                    // Mirrors WalkInstance's TextProperty branch on
                     // purpose, including the "(empty)" typedValue: the two readers
                     // must agree, and this is the pair that did not.
                     //
