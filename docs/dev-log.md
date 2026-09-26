@@ -27,6 +27,37 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3565) — UI text checked against behaviour: 123 view strings move to en.axaml, nine tooltips corrected, a gate for inline strings `[AXAML-INLINE-STRINGS]` `[WIKI-TIPS-B2]`
+
+The Wiki re-translation pass checks every English page against the code and forwards what the UI text
+gets wrong; each item was confirmed against the source before it was fixed. Red before green throughout.
+
+- **`[AXAML-INLINE-STRINGS]`:** 123 user-visible attribute values were English literals in 15 views
+  (column headers, copy-button labels, range placeholders, Live Walker's tooltips, Class Struct's empty-class
+  banner). They now bind 111 new `en.axaml` keys, verbatim. `check_axaml_strings` checked keys only, which
+  is how they accumulated; it gains a third direction, INLINE, that fails on any such literal (a glyph-only
+  value passes).
+- **Tooltips that described behaviour the code does not have:** the Object Tree search suggests a fixed list
+  of class names, not recent searches (`[OBJTREE-SEARCH-TIP]`); Live Walker's field search matches name,
+  type, value and the class or struct behind a field, with a 2-character floor (`[LW-SEARCH-TIP]`); and
+  `[WIKI-TIPS-B2]`: three result filters are space = AND, not substring; Value Search's timeout is 10–90 s,
+  default 25 (was quoted as 10–60 / 15); native functions' Props are a disassembly heuristic, not empty;
+  Locate in GWorld has no client gate (audit #5 AE10); Clear also turns off BP/Exec only; the category
+  filter includes Gameplay and Other. The timeout text and the category list are now derived from the
+  slider, the VM default and `KeywordScoringTable` in the tests, so they cannot drift silently again.
+- **`[GENCT-ONE-ROW]`:** Generate CT's empty-selection refusal asked for "2+ rows"; one row works.
+- **`[UINT8PROP-DEAD]` (DLL + UI):** the Force-value gate accepted `UInt8Property`, a class no engine emits
+  (uint8 is `ByteProperty`). Dropped from `Solide::IntWidthOf` and `PropertySearchMatch.CanForceNumeric`;
+  a UI test reads the DLL's list out of `Solide.h` / `Solide.cpp` and requires the two to agree. No behaviour
+  change.
+- **Open, needs the maintainer:** `[VM-INLINE-STRINGS]`. 458 status literals in 22 view models; moving them
+  needs a test-time resource loader first.
+- Tests: UI suite 5,624 run, 0 failed; `dll_helpers_test` 0 failed. Gates 27 run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,203,136 B `383e5d8b9f97` (the new strings are in it), `UE5Dumper.dll`
+  3,016,192 B `49dba05e4013`; proxies version `3f12016e688c`, dinput8 `b810136d0ff9`, dxgi `eee40f37f75d`,
+  winmm `6d2d9aed918e`. ⬜ Live checks owed (the `todo.md` rows carry them): hover the corrected tooltips,
+  and open each of the 15 views to read the moved text.
+
 ## 2026-09-26 (build 3564) — the Console's CheatManager warning names the real cause: no live instance, not a compiled-out body `[CONSOLE-CHEATMGR-HINT]`
 
 - **3563's wording was wrong, and this build replaces it.** It said the engine's CheatManager execs are
