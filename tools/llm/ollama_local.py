@@ -661,6 +661,8 @@ def guard(p: Probe):
     if marker:
         return (f"the GPU is reserved for a game ({marker.get('reason')}); `release` clears it if that "
                 f"launch was abandoned")
+    if not p.loaded:                                 # re-ask: an earlier request of OURS may have loaded
+        p.loaded = p.is_loaded()                     # it (an overflowing slice does), and its VRAM is ours
     if not p.loaded:
         free = gpu_free_mb()
         need = int((p.entry or {}).get("size") or 0) // (1024 * 1024) + VRAM_MARGIN_MB
