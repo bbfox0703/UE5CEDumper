@@ -350,6 +350,14 @@ def settings_text(data: dict) -> str:
     return json.dumps(data, indent=2, ensure_ascii=False) + "\n"
 
 
+def newline_of(original) -> str:
+    """The line ending to write a file back with: the one it already has (LF for a new file).
+
+    Path.write_text translates "\\n" to os.linesep on Windows, which rewrote an LF settings.json
+    as CRLF -- a one-hook edit that diffed as a whole-file rewrite (measured 2026-09-26)."""
+    return "\r\n" if original and b"\r\n" in original else "\n"
+
+
 def disabled_by_env(env) -> bool:
     return (env.get(DISABLE_ENV) or "").strip().lower() in ("off", "0", "false", "no")
 
@@ -454,7 +462,7 @@ def _read_json(path: pathlib.Path):
 def _write_json(path: pathlib.Path, data) -> bool:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(data), encoding="utf-8")
+        path.write_text(json.dumps(data), encoding="utf-8", newline="\n")
         return True
     except OSError:
         return False
@@ -924,12 +932,13 @@ def _save_settings(path: pathlib.Path, before: dict, after: dict, backup: bool) 
     if not after and path.name == SETTINGS_REL.name:
         path.unlink(missing_ok=True)                 # a settings.local.json that only ever held ours
         return
-    if backup and path.is_file():
+    original = path.read_bytes() if path.is_file() else None
+    if backup and original is not None:
         bak = path.with_name(path.name + USER_SETTINGS_BACKUP_SUFFIX)
         if not bak.exists():
             shutil.copy2(path, bak)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(settings_text(after), encoding="utf-8")
+    path.write_text(settings_text(after), encoding="utf-8", newline=newline_of(original))
 
 
 def cmd_setup(args) -> int:
@@ -973,7 +982,7 @@ def cmd_setup(args) -> int:
     if args.num_ctx:
         cfg["num_ctx"] = args.num_ctx
     cfg_path.parent.mkdir(parents=True, exist_ok=True)
-    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8")
+    cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding="utf-8", newline="\n")
     python = shutil.which("py") or sys.executable
     script = (main / "tools" / "llm" / "ollama_local.py").as_posix()
     _save_settings(USER_SETTINGS, user_before, merge_hook(user_before, python, script), backup=True)
