@@ -27,6 +27,30 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3566) — the Wiki check's last batch, two behaviour fixes, and what an adversarial review found in the first two `[WIKI-TIPS-B3]` `[SNAPSHOT-MANUAL-GATE]` `[FLY-EXPORT-EXPERIMENTAL]`
+
+- **Behaviour:** manual Capture / Estimate stand down while Auto Snapshot runs — `CanManualCapture` existed and
+  was raised, but the panel had bound `CanCapture` since Auto Snapshot shipped (`[SNAPSHOT-MANUAL-GATE]`). The
+  Fly CE records follow the Experimental switch in Add action records and Save .CT, the maintainer's call
+  (`[FLY-EXPORT-EXPERIMENTAL]`).
+- **Text that contradicted the code (`[WIKI-TIPS-B3]`):** Teleport's export tips now count 17 teleport + 4
+  movement + 2 time (+ 4 Fly); Gravity Direction is UE5.3+ everywhere, as `Laufen.h` says; hotkey hints name
+  the section that holds each row; Run BugItGo runs the field; God Mode's refresh names its six badge states; no
+  UI string cites `docs/` or carries CJK text; each tab keeps its own noise denylist; Discover is a local
+  database query; Detect's filter is ANDed. Also `[LIVEFUNCS-CAP-ADVICE]` (the filter cannot recover rows below
+  the fetch cap) and `[TP-CURSORHK-TIP]` (the hotkey fallback reads as a range, not a key sequence).
+- **An adversarial review of builds 3565's fixes** (a 12-agent workflow; 9 of 13 findings skeptic-verified, the
+  rest checked by hand) found text half-fixed or missed — two more AND filters, seven `pre-5.4` comments, the
+  search floor on the whole query, Batch Props, IP's Timing category, the Add status legend
+  (`[WIKI-REVIEW-TEXT]`); two tests deriving from a proxy (`[WIKI-REVIEW-TESTS]`); and two gate blind spots
+  (`[WIKI-REVIEW-GATES]`): the view gate now reads binding text (three `StringFormat`s allow-listed rather than
+  moved, a cost/benefit call), and the status ratchet counts every status assignment carrying a literal —
+  558 grandfathered in 22 view models, where the one-line match had seen 388.
+- Tests: UI suite 5,642 run, 0 failed. Gates 28 run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,206,720 B `2e641eb08d76` (the new strings are in it), `UE5Dumper.dll`
+  3,016,192 B `ee31f4023b5d` (only a comment changed in `Solide.h`); proxies version `a23a3e00e927`, dinput8
+  `9bbe307aa01a`, dxgi `74235e067adb`, winmm `c154df98bf5f`.
+
 ## 2026-09-26 (build 3565) — UI text checked against behaviour: 123 view strings move to en.axaml, nine tooltips corrected, a gate for inline strings `[AXAML-INLINE-STRINGS]` `[WIKI-TIPS-B2]`
 
 The Wiki re-translation pass checks every English page against the code and forwards what the UI text
