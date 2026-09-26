@@ -1260,6 +1260,11 @@ public class ConsoleViewModelTests
         Assert.Contains("Shipping", text, StringComparison.Ordinal);
         Assert.DoesNotContain("memory", text, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("feedback_", text, StringComparison.OrdinalIgnoreCase);
+
+        // The cause is a missing instance, not a missing body: a stock 4.27.2 Shipping EXE
+        // keeps UCheatManager's bodies (docs/lessons-learned.md, the UCheatManager entry).
+        Assert.DoesNotContain("compiled out", text, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stripped", text, StringComparison.OrdinalIgnoreCase);
     }
 
     [Fact]
