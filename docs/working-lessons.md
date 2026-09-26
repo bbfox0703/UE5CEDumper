@@ -3188,10 +3188,11 @@ architecture or UX changes in these areas.
   `ObjectTreeFilter.MatchesAllTerms` (see the CLAUDE.md rule).
 - **GPL-3.0** — rejected. The project is MIT.
 - **Existing view-model status literals stay in C#** (maintainer, 2026-09-26, `[VM-INLINE-STRINGS]`). The
-  en.axaml rule applies to NEW view-model status text (`Res.Get` / `Res.Format`); moving the ~390 old
-  `StatusText` literals was judged not worth the re-testing. `check_vm_status_literals` freezes their
-  per-file count, so only a new literal fails. The views are different: they hold no literal at all
-  (`check_axaml_strings`, INLINE).
+  en.axaml rule applies to NEW view-model status text (`Res.Get` / `Res.Format`); moving the ~560 old
+  status literals (`StatusText` and the `…Status` siblings) was judged not worth the re-testing.
+  `check_vm_status_literals` freezes their per-file count, so only a new literal fails. The views are
+  held to more: no literal attribute text at all, and binding text only in three allow-listed
+  `StringFormat`s kept by the same cost/benefit call (`check_axaml_strings`, INLINE).
 - **Hierarchical Copy CE XML direct-push to CE** — DEFERRED, not refused: it needs an unbuilt bulk-tree
   client plus a `CeXmlExportService` Emit-layer refactor (there is no tree model today). Per-row `+CE`
   (PR #251) and flat `+CE Fields` (PR #252) **did** ship.
