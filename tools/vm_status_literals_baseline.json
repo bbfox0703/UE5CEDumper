@@ -1,0 +1,21 @@
+{
+  "ui/UE5DumpUI/ViewModels/ClassPivotViewModel.cs": 23,
+  "ui/UE5DumpUI/ViewModels/ConsoleViewModel.cs": 14,
+  "ui/UE5DumpUI/ViewModels/DetectStatsViewModel.cs": 5,
+  "ui/UE5DumpUI/ViewModels/DumpExplorerViewModel.cs": 11,
+  "ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs": 8,
+  "ui/UE5DumpUI/ViewModels/InstanceFinderViewModel.cs": 11,
+  "ui/UE5DumpUI/ViewModels/InterestingFunctionsViewModel.cs": 11,
+  "ui/UE5DumpUI/ViewModels/InterestingPropertiesViewModel.cs": 11,
+  "ui/UE5DumpUI/ViewModels/LiveFuncsViewModel.cs": 10,
+  "ui/UE5DumpUI/ViewModels/LiveWalkerViewModel.cs": 43,
+  "ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs": 66,
+  "ui/UE5DumpUI/ViewModels/ObjectTreeViewModel.cs": 8,
+  "ui/UE5DumpUI/ViewModels/PropertySearchViewModel.cs": 26,
+  "ui/UE5DumpUI/ViewModels/ProxyDeployViewModel.cs": 31,
+  "ui/UE5DumpUI/ViewModels/RelatedObjectsViewModel.cs": 6,
+  "ui/UE5DumpUI/ViewModels/SnapshotViewModel.cs": 10,
+  "ui/UE5DumpUI/ViewModels/SpcQueryViewModel.cs": 6,
+  "ui/UE5DumpUI/ViewModels/TeleportViewModel.cs": 73,
+  "ui/UE5DumpUI/ViewModels/ValueSearchViewModel.cs": 15
+}

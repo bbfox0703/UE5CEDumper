@@ -106,6 +106,10 @@ jobs:
           # same text. Stdlib-only, no Avalonia, <1s.
           & $py tools/check_axaml_strings.py
           if ($LASTEXITCODE -ne 0) { throw "check_axaml_strings FAILED ($LASTEXITCODE) - an en.axaml key is referenced-but-undefined (a load-time crash) or defined-but-unreferenced (dead), or a view hard-codes a user-visible string. Run 'py tools/check_axaml_strings.py --list' for all three sets." }
+          # View-model status strings: a RATCHET, not a sweep ([VM-INLINE-STRINGS], maintainer's call
+          # 2026-09-26). Existing StatusText literals are grandfathered per file; a new one fails.
+          & $py tools/check_vm_status_literals.py
+          if ($LASTEXITCODE -ne 0) { throw "check_vm_status_literals FAILED ($LASTEXITCODE) - a view model's StatusText literal count moved off tools/vm_status_literals_baseline.json. A NEW literal belongs in en.axaml; after REMOVING one run 'py tools/check_vm_status_literals.py --update'." }
           # CE Lua <-> DLL mailbox contract. Every generated script bakes a contract version
           # and checks itself against what the DLL publishes - but that is only worth anything
           # if the version actually moves when the contract does. A FORGOTTEN bump is worse
