@@ -5119,22 +5119,28 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                     ok++;
             }
             // Fly (Dunste) — one row per key preset (WASD often collides with the game's
-            // own movement) + a Noclip toggle. DLL-driven; stateful on/off.
+            // own movement) + a Noclip toggle. DLL-driven; stateful on/off. Only while
+            // Experimental features is on: the Fly card is hidden otherwise, and a CE table
+            // should not carry records the UI does not show [FLY-EXPORT-EXPERIMENTAL].
             var flySpecs = new List<(string Desc, string Script)>();
-            for (int p = 0; p < FlyScriptGenerator.PresetNames.Length; p++)
-                flySpecs.Add(($"Fly: no-gravity 3D flight ({FlyScriptGenerator.PresetNames[p]})",
-                              FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled, p)));
-            flySpecs.Add(("Fly: Noclip (through walls)",
-                          FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip)));
+            if (ExperimentalEnabled)
+            {
+                for (int p = 0; p < FlyScriptGenerator.PresetNames.Length; p++)
+                    flySpecs.Add(($"Fly: no-gravity 3D flight ({FlyScriptGenerator.PresetNames[p]})",
+                                  FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled, p)));
+                flySpecs.Add(("Fly: Noclip (through walls)",
+                              FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip)));
+            }
             foreach (var s in flySpecs)
             {
                 if (await _aobMaker!.CreateAAScriptAsync(s.Desc, s.Script, autoActivate: false, group: CeGroupDll))
                     ok++;
             }
             int total = specs.Length + moveSpecs.Length + 1 + timeSpecs.Length + flySpecs.Count;
-            StatusText = $"Added {ok}/{total} Teleport + Movement + Time + Fly records to CE " +
+            string groups = flySpecs.Count > 0 ? "Teleport + Movement + Time + Fly" : "Teleport + Movement + Time";
+            StatusText = $"Added {ok}/{total} {groups} records to CE " +
                          "(teleport = momentary; movement/time/fly = on/off toggle; bind CE hotkeys as you like).";
-            _log.Info($"Teleport + Movement + Time + Fly actions -> CE via AOBMaker ({ok}/{total})");
+            _log.Info($"{groups} actions -> CE via AOBMaker ({ok}/{total})");
         }
         catch (Exception ex)
         {
@@ -5161,7 +5167,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // Time dilation (Hemmung) — World + Player levers baked at each lever's slider.
             rows.AddRange(TimeDilationScriptGenerator.BuildBatchRows(WorldTimeDilation, PawnTimeDilation));
             // Fly (Dunste) — DLL-driven no-gravity flight on/off + noclip on/off.
-            rows.AddRange(FlyScriptGenerator.BuildBatchRows());
+            if (ExperimentalEnabled)   // [FLY-EXPORT-EXPERIMENTAL], as in Add action records
+                rows.AddRange(FlyScriptGenerator.BuildBatchRows());
             string ct = CheatTableBuilder.Build("Teleport — UE5CEDumper", rows);
             var path = await _platform.ShowSaveFileDialogAsync(
                 defaultFileName: CheatTableBuilder.DefaultFileName("Teleport", DateTime.Now),
