@@ -15,8 +15,10 @@ public class WikiTooltipAccuracyTests
     [Fact]
     public void Result_filters_say_their_keywords_are_ANDed_not_substring_matched()
     {
-        // All three go through ObjectTreeFilter.MatchesAllTerms (term-level AND).
-        foreach (var key in new[] { "str.Tip.PropertySearch.ResultFilter", "str.Tip.IF.Filter", "str.Tip.IP.Filter" })
+        // All go through ObjectTreeFilter.MatchesAllTerms (term-level AND); the last two were
+        // missed by the first pass and found by review [WIKI-REVIEW-TEXT].
+        foreach (var key in new[] { "str.Tip.PropertySearch.ResultFilter", "str.Tip.IF.Filter", "str.Tip.IP.Filter",
+                                    "str.Tip.LiveWalker.FuncFilter", "str.Tip.Con.Filter" })
         {
             var tip = EnString(key);
             Assert.DoesNotContain("substring", tip, StringComparison.OrdinalIgnoreCase);
@@ -63,6 +65,25 @@ public class WikiTooltipAccuracyTests
     {
         // InterestingFunctionsViewModel.ClearFilters also sets CallableOnly = false.
         Assert.Contains(EnString("str.IF.CallableOnly"), EnString("str.Tip.IF.ClearFilters"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Batch_Props_tip_does_not_say_native_functions_show_0()
+    {
+        // [WIKI-REVIEW-TEXT] The batch calls the same WalkFunctionPropsAsync as Props (native =
+        // disassembly heuristic), and a row nothing could analyse reads PartialResultNotice.NotAnalysedCell.
+        var tip = EnString("str.Tip.IF.BatchProps");
+        Assert.DoesNotContain("native funcs", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains(UE5DumpUI.Core.PartialResultNotice.NotAnalysedCell, tip, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Property_category_tip_names_every_category_the_filter_can_show()
+    {
+        // [WIKI-REVIEW-TEXT] The IF twin below was fixed in B2; this one omitted Timing.
+        var tip = EnString("str.Tip.IP.Category");
+        foreach (var cat in Enum.GetValues<PropertyCategory>())
+            Assert.Contains(PropertyScoringTable.DisplayName(cat), tip, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -37,6 +37,8 @@ public class FlyExportFollowsExperimentalTests : IDisposable
         Assert.Equal(experimental ? FlyScriptGenerator.BuildBatchRows().Count : 0, fly);
         Assert.Contains(bridge.Descriptions, d => d.StartsWith("Movement:", StringComparison.Ordinal));
         Assert.Contains(bridge.Descriptions, d => d.StartsWith("Time:", StringComparison.Ordinal));
+        // [WIKI-REVIEW-TEXT] The status line must not describe Fly records it did not send.
+        Assert.Equal(experimental, vm.StatusText.Contains("fly", StringComparison.OrdinalIgnoreCase));
     }
 
     [Theory]

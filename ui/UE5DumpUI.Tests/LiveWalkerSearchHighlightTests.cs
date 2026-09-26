@@ -218,6 +218,11 @@ public class LiveWalkerSearchHighlightTests
         foreach (var what in new[] { "name", "type", "value", "2 characters" })
             Assert.Contains(what, tip, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("by name", tip, StringComparison.OrdinalIgnoreCase);
+
+        // [WIKI-REVIEW-TEXT] The floor is on the whole query, not on each keyword: "a b" is
+        // active and ANDs two one-letter terms, so the tooltip must put the floor on the box.
+        Assert.Equal(1, LiveWalkerViewModel.MarkSearchMatches(Rows(), "a b"));
+        Assert.Contains("box holds at least 2 characters", tip, StringComparison.Ordinal);
     }
 
     private static string EnString(string key)

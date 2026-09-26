@@ -35,10 +35,17 @@ public class WikiTooltipAccuracyB3Tests
     {
         // Laufen.h: UE5.3+ (stock 5.3 honours GravityDirection, [R7-X7]).
         Assert.Contains("UE5.3+", File.ReadAllText(Repo("dll/src/Laufen.h")), StringComparison.Ordinal);
+        // Comments too: "pre-5.4" beside a UE5.3+ edit slipped past a plain "UE5.4+" check
+        // [WIKI-REVIEW-TEXT]. Test files may still quote the old message as history.
+        var stale = new Regex(@"pre-5\.4|5\.4\+", RegexOptions.IgnoreCase);
         foreach (var rel in new[] { "ui/UE5DumpUI/Resources/Strings/en.axaml", TeleportVm,
                                     "ui/UE5DumpUI/Services/MovementScriptGenerator.cs",
-                                    "ui/UE5DumpUI/Models/TeleportModels.cs" })
-            Assert.DoesNotContain("UE5.4+", File.ReadAllText(Repo(rel)), StringComparison.Ordinal);
+                                    "ui/UE5DumpUI/Models/TeleportModels.cs",
+                                    "ui/UE5DumpUI/Core/IDumpService.cs" })
+        {
+            var hit = stale.Match(File.ReadAllText(Repo(rel)));
+            Assert.False(hit.Success, $"{rel} still says \"{hit.Value}\"");
+        }
         Assert.Contains("UE5.3+", EnString("str.Tip.TP.GdRefresh"), StringComparison.Ordinal);
         Assert.DoesNotContain("not yet exposed", EnString("str.TP.GrHint"), StringComparison.Ordinal);
     }
