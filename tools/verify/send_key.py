@@ -11,6 +11,12 @@ still holding the typed text, with the caret verifiably inside it. This sends th
 plain SendInput keyboard event from this process instead, so the row does not need a human at the
 keyboard. It prints the foreground window's title before and after, so a key that went to the wrong
 window shows up in the output rather than as a silent no-op.
+
+EDITING A LIVE WALKER CELL (measured 2026-09-27): a computer-use double-click opens the editor but
+leaves keyboard focus on the DataGrid, so every key -- this tool's included -- goes to the grid
+(text is ignored, Enter moves to the next row). Click INSIDE the opened box first, then send. Prefer
+--post: a SendInput key hands the foreground to the NVIDIA overlay, after which computer-use refuses
+every call until the overlay is granted or the UI is brought forward again.
 """
 import argparse
 import ctypes

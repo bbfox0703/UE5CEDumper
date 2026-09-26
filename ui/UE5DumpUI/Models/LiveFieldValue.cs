@@ -662,11 +662,20 @@ public sealed partial class LiveFieldValue : ObservableObject
     /// <summary>Static options for BoolProperty dropdown.</summary>
     public static string[] BoolOptions { get; } = ["true", "false"];
 
-    /// <summary>Mutable value for DataGrid edit binding. Get returns the editable string form; set stores pending value.</summary>
+    /// <summary>Mutable value for DataGrid edit binding. Set stores the pending value; get returns
+    /// it while there is one, else the editable string form of the live value.</summary>
     public string EditableValue
     {
         get
         {
+            // [LW-EDIT-RETYPE-DROP] The pending text first. The editor's TwoWay binding re-reads
+            // this getter after every value it writes, and skips a keystroke whose text equals
+            // what it last read. Returning the LIVE value here made retyping the value on screen
+            // lose its final keystroke -- typing 1234568 over 1234568 wrote 123456 (measured,
+            // build 3568) -- and let a refresh repaint the box under the user's typing.
+            // ResetPendingEdit at edit begin empties it, so the editor still opens on the live value.
+            if (_editableValue.Length > 0)
+                return _editableValue;
             if (TypeName == "BoolProperty")
             {
                 // Extract just "true" or "false" from TypedValue like "true (bit 2, mask 0x04)"
