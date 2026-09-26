@@ -824,8 +824,8 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // `tools/check_property_family.py` pins all of this — counting writers by hand is what failed
 // the first time.
 //
-// Pure and constexpr, so dll_helpers_test can pin the invariant — which matters because no
-// test target compiles Genau.cpp.
+// Pure and constexpr, so dll_helpers_test can pin the invariant without Genau.cpp's scan
+// machinery.
 struct PropertyFamily {
     int structProp;     // FStructProperty::Struct
     int arrayInner;     // FArrayProperty::Inner

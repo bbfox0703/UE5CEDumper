@@ -26,7 +26,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
     /// <c>TotalClasses</c> counts to the end regardless ([CLASSTOTAL-2026-08-18]); this bounds only
     /// the rows materialized. Clamped 100..50000 by the NumericUpDown and again DLL-side.
     ///
-    /// <para>[CLASSCAP-2026-08-21] — the status line has always ended "or raise the cap" and there
+    /// <para>[CLASSCAP] — the status line has always ended "or raise the cap" and there
     /// was nothing to raise. Found while live-checking CLASSTOTAL on Avowed: "5,000 classes shown
     /// of 7,409 total … ⚠ STOPPED at the 5,000-row cap" — and then advised raising a cap the
     /// toolbar did not expose anywhere. Third instance of audit #5 Z10.
@@ -138,7 +138,7 @@ public partial class GameClassFilterViewModel : ViewModelBase
             // nothing is no longer indistinguishable from the class not existing, and the
             // user can see how far above the cap the real count is.
             // ⚠ "or raise the cap" is offered ONLY while the cap can actually go higher.
-            // [CLASSCAP-2026-08-21]: this line said it unconditionally on a panel that had NO cap
+            // [CLASSCAP]: this line said it unconditionally on a panel that had NO cap
             // control at all — the third instance of the audit #5 Z10 shape (name no lever the
             // user cannot reach), found while live-checking CLASSTOTAL on Avowed, where it read
             // "5,000 classes shown of 7,409 total … or raise the cap" with nothing to raise. The

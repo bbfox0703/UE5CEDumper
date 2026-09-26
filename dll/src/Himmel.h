@@ -72,7 +72,7 @@
 //   SAT426  : Satisfactory UE 4.26 build analysis (work/SF UE 4.26 AOBs.txt)
 //   SAT52   : Satisfactory UE 5.2 build analysis (work/SF UE 5.21 AOBs.txt)
 //   OT      : Octopath Traveller (UE4, Ghidra + CE analysis, codename "Kingship")
-//   GH      : Ghidra cross-game analysis (aob_export/analysis_report.md)
+//   GH      : Ghidra cross-game analysis (aob_export/analysis_report.md, not in this repo)
 //   ME      : MindsEye (Build A Rocket Boy, UE 5.4.4 licensee fork — capstone + .pdata analysis).
 //             NOTE: AOB_NAMEDECRYPT_ME1 is deliberately NOT in any PATTERNS[] array — it does
 //             not resolve a global pointer, so Genau::ResolveNameKeyTable consumes it directly.
@@ -1338,7 +1338,7 @@ constexpr const char* AOB_SPARSE_X2 =
 //     Band by SEMANTICS, not by its 13 literal bytes — the same judgement the GOBJ_ES53_1
 //     counter-example in the band block above makes in the opposite direction.
 //     **DEMOTION VERIFIED by the full 58-program sweep (2026-07-29):** not one lander moved on
-//     any oracle, REPORT.md's band audit came back EMPTY ("all patterns sit in a band consistent
+//     any oracle, out/sweep/REPORT.md's band audit came back EMPTY ("all patterns sit in a band consistent
 //     with their specificity"), and DI427_1 now appears only in the §6 noise table. Neutral, as
 //     predicted — the point was ordering hygiene, not a measurable win.
 //   * GOBJ_DI427_2 (5 binaries) and _3 (4 binaries) DO reach genuine SHIPPING builds — 4.22 and
@@ -1965,7 +1965,7 @@ constexpr AobSignature GWORLD_PATTERNS[] = {
     // What it displaces is worth nothing: GWLD_SP57_3 falls to batch 2 but hits exactly 1
     // of 51 binaries (Solarpunk), where GWLD_SP57_1 @100 lands first in batch 1 under BOTH
     // layouts — so it is unreachable there either way; and GWLD_GH_2 falls to batch 3 with
-    // 0 hits on 51 binaries (it is in REPORT.md's "never hits anything, anywhere" list).
+    // 0 hits on 51 binaries (it is in out/sweep/REPORT.md's "never hits anything, anywhere" list).
     // The census also showed five of the eight batch-1 slots — DI427_1, DI427_2, SP57_2,
     // ES2_2, SP57_3 — win on ZERO binaries. Batch 1 was not scarce.
     //

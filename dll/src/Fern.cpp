@@ -4039,7 +4039,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int limit = request.value("limit", 5000);
             // Same clamp and ceiling as CMD_FIND_INSTANCES / CMD_SEARCH_PROPERTIES: <1 returns
             // nothing, 50000 bounds one payload. The walk runs to the end of GObjects either way
-            // (CLASSTOTAL) — this bounds only row materialization. [CLASSCAP-2026-08-21]
+            // (CLASSTOTAL) — this bounds only row materialization. [CLASSCAP]
             //
             // ⚠ The DEFAULT stays 5000: it is the wire default for a client that sends no
             // "limit", and the UI now always sends one.

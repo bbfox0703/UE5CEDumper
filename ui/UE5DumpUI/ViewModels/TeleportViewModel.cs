@@ -883,7 +883,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // ⚠ This used to be two calls covering three badges, while the disconnect
             // branch below reset TWELVE — so nine cards read "Unknown" over state the
             // DLL could answer for. Measured live on Shipping, with the two primed
-            // cards as the control. [BADGEPRIME-2026-09-10]; the asymmetry is now held
+            // cards as the control. [BADGEPRIME]; the asymmetry is now held
             // by tools/check_badge_prime_symmetry.py.
             //
             // Deliberately NOT the button-driven RefreshXxxAsync methods: those set
@@ -2380,7 +2380,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// Super Jump and Fly all read "State: Unknown" against a pipe answering
     /// <c>state: 0</c> / <c>has_cmc: true</c> — while God Mode and Time Dilation showed
     /// real values, and those were exactly the two that were primed.
-    /// [BADGEPRIME-2026-09-10].</para>
+    /// [BADGEPRIME].</para>
     ///
     /// <para>It is not cosmetic: a DLL hold SURVIVES a UI reconnect for as long as the game
     /// lives (that is the whole premise of <c>RefreshHeldProtectStateAsync</c>, added for

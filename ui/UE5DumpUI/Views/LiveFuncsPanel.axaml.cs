@@ -12,7 +12,7 @@ public partial class LiveFuncsPanel : UserControl
     // AOT-safe sort comparers for every column whose sort path no column binding
     // roots — a template column (no column-level Binding at all) or a text column
     // whose SortMemberPath differs from its Binding path. Their reflection sort is
-    // trimmed under AOT (aot-pitfalls.md §4.5). Class and Function bind and sort on the
+    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Class and Function bind and sort on the
     // same path, so they are rooted and need nothing.
     //
     // ⚠ ROOTED IS NOT THE SAME AS CORRECT. This comment used to include Params in that

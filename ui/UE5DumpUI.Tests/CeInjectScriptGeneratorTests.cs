@@ -318,7 +318,7 @@ public class CeInjectScriptGeneratorTests
     }
 
     // ────────────────────────────────────────────────────────────────────────
-    // [B30-REOPEN-2026-09-10] — the disable must tear down only what THIS record
+    // [B30-REOPEN] — the disable must tear down only what THIS record
     // started. The original B30 fix guarded on "is a DLL loaded", which is not the
     // same question: all four proxy .def files export UE5_StopPipeServer, so in the
     // exact case B30 was filed about — a proxy already loaded and serving — the probe

@@ -130,7 +130,7 @@ void Aura::SetDecryptFunc(DecryptFunc func) {
 // give each thread its own caches + result buffer, then merge in chunk order
 // so the global result stays ascending-index ordered (matching the serial
 // semantics exactly). Mirrors the discrete dumper's RunParallelScan design
-// (docs reference: Memory-Scanning-Internals.md §16).
+// (discrete's own docs: Memory-Scanning-Internals.md §16, not in this repo).
 namespace {
 
 // Worker thread count for a GObjects walk of `workItems` objects. Leaves

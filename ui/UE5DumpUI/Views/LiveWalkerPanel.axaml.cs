@@ -24,7 +24,7 @@ public partial class LiveWalkerPanel : UserControl
     // AOT-safe sort comparers for the FieldGrid's TEMPLATE data columns ("Value" and
     // "Type"). Text columns sort out-of-box via their Binding path; a template column
     // has no column-level binding, so its reflection sort is trimmed under AOT — wire
-    // an explicit comparer (aot-pitfalls.md §4.5).
+    // an explicit comparer (the sort trap explained in Helpers/DataGridSortComparers.cs).
     //
     // ⚠ "Type" joined this list on 2026-08-23 and did NOT start as a template column.
     // It was a DataGridTextColumn, therefore binding-rooted and safe, until

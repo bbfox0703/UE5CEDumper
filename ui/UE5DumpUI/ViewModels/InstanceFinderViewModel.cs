@@ -536,7 +536,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
             // and the advice becomes the Z10 lie again, one ceiling later. The clause is shared
             // (PartialResultNotice.RaiseMaxClause) rather than re-derived here: the same rule
             // was written three times in one day for three panels, and the third time is when a
-            // rule stops being a rule. [CLASSCAP-2026-08-21] sibling sweep.
+            // rule stops being a rule. [CLASSCAP] sibling sweep.
             var capNote = result.Truncated
                 ? $" — ⚠ capped at {found} of max {InstanceSearchCap:N0}; exclude noise classes"
                   + PartialResultNotice.RaiseMaxClause(InstanceSearchCap, Constants.MaxSearchCap)

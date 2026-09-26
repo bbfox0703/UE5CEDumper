@@ -114,8 +114,8 @@ static fs::path MakeTempPath(const fs::path& path) {
 // the UI holds this file with FileShare.Read and NOT FileShare.Delete, so a
 // replace-rename during a UI read simply fails.
 //
-// The decision itself lives in Flamme.h (ShouldPublishAtomicWrite) because no test
-// target compiles this file.
+// The decision itself lives in Flamme.h (ShouldPublishAtomicWrite) so the light
+// `dll_helpers_test` can pin it; this file reaches only `dll_core_test`.
 
 // Remove staging files abandoned by earlier failures — ours AND the UI's; both
 // build "<cache>.tmp.<pid>" (AobUsageService.cs:139). Age-guarded rather than

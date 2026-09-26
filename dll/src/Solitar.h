@@ -51,7 +51,7 @@ inline uint8_t ApplyBoolBit(uint8_t cur, uint8_t mask, bool value) {
                  : static_cast<uint8_t>(cur & ~mask);
 }
 
-// Generic damage/invincibility flag matcher (T2 — docs/godmode-spec.md §5.2a).
+// Generic damage/invincibility flag matcher (T2 — the "Build 1256" note at the top of docs/godmode-spec.md).
 // Given an ALREADY-LOWERCASED reflected bool property name, return true when it
 // is a known damage/invincibility flag and set outProtect to the value that
 // means "protected" (what GodMode ON writes; OFF writes the inverse). Universal

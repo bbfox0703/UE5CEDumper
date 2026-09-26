@@ -37,7 +37,10 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CODE_DIRS = ("dll/", "ui/", "scripts/", "tools/")
 CODE_EXT = (".cpp", ".h", ".hpp", ".cs", ".lua", ".py", ".CT")
 OTHER_REPOS = re.compile(r"(?i)\b(AOBMaker|cheat-engine|RE-UE4SS|Dumper-?7|UEPseudo|patternsleuth|CrimsonAtomtic|"
-                         r"UnrealEngine|Epic)\b")
+                         r"discrete|UnrealEngine|Epic)\b")
+HISTORY = re.compile(r"(?i)\b(until|before|used to|believ\w*)\b")
+# The evaluation doc names the broken tags as examples; it must not count as their record.
+TAG_CORPUS_EXCLUDE = ("docs/comment-integrity-eval.md",)
 
 FILELINE = re.compile(r"\b([A-Za-z_][\w.-]*\.(?:cpp|h|hpp|cs|axaml|lua|py|CT|ps1|md))\s?:(\d{1,5})(?:\s*[-–]\s*\d{1,5})?\b")
 ANYFILE = re.compile(r"\b([A-Za-z_][\w.-]*\.(?:cpp|h|hpp|cs|axaml|lua|py|CT|ps1|md|pas|inc|java|ini|txt))\b")
@@ -89,8 +92,15 @@ def comment_text(path, lines):
 
 
 def test_compiled_cpps(root):
-    return {m for f in glob.glob(os.path.join(root, "dll", "tests", "*.cpp"))
-            for m in re.findall(r"\.\./src/([A-Za-z_]+)\.cpp", read(f))}
+    """Stems of dll/src .cpp files some test target compiles: #included by a dll/tests .cpp (check_derived_counts'
+    derivation) OR listed as a source of a *_test executable in dll/CMakeLists.txt (dll_helpers_test builds
+    Radar.cpp and Denken.cpp that way, not by #include)."""
+    stems = {m for f in glob.glob(os.path.join(root, "dll", "tests", "*.cpp"))
+             for m in re.findall(r"\.\./src/([A-Za-z_]+)\.cpp", read(f))}
+    cm = read(os.path.join(root, "dll", "CMakeLists.txt"))
+    for body in re.findall(r"add_executable\(\s*\w+_test\b([^)]*)\)", cm):
+        stems |= set(re.findall(r"src/([A-Za-z_]+)\.cpp", body))
+    return stems
 
 
 def headings(text):
@@ -122,13 +132,16 @@ def scan_line(path, n, c, ctx):
             inrepo = True          # a bare :NNN with no file before it = this file
         if inrepo:
             out.append(("LINE", path, n, m.group(1)))
-    # --- TESTTARGET
+    # --- TESTTARGET (history -- "until now", "used to", a claim quoted as someone's belief -- is not a claim)
+    history = bool(HISTORY.search(c))
     for m in TESTCLAIM.finditer(c):
         stem = m.group(1) or m.group(2)
-        if stem in in_tests:
-            out.append(("TESTTARGET", path, n, f"{stem}.cpp IS compiled by a dll/tests target"))
+        quoted = c[:m.start()].count('"') % 2 == 1
+        if stem in in_tests and not history and not quoted:
+            out.append(("TESTTARGET", path, n, f"{stem}.cpp IS compiled by a test target"))
     # --- REFS
-    other_repo = bool(OTHER_REPOS.search(c)) or "out/" in c or "out\\" in c
+    other_repo = (bool(OTHER_REPOS.search(c)) or "out/" in c or "out\\" in c
+                  or "not in this repo" in c)
     for m in MDREF.finditer(c):
         name, sec = m.group(1), m.group(2)
         key = name.lower()
@@ -155,7 +168,8 @@ def run(root):
     for f in files:
         by_base.setdefault(os.path.basename(f).lower(), []).append(f)
     md_by_base = {os.path.basename(f).lower(): f for f in files if f.endswith(".md")}
-    doc_text = "\n".join(read(os.path.join(root, f)) for f in files if f.startswith("docs/") and f.endswith(".md"))
+    doc_text = "\n".join(read(os.path.join(root, f)) for f in files
+                         if f.startswith("docs/") and f.endswith(".md") and f not in TAG_CORPUS_EXCLUDE)
     heads = {f: headings(read(os.path.join(root, f))) for f in files if f.endswith(".md")}
     ctx = (by_base, test_compiled_cpps(root), md_by_base, doc_text, heads)
     findings = []
@@ -188,6 +202,10 @@ def selftest():
         ("UnrealNames.cpp@5.4 line 2017", "LINE", False),
         ("no test target compiles Aura.cpp, so", "TESTTARGET", True),
         ("no test target compiles Stark.cpp, so", "TESTTARGET", False),
+        ("Until now no test target compiled Aura.cpp", "TESTTARGET", False),
+        ('believing "Aura.cpp is in no test target" -- wrong', "TESTTARGET", False),
+        ("discrete's docs: Scan-Internals.md §16", "REFS", False),
+        ("report.md, not in this repo", "REFS", False),
         ("see aot-pitfalls.md for the list", "REFS", True),
         ("see working-lessons §3.wc", "REFS", False),
         ("see working-lessons §9.zz", "REFS", True),

@@ -13,7 +13,7 @@ public partial class RelatedObjectsPanel : UserControl
     // AOT-safe sort comparers — the Address column displays a hex string but
     // sorts on the parsed ulong, and the template (actions) column has no
     // column-level binding. Without these the header click is a silent no-op
-    // under AOT (aot-pitfalls.md §4.5).
+    // under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs).
     private static readonly IReadOnlyDictionary<string, IComparer> RelatedSortComparers =
         new Dictionary<string, IComparer>
         {

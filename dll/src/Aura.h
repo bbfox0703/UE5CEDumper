@@ -842,8 +842,8 @@ std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::strin
 // previewed `0 (CDO default)` while the freeze on that row hit two live instances.
 //
 // The preview now searches derived instances too, so the two halves agree, and says which
-// kind of sample it got. Keeping the rule here rather than in Aura.cpp is deliberate: no
-// test target compiles Aura.cpp, so a decision left there cannot be pinned at all.
+// kind of sample it got. Keeping the rule here rather than in Aura.cpp is deliberate: the light
+// `dll_helpers_test` pins a header rule directly, while Aura.cpp reaches only `dll_core_test`.
 enum class PreviewSource {
     None,          // nothing to preview
     Exact,         // a live instance whose class is exactly the row's class
@@ -1864,8 +1864,8 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 //
 // RAII because the fix is otherwise one `erase` per `return` in a lambda with
 // many early exits, and the first one anybody forgets silently restores the bug.
-// Header-inline and dependency-free so `dll_helpers_test` can compile it — no
-// test target builds Aura.cpp, so this is the only way to pin the semantics.
+// Header-inline and dependency-free so `dll_helpers_test` can compile it: Aura.cpp
+// reaches only `dll_core_test`, whose fake object pool this guard does not need.
 class StructPathGuard {
 public:
     StructPathGuard(std::unordered_set<uintptr_t>& path, uintptr_t node)

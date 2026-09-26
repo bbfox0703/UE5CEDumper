@@ -4,10 +4,10 @@
 // VersionNeedleScan — the UE-version needle sweep, extracted from Genau.cpp
 //
 // Header-only and PURE: (const uint8_t*, size_t) in, offsets and table indices out.
-// No Win32, no Macht, no Sein. That is the whole point — nothing in dll/CMakeLists.txt
-// compiles Genau.cpp into a test target (dll_helpers_test builds tests/dll_helpers_test.cpp
-// + src/Radar.cpp + src/Denken.cpp only), so this logic was uncatchable at build time.
-// Here it is unit-testable against a naive reference implementation.
+// No Win32, no Macht, no Sein. That is the whole point: Genau.cpp reaches only
+// `dll_core_test` (since 2026-08-25), and dll_helpers_test builds tests/dll_helpers_test.cpp
+// + src/Radar.cpp + src/Denken.cpp only. Kept pure here, this logic is unit-testable in the
+// light target against a naive reference implementation.
 //
 // Kept in English and NOT given a Frieren roster name: CLAUDE.md's module-naming rule
 // exempts "algorithm helpers that live inside an existing namespace", the precedent being

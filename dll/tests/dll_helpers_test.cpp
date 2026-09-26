@@ -6027,8 +6027,8 @@ static void Test_VersionTier2_BareNeedle_G11() {
 // Deterministic, first run, no concurrency. docs/test-games.md records Solarpunk resolving
 // through exactly that heuristic fallback.
 //
-// This pins the INVARIANT. It cannot pin the wiring — no test target compiles Genau.cpp or
-// Ubel.cpp — but making the helper the only sane way to express the family is the
+// This pins the INVARIANT. It cannot pin the wiring, which lives in Genau.cpp / Ubel.cpp and
+// reaches only dll_core_test, but making the helper the only sane way to express the family is the
 // structural half, and this is the half a build can check.
 static void Test_SoftObjectPathSize() {
     // A9: sizeof(FSoftObjectPath). The FName block pads UP to 8 before the trailing
@@ -7872,8 +7872,8 @@ static void Test_Radar_LeafAnchor() {
     // --- the depth rule, in the one place it lives -----------------------------
     // Leaves are emitted with `depth + 1`, so the container header is a direct field
     // of the scanned object exactly when the LEAF's depth is 1. Writing this test at
-    // the call site with the walker's own `depth` is an off-by-one no target can catch,
-    // because no test target compiles Aura.cpp.
+    // the call site with the walker's own `depth` is an off-by-one, so the rule is pinned
+    // here rather than at Aura.cpp's call site.
     EXPECT("depth-1 array leaf is anchorable",
            Radar::AnchorKindForLeaf(/*isSparse=*/false, 1) == ValueAnchor::ArrayElement);
     EXPECT("depth-1 sparse leaf is anchorable",

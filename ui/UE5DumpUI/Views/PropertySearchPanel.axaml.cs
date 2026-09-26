@@ -16,7 +16,7 @@ public partial class PropertySearchPanel : UserControl
     // rooted by a column-level Binding: the three template columns (Scope /
     // Property / Preview) and the Offset text column (sorts by PropOffset
     // while it displays OffsetHex). Without these the header click is a
-    // silent no-op under AOT (aot-pitfalls.md §4.5).
+    // silent no-op under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs).
     private static readonly IReadOnlyDictionary<string, IComparer> ResultsSortComparers =
         new Dictionary<string, IComparer>
         {

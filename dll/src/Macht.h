@@ -195,8 +195,7 @@ inline bool ParsePattern(const char* patStr, ParsedPattern& out) {
 // AOBScanBatch — measured at most 0.64 s on a 213 MB .text — or one
 // AOBScanAllModules — measured at most 2.34 s on a 593-module title. Both sit
 // inside CE's 5000 ms call ceiling, so a poll here would buy no measurable
-// responsiveness while costing a relaxed atomic load per 32-byte AVX2 stride, in
-// a file NO test target compiles.
+// responsiveness while costing a relaxed atomic load per 32-byte AVX2 stride.
 //
 // ⚠ If a poll is ever added here anyway, it MUST discard the partial result —
 // return 0 / an EMPTY vector, never what was found so far. Two callers read these

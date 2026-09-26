@@ -619,8 +619,8 @@ struct LeafAnchor {
 
 /// The depth rule, in ONE place. Leaves are emitted with `depth + 1`, so "the container
 /// header is a direct field of the scanned object" is `leafDepth == 1` — writing that
-/// test at the call site with the walker's own `depth` is an off-by-one nothing can
-/// catch, because no test target compiles `Aura.cpp`.
+/// test at the call site with the walker's own `depth` is an off-by-one that is easy to
+/// write and hard to see, so the rule lives here where `dll_helpers_test` pins it.
 constexpr ValueAnchor AnchorKindForLeaf(bool isSparse, int leafDepth) {
     if (leafDepth != 1) return ValueAnchor::UnverifiableNested;
     return isSparse ? ValueAnchor::SparseElement : ValueAnchor::ArrayElement;
@@ -1106,9 +1106,9 @@ size_t GroupCandidatesWithinLeafBudget(const std::vector<GroupCandidate>& candid
 //
 // The proper fix is to intern ownerClass the way V3-A interns the per-candidate metadata
 // (GroupSession already carries `descriptors` and `instances` pools for exactly this).
-// Deliberately NOT done here: the producers live in Aura.cpp and the reader in Fern.cpp,
-// and no test target compiles either file, so it is a change that can only be verified
-// in-game. Tracked in docs/todo.md.
+// Deliberately NOT done here: the producers live in Aura.cpp and the reader in Fern.cpp;
+// Fern.cpp reaches no test target and Aura.cpp only `dll_core_test`'s fake pool, so it is a
+// change that can only be verified end to end in-game. Tracked in docs/todo.md.
 //
 // Derived from sizeof rather than restated as a literal, so it cannot go stale again.
 inline constexpr size_t kGroupSlotMatchBytes = sizeof(GroupSlotMatch);
@@ -1396,7 +1396,7 @@ bool ComparePredicate(DataType dt, ScanType st,
 //
 // It exists so the AlwaysTrue verdict is honoured in ONE place, here in Radar,
 // rather than at each consumer. That split is deliberate: `Radar.cpp` is compiled
-// by `dll_helpers_test` and `Aura.cpp` is compiled by no test target at all, so
+// by `dll_helpers_test`, while `Aura.cpp` reaches only `dll_core_test`'s fake pool, so
 // putting the decision here makes it unit-testable and leaves the engines with a
 // mechanical `Find` -> `FindEntry` substitution that has nothing to get wrong.
 //

@@ -1416,8 +1416,8 @@ static uintptr_t ScanForTarget(
         // (MA1) Cancellation lives HERE, at the pattern boundary, and deliberately not
         // inside Macht: the largest indivisible unit below this line is one AOBScanBatch,
         // measured at most 0.64 s on a 213 MB .text, against CE's 5000 ms ceiling. Polling
-        // inside Macht's AVX2 strides would cost a relaxed atomic load per 32 bytes in a
-        // file no test target compiles, for no measurable gain in responsiveness.
+        // inside Macht's AVX2 strides would cost a relaxed atomic load per 32 bytes, for
+        // no measurable gain in responsiveness.
         if (Tot::Requested()) {
             report.cancelled = true;
             LOG_WARN("[%s] AOB scan CANCELLED after %d/%d batches (client gone / shutdown) — "

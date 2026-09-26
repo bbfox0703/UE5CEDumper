@@ -2590,7 +2590,7 @@ std::string InterpretValue(const std::string& typeName, const void* data, int32_
     // StructProperty: byte-blind float hint, LAST RESORT ONLY (audit U3).
     // The whole decode — including the vtable-skip decision that used to drop
     // leading members silently — lives in Ubel.h::InterpretStructBytes so it is
-    // pure and unit-pinned; no target compiles this .cpp. Callers that can
+    // pure and unit-pinned in `dll_helpers_test`. Callers that can
     // resolve the UScriptStruct* must prefer the reflected-layout preview
     // (WalkInstance's "{Name=Value}"), which is width-correct and labelled.
     if (typeName == "StructProperty" && size >= 4) {

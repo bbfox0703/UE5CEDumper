@@ -9,7 +9,7 @@ namespace UE5DumpUI.Tests;
 /// (<see cref="DataGridSortComparers"/>). These back the column-header sort
 /// on every result grid whose sort property isn't rooted by a column-level
 /// Binding (template columns + mismatched-SortMemberPath text columns) — the
-/// reflection-free path that survives Native-AOT trimming (aot-pitfalls.md
+/// reflection-free path that survives Native-AOT trimming (Helpers/DataGridSortComparers.cs
 /// §4.5). The factories are pure (delegate-driven), so we exercise the
 /// returned IComparer directly without a DataGrid.
 /// </summary>
