@@ -106,6 +106,14 @@ these rules, an independent reviewer agent per batch, and textlint. Keep all thr
 | seed / starting object | 起点のオブジェクト | |
 | back-reference | たどってきた側を指し返す参照 | ❌ 逆参照 (reads as *dereference*) |
 | amber / teal | 琥珀色 / 青緑色 | |
+| hold (Force field) / freeze | 保持 / 固定 | keep the two mechanisms distinct |
+| armed (Force field) | 待機状態（armed） | |
+| baseline | ベースライン | |
+| predicate (Value Search) | 条件 | |
+| projected value (Class Pivot) | 射影値 | |
+| curated | 選別した | ❌ 厳選した / 絞り込んだ (adds intent / implies the user filtered) |
+| trampoline | トランポリン | |
+| entry (CT) | エントリ | Microsoft -y rule |
 
 ## Checking a page
 
