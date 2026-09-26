@@ -25,6 +25,10 @@ Three directions, and they fail for different reasons:
             in 15 views ([AXAML-INLINE-STRINGS], 2026-09-26). A value with no run of
             two letters (`>`, `▲`, `X`, a number) is a glyph, not text, and passes.
             Strings a view model or code-behind builds in C# are out of reach here.
+            Text inside a binding counts too: a quoted StringFormat / FallbackValue /
+            TargetNullValue, and a MultiBinding's StringFormat attribute, are checked
+            once their `{}` escape and `{0}` / `{0:X}` placeholders are stripped
+            ([WIKI-REVIEW-GATES]). Three formats predate that and are allow-listed below.
 
 Deliberately a plain grep-style scan with no XML parser and no Avalonia dependency, for
 the same reason as aob_specificity.py: it has to run in CI and on a bare checkout.
@@ -53,9 +57,25 @@ SKIP_DIRS = {"obj", "bin", ".vs"}
 # The attributes a user reads. A value opening with `{` is a markup extension (a binding
 # or a StaticResource), which is the compliant form.
 VISIBLE_ATTR = re.compile(
-    r'\b(Text|ToolTip\.Tip|Content|PlaceholderText|Header|Title|Watermark)="([^"]*)"')
+    r'\b(Text|ToolTip\.Tip|Content|PlaceholderText|Header|Title|Watermark|StringFormat)="([^"]*)"')
 XML_COMMENT = re.compile(r"<!--.*?-->", re.DOTALL)
 WORDISH = re.compile(r"[A-Za-z]{2}")
+# Text a binding carries inside its markup, and a MultiBinding's StringFormat attribute.
+BINDING_TEXT = re.compile(r"\b(StringFormat|FallbackValue|TargetNullValue)='([^']*)'")
+PLACEHOLDER = re.compile(r"\{\d+(?::[^}]*)?\}")
+# The formats that predate the StringFormat check. Moving them needs
+# StringFormat={StaticResource ...}, which this UI has never used and only a live run
+# can confirm, so they stay by the same cost/benefit call as [VM-INLINE-STRINGS]; a new
+# one fails. Exact text, so an edit to one of them fails too.
+ALLOWED_FORMATS = {"{}{0} matches", "{}{0} shown", "({0} held)"}
+
+
+def is_text_format(fmt: str) -> bool:
+    """True when a format string still holds a word once its placeholders are gone."""
+    if fmt in ALLOWED_FORMATS:
+        return False
+    bare = PLACEHOLDER.sub("", fmt[2:] if fmt.startswith("{}") else fmt)
+    return bool(WORDISH.search(bare))
 
 
 def scan() -> tuple[set[str], set[str]]:
@@ -93,10 +113,16 @@ def scan_inline() -> list[str]:
             rel = os.path.relpath(path, ROOT).replace(os.sep, "/")
             for m in VISIBLE_ATTR.finditer(text):
                 value = html.unescape(m.group(2))
-                if value.startswith("{") or not WORDISH.search(value):
-                    continue
                 line = text.count("\n", 0, m.start()) + 1
-                found.append(f'{rel}:{line}: {m.group(1)}="{m.group(2)}"')
+                if m.group(1) == "StringFormat":            # <MultiBinding StringFormat="...">
+                    if is_text_format(value):
+                        found.append(f'{rel}:{line}: StringFormat="{m.group(2)}"')
+                elif value.startswith("{"):                 # a binding: check the text it carries
+                    for b in BINDING_TEXT.finditer(value):
+                        if is_text_format(b.group(2)):
+                            found.append(f"{rel}:{line}: {m.group(1)}=... {b.group(1)}='{b.group(2)}'")
+                elif WORDISH.search(value):
+                    found.append(f'{rel}:{line}: {m.group(1)}="{m.group(2)}"')
     return found
 
 
