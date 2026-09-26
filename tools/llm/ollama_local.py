@@ -716,7 +716,8 @@ def selftest() -> int:
                         ("DumperTest-Win64-Shipping.exe", False), ("DumperTest51-Win64-Shipping.exe", False),
                         ("DumperTest58-Win64-DebugGame.exe", False), ("dumpertest-win64-shipping.exe", False),
                         ("DumperTest.exe", False), ("Elliot.exe", False), ("ollama.exe", False),
-                        ("Code.exe", False), ("Elliot-Win64-Shipping.exe.bak", False)]:
+                        ("Code.exe", False), ("Elliot-Win64-Shipping.exe.bak", False),
+                        ("EOSOverlayRenderer-Win64-Shipping.exe", False)]:
         ok(f"process {image} -> {want}", is_commercial_process(image) is want)
 
     for cmd, want in [
@@ -739,6 +740,31 @@ def selftest() -> int:
     ok("hook input: malformed JSON is scanned raw, not ignored",
        command_launches_commercial(hook_command('{"command":"\\"C:\\Steam\\steam.exe\\" -applaunch 3"')) is not None)
     ok("hook input: empty and non-object inputs", hook_command("") == "" and hook_command("[1]") == "[1]")
+    ok("command: the EOS overlay helper is not a game launch",
+       command_launches_commercial("taskkill /IM EOSOverlayRenderer-Win64-Shipping.exe") is None)
+
+    def fake_post(results):
+        calls = []
+
+        def post(url, payload, timeout):
+            calls.append(url)
+            r = results[len(calls) - 1]
+            if isinstance(r, int):
+                raise urllib.error.HTTPError(url, r, "fake", None, io.BytesIO(b"{}"))
+            return r
+        return post, calls
+
+    post, calls = fake_post([500, {"done": True}])
+    ok("retry: one transient 500 (CUDA init) is retried once",
+       _post_with_retry("u", {}, 1, post=post, sleep=lambda s: None) == {"done": True} and len(calls) == 2)
+    for seq, label in (([400], "a 400 is not retried"), ([500, 500], "a second 500 propagates")):
+        post, calls = fake_post(seq)
+        try:
+            _post_with_retry("u", {}, 1, post=post, sleep=lambda s: None)
+            raised = None
+        except urllib.error.HTTPError as e:
+            raised = e.code
+        ok(f"retry: {label}", raised == seq[-1] and len(calls) == len(seq))
 
     listing = ('"System Idle Process","0","Services","0","8 K"\r\n'
                '"Elliot-Win64-Shipping.exe","4242","Console","1","3,210,000 K"\r\n'
