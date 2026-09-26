@@ -241,7 +241,7 @@ public sealed class MovementParams
     public MovementKnob WalkSpeed { get; init; } = new();
     public MovementKnob Gravity { get; init; } = new();   // P2
     public MovementKnob Jump { get; init; } = new();      // P3
-    public MovementVectorKnob GravityDirection { get; init; } = new();  // UE5.4+
+    public MovementVectorKnob GravityDirection { get; init; } = new();  // UE5.3+
 }
 
 /// <summary>Result of a <c>set_movement_multiplier</c> / <c>reset_movement</c>

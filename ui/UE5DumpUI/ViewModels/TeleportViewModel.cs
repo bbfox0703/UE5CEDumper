@@ -96,7 +96,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugit",        DisplayName = "Copy BugItGo",
             Hint = "Copy the current position as a 'BugItGo X Y Z' string to the clipboard." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugitgo",      DisplayName = "Run BugItGo",
-            Hint = "Teleport to the position stored by the last BugIt." });
+            Hint = "Teleport to the coordinates in the BugItGo field (filled by Copy BugItGo, or pasted)." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "debugcam_on",  DisplayName = "Debug cam ON",
             Hint = "Turn the free-fly Debug Camera ON." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "debugcam_off", DisplayName = "Debug cam OFF",
@@ -112,7 +112,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "gravity_toggle",   DisplayName = "Gravity toggle",
             Hint = "Toggle the Gravity (GravityScale) override on/off." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "gravdir_toggle",   DisplayName = "Gravity Dir toggle",
-            Hint = "Toggle the Gravity Direction override on/off (UE5.4+)." });
+            Hint = "Toggle the Gravity Direction override on/off (UE5.3+)." });
         // Experimental-gated hotkeys live in their own collection + card (below).
         ExperimentalHotkeyRows.Add(new TeleportHotkeyRow { ActionId = "fly_toggle", DisplayName = "Fly toggle",
             Hint = "Toggle Fly (no-gravity 3D flight) on/off. While flying, use the selected keyboard preset to move." });
@@ -709,7 +709,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _superJumpState = "Unknown";
     [ObservableProperty] private string _superJumpBadgeColor = "#888888";
 
-    /// <summary>Log-scale slider for jump HEIGHT (10%…1000%, 100% = base). Apex
+    /// <summary>Log-scale slider for jump HEIGHT (10%…3000%, 100% = base). Apex
     /// height h ∝ JumpZVelocity², so the applied velocity multiplier is
     /// √(heightMultiplier) — see <see cref="SuperJumpVelocityMultiplier"/>.</summary>
     [ObservableProperty]
@@ -747,8 +747,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// 1 = numpad, 2 = arrows. Turn is view-relative (the mouse).</summary>
     [ObservableProperty] private int _flyPresetIndex;
 
-    /// <summary>Noclip: position-drive (fly through walls, works even where the
-    /// game overrides velocity) vs the default velocity-drive (collision kept).</summary>
+    /// <summary>Noclip: the same velocity-drive with the actor's collision off, so the
+    /// flight passes through walls (Dunste.h); off = collision kept.</summary>
     [ObservableProperty] private bool _flyNoclip;
 
     [ObservableProperty] private string _flyCurrentText = "—";
@@ -3215,7 +3215,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         finally { IsBusy = false; }
     }
 
-    // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.4+) ──
+    // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.3+) ──
 
     // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.3).
     // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
@@ -3307,7 +3307,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // when the pawn / CMC class lookup or the vector read fails (Laufen.cpp ResolveCtx,
                 // SetGravityDirection). So: the set refused on reflection AND a live CMC lacks the field.
                 _ when r.State == Constants.LaufenErrReflect && mp.HasCmc && !g.Resolved
-                    => "Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection).",
+                    => "Gravity direction unavailable — needs UE5.3+ (no reflected GravityDirection).",
                 _ => "Gravity direction: no pawn / no CharacterMovement (enter gameplay first).",
             };
         }
@@ -3363,7 +3363,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 StatusText = !mp.HasCmc
                     ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
                     : !g.Resolved
-                        ? "No GravityDirection field to locate (needs UE5.4+)."
+                        ? "No GravityDirection field to locate (needs UE5.3+)."
                         : "The GravityDirection field resolved without an address — press ↻ and try again.";
                 return;
             }

@@ -118,7 +118,7 @@ public static class MovementScriptGenerator
     }
 
     /// <summary>Build a stateful [ENABLE]/[DISABLE] record for the gravity DIRECTION
-    /// vector (UE5.4+) baked at (x,y,z) ∈ [-1,1]. [DISABLE] sends (0,0,0) = OFF
+    /// vector (UE5.3+) baked at (x,y,z) ∈ [-1,1]. [DISABLE] sends (0,0,0) = OFF
     /// (the DLL restores the captured game default). Pre-5.4 games report
     /// unavailable when ticked.</summary>
     public static string GenerateGravityDirection(double x, double y, double z)
@@ -188,7 +188,7 @@ public static class MovementScriptGenerator
             Line(sb, "dbg('[Movement] Gravity Direction -> state=' .. tostring(state))");
             Line(sb, "if state < 0 then");
             // Applied nothing -> the row must not stay ticked.
-            Line(sb, "  showMessage('[Movement] Gravity Direction -- unavailable (needs UE5.4+) or no pawn.')");
+            Line(sb, "  showMessage('[Movement] Gravity Direction -- unavailable (needs UE5.3+) or no pawn.')");
             Line(sb, CeLuaHygiene.DeferredUntickLua("  "));
             Line(sb, "elseif DEBUG == 0 then");
             Line(sb, $"  {CeLuaHygiene.CloseCall}   -- clean success: close the Lua Engine window");

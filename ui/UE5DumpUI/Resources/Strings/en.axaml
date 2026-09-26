@@ -58,7 +58,7 @@
     <!-- Detect Stats tooltips -->
     <sys:String x:Key="str.Tip.Detect.Run">Shortlist likely player stats (HP/MP/Gold/…) and confirm each against the live game — find a live instance and read its current value. Reference only; verify before use.</sys:String>
     <sys:String x:Key="str.Tip.Detect.UseSnapshot">Cross-reference your two most-recent snapshots and boost fields whose value DECREASED. Workflow: capture a snapshot, take damage / spend in-game, capture again, then Detect. Needs ≥2 usable snapshots.</sys:String>
-    <sys:String x:Key="str.Tip.Detect.Filter">Substring filter over the property, class and category columns (case-insensitive).</sys:String>
+    <sys:String x:Key="str.Tip.Detect.Filter">Space-separated keywords are ANDed; each may match the property, class or category column (case-insensitive). Keywords that matched are remembered for this session.</sys:String>
     <sys:String x:Key="str.Tip.Detect.GWorld">Locate a live instance of this class in the GWorld object graph (opens Live Walker, where you can Copy CE Field).</sys:String>
     <sys:String x:Key="str.Tip.Detect.Finder">Find all live instances of this class in the Instance Finder.</sys:String>
     <sys:String x:Key="str.Tip.Detect.Copy">Copy the property name to the clipboard.</sys:String>
@@ -543,7 +543,7 @@
     <sys:String x:Key="str.Snapshot.Family">Type:</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.Family">Type-family narrowing applied ON TOP of Scope. "All numeric" captures every eligible width; "Integers only" keeps Int8/16/32/64 (+ unsigned) and drops Float/Double; "Floats only" keeps Float/Double and drops every integer. A source-level cut that shrinks the snapshot DB when the hunt is type-specific — floats for HP/MP/coordinates, integers for counts/flags/IDs. Lossy by design: re-capture to bring the other family back.</sys:String>
     <sys:String x:Key="str.Snapshot.MaxDataset">Max size:</sys:String>
-    <sys:String x:Key="str.Tip.Snapshot.MaxDataset">Opt-in in-capture ceiling ("提前止血"). When the live database size crosses this, the capture stops early and KEEPS the partial snapshot (the first-N objects scanned). "Off" disables the cap. This is distinct from the per-game quota, which only evicts whole OLDER snapshots AFTER a capture finishes — it cannot bound a single oversized capture, so a huge game can balloon to many GB before any check. Use the cap (and Estimate size) on large games.</sys:String>
+    <sys:String x:Key="str.Tip.Snapshot.MaxDataset">Opt-in ceiling checked during a capture. When the live database size crosses this, the capture stops early and KEEPS the partial snapshot (the first-N objects scanned). "Off" disables the cap. This is distinct from the per-game quota, which only evicts whole OLDER snapshots AFTER a capture finishes — it cannot bound a single oversized capture, so a huge game can balloon to many GB before any check. Use the cap (and Estimate size) on large games.</sys:String>
     <sys:String x:Key="str.Snapshot.Estimate">Estimate size</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.Estimate">Pre-flight check: walks a small SAMPLE of objects (spread across the index space) with the current options, models the on-disk row cost, and extrapolates to the full object count — WITHOUT writing the database. Gives a "~X GB" go/no-go before committing to a multi-GB capture on a huge game.</sys:String>
     <sys:String x:Key="str.Snapshot.GameOnly">Game objects only</sys:String>
@@ -705,7 +705,7 @@
 
     <!-- N1: per-game class denylist (noise picker) — shared by SPC + Diff -->
     <sys:String x:Key="str.Noise.PanelHeader">Noise picker — top classes in this result</sys:String>
-    <sys:String x:Key="str.Noise.PanelHint">Tick classes whose hits you consider noise (UI widgets, animation, tick state). Apply adds them to this game's denylist and re-runs the query. The denylist also filters Snapshot Diff and the Class Pivot picker.</sys:String>
+    <sys:String x:Key="str.Noise.PanelHint">Tick classes whose hits you consider noise (UI widgets, animation, tick state). Apply adds them to this tab's denylist for this game and re-runs the query. Snapshot Diff, SPC Query and the Class Pivot picker each keep their own list.</sys:String>
     <sys:String x:Key="str.Noise.Col.Pick">Hide</sys:String>
     <sys:String x:Key="str.Noise.Col.Class">Class</sys:String>
     <sys:String x:Key="str.Noise.Col.Hits">Hits</sys:String>
@@ -773,7 +773,7 @@
     <sys:String x:Key="str.Pivot.Discover.Use">Use → (pivot this)</sys:String>
     <!-- Usage limits, one click away: the toggle's label, then the text it shows. -->
     <sys:String x:Key="str.Pivot.Discover.LimitsToggle">ⓘ How it works &amp; limits</sys:String>
-    <sys:String x:Key="str.Pivot.Discover.Limits">How it works &amp; limits:&#10;• Capture 2-4 snapshots around the action you want to isolate (Before … After).&#10;• Use 3-4 to separate a one-time change from constant per-frame noise (rotation, timers, positions); with only 2, both just look "changed".&#10;• Only fields that MOVED appear — a value that never changed between your captures will not show.&#10;• Across a game restart, only objects that re-appear with a stable identity (GameInstance / PlayerState / Pawn / components / GAS) re-join reliably; randomly-spawned actors may not.&#10;• The scan covers the numeric fields captured in the snapshot and runs server-side; on a large capture it can take several seconds (cancellable).</sys:String>
+    <sys:String x:Key="str.Pivot.Discover.Limits">How it works &amp; limits:&#10;• Capture 2-4 snapshots around the action you want to isolate (Before … After).&#10;• Use 3-4 to separate a one-time change from constant per-frame noise (rotation, timers, positions); with only 2, both just look "changed".&#10;• Only fields that MOVED appear — a value that never changed between your captures will not show.&#10;• Across a game restart, only objects that re-appear with a stable identity (GameInstance / PlayerState / Pawn / components / GAS) re-join reliably; randomly-spawned actors may not.&#10;• The scan covers the numeric fields captured in the snapshot and runs as a query over the local snapshot database; on a large capture it can take several seconds (cancellable).</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Class">Class</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Prop">Property</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Changed">Changed</sys:String>
@@ -1112,7 +1112,7 @@
     <sys:String x:Key="str.TP.HkHeader">Hotkey Settings</sys:String>
     <sys:String x:Key="str.TP.HkHint">Global hotkeys for markers (Save / Recall / Recall-last), BugItGo, Debug camera, and the God Mode / Super Jump / Move Speed / Gravity toggles + teleport / cursor actions (fire while the game is focused). Click Set, then press the combo — hold Ctrl/Alt/Shift then a key (e.g. Ctrl+F7), or a single key (e.g. F7). Click Cancel or press Esc to abort. Keyboard only for now (mouse extra-buttons / gamepad not yet supported). Saved automatically. A combo marked ⚠ is held by another app — free it and reconnect, or bind a different one.</sys:String>
     <sys:String x:Key="str.TP.ExpHkHeader">Experimental Hotkeys</sys:String>
-    <sys:String x:Key="str.TP.ExpHkHint">Global hotkeys for the experimental features (Keep Foreground ON/OFF, Fly toggle). These are only active while Experimental features is enabled — turning it off unbinds them (and the emergency Keep-Foreground-OFF key). Bind them the same way: click Set, then press the combo.</sys:String>
+    <sys:String x:Key="str.TP.ExpHkHint">Global hotkeys for the experimental features (Keep Foreground ON, Keep Foreground OFF, Fly toggle, See-through toggle). These are only active while Experimental features is enabled — turning it off unbinds them (and the emergency Keep-Foreground-OFF key). Bind them the same way: click Set, then press the combo.</sys:String>
     <sys:String x:Key="str.TP.HkClear">Clear</sys:String>
     <sys:String x:Key="str.TP.CeHeader">CE Export</sys:String>
     <sys:String x:Key="str.TP.AddActions">Add action records to CE</sys:String>
@@ -1125,7 +1125,7 @@
     <sys:String x:Key="str.Tip.TP.PtrGWorld">Add a CE record that resolves the stable &amp;GWorld pointer slot via the DLL and registers it directly as the symbol UE_GWorld, so [UE_GWorld]+offset dereferences the slot to the CURRENT UWorld and chains into it — it auto-follows level transitions (no snapshot). Enable = register, disable = unregister (nothing to free — the slot is a game address). Pushed via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected. Uses the mailbox (CMD_QUERY_PTR), so it works where executeCodeEx can't read export returns.</sys:String>
     <sys:String x:Key="str.Tip.TP.PtrGameEngine">Add a CE record that resolves the live UEngine* (GameEngine instance) via the DLL and registers it as the symbol UE_GameEngine, so [UE_GameEngine]+offset chains straight into the engine. Resolved by walking GObjects — no static GEngine slot needed. Enable = register, disable = unregister + free. Pushed via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected. Uses the mailbox (CMD_QUERY_PTR).</sys:String>
     <sys:String x:Key="str.TP.Warning">⚠ Single-player only. Online games will rubber-band or may flag teleports.</sys:String>
-    <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort, per the design spec (docs/teleport-spec.md): the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
+    <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort: the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
     <sys:String x:Key="str.Tip.TP.Refresh">Read the current pawn's world location and control rotation (DLL resolves the local PlayerController → Pawn → RootComponent via reflection).</sys:String>
     <sys:String x:Key="str.Tip.TP.ParentRelative">These numbers are NOT world coordinates. The pawn is attached (vehicle / mount / moving platform) and the world-space read failed, so the DLL fell back to the raw RelativeLocation, which is relative to the parent. Do not save them as a marker or a library entry.</sys:String>
     <sys:String x:Key="str.Tip.TP.Auto">Re-read the pose every 0.5s, and the camera POV too (POV is skipped silently on games where it isn't available). Off by default; stops automatically on disconnect.</sys:String>
@@ -1154,8 +1154,8 @@
     <sys:String x:Key="str.Tip.TP.RunBugItGo">Parse the pasted string and teleport there. Works without any CheatManager — feeds X/Y/Z into the same recall path as markers.</sys:String>
     <sys:String x:Key="str.Tip.TP.RecallLast">Undo the most recent teleport: jump back to the pose auto-saved just before your last Recall / Force / BugItGo / cursor teleport. One-way — recalling it doesn't change the saved spot, so you can press it repeatedly. The system writes this slot; you can't save into it.</sys:String>
     <sys:String x:Key="str.Tip.TP.HkSet">Click, then press the key combo you want for this action. Hold modifiers (Ctrl/Alt/Shift) then a key, or press a single key. Esc cancels. The combo is registered system-wide so it works while the game is focused.</sys:String>
-    <sys:String x:Key="str.Tip.TP.AddActions">Ship the 17 momentary teleport records (Save 1-3, Recall 1-3, Recall last, BugIt, BugItGo, Cursor, Get POV, Get current coords, TP facing direction, TP to coordinates, Cursor ON, Cursor OFF, Clear all) PLUS 3 movement on/off toggles (Move Speed, Gravity, Super Jump — baked at the current slider %, tick = apply, untick = OFF) into the open Cheat Engine table via AOBMaker. Teleport records fire once and auto-untick; movement records stay on while ticked (the DLL holds the value). The directional/coordinate/movement records bake the current field values. Requires the AOBMaker plugin connected.</sys:String>
-    <sys:String x:Key="str.Tip.TP.SaveCt">Backup: save a Cheat Engine .CT file with the 17 teleport records + 3 movement on/off toggles (Move Speed / Gravity / Super Jump baked at the current slider %), for when AOBMaker isn't connected. Import via CE File → Open.</sys:String>
+    <sys:String x:Key="str.Tip.TP.AddActions">Ship 17 teleport records (momentary: Save 1-3, Recall 1-3, Recall last, BugIt, BugItGo, Cursor, Get POV, Get current coords, TP facing direction, TP to coordinates, Cursor ON, Cursor OFF, Clear all), 4 movement toggles (Move Speed, Gravity and Super Jump baked at the current slider %, Gravity Direction at the current vector), 2 time toggles (World, Player) and, while Experimental features is on, 4 Fly toggles (the WASD / Numpad / Arrows presets and Noclip) into the open Cheat Engine table via AOBMaker. Teleport records fire once and auto-untick; the toggles stay on while ticked (the DLL holds the value). The directional/coordinate/movement records bake the current field values. Requires the AOBMaker plugin connected.</sys:String>
+    <sys:String x:Key="str.Tip.TP.SaveCt">Backup: save a Cheat Engine .CT file with the same records (17 teleport, 4 movement, 2 time and, while Experimental features is on, 4 Fly), for when AOBMaker isn't connected. Import via CE File → Open.</sys:String>
     <!-- Teleport: Debug Camera (free-look) -->
     <sys:String x:Key="str.TP.DcHeader">Debug Camera (free-look)</sys:String>
     <sys:String x:Key="str.TP.DcHint">Detach the view into a free-fly debug camera (UCheatManager::ToggleDebugCamera). Turning it back OFF is handled even on Shipping builds that stripped the disable path — the DLL switches the local player's controller back. Needs a live PlayerController, so enter gameplay first. Available only on games that kept ToggleDebugCamera.</sys:String>
@@ -1177,7 +1177,7 @@
     <sys:String x:Key="str.TP.GmCopyScript">Add to CE</sys:String>
     <sys:String x:Key="str.Tip.TP.GmOn">Turn God Mode ON (clear bCanBeDamaged). Idempotent; the DLL re-asserts the bit every ~300 ms so it survives respawns.</sys:String>
     <sys:String x:Key="str.Tip.TP.GmOff">Turn God Mode OFF (restore bCanBeDamaged) and stop the re-assert worker.</sys:String>
-    <sys:String x:Key="str.Tip.TP.GmRefresh">Re-read the live God Mode state (1=immune / 0=can be damaged / unknown if no pawn).</sys:String>
+    <sys:String x:Key="str.Tip.TP.GmRefresh">Re-read the live God Mode state. ON = held; ON (pending) = armed, no pawn yet; ON (contested) = the game just reset it and the hold takes it back; ON (not held) = immune, but not by us; OFF = can be damaged; Unknown = no pawn and nothing requested.</sys:String>
     <sys:String x:Key="str.Tip.TP.GmCopyScript">Add a self-contained Cheat Engine AA record (tick = ON, untick = OFF) that drives God Mode via the DLL mailbox. Pushed straight into CE via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected (right-click the address list → Paste). Works offline — no pipe / UI connection needed.</sys:String>
 
     <!-- Player Stealth meter (Solide — auto-find + hold a stealth/visibility float at 0) -->
@@ -1243,7 +1243,7 @@
     <!-- Gravity multiplier (Laufen — force UCharacterMovementComponent.GravityScale) -->
     <sys:String x:Key="str.TP.GrHeader">Gravity</sys:String>
     <sys:String x:Key="str.TP.GrState">State:</sys:String>
-    <sys:String x:Key="str.TP.GrHint">Scales the player pawn's UCharacterMovementComponent.GravityScale by the slider (10%–1000%, log scale, 100% = base). Below 100% = floaty / moon-jump; above = heavy. Held against per-tick overwrites by the re-assert worker. Per-pawn only — it does not change world gravity for other actors. Extreme values can clip you through floors or break fall damage. Arbitrary gravity direction (UE5.4+) is not yet exposed. Needs a live pawn with a CharacterMovement. Single-player only.</sys:String>
+    <sys:String x:Key="str.TP.GrHint">Scales the player pawn's UCharacterMovementComponent.GravityScale by the slider (10%–1000%, log scale, 100% = base). Below 100% = floaty / moon-jump; above = heavy. Held against per-tick overwrites by the re-assert worker. Per-pawn only — it does not change world gravity for other actors. Extreme values can clip you through floors or break fall damage. To change the gravity DIRECTION (UE5.3+), use the Gravity Direction card. Needs a live pawn with a CharacterMovement. Single-player only.</sys:String>
     <sys:String x:Key="str.TP.GrApply">Apply</sys:String>
     <sys:String x:Key="str.TP.GrReset">Reset</sys:String>
     <sys:String x:Key="str.TP.GrRefresh">↻</sys:String>
@@ -1262,7 +1262,7 @@
     <sys:String x:Key="str.TP.SjReset">Reset</sys:String>
     <sys:String x:Key="str.TP.SjRefresh">↻</sys:String>
     <sys:String x:Key="str.TP.SjLocate">🌍 Locate</sys:String>
-    <sys:String x:Key="str.TP.SjHotkeyHint">Bind a global hotkey to "Super Jump toggle" in the Marker Hotkeys section above to toggle it in-game.</sys:String>
+    <sys:String x:Key="str.TP.SjHotkeyHint">Bind a global hotkey to "Super Jump toggle" in the Hotkey Settings section above to toggle it in-game.</sys:String>
     <sys:String x:Key="str.Tip.TP.SjOn">Turn Super Jump ON — set JumpZVelocity to base × √(slider height %) and hold it (survives respawns).</sys:String>
     <sys:String x:Key="str.Tip.TP.SjOff">Turn Super Jump OFF — restore JumpZVelocity to its captured base.</sys:String>
     <sys:String x:Key="str.Tip.TP.SjReset">Turn Super Jump OFF and snap the height slider back to 100%.</sys:String>
@@ -1279,7 +1279,7 @@
     <sys:String x:Key="str.TP.FlyOn">Fly ON</sys:String>
     <sys:String x:Key="str.TP.FlyOff">Fly OFF</sys:String>
     <sys:String x:Key="str.TP.FlyRefresh">↻</sys:String>
-    <sys:String x:Key="str.TP.FlyHotkeyHint">Bind a global hotkey to "Fly toggle" in the Hotkey Settings section above to toggle Fly in-game without alt-tabbing.</sys:String>
+    <sys:String x:Key="str.TP.FlyHotkeyHint">Bind a global hotkey to "Fly toggle" in the Experimental Hotkeys section to toggle Fly in-game without alt-tabbing.</sys:String>
     <sys:String x:Key="str.Tip.TP.FlyPreset">Which keys drive flight: WASD (+Q/E turn, Z/C up-down), the numeric keypad, or the arrow keys (+Ins/Del turn, PgUp/PgDn up-down).</sys:String>
     <sys:String x:Key="str.Tip.TP.FlyOn">Turn Fly ON — force MOVE_Flying and start reading the keyboard (held against the game re-asserting its own movement mode).</sys:String>
     <sys:String x:Key="str.Tip.TP.FlyOff">Turn Fly OFF — restore the pawn's captured MovementMode and stop.</sys:String>
@@ -1301,7 +1301,7 @@
     <sys:String x:Key="str.Tip.TP.SeeThroughRefresh">Re-read the live see-through state (active / whether it has a target / how many objects are hidden).</sys:String>
     <sys:String x:Key="str.Tip.TP.SeeThroughAddCe">Push a self-contained CE toggle script (tick = ON / untick = OFF) straight into Cheat Engine via AOBMaker. It drives the DLL's See-through through the mailbox, so no pipe connection is needed once added. Disabled when the AOBMaker CE plugin isn't detected.</sys:String>
 
-    <!-- Gravity Direction (Laufen — UE5.4+ UCharacterMovementComponent.GravityDirection) -->
+    <!-- Gravity Direction (Laufen — UE5.3+ UCharacterMovementComponent.GravityDirection) -->
     <sys:String x:Key="str.TP.GdHeader">Gravity Direction (UE5.3+)</sys:String>
     <sys:String x:Key="str.TP.GdState">State:</sys:String>
     <sys:String x:Key="str.TP.GdHint">Tilt gravity to any direction by setting the per-axis components (each −100%…+100%, i.e. −1.0…+1.0). This is DIRECTION only — the DLL normalizes to a unit vector, so a single-axis setting like (0,0,−62%) collapses to (0,0,−1): it only re-aims gravity, it does NOT change strength (use the Gravity card for strength). To tilt you must mix axes, e.g. X=+100%, Z=−100% → diagonal. Default (0,0,−100%) = straight down; X=+100%, Z=0 makes gravity pull along +X (walk on a wall). Apply holds the direction; Reset restores the game's captured default and snaps the sliders back to down. Needs UE5.3+ with a reflected GravityDirection (older games show Unavailable). Single-player only.</sys:String>
@@ -1312,7 +1312,7 @@
     <sys:String x:Key="str.TP.GdHotkeyHint">Bind a global hotkey to "Gravity Dir toggle" in the Hotkey Settings section to toggle it in-game.</sys:String>
     <sys:String x:Key="str.Tip.TP.GdApply">Force GravityDirection to the (X,Y,Z) sliders (normalized) and hold it (re-asserted on a timer). All-zero = off.</sys:String>
     <sys:String x:Key="str.Tip.TP.GdReset">Restore GravityDirection to the captured game default and snap the sliders to straight down (0,0,−100%).</sys:String>
-    <sys:String x:Key="str.Tip.TP.GdRefresh">Re-read the live GravityDirection and override state from the current pawn's CharacterMovement (UE5.4+).</sys:String>
+    <sys:String x:Key="str.Tip.TP.GdRefresh">Re-read the live GravityDirection and override state from the current pawn's CharacterMovement (UE5.3+).</sys:String>
     <sys:String x:Key="str.Tip.TP.GdLocate">Find the GravityDirection FVector in GWorld and select it in the Live Walker.</sys:String>
 
     <!-- Teleport: Camera POV (read-only) -->
