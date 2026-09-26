@@ -84,6 +84,24 @@ public class LiveWalkerEditPendingTests
     }
 
     [Fact]
+    public void ClearingTheBox_ReadsBackEmpty_NotTheLiveValue()
+    {
+        // [LW-EDIT-RETYPE-DROP] The first fix returned the pending text only when NON-EMPTY, so
+        // deleting the last character made the getter fall back to the live value and the binding
+        // put it straight back into the box: measured on build 3569, "567" -> Delete x3 -> the box
+        // read "1234567" again, and the user could not empty it. Once the editor has written, even
+        // an empty string is what the box holds.
+        var row = Health("1234567");
+        row.ResetPendingEdit();
+        row.EditableValue = "567";
+        row.EditableValue = "";
+        Assert.Equal("", row.EditableValue);
+        Assert.Equal("", row.GetPendingEditValue());   // Enter on an empty box still writes nothing
+        row.ResetPendingEdit();
+        Assert.Equal("1234567", row.EditableValue);    // the next edit opens on the live value again
+    }
+
+    [Fact]
     public void ADeliberateReType_OfTheCurrentValue_IsStillPending()
     {
         // Why the fix is a reset and not a "same as current? skip" comparison: typing the value the
