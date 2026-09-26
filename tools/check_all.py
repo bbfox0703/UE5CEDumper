@@ -223,6 +223,15 @@ GATES = [
      "previous launch's address is walked in this one. Gate it the way Snapshot Diff and SPC do "
      "([W1-PIVOT-SESSION]). Run 'py tools/check_session_gate.py --list' or '--selftest'", False),
 
+    # [COMMENT-INTEGRITY-2026-09-26] A comment may not point at code by line number (69% of in-repo `File:NNN` had
+    # drifted when measured), claim "no test target compiles X" when one does, or name a .md / section / [TAG] that
+    # does not exist. docs/comment-integrity-eval.md has the measurements; cite a symbol instead of a line.
+    ("check_comment_refs",
+     ["tools/check_comment_refs.py"],
+     "a comment points at code by line number, claims no test target compiles a file that one does, or names a "
+     ".md / section / [TAG] that is not there. Cite the function / constant / [TAG] instead of the line. "
+     "Run 'py tools/check_comment_refs.py --list' or '--selftest'", False),
+
     # [CI-GATE-DRIFT-2026-09-25] Enforces what the docstring above used to only ask for: every gate here also runs in
     # ci.yml, with the same arguments, and CI runs no pre-build gate this list lacks. Nine had drifted out again.
     ("check_ci_gate_parity",
