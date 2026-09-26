@@ -29,7 +29,7 @@ unambiguous: there is exactly one worker, its per-thread results accumulate into
 unwind does not destroy, so everything found before the fault survives into the response.
 
 ⛔ TRAP 3 — THE WRONG LOG FILE. The register said "a SCAN-category log line". It is not: `Aura.cpp`
-declares `LOG_CAT "OARR"` at line 8 and `Sein.cpp:82` routes OARR to `LF_Offsets`, so the worker
+declares `LOG_CAT "OARR"` and Sein.cpp's `s_catMap` routes OARR to `LF_Offsets`, so the worker
 line lands in **offsets-*.log**. "SCAN" is a real category mapping to scan.log, so an operator
 following the register greps a file that will never contain it.
 
