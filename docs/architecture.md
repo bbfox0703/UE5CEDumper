@@ -23,7 +23,7 @@ UE5CEDumper/
 │       ├── Methode.h               ← CEPlugin pure helpers (NarrowForAnsiLoad), tested by dll_helpers_test
 │       ├── BuildStamp.cpp / .h     ← build/version metadata accessors (only TU that includes generated BuildInfo.h), build 1817
 │       ├── Grimoire.h              ← Constants — magic strings, pipe name, UObject offsets, DynOff namespace
-│       ├── Himmel.h                ← Signatures — 151 AOB + 1 CallFollow + 6 symbol exports = 158 (31 sources)
+│       ├── Himmel.h                ← Signatures — 153 AOB + 1 CallFollow + 6 symbol exports = 160 (33 sources)
 │       ├── BuildInfo.h.in          ← Template → BuildInfo.h (version, git hash)
 │       ├── version.rc              ← Win32 PE VERSIONINFO resource
 │       │
