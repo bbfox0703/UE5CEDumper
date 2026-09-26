@@ -257,10 +257,10 @@ InvokeParamDialog FIRE result now shows a 4-column DataGrid (Field / Type / Valu
 
 ## UCheatManager stripped-body hint (build 778, pick #6)
 
-Console panel surfaces an orange-bordered footer warning when the selected exec's class or super name contains "CheatManager" (case-insensitive substring). Redirects users from the `Result=0 + no in-game effect` failure mode (UE wraps these in `#if !UE_BUILD_SHIPPING` — reflection metadata survives the cook, function bodies don't) to a game-specific verification target.
+Console panel surfaces an orange-bordered footer warning when the selected exec's class or super name contains "CheatManager" (case-insensitive substring). Redirects users from the `Result=0 + no in-game effect` failure mode (UE wraps these in `#if !UE_BUILD_SHIPPING` — reflection metadata survives the cook, function bodies don't) to a game-specific verification target. ⚠ **That mechanism was wrong** (measured 2026-07-29): the bodies survive; Shipping usually has no live CheatManager instance, so the invoke lands on the CDO. The hint's wording says so since 2026-09-26.
 
-**Discriminator** (see [lessons-learned.md](lessons-learned.md), the UCheatManager cooker-strip entry): `Stark::GetHookFireCount()`:
-- `>0 + Result=0 + no effect` = cooker-stripped body (the bug this hint addresses)
+**Discriminator** (see [lessons-learned.md](lessons-learned.md), the UCheatManager entry): `Stark::GetHookFireCount()`:
+- `>0 + Result=0 + no effect` = the call ran and did nothing (the case this hint addresses; no live instance, not a stripped body)
 - `==0 + Result=0 + no effect` = hook on wrong vtable slot (closed by build-648 pattern scan)
 
 Detection lives in `ConsoleViewModel.IsLikelyUCheatManagerExec(entry)` — public + static, tested across 10 row variants (engine class / game subclass via own name / subclass via super name only / case-insensitive / 4 negatives). Out of scope for v1: full super-chain walk to catch second-degree subclasses (`BP_MyCheatManager_C : MyGameCheatManager : UCheatManager`) — would need a new `walk_super_chain` pipe call; revisit if false-negatives surface.

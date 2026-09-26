@@ -186,21 +186,21 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>
     /// When the user selects a row, refresh the
-    /// <see cref="ShowCheatManagerStripHint"/> binding so the cooker-strip
+    /// <see cref="ShowCheatManagerHint"/> binding so the CheatManager
     /// warning footer toggles per-selection. Single notification —
     /// the flag is computed on demand from <see cref="SelectedResult"/>
     /// to keep this side-effect-free.
     /// </summary>
     partial void OnSelectedResultChanged(AllFunctionEntry? value)
-        => OnPropertyChanged(nameof(ShowCheatManagerStripHint));
+        => OnPropertyChanged(nameof(ShowCheatManagerHint));
 
     /// <summary>
-    /// True when the currently-selected exec is likely one of the
-    /// <c>#if !UE_BUILD_SHIPPING</c> stripped engine commands
-    /// (UCheatManager::Fly/Ghost/God/Walk/Slomo/ChangeSize/Teleport
-    /// etc., or a game-defined subclass). The panel shows the footer
+    /// True when the currently-selected exec likely belongs to a
+    /// CheatManager class (the engine's UCheatManager or a game-defined
+    /// subclass). On Shipping there is usually no live instance, so the
+    /// invoke lands on the CDO and does nothing. The panel shows the footer
     /// warning while this is true; its wording lives in en.axaml
-    /// (<c>str.Con.CheatManagerStripHint</c>) and is bound there directly,
+    /// (<c>str.Con.CheatManagerHint</c>) and is bound there directly,
     /// so the VM carries only the decision, not the text.
     ///
     /// Detection is a cheap class-name / super-name substring match
@@ -208,12 +208,13 @@ public partial class ConsoleViewModel : ViewModelBase
     /// the typical game-defined subclasses
     /// (<c>MyGameCheatManager</c>, <c>BP_CheatManager_C</c>) without
     /// needing a full super-chain walk. It cannot tell the build
-    /// configuration, so it also fires on Development builds, where the
-    /// bodies are intact — the wording is phrased as a Shipping caveat
-    /// for that reason. The cooker-strip vs wrong-hook-slot discriminator
-    /// is in docs/lessons-learned.md.
+    /// configuration, so it also fires on Development builds, where an
+    /// instance exists and the commands work — the wording is phrased as a
+    /// Shipping caveat for that reason. Why there is no instance, and how
+    /// to tell it from a hook on the wrong slot, is the UCheatManager entry
+    /// in docs/lessons-learned.md.
     /// </summary>
-    public bool ShowCheatManagerStripHint
+    public bool ShowCheatManagerHint
         => SelectedResult is not null && IsLikelyUCheatManagerExec(SelectedResult);
 
     /// <summary>

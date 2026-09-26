@@ -1176,14 +1176,14 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
-    public void ShowCheatManagerStripHint_IsFalse_WhenNoSelection()
+    public void ShowCheatManagerHint_IsFalse_WhenNoSelection()
     {
         var vm = CreateVm(new FakeDumpService());
-        Assert.False(vm.ShowCheatManagerStripHint);
+        Assert.False(vm.ShowCheatManagerHint);
     }
 
     [Fact]
-    public void ShowCheatManagerStripHint_IsTrueForUCheatManager()
+    public void ShowCheatManagerHint_IsTrueForUCheatManager()
     {
         var vm = CreateVm(new FakeDumpService());
         vm.SelectedResult = new AllFunctionEntry
@@ -1192,11 +1192,11 @@ public class ConsoleViewModelTests
             FuncName  = "Fly",
             FunctionFlags = 0x0000_0200,
         };
-        Assert.True(vm.ShowCheatManagerStripHint);
+        Assert.True(vm.ShowCheatManagerHint);
     }
 
     [Fact]
-    public void ShowCheatManagerStripHint_IsFalseForUnrelatedClass()
+    public void ShowCheatManagerHint_IsFalseForUnrelatedClass()
     {
         var vm = CreateVm(new FakeDumpService());
         vm.SelectedResult = new AllFunctionEntry
@@ -1205,11 +1205,11 @@ public class ConsoleViewModelTests
             FuncName  = "ClientMessage",
             FunctionFlags = 0x0000_0200,
         };
-        Assert.False(vm.ShowCheatManagerStripHint);
+        Assert.False(vm.ShowCheatManagerHint);
     }
 
     [Fact]
-    public void ShowCheatManagerStripHint_RefreshesOnSelectionChange()
+    public void ShowCheatManagerHint_RefreshesOnSelectionChange()
     {
         // Locks the OnSelectedResultChanged partial — the property must
         // re-evaluate when SelectedResult flips. Without the
@@ -1230,16 +1230,16 @@ public class ConsoleViewModelTests
         int changes = 0;
         vm.PropertyChanged += (_, e) =>
         {
-            if (e.PropertyName == nameof(vm.ShowCheatManagerStripHint)) changes++;
+            if (e.PropertyName == nameof(vm.ShowCheatManagerHint)) changes++;
         };
 
         vm.SelectedResult = cheatRow;
-        Assert.True(changes >= 1, "ShowCheatManagerStripHint must fire PropertyChanged on selection");
-        Assert.True(vm.ShowCheatManagerStripHint);
+        Assert.True(changes >= 1, "ShowCheatManagerHint must fire PropertyChanged on selection");
+        Assert.True(vm.ShowCheatManagerHint);
 
         vm.SelectedResult = normalRow;
         Assert.True(changes >= 2, "PropertyChanged must fire again on subsequent selection");
-        Assert.False(vm.ShowCheatManagerStripHint);
+        Assert.False(vm.ShowCheatManagerHint);
     }
 
     // [CONSOLE-CHEATMGR-HINT] The warning's text used to be a C# literal that ended
@@ -1248,12 +1248,12 @@ public class ConsoleViewModelTests
     // it with StaticResource; these pin the key, its wording and the binding.
 
     [Fact]
-    public void CheatManagerStripHint_wording_is_a_Shipping_caveat_without_internal_references()
+    public void CheatManagerHint_wording_is_a_Shipping_caveat_without_internal_references()
     {
         var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
-        const string open = "x:Key=\"str.Con.CheatManagerStripHint\">";
+        const string open = "x:Key=\"str.Con.CheatManagerHint\">";
         int start = axaml.IndexOf(open, StringComparison.Ordinal);
-        Assert.True(start >= 0, "str.Con.CheatManagerStripHint missing from en.axaml");
+        Assert.True(start >= 0, "str.Con.CheatManagerHint missing from en.axaml");
         start += open.Length;
         var text = axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)];
 
@@ -1268,11 +1268,11 @@ public class ConsoleViewModelTests
     }
 
     [Fact]
-    public void CheatManagerStripHint_panel_binds_the_resource_and_the_flag()
+    public void CheatManagerHint_panel_binds_the_resource_and_the_flag()
     {
         var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ConsolePanel.axaml"));
-        Assert.Contains("IsVisible=\"{Binding ShowCheatManagerStripHint}\"", panel, StringComparison.Ordinal);
-        Assert.Contains("Text=\"{StaticResource str.Con.CheatManagerStripHint}\"", panel, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding ShowCheatManagerHint}\"", panel, StringComparison.Ordinal);
+        Assert.Contains("Text=\"{StaticResource str.Con.CheatManagerHint}\"", panel, StringComparison.Ordinal);
 
         var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/ConsoleViewModel.cs"));
         Assert.DoesNotContain("See memory", vm, StringComparison.Ordinal);
