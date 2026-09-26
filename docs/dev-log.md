@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-09-26 (build 3563) — the Console's CheatManager warning moves to en.axaml and stops citing a private note `[CONSOLE-CHEATMGR-HINT]`
+
+- **The Console footer warning** for a selected CheatManager exec was a C# literal ending *"See memory
+  feedback_ucheatmanager_stripped."*, a developer's Claude memory note that no user has. Its text is now
+  `str.Con.CheatManagerStripHint` in `en.axaml`, bound by `ConsolePanel.axaml` with `StaticResource`, and
+  the view model keeps only the decision (`ShowCheatManagerStripHint`). The wording is a Shipping caveat:
+  engine CheatManager execs are usually compiled out there (they report success and do nothing), while the
+  game's own exec commands usually still work. Detection is unchanged, so it still shows on Development.
+- Tests: `ConsoleViewModelTests` pin the key's wording, the panel's bindings, and no `See memory` in the VM.
+  UI suite 5,612 run, 0 failed. Gates 25 run, 0 failed.
+- Build 3562 was consumed by the `-Target Test` run; **3563 is the published AOT build** (`UE5DumpUI.exe`
+  55.5 MB `c8c381e5`, `UE5Dumper.dll` `f4bab95a`). ⬜ Live check owed: select a CheatManager exec on the
+  AOT build and read the banner (the `todo.md` row carries it).
+
 ## 2026-09-26 (build 3561, tools only — no rebuild) — the local-LLM helper: 23 review findings fixed, the free-VRAM need computed from the model, live-checked
 
 **No binary changed.** Everything here is `tools/llm/ollama_local.py`, its skill and its docs, after the
