@@ -45,7 +45,9 @@ LOG_INFO LOG_WARN LOG_ERROR LOG_DEBUG LOG_CAT TEXT DWORD HANDLE HMODULE BYTE WOR
 ToString Length Count Add Remove Contains TryGetValue GetValue SetValue Equals GetHashCode Dispose DisposeAsync
 IsNullOrEmpty IsNullOrWhiteSpace StringComparison OrdinalIgnoreCase Ordinal
 self None True False print format append
+static_cast reinterpret_cast const_cast dynamic_cast HashSet StringComparer ReadOnlySpan IReadOnlyList
 """.split())
+PARAM_NOTE = re.compile(r"^\s*\w+\s*[=:]?\s*$")  # /*exactMatch=*/ -- names an argument, documents nothing
 
 IDENT = re.compile(r"\b[A-Za-z_][A-Za-z0-9_]{3,}\b")
 QUOTED = re.compile(r"\"([a-z][a-z0-9]*(?:_[a-z0-9]+)+|[a-z]+[A-Z][A-Za-z0-9]+)\"")  # "pipe_key" / "jsonKey"
@@ -54,6 +56,8 @@ CTX_FN = re.compile(r"([A-Za-z_][\w:]*)\s*\(")
 RISKY = re.compile(r"(?i)\b(only|both|the one|the sole|sole|exactly|two|three|four|five|six|seven|eight|nine|ten|"
                    r"\d+\s+(?:callers?|fields?|keys?|entries|values?|sites?|modules?|commands?|states?|knobs?))\b")
 SLASH_LIST = re.compile(r"\b[A-Za-z_]\w+/[A-Za-z_]\w+/[A-Za-z_]\w+")
+_ITEM = r"`?(?:[A-Z][\w:]*|[a-z]+_\w+|[a-z]+[A-Z]\w*)(?:\(\))?`?"
+COMMA_LIST = re.compile(rf"(?<![\w`]){_ITEM}\s*,\s*{_ITEM}\s*,\s*(?:(?:and|or)\s+)?{_ITEM}(?![\w`])")
 MARKS = {".cpp": "//", ".h": "//", ".hpp": "//", ".cs": "//", ".lua": "--", ".ct": "--", ".py": "#"}
 
 
@@ -149,6 +153,8 @@ def blocks_of(path, lines):
         own = code_part(lines[n - 1], ext).strip()
         if own and not own.startswith(("/*", "*")):
             close()
+            if PARAM_NOTE.match(c):
+                continue
             out.append((n, n, [(n, c)], own))
             continue
         if run and n != run[-1][0] + 1:
@@ -194,11 +200,10 @@ def comment_index(with_docs: bool):
 
 
 def risky(c: str) -> bool:
-    if RISKY.search(c) or SLASH_LIST.search(c):
-        return True
-    items = [t.strip(" `'\"()") for t in c.split(",")]
-    return sum(1 for t in items
-               if re.fullmatch(r"[A-Za-z_]\w*(?:::\w+)*", t) and distinctive(t.split("::")[-1])) >= 3
+    """Enumerates or claims uniqueness: a count / "only" / "both" word, an a/b/c list, or three code-shaped items
+    in a comma list ("Wirbel, Edel, Solitar" -- module names are single capitalised words, so the item test is the
+    SHAPE, not distinctive())."""
+    return bool(RISKY.search(c) or SLASH_LIST.search(c) or COMMA_LIST.search(c))
 
 
 def find_hits(changed, index, max_hits):
@@ -210,7 +215,9 @@ def find_hits(changed, index, max_hits):
         found = syms & words
         if not found or any(a <= y and x <= b for x, y in inside.get(p, ())):
             continue
-        star = next(((n, c) for n, c in body if risky(c)), None)
+        # Show the most enumerative line: a list shape beats a count / "only" word.
+        scored = [(2 if (SLASH_LIST.search(c) or COMMA_LIST.search(c)) else 1, n, c) for n, c in body if risky(c)]
+        star = max(scored, key=lambda t: (t[0], -t[1]))[1:] if scored else None
         for s in found:
             named = next(((n, c) for n, c in body if re.search(r"\b" + re.escape(s) + r"\b", c)), None)
             n, c = star or named or body[0]
@@ -258,6 +265,8 @@ def selftest() -> int:
     if risky(" plain prose, with commas, about the walker"): bad.append("plain comma prose starred")
     if risky(" every non-pipe caller wants a bounded scan"): bad.append("the recommended 'every' wording starred")
     if not risky(" the callers are FindA, FindB, FindC today"): bad.append("an identifier comma list not starred")
+    if not risky(" used by Wirbel, Edel, and Solitar"): bad.append("a module-name comma list not starred")
+    if risky(" reads the value, then writes it back, and logs"): bad.append("a lowercase verb list starred")
     for b in bad:
         print("SELFTEST FAIL:", b)
     return 1 if bad else 0
