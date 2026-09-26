@@ -95,7 +95,9 @@ they are the ground truth for tone.
 Source: 教育部《國語辭典簡編本》附錄〈兩岸常用詞語對照表〉,
 <https://dict.concised.moe.edu.tw/appendix.jsp?ID=54&la=0&powerMode=0> (619 pairs; the
 maintainer's reference). Only the computing-relevant pairs are copied here; the site is the
-authority for anything else.
+authority for anything else. A full local copy of all 7 pages (620 pairs, `注音 / 臺灣語詞 /
+大陸語詞` TSV) may exist at `out/moe-cross-strait/moe-cross-strait-table.tsv` — `out/` is
+gitignored and machine-local, and the copy is for lookup only, not for redistribution.
 
 | ✅ Taiwan | ❌ Mainland | | ✅ Taiwan | ❌ Mainland |
 |---|---|---|---|---|
