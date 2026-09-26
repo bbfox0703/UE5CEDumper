@@ -1139,7 +1139,8 @@ constexpr const char* AOB_SPARSE_DI427_2 =
 // WHY it exists: Palworld was the corpus's first UE 5.1 sample, and SparseDelegates resolved
 // there through exactly ONE pattern (SPARSE_ES2_1). That is the thinnest coverage of any target
 // on any binary, and it matters more here than elsewhere because ValidateSparseDelegates is the
-// weakest validator we have — it can only range-check two ints, so it cannot rescue a miss.
+// weakest validator we have — on an empty map it can only range-check two ints (its UObject-key
+// content check needs a live element), so it cannot rescue a miss.
 //
 // Ground truth was established without a PDB: the SPARSE_ES2_1 site disassembles to
 // FSparseDelegateStorage::NotifyUObjectDeleted — `lea rcx,[crit]; call EnterCriticalSection;
@@ -1171,8 +1172,9 @@ constexpr const char* AOB_SPARSE_PAL51_1 =
 // --- MEL55: FSparseDelegateStorage twin-reference + element math (Meltopia) ---------
 // A second anchor for the UE 5.2-5.6 band, where SPARSE_ES2_1 was the ONLY pattern that hit.
 // Sparse coverage was measured across the whole corpus and that band was uniformly n=1, which
-// matters more than it looks: ValidateSparseDelegates can only range-check two ints, so it
-// cannot rescue a miss the way the GObjects/GNames/GWorld/GEngine validators can.
+// matters more than it looks: on an empty map ValidateSparseDelegates can only range-check two
+// ints (its UObject-key content check needs a live element), so it cannot rescue a miss the way
+// the GObjects/GNames/GWorld/GEngine validators can.
 //
 //   lea rcx,[SparseDelegates]      <- passed as `this` to TSet::FindOrAddId
 //   call <FindOrAddId>
@@ -1237,10 +1239,11 @@ constexpr const char* AOB_SPARSE_MEL55_1 =
 //     its only hit.
 //   * a `mov rdx` register variant — strictly dominated: a nibbled form covers its sites plus
 //     AV53_1's, so it buys nothing.
-//   Both also push SPARSE_PATTERNS from 8 to 9 entries = 2 batches (kBatchSize = 8), which costs
-//   a second full AVX2 pass over 430 MB of .text across the titles that find nothing in batch 1,
-//   for a pattern that can only ever hit Avowed. If more Avowed sites are wanted, WIDEN this
-//   pattern in place rather than appending a 9th entry.
+//   Either would also add an Avowed-only entry to SPARSE_PATTERNS, which is scanned in kBatchSize
+//   batches: an entry that opens a new batch costs a further full AVX2 pass over 430 MB of .text
+//   across the titles that find nothing in the batches before it, for a pattern that can only
+//   ever hit Avowed. If more Avowed sites are wanted, WIDEN this pattern in place rather than
+//   appending an entry.
 constexpr const char* AOB_SPARSE_AV53_1 =
     "48 8B 05 ?? ?? ?? ?? 48 63 C9 48 8D 14 49 48 C1 E2 05 48 8D 0C 10 48 39 34 10";
 
@@ -2136,9 +2139,10 @@ constexpr AobSignature SPARSE_PATTERNS[] = {
                    "MEL55", "UE5.5/5.6 twin-ref lea+add of SparseDelegates around the 0x60 stride math"),
     // 170: last, same reasoning as PAL51_1/MEL55_1 — it hits ONLY Avowed (0 hits on the other
     // 41 programs), so ordering it behind everything guarantees it cannot perturb a selection.
-    // This is the 8th entry, which keeps SPARSE_PATTERNS at exactly one batch (kBatchSize = 8).
-    // Do not append a 9th without measuring the extra .text pass it imposes on every title that
-    // finds nothing in batch 1.
+    // Where an entry falls against the kBatchSize boundary (Genau.cpp) decides its cost: one inside
+    // an already-paid batch rides that .text pass for free, one that OPENS a batch imposes a further
+    // full .text pass on every title that finds nothing in the batches before it. Measure that pass
+    // before appending an entry that opens a batch.
     SIG_RIP_DIRECT("SPARSE_AV53_1", AOB_SPARSE_AV53_1, AobTarget::SparseDelegates,
                    0, 3, 7, 0, 170,
                    "AV53", "UE5.3 (Avowed fork) element addr + pointer-key compare; stock 0x60 stride"),

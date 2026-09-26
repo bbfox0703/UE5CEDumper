@@ -53,7 +53,7 @@ static const LogFileName s_fileNames[LF_COUNT] = {
 };
 
 // ================================================================
-// Category → file routing (prefix-match, longest first)
+// Category → file routing (prefix-match, first match wins)
 // ================================================================
 
 struct CatMapping {
@@ -62,16 +62,18 @@ struct CatMapping {
     LogFile     file;
 };
 
-// Sorted longest-prefix-first for correct matching
-static const CatMapping s_catMap[] = {
+// First match wins, so a row must come before any shorter row whose prefix it
+// extends — placed after it, it can never match. prefixLen must equal the
+// literal's length. CatMapIsWellFormed (below the table) enforces both.
+static constexpr CatMapping s_catMap[] = {
     { "WALK:StructP",  12, LF_Walk    },
     { "WALK:ArrayP",   11, LF_Walk    },
     { "PIPE:world",    10, LF_Pipe    },
     { "PIPE:watch",    10, LF_Pipe    },
     { "DYNO:Enum",      9, LF_Offsets },
-    { "SCAN:GObj",      8, LF_Scan    },
-    { "SCAN:GNam",      8, LF_Scan    },
-    { "SCAN:GWld",      8, LF_Scan    },
+    { "SCAN:GObj",      9, LF_Scan    },
+    { "SCAN:GNam",      9, LF_Scan    },
+    { "SCAN:GWld",      9, LF_Scan    },
     { "SCAN:Ver",       8, LF_Scan    },
     { "PIPE:svr",       8, LF_Pipe    },
     { "PIPE:cmd",       8, LF_Pipe    },
@@ -87,6 +89,26 @@ static const CatMapping s_catMap[] = {
     { "CEP",            3, LF_Init    },
     { "MEM",            3, LF_Scan    },
 };
+
+// Both table rules fail silently at runtime — every category still lands in SOME
+// file — so they are checked here, at compile time.
+static constexpr bool CatMapIsWellFormed() {
+    for (size_t j = 0; j < std::size(s_catMap); ++j) {
+        const char* p = s_catMap[j].prefix;
+        size_t len = 0;
+        while (p[len] != '\0') ++len;
+        if (len != static_cast<size_t>(s_catMap[j].prefixLen)) return false;  // hand-typed length drifted
+        for (size_t i = 0; i < j; ++i) {
+            const char* q = s_catMap[i].prefix;
+            size_t k = 0;
+            while (q[k] != '\0' && q[k] == p[k]) ++k;
+            if (q[k] == '\0') return false;   // row i is a prefix of row j: row j can never match
+        }
+    }
+    return true;
+}
+static_assert(CatMapIsWellFormed(),
+              "s_catMap: a prefixLen differs from its literal, or a row is shadowed by an earlier row");
 
 static LogFile ResolveFile(const char* cat) {
     if (!cat || cat[0] == '\0') return LF_Init;
@@ -315,8 +337,8 @@ static void MigrateLegacyGenerations(const fs::path& dir, const wchar_t* baseNam
 }
 
 // Append one already-formatted line to the first category whose file is open,
-// bypassing WriteToFile (and therefore RotateIfNeeded) so a failure notice can
-// never re-enter rotation. Used only for the "a category is dead" notices below.
+// bypassing WriteToFile (and therefore RotateIfNeeded), so a caller that is
+// already handling a failed rotation can never re-enter it.
 // LF_Init is index 0, so it is preferred — matching ResolveFile's own fallback.
 static void EmergencyNote(const char* line) {
     for (int i = 0; i < LF_COUNT; ++i) {

@@ -5461,9 +5461,11 @@ public partial class TeleportHotkeyRow : ObservableObject
     [NotifyPropertyChangedFor(nameof(CaptureButtonText))]
     private bool _isCapturing;
 
-    /// <summary>True when the saved combo could not be registered at startup —
-    /// another app holds it. The label is still shown (so the user knows which
-    /// combo to free or rebind), flagged with a warning.</summary>
+    /// <summary>True when a saved combo could not be registered — another app holds
+    /// it. Set wherever a saved binding is (re)registered, which is not only startup:
+    /// a row held back by the experimental gate registers when the gate turns on.
+    /// The label is still shown (so the user knows which combo to free or rebind),
+    /// flagged with a warning.</summary>
     [ObservableProperty]
     [NotifyPropertyChangedFor(nameof(DisplayLabel))]
     private bool _conflicted;

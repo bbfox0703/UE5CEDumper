@@ -223,10 +223,10 @@ SearchResultSet SearchByName(const std::string& query, int maxResults = 200, boo
 // buildHistogram: when true (the pipe `find_instances` path), the scan does NOT
 // stop at the cap — it walks ALL of GObjects so rset.classHistogram counts every
 // matched class even when its instances all sit past the cap (the histogram-vanish
-// fix), and applies excludeClasses before the cap. When false (the cheap internal
-// callers: Wirbel/Edel/Solitar/Mimic/Frieren, which want a bounded first-N scan and
-// ignore the histogram), the loop keeps the old early-exit at maxResults and skips
-// the tally — so those hot paths are not regressed into a full-array walk.
+// fix), and applies excludeClasses before the cap. When false (the default, for
+// callers that want a bounded first-N scan and ignore the histogram), the loop keeps
+// the early exit at maxResults and skips the tally — so those hot paths are not
+// regressed into a full-array walk.
 SearchResultSet FindInstancesByClass(const std::string& className, bool exactMatch = false, int maxResults = 500, bool newestFirst = false, const std::string& nameFilter = "", const std::vector<std::string>& excludeClasses = {}, bool buildHistogram = false);
 
 // LIVE instances of `baseClassName` AND of every class derived from it.
@@ -825,9 +825,6 @@ struct NoiseClassVerdict {
 // isNoise=false). Order mirrors the input; duplicates de-duped.
 std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::string>& classNames);
 
-// True if `classObj`'s super-chain (itself included) has an FName exactly equal
-// to any entry in `baseNames`. Bounded 64-hop walk with a self-loop break (the
-// reusable generalization of Edel::ClassifyBySuperChain). Pure read-only.
 // ── Where a Property Search row's Preview value came from ───────────────────
 // [CDOSCOPE-2026-08-20]
 //
@@ -897,6 +894,9 @@ inline std::vector<uintptr_t> PreviewAncestorsOf(uintptr_t cls, IsPreviewFn isPr
     return out;
 }
 
+// True if `classObj`'s super-chain (itself included) has an FName exactly equal
+// to any entry in `baseNames`. Bounded 64-hop walk with a self-loop break (the
+// reusable generalization of Edel::ClassifyBySuperChain). Pure read-only.
 bool ClassDerivesFromAny(uintptr_t classObj, const std::unordered_set<std::string>& baseNames);
 
 // True if `path` (a class full path from Ubel::GetFullName) is in a known UE
@@ -1629,13 +1629,13 @@ ValueScanStats RefineCandidates(
 // numeric-property offsets, in any order. The pure SDR match is
 // Orden::MatchGroup; this layer enumerates each object's numeric leaves
 // (direct fields + depth-capped StructProperty descent, mirroring
-// ScanForValue's reach — numeric containers are P3) and persists per-slot
-// convergence lists so a refine can re-read the located offsets.
+// ScanForValue's reach; numeric containers are walked only under `deep`,
+// below, as separate blocks) and persists per-slot convergence lists so a
+// refine can re-read the located offsets.
 //
-// Runs single-threaded (mirrors CaptureSnapshotChunk): group result sets are
-// small by construction (the AND across slots is highly selective), so the
-// parallel scan machinery isn't warranted for P1. Honors Tot::Requested() + a
-// 15s deadline + maxResults.
+// Runs single-threaded: group result sets are small by construction (the AND
+// across slots is highly selective), so the parallel scan machinery isn't
+// warranted. Honors Tot::Requested() + `deadlineMs` + maxResults.
 struct GroupScanResult {
     std::vector<Radar::GroupCandidate>  candidates;
     std::vector<Radar::FieldDescriptor> descriptors;  // shared via GroupSlotMatch::descriptorIdx
@@ -1685,7 +1685,7 @@ GroupScanResult ScanForValueGroup(
     // EMIT-ON-MATCH (a raw leaf is kept only when its bytes satisfy a slot), bounded
     // to <= 64 matching raw leaves per object. See native-c-value-scan-spec.md §7.
     bool                                nativeC     = false,
-    // Walk GObjects newest-first (high index → low) so a 15s-deadline truncation on
+    // Walk GObjects newest-first (high index → low) so a deadline truncation on
     // a huge game keeps the most-recently-allocated objects (just-spawned UI/actors
     // holding native values) instead of low-index CDOs/templates. The UI couples this
     // on with native-C. Default false (ascending).

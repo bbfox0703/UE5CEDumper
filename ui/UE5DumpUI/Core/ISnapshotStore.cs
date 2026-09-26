@@ -5,8 +5,11 @@ namespace UE5DumpUI.Core;
 /// <summary>
 /// A bulk-capture write session (one connection + bulk pragmas + a transaction committed
 /// every N chunks). <see cref="WriteChunk"/> runs SYNCHRONOUSLY — call it from a background
-/// consumer task, never the UI thread. Disposing commits the tail + restores durability
-/// pragmas. See <see cref="ISnapshotStore.BeginCaptureSessionAsync"/>.
+/// consumer task, never the UI thread. A kept capture's row tail is committed by
+/// <see cref="CompleteSnapshotAsync"/>, so disposing commits only a capture that was never
+/// completed (an abandoned partial, for the caller to delete) and restores only
+/// <c>synchronous=NORMAL</c>: the other bulk pragmas stay on the pooled handle until the
+/// store's next open re-normalizes them. See <see cref="ISnapshotStore.BeginCaptureSessionAsync"/>.
 /// </summary>
 public interface ICaptureSession : IAsyncDisposable
 {
@@ -77,8 +80,9 @@ public interface ISnapshotStore
     /// transaction committed every N chunks, so a multi-million-row capture isn't paying
     /// a fresh connection + `EnsureSchema` + fsync per chunk. The streaming capture loop
     /// writes each chunk via <see cref="ICaptureSession.WriteChunk"/> from a background
-    /// consumer task; <see cref="IAsyncDisposable.DisposeAsync"/> commits the tail and
-    /// restores durability pragmas.</summary>
+    /// consumer task and finalises a kept capture via
+    /// <see cref="ICaptureSession.CompleteSnapshotAsync"/>; disposing restores only
+    /// <c>synchronous=NORMAL</c> (see <see cref="ICaptureSession"/>).</summary>
     Task<ICaptureSession> BeginCaptureSessionAsync(CancellationToken ct = default);
 
     /// <summary>Record the final object/field totals on the snapshot row.</summary>

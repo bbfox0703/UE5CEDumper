@@ -6110,7 +6110,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // ── fly_set / fly_get_state (Dunste) — no-gravity 3D flight ──
-        // fly_set applies whichever of {enable, speed, preset} are present, then
+        // fly_set applies whichever of the fields read below are present, then
         // returns the live status. Input (WASD/numpad/arrows) is sampled DLL-side
         // by the fly worker (GetAsyncKeyState) — the pipe only toggles + configs,
         // so there is no per-frame IPC.

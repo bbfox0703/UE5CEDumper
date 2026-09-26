@@ -5009,7 +5009,8 @@ uintptr_t RecoverGWorldViaEngine() {
 // because ValidateGEngineSlot derefs the candidate and asks the reflected class for a
 // "GameViewport" property. That is deliberate — it is the same version-independent test
 // FindLiveGameEngine uses, and it is what stops a decoy .data global from being accepted
-// (unlike the SparseDelegates validator, which can only range-check two ints).
+// (unlike the SparseDelegates validator, which on an EMPTY map can only range-check two ints —
+// its UObject-key content check needs a live element).
 //
 // Why the SLOT and not just the object: FindLiveGameEngine walks the entire GObjects pool
 // resolving a property offset per class. With the slot that becomes one deref. More

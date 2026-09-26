@@ -703,7 +703,11 @@ static bool LooksLikeUObject(uintptr_t obj) {
 
 // Test a candidate stride against a chunk, counting valid UObject items.
 // Returns the number of items that resolved names (strong) and total valid items (weak).
-// NOTE: No early exit — scans all maxItems for fair comparison across strides.
+// NOTE: A stride that has produced even one valid item scans all maxItems, so every plausible
+// stride is compared over the same item count (Lineal::PreferStride's tie rule relies on it).
+// The early exit (the same test after every bad probe) abandons a stride whose bad count passes
+// the give-up threshold with no good item yet, so that stride's `bad` is a capped count, not a
+// full-sample one.
 //
 // reconstructPacked: when true, the object pointer is RECONSTRUCTED from the UE5.7+
 // packed encoding (flags@item+0x00, ptrLow@item+0x08 -> Lineal::Reconstruct) instead

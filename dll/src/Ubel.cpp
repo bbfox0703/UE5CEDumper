@@ -2021,9 +2021,12 @@ static int FNameSize() {
 
 // --- Live Instance Walking ---
 
-/// Infer the expected element size from a well-known property type name.
-/// Used as a fallback when FPROPERTY_ELEMSIZE reads 0 or garbage (e.g. Inner
-/// FProperty in ArrayProperty where the ELEMSIZE offset doesn't apply).
+/// Infer the expected element size from a well-known property type name; 0 when the
+/// name does not fix the size. ⚠ Not merely a fallback for a 0/garbage FPROPERTY_ELEMSIZE:
+/// callers may override a mismatching engine size with it, and ResolveInnerSize returns it
+/// (for every inner type but LazyObjectProperty) before the engine is read at all, so a
+/// wrong entry here is actively substituted for a right one. Override-on-mismatch versus
+/// backstop-only-when-implausible is decided per caller.
 static int32_t InferScalarSize(const std::string& typeName) {
     // Numeric scalars
     if (typeName == "FloatProperty")  return 4;

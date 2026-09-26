@@ -944,7 +944,8 @@ static bool AutoStartWork() {
         // That same shutdown ran Mimic::StopThread(), which memsets the mailbox and
         // joins the poller — and StartThread's only other caller is DllMain, which
         // never runs twice. A CE .CT row would then write commands nobody collects,
-        // leaving status = 0, which CLAUDE.md's own rule tells the user means "stale
+        // leaving status = 0, which the generated CE scripts' timeout message
+        // (CeLuaHygiene.AppendTimeoutReason, UI side) blames on a "stale
         // g_invokeMailbox address" — a confidently WRONG diagnosis.
         //
         // Re-arm only if the shutdown is no longer latched. Reviving the poller
@@ -1845,7 +1846,9 @@ static std::atomic<int>  s_processEventOffset{Stark::kPeOffsetNotDetected};
 static std::atomic<bool> s_peOffsetFromVersionTable{false};
 
 /// Resolve the actual ProcessEvent function address from any valid UObject's vtable.
-/// Used both for direct calls and for installing the game-thread hook.
+/// The game-thread hook installs on this address. Direct calls do not use it: they read
+/// the slot from the TARGET instance's own vtable, which stays right even for a class
+/// that overrides ProcessEvent.
 ///
 /// Pure resolver: it does NOT detect. The ad-hoc `if (offset == -2) detect;` that
 /// used to sit here was the one detection site outside the serialized path, i.e.

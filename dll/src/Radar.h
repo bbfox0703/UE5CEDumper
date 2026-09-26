@@ -774,11 +774,11 @@ struct Session {
     std::chrono::steady_clock::time_point lastUse;
 
     // V3-C: cached ordered view (filtered + sorted candidate indices) so pure
-    // paging doesn't re-sort. Recomputed by SessionManager::QueryWith only when
-    // (viewFilter, viewSortKey, viewSortDesc) change, and invalidated
-    // (viewValid=false) after a refine mutates `candidates`. viewSortKey is the
-    // raw SortKey value (stored as uint8_t because the enum is declared after
-    // this struct).
+    // paging doesn't re-sort. Recomputed by SessionManager::QueryWith only when a
+    // query's view parameters differ from those recorded in the view* fields below,
+    // and invalidated (viewValid=false) after a refine mutates `candidates`.
+    // viewSortKey is the raw SortKey value (stored as uint8_t because the enum is
+    // declared after this struct).
     bool                                  viewValid    = false;
     std::string                           viewFilter;
     uint8_t                               viewSortKey  = 0;
@@ -915,8 +915,10 @@ public:
     }
 
     // V3-C server-side window query. Ensures the session's cached ordered view
-    // matches (filter, sortKey, sortDesc) — recomputing via BuildOrderedView
-    // only when those params changed or the view was invalidated by a refine —
+    // was built for this call's view parameters (every argument but sessionId and
+    // fn; the exclude list compared order-insensitively via CanonicalExcludeKey) —
+    // recomputing via BuildOrderedView only when one of them changed or the view
+    // was invalidated by a refine —
     // then calls `fn(const Session&, const std::vector<uint32_t>& order)` under
     // the lock; the caller slices the requested window out of `order`. Returns
     // false if the session doesn't exist. Reads only the DLL's own pools (no
@@ -1296,8 +1298,8 @@ public:
         return true;
     }
 
-    // V3-C window query — ensures the cached ordered view matches (filter,
-    // sortKey, sortDesc), then `fn(const GroupSession&, const std::vector<uint32_t>&)`.
+    // V3-C window query — same view-cache contract as SessionManager::QueryWith,
+    // then `fn(const GroupSession&, const std::vector<uint32_t>&)`.
     template <typename Fn>
     bool QueryWith(uint64_t sessionId, const std::string& filter,
                    SortKey sortKey, bool sortDesc,

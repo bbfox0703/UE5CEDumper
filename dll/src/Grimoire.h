@@ -425,12 +425,15 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // UE5_Init runs a raise-only ladder every init: 503 (tagged FFieldVariant) -> 504
 // (CMC::SetGravityDirection UFUNCTION; the property alone only floors at 503 -- [R7-X4]) -> 507 (reordered FUObjectItem) -> 508 (virtual ~FFieldClass).
 // It exists because heavily-stripped titles lose every version string and fall back to
-// 4.27 while the structural probes have already proved otherwise. The two PURE predicates
-// live here so the tests can pin them; the 503/504 markers walk GObjects and stay in
-// Frieren.
+// 4.27 while the structural probes have already proved otherwise. The PURE predicates
+// live in this header so the tests can pin them (the two below, and the CMC rule as
+// DynOff::CmcMarkerVersion); the live reads that feed them stay in UE5_Init.
 //
-// ⚠ Both are RAISE-ONLY and both are guarded on `ver >= 500`. That guard is not cosmetic:
-// a false positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
+// ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
+// PER RUNG at its UE5_Init call site: a rung whose probe could misfire on a UE4 title must
+// carry the guard, while one keyed on a layout no UE4 build has may go without — lifting a
+// 4.27-fallback title is the 503 rung's whole job. The guard is not cosmetic: a false
+// positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
 // turning a harmless badge fix into a breaking layout change.
 
 // UE 5.7 moved FUObjectItem's Object* to +0x08. The SIZE varies with build configuration

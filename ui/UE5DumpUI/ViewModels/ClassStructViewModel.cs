@@ -255,9 +255,9 @@ public partial class ClassStructViewModel : ViewModelBase
     /// <paramref name="gen"/>. Every write to the panel is gated on that ticket
     /// still being the newest, so a superseded request returns silently instead
     /// of repainting over the selection the user actually made (audit #5 AE2).
-    /// Four guard points, ported from <c>InstanceFinderViewModel</c>'s
-    /// <c>LoadInstanceFieldsAsync</c> — the one site in this repo that guards all
-    /// four (success write, failure write, the loading flag, and the early exit).
+    /// Ported from <c>InstanceFinderViewModel</c>'s <c>LoadInstanceFieldsAsync</c>,
+    /// which gates the same way: every exit path that writes state after the await
+    /// checks the ticket first, the loading flag in the <c>finally</c> included.
     /// </summary>
     private async Task LoadClassCoreAsync(string classAddr, int gen)
     {
