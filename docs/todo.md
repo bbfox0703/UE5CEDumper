@@ -267,7 +267,12 @@ from the agents' notes, not yet reproduced (working-lessons §1.8).
 
 ## 🔎 Maintainer request 2026-09-26 — code comments drift from the code `[COMMENT-INTEGRITY-2026-09-26]`
 
-**Evaluated, awaiting the maintainer's pick:** [comment-integrity-eval.md](comment-integrity-eval.md).
+**Maintainer's pick: items 1 (prevention) and 2 (mechanical cleanup) -- DONE 2026-09-26**; what each commit
+did is §5 of [comment-integrity-eval.md](comment-integrity-eval.md). **Still open:** the targeted semantic pass
+(one module per session, ≤ 3 agents), version-tagging the 79 external engine / CE line references, and the leads
+filed in the section above. The lead below turned out to be a real code gap: `[BOOL-NATIVE-SEARCH]`, fixed.
+
+The evaluation, as filed:
 - **Measured:** 69% of the 141 in-repo `File:line` references in comments have drifted.
   - A 90-block sample judged against today's code: 26% of substantive comment blocks are stale (DLL core 33%,
     DLL features 30%, UI + Lua 13%), roughly 1,600 blocks.

@@ -108,3 +108,59 @@ over 6,208 blocks is about **69 times that**, far past a session quota. So a ful
 **Lead to check, found by the sample (not verified):** `Fern.cpp:2992` still documents the two-state bool rule
 ("absent mask = native") after `[A3-BOOL-NATIVE-NOWRITE]` made it three-state. The judge noted that
 `search_properties` may emit no `bool_native`. If so, that is a code gap, not only a stale comment.
+
+## 5. What was done (2026-09-26) — items 1 and 2
+
+The maintainer picked prevention (1) and the mechanical cleanup (2). Every commit is tagged
+`[COMMENT-INTEGRITY-2026-09-26]` (`git log --grep`).
+
+**Gates** — `tools/check_comment_refs.py`, registered in `check_all` and CI:
+- **LINE** (no in-repo `File.ext:NNN` or bare `:NNN`), **TESTTARGET**, **REFS** (`.md`, `§`, `[TAG]`) and
+  **CSDOC** (a `<summary>` block directly followed by another).
+- Two holes found later by the stale-comment agents are closed. Any line containing "before" or "until" had
+  exempted its line numbers; LINE now takes a narrow history test. A `<c>:NNN</c>` also escaped the bare-ref match.
+
+**Cleanup:**
+- **151 line references** re-anchored on the symbol they meant. Each was traced through `git blame` to the target
+  file as of the commit that wrote it, then to the function enclosing that line. 96 were mechanical and 55 were
+  rewritten by hand.
+- **52** dead references and false "no test target compiles X" claims.
+- **13** stacked C# docs.
+- **6** more surfaced by the hole fix.
+- `working-lessons.md`'s own twelve line references.
+
+**Asserts and pins:**
+- `Sein.cpp`'s `s_catMap` table now has a `static_assert` for both of its rules: each `prefixLen` equals its
+  literal, and no row is shadowed by an earlier one. Three lengths had drifted, and "longest first" was false.
+  Negative controls fire.
+- `Frieren.cpp`'s banner ("~30 C ABI exports" over 63) is now a `check_derived_counts` claim.
+- No `static_assert` was added for `SPARSE_PATTERNS` against `kBatchSize`. `ScanForTarget` batches only the AOB
+  signatures, so the table size is not the batched count, and the reworded comment no longer depends on the
+  number.
+
+**Change-time aid** — `tools/verify/comment_impact.py`:
+- It lists every comment block elsewhere that names a symbol the diff touches, in its text or on the declaration
+  directly below it. Blocks that enumerate or claim uniqueness are starred.
+- Checked on the commit that added Hemmung's caller: `Aura.h`'s caller list surfaces, starred.
+
+**Style rule** — [working-lessons §8](working-lessons.md). CLAUDE.md's Rules point at it and give the
+`comment_impact --staged` routine.
+
+**The sampled stale blocks** — all 23 are resolved:
+- 20 were rewritten against today's code (workflow `wf_8a72cf58-837`). Proposals came one stratum at a time, and an
+  adversarial reviewer corrected three of them.
+- 2 had already been fixed by the mechanical pass.
+- 1 went with its code fix.
+- 16 more stale comments that the agents found in passing were each re-checked and fixed. The leads they could not
+  settle are rows in `todo.md`.
+
+**The lead was a code gap, not only a comment.** Fern's "absent `bool_mask` = native bool" hid
+`[BOOL-NATIVE-SEARCH]`. Search rows never carried `bool_native`, so a Freeze from Property Search or Interesting
+Properties could whole-byte-write an unresolved packed bool. It is fixed red-before-green, and its live check is in
+the verification register.
+
+**Not done:**
+- **Version-tagging the 79 external engine / CE line references** (item 1's second half). The version each
+  reference was read from is not recorded, so it cannot be added mechanically.
+- **The targeted semantic pass** (§4 "Cleanup, second").
+- **Re-measuring the rate:** re-run `comment_sample.py` with a new seed at the next release.
