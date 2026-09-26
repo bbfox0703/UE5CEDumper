@@ -96,6 +96,12 @@ It checks the tag against the running server (`--url` if not the default local p
 gitignored.** The hook applies from the next session. To opt out: `setup --remove`, or set
 `UE5CE_LLM=off` for one shell.
 
+⚠ If the user also runs that model outside the helper (`ollama run`, another app), its default
+window must EQUAL the helper's `num_ctx` (32768 unless `setup --num-ctx N` said otherwise).
+A different `num_ctx` reloads the model, so otherwise every switch between the two costs a cold
+load. Set it in the model's Modelfile (`PARAMETER num_ctx 32768`) and re-run `ollama create`, then
+check with `ollama show <tag> --parameters`.
+
 ## ⛔ This file is public
 
 Never write machine facts here or in the helper: model tags, hardware, IPs/URLs, whether a server
