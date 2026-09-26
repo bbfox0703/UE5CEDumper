@@ -89,6 +89,7 @@ PROBE_TIMEOUT = 0.4                    # s -- a closed loopback port costs the w
 UNLOAD_TIMEOUT = 10
 SETUP_TIMEOUT = 3
 GENERATE_TIMEOUT = 600                 # a cold load plus a long answer
+LOAD_RETRY_DELAY_S = 2                 # before retrying a load that died in CUDA init (HTTP 500)
 NUM_CTX = 32768                        # fixed: a different value reloads the model
 OUTPUT_RESERVE = 4096                  # tokens of the window kept for the answer
 KEEP_ALIVE = "10m"
@@ -109,6 +110,11 @@ EXE_TAIL = r"-(?:Win64|WinGDK|WinGRDK)-(?:Shipping|Test|DebugGame)\.exe"
 PROCESS_EXE_RE = re.compile(r"(.+)" + EXE_TAIL, re.I)
 COMMAND_EXE_RE = re.compile(r"([^\\/\"'\s]+)" + EXE_TAIL + r"\b", re.I)
 EXEMPT_STEM_PREFIX = "dumpertest"
+# UE-shaped helper processes that are never the game. EOSOverlayRenderer is the Epic Online Services
+# overlay: measured 2026-09-26 running under the Epic Games Launcher with NO game open, which made the
+# guard refuse the LLM for as long as the launcher was up. An EOS game still has its own shipping exe
+# alive beside it, so excluding the helper loses nothing.
+NON_GAME_STEMS = frozenset({"eosoverlayrenderer"})
 # DumperTest is never a Steam app, so any Steam launch is a commercial one. `[\\"']*` and not `["']?`:
 # in raw (unparsed) hook JSON the closing quote after steam.exe arrives escaped, as `\"`.
 STEAM_LAUNCH_RE = re.compile(r"steam(?:\.exe)?[\\\"']*\s+(?:\S+\s+)*?-applaunch\s+\d+"
@@ -136,9 +142,14 @@ def find_model(tags: dict, wanted: str):
     return None
 
 
+def _is_game_stem(stem: str) -> bool:
+    s = stem.lower()
+    return not s.startswith(EXEMPT_STEM_PREFIX) and s not in NON_GAME_STEMS
+
+
 def is_commercial_process(image: str) -> bool:
     m = PROCESS_EXE_RE.fullmatch((image or "").strip())
-    return bool(m) and not m.group(1).lower().startswith(EXEMPT_STEM_PREFIX)
+    return bool(m) and _is_game_stem(m.group(1))
 
 
 def command_launches_commercial(command: str) -> str | None:
@@ -150,7 +161,7 @@ def command_launches_commercial(command: str) -> str | None:
     if m:
         return m.group(0)
     for m in COMMAND_EXE_RE.finditer(command or ""):
-        if not m.group(1).lower().startswith(EXEMPT_STEM_PREFIX):
+        if _is_game_stem(m.group(1)):
             return m.group(0)
     return None
 
@@ -330,6 +341,23 @@ def _toolhelp_images() -> list[str]:
         k32.CloseHandle(snap)
 
 
+def _post_with_retry(url: str, payload, timeout: float, post=None, sleep=time.sleep):
+    """POST once more after an HTTP 500, never after anything else.
+
+    Measured 2026-09-26: a model load returned 500 because llama-server died on "CUDA error: shared
+    object initialization failed" (0xc0000409) -- a laptop dGPU waking from idle -- and the next
+    request loaded normally. A 400 is the request's own fault (e.g. an over-window prompt) and a
+    second 500 is a real failure; both propagate."""
+    post = post or http_json
+    try:
+        return post(url, payload, timeout=timeout)
+    except urllib.error.HTTPError as e:
+        if e.code != 500:
+            raise
+    sleep(LOAD_RETRY_DELAY_S)
+    return post(url, payload, timeout=timeout)
+
+
 def running_images() -> list[str]:
     if os.name == "nt":
         try:
@@ -477,8 +505,8 @@ def cmd_warm(args) -> int:
         print(f"local-llm: refused -- {refusal}", file=sys.stderr)
         return 3
     t0 = time.perf_counter()
-    http_json(p.url + "/api/generate", {"model": p.name, "prompt": "", "keep_alive": p.keep_alive,
-                                        "options": {"num_ctx": p.num_ctx}}, timeout=GENERATE_TIMEOUT)
+    _post_with_retry(p.url + "/api/generate", {"model": p.name, "prompt": "", "keep_alive": p.keep_alive,
+                                               "options": {"num_ctx": p.num_ctx}}, GENERATE_TIMEOUT)
     print(f"local-llm: {p.name} loaded (num_ctx={p.num_ctx}, keep_alive={p.keep_alive}) "
           f"in {time.perf_counter() - t0:.1f}s")
     return 0
@@ -511,13 +539,13 @@ class Refused(Exception):
 def _chat(p: Probe, user: str, think: bool) -> dict:
     """One request. `truncate: false` turns Ollama's silent over-window cut into ContextOverflow."""
     try:
-        return http_json(p.url + "/api/chat", {
+        return _post_with_retry(p.url + "/api/chat", {
             "model": p.name, "stream": False, "think": bool(think), "keep_alive": p.keep_alive,
             "truncate": False,
             "messages": [{"role": "system", "content": SYSTEM_PROMPT},
                          {"role": "user", "content": user}],
             "options": {"num_ctx": p.num_ctx, "temperature": TEMPERATURE, "num_predict": OUTPUT_RESERVE},
-        }, timeout=GENERATE_TIMEOUT)
+        }, GENERATE_TIMEOUT)
     except urllib.error.HTTPError as e:
         tokens = parse_overflow(e.code, e.read().decode("utf-8", errors="replace"))
         if tokens is None:
