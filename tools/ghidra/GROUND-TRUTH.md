@@ -173,6 +173,19 @@ govern. Read that block too before adding, moving or deleting anything. The shor
   measurement rather than interpolation. `SPARSE_DI427_1` resolves it live. The structural
   mitigation still stands and should stay: **`Aura` probes the live key shape instead of gating on
   a version number**, which is what covers licensee forks that no sample can.
+- ✅ **FIXED 2026-09-26 (build 3560) by `GNAM_LLM54_1` (695) + `GNAM_IWB_1` (725)
+  `[GNAMES-NONSHIP-LLM54]`.** The cause, from UE source and the PDBs: UE 5.4 added
+  `LLM(FLowLevelMemTracker::Get().FinishInitialise());` to `GetNamePool()`'s one-time init. LLM is
+  compiled out of Shipping, so only non-Shipping codegen changed: two calls now follow the FNamePool
+  ctor, the pool sits in a callee-saved register, and the init is no longer inlined into the FName
+  callers. LLM54_1 anchors on that init (every hit truth on 5.4 / 5.6 / 5.7.4 / 5.8.3 Dev + DbgGame,
+  0 hits on every Shipping build and before 5.4, 0 decoys over the 65-program archive corpus); IWB_1
+  on `FName::IsWithinBounds` (Pool+8, adjustment -8), byte-identical 4.23 -> 5.8.3. Live red -> green
+  on DumperTest 5.4 Dev and DumperTest58 5.8.3 Dev (V1 -> LLM54_1, same address; GNames step 7.6 ->
+  5.0 s and 8.4 -> 6.5 s), Shipping 5.4 / 5.8.3 unchanged. The priority is deliberately low (the
+  maintainer's rule: few games ship non-Shipping), so 15-16 Pass-2 scans remain before it; at 101 the
+  walk simulation gives 0. Evidence: `out/gnames_mine` (workflow `wf_8c5dd600-b4f`), `out/llm54_live`.
+  The original record, as it stood:
 - **GNames all but collapses on a non-Shipping UE5 build.** It is **config**, not a version
   regression: every Shipping build tested resolves normally, so **no shipped game is affected**.
   **The boundary is 5.3 → 5.4** — BISECTED 2026-07-29 with stock ThirdPerson builds either side:
