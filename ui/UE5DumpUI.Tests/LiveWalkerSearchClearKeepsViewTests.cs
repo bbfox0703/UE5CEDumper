@@ -14,7 +14,8 @@ namespace UE5DumpUI.Tests;
 /// <item>the selection contains the match ▲/▼ landed on → the view stays where it is;</item>
 /// <item>it does not → the first selected row (grid order) comes to the top.</item>
 /// </list>
-/// Typing, pasting, shortening, a partial delete, and 1 → 0 characters keep today's behaviour.
+/// With nothing selected the view stays where it is too (the maintainer's follow-up). Typing,
+/// pasting, shortening, a partial delete, and 1 → 0 characters keep today's behaviour.
 /// The VM hands the View a restore (selection, top row, row to keep visible); these pin what it
 /// hands over — the scrolling itself is the View's, proven live.
 /// </summary>
@@ -115,15 +116,19 @@ public class LiveWalkerSearchClearKeepsViewTests
     }
 
     [Fact]
-    public void Clearing_with_nothing_selected_keeps_todays_behaviour()
+    public void Clearing_with_nothing_selected_stays_where_it_is()
     {
+        // The maintainer's follow-up (2026-09-27): with nothing selected the view stays put too.
         var vm = VmWithRows();
         var got = AttachView(vm, new BookmarkFieldRef("Beta", 0x700));
         vm.SearchText = "I32";
 
         vm.SearchText = "";
 
-        Assert.Empty(got);
+        var r = Assert.Single(got);
+        Assert.Empty(r.Selected);
+        Assert.Equal(new BookmarkFieldRef("Beta", 0x700), r.Top);
+        Assert.Null(r.Keep);
     }
 
     [Fact]
