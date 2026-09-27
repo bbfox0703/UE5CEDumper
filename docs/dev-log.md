@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3586–3588) — the USMAP export carries Blueprint structs and enums; a class-valued SDK member says which class it holds `[USMAP-UDS-MISSING]` `[USMAP-UDE-MISSING]` `[SDK-METACLASS]`
+
+- **USMAP export:** Blueprint user-defined structs and enums are written, and class-default objects
+  (`Default__Class`, `Default__Enum`, …) are not. Verified live on EVERSPACE 2, same game state before and after:
+  22 of 22 structs and 45 of 45 enums (33 / 55 with a save loaded), 0 undefined references (was 36 struct, 75
+  enum). An independent reader, CUE4Parse, reads every one of them through the new file exactly as the game's own
+  cooked schema describes it.
+- **SDK export:** a class-valued member is declared from the class it holds — `TSubclassOf<class Pawn>
+  DefaultPawnClass` (was `UClass*`), `TSoftClassPtr<class PlayerInput>`, `class BlueprintGeneratedClass*` for a
+  `TObjectPtr<UBlueprintGeneratedClass>`. Checked against the ENGINE SOURCE, not another dumper: 303 of 304
+  class-valued members of EVERSPACE 2's engine classes match UE 5.6 (was 64), 168 of 174 on the UE 4.23 fixture
+  (was 3). The one left on 5.6 and the six on 4.23 are container slots, filed.
+- **Review round (7 agents)** caught a regression before release: on UE 4.18–4.24 the new rule turned every
+  `TSubclassOf` into a plain pointer — fixed red-first in 3588. It also made `list_enums` cheap again on large
+  games and hardened the new oracle.
+- **New rig:** `tools/verify/sdk_source_oracle.py` checks an SDK header's class-valued members against the engine
+  source it came from; its self-test is a gate (ten mutants, all killed).
+- **Found and filed:** `[UPROP-SUBCLASS-SLOT]` (HIGH) — on UE 4.18–4.24 `walk_class` reads struct, object and
+  enum types from the wrong slot after a fresh connect (UE 4.23 fixture: 2,624 of 2,624 struct members raw
+  bytes) — and nine related rows.
+- Build 3586's tests failed on a test-order flake (a freed heap block's address reused a cached class answer),
+  fixed in the test; 3587 carried the three fixes, 3588 the review's. AOT `dist\UE5DumpUI.exe` 58,443,264 B,
+  sha256 `419b93cfa9f3`; `dist\UE5Dumper.dll` `13687eeaa9b3`. C# 5797/5797, headless 15/15, dll_core 483 checks,
+  dll_helpers 2992.
+
 ## 2026-09-27 (builds 3583–3585) — the SDK export defines Blueprint user-defined structs, and Live Walker's Export .h declares the declared types `[SDK-UDS-MISSING]` `[SDK-LIVE-VALUE-TYPES]`
 
 - **Whole-pool SDK export:** Blueprint `UserDefinedStruct`s are now defined, so a Blueprint member of such a type
