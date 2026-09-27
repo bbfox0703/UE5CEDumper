@@ -7,7 +7,7 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// Works around Avalonia's TextBox putting the caret at the WRONG END when Home / End (or
-/// Ctrl+Home / Ctrl+End) is pressed with text selected [TEXTBOX-HOMEEND-CARET].
+/// Ctrl+Home / Ctrl+End, or a page key) is pressed with text selected [TEXTBOX-HOMEEND-CARET].
 /// </summary>
 /// <remarks>
 /// <para>Measured on build 3574 in the Interesting Funcs keyword box: a click on the box's padding
@@ -19,7 +19,10 @@ namespace UE5DumpUI.Helpers;
 /// caret at <c>SelectionStart</c>. Moving the caret normally collapses the selection onto it
 /// first; but when the caret already sits at the target, <c>CaretIndex</c> does not change,
 /// nothing collapses, and the caret lands on the selection's start — End jumps to the start of a
-/// select-all, Home to the end of a selection made right to left.</para>
+/// select-all (the mirror case for Home needs the caret at the start with the selection anchored
+/// at the end, which keyboard input does not produce in 12.1.3; it is covered anyway). The page
+/// keys share the sink and never move the caret at all, so with a selection they ALWAYS land on
+/// its start (found by review, confirmed on a real TextBox).</para>
 /// <para>So the selection is collapsed BEFORE the TextBox handles the key; its own move then lands
 /// on the target whether the caret moves or not. It collapses onto the ACTIVE end,
 /// <c>SelectionEnd</c> — where the caret shows — not onto <c>CaretIndex</c>: keyboard selection
@@ -37,9 +40,9 @@ public static class TextBoxHomeEndFix
         => InputElement.KeyDownEvent.AddClassHandler<TextBox>(OnKeyDown, RoutingStrategies.Tunnel);
 
     /// <summary>True when <paramref name="e"/> is one of <paramref name="moves"/> — the platform's
-    /// plain Home / End / Ctrl+Home / Ctrl+End gestures, the four moves that end in
+    /// plain Home / End / Ctrl+Home / Ctrl+End and page gestures, the moves that end in
     /// <c>ClearSelection()</c>. The Shift variants extend the selection and are not among them.</summary>
-    public static bool IsPlainHomeOrEnd(KeyEventArgs e, params IEnumerable<KeyGesture>[] moves)
+    public static bool IsSelectionClearingMove(KeyEventArgs e, params IEnumerable<KeyGesture>[] moves)
     {
         foreach (var gestures in moves)
             foreach (var g in gestures)
@@ -56,9 +59,10 @@ public static class TextBoxHomeEndFix
     {
         if (e.Handled) return;
         var keymap = Application.Current?.PlatformSettings?.HotkeyConfiguration;
-        if (keymap == null || !IsPlainHomeOrEnd(e,
+        if (keymap == null || !IsSelectionClearingMove(e,
                 keymap.MoveCursorToTheStartOfLine, keymap.MoveCursorToTheEndOfLine,
-                keymap.MoveCursorToTheStartOfDocument, keymap.MoveCursorToTheEndOfDocument)) return;
+                keymap.MoveCursorToTheStartOfDocument, keymap.MoveCursorToTheEndOfDocument,
+                keymap.PageUp, keymap.PageDown, keymap.PageLeft, keymap.PageRight)) return;
         if (CollapseOntoActiveEnd(box.SelectionStart, box.SelectionEnd) is not { } sel) return;
         // SetCurrentValue, as the TextBox itself does: a local value would replace a binding.
         // SelectionStart first: meeting SelectionEnd, it moves CaretIndex there too, which

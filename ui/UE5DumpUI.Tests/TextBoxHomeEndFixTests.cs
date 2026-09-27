@@ -13,11 +13,13 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class TextBoxHomeEndFixTests
 {
-    // Windows' plain Home / End / Ctrl+Home / Ctrl+End, as Avalonia's Win32 keymap declares them.
+    // Windows' plain Home / End / Ctrl+Home / Ctrl+End and page keys, as Avalonia's Win32 keymap
+    // declares them.
     private static readonly KeyGesture[][] Moves =
     {
         new[] { new KeyGesture(Key.Home) }, new[] { new KeyGesture(Key.End) },
         new[] { new KeyGesture(Key.Home, KeyModifiers.Control) }, new[] { new KeyGesture(Key.End, KeyModifiers.Control) },
+        new[] { new KeyGesture(Key.PageUp) }, new[] { new KeyGesture(Key.PageDown) },
     };
 
     private static KeyEventArgs Press(Key key, KeyModifiers modifiers = KeyModifiers.None)
@@ -28,8 +30,10 @@ public class TextBoxHomeEndFixTests
     [InlineData(Key.End, KeyModifiers.None)]
     [InlineData(Key.Home, KeyModifiers.Control)]
     [InlineData(Key.End, KeyModifiers.Control)]
-    public void The_four_plain_moves_that_end_in_ClearSelection_are_caught(Key key, KeyModifiers modifiers)
-        => Assert.True(TextBoxHomeEndFix.IsPlainHomeOrEnd(Press(key, modifiers), Moves));
+    [InlineData(Key.PageUp, KeyModifiers.None)]
+    [InlineData(Key.PageDown, KeyModifiers.None)]
+    public void The_plain_moves_that_end_in_ClearSelection_are_caught(Key key, KeyModifiers modifiers)
+        => Assert.True(TextBoxHomeEndFix.IsSelectionClearingMove(Press(key, modifiers), Moves));
 
     [Theory]
     [InlineData(Key.Home, KeyModifiers.Shift)]                         // extends the selection
@@ -38,7 +42,7 @@ public class TextBoxHomeEndFixTests
     [InlineData(Key.Left, KeyModifiers.None)]
     [InlineData(Key.A, KeyModifiers.Control)]
     public void Other_keys_are_left_to_the_TextBox(Key key, KeyModifiers modifiers)
-        => Assert.False(TextBoxHomeEndFix.IsPlainHomeOrEnd(Press(key, modifiers), Moves));
+        => Assert.False(TextBoxHomeEndFix.IsSelectionClearingMove(Press(key, modifiers), Moves));
 
     [Fact]
     public void A_select_all_collapses_onto_its_active_end_so_End_stays_at_the_end()
