@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (build 3577) — keyword boxes: a selection hidden by a typo comes back `[KEYWORD-BOX-VIEW-KEEP]`
+
+- **The maintainer's call: keep the last non-empty selection.** Before, a keyword that hid every selected row
+  (a typo, zero rows) dropped the selection for good, so clearing the typo brought nothing back. Now the hidden
+  selection is kept: clearing the keyword brings its first row to the top, and a Backspace that shows the rows
+  again selects them again. Picking another row yourself, or a reload that resets the box, lets it go. A
+  selection that is only partly hidden keeps the rows still shown.
+- Live check PASSED on 3577 (DumperTest 5.4 Shipping): Interesting Funcs with two rows picked (zero-row typo then
+  clear, typo then Backspace, a pick of your own in between) and the Object Tree.
+
 ## 2026-09-27 (builds 3575, 3576) — keyword boxes: a clear typed faster than the view restores still lands right `[KEYWORD-BOX-VIEW-KEEP]`
 
 - **A race behind 3574's filter-box rules, found while retrying an unexplained live run.** A rebuild detaches the
