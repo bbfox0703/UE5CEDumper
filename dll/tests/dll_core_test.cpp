@@ -5591,6 +5591,87 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- LISTCLASSES-2026-09-28 -- the class enumerators do not take a metaclass's class-default object for a class -----
+    //
+    // ⛔ OWN name table and OWN object array: re-initialises Aura, and puts the main pool back at the end.
+    // [LISTCLASSES-METACLASS-CDO] A metaclass's CDO -- Default__Class, Default__BlueprintGeneratedClass, ... -- has that
+    // metaclass as its own class, so the class-like-meta test alone admitted it: with "Game classes only" unticked,
+    // UE423_Flying's class list carried its five metaclass CDOs as classes, and every enumerator counted five classes
+    // too many (review wf_b99fb861-680). [DUMPALL-METACLASS-CDO] fixed the same shape in Dump All.
+    {
+        blk("LISTCLASSES - a metaclass's class-default object is not listed or counted as a class");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t lcEntry[7][0x40] = {};
+        const char* lcNames[7] = { "", "Class", "Actor", "Default__Class", "BlueprintGeneratedClass",
+                                   "Default__BlueprintGeneratedClass", "BP_Hero_C" };
+        static uintptr_t lcNameChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(lcEntry[i] + 0x10, lcNames[i], strlen(lcNames[i]) + 1);
+            lcNameChunk[i] = A(lcEntry[i]);
+        }
+        static uintptr_t lcNameChunks[2] = { A(lcNameChunk), 0 };
+        Serie::InitUE4(A(lcNameChunks), 0x10);
+
+        // Object i is named lcNames[i + 1], and its class is the metaclass it has in an engine: UClass for the two
+        // classes, the BGC metaclass and UClass's own CDO; BlueprintGeneratedClass for the Blueprint class and its CDO.
+        static uint8_t lcObj[6][0x100] = {};
+        const int lcClassOf[6] = { 0, 0, 0, 0, 3, 3 };
+        for (int i = 0; i < 6; ++i) {
+            putP(lcObj[i], Grimoire::OFF_UOBJECT_CLASS, A(lcObj[lcClassOf[i]]));
+            put32(lcObj[i], Grimoire::OFF_UOBJECT_NAME, i + 1);
+        }
+        put32(lcObj[1], DynOff::USTRUCT_PROPSSIZE, 0x30);   // Actor
+        put32(lcObj[5], DynOff::USTRUCT_PROPSSIZE, 0x38);   // BP_Hero_C
+
+        static uint8_t lcChunk[6 * 24] = {};
+        static uintptr_t lcTable[2] = {};
+        static uint8_t lcHdr[0x40] = {};
+        for (int i = 0; i < 6; ++i) putP(lcChunk, i * 24, A(lcObj[i]));
+        lcTable[0] = A(lcChunk);
+        putP(lcHdr, 0x10, A(lcTable));
+        put32(lcHdr, 0x20, 6);  put32(lcHdr, 0x24, 6);
+        put32(lcHdr, 0x28, 1);  put32(lcHdr, 0x2C, 1);
+        Aura::InitWithExtendedLayout(A(lcHdr), 24);
+        check("LISTCLASSES setup: the array holds the six objects", Aura::GetCount() == 6,
+              std::to_string(Aura::GetCount()).c_str());
+
+        const auto lc = Aura::ListClasses(false);
+        std::string lcRows;
+        bool lcAnyCdo = false;
+        for (const auto& e : lc.results) {
+            lcRows += e.className + " ";
+            if (e.className.rfind("Default__", 0) == 0) lcAnyCdo = true;
+        }
+        check("LISTCLASSES ⭐: no class-default object is listed as a class", !lcAnyCdo, lcRows.c_str());
+        check("LISTCLASSES ⭐: ...nor counted in the total", lc.totalClasses == 4,
+              std::to_string(lc.totalClasses).c_str());
+        check("LISTCLASSES control: every class is still listed, the metaclasses and a Blueprint class included",
+              lc.results.size() == 4 && lcRows.find("BP_Hero_C") != std::string::npos
+              && lcRows.find("Actor") != std::string::npos && lcRows.find("BlueprintGeneratedClass") != std::string::npos,
+              lcRows.c_str());
+
+        const auto lcSearch = Aura::SearchProperties("Health", {}, false);
+        check("LISTCLASSES ⭐: the property search does not scan a class-default object as a class",
+              lcSearch.scannedClasses == 4, std::to_string(lcSearch.scannedClasses).c_str());
+        const auto lcBatch = Aura::SearchPropertiesBatch({ "Health" }, {}, false);
+        check("LISTCLASSES ⭐: ...nor does the batched property search",
+              lcBatch.size() == 1 && lcBatch[0].scannedClasses == 4,
+              lcBatch.empty() ? "(no result)" : std::to_string(lcBatch[0].scannedClasses).c_str());
+        const auto lcFuncs = Aura::EnumerateAllFunctions(false);
+        check("LISTCLASSES ⭐: ...nor the function enumerator", lcFuncs.scannedClasses == 4,
+              std::to_string(lcFuncs.scannedClasses).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        check("LISTCLASSES control: the main pool is back", Aura::GetCount() == kCount);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
