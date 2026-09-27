@@ -4993,6 +4993,7 @@ int main() {
         const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE; const auto svScript = DynOff::USTRUCT_SCRIPT;
         const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
         const auto svUFlags = DynOff::UPROPERTY_FLAGS;    const auto svUBool = DynOff::UBOOLPROP_FIELDSIZE;
+        const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
         const auto svTagged = DynOff::bTaggedFFieldVariant; const auto svFNum = DynOff::FNAME_NUMBER;
         const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
                                                DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
@@ -5153,6 +5154,10 @@ int main() {
         runGenau(415);
         check("UPROPSLOT ⭐: a 4.15 give-up keeps 0x78 -- no default derived from the 4.18+ Offset_Internal",
               famAt(0x78), fam().c_str());
+        // ...and the readers outside the family take the same 0x78: with no start recorded, UPropertySubclassStart fell
+        // back to the version formula over that very 0x44 default -- 0x6C (review of build 3596, LOW).
+        check("UPROPSLOT ⭐: ...and so do the readers outside the family (UPropertySubclassStart), not 0x6C",
+              DynOff::UPropertySubclassStart(415) == 0x78, std::to_string(DynOff::UPropertySubclassStart(415)).c_str());
 
         // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
         // labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 set no UProperty family; the
@@ -5175,6 +5180,7 @@ int main() {
         DynOff::USTRUCT_PROPSSIZE = svPropsSize; DynOff::USTRUCT_SCRIPT = svScript;
         DynOff::UPROPERTY_OFFSET = svUOff;    DynOff::UPROPERTY_ELEMSIZE = svUElem; DynOff::UPROPERTY_FLAGS = svUFlags;
         DynOff::UBOOLPROP_FIELDSIZE = svUBool; DynOff::bTaggedFFieldVariant = svTagged; DynOff::FNAME_NUMBER = svFNum;
+        DynOff::UPROPERTY_SUBCLASS_START = svUStart;   // Genau set it; a later block must not inherit this fixture's
         DynOff::bOffsetsValidated.store(false); DynOff::bOffsetsProbeRan.store(false);
         DynOff::g_offsetsFallbackReason = "";
         g_cachedUEVersion = svVer;
