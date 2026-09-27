@@ -5090,6 +5090,14 @@ int main() {
         runGenau(415);
         check("UPROPSLOT control: 4.15 stock -- the family at 0x78 (right before the fix by coincidence)",
               DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
+        // Review wf_b99fb861-680 (F1): the tail ORDER came from the version alone. A 4.11-4.17 title whose version
+        // detection fails is relabelled 422 (the TNameEntryArray rule), so the measured 0x50 got the 4.18+ tail and a
+        // misaligned 0x7C where this very layout's start is 0x78 -- worse than the untouched default it replaced. The
+        // measured layout says which order it is: Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from it.
+        layout(2, 0x28, 0x34, 0x50);
+        runGenau(422);
+        check("UPROPSLOT ⭐: a 4.15 layout running under a misdetected 4.22 still gets 0x78 -- the layout decides",
+              DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
 
         // No Guid / Vector: Genau gives up on its defaults -- which must be the UProperty family, not FProperty's.
         layout(4, 0x28, 0x34, 0x44);
