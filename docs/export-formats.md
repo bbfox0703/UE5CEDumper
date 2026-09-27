@@ -435,7 +435,33 @@ verbatim. `Services/SdkMemberNames` names a struct's own members once, before th
 
 Deliberately **not** reserved: `Name` / `Class` / `Flags` / `Outer`. Dumper-7 renames them on classes
 because its SDK emits a UObject base that holds them; this header emits no such base, and hiding a
-base member compiles. Type names are not sanitised yet — `[SDK-TYPE-NAMES]` in `docs/todo.md`.
+base member compiles.
+
+### Type names are made valid and unique `[SDK-TYPE-NAMES]`
+
+A struct's own name, its super, and every type a member spells go through `Services/SdkTypeNames`,
+so a definition and every reference to it agree:
+
+- One sanitiser for every spelling, as for members; also reserved are the header's own built-in
+  spellings (`TArray`, `FName`, `UObject`, …), since a pool type of that name would redefine one.
+- A name held by more than one type is qualified with each holder's outers, nearest first, at the
+  smallest depth that tells them all apart — every AnimBlueprint's
+  `AnimBlueprintGeneratedConstantData` becomes `AnimBlueprintGeneratedConstantData_ABP_Manny_C`,
+  `…_ABP_Quinn_C`. The single native (`/Script`) holder keeps the plain name. No result depends
+  on GObjects order, and a qualified name never takes another type's own name.
+- The super is found by `SuperAddress` and is never the struct itself. If a super is not in the
+  export (or the export is a single struct) and shares the struct's name, the struct is the one
+  renamed: the super is the type you already have under that name.
+- A member's type arrives as a short name only, so among several holders the one of the right
+  kind (a pointer names a class, a by-value member a struct) whose path shares the most with the
+  referring type wins, ties to the lower path. With no holder of that kind, it is only sanitised.
+- A class the DLL refuses (it answers with an empty class) gets an `// ERROR` line, not an empty
+  struct that derived classes would silently sit on.
+- The comment above each struct still carries the UE path verbatim.
+
+⚠ The whole-pool header is **not** a compilable unit: it is in GObjects order (a by-value member
+can name a struct defined further down) and emits no enums. It is an offsets reference; the
+single-class exports compile once the engine types are provided.
 
 ### Features
 
