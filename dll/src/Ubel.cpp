@@ -769,7 +769,14 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     }
 
     // FFieldClass has Name (FName) at offset 0x00
-    return ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
+    std::string name = ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
+    // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY:
+    // an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) that serializes the same object
+    // reference, and which 5.4 folded back into ClassProperty. No consumer knew the name -- DumperTest51's SDK export
+    // wrote 29 such members as raw bytes and its .usmap 30 slots of type Unknown, which an unversioned reader cannot
+    // size. Every type-name reader in FProperty mode comes through here, so they all see the ClassProperty it is.
+    if (name == "ClassPtrProperty") return "ClassProperty";
+    return name;
 }
 
 // Read the type name from a UProperty* (UObject subclass, UE4 UProperty mode).
