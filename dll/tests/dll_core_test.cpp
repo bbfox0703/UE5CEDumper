@@ -5470,6 +5470,35 @@ int main() {
         check("CONTAINEROBJ control: ...beside its MetaClass Object", fD && fD->keyMetaClass == "Object",
               s(fD, &FieldInfo::keyMetaClass));
 
+        // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY
+        // -- an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) -- and nothing downstream knew
+        // the name: DumperTest51's SDK export wrote 29 of them as raw bytes and its .usmap 30 slots of type Unknown
+        // (0xFF), which an unversioned reader cannot size. Same fixture: one more class, one field of that type.
+        static uint8_t coPtrFC[0x20] = {};
+        static uint8_t coPtrEntry[0x40] = {};
+        memcpy(coPtrEntry + 0x10, "ClassPtrProperty", 17);
+        static uintptr_t coPtrChunk[21] = {};
+        for (int i = 1; i <= 18; ++i) coPtrChunk[i] = coChunk[i];
+        coPtrChunk[19] = A(coPtrEntry);
+        static uintptr_t coPtrChunks[2] = { reinterpret_cast<uintptr_t>(coPtrChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(coPtrChunks), 0x10);
+        put32(coPtrFC, DynOff::FFIELDCLASS_NAME, 19);
+        static uint8_t coPtrProp[0x100] = {}, coPtrCls[0x100] = {};
+        putP(coPtrProp, DynOff::FFIELD_CLASS, A(coPtrFC));  put32(coPtrProp, DynOff::FFIELD_NAME, 17);   // "Directors"
+        put32(coPtrProp, DynOff::FPROPERTY_OFFSET, 0x28);   put32(coPtrProp, DynOff::FPROPERTY_ELEMSIZE, 8);
+        put32(coPtrProp, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+        putP(coPtrProp, slot, obj(11));                     // PropertyClass BlueprintGeneratedClass
+        putP(coPtrProp, slot + 8, obj(13));                 // MetaClass Object
+        put32(coPtrCls, DynOff::USTRUCT_PROPSSIZE, 0x30);
+        putP(coPtrCls, DynOff::USTRUCT_CHILDPROPS, A(coPtrProp));
+        const auto& cpInfo = Ubel::WalkClassEx(A(coPtrCls));
+        const FieldInfo* fP = cpInfo.Fields.empty() ? nullptr : &cpInfo.Fields[0];
+        check("CLASSPTRPROP ⭐: a UE 5.0 / 5.1 ClassPtrProperty is reported as the ClassProperty it is",
+              fP && fP->TypeName == "ClassProperty", fP ? fP->TypeName.c_str() : "(no field)");
+        check("CLASSPTRPROP ⭐: ...and reads its PropertyClass and MetaClass like one",
+              fP && fP->objClassName == "BlueprintGeneratedClass" && fP->metaClassName == "Object",
+              fP ? fP->objClassName.c_str() : "(no field)");
+
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;
     }
