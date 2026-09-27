@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3594) — the class list no longer shows the metaclasses' default objects; UE 4.11–4.17 titles with an unrecognised version read their struct and object types right `[LISTCLASSES-METACLASS-CDO]` `[UPROP-SUBCLASS-SLOT]` `[FPROP-FAMILY-ALIGN]` `[FAMILY-EPOCH]`
+
+- **Class list, Property Search, Interesting Functions:** with "Game classes only" unticked, the class list
+  showed five engine objects named `Default__Class`, `Default__BlueprintGeneratedClass`, … as classes with no
+  properties, and every class count was five too high. They are gone (UE 4.23 fixture: 1,869 → 1,864 classes).
+- **UE 4.11–4.17:** when the engine version is not recognised, or the game keeps case-preserving names, the
+  struct / object / enum type slot is now read from the property layout the dumper measures instead of the
+  version, which was 4 or 8 bytes off there. (Build 3592's note on case-preserving UE4 builds held for 4.18–4.24
+  only; 4.11–4.17 are covered now.) The fixtures keep their values: UE 4.23 0x70, UE 4.11 0x78, DQ XI S 0x80.
+- **UE 5.3+ builds that keep editor data and case-preserving names:** the same slot is 8 bytes further on than
+  build 3591 derived; fixed. No fixture has this shape; UE 4.27 and UE 5.8 checked identical.
+- **Safety net:** a class read while the layout is being corrected on another thread is read again afterwards,
+  instead of keeping the old answer.
+- Build 3594: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `417e59b9d2c6`; `dist\UE5Dumper.dll` 3,037,696 B,
+  `a4d36493e7a8`. C# 5800/5800, headless 15/15, dll_core 538 checks, dll_helpers 3073.
+
 ## 2026-09-28 (build 3593) — UE 5.0 / 5.1: `TObjectPtr<UClass>` members are typed, and the `.usmap` no longer carries unreadable types `[UE51-CLASSPTRPROP]`
 
 - UE 5.0 and 5.1 give every `TObjectPtr<UClass-derived>` member a property kind of their own that nothing in the
