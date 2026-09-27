@@ -421,6 +421,10 @@ def header_looks_classy(decl: str, kind: str) -> bool:
 # the run
 # ---------------------------------------------------------------------------------------------
 
+def exit_code(cats: collections.Counter) -> int:
+    return 1 if any(cats[k] for k in FAILING) else 0
+
+
 def run(header: pathlib.Path, engine: pathlib.Path, show: int = 25, json_path: str | None = None,
         quiet: bool = False):
     """(rows, category counter, exit code). Prints the report unless quiet."""
@@ -515,7 +519,7 @@ def run(header: pathlib.Path, engine: pathlib.Path, show: int = 25, json_path: s
     if json_path:
         pathlib.Path(json_path).write_text(json.dumps(rows, indent=1), encoding="utf-8")
         say(f"\nrows -> {json_path}")
-    return rows, cats, (1 if any(cats[k] for k in FAILING) else 0)
+    return rows, cats, exit_code(cats)
 
 
 # ---------------------------------------------------------------------------------------------
@@ -672,6 +676,12 @@ def selftest() -> int:
         bad.append(("unexpected rows", "none", ", ".join(f"{c}::{m}={got[(c, m)]}" for c, m in extra)))
     if rc != 1:
         bad.append(("exit code", 1, rc))
+    # The fixture fails on MISMATCH already, so the exit rule is pinned on its own as well.
+    for cats_, want in ((collections.Counter({"NO-SOURCE-MEMBER": 1}), 1),
+                        (collections.Counter({"NOT-CLASS-VALUED": 1}), 1),
+                        (collections.Counter({"BLOB": 3, "UNPAIRED": 5, "NO-SOURCE-CLASS": 2, "MATCH": 9}), 0)):
+        if exit_code(cats_) != want:
+            bad.append((f"exit code for {dict(cats_)}", want, exit_code(cats_)))
     for k, want, g in bad:
         print(f"SELFTEST FAIL  {k}: expected {want}, got {g}")
     if bad:

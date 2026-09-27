@@ -193,6 +193,8 @@ jobs:
           # (last) now fails whenever the two lists differ.
           & $py tools/verify/crc_authority_survey.py --selftest
           if ($LASTEXITCODE -ne 0) { throw "crc_oracle_selftest FAILED ($LASTEXITCODE) - the CRC oracle merge self-test failed" }
+          & $py tools/verify/sdk_source_oracle.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "sdk_source_oracle_selftest FAILED ($LASTEXITCODE) - the SDK engine-source oracle self-test failed -- a verdict it gives on real headers can no longer be trusted" }
           & $py tools/check_processevent_slots.py
           if ($LASTEXITCODE -ne 0) { throw "check_processevent_slots FAILED ($LASTEXITCODE) - Grimoire.h's ProcessEvent vtable slot table disagrees with the vendored RE-UE4SS templates it was transcribed from. It is DERIVED data -- run 'py tools/check_processevent_slots.py --list'. ⚠ The runtime pattern scan is still primary and a per-BUILD difference is not a bug; this only pins the fallback table against its own source" }
           & $py tools/check_property_family.py

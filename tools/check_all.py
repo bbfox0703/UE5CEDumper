@@ -102,6 +102,13 @@ GATES = [
      ["tools/verify/crc_authority_survey.py", "--selftest"],
      "the CRC oracle merge self-test failed", False),
 
+    # [SDK-METACLASS] the engine-source oracle for SDK headers: its verdicts are evidence, so every blind spot the
+    # review of 2026-09-27 found is a fixture that must keep its verdict
+    ("sdk_source_oracle_selftest",
+     ["tools/verify/sdk_source_oracle.py", "--selftest"],
+     "the SDK engine-source oracle self-test failed -- a verdict it gives on real headers can no longer be trusted",
+     False),
+
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
      "an en.axaml key is referenced-but-undefined (a load-time crash) or "
