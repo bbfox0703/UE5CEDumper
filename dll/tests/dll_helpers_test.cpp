@@ -3029,6 +3029,10 @@ static void Test_IsListedEnumObject() {
     EXPECT("enum: not the UserDefinedEnum CDO", !IsListedEnumObject("UserDefinedEnum", "Default__UserDefinedEnum"));
     EXPECT("enum: not a struct",                !IsListedEnumObject("UserDefinedStruct", "S_Item"));
     EXPECT("enum: not a class",                 !IsListedEnumObject("Class", "Actor"));
+    // The class-only pre-filter list_enums runs before it resolves an object's name must agree with it.
+    EXPECT("enum class: Enum",                   Aura::IsListedEnumClass("Enum"));
+    EXPECT("enum class: UserDefinedEnum",        Aura::IsListedEnumClass("UserDefinedEnum"));
+    EXPECT("enum class: not UserDefinedStruct", !Aura::IsListedEnumClass("UserDefinedStruct"));
 }
 
 // IsReflectionMetaClass: the Object Tree "Instances only" server-side gate. MUST match

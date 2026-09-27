@@ -2330,10 +2330,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 uintptr_t obj = Aura::GetByIndex(i);
                 if (!obj) continue;
 
-                // Check if this object's class is "Enum" (UEnum inherits UObject)
+                // A UEnum or a Blueprint UserDefinedEnum, never a class-default object (Aura::IsListedEnumObject).
+                // The class is tested first so only enums pay for resolving their own name.
                 uintptr_t cls = Ubel::GetClass(obj);
                 if (!cls) continue;
                 std::string clsName = Ubel::GetName(cls);
+                if (!Aura::IsListedEnumClass(clsName)) continue;
                 std::string name = Ubel::GetName(obj);
                 if (name.empty() || !Aura::IsListedEnumObject(clsName, name)) continue;
 

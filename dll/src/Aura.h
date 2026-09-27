@@ -1057,6 +1057,23 @@ inline std::string PathLeafName(const std::string& raw) {
     return (slash == std::string::npos) ? canon : canon.substr(slash + 1);
 }
 
+// IsListedEnumObject -- which GObjects rows list_enums publishes. [USMAP-UDE-MISSING]
+// A native UEnum and a Blueprint UserDefinedEnum (its own UEnum subclass, so an exact
+// `== "Enum"` dropped every one), never a class-default object: a CDO's row reads its
+// metaclass, so Default__Enum passed. The USMAP export is list_enums' consumer, and a
+// .usmap that names an enum it does not define leaves that member unreadable.
+// The class test is its own function so list_enums can run it BEFORE resolving the
+// object's name: a loaded save holds over a million objects and a few thousand enums.
+// Pure / string-only so dll_helpers_test can pin it; list_enums itself lives in Fern.cpp,
+// which no test target compiles.
+inline bool IsListedEnumClass(const std::string& className) {
+    return className == "Enum" || className == "UserDefinedEnum";
+}
+
+inline bool IsListedEnumObject(const std::string& className, const std::string& objName) {
+    return IsListedEnumClass(className) && objName.rfind("Default__", 0) != 0;
+}
+
 // IsReflectionMetaClass — true when a UObject's CLASS name denotes the reflection /
 // type layer (UClass family, UFunction family, UScriptStruct/UEnum descriptors,
 // UPackage) rather than a live gameplay instance. On UE4 (a priority target, where
@@ -1068,18 +1085,6 @@ inline std::string PathLeafName(const std::string& raw) {
 // MUST stay in sync with the C# mirror Helpers/ReflectionMetaClassifier. Exact-cased
 // match (UE emits meta names exactly cased); pure / string-only so the lightweight DLL
 // test can exercise it without linking the whole DLL.
-// IsListedEnumObject -- which GObjects rows list_enums publishes. [USMAP-UDE-MISSING]
-// A native UEnum and a Blueprint UserDefinedEnum (its own UEnum subclass, so an exact
-// `== "Enum"` dropped every one), never a class-default object: a CDO's row reads its
-// metaclass, so Default__Enum passed. The USMAP export is list_enums' consumer, and a
-// .usmap that names an enum it does not define leaves that member unreadable.
-// Pure / string-only so dll_helpers_test can pin it; list_enums itself lives in Fern.cpp,
-// which no test target compiles.
-inline bool IsListedEnumObject(const std::string& className, const std::string& objName) {
-    if (className != "Enum" && className != "UserDefinedEnum") return false;
-    return objName.rfind("Default__", 0) != 0;
-}
-
 inline bool IsReflectionMetaClass(const std::string& className) {
     if (className.empty()) return false;
     static const char* const kReflectionMetas[] = {
