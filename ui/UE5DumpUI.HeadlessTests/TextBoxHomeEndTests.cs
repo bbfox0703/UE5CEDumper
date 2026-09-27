@@ -152,6 +152,29 @@ public class TextBoxHomeEndTests
         Assert.True(box.CaretIndex >= 2 && box.CaretIndex <= 3, $"line 1's end, got {box.CaretIndex}");
     });
 
+    [Theory]
+    [InlineData(Key.End)]
+    [InlineData(Key.Home)]
+    public Task A_selection_made_down_across_lines_moves_on_the_line_the_caret_is_on(Key key) => Headless.Run(() =>
+    {
+        // Keyboard selection leaves CaretIndex at the ANCHOR and puts the visible caret at
+        // SelectionEnd: after Shift+Down from the start the caret shows on line 2, so End /
+        // Home must act on line 2 -- as Windows does -- not on the anchor's line 1.
+        using var fix = TextBoxHomeEndFix.Register();
+        var line2 = ShowBox("ab\ncd", multiline: true);
+        line2.CaretIndex = 4;                               // inside line 2
+        Press(line2, key);                                  // where End / Home lands on line 2
+
+        var box = ShowBox("ab\ncd", multiline: true);
+        box.CaretIndex = 0;
+        Press(box, Key.Down, RawInputModifiers.Shift);      // selects onto line 2
+        Assert.NotEqual(box.SelectionStart, box.SelectionEnd);
+
+        Press(box, key);
+
+        Assert.Equal(line2.CaretIndex, box.CaretIndex);
+    });
+
     [Fact]
     public Task Shift_End_still_extends_the_selection() => Headless.Run(() =>
     {
