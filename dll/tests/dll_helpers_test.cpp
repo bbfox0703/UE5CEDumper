@@ -6758,13 +6758,15 @@ static void Test_PropertyFamilyIsCoherent() {
     }
 
     // The two concrete layouts this repo actually ships against. 0x44 is the UE5.1.1+
-    // default Step 2.5 writes; 0x48 is TQ2's measured value.
+    // default Step 2.5 writes; 0x48 is TQ2's measured value. [FPROP-FAMILY-ALIGN] This pinned 0x74 --
+    // the flat +0x2C -- until TQ2's own log showed the struct at 0x78 (`CorrectSubclassOffsets: delta=4,
+    // FSTRUCTPROP 0x74 -> 0x78`): the link pointers are 8-aligned, so the pin had encoded the defect.
     DynOff::PropertyFamily ue5 = DynOff::PropertyFamilyFor(0x44);
     EXPECT("G12: Offset_Internal 0x44 -> family base 0x70", ue5.structProp == 0x70);
     EXPECT("G12: Offset_Internal 0x44 -> EnumProperty 0x78", ue5.enumEnum == 0x78);
 
     DynOff::PropertyFamily tq2 = DynOff::PropertyFamilyFor(0x48);
-    EXPECT("G12: Offset_Internal 0x48 -> family base 0x74", tq2.structProp == 0x74);
+    EXPECT("G12: Offset_Internal 0x48 -> family base 0x78 (TQ2's measured struct slot)", tq2.structProp == 0x78);
 
     // [VND583-11] Case-preserving: RepNotifyFunc is a 12-byte FName, so the family starts 8 later.
     // RE-UE4SS 4.27: Offset_Internal 0x4C -> Struct 0x78; the CasePreserving template: 0x80.
