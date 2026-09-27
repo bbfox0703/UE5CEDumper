@@ -21,6 +21,28 @@ namespace UE5DumpUI.Views;
 /// </remarks>
 public static class FilterViewBinding
 {
+    /// <summary>Attach <paramref name="grid"/> to the keeper <paramref name="pick"/> returns from
+    /// <paramref name="owner"/>'s view model, now and whenever the DataContext changes (a panel is
+    /// built before its view model arrives).</summary>
+    public static void AttachFilterView<TVm>(this StyledElement owner, DataGrid? grid,
+                                             Func<TVm, FilterViewKeeper> pick) where TVm : class
+    {
+        if (grid == null) return;
+        void Hook() { if (owner.DataContext is TVm vm) Attach(grid, pick(vm)); }
+        owner.DataContextChanged += (_, _) => Hook();
+        Hook();
+    }
+
+    /// <summary>The same, for a ListBox.</summary>
+    public static void AttachFilterView<TVm>(this StyledElement owner, ListBox? list,
+                                             Func<TVm, FilterViewKeeper> pick) where TVm : class
+    {
+        if (list == null) return;
+        void Hook() { if (owner.DataContext is TVm vm) Attach(list, pick(vm)); }
+        owner.DataContextChanged += (_, _) => Hook();
+        Hook();
+    }
+
     public static void Attach(DataGrid grid, FilterViewKeeper keeper)
     {
         keeper.CaptureView = () => new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid));

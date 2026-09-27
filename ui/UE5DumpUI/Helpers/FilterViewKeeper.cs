@@ -44,7 +44,7 @@ public sealed record FilterViewState(IReadOnlyList<object> Selected, object? Top
 /// </remarks>
 public sealed class FilterViewKeeper
 {
-    private string _lastApplied = "";
+    private string[] _lastApplied = Array.Empty<string>();
 
     /// <summary>Set by the View: the current selection and top row, taken synchronously BEFORE
     /// the list changes. Null when no View is attached.</summary>
@@ -60,14 +60,15 @@ public sealed class FilterViewKeeper
     /// <summary>
     /// Replace <paramref name="target"/>'s contents with <paramref name="rows"/> — unless they are
     /// already the same rows in the same order, in which case nothing happens and the view does
-    /// not move. <paramref name="keyword"/> is the box's text as now applied.
-    /// <paramref name="detachSelection"/> nulls the bound <c>Selected*</c> properties first, as
-    /// <see cref="UiCollection.Reset{T}"/> requires. Returns whether the list changed.
+    /// not move. <paramref name="detachSelection"/> nulls the bound <c>Selected*</c> properties
+    /// first, as <see cref="UiCollection.Reset{T}"/> requires. <paramref name="keywords"/> are the
+    /// list's keyword boxes as now applied, always in the same order. Returns whether the list
+    /// changed.
     /// </summary>
-    public bool Update<T>(ObservableCollection<T> target, IReadOnlyList<T> rows, string? keyword,
-                          Action detachSelection)
+    public bool Update<T>(ObservableCollection<T> target, IReadOnlyList<T> rows, Action detachSelection,
+                          params string?[] keywords)
     {
-        var mode = Advance(keyword);
+        var mode = Advance(keywords);
         if (SameRows(target, rows)) return false;
         Rebuild(() => UiCollection.Reset(target, rows, detachSelection), mode);
         return true;
@@ -77,17 +78,17 @@ public sealed class FilterViewKeeper
     /// The same, for a box that swaps in a NEW collection (or rebuilds some other way):
     /// <paramref name="rebuild"/> does the swap; <paramref name="rowsChanged"/> false skips it.
     /// </summary>
-    public bool Update(Action rebuild, bool rowsChanged, string? keyword)
+    public bool Update(Action rebuild, bool rowsChanged, params string?[] keywords)
     {
-        var mode = Advance(keyword);
+        var mode = Advance(keywords);
         if (!rowsChanged) return false;
         Rebuild(rebuild, mode);
         return true;
     }
 
-    /// <summary>Forget the applied keyword: call before the PROGRAM empties the box (a reload, a
+    /// <summary>Forget the applied keywords: call before the PROGRAM empties a box (a reload, a
     /// navigation), so that is not taken for the user clearing it.</summary>
-    public void Forget() => _lastApplied = "";
+    public void Forget() => _lastApplied = Array.Empty<string>();
 
     /// <summary>True when <paramref name="rows"/> are exactly <paramref name="current"/>'s items,
     /// in order, by reference.</summary>
@@ -103,11 +104,22 @@ public sealed class FilterViewKeeper
     public static bool IsClear(string? previous, string? now)
         => (previous?.Trim().Length ?? 0) >= 2 && string.IsNullOrWhiteSpace(now);
 
-    private FilterViewRestore Advance(string? keyword)
+    // A clear is ONE box going 2+ -> empty while every other box of the list stays as it was: a
+    // list with several boxes (a global keyword plus per-column ones) is cleared box by box.
+    private FilterViewRestore Advance(string?[] keywords)
     {
-        var mode = IsClear(_lastApplied, keyword) ? FilterViewRestore.Cleared : FilterViewRestore.Narrowed;
-        _lastApplied = keyword ?? "";
-        return mode;
+        var now = keywords.Select(k => k ?? "").ToArray();
+        bool cleared = false, othersSame = true;
+        if (now.Length == _lastApplied.Length)
+        {
+            for (int i = 0; i < now.Length; i++)
+            {
+                if (IsClear(_lastApplied[i], now[i])) cleared = true;
+                else if (!string.Equals(_lastApplied[i], now[i], StringComparison.Ordinal)) othersSame = false;
+            }
+        }
+        _lastApplied = now;
+        return cleared && othersSame ? FilterViewRestore.Cleared : FilterViewRestore.Narrowed;
     }
 
     private void Rebuild(Action rebuild, FilterViewRestore mode)

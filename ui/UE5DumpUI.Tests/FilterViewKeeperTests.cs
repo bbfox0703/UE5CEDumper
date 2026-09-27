@@ -34,7 +34,7 @@ public class FilterViewKeeperTests
         int detached = 0, resets = 0;
         list.CollectionChanged += (_, _) => resets++;
 
-        bool changed = k.Update(list, new[] { "a", "b" }, "a ", () => detached++);
+        bool changed = k.Update(list, new[] { "a", "b" }, () => detached++, "a ");
 
         Assert.False(changed);
         Assert.Equal(0, resets);
@@ -50,7 +50,7 @@ public class FilterViewKeeperTests
         var k = probe.Attach(list);
         int detached = 0;
 
-        bool changed = k.Update(list, new[] { "b" }, "b", () => detached++);
+        bool changed = k.Update(list, new[] { "b" }, () => detached++, "b");
 
         Assert.True(changed);
         Assert.Equal(1, detached);
@@ -69,10 +69,10 @@ public class FilterViewKeeperTests
         var list = new ObservableCollection<string> { "a" };
         var probe = new Probe();
         var k = probe.Attach(list);
-        k.Update(list, new[] { "x" }, from, () => { });
+        k.Update(list, new[] { "x" }, () => { }, from);
         probe.Modes.Clear();
 
-        k.Update(list, new[] { "y" }, to, () => { });
+        k.Update(list, new[] { "y" }, () => { }, to);
 
         Assert.Equal(new[] { expected }, probe.Modes);
     }
@@ -85,15 +85,34 @@ public class FilterViewKeeperTests
         var list = new ObservableCollection<string> { "a" };
         var probe = new Probe();
         var k = probe.Attach(list);
-        k.Update(list, new[] { "a" }, "ab", () => { });      // same rows: skipped, but "ab" applied
-        k.Update(list, new[] { "a", "b" }, "", () => { });
+        k.Update(list, new[] { "a" }, () => { }, "ab");      // same rows: skipped, but "ab" applied
+        k.Update(list, new[] { "a", "b" }, () => { }, "");
         Assert.Equal(new[] { FilterViewRestore.Cleared }, probe.Modes);
 
         probe.Modes.Clear();
-        k.Update(list, new[] { "a" }, "ab", () => { });
+        k.Update(list, new[] { "a" }, () => { }, "ab");
         k.Forget();
-        k.Update(list, new[] { "a", "b", "c" }, "", () => { });
+        k.Update(list, new[] { "a", "b", "c" }, () => { }, "");
         Assert.Equal(new[] { FilterViewRestore.Narrowed, FilterViewRestore.Narrowed }, probe.Modes);
+    }
+
+    [Theory]
+    [InlineData("abc", "x", "", "x", FilterViewRestore.Cleared)]     // one box cleared, the other kept
+    [InlineData("abc", "x", "", "", FilterViewRestore.Narrowed)]     // two boxes changed at once
+    [InlineData("abc", "x", "abc", "", FilterViewRestore.Narrowed)]  // the other box went 1 -> 0
+    [InlineData("abc", "xy", "abc", "", FilterViewRestore.Cleared)]
+    public void With_several_boxes_a_clear_is_one_box_emptied_while_the_rest_stay(
+        string a0, string b0, string a1, string b1, FilterViewRestore expected)
+    {
+        var list = new ObservableCollection<string> { "a" };
+        var probe = new Probe();
+        var k = probe.Attach(list);
+        k.Update(list, new[] { "x" }, () => { }, a0, b0);
+        probe.Modes.Clear();
+
+        k.Update(list, new[] { "y" }, () => { }, a1, b1);
+
+        Assert.Equal(new[] { expected }, probe.Modes);
     }
 
     [Fact]
@@ -117,7 +136,7 @@ public class FilterViewKeeperTests
         var list = new ObservableCollection<string> { "a", "b" };
         var k = new FilterViewKeeper();
 
-        Assert.True(k.Update(list, new[] { "b" }, "b", () => { }));
+        Assert.True(k.Update(list, new[] { "b" }, () => { }, "b"));
         Assert.Equal(new[] { "b" }, list);
     }
 }

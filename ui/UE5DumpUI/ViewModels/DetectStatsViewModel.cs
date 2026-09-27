@@ -124,6 +124,14 @@ public partial class DetectStatsViewModel : ViewModelBase
         StatusText = "Click Detect to shortlist likely HP / MP / Gold fields and confirm them live.";
     }
 
+    /// <summary>Test seam: the rows a Detect run would publish, without the pipe round trips
+    /// behind them.</summary>
+    internal void SeedForTests(IEnumerable<DetectedStat> rows)
+    {
+        _allResults = rows.ToList();
+        ApplyFilter();
+    }
+
     [RelayCommand]
     private async Task DetectAsync()
     {
