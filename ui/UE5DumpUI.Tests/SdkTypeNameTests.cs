@@ -544,6 +544,24 @@ public class SdkTypeNameTests
     }
 
     [Fact]
+    public void Pool_TheMetaclassesDefaultObjects_AreNotTypes()
+    {
+        // A class-default object's GObjects row reads its metaclass, so `Default__ScriptStruct`,
+        // `Default__Class` and `Default__UserDefinedStruct` pass a meta filter -- and were emitted as
+        // empty `struct Default__X {}` of size 0. Measured live on EVERSPACE 2 (UE 5.6): five of them
+        // before admitting UserDefinedStruct, six after.
+        var n = new SdkPoolDump()
+            .Add("0x1", "Default__ScriptStruct", "ScriptStruct", "//Script/CoreUObject/Default__ScriptStruct", size: 0)
+            .Add("0x2", "Default__Class", "Class", "//Script/CoreUObject/Default__Class", size: 0)
+            .Add("0x3", "Default__UserDefinedStruct", "UserDefinedStruct", "//Script/CoreUObject/Default__UserDefinedStruct", size: 0)
+            .Add("0x4", "S_Item", "UserDefinedStruct", "//Game/Data/S_Item/S_Item", fields: new[] { Int("V", 0) })
+            .Sdk();
+
+        Assert.DoesNotContain("Default__", n);
+        Assert.Contains("struct S_Item", n);
+    }
+
+    [Fact]
     public void Pool_SharingOnlyTheMountPoint_IsNotLocality()
     {
         // A Blueprint in an unrelated /Game folder names `Vector` by value: sharing `Game` alone does not
