@@ -406,6 +406,10 @@ public sealed class DumpService : IDumpService
                     InnerType = fo["inner_type"]?.GetValue<string>() ?? "",
                     InnerStructType = fo["inner_struct_type"]?.GetValue<string>() ?? "",
                     InnerObjClass = fo["inner_obj_class"]?.GetValue<string>() ?? "",
+                    // [SDK-CONTAINER-OBJCLASS] additive keys; an older DLL sends none
+                    KeyObjClass   = fo["key_obj_class"]?.GetValue<string>() ?? "",
+                    ValueObjClass = fo["value_obj_class"]?.GetValue<string>() ?? "",
+                    ElemObjClass  = fo["elem_obj_class"]?.GetValue<string>() ?? "",
                     KeyType = fo["key_type"]?.GetValue<string>() ?? "",
                     KeyStructType = fo["key_struct_type"]?.GetValue<string>() ?? "",
                     ValueType = fo["value_type"]?.GetValue<string>() ?? "",

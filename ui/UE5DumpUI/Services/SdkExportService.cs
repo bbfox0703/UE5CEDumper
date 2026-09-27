@@ -265,9 +265,10 @@ public static class SdkExportService
             field.BoolFieldMask, field.Size,
             ClassValuedCpp(field.TypeName, field.ObjClassName, field.MetaClassName, C),
             ClassValuedCpp(field.InnerType, field.InnerObjClass, field.InnerMetaClass, C),
-            ClassValuedCpp(field.KeyType, "", field.KeyMetaClass, C),
-            ClassValuedCpp(field.ValueType, "", field.ValueMetaClass, C),
-            ClassValuedCpp(field.ElemType, "", field.ElemMetaClass, C));
+            ClassValuedCpp(field.KeyType, field.KeyObjClass, field.KeyMetaClass, C),
+            ClassValuedCpp(field.ValueType, field.ValueObjClass, field.ValueMetaClass, C),
+            ClassValuedCpp(field.ElemType, field.ElemObjClass, field.ElemMetaClass, C),
+            C(field.KeyObjClass), C(field.ValueObjClass), C(field.ElemObjClass));
     }
 
     /// <summary>
@@ -344,7 +345,8 @@ public static class SdkExportService
         string elemType, string elemStructType, string enumName,
         int boolFieldMask, int size,
         string? classCpp = null, string? innerClassCpp = null, string? keyClassCpp = null,
-        string? valueClassCpp = null, string? elemClassCpp = null)
+        string? valueClassCpp = null, string? elemClassCpp = null,
+        string keyObjClass = "", string valueObjClass = "", string elemObjClass = "")
     {
         // `null` means "no C++ spelling for this" and is the ONLY route to the raw-byte fallback,
         // so the extent can never be smuggled into a type string again.
@@ -390,8 +392,9 @@ public static class SdkExportService
                 : null,   // unresolved struct → raw bytes, extent AFTER the identifier
 
             "ArrayProperty" => $"TArray<{MapInnerCppType(innerType, innerStructType, innerObjClass, innerClassCpp)}>",
-            "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, "", keyClassCpp)}, {MapInnerCppType(valueType, valueStructType, "", valueClassCpp)}>",
-            "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, "", elemClassCpp)}>",
+            // [SDK-CONTAINER-OBJCLASS] a key / value / element of the object family names its class, as an Array inner does
+            "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, keyObjClass, keyClassCpp)}, {MapInnerCppType(valueType, valueStructType, valueObjClass, valueClassCpp)}>",
+            "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, elemObjClass, elemClassCpp)}>",
 
             // With no known enum type, an integer of the property's own size: a 4-byte enum declared
             // uint8_t shifts every member after it, because the padding pass trusts the row's Size.
