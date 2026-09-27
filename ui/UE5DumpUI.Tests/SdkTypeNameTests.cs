@@ -220,6 +220,29 @@ public class SdkTypeNameTests
     }
 
     [Fact]
+    public void Pool_WhenTheNearestOuterIsShared_BothHoldersGoOneLevelOut()
+    {
+        // Both nearest outers are `Shared`, so depth 1 would name both `X_C_Shared`; the whole group
+        // moves to depth 2 together, whatever the GObjects order.
+        SdkPoolDump Pool(bool reversed)
+        {
+            var d = new SdkPoolDump();
+            var a = ("0x1", "//Game/A/Shared/X/X_C");
+            var b = ("0x2", "//Game/B/Shared/X/X_C");
+            foreach (var (addr, path) in reversed ? new[] { b, a } : new[] { a, b })
+                d.Add(addr, "X_C", "BlueprintGeneratedClass", path, fields: new[] { Int("V", 0) });
+            return d;
+        }
+
+        foreach (var sdk in new[] { Pool(false).Sdk(), Pool(true).Sdk() })
+        {
+            var n = sdk.Replace("\r\n", "\n");
+            Assert.Contains("// //Game/A/Shared/X/X_C\nstruct X_C_A_Shared\n", n);
+            Assert.Contains("// //Game/B/Shared/X/X_C\nstruct X_C_B_Shared\n", n);
+        }
+    }
+
+    [Fact]
     public void Pool_ReferenceKind_PicksTheClassOrTheStruct()
     {
         // A class and a struct may share a short name in different modules; a pointer names a class,
@@ -258,6 +281,59 @@ public class SdkTypeNameTests
 
         Assert.Contains("struct TArray_Weird\n", sdk);
         Assert.Contains("struct TArray_Weird Arr;", sdk);
+    }
+
+    [Fact]
+    public void BuiltIns_CoverEveryTypeTheEmitterSpellsItself()
+    {
+        // Derived, not listed: every property type the emitter's source names, alone and as every
+        // container's inner, through both metadata shapes, with no UE type names -- so what comes out
+        // is only the header's own spellings. A new one must join SdkTypeNames.BuiltIns, or a pool
+        // type of that name would redefine it.
+        var root = FindRepoRoot();
+        Assert.NotNull(root);
+        var src = File.ReadAllText(Path.Combine(root!, "ui", "UE5DumpUI", "Services", "SdkExportService.cs"));
+        var types = System.Text.RegularExpressions.Regex.Matches(src, "\"(\\w+Property)\"")
+            .Select(m => m.Groups[1].Value).Distinct(StringComparer.Ordinal).ToList();
+        Assert.True(types.Count > 20, $"only {types.Count} property types found in the emitter's source");
+
+        var spelled = new HashSet<string>(StringComparer.Ordinal);
+        void Collect(string cppType)
+        {
+            foreach (System.Text.RegularExpressions.Match m in
+                     System.Text.RegularExpressions.Regex.Matches(cppType, "[A-Za-z_][A-Za-z0-9_]*"))
+                spelled.Add(m.Value);
+        }
+        foreach (var t in types)
+        {
+            foreach (var inner in types.Append(""))
+            {
+                Collect(SdkExportService.MapCppDecl(new FieldInfoModel
+                    { TypeName = t, InnerType = inner, KeyType = inner, ValueType = inner, ElemType = inner, Size = 4 }).Type);
+                Collect(SdkExportService.MapCppDecl(new LiveFieldValue
+                    { TypeName = t, ArrayInnerType = inner, MapKeyType = inner, MapValueType = inner, SetElemType = inner, Size = 4 }).Type);
+            }
+        }
+
+        var language = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "struct", "class", "bool", "float", "double",
+            "int8_t", "int16_t", "int32_t", "int64_t", "uint8_t", "uint16_t", "uint32_t", "uint64_t",
+        };
+        var missing = spelled.Where(s => !language.Contains(s) && !SdkTypeNames.BuiltIns.Contains(s)).ToList();
+        Assert.True(missing.Count == 0, "spelled by the emitter but not reserved: " + string.Join(", ", missing));
+    }
+
+    private static string? FindRepoRoot()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        for (int i = 0; i < 10 && dir is not null; i++, dir = dir.Parent)
+        {
+            if (File.Exists(Path.Combine(dir.FullName, "build.ps1"))
+                && Directory.Exists(Path.Combine(dir.FullName, "docs")))
+                return dir.FullName;
+        }
+        return null;
     }
 
     [Fact]

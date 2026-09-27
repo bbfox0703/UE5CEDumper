@@ -61,6 +61,13 @@ internal static class SdkMemberNames
     };
 
     /// <summary>
+    /// A keyword, or a name the program around the header already owns (a macro, a typedef, a UE SDK
+    /// function). <see cref="SdkTypeNames"/> reserves the same set for type names.
+    /// </summary>
+    internal static bool IsReservedIdentifier(string name) =>
+        CppKeywords.Contains(name) || SdkReserved.Contains(name);
+
+    /// <summary>
     /// The emitted name for each UE name, in the same order. <paramref name="typeSpellings"/> are
     /// the C++ type strings the struct's members are declared with: every identifier they spell
     /// WITHOUT a <c>struct</c> / <c>class</c> in front is a type name no member may take.
