@@ -27,6 +27,18 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3595) — struct and object types are taken only from a real struct / class `[STRUCTPROBE-ANY-NAME]` `[STRUCTCACHE-ENUM-UNCHECKED]`
+
+- When the dumper reads which struct a struct member holds, or which class an object member points to, it now
+  checks that what it found IS a struct or a class. It used to accept any object with a name, so on a game whose
+  layout it had derived slightly off, a member could be typed by an unrelated object's name, and Live Walker could
+  settle on that object instead of the struct next to it. The same kind of check now guards the enum a byte member
+  of a struct array is shown with.
+- No change on any fixture: every struct and object member of every class compares identical to build 3594 on
+  UE 4.11, 4.23, 4.27, 5.1, 5.8 and DQ XI S (about 445,000 members).
+- Build 3595: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `e4993cc5ea4e`; `dist\UE5Dumper.dll` 3,038,720 B,
+  `1ec9e12edce0`. C# 5800/5800, headless 15/15, dll_core 548 checks, dll_helpers 3073.
+
 ## 2026-09-28 (build 3594) — the class list no longer shows the metaclasses' default objects; UE 4.11–4.17 titles with an unrecognised version read their struct and object types right `[LISTCLASSES-METACLASS-CDO]` `[UPROP-SUBCLASS-SLOT]` `[FPROP-FAMILY-ALIGN]` `[FAMILY-EPOCH]`
 
 - **Class list, Property Search, Interesting Functions:** with "Game classes only" unticked, the class list
