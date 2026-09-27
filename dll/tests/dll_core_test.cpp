@@ -6110,6 +6110,92 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- KINDNAMES-2026-09-28 -- the engine's own metaclasses pass the kind checks without SuperStruct -------------------
+    //
+    // ⛔ OWN name table (after OPTSTRUCT). [STRUCTPROBE-ANY-NAME] [ENUMSLOT-ANY-NAME] follow-up (review of build 3596,
+    // INFO): the kind checks walked the metaclass's SuperStruct chain even for UserDefinedStruct, BlueprintGeneratedClass
+    // and UserDefinedEnum, whose names already say what they are. A give-up session never measures USTRUCT_SUPER (its
+    // 0x40 default is wrong on 4.11-4.21), so there every Blueprint struct, class and enum was dropped -- where the
+    // name-only check before build 3595 kept them. Here the metaclasses have no SuperStruct at all.
+    {
+        blk("KINDNAMES - a Blueprint struct, class and enum pass by their metaclass's name, with no SuperStruct");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t knEntry[13][0x40] = {};
+        const char* knNames[13] = { "", "StructProperty", "ObjectProperty", "ByteProperty", "UserDefinedStruct",
+                                    "S_Item", "BlueprintGeneratedClass", "BP_Hero_C", "UserDefinedEnum", "E_Mood",
+                                    "Item", "Hero", "Mood" };
+        static uintptr_t knChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
+            memcpy(knEntry[i] + 0x10, knNames[i], strlen(knNames[i]) + 1);
+            knChunk[i] = A(knEntry[i]);
+        }
+        static uintptr_t knChunks[2] = { A(knChunk), 0 };
+        Serie::InitUE4(A(knChunks), 0x10);
+
+        // Metaclasses named as the engine names them, with NO SuperStruct; one object of each.
+        static uint8_t knUdsMeta[0x100] = {}, knBpgcMeta[0x100] = {}, knUdeMeta[0x100] = {},
+                       knUds[0x100] = {}, knBp[0x100] = {}, knUde[0x100] = {};
+        put32(knUdsMeta, Grimoire::OFF_UOBJECT_NAME, 4);
+        put32(knBpgcMeta, Grimoire::OFF_UOBJECT_NAME, 6);
+        put32(knUdeMeta, Grimoire::OFF_UOBJECT_NAME, 8);
+        putP(knUds, Grimoire::OFF_UOBJECT_CLASS, A(knUdsMeta));   put32(knUds, Grimoire::OFF_UOBJECT_NAME, 5);
+        putP(knBp, Grimoire::OFF_UOBJECT_CLASS, A(knBpgcMeta));   put32(knBp, Grimoire::OFF_UOBJECT_NAME, 7);
+        putP(knUde, Grimoire::OFF_UOBJECT_CLASS, A(knUdeMeta));   put32(knUde, Grimoire::OFF_UOBJECT_NAME, 9);
+
+        static uint8_t knStructFC[0x20] = {}, knObjFC[0x20] = {}, knByteFC[0x20] = {};
+        put32(knStructFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(knObjFC, DynOff::FFIELDCLASS_NAME, 2);
+        put32(knByteFC, DynOff::FFIELDCLASS_NAME, 3);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next,
+                         uintptr_t slot) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+            putP(p, 0x78, slot);
+        };
+        static uint8_t knItem[0x100] = {}, knHero[0x100] = {}, knMood[0x100] = {}, knCls[0x100] = {};
+        fprop(knItem, knStructFC, 10, 0x00, 0x10, knHero, A(knUds));
+        fprop(knHero, knObjFC,    11, 0x10, 0x08, knMood, A(knBp));
+        fprop(knMood, knByteFC,   12, 0x18, 0x01, nullptr, A(knUde));
+        put32(knCls, DynOff::USTRUCT_PROPSSIZE, 0x20);
+        putP(knCls, DynOff::USTRUCT_CHILDPROPS, A(knItem));
+
+        const auto& knInfo = Ubel::WalkClassEx(A(knCls));
+        auto fieldOf = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : knInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fItem = fieldOf("Item");
+        const FieldInfo* fHero = fieldOf("Hero");
+        const FieldInfo* fMood = fieldOf("Mood");
+        check("KINDNAMES setup: the three fields were walked", fItem && fHero && fMood,
+              std::to_string(knInfo.Fields.size()).c_str());
+        if (fItem && fHero && fMood) {
+            check("KINDNAMES ⭐: a UserDefinedStruct is a struct without its SuperStruct", fItem->structType == "S_Item",
+                  fItem->structType.c_str());
+            check("KINDNAMES ⭐: a BlueprintGeneratedClass is a class without its SuperStruct",
+                  fHero->objClassName == "BP_Hero_C", fHero->objClassName.c_str());
+            check("KINDNAMES ⭐: a UserDefinedEnum is an enum without its SuperStruct", fMood->enumName == "E_Mood",
+                  fMood->enumName.c_str());
+        }
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
