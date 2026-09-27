@@ -2925,9 +2925,10 @@ int main() {
         DynOff::bUseFProperty = savedFPropMC;
 
         // ---- UProperty mode, UE 4.18 ----
-        // The subclass slot is UPropertySubclassStartFor(0x44, 418) = 0x70; FSTRUCTPROP_STRUCT is left at 0x78 -- the
-        // FProperty family's default, which Genau never recalibrates in UProperty mode. PropertyClass is planted ONLY
-        // at 0x70 and MetaClass at 0x78, so a reader that borrows FSTRUCTPROP_STRUCT reads MetaClass as its anchor.
+        // The subclass slot is UPropertySubclassStartFor(0x44, 418) = 0x70; FSTRUCTPROP_STRUCT is hand-set to 0x78 --
+        // what Genau left on every UProperty engine before [UPROP-SUBCLASS-SLOT], and what a family move after init can
+        // still leave -- so the class-valued read must not borrow it. PropertyClass is planted ONLY at 0x70 and
+        // MetaClass at 0x78, so a reader that borrows FSTRUCTPROP_STRUCT reads MetaClass as its anchor.
         const bool     savedFPropU = DynOff::bUseFProperty;
         const bool     savedCpnU   = DynOff::bCasePreservingName;
         const int      savedOffU   = DynOff::UPROPERTY_OFFSET;

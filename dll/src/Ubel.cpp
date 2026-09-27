@@ -1331,10 +1331,11 @@ static bool IsPrintableName(const std::string& n) {
 // subclass of. MetaClass is the pointer right after PropertyClass in every supported layout -- FClassProperty
 // and FSoftClassProperty add it as their only member, 4.18..5.8 UnrealType.h, the RE-UE4SS layout templates and
 // Dumper-7's Offsets.cpp all agree -- so it is derived, never stored as a DynOff.
-// The slot is the MODE's. FSTRUCTPROP_STRUCT is the FProperty family's: Genau never derives it for a UProperty
-// engine and only WalkInstance's struct probe moves it later, so there it can sit one pointer past
-// PropertyClass -- ON the MetaClass (UE423_Flying: 0x78 against a 0x70 subclass start). That is also why the
-// PropertyClass read here, not the plain FSTRUCTPROP_STRUCT read, becomes a class-valued property's obj_class.
+// The slot is the MODE's own subclass start. On a UProperty engine FSTRUCTPROP_STRUCT was never derived before
+// [UPROP-SUBCLASS-SLOT] and sat one pointer past PropertyClass -- ON the MetaClass (UE423_Flying: 0x78 against a
+// 0x70 start) -- and a family move after init can still leave it off for a while ([FAMILY-EPOCH]). That is why
+// the PropertyClass read and validated here, not the plain FSTRUCTPROP_STRUCT read, becomes a class-valued
+// property's obj_class.
 // Validated before anything is published, because a wrong offset here reads a real UClass either way:
 // PropertyClass must be a class of classes (which also proves the slot), and the pointer after it a UClass.
 // Both empty when the anchor fails; metaClass alone empty when only the MetaClass fails -- the export then

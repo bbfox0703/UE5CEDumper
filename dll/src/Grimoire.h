@@ -818,8 +818,9 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // ⚠ G12 recorded "both writers now go through here". There were THREE, and the third was
 // missed: `Ubel.cpp` WalkInstance's StructProperty probe wrote FSTRUCTPROP_STRUCT directly
 // until 2026-09-07, so the split-family failure above stayed reachable by the one path G12
-// had not counted. Writers are now FIVE and all routed: Genau ×3, Ubel::CorrectSubclassOffsets,
-// and Ubel's WalkInstance StructProperty probe.
+// had not counted. Every writer is routed now -- Genau's default and measured arms for BOTH modes,
+// Ubel::CorrectSubclassOffsets, and Ubel's WalkInstance StructProperty probe -- and
+// `tools/check_property_family.py` counts them mechanically instead of this comment.
 // ⛔ ONE deliberate exception, and it is the only one: `Ubel.cpp`'s ArrayProperty probe assigns
 // FARRAYPROP_INNER on its own, because UE5.3+ puts EArrayPropertyFlags before Inner so that
 // member legitimately diverges from the shared base after calibration. It re-probes per field
@@ -849,6 +850,18 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 // 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
 inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
     return PropertyFamilyAtBase(propOffsetOff + (casePreservingName ? 0x34 : 0x2C));
+}
+
+// [UPROP-SUBCLASS-SLOT] The same five slots on a UProperty engine (UE < 4.25), at the version's
+// subclass start -- UStructProperty::Struct, UObjectPropertyBase::PropertyClass, UArrayProperty::Inner,
+// UByteProperty::Enum and UBoolProperty::FieldSize all sit right behind the UProperty base, and
+// UEnumProperty::Enum 8 later behind UnderlyingProp (UE_4.18 / 4.23 UnrealType.h, EnumProperty.h).
+// Genau used to derive only the bool slot there, so the rest kept the FProperty default 0x78 -- on
+// stock 4.18-4.24 (start 0x70) past the end of a UStructProperty and ON a UClassProperty's
+// MetaClass. UE423_Flying: 2,624 of 2,624 struct members read as raw bytes after a fresh connect.
+inline constexpr PropertyFamily UPropertyFamilyFor(int offsetInternal, unsigned ueVersion,
+                                                   bool casePreservingName) {
+    return PropertyFamilyAtBase(UPropertySubclassStartFor(offsetInternal, ueVersion, casePreservingName));
 }
 
 // Publish all five together. Never assign a member of this family directly.

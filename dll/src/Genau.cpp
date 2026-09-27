@@ -3673,6 +3673,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             }
             // UE 5.0-5.2 keep the larger layout's defaults; probing measures the real one.
         }
+    } else {
+        // [UPROP-SUBCLASS-SLOT] A UProperty engine's family, from the version and the default Offset_Internal, so a
+        // give-up exit below ships the UProperty subclass start rather than the FProperty default.
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(DynOff::UPROPERTY_OFFSET, ueVersion,
+                                                               DynOff::bCasePreservingName));
     }
 
     // Step 3: Find "Guid" or "Vector" struct for probing
@@ -4451,7 +4456,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     } else if (propOffsetOff >= 0) {
         // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
         // in this function with zero writers -- it kept its 0x70 default on every UE4
-        // <4.25 game, including shifted ones. On DQ XI S (4.22, +0x10 shift) the true
+        // <4.25 game, including shifted ones. On DQ XI S (4.18, +0x10 shift) the true
         // value is 0x80 and Ubel's ±4/+8/-8 spread tops out at 0x78, so no probe reached
         // it, boolFieldMask stayed 0, and the reader fell back to `byteVal != 0` -- which
         // reports a native bitfield bool as TRUE whenever any sibling in its byte is set.
@@ -4464,6 +4469,9 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                    "+0x%02X (Offset_Internal +0x%02X, UE=%u%s)",
                    DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, ueVersion,
                    DynOff::bCasePreservingName ? ", CPN" : "");
+        // [UPROP-SUBCLASS-SLOT] ...and the rest of the subclass family from the same start. The bool slot was the only
+        // one derived here, so every struct / object / enum reader kept the FProperty default (DynOff::UPropertyFamilyFor).
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(propOffsetOff, ueVersion, DynOff::bCasePreservingName));
     }
 
     // Infer tagged FFieldVariant from probed offsets:
@@ -4566,6 +4574,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "  UProperty::ElemSize = +0x%02X", DynOff::UPROPERTY_ELEMSIZE);
         Sein::Info("DYNO", "  UProperty::Flags    = +0x%02X", DynOff::UPROPERTY_FLAGS);
         Sein::Info("DYNO", "  UProperty::Offset   = +0x%02X", DynOff::UPROPERTY_OFFSET);
+        Sein::Info("DYNO", "  UProp subclass      = +0x%02X (Struct / PropertyClass / Inner; UEnumProperty::Enum +0x%02X)",
+                   DynOff::FSTRUCTPROP_STRUCT, DynOff::FENUMPROP_ENUM);
     }
     Sein::Info("DYNO", "==============================");
 

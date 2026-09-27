@@ -6702,6 +6702,23 @@ static void Test_UBoolPropFieldSize() {
     }
 }
 
+// [UPROP-SUBCLASS-SLOT] The UProperty family: all five slots at the version's subclass start, UEnumProperty::Enum 8 later.
+static void Test_UPropertyFamilyFor() {
+    using DynOff::UPropertyFamilyFor;
+    const auto f423 = UPropertyFamilyFor(0x44, 423, false);
+    EXPECT("UPROPSLOT: 4.23 stock, Offset_Internal 0x44 -> the family at 0x70",
+           f423.structProp == 0x70 && f423.arrayInner == 0x70 && f423.boolFieldSize == 0x70 && f423.byteEnum == 0x70);
+    EXPECT("UPROPSLOT: ...and UEnumProperty::Enum behind UnderlyingProp at 0x78", f423.enumEnum == 0x78);
+    EXPECT("UPROPSLOT: DQ XI S's shifted 4.18, 0x54 -> 0x80", UPropertyFamilyFor(0x54, 418, false).structProp == 0x80);
+    EXPECT("UPROPSLOT: 4.15 stock, 0x50 -> 0x78 (the 0x28 delta)", UPropertyFamilyFor(0x50, 415, false).structProp == 0x78);
+    EXPECT("UPROPSLOT: case-preserving 4.23, 0x4C -> 0x80", UPropertyFamilyFor(0x4C, 423, true).structProp == 0x80);
+    EXPECT("UPROPSLOT: an unknown version keeps +0x2C", UPropertyFamilyFor(0x44, 0, false).structProp == 0x70);
+    for (unsigned v : { 411u, 415u, 417u, 418u, 422u, 424u })
+        for (bool cpn : { false, true })
+            EXPECT("UPROPSLOT: the family's base IS the bool slot A6 derives, at every UProperty version",
+                   UPropertyFamilyFor(0x50, v, cpn).structProp == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
+}
+
 static void Test_PropertyFamilyIsCoherent() {
     // Every real Offset_Internal this repo has measured, plus the neighbours a future
     // engine could plausibly land on.
@@ -9203,6 +9220,7 @@ int main() {
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
+    RUN(Test_UPropertyFamilyFor);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
     RUN(Test_Holes_NormalizeGuessedType);
