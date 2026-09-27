@@ -310,9 +310,40 @@ public class SdkHeaderDeclaratorTests
             },
         };
 
+        // UE names that are not C++ identifiers as they stand (SdkMemberNameTests has one case
+        // each). The regex oracle above cannot see these -- `int32_t class;` is TYPE NAME-shaped --
+        // so only the compile rig proves they are renamed into something cl.exe accepts.
+        var clash = new ClassInfoModel
+        {
+            Name = "FSdkNameClash",
+            SuperName = "",
+            PropertiesSize = 0x58,
+            Fields =
+            {
+                new FieldInfoModel { Name = "class", TypeName = "IntProperty", Offset = 0x00, Size = 4 },
+                new FieldInfoModel { Name = "default", TypeName = "FloatProperty", Offset = 0x04, Size = 4 },
+                new FieldInfoModel { Name = "StaticClass", TypeName = "IntProperty", Offset = 0x08, Size = 4 },
+                new FieldInfoModel { Name = "Value", TypeName = "IntProperty", Offset = 0x0C, Size = 4 },
+                new FieldInfoModel { Name = "Value", TypeName = "IntProperty", Offset = 0x10, Size = 4 },
+                new FieldInfoModel { Name = "Max Health", TypeName = "FloatProperty", Offset = 0x14, Size = 4 },
+                new FieldInfoModel { Name = "FName", TypeName = "IntProperty", Offset = 0x18, Size = 4 },
+                // 0x1C..0x1F is a gap → `Pad_001C`, which the next-but-one member also claims
+                new FieldInfoModel { Name = "Tag", TypeName = "NameProperty", Offset = 0x20, Size = 8 },
+                new FieldInfoModel { Name = "Pad_001C", TypeName = "IntProperty", Offset = 0x28, Size = 4 },
+                new FieldInfoModel { Name = "FVector", TypeName = "IntProperty", Offset = 0x2C, Size = 4 },
+                new FieldInfoModel { Name = "Loc", TypeName = "StructProperty", StructType = "FVector", Offset = 0x30, Size = 0x18 },
+                new FieldInfoModel { Name = "delete", TypeName = "BoolProperty", Offset = 0x48, Size = 1, BoolFieldMask = 0x01 },
+                new FieldInfoModel { Name = "bOk", TypeName = "BoolProperty", Offset = 0x48, Size = 1, BoolFieldMask = 0x02 },
+                new FieldInfoModel { Name = "EMovementMode", TypeName = "IntProperty", Offset = 0x4C, Size = 4 },
+                new FieldInfoModel { Name = "Mode", TypeName = "EnumProperty", EnumName = "EMovementMode", Offset = 0x50, Size = 1 },
+            },
+        };
+
         return SdkExportService.GenerateClassHeaderFromSchema(schema)
              + "\n"
-             + SdkExportService.GenerateClassHeader("FSdkSmokeStruct", "", 0x90, live);
+             + SdkExportService.GenerateClassHeader("FSdkSmokeStruct", "", 0x90, live)
+             + "\n"
+             + SdkExportService.GenerateClassHeaderFromSchema(clash);
     }
 
     /// <summary>
