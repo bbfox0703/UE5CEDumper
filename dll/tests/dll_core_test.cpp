@@ -5740,6 +5740,121 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- STRUCTPROBE-2026-09-28 -- a struct / class slot is accepted only when it holds a struct / a class ----------------
+    //
+    // ⛔ OWN name table (after STRUCTENUM). [STRUCTPROBE-ANY-NAME] The subclass-slot readers accepted ANY object with a
+    // printable name. On a shifted layout the default slot holds another named object -- on DQ XI S a Blueprint-owned
+    // property's PostConstructLinkNext, a named UProperty -- and it passed: a struct member was typed as a property's
+    // name, and the WalkInstance probe stopped at delta 0 on it instead of finding the struct 8 bytes on (review
+    // wf_63e981ac-5e4, S2). A slot is accepted now only when the object's class chain reaches ScriptStruct (a struct)
+    // or Class (an object property's PropertyClass).
+    {
+        blk("STRUCTPROBE - a subclass slot is accepted only when it holds the kind of object it must");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t spEntry[15][0x40] = {};
+        const char* spNames[15] = { "", "StructProperty", "ObjectProperty", "ScriptStruct", "Class", "Vector", "Actor",
+                                    "Decoy", "Loc", "Owner", "UserDefinedStruct", "S_Item", "Item", "Pos", "Target" };
+        static uintptr_t spChunk[16] = {};
+        for (int i = 1; i <= 14; ++i) {
+            memcpy(spEntry[i] + 0x10, spNames[i], strlen(spNames[i]) + 1);
+            spChunk[i] = A(spEntry[i]);
+        }
+        static uintptr_t spChunks[2] = { A(spChunk), 0 };
+        Serie::InitUE4(A(spChunks), 0x10);
+
+        // UObjects as an engine has them: UClass (its own class), the ScriptStruct and UserDefinedStruct metaclasses
+        // (UserDefinedStruct's super is ScriptStruct), a native struct and a Blueprint struct, the Actor class, and a
+        // named Actor instance -- the decoy, a named object that is neither a struct nor a class.
+        static uint8_t spClassCls[0x100] = {}, spSsCls[0x100] = {}, spUdsCls[0x100] = {}, spVector[0x100] = {},
+                       spUds[0x100] = {}, spActorCls[0x100] = {}, spDecoy[0x100] = {};
+        auto uobj = [&](uint8_t* o, const uint8_t* cls, int nameIdx) {
+            putP(o, Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(o, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+        };
+        uobj(spClassCls, spClassCls, 4);
+        uobj(spSsCls, spClassCls, 3);
+        uobj(spUdsCls, spClassCls, 10);
+        putP(spUdsCls, DynOff::USTRUCT_SUPER, A(spSsCls));
+        uobj(spVector, spSsCls, 5);
+        uobj(spUds, spUdsCls, 11);
+        uobj(spActorCls, spClassCls, 6);
+        uobj(spDecoy, spActorCls, 7);
+
+        static uint8_t spStructFC[0x20] = {}, spObjFC[0x20] = {};
+        put32(spStructFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(spObjFC, DynOff::FFIELDCLASS_NAME, 2);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next,
+                         uintptr_t slot) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+            putP(p, 0x78, slot);
+        };
+        static uint8_t spPos[0x100] = {}, spItem[0x100] = {}, spLoc[0x100] = {}, spTarget[0x100] = {},
+                       spOwner[0x100] = {}, spCls[0x100] = {};
+        fprop(spPos,    spStructFC, 13, 0x00, 0x0C, spItem,   A(spVector));   // FVector Pos
+        fprop(spItem,   spStructFC, 12, 0x10, 0x08, spLoc,    A(spUds));      // S_Item Item (a Blueprint struct)
+        fprop(spLoc,    spStructFC,  8, 0x18, 0x0C, spTarget, A(spDecoy));    // the slot holds a named non-struct
+        fprop(spTarget, spObjFC,    14, 0x28, 0x08, spOwner,  A(spActorCls)); // AActor* Target
+        fprop(spOwner,  spObjFC,     9, 0x30, 0x08, nullptr,  A(spDecoy));    // the slot holds a named non-class
+        put32(spCls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+        putP(spCls, DynOff::USTRUCT_CHILDPROPS, A(spPos));
+
+        const auto& spInfo = Ubel::WalkClassEx(A(spCls));
+        auto fieldOf = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : spInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fPos = fieldOf("Pos");
+        const FieldInfo* fItem = fieldOf("Item");
+        const FieldInfo* fLoc = fieldOf("Loc");
+        const FieldInfo* fTarget = fieldOf("Target");
+        const FieldInfo* fOwner = fieldOf("Owner");
+        check("STRUCTPROBE setup: the five fields were walked", fPos && fItem && fLoc && fTarget && fOwner,
+              std::to_string(spInfo.Fields.size()).c_str());
+        if (fPos && fItem && fLoc && fTarget && fOwner) {
+            check("STRUCTPROBE ⭐: a StructProperty whose slot holds a named NON-struct is not typed by that name",
+                  fLoc->structType.empty(), fLoc->structType.c_str());
+            check("STRUCTPROBE ⭐: an ObjectProperty whose slot holds a named NON-class is not typed by that name",
+                  fOwner->objClassName.empty(), fOwner->objClassName.c_str());
+            check("STRUCTPROBE control: a native struct is named", fPos->structType == "Vector", fPos->structType.c_str());
+            check("STRUCTPROBE control: a Blueprint struct (UserDefinedStruct : ScriptStruct) is named",
+                  fItem->structType == "S_Item", fItem->structType.c_str());
+            check("STRUCTPROBE control: an object property's class is named", fTarget->objClassName == "Actor",
+                  fTarget->objClassName.c_str());
+        }
+
+        // WalkInstance's probe: the decoy at the family slot, the real struct one pointer on. It must not stop at the
+        // decoy -- it finds the struct at +8 (and, by design, moves the family there).
+        static uint8_t spLoc2[0x100] = {}, spCls2[0x100] = {}, spInst[0x100] = {};
+        fprop(spLoc2, spStructFC, 8, 0x00, 0x0C, nullptr, A(spDecoy));
+        putP(spLoc2, 0x80, A(spVector));
+        put32(spCls2, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        putP(spCls2, DynOff::USTRUCT_CHILDPROPS, A(spLoc2));
+        putP(spInst, Grimoire::OFF_UOBJECT_CLASS, A(spCls2));
+        const auto spWalk = Ubel::WalkInstance(A(spInst), A(spCls2), 64, 2, false);
+        std::string spWalkType = "(no field)";
+        for (const auto& fv : spWalk.fields) if (fv.name == "Loc") spWalkType = fv.structTypeName;
+        check("STRUCTPROBE ⭐: WalkInstance's struct probe passes over a named non-struct to the struct beyond it",
+              spWalkType == "Vector", spWalkType.c_str());
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
