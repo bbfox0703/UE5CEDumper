@@ -1033,11 +1033,11 @@ public class InvokeScriptTests
     public void BakedGenerate_UnparseableWithLongBracketClose_NeverEmitsAobMakerWrapperTerminator(
         string adversarial)
     {
-        // AOBMaker's CE plugin wraps the WHOLE submitted script in [==[ ... ]==]
-        // at a HARDCODED level (pipe_server.cpp HandleCreateAAScript) and does
-        // NOT escape the script body -- unlike its InjectTableFile handler,
-        // which picks a non-colliding level. A "]==]" reaching it from user free
-        // text terminates that wrapper early and breaks the CreateAAScript push.
+        // Older deployed AOBMaker CE plugins (before its a5aba68) wrap the WHOLE
+        // submitted script in [==[ ... ]==] at a hardcoded level (pipe_server.cpp
+        // HandleCreateAAScript) and do NOT escape the script body. A "]==]"
+        // reaching one from user free text terminates that wrapper early and
+        // breaks the CreateAAScript push.
         // MarkUnparsed is the widest free-text channel into a generated script.
         var script = BakedScriptGenerator.Generate(
             "C", "F", 4,

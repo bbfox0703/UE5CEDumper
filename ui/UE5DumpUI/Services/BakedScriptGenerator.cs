@@ -776,11 +776,12 @@ public static class BakedScriptGenerator
     /// long bracket early.
     ///
     /// Level 2 (<c>]==]</c>) matters as much as level 0 even though our own comment
-    /// is level 0: AOBMaker's CE plugin wraps the WHOLE submitted script in
-    /// <c>[==[ ... ]==]</c> at a HARDCODED level (pipe_server.cpp HandleCreateAAScript),
-    /// unlike its InjectTableFile handler which picks a non-colliding level. A user
-    /// typing <c>]==]</c> into an unparseable param would otherwise terminate that
-    /// wrapper and break the CreateAAScript push. This is the widest free-text
+    /// is level 0: older deployed AOBMaker CE plugins wrap the WHOLE submitted script in
+    /// <c>[==[ ... ]==]</c> at a hardcoded level (pipe_server.cpp HandleCreateAAScript).
+    /// AOBMaker a5aba68 made that handler pick a non-colliding level, as its
+    /// InjectTableFile handler already did, but a user's CE can still run a plugin built
+    /// before it. There, a user typing <c>]==]</c> into an unparseable param would
+    /// terminate that wrapper and break the CreateAAScript push. This is the widest free-text
     /// channel into any generated script (InvokeParamDialog -> MarkUnparsed).</summary>
     private static string EscapeLuaComment(string s)
     {
