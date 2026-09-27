@@ -2909,6 +2909,8 @@ int main() {
               fBadM && fBadM->metaClassName.empty(), s(fBadM, &FieldInfo::metaClassName));
         check("METACLASS ⭐: a PropertyClass that is not a class of classes refuses the whole read",
               fBadA && fBadA->metaClassName.empty(), s(fBadA, &FieldInfo::metaClassName));
+        check("METACLASS control: ...and its obj_class is still the plain slot read, not blanked",
+              fBadA && fBadA->objClassName == "Actor", s(fBadA, &FieldInfo::objClassName));
         check("METACLASS ⭐: PropertyClass BlueprintGeneratedClass passes the anchor through its super chain",
               fDir && fDir->metaClassName == "Object" && fDir->objClassName == "BlueprintGeneratedClass",
               s(fDir, &FieldInfo::metaClassName));
@@ -2960,6 +2962,11 @@ int main() {
               fU && fU->TypeName == "ClassProperty", std::to_string(muInfo.Fields.size()).c_str());
         check("METACLASS ⭐: UProperty 4.18 reads MetaClass at the VERSION's slot + 8, not FSTRUCTPROP_STRUCT's",
               fU && fU->metaClassName == "Actor", s(fU, &FieldInfo::metaClassName));
+        // [SDK-METACLASS] review wf_63e981ac-5e4: obj_class came from FSTRUCTPROP_STRUCT, which on a UProperty engine
+        // sits one pointer past PropertyClass -- ON the MetaClass -- so the wire said obj_class == meta_class and the
+        // SDK export turned every TSubclassOf<X> into `class X*` (UE423_Flying: 0 of 160 ClassProperty rows right).
+        check("METACLASS ⭐: UProperty 4.18 publishes PropertyClass `Class` as obj_class, not the MetaClass beside it",
+              fU && fU->objClassName == "Class", s(fU, &FieldInfo::objClassName));
 
         g_cachedUEVersion           = savedVerU;
         DynOff::FSTRUCTPROP_STRUCT  = savedSlotU;
