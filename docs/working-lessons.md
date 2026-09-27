@@ -808,6 +808,21 @@ an export against the ENGINE SOURCE where it exists (`tools/verify/sdk_source_or
 against another dumper: agreement with a peer is not correctness, and this defect made both halves of an SDK
 line look plausible.
 
+### 1.aj A change to what a SHARED reader ACCEPTS is checked over the WHOLE pool, before against after — not on a few core classes
+
+Measured 2026-09-28 (`[STRUCTPROBE-ANY-NAME]`, build 3595). The fix made every property subclass-slot reader require
+the object it finds to BE a struct / a class (its class chain reaches `ScriptStruct` / `Class`). A change like that
+can only break the RARE kinds — a Blueprint struct, an interface class, a struct used as a map key — and the
+eleven-core-class walk every earlier row in this family was checked with meets none of them: it would have passed a
+fix that rejected every `UserDefinedStruct`. `tools/verify/pool_walk_diff.py` walks EVERY class `list_classes` returns
+and keeps each field's slot-read metadata, so two builds compare row by row: six fixtures (UE 4.11 → 5.8, DQ XI S),
+~445,000 fields, about two minutes a fixture, 0 changed. The same night, the diff also showed 7 rows present in one
+DQ XI S capture only — per-session Blueprint loading, explained (the field LIST does not come from the slot), not ignored.
+**How to apply:** (1) a change to a reader shared by every walk — a slot, a validator, a name resolver — gets a whole-pool
+capture with the old DLL and with the new one, fresh inject each (1.ai), and `changed` is the verdict. (2) Rows in one
+capture only are explained before the check is called. (3) A spot check of core classes is a smoke test, not the
+no-regression evidence.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
