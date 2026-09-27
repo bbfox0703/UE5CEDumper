@@ -913,6 +913,10 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
 inline std::atomic<uint32_t> g_propertyFamilyEpoch{0};
 
 // User-space addresses stay below 2^47, so the epoch in the top 16 bits cannot collide with an address.
+// ⚠ It reads the epoch afresh on every call, so a builder takes its key ONCE, before its first read through the family,
+// and publishes under THAT key. A key taken at publish time filed an answer that a concurrent move had overtaken under
+// the NEW epoch, where it was served for the rest of the session (review wf_b99fb861-680, F4); taken first, the same
+// race files it under a dead epoch, and the class is simply built again.
 inline uintptr_t FamilyCacheKey(uintptr_t addr) {
     return (static_cast<uintptr_t>(g_propertyFamilyEpoch.load(std::memory_order_acquire)) << 48) ^ addr;
 }

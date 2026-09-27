@@ -2509,9 +2509,13 @@ static void CollectContainersRecursive(
 static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
 
 static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
+    // [FAMILY-EPOCH] Taken once, before the WalkClassEx below, and the publish uses it: a key taken after that call
+    // could be a newer epoch than the walk it builds on. A walk that calibrates the family files this under a dead
+    // epoch, which costs one rebuild.
+    const uintptr_t key = DynOff::FamilyCacheKey(cls);
     {
         std::lock_guard<std::mutex> lk(s_classContainerMutex);
-        auto it = s_classContainerCache.find(DynOff::FamilyCacheKey(cls));   // [FAMILY-EPOCH]
+        auto it = s_classContainerCache.find(key);
         if (it != s_classContainerCache.end()) return it->second;
     }
 
@@ -2546,7 +2550,7 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
 
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("ClassContainers");
     std::lock_guard<std::mutex> lk(s_classContainerMutex);
-    auto [ins, _] = s_classContainerCache.emplace(DynOff::FamilyCacheKey(cls), std::move(entries));
+    auto [ins, _] = s_classContainerCache.emplace(key, std::move(entries));
     return ins->second;
 }
 
@@ -3566,9 +3570,10 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
 }
 
 static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
+    const uintptr_t key = DynOff::FamilyCacheKey(cls);   // [FAMILY-EPOCH] taken once, as in GetClassContainers
     {
         std::lock_guard<std::mutex> lk(s_classRefMutex);
-        auto it = s_classRefCache.find(DynOff::FamilyCacheKey(cls));   // [FAMILY-EPOCH]
+        auto it = s_classRefCache.find(key);
         if (it != s_classRefCache.end()) return it->second;
     }
 
@@ -3600,7 +3605,7 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
 
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("ClassRefMeta");
     std::lock_guard<std::mutex> lk(s_classRefMutex);
-    auto [ins, _] = s_classRefCache.emplace(DynOff::FamilyCacheKey(cls), std::move(meta));
+    auto [ins, _] = s_classRefCache.emplace(key, std::move(meta));
     return ins->second;
 }
 

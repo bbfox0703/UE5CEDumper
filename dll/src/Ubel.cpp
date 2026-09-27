@@ -1105,9 +1105,9 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
 
     // Check cache first. Return a copy so callers read lock-free; node-based
     // unordered_map keeps the entry alive regardless of later inserts.
+    const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH] taken once: the publish uses it too
     {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH]
         auto cacheIt = s_walkClassCache.find(key);
         if (cacheIt != s_walkClassCache.end()) {
             TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
@@ -1260,7 +1260,7 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClass");
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        PublishWalkClass(DynOff::FamilyCacheKey(uclassAddr), info);
+        PublishWalkClass(key, info);
     } else {
         // Name the term that actually fired. The old text asserted a disjunction it
         // had not measured ("not a UStruct, or recycled memory") about classes that
@@ -1508,6 +1508,11 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // probe-delta reads per StructProperty until one validates.
     CorrectSubclassOffsets(info.Fields);
 
+    // [FAMILY-EPOCH] The key is taken HERE -- after the calibration above, which may move the family on purpose, and
+    // before the first enrichment read through it -- and the publish below uses it. The plain walk's one family read
+    // (the bool layout) is read again below, so nothing in `info` predates this key.
+    const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);
+
     // Enrich each field with extended type metadata
     for (auto& fi : info.Fields) {
         if (!fi.Address) continue;
@@ -1646,8 +1651,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // Only reachable for a class that passed the memoization gate above.
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-    // Keyed AFTER CorrectSubclassOffsets above, so a walk that moved the family files its answer under the new epoch.
-    return s_walkClassExCache.try_emplace(DynOff::FamilyCacheKey(uclassAddr), std::move(info)).first->second;
+    return s_walkClassExCache.try_emplace(key, std::move(info)).first->second;
 }
 
 // ============================================================
@@ -3354,9 +3358,10 @@ struct CachedStructField {
 static std::unordered_map<uintptr_t, std::vector<CachedStructField>> s_structFieldCache;
 
 static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t structAddr) {
+    const uintptr_t key = DynOff::FamilyCacheKey(structAddr);   // [FAMILY-EPOCH] taken once: the publish uses it too
     {
         std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
-        auto it = s_structFieldCache.find(DynOff::FamilyCacheKey(structAddr));   // [FAMILY-EPOCH]
+        auto it = s_structFieldCache.find(key);
         if (it != s_structFieldCache.end())
             return it->second;   // ref stays valid after unlock (node stability)
     }
@@ -3455,7 +3460,7 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
 
     if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("StructFields");
     std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
-    auto [ins, _] = s_structFieldCache.emplace(DynOff::FamilyCacheKey(structAddr), std::move(cached));
+    auto [ins, _] = s_structFieldCache.emplace(key, std::move(cached));
     return ins->second;
 }
 
