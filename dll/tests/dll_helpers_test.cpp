@@ -6702,6 +6702,22 @@ static void Test_UBoolPropFieldSize() {
     }
 }
 
+// [FPROP-FAMILY-ALIGN] The FProperty family starts at sizeof(FProperty), which ends in pointers and so is always a
+// multiple of 8. A UE 5.7 build that keeps WITH_EDITORONLY_DATA / WITH_METADATA puts an int32 before Offset_Internal
+// (UE_5.7 UnrealType.h), so Offset_Internal lands at 0x48 and Offset_Internal + 0x2C is 0x74 -- four short of the
+// real 0x78. TQ2 logged exactly that correction, `CorrectSubclassOffsets: delta=4, FSTRUCTPROP 0x74 -> 0x78`.
+static void Test_PropertyFamilyForIsAligned() {
+    using DynOff::PropertyFamilyFor;
+    EXPECT("FPROPALIGN: a UE 5.7 editor-data build, Offset_Internal 0x48 -> the family at 0x78",
+           PropertyFamilyFor(0x48, false).structProp == 0x78 && PropertyFamilyFor(0x48, false).enumEnum == 0x80);
+    EXPECT("FPROPALIGN control: UE 5.3+ stock, 0x44 -> 0x70", PropertyFamilyFor(0x44, false).structProp == 0x70);
+    EXPECT("FPROPALIGN control: UE 4.25-5.2 stock, 0x4C -> 0x78", PropertyFamilyFor(0x4C, false).structProp == 0x78);
+    EXPECT("FPROPALIGN control: 4.27 case-preserving, 0x4C -> 0x80", PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    for (int off = 0x30; off <= 0x68; off += 4)
+        for (bool cpn : { false, true })
+            EXPECT("FPROPALIGN: every derived family base is 8-aligned", (PropertyFamilyFor(off, cpn).structProp % 8) == 0);
+}
+
 // [UPROP-SUBCLASS-SLOT] The UProperty family: all five slots at the version's subclass start, UEnumProperty::Enum 8 later.
 static void Test_UPropertyFamilyFor() {
     using DynOff::UPropertyFamilyFor;
@@ -9228,6 +9244,7 @@ int main() {
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
     RUN(Test_UPropertyFamilyFor);
+    RUN(Test_PropertyFamilyForIsAligned);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
     RUN(Test_Holes_NormalizeGuessedType);
