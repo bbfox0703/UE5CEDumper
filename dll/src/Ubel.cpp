@@ -1537,8 +1537,10 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     CorrectSubclassOffsets(info.Fields);
 
     // [FAMILY-EPOCH] The key is taken HERE -- after the calibration above, which may move the family on purpose, and
-    // before the first enrichment read through it -- and the publish below uses it. The plain walk's one family read
-    // (the bool layout) is read again below, so nothing in `info` predates this key.
+    // before the first enrichment read through it -- and the publish below uses it. The plain walk's one family read,
+    // the bool layout, is probed again below but overwritten only on a HIT: a classification the new base cannot
+    // confirm keeps the plain walk's. Bounded -- every measured move keeps the true slot inside both probes' spreads,
+    // and the classifier is strict (FieldSize 1, one mask bit) -- not "nothing predates this key".
     const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);
 
     // Enrich each field with extended type metadata

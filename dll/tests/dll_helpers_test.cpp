@@ -6691,8 +6691,9 @@ static void Test_UBoolPropFieldSize() {
         //   true   : 4.20, CasePreserving, Offset_Internal 0x50  -> 0x50 + 0x2C + 8 = 0x84
         //   guessed: misdetected as 4.15 AND CPN missed          -> 0x50 + 0x28 + 0 = 0x78
         // Direction matters and is why this is a THIRD assertion rather than a sum of the two
-        // above: misdetecting the version HIGH while missing CPN partially CANCELS (+4 then -8,
-        // net -4, still inside). Only a LOW version miss stacks with a missed CPN.
+        // above: a HIGH version miss with a missed CPN is off by 4 only (the counter-case below;
+        // before 4.18 case-preserving adds nothing to the tail, so there is no -8 to cancel).
+        // Only a LOW version miss stacks with a missed CPN.
         // RE-UE4SS ships a real-world shape that can land here: Kingdom Hearts 3's config carries
         // the pre-4.18 tail order (RepNotifyFunc before Offset_Internal), i.e. exactly the layout
         // that invites a low version guess.
