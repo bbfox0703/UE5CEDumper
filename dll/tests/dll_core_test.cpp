@@ -5210,6 +5210,93 @@ int main() {
         DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
     }
 
+    // -- FAMILYEPOCH-2026-09-28 -- a class walked before the family moves is walked again after it ----------------------
+    //
+    // ⛔ OWN name table (after UPROPINNER). [FAMILY-EPOCH] The walk caches were keyed by class address alone, and two
+    // writers move the property family after init (CorrectSubclassOffsets, WalkInstance's struct probe) -- measured on
+    // UE423_Flying 0x78 -> 0x70, DQ XI S 0x78 -> 0x80, TQ2 0x74 -> 0x78. Every class cached before the move kept the
+    // answer its old slot gave for the rest of the session. A named object at each candidate slot tells which one a
+    // walk read; the class has no StructProperty, so CorrectSubclassOffsets cannot move anything by itself here.
+    {
+        blk("FAMILYEPOCH - a family move makes the walk caches read again, and a same-value write does not");
+
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t feEntry[7][0x40] = {};
+        const char* feNames[7] = { "", "ObjectProperty", "BoolProperty", "Actor", "Pawn", "Target", "Flag" };
+        static uintptr_t feChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(feEntry[i] + 0x10, feNames[i], strlen(feNames[i]) + 1);
+            feChunk[i] = A(feEntry[i]);
+        }
+        static uintptr_t feChunks[2] = { reinterpret_cast<uintptr_t>(feChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(feChunks), 0x10);
+
+        static uint8_t feObjFC[0x20] = {}, feBoolFC[0x20] = {}, feActor[0x100] = {}, fePawn[0x100] = {};
+        put32(feObjFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(feBoolFC, DynOff::FFIELDCLASS_NAME, 2);
+        put32(feActor, Grimoire::OFF_UOBJECT_NAME, 3);
+        put32(fePawn, Grimoire::OFF_UOBJECT_NAME, 4);
+
+        static uint8_t feTarget[0x100] = {}, feFlag[0x100] = {}, feCls[0x100] = {};
+        auto fprop = [&](uint8_t* p, uintptr_t fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fc);
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        fprop(feTarget, A(feObjFC), 5, 0x28, 8, feFlag);            // UObject* Target
+        putP(feTarget, 0x70, A(feActor));                           //   PropertyClass if the family is at 0x70
+        putP(feTarget, 0x78, A(fePawn));                            //   ...or if it is at 0x78
+        fprop(feFlag, A(feBoolFC), 6, 0x30, 1, nullptr);            // uint8 Flag : 1
+        const uint8_t boolAt70[4] = { 1, 0, 0x04, 0x04 }, boolAt78[4] = { 1, 0, 0x01, 0x01 };
+        memcpy(feFlag + 0x70, boolAt70, 4);
+        memcpy(feFlag + 0x78, boolAt78, 4);
+        put32(feCls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+        putP(feCls, DynOff::USTRUCT_CHILDPROPS, A(feTarget));
+
+        auto target = [](const ClassInfo& ci) -> std::string {
+            for (const auto& f : ci.Fields) if (f.Name == "Target") return f.objClassName;
+            return "(no field)";
+        };
+        auto flagMask = [](const ClassInfo& ci) -> int {
+            for (const auto& f : ci.Fields) if (f.Name == "Flag") return f.boolFieldMask;
+            return -1;
+        };
+
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+        const ClassInfo& before = Ubel::WalkClassEx(A(feCls));
+        check("FAMILYEPOCH setup: at 0x78 the walk reads the object there", target(before) == "Pawn",
+              target(before).c_str());
+        check("FAMILYEPOCH setup: ...and the plain walk the bool layout there", flagMask(Ubel::WalkClass(A(feCls))) == 1,
+              std::to_string(flagMask(Ubel::WalkClass(A(feCls)))).c_str());
+
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x70));   // a late correction, as on UE423_Flying
+        const ClassInfo& after = Ubel::WalkClassEx(A(feCls));
+        check("FAMILYEPOCH ⭐: after the family moves, WalkClassEx reads the class again at the new slot",
+              target(after) == "Actor", target(after).c_str());
+        check("FAMILYEPOCH ⭐: ...and so does the plain WalkClass cache (bool layout)",
+              flagMask(Ubel::WalkClass(A(feCls))) == 4, std::to_string(flagMask(Ubel::WalkClass(A(feCls)))).c_str());
+        check("FAMILYEPOCH control: the reference handed out before the move is still valid and unchanged",
+              target(before) == "Pawn", target(before).c_str());
+
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x70));   // the same values again
+        check("FAMILYEPOCH control: re-publishing the same family is a cache HIT, not a new walk",
+              &Ubel::WalkClassEx(A(feCls)) == &after);
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
