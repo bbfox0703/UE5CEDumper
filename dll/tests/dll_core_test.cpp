@@ -392,7 +392,7 @@ int main() {
         blk("SANEPROPS - a real 3.6 MB class must walk; a garbage one must still bail");
 
         // ONE CLASS BLOB PER CASE, and it is not tidiness: s_walkClassExCache is keyed
-        // by the raw class address and NOTHING erases it (that unboundedness is exactly
+        // by the class address (per family epoch) and NOTHING erases it (that unboundedness is exactly
         // why the plausibility ceiling has to stay a bound). Reusing one address makes
         // every case after the first read the FIRST case's memoised answer -- the A10
         // defect the fixture above demonstrates, hit here by accident while writing

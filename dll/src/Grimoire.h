@@ -881,13 +881,29 @@ inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool 
     return UPropertyFamilyFor(casePreservingName ? 0x4C : 0x44, ueVersion, casePreservingName);
 }
 
+// [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base. Every memo cache whose content was read
+// through the family keys its entries by FamilyCacheKey -- (epoch, address) -- so a class walked before a late
+// correction is walked again after it instead of serving the old slot's answer for the rest of the session. Nothing
+// is erased: an entry of an older epoch stays put, so a `const&` already handed out stays valid, and the moves are
+// few (at most one per session in every log measured). Moves after init were measured on UE423_Flying (0x78 -> 0x70),
+// DQ XI S (0x78 -> 0x80) and TQ2 (0x74 -> 0x78) before their causes were fixed. The base alone decides "moved":
+// FARRAYPROP_INNER legitimately diverges after calibration (see above), and resetting it is not a move.
+inline std::atomic<uint32_t> g_propertyFamilyEpoch{0};
+
+// User-space addresses stay below 2^47, so the epoch in the top 16 bits cannot collide with an address.
+inline uintptr_t FamilyCacheKey(uintptr_t addr) {
+    return (static_cast<uintptr_t>(g_propertyFamilyEpoch.load(std::memory_order_acquire)) << 48) ^ addr;
+}
+
 // Publish all five together. Never assign a member of this family directly.
 inline void ApplyPropertyFamily(const PropertyFamily& f) {
+    const bool moved = FSTRUCTPROP_STRUCT != f.structProp;
     FSTRUCTPROP_STRUCT  = f.structProp;
     FARRAYPROP_INNER    = f.arrayInner;
     FBOOLPROP_FIELDSIZE = f.boolFieldSize;
     FBYTEPROP_ENUM      = f.byteEnum;
     FENUMPROP_ENUM      = f.enumEnum;
+    if (moved) g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
 // === UEnum — lazy-detected by DetectUEnumNames() ===

@@ -2504,7 +2504,7 @@ static void CollectContainersRecursive(
 static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
     {
         std::lock_guard<std::mutex> lk(s_classContainerMutex);
-        auto it = s_classContainerCache.find(cls);
+        auto it = s_classContainerCache.find(DynOff::FamilyCacheKey(cls));   // [FAMILY-EPOCH]
         if (it != s_classContainerCache.end()) return it->second;
     }
 
@@ -2538,7 +2538,7 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
                                entries, /*depth*/ 0);
 
     std::lock_guard<std::mutex> lk(s_classContainerMutex);
-    auto [ins, _] = s_classContainerCache.emplace(cls, std::move(entries));
+    auto [ins, _] = s_classContainerCache.emplace(DynOff::FamilyCacheKey(cls), std::move(entries));
     return ins->second;
 }
 
@@ -3560,7 +3560,7 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
 static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     {
         std::lock_guard<std::mutex> lk(s_classRefMutex);
-        auto it = s_classRefCache.find(cls);
+        auto it = s_classRefCache.find(DynOff::FamilyCacheKey(cls));   // [FAMILY-EPOCH]
         if (it != s_classRefCache.end()) return it->second;
     }
 
@@ -3591,7 +3591,7 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     CollectRefMetaRecursive(cls, 0, "", meta, 0);
 
     std::lock_guard<std::mutex> lk(s_classRefMutex);
-    auto [ins, _] = s_classRefCache.emplace(cls, std::move(meta));
+    auto [ins, _] = s_classRefCache.emplace(DynOff::FamilyCacheKey(cls), std::move(meta));
     return ins->second;
 }
 

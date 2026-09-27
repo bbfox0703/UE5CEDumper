@@ -978,7 +978,8 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
 }
 
 // Cache for WalkClass results — class/struct field metadata doesn't change at
-// runtime, so we cache by class address to avoid re-reading the FField chain
+// runtime, so we cache by class address (within the property family's epoch,
+// DynOff::FamilyCacheKey [FAMILY-EPOCH]) to avoid re-reading the FField chain
 // on every WalkInstance call. This dramatically speeds up repeated drilldown/
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
@@ -996,21 +997,23 @@ static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 static std::list<uintptr_t> s_walkLru;
 static std::unordered_map<uintptr_t, std::list<uintptr_t>::iterator> s_walkLruPos;
 
-// Move `addr` to the front. Caller MUST hold s_walkClassCacheMutex.
-static void TouchWalkLru(uintptr_t addr) {
-    auto it = s_walkLruPos.find(addr);
+// Move `key` to the front. Caller MUST hold s_walkClassCacheMutex. The map and the LRU both hold
+// DynOff::FamilyCacheKey(addr), never the bare address: a plain walk reads the bool layout through the
+// property family, so its answer belongs to the family it was read under. [FAMILY-EPOCH]
+static void TouchWalkLru(uintptr_t key) {
+    auto it = s_walkLruPos.find(key);
     if (it == s_walkLruPos.end()) return;
     s_walkLru.splice(s_walkLru.begin(), s_walkLru, it->second);
 }
 
-// Insert-or-refresh `addr`, evicting the least recently used entries until the
+// Insert-or-refresh `key`, evicting the least recently used entries until the
 // cache is within its bound. Caller MUST hold s_walkClassCacheMutex.
-static void PublishWalkClass(uintptr_t addr, const ClassInfo& info) {
-    auto [entry, inserted] = s_walkClassCache.try_emplace(addr, info);
-    if (!inserted) { TouchWalkLru(addr); return; }
+static void PublishWalkClass(uintptr_t key, const ClassInfo& info) {
+    auto [entry, inserted] = s_walkClassCache.try_emplace(key, info);
+    if (!inserted) { TouchWalkLru(key); return; }
 
-    s_walkLru.push_front(addr);
-    s_walkLruPos[addr] = s_walkLru.begin();
+    s_walkLru.push_front(key);
+    s_walkLruPos[key] = s_walkLru.begin();
 
     while (s_walkLru.size() > Ubel::kMaxWalkClassCacheEntries) {
         uintptr_t victim = s_walkLru.back();
@@ -1090,9 +1093,10 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // unordered_map keeps the entry alive regardless of later inserts.
     {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        auto cacheIt = s_walkClassCache.find(uclassAddr);
+        const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH]
+        auto cacheIt = s_walkClassCache.find(key);
         if (cacheIt != s_walkClassCache.end()) {
-            TouchWalkLru(uclassAddr);   // the lock is exclusive, so mutating on read is fine
+            TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
             return cacheIt->second;
         }
     }
@@ -1171,11 +1175,12 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
         // cached super's fields out while holding the lock.
         {
             std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-            auto superCacheIt = s_walkClassCache.find(super);
+            const uintptr_t superKey = DynOff::FamilyCacheKey(super);
+            auto superCacheIt = s_walkClassCache.find(superKey);
             if (superCacheIt != s_walkClassCache.end()) {
                 // A base class is reused by every subclass, so it is exactly what must
                 // not be evicted for being "old" — the chain walk is a use.
-                TouchWalkLru(super);
+                TouchWalkLru(superKey);
                 const auto& superFields = superCacheIt->second.Fields;
                 info.Fields.insert(info.Fields.begin(), superFields.begin(), superFields.end());
                 break;  // cached super already includes its entire inheritance chain
@@ -1240,7 +1245,7 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        PublishWalkClass(uclassAddr, info);
+        PublishWalkClass(DynOff::FamilyCacheKey(uclassAddr), info);
     } else {
         // Name the term that actually fired. The old text asserted a disjunction it
         // had not measured ("not a UStruct, or recycled memory") about classes that
@@ -1413,7 +1418,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
     {
         std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-        auto it = s_walkClassExCache.find(uclassAddr);
+        auto it = s_walkClassExCache.find(DynOff::FamilyCacheKey(uclassAddr));   // [FAMILY-EPOCH]
         if (it != s_walkClassExCache.end()) return it->second;
     }
 
@@ -1617,7 +1622,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
     // Only reachable for a class that passed the memoization gate above.
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-    return s_walkClassExCache.try_emplace(uclassAddr, std::move(info)).first->second;
+    // Keyed AFTER CorrectSubclassOffsets above, so a walk that moved the family files its answer under the new epoch.
+    return s_walkClassExCache.try_emplace(DynOff::FamilyCacheKey(uclassAddr), std::move(info)).first->second;
 }
 
 // ============================================================
@@ -3326,7 +3332,7 @@ static std::unordered_map<uintptr_t, std::vector<CachedStructField>> s_structFie
 static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t structAddr) {
     {
         std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
-        auto it = s_structFieldCache.find(structAddr);
+        auto it = s_structFieldCache.find(DynOff::FamilyCacheKey(structAddr));   // [FAMILY-EPOCH]
         if (it != s_structFieldCache.end())
             return it->second;   // ref stays valid after unlock (node stability)
     }
@@ -3424,7 +3430,7 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
         static_cast<unsigned long long>(structAddr), static_cast<int>(cached.size()));
 
     std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
-    auto [ins, _] = s_structFieldCache.emplace(structAddr, std::move(cached));
+    auto [ins, _] = s_structFieldCache.emplace(DynOff::FamilyCacheKey(structAddr), std::move(cached));
     return ins->second;
 }
 
