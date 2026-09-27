@@ -221,6 +221,20 @@ public class InstanceFinderViewModelTests
         Assert.Equal(0, changes);
         Assert.Same(picked, vm.SelectedInstance);
         Assert.Equal(walks, dump.WalkInstanceCalls);
+
+        // A real narrowing that keeps the pick: the view model re-selects it (suppressed, no
+        // walk) and the View is handed it to keep visible; the clear asks for Cleared.
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.InstancesView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.InstancesView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.InstanceFilterText = picked!.Name;
+        vm.ApplyInstanceFilter();
+        Assert.Same(picked, vm.SelectedInstance);
+        vm.InstanceFilterText = "";
+        vm.ApplyInstanceFilter();
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
+        Assert.Equal(walks, dump.WalkInstanceCalls);
     }
 
     [Fact]

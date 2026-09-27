@@ -9,6 +9,7 @@ public partial class ObjectTreePanel : UserControl
     public ObjectTreePanel()
     {
         InitializeComponent();
+        this.AttachFilterView<ObjectTreeViewModel>(this.FindControl<ListBox>("ObjectList"), vm => vm.NodesView);
     }
 
     private void SearchBox_KeyDown(object? sender, KeyEventArgs e)

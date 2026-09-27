@@ -160,6 +160,11 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _instanceFilterText = "";
 
     [ObservableProperty] private ObservableCollection<InstanceResult> _instances = new();
+    /// <summary>Keeps the instances grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.
+    /// Not keyed on the address: selecting a NEW row object walks it, so a row a server re-run
+    /// replaced is left unselected rather than re-selected by the View (Z7).</summary>
+    public FilterViewKeeper InstancesView { get; } = new();
     [ObservableProperty] private bool _isXrefBatchRunning;
     [ObservableProperty] private InstanceResult? _selectedInstance;
     [ObservableProperty] private ObservableCollection<LiveFieldValue> _fields = new();
@@ -383,7 +388,8 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         _suppressSelectionSideEffects = selectionSurvives;
         try
         {
-            UiCollection.Reset(Instances, kept, () => SelectedInstance = null);
+            // Unchanged rows are not rebuilt at all [KEYWORD-BOX-VIEW-KEEP].
+            InstancesView.Update(Instances, kept, () => SelectedInstance = null, InstanceFilterText);
             HasInstances = Instances.Count > 0;
             // After a server-side exclude re-run the excluded rows are no longer in
             // _allInstances, so "hidden" counts keyword-filtered rows (plus, briefly, the

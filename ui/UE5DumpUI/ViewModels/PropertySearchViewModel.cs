@@ -98,6 +98,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private bool _isSearching;
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private ObservableCollection<PropertySearchMatch> _results = new();
+    /// <summary>Keeps the results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
     [ObservableProperty] private bool _isXrefBatchRunning;
     [ObservableProperty] private PropertySearchMatch? _selectedResult;
 
@@ -701,10 +704,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
     internal void ApplyResultFilter()
     {
         var terms = ObjectTreeFilter.SplitTerms(ResultFilter);
-        SelectedResult = null;   // detach before rebuilding the selection-bound list
-        Results.Clear();
 
         int hiddenByClass = 0;
+        var rows = new List<PropertySearchMatch>();
         foreach (var m in _allResults)
         {
             // space = AND: every term must match at least one visible column.
@@ -714,8 +716,10 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
             // Class-noise exclusion last, so the count reflects rows that would
             // otherwise be visible.
             if (ClassFilter.IsExcluded(m.ClassName)) { hiddenByClass++; continue; }
-            Results.Add(m);
+            rows.Add(m);
         }
+        // Detach before rebuilding the selection-bound list; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, rows, () => SelectedResult = null, ResultFilter);
         ClassFilterNote = hiddenByClass > 0 ? $"{hiddenByClass} hidden by class filter" : "";
     }
 

@@ -4,6 +4,7 @@ using System.Collections.Generic;
 using Avalonia.Controls;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -86,5 +87,6 @@ public partial class SnapshotPanel : UserControl
                     root.RowDefinitions[LowerRow].MinHeight = lower;
             };
         }
+        this.AttachFilterView<SnapshotViewModel>(this.FindControl<DataGrid>("DiffGrid"), vm => vm.DiffView);
     }
 }

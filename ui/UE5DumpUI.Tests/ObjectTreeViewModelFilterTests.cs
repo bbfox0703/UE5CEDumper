@@ -155,6 +155,16 @@ public class ObjectTreeViewModelFilterTests
 
         Assert.Equal(0, changes);
         Assert.Same(picked, vm.SelectedNode);
+
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.NodesView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.NodesView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.FilterText = "enemy_1";
+        vm.ApplyFilter();
+        vm.FilterText = "";
+        vm.ApplyFilter();
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
     }
 
     private static bool ReflectionMetaClassName(string className) =>

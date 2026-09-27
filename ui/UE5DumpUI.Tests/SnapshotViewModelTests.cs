@@ -994,6 +994,16 @@ public class SnapshotViewModelTests : IDisposable
 
         Assert.Equal(0, changes);
         Assert.Same(picked, vm.SelectedDiffRow);
+
+        // A real narrowing hands the View the pick; clearing a COLUMN box while the global
+        // one stays is a clear too.
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.DiffView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.DiffView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.DiffPropFilter = "HP";
+        vm.DiffPropFilter = "";
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
     }
 
     [Fact]

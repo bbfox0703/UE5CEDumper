@@ -295,6 +295,9 @@ public partial class SpcQueryViewModel : ViewModelBase
     public ObservableCollection<SpcSnapshotPick> SnapshotPicks { get; } = new();
 
     public ObservableCollection<SpcResultRow> Results { get; } = new();
+    /// <summary>Keeps the results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
 
     // --- N1: per-game class denylist (noise picker) ---
 
@@ -696,8 +699,7 @@ public partial class SpcQueryViewModel : ViewModelBase
         double? fMin = ParseBound(SeqFirstMin), fMax = ParseBound(SeqFirstMax);
         double? lMin = ParseBound(SeqLastMin),  lMax = ParseBound(SeqLastMax);
 
-        SelectedResult = null;   // detach before clearing the bound results grid
-        Results.Clear();
+        var rows = new List<SpcResultRow>();
         foreach (var r in _allResults)
         {
             if (clsTerms.Length  > 0 && !ObjectTreeFilter.MatchesAllTerms(clsTerms, r.ClassName)) continue;
@@ -707,8 +709,11 @@ public partial class SpcQueryViewModel : ViewModelBase
                     globTerms, r.ClassName, r.PropName, r.NormPath, r.DeclaredType, r.SequenceDisplay)) continue;
             if (!WithinRange(SeqFirst(r), fMin, fMax)) continue;
             if (!WithinRange(SeqLast(r),  lMin, lMax)) continue;
-            Results.Add(r);
+            rows.Add(r);
         }
+        // Detach before clearing the bound results grid; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, rows, () => SelectedResult = null,
+                           ResultGlobalFilter, ResultClassFilter, ResultFieldFilter, ResultObjectFilter);
         StatusText = _resultSummary +
             (Results.Count != _allResults.Count ? $"  ·  showing {Results.Count:N0}" : "");
     }

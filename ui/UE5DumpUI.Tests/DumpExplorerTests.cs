@@ -271,6 +271,15 @@ public class DumpExplorerTests
             Assert.Same(unmatched, vm.Unmatched);
             Assert.Same(pickedM, vm.MatchedSelected);
             Assert.Same(pickedU, vm.UnmatchedSelected);
+
+            // A search that narrows one group rebuilds only that one; its clear asks for Cleared.
+            var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+            vm.MatchedView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { pickedM! }, null);
+            vm.MatchedView.RestoreView = (_, mode) => modes.Add(mode);
+            vm.SearchText = "health";
+            vm.SearchText = "";
+            Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                                 UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
         }
         finally { File.Delete(path); }
     }

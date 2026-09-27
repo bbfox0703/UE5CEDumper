@@ -302,6 +302,14 @@ public class SpcQueryViewModelTests : IDisposable
 
         Assert.Equal(0, changes);
         Assert.Same(picked, vm.SelectedResult);
+
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.ResultsView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.ResultsView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.ResultFieldFilter = "HP";
+        vm.ResultFieldFilter = "";
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
     }
 
     [Fact]

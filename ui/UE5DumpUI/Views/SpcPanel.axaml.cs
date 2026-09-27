@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Avalonia.Controls;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -23,5 +24,6 @@ public partial class SpcPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("GroupGrid")?.WireSortComparers(GroupSortComparers);
+        this.AttachFilterView<SpcQueryViewModel>(this.FindControl<DataGrid>("SpcResultsGrid"), vm => vm.ResultsView);
     }
 }

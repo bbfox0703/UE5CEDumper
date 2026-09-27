@@ -130,14 +130,19 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     partial void OnSearchTextChanged(string value)
     {
-        if (HasFile) ApplyFilter();
+        if (HasFile) ApplyFilter(filterEdit: true);
         _searchMemory.Schedule(value);
     }
 
     partial void OnSelectedCategoryIndexChanged(int value)
     {
-        if (HasFile) ApplyFilter();
+        if (HasFile) ApplyFilter(filterEdit: true);
     }
+
+    /// <summary>Keep the two grids' selection and scroll position across search edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches them.</summary>
+    public FilterViewKeeper MatchedView { get; } = new();
+    public FilterViewKeeper UnmatchedView { get; } = new();
 
     [RelayCommand(CanExecute = nameof(CanStartOp))]
     private async Task LoadFileAsync()
@@ -514,7 +519,10 @@ public partial class DumpExplorerViewModel : ViewModelBase
     // ------------------------------------------------------------------
 
     [RelayCommand]
-    private void ApplyFilter()
+    /// <param name="filterEdit">True from the search box and the category picker: then a
+    /// group that would show the same entries keeps its collection. A live check changes
+    /// entries in place (the live address) and needs new rows to repaint.</param>
+    private void ApplyFilter(bool filterEdit = false)
     {
         // R4 — the last panel not using the shared space=AND helpers. Splitting on ' '
         // alone missed tab/newline-separated input (pasting a column out of a
@@ -561,8 +569,10 @@ public partial class DumpExplorerViewModel : ViewModelBase
             }
         }
 
-        Matched = new ObservableCollection<DumpEntry>(matched);
-        Unmatched = new ObservableCollection<DumpEntry>(unmatched);
+        MatchedView.Update(() => Matched = new ObservableCollection<DumpEntry>(matched),
+                           rowsChanged: !(filterEdit && FilterViewKeeper.SameRows(Matched, matched)), SearchText);
+        UnmatchedView.Update(() => Unmatched = new ObservableCollection<DumpEntry>(unmatched),
+                             rowsChanged: !(filterEdit && FilterViewKeeper.SameRows(Unmatched, unmatched)), SearchText);
 
         // Settled-signal for keyword-memory: total hits across both groups (pre-cap),
         // so a remembered keyword reflects real matches even when the grid is capped.

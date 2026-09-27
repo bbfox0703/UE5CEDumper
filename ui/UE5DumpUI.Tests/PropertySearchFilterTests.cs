@@ -74,6 +74,16 @@ public class PropertySearchFilterTests
 
         Assert.Equal(0, changes);
         Assert.Same(picked, vm.SelectedResult);
+
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.ResultsView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.ResultsView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.ResultFilter = "current";
+        vm.ApplyResultFilter();
+        vm.ResultFilter = "";
+        vm.ApplyResultFilter();
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
     }
 
     [Fact]

@@ -160,7 +160,7 @@
     </StackPanel>
 
     <!-- Results -->
-    <DataGrid Grid.Row="5" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
+    <DataGrid x:Name="SpcResultsGrid" Grid.Row="5" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
               IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
               CanUserResizeColumns="True" CanUserSortColumns="True"
               HorizontalScrollBarVisibility="Auto">

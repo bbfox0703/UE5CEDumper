@@ -43,6 +43,10 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
     [ObservableProperty] private ObservableCollection<UObjectNode> _filteredNodes = new();
+    /// <summary>Keeps the object list's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.
+    /// Selecting a node again is harmless: Class/Struct ignores a node it already shows.</summary>
+    public FilterViewKeeper NodesView { get; } = new();
     [ObservableProperty] private UObjectNode? _selectedNode;
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private string _filterText = "";
@@ -332,6 +336,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             StatusText = "Loading...";
             _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (L17)
             _allNodes.Clear();
+            NodesView.Forget();   // the program empties the box, not the user
             FilterText = "";
             SelectedClassFilterIndex = 0;
 
@@ -427,6 +432,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             IsLoading = true;
             StatusText = "Searching...";
             _filterMemory.Flush();   // commit a just-typed keyword before clearing the box (L17)
+            NodesView.Forget();   // the program empties the box, not the user
             FilterText = "";
             SelectedClassFilterIndex = 0;
 
@@ -505,12 +511,6 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
     /// seam <c>PropertySearchViewModel.ApplyResultFilter</c> uses.</summary>
     internal void ApplyFilter()
     {
-        // Detach the bound selection before clearing: Avalonia's selection model
-        // otherwise nulls SelectedNode DURING the Clear()'s CollectionChanged event,
-        // firing the cross-VM SelectionChanged cascade reentrantly. SearchAsync
-        // re-selects FilteredNodes[0] explicitly after this returns.
-        SelectedNode = null;
-        FilteredNodes.Clear();
         // Multi-term text filter: whitespace-separated terms are ANDed (each term
         // must hit Name / ClassName / Address), so "BP_ char" narrows to objects
         // matching both — the two-layer filter without a second box.
@@ -519,6 +519,7 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             ? ClassFilterOptions[SelectedClassFilterIndex] : null;
 
         int matchCount = 0;
+        var rows = new List<UObjectNode>();
 
         foreach (var node in _allNodes)
         {
@@ -542,9 +543,16 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             matchCount++;
 
             // Cap the UI display collection to prevent excessive rendering overhead
-            if (FilteredNodes.Count < Constants.ObjectTreeMaxDisplay)
-                FilteredNodes.Add(node);
+            if (rows.Count < Constants.ObjectTreeMaxDisplay)
+                rows.Add(node);
         }
+
+        // Detach the bound selection before clearing: Avalonia's selection model
+        // otherwise nulls SelectedNode DURING the Clear()'s CollectionChanged event,
+        // firing the cross-VM SelectionChanged cascade reentrantly. SearchAsync
+        // re-selects FilteredNodes[0] explicitly after this returns. Unchanged rows
+        // are not rebuilt.
+        NodesView.Update(FilteredNodes, rows, () => SelectedNode = null, FilterText);
 
         bool hasAnyFilter = terms.Length > 0 || classFilter != null || InstancesOnly;
         var totalSuffix = ObjectCount > 0 && ObjectCount != _allNodes.Count
