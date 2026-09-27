@@ -2247,6 +2247,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.elemEnumName.empty())     fj["elem_enum"]         = f.elemEnumName;
                 if (!f.keyEnumName.empty())      fj["key_enum"]          = f.keyEnumName;
                 if (!f.valueEnumName.empty())    fj["value_enum"]        = f.valueEnumName;
+                // [SDK-METACLASS] a Class/SoftClass property's MetaClass (additive keys; obj_class stays
+                // its PropertyClass)
+                if (!f.metaClassName.empty())    fj["meta_class"]        = f.metaClassName;
+                if (!f.innerMetaClass.empty())   fj["inner_meta_class"]  = f.innerMetaClass;
+                if (!f.keyMetaClass.empty())     fj["key_meta_class"]    = f.keyMetaClass;
+                if (!f.valueMetaClass.empty())   fj["value_meta_class"]  = f.valueMetaClass;
+                if (!f.elemMetaClass.empty())    fj["elem_meta_class"]   = f.elemMetaClass;
                 if (f.boolFieldMask != 0)        fj["bool_mask"]         = f.boolFieldMask;
                 fields.push_back(fj);
             }

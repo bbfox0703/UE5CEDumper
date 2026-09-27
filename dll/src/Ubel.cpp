@@ -1310,6 +1310,57 @@ static std::string ReadSubclassTypeName(uintptr_t propAddr) {
     return name;
 }
 
+// [SDK-METACLASS] True when `cls` or one of its supers is named `name`. A class of classes -- UClass and its
+// subclasses (BlueprintGeneratedClass, VerseClass, ...) -- is exactly a class whose chain reaches `Class`.
+static bool ClassChainHasName(uintptr_t cls, const char* name) {
+    for (int depth = 0; cls != 0 && depth < 16; ++depth) {
+        if (GetName(cls) == name) return true;
+        uintptr_t super = 0;
+        if (!Macht::ReadSafe(cls + DynOff::USTRUCT_SUPER, super)) return false;
+        cls = super;
+    }
+    return false;
+}
+
+// [SDK-METACLASS] A ClassProperty's / SoftClassProperty's MetaClass: the UClass it holds a subclass of.
+// It is the pointer right after PropertyClass in every supported layout -- FClassProperty and
+// FSoftClassProperty add MetaClass as their only member, 4.18..5.8 UnrealType.h, the RE-UE4SS layout
+// templates and Dumper-7's Offsets.cpp all agree -- so it is derived, never stored as a DynOff.
+// The PropertyClass slot is the MODE's: FSTRUCTPROP_STRUCT is the FProperty family's and is never
+// recalibrated in UProperty mode, where the version's measured subclass start applies.
+// Validated twice before anything is published, because a wrong offset here reads a real UClass
+// either way: PropertyClass must be a class of classes (which also proves the slot), and the pointer
+// after it must be a UClass. "" when either check fails -- the export then falls back to UClass*.
+static std::string ReadMetaClassName(uintptr_t propAddr) {
+    const int slot = DynOff::bUseFProperty
+        ? DynOff::FSTRUCTPROP_STRUCT
+        : DynOff::UPropertySubclassStartFor(DynOff::UPROPERTY_OFFSET, g_cachedUEVersion,
+                                            DynOff::bCasePreservingName);
+    uintptr_t propertyClass = 0, meta = 0;
+    if (!Macht::ReadSafe(propAddr + slot, propertyClass) || !propertyClass) return "";
+    if (!ClassChainHasName(propertyClass, "Class")) {
+        static std::atomic<bool> s_warned{false};
+        if (!s_warned.exchange(true))
+            Sein::Warn("WALK", "MetaClass: PropertyClass at +0x%X is not a class of classes -- MetaClass not read "
+                       "(reported once)", slot);
+        return "";
+    }
+    if (!Macht::ReadSafe(propAddr + slot + 8, meta) || !meta) return "";
+    if (!ClassChainHasName(GetClass(meta), "Class")) return "";
+    std::string name = GetName(meta);
+    if (name.empty() || static_cast<unsigned char>(name[0]) < 0x20 || static_cast<unsigned char>(name[0]) >= 0x7F)
+        return "";
+    static std::atomic<bool> s_reported{false};
+    if (!s_reported.exchange(true))
+        Sein::Info("WALK", "MetaClass at +0x%X (PropertyClass +0x%X) validated -> '%s' (reported once)",
+                   slot + 8, slot, name.c_str());
+    return name;
+}
+
+static bool IsClassValuedProperty(const std::string& tn) {
+    return tn == "ClassProperty" || tn == "SoftClassProperty";
+}
+
 // Forward declaration -- definition lives further down this file (line ~2441).
 // WalkClassEx calls it at the top to ensure FSTRUCTPROP_STRUCT is calibrated
 // before any caller reads FProperty subclass extension fields.
@@ -1421,6 +1472,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
               || tn == "SoftClassProperty" || tn == "InterfaceProperty"
               || tn == "LazyObjectProperty") {
             fi.objClassName = ReadSubclassTypeName(fi.Address);
+            if (IsClassValuedProperty(tn)) fi.metaClassName = ReadMetaClassName(fi.Address);   // [SDK-METACLASS]
         }
 
         // ArrayProperty -> inner type
@@ -1432,6 +1484,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
                 else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
                     fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                if (IsClassValuedProperty(innerTn)) fi.innerMetaClass = ReadMetaClassName(innerProp);   // [SDK-METACLASS]
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
@@ -1447,6 +1500,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
                 else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
                     fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                if (IsClassValuedProperty(innerTn)) fi.innerMetaClass = ReadMetaClassName(innerProp);   // [SDK-METACLASS]
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
@@ -1475,6 +1529,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
                 fi.keyEnumName   = innerEnumOf(keyProp, keyTn);     // [A4-USMAP-CONTAINER-ENUM]
                 fi.valueEnumName = innerEnumOf(valueProp, valTn);
+                if (IsClassValuedProperty(keyTn)) fi.keyMetaClass   = ReadMetaClassName(keyProp);     // [SDK-METACLASS]
+                if (IsClassValuedProperty(valTn)) fi.valueMetaClass = ReadMetaClassName(valueProp);
                 break;
             }
         }
@@ -1486,6 +1542,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.elemType = elemTn;
                 if (elemTn == "StructProperty")
                     fi.elemStructType = ReadSubclassTypeName(elemProp);
+                if (IsClassValuedProperty(elemTn)) fi.elemMetaClass = ReadMetaClassName(elemProp);   // [SDK-METACLASS]
                 fi.elemEnumName = innerEnumOf(elemProp, elemTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
