@@ -35,6 +35,7 @@ public class TextBoxHomeEndTests
             Key.PageUp => PhysicalKey.PageUp,
             Key.PageDown => PhysicalKey.PageDown,
             Key.Down => PhysicalKey.ArrowDown,
+            Key.A => PhysicalKey.A,
             _ => PhysicalKey.None,
         };
         top.KeyPress(key, modifiers, physical, null);
@@ -176,6 +177,26 @@ public class TextBoxHomeEndTests
         Press(box, key);
 
         Assert.Equal(line2.CaretIndex, box.CaretIndex);
+    });
+
+    [Theory]
+    [InlineData(false, 0)]      // Avalonia alone: Home lands on SelectionStart, the document start
+    [InlineData(true, 3)]       // with the fix: the start of line 2, where the caret shows (Windows too)
+    public Task Ctrl_A_with_the_caret_at_the_start_of_line_2_then_Home(bool withFix, int expected) => Headless.Run(() =>
+    {
+        // Keyboard only, found by review: Ctrl+A keeps CaretIndex where it was (3, the start of
+        // line 2), which is exactly Home's target on that line -- so CaretIndex does not change
+        // and ClearSelection sends the caret to SelectionStart.
+        using var fix = withFix ? TextBoxHomeEndFix.Register() : null;
+        var box = ShowBox("ab\ncd", multiline: true);
+        box.CaretIndex = 3;
+        Press(box, Key.A, RawInputModifiers.Control);
+        Assert.Equal(0, box.SelectionStart);                // the premise: everything selected
+        Assert.Equal(5, box.SelectionEnd);
+
+        Press(box, Key.Home);
+
+        Assert.Equal(expected, box.CaretIndex);
     });
 
     [Theory]

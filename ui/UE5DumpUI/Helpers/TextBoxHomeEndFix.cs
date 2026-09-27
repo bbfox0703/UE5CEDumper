@@ -19,8 +19,9 @@ namespace UE5DumpUI.Helpers;
 /// caret at <c>SelectionStart</c>. Moving the caret normally collapses the selection onto it
 /// first; but when the caret already sits at the target, <c>CaretIndex</c> does not change,
 /// nothing collapses, and the caret lands on the selection's start — End jumps to the start of a
-/// select-all (the mirror case for Home needs the caret at the start with the selection anchored
-/// at the end, which keyboard input does not produce in 12.1.3; it is covered anyway). The page
+/// select-all, and Home to SelectionStart when the caret already sits at its line's start — Ctrl+A
+/// in a multi-line box with the caret at the start of line 2 sends it to the document start, and
+/// a Shift+double-click reaches the same shape in a single-line box (both found by review). The page
 /// keys share the sink and never move the caret at all, so with a selection they ALWAYS land on
 /// its start (found by review, confirmed on a real TextBox).</para>
 /// <para>So the selection is collapsed BEFORE the TextBox handles the key; its own move then lands
