@@ -5861,6 +5861,114 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- ENUMSLOT-2026-09-28 -- an enum slot is accepted only when it holds a UEnum ------------------------------------------
+    //
+    // ⛔ OWN name table (after STRUCTPROBE). [ENUMSLOT-ANY-NAME] [STRUCTPROBE-ANY-NAME] gave the struct and class slots a
+    // kind check; the ENUM slots kept the old one (review of builds 3594-3595): the enum-name readers accepted any
+    // printable name -- and those names go into the SDK and USMAP exports -- the EnumProperty pointer readers kept any
+    // pointer, and IsUEnumObject matched two exact class names, so a UEnum SUBCLASS was dropped where the struct and class
+    // checks walk the chain.
+    {
+        blk("ENUMSLOT - an enum slot is accepted only when it holds a UEnum (or a UEnum subclass)");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));   // Byte's Enum at 0x78, Enum's at 0x80
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t esEntry[16][0x40] = {};
+        const char* esNames[16] = { "", "EnumProperty", "ByteProperty", "ArrayProperty", "Enum", "EColor", "Actor",
+                                    "Decoy", "CustomEnum", "ECustom", "Mode", "Kind", "Tags", "Level", "Grade", "Tier" };
+        static uintptr_t esChunk[17] = {};
+        for (int i = 1; i <= 15; ++i) {
+            memcpy(esEntry[i] + 0x10, esNames[i], strlen(esNames[i]) + 1);
+            esChunk[i] = A(esEntry[i]);
+        }
+        static uintptr_t esChunks[2] = { A(esChunk), 0 };
+        Serie::InitUE4(A(esChunks), 0x10);
+
+        // The Enum metaclass, a UEnum SUBCLASS metaclass (super = Enum -- a UserDefinedEnum or a Verse enum has this
+        // shape), one enum of each, the Actor class and a named Actor instance: the decoy.
+        static uint8_t esEnumCls[0x100] = {}, esCustomCls[0x100] = {}, esColor[0x100] = {}, esCustom[0x100] = {},
+                       esActorCls[0x100] = {}, esDecoy[0x100] = {};
+        auto uobj = [&](uint8_t* o, const uint8_t* cls, int nameIdx) {
+            putP(o, Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(o, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+        };
+        uobj(esEnumCls, esEnumCls, 4);
+        uobj(esCustomCls, esEnumCls, 8);
+        putP(esCustomCls, DynOff::USTRUCT_SUPER, A(esEnumCls));
+        uobj(esColor, esEnumCls, 5);
+        uobj(esCustom, esCustomCls, 9);
+        uobj(esActorCls, esActorCls, 6);
+        uobj(esDecoy, esActorCls, 7);
+
+        static uint8_t esEnumFC[0x20] = {}, esByteFC[0x20] = {}, esArrayFC[0x20] = {};
+        put32(esEnumFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(esByteFC, DynOff::FFIELDCLASS_NAME, 2);
+        put32(esArrayFC, DynOff::FFIELDCLASS_NAME, 3);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        static uint8_t esMode[0x100] = {}, esKind[0x100] = {}, esTags[0x100] = {}, esTagsInner[0x100] = {},
+                       esLevel[0x100] = {}, esGrade[0x100] = {}, esTier[0x100] = {}, esCls[0x100] = {};
+        fprop(esMode,  esEnumFC,  10, 0x00, 1, esKind);    putP(esMode, 0x80, A(esDecoy));     // EnumProperty -> decoy
+        fprop(esKind,  esByteFC,  11, 0x01, 1, esTags);    putP(esKind, 0x78, A(esDecoy));     // ByteProperty -> decoy
+        fprop(esTags,  esArrayFC, 12, 0x08, 16, esLevel);  putP(esTags, 0x78, A(esTagsInner)); // TArray<enum> Tags
+        fprop(esTagsInner, esEnumFC, 12, 0x00, 1, nullptr); putP(esTagsInner, 0x80, A(esDecoy)); //   inner -> decoy
+        fprop(esLevel, esEnumFC,  13, 0x18, 1, esGrade);   putP(esLevel, 0x80, A(esColor));    // EnumProperty EColor
+        fprop(esGrade, esByteFC,  14, 0x19, 1, esTier);    putP(esGrade, 0x78, A(esCustom));   // TEnumAsByte<ECustom>
+        fprop(esTier,  esEnumFC,  15, 0x1A, 1, nullptr);   putP(esTier, 0x80, A(esCustom));    // EnumProperty ECustom
+        put32(esCls, DynOff::USTRUCT_PROPSSIZE, 0x20);
+        putP(esCls, DynOff::USTRUCT_CHILDPROPS, A(esMode));
+
+        const auto& esInfo = Ubel::WalkClassEx(A(esCls));
+        auto fieldOf = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : esInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fMode = fieldOf("Mode");
+        const FieldInfo* fKind = fieldOf("Kind");
+        const FieldInfo* fTags = fieldOf("Tags");
+        const FieldInfo* fLevel = fieldOf("Level");
+        const FieldInfo* fTier = fieldOf("Tier");
+        check("ENUMSLOT setup: the fields were walked", fMode && fKind && fTags && fLevel && fTier,
+              std::to_string(esInfo.Fields.size()).c_str());
+        if (fMode && fKind && fTags && fLevel && fTier) {
+            check("ENUMSLOT ⭐: an EnumProperty whose slot holds a named NON-enum is not named by it",
+                  fMode->enumName.empty(), fMode->enumName.c_str());
+            check("ENUMSLOT ⭐: ...nor a ByteProperty's", fKind->enumName.empty(), fKind->enumName.c_str());
+            check("ENUMSLOT ⭐: ...nor an array inner's", fTags->innerEnumName.empty(), fTags->innerEnumName.c_str());
+            check("ENUMSLOT control: a real UEnum is named", fLevel->enumName == "EColor", fLevel->enumName.c_str());
+            check("ENUMSLOT control: ...and a UEnum subclass's enum too", fTier->enumName == "ECustom",
+                  fTier->enumName.c_str());
+        }
+
+        const auto& esCached = Ubel::GetCachedStructFields(A(esCls));
+        auto cachedEnum = [&](const char* n) -> uintptr_t {
+            for (const auto& f : esCached) if (f.name == n) return f.enumAddr;
+            return ~uintptr_t(0);
+        };
+        check("ENUMSLOT ⭐: the struct-field cache keeps no EnumProperty pointer that is not a UEnum",
+              cachedEnum("Mode") == 0);
+        check("ENUMSLOT ⭐: ...and does keep a ByteProperty's enum of a UEnum SUBCLASS (the exact-name check dropped it)",
+              cachedEnum("Grade") == A(esCustom));
+        check("ENUMSLOT control: a real EnumProperty enum is cached", cachedEnum("Level") == A(esColor));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
