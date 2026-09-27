@@ -1012,23 +1012,33 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task W8_UsmapCollector_MatchesTheSdkExporter()
     {
-        // The point of the fix is that the two exporters agree. Assert the shared
-        // predicate rather than a second hand-written list, so they cannot drift again.
-        var metas = new[]
+        // The point of the fix is that the two exporters agree. They drifted anyway: the SDK
+        // exporter learned UserDefinedStruct and to skip class-default objects
+        // ([SDK-UDS-MISSING]) while this test compared the USMAP collector with a hand-written
+        // copy of the OLD rule, so it stayed green. [USMAP-UDS-MISSING] Now both exporters walk
+        // the same stub and must walk the same rows -- and the rows that decide it are named.
+        var rows = new[]
         {
-            "Class", "BlueprintGeneratedClass", "AnimBlueprintGeneratedClass",
-            "WidgetBlueprintGeneratedClass", "DynamicClass", "ScriptStruct",
-            "Function", "Enum", "Package",
+            ("N_Class", "Class"), ("N_BPGC", "BlueprintGeneratedClass"),
+            ("N_ABPGC", "AnimBlueprintGeneratedClass"), ("N_WBPGC", "WidgetBlueprintGeneratedClass"),
+            ("N_Dyn", "DynamicClass"), ("N_Struct", "ScriptStruct"), ("S_Uds", "UserDefinedStruct"),
+            ("N_Func", "Function"), ("N_Enum", "Enum"), ("N_Pkg", "Package"),
+            // A class-default object's row reads its METAclass, so it passes a meta test.
+            ("Default__ScriptStruct", "ScriptStruct"), ("Default__Class", "Class"),
+            ("Default__UserDefinedStruct", "UserDefinedStruct"),
         };
-        var stub = new MetaClassStub(metas.Select(m => ($"N_{m}", m)).ToArray());
+        var usmap = new MetaClassStub(rows);
+        var sdk = new MetaClassStub(rows);
 
-        await UsmapExportService.GenerateUsmapAsync(stub, ct: TestContext.Current.CancellationToken);
+        await UsmapExportService.GenerateUsmapAsync(usmap, ct: TestContext.Current.CancellationToken);
+        await SdkExportService.GenerateFullSdkAsync(sdk, ct: TestContext.Current.CancellationToken);
 
-        foreach (var m in metas)
-        {
-            bool expected = DumpAllService.IsClassLikeMetaName(m) || m == "ScriptStruct";
-            Assert.Equal(expected, stub.Walked.Contains($"N_{m}"));
-        }
+        Assert.Equal(sdk.Walked.OrderBy(n => n, StringComparer.Ordinal),
+                     usmap.Walked.OrderBy(n => n, StringComparer.Ordinal));
+        Assert.Contains("S_Uds", usmap.Walked);
+        Assert.DoesNotContain(usmap.Walked, n => n.StartsWith("Default__", StringComparison.Ordinal));
+        Assert.DoesNotContain("N_Func", usmap.Walked);
+        Assert.DoesNotContain("N_Enum", usmap.Walked);
     }
 
     // ══ Y10 — the baked verify script wrote into the mailbox with no contract check ══
