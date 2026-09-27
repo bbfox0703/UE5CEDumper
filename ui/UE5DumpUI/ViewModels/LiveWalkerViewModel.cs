@@ -223,6 +223,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private readonly List<FunctionInfoModel> _allFunctions = new();
     private Task? _pendingFunctionsLoad;
     [ObservableProperty] private ObservableCollection<FunctionInfoModel> _functions = new();
+    /// <summary>Keeps the Functions grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it. Keyed on the UFunction
+    /// address: a walk of another object of the same class lists new rows for the same
+    /// functions.</summary>
+    public FilterViewKeeper FunctionsView { get; } = new()
+    {
+        KeyOf = o => o is FunctionInfoModel f && !string.IsNullOrEmpty(f.Address) ? f.Address : o,
+    };
     [ObservableProperty] private bool _hasFunctions;
     [ObservableProperty] private FunctionInfoModel? _selectedFunction;
     [ObservableProperty] private string _functionFilter = "";
@@ -6226,6 +6234,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // filter edit bring the previous game's UFunctions back. (The filter box is not blanked, so there is nothing
         // for the keyword memory to Flush.)
         _allFunctions.Clear();
+        SelectedFunction = null;   // detach before clearing the selection-bound grid
         Functions.Clear();
         HasFunctions = false;
         ClearForwardStack();
@@ -7313,6 +7322,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var funcs = await _dump.WalkFunctionsAsync(classAddr);
+            // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
+            // functions. The same UFunctions keep their rows, so the Functions grid keeps its
+            // place instead of jumping to the top on every tick [KEYWORD-BOX-VIEW-KEEP].
+            if (funcs.Count > 0 && SameFunctions(_allFunctions, funcs))
+            {
+                HasFunctions = true;
+                return;
+            }
             _allFunctions.Clear();
             _allFunctions.AddRange(funcs);
             HasFunctions = funcs.Count > 0;
@@ -7335,23 +7352,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ApplyFunctionFilter()
     {
-        Functions.Clear();
-        if (_allFunctions.Count == 0) return;
-
         // Space-separated terms are ANDed (each must hit the function name) — the
         // shared Object Tree filter semantics. Empty filter shows everything.
         var terms = ObjectTreeFilter.SplitTerms(FunctionFilter);
-        if (terms.Length == 0)
-        {
-            foreach (var f in _allFunctions) Functions.Add(f);
-            return;
-        }
+        var rows = terms.Length == 0
+            ? new List<FunctionInfoModel>(_allFunctions)
+            : _allFunctions.Where(f => ObjectTreeFilter.MatchesAllTerms(terms, f.Name)).ToList();
+        // Detach before rebuilding the selection-bound grid; unchanged rows are not rebuilt.
+        FunctionsView.Update(Functions, rows, () => SelectedFunction = null, FunctionFilter);
+    }
 
-        foreach (var f in _allFunctions)
+    /// <summary>True when <paramref name="fresh"/> lists the same UFunctions, in order.</summary>
+    private static bool SameFunctions(IReadOnlyList<FunctionInfoModel> shown, IReadOnlyList<FunctionInfoModel> fresh)
+    {
+        if (shown.Count != fresh.Count) return false;
+        for (int i = 0; i < fresh.Count; i++)
         {
-            if (ObjectTreeFilter.MatchesAllTerms(terms, f.Name))
-                Functions.Add(f);
+            if (!string.Equals(shown[i].Address, fresh[i].Address, StringComparison.Ordinal) ||
+                !string.Equals(shown[i].Name, fresh[i].Name, StringComparison.Ordinal))
+                return false;
         }
+        return true;
     }
 
     /// <summary>
@@ -7387,6 +7408,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(FunctionFilter))
         {
             _functionFilterMemory.Flush();
+            FunctionsView.Forget();   // the program empties the box, not the user
             FunctionFilter = "";
         }
 

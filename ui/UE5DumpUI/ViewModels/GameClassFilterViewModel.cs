@@ -56,6 +56,9 @@ public partial class GameClassFilterViewModel : ViewModelBase
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private string _statusText = "";
     [ObservableProperty] private ObservableCollection<GameClassEntry> _results = new();
+    /// <summary>Keeps the Results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
     [ObservableProperty] private GameClassEntry? _selectedResult;
     [ObservableProperty] private bool _isXrefBatchRunning;
 
@@ -210,8 +213,6 @@ public partial class GameClassFilterViewModel : ViewModelBase
 
     private void ApplyFilter()
     {
-        SelectedResult = null;   // detach before rebuilding the selection-bound grid
-        Results.Clear();
         // Space-separated terms are ANDed (each must hit ClassName, SuperName or
         // ClassPath) — the shared Object Tree filter semantics, so "BP_ char"
         // keeps rows matching BOTH terms in any order.
@@ -258,10 +259,9 @@ public partial class GameClassFilterViewModel : ViewModelBase
             return cmp != 0 ? cmp : string.Compare(a.ClassName, b.ClassName, StringComparison.Ordinal);
         });
 
-        foreach (var entry in filtered)
-        {
-            Results.Add(entry);
-        }
+        // Detach before rebuilding the selection-bound grid; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, filtered, () => SelectedResult = null,
+                           FilterText, SuperFilter, PackageFilter);
     }
 
     [RelayCommand]

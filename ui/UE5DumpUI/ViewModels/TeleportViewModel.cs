@@ -3605,12 +3605,20 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     partial void OnCoordFilterTextChanged(string value)
     {
-        ApplyCoordFilter();
+        ApplyCoordFilter(filterEdit: true);
         _coordFilterMemory.Schedule(value);
     }
-    partial void OnCoordGroupFilterChanged(string value) => ApplyCoordFilter();
+    partial void OnCoordGroupFilterChanged(string value) => ApplyCoordFilter(filterEdit: true);
     partial void OnCoordZToleranceChanged(double value) => PersistCoordLibrary();
-    partial void OnCoordCurrentMapOnlyChanged(bool value) => ApplyCoordFilter();
+    partial void OnCoordCurrentMapOnlyChanged(bool value) => ApplyCoordFilter(filterEdit: true);
+
+    /// <summary>Keeps the coordinate grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it. Keyed on the entry uid: every
+    /// rebuild makes new rows for the same entries.</summary>
+    public FilterViewKeeper CoordView { get; } = new()
+    {
+        KeyOf = o => o is CoordRow r ? r.Entry.Uid : o,
+    };
 
     partial void OnSelectedCoordChanged(CoordRow? value)
     {
@@ -3747,10 +3755,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// controlled by insertion order (the repo's VM-side sort convention) — the grid
     /// preserves it.
     /// </summary>
-    private void ApplyCoordFilter()
+    /// <param name="filterEdit">True from the filter controls: then the same entries, each
+    /// still on the same side of the current-map check, keep their rows. Every other caller
+    /// changed an entry in place (a rename, a re-capture) or the map, and needs new rows to
+    /// repaint.</param>
+    private void ApplyCoordFilter(bool filterEdit = false)
     {
         var keepUid = SelectedCoord?.Entry.Uid;
-        CoordResults.Clear();
 
         var terms = ObjectTreeFilter.SplitTerms(CoordFilterText);
         bool byGroup = !string.Equals(CoordGroupFilter, CoordAllGroups, StringComparison.Ordinal)
@@ -3772,27 +3783,34 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
 
         matched.Sort(CompareForDisplay);
-        foreach (var e in matched)
-            CoordResults.Add(new CoordRow(e, IsOnCurrentMap(e.Map)));
 
-        UpdateCoordDistances();
+        bool same = filterEdit && CoordResults.Count == matched.Count;
+        for (int i = 0; same && i < matched.Count; i++)
+            same = ReferenceEquals(CoordResults[i].Entry, matched[i])
+                   && CoordResults[i].OnCurrentMap == IsOnCurrentMap(matched[i].Map);
 
-        if (keepUid != null)
+        CoordView.Update(() =>
         {
-            // RESTORING the selection must not look like the user PICKING a row. The
-            // rebuild above makes fresh CoordRow objects, so SelectedCoord always changes
+            // Detaching and RESTORING the selection must not look like the user PICKING a
+            // row: the rebuild makes fresh CoordRow objects, so SelectedCoord always changes
             // reference and OnSelectedCoordChanged always fires — overwriting
-            // EditCoordLabel/Group from the stored entry. This runs per keystroke in the
-            // filter box, so typing while an edit was in progress silently reverted it.
-            // Same shape as _suppressCoordPersist. (B20)
+            // EditCoordLabel/Group from the stored entry (with "" for the detach). This runs
+            // per keystroke in the filter box, so typing while an edit was in progress
+            // silently reverted it. Same shape as _suppressCoordPersist. (B20)
             _suppressCoordEditorSync = true;
             try
             {
-                SelectedCoord = CoordResults.FirstOrDefault(r => r.Entry.Uid == keepUid);
+                SelectedCoord = null;   // detach before clearing the selection-bound grid
+                CoordResults.Clear();
+                foreach (var e in matched)
+                    CoordResults.Add(new CoordRow(e, IsOnCurrentMap(e.Map)));
+                if (keepUid != null)
+                    SelectedCoord = CoordResults.FirstOrDefault(r => r.Entry.Uid == keepUid);
             }
             finally { _suppressCoordEditorSync = false; }
-        }
+        }, rowsChanged: !same, CoordFilterText, CoordGroupFilter);
 
+        UpdateCoordDistances();
         OnPropertyChanged(nameof(CoordLibraryHeader));
     }
 

@@ -1366,7 +1366,7 @@ public partial class ClassPivotViewModel : ViewModelBase
 
     // Filter the results grid by space-separated AND terms over key + values (each term
     // must hit KeyValue or ValuesDisplay). Empty filter shows all. Detaches the selection
-    // before the rebuild (selection-model safe).
+    // before a rebuild (selection-model safe); the same rows are not rebuilt.
     private void ApplyResultFilter()
     {
         var terms = ObjectTreeFilter.SplitTerms(ResultFilter);
@@ -1374,8 +1374,12 @@ public partial class ClassPivotViewModel : ViewModelBase
         if (terms.Length > 0)
             view = _allResults.Where(r =>
                 ObjectTreeFilter.MatchesAllTerms(terms, r.KeyValue, r.ValuesDisplay));
-        UiCollection.Reset(Results, view, () => SelectedResult = null);
+        ResultsView.Update(Results, view.ToList(), () => SelectedResult = null, ResultFilter);
     }
+
+    /// <summary>Keeps the results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
 
     /// <summary>Open the selected group's representative object in Live Walker.</summary>
     [RelayCommand]

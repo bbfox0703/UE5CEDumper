@@ -36,7 +36,7 @@ public class FilterBoxViewKeepTests
         IList Rows,
         Func<object?> Selected,
         Action<object?> Select,
-        FilterViewKeeper? Keeper,
+        FilterViewKeeper Keeper,
         string Wide, string Same, string Narrow);
 
     public static TheoryData<string> Boxes => new()
@@ -62,7 +62,6 @@ public class FilterBoxViewKeepTests
     private static List<(FilterViewState State, FilterViewRestore Mode)> AttachView(Box box)
     {
         var got = new List<(FilterViewState, FilterViewRestore)>();
-        if (box.Keeper == null) return got;              // the box has no keeper yet
         box.Keeper.CaptureView = () => new FilterViewState(
             box.Selected() is { } s ? new[] { s } : Array.Empty<object>(),
             box.Rows.Count > 0 ? box.Rows[0] : null);
@@ -101,7 +100,6 @@ public class FilterBoxViewKeepTests
     public async Task A_narrowing_hands_the_View_its_selection_to_keep(string name)
     {
         var box = await Make(name);
-        Assert.NotNull(box.Keeper);
         box.SetFilter(box.Wide);
         box.Select(box.Rows[0]);
         var picked = box.Selected();
@@ -119,7 +117,6 @@ public class FilterBoxViewKeepTests
     public async Task Clearing_a_real_keyword_asks_the_View_for_Cleared(string name)
     {
         var box = await Make(name);
-        Assert.NotNull(box.Keeper);
         box.SetFilter(box.Narrow);
         box.Select(box.Rows[0]);
         var picked = box.Selected();
@@ -283,7 +280,7 @@ public class FilterBoxViewKeepTests
                                           new MockPlatformService(Path.GetTempPath()));
         await vm.LoadClassCommand.ExecuteAsync("0x1000");
         return new Box(t => vm.FieldFilter = t, vm.Fields, () => vm.SelectedField,
-                       o => vm.SelectedField = (FieldInfoModel?)o, KeeperOf(vm, "FieldsView"),
+                       o => vm.SelectedField = (FieldInfoModel?)o, vm.FieldsView,
                        "floa", "float", "health");
     }
 
@@ -295,7 +292,7 @@ public class FilterBoxViewKeepTests
         var vm = new GameClassFilterViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
         await vm.LoadCommand.ExecuteAsync(null);
         return new Box(t => vm.FilterText = t, vm.Results, () => vm.SelectedResult,
-                       o => vm.SelectedResult = (GameClassEntry?)o, KeeperOf(vm, "ResultsView"),
+                       o => vm.SelectedResult = (GameClassEntry?)o, vm.ResultsView,
                        "her", "hero", "heroa");
     }
 
@@ -321,11 +318,7 @@ public class FilterBoxViewKeepTests
         var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
         await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
         return new Box(t => vm.FunctionFilter = t, vm.Functions, () => vm.SelectedFunction,
-                       o => vm.SelectedFunction = (FunctionInfoModel?)o, KeeperOf(vm, "FunctionsView"),
+                       o => vm.SelectedFunction = (FunctionInfoModel?)o, vm.FunctionsView,
                        "rec", "rece", "receivet");
     }
-
-    /// <summary>The box's keeper, looked up by name so a box can be pinned before it has one.</summary>
-    private static FilterViewKeeper? KeeperOf(object vm, string property)
-        => vm.GetType().GetProperty(property)?.GetValue(vm) as FilterViewKeeper;
 }

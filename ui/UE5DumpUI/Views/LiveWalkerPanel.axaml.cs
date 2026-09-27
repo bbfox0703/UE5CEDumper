@@ -94,6 +94,7 @@ public partial class LiveWalkerPanel : UserControl
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttached;
         DetachedFromVisualTree += OnDetached;
+        this.AttachFilterView<LiveWalkerViewModel>(this.FindControl<DataGrid>("FunctionGrid"), vm => vm.FunctionsView);
     }
 
     /// <summary>

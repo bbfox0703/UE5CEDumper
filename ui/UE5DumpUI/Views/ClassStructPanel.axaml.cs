@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using Avalonia.Controls;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -20,5 +21,6 @@ public partial class ClassStructPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("ClassFieldsGrid")?.WireSortComparers(FieldsSortComparers);
+        this.AttachFilterView<ClassStructViewModel>(this.FindControl<DataGrid>("ClassFieldsGrid"), vm => vm.FieldsView);
     }
 }

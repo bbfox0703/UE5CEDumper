@@ -49,6 +49,7 @@ public partial class TeleportPanel : UserControl
         // handled before the presenter's class handler scrolls. Manual wheel /
         // scrollbar are unaffected (they don't raise this event).
         ContentRoot.AddHandler(RequestBringIntoViewEvent, OnRequestBringIntoView);
+        this.AttachFilterView<TeleportViewModel>(this.FindControl<DataGrid>("CoordGrid"), vm => vm.CoordView);
     }
 
     private void OnRequestBringIntoView(object? sender, RequestBringIntoViewEventArgs e)

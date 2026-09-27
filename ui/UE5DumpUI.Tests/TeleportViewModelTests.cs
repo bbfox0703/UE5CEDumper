@@ -2954,6 +2954,36 @@ public class TeleportViewModelTests
         Assert.Same(picked, vm.SelectedCoord);
     }
 
+    /// <summary>A narrowing rebuilds the rows; the view model re-selects the kept entry itself
+    /// (selecting runs the editor sync, B20) and the View is handed it to keep visible, keyed
+    /// on the uid because the row objects are new.</summary>
+    [Fact]
+    public async Task A_coord_narrowing_keeps_the_entry_selected_and_hands_it_to_the_View()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.CoordFilterText = "ca";
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Castle");
+        var uid = vm.SelectedCoord!.Entry.Uid;
+        vm.EditCoordLabel = "Castle (edit in progress)";
+        var handed = new List<(object Row, UE5DumpUI.Helpers.FilterViewRestore Mode)>();
+        vm.CoordView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(
+            vm.SelectedCoord is { } s ? new object[] { s } : Array.Empty<object>(), null);
+        vm.CoordView.RestoreView = (state, mode) => handed.Add((state.Selected[0], mode));
+
+        vm.CoordFilterText = "cas";
+
+        Assert.Equal(uid, vm.SelectedCoord?.Entry.Uid);
+        Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);    // B20: not reverted
+        var (row, mode) = Assert.Single(handed);
+        Assert.Equal(UE5DumpUI.Helpers.FilterViewRestore.Narrowed, mode);
+        Assert.Equal(uid, vm.CoordView.KeyOf!(row));
+
+        handed.Clear();
+        vm.CoordFilterText = "";                                          // select all, Delete
+        Assert.Equal(UE5DumpUI.Helpers.FilterViewRestore.Cleared, Assert.Single(handed).Mode);
+        Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);
+    }
+
     /// <summary>...while an edit that renames a row in place still repaints it: the same
     /// entries, but the row shows new text.</summary>
     [Fact]

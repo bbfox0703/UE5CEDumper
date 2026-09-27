@@ -1032,6 +1032,21 @@ public class ClassPivotViewModelTests : IDisposable
 
         Assert.Equal(0, changes);
         Assert.Same(picked, vm.SelectedResult);
+
+        // A real narrowing hands the View the pick; clearing it asks for Cleared.
+        var all = vm.Results.ToList();
+        // The group keys here are one character ("1", "2"); a clear only counts from 2+, so
+        // narrow on a row's values text instead, checked with the filter's own matcher.
+        var term = all.Select(r => r.ValuesDisplay).First(v => v.Trim().Length >= 2 &&
+            all.Count(r => UE5DumpUI.Helpers.ObjectTreeFilter.MatchesAllTerms(
+                UE5DumpUI.Helpers.ObjectTreeFilter.SplitTerms(v), r.KeyValue, r.ValuesDisplay)) < all.Count);
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.ResultsView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.ResultsView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.ResultFilter = term;
+        vm.ResultFilter = "";
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
     }
 
     [Fact]

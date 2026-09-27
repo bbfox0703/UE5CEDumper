@@ -80,21 +80,29 @@ public class AuditL9SelectionAndCancelTests
         Assert.Null(vm.SelectedField);
     }
 
-    /// <summary>The detach is unconditional, exactly as in the four siblings — a row
-    /// that SURVIVES the filter is also cleared. Pinned deliberately so nobody
-    /// "improves" it into a survivor-preserving variant without deciding to: Instance
-    /// Finder's survivor-preserving version needed a whole suppression flag (Z7) to
-    /// stop the restore re-issuing a pipe walk, and this panel has no such guard.</summary>
+    /// <summary>A rebuild still detaches every row first, a SURVIVING one included — the
+    /// selection model needs that. What changed, deliberately ([KEYWORD-BOX-VIEW-KEEP], the
+    /// maintainer's call on 2026-09-27): the View is then handed the surviving row to
+    /// re-select. That is safe HERE because selecting a field starts nothing; Instance
+    /// Finder's survivor-preserving version needed a suppression flag (Z7) to stop the
+    /// restore re-issuing a pipe walk, and anything with such a side effect must re-select
+    /// in its view model instead.</summary>
     [Fact]
-    public async Task AE14_the_detach_is_unconditional_like_its_four_siblings()
+    public async Task AE14_a_rebuild_detaches_a_surviving_row_and_hands_it_to_the_View()
     {
         var vm = await LoadedPanelAsync();
-        vm.SelectedField = vm.Fields.First(f => f.Name == "Health");
+        var health = vm.Fields.First(f => f.Name == "Health");
+        vm.SelectedField = health;
+        var handedBack = new List<object>();
+        vm.FieldsView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(
+            vm.SelectedField is { } s ? new object[] { s } : Array.Empty<object>(), null);
+        vm.FieldsView.RestoreView = (state, _) => handedBack.AddRange(state.Selected);
 
         vm.FieldFilter = "health";      // "Health" still matches
 
         Assert.Contains(vm.Fields, f => f.Name == "Health");
         Assert.Null(vm.SelectedField);
+        Assert.Same(health, Assert.Single(handedBack));
     }
 
     [Fact]
