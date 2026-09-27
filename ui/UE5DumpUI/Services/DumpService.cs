@@ -418,6 +418,12 @@ public sealed class DumpService : IDumpService
                     ElemEnumName  = fo["elem_enum"]?.GetValue<string>() ?? "",
                     KeyEnumName   = fo["key_enum"]?.GetValue<string>() ?? "",
                     ValueEnumName = fo["value_enum"]?.GetValue<string>() ?? "",
+                    // [SDK-METACLASS] a class-valued property's MetaClass; absent from an older DLL
+                    MetaClassName  = fo["meta_class"]?.GetValue<string>() ?? "",
+                    InnerMetaClass = fo["inner_meta_class"]?.GetValue<string>() ?? "",
+                    KeyMetaClass   = fo["key_meta_class"]?.GetValue<string>() ?? "",
+                    ValueMetaClass = fo["value_meta_class"]?.GetValue<string>() ?? "",
+                    ElemMetaClass  = fo["elem_meta_class"]?.GetValue<string>() ?? "",
                     BoolFieldMask = fo["bool_mask"]?.GetValue<int>() ?? 0,
                     PropertyFlags = ParseFlagsHex(fo["prop_flags"]?.GetValue<string>()),
                     ArrayDim = fo["array_dim"]?.GetValue<int>() ?? 1,

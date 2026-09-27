@@ -258,11 +258,16 @@ public static class SdkExportService
         string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
         string C(string n) => t.Reference(n, SdkTypeNames.Kind.Class, fromPath);
         return MapCppDeclCore(
-            field.TypeName, S(field.StructType, field.Size), C(KnownClass(field.TypeName, field.ObjClassName)),
-            field.InnerType, S(field.InnerStructType), C(KnownClass(field.InnerType, field.InnerObjClass)),
+            field.TypeName, S(field.StructType, field.Size), C(field.ObjClassName),
+            field.InnerType, S(field.InnerStructType), C(field.InnerObjClass),
             field.KeyType, S(field.KeyStructType), field.ValueType, S(field.ValueStructType),
             field.ElemType, S(field.ElemStructType), t.Reference(field.EnumName, SdkTypeNames.Kind.Enum, fromPath),
-            field.BoolFieldMask, field.Size);
+            field.BoolFieldMask, field.Size,
+            ClassValuedCpp(field.TypeName, field.ObjClassName, field.MetaClassName, C),
+            ClassValuedCpp(field.InnerType, field.InnerObjClass, field.InnerMetaClass, C),
+            ClassValuedCpp(field.KeyType, "", field.KeyMetaClass, C),
+            ClassValuedCpp(field.ValueType, "", field.ValueMetaClass, C),
+            ClassValuedCpp(field.ElemType, "", field.ElemMetaClass, C));
     }
 
     /// <summary>
@@ -286,13 +291,27 @@ public static class SdkExportService
     }
 
     /// <summary>
-    /// A class-valued property's target class, or "" when the wire does not carry it:
-    /// <c>walk_class</c> sends a ClassProperty's PropertyClass, which is always <c>Class</c> -- its
-    /// MetaClass never reaches the UI -- so <c>TSubclassOf&lt;class Class&gt;</c> would declare a
-    /// subclass of UClass. "" falls back to <c>UClass*</c> / <c>TSoftClassPtr&lt;UObject&gt;</c>.
+    /// [SDK-METACLASS] The C++ of a class-valued property, or null for any other type. <c>obj_class</c>
+    /// is its PropertyClass: <c>Class</c> for a TSubclassOf -- but UHT also turns
+    /// <c>TObjectPtr&lt;UBlueprintGeneratedClass&gt;</c> / <c>TObjectPtr&lt;UVerseClass&gt;</c> into a
+    /// ClassProperty whose PropertyClass is that class and whose MetaClass is Object, which is a pointer
+    /// to it, not a TSubclassOf of it. <c>meta_class</c> is the class a TSubclassOf / TSoftClassPtr holds
+    /// a subclass of; Object means any class, and an older DLL sends none. The decision is taken on the
+    /// UE names; <paramref name="resolve"/> spells them for the header.
     /// </summary>
-    private static string KnownClass(string propertyType, string className) =>
-        propertyType is "ClassProperty" or "SoftClassProperty" && className == "Class" ? "" : className;
+    private static string? ClassValuedCpp(string propertyType, string propertyClass, string metaClass,
+                                          Func<string, string> resolve)
+    {
+        bool knownMeta = !string.IsNullOrEmpty(metaClass) && metaClass != "Object";
+        return propertyType switch
+        {
+            "ClassProperty" when !string.IsNullOrEmpty(propertyClass) && propertyClass != "Class"
+                => $"class {resolve(propertyClass)}*",
+            "ClassProperty" => knownMeta ? $"TSubclassOf<class {resolve(metaClass)}>" : "UClass*",
+            "SoftClassProperty" => knownMeta ? $"TSoftClassPtr<class {resolve(metaClass)}>" : "TSoftClassPtr<UObject>",
+            _ => null,
+        };
+    }
 
     /// <summary>An unsigned integer of the given byte size, or null for a size no integer has.</summary>
     private static string? UnsignedOfSize(int size) => size switch
@@ -323,7 +342,9 @@ public static class SdkExportService
         string innerType, string innerStructType, string innerObjClass,
         string keyType, string keyStructType, string valueType, string valueStructType,
         string elemType, string elemStructType, string enumName,
-        int boolFieldMask, int size)
+        int boolFieldMask, int size,
+        string? classCpp = null, string? innerClassCpp = null, string? keyClassCpp = null,
+        string? valueClassCpp = null, string? elemClassCpp = null)
     {
         // `null` means "no C++ spelling for this" and is the ONLY route to the raw-byte fallback,
         // so the extent can never be smuggled into a type string again.
@@ -348,18 +369,15 @@ public static class SdkExportService
             "TextProperty" => "FText",
 
             "ObjectProperty" => FormatPtrType("class", objClassName, "UObject"),
-            "ClassProperty" => !string.IsNullOrEmpty(objClassName)
-                ? $"TSubclassOf<class {objClassName}>"
-                : "UClass*",
+            // [SDK-METACLASS] decided by ClassValuedCpp; a live row carries no MetaClass.
+            "ClassProperty" => classCpp ?? "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TWeakObjectPtr<class {objClassName}>"
                 : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TSoftObjectPtr<class {objClassName}>"
                 : "TSoftObjectPtr<UObject>",
-            "SoftClassProperty" => !string.IsNullOrEmpty(objClassName)
-                ? $"TSoftClassPtr<class {objClassName}>"
-                : "TSoftClassPtr<UObject>",
+            "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TScriptInterface<class {objClassName}>"
                 : "TScriptInterface<IInterface>",
@@ -371,9 +389,9 @@ public static class SdkExportService
                 ? $"struct {structType}"
                 : null,   // unresolved struct → raw bytes, extent AFTER the identifier
 
-            "ArrayProperty" => $"TArray<{MapInnerCppType(innerType, innerStructType, innerObjClass)}>",
-            "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, "")}, {MapInnerCppType(valueType, valueStructType, "")}>",
-            "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, "")}>",
+            "ArrayProperty" => $"TArray<{MapInnerCppType(innerType, innerStructType, innerObjClass, innerClassCpp)}>",
+            "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, "", keyClassCpp)}, {MapInnerCppType(valueType, valueStructType, "", valueClassCpp)}>",
+            "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, "", elemClassCpp)}>",
 
             // With no known enum type, an integer of the property's own size: a 4-byte enum declared
             // uint8_t shifts every member after it, because the padding pass trusts the row's Size.
@@ -399,7 +417,8 @@ public static class SdkExportService
         return $"{prefix} {name}*";
     }
 
-    private static string MapInnerCppType(string innerType, string structType, string objClass)
+    private static string MapInnerCppType(string innerType, string structType, string objClass,
+                                          string? classCpp = null)
     {
         if (string.IsNullOrEmpty(innerType)) return "uint8_t";
 
@@ -407,11 +426,11 @@ public static class SdkExportService
         {
             "StructProperty" => !string.IsNullOrEmpty(structType) ? $"struct {structType}" : "uint8_t",
             "ObjectProperty" => FormatPtrType("class", objClass, "UObject"),
-            "ClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSubclassOf<class {objClass}>" : "UClass*",
+            "ClassProperty" => classCpp ?? "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TWeakObjectPtr<class {objClass}>" : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftObjectPtr<class {objClass}>" : "TSoftObjectPtr<UObject>",
             // [P3-SDK-INNERS] The scalar path's spellings, copied: a container of these was declared uint8_t.
-            "SoftClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftClassPtr<class {objClass}>" : "TSoftClassPtr<UObject>",
+            "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
             "LazyObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TLazyObjectPtr<class {objClass}>" : "TLazyObjectPtr<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClass) ? $"TScriptInterface<class {objClass}>" : "TScriptInterface<IInterface>",
             _ => MapScalarInnerType(innerType),
