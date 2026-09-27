@@ -45,8 +45,9 @@ public static class FilterViewBinding
 
     public static void Attach(DataGrid grid, FilterViewKeeper keeper)
     {
-        keeper.CaptureView = () => new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid));
-        keeper.RestoreView = (state, mode) => Restore(
+        var queue = new FilterViewRestoreQueue();
+        keeper.CaptureView = () => queue.Capture(() => new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid)));
+        keeper.RestoreView = (state, mode) => Restore(queue,
             items: () => DisplayItems(grid),
             current: () => grid.SelectedItem,
             select: rows =>
@@ -62,15 +63,16 @@ public static class FilterViewBinding
 
     public static void Attach(ListBox list, FilterViewKeeper keeper)
     {
-        keeper.CaptureView = () =>
+        var queue = new FilterViewRestoreQueue();
+        keeper.CaptureView = () => queue.Capture(() =>
         {
             var selected = new List<object>();
             if (list.SelectedItems != null)
                 foreach (var o in list.SelectedItems) if (o != null) selected.Add(o);
             if (selected.Count == 0 && list.SelectedItem != null) selected.Add(list.SelectedItem);
             return new FilterViewState(OrderBy(selected, ListItems(list)), TopContainer<ListBoxItem>(list));
-        };
-        keeper.RestoreView = (state, mode) => Restore(
+        });
+        keeper.RestoreView = (state, mode) => Restore(queue,
             items: () => ListItems(list),
             current: () => list.SelectedItem,
             select: rows => list.SelectedItem = rows.Count > 0 ? rows[0] : null,
@@ -78,13 +80,23 @@ public static class FilterViewBinding
             state, mode, keeper.KeyOf);
     }
 
-    private static void Restore(Func<List<object>> items, Func<object?> current, Action<List<object>> select,
+    private static void Restore(FilterViewRestoreQueue queue,
+                                Func<List<object>> items, Func<object?> current, Action<List<object>> select,
                                 Action<object> scrollIntoView,
                                 FilterViewState state, FilterViewRestore mode, Func<object, object>? keyOf)
     {
+        // Keys typed faster than this runs rebuild again: only the newest restore of the burst
+        // runs, carrying the selection the user had before it (FilterViewRestoreQueue).
+        int ticket = queue.Schedule(state);
+        void Scroll(object row)
+        {
+            if (queue.IsNewest(ticket)) scrollIntoView(row);
+        }
+
         // After the rebuild's own layout pass, like every restore in this UI.
         Dispatcher.UIThread.Post(() =>
         {
+            if (!queue.Begin(ticket)) return;
             var now = items();
             if (now.Count == 0) return;
             object Key(object o) => keyOf?.Invoke(o) ?? o;
@@ -112,7 +124,7 @@ public static class FilterViewBinding
             if (mode == FilterViewRestore.Narrowed)
             {
                 if (first != null)
-                    Dispatcher.UIThread.Post(() => scrollIntoView(first), DispatcherPriority.Background);
+                    Dispatcher.UIThread.Post(() => Scroll(first), DispatcherPriority.Background);
                 return;
             }
 
@@ -120,8 +132,8 @@ public static class FilterViewBinding
             if (toTop == null) return;
             Dispatcher.UIThread.Post(() =>
             {
-                scrollIntoView(now[^1]);
-                Dispatcher.UIThread.Post(() => scrollIntoView(toTop), DispatcherPriority.Background);
+                Scroll(now[^1]);
+                Dispatcher.UIThread.Post(() => Scroll(toTop), DispatcherPriority.Background);
             }, DispatcherPriority.Background);
         }, DispatcherPriority.Background);
     }
