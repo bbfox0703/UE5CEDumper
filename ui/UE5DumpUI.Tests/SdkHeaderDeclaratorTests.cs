@@ -339,11 +339,45 @@ public class SdkHeaderDeclaratorTests
             },
         };
 
+        // A whole-pool export whose TYPE names collide or are not identifiers (SdkTypeNameTests has
+        // one case each): the AnimBlueprint pair that used to inherit from itself, a dash, a keyword,
+        // and a type named like a header built-in. Listed supers-first, as GObjects has them, because
+        // the export does not reorder. Its two include lines are dropped: this unit includes nothing.
+        var pool = new SdkPoolDump()
+            .Add("0x1", "AnimBlueprintConstantData", "ScriptStruct", "//Script/Engine/AnimBlueprintConstantData",
+                 fields: new[] { new FieldInfoModel { Name = "Base", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x10", "AnimBlueprintGeneratedConstantData", "ScriptStruct",
+                 "//Game/Anim/ABP_Manny/ABP_Manny_C.AnimBlueprintGeneratedConstantData", "0x1",
+                 "AnimBlueprintConstantData", 8,
+                 new FieldInfoModel { Name = "MannyOnly", TypeName = "IntProperty", Offset = 4, Size = 4 })
+            .Add("0x20", "AnimBlueprintGeneratedConstantData", "ScriptStruct",
+                 "//Game/Anim/ABP_Quinn/ABP_Quinn_C.AnimBlueprintGeneratedConstantData", "0x10",
+                 "AnimBlueprintGeneratedConstantData", 12,
+                 new FieldInfoModel { Name = "QuinnOnly", TypeName = "IntProperty", Offset = 8, Size = 4 })
+            .Add("0x30", "TArray", "ScriptStruct", "//Script/Weird/TArray",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x40", "union", "ScriptStruct", "//Script/Weird/union",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x50", "ABP_Manny_C", "AnimBlueprintGeneratedClass", "//Game/Anim/ABP_Manny/ABP_Manny_C", size: 0x28,
+                 fields: new[]
+                 {
+                     new FieldInfoModel { Name = "Consts", TypeName = "StructProperty", StructType = "AnimBlueprintGeneratedConstantData", Offset = 0x00, Size = 8 },
+                     new FieldInfoModel { Name = "Arr", TypeName = "StructProperty", StructType = "TArray", Offset = 0x08, Size = 4 },
+                     new FieldInfoModel { Name = "U", TypeName = "StructProperty", StructType = "union", Offset = 0x0C, Size = 4 },
+                     new FieldInfoModel { Name = "Door", TypeName = "ObjectProperty", ObjClassName = "BP_Door-Big_C", Offset = 0x10, Size = 8 },
+                     new FieldInfoModel { Name = "Doors", TypeName = "ArrayProperty", InnerType = "ObjectProperty", InnerObjClass = "BP_Door-Big_C", Offset = 0x18, Size = 0x10 },
+                 })
+            .Add("0x60", "BP_Door-Big_C", "BlueprintGeneratedClass", "//Game/Props/BP_Door-Big/BP_Door-Big_C",
+                 fields: new[] { new FieldInfoModel { Name = "Open", TypeName = "IntProperty", Offset = 0, Size = 4 } });
+        var poolHeader = pool.Sdk().Replace("#pragma once", "").Replace("#include <cstdint>", "");
+
         return SdkExportService.GenerateClassHeaderFromSchema(schema)
              + "\n"
              + SdkExportService.GenerateClassHeader("FSdkSmokeStruct", "", 0x90, live)
              + "\n"
-             + SdkExportService.GenerateClassHeaderFromSchema(clash);
+             + SdkExportService.GenerateClassHeaderFromSchema(clash)
+             + "\n"
+             + poolHeader;
     }
 
     /// <summary>
