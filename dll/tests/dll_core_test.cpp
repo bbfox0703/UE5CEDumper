@@ -1750,12 +1750,12 @@ int main() {
     {
         blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
 
-        static uint8_t olEntry[12][0x40] = {};
-        const char* olNames[12] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
+        static uint8_t olEntry[13][0x40] = {};
+        const char* olNames[13] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
                                     "StrProperty", "Opt", "Inner", "NameProperty", "TextProperty",
-                                    "StructProperty", "MyStruct", "LazyObjectProperty" };
-        static uintptr_t olChunk[13] = {};
-        for (int i = 1; i <= 11; ++i) {
+                                    "StructProperty", "MyStruct", "LazyObjectProperty", "ScriptStruct" };
+        static uintptr_t olChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
             memcpy(olEntry[i] + 0x10, olNames[i], strlen(olNames[i]) + 1);
             olChunk[i] = reinterpret_cast<uintptr_t>(olEntry[i]);
         }
@@ -1940,8 +1940,12 @@ int main() {
 
         // (#8) A struct optional: the struct probe + UScriptStruct::MinAlignment decide the layout.
         static uint8_t olStruct[2][0x100] = {};
+        // MyStruct is a UScriptStruct: a struct slot is read only when it holds one ([OPTSTRUCT-ANY-NAME]).
+        static uint8_t olSsCls[0x100] = {};
+        *reinterpret_cast<int32_t*>(olSsCls + Grimoire::OFF_UOBJECT_NAME) = 12;              // "ScriptStruct"
         auto structInner = [&](int k, int s, int16_t minAlign) {
             *reinterpret_cast<int32_t*>(olStruct[s] + Grimoire::OFF_UOBJECT_NAME) = 10;      // "MyStruct"
+            putP(olStruct[s], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(olSsCls));
             put32(olStruct[s], DynOff::USTRUCT_PROPSSIZE, 24);
             memcpy(olStruct[s] + DynOff::USTRUCT_PROPSSIZE + 4, &minAlign, sizeof(minAlign));
             const uintptr_t p = inner(k, 9, 24);                                              // "StructProperty"
@@ -1984,6 +1988,7 @@ int main() {
             put32(olSRChild[k], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
             if (childInner) putP(olSRChild[k], DynOff::FARRAYPROP_INNER, childInner);
             *reinterpret_cast<int32_t*>(olSR[k] + Grimoire::OFF_UOBJECT_NAME) = 10;          // "MyStruct"
+            putP(olSR[k], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(olSsCls));
             put32(olSR[k], DynOff::USTRUCT_PROPSSIZE, 24);
             const int16_t align8 = 8;
             memcpy(olSR[k] + DynOff::USTRUCT_PROPSSIZE + 4, &align8, sizeof(align8));

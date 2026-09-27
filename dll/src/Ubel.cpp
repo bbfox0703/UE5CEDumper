@@ -2469,6 +2469,8 @@ OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optiona
             if (off < 0) continue;
             uintptr_t c = 0;
             if (!Macht::ReadSafe(innerProp + off, c) || !Grimoire::IsUserspacePointer(c)) continue;
+            // [OPTSTRUCT-ANY-NAME] A struct, not the first named object: its MinAlignment decides the layout.
+            if (!IsScriptStructObject(c)) continue;
             const std::string n = GetName(c);
             if (n.empty() || n[0] < 0x20 || n[0] >= 0x7F) continue;
             structAddr = c;
@@ -3451,13 +3453,9 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
         if (fi.TypeName == "EnumProperty" || fi.TypeName == "ByteProperty")
             cf.enumAddr = ReadPropertyEnum(fi.Address, fi.TypeName);
 
-        // StructProperty: read nested struct type name
-        if (fi.TypeName == "StructProperty" && fi.Address) {
-            uintptr_t nestedStruct = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FSTRUCTPROP_STRUCT, nestedStruct) && nestedStruct) {
-                cf.nestedTypeName = GetName(nestedStruct);
-            }
-        }
+        // StructProperty: read nested struct type name -- only a struct's ([OPTSTRUCT-ANY-NAME])
+        if (fi.TypeName == "StructProperty" && fi.Address)
+            cf.nestedTypeName = ReadStructTypeName(fi.Address);
 
         cached.push_back(std::move(cf));
     }
