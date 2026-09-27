@@ -27,8 +27,9 @@ namespace UE5DumpUI.Helpers;
 /// </remarks>
 public static class TextBoxHomeEndFix
 {
-    /// <summary>Install the fix for every TextBox in the application. Call once, at startup.</summary>
-    public static void Register()
+    /// <summary>Install the fix for every TextBox in the application. Call once, at startup; the
+    /// returned handle removes it again (the headless tests compare with and without it).</summary>
+    public static IDisposable Register()
         => InputElement.KeyDownEvent.AddClassHandler<TextBox>(OnKeyDown, RoutingStrategies.Tunnel);
 
     /// <summary>True when <paramref name="e"/> is one of <paramref name="moves"/> — the platform's
