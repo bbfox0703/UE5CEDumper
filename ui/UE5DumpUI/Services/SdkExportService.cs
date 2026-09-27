@@ -39,7 +39,7 @@ public static class SdkExportService
     {
         var sb = new StringBuilder(classInfo.Fields.Count * 80 + 256);
         EmitFileHeader(sb);
-        EmitClassHeaderFromSchema(sb, classInfo);
+        EmitClassHeaderFromSchema(sb, classInfo, SdkTypeNames.Single(classInfo.Name, classInfo.FullPath, classInfo.SuperName), 0);
         return sb.ToString();
     }
 
@@ -89,7 +89,13 @@ public static class SdkExportService
                 // BlueprintGeneratedClass — which is where 90%+ of
                 // game-specific cheat targets live. Same bug fixed in
                 // the DLL build 673; this is the C# mirror.
-                if (DumpAllService.IsClassLikeMetaName(obj.ClassName) || obj.ClassName == "ScriptStruct")
+                // [SDK-UDS-MISSING] A Blueprint UserDefinedStruct is its own UScriptStruct subclass, so its
+                // row reads "UserDefinedStruct": without it, every Blueprint member of that type named a
+                // struct the header never defined.
+                // Shared with the USMAP collector: class-like metas, native and user-defined
+                // structs, never a class-default object (which came out as an empty
+                // `struct Default__X {}`).
+                if (DumpAllService.IsExportedTypeRow(obj.ClassName, obj.Name))
                     targets.Add((obj.Address, obj.Name, obj.ClassName));
             }
 
@@ -99,12 +105,10 @@ public static class SdkExportService
 
         progress?.Report($"Walking {targets.Count} classes...");
 
-        // 2. Walk each class to get field definitions, batched
-        var sb = new StringBuilder(targets.Count * 512);
-        EmitFileHeader(sb);
-        sb.AppendLine("#pragma once");
-        sb.AppendLine("#include <cstdint>");
-        sb.AppendLine();
+        // 2. Walk each class to get field definitions, batched. Nothing is emitted yet: a type's C++
+        // name depends on every other type of the same name [SDK-TYPE-NAMES], so the whole pool is
+        // walked before the first struct is written.
+        var walks = new ClassInfoModel?[targets.Count];
 
         int walked = 0;
         for (int chunkStart = 0; chunkStart < targets.Count; chunkStart += FullSdkBatchChunkSize)
@@ -140,8 +144,7 @@ public static class SdkExportService
             {
                 for (int i = 0; i < chunkLen; i++)
                 {
-                    EmitClassHeaderFromSchema(sb, batchResult[i]);
-                    sb.AppendLine();
+                    walks[chunkStart + i] = batchResult[i];
                     walked++;
                     if (walked % 50 == 0)
                         progress?.Report($"Walking classes... ({walked}/{targets.Count})");
@@ -153,12 +156,10 @@ public static class SdkExportService
                 for (int i = 0; i < chunkLen; i++)
                 {
                     ct.ThrowIfCancellationRequested();
-                    var (addr, name, _) = targets[chunkStart + i];
+                    var (addr, _, _) = targets[chunkStart + i];
                     try
                     {
-                        var classInfo = await dump.WalkClassAsync(addr, ct);
-                        EmitClassHeaderFromSchema(sb, classInfo);
-                        sb.AppendLine();
+                        walks[chunkStart + i] = await dump.WalkClassAsync(addr, ct);
                     }
                     catch (OperationCanceledException)
                     {
@@ -166,14 +167,63 @@ public static class SdkExportService
                     }
                     catch
                     {
-                        sb.AppendLine($"// ERROR: Failed to walk {name} at {addr}");
-                        sb.AppendLine();
+                        // walks[i] stays null: emitted below as the per-class error line.
                     }
                     walked++;
                     if (walked % 50 == 0)
                         progress?.Report($"Walking classes... ({walked}/{targets.Count})");
                 }
             }
+        }
+
+        // A class the DLL refuses comes back as an EMPTY ClassInfo (Ubel::WalkClassEx), not an error.
+        // Emitted, it would be a real-looking `struct X {}` of size 0 that every derived class sits
+        // on; it gets the failed walk's ERROR line instead, and keeps its GObjects name for them.
+        var refused = new bool[targets.Count];
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (walks[i] is { } w && string.IsNullOrEmpty(w.Name))
+            {
+                walks[i] = null;
+                refused[i] = true;
+            }
+        }
+
+        // 3. Name every type once, against the whole pool, then emit in GObjects order.
+        var entries = new SdkTypeNames.Entry[targets.Count];
+        for (int i = 0; i < targets.Count; i++)
+        {
+            var (addr, name, meta) = targets[i];
+            var info = walks[i];
+            entries[i] = new SdkTypeNames.Entry(
+                addr, info?.Name ?? name, !DumpAllService.IsStructMetaName(meta), info?.FullPath ?? "", info?.PropertiesSize ?? 0);
+        }
+        // A super the pool does not hold is a type the user must supply under its own name, so no
+        // pool type may take that spelling (a pool type named like its missing super would otherwise
+        // come out inheriting from itself).
+        var addresses = new HashSet<string>(targets.Select(t => t.addr), StringComparer.Ordinal);
+        var rawNames = new HashSet<string>(entries.Select(e => e.Name), StringComparer.Ordinal);
+        var outside = walks.Where(w => w is not null && !string.IsNullOrEmpty(w.SuperName)
+                                       && (string.IsNullOrEmpty(w.SuperAddress)
+                                               ? !rawNames.Contains(w.SuperName)
+                                               : !addresses.Contains(w.SuperAddress)))
+                           .Select(w => w!.SuperName);
+        var names = new SdkTypeNames(entries, outside);
+
+        var sb = new StringBuilder(targets.Count * 512);
+        EmitFileHeader(sb);
+        sb.AppendLine("#pragma once");
+        sb.AppendLine("#include <cstdint>");
+        sb.AppendLine();
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (walks[i] is { } info)
+                EmitClassHeaderFromSchema(sb, info, names, i);
+            else if (refused[i])
+                sb.AppendLine($"// ERROR: Failed to walk {targets[i].name} at {targets[i].addr} (the DLL returned an empty class)");
+            else
+                sb.AppendLine($"// ERROR: Failed to walk {targets[i].name} at {targets[i].addr}");
+            sb.AppendLine();
         }
 
         progress?.Report($"Generated SDK with {walked} classes");
@@ -199,28 +249,80 @@ public static class SdkExportService
     /// <summary>
     /// Map a UE property to its C++ declaration, using FieldInfoModel metadata.
     /// </summary>
-    internal static CppDecl MapCppDecl(FieldInfoModel field)
+    /// <param name="names">The pool the header's types are named against; none means a reference is
+    /// only sanitised [SDK-TYPE-NAMES].</param>
+    /// <param name="fromPath">The referring type's path: picks the nearest of several same-named holders.</param>
+    internal static CppDecl MapCppDecl(FieldInfoModel field, SdkTypeNames? names = null, string? fromPath = null)
     {
+        var t = names ?? SdkTypeNames.None;
+        string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
+        string C(string n) => t.Reference(n, SdkTypeNames.Kind.Class, fromPath);
         return MapCppDeclCore(
-            field.TypeName, field.StructType, field.ObjClassName,
-            field.InnerType, field.InnerStructType, field.InnerObjClass,
-            field.KeyType, field.KeyStructType, field.ValueType, field.ValueStructType,
-            field.ElemType, field.ElemStructType, field.EnumName,
-            field.BoolFieldMask, field.Size);
+            field.TypeName, S(field.StructType, field.Size), C(field.ObjClassName),
+            field.InnerType, S(field.InnerStructType), C(field.InnerObjClass),
+            field.KeyType, S(field.KeyStructType), field.ValueType, S(field.ValueStructType),
+            field.ElemType, S(field.ElemStructType), t.Reference(field.EnumName, SdkTypeNames.Kind.Enum, fromPath),
+            field.BoolFieldMask, field.Size,
+            ClassValuedCpp(field.TypeName, field.ObjClassName, field.MetaClassName, C),
+            ClassValuedCpp(field.InnerType, field.InnerObjClass, field.InnerMetaClass, C),
+            ClassValuedCpp(field.KeyType, field.KeyObjClass, field.KeyMetaClass, C),
+            ClassValuedCpp(field.ValueType, field.ValueObjClass, field.ValueMetaClass, C),
+            ClassValuedCpp(field.ElemType, field.ElemObjClass, field.ElemMetaClass, C),
+            C(field.KeyObjClass), C(field.ValueObjClass), C(field.ElemObjClass));
     }
 
     /// <summary>
     /// Map a UE property to its C++ declaration, using LiveFieldValue metadata.
+    /// <para>[SDK-LIVE-VALUE-TYPES] A live row describes what the instance HOLDS: its
+    /// <c>EnumName</c> is the enum VALUE's name and its <c>PtrClassName</c> the pointee's RUNTIME
+    /// class. Neither is a type, so neither is used as one: an enum is an integer of its size and a
+    /// pointee is UObject. The struct names a live row carries are read from the declared property
+    /// and stay. Live Walker exports from <c>walk_class</c> whenever it can; this is its fallback.</para>
     /// </summary>
-    internal static CppDecl MapCppDecl(LiveFieldValue field)
+    internal static CppDecl MapCppDecl(LiveFieldValue field, SdkTypeNames? names = null, string? fromPath = null)
     {
+        var t = names ?? SdkTypeNames.None;
+        string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
         return MapCppDeclCore(
-            field.TypeName, field.StructTypeName, field.PtrClassName,
-            field.ArrayInnerType, field.ArrayStructType, "",
-            field.MapKeyType, field.MapKeyStructType, field.MapValueType, field.MapValueStructType,
-            field.SetElemType, field.SetElemStructType, field.EnumName,
+            field.TypeName, S(field.StructTypeName, field.Size), "",
+            field.ArrayInnerType, S(field.ArrayStructType), "",
+            field.MapKeyType, S(field.MapKeyStructType), field.MapValueType, S(field.MapValueStructType),
+            field.SetElemType, S(field.SetElemStructType), "",
             field.BoolFieldMask, field.Size);
     }
+
+    /// <summary>
+    /// [SDK-METACLASS] The C++ of a class-valued property, or null for any other type. <c>obj_class</c>
+    /// is its PropertyClass: <c>Class</c> for a TSubclassOf -- but UHT also turns
+    /// <c>TObjectPtr&lt;UBlueprintGeneratedClass&gt;</c> / <c>TObjectPtr&lt;UVerseClass&gt;</c> into a
+    /// ClassProperty whose PropertyClass is that class and whose MetaClass is Object, which is a pointer
+    /// to it, not a TSubclassOf of it. <c>meta_class</c> is the class a TSubclassOf / TSoftClassPtr holds
+    /// a subclass of; Object means any class, and an older DLL sends none. The decision is taken on the
+    /// UE names; <paramref name="resolve"/> spells them for the header.
+    /// </summary>
+    private static string? ClassValuedCpp(string propertyType, string propertyClass, string metaClass,
+                                          Func<string, string> resolve)
+    {
+        bool knownMeta = !string.IsNullOrEmpty(metaClass) && metaClass != "Object";
+        return propertyType switch
+        {
+            "ClassProperty" when !string.IsNullOrEmpty(propertyClass) && propertyClass != "Class"
+                => $"class {resolve(propertyClass)}*",
+            "ClassProperty" => knownMeta ? $"TSubclassOf<class {resolve(metaClass)}>" : "UClass*",
+            "SoftClassProperty" => knownMeta ? $"TSoftClassPtr<class {resolve(metaClass)}>" : "TSoftClassPtr<UObject>",
+            _ => null,
+        };
+    }
+
+    /// <summary>An unsigned integer of the given byte size, or null for a size no integer has.</summary>
+    private static string? UnsignedOfSize(int size) => size switch
+    {
+        1 => "uint8_t",
+        2 => "uint16_t",
+        4 => "uint32_t",
+        8 => "uint64_t",
+        _ => null,
+    };
 
     /// <summary>
     /// The raw-byte fallback: a property we have no C++ spelling for is declared as a byte array
@@ -241,7 +343,10 @@ public static class SdkExportService
         string innerType, string innerStructType, string innerObjClass,
         string keyType, string keyStructType, string valueType, string valueStructType,
         string elemType, string elemStructType, string enumName,
-        int boolFieldMask, int size)
+        int boolFieldMask, int size,
+        string? classCpp = null, string? innerClassCpp = null, string? keyClassCpp = null,
+        string? valueClassCpp = null, string? elemClassCpp = null,
+        string keyObjClass = "", string valueObjClass = "", string elemObjClass = "")
     {
         // `null` means "no C++ spelling for this" and is the ONLY route to the raw-byte fallback,
         // so the extent can never be smuggled into a type string again.
@@ -266,18 +371,15 @@ public static class SdkExportService
             "TextProperty" => "FText",
 
             "ObjectProperty" => FormatPtrType("class", objClassName, "UObject"),
-            "ClassProperty" => !string.IsNullOrEmpty(objClassName)
-                ? $"TSubclassOf<class {objClassName}>"
-                : "UClass*",
+            // [SDK-METACLASS] decided by ClassValuedCpp; a live row carries no MetaClass.
+            "ClassProperty" => classCpp ?? "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TWeakObjectPtr<class {objClassName}>"
                 : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TSoftObjectPtr<class {objClassName}>"
                 : "TSoftObjectPtr<UObject>",
-            "SoftClassProperty" => !string.IsNullOrEmpty(objClassName)
-                ? $"TSoftClassPtr<class {objClassName}>"
-                : "TSoftClassPtr<UObject>",
+            "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClassName)
                 ? $"TScriptInterface<class {objClassName}>"
                 : "TScriptInterface<IInterface>",
@@ -289,11 +391,14 @@ public static class SdkExportService
                 ? $"struct {structType}"
                 : null,   // unresolved struct → raw bytes, extent AFTER the identifier
 
-            "ArrayProperty" => $"TArray<{MapInnerCppType(innerType, innerStructType, innerObjClass)}>",
-            "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, "")}, {MapInnerCppType(valueType, valueStructType, "")}>",
-            "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, "")}>",
+            "ArrayProperty" => $"TArray<{MapInnerCppType(innerType, innerStructType, innerObjClass, innerClassCpp)}>",
+            // [SDK-CONTAINER-OBJCLASS] a key / value / element of the object family names its class, as an Array inner does
+            "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, keyObjClass, keyClassCpp)}, {MapInnerCppType(valueType, valueStructType, valueObjClass, valueClassCpp)}>",
+            "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, elemObjClass, elemClassCpp)}>",
 
-            "EnumProperty" => !string.IsNullOrEmpty(enumName) ? enumName : "uint8_t",
+            // With no known enum type, an integer of the property's own size: a 4-byte enum declared
+            // uint8_t shifts every member after it, because the padding pass trusts the row's Size.
+            "EnumProperty" => !string.IsNullOrEmpty(enumName) ? enumName : UnsignedOfSize(size),
             "ByteProperty" => !string.IsNullOrEmpty(enumName) ? enumName : "uint8_t",
 
             "DelegateProperty" => "FScriptDelegate",
@@ -315,7 +420,8 @@ public static class SdkExportService
         return $"{prefix} {name}*";
     }
 
-    private static string MapInnerCppType(string innerType, string structType, string objClass)
+    private static string MapInnerCppType(string innerType, string structType, string objClass,
+                                          string? classCpp = null)
     {
         if (string.IsNullOrEmpty(innerType)) return "uint8_t";
 
@@ -323,11 +429,11 @@ public static class SdkExportService
         {
             "StructProperty" => !string.IsNullOrEmpty(structType) ? $"struct {structType}" : "uint8_t",
             "ObjectProperty" => FormatPtrType("class", objClass, "UObject"),
-            "ClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSubclassOf<class {objClass}>" : "UClass*",
+            "ClassProperty" => classCpp ?? "UClass*",
             "WeakObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TWeakObjectPtr<class {objClass}>" : "TWeakObjectPtr<UObject>",
             "SoftObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftObjectPtr<class {objClass}>" : "TSoftObjectPtr<UObject>",
             // [P3-SDK-INNERS] The scalar path's spellings, copied: a container of these was declared uint8_t.
-            "SoftClassProperty" => !string.IsNullOrEmpty(objClass) ? $"TSoftClassPtr<class {objClass}>" : "TSoftClassPtr<UObject>",
+            "SoftClassProperty" => classCpp ?? "TSoftClassPtr<UObject>",
             "LazyObjectProperty" => !string.IsNullOrEmpty(objClass) ? $"TLazyObjectPtr<class {objClass}>" : "TLazyObjectPtr<UObject>",
             "InterfaceProperty" => !string.IsNullOrEmpty(objClass) ? $"TScriptInterface<class {objClass}>" : "TScriptInterface<IInterface>",
             _ => MapScalarInnerType(innerType),
@@ -370,34 +476,37 @@ public static class SdkExportService
         sb.AppendLine();
     }
 
-    private static void EmitClassHeaderFromSchema(StringBuilder sb, ClassInfoModel classInfo)
+    private static void EmitClassHeaderFromSchema(StringBuilder sb, ClassInfoModel classInfo,
+                                                  SdkTypeNames names, int index)
     {
-        var className = classInfo.Name;
         var superName = classInfo.SuperName;
-        var propsSize = classInfo.PropertiesSize;
         var fullPath = classInfo.FullPath;
 
-        // Class header comment
-        sb.Append("// ");
-        sb.Append(!string.IsNullOrEmpty(fullPath) ? fullPath : className);
-        sb.AppendLine();
+        EmitStructOpening(sb, !string.IsNullOrEmpty(fullPath) ? fullPath : classInfo.Name,
+            names.NameAt(index),
+            string.IsNullOrEmpty(superName) ? "" : names.Super(index, classInfo.SuperAddress, superName));
 
-        // Struct declaration
-        sb.Append("struct ");
-        sb.Append(className);
-        if (!string.IsNullOrEmpty(superName))
-        {
-            sb.Append(" : public ");
-            sb.Append(superName);
-        }
-        sb.AppendLine();
-        sb.AppendLine("{");
-
+        // The RAW super name still decides whether there is a super at all (PropertyOwnership).
         EmitStructBody(
             sb,
             classInfo.Fields.Select(f => new SdkField(
-                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
-            superName, classInfo.SuperPropertiesSize, propsSize, classInfo.OwnPropertiesStart);
+                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f, names, fullPath))).ToList(),
+            superName, classInfo.SuperPropertiesSize, classInfo.PropertiesSize, classInfo.OwnPropertiesStart);
+    }
+
+    /// <summary>
+    /// The comment naming the UE type, then <c>struct X : public Y</c> and the opening brace. The
+    /// comment carries the UE name or path verbatim; <paramref name="cppName"/> and
+    /// <paramref name="cppSuper"/> are already the C++ names [SDK-TYPE-NAMES].
+    /// </summary>
+    private static void EmitStructOpening(StringBuilder sb, string ueLabel, string cppName, string cppSuper)
+    {
+        sb.Append("// ").Append(ueLabel.Replace('\r', ' ').Replace('\n', ' ')).AppendLine();
+        sb.Append("struct ").Append(cppName);
+        if (!string.IsNullOrEmpty(cppSuper))
+            sb.Append(" : public ").Append(cppSuper);
+        sb.AppendLine();
+        sb.AppendLine("{");
     }
 
     /// <summary>
@@ -405,7 +514,8 @@ public static class SdkExportService
     /// keeping two copies of it. They had two, and both carried the same two defects.
     /// </summary>
     private readonly record struct SdkField(
-        string Name, int Offset, int Size, string TypeName, int BoolMask, CppDecl Decl);
+        string Name, int Offset, int Size, string TypeName, int BoolMask, CppDecl Decl,
+        string? UeName = null);   // set only when Name had to differ from the UE name
 
     /// <summary>
     /// Emit the member list, padding and closing brace for one struct.
@@ -458,6 +568,17 @@ public static class SdkExportService
         var own = sorted.Where(f => f.Offset >= ownStart).ToList();
         int cursor = ownStart;
 
+        // [SDK-MEMBER-NAMES] A UE name is not a C++ identifier: keywords, duplicates, spaces, a
+        // generated Pad_XXXX and a type the struct spells all stopped the header compiling.
+        // Named once, here, so the plain and the bitfield paths below cannot disagree.
+        int layoutEnd = Math.Max(propsSize, own.Count > 0 ? own.Max(f => f.Offset + f.Size) : 0);
+        var names = SdkMemberNames.Assign(own.ConvertAll(f => f.Name), own.Select(f => f.Decl.Type), layoutEnd);
+        for (int k = 0; k < own.Count; k++)
+        {
+            if (!string.Equals(names[k], own[k].Name, StringComparison.Ordinal))
+                own[k] = own[k] with { Name = names[k], UeName = own[k].Name };
+        }
+
         for (int i = 0; i < own.Count; i++)
         {
             // Collect every field sharing this offset — a packed bitfield byte if they all
@@ -482,7 +603,7 @@ public static class SdkExportService
                     // `type name[extent];` — the extent MUST follow the identifier. See CppDecl.
                     sb.Append("    ").Append(f.Decl.Type).Append(' ').Append(f.Name)
                       .Append(f.Decl.ArraySuffix).Append(';')
-                      .Append(BuildFieldComment(f.Offset, f.Size, f.TypeName, f.BoolMask))
+                      .Append(BuildFieldComment(f.Offset, f.Size, f.TypeName, f.BoolMask, f.UeName))
                       .AppendLine();
                 }
                 cursor = own[i].Offset + group[^1].Size;
@@ -537,7 +658,7 @@ public static class SdkExportService
                 pendingFiller = 0;
             }
             sb.Append("    uint8_t ").Append(field.Name).Append(" : 1;")
-              .Append(BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolMask))
+              .Append(BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolMask, field.UeName))
               .AppendLine();
         }
         // Trailing unused bits need no filler: the next member starts on a fresh byte anyway.
@@ -548,26 +669,18 @@ public static class SdkExportService
         IReadOnlyList<LiveFieldValue> fields, string? fullPath, int superPropsSize,
         int ownPropsStart)
     {
-        sb.Append("// ");
-        sb.Append(!string.IsNullOrEmpty(fullPath) ? fullPath : className);
-        sb.AppendLine();
-
-        sb.Append("struct ");
-        sb.Append(className);
-        if (!string.IsNullOrEmpty(superName))
-        {
-            sb.Append(" : public ");
-            sb.Append(superName);
-        }
-        sb.AppendLine();
-        sb.AppendLine("{");
+        // One struct, no pool: its own name is the only one references can resolve to.
+        var names = SdkTypeNames.Single(className, fullPath, superName);
+        EmitStructOpening(sb, !string.IsNullOrEmpty(fullPath) ? fullPath : className,
+            names.NameAt(0),
+            string.IsNullOrEmpty(superName) ? "" : names.Super(0, null, superName));
 
         EmitStructBody(
             sb,
             // [P3-SDK-GUESSED] Live Walker's "Guess?" rows are excluded from every export (commit 860245b0), and
             // their "?0x..." names do not compile. Their bytes stay covered, as padding.
             fields.Where(f => !f.IsGuessed).Select(f => new SdkField(
-                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f))).ToList(),
+                f.Name, f.Offset, f.Size, f.TypeName, f.BoolFieldMask, MapCppDecl(f, names, fullPath))).ToList(),
             superName, superPropsSize, propsSize, ownPropsStart);
     }
 
@@ -582,7 +695,8 @@ public static class SdkExportService
         sb.AppendLine();
     }
 
-    private static string BuildFieldComment(int offset, int size, string typeName, int boolMask)
+    private static string BuildFieldComment(int offset, int size, string typeName, int boolMask,
+                                            string? ueName = null)
     {
         var sb = new StringBuilder(60);
         sb.Append(" // 0x");
@@ -597,6 +711,10 @@ public static class SdkExportService
             sb.Append(boolMask.ToString("X2"));
             sb.Append(']');
         }
+        // A renamed member keeps its real name findable: that is what anyone searching the header
+        // types. A line break inside it would end the comment and put the rest of the name in code.
+        if (ueName is not null)
+            sb.Append(" [UE name: ").Append(ueName.Replace('\r', ' ').Replace('\n', ' ')).Append(']');
         return sb.ToString();
     }
 

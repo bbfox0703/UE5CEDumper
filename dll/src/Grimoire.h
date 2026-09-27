@@ -756,7 +756,9 @@ constexpr int FunctionTailShiftFor(unsigned ueVersion) {
 // Offset_Internal moves ahead of RepNotifyFunc, shortening the tail by 4. 4.11-4.17 is
 // SEVEN versions inside our supported range, so a flat +0x2C would have been wrong there.
 // The CPN +8 is the usual padded-FName SLOT delta (RepNotifyFunc is an FName followed by
-// 8-aligned pointers) -- see bCasePreservingName.
+// 8-aligned pointers) -- see bCasePreservingName -- and it exists from 4.18 only. Before 4.18 the
+// 12-byte FName sits BEFORE Offset_Internal and moves Offset_Internal itself (0x50 -> 0x58), so the
+// tail stays 0x28: case-preserving 4.15 starts at 0x80, not 0x88 (review wf_b99fb861-680, F3).
 //
 // ⚠ KEEP Ubel's { base, ±4, +8, -8 } probe spread. It is what makes a misdetected version
 // survivable: the two live deltas differ by exactly 4 and the CPN case by 8, so both are
@@ -766,7 +768,7 @@ constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
     const int delta = (ueVersion >= 418) ? 0x2C
                     : (ueVersion >= 411) ? 0x28
                     : 0x24;                       // 4.07-4.10, below the floor
-    return offsetInternal + delta + (casePreservingName ? 8 : 0);
+    return offsetInternal + delta + (casePreservingName && ueVersion >= 418 ? 8 : 0);
 }
 
 // The FIRST field of a UProperty subclass -- UStructProperty::Struct, UObjectPropertyBase::
@@ -781,6 +783,23 @@ constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
                             : offsetInternal + 0x2C + (casePreservingName ? 8 : 0);
 }
 
+// [UPROP-SUBCLASS-SLOT] The subclass start from the MEASURED layout, the version only as a fallback. Which of the two
+// UProperty tail orders a build has is readable from the two offsets Genau measures: Offset_Internal - ElementSize is
+// 0x10 when Offset_Internal comes first (4.18+: Offset_Internal, RepNotifyFunc, four pointers) and 0x1C when
+// RepNotifyFunc does (4.11-4.17: RepNotifyFunc, Offset_Internal, four pointers). Reading the order from the version
+// broke on a misdetected one: a 4.11-4.17 title whose detection fails is relabelled 422 and got the 4.18+ tail, a
+// misaligned 0x7C where its start is 0x78 (review wf_b99fb861-680, F1). The pointers are 8-aligned either way, which
+// also makes a case-preserving FName (12 bytes, alignof 4) come out right in both orders.
+constexpr int UPropertySubclassStartFromLayout(int offsetInternal, int elemSizeOff, unsigned ueVersion,
+                                               bool casePreservingName) {
+    const int gap = elemSizeOff >= 0 ? offsetInternal - elemSizeOff : -1;
+    if (gap == 0x10)   // 4.18+ order: Offset_Internal, then RepNotifyFunc
+        return ((offsetInternal + 4 + (casePreservingName ? 12 : 8) + 7) & ~7) + 4 * 8;
+    if (gap == 0x1C)   // 4.11-4.17 order: RepNotifyFunc already behind Offset_Internal
+        return ((offsetInternal + 4 + 7) & ~7) + 4 * 8;
+    return UPropertySubclassStartFor(offsetInternal, ueVersion, casePreservingName);
+}
+
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===
 // Used when bUseFProperty == false (UE4 <4.25).
 // UField::Next is at UObject_TotalSize: 0x28; 0x30 for CPN and on pre-4.25 STATS builds; 0x38
@@ -789,9 +808,15 @@ inline int UFIELD_NEXT        = 0x28;  // UField::Next (standard): 0x28
 inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
 inline int UPROPERTY_FLAGS    = 0x38;  // UProperty::PropertyFlags (uint64)
+// [UPROP-SUBCLASS-SLOT] The UProperty subclass start Genau derived for THIS run -- from the measured layout, or the
+// family it ships on a give-up -- set on every UProperty-mode run; 0 before Genau has run and in FProperty mode. Read it
+// through UPropertySubclassStart (below).
+inline int UPROPERTY_SUBCLASS_START = 0;
 
 // === FEnumProperty / FByteProperty subclass fields ===
-// Both store UEnum* at the same offset relative to FProperty base.
+// NOT at the same offset: FByteProperty's UEnum* is the first subclass field, FEnumProperty's one
+// pointer later -- read either through Ubel::ReadPropertyEnum, which picks the type's own slot
+// ([ENUMSLOT-ANY-NAME]: the DataTable reader read a TEnumAsByte at the EnumProperty slot).
 // Derived from FSTRUCTPROP_STRUCT (same subclass extension offset).
 inline int FBYTEPROP_ENUM       = 0x78;  // FByteProperty::Enum (UEnum*) — first subclass field (== sizeof(FProperty))
 // FEnumProperty has FNumericProperty* UnderlyingProp BEFORE its UEnum* Enum, so Enum sits
@@ -818,8 +843,9 @@ inline int FENUMPROP_ENUM       = 0x80;  // FEnumProperty::Enum (UEnum*) = FBYTE
 // ⚠ G12 recorded "both writers now go through here". There were THREE, and the third was
 // missed: `Ubel.cpp` WalkInstance's StructProperty probe wrote FSTRUCTPROP_STRUCT directly
 // until 2026-09-07, so the split-family failure above stayed reachable by the one path G12
-// had not counted. Writers are now FIVE and all routed: Genau ×3, Ubel::CorrectSubclassOffsets,
-// and Ubel's WalkInstance StructProperty probe.
+// had not counted. Every writer is routed now -- Genau's default and measured arms for BOTH modes,
+// Ubel::CorrectSubclassOffsets, and Ubel's WalkInstance StructProperty probe -- and
+// `tools/check_property_family.py` counts them mechanically instead of this comment.
 // ⛔ ONE deliberate exception, and it is the only one: `Ubel.cpp`'s ArrayProperty probe assigns
 // FARRAYPROP_INNER on its own, because UE5.3+ puts EArrayPropertyFlags before Inner so that
 // member legitimately diverges from the shared base after calibration. It re-probes per field
@@ -847,17 +873,69 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 // WITH_CASE_PRESERVING_NAME, not 8, so the pointer run after it and the subclass extension start
 // 8 bytes later: +0x34. RE-UE4SS's 4.27 templates: Offset_Internal 0x4C -> FStructProperty::Struct
 // 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
+// [FPROP-FAMILY-ALIGN] The +0x2C / +0x34 were right only while Offset_Internal sat on an 8-byte boundary minus 4. A UE
+// 5.7 build with WITH_EDITORONLY_DATA / WITH_METADATA puts an int32 before Offset_Internal (UE_5.7 UnrealType.h) and
+// moves it to 0x48: the flat +0x2C gave 0x74 where the struct is at 0x78, and TQ2 logged the later correction
+// (`CorrectSubclassOffsets: delta=4`). The fix is the same sum rounded UP to 8, and the rounding is at the END on
+// purpose: from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8 UnrealType.h), so on an 8-aligned
+// Offset_Internal -- which only a 5.3+ editor-data build has; 4.25-5.2 keep it at 4 mod 8 -- the pointers start at the
+// next boundary and the FName ends the object, which sizeof rounds up. Case-preserving 0x48 is 0x80 and a 5.5+ editor's
+// 0x50 is 0x88; the first version of this fix modelled the 4.25-5.2 order (FName, then align) and gave 0x78 / 0x80
+// (review wf_b99fb861-680, F2). At the 4-mod-8 values every build uses, both orders give the same start.
 inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
-    return PropertyFamilyAtBase(propOffsetOff + (casePreservingName ? 0x34 : 0x2C));
+    return PropertyFamilyAtBase((propOffsetOff + (casePreservingName ? 0x34 : 0x2C) + 7) & ~7);
+}
+
+// [UPROP-SUBCLASS-SLOT] The same five slots on a UProperty engine (UE < 4.25), at the version's
+// subclass start -- UStructProperty::Struct, UObjectPropertyBase::PropertyClass, UArrayProperty::Inner,
+// UByteProperty::Enum and UBoolProperty::FieldSize all sit right behind the UProperty base, and
+// UEnumProperty::Enum 8 later behind UnderlyingProp (UE_4.18 / 4.23 UnrealType.h, EnumProperty.h).
+// Genau used to derive only the bool slot there, so the rest kept the FProperty default 0x78 -- on
+// stock 4.18-4.24 (start 0x70) past the end of a UStructProperty and ON a UClassProperty's
+// MetaClass. UE423_Flying: 2,624 of 2,624 struct members read as raw bytes after a fresh connect.
+inline constexpr PropertyFamily UPropertyFamilyFor(int offsetInternal, unsigned ueVersion,
+                                                   bool casePreservingName) {
+    return PropertyFamilyAtBase(UPropertySubclassStartFor(offsetInternal, ueVersion, casePreservingName));
+}
+
+// The family a UProperty engine starts from before anything is measured -- what a give-up exit ships. Only for
+// 4.18+ (and an unknown version): stock Offset_Internal 0x44, 0x4C case-preserving (the 12-byte FName moves the
+// whole UObject head 8 on). 4.11-4.17 get none, because their stock start (Offset_Internal 0x50 + 0x28) IS the
+// FProperty default 0x78 already, and UPROPERTY_OFFSET's 0x44 default -- the 4.18+ layout -- derives 0x6C there.
+inline constexpr bool UPropertyHasDefaultFamily(unsigned ueVersion) {
+    return ueVersion == 0 || ueVersion >= 418;
+}
+inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool casePreservingName) {
+    return UPropertyFamilyFor(casePreservingName ? 0x4C : 0x44, ueVersion, casePreservingName);
+}
+
+// [FAMILY-EPOCH] Bumped each time ApplyPropertyFamily MOVES the family's base. Every memo cache whose content was read
+// through the family keys its entries by FamilyCacheKey -- (epoch, address) -- so a class walked before a late
+// correction is walked again after it instead of serving the old slot's answer for the rest of the session. Nothing
+// is erased: an entry of an older epoch stays put, so a `const&` already handed out stays valid, and the moves are
+// few (at most one per session in every log measured). Moves after init were measured on UE423_Flying (0x78 -> 0x70),
+// DQ XI S (0x78 -> 0x80) and TQ2 (0x74 -> 0x78) before their causes were fixed. The base alone decides "moved":
+// FARRAYPROP_INNER legitimately diverges after calibration (see above), and resetting it is not a move.
+inline std::atomic<uint32_t> g_propertyFamilyEpoch{0};
+
+// User-space addresses stay below 2^47, so the epoch in the top 16 bits cannot collide with an address.
+// ⚠ It reads the epoch afresh on every call, so a builder takes its key ONCE, before its first read through the family,
+// and publishes under THAT key. A key taken at publish time filed an answer that a concurrent move had overtaken under
+// the NEW epoch, where it was served for the rest of the session (review wf_b99fb861-680, F4); taken first, the same
+// race files it under a dead epoch, and the class is simply built again.
+inline uintptr_t FamilyCacheKey(uintptr_t addr) {
+    return (static_cast<uintptr_t>(g_propertyFamilyEpoch.load(std::memory_order_acquire)) << 48) ^ addr;
 }
 
 // Publish all five together. Never assign a member of this family directly.
 inline void ApplyPropertyFamily(const PropertyFamily& f) {
+    const bool moved = FSTRUCTPROP_STRUCT != f.structProp;
     FSTRUCTPROP_STRUCT  = f.structProp;
     FARRAYPROP_INNER    = f.arrayInner;
     FBOOLPROP_FIELDSIZE = f.boolFieldSize;
     FBYTEPROP_ENUM      = f.byteEnum;
     FENUMPROP_ENUM      = f.enumEnum;
+    if (moved) g_propertyFamilyEpoch.fetch_add(1, std::memory_order_acq_rel);
 }
 
 // === UEnum — lazy-detected by DetectUEnumNames() ===
@@ -892,6 +970,16 @@ inline std::atomic<bool> bUEnumNamesFailed{false};
 // ⚠ Member ORDER also moves and is a separate axis: Number is at +4 from UE 5.1, but at +8
 // on a CasePreserving build of UE <= 5.0 / UE4 (DisplayIndex comes second there).
 inline bool bCasePreservingName  = false;
+
+// [UPROP-SUBCLASS-SLOT] The start for a reader that does not go through the family: the one Genau derived, else the
+// version's. The readers used the version formula on its own, so on a layout whose version is misdetected -- a
+// 4.11-4.17 title relabelled 422 -- they read 0x7C where Genau had put the family at the layout's 0x78: a class-valued
+// member lost its MetaClass, a UFunction parameter its struct / class (review of build 3594).
+inline int UPropertySubclassStart(unsigned ueVersion) {
+    return UPROPERTY_SUBCLASS_START > 0
+        ? UPROPERTY_SUBCLASS_START
+        : UPropertySubclassStartFor(UPROPERTY_OFFSET, ueVersion, bCasePreservingName);
+}
 
 // ⭐ ASK THE QUESTION BY NAME. The rule above was already written down and was still copied
 // wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`

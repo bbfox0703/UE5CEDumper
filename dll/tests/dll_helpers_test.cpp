@@ -3017,6 +3017,45 @@ static void Test_CanonicalizeObjectPath() {
     EXPECT_EQ_STR("leaf: bare name is its own leaf", PathLeafName("Actor"), "Actor");
 }
 
+// IsListedEnumObject: what list_enums publishes, and so what a .usmap can name. [USMAP-UDE-MISSING]
+// A Blueprint UserDefinedEnum is its own UEnum subclass, so a `== "Enum"` test dropped every one
+// (EVERSPACE 2's STRCT_PlanetType.Type names EPlanetTypes, a cooked UserDefinedEnum); and the
+// class-default object Default__Enum passed it, because a CDO's row reads its metaclass.
+static void Test_IsListedEnumObject() {
+    using Aura::IsListedEnumObject;
+    EXPECT("enum: native UEnum",                 IsListedEnumObject("Enum", "EMovementMode"));
+    EXPECT("enum: Blueprint UserDefinedEnum",    IsListedEnumObject("UserDefinedEnum", "EPlanetTypes"));
+    EXPECT("enum: not the UEnum CDO",           !IsListedEnumObject("Enum", "Default__Enum"));
+    EXPECT("enum: not the UserDefinedEnum CDO", !IsListedEnumObject("UserDefinedEnum", "Default__UserDefinedEnum"));
+    EXPECT("enum: not a struct",                !IsListedEnumObject("UserDefinedStruct", "S_Item"));
+    EXPECT("enum: not a class",                 !IsListedEnumObject("Class", "Actor"));
+    // The class-only pre-filter list_enums runs before it resolves an object's name must agree with it.
+    EXPECT("enum class: Enum",                   Aura::IsListedEnumClass("Enum"));
+    EXPECT("enum class: UserDefinedEnum",        Aura::IsListedEnumClass("UserDefinedEnum"));
+    EXPECT("enum class: not UserDefinedStruct", !Aura::IsListedEnumClass("UserDefinedStruct"));
+}
+
+// IsListedClassObject: what the class enumerators take for a class. [LISTCLASSES-METACLASS-CDO]
+// A metaclass's class-default object reads its metaclass as its own class, so the class-like
+// meta test alone admitted Default__Class and its siblings as classes.
+static void Test_IsListedClassObject() {
+    using Aura::IsListedClassObject;
+    EXPECT("class: a native class",                 IsListedClassObject("Class", "Actor"));
+    EXPECT("class: UClass itself",                  IsListedClassObject("Class", "Class"));
+    EXPECT("class: a Blueprint class",              IsListedClassObject("BlueprintGeneratedClass", "BP_Hero_C"));
+    EXPECT("class: a cooked dynamic class",         IsListedClassObject("DynamicClass", "BP_Door_C"));
+    EXPECT("class: not UClass's CDO",              !IsListedClassObject("Class", "Default__Class"));
+    EXPECT("class: not the BGC metaclass's CDO",   !IsListedClassObject("BlueprintGeneratedClass",
+                                                                         "Default__BlueprintGeneratedClass"));
+    EXPECT("class: not the Widget BGC's CDO",      !IsListedClassObject("WidgetBlueprintGeneratedClass",
+                                                                         "Default__WidgetBlueprintGeneratedClass"));
+    EXPECT("class: not an instance",               !IsListedClassObject("Actor", "Actor_0"));
+    EXPECT("class: not a struct",                  !IsListedClassObject("ScriptStruct", "Vector"));
+    // The meta-only pre-filter the enumerators run before resolving a name must agree with it.
+    EXPECT("class meta: AnimBlueprintGeneratedClass", Aura::IsClassLikeMeta("AnimBlueprintGeneratedClass"));
+    EXPECT("class meta: not ScriptStruct",           !Aura::IsClassLikeMeta("ScriptStruct"));
+}
+
 // IsReflectionMetaClass: the Object Tree "Instances only" server-side gate. MUST match
 // the C# Helpers/ReflectionMetaClassifier — excludes the FULL reflection/type layer, not
 // just class-like metas (else UFunction/UScriptStruct/UPackage/UEnum leak through).
@@ -6652,8 +6691,9 @@ static void Test_UBoolPropFieldSize() {
         //   true   : 4.20, CasePreserving, Offset_Internal 0x50  -> 0x50 + 0x2C + 8 = 0x84
         //   guessed: misdetected as 4.15 AND CPN missed          -> 0x50 + 0x28 + 0 = 0x78
         // Direction matters and is why this is a THIRD assertion rather than a sum of the two
-        // above: misdetecting the version HIGH while missing CPN partially CANCELS (+4 then -8,
-        // net -4, still inside). Only a LOW version miss stacks with a missed CPN.
+        // above: a HIGH version miss with a missed CPN is off by 4 only (the counter-case below;
+        // before 4.18 case-preserving adds nothing to the tail, so there is no -8 to cancel).
+        // Only a LOW version miss stacks with a missed CPN.
         // RE-UE4SS ships a real-world shape that can land here: Kingdom Hearts 3's config carries
         // the pre-4.18 tail order (RepNotifyFunc before Offset_Internal), i.e. exactly the layout
         // that invites a low version guess.
@@ -6667,11 +6707,14 @@ static void Test_UBoolPropFieldSize() {
                (trueBoth - wrongBoth) != 0 && (trueBoth - wrongBoth) != 4
                && (trueBoth - wrongBoth) != -4 && (trueBoth - wrongBoth) != 8
                && (trueBoth - wrongBoth) != -8);
-        // The counter-case, so the claim above is not mistaken for "any two errors escape":
-        const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x50, 420, false);
-        const int trueLoCpn     = UBoolPropFieldSizeFor(0x50, 415, true);
-        EXPECT("A6: a HIGH version miss partially cancels a missed CPN -- net 4, still inside",
-               trueLoCpn - hiMissCpnMiss == 4);
+        // The counter-case, so the claim above is not mistaken for "any two errors escape". It used a case-preserving
+        // 4.15 at Offset_Internal 0x50 with the +8, a layout no engine builds: before 4.18 the 12-byte FName moves
+        // Offset_Internal itself to 0x58 and adds nothing to the tail (review wf_b99fb861-680, F3). On the real layout
+        // a HIGH version miss that also misses CPN is off by 4 -- still inside.
+        const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x58, 420, false);
+        const int trueLoCpn     = UBoolPropFieldSizeFor(0x58, 415, true);
+        EXPECT("A6: a HIGH version miss with a missed CPN on real case-preserving 4.15 is off by 4 -- still inside",
+               hiMissCpnMiss - trueLoCpn == 4);
     }
 
     // --- every result must be a plausible offset, and strictly past Offset_Internal ---
@@ -6682,6 +6725,84 @@ static void Test_UBoolPropFieldSize() {
             EXPECT("A6: FieldSize is 4-aligned", (r % 4) == 0);
         }
     }
+}
+
+// [FPROP-FAMILY-ALIGN] The FProperty family starts at sizeof(FProperty), which ends in pointers and so is always a
+// multiple of 8. A UE 5.7 build that keeps WITH_EDITORONLY_DATA / WITH_METADATA puts an int32 before Offset_Internal
+// (UE_5.7 UnrealType.h), so Offset_Internal lands at 0x48 and Offset_Internal + 0x2C is 0x74 -- four short of the
+// real 0x78. TQ2 logged exactly that correction, `CorrectSubclassOffsets: delta=4, FSTRUCTPROP 0x74 -> 0x78`.
+static void Test_PropertyFamilyForIsAligned() {
+    using DynOff::PropertyFamilyFor;
+    EXPECT("FPROPALIGN: a UE 5.7 editor-data build, Offset_Internal 0x48 -> the family at 0x78",
+           PropertyFamilyFor(0x48, false).structProp == 0x78 && PropertyFamilyFor(0x48, false).enumEnum == 0x80);
+    EXPECT("FPROPALIGN control: UE 5.3+ stock, 0x44 -> 0x70", PropertyFamilyFor(0x44, false).structProp == 0x70);
+    EXPECT("FPROPALIGN control: UE 4.25-5.2 stock, 0x4C -> 0x78", PropertyFamilyFor(0x4C, false).structProp == 0x78);
+    EXPECT("FPROPALIGN control: 4.27 case-preserving, 0x4C -> 0x80", PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    // Review wf_b99fb861-680 (F2): from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8
+    // UnrealType.h), and 4.25-5.2 always put Offset_Internal at 4 mod 8, so an 8-aligned Offset_Internal is a 5.3+
+    // editor-data layout: pointers first, then the FName, then sizeof rounds up to 8. Case-preserving at 0x48 is
+    // 0x50..0x70 + 0x70..0x7C -> 0x80 (this pin said 0x78 for a 4.25-5.2 order no engine builds at 0x48), and a
+    // 5.5+ editor at 0x50 (IndexInOwner) is 0x88. The plain round-up of Offset_Internal + 0x2C / + 0x34 is exact for
+    // both orders at every stock value.
+    EXPECT("FPROPALIGN: case-preserving with Offset_Internal 0x48 (5.3+ order) -> 0x80",
+           PropertyFamilyFor(0x48, true).structProp == 0x80);
+    EXPECT("FPROPALIGN: a 5.5+ editor-data build, case-preserving, Offset_Internal 0x50 -> 0x88",
+           PropertyFamilyFor(0x50, true).structProp == 0x88);
+    EXPECT("FPROPALIGN control: a 5.4 editor, case-preserving, Offset_Internal 0x4C -> 0x80 (the live UnrealEditor log)",
+           PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    EXPECT("FPROPALIGN control: a 4.27 editor, case-preserving, Offset_Internal 0x54 -> 0x88 (the live UE4Editor log)",
+           PropertyFamilyFor(0x54, true).structProp == 0x88);
+    for (int off = 0x30; off <= 0x68; off += 4)
+        for (bool cpn : { false, true })
+            EXPECT("FPROPALIGN: every derived family base is 8-aligned", (PropertyFamilyFor(off, cpn).structProp % 8) == 0);
+}
+
+// [UPROP-SUBCLASS-SLOT] The UProperty family: all five slots at the version's subclass start, UEnumProperty::Enum 8 later.
+static void Test_UPropertyFamilyFor() {
+    using DynOff::UPropertyFamilyFor;
+    const auto f423 = UPropertyFamilyFor(0x44, 423, false);
+    EXPECT("UPROPSLOT: 4.23 stock, Offset_Internal 0x44 -> the family at 0x70",
+           f423.structProp == 0x70 && f423.arrayInner == 0x70 && f423.boolFieldSize == 0x70 && f423.byteEnum == 0x70);
+    EXPECT("UPROPSLOT: ...and UEnumProperty::Enum behind UnderlyingProp at 0x78", f423.enumEnum == 0x78);
+    EXPECT("UPROPSLOT: DQ XI S's shifted 4.18, 0x54 -> 0x80", UPropertyFamilyFor(0x54, 418, false).structProp == 0x80);
+    EXPECT("UPROPSLOT: 4.15 stock, 0x50 -> 0x78 (the 0x28 delta)", UPropertyFamilyFor(0x50, 415, false).structProp == 0x78);
+    EXPECT("UPROPSLOT: case-preserving 4.23, 0x4C -> 0x80", UPropertyFamilyFor(0x4C, 423, true).structProp == 0x80);
+    // Review wf_b99fb861-680 (F3): before 4.18 the 12-byte FName sits BEFORE Offset_Internal and moves it (0x50 ->
+    // 0x58); the tail stays 0x28. The +8 belongs to the 4.18+ order only. Case-preserving 4.15: start 0x80.
+    EXPECT("UPROPSLOT: case-preserving 4.15, 0x58 -> 0x80 (no +8 before 4.18)",
+           UPropertyFamilyFor(0x58, 415, true).structProp == 0x80);
+    EXPECT("A6: case-preserving 4.15's bool slot is the same 0x80",
+           DynOff::UBoolPropFieldSizeFor(0x58, 415, true) == 0x80);
+    // The layout decides the order (review F1): Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from 4.18.
+    using DynOff::UPropertySubclassStartFromLayout;
+    EXPECT("UPROPSLOT layout: 4.15 stock (0x50, ElementSize 0x34) -> 0x78, whatever the version says",
+           UPropertySubclassStartFromLayout(0x50, 0x34, 422, false) == 0x78
+           && UPropertySubclassStartFromLayout(0x50, 0x34, 0, false) == 0x78);
+    EXPECT("UPROPSLOT layout: case-preserving 4.15 (0x58, 0x3C) -> 0x80",
+           UPropertySubclassStartFromLayout(0x58, 0x3C, 415, true) == 0x80);
+    EXPECT("UPROPSLOT layout: 4.23 stock (0x44, 0x34) -> 0x70, even labelled 4.15",
+           UPropertySubclassStartFromLayout(0x44, 0x34, 415, false) == 0x70);
+    EXPECT("UPROPSLOT layout: case-preserving 4.23 (0x4C, 0x3C) -> 0x80",
+           UPropertySubclassStartFromLayout(0x4C, 0x3C, 423, true) == 0x80);
+    EXPECT("UPROPSLOT layout: DQ XI S shifted 4.18 (0x54, 0x44) -> 0x80",
+           UPropertySubclassStartFromLayout(0x54, 0x44, 418, false) == 0x80);
+    EXPECT("UPROPSLOT layout: STATS 4.18 (0x4C, 0x3C) -> 0x78",
+           UPropertySubclassStartFromLayout(0x4C, 0x3C, 418, false) == 0x78);
+    EXPECT("UPROPSLOT layout: an unmeasured ElementSize falls back to the version",
+           UPropertySubclassStartFromLayout(0x50, -1, 415, false) == 0x78
+           && UPropertySubclassStartFromLayout(0x44, -1, 423, false) == 0x70);
+    EXPECT("UPROPSLOT: an unknown version keeps +0x2C", UPropertyFamilyFor(0x44, 0, false).structProp == 0x70);
+    // The unmeasured default a give-up ships: none below 4.18, where the FProperty default 0x78 IS the stock start.
+    EXPECT("UPROPSLOT: 4.23 default family 0x70", DynOff::UPropertyDefaultFamily(423, false).structProp == 0x70);
+    EXPECT("UPROPSLOT: 4.23 case-preserving default 0x80", DynOff::UPropertyDefaultFamily(423, true).structProp == 0x80);
+    EXPECT("UPROPSLOT: an unknown version gets the 4.18+ default", DynOff::UPropertyHasDefaultFamily(0)
+           && DynOff::UPropertyDefaultFamily(0, false).structProp == 0x70);
+    EXPECT("UPROPSLOT: 4.18 gets a default", DynOff::UPropertyHasDefaultFamily(418));
+    EXPECT("UPROPSLOT: 4.17 gets NO default -- 0x44 would derive 0x6C there", !DynOff::UPropertyHasDefaultFamily(417));
+    for (unsigned v : { 411u, 415u, 417u, 418u, 422u, 424u })
+        for (bool cpn : { false, true })
+            EXPECT("UPROPSLOT: the family's base IS the bool slot A6 derives, at every UProperty version",
+                   UPropertyFamilyFor(0x50, v, cpn).structProp == DynOff::UBoolPropFieldSizeFor(0x50, v, cpn));
 }
 
 static void Test_PropertyFamilyIsCoherent() {
@@ -6697,13 +6818,15 @@ static void Test_PropertyFamilyIsCoherent() {
     }
 
     // The two concrete layouts this repo actually ships against. 0x44 is the UE5.1.1+
-    // default Step 2.5 writes; 0x48 is TQ2's measured value.
+    // default Step 2.5 writes; 0x48 is TQ2's measured value. [FPROP-FAMILY-ALIGN] This pinned 0x74 --
+    // the flat +0x2C -- until TQ2's own log showed the struct at 0x78 (`CorrectSubclassOffsets: delta=4,
+    // FSTRUCTPROP 0x74 -> 0x78`): the link pointers are 8-aligned, so the pin had encoded the defect.
     DynOff::PropertyFamily ue5 = DynOff::PropertyFamilyFor(0x44);
     EXPECT("G12: Offset_Internal 0x44 -> family base 0x70", ue5.structProp == 0x70);
     EXPECT("G12: Offset_Internal 0x44 -> EnumProperty 0x78", ue5.enumEnum == 0x78);
 
     DynOff::PropertyFamily tq2 = DynOff::PropertyFamilyFor(0x48);
-    EXPECT("G12: Offset_Internal 0x48 -> family base 0x74", tq2.structProp == 0x74);
+    EXPECT("G12: Offset_Internal 0x48 -> family base 0x78 (TQ2's measured struct slot)", tq2.structProp == 0x78);
 
     // [VND583-11] Case-preserving: RepNotifyFunc is a 12-byte FName, so the family starts 8 later.
     // RE-UE4SS 4.27: Offset_Internal 0x4C -> Struct 0x78; the CasePreserving template: 0x80.
@@ -9075,6 +9198,8 @@ int main() {
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
     RUN(Test_CanonicalizeObjectPath);
+    RUN(Test_IsListedEnumObject);
+    RUN(Test_IsListedClassObject);
     RUN(Test_IsReflectionMetaClass);
     RUN(Test_KeywordMatch);
     RUN(Test_SnapshotNoise_GuardrailAndSets);
@@ -9184,6 +9309,8 @@ int main() {
     RUN(Test_ProcessEventVTableSlot);
     RUN(Test_PersistentPtrEnvelope);
     RUN(Test_UBoolPropFieldSize);
+    RUN(Test_UPropertyFamilyFor);
+    RUN(Test_PropertyFamilyForIsAligned);
     RUN(Test_PropertyFamilyIsCoherent);
     RUN(Test_NameWitness);
     RUN(Test_Holes_NormalizeGuessedType);

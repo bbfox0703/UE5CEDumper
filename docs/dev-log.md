@@ -27,6 +27,208 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3597) — Blueprint structs, classes and enums stay typed when the engine layout was only partly detected `[STRUCTPROBE-ANY-NAME]` `[UPROP-SUBCLASS-SLOT]`
+
+- When the dumper cannot measure the whole engine layout, members typed with a Blueprint struct, Blueprint class
+  or Blueprint enum keep their types. Builds 3595–3596 checked those through a part of the layout that is not
+  measured in that case, and could drop them there.
+- UE4 function parameters take their struct / class type only from a real struct or class, like members do.
+- UE 4.11–4.17 when the layout could not be measured: class-valued members and function parameters read the same
+  slot as everything else.
+- No change on any fixture: every member of every class (UE 4.11, 4.23, 4.27, 5.1, 5.8, DQ XI S) and every
+  function parameter (UE 4.23, DQ XI S) compares identical to build 3596.
+- Correction to build 3596's note: `TEnumAsByte` columns of DataTable rows never showed their enumerator names
+  before — "again" was wrong — and that part is fixed in the code but not checked on a game (no test table has
+  such a column).
+- Build 3597: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `581a75c206f6`; `dist\UE5Dumper.dll` 3,039,232 B,
+  `e3695d12cd0a`. C# 5800/5800, headless 15/15, dll_core 576 checks, dll_helpers 3073.
+
+## 2026-09-28 (build 3596) — enum types, optional structs and UE4 class-valued members get the same checks `[ENUMSLOT-ANY-NAME]` `[OPTSTRUCT-ANY-NAME]` `[UPROP-SUBCLASS-SLOT]`
+
+- The check build 3595 added for struct and object members now also guards enum members: the enum a member is
+  exported with must really be an enum (Blueprint and other enum subclasses included). DataTable rows show the
+  enumerator names of their `TEnumAsByte` columns again; they were looked up one pointer off.
+- `TOptional` members that hold a struct take that struct's real alignment, so the dumper finds where the optional
+  keeps its is-set flag.
+- UE 4.11–4.17 titles whose engine version is not recognised: class-valued members keep their base class and
+  function parameters their struct / class types (build 3594 fixed the member types themselves).
+- No change on any fixture: every member of every class compares identical to build 3595 on UE 4.11, 4.23, 4.27,
+  5.1, 5.8 and DQ XI S.
+- Build 3596: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `0d71c98af627`; `dist\UE5Dumper.dll` 3,038,208 B,
+  `2618dae26829`. C# 5800/5800, headless 15/15, dll_core 563 checks, dll_helpers 3073.
+
+## 2026-09-28 (build 3595) — struct and object types are taken only from a real struct / class `[STRUCTPROBE-ANY-NAME]` `[STRUCTCACHE-ENUM-UNCHECKED]`
+
+- When the dumper reads which struct a struct member holds, or which class an object member points to, it now
+  checks that what it found IS a struct or a class. It used to accept any object with a name, so on a game whose
+  layout it had derived slightly off, a member could be typed by an unrelated object's name, and Live Walker could
+  settle on that object instead of the struct next to it. The same kind of check now guards the enum a byte member
+  of a struct array is shown with.
+- No change on any fixture: every struct and object member of every class compares identical to build 3594 on
+  UE 4.11, 4.23, 4.27, 5.1, 5.8 and DQ XI S (about 445,000 members).
+- Build 3595: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `e4993cc5ea4e`; `dist\UE5Dumper.dll` 3,038,720 B,
+  `1ec9e12edce0`. C# 5800/5800, headless 15/15, dll_core 548 checks, dll_helpers 3073.
+
+## 2026-09-28 (build 3594) — the class list no longer shows the metaclasses' default objects; UE 4.11–4.17 titles with an unrecognised version read their struct and object types right `[LISTCLASSES-METACLASS-CDO]` `[UPROP-SUBCLASS-SLOT]` `[FPROP-FAMILY-ALIGN]` `[FAMILY-EPOCH]`
+
+- **Class list, Property Search, Interesting Functions:** with "Game classes only" unticked, the class list
+  showed five engine objects named `Default__Class`, `Default__BlueprintGeneratedClass`, … as classes with no
+  properties, and every class count was five too high. They are gone (UE 4.23 fixture: 1,869 → 1,864 classes).
+- **UE 4.11–4.17:** when the engine version is not recognised, or the game keeps case-preserving names, the
+  struct / object / enum type slot is now read from the property layout the dumper measures instead of the
+  version, which was 4 or 8 bytes off there. (Build 3592's note on case-preserving UE4 builds held for 4.18–4.24
+  only; 4.11–4.17 are covered now.) The fixtures keep their values: UE 4.23 0x70, UE 4.11 0x78, DQ XI S 0x80.
+- **UE 5.3+ builds that keep editor data and case-preserving names:** the same slot is 8 bytes further on than
+  build 3591 derived; fixed. No fixture has this shape; UE 4.27 and UE 5.8 checked identical.
+- **Safety net:** a class read while the layout is being corrected on another thread is read again afterwards,
+  instead of keeping the old answer.
+- Build 3594: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `417e59b9d2c6`; `dist\UE5Dumper.dll` 3,037,696 B,
+  `a4d36493e7a8`. C# 5800/5800, headless 15/15, dll_core 538 checks, dll_helpers 3073.
+
+## 2026-09-28 (build 3593) — UE 5.0 / 5.1: `TObjectPtr<UClass>` members are typed, and the `.usmap` no longer carries unreadable types `[UE51-CLASSPTRPROP]`
+
+- UE 5.0 and 5.1 give every `TObjectPtr<UClass-derived>` member a property kind of their own that nothing in the
+  dumper recognised: the SDK export wrote them as raw bytes and the USMAP export wrote a type no reader can size
+  (the UE 5.1 fixture: 29 members, 30 USMAP slots). They are treated as the class references they are now — 0
+  raw members, 0 unreadable slots, and every class-valued member of the fixture's engine classes matches UE 5.1's
+  own source (223 of 223).
+- Build 3593: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `5b7c48c53ef6`; `dist\UE5Dumper.dll` 3,037,184 B,
+  `a77169fd1c5a`. C# 5800/5800, headless 15/15, dll_core 517 checks, dll_helpers 3050.
+
+## 2026-09-28 (build 3592) — map and set members name their object classes; UE 4.11–4.17 struct arrays show their element type; walk caches follow a late layout correction `[SDK-CONTAINER-OBJCLASS]` `[UPROP-CONTAINER-FLAT-2C]` `[FAMILY-EPOCH]`
+
+- **SDK export:** a TMap key or value and a TSet element that holds objects now says which class — EVERSPACE 2's
+  header had 125 map sides, 28 set elements and 69 soft / weak pointers written as `UObject`; now none, and every
+  class-valued member of its engine classes matches UE 5.6's own source (304 of 304).
+- **UE 4.11–4.17 (and case-preserving UE4 builds):** Live Walker named no element struct of a struct array
+  (NEKOPALIVE: 0 of 13); it names all 13 now.
+- **Safety net:** if the engine layout the dumper derived is corrected at runtime, every class read before the
+  correction is read again instead of keeping the old answer.
+- Build 3592: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `97172b4c7d87`; `dist\UE5Dumper.dll` 3,036,672 B,
+  `296053b6c66a`. C# 5800/5800, headless 15/15, dll_core 515 checks, dll_helpers 3050.
+
+## 2026-09-28 (build 3591) — the property type slot is derived right on UE 5.7 builds that keep editor data `[FPROP-FAMILY-ALIGN]`
+
+- A UE 5.7 build that keeps its editor data (Titan Quest II) moves one field of the engine's property layout, and
+  the dumper derived the struct / object type slot 4 bytes short there, only correcting itself later at runtime.
+  It is now computed from the layout's alignment and is right at init. Other engines keep exactly the value they
+  had (checked live on UE 4.27 and UE 5.8 fixtures: identical). The Titan Quest II check itself waits on its
+  deployed proxy DLL (build 3553) being updated.
+- Build 3591: AOT `dist\UE5DumpUI.exe` 58,443,776 B, sha256 `d0f6c39d4ea6`; `dist\UE5Dumper.dll` 3,031,552 B,
+  `46d028df7a51`. C# 5798/5798, headless 15/15, dll_core 499 checks, dll_helpers 3050.
+
+## 2026-09-27 (build 3590) — UE 4.18–4.24 containers name their element types; Dump All drops the metaclasses' default objects `[UPROP-INNER-TYPENAME]` `[DUMPALL-METACLASS-CDO]`
+
+- **UE 4.18–4.24:** a TArray / TMap / TSet member now says what it holds. The UE 4.23 fixture's SDK export went
+  from 1,016 `TArray<uint8_t>` and 52 `TMap<uint8_t, uint8_t>` to 28 (byte arrays, and delegate elements the SDK
+  writes as bytes on every engine) and 0, and every
+  class-valued member of its engine classes now matches UE 4.23's own source (174 of 174). DQ XI S and
+  NEKOPALIVE name all their array elements; a UE 4.27 control is unchanged.
+- **Dump All:** `Default__Class`, `Default__BlueprintGeneratedClass` and their siblings are no longer written
+  as classes (checked live on the UE 4.23 fixture: five in GObjects, none in the `.jsonl`).
+- Build 3590: AOT `dist\UE5DumpUI.exe` 58,443,776 B, sha256 `8d112f81707e`; `dist\UE5Dumper.dll` 3,031,552 B,
+  `37353b2cf2fc`. C# 5798/5798, headless 15/15, dll_core 499 checks, dll_helpers 3015.
+
+## 2026-09-27 (build 3589) — UE 4.18–4.24 games get struct, object and enum types back in every export `[UPROP-SUBCLASS-SLOT]`
+
+- **What was wrong:** on UE 4.18–4.24 (UProperty engines) the dumper read every struct / object / enum type from
+  the wrong slot straight after connecting. Only a Live Walker walk happened to repair it, and every class read
+  before that stayed wrong for the session. UE 4.23 fixture, SDK export after a fresh connect: 2,624 of 2,624
+  struct members were raw bytes, 1,038 of 1,038 object pointers `UObject*`, and the `.usmap` named none of its
+  2,628 struct slots. By the code, the same slot also fed the Class Struct panel, Property / Value Search struct
+  fields, snapshots and Dump All on those engines (not measured one by one).
+- **Now:** the slot is derived at init from the measured layout. Same fixture, same order: 0 raw struct members,
+  0 untyped object pointers, 774 enums typed, 2,628 of 2,628 struct slots named in the `.usmap`. DQ XI S (4.18,
+  shifted layout) gets its slot right at init too; NEKOPALIVE (4.11) is unchanged and right; a UE 4.27 control
+  is byte-for-byte the same.
+- Still open on those engines: container element types (`[UPROP-INNER-TYPENAME]`).
+- Build 3589: AOT `dist\UE5DumpUI.exe` 58,443,264 B, sha256 `374b78673b45`; `dist\UE5Dumper.dll` 3,031,552 B,
+  `554d58dad936`. C# 5797/5797, headless 15/15, dll_core 494 checks, dll_helpers 3015.
+
+## 2026-09-27 (builds 3586–3588) — the USMAP export carries Blueprint structs and enums; a class-valued SDK member says which class it holds `[USMAP-UDS-MISSING]` `[USMAP-UDE-MISSING]` `[SDK-METACLASS]`
+
+- **USMAP export:** Blueprint user-defined structs and enums are written, and class-default objects
+  (`Default__Class`, `Default__Enum`, …) are not. Verified live on EVERSPACE 2, same game state before and after:
+  22 of 22 structs and 45 of 45 enums (33 / 55 with a save loaded), 0 undefined references (was 36 struct, 75
+  enum). An independent reader, CUE4Parse, reads every one of them through the new file exactly as the game's own
+  cooked schema describes it.
+- **SDK export:** a class-valued member is declared from the class it holds — `TSubclassOf<class Pawn>
+  DefaultPawnClass` (was `UClass*`), `TSoftClassPtr<class PlayerInput>`, `class BlueprintGeneratedClass*` for a
+  `TObjectPtr<UBlueprintGeneratedClass>`. Checked against the ENGINE SOURCE, not another dumper: 303 of 304
+  class-valued members of EVERSPACE 2's engine classes match UE 5.6 (was 64), 168 of 174 on the UE 4.23 fixture
+  (was 3). The one left on 5.6 and the six on 4.23 are container slots, filed.
+- **Review round (7 agents)** caught a regression before release: on UE 4.18–4.24 the new rule turned every
+  `TSubclassOf` into a plain pointer — fixed red-first in 3588. It also made `list_enums` cheap again on large
+  games and hardened the new oracle.
+- **New rig:** `tools/verify/sdk_source_oracle.py` checks an SDK header's class-valued members against the engine
+  source it came from; its self-test is a gate (ten mutants, all killed).
+- **Found and filed:** `[UPROP-SUBCLASS-SLOT]` (HIGH) — on UE 4.18–4.24 `walk_class` reads struct, object and
+  enum types from the wrong slot after a fresh connect (UE 4.23 fixture: 2,624 of 2,624 struct members raw
+  bytes) — and nine related rows.
+- Build 3586's tests failed on a test-order flake (a freed heap block's address reused a cached class answer),
+  fixed in the test; 3587 carried the three fixes, 3588 the review's. AOT `dist\UE5DumpUI.exe` 58,443,264 B,
+  sha256 `419b93cfa9f3`; `dist\UE5Dumper.dll` `13687eeaa9b3`. C# 5797/5797, headless 15/15, dll_core 483 checks,
+  dll_helpers 2992.
+
+## 2026-09-27 (builds 3583–3585) — the SDK export defines Blueprint user-defined structs, and Live Walker's Export .h declares the declared types `[SDK-UDS-MISSING]` `[SDK-LIVE-VALUE-TYPES]`
+
+- **Whole-pool SDK export:** Blueprint `UserDefinedStruct`s are now defined, so a Blueprint member of such a type
+  names a struct the header contains. Verified live on EVERSPACE 2 at the main menu, same game state before and
+  after: 22 of 22 user-defined structs defined (was 0), 36 of 36 references resolved (was 0). The metaclasses'
+  class-default objects (`Default__ScriptStruct`, `Default__Class`, …) are no longer emitted as empty structs —
+  found by that same live check.
+- **Live Walker → Export .h:** a member's type is its DECLARED type, not what the instance holds right now — an enum
+  was declared as its current value's name (`EDumperTestGrade__Elite Grade;`) and a pointer as the class it happened
+  to point at. An object's header now also names its super and leaves inherited members to it (220 → 129 lines on
+  DumperTestActor). Verified live on DumperTest 5.4 Shipping, before and after in one session.
+- **Every SDK export:** `TSubclassOf<class Class>` (320 of 324 in EVERSPACE 2's export) is now `UClass*` — the
+  metaclass is not on the wire yet (`[SDK-METACLASS]`); an enum of unknown type is an integer of its real size.
+- Filed: `[USMAP-UDS-MISSING]` (the USMAP export shares the old filter) and `[SDK-METACLASS]`.
+- Build 3583 carried both fixes for the live checks; **3584 was consumed by a failed publish** (the running game held
+  `dist\UE5Dumper.dll`, so the copy step failed — no artifact); **3585** adds the CDO fix. AOT `dist\UE5DumpUI.exe`
+  58,439,680 B, sha256 `66a02654acb9`; `dist\UE5Dumper.dll` sha256 `42c2781e3fb8`. C# 5788/5788, headless 15/15.
+
+## 2026-09-27 (build 3582) — the SDK header's TYPE names: valid, unique across the whole export, and never inheriting from themselves `[SDK-TYPE-NAMES]`
+
+- **Measured first, on a real whole-pool export** (DumperTest 5.4, 7,894 structs): every AnimBlueprint carries its
+  own `AnimBlueprintGeneratedConstantData`, so two AnimBPs defined one struct twice, and the child ABP_Quinn's came
+  out as `struct AnimBlueprintGeneratedConstantData : public AnimBlueprintGeneratedConstantData`. The same
+  measurement showed the whole-pool header is not a compilable unit anyway (2,719 members name a struct defined
+  later; 1,152 enum types are never defined). The maintainer chose: fix the names only, UI only.
+- **Now:** every type spelling goes through one sanitiser (a `-` in an asset name, a keyword, or a type named like
+  the header's own `TArray` / `FName` no longer breaks it). A name held by several types gets the holder's outer
+  (`AnimBlueprintGeneratedConstantData_ABP_Quinn_C`), chosen so the result never depends on load order; the super
+  follows its address and is never the struct itself; a member's type goes to the nearest holder of the right
+  kind. A class the DLL refuses gets an `// ERROR` line instead of an empty struct.
+- **An adversarial review** (8 agents) found 19 issues, 12 confirmed: seven code fixes made red-first, three test
+  gaps closed, the compile rig's staleness check widened to the name services, and two rows filed —
+  `[SDK-UDS-MISSING]` (Blueprint user-defined structs never reach the export) and `[SDK-LIVE-VALUE-TYPES]` (MED,
+  pre-existing: Live Walker's SDK export takes a member's type from its current value). 17/17 mutants killed.
+- AOT `dist\UE5DumpUI.exe` 55.7 MB (58,436,608 B), sha256 `db57895beea8`; `dist\UE5Dumper.dll` sha256 `f7c9e802821a`.
+
+## 2026-09-27 (build 3581) — the SDK header renames member names C++ would reject; nine docs brought back in line with the code `[SDK-MEMBER-NAMES]`
+
+Both halves came from the other PC's memory-refresh audit of build 3580; every item was checked against the
+code or the record before it was changed.
+
+- **SDK header export:** a UE property name went into the header verbatim, so a property called `class` or
+  `default`, two properties with one name, a Blueprint variable with a space in it, a member named after a type
+  the struct uses, or one named like the generated padding made `cl.exe` reject the whole header (measured with
+  `tools/verify/compile_sdk_header.py`: C2236, C2321, C2086, C3646, C2327, C2040, C2059). Such members are now
+  renamed the way Dumper-7 does it (the second `Value` becomes `Value_0`), and the comment keeps the real name
+  (`[UE name: class]`). `StaticClass` / `StaticName` / `GetDefaultObj` and the `<windows.h>` macros that erase
+  a declaration are renamed too. `Name` / `Class` / `Flags` / `Outer` are left alone on purpose. Red first (11
+  tests and the compile rig), 5/5 mutants killed. The same problem in TYPE names is filed as `[SDK-TYPE-NAMES]`.
+- **Nine repo texts that contradicted the code or the record, one commit each:** Octopath's dxgi proxy works
+  since 3366 (test-games, handover); the sparse-delegate key is PDB-confirmed at 4.23–4.26 too (Aura, Ubel,
+  Genau, technical-notes); `GWLD_FD_1` sits at priority 102 (GROUND-TRUTH); `build.ps1 -Target DLL` builds every
+  proxy, winmm included (help text); Native-C P3 is fully verified (spec header); Locate-in-GWorld's
+  `ok_via_level` has fired live on Titan Quest II, only the drill to HP is unchecked (todo); the live-verification
+  checker and CI now name `docs/verification-register.md`; Class Pivot's Discover has run live
+  (`[AOTSORT-4-2026-08-20]`, todo reconciled); AOBMaker's CreateAAScript level is no longer hardcoded since its
+  a5aba68 (comments now say "older deployed plugins").
+- AOT `dist\UE5DumpUI.exe` 55.6 MB (58,330,112 B), sha256 `e86c5fa22c92`; `dist\UE5Dumper.dll` sha256 `2a32b94d66a3`.
+
 ## 2026-09-27 (builds 3578–3580) — Home / End / page keys with text selected keep the caret where it belongs; UI tests on real controls `[TEXTBOX-HOMEEND-CARET]`
 
 - **Every text field:** with text selected, End could put the caret at the START (and Home at the end) — e.g. a

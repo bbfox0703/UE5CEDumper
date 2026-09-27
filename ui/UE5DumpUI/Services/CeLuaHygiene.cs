@@ -358,10 +358,10 @@ public static class CeLuaHygiene
     /// neither <c>\r</c> nor <c>\t</c> nor <c>]</c>.
     ///
     /// Handles backslash, single quote, LF, CR, TAB — and any closing long bracket
-    /// (<c>]]</c>, <c>]=]</c>, <c>]==]</c>, …). That last one is not about Lua: the
-    /// AOBMaker CE plugin wraps the WHOLE submitted script in <c>[==[ … ]==]</c> at a
-    /// hardcoded level and does not escape the body, so the byte sequence must not
-    /// appear anywhere in an emitted script — even inside a quoted string, where Lua
+    /// (<c>]]</c>, <c>]=]</c>, <c>]==]</c>, …). That last one is not about Lua: older
+    /// deployed AOBMaker CE plugins (before its a5aba68) wrap the WHOLE submitted script
+    /// in <c>[==[ … ]==]</c> at a hardcoded level and do not escape the body, so the byte
+    /// sequence must not appear anywhere in an emitted script — even inside a quoted string, where Lua
     /// itself would be perfectly happy. The leading <c>]</c> becomes the decimal
     /// escape <c>\093</c>: same runtime value, different source bytes. Three digits
     /// because <c>\ddd</c> greedily takes three (by construction the next emitted

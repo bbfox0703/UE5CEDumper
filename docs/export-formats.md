@@ -416,6 +416,71 @@ still gets its padding.
 that is the Itanium rule, and the same translation units compiled for Linux do show reuse — so
 EBO is the only shape that intrudes on a derived member's offset.*
 
+### Member names are made valid C++ `[SDK-MEMBER-NAMES]`
+
+A UE property name is not a C++ identifier, and `cl.exe` rejected the header when one was emitted
+verbatim. `Services/SdkMemberNames` names a struct's own members once, before they are written:
+
+- Characters that cannot continue an identifier become `_` (a Blueprint variable keeps the space it
+  was typed with); a leading digit gets `_` in front; an empty name becomes `Unnamed`. Letters
+  outside ASCII are kept.
+- Reserved, so renamed: C++20 keywords; `StaticClass` / `StaticName` / `GetDefaultObj`; the
+  `<windows.h>` object-like macros that erase a declarator (`NULL`, `TRUE`, `ERROR`, `IN`, …);
+  the fixed-width typedefs; every type the struct spells without `struct` / `class` in front
+  (`int32_t FName;` before `FName Tag;` is C2327); and every `Pad_XXXX` the layout could generate.
+- The first holder of a name keeps it, the next gets `_0`, then `_1` (Dumper-7's shape). A member
+  whose UE name is already clean is served first, so no rename takes a real member's name.
+- A renamed member's comment ends with `[UE name: …]`, so the header can still be searched by the
+  property's real name.
+
+Deliberately **not** reserved: `Name` / `Class` / `Flags` / `Outer`. Dumper-7 renames them on classes
+because its SDK emits a UObject base that holds them; this header emits no such base, and hiding a
+base member compiles.
+
+### Type names are made valid and unique `[SDK-TYPE-NAMES]`
+
+A struct's own name, its super, and every type a member spells go through `Services/SdkTypeNames`,
+so a definition and every reference to it agree:
+
+- One sanitiser for every spelling, as for members; also reserved are the header's own built-in
+  spellings (`TArray`, `FName`, `UObject`, …), since a pool type of that name would redefine one.
+- A name held by more than one type is qualified with each holder's outers, nearest first, at the
+  smallest depth that tells them all apart — every AnimBlueprint's
+  `AnimBlueprintGeneratedConstantData` becomes `AnimBlueprintGeneratedConstantData_ABP_Manny_C`,
+  `…_ABP_Quinn_C`. The single native (`/Script`) holder keeps the plain name. No result depends
+  on GObjects order, and a qualified name never takes another type's own name.
+- The super is found by `SuperAddress` and is never the struct itself. If a super is not in the
+  export (or the export is a single struct) and shares the struct's name, the struct is the one
+  renamed: the super is the type you already have under that name.
+- A member's type arrives as a short name only, so among several holders the one of the right
+  kind (a pointer names a class, a by-value member a struct) whose path shares the most with the
+  referring type wins, ties to the lower path. With no holder of that kind, it is only sanitised.
+- A class the DLL refuses (it answers with an empty class) gets an `// ERROR` line, not an empty
+  struct that derived classes would silently sit on.
+- The comment above each struct still carries the UE path verbatim.
+
+### What the whole-pool export takes `[SDK-UDS-MISSING]`
+
+Every class-like meta, `ScriptStruct` and Blueprint `UserDefinedStruct` — the last two are both
+structs for the kind rule above — and never a class-default object: a CDO's row reads its
+metaclass (`Default__ScriptStruct` is a `ScriptStruct`), so it passed the meta test and came out as
+an empty `struct Default__X {}`. A by-value member prefers a holder whose size can be the member's
+(a struct member's size is its struct's size aligned up), and sharing only the mount point
+(`Game`, `Script`) is not locality.
+
+### Live Walker's Export .h declares the DECLARED types `[SDK-LIVE-VALUE-TYPES]`
+
+It walks the class on screen and exports that walk's rows, super included, exactly as a
+single-class schema export does. The rows on screen hold VALUES — an enum's value name, a pointer's
+runtime class — and a header built from them changed whenever a value did. When no walk of the
+class on screen is available (a container or GWorld view), it falls back to the live rows, where an
+enum of unknown type is an integer of its size and a pointee of unknown class is `UObject`.
+A `TSubclassOf` member is `UClass*`: `walk_class` does not carry the metaclass (`[SDK-METACLASS]`).
+
+⚠ The whole-pool header is **not** a compilable unit: it is in GObjects order (a by-value member
+can name a struct defined further down) and emits no enums. It is an offsets reference; the
+single-class exports compile once the engine types are provided.
+
 ### Features
 
 - Sorts fields by offset, inserts padding for gaps

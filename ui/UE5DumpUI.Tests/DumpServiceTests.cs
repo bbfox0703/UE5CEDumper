@@ -879,6 +879,68 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkClassAsync_CarriesEachContainerObjClass()
+    {
+        // [SDK-CONTAINER-OBJCLASS] key_obj_class / value_obj_class / elem_obj_class are new, additive wire keys.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "ByName", ["type"] = "MapProperty",
+                    ["key_type"] = "ClassProperty", ["key_obj_class"] = "BlueprintGeneratedClass",
+                    ["value_type"] = "ObjectProperty", ["value_obj_class"] = "Actor",
+                },
+                new JsonObject { ["name"] = "Watched", ["type"] = "SetProperty", ["elem_type"] = "WeakObjectProperty", ["elem_obj_class"] = "Pawn" },
+                new JsonObject { ["name"] = "Old", ["type"] = "SetProperty", ["elem_type"] = "ObjectProperty" },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("BlueprintGeneratedClass", model.Fields[0].KeyObjClass);
+        Assert.Equal("Actor", model.Fields[0].ValueObjClass);
+        Assert.Equal("Pawn", model.Fields[1].ElemObjClass);
+        Assert.Equal("", model.Fields[2].ElemObjClass);   // an older DLL sends none
+    }
+
+    [Fact]
+    public async Task WalkClassAsync_CarriesEachMetaClass()
+    {
+        // [SDK-METACLASS] meta_class / inner_meta_class / key_meta_class / value_meta_class / elem_meta_class are
+        // new, additive wire keys; obj_class keeps meaning the PropertyClass.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject { ["name"] = "Pawn", ["type"] = "ClassProperty", ["obj_class"] = "Class", ["meta_class"] = "Pawn" },
+                new JsonObject { ["name"] = "Mods", ["type"] = "ArrayProperty", ["inner_type"] = "ClassProperty", ["inner_meta_class"] = "CameraModifier" },
+                new JsonObject
+                {
+                    ["name"] = "Map", ["type"] = "MapProperty",
+                    ["key_type"] = "ClassProperty", ["key_meta_class"] = "PlatformSettings",
+                    ["value_type"] = "SoftClassProperty", ["value_meta_class"] = "Actor",
+                },
+                new JsonObject { ["name"] = "Set", ["type"] = "SetProperty", ["elem_type"] = "SoftClassProperty", ["elem_meta_class"] = "Widget" },
+                new JsonObject { ["name"] = "Old", ["type"] = "ClassProperty", ["obj_class"] = "Class" },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("Pawn", model.Fields[0].MetaClassName);
+        Assert.Equal("Class", model.Fields[0].ObjClassName);
+        Assert.Equal("CameraModifier", model.Fields[1].InnerMetaClass);
+        Assert.Equal("PlatformSettings", model.Fields[2].KeyMetaClass);
+        Assert.Equal("Actor", model.Fields[2].ValueMetaClass);
+        Assert.Equal("Widget", model.Fields[3].ElemMetaClass);
+        Assert.Equal("", model.Fields[4].MetaClassName);   // an older DLL sends none
+    }
+
+    [Fact]
     public async Task ListEnumsDetailedAsync_CarriesTheFailedLatchAndTheTruncation()
     {
         // [P1-ENUMNAMES] list_enums answered ok with every UEnum's entries empty, and no exit said why.

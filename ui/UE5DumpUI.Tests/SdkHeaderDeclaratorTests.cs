@@ -276,7 +276,7 @@ public class SdkHeaderDeclaratorTests
                 new FieldInfoModel { Name = "Tag", TypeName = "NameProperty", Offset = 0x78, Size = 8 },
                 new FieldInfoModel { Name = "Label", TypeName = "StrProperty", Offset = 0x80, Size = 0x10 },
                 new FieldInfoModel { Name = "Owner", TypeName = "ObjectProperty", ObjClassName = "APlayerController", Offset = 0x90, Size = 8 },
-                new FieldInfoModel { Name = "SpawnClass", TypeName = "ClassProperty", ObjClassName = "AActor", Offset = 0x98, Size = 8 },
+                new FieldInfoModel { Name = "SpawnClass", TypeName = "ClassProperty", ObjClassName = "Class", MetaClassName = "AActor", Offset = 0x98, Size = 8 },
                 new FieldInfoModel { Name = "Watched", TypeName = "WeakObjectProperty", ObjClassName = "AActor", Offset = 0xA0, Size = 8 },
                 new FieldInfoModel
                 {
@@ -310,9 +310,81 @@ public class SdkHeaderDeclaratorTests
             },
         };
 
+        // UE names that are not C++ identifiers as they stand (SdkMemberNameTests has one case
+        // each). The regex oracle above cannot see these -- `int32_t class;` is TYPE NAME-shaped --
+        // so only the compile rig proves they are renamed into something cl.exe accepts.
+        var clash = new ClassInfoModel
+        {
+            Name = "FSdkNameClash",
+            SuperName = "",
+            PropertiesSize = 0x58,
+            Fields =
+            {
+                new FieldInfoModel { Name = "class", TypeName = "IntProperty", Offset = 0x00, Size = 4 },
+                new FieldInfoModel { Name = "default", TypeName = "FloatProperty", Offset = 0x04, Size = 4 },
+                new FieldInfoModel { Name = "StaticClass", TypeName = "IntProperty", Offset = 0x08, Size = 4 },
+                new FieldInfoModel { Name = "Value", TypeName = "IntProperty", Offset = 0x0C, Size = 4 },
+                new FieldInfoModel { Name = "Value", TypeName = "IntProperty", Offset = 0x10, Size = 4 },
+                new FieldInfoModel { Name = "Max Health", TypeName = "FloatProperty", Offset = 0x14, Size = 4 },
+                new FieldInfoModel { Name = "FName", TypeName = "IntProperty", Offset = 0x18, Size = 4 },
+                // 0x1C..0x1F is a gap → `Pad_001C`, which the next-but-one member also claims
+                new FieldInfoModel { Name = "Tag", TypeName = "NameProperty", Offset = 0x20, Size = 8 },
+                new FieldInfoModel { Name = "Pad_001C", TypeName = "IntProperty", Offset = 0x28, Size = 4 },
+                new FieldInfoModel { Name = "FVector", TypeName = "IntProperty", Offset = 0x2C, Size = 4 },
+                new FieldInfoModel { Name = "Loc", TypeName = "StructProperty", StructType = "FVector", Offset = 0x30, Size = 0x18 },
+                new FieldInfoModel { Name = "delete", TypeName = "BoolProperty", Offset = 0x48, Size = 1, BoolFieldMask = 0x01 },
+                new FieldInfoModel { Name = "bOk", TypeName = "BoolProperty", Offset = 0x48, Size = 1, BoolFieldMask = 0x02 },
+                new FieldInfoModel { Name = "EMovementMode", TypeName = "IntProperty", Offset = 0x4C, Size = 4 },
+                new FieldInfoModel { Name = "Mode", TypeName = "EnumProperty", EnumName = "EMovementMode", Offset = 0x50, Size = 1 },
+            },
+        };
+
+        // A whole-pool export whose TYPE names collide or are not identifiers (SdkTypeNameTests has
+        // one case each): the AnimBlueprint pair that used to inherit from itself, a dash, a keyword,
+        // and a type named like a header built-in. Listed supers-first, as GObjects has them, because
+        // the export does not reorder. Its two include lines are dropped: this unit includes nothing.
+        var pool = new SdkPoolDump()
+            .Add("0x1", "AnimBlueprintConstantData", "ScriptStruct", "//Script/Engine/AnimBlueprintConstantData",
+                 fields: new[] { new FieldInfoModel { Name = "Base", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x10", "AnimBlueprintGeneratedConstantData", "ScriptStruct",
+                 "//Game/Anim/ABP_Manny/ABP_Manny_C.AnimBlueprintGeneratedConstantData", "0x1",
+                 "AnimBlueprintConstantData", 8,
+                 new FieldInfoModel { Name = "MannyOnly", TypeName = "IntProperty", Offset = 4, Size = 4 })
+            .Add("0x20", "AnimBlueprintGeneratedConstantData", "ScriptStruct",
+                 "//Game/Anim/ABP_Quinn/ABP_Quinn_C.AnimBlueprintGeneratedConstantData", "0x10",
+                 "AnimBlueprintGeneratedConstantData", 12,
+                 new FieldInfoModel { Name = "QuinnOnly", TypeName = "IntProperty", Offset = 8, Size = 4 })
+            .Add("0x30", "TArray", "ScriptStruct", "//Script/Weird/TArray",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x40", "union", "ScriptStruct", "//Script/Weird/union",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x50", "ABP_Manny_C", "AnimBlueprintGeneratedClass", "//Game/Anim/ABP_Manny/ABP_Manny_C", size: 0x28,
+                 fields: new[]
+                 {
+                     new FieldInfoModel { Name = "Consts", TypeName = "StructProperty", StructType = "AnimBlueprintGeneratedConstantData", Offset = 0x00, Size = 8 },
+                     new FieldInfoModel { Name = "Arr", TypeName = "StructProperty", StructType = "TArray", Offset = 0x08, Size = 4 },
+                     new FieldInfoModel { Name = "U", TypeName = "StructProperty", StructType = "union", Offset = 0x0C, Size = 4 },
+                     new FieldInfoModel { Name = "Door", TypeName = "ObjectProperty", ObjClassName = "BP_Door-Big_C", Offset = 0x10, Size = 8 },
+                     new FieldInfoModel { Name = "Doors", TypeName = "ArrayProperty", InnerType = "ObjectProperty", InnerObjClass = "BP_Door-Big_C", Offset = 0x18, Size = 0x10 },
+                 })
+            .Add("0x60", "BP_Door-Big_C", "BlueprintGeneratedClass", "//Game/Props/BP_Door-Big/BP_Door-Big_C",
+                 fields: new[] { new FieldInfoModel { Name = "Open", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            // A pair whose depth-1 name (`Door_C_A`) is another type's kept name: they must go to depth 2.
+            .Add("0x70", "Door_C", "BlueprintGeneratedClass", "//Game/A/Door/Door_C",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x71", "Door_C", "BlueprintGeneratedClass", "//Game/B/Door/Door_C",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x72", "Door_C_A", "BlueprintGeneratedClass", "//Game/Z/Door_C_A/Door_C_A",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } });
+        var poolHeader = pool.Sdk().Replace("#pragma once", "").Replace("#include <cstdint>", "");
+
         return SdkExportService.GenerateClassHeaderFromSchema(schema)
              + "\n"
-             + SdkExportService.GenerateClassHeader("FSdkSmokeStruct", "", 0x90, live);
+             + SdkExportService.GenerateClassHeader("FSdkSmokeStruct", "", 0x90, live)
+             + "\n"
+             + SdkExportService.GenerateClassHeaderFromSchema(clash)
+             + "\n"
+             + poolHeader;
     }
 
     /// <summary>

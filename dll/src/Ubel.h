@@ -28,10 +28,24 @@ struct FieldInfo {
 
     // === Extended type metadata (populated by WalkClassEx) ===
     std::string structType;      // StructProperty -> UScriptStruct name
-    std::string objClassName;    // ObjectProperty/ClassProperty -> target UClass name
+    std::string objClassName;    // Object-family property -> its PropertyClass. For a ClassProperty /
+                                 // SoftClassProperty that is the class of the VALUE (`Class`, or e.g.
+                                 // `BlueprintGeneratedClass`), never the class it holds a subclass of.
+    // [SDK-METACLASS] A ClassProperty's / SoftClassProperty's MetaClass: the UClass it holds a subclass
+    // of (TSubclassOf<X> / TSoftClassPtr<X>). Empty when unread or when the read did not validate.
+    std::string metaClassName;   // the field itself
+    std::string innerMetaClass;  // ArrayProperty / OptionalProperty inner
+    std::string keyMetaClass;    // MapProperty key
+    std::string valueMetaClass;  // MapProperty value
+    std::string elemMetaClass;   // SetProperty element
     std::string innerType;       // ArrayProperty -> inner FProperty type name
     std::string innerStructType; // ArrayProperty of struct -> inner struct name
-    std::string innerObjClass;   // ArrayProperty of object -> inner class name
+    std::string innerObjClass;   // ArrayProperty / OptionalProperty of the object family -> inner class name
+    // [SDK-CONTAINER-OBJCLASS] The same for a Map's key / value and a Set's element: the PropertyClass of an
+    // object-family slot (for a Class / SoftClass slot, the validated one -- see ApplyClassValuedNames).
+    std::string keyObjClass;
+    std::string valueObjClass;
+    std::string elemObjClass;
     std::string keyType;         // MapProperty -> key FProperty type name
     std::string keyStructType;   // MapProperty key struct name (if StructProperty)
     std::string valueType;       // MapProperty -> value FProperty type name
@@ -350,6 +364,18 @@ int FunctionFlagsOffset();
 
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
+
+// [STRUCTPROBE-ANY-NAME] What a property's subclass slot must hold before a reader accepts it: a UScriptStruct (or a
+// subclass -- UserDefinedStruct, ...) for a StructProperty, a UClass (or a subclass) for an object property's
+// PropertyClass. A printable name used to be enough, and on a shifted layout the slot probed first holds ANOTHER named
+// object -- on DQ XI S a Blueprint-owned property's PostConstructLinkNext, a named UProperty.
+bool IsScriptStructObject(uintptr_t obj);
+bool IsClassObject(uintptr_t obj);
+// [ENUMSLOT-ANY-NAME] The same for an enum slot: a UEnum or a subclass (UserDefinedEnum, ...). ReadPropertyEnum reads the
+// slot the property TYPE has -- FByteProperty::Enum or FEnumProperty::Enum, one pointer apart -- and returns the UEnum*
+// only if it is one, else 0 (also for any other type). Every enum-slot reader goes through it.
+bool IsUEnumObject(uintptr_t obj);
+uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName);
 
 // Get the Outer object of a UObject
 uintptr_t GetOuter(uintptr_t uobjectAddr);

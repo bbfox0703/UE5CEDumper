@@ -321,7 +321,8 @@ govern. Read that block too before adding, moving or deleting anything. The shor
   `PAL51` provenance as version coverage. The 5.1 sparse coverage that actually works is
   `SPARSE_ES2_1` (+ now `X1`/`X2`).
 - ~~**4.11 / 4.13 GWorld reaches truth only via `GWLD_G42_1` at priority 880**~~ **CLOSED
-  2026-07-27 by `GWLD_FD_1` (priority 265).** `UWorld::FinishDestroy`'s read-then-conditional-
+  2026-07-27 by `GWLD_FD_1` (landed at priority 265; promoted to **102** on 2026-07-28, `5a3d1fe6`,
+  after a 51-binary replay showed the move changes zero landers).** `UWorld::FinishDestroy`'s read-then-conditional-
   write-back of the same global — PDB-confirmed on HeliumRain 4.20, DropIn 4.24 and DropIn 4.27,
   22 bytes / 12 literal. Result: **21 hits, 16 UNIQUE-OK, ZERO decoys on all 46 programs**, never
   more than 1 hit on any binary, and it appears in neither the hotspot nor the dead-weight table.
@@ -523,7 +524,7 @@ the highest-value thing to do with it.
 
 **Pre-4.20 GWorld used to be thinner still and no longer is.** On 4.11 and 4.13 the only pattern
 that reached truth was `GWLD_G42_1` — 7 literal bytes, priority 880, the last-resort read form —
-i.e. one degenerate shape standing between those titles and no GWorld at all. `GWLD_FD_1` (265,
+i.e. one degenerate shape standing between those titles and no GWorld at all. `GWLD_FD_1` (102,
 `UWorld::FinishDestroy`) makes it two, from a structurally different site. Do not re-mine this.
 
 **Why this file exists:** re-deriving these costs a headless run per binary, and getting one

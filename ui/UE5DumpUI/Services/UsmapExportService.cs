@@ -150,8 +150,12 @@ public static class UsmapExportService
                 // precisely the ones a .usmap consumer needs to parse saved games and
                 // network traffic. Same bug fixed in the DLL at build 673 and in the
                 // SDK exporter at build 1986; this was the last unfixed mirror
-                // (audit #5 W8).
-                if (DumpAllService.IsClassLikeMetaName(obj.ClassName) || obj.ClassName == "ScriptStruct")
+                // (audit #5 W8). It drifted once more: the SDK exporter learned
+                // UserDefinedStruct -- a Blueprint struct type, whose schema a .usmap must carry
+                // like any other (Dumper-7's writer includes every UStruct that is not a function)
+                // -- and to skip class-default objects, which this collector wrote as empty
+                // `Default__*` structs. Both now share one predicate. [USMAP-UDS-MISSING]
+                if (DumpAllService.IsExportedTypeRow(obj.ClassName, obj.Name))
                     structTargets.Add((obj.Address, obj.Name));
             }
 

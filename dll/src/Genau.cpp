@@ -3645,6 +3645,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // Step 2.5: Set version-based defaults BEFORE probing (so if probing fails, we have sane values)
     // These serve as the fallback if Guid/Vector structs can't be found.
+    DynOff::UPROPERTY_SUBCLASS_START = 0;   // none derived yet: a re-run must not keep the last run's
     if (DynOff::bUseFProperty) {
         if (ueVersion >= 501 || ueVersion == 0) {
             // [VND583-09] UE 5.3+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44.
@@ -3673,6 +3674,17 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             }
             // UE 5.0-5.2 keep the larger layout's defaults; probing measures the real one.
         }
+    } else if (DynOff::UPropertyHasDefaultFamily(ueVersion)) {
+        // [UPROP-SUBCLASS-SLOT] A UProperty engine's default family, so a give-up exit below ships the UProperty
+        // subclass start rather than the FProperty default (DynOff::UPropertyDefaultFamily says which versions).
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
+    } else {
+        // Below 4.18 (4.11-4.17 in the supported range): no default family, because the untouched one IS their stock
+        // start (UPropertyHasDefaultFamily).
+        // Record it all the same, or a give-up leaves the readers outside the family on the version formula over the
+        // 4.18+ Offset_Internal default -- 0x6C against this 0x78 (review of build 3596).
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
 
     // Step 3: Find "Guid" or "Vector" struct for probing
@@ -3803,7 +3815,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     tn == "MulticastInlineDelegateProperty" || tn == "MulticastSparseDelegateProperty" ||
                     tn == "WeakObjectProperty"  || tn == "LazyObjectProperty" ||
                     tn == "SoftObjectProperty"  || tn == "SoftClassProperty" ||
-                    tn == "InterfaceProperty")
+                    tn == "InterfaceProperty" ||
+                    // [UE51-CLASSPTRPROP] UE 5.0 / 5.1's TObjectPtr<UClass> property. This probe reads the raw
+                    // FFieldClass name, not Ubel::GetFieldTypeName's alias, and "ClassPtrProperty" does not contain
+                    // "ClassProperty".
+                    tn == "ClassPtrProperty")
                     return 8;
                 // 4-byte: int/uint32/float/enum
                 if (tn == "IntProperty" || tn == "UInt32Property" || tn == "FloatProperty" ||
@@ -4451,19 +4467,32 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
     } else if (propOffsetOff >= 0) {
         // (A6) UProperty mode had NO else arm, so UBOOLPROP_FIELDSIZE was the one offset
         // in this function with zero writers -- it kept its 0x70 default on every UE4
-        // <4.25 game, including shifted ones. On DQ XI S (4.22, +0x10 shift) the true
+        // <4.25 game, including shifted ones. On DQ XI S (4.18, +0x10 shift) the true
         // value is 0x80 and Ubel's ±4/+8/-8 spread tops out at 0x78, so no probe reached
         // it, boolFieldMask stayed 0, and the reader fell back to `byteVal != 0` -- which
         // reports a native bitfield bool as TRUE whenever any sibling in its byte is set.
         //
         // The `>= 0` guard mirrors the FProperty arm: an unmeasured probe must leave the
         // default alone rather than derive from -1.
-        DynOff::UBOOLPROP_FIELDSIZE = DynOff::UBoolPropFieldSizeFor(
-            propOffsetOff, ueVersion, DynOff::bCasePreservingName);
+        //
+        // [UPROP-SUBCLASS-SLOT] The start comes from the measured layout (DynOff::UPropertySubclassStartFromLayout:
+        // the Offset_Internal - ElementSize gap tells the tail order), the version only when ElementSize was not
+        // measured -- and the whole family goes there with the bool slot, which used to be the only one derived here.
+        const int start = DynOff::UPropertySubclassStartFromLayout(propOffsetOff, propElemSizeOff, ueVersion,
+                                                                   DynOff::bCasePreservingName);
+        DynOff::UBOOLPROP_FIELDSIZE = start;
+        DynOff::UPROPERTY_SUBCLASS_START = start;   // the readers outside the family take THIS start
         Sein::Info("DYNO", "ValidateAndFixOffsets: UBoolProperty::FieldSize derived at "
-                   "+0x%02X (Offset_Internal +0x%02X, UE=%u%s)",
-                   DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, ueVersion,
+                   "+0x%02X (Offset_Internal +0x%02X, ElementSize +0x%02X, UE=%u%s)",
+                   DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, propElemSizeOff, ueVersion,
                    DynOff::bCasePreservingName ? ", CPN" : "");
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(start));
+    } else if (!DynOff::bUseFProperty && DynOff::UPropertyHasDefaultFamily(ueVersion)) {
+        // A run that entered UProperty mode AFTER Step 2.5 (the ChildProperties fallback flips it) and then failed the
+        // Offset_Internal probe would otherwise ship the FProperty default -- give it the UProperty one (review
+        // wf_b99fb861-680, F5).
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
 
     // Infer tagged FFieldVariant from probed offsets:
@@ -4566,6 +4595,8 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         Sein::Info("DYNO", "  UProperty::ElemSize = +0x%02X", DynOff::UPROPERTY_ELEMSIZE);
         Sein::Info("DYNO", "  UProperty::Flags    = +0x%02X", DynOff::UPROPERTY_FLAGS);
         Sein::Info("DYNO", "  UProperty::Offset   = +0x%02X", DynOff::UPROPERTY_OFFSET);
+        Sein::Info("DYNO", "  UProp subclass      = +0x%02X (Struct / PropertyClass / Inner; UEnumProperty::Enum +0x%02X)",
+                   DynOff::FSTRUCTPROP_STRUCT, DynOff::FENUMPROP_ENUM);
     }
     Sein::Info("DYNO", "==============================");
 

@@ -184,7 +184,9 @@ Total commands: **99** — a DERIVED number, regenerate it, never hand-edit:
 // results, so on a truncated walk it equals "total".
 { "id": 21, "cmd": "list_classes", "limit": 500 }
 
-// List all enum definitions
+// List all enum definitions: every native UEnum AND every Blueprint UserDefinedEnum (a
+// Blueprint struct's member can be typed by one), never a class-default object such as
+// Default__Enum / Default__UserDefinedEnum. [USMAP-UDE-MISSING]
 { "id": 22, "cmd": "list_enums" }
 ```
 
@@ -740,8 +742,12 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
 
 Extended per-field keys are emitted **only when non-default**: `struct_type`,
 `obj_class`, `inner_type`, `inner_struct_type`, `inner_obj_class`,
+`key_obj_class` / `value_obj_class` / `elem_obj_class` (the class of an object-family Map key / value / Set
+element `[SDK-CONTAINER-OBJCLASS]`),
 `key_type`/`key_struct_type`, `value_type`/`value_struct_type`,
-`elem_type`/`elem_struct_type`, `enum_name`, `bool_mask`, plus **`prop_flags`**
+`elem_type`/`elem_struct_type`, `enum_name`, `bool_mask`, the **MetaClass** of a
+class-valued property — `meta_class` on the field itself, `inner_meta_class` /
+`key_meta_class` / `value_meta_class` / `elem_meta_class` on a container slot — plus **`prop_flags`**
 (uint64 `CPF_*` reflection flags — `SaveGame`/`BlueprintVisible`/`Net`/
 `Transient`/`EditConst`/… — as an `"0x…"` hex string, omitted when 0) and
 **`array_dim`** (static C-array dimension `Type Foo[N]`, omitted when 1). The
@@ -750,6 +756,15 @@ object through the same serialiser, so these keys appear identically there and
 in the `Dump All Metadata` JSONL. `search_properties` / `search_properties_batch`
 match rows also carry **`prop_flags`** (same `"0x…"` hex form, omitted when 0) so
 the Interesting Properties scorer can gate on `SaveGame`/`BlueprintVisible`/`EditorOnly`.
+
+**`obj_class` vs `meta_class` on a `ClassProperty` / `SoftClassProperty`** `[SDK-METACLASS]`:
+`obj_class` is the PropertyClass — the class of the *value*, which for a class-valued property
+is `Class` (or a UClass subclass such as `BlueprintGeneratedClass`). `meta_class` is the class
+it holds a *subclass of*: `TSubclassOf<APawn>` arrives as `obj_class: "Class"`,
+`meta_class: "Pawn"`. It is read right after PropertyClass and published only when both
+pointers validate (PropertyClass's chain reaches `Class`, and the MetaClass is a UClass), so an
+absent `meta_class` means "unknown", never "Object". `TObjectPtr<UBlueprintGeneratedClass>` is
+also a `ClassProperty` — PropertyClass `BlueprintGeneratedClass`, MetaClass `Object`.
 
 ### walk_instance
 

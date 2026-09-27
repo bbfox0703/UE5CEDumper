@@ -168,7 +168,10 @@ public static class DumpAllService
                 foreach (var obj in page.Objects)
                 {
                     scannedObjects++;
-                    if (!ClassLikeMetas.Contains(obj.ClassName))
+                    // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass
+                    // (Default__Class is a Class), so the meta test alone admitted it as a class.
+                    if (!ClassLikeMetas.Contains(obj.ClassName)
+                        || obj.Name.StartsWith("Default__", StringComparison.Ordinal))
                     {
                         continue;
                     }
@@ -527,6 +530,21 @@ public static class DumpAllService
 
     /// <summary>Whitelist check — exposed for tests.</summary>
     internal static bool IsClassLikeMetaName(string meta) => ClassLikeMetas.Contains(meta);
+
+    /// <summary>The GObjects metas of a struct type: native, and a Blueprint user-defined one
+    /// (its own UScriptStruct subclass, so its row reads "UserDefinedStruct").</summary>
+    internal static bool IsStructMetaName(string meta) => meta is "ScriptStruct" or "UserDefinedStruct";
+
+    /// <summary>
+    /// The GObjects rows the whole-pool exporters (SDK header, USMAP) turn into type definitions.
+    /// ONE predicate for both, because two copies drifted: the SDK exporter learned
+    /// UserDefinedStruct and to skip class-default objects while the USMAP collector kept the old
+    /// rule [USMAP-UDS-MISSING]. A CDO's row reads its METAclass (Default__ScriptStruct is a
+    /// ScriptStruct), so it passes a meta test; UE reserves the prefix for CDOs.
+    /// </summary>
+    internal static bool IsExportedTypeRow(string meta, string name) =>
+        (IsClassLikeMetaName(meta) || IsStructMetaName(meta))
+        && !name.StartsWith("Default__", StringComparison.Ordinal);
 }
 
 /// <summary>What a dump run actually produced — the same counters the trailing

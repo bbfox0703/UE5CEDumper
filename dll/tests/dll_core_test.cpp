@@ -338,11 +338,14 @@ int main() {
         // A minimal walkable "UClass": WalkClassEx caches whenever
         // ShouldPublishClassWalk(true, PropertiesSize) holds, and that is only
         // IsPlausiblePropertiesSize -- a range check. Name/super reads may fail harmlessly.
-        std::vector<uint8_t> blob(0x200, 0);
-        const uintptr_t X = reinterpret_cast<uintptr_t>(blob.data());
+        // STATIC, never a heap buffer: this class stays in s_walkClassExCache for the rest of the
+        // run, and a freed heap block's address is handed to the next same-sized allocation -- a
+        // later test's class then read THIS cached answer (SANEPROPS failed that way on 2026-09-27).
+        static uint8_t blob[0x200] = {};
+        const uintptr_t X = reinterpret_cast<uintptr_t>(blob);
 
         auto setPropsSize = [&](int32_t v) {
-            memcpy(blob.data() + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
+            memcpy(blob + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
         };
 
         setPropsSize(100);
@@ -389,17 +392,23 @@ int main() {
         blk("SANEPROPS - a real 3.6 MB class must walk; a garbage one must still bail");
 
         // ONE CLASS BLOB PER CASE, and it is not tidiness: s_walkClassExCache is keyed
-        // by the raw class address and NOTHING erases it (that unboundedness is exactly
+        // by the class address (per family epoch) and NOTHING erases it (that unboundedness is exactly
         // why the plausibility ceiling has to stay a bound). Reusing one address makes
         // every case after the first read the FIRST case's memoised answer -- the A10
         // defect the fixture above demonstrates, hit here by accident while writing
         // this test.
-        std::vector<uint8_t> objBlob(0x200, 0);
-        const uintptr_t O = reinterpret_cast<uintptr_t>(objBlob.data());
-        std::vector<uint8_t> clsGarbage(0x200, 0), clsEmpty(0x200, 0), clsBig(0x200, 0);
-        auto setPropsSize = [](std::vector<uint8_t>& b, int32_t v) {
-            memcpy(b.data() + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
-            return reinterpret_cast<uintptr_t>(b.data());
+        // STATIC blobs, for the same reason one step further: a heap buffer can be handed the
+        // address of a class an EARLIER test walked and freed, and then reads that test's memoised
+        // answer. 2026-09-27: A10's 0x200-byte class vector is freed right before this block; in one
+        // build.ps1 run "garbage 827 MB is STILL judged stale" failed -- what reading A10's cached
+        // small PropertiesSize would produce -- and it passed in three standalone reruns. The address
+        // reuse was inferred from that, not logged; static storage removes it either way.
+        static uint8_t objBlob[0x200] = {};
+        const uintptr_t O = reinterpret_cast<uintptr_t>(objBlob);
+        static uint8_t clsGarbage[0x200] = {}, clsEmpty[0x200] = {}, clsBig[0x200] = {};
+        auto setPropsSize = [](uint8_t* b, int32_t v) {
+            memcpy(b + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
+            return reinterpret_cast<uintptr_t>(b);
         };
 
         // Order matters: prove the wedge case still bails BEFORE asking the walker to
@@ -1628,11 +1637,12 @@ int main() {
     {
         blk("UFUNCWALK - WalkFunctions reads a UProperty param's subclass field at the version's delta");
 
-        static uint8_t wfEntry[9][0x40] = {};
-        const char* wfNames[9] = { "", "Function", "ObjectProperty", "Target", "Actor",
-                                   "StructProperty", "Hit", "HitResult", "DoIt" };
-        static uintptr_t wfChunk[10] = {};
-        for (int i = 1; i <= 8; ++i) {
+        static uint8_t wfEntry[13][0x40] = {};
+        const char* wfNames[13] = { "", "Function", "ObjectProperty", "Target", "Actor",
+                                    "StructProperty", "Hit", "HitResult", "DoIt",
+                                    "Class", "ScriptStruct", "Decoy", "Thing" };
+        static uintptr_t wfChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
             memcpy(wfEntry[i] + 0x10, wfNames[i], strlen(wfNames[i]) + 1);
             wfChunk[i] = reinterpret_cast<uintptr_t>(wfEntry[i]);
         }
@@ -1645,23 +1655,33 @@ int main() {
         const bool     savedCpnW   = DynOff::bCasePreservingName;
         const int      savedOffW   = DynOff::UPROPERTY_OFFSET;
         const uint32_t savedVerW   = g_cachedUEVersion;
+        const int      savedStartW = DynOff::UPROPERTY_SUBCLASS_START;
+        DynOff::UPROPERTY_SUBCLASS_START = 0;   // no Genau run here: the version's start
         DynOff::bUseFProperty       = false;
         DynOff::bCasePreservingName = false;
 
         // Named objects: a zeroed UObject whose FName is the given pool index. 0x100 bytes, so a
         // WalkClass of the fake struct reads zeros, not a neighbour.
-        static uint8_t wfNamed[9][0x100] = {};
+        static uint8_t wfNamed[13][0x100] = {};
         auto named = [&](int idx) {
             *reinterpret_cast<int32_t*>(wfNamed[idx] + Grimoire::OFF_UOBJECT_NAME) = idx;
             return reinterpret_cast<uintptr_t>(wfNamed[idx]);
         };
         auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        // Actor is a UClass and HitResult a UScriptStruct -- a param's slot is read only when it holds that kind
+        // ([STRUCTPROBE-ANY-NAME]); Decoy is an instance of a class called Thing, neither.
+        put(wfNamed[9], Grimoire::OFF_UOBJECT_CLASS, named(9));     // Class : Class
+        put(wfNamed[4], Grimoire::OFF_UOBJECT_CLASS, named(9));     // Actor : Class
+        put(wfNamed[7], Grimoire::OFF_UOBJECT_CLASS, named(10));    // HitResult : ScriptStruct
+        put(wfNamed[11], Grimoire::OFF_UOBJECT_CLASS, named(12));   // Decoy : Thing
+        named(4); named(7); named(11);
 
         // ONE set of blobs per case: a class, its UFunction, two UProperty params.
-        static uint8_t wfCls[2][0x100] = {}, wfFn[2][0x100] = {};
-        static uint8_t wfObjP[2][0x100] = {}, wfStrP[2][0x100] = {};
-        auto walkAt = [&](int c, unsigned ver, int offsetInternal, int subclassStart) {
+        static uint8_t wfCls[4][0x100] = {}, wfFn[4][0x100] = {};
+        static uint8_t wfObjP[4][0x100] = {}, wfStrP[4][0x100] = {};
+        auto walkAt = [&](int c, unsigned ver, int offsetInternal, int subclassStart,
+                          uintptr_t objTarget = 0, uintptr_t structTarget = 0) {
             g_cachedUEVersion        = ver;
             DynOff::UPROPERTY_OFFSET = offsetInternal;
             put(wfCls[c], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(wfFn[c]));
@@ -1674,14 +1694,14 @@ int main() {
             put32(wfObjP[c], Grimoire::OFF_UOBJECT_NAME, 3);
             put32(wfObjP[c], DynOff::UPROPERTY_ELEMSIZE, 8);
             put32(wfObjP[c], offsetInternal, 0);
-            put(wfObjP[c], subclassStart, named(4));
+            put(wfObjP[c], subclassStart, objTarget ? objTarget : named(4));
             put(wfObjP[c], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfStrP[c]));
             // param 2: StructProperty "Hit" -> Struct "HitResult" at the REAL subclass start
             put(wfStrP[c], Grimoire::OFF_UOBJECT_CLASS, named(5));
             put32(wfStrP[c], Grimoire::OFF_UOBJECT_NAME, 6);
             put32(wfStrP[c], DynOff::UPROPERTY_ELEMSIZE, 0x88);
             put32(wfStrP[c], offsetInternal, 8);
-            put(wfStrP[c], subclassStart, named(7));
+            put(wfStrP[c], subclassStart, structTarget ? structTarget : named(7));
             return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(wfCls[c]));
         };
         // Anti-vacuity: every ⭐ is a string compare an empty walk would fail -- but say which.
@@ -1720,6 +1740,31 @@ int main() {
         check("UFUNCWALK control: ...and the 4.18 one, as before",
               Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
 
+        // [STRUCTPROBE-ANY-NAME] (review of build 3596): this UProperty param path took ANY named object as the
+        // param's struct / class -- and walked it as a struct. A named non-struct, non-class object in the slot:
+        const auto pDecoy = paramsOf("a decoy in the slot", walkAt(2, 418, 0x44, 0x70, named(11), named(11)));
+        if (pDecoy.size() == 2) {
+            check("UFUNCWALK ⭐: a UProperty param's slot holding a named NON-class names no PropertyClass",
+                  pDecoy[0].objClassName.empty(), pDecoy[0].objClassName.c_str());
+            check("UFUNCWALK ⭐: ...nor a named NON-struct a Struct", pDecoy[1].structType.empty(),
+                  pDecoy[1].structType.c_str());
+        }
+
+        // [UPROP-SUBCLASS-SLOT] (review of build 3596): the start Genau RECORDED, not the version's -- a 4.15 layout
+        // labelled 4.22 (the version formula says 0x7C, the layout 0x78). Pins the WalkFunctions and the
+        // ParamTargetType sites, which a revert to the version formula left green.
+        DynOff::UPROPERTY_SUBCLASS_START = 0x78;
+        const auto pMis = paramsOf("4.15 labelled 4.22", walkAt(3, 422, 0x50, 0x78));
+        if (pMis.size() == 2) {
+            check("UFUNCWALK ⭐: WalkFunctions reads a param at the recorded start, not the version's",
+                  pMis[0].objClassName == "Actor" && pMis[1].structType == "HitResult",
+                  (pMis[0].objClassName + "/" + pMis[1].structType).c_str());
+        }
+        g_cachedUEVersion = 422; DynOff::UPROPERTY_OFFSET = 0x50;
+        check("UFUNCWALK ⭐: ...and so does FindFunctionsByClassParam's matcher",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[3]), named(4), retMatch) == 1);
+        DynOff::UPROPERTY_SUBCLASS_START = savedStartW;
+
         g_cachedUEVersion           = savedVerW;
         DynOff::UPROPERTY_OFFSET    = savedOffW;
         DynOff::bCasePreservingName = savedCpnW;
@@ -1741,12 +1786,12 @@ int main() {
     {
         blk("OPTLAYOUT - TOptional set/unset follows UE's CalcSize layout, and Find Refs agrees");
 
-        static uint8_t olEntry[12][0x40] = {};
-        const char* olNames[12] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
+        static uint8_t olEntry[13][0x40] = {};
+        const char* olNames[13] = { "", "OptionalProperty", "ObjectProperty", "ArrayProperty",
                                     "StrProperty", "Opt", "Inner", "NameProperty", "TextProperty",
-                                    "StructProperty", "MyStruct", "LazyObjectProperty" };
-        static uintptr_t olChunk[13] = {};
-        for (int i = 1; i <= 11; ++i) {
+                                    "StructProperty", "MyStruct", "LazyObjectProperty", "ScriptStruct" };
+        static uintptr_t olChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
             memcpy(olEntry[i] + 0x10, olNames[i], strlen(olNames[i]) + 1);
             olChunk[i] = reinterpret_cast<uintptr_t>(olEntry[i]);
         }
@@ -1931,8 +1976,12 @@ int main() {
 
         // (#8) A struct optional: the struct probe + UScriptStruct::MinAlignment decide the layout.
         static uint8_t olStruct[2][0x100] = {};
+        // MyStruct is a UScriptStruct: a struct slot is read only when it holds one ([OPTSTRUCT-ANY-NAME]).
+        static uint8_t olSsCls[0x100] = {};
+        *reinterpret_cast<int32_t*>(olSsCls + Grimoire::OFF_UOBJECT_NAME) = 12;              // "ScriptStruct"
         auto structInner = [&](int k, int s, int16_t minAlign) {
             *reinterpret_cast<int32_t*>(olStruct[s] + Grimoire::OFF_UOBJECT_NAME) = 10;      // "MyStruct"
+            putP(olStruct[s], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(olSsCls));
             put32(olStruct[s], DynOff::USTRUCT_PROPSSIZE, 24);
             memcpy(olStruct[s] + DynOff::USTRUCT_PROPSSIZE + 4, &minAlign, sizeof(minAlign));
             const uintptr_t p = inner(k, 9, 24);                                              // "StructProperty"
@@ -1975,6 +2024,7 @@ int main() {
             put32(olSRChild[k], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
             if (childInner) putP(olSRChild[k], DynOff::FARRAYPROP_INNER, childInner);
             *reinterpret_cast<int32_t*>(olSR[k] + Grimoire::OFF_UOBJECT_NAME) = 10;          // "MyStruct"
+            putP(olSR[k], Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(olSsCls));
             put32(olSR[k], DynOff::USTRUCT_PROPSSIZE, 24);
             const int16_t align8 = 8;
             memcpy(olSR[k] + DynOff::USTRUCT_PROPSSIZE + 4, &align8, sizeof(align8));
@@ -2703,11 +2753,12 @@ int main() {
     {
         blk("CONTAINERENUM - WalkClassEx publishes a container inner's UEnum (Array / Set / Map)");
 
-        static uint8_t ceEntry[12][0x40] = {};
-        const char* ceNames[12] = { "", "ArrayProperty", "SetProperty", "MapProperty", "ByteProperty",
-                                    "EnumProperty", "IntProperty", "Items", "Tags", "Lookup", "EMyEnum", "EOther" };
-        static uintptr_t ceChunk[13] = {};
-        for (int i = 1; i <= 11; ++i) {
+        static uint8_t ceEntry[13][0x40] = {};
+        const char* ceNames[13] = { "", "ArrayProperty", "SetProperty", "MapProperty", "ByteProperty",
+                                    "EnumProperty", "IntProperty", "Items", "Tags", "Lookup", "EMyEnum", "EOther",
+                                    "Enum" };
+        static uintptr_t ceChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
             memcpy(ceEntry[i] + 0x10, ceNames[i], strlen(ceNames[i]) + 1);
             ceChunk[i] = reinterpret_cast<uintptr_t>(ceEntry[i]);
         }
@@ -2727,6 +2778,11 @@ int main() {
         static uint8_t ceEnumA[0x40] = {}, ceEnumB[0x40] = {};              // the two UEnum objects
         put32(ceEnumA, Grimoire::OFF_UOBJECT_NAME, 10);                      // "EMyEnum"
         put32(ceEnumB, Grimoire::OFF_UOBJECT_NAME, 11);                      // "EOther"
+        // ...of class Enum: an enum slot is read only when it holds a UEnum ([ENUMSLOT-ANY-NAME]).
+        static uint8_t ceEnumCls[0x40] = {};
+        put32(ceEnumCls, Grimoire::OFF_UOBJECT_NAME, 12);
+        putP(ceEnumA, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ceEnumCls));
+        putP(ceEnumB, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ceEnumCls));
 
         // Inners: a TEnumAsByte (ByteProperty + Enum), an EnumProperty (+ Enum), and a plain IntProperty.
         static uint8_t ceByteInner[0x100] = {}, ceEnumInner[0x100] = {}, ceByteKey[0x100] = {}, ceIntVal[0x100] = {};
@@ -2779,6 +2835,192 @@ int main() {
               im >= 0 ? F[im].keyEnumName.c_str() : "(no field)");
 
         DynOff::bUseFProperty = savedFPropCE;
+    }
+
+    // -- METACLASS-2026-09-27 -- a ClassProperty's MetaClass reaches FieldInfo, validated ---------------------------
+    //
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [SDK-METACLASS] walk_class published a ClassProperty's
+    // PropertyClass -- `Class` -- and never its MetaClass, so the SDK header could only write TSubclassOf<class Class>.
+    // MetaClass is the next pointer after PropertyClass in every supported layout (4.18..5.8 UnrealType.h; RE-UE4SS
+    // templates; Dumper-7 Offsets.cpp). The read is refused unless the PropertyClass slot really holds a class of
+    // classes AND the pointer after it is a UClass.
+    {
+        blk("METACLASS - WalkClassEx publishes a Class/SoftClass property's MetaClass, and refuses a bad read");
+
+        static uint8_t mcEntry[22][0x40] = {};
+        const char* mcNames[22] = { "", "ClassProperty", "SoftClassProperty", "ArrayProperty", "ObjectProperty",
+                                    "Class", "BlueprintGeneratedClass", "Actor", "Object", "BP_Foo_C", "Pawn_0",
+                                    "SubCls", "SoftCls", "BadMeta", "BadAnchor", "Director", "Arr", "Ctrl",
+                                    "SetProperty", "Classes", "MapProperty", "ByClass" };
+        static uintptr_t mcChunk[23] = {};
+        for (int i = 1; i <= 21; ++i) {
+            memcpy(mcEntry[i] + 0x10, mcNames[i], strlen(mcNames[i]) + 1);
+            mcChunk[i] = reinterpret_cast<uintptr_t>(mcEntry[i]);
+        }
+        static uintptr_t mcChunks[2] = { reinterpret_cast<uintptr_t>(mcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(mcChunks), 0x10);
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        // The reflection objects: `Class` is its own class; BlueprintGeneratedClass is a Class whose super is Class;
+        // Actor / Object are Classes; BP_Foo_C is a BlueprintGeneratedClass; Pawn_0 is an INSTANCE (class Actor).
+        static uint8_t mcObj[11][0x100] = {};
+        auto obj = [&](int nameIdx) { return A(mcObj[nameIdx]); };
+        for (int i = 5; i <= 10; ++i) put32(mcObj[i], Grimoire::OFF_UOBJECT_NAME, i);
+        putP(mcObj[5],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[6],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[6],  DynOff::USTRUCT_SUPER, obj(5));
+        putP(mcObj[7],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[8],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[9],  Grimoire::OFF_UOBJECT_CLASS, obj(6));
+        putP(mcObj[10], Grimoire::OFF_UOBJECT_CLASS, obj(7));
+
+        // ---- FProperty mode ----
+        const bool savedFPropMC = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        const int slot = DynOff::FSTRUCTPROP_STRUCT;
+
+        static uint8_t mcFC[5][0x20] = {};
+        auto fclass = [&](int nameIdx) { put32(mcFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx); return A(mcFC[nameIdx]); };
+        static uint8_t mcSetFC[0x20] = {}, mcMapFC[0x20] = {};
+        put32(mcSetFC, DynOff::FFIELDCLASS_NAME, 18);
+        put32(mcMapFC, DynOff::FFIELDCLASS_NAME, 20);
+
+        static uint8_t mcP[10][0x100] = {};
+        auto prop = [&](int i, uintptr_t fc, int nameIdx, int32_t off, uintptr_t propertyClass, uintptr_t meta,
+                        uint8_t* next) {
+            putP(mcP[i], DynOff::FFIELD_CLASS, fc);
+            put32(mcP[i], DynOff::FFIELD_NAME, nameIdx);
+            put32(mcP[i], DynOff::FPROPERTY_OFFSET, off);
+            put32(mcP[i], DynOff::FPROPERTY_ELEMSIZE, 8);
+            put32(mcP[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(mcP[i], DynOff::FFIELD_NEXT, A(next));
+            if (propertyClass) putP(mcP[i], slot, propertyClass);
+            if (meta)          putP(mcP[i], slot + 8, meta);
+        };
+        // Container inners (never chained into the class).
+        static uint8_t mcInner[0x100] = {}, mcSetElem[0x100] = {}, mcKey[0x100] = {}, mcVal[0x100] = {};
+        auto innerProp = [&](uint8_t* p, uintptr_t fc, uintptr_t propertyClass, uintptr_t meta) {
+            putP(p, DynOff::FFIELD_CLASS, fc);
+            putP(p, slot, propertyClass);
+            putP(p, slot + 8, meta);
+        };
+        innerProp(mcInner,   fclass(1), obj(5), obj(7));   // TArray<TSubclassOf<Actor>>
+        innerProp(mcSetElem, fclass(2), obj(5), obj(9));   // TSet<TSoftClassPtr<BP_Foo_C>>
+        innerProp(mcKey,     fclass(1), obj(5), obj(7));   // TMap<TSubclassOf<Actor>, UObject*>
+        innerProp(mcVal,     fclass(4), obj(7), obj(7));   //   value: a plain ObjectProperty (no MetaClass)
+
+        prop(0, fclass(1), 11, 0x28, obj(5), obj(7),  mcP[1]);   // SubCls    TSubclassOf<Actor>
+        prop(1, fclass(2), 12, 0x30, obj(5), obj(9),  mcP[2]);   // SoftCls   TSoftClassPtr<BP_Foo_C>
+        prop(2, fclass(1), 13, 0x38, obj(5), obj(10), mcP[3]);   // BadMeta   +8 is an INSTANCE
+        prop(3, fclass(1), 14, 0x40, obj(7), obj(7),  mcP[4]);   // BadAnchor PropertyClass is not a class of classes
+        prop(4, fclass(1), 15, 0x48, obj(6), obj(8),  mcP[5]);   // Director  TObjectPtr<UBlueprintGeneratedClass>
+        prop(5, fclass(3), 16, 0x50, 0, 0,            mcP[6]);   // Arr       TArray<TSubclassOf<Actor>>
+        putP(mcP[5], DynOff::FARRAYPROP_INNER, A(mcInner));
+        prop(6, fclass(4), 17, 0x60, obj(7), obj(7),  mcP[7]);   // Ctrl      an ObjectProperty: no MetaClass, ever
+        prop(7, A(mcSetFC), 19, 0x68, 0, 0,           mcP[8]);   // Classes   TSet<TSoftClassPtr<BP_Foo_C>>
+        putP(mcP[7], DynOff::FARRAYPROP_INNER, A(mcSetElem));
+        prop(8, A(mcMapFC), 21, 0xB8, 0, 0,           nullptr);  // ByClass   TMap<TSubclassOf<Actor>, Actor*>
+        putP(mcP[8], slot, A(mcKey));
+        putP(mcP[8], slot + 8, A(mcVal));
+
+        static uint8_t mcCls[0x100] = {};
+        put32(mcCls, DynOff::USTRUCT_PROPSSIZE, 0x108);
+        putP(mcCls, DynOff::USTRUCT_CHILDPROPS, A(mcP[0]));
+
+        const auto& mcInfo = Ubel::WalkClassEx(A(mcCls));
+        auto field = [&](const char* name) -> const FieldInfo* {
+            for (const auto& f : mcInfo.Fields) if (f.Name == name) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fSub = field("SubCls");   const FieldInfo* fSoft = field("SoftCls");
+        const FieldInfo* fBadM = field("BadMeta"); const FieldInfo* fBadA = field("BadAnchor");
+        const FieldInfo* fDir = field("Director"); const FieldInfo* fArr = field("Arr");
+        const FieldInfo* fCtl = field("Ctrl");     const FieldInfo* fSet = field("Classes");
+        const FieldInfo* fMap = field("ByClass");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("METACLASS control: the fake class produced all nine fields, typed",
+              fSub && fSoft && fBadM && fBadA && fDir && fArr && fCtl && fSet && fMap
+                && fSub->TypeName == "ClassProperty" && fArr->innerType == "ClassProperty"
+                && fSet->elemType == "SoftClassProperty" && fMap->keyType == "ClassProperty",
+              std::to_string(mcInfo.Fields.size()).c_str());
+        check("METACLASS ⭐: a ClassProperty publishes its MetaClass",
+              fSub && fSub->metaClassName == "Actor", s(fSub, &FieldInfo::metaClassName));
+        check("METACLASS control: ...and its PropertyClass is still `Class`",
+              fSub && fSub->objClassName == "Class", s(fSub, &FieldInfo::objClassName));
+        check("METACLASS ⭐: a SoftClassProperty publishes its MetaClass (a BlueprintGeneratedClass passes the chain)",
+              fSoft && fSoft->metaClassName == "BP_Foo_C", s(fSoft, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: an INSTANCE after PropertyClass is refused",
+              fBadM && fBadM->metaClassName.empty(), s(fBadM, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: a PropertyClass that is not a class of classes refuses the whole read",
+              fBadA && fBadA->metaClassName.empty(), s(fBadA, &FieldInfo::metaClassName));
+        check("METACLASS control: ...and its obj_class is still the plain slot read, not blanked",
+              fBadA && fBadA->objClassName == "Actor", s(fBadA, &FieldInfo::objClassName));
+        check("METACLASS ⭐: PropertyClass BlueprintGeneratedClass passes the anchor through its super chain",
+              fDir && fDir->metaClassName == "Object" && fDir->objClassName == "BlueprintGeneratedClass",
+              s(fDir, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: an Array's ClassProperty inner publishes its MetaClass",
+              fArr && fArr->innerMetaClass == "Actor", s(fArr, &FieldInfo::innerMetaClass));
+        check("METACLASS ⭐: a Set's SoftClassProperty element publishes its MetaClass",
+              fSet && fSet->elemMetaClass == "BP_Foo_C", s(fSet, &FieldInfo::elemMetaClass));
+        check("METACLASS ⭐: a Map's ClassProperty key publishes its MetaClass, its ObjectProperty value none",
+              fMap && fMap->keyMetaClass == "Actor" && fMap->valueMetaClass.empty(), s(fMap, &FieldInfo::keyMetaClass));
+        check("METACLASS control: an ObjectProperty never gets a MetaClass",
+              fCtl && fCtl->metaClassName.empty() && fCtl->objClassName == "Actor", s(fCtl, &FieldInfo::metaClassName));
+        DynOff::bUseFProperty = savedFPropMC;
+
+        // ---- UProperty mode, UE 4.18 ----
+        // The subclass slot is UPropertySubclassStartFor(0x44, 418) = 0x70; FSTRUCTPROP_STRUCT is hand-set to 0x78 --
+        // what Genau left on every UProperty engine before [UPROP-SUBCLASS-SLOT], and what a family move after init can
+        // still leave -- so the class-valued read must not borrow it. PropertyClass is planted ONLY at 0x70 and
+        // MetaClass at 0x78, so a reader that borrows FSTRUCTPROP_STRUCT reads MetaClass as its anchor.
+        const bool     savedFPropU = DynOff::bUseFProperty;
+        const bool     savedCpnU   = DynOff::bCasePreservingName;
+        const int      savedOffU   = DynOff::UPROPERTY_OFFSET;
+        const int      savedSlotU  = DynOff::FSTRUCTPROP_STRUCT;
+        const uint32_t savedVerU   = g_cachedUEVersion;
+        DynOff::bUseFProperty       = false;
+        DynOff::bCasePreservingName = false;
+        DynOff::UPROPERTY_OFFSET    = 0x44;
+        DynOff::FSTRUCTPROP_STRUCT  = 0x78;
+        g_cachedUEVersion           = 418;
+        const int uSlot = DynOff::UPropertySubclassStartFor(0x44, 418, false);
+        check("METACLASS setup: the 4.18 UProperty subclass slot is 0x70, not FSTRUCTPROP_STRUCT's 0x78",
+              uSlot == 0x70 && DynOff::FSTRUCTPROP_STRUCT != uSlot, std::to_string(uSlot).c_str());
+
+        static uint8_t mcUClassProp[0x100] = {};          // the UObject whose NAME is "ClassProperty"
+        put32(mcUClassProp, Grimoire::OFF_UOBJECT_NAME, 1);
+        static uint8_t mcUProp[0x100] = {};
+        putP(mcUProp, Grimoire::OFF_UOBJECT_CLASS, A(mcUClassProp));
+        put32(mcUProp, Grimoire::OFF_UOBJECT_NAME, 11);     // "SubCls"
+        put32(mcUProp, DynOff::UPROPERTY_ELEMSIZE, 8);
+        put32(mcUProp, DynOff::UPROPERTY_ELEMSIZE - 4, 1);        // ArrayDim
+        put32(mcUProp, 0x44, 0x28);
+        putP(mcUProp, uSlot, obj(5));                        // PropertyClass = Class
+        putP(mcUProp, uSlot + 8, obj(7));                    // MetaClass     = Actor
+        static uint8_t mcUCls[0x100] = {};
+        put32(mcUCls, DynOff::USTRUCT_PROPSSIZE, 0x30);
+        putP(mcUCls, DynOff::USTRUCT_CHILDREN, A(mcUProp));
+        const auto& muInfo = Ubel::WalkClassEx(A(mcUCls));
+        const FieldInfo* fU = nullptr;
+        for (const auto& f : muInfo.Fields) if (f.Name == "SubCls") fU = &f;
+        check("METACLASS control: the 4.18 UProperty class produced its ClassProperty",
+              fU && fU->TypeName == "ClassProperty", std::to_string(muInfo.Fields.size()).c_str());
+        check("METACLASS ⭐: UProperty 4.18 reads MetaClass at the VERSION's slot + 8, not FSTRUCTPROP_STRUCT's",
+              fU && fU->metaClassName == "Actor", s(fU, &FieldInfo::metaClassName));
+        // [SDK-METACLASS] review wf_63e981ac-5e4: obj_class came from FSTRUCTPROP_STRUCT, which on a UProperty engine
+        // sits one pointer past PropertyClass -- ON the MetaClass -- so the wire said obj_class == meta_class and the
+        // SDK export turned every TSubclassOf<X> into `class X*` (UE423_Flying: 0 of 160 ClassProperty rows right).
+        check("METACLASS ⭐: UProperty 4.18 publishes PropertyClass `Class` as obj_class, not the MetaClass beside it",
+              fU && fU->objClassName == "Class", s(fU, &FieldInfo::objClassName));
+
+        g_cachedUEVersion           = savedVerU;
+        DynOff::FSTRUCTPROP_STRUCT  = savedSlotU;
+        DynOff::UPROPERTY_OFFSET    = savedOffU;
+        DynOff::bCasePreservingName = savedCpnU;
+        DynOff::bUseFProperty       = savedFPropU;
     }
 
     // -- GENAUABORT-2026-09-12 -- a Genau sweep that bails on a cancel records it AT THE BAIL -----------------
@@ -4769,6 +5011,1225 @@ int main() {
                 check("SCAN-EARLY R10-02 ⭐ ...and the pin, released on return, was the last reference: unmapped", gone);
             }
         }
+    }
+
+    // -- UPROPSLOT-2026-09-27 -- a UProperty engine gets the property subclass family at ITS start -------------------
+    //
+    // ⛔ POOL-FAKING (own GObjects, own name table; the LAST block, and it restores every DynOff Genau writes).
+    // [UPROP-SUBCLASS-SLOT] Genau's UProperty arm derived the bool slot alone, so FSTRUCTPROP_STRUCT and the rest of the
+    // family kept the FProperty default 0x78 -- past the end of a 4.23 UStructProperty / UObjectProperty and ON a
+    // UClassProperty's MetaClass. Measured on UE423_Flying, SDK export straight after connect: 2,624 of 2,624 struct
+    // members raw bytes, 1,038 of 1,038 object pointers UObject*. Only a later Live Walker struct probe corrected it.
+    {
+        blk("UPROPSLOT - Genau publishes the UProperty subclass family at the version's start, and a walk reads it");
+
+        const auto svCpn = DynOff::bCasePreservingName;   const auto svOuter = DynOff::UOBJECT_OUTER;
+        const auto svFProp = DynOff::bUseFProperty;       const auto svNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svSuper = DynOff::USTRUCT_SUPER;
+        const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE; const auto svScript = DynOff::USTRUCT_SCRIPT;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const auto svUFlags = DynOff::UPROPERTY_FLAGS;    const auto svUBool = DynOff::UBOOLPROP_FIELDSIZE;
+        const auto svUStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const auto svTagged = DynOff::bTaggedFFieldVariant; const auto svFNum = DynOff::FNAME_NUMBER;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t upEntry[15][0x40] = {};
+        const char* upNames[15] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D",
+                                    "StructProperty", "Where", "Decoy", "ClassProperty", "Class", "Pawn", "Kind" };
+        static uintptr_t upChunk[16] = {};
+        for (int i = 1; i <= 14; ++i) {
+            memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
+            upChunk[i] = A(upEntry[i]);
+        }
+        static uintptr_t upChunks[2] = { reinterpret_cast<uintptr_t>(upChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(upChunks), 0x10);
+
+        // Guid (a ScriptStruct) whose UStruct::Children at +0x48 heads A -> B -> C -> D, four IntProperty UObjects.
+        static uint8_t upScriptStructCls[0x100] = {}, upIntPropCls[0x100] = {}, upGuid[0x100] = {};
+        static uint8_t upProp[4][0x100] = {};
+        put32(upScriptStructCls, Grimoire::OFF_UOBJECT_NAME, 1);
+        put32(upIntPropCls, Grimoire::OFF_UOBJECT_NAME, 3);
+        putP(upGuid, Grimoire::OFF_UOBJECT_CLASS, A(upScriptStructCls));
+        putP(upGuid, 0x48, A(upProp[0]));
+        auto layout = [&](int nameIdxOfGuid, int nextOff, int elemOff, int offOff) {
+            put32(upGuid, Grimoire::OFF_UOBJECT_NAME, nameIdxOfGuid);
+            for (auto& p : upProp) memset(p, 0, sizeof(p));
+            for (int i = 0; i < 4; ++i) {
+                putP(upProp[i], Grimoire::OFF_UOBJECT_CLASS, A(upIntPropCls));
+                put32(upProp[i], Grimoire::OFF_UOBJECT_NAME, 4 + i);
+                if (i < 3) putP(upProp[i], nextOff, A(upProp[i + 1]));
+                put32(upProp[i], elemOff - 4, 1);        // ArrayDim
+                put32(upProp[i], elemOff, 4);            // ElementSize
+                put32(upProp[i], offOff, i * 4);         // Offset_Internal
+            }
+        };
+        FakePool upPool;
+        upPool.Build(2);
+        static uint8_t upZero[0x100] = {};
+        const uintptr_t upObjs[2] = { A(upZero), A(upGuid) };
+        for (int i = 0; i < 2; ++i)
+            memcpy(upPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &upObjs[i], sizeof(uintptr_t));
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        auto runGenau = [&](uint32_t ver) {
+            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));   // the FProperty default, as at load
+            DynOff::UPROPERTY_OFFSET = 0x44;
+            DynOff::UFIELD_NEXT = 0x28;
+            Genau::ValidateAndFixOffsets(ver);
+        };
+        auto fam = [] {
+            return std::to_string(DynOff::FSTRUCTPROP_STRUCT) + "/" + std::to_string(DynOff::FARRAYPROP_INNER) + "/"
+                 + std::to_string(DynOff::FBOOLPROP_FIELDSIZE) + "/" + std::to_string(DynOff::FBYTEPROP_ENUM) + "/"
+                 + std::to_string(DynOff::FENUMPROP_ENUM);
+        };
+        auto famAt = [](int s) {
+            return DynOff::FSTRUCTPROP_STRUCT == s && DynOff::FARRAYPROP_INNER == s && DynOff::FBOOLPROP_FIELDSIZE == s
+                && DynOff::FBYTEPROP_ENUM == s && DynOff::FENUMPROP_ENUM == s + 8;
+        };
+
+        // 4.23 stock: Next +0x28, ElementSize +0x34, Offset_Internal +0x44 -> subclass start 0x70.
+        layout(2, 0x28, 0x34, 0x44);
+        runGenau(423);
+        check("UPROPSLOT setup: 4.23 is UProperty mode and Offset_Internal was MEASURED at +0x44",
+              !DynOff::bUseFProperty && DynOff::UPROPERTY_OFFSET == 0x44 && DynOff::UPROPERTY_ELEMSIZE == 0x34,
+              std::to_string(DynOff::UPROPERTY_OFFSET).c_str());
+        check("UPROPSLOT control: the bool slot was already derived there (the A6 arm)",
+              DynOff::UBOOLPROP_FIELDSIZE == 0x70, std::to_string(DynOff::UBOOLPROP_FIELDSIZE).c_str());
+        check("UPROPSLOT ⭐: 4.23 stock -- the whole family at 0x70, UEnumProperty::Enum at 0x78", famAt(0x70),
+              fam().c_str());
+
+        // A walk now reads a 4.23-sized UStructProperty's Struct at +0x70 -- and not the NAMED object behind it at +0x78,
+        // which the old 0x78 read took for the struct (a real neighbour UObject has a name too).
+        static uint8_t upStructPropCls[0x100] = {}, upDecoy[0x100] = {}, upSP[0x100] = {}, upCls[0x100] = {};
+        put32(upStructPropCls, Grimoire::OFF_UOBJECT_NAME, 8);
+        put32(upDecoy, Grimoire::OFF_UOBJECT_NAME, 10);
+        putP(upSP, Grimoire::OFF_UOBJECT_CLASS, A(upStructPropCls));
+        put32(upSP, Grimoire::OFF_UOBJECT_NAME, 9);                  // "Where"
+        put32(upSP, DynOff::UPROPERTY_ELEMSIZE - 4, 1);
+        put32(upSP, DynOff::UPROPERTY_ELEMSIZE, 0x10);
+        put32(upSP, DynOff::UPROPERTY_OFFSET, 0x28);
+        putP(upSP, 0x70, A(upGuid));                                  // UStructProperty::Struct = Guid
+        putP(upSP, 0x78, A(upDecoy));                                 // the next object in memory
+        put32(upCls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+        putP(upCls, DynOff::USTRUCT_CHILDREN, A(upSP));
+        const auto& upInfo = Ubel::WalkClassEx(A(upCls));
+        const FieldInfo* upW = nullptr;
+        for (const auto& f : upInfo.Fields) if (f.Name == "Where") upW = &f;
+        check("UPROPSLOT setup: the 4.23 class walked its StructProperty",
+              upW && upW->TypeName == "StructProperty", std::to_string(upInfo.Fields.size()).c_str());
+        check("UPROPSLOT ⭐: ...and names its struct `Guid`, not the decoy object one pointer later",
+              upW && upW->structType == "Guid", upW ? upW->structType.c_str() : "(no field)");
+
+        // DQ XI S's shifted 4.18 layout: Next +0x38, ElementSize +0x44, Offset_Internal +0x54 -> start 0x80.
+        layout(2, 0x38, 0x44, 0x54);
+        runGenau(418);
+        check("UPROPSLOT setup: the shifted layout's Offset_Internal was measured at +0x54",
+              DynOff::UPROPERTY_OFFSET == 0x54, std::to_string(DynOff::UPROPERTY_OFFSET).c_str());
+        check("UPROPSLOT ⭐: a DQ XI S-style shifted 4.18 -- the family at 0x80", famAt(0x80), fam().c_str());
+
+        // 4.15 stock: Offset_Internal +0x50, delta 0x28 -> start 0x78, which the FProperty default happens to equal.
+        layout(2, 0x28, 0x34, 0x50);
+        runGenau(415);
+        check("UPROPSLOT control: 4.15 stock -- the family at 0x78 (right before the fix by coincidence)",
+              DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
+        // Review wf_b99fb861-680 (F1): the tail ORDER came from the version alone. A 4.11-4.17 title whose version
+        // detection fails is relabelled 422 (the TNameEntryArray rule), so the measured 0x50 got the 4.18+ tail and a
+        // misaligned 0x7C where this very layout's start is 0x78 -- worse than the untouched default it replaced. The
+        // measured layout says which order it is: Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from it.
+        layout(2, 0x28, 0x34, 0x50);
+        runGenau(422);
+        check("UPROPSLOT ⭐: a 4.15 layout running under a misdetected 4.22 still gets 0x78 -- the layout decides",
+              DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
+        // ...and so does every reader that takes the UProperty start without the family (review of build 3594, LOW): the
+        // class-valued names, WalkFunctions' parameters and Aura's parameter matcher recomputed it from the VERSION,
+        // 0x7C here, where the family and the layout say 0x78. A TSubclassOf<APawn> UClassProperty, PropertyClass
+        // `Class` at 0x78 and MetaClass `Pawn` at 0x80, walked under the misdetected label:
+        {
+            static uint8_t upClassCls[0x100] = {}, upPawnCls[0x100] = {}, upClassPropCls[0x100] = {}, upCP[0x100] = {},
+                           upCls2[0x100] = {};
+            putP(upClassCls, Grimoire::OFF_UOBJECT_CLASS, A(upClassCls));  put32(upClassCls, Grimoire::OFF_UOBJECT_NAME, 12);
+            putP(upPawnCls, Grimoire::OFF_UOBJECT_CLASS, A(upClassCls));   put32(upPawnCls, Grimoire::OFF_UOBJECT_NAME, 13);
+            put32(upClassPropCls, Grimoire::OFF_UOBJECT_NAME, 11);
+            putP(upCP, Grimoire::OFF_UOBJECT_CLASS, A(upClassPropCls));
+            put32(upCP, Grimoire::OFF_UOBJECT_NAME, 14);                    // "Kind"
+            put32(upCP, DynOff::UPROPERTY_ELEMSIZE - 4, 1);
+            put32(upCP, DynOff::UPROPERTY_ELEMSIZE, 8);
+            put32(upCP, DynOff::UPROPERTY_OFFSET, 0x28);
+            putP(upCP, 0x78, A(upClassCls));                                // UObjectPropertyBase::PropertyClass
+            putP(upCP, 0x80, A(upPawnCls));                                 // UClassProperty::MetaClass
+            put32(upCls2, DynOff::USTRUCT_PROPSSIZE, 0x30);
+            putP(upCls2, DynOff::USTRUCT_CHILDREN, A(upCP));
+            const uint32_t svVer2 = g_cachedUEVersion;
+            g_cachedUEVersion = 422;
+            const auto& upInfo2 = Ubel::WalkClassEx(A(upCls2));
+            g_cachedUEVersion = svVer2;
+            const FieldInfo* upK = nullptr;
+            for (const auto& f : upInfo2.Fields) if (f.Name == "Kind") upK = &f;
+            check("UPROPSLOT setup: the misdetected 4.15 class walked its ClassProperty",
+                  upK && upK->TypeName == "ClassProperty", std::to_string(upInfo2.Fields.size()).c_str());
+            check("UPROPSLOT ⭐: ...and reads its MetaClass at the layout's start, not the version's",
+                  upK && upK->metaClassName == "Pawn", upK ? upK->metaClassName.c_str() : "(no field)");
+        }
+
+        // No Guid / Vector: Genau gives up on its defaults -- which must be the UProperty family, not FProperty's.
+        layout(4, 0x28, 0x34, 0x44);
+        runGenau(423);
+        check("UPROPSLOT setup: no Guid / Vector takes the give-up",
+              std::string(DynOff::g_offsetsFallbackReason) == "no-guid-or-vector-struct",
+              DynOff::g_offsetsFallbackReason);
+        check("UPROPSLOT ⭐: the give-up ships the 4.23 default family 0x70, not FProperty's 0x78", famAt(0x70),
+              fam().c_str());
+        // 4.11-4.17 stock put Offset_Internal at 0x50, not the 4.18+ 0x44 UPROPERTY_OFFSET defaults to: a default derived
+        // from 0x44 there is 0x6C, where the untouched 0x78 was right.
+        runGenau(415);
+        check("UPROPSLOT ⭐: a 4.15 give-up keeps 0x78 -- no default derived from the 4.18+ Offset_Internal",
+              famAt(0x78), fam().c_str());
+        // ...and the readers outside the family take the same 0x78: with no start recorded, UPropertySubclassStart fell
+        // back to the version formula over that very 0x44 default -- 0x6C (review of build 3596, LOW).
+        check("UPROPSLOT ⭐: ...and so do the readers outside the family (UPropertySubclassStart), not 0x6C",
+              DynOff::UPropertySubclassStart(415) == 0x78, std::to_string(DynOff::UPropertySubclassStart(415)).c_str());
+
+        // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
+        // labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 set no UProperty family; the
+        // ChildProperties scan then fails over to UProperty mode, and if the Offset_Internal probe fails too, the run
+        // shipped the FProperty default 0x78 against the UProperty start 0x70. The fixture's UProperties are UObjects,
+        // so the FField scan fails and the fallback flips; their Offset_Internal values are all 0, so the probe fails.
+        layout(2, 0x28, 0x34, 0x44);
+        for (auto& pr : upProp) put32(pr, 0x44, 0);
+        runGenau(427);
+        check("UPROPSLOT setup: a 4.27 label on a UProperty layout flipped to UProperty mode with Offset_Internal unmeasured",
+              !DynOff::bUseFProperty && DynOff::UPROPERTY_OFFSET == 0x44,
+              (std::to_string(DynOff::bUseFProperty) + " " + std::to_string(DynOff::UPROPERTY_OFFSET)).c_str());
+        check("UPROPSLOT ⭐: ...and still ships the UProperty default family 0x70, not FProperty's 0x78 (the F5 arm)",
+              famAt(0x70) && DynOff::UPROPERTY_SUBCLASS_START == 0x70, fam().c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bCasePreservingName = svCpn;  DynOff::UOBJECT_OUTER = svOuter;   DynOff::bUseFProperty = svFProp;
+        DynOff::UFIELD_NEXT = svNext;         DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_SUPER = svSuper;
+        DynOff::USTRUCT_PROPSSIZE = svPropsSize; DynOff::USTRUCT_SCRIPT = svScript;
+        DynOff::UPROPERTY_OFFSET = svUOff;    DynOff::UPROPERTY_ELEMSIZE = svUElem; DynOff::UPROPERTY_FLAGS = svUFlags;
+        DynOff::UBOOLPROP_FIELDSIZE = svUBool; DynOff::bTaggedFFieldVariant = svTagged; DynOff::FNAME_NUMBER = svFNum;
+        DynOff::UPROPERTY_SUBCLASS_START = svUStart;   // Genau set it; a later block must not inherit this fixture's
+        DynOff::bOffsetsValidated.store(false); DynOff::bOffsetsProbeRan.store(false);
+        DynOff::g_offsetsFallbackReason = "";
+        g_cachedUEVersion = svVer;
+    }
+
+    // -- UPROPINNER-2026-09-27 -- a UProperty engine's container inners are named -------------------------------------
+    //
+    // ⛔ OWN name table (after UPROPSLOT). [UPROP-INNER-TYPENAME] WalkClassEx typed a container's inner / key / value /
+    // element with the FField reader, which on a UProperty (a UObject) reads ObjectFlags | InternalIndex at +0x8 and
+    // never names anything: UE423_Flying's export had 1,016 TArray<uint8_t> and 52 TMap<uint8_t, uint8_t>, and DQ XI S
+    // typed 0 of 77 array inners. Objects are sized as 4.23's: subclass start 0x70 (the family, since UPROPSLOT).
+    {
+        blk("UPROPINNER - on a UProperty engine WalkClassEx names Array / Map / Set inners, and reads their classes");
+
+        const auto svFProp = DynOff::bUseFProperty;       const auto svNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const auto svCpn = DynOff::bCasePreservingName;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+        DynOff::bUseFProperty = false;  DynOff::bCasePreservingName = false;  g_cachedUEVersion = 423;
+        DynOff::UFIELD_NEXT = 0x28;     DynOff::USTRUCT_CHILDREN = 0x48;      DynOff::USTRUCT_PROPSSIZE = 0x50;
+        DynOff::UPROPERTY_OFFSET = 0x44; DynOff::UPROPERTY_ELEMSIZE = 0x34;
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(0x44, 423, false));
+        const int S = DynOff::FSTRUCTPROP_STRUCT;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t uiEntry[14][0x40] = {};
+        const char* uiNames[14] = { "", "ArrayProperty", "MapProperty", "SetProperty", "IntProperty", "NameProperty",
+                                    "ObjectProperty", "ClassProperty", "Class", "Actor", "Scores", "ByName", "Kinds",
+                                    "Inner" };
+        static uintptr_t uiChunk[15] = {};
+        for (int i = 1; i <= 13; ++i) {
+            memcpy(uiEntry[i] + 0x10, uiNames[i], strlen(uiNames[i]) + 1);
+            uiChunk[i] = A(uiEntry[i]);
+        }
+        static uintptr_t uiChunks[2] = { reinterpret_cast<uintptr_t>(uiChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(uiChunks), 0x10);
+
+        // The property UClasses (named "ArrayProperty" ...), and the reflection objects Class / Actor.
+        static uint8_t uiPC[8][0x100] = {};
+        auto pcls = [&](int nameIdx) { put32(uiPC[nameIdx], Grimoire::OFF_UOBJECT_NAME, nameIdx); return A(uiPC[nameIdx]); };
+        static uint8_t uiClass[0x100] = {}, uiActor[0x100] = {};
+        put32(uiClass, Grimoire::OFF_UOBJECT_NAME, 8);  putP(uiClass, Grimoire::OFF_UOBJECT_CLASS, A(uiClass));
+        put32(uiActor, Grimoire::OFF_UOBJECT_NAME, 9);  putP(uiActor, Grimoire::OFF_UOBJECT_CLASS, A(uiClass));
+
+        // Inners: never chained into the class, each 4.23-sized, subclass members at S.
+        static uint8_t uiInt[0x100] = {}, uiKey[0x100] = {}, uiVal[0x100] = {}, uiElem[0x100] = {};
+        auto innerU = [&](uint8_t* p, uintptr_t cls) {
+            putP(p, Grimoire::OFF_UOBJECT_CLASS, cls);  put32(p, Grimoire::OFF_UOBJECT_NAME, 13);
+        };
+        innerU(uiInt, pcls(4));                                                        // int32
+        innerU(uiKey, pcls(5));                                                        // FName
+        innerU(uiVal, pcls(6));  putP(uiVal, S, A(uiActor));                           // AActor*
+        innerU(uiElem, pcls(7)); putP(uiElem, S, A(uiClass)); putP(uiElem, S + 8, A(uiActor));   // TSubclassOf<AActor>
+
+        // The class's three container properties: TArray<int32> Scores, TMap<FName, AActor*> ByName,
+        // TSet<TSubclassOf<AActor>> Kinds.
+        static uint8_t uiArr[0x100] = {}, uiMap[0x100] = {}, uiSet[0x100] = {}, uiCls[0x100] = {};
+        auto prop = [&](uint8_t* p, uintptr_t cls, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, Grimoire::OFF_UOBJECT_CLASS, cls);  put32(p, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+            put32(p, DynOff::UPROPERTY_ELEMSIZE - 4, 1);  put32(p, DynOff::UPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::UPROPERTY_OFFSET, off);
+            putP(p, DynOff::UFIELD_NEXT, next ? A(next) : 0);
+        };
+        prop(uiArr, pcls(1), 10, 0x28, 0x10, uiMap);  putP(uiArr, S, A(uiInt));
+        prop(uiMap, pcls(2), 11, 0x38, 0x50, uiSet);  putP(uiMap, S, A(uiKey));  putP(uiMap, S + 8, A(uiVal));
+        prop(uiSet, pcls(3), 12, 0x88, 0x50, nullptr); putP(uiSet, S, A(uiElem));
+        put32(uiCls, DynOff::USTRUCT_PROPSSIZE, 0xD8);
+        putP(uiCls, DynOff::USTRUCT_CHILDREN, A(uiArr));
+
+        const auto& uiInfo = Ubel::WalkClassEx(A(uiCls));
+        auto field = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : uiInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fA = field("Scores"); const FieldInfo* fM = field("ByName"); const FieldInfo* fS = field("Kinds");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("UPROPINNER setup: the 4.23 class walked its three containers",
+              fA && fM && fS && fA->TypeName == "ArrayProperty" && fM->TypeName == "MapProperty"
+                && fS->TypeName == "SetProperty", std::to_string(uiInfo.Fields.size()).c_str());
+        check("UPROPINNER ⭐: a TArray's inner is named", fA && fA->innerType == "IntProperty", s(fA, &FieldInfo::innerType));
+        check("UPROPINNER ⭐: a TMap's key and value are named",
+              fM && fM->keyType == "NameProperty" && fM->valueType == "ObjectProperty", s(fM, &FieldInfo::keyType));
+        check("UPROPINNER ⭐: a TSet's element is named", fS && fS->elemType == "ClassProperty", s(fS, &FieldInfo::elemType));
+        check("UPROPINNER ⭐: ...and a class-valued element reads its MetaClass",
+              fS && fS->elemMetaClass == "Actor", s(fS, &FieldInfo::elemMetaClass));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;  g_cachedUEVersion = svVer;
+        DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
+        DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+    }
+
+    // -- FAMILYEPOCH-2026-09-28 -- a class walked before the family moves is walked again after it ----------------------
+    //
+    // ⛔ OWN name table (after UPROPINNER). [FAMILY-EPOCH] The walk caches were keyed by class address alone, and two
+    // writers move the property family after init (CorrectSubclassOffsets, WalkInstance's struct probe) -- measured on
+    // UE423_Flying 0x78 -> 0x70, DQ XI S 0x78 -> 0x80, TQ2 0x74 -> 0x78. Every class cached before the move kept the
+    // answer its old slot gave for the rest of the session. A named object at each candidate slot tells which one a
+    // walk read; the class has no StructProperty, so CorrectSubclassOffsets cannot move anything by itself here.
+    {
+        blk("FAMILYEPOCH - a family move makes the walk caches read again, and a same-value write does not");
+
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t feEntry[8][0x40] = {};
+        const char* feNames[8] = { "", "ObjectProperty", "BoolProperty", "Actor", "Pawn", "Target", "Flag", "Class" };
+        static uintptr_t feChunk[9] = {};
+        for (int i = 1; i <= 7; ++i) {
+            memcpy(feEntry[i] + 0x10, feNames[i], strlen(feNames[i]) + 1);
+            feChunk[i] = A(feEntry[i]);
+        }
+        static uintptr_t feChunks[2] = { reinterpret_cast<uintptr_t>(feChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(feChunks), 0x10);
+
+        static uint8_t feObjFC[0x20] = {}, feBoolFC[0x20] = {}, feActor[0x100] = {}, fePawn[0x100] = {};
+        put32(feObjFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(feBoolFC, DynOff::FFIELDCLASS_NAME, 2);
+        put32(feActor, Grimoire::OFF_UOBJECT_NAME, 3);
+        put32(fePawn, Grimoire::OFF_UOBJECT_NAME, 4);
+        // Both are UClasses -- an object property's PropertyClass must be one to be read ([STRUCTPROBE-ANY-NAME]).
+        static uint8_t feClassCls[0x100] = {};
+        putP(feClassCls, Grimoire::OFF_UOBJECT_CLASS, A(feClassCls));
+        put32(feClassCls, Grimoire::OFF_UOBJECT_NAME, 7);
+        putP(feActor, Grimoire::OFF_UOBJECT_CLASS, A(feClassCls));
+        putP(fePawn, Grimoire::OFF_UOBJECT_CLASS, A(feClassCls));
+
+        static uint8_t feTarget[0x100] = {}, feFlag[0x100] = {}, feCls[0x100] = {};
+        auto fprop = [&](uint8_t* p, uintptr_t fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, fc);
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        fprop(feTarget, A(feObjFC), 5, 0x28, 8, feFlag);            // UObject* Target
+        putP(feTarget, 0x70, A(feActor));                           //   PropertyClass if the family is at 0x70
+        putP(feTarget, 0x78, A(fePawn));                            //   ...or if it is at 0x78
+        fprop(feFlag, A(feBoolFC), 6, 0x30, 1, nullptr);            // uint8 Flag : 1
+        const uint8_t boolAt70[4] = { 1, 0, 0x04, 0x04 }, boolAt78[4] = { 1, 0, 0x01, 0x01 };
+        memcpy(feFlag + 0x70, boolAt70, 4);
+        memcpy(feFlag + 0x78, boolAt78, 4);
+        put32(feCls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+        putP(feCls, DynOff::USTRUCT_CHILDPROPS, A(feTarget));
+
+        auto target = [](const ClassInfo& ci) -> std::string {
+            for (const auto& f : ci.Fields) if (f.Name == "Target") return f.objClassName;
+            return "(no field)";
+        };
+        auto flagMask = [](const ClassInfo& ci) -> int {
+            for (const auto& f : ci.Fields) if (f.Name == "Flag") return f.boolFieldMask;
+            return -1;
+        };
+
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+        const ClassInfo& before = Ubel::WalkClassEx(A(feCls));
+        check("FAMILYEPOCH setup: at 0x78 the walk reads the object there", target(before) == "Pawn",
+              target(before).c_str());
+        check("FAMILYEPOCH setup: ...and the plain walk the bool layout there", flagMask(Ubel::WalkClass(A(feCls))) == 1,
+              std::to_string(flagMask(Ubel::WalkClass(A(feCls)))).c_str());
+
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x70));   // a late correction, as on UE423_Flying
+        const ClassInfo& after = Ubel::WalkClassEx(A(feCls));
+        check("FAMILYEPOCH ⭐: after the family moves, WalkClassEx reads the class again at the new slot",
+              target(after) == "Actor", target(after).c_str());
+        check("FAMILYEPOCH ⭐: ...and so does the plain WalkClass cache (bool layout)",
+              flagMask(Ubel::WalkClass(A(feCls))) == 4, std::to_string(flagMask(Ubel::WalkClass(A(feCls)))).c_str());
+        check("FAMILYEPOCH control: the reference handed out before the move is still valid and unchanged",
+              target(before) == "Pawn", target(before).c_str());
+
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x70));   // the same values again
+        check("FAMILYEPOCH control: re-publishing the same family is a cache HIT, not a new walk",
+              &Ubel::WalkClassEx(A(feCls)) == &after);
+
+        // Review wf_b99fb861-680 (F4): every builder worked its key out AT PUBLISH, after its reads. A move made by
+        // another thread in between (a pipe lane's WalkInstance struct probe, a scan worker's CorrectSubclassOffsets)
+        // filed the old slot's answer under the NEW epoch, where every later lookup found it. Each builder's test seam
+        // moves the family 0x78 -> 0x70 at exactly that point, once; the next call must read the class again.
+        static const char* s_raceCache = nullptr;
+        auto moveOnce = [](const char* cache) {
+            if (s_raceCache && strcmp(cache, s_raceCache) == 0) {
+                s_raceCache = nullptr;
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x70));
+            }
+        };
+        auto armRace = [](const char* cache) {
+            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+            s_raceCache = cache;
+        };
+        static uint8_t feRace[5][0x100] = {};
+        for (auto& c : feRace) {
+            put32(c, DynOff::USTRUCT_PROPSSIZE, 0x38);
+            putP(c, DynOff::USTRUCT_CHILDPROPS, A(feTarget));
+        }
+        Ubel::g_beforeFamilyCachePublishForTest = moveOnce;
+        Aura::g_beforeFamilyCachePublishForTest = moveOnce;
+
+        armRace("WalkClass");
+        const int raceMask1 = flagMask(Ubel::WalkClass(A(feRace[0])));
+        const bool fired1 = s_raceCache == nullptr;
+        const int raceMask2 = flagMask(Ubel::WalkClass(A(feRace[0])));
+        check("FAMILYEPOCH race setup: the WalkClass seam fired, after a read at 0x78", fired1 && raceMask1 == 1,
+              std::to_string(raceMask1).c_str());
+        check("FAMILYEPOCH race ⭐: a plain walk overtaken by a move is NOT served under the new epoch",
+              raceMask2 == 4, std::to_string(raceMask2).c_str());
+
+        armRace("WalkClassEx");
+        const std::string raceTarget1 = target(Ubel::WalkClassEx(A(feRace[1])));
+        const bool fired2 = s_raceCache == nullptr;
+        const std::string raceTarget2 = target(Ubel::WalkClassEx(A(feRace[1])));
+        check("FAMILYEPOCH race setup: the WalkClassEx seam fired, after a read at 0x78",
+              fired2 && raceTarget1 == "Pawn", raceTarget1.c_str());
+        check("FAMILYEPOCH race ⭐: an enriched walk overtaken by a move is NOT served under the new epoch",
+              raceTarget2 == "Actor", raceTarget2.c_str());
+
+        auto structMask = [](const std::vector<Ubel::CachedStructField>& v) -> int {
+            for (const auto& f : v) if (f.name == "Flag") return f.boolFieldMask;
+            return -1;
+        };
+        armRace("StructFields");
+        const int raceSMask1 = structMask(Ubel::GetCachedStructFields(A(feRace[2])));
+        const bool fired3 = s_raceCache == nullptr;
+        const int raceSMask2 = structMask(Ubel::GetCachedStructFields(A(feRace[2])));
+        check("FAMILYEPOCH race setup: the struct-field seam fired, after a read at 0x78", fired3 && raceSMask1 == 1,
+              std::to_string(raceSMask1).c_str());
+        check("FAMILYEPOCH race ⭐: struct fields overtaken by a move are NOT served under the new epoch",
+              raceSMask2 == 4, std::to_string(raceSMask2).c_str());
+
+        // The two Aura memos hold no slot value this fixture can tell apart (no container, no reference), so they are
+        // pinned by identity: an entry built across the move must not be the one the next call is served.
+        armRace("ClassContainers");
+        const auto* raceC1 = &Aura::GetClassContainers(A(feRace[3]));
+        const bool fired4 = s_raceCache == nullptr;
+        const auto* raceC2 = &Aura::GetClassContainers(A(feRace[3]));
+        check("FAMILYEPOCH race setup: the container seam fired", fired4);
+        check("FAMILYEPOCH race ⭐: a container list built across a move is NOT served under the new epoch",
+              raceC1 != raceC2);
+        check("FAMILYEPOCH race control: ...and the rebuilt one is a plain cache hit",
+              &Aura::GetClassContainers(A(feRace[3])) == raceC2);
+
+        armRace("ClassRefMeta");
+        const auto* raceR1 = &Aura::GetClassRefMeta(A(feRace[4]));
+        const bool fired5 = s_raceCache == nullptr;
+        const auto* raceR2 = &Aura::GetClassRefMeta(A(feRace[4]));
+        check("FAMILYEPOCH race setup: the reference-meta seam fired", fired5);
+        check("FAMILYEPOCH race ⭐: reference meta built across a move is NOT served under the new epoch",
+              raceR1 != raceR2);
+        check("FAMILYEPOCH race control: ...and the rebuilt one is a plain cache hit",
+              &Aura::GetClassRefMeta(A(feRace[4])) == raceR2);
+
+        Ubel::g_beforeFamilyCachePublishForTest = nullptr;
+        Aura::g_beforeFamilyCachePublishForTest = nullptr;
+        s_raceCache = nullptr;
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- UPROPFLAT-2026-09-28 -- WalkInstance's UProperty container arms read an inner's struct at the family slot -------
+    //
+    // ⛔ OWN name table (after FAMILYEPOCH). [UPROP-CONTAINER-FLAT-2C] The UProperty TArray / TMap / TSet arms probed the
+    // inner pointer around a flat UPROPERTY_OFFSET + 0x2C and then read the inner's UScriptStruct at that SAME flat
+    // offset, unprobed. It is right on stock 4.18-4.24 only: 4.11-4.17 put the subclass start at Offset_Internal + 0x28
+    // and a case-preserving build at + 0x34, so a struct element's type came from the wrong slot.
+    {
+        blk("UPROPFLAT - a UProperty TArray<struct>'s element struct is read at the family slot on 4.15 and case-preserving 4.23");
+
+        const bool svFProp = DynOff::bUseFProperty;  const bool svCpn = DynOff::bCasePreservingName;
+        const auto svNext = DynOff::UFIELD_NEXT;     const auto svChildren = DynOff::USTRUCT_CHILDREN;
+        const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET; const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t ufEntry[6][0x40] = {};
+        const char* ufNames[6] = { "", "ArrayProperty", "StructProperty", "Vector", "Decoy", "Points" };
+        static uintptr_t ufChunk[7] = {};
+        for (int i = 1; i <= 5; ++i) {
+            memcpy(ufEntry[i] + 0x10, ufNames[i], strlen(ufNames[i]) + 1);
+            ufChunk[i] = A(ufEntry[i]);
+        }
+        static uintptr_t ufChunks[2] = { reinterpret_cast<uintptr_t>(ufChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ufChunks), 0x10);
+
+        static uint8_t ufArrCls[0x40] = {}, ufStructCls[0x40] = {}, ufVector[0x100] = {}, ufDecoy[0x100] = {};
+        put32(ufArrCls, Grimoire::OFF_UOBJECT_NAME, 1);
+        put32(ufStructCls, Grimoire::OFF_UOBJECT_NAME, 2);
+        put32(ufVector, Grimoire::OFF_UOBJECT_NAME, 3);
+        put32(ufDecoy, Grimoire::OFF_UOBJECT_NAME, 4);
+
+        // One layout per call: an ArrayProperty "Points" whose Inner is a StructProperty of Vector, both UProperties
+        // with the subclass start at `start`; a named decoy sits at `decoyAt` in the inner when it does not overlap.
+        auto walkAt = [&](int ver, bool cpn, int next, int elem, int offInt, int decoyAt, uint8_t* arr, uint8_t* inner,
+                          uint8_t* cls, uint8_t* inst) -> std::string {
+            DynOff::bUseFProperty = false;  DynOff::bCasePreservingName = cpn;
+            DynOff::UFIELD_NEXT = next;     DynOff::UPROPERTY_ELEMSIZE = elem;  DynOff::UPROPERTY_OFFSET = offInt;
+            DynOff::USTRUCT_CHILDREN = 0x48; DynOff::USTRUCT_PROPSSIZE = 0x50;
+            DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(offInt, ver, cpn));
+            const int S = DynOff::FSTRUCTPROP_STRUCT;
+            putP(inner, Grimoire::OFF_UOBJECT_CLASS, A(ufStructCls));
+            put32(inner, elem, 12);
+            putP(inner, S, A(ufVector));                               // UStructProperty::Struct
+            if (decoyAt >= 0) putP(inner, decoyAt, A(ufDecoy));
+            putP(arr, Grimoire::OFF_UOBJECT_CLASS, A(ufArrCls));
+            put32(arr, Grimoire::OFF_UOBJECT_NAME, 5);
+            put32(arr, elem - 4, 1);  put32(arr, elem, 0x10);  put32(arr, offInt, 0x28);
+            putP(arr, S, A(inner));                                    // UArrayProperty::Inner
+            put32(cls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+            putP(cls, DynOff::USTRUCT_CHILDREN, A(arr));
+            const auto r = Ubel::WalkInstance(A(inst), A(cls), 64, 2, false);   // an empty TArray: Data 0, Num 0
+            for (const auto& f : r.fields) if (f.name == "Points") return f.arrayInnerStructType + "|" + f.arrayInnerType;
+            return "(no field)";
+        };
+
+        static uint8_t a1[0x100] = {}, i1[0x100] = {}, c1[0x100] = {}, n1[0x100] = {};
+        const std::string r415 = walkAt(415, false, 0x28, 0x34, 0x50, -1, a1, i1, c1, n1);   // start 0x78, flat 0x7C
+        check("UPROPFLAT setup: the 4.15 walk found the array and its StructProperty inner",
+              r415.find('|') != std::string::npos && r415.substr(r415.find('|') + 1) == "StructProperty", r415.c_str());
+        check("UPROPFLAT ⭐: 4.15 -- the element struct is read at 0x78, not at the flat 0x7C",
+              r415.substr(0, r415.find('|')) == "Vector", r415.c_str());
+
+        static uint8_t a2[0x100] = {}, i2[0x100] = {}, c2[0x100] = {}, n2[0x100] = {};
+        const std::string r423 = walkAt(423, true, 0x30, 0x3C, 0x4C, 0x78, a2, i2, c2, n2);   // start 0x80, flat 0x78
+        check("UPROPFLAT ⭐: case-preserving 4.23 -- the struct at 0x80, not the named object at the flat 0x78",
+              r423.substr(0, r423.find('|')) == "Vector", r423.c_str());
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;
+        DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
+        DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+    }
+
+    // -- CONTAINEROBJ-2026-09-28 -- a Map key / value, a Set element and every object-family inner carry their class ------
+    //
+    // ⛔ OWN name table (after UPROPFLAT). [SDK-CONTAINER-OBJCLASS] walk_class published an object property's class for
+    // an Array inner of Object / Class type only, so EVERSPACE 2's SDK header had 20 TMap<FName, class UObject*>, 28
+    // TSet<class UObject*> and 50 TSoftObjectPtr<UObject>, and a class-valued map key whose PropertyClass is a UClass
+    // subclass -- ALevelVariantSetsActor::DirectorInstances -- came out UClass* (the source oracle's one MISMATCH).
+    {
+        blk("CONTAINEROBJ - Map key / value, Set element and object-family Array inners publish their PropertyClass");
+
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+        const int slot = DynOff::FSTRUCTPROP_STRUCT;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t coEntry[19][0x40] = {};
+        const char* coNames[19] = { "", "MapProperty", "SetProperty", "ArrayProperty", "NameProperty", "ObjectProperty",
+                                    "WeakObjectProperty", "SoftObjectProperty", "ClassProperty", "IntProperty", "Class",
+                                    "BlueprintGeneratedClass", "Actor", "Object", "ByName", "Watched", "Softs",
+                                    "Directors", "Inner" };
+        static uintptr_t coChunk[20] = {};
+        for (int i = 1; i <= 18; ++i) {
+            memcpy(coEntry[i] + 0x10, coNames[i], strlen(coNames[i]) + 1);
+            coChunk[i] = A(coEntry[i]);
+        }
+        static uintptr_t coChunks[2] = { reinterpret_cast<uintptr_t>(coChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(coChunks), 0x10);
+
+        // Reflection objects: Class is its own class; BlueprintGeneratedClass is a Class whose super is Class.
+        static uint8_t coObj[14][0x100] = {};
+        auto obj = [&](int nameIdx) { return A(coObj[nameIdx]); };
+        for (int i = 10; i <= 13; ++i) { put32(coObj[i], Grimoire::OFF_UOBJECT_NAME, i); putP(coObj[i], Grimoire::OFF_UOBJECT_CLASS, obj(10)); }
+        putP(coObj[11], DynOff::USTRUCT_SUPER, obj(10));
+
+        static uint8_t coFC[10][0x20] = {};
+        auto fclass = [&](int nameIdx) { put32(coFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx); return A(coFC[nameIdx]); };
+
+        // Inners: FFields never chained into the class.
+        static uint8_t coKeyName[0x100] = {}, coValObj[0x100] = {}, coElemWeak[0x100] = {}, coInnerSoft[0x100] = {},
+                       coKeyDir[0x100] = {}, coValInt[0x100] = {};
+        auto inner = [&](uint8_t* p, uintptr_t fc, uintptr_t propertyClass, uintptr_t meta) {
+            putP(p, DynOff::FFIELD_CLASS, fc);  put32(p, DynOff::FFIELD_NAME, 18);
+            if (propertyClass) putP(p, slot, propertyClass);
+            if (meta)          putP(p, slot + 8, meta);
+        };
+        inner(coKeyName, fclass(4), 0, 0);                 // FName
+        inner(coValObj, fclass(5), obj(12), 0);            // AActor*
+        inner(coElemWeak, fclass(6), obj(12), 0);          // TWeakObjectPtr<AActor>
+        inner(coInnerSoft, fclass(7), obj(12), 0);         // TSoftObjectPtr<AActor>
+        inner(coKeyDir, fclass(8), obj(11), obj(13));      // TObjectPtr<UBlueprintGeneratedClass>: PropertyClass BGC, Meta Object
+        inner(coValInt, fclass(9), 0, 0);                  // int32
+
+        static uint8_t coP[4][0x100] = {};
+        auto prop = [&](int i, uintptr_t fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(coP[i], DynOff::FFIELD_CLASS, fc);          put32(coP[i], DynOff::FFIELD_NAME, nameIdx);
+            put32(coP[i], DynOff::FPROPERTY_OFFSET, off);    put32(coP[i], DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(coP[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1); putP(coP[i], DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        prop(0, fclass(1), 14, 0x28, 0x50, coP[1]);  putP(coP[0], slot, A(coKeyName));  putP(coP[0], slot + 8, A(coValObj));
+        prop(1, fclass(2), 15, 0x78, 0x50, coP[2]);  putP(coP[1], slot, A(coElemWeak));
+        prop(2, fclass(3), 16, 0xC8, 0x10, coP[3]);  putP(coP[2], slot, A(coInnerSoft));
+        prop(3, fclass(1), 17, 0xD8, 0x50, nullptr); putP(coP[3], slot, A(coKeyDir));    putP(coP[3], slot + 8, A(coValInt));
+        static uint8_t coCls[0x100] = {};
+        put32(coCls, DynOff::USTRUCT_PROPSSIZE, 0x128);
+        putP(coCls, DynOff::USTRUCT_CHILDPROPS, A(coP[0]));
+
+        const auto& coInfo = Ubel::WalkClassEx(A(coCls));
+        auto field = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : coInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fBy = field("ByName"); const FieldInfo* fW = field("Watched");
+        const FieldInfo* fS = field("Softs");   const FieldInfo* fD = field("Directors");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("CONTAINEROBJ setup: the four containers walked with their inner types",
+              fBy && fW && fS && fD && fBy->valueType == "ObjectProperty" && fW->elemType == "WeakObjectProperty"
+                && fS->innerType == "SoftObjectProperty" && fD->keyType == "ClassProperty",
+              std::to_string(coInfo.Fields.size()).c_str());
+        check("CONTAINEROBJ ⭐: a Map's object VALUE publishes its class", fBy && fBy->valueObjClass == "Actor",
+              s(fBy, &FieldInfo::valueObjClass));
+        check("CONTAINEROBJ control: ...and its FName key none", fBy && fBy->keyObjClass.empty(), s(fBy, &FieldInfo::keyObjClass));
+        check("CONTAINEROBJ ⭐: a Set's weak-object ELEMENT publishes its class", fW && fW->elemObjClass == "Actor",
+              s(fW, &FieldInfo::elemObjClass));
+        check("CONTAINEROBJ ⭐: an Array's soft-object INNER publishes its class (the whole object family, not Object / Class)",
+              fS && fS->innerObjClass == "Actor", s(fS, &FieldInfo::innerObjClass));
+        check("CONTAINEROBJ ⭐: a class-valued Map KEY publishes its PropertyClass (a UClass subclass)",
+              fD && fD->keyObjClass == "BlueprintGeneratedClass", s(fD, &FieldInfo::keyObjClass));
+        check("CONTAINEROBJ control: ...beside its MetaClass Object", fD && fD->keyMetaClass == "Object",
+              s(fD, &FieldInfo::keyMetaClass));
+
+        // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY
+        // -- an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) -- and nothing downstream knew
+        // the name: DumperTest51's SDK export wrote 29 of them as raw bytes and its .usmap 30 slots of type Unknown
+        // (0xFF), which an unversioned reader cannot size. Same fixture: one more class, one field of that type.
+        static uint8_t coPtrFC[0x20] = {};
+        static uint8_t coPtrEntry[0x40] = {};
+        memcpy(coPtrEntry + 0x10, "ClassPtrProperty", 17);
+        static uintptr_t coPtrChunk[21] = {};
+        for (int i = 1; i <= 18; ++i) coPtrChunk[i] = coChunk[i];
+        coPtrChunk[19] = A(coPtrEntry);
+        static uintptr_t coPtrChunks[2] = { reinterpret_cast<uintptr_t>(coPtrChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(coPtrChunks), 0x10);
+        put32(coPtrFC, DynOff::FFIELDCLASS_NAME, 19);
+        static uint8_t coPtrProp[0x100] = {}, coPtrCls[0x100] = {};
+        putP(coPtrProp, DynOff::FFIELD_CLASS, A(coPtrFC));  put32(coPtrProp, DynOff::FFIELD_NAME, 17);   // "Directors"
+        put32(coPtrProp, DynOff::FPROPERTY_OFFSET, 0x28);   put32(coPtrProp, DynOff::FPROPERTY_ELEMSIZE, 8);
+        put32(coPtrProp, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+        putP(coPtrProp, slot, obj(11));                     // PropertyClass BlueprintGeneratedClass
+        putP(coPtrProp, slot + 8, obj(13));                 // MetaClass Object
+        put32(coPtrCls, DynOff::USTRUCT_PROPSSIZE, 0x30);
+        putP(coPtrCls, DynOff::USTRUCT_CHILDPROPS, A(coPtrProp));
+        const auto& cpInfo = Ubel::WalkClassEx(A(coPtrCls));
+        const FieldInfo* fP = cpInfo.Fields.empty() ? nullptr : &cpInfo.Fields[0];
+        check("CLASSPTRPROP ⭐: a UE 5.0 / 5.1 ClassPtrProperty is reported as the ClassProperty it is",
+              fP && fP->TypeName == "ClassProperty", fP ? fP->TypeName.c_str() : "(no field)");
+        check("CLASSPTRPROP ⭐: ...and reads its PropertyClass and MetaClass like one",
+              fP && fP->objClassName == "BlueprintGeneratedClass" && fP->metaClassName == "Object",
+              fP ? fP->objClassName.c_str() : "(no field)");
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- LISTCLASSES-2026-09-28 -- the class enumerators do not take a metaclass's class-default object for a class -----
+    //
+    // ⛔ OWN name table and OWN object array: re-initialises Aura, and puts the main pool back at the end.
+    // [LISTCLASSES-METACLASS-CDO] A metaclass's CDO -- Default__Class, Default__BlueprintGeneratedClass, ... -- has that
+    // metaclass as its own class, so the class-like-meta test alone admitted it: with "Game classes only" unticked,
+    // UE423_Flying's class list carried its five metaclass CDOs as classes, and every enumerator counted five classes
+    // too many (review wf_b99fb861-680). [DUMPALL-METACLASS-CDO] fixed the same shape in Dump All.
+    {
+        blk("LISTCLASSES - a metaclass's class-default object is not listed or counted as a class");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t lcEntry[7][0x40] = {};
+        const char* lcNames[7] = { "", "Class", "Actor", "Default__Class", "BlueprintGeneratedClass",
+                                   "Default__BlueprintGeneratedClass", "BP_Hero_C" };
+        static uintptr_t lcNameChunk[8] = {};
+        for (int i = 1; i <= 6; ++i) {
+            memcpy(lcEntry[i] + 0x10, lcNames[i], strlen(lcNames[i]) + 1);
+            lcNameChunk[i] = A(lcEntry[i]);
+        }
+        static uintptr_t lcNameChunks[2] = { A(lcNameChunk), 0 };
+        Serie::InitUE4(A(lcNameChunks), 0x10);
+
+        // Object i is named lcNames[i + 1], and its class is the metaclass it has in an engine: UClass for the two
+        // classes, the BGC metaclass and UClass's own CDO; BlueprintGeneratedClass for the Blueprint class and its CDO.
+        static uint8_t lcObj[6][0x100] = {};
+        const int lcClassOf[6] = { 0, 0, 0, 0, 3, 3 };
+        for (int i = 0; i < 6; ++i) {
+            putP(lcObj[i], Grimoire::OFF_UOBJECT_CLASS, A(lcObj[lcClassOf[i]]));
+            put32(lcObj[i], Grimoire::OFF_UOBJECT_NAME, i + 1);
+        }
+        put32(lcObj[1], DynOff::USTRUCT_PROPSSIZE, 0x30);   // Actor
+        put32(lcObj[5], DynOff::USTRUCT_PROPSSIZE, 0x38);   // BP_Hero_C
+
+        static uint8_t lcChunk[6 * 24] = {};
+        static uintptr_t lcTable[2] = {};
+        static uint8_t lcHdr[0x40] = {};
+        for (int i = 0; i < 6; ++i) putP(lcChunk, i * 24, A(lcObj[i]));
+        lcTable[0] = A(lcChunk);
+        putP(lcHdr, 0x10, A(lcTable));
+        put32(lcHdr, 0x20, 6);  put32(lcHdr, 0x24, 6);
+        put32(lcHdr, 0x28, 1);  put32(lcHdr, 0x2C, 1);
+        Aura::InitWithExtendedLayout(A(lcHdr), 24);
+        check("LISTCLASSES setup: the array holds the six objects", Aura::GetCount() == 6,
+              std::to_string(Aura::GetCount()).c_str());
+
+        const auto lc = Aura::ListClasses(false);
+        std::string lcRows;
+        bool lcAnyCdo = false;
+        for (const auto& e : lc.results) {
+            lcRows += e.className + " ";
+            if (e.className.rfind("Default__", 0) == 0) lcAnyCdo = true;
+        }
+        check("LISTCLASSES ⭐: no class-default object is listed as a class", !lcAnyCdo, lcRows.c_str());
+        check("LISTCLASSES ⭐: ...nor counted in the total", lc.totalClasses == 4,
+              std::to_string(lc.totalClasses).c_str());
+        check("LISTCLASSES control: every class is still listed, the metaclasses and a Blueprint class included",
+              lc.results.size() == 4 && lcRows.find("BP_Hero_C") != std::string::npos
+              && lcRows.find("Actor") != std::string::npos && lcRows.find("BlueprintGeneratedClass") != std::string::npos,
+              lcRows.c_str());
+
+        const auto lcSearch = Aura::SearchProperties("Health", {}, false);
+        check("LISTCLASSES ⭐: the property search does not scan a class-default object as a class",
+              lcSearch.scannedClasses == 4, std::to_string(lcSearch.scannedClasses).c_str());
+        const auto lcBatch = Aura::SearchPropertiesBatch({ "Health" }, {}, false);
+        check("LISTCLASSES ⭐: ...nor does the batched property search",
+              lcBatch.size() == 1 && lcBatch[0].scannedClasses == 4,
+              lcBatch.empty() ? "(no result)" : std::to_string(lcBatch[0].scannedClasses).c_str());
+        const auto lcFuncs = Aura::EnumerateAllFunctions(false);
+        check("LISTCLASSES ⭐: ...nor the function enumerator", lcFuncs.scannedClasses == 4,
+              std::to_string(lcFuncs.scannedClasses).c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        check("LISTCLASSES control: the main pool is back", Aura::GetCount() == kCount);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- STRUCTENUM-2026-09-28 -- the struct-field cache keeps a ByteProperty's enum only if it IS a UEnum ------------------
+    //
+    // ⛔ OWN name table (after LISTCLASSES). [STRUCTCACHE-ENUM-UNCHECKED] GetCachedStructFields stored whatever pointer sat
+    // in a ByteProperty's Enum slot, unchecked, for the session; ResolveEnumValue then parsed that object as a UEnum and
+    // printed its "enumerators" for a plain byte inside a struct array. The WalkInstance twin and the array reader both
+    // require the pointer's class to be Enum / UserDefinedEnum (review wf_63e981ac-5e4, S4).
+    {
+        blk("STRUCTENUM - a struct's ByteProperty caches its enum only when the pointer is a UEnum");
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t seEntry[9][0x40] = {};
+        const char* seNames[9] = { "", "ByteProperty", "Mode", "Kind", "Enum", "EColor", "Actor", "Decoy",
+                                   "UserDefinedEnum" };
+        static uintptr_t seChunk[10] = {};
+        for (int i = 1; i <= 8; ++i) {
+            memcpy(seEntry[i] + 0x10, seNames[i], strlen(seNames[i]) + 1);
+            seChunk[i] = A(seEntry[i]);
+        }
+        static uintptr_t seChunks[2] = { A(seChunk), 0 };
+        Serie::InitUE4(A(seChunks), 0x10);
+
+        // UObjects: the Enum metaclass and one UEnum of it; an Actor class and a named Actor instance (the decoy).
+        static uint8_t seEnumCls[0x100] = {}, seEnum[0x100] = {}, seActorCls[0x100] = {}, seDecoy[0x100] = {};
+        putP(seEnumCls, Grimoire::OFF_UOBJECT_CLASS, A(seEnumCls));   put32(seEnumCls, Grimoire::OFF_UOBJECT_NAME, 4);
+        putP(seEnum, Grimoire::OFF_UOBJECT_CLASS, A(seEnumCls));      put32(seEnum, Grimoire::OFF_UOBJECT_NAME, 5);
+        putP(seActorCls, Grimoire::OFF_UOBJECT_CLASS, A(seActorCls)); put32(seActorCls, Grimoire::OFF_UOBJECT_NAME, 6);
+        putP(seDecoy, Grimoire::OFF_UOBJECT_CLASS, A(seActorCls));    put32(seDecoy, Grimoire::OFF_UOBJECT_NAME, 7);
+
+        static uint8_t seByteFC[0x20] = {};
+        put32(seByteFC, DynOff::FFIELDCLASS_NAME, 1);
+        static uint8_t seMode[0x100] = {}, seKind[0x100] = {}, seStruct[0x100] = {};
+        auto fprop = [&](uint8_t* p, int nameIdx, int32_t off, uint8_t* next, uintptr_t enumSlot) {
+            putP(p, DynOff::FFIELD_CLASS, A(seByteFC));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, 1);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+            putP(p, 0x78, enumSlot);                                   // FByteProperty::Enum at the family base
+        };
+        fprop(seMode, 2, 0x00, seKind, A(seDecoy));   // uint8 Mode -- the slot holds a named non-enum object
+        fprop(seKind, 3, 0x01, nullptr, A(seEnum));   // TEnumAsByte<EColor> Kind
+        put32(seStruct, DynOff::USTRUCT_PROPSSIZE, 0x02);
+        putP(seStruct, DynOff::USTRUCT_CHILDPROPS, A(seMode));
+
+        const auto& seFields = Ubel::GetCachedStructFields(A(seStruct));
+        auto enumOf = [&](const char* name) -> uintptr_t {
+            for (const auto& f : seFields) if (f.name == name) return f.enumAddr;
+            return ~uintptr_t(0);
+        };
+        check("STRUCTENUM setup: both byte fields were walked", seFields.size() == 2,
+              std::to_string(seFields.size()).c_str());
+        check("STRUCTENUM ⭐: a ByteProperty whose Enum slot holds a non-enum object caches NO enum",
+              enumOf("Mode") == 0, (std::string("Mode enumAddr=") + std::to_string(enumOf("Mode"))).c_str());
+        check("STRUCTENUM control: a real UEnum is still cached", enumOf("Kind") == A(seEnum));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- STRUCTPROBE-2026-09-28 -- a struct / class slot is accepted only when it holds a struct / a class ----------------
+    //
+    // ⛔ OWN name table (after STRUCTENUM). [STRUCTPROBE-ANY-NAME] The subclass-slot readers accepted ANY object with a
+    // printable name. On a shifted layout the default slot holds another named object -- on DQ XI S a Blueprint-owned
+    // property's PostConstructLinkNext, a named UProperty -- and it passed: a struct member was typed as a property's
+    // name, and the WalkInstance probe stopped at delta 0 on it instead of finding the struct 8 bytes on (review
+    // wf_63e981ac-5e4, S2). A slot is accepted now only when the object's class chain reaches ScriptStruct (a struct)
+    // or Class (an object property's PropertyClass).
+    {
+        blk("STRUCTPROBE - a subclass slot is accepted only when it holds the kind of object it must");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t spEntry[15][0x40] = {};
+        const char* spNames[15] = { "", "StructProperty", "ObjectProperty", "ScriptStruct", "Class", "Vector", "Actor",
+                                    "Decoy", "Loc", "Owner", "UserDefinedStruct", "S_Item", "Item", "Pos", "Target" };
+        static uintptr_t spChunk[16] = {};
+        for (int i = 1; i <= 14; ++i) {
+            memcpy(spEntry[i] + 0x10, spNames[i], strlen(spNames[i]) + 1);
+            spChunk[i] = A(spEntry[i]);
+        }
+        static uintptr_t spChunks[2] = { A(spChunk), 0 };
+        Serie::InitUE4(A(spChunks), 0x10);
+
+        // UObjects as an engine has them: UClass (its own class), the ScriptStruct and UserDefinedStruct metaclasses
+        // (UserDefinedStruct's super is ScriptStruct), a native struct and a Blueprint struct, the Actor class, and a
+        // named Actor instance -- the decoy, a named object that is neither a struct nor a class.
+        static uint8_t spClassCls[0x100] = {}, spSsCls[0x100] = {}, spUdsCls[0x100] = {}, spVector[0x100] = {},
+                       spUds[0x100] = {}, spActorCls[0x100] = {}, spDecoy[0x100] = {};
+        auto uobj = [&](uint8_t* o, const uint8_t* cls, int nameIdx) {
+            putP(o, Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(o, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+        };
+        uobj(spClassCls, spClassCls, 4);
+        uobj(spSsCls, spClassCls, 3);
+        uobj(spUdsCls, spClassCls, 10);
+        putP(spUdsCls, DynOff::USTRUCT_SUPER, A(spSsCls));
+        uobj(spVector, spSsCls, 5);
+        uobj(spUds, spUdsCls, 11);
+        uobj(spActorCls, spClassCls, 6);
+        uobj(spDecoy, spActorCls, 7);
+
+        static uint8_t spStructFC[0x20] = {}, spObjFC[0x20] = {};
+        put32(spStructFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(spObjFC, DynOff::FFIELDCLASS_NAME, 2);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next,
+                         uintptr_t slot) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+            putP(p, 0x78, slot);
+        };
+        static uint8_t spPos[0x100] = {}, spItem[0x100] = {}, spLoc[0x100] = {}, spTarget[0x100] = {},
+                       spOwner[0x100] = {}, spCls[0x100] = {};
+        fprop(spPos,    spStructFC, 13, 0x00, 0x0C, spItem,   A(spVector));   // FVector Pos
+        fprop(spItem,   spStructFC, 12, 0x10, 0x08, spLoc,    A(spUds));      // S_Item Item (a Blueprint struct)
+        fprop(spLoc,    spStructFC,  8, 0x18, 0x0C, spTarget, A(spDecoy));    // the slot holds a named non-struct
+        fprop(spTarget, spObjFC,    14, 0x28, 0x08, spOwner,  A(spActorCls)); // AActor* Target
+        fprop(spOwner,  spObjFC,     9, 0x30, 0x08, nullptr,  A(spDecoy));    // the slot holds a named non-class
+        put32(spCls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+        putP(spCls, DynOff::USTRUCT_CHILDPROPS, A(spPos));
+
+        const auto& spInfo = Ubel::WalkClassEx(A(spCls));
+        auto fieldOf = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : spInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fPos = fieldOf("Pos");
+        const FieldInfo* fItem = fieldOf("Item");
+        const FieldInfo* fLoc = fieldOf("Loc");
+        const FieldInfo* fTarget = fieldOf("Target");
+        const FieldInfo* fOwner = fieldOf("Owner");
+        check("STRUCTPROBE setup: the five fields were walked", fPos && fItem && fLoc && fTarget && fOwner,
+              std::to_string(spInfo.Fields.size()).c_str());
+        if (fPos && fItem && fLoc && fTarget && fOwner) {
+            check("STRUCTPROBE ⭐: a StructProperty whose slot holds a named NON-struct is not typed by that name",
+                  fLoc->structType.empty(), fLoc->structType.c_str());
+            check("STRUCTPROBE ⭐: an ObjectProperty whose slot holds a named NON-class is not typed by that name",
+                  fOwner->objClassName.empty(), fOwner->objClassName.c_str());
+            check("STRUCTPROBE control: a native struct is named", fPos->structType == "Vector", fPos->structType.c_str());
+            check("STRUCTPROBE control: a Blueprint struct (UserDefinedStruct : ScriptStruct) is named",
+                  fItem->structType == "S_Item", fItem->structType.c_str());
+            check("STRUCTPROBE control: an object property's class is named", fTarget->objClassName == "Actor",
+                  fTarget->objClassName.c_str());
+        }
+
+        // WalkInstance's probe: the decoy at the family slot, the real struct one pointer on. It must not stop at the
+        // decoy -- it finds the struct at +8 (and, by design, moves the family there).
+        static uint8_t spLoc2[0x100] = {}, spCls2[0x100] = {}, spInst[0x100] = {};
+        fprop(spLoc2, spStructFC, 8, 0x00, 0x0C, nullptr, A(spDecoy));
+        putP(spLoc2, 0x80, A(spVector));
+        put32(spCls2, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        putP(spCls2, DynOff::USTRUCT_CHILDPROPS, A(spLoc2));
+        putP(spInst, Grimoire::OFF_UOBJECT_CLASS, A(spCls2));
+        const auto spWalk = Ubel::WalkInstance(A(spInst), A(spCls2), 64, 2, false);
+        std::string spWalkType = "(no field)";
+        for (const auto& fv : spWalk.fields) if (fv.name == "Loc") spWalkType = fv.structTypeName;
+        check("STRUCTPROBE ⭐: WalkInstance's struct probe passes over a named non-struct to the struct beyond it",
+              spWalkType == "Vector", spWalkType.c_str());
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- ENUMSLOT-2026-09-28 -- an enum slot is accepted only when it holds a UEnum ------------------------------------------
+    //
+    // ⛔ OWN name table (after STRUCTPROBE). [ENUMSLOT-ANY-NAME] [STRUCTPROBE-ANY-NAME] gave the struct and class slots a
+    // kind check; the ENUM slots kept the old one (review of builds 3594-3595): the enum-name readers accepted any
+    // printable name -- and those names go into the SDK and USMAP exports -- the EnumProperty pointer readers kept any
+    // pointer, and IsUEnumObject matched two exact class names, so a UEnum SUBCLASS was dropped where the struct and class
+    // checks walk the chain.
+    {
+        blk("ENUMSLOT - an enum slot is accepted only when it holds a UEnum (or a UEnum subclass)");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));   // Byte's Enum at 0x78, Enum's at 0x80
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t esEntry[16][0x40] = {};
+        const char* esNames[16] = { "", "EnumProperty", "ByteProperty", "ArrayProperty", "Enum", "EColor", "Actor",
+                                    "Decoy", "CustomEnum", "ECustom", "Mode", "Kind", "Tags", "Level", "Grade", "Tier" };
+        static uintptr_t esChunk[17] = {};
+        for (int i = 1; i <= 15; ++i) {
+            memcpy(esEntry[i] + 0x10, esNames[i], strlen(esNames[i]) + 1);
+            esChunk[i] = A(esEntry[i]);
+        }
+        static uintptr_t esChunks[2] = { A(esChunk), 0 };
+        Serie::InitUE4(A(esChunks), 0x10);
+
+        // The Enum metaclass, a UEnum SUBCLASS metaclass (super = Enum -- a UserDefinedEnum or a Verse enum has this
+        // shape), one enum of each, the Actor class and a named Actor instance: the decoy.
+        static uint8_t esEnumCls[0x100] = {}, esCustomCls[0x100] = {}, esColor[0x100] = {}, esCustom[0x100] = {},
+                       esActorCls[0x100] = {}, esDecoy[0x100] = {};
+        auto uobj = [&](uint8_t* o, const uint8_t* cls, int nameIdx) {
+            putP(o, Grimoire::OFF_UOBJECT_CLASS, A(cls));
+            put32(o, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+        };
+        uobj(esEnumCls, esEnumCls, 4);
+        uobj(esCustomCls, esEnumCls, 8);
+        putP(esCustomCls, DynOff::USTRUCT_SUPER, A(esEnumCls));
+        uobj(esColor, esEnumCls, 5);
+        uobj(esCustom, esCustomCls, 9);
+        uobj(esActorCls, esActorCls, 6);
+        uobj(esDecoy, esActorCls, 7);
+
+        static uint8_t esEnumFC[0x20] = {}, esByteFC[0x20] = {}, esArrayFC[0x20] = {};
+        put32(esEnumFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(esByteFC, DynOff::FFIELDCLASS_NAME, 2);
+        put32(esArrayFC, DynOff::FFIELDCLASS_NAME, 3);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        static uint8_t esMode[0x100] = {}, esKind[0x100] = {}, esTags[0x100] = {}, esTagsInner[0x100] = {},
+                       esLevel[0x100] = {}, esGrade[0x100] = {}, esTier[0x100] = {}, esCls[0x100] = {};
+        fprop(esMode,  esEnumFC,  10, 0x00, 1, esKind);    putP(esMode, 0x80, A(esDecoy));     // EnumProperty -> decoy
+        fprop(esKind,  esByteFC,  11, 0x01, 1, esTags);    putP(esKind, 0x78, A(esDecoy));     // ByteProperty -> decoy
+        fprop(esTags,  esArrayFC, 12, 0x08, 16, esLevel);  putP(esTags, 0x78, A(esTagsInner)); // TArray<enum> Tags
+        fprop(esTagsInner, esEnumFC, 12, 0x00, 1, nullptr); putP(esTagsInner, 0x80, A(esDecoy)); //   inner -> decoy
+        fprop(esLevel, esEnumFC,  13, 0x18, 1, esGrade);   putP(esLevel, 0x80, A(esColor));    // EnumProperty EColor
+        fprop(esGrade, esByteFC,  14, 0x19, 1, esTier);    putP(esGrade, 0x78, A(esCustom));   // TEnumAsByte<ECustom>
+        fprop(esTier,  esEnumFC,  15, 0x1A, 1, nullptr);   putP(esTier, 0x80, A(esCustom));    // EnumProperty ECustom
+        put32(esCls, DynOff::USTRUCT_PROPSSIZE, 0x20);
+        putP(esCls, DynOff::USTRUCT_CHILDPROPS, A(esMode));
+
+        const auto& esInfo = Ubel::WalkClassEx(A(esCls));
+        auto fieldOf = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : esInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fMode = fieldOf("Mode");
+        const FieldInfo* fKind = fieldOf("Kind");
+        const FieldInfo* fTags = fieldOf("Tags");
+        const FieldInfo* fLevel = fieldOf("Level");
+        const FieldInfo* fTier = fieldOf("Tier");
+        check("ENUMSLOT setup: the fields were walked", fMode && fKind && fTags && fLevel && fTier,
+              std::to_string(esInfo.Fields.size()).c_str());
+        if (fMode && fKind && fTags && fLevel && fTier) {
+            check("ENUMSLOT ⭐: an EnumProperty whose slot holds a named NON-enum is not named by it",
+                  fMode->enumName.empty(), fMode->enumName.c_str());
+            check("ENUMSLOT ⭐: ...nor a ByteProperty's", fKind->enumName.empty(), fKind->enumName.c_str());
+            check("ENUMSLOT ⭐: ...nor an array inner's", fTags->innerEnumName.empty(), fTags->innerEnumName.c_str());
+            check("ENUMSLOT control: a real UEnum is named", fLevel->enumName == "EColor", fLevel->enumName.c_str());
+            check("ENUMSLOT control: ...and a UEnum subclass's enum too", fTier->enumName == "ECustom",
+                  fTier->enumName.c_str());
+        }
+
+        const auto& esCached = Ubel::GetCachedStructFields(A(esCls));
+        auto cachedEnum = [&](const char* n) -> uintptr_t {
+            for (const auto& f : esCached) if (f.name == n) return f.enumAddr;
+            return ~uintptr_t(0);
+        };
+        check("ENUMSLOT ⭐: the struct-field cache keeps no EnumProperty pointer that is not a UEnum",
+              cachedEnum("Mode") == 0);
+        check("ENUMSLOT ⭐: ...and does keep a ByteProperty's enum of a UEnum SUBCLASS (the exact-name check dropped it)",
+              cachedEnum("Grade") == A(esCustom));
+        check("ENUMSLOT control: a real EnumProperty enum is cached", cachedEnum("Level") == A(esColor));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- OPTSTRUCT-2026-09-28 -- the two struct-slot readers [STRUCTPROBE-ANY-NAME] did not reach -------------------------
+    //
+    // ⛔ OWN name table (after ENUMSLOT). [OPTSTRUCT-ANY-NAME] ResolveOptionalLayout's probe for a TOptional<FStruct>'s
+    // UScriptStruct still took the first NAMED object -- and then read that object's "MinAlignment", so the optional's
+    // layout (where bIsSet sits) came out wrong or Unknown -- and the struct-field cache named a nested struct by
+    // whatever object its slot held (review of builds 3594-3595, LOW + INFO).
+    {
+        blk("OPTSTRUCT - the TOptional struct probe and the struct cache take only a struct");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t osEntry[10][0x40] = {};
+        const char* osNames[10] = { "", "OptionalProperty", "StructProperty", "ScriptStruct", "Transform8", "Actor",
+                                    "Decoy", "Opt", "Val", "Where" };
+        static uintptr_t osChunk[11] = {};
+        for (int i = 1; i <= 9; ++i) {
+            memcpy(osEntry[i] + 0x10, osNames[i], strlen(osNames[i]) + 1);
+            osChunk[i] = A(osEntry[i]);
+        }
+        static uintptr_t osChunks[2] = { A(osChunk), 0 };
+        Serie::InitUE4(A(osChunks), 0x10);
+
+        static uint8_t osSsCls[0x100] = {}, osStruct[0x100] = {}, osActorCls[0x100] = {}, osDecoy[0x100] = {};
+        putP(osSsCls, Grimoire::OFF_UOBJECT_CLASS, A(osSsCls));       put32(osSsCls, Grimoire::OFF_UOBJECT_NAME, 3);
+        putP(osStruct, Grimoire::OFF_UOBJECT_CLASS, A(osSsCls));      put32(osStruct, Grimoire::OFF_UOBJECT_NAME, 4);
+        put32(osStruct, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        const int16_t osAlign8 = 8;
+        memcpy(osStruct + DynOff::USTRUCT_PROPSSIZE + 4, &osAlign8, sizeof(osAlign8));   // UScriptStruct::MinAlignment
+        putP(osActorCls, Grimoire::OFF_UOBJECT_CLASS, A(osActorCls)); put32(osActorCls, Grimoire::OFF_UOBJECT_NAME, 5);
+        putP(osDecoy, Grimoire::OFF_UOBJECT_CLASS, A(osActorCls));    put32(osDecoy, Grimoire::OFF_UOBJECT_NAME, 6);
+
+        static uint8_t osOptFC[0x20] = {}, osStructFC[0x20] = {};
+        put32(osOptFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(osStructFC, DynOff::FFIELDCLASS_NAME, 2);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        // TOptional<Transform8>: a 0x10-byte, 8-aligned struct -> the value at 0, bIsSet at 0x10, sizeof 0x18.
+        static uint8_t osOpt[0x100] = {}, osVal[0x100] = {};
+        fprop(osOpt, osOptFC, 7, 0x00, 0x18, nullptr);
+        putP(osOpt, 0x78, A(osVal));                                   // ValueProperty (the Inner slot)
+        fprop(osVal, osStructFC, 8, 0x00, 0x10, nullptr);
+        putP(osVal, 0x78, A(osDecoy));                                 // the struct slot holds a named NON-struct...
+        putP(osVal, 0x80, A(osStruct));                                // ...and the struct is one pointer on
+        const auto osOl = Ubel::ResolveOptionalLayout(A(osOpt), 0x18, "");
+        check("OPTSTRUCT setup: the optional's value property is the StructProperty", osOl.innerProp == A(osVal)
+              && osOl.innerType == "StructProperty", osOl.innerType.c_str());
+        check("OPTSTRUCT ⭐: the TOptional probe passes over a named non-struct to the struct's alignment",
+              osOl.innerAlign == 8, std::to_string(osOl.innerAlign).c_str());
+        check("OPTSTRUCT ⭐: ...so the optional is laid out as the trailing-flag TOptional it is",
+              osOl.layout == Ubel::OptionalLayout::TrailingFlag, std::to_string(static_cast<int>(osOl.layout)).c_str());
+
+        // The struct-field cache: a StructProperty whose slot holds the decoy names no nested struct.
+        static uint8_t osWhere[0x100] = {}, osCls[0x100] = {};
+        fprop(osWhere, osStructFC, 9, 0x00, 0x10, nullptr);
+        putP(osWhere, 0x78, A(osDecoy));
+        put32(osCls, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        putP(osCls, DynOff::USTRUCT_CHILDPROPS, A(osWhere));
+        std::string osNested = "(no field)";
+        for (const auto& f : Ubel::GetCachedStructFields(A(osCls))) if (f.name == "Where") osNested = f.nestedTypeName;
+        check("OPTSTRUCT ⭐: the struct-field cache names no nested struct from a named non-struct",
+              osNested.empty(), osNested.c_str());
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
+    // -- KINDNAMES-2026-09-28 -- the engine's own metaclasses pass the kind checks without SuperStruct -------------------
+    //
+    // ⛔ OWN name table (after OPTSTRUCT). [STRUCTPROBE-ANY-NAME] [ENUMSLOT-ANY-NAME] follow-up (review of build 3596,
+    // INFO): the kind checks walked the metaclass's SuperStruct chain even for UserDefinedStruct, BlueprintGeneratedClass
+    // and UserDefinedEnum, whose names already say what they are. A give-up session never measures USTRUCT_SUPER (its
+    // 0x40 default is wrong on 4.11-4.21), so there every Blueprint struct, class and enum was dropped -- where the
+    // name-only check before build 3595 kept them. Here the metaclasses have no SuperStruct at all.
+    {
+        blk("KINDNAMES - a Blueprint struct, class and enum pass by their metaclass's name, with no SuperStruct");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t knEntry[13][0x40] = {};
+        const char* knNames[13] = { "", "StructProperty", "ObjectProperty", "ByteProperty", "UserDefinedStruct",
+                                    "S_Item", "BlueprintGeneratedClass", "BP_Hero_C", "UserDefinedEnum", "E_Mood",
+                                    "Item", "Hero", "Mood" };
+        static uintptr_t knChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
+            memcpy(knEntry[i] + 0x10, knNames[i], strlen(knNames[i]) + 1);
+            knChunk[i] = A(knEntry[i]);
+        }
+        static uintptr_t knChunks[2] = { A(knChunk), 0 };
+        Serie::InitUE4(A(knChunks), 0x10);
+
+        // Metaclasses named as the engine names them, with NO SuperStruct; one object of each.
+        static uint8_t knUdsMeta[0x100] = {}, knBpgcMeta[0x100] = {}, knUdeMeta[0x100] = {},
+                       knUds[0x100] = {}, knBp[0x100] = {}, knUde[0x100] = {};
+        put32(knUdsMeta, Grimoire::OFF_UOBJECT_NAME, 4);
+        put32(knBpgcMeta, Grimoire::OFF_UOBJECT_NAME, 6);
+        put32(knUdeMeta, Grimoire::OFF_UOBJECT_NAME, 8);
+        putP(knUds, Grimoire::OFF_UOBJECT_CLASS, A(knUdsMeta));   put32(knUds, Grimoire::OFF_UOBJECT_NAME, 5);
+        putP(knBp, Grimoire::OFF_UOBJECT_CLASS, A(knBpgcMeta));   put32(knBp, Grimoire::OFF_UOBJECT_NAME, 7);
+        putP(knUde, Grimoire::OFF_UOBJECT_CLASS, A(knUdeMeta));   put32(knUde, Grimoire::OFF_UOBJECT_NAME, 9);
+
+        static uint8_t knStructFC[0x20] = {}, knObjFC[0x20] = {}, knByteFC[0x20] = {};
+        put32(knStructFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(knObjFC, DynOff::FFIELDCLASS_NAME, 2);
+        put32(knByteFC, DynOff::FFIELDCLASS_NAME, 3);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next,
+                         uintptr_t slot) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+            putP(p, 0x78, slot);
+        };
+        static uint8_t knItem[0x100] = {}, knHero[0x100] = {}, knMood[0x100] = {}, knCls[0x100] = {};
+        fprop(knItem, knStructFC, 10, 0x00, 0x10, knHero, A(knUds));
+        fprop(knHero, knObjFC,    11, 0x10, 0x08, knMood, A(knBp));
+        fprop(knMood, knByteFC,   12, 0x18, 0x01, nullptr, A(knUde));
+        put32(knCls, DynOff::USTRUCT_PROPSSIZE, 0x20);
+        putP(knCls, DynOff::USTRUCT_CHILDPROPS, A(knItem));
+
+        const auto& knInfo = Ubel::WalkClassEx(A(knCls));
+        auto fieldOf = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : knInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fItem = fieldOf("Item");
+        const FieldInfo* fHero = fieldOf("Hero");
+        const FieldInfo* fMood = fieldOf("Mood");
+        check("KINDNAMES setup: the three fields were walked", fItem && fHero && fMood,
+              std::to_string(knInfo.Fields.size()).c_str());
+        if (fItem && fHero && fMood) {
+            check("KINDNAMES ⭐: a UserDefinedStruct is a struct without its SuperStruct", fItem->structType == "S_Item",
+                  fItem->structType.c_str());
+            check("KINDNAMES ⭐: a BlueprintGeneratedClass is a class without its SuperStruct",
+                  fHero->objClassName == "BP_Hero_C", fHero->objClassName.c_str());
+            check("KINDNAMES ⭐: a UserDefinedEnum is an enum without its SuperStruct", fMood->enumName == "E_Mood",
+                  fMood->enumName.c_str());
+        }
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

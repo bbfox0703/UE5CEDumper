@@ -2235,6 +2235,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.innerType.empty())        fj["inner_type"]        = f.innerType;
                 if (!f.innerStructType.empty())  fj["inner_struct_type"] = f.innerStructType;
                 if (!f.innerObjClass.empty())    fj["inner_obj_class"]   = f.innerObjClass;
+                // [SDK-CONTAINER-OBJCLASS] a Map key / value's and a Set element's class (additive keys)
+                if (!f.keyObjClass.empty())      fj["key_obj_class"]     = f.keyObjClass;
+                if (!f.valueObjClass.empty())    fj["value_obj_class"]   = f.valueObjClass;
+                if (!f.elemObjClass.empty())     fj["elem_obj_class"]    = f.elemObjClass;
                 if (!f.keyType.empty())          fj["key_type"]          = f.keyType;
                 if (!f.keyStructType.empty())    fj["key_struct_type"]   = f.keyStructType;
                 if (!f.valueType.empty())        fj["value_type"]        = f.valueType;
@@ -2247,6 +2251,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.elemEnumName.empty())     fj["elem_enum"]         = f.elemEnumName;
                 if (!f.keyEnumName.empty())      fj["key_enum"]          = f.keyEnumName;
                 if (!f.valueEnumName.empty())    fj["value_enum"]        = f.valueEnumName;
+                // [SDK-METACLASS] a Class/SoftClass property's MetaClass (additive keys; obj_class stays
+                // its PropertyClass)
+                if (!f.metaClassName.empty())    fj["meta_class"]        = f.metaClassName;
+                if (!f.innerMetaClass.empty())   fj["inner_meta_class"]  = f.innerMetaClass;
+                if (!f.keyMetaClass.empty())     fj["key_meta_class"]    = f.keyMetaClass;
+                if (!f.valueMetaClass.empty())   fj["value_meta_class"]  = f.valueMetaClass;
+                if (!f.elemMetaClass.empty())    fj["elem_meta_class"]   = f.elemMetaClass;
                 if (f.boolFieldMask != 0)        fj["bool_mask"]         = f.boolFieldMask;
                 fields.push_back(fj);
             }
@@ -2323,14 +2334,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 uintptr_t obj = Aura::GetByIndex(i);
                 if (!obj) continue;
 
-                // Check if this object's class is "Enum" (UEnum inherits UObject)
+                // A UEnum or a Blueprint UserDefinedEnum, never a class-default object (Aura::IsListedEnumObject).
+                // The class is tested first so only enums pay for resolving their own name.
                 uintptr_t cls = Ubel::GetClass(obj);
                 if (!cls) continue;
                 std::string clsName = Ubel::GetName(cls);
-                if (clsName != "Enum") continue;
-
+                if (!Aura::IsListedEnumClass(clsName)) continue;
                 std::string name = Ubel::GetName(obj);
-                if (name.empty()) continue;
+                if (name.empty() || !Aura::IsListedEnumObject(clsName, name)) continue;
 
                 // Read enum entries via cached resolver
                 auto entries = Ubel::GetEnumEntries(obj);

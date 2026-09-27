@@ -790,6 +790,40 @@ that the build number is the release number and advances on every build, so a re
 (memory: build number = release number). ⚠ This paragraph said the opposite until 2026-09-24, and build
 3548 was re-published under it; that was a breach of the rule, not a precedent.
 
+### 1.ai A path that CORRECTS ITSELF hides the defect from every check that goes through it — verify from a FRESH connect, against SOURCE
+
+Measured 2026-09-27 (`[UPROP-SUBCLASS-SLOT]`). On every UE 4.18–4.24 game `walk_class` read struct, object and enum
+types from the FProperty family's default slot, one pointer past the right one: UE423_Flying's SDK export straight
+after connect had 2,624 of 2,624 struct members as raw bytes and 1,038 of 1,038 object pointers as `UObject*`, and
+its `.usmap` named 0 of 2,628 struct slots. It survived months of UE4 verification because every UE4 check went
+through a path that heals it or never uses it: Live Walker's struct probe moves the family to the right slot on
+its first StructProperty (and logs it — DQ XI S said `delta=8` on 2026-09-24 and nobody read it as a defect),
+function walks and the bool slot each had their own correct offset, and the one UE4 title with the default right
+(4.11–4.17) got it right by coincidence. The offsets summary never printed the slot, so no log showed it.
+**How to apply:** (1) a live check of an export or any `walk_class` consumer starts from a FRESH inject and runs
+that consumer FIRST — no Live Walker, no instance walk before it; a later correction is also cached-around
+(`[FAMILY-EPOCH]`), so the order matters twice. (2) A `delta=` / "corrected" line in a walk log is a defect
+report about init, not a success. (3) Every offset a reader uses must appear in the offsets summary. (4) Check
+an export against the ENGINE SOURCE where it exists (`tools/verify/sdk_source_oracle.py`, fixture PDBs), not only
+against another dumper: agreement with a peer is not correctness, and this defect made both halves of an SDK
+line look plausible.
+
+### 1.aj A change to what a SHARED reader ACCEPTS is checked over the WHOLE pool, before against after — not on a few core classes
+
+Measured 2026-09-28 (`[STRUCTPROBE-ANY-NAME]`, build 3595). The fix made every property subclass-slot reader require
+the object it finds to BE a struct / a class (its class chain reaches `ScriptStruct` / `Class`). A change like that
+can only break the RARE kinds — a Blueprint struct, an interface class, a struct used as a map key — and the
+eleven-core-class walk every earlier row in this family was checked with meets none of them: it would have passed a
+fix that rejected every `UserDefinedStruct`. `tools/verify/pool_walk_diff.py` walks EVERY class `list_classes` returns
+and keeps each field's slot-read metadata, so two builds compare row by row: six fixtures (UE 4.11 → 5.8, DQ XI S),
+~445,000 fields, about two minutes a fixture, 0 changed. The same night the diff showed 6–7 rows present in one DQ XI S
+capture only. Most were the RIG: it keyed rows by class NAME, and two class objects can share one, so whichever was
+walked last won; keyed by class PATH, one row was left (a widget Blueprint's field) — explained, not ignored.
+**How to apply:** (1) a change to a reader shared by every walk — a slot, a validator, a name resolver — gets a whole-pool
+capture with the old DLL and with the new one, fresh inject each (1.ai), and `changed` is the verdict. (2) Rows in one
+capture only are explained before the check is called — and a rig keys by something unique first. (3) A spot check of core classes is a smoke test, not the
+no-regression evidence.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

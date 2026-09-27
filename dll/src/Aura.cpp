@@ -2501,10 +2501,21 @@ static void CollectContainersRecursive(
     }
 }
 
+// [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
+// before its publish, with the cache's name. Null in the product. dll_core_test, which #includes this file, sets it
+// to move the family at exactly that point -- the one way to prove a build that a concurrent move overtook is not
+// filed under the new epoch (review wf_b99fb861-680, F4). Not declared in the header, so nothing outside this
+// translation unit can set it.
+static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
+
 static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
+    // [FAMILY-EPOCH] Taken once, before the WalkClassEx below, and the publish uses it: a key taken after that call
+    // could be a newer epoch than the walk it builds on. A walk that calibrates the family files this under a dead
+    // epoch, which costs one rebuild.
+    const uintptr_t key = DynOff::FamilyCacheKey(cls);
     {
         std::lock_guard<std::mutex> lk(s_classContainerMutex);
-        auto it = s_classContainerCache.find(cls);
+        auto it = s_classContainerCache.find(key);
         if (it != s_classContainerCache.end()) return it->second;
     }
 
@@ -2537,8 +2548,9 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     CollectContainersRecursive(cls, /*baseOffset*/ 0, /*namePrefix*/ "",
                                entries, /*depth*/ 0);
 
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("ClassContainers");
     std::lock_guard<std::mutex> lk(s_classContainerMutex);
-    auto [ins, _] = s_classContainerCache.emplace(cls, std::move(entries));
+    auto [ins, _] = s_classContainerCache.emplace(key, std::move(entries));
     return ins->second;
 }
 
@@ -3558,9 +3570,10 @@ static void CollectRefMetaRecursive(uintptr_t structAddr,
 }
 
 static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
+    const uintptr_t key = DynOff::FamilyCacheKey(cls);   // [FAMILY-EPOCH] taken once, as in GetClassContainers
     {
         std::lock_guard<std::mutex> lk(s_classRefMutex);
-        auto it = s_classRefCache.find(cls);
+        auto it = s_classRefCache.find(key);
         if (it != s_classRefCache.end()) return it->second;
     }
 
@@ -3590,8 +3603,9 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     ClassReferenceMeta meta;
     CollectRefMetaRecursive(cls, 0, "", meta, 0);
 
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("ClassRefMeta");
     std::lock_guard<std::mutex> lk(s_classRefMutex);
-    auto [ins, _] = s_classRefCache.emplace(cls, std::move(meta));
+    auto [ins, _] = s_classRefCache.emplace(key, std::move(meta));
     return ins->second;
 }
 
@@ -3757,8 +3771,9 @@ struct TMapHeader {
     uintptr_t bitArrayBase   = 0;
 };
 
-// [R7-S2] The outer storage key's SHAPE, probed on the first occupied slots: a raw UObjectBase* on UE 5.x and 4.27
-// (PDB-verified), possibly an FObjectKey (two small int32s) on 4.23-4.26, which no symbol here has confirmed. False
+// [R7-S2] The outer storage key's SHAPE, probed on the first occupied slots. Every stock version that has sparse
+// delegates, 4.23 through 5.x, keys it by a raw UObjectBase* (PDB-verified, tools/ghidra/GROUND-TRUTH.md); a licensee
+// fork, which no sample covers, could still key it by something else, e.g. an FObjectKey (two small int32s). False
 // only when a slot was read and none looked like a pointer. Shared by WalkSparseDelegateBindings and Find References'
 // sparse pass, so the two readers of the storage cannot disagree about whether they can read it.
 static bool SparseOuterKeysLookLikePointers(const TMapHeader& outerHdr, int32_t outerStride) {
@@ -4684,27 +4699,7 @@ GraphPathResult FindObjectGraphPath(uintptr_t rootObj, uintptr_t targetObj,
 
 // === Property Keyword Search ===
 
-// Identify "class-like" metas. UClass instances have meta-class name "Class",
-// but UE has several UClass subclasses whose own meta is a different string:
-//   * Class                           — regular C++ UClass
-//   * BlueprintGeneratedClass         — every BP-derived class (most games)
-//   * AnimBlueprintGeneratedClass     — Anim BP-derived classes
-//   * WidgetBlueprintGeneratedClass   — UMG widget BP-derived classes
-//   * DynamicClass                    — Shipping cooked dynamic classes
-// Before this whitelist, SearchProperties / ListClasses / EnumerateAllFunctions
-// matched only "Class" and silently dropped every game-specific BPGC — which
-// is where 90%+ of game-specific Health / Damage / Gold properties live. The
-// user's TowerOfMask repro: `SearchProperties 'Health': 0 matches` despite
-// `Health @ AnimMan_Player_C` clearly existing in the Class Struct view.
-static bool IsClassLikeMeta(const std::string& metaClassName) {
-    return metaClassName == "Class"
-        || metaClassName == "BlueprintGeneratedClass"
-        || metaClassName == "AnimBlueprintGeneratedClass"
-        || metaClassName == "WidgetBlueprintGeneratedClass"
-        || metaClassName == "DynamicClass";
-}
-
-// IsEnginePackage moved to Aura.h (header-inline, pure + unit-tested).
+// IsClassLikeMeta and IsListedClassObject live in Aura.h (header-inline, pure + unit-tested), as IsEnginePackage does.
 
 static std::string ToLower(const std::string& s) {
     std::string out = s;
@@ -4974,6 +4969,7 @@ PropertySearchResult SearchProperties(
 
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         // This object is a class. Skip if already visited.
         if (!visitedClasses.insert(obj).second) continue;
@@ -5337,7 +5333,7 @@ PropertySearchResult SearchProperties(
             // Resolve EnumProperty: read UEnum* from FField for matches that need it
             for (auto& m : result.results) {
                 if (m.propType == "EnumProperty" && m.enumAddr == 0 && m.fieldAddr) {
-                    Macht::ReadSafe(m.fieldAddr + DynOff::FENUMPROP_ENUM, m.enumAddr);
+                    m.enumAddr = Ubel::ReadPropertyEnum(m.fieldAddr, m.propType);   // [ENUMSLOT-ANY-NAME]
                 }
             }
             Ubel::ResolvePropertyPreviews(result.results, instanceMap);
@@ -5478,6 +5474,7 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
         if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx)) continue;
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         if (!visitedClasses.insert(obj).second) continue;
 
@@ -5768,6 +5765,7 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
 
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         // Skip if already visited
         if (!visitedClasses.insert(obj).second) continue;
@@ -5951,6 +5949,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
 
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         // Skip duplicates (same UClass can be referenced from multiple GObjects slots
         // when CDOs or hot-reload artefacts keep stale handles around).
@@ -6273,14 +6272,13 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
         pType == "InterfaceProperty"  || pType == "LazyObjectProperty";
     if (!classBearing) return 0;
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
-    // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the version's
-    // MEASURED delta from Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
-    // DynOff::UPropertySubclassStartFor WalkFunctions uses. A flat +0x2C here left this mirror
+    // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the start Genau
+    // derived behind Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
+    // DynOff::UPropertySubclassStart WalkFunctions uses. A flat +0x2C here left this mirror
     // unable to match any 4.11-4.17 param ([A2-UFUNC-TAIL-4X] review follow-up).
     const int slot = DynOff::bUseFProperty
         ? DynOff::FSTRUCTPROP_STRUCT
-        : DynOff::UPropertySubclassStartFor(DynOff::UPROPERTY_OFFSET, ::g_cachedUEVersion,
-                                            DynOff::bCasePreservingName);
+        : DynOff::UPropertySubclassStart(::g_cachedUEVersion);
     uintptr_t target = 0;
     Macht::ReadSafe(fieldAddr + slot, target);
     return target;
@@ -6753,11 +6751,12 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     // identically). FObjectKey is also 8 bytes there, not the 16 the old note claimed.
     // Every other constant below was checked against that PDB and matches exactly.
     //
-    // We still have NO symbol evidence for 4.23-4.26, so instead of widening the version
-    // range on a guess, probe the actual key shape: the first occupied outer slot must hold
-    // something that looks like a userspace pointer. An FObjectKey-keyed build stores two
-    // small int32s there, which fails the test and lands us back on the bIsBound fallback —
-    // i.e. unknown builds fail safe rather than misreading memory.
+    // The PDBs have since shown the same raw pointer key at 4.23, 4.24, 4.25 and 4.26 as
+    // well (tools/ghidra/GROUND-TRUTH.md), so no stock version needs a gate. The probe stays
+    // for licensee forks: the first occupied outer slot must hold something that looks like
+    // a userspace pointer. An FObjectKey-keyed build stores two small int32s there, which
+    // fails the test and lands us back on the bIsBound fallback — i.e. unknown builds fail
+    // safe rather than misreading memory.
     uintptr_t storage = Genau::FindSparseDelegateStorage();
     if (!storage) return result;  // resolved=false
 

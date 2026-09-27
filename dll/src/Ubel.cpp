@@ -769,7 +769,16 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     }
 
     // FFieldClass has Name (FName) at offset 0x00
-    return ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
+    std::string name = ReadFName(fieldClass + DynOff::FFIELDCLASS_NAME);
+    // [UE51-CLASSPTRPROP] UE 5.0 / 5.1 build an FClassPtrProperty for every `TObjectPtr<UClass-derived>` UPROPERTY:
+    // an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) that serializes the same object
+    // reference, and which 5.4 folded back into ClassProperty. No consumer knew the name -- DumperTest51's SDK export
+    // wrote 29 such members as raw bytes and its .usmap 30 slots of type Unknown, which an unversioned reader cannot
+    // size. The runtime readers of an FProperty's type name come through here and see the ClassProperty it is; Genau's
+    // discovery-time alignment probe reads the raw name before this module is set up, and lists ClassPtrProperty
+    // itself (review wf_b99fb861-680, INFO).
+    if (name == "ClassPtrProperty") return "ClassProperty";
+    return name;
 }
 
 // Read the type name from a UProperty* (UObject subclass, UE4 UProperty mode).
@@ -782,6 +791,14 @@ static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
     uint32_t nameIdx = 0;
     if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, nameIdx)) return "";
     return Serie::GetString(nameIdx);
+}
+
+// [UPROP-INNER-TYPENAME] A property's type name in the running mode: an FField's FFieldClass name, or -- on a
+// UProperty engine, where a property IS a UObject -- its UClass name. The FField read on a UProperty lands on
+// ObjectFlags | InternalIndex at +0x8 and names nothing, so a container inner probed with it was never typed there
+// (UE423_Flying: 1,016 TArray<uint8_t> in the SDK export; DQ XI S: 0 of 77 array inners).
+static std::string GetPropertyTypeNameForMode(uintptr_t propAddr) {
+    return DynOff::bUseFProperty ? GetFieldTypeName(propAddr) : GetUPropertyTypeName(propAddr);
 }
 
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
@@ -970,10 +987,18 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
 }
 
 // Cache for WalkClass results — class/struct field metadata doesn't change at
-// runtime, so we cache by class address to avoid re-reading the FField chain
+// runtime, so we cache by class address (within the property family's epoch,
+// DynOff::FamilyCacheKey [FAMILY-EPOCH]) to avoid re-reading the FField chain
 // on every WalkInstance call. This dramatically speeds up repeated drilldown/
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
+
+// [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
+// before its publish, with the cache's name. Null in the product. dll_core_test, which #includes this file, sets it
+// to move the family at exactly that point -- the one way to prove a build that a concurrent move overtook is not
+// filed under the new epoch (review wf_b99fb861-680, F4). Not declared in the header, so nothing outside this
+// translation unit can set it.
+static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
 
 // --- LRU bound for the cache above (audit #5 U5) ---
 //
@@ -988,21 +1013,23 @@ static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 static std::list<uintptr_t> s_walkLru;
 static std::unordered_map<uintptr_t, std::list<uintptr_t>::iterator> s_walkLruPos;
 
-// Move `addr` to the front. Caller MUST hold s_walkClassCacheMutex.
-static void TouchWalkLru(uintptr_t addr) {
-    auto it = s_walkLruPos.find(addr);
+// Move `key` to the front. Caller MUST hold s_walkClassCacheMutex. The map and the LRU both hold
+// DynOff::FamilyCacheKey(addr), never the bare address: a plain walk reads the bool layout through the
+// property family, so its answer belongs to the family it was read under. [FAMILY-EPOCH]
+static void TouchWalkLru(uintptr_t key) {
+    auto it = s_walkLruPos.find(key);
     if (it == s_walkLruPos.end()) return;
     s_walkLru.splice(s_walkLru.begin(), s_walkLru, it->second);
 }
 
-// Insert-or-refresh `addr`, evicting the least recently used entries until the
+// Insert-or-refresh `key`, evicting the least recently used entries until the
 // cache is within its bound. Caller MUST hold s_walkClassCacheMutex.
-static void PublishWalkClass(uintptr_t addr, const ClassInfo& info) {
-    auto [entry, inserted] = s_walkClassCache.try_emplace(addr, info);
-    if (!inserted) { TouchWalkLru(addr); return; }
+static void PublishWalkClass(uintptr_t key, const ClassInfo& info) {
+    auto [entry, inserted] = s_walkClassCache.try_emplace(key, info);
+    if (!inserted) { TouchWalkLru(key); return; }
 
-    s_walkLru.push_front(addr);
-    s_walkLruPos[addr] = s_walkLru.begin();
+    s_walkLru.push_front(key);
+    s_walkLruPos[key] = s_walkLru.begin();
 
     while (s_walkLru.size() > Ubel::kMaxWalkClassCacheEntries) {
         uintptr_t victim = s_walkLru.back();
@@ -1080,11 +1107,12 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
 
     // Check cache first. Return a copy so callers read lock-free; node-based
     // unordered_map keeps the entry alive regardless of later inserts.
+    const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);   // [FAMILY-EPOCH] taken once: the publish uses it too
     {
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        auto cacheIt = s_walkClassCache.find(uclassAddr);
+        auto cacheIt = s_walkClassCache.find(key);
         if (cacheIt != s_walkClassCache.end()) {
-            TouchWalkLru(uclassAddr);   // the lock is exclusive, so mutating on read is fine
+            TouchWalkLru(key);   // the lock is exclusive, so mutating on read is fine
             return cacheIt->second;
         }
     }
@@ -1163,11 +1191,12 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
         // cached super's fields out while holding the lock.
         {
             std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-            auto superCacheIt = s_walkClassCache.find(super);
+            const uintptr_t superKey = DynOff::FamilyCacheKey(super);
+            auto superCacheIt = s_walkClassCache.find(superKey);
             if (superCacheIt != s_walkClassCache.end()) {
                 // A base class is reused by every subclass, so it is exactly what must
                 // not be evicted for being "old" — the chain walk is a use.
-                TouchWalkLru(super);
+                TouchWalkLru(superKey);
                 const auto& superFields = superCacheIt->second.Fields;
                 info.Fields.insert(info.Fields.begin(), superFields.begin(), superFields.end());
                 break;  // cached super already includes its entire inheritance chain
@@ -1231,8 +1260,9 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
+        if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClass");
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
-        PublishWalkClass(uclassAddr, info);
+        PublishWalkClass(key, info);
     } else {
         // Name the term that actually fired. The old text asserted a disjunction it
         // had not measured ("not a UStruct, or recycled memory") about classes that
@@ -1261,7 +1291,7 @@ static std::pair<uintptr_t, std::string> ProbeInnerProperty(uintptr_t fieldAddr,
         if (off < 0) continue;
         uintptr_t inner = 0;
         if (!Macht::ReadSafe(fieldAddr + off, inner) || !inner) continue;
-        std::string tn = GetFieldTypeName(inner);
+        std::string tn = GetPropertyTypeNameForMode(inner);
         if (!tn.empty() && tn != "Unknown" && tn.find("Property") != std::string::npos)
             return { inner, tn };
     }
@@ -1300,14 +1330,142 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
     return true;
 }
 
-// Helper: given an FProperty* for StructProperty/ObjectProperty/ClassProperty,
-// read the UScriptStruct*/UClass* at the subclass extension offset and return its name.
-static std::string ReadSubclassTypeName(uintptr_t propAddr) {
+// The name of the object in a property's subclass slot -- a StructProperty's UScriptStruct, an object property's
+// PropertyClass -- or "" when the slot does not hold that kind of object. [STRUCTPROBE-ANY-NAME] A printable name
+// was the whole test, so a named object of any other kind typed the member by ITS name.
+static std::string ReadSlotObjectName(uintptr_t propAddr, bool (*isKind)(uintptr_t)) {
     uintptr_t ptr = 0;
-    if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr) return "";
+    if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr || !isKind(ptr)) return "";
     std::string name = GetName(ptr);
     if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return "";
     return name;
+}
+static std::string ReadStructTypeName(uintptr_t propAddr)    { return ReadSlotObjectName(propAddr, IsScriptStructObject); }
+static std::string ReadPropertyClassName(uintptr_t propAddr) { return ReadSlotObjectName(propAddr, IsClassObject); }
+
+// [SDK-METACLASS] True when `cls` or one of its supers is named `name`. A class of classes -- UClass and its
+// subclasses (BlueprintGeneratedClass, VerseClass, ...) -- is exactly a class whose chain reaches `Class`.
+static bool ClassChainHasName(uintptr_t cls, const char* name) {
+    for (int depth = 0; cls != 0 && depth < 16; ++depth) {
+        if (GetName(cls) == name) return true;
+        uintptr_t super = 0;
+        if (!Macht::ReadSafe(cls + DynOff::USTRUCT_SUPER, super)) return false;
+        cls = super;
+    }
+    return false;
+}
+
+// The engine's own metaclasses are recognised by NAME first, the SuperStruct chain walked only for any other subclass:
+// a give-up session never measures USTRUCT_SUPER (its default is wrong on 4.11-4.21), and there the chain alone
+// dropped every UserDefinedStruct, Blueprint class and UserDefinedEnum that the name-only check before build 3595 kept
+// (review of build 3596).
+static bool MetaclassIsKind(uintptr_t obj, const char* root, bool (*knownMetaName)(const std::string&)) {
+    if (!obj || !Grimoire::IsUserspacePointer(obj)) return false;
+    const uintptr_t meta = GetClass(obj);
+    if (!meta) return false;
+    return knownMetaName(GetName(meta)) || ClassChainHasName(meta, root);
+}
+
+static bool IsEngineStructMetaName(const std::string& n) { return n == "ScriptStruct" || n == "UserDefinedStruct"; }
+
+bool IsScriptStructObject(uintptr_t obj) {
+    return MetaclassIsKind(obj, "ScriptStruct", IsEngineStructMetaName);
+}
+
+bool IsClassObject(uintptr_t obj) {
+    return MetaclassIsKind(obj, "Class", Aura::IsClassLikeMeta);
+}
+
+// A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family an enum slot holds whatever sits
+// there. [STRUCTCACHE-ENUM-UNCHECKED] fixed one reader that kept the pointer unchecked; [ENUMSLOT-ANY-NAME] found the
+// rest -- the enum names the exports write took any printable name -- and that the check itself matched two exact
+// class names, so an enum whose class is a UEnum subclass was dropped where the struct and class checks walk the chain.
+bool IsUEnumObject(uintptr_t obj) {
+    return MetaclassIsKind(obj, "Enum", Aura::IsListedEnumClass);
+}
+
+uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
+    const int slot = typeName == "ByteProperty" ? DynOff::FBYTEPROP_ENUM
+                   : typeName == "EnumProperty" ? DynOff::FENUMPROP_ENUM : -1;
+    uintptr_t e = 0;
+    if (slot < 0 || !propAddr || !Macht::ReadSafe(propAddr + slot, e) || !IsUEnumObject(e)) return 0;
+    return e;
+}
+
+static bool IsPrintableName(const std::string& n) {
+    return !n.empty() && static_cast<unsigned char>(n[0]) >= 0x20 && static_cast<unsigned char>(n[0]) < 0x7F;
+}
+
+// [SDK-METACLASS] A ClassProperty's / SoftClassProperty's two classes: PropertyClass, the class of the VALUE
+// (`Class`, or a UClass subclass such as BlueprintGeneratedClass), and MetaClass, the UClass it holds a
+// subclass of. MetaClass is the pointer right after PropertyClass in every supported layout -- FClassProperty
+// and FSoftClassProperty add it as their only member, 4.18..5.8 UnrealType.h, the RE-UE4SS layout templates and
+// Dumper-7's Offsets.cpp all agree -- so it is derived, never stored as a DynOff.
+// The slot is the MODE's own subclass start. On a UProperty engine FSTRUCTPROP_STRUCT was never derived before
+// [UPROP-SUBCLASS-SLOT] and sat one pointer past PropertyClass -- ON the MetaClass (UE423_Flying: 0x78 against a
+// 0x70 start) -- and a family move after init can still leave it off for a while ([FAMILY-EPOCH]). That is why
+// the PropertyClass read and validated here, not the plain FSTRUCTPROP_STRUCT read, becomes a class-valued
+// property's obj_class.
+// Validated before anything is published, because a wrong offset here reads a real UClass either way:
+// PropertyClass must be a class of classes (which also proves the slot), and the pointer after it a UClass.
+// Both empty when the anchor fails; metaClass alone empty when only the MetaClass fails -- the export then
+// falls back to UClass*.
+struct ClassValuedNames { std::string propertyClass; std::string metaClass; };
+
+static ClassValuedNames ReadClassValuedNames(uintptr_t propAddr) {
+    const int slot = DynOff::bUseFProperty
+        ? DynOff::FSTRUCTPROP_STRUCT
+        : DynOff::UPropertySubclassStart(g_cachedUEVersion);
+    uintptr_t propertyClass = 0, meta = 0;
+    if (!Macht::ReadSafe(propAddr + slot, propertyClass) || !propertyClass) return {};
+    if (!ClassChainHasName(propertyClass, "Class")) {
+        static std::atomic<bool> s_warned{false};
+        if (!s_warned.exchange(true))
+            Sein::Warn("WALK", "MetaClass: PropertyClass at +0x%X is not a class of classes -- MetaClass not read "
+                       "(reported once)", slot);
+        return {};
+    }
+    ClassValuedNames out;
+    out.propertyClass = GetName(propertyClass);
+    if (!IsPrintableName(out.propertyClass)) return {};
+    if (!Macht::ReadSafe(propAddr + slot + 8, meta) || !meta) return out;
+    if (!ClassChainHasName(GetClass(meta), "Class")) return out;
+    std::string name = GetName(meta);
+    if (!IsPrintableName(name)) return out;
+    static std::atomic<bool> s_reported{false};
+    if (!s_reported.exchange(true))
+        Sein::Info("WALK", "MetaClass at +0x%X (PropertyClass +0x%X) validated -> '%s' (reported once)",
+                   slot + 8, slot, name.c_str());
+    out.metaClass = std::move(name);
+    return out;
+}
+
+// The validated PropertyClass wins over a plain slot read, and an unvalidated read is left as it was.
+static void ApplyClassValuedNames(uintptr_t propAddr, std::string& objClass, std::string& metaClass) {
+    ClassValuedNames cv = ReadClassValuedNames(propAddr);
+    if (!cv.propertyClass.empty()) objClass = std::move(cv.propertyClass);
+    metaClass = std::move(cv.metaClass);
+}
+
+static bool IsClassValuedProperty(const std::string& tn) {
+    return tn == "ClassProperty" || tn == "SoftClassProperty";
+}
+
+// [SDK-CONTAINER-OBJCLASS] Every property type whose first subclass member is a class pointer:
+// UObjectPropertyBase::PropertyClass for the object / class / weak / soft / lazy flavours, and
+// UInterfaceProperty::InterfaceClass at the same slot.
+static bool IsObjectFamilyProperty(const std::string& tn) {
+    return tn == "ObjectProperty" || tn == "ClassProperty" || tn == "WeakObjectProperty"
+        || tn == "SoftObjectProperty" || tn == "SoftClassProperty" || tn == "InterfaceProperty"
+        || tn == "LazyObjectProperty";
+}
+
+// One slot's class names, the field's own or a container's: the plain slot read for the object family, overridden
+// by the validated PropertyClass -- and joined by the MetaClass -- for a class-valued one. A Map key / value and a Set
+// element used to get neither, so the SDK export wrote `class UObject*` for them. [SDK-CONTAINER-OBJCLASS]
+static void ReadSlotClassNames(uintptr_t prop, const std::string& tn, std::string& objClass, std::string& metaClass) {
+    if (IsObjectFamilyProperty(tn)) objClass = ReadPropertyClassName(prop);
+    if (IsClassValuedProperty(tn)) ApplyClassValuedNames(prop, objClass, metaClass);   // [SDK-METACLASS]
 }
 
 // Forward declaration -- definition lives further down this file (line ~2441).
@@ -1333,7 +1491,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
     {
         std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-        auto it = s_walkClassExCache.find(uclassAddr);
+        auto it = s_walkClassExCache.find(DynOff::FamilyCacheKey(uclassAddr));   // [FAMILY-EPOCH]
         if (it != s_walkClassExCache.end()) return it->second;
     }
 
@@ -1381,7 +1539,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // calibration only ran inside WalkInstance -- which meant any caller
     // that hit WalkClassEx without a prior WalkInstance (e.g. the Value
     // Search tab's GObjects walk, build 738+) saw uncalibrated reads:
-    // ReadSubclassTypeName returns "" for every StructProperty, the
+    // ReadStructTypeName returns "" for every StructProperty, the
     // nested-struct recursion in Aura::ScanForValue bails, and the user
     // gets 0 candidates on GAS / FGameplayAttributeData scans.
     //
@@ -1390,6 +1548,13 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // successful probe. The cost on cold call is bounded: at most 7
     // probe-delta reads per StructProperty until one validates.
     CorrectSubclassOffsets(info.Fields);
+
+    // [FAMILY-EPOCH] The key is taken HERE -- after the calibration above, which may move the family on purpose, and
+    // before the first enrichment read through it -- and the publish below uses it. The plain walk's one family read,
+    // the bool layout, is probed again below but overwritten only on a HIT: a classification the new base cannot
+    // confirm keeps the plain walk's. Bounded -- every measured move keeps the true slot inside both probes' spreads,
+    // and the classifier is strict (FieldSize 1, one mask bit) -- not "nothing predates this key".
+    const uintptr_t key = DynOff::FamilyCacheKey(uclassAddr);
 
     // Enrich each field with extended type metadata
     for (auto& fi : info.Fields) {
@@ -1400,9 +1565,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner carries it at FBYTEPROP_ENUM, an
         // EnumProperty inner at FENUMPROP_ENUM. Read and validated exactly like the field's own enumName below.
         auto innerEnumOf = [](uintptr_t prop, const std::string& ptn) -> std::string {
-            uintptr_t e = 0;
-            if (ptn == "ByteProperty")      Macht::ReadSafe(prop + DynOff::FBYTEPROP_ENUM, e);
-            else if (ptn == "EnumProperty") Macht::ReadSafe(prop + DynOff::FENUMPROP_ENUM, e);
+            const uintptr_t e = ReadPropertyEnum(prop, ptn);   // [ENUMSLOT-ANY-NAME]
             if (!e) return std::string();
             std::string n = GetName(e);
             return (!n.empty() && n[0] >= 0x20 && n[0] < 0x7F) ? n : std::string();
@@ -1410,17 +1573,13 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
         // StructProperty -> UScriptStruct name
         if (tn == "StructProperty") {
-            fi.structType = ReadSubclassTypeName(fi.Address);
+            fi.structType = ReadStructTypeName(fi.Address);
         }
 
-        // ObjectProperty / ClassProperty / WeakObjectProperty / SoftObjectProperty / SoftClassProperty
-        // / InterfaceProperty -> target UClass name
-        // FObjectPropertyBase::PropertyClass is at the same offset as FStructProperty::Struct
-        else if (tn == "ObjectProperty" || tn == "ClassProperty"
-              || tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
-              || tn == "SoftClassProperty" || tn == "InterfaceProperty"
-              || tn == "LazyObjectProperty") {
-            fi.objClassName = ReadSubclassTypeName(fi.Address);
+        // The object family -> target UClass name. FObjectPropertyBase::PropertyClass is at the same offset as
+        // FStructProperty::Struct; a container slot reads the same way through the same helper.
+        else if (IsObjectFamilyProperty(tn)) {
+            ReadSlotClassNames(fi.Address, tn, fi.objClassName, fi.metaClassName);
         }
 
         // ArrayProperty -> inner type
@@ -1429,9 +1588,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             if (innerProp) {
                 fi.innerType = innerTn;
                 if (innerTn == "StructProperty")
-                    fi.innerStructType = ReadSubclassTypeName(innerProp);
-                else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
-                    fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                    fi.innerStructType = ReadStructTypeName(innerProp);
+                ReadSlotClassNames(innerProp, innerTn, fi.innerObjClass, fi.innerMetaClass);
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
@@ -1444,9 +1602,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             if (innerProp) {
                 fi.innerType = innerTn;
                 if (innerTn == "StructProperty")
-                    fi.innerStructType = ReadSubclassTypeName(innerProp);
-                else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
-                    fi.innerObjClass = ReadSubclassTypeName(innerProp);
+                    fi.innerStructType = ReadStructTypeName(innerProp);
+                ReadSlotClassNames(innerProp, innerTn, fi.innerObjClass, fi.innerMetaClass);
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
@@ -1460,21 +1617,23 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 if (tryOff < 0) continue;
                 uintptr_t keyProp = 0;
                 if (!Macht::ReadSafe(fi.Address + tryOff, keyProp) || !keyProp) continue;
-                std::string keyTn = GetFieldTypeName(keyProp);
+                std::string keyTn = GetPropertyTypeNameForMode(keyProp);
                 if (keyTn.empty() || keyTn == "Unknown" || keyTn.find("Property") == std::string::npos)
                     continue;
                 // Found KeyProp — ValueProp is at +8
                 uintptr_t valueProp = 0;
                 Macht::ReadSafe(fi.Address + tryOff + 8, valueProp);
-                std::string valTn = valueProp ? GetFieldTypeName(valueProp) : "";
+                std::string valTn = valueProp ? GetPropertyTypeNameForMode(valueProp) : "";
                 if (valTn.empty() || valTn.find("Property") == std::string::npos) continue;
 
                 fi.keyType = keyTn;
                 fi.valueType = valTn;
-                if (keyTn == "StructProperty")   fi.keyStructType = ReadSubclassTypeName(keyProp);
-                if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
+                if (keyTn == "StructProperty")   fi.keyStructType = ReadStructTypeName(keyProp);
+                if (valTn == "StructProperty")   fi.valueStructType = ReadStructTypeName(valueProp);
                 fi.keyEnumName   = innerEnumOf(keyProp, keyTn);     // [A4-USMAP-CONTAINER-ENUM]
                 fi.valueEnumName = innerEnumOf(valueProp, valTn);
+                ReadSlotClassNames(keyProp, keyTn, fi.keyObjClass, fi.keyMetaClass);
+                ReadSlotClassNames(valueProp, valTn, fi.valueObjClass, fi.valueMetaClass);
                 break;
             }
         }
@@ -1485,15 +1644,15 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             if (elemProp) {
                 fi.elemType = elemTn;
                 if (elemTn == "StructProperty")
-                    fi.elemStructType = ReadSubclassTypeName(elemProp);
+                    fi.elemStructType = ReadStructTypeName(elemProp);
+                ReadSlotClassNames(elemProp, elemTn, fi.elemObjClass, fi.elemMetaClass);
                 fi.elemEnumName = innerEnumOf(elemProp, elemTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
 
         // EnumProperty -> UEnum name
         else if (tn == "EnumProperty") {
-            uintptr_t enumPtr = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr) && enumPtr) {
+            if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
                 if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
                     fi.enumName = ename;
@@ -1502,8 +1661,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
         // ByteProperty -> check if it has an associated UEnum
         else if (tn == "ByteProperty") {
-            uintptr_t enumPtr = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr) && enumPtr) {
+            if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
                 if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
                     fi.enumName = ename;
@@ -1530,8 +1688,9 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // keeping the existing one costs nothing and keeps every handed-out reference
     // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
     // Only reachable for a class that passed the memoization gate above.
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
-    return s_walkClassExCache.try_emplace(uclassAddr, std::move(info)).first->second;
+    return s_walkClassExCache.try_emplace(key, std::move(info)).first->second;
 }
 
 // ============================================================
@@ -1836,10 +1995,12 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             // StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
-                                param.structType = ReadSubclassTypeName(cur);
-                                // Phase B: walk the UScriptStruct to discover sub-fields
+                                param.structType = ReadStructTypeName(cur);
+                                // Phase B: walk the UScriptStruct to discover sub-fields -- only a struct
+                                // ([STRUCTPROBE-ANY-NAME]: the slot on a mis-derived family holds something else)
                                 uintptr_t structPtr = 0;
-                                if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
+                                if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr)
+                                    && IsScriptStructObject(structPtr)) {
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
                                         param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
@@ -1849,12 +2010,12 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // expose their target UClass name (FObjectPropertyBase::
                             // PropertyClass lives at the same FProperty subclass
                             // extension slot as FStructProperty::Struct — mirrors
-                            // the WalkClassEx field-side enrichment at line 599).
+                            // the WalkClassEx field-side enrichment, ReadSlotClassNames).
                             else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
                                   || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
                                   || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
                                   || param.typeName == "LazyObjectProperty") {
-                                param.objClassName = ReadSubclassTypeName(cur);
+                                param.objClassName = ReadPropertyClassName(cur);
                             }
 
                             if (param.isReturn)
@@ -1874,10 +2035,9 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
                         uintptr_t cur = paramChain;
                         // [A2-UFUNC-TAIL-4X]'s lead: the first subclass field (Struct /
-                        // PropertyClass) sits at the version's MEASURED delta, not a flat +0x2C
-                        // (+0x28 on 4.11-4.17). See DynOff::UPropertySubclassStartFor.
-                        const int subclassStart = DynOff::UPropertySubclassStartFor(
-                            DynOff::UPROPERTY_OFFSET, g_cachedUEVersion, DynOff::bCasePreservingName);
+                        // PropertyClass) sits at the MEASURED start, not a flat +0x2C (+0x28 on
+                        // 4.11-4.17). See DynOff::UPropertySubclassStart.
+                        const int subclassStart = DynOff::UPropertySubclassStart(g_cachedUEVersion);
                         int paramLimit = 256;
                         std::unordered_set<uintptr_t> seenParams;
                         while (cur != 0 && paramLimit-- > 0) {
@@ -1904,8 +2064,9 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // UE4 StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
                                 uintptr_t structPtr = 0;
-                                // UStructProperty::Struct is at UPROPERTY subclass extension offset
-                                if (Macht::ReadSafe(cur + subclassStart, structPtr) && structPtr) {
+                                // UStructProperty::Struct is at UPROPERTY subclass extension offset -- a struct
+                                // only ([STRUCTPROBE-ANY-NAME]: this path named and WALKED any named object)
+                                if (Macht::ReadSafe(cur + subclassStart, structPtr) && IsScriptStructObject(structPtr)) {
                                     std::string sn = GetName(structPtr);
                                     if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
                                         param.structType = sn;
@@ -1924,7 +2085,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                   || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
                                   || param.typeName == "LazyObjectProperty") {
                                 uintptr_t classPtr = 0;
-                                if (Macht::ReadSafe(cur + subclassStart, classPtr) && classPtr) {
+                                if (Macht::ReadSafe(cur + subclassStart, classPtr) && IsClassObject(classPtr)) {
                                     std::string cn = GetName(classPtr);
                                     if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
                                         param.objClassName = cn;
@@ -2322,6 +2483,8 @@ OptionalLayoutInfo ResolveOptionalLayout(uintptr_t optionalProp, int32_t optiona
             if (off < 0) continue;
             uintptr_t c = 0;
             if (!Macht::ReadSafe(innerProp + off, c) || !Grimoire::IsUserspacePointer(c)) continue;
+            // [OPTSTRUCT-ANY-NAME] A struct, not the first named object: its MinAlignment decides the layout.
+            if (!IsScriptStructObject(c)) continue;
             const std::string n = GetName(c);
             if (n.empty() || n[0] < 0x20 || n[0] >= 0x7F) continue;
             structAddr = c;
@@ -2890,21 +3053,7 @@ ReadArrayResult ReadArrayElements(
     if (end - offset > kArrayElementsPerRequestCap) end = offset + kArrayElementsPerRequestCap;  // hard cap per request
 
     // For enum arrays: read UEnum* once from Inner FProperty
-    uintptr_t enumPtr = 0;
-    if (innerFFieldAddr) {
-        if (innerTypeName == "EnumProperty") {
-            Macht::ReadSafe(innerFFieldAddr + DynOff::FENUMPROP_ENUM, enumPtr);
-        } else if (innerTypeName == "ByteProperty") {
-            uintptr_t candidateEnum = 0;
-            if (Macht::ReadSafe(innerFFieldAddr + DynOff::FBYTEPROP_ENUM, candidateEnum) && candidateEnum) {
-                // Validate it's a UEnum
-                uintptr_t enumClass = GetClass(candidateEnum);
-                std::string enumClassName = enumClass ? GetName(enumClass) : "";
-                if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum")
-                    enumPtr = candidateEnum;
-            }
-        }
-    }
+    const uintptr_t enumPtr = ReadPropertyEnum(innerFFieldAddr, innerTypeName);   // [ENUMSLOT-ANY-NAME]
     result.enumAddr = enumPtr;  // Expose for CE DropDownList sharing
 
     // Read elements
@@ -3238,9 +3387,10 @@ struct CachedStructField {
 static std::unordered_map<uintptr_t, std::vector<CachedStructField>> s_structFieldCache;
 
 static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t structAddr) {
+    const uintptr_t key = DynOff::FamilyCacheKey(structAddr);   // [FAMILY-EPOCH] taken once: the publish uses it too
     {
         std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
-        auto it = s_structFieldCache.find(structAddr);
+        auto it = s_structFieldCache.find(key);
         if (it != s_structFieldCache.end())
             return it->second;   // ref stays valid after unlock (node stability)
     }
@@ -3313,23 +3463,13 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
             }
         }
 
-        // EnumProperty: read UEnum*
-        if (fi.TypeName == "EnumProperty" && fi.Address) {
-            Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, cf.enumAddr);
-        }
+        // EnumProperty / ByteProperty-with-enum: the UEnum*, kept only if it IS one (ReadPropertyEnum)
+        if (fi.TypeName == "EnumProperty" || fi.TypeName == "ByteProperty")
+            cf.enumAddr = ReadPropertyEnum(fi.Address, fi.TypeName);
 
-        // ByteProperty: check for UEnum* (ByteProperty-with-enum)
-        if (fi.TypeName == "ByteProperty" && fi.Address) {
-            Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, cf.enumAddr);
-        }
-
-        // StructProperty: read nested struct type name
-        if (fi.TypeName == "StructProperty" && fi.Address) {
-            uintptr_t nestedStruct = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FSTRUCTPROP_STRUCT, nestedStruct) && nestedStruct) {
-                cf.nestedTypeName = GetName(nestedStruct);
-            }
-        }
+        // StructProperty: read nested struct type name -- only a struct's ([OPTSTRUCT-ANY-NAME])
+        if (fi.TypeName == "StructProperty" && fi.Address)
+            cf.nestedTypeName = ReadStructTypeName(fi.Address);
 
         cached.push_back(std::move(cf));
     }
@@ -3337,8 +3477,9 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
     Sein::Debug("WALK:ArrayF", "Cached struct fields for 0x%llX: %d fields",
         static_cast<unsigned long long>(structAddr), static_cast<int>(cached.size()));
 
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("StructFields");
     std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
-    auto [ins, _] = s_structFieldCache.emplace(structAddr, std::move(cached));
+    auto [ins, _] = s_structFieldCache.emplace(key, std::move(cached));
     return ins->second;
 }
 
@@ -4292,7 +4433,9 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
             if (tryOff < 0) continue;
             uintptr_t candidate = 0;
             if (!Macht::ReadSafe(fi.Address + tryOff, candidate) || !candidate) continue;
-            // Validate: must be a UScriptStruct (UObject) with a readable ASCII name
+            // Validate: must be a UScriptStruct with a readable ASCII name. [STRUCTPROBE-ANY-NAME] The name alone
+            // accepted any named object -- and at delta 0 it LATCHED the wrong family for the session.
+            if (!IsScriptStructObject(candidate)) continue;
             std::string sname = GetName(candidate);
             if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F) continue;
 
@@ -5354,9 +5497,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     Sein::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s", dumpStart, dumpStart+64, hexDump);
                 }
             } else {
-                // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass).
-                // Located at end of UProperty base class = UPROPERTY_OFFSET + 0x2C (standard delta).
-                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass), the first
+                // subclass member. [UPROP-CONTAINER-FLAT-2C] The base is the property family, derived per version since
+                // [UPROP-SUBCLASS-SLOT]: a flat UPROPERTY_OFFSET + 0x2C was right on stock 4.18-4.24 only (4.11-4.17 are
+                // + 0x28, case-preserving + 0x34), and the inner's Struct below is read at it UNPROBED.
+                int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
                 bool innerFound = false;
                 for (int delta : kUPropProbeOffsets) {
@@ -5748,8 +5893,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
             } else {
-                // UProperty mode (UE4 <4.25): UMapProperty has KeyProp + ValueProp as UProperty*.
-                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                // UProperty mode (UE4 <4.25): UMapProperty has KeyProp + ValueProp as UProperty*. The family base, as
+                // in the TArray arm above -- the key's / value's Struct is read at it unprobed. [UPROP-CONTAINER-FLAT-2C]
+                int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
                 for (int delta : kUPropProbeOffsets) {
                     int tryOff = baseOff + delta;
@@ -6025,8 +6171,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     break;
                 }
             } else {
-                // UProperty mode (UE4 <4.25): USetProperty::ElementProp is a UProperty*.
-                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                // UProperty mode (UE4 <4.25): USetProperty::ElementProp is a UProperty*. The family base, as in the
+                // TArray arm above -- the element's Struct is read at it unprobed. [UPROP-CONTAINER-FLAT-2C]
+                int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
                 for (int delta : kUPropProbeOffsets) {
                     int tryOff = baseOff + delta;
@@ -6120,7 +6267,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (!Macht::ReadSafe(fi.Address + tryOffset, candidate) || !candidate) continue;
                 // Skip obvious garbage addresses to avoid SEH faults
                 if (!Grimoire::IsUserspacePointer(candidate)) continue;
-                // Validate: must be a UScriptStruct (inherits UObject), so GetName should return ASCII
+                // Validate: must be a UScriptStruct, with an ASCII name. [STRUCTPROBE-ANY-NAME] The name alone
+                // stopped this probe at delta 0 on any named object, before the struct beyond it.
+                if (!IsScriptStructObject(candidate)) continue;
                 std::string sname = GetName(candidate);
                 if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
                     fv.structClassAddr = candidate;
@@ -6289,8 +6438,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle EnumProperty: read underlying int, resolve via UEnum
         if (fi.TypeName == "EnumProperty") {
-            uintptr_t enumPtr = 0;
-            Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr);
+            const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, fi.TypeName);   // [ENUMSLOT-ANY-NAME]
 
             // Validate enum size: FPROPERTY_ELEMSIZE can be garbage for fields in
             // UScriptStruct layouts. Default to 1 (uint8, most common for BP enums).
@@ -6353,13 +6501,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle ByteProperty: check if it has a UEnum* (byte-sized enum)
         if (fi.TypeName == "ByteProperty") {
-            uintptr_t enumPtr = 0;
-            Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr);
+            const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, fi.TypeName);   // a UEnum, or 0
             if (enumPtr) {
-                // Validate it's actually a UEnum by checking its class name
-                uintptr_t enumClass = GetClass(enumPtr);
-                std::string enumClassName = enumClass ? GetName(enumClass) : "";
-                if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum") {
+                {
                     // Same gate, same reason, as the EnumProperty handler above: a faulted read
                     // leaves rawVal at 0, which this block then published as the NAME of
                     // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
@@ -6903,7 +7047,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 // Couldn't resolve — surface the original bound-flag string so
                 // the user still knows the field is bound, just opaque.
                 if (!sr.supported) {
-                    // A key shape we cannot read (an FObjectKey-keyed 4.23-4.26 build), or a compact-set
+                    // A key shape we cannot read (a fork that does not key it by raw pointer), or a compact-set
                     // build [R7-A-01]: either way the storage is not decoded here.
                     fv.typedValue = "(sparse, bound — storage layout not decoded on this build)";
                 } else if (!sr.resolved) {
@@ -7886,8 +8030,10 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                     else if (readSize == 8) { int64_t v = 0; memcpy(&v, p, 8); rawVal = v; }
                     fv.enumValue = rawVal;
                     // Resolve enum address and name
-                    uintptr_t enumAddr = 0;
-                    if (Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumAddr) && enumAddr) {
+                    // [ENUMSLOT-ANY-NAME] The TYPE's slot: a TEnumAsByte column used to be read at FENUMPROP_ENUM,
+                    // one pointer past the end of an FByteProperty.
+                    const uintptr_t enumAddr = ReadPropertyEnum(fi.Address, fi.TypeName);
+                    if (enumAddr) {
                         fv.enumAddr = enumAddr;
                         fv.enumName = ResolveEnumValue(enumAddr, rawVal);
                     }

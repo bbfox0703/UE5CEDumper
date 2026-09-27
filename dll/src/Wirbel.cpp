@@ -722,8 +722,9 @@ bool ReadPawnWorld(uintptr_t pawn, double out[3]) {
 
 // Read FStructProperty::Struct (the inner UScriptStruct*) from a StructProperty
 // FieldInfo, so a nested struct can be walked. Mirrors the probe Ubel uses in
-// its value walk (DynOff::FSTRUCTPROP_STRUCT ± a few slots, validated by a
-// readable UScriptStruct name). Returns 0 when not a struct field / unresolved.
+// its value walk (DynOff::FSTRUCTPROP_STRUCT ± a few slots, validated as a
+// UScriptStruct -- Ubel::IsScriptStructObject [STRUCTPROBE-ANY-NAME] -- with a
+// readable name). Returns 0 when not a struct field / unresolved.
 uintptr_t StructInner(const FieldInfo& fi) {
     if (fi.TypeName != "StructProperty" || !fi.Address) return 0;
     static const int kProbes[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
@@ -734,6 +735,7 @@ uintptr_t StructInner(const FieldInfo& fi) {
         if (!Macht::ReadSafe(fi.Address + static_cast<uintptr_t>(off), cand) || !cand)
             continue;
         if (!Grimoire::IsUserspacePointer(cand)) continue;
+        if (!Ubel::IsScriptStructObject(cand)) continue;
         std::string sn = Ubel::GetName(cand);
         if (!sn.empty() && static_cast<unsigned char>(sn[0]) >= 0x20
             && static_cast<unsigned char>(sn[0]) < 0x7F)

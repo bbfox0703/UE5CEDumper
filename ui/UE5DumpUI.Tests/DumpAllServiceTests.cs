@@ -195,6 +195,29 @@ public class DumpAllServiceTests
         Assert.DoesNotContain(classLines, l => l.Contains("\"name\":\"FVector\""));
     }
 
+    // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass (Default__Class's class is Class),
+    // so a meta-only test admitted it and Dump All wrote it as a class -- the shape the SDK and USMAP exports shed with
+    // IsExportedTypeRow. A Blueprint class's CDO (Default__BP_Player_C, class BP_Player_C) never passed the meta test.
+    [Fact]
+    public void Generate_SkipsTheMetaclassesClassDefaultObjects()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "Actor", "Class", "/Script/Engine.Actor"));
+        dump.Objects.Add(Obj("0x2", "Default__Class", "Class", "/Script/CoreUObject.Default__Class"));
+        dump.Objects.Add(Obj("0x3", "Default__BlueprintGeneratedClass", "BlueprintGeneratedClass",
+            "/Script/Engine.Default__BlueprintGeneratedClass"));
+        dump.Objects.Add(Obj("0x4", "Default__WidgetBlueprintGeneratedClass", "WidgetBlueprintGeneratedClass",
+            "/Script/UMG.Default__WidgetBlueprintGeneratedClass"));
+        foreach (var (addr, name) in new[] { ("0x1", "Actor"), ("0x2", "Default__Class"),
+                     ("0x3", "Default__BlueprintGeneratedClass"), ("0x4", "Default__WidgetBlueprintGeneratedClass") })
+            dump.ClassWalks[addr] = new ClassInfoModel { Name = name };
+
+        var classLines = Dump(dump).Where(l => l.StartsWith("{\"kind\":\"class\"")).ToList();
+
+        Assert.Single(classLines);
+        Assert.Contains("\"name\":\"Actor\"", classLines[0]);
+    }
+
     // ==================================================================
     // X4: GenerateAsync returns a DumpResult the completion line is built from
     // ==================================================================

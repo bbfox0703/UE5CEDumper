@@ -1,6 +1,8 @@
 # Native-C Value Scan — Spec & Design
 
-> **Status: P0–P3 SHIPPED; only the in-game verify of P3 remains** (see § below and `docs/todo.md`). The
+> **Status: P0–P3 SHIPPED and FULLY VERIFIED** — P3's Class Pivot half closed in-game on DumperTest
+> on 2026-09-06 (`51668ef0`), its SPC-Query arm on 2026-09-07 (`2b8aad04`, `dae0d319`); the record is
+> the Native-C row in `docs/todo.md`. The
 > `Native-C (raw)` opt-in is live in Value Search, Group Scan and Snapshot. This header read
 > "DESIGN ONLY — not implemented" until 2026-08-05, long after the feature shipped.
 > This remains the durable reference for an
@@ -42,7 +44,7 @@
 > code changes** — they key on `prop_name` (which encodes the offset) + the canonical
 > `declared_type` (so `SnapshotNumeric.TryFromHex` decodes it), reusing the existing
 > `fields` schema (no migration). **The whole Native-C feature (P0–P3) is now shipped;
-> P3 in-game verify pending.**
+> P3 in-game verify was pending then; it closed 2026-09-06 / 09-07 (see the header).**
 
 -----
 

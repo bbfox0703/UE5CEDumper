@@ -19,10 +19,15 @@ public sealed class FieldInfoModel
 
     // Extended type metadata (from walk_class JSON)
     public string StructType { get; init; } = "";        // StructProperty -> UScriptStruct name
-    public string ObjClassName { get; init; } = "";      // ObjectProperty/ClassProperty -> target class name
+    public string ObjClassName { get; init; } = "";      // Object-family property -> its PropertyClass (for a
+                                                         // ClassProperty that is `Class`, the VALUE's class)
     public string InnerType { get; init; } = "";         // ArrayProperty -> inner element type
     public string InnerStructType { get; init; } = "";   // ArrayProperty of struct -> struct name
-    public string InnerObjClass { get; init; } = "";     // ArrayProperty of object -> class name
+    public string InnerObjClass { get; init; } = "";     // ArrayProperty / OptionalProperty of the object family -> class name
+    // [SDK-CONTAINER-OBJCLASS] The PropertyClass of a Map key / value and a Set element of the object family.
+    public string KeyObjClass { get; init; } = "";
+    public string ValueObjClass { get; init; } = "";
+    public string ElemObjClass { get; init; } = "";
     public string KeyType { get; init; } = "";           // MapProperty -> key type
     public string KeyStructType { get; init; } = "";     // MapProperty key struct name
     public string ValueType { get; init; } = "";         // MapProperty -> value type
@@ -35,6 +40,13 @@ public sealed class FieldInfoModel
     public string ElemEnumName { get; init; } = "";      // SetProperty element
     public string KeyEnumName { get; init; } = "";       // MapProperty key
     public string ValueEnumName { get; init; } = "";     // MapProperty value
+    // [SDK-METACLASS] a ClassProperty's / SoftClassProperty's MetaClass (the class it holds a subclass of); "" when
+    // the DLL did not send it (older DLL, or a read that did not validate)
+    public string MetaClassName { get; init; } = "";     // the field itself
+    public string InnerMetaClass { get; init; } = "";    // ArrayProperty / OptionalProperty inner
+    public string KeyMetaClass { get; init; } = "";      // MapProperty key
+    public string ValueMetaClass { get; init; } = "";    // MapProperty value
+    public string ElemMetaClass { get; init; } = "";     // SetProperty element
     public int BoolFieldMask { get; init; }              // BoolProperty -> FieldMask byte
 
     // Reflection / layout metadata (feed the auto-detect scorer)
