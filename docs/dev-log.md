@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3596) — enum types, optional structs and UE4 class-valued members get the same checks `[ENUMSLOT-ANY-NAME]` `[OPTSTRUCT-ANY-NAME]` `[UPROP-SUBCLASS-SLOT]`
+
+- The check build 3595 added for struct and object members now also guards enum members: the enum a member is
+  exported with must really be an enum (Blueprint and other enum subclasses included). DataTable rows show the
+  enumerator names of their `TEnumAsByte` columns again; they were looked up one pointer off.
+- `TOptional` members that hold a struct take that struct's real alignment, so the dumper finds where the optional
+  keeps its is-set flag.
+- UE 4.11–4.17 titles whose engine version is not recognised: class-valued members keep their base class and
+  function parameters their struct / class types (build 3594 fixed the member types themselves).
+- No change on any fixture: every member of every class compares identical to build 3595 on UE 4.11, 4.23, 4.27,
+  5.1, 5.8 and DQ XI S.
+- Build 3596: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `0d71c98af627`; `dist\UE5Dumper.dll` 3,038,208 B,
+  `2618dae26829`. C# 5800/5800, headless 15/15, dll_core 563 checks, dll_helpers 3073.
+
 ## 2026-09-28 (build 3595) — struct and object types are taken only from a real struct / class `[STRUCTPROBE-ANY-NAME]` `[STRUCTCACHE-ENUM-UNCHECKED]`
 
 - When the dumper reads which struct a struct member holds, or which class an object member points to, it now
