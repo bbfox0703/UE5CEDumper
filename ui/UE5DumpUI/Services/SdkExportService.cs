@@ -92,7 +92,12 @@ public static class SdkExportService
                 // [SDK-UDS-MISSING] A Blueprint UserDefinedStruct is its own UScriptStruct subclass, so its
                 // row reads "UserDefinedStruct": without it, every Blueprint member of that type named a
                 // struct the header never defined.
-                if (DumpAllService.IsClassLikeMetaName(obj.ClassName) || IsStructMeta(obj.ClassName))
+                // A class-default object's row reads its METAclass (Default__ScriptStruct is a
+                // ScriptStruct, Default__Class a Class), so it passes the meta test -- but it is an
+                // object, not a type, and came out as an empty `struct Default__X {}`. UE reserves
+                // the prefix for CDOs.
+                if ((DumpAllService.IsClassLikeMetaName(obj.ClassName) || IsStructMeta(obj.ClassName))
+                    && !obj.Name.StartsWith("Default__", StringComparison.Ordinal))
                     targets.Add((obj.Address, obj.Name, obj.ClassName));
             }
 
