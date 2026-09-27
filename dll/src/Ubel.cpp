@@ -784,6 +784,14 @@ static std::string GetUPropertyTypeName(uintptr_t upropAddr) {
     return Serie::GetString(nameIdx);
 }
 
+// [UPROP-INNER-TYPENAME] A property's type name in the running mode: an FField's FFieldClass name, or -- on a
+// UProperty engine, where a property IS a UObject -- its UClass name. The FField read on a UProperty lands on
+// ObjectFlags | InternalIndex at +0x8 and names nothing, so a container inner probed with it was never typed there
+// (UE423_Flying: 1,016 TArray<uint8_t> in the SDK export; DQ XI S: 0 of 77 array inners).
+static std::string GetPropertyTypeNameForMode(uintptr_t propAddr) {
+    return DynOff::bUseFProperty ? GetFieldTypeName(propAddr) : GetUPropertyTypeName(propAddr);
+}
+
 // Walk the FField chain starting from the first field (UE4.25+ / UE5)
 // [A2-STRUCT-PREVIEW-BOOLMASK] [A3-BOOL-NATIVE-NOWRITE] Probe an FBoolProperty's layout bytes on
 // the UE5 FField walk. It never did: only WalkClassEx's enrichment read the mask, so everything that
@@ -1261,7 +1269,7 @@ static std::pair<uintptr_t, std::string> ProbeInnerProperty(uintptr_t fieldAddr,
         if (off < 0) continue;
         uintptr_t inner = 0;
         if (!Macht::ReadSafe(fieldAddr + off, inner) || !inner) continue;
-        std::string tn = GetFieldTypeName(inner);
+        std::string tn = GetPropertyTypeNameForMode(inner);
         if (!tn.empty() && tn != "Unknown" && tn.find("Property") != std::string::npos)
             return { inner, tn };
     }
@@ -1535,13 +1543,13 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 if (tryOff < 0) continue;
                 uintptr_t keyProp = 0;
                 if (!Macht::ReadSafe(fi.Address + tryOff, keyProp) || !keyProp) continue;
-                std::string keyTn = GetFieldTypeName(keyProp);
+                std::string keyTn = GetPropertyTypeNameForMode(keyProp);
                 if (keyTn.empty() || keyTn == "Unknown" || keyTn.find("Property") == std::string::npos)
                     continue;
                 // Found KeyProp — ValueProp is at +8
                 uintptr_t valueProp = 0;
                 Macht::ReadSafe(fi.Address + tryOff + 8, valueProp);
-                std::string valTn = valueProp ? GetFieldTypeName(valueProp) : "";
+                std::string valTn = valueProp ? GetPropertyTypeNameForMode(valueProp) : "";
                 if (valTn.empty() || valTn.find("Property") == std::string::npos) continue;
 
                 fi.keyType = keyTn;
