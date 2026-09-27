@@ -3757,8 +3757,9 @@ struct TMapHeader {
     uintptr_t bitArrayBase   = 0;
 };
 
-// [R7-S2] The outer storage key's SHAPE, probed on the first occupied slots: a raw UObjectBase* on UE 5.x and 4.27
-// (PDB-verified), possibly an FObjectKey (two small int32s) on 4.23-4.26, which no symbol here has confirmed. False
+// [R7-S2] The outer storage key's SHAPE, probed on the first occupied slots. Every stock version that has sparse
+// delegates, 4.23 through 5.x, keys it by a raw UObjectBase* (PDB-verified, tools/ghidra/GROUND-TRUTH.md); a licensee
+// fork, which no sample covers, could still key it by something else, e.g. an FObjectKey (two small int32s). False
 // only when a slot was read and none looked like a pointer. Shared by WalkSparseDelegateBindings and Find References'
 // sparse pass, so the two readers of the storage cannot disagree about whether they can read it.
 static bool SparseOuterKeysLookLikePointers(const TMapHeader& outerHdr, int32_t outerStride) {
@@ -6753,11 +6754,12 @@ SparseDelegateResult WalkSparseDelegateBindings(uintptr_t ownerObj,
     // identically). FObjectKey is also 8 bytes there, not the 16 the old note claimed.
     // Every other constant below was checked against that PDB and matches exactly.
     //
-    // We still have NO symbol evidence for 4.23-4.26, so instead of widening the version
-    // range on a guess, probe the actual key shape: the first occupied outer slot must hold
-    // something that looks like a userspace pointer. An FObjectKey-keyed build stores two
-    // small int32s there, which fails the test and lands us back on the bIsBound fallback —
-    // i.e. unknown builds fail safe rather than misreading memory.
+    // The PDBs have since shown the same raw pointer key at 4.23, 4.24, 4.25 and 4.26 as
+    // well (tools/ghidra/GROUND-TRUTH.md), so no stock version needs a gate. The probe stays
+    // for licensee forks: the first occupied outer slot must hold something that looks like
+    // a userspace pointer. An FObjectKey-keyed build stores two small int32s there, which
+    // fails the test and lands us back on the bIsBound fallback — i.e. unknown builds fail
+    // safe rather than misreading memory.
     uintptr_t storage = Genau::FindSparseDelegateStorage();
     if (!storage) return result;  // resolved=false
 

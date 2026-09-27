@@ -314,11 +314,11 @@ uintptr_t FindGWorld(const char* hintPatternId = nullptr);
 // Cached for the DLL lifetime; first call scans, subsequent calls are O(1).
 // Returns 0 if no AOB pattern matched (caller should fall back to bIsBound).
 //
-// Layout support: the outer key is a raw `UObjectBase*` on UE 5.x AND on UE 4.27
-// (PDB-verified on DropIn 4.27.2 — the long-standing "UE 4.23-4.27 uses FObjectKey"
-// note was wrong, and FObjectKey is 8 bytes there, not 16). Aura's walker probes the
-// live key shape at runtime rather than trusting a version number, so 4.23-4.26 —
-// for which we still have no symbol evidence — fail safe instead of misreading.
+// Layout support: the outer key is a raw `UObjectBase*` at every stock version from
+// 4.23 through 5.x (PDB-verified — the long-standing "UE 4.23-4.27 uses FObjectKey"
+// note was wrong, and FObjectKey is 8 bytes there, not 16). Aura's walker still probes
+// the live key shape at runtime rather than trusting a version number, so a licensee
+// fork keyed differently fails safe instead of misreading.
 uintptr_t FindSparseDelegateStorage();
 
 // Resolve &GEngine (the static slot holding UEngine*) by AOB.

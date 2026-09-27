@@ -540,8 +540,10 @@ Every walker constant was re-checked against that PDB and matches exactly
 (outer stride `0x60`, value at `+0x08`, `FName` 8B → inner stride `0x20`,
 `FScriptDelegate` 16B). The version gate is gone; `Aura::WalkSparseDelegateBindings`
 now probes the live outer key and declines to walk if it does not look like a
-userspace pointer, so 4.23-4.26 (still unverified — we have no symbols for them)
-fail safe instead of misreading memory.
+userspace pointer. The PDBs have since confirmed the same raw pointer key at 4.23,
+4.24, 4.25 and 4.26 too — every version the feature has existed
+(`tools/ghidra/GROUND-TRUTH.md`) — so the probe now guards licensee forks, which no
+sample covers, and a fork keyed differently fails safe instead of misreading memory.
 
 `Aura::WalkSparseDelegateBindings(owner, fname, max)` (build 561+) is
 the read-side path. Three phases:
