@@ -276,7 +276,7 @@ public class SdkHeaderDeclaratorTests
                 new FieldInfoModel { Name = "Tag", TypeName = "NameProperty", Offset = 0x78, Size = 8 },
                 new FieldInfoModel { Name = "Label", TypeName = "StrProperty", Offset = 0x80, Size = 0x10 },
                 new FieldInfoModel { Name = "Owner", TypeName = "ObjectProperty", ObjClassName = "APlayerController", Offset = 0x90, Size = 8 },
-                new FieldInfoModel { Name = "SpawnClass", TypeName = "ClassProperty", ObjClassName = "AActor", Offset = 0x98, Size = 8 },
+                new FieldInfoModel { Name = "SpawnClass", TypeName = "ClassProperty", ObjClassName = "Class", MetaClassName = "AActor", Offset = 0x98, Size = 8 },
                 new FieldInfoModel { Name = "Watched", TypeName = "WeakObjectProperty", ObjClassName = "AActor", Offset = 0xA0, Size = 8 },
                 new FieldInfoModel
                 {

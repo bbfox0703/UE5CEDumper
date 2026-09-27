@@ -99,7 +99,7 @@ public class SdkTypeNameTests
                 StructMember("Item", "S_Item-Data", 0x08, 8),
                 new FieldInfoModel { Name = "Kind", TypeName = "EnumProperty", EnumName = "E_Type-A", Offset = 0x10, Size = 1 },
                 new FieldInfoModel { Name = "Items", TypeName = "ArrayProperty", InnerType = "StructProperty", InnerStructType = "S_Item-Data", Offset = 0x18, Size = 0x10 },
-                new FieldInfoModel { Name = "Spawn", TypeName = "ClassProperty", ObjClassName = "BP_Enemy-Boss_C", Offset = 0x28, Size = 8 },
+                new FieldInfoModel { Name = "Spawn", TypeName = "ClassProperty", ObjClassName = "Class", MetaClassName = "BP_Enemy-Boss_C", Offset = 0x28, Size = 8 },
                 new FieldInfoModel { Name = "Bag", TypeName = "MapProperty", KeyType = "StructProperty", KeyStructType = "S_Item-Data", ValueType = "IntProperty", Offset = 0x30, Size = 0x10 },
                 new FieldInfoModel { Name = "Loot", TypeName = "MapProperty", KeyType = "IntProperty", ValueType = "StructProperty", ValueStructType = "S_Item-Data", Offset = 0x40, Size = 0x10 },
                 new FieldInfoModel { Name = "Kinds", TypeName = "SetProperty", ElemType = "StructProperty", ElemStructType = "S_Item-Data", Offset = 0x50, Size = 0x10 },

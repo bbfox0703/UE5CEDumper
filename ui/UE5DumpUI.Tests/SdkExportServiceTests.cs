@@ -80,7 +80,8 @@ public class SdkExportServiceTests
     [Fact]
     public void MapCppDecl_ClassProperty_ReturnsSubclassOf()
     {
-        var field = new FieldInfoModel { TypeName = "ClassProperty", ObjClassName = "AActor", Size = 8 };
+        // [SDK-METACLASS] What the DLL sends: obj_class is the PropertyClass (`Class`), meta_class the subclass.
+        var field = new FieldInfoModel { TypeName = "ClassProperty", ObjClassName = "Class", MetaClassName = "AActor", Size = 8 };
         Assert.Equal("TSubclassOf<class AActor>", SdkExportService.MapCppDecl(field).Type);
     }
 
@@ -208,9 +209,51 @@ public class SdkExportServiceTests
     {
         var field = new FieldInfoModel
         {
-            TypeName = "ArrayProperty", InnerType = "SoftClassProperty", InnerObjClass = "AActor", Size = 16,
+            TypeName = "ArrayProperty", InnerType = "SoftClassProperty", InnerMetaClass = "AActor", Size = 16,
         };
         Assert.Equal("TArray<TSoftClassPtr<class AActor>>", SdkExportService.MapCppDecl(field).Type);
+    }
+
+    // --- [SDK-METACLASS] which C++ a class-valued property is ---
+
+    [Theory]
+    // PropertyClass `Class` + a MetaClass: a subclass of it.
+    [InlineData("ClassProperty", "Class", "Pawn", "TSubclassOf<class Pawn>")]
+    // MetaClass Object is any class; and none known (an older DLL, or a refused read): a plain pointer.
+    [InlineData("ClassProperty", "Class", "Object", "UClass*")]
+    [InlineData("ClassProperty", "Class", "", "UClass*")]
+    // TObjectPtr<UBlueprintGeneratedClass>: UHT makes it a ClassProperty whose PropertyClass is the class itself
+    // and whose MetaClass is Object -- a pointer to that class, not a TSubclassOf of it.
+    [InlineData("ClassProperty", "BlueprintGeneratedClass", "Object", "class BlueprintGeneratedClass*")]
+    [InlineData("SoftClassProperty", "Class", "PlayerInput", "TSoftClassPtr<class PlayerInput>")]
+    [InlineData("SoftClassProperty", "Class", "Object", "TSoftClassPtr<UObject>")]
+    [InlineData("SoftClassProperty", "Class", "", "TSoftClassPtr<UObject>")]
+    public void MapCppDecl_AClassValuedProperty_FollowsItsMetaClass(string type, string propertyClass, string meta, string expected)
+    {
+        var field = new FieldInfoModel { TypeName = type, ObjClassName = propertyClass, MetaClassName = meta, Size = 8 };
+        Assert.Equal(expected, SdkExportService.MapCppDecl(field).Type);
+    }
+
+    [Fact]
+    public void MapCppDecl_ContainerInners_FollowTheirMetaClass()
+    {
+        Assert.Equal("TArray<TSubclassOf<class CameraModifier>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "ArrayProperty", InnerType = "ClassProperty", InnerObjClass = "Class", InnerMetaClass = "CameraModifier", Size = 16,
+        }).Type);
+        Assert.Equal("TArray<class VerseClass*>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "ArrayProperty", InnerType = "ClassProperty", InnerObjClass = "VerseClass", InnerMetaClass = "Object", Size = 16,
+        }).Type);
+        Assert.Equal("TMap<TSubclassOf<class PlatformSettings>, TSoftClassPtr<class Actor>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "MapProperty", KeyType = "ClassProperty", KeyMetaClass = "PlatformSettings",
+            ValueType = "SoftClassProperty", ValueMetaClass = "Actor", Size = 80,
+        }).Type);
+        Assert.Equal("TSet<TSoftClassPtr<class Widget>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "SetProperty", ElemType = "SoftClassProperty", ElemMetaClass = "Widget", Size = 80,
+        }).Type);
     }
 
     [Fact]
