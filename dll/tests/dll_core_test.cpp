@@ -2781,6 +2781,184 @@ int main() {
         DynOff::bUseFProperty = savedFPropCE;
     }
 
+    // -- METACLASS-2026-09-27 -- a ClassProperty's MetaClass reaches FieldInfo, validated ---------------------------
+    //
+    // ⛔ POOL-FAKING (own pool, after CONTAINERENUM). [SDK-METACLASS] walk_class published a ClassProperty's
+    // PropertyClass -- `Class` -- and never its MetaClass, so the SDK header could only write TSubclassOf<class Class>.
+    // MetaClass is the next pointer after PropertyClass in every supported layout (4.18..5.8 UnrealType.h; RE-UE4SS
+    // templates; Dumper-7 Offsets.cpp). The read is refused unless the PropertyClass slot really holds a class of
+    // classes AND the pointer after it is a UClass.
+    {
+        blk("METACLASS - WalkClassEx publishes a Class/SoftClass property's MetaClass, and refuses a bad read");
+
+        static uint8_t mcEntry[22][0x40] = {};
+        const char* mcNames[22] = { "", "ClassProperty", "SoftClassProperty", "ArrayProperty", "ObjectProperty",
+                                    "Class", "BlueprintGeneratedClass", "Actor", "Object", "BP_Foo_C", "Pawn_0",
+                                    "SubCls", "SoftCls", "BadMeta", "BadAnchor", "Director", "Arr", "Ctrl",
+                                    "SetProperty", "Classes", "MapProperty", "ByClass" };
+        static uintptr_t mcChunk[23] = {};
+        for (int i = 1; i <= 21; ++i) {
+            memcpy(mcEntry[i] + 0x10, mcNames[i], strlen(mcNames[i]) + 1);
+            mcChunk[i] = reinterpret_cast<uintptr_t>(mcEntry[i]);
+        }
+        static uintptr_t mcChunks[2] = { reinterpret_cast<uintptr_t>(mcChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(mcChunks), 0x10);
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        // The reflection objects: `Class` is its own class; BlueprintGeneratedClass is a Class whose super is Class;
+        // Actor / Object are Classes; BP_Foo_C is a BlueprintGeneratedClass; Pawn_0 is an INSTANCE (class Actor).
+        static uint8_t mcObj[11][0x100] = {};
+        auto obj = [&](int nameIdx) { return A(mcObj[nameIdx]); };
+        for (int i = 5; i <= 10; ++i) put32(mcObj[i], Grimoire::OFF_UOBJECT_NAME, i);
+        putP(mcObj[5],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[6],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[6],  DynOff::USTRUCT_SUPER, obj(5));
+        putP(mcObj[7],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[8],  Grimoire::OFF_UOBJECT_CLASS, obj(5));
+        putP(mcObj[9],  Grimoire::OFF_UOBJECT_CLASS, obj(6));
+        putP(mcObj[10], Grimoire::OFF_UOBJECT_CLASS, obj(7));
+
+        // ---- FProperty mode ----
+        const bool savedFPropMC = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = true;
+        const int slot = DynOff::FSTRUCTPROP_STRUCT;
+
+        static uint8_t mcFC[5][0x20] = {};
+        auto fclass = [&](int nameIdx) { put32(mcFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx); return A(mcFC[nameIdx]); };
+        static uint8_t mcSetFC[0x20] = {}, mcMapFC[0x20] = {};
+        put32(mcSetFC, DynOff::FFIELDCLASS_NAME, 18);
+        put32(mcMapFC, DynOff::FFIELDCLASS_NAME, 20);
+
+        static uint8_t mcP[10][0x100] = {};
+        auto prop = [&](int i, uintptr_t fc, int nameIdx, int32_t off, uintptr_t propertyClass, uintptr_t meta,
+                        uint8_t* next) {
+            putP(mcP[i], DynOff::FFIELD_CLASS, fc);
+            put32(mcP[i], DynOff::FFIELD_NAME, nameIdx);
+            put32(mcP[i], DynOff::FPROPERTY_OFFSET, off);
+            put32(mcP[i], DynOff::FPROPERTY_ELEMSIZE, 8);
+            put32(mcP[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(mcP[i], DynOff::FFIELD_NEXT, A(next));
+            if (propertyClass) putP(mcP[i], slot, propertyClass);
+            if (meta)          putP(mcP[i], slot + 8, meta);
+        };
+        // Container inners (never chained into the class).
+        static uint8_t mcInner[0x100] = {}, mcSetElem[0x100] = {}, mcKey[0x100] = {}, mcVal[0x100] = {};
+        auto innerProp = [&](uint8_t* p, uintptr_t fc, uintptr_t propertyClass, uintptr_t meta) {
+            putP(p, DynOff::FFIELD_CLASS, fc);
+            putP(p, slot, propertyClass);
+            putP(p, slot + 8, meta);
+        };
+        innerProp(mcInner,   fclass(1), obj(5), obj(7));   // TArray<TSubclassOf<Actor>>
+        innerProp(mcSetElem, fclass(2), obj(5), obj(9));   // TSet<TSoftClassPtr<BP_Foo_C>>
+        innerProp(mcKey,     fclass(1), obj(5), obj(7));   // TMap<TSubclassOf<Actor>, UObject*>
+        innerProp(mcVal,     fclass(4), obj(7), obj(7));   //   value: a plain ObjectProperty (no MetaClass)
+
+        prop(0, fclass(1), 11, 0x28, obj(5), obj(7),  mcP[1]);   // SubCls    TSubclassOf<Actor>
+        prop(1, fclass(2), 12, 0x30, obj(5), obj(9),  mcP[2]);   // SoftCls   TSoftClassPtr<BP_Foo_C>
+        prop(2, fclass(1), 13, 0x38, obj(5), obj(10), mcP[3]);   // BadMeta   +8 is an INSTANCE
+        prop(3, fclass(1), 14, 0x40, obj(7), obj(7),  mcP[4]);   // BadAnchor PropertyClass is not a class of classes
+        prop(4, fclass(1), 15, 0x48, obj(6), obj(8),  mcP[5]);   // Director  TObjectPtr<UBlueprintGeneratedClass>
+        prop(5, fclass(3), 16, 0x50, 0, 0,            mcP[6]);   // Arr       TArray<TSubclassOf<Actor>>
+        putP(mcP[5], DynOff::FARRAYPROP_INNER, A(mcInner));
+        prop(6, fclass(4), 17, 0x60, obj(7), obj(7),  mcP[7]);   // Ctrl      an ObjectProperty: no MetaClass, ever
+        prop(7, A(mcSetFC), 19, 0x68, 0, 0,           mcP[8]);   // Classes   TSet<TSoftClassPtr<BP_Foo_C>>
+        putP(mcP[7], DynOff::FARRAYPROP_INNER, A(mcSetElem));
+        prop(8, A(mcMapFC), 21, 0xB8, 0, 0,           nullptr);  // ByClass   TMap<TSubclassOf<Actor>, Actor*>
+        putP(mcP[8], slot, A(mcKey));
+        putP(mcP[8], slot + 8, A(mcVal));
+
+        static uint8_t mcCls[0x100] = {};
+        put32(mcCls, DynOff::USTRUCT_PROPSSIZE, 0x108);
+        putP(mcCls, DynOff::USTRUCT_CHILDPROPS, A(mcP[0]));
+
+        const auto& mcInfo = Ubel::WalkClassEx(A(mcCls));
+        auto field = [&](const char* name) -> const FieldInfo* {
+            for (const auto& f : mcInfo.Fields) if (f.Name == name) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fSub = field("SubCls");   const FieldInfo* fSoft = field("SoftCls");
+        const FieldInfo* fBadM = field("BadMeta"); const FieldInfo* fBadA = field("BadAnchor");
+        const FieldInfo* fDir = field("Director"); const FieldInfo* fArr = field("Arr");
+        const FieldInfo* fCtl = field("Ctrl");     const FieldInfo* fSet = field("Classes");
+        const FieldInfo* fMap = field("ByClass");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("METACLASS control: the fake class produced all nine fields, typed",
+              fSub && fSoft && fBadM && fBadA && fDir && fArr && fCtl && fSet && fMap
+                && fSub->TypeName == "ClassProperty" && fArr->innerType == "ClassProperty"
+                && fSet->elemType == "SoftClassProperty" && fMap->keyType == "ClassProperty",
+              std::to_string(mcInfo.Fields.size()).c_str());
+        check("METACLASS ⭐: a ClassProperty publishes its MetaClass",
+              fSub && fSub->metaClassName == "Actor", s(fSub, &FieldInfo::metaClassName));
+        check("METACLASS control: ...and its PropertyClass is still `Class`",
+              fSub && fSub->objClassName == "Class", s(fSub, &FieldInfo::objClassName));
+        check("METACLASS ⭐: a SoftClassProperty publishes its MetaClass (a BlueprintGeneratedClass passes the chain)",
+              fSoft && fSoft->metaClassName == "BP_Foo_C", s(fSoft, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: an INSTANCE after PropertyClass is refused",
+              fBadM && fBadM->metaClassName.empty(), s(fBadM, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: a PropertyClass that is not a class of classes refuses the whole read",
+              fBadA && fBadA->metaClassName.empty(), s(fBadA, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: PropertyClass BlueprintGeneratedClass passes the anchor through its super chain",
+              fDir && fDir->metaClassName == "Object" && fDir->objClassName == "BlueprintGeneratedClass",
+              s(fDir, &FieldInfo::metaClassName));
+        check("METACLASS ⭐: an Array's ClassProperty inner publishes its MetaClass",
+              fArr && fArr->innerMetaClass == "Actor", s(fArr, &FieldInfo::innerMetaClass));
+        check("METACLASS ⭐: a Set's SoftClassProperty element publishes its MetaClass",
+              fSet && fSet->elemMetaClass == "BP_Foo_C", s(fSet, &FieldInfo::elemMetaClass));
+        check("METACLASS ⭐: a Map's ClassProperty key publishes its MetaClass, its ObjectProperty value none",
+              fMap && fMap->keyMetaClass == "Actor" && fMap->valueMetaClass.empty(), s(fMap, &FieldInfo::keyMetaClass));
+        check("METACLASS control: an ObjectProperty never gets a MetaClass",
+              fCtl && fCtl->metaClassName.empty() && fCtl->objClassName == "Actor", s(fCtl, &FieldInfo::metaClassName));
+        DynOff::bUseFProperty = savedFPropMC;
+
+        // ---- UProperty mode, UE 4.18 ----
+        // The subclass slot is UPropertySubclassStartFor(0x44, 418) = 0x70; FSTRUCTPROP_STRUCT is left at 0x78 -- the
+        // FProperty family's default, which Genau never recalibrates in UProperty mode. PropertyClass is planted ONLY
+        // at 0x70 and MetaClass at 0x78, so a reader that borrows FSTRUCTPROP_STRUCT reads MetaClass as its anchor.
+        const bool     savedFPropU = DynOff::bUseFProperty;
+        const bool     savedCpnU   = DynOff::bCasePreservingName;
+        const int      savedOffU   = DynOff::UPROPERTY_OFFSET;
+        const int      savedSlotU  = DynOff::FSTRUCTPROP_STRUCT;
+        const uint32_t savedVerU   = g_cachedUEVersion;
+        DynOff::bUseFProperty       = false;
+        DynOff::bCasePreservingName = false;
+        DynOff::UPROPERTY_OFFSET    = 0x44;
+        DynOff::FSTRUCTPROP_STRUCT  = 0x78;
+        g_cachedUEVersion           = 418;
+        const int uSlot = DynOff::UPropertySubclassStartFor(0x44, 418, false);
+        check("METACLASS setup: the 4.18 UProperty subclass slot is 0x70, not FSTRUCTPROP_STRUCT's 0x78",
+              uSlot == 0x70 && DynOff::FSTRUCTPROP_STRUCT != uSlot, std::to_string(uSlot).c_str());
+
+        static uint8_t mcUClassProp[0x100] = {};          // the UObject whose NAME is "ClassProperty"
+        put32(mcUClassProp, Grimoire::OFF_UOBJECT_NAME, 1);
+        static uint8_t mcUProp[0x100] = {};
+        putP(mcUProp, Grimoire::OFF_UOBJECT_CLASS, A(mcUClassProp));
+        put32(mcUProp, Grimoire::OFF_UOBJECT_NAME, 11);     // "SubCls"
+        put32(mcUProp, DynOff::UPROPERTY_ELEMSIZE, 8);
+        put32(mcUProp, DynOff::UPROPERTY_ELEMSIZE - 4, 1);        // ArrayDim
+        put32(mcUProp, 0x44, 0x28);
+        putP(mcUProp, uSlot, obj(5));                        // PropertyClass = Class
+        putP(mcUProp, uSlot + 8, obj(7));                    // MetaClass     = Actor
+        static uint8_t mcUCls[0x100] = {};
+        put32(mcUCls, DynOff::USTRUCT_PROPSSIZE, 0x30);
+        putP(mcUCls, DynOff::USTRUCT_CHILDREN, A(mcUProp));
+        const auto& muInfo = Ubel::WalkClassEx(A(mcUCls));
+        const FieldInfo* fU = nullptr;
+        for (const auto& f : muInfo.Fields) if (f.Name == "SubCls") fU = &f;
+        check("METACLASS control: the 4.18 UProperty class produced its ClassProperty",
+              fU && fU->TypeName == "ClassProperty", std::to_string(muInfo.Fields.size()).c_str());
+        check("METACLASS ⭐: UProperty 4.18 reads MetaClass at the VERSION's slot + 8, not FSTRUCTPROP_STRUCT's",
+              fU && fU->metaClassName == "Actor", s(fU, &FieldInfo::metaClassName));
+
+        g_cachedUEVersion           = savedVerU;
+        DynOff::FSTRUCTPROP_STRUCT  = savedSlotU;
+        DynOff::UPROPERTY_OFFSET    = savedOffU;
+        DynOff::bCasePreservingName = savedCpnU;
+        DynOff::bUseFProperty       = savedFPropU;
+    }
+
     // -- GENAUABORT-2026-09-12 -- a Genau sweep that bails on a cancel records it AT THE BAIL -----------------
     //
     // [P1-GENAU-ABORT] [A2-GNAMES-PTRSCAN-ABORT] Each sweep polls Tot::Requested() on its first page-aligned slot, so

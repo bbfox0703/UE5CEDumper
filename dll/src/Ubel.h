@@ -28,7 +28,16 @@ struct FieldInfo {
 
     // === Extended type metadata (populated by WalkClassEx) ===
     std::string structType;      // StructProperty -> UScriptStruct name
-    std::string objClassName;    // ObjectProperty/ClassProperty -> target UClass name
+    std::string objClassName;    // Object-family property -> its PropertyClass. For a ClassProperty /
+                                 // SoftClassProperty that is the class of the VALUE (`Class`, or e.g.
+                                 // `BlueprintGeneratedClass`), never the class it holds a subclass of.
+    // [SDK-METACLASS] A ClassProperty's / SoftClassProperty's MetaClass: the UClass it holds a subclass
+    // of (TSubclassOf<X> / TSoftClassPtr<X>). Empty when unread or when the read did not validate.
+    std::string metaClassName;   // the field itself
+    std::string innerMetaClass;  // ArrayProperty / OptionalProperty inner
+    std::string keyMetaClass;    // MapProperty key
+    std::string valueMetaClass;  // MapProperty value
+    std::string elemMetaClass;   // SetProperty element
     std::string innerType;       // ArrayProperty -> inner FProperty type name
     std::string innerStructType; // ArrayProperty of struct -> inner struct name
     std::string innerObjClass;   // ArrayProperty of object -> inner class name
