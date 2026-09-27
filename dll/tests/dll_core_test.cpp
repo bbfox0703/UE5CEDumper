@@ -4998,8 +4998,8 @@ int main() {
             memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
             upChunk[i] = A(upEntry[i]);
         }
-        static uintptr_t upChunks[2] = { A(upChunk), 0 };
-        Serie::InitUE4(A(upChunks), 0x10);
+        static uintptr_t upChunks[2] = { reinterpret_cast<uintptr_t>(upChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(upChunks), 0x10);
 
         // Guid (a ScriptStruct) whose UStruct::Children at +0x48 heads A -> B -> C -> D, four IntProperty UObjects.
         static uint8_t upScriptStructCls[0x100] = {}, upIntPropCls[0x100] = {}, upGuid[0x100] = {};
