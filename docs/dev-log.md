@@ -27,6 +27,29 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (build 3581) — the SDK header renames member names C++ would reject; nine docs brought back in line with the code `[SDK-MEMBER-NAMES]`
+
+Both halves came from the other PC's memory-refresh audit of build 3580; every item was checked against the
+code or the record before it was changed.
+
+- **SDK header export:** a UE property name went into the header verbatim, so a property called `class` or
+  `default`, two properties with one name, a Blueprint variable with a space in it, a member named after a type
+  the struct uses, or one named like the generated padding made `cl.exe` reject the whole header (measured with
+  `tools/verify/compile_sdk_header.py`: C2236, C2321, C2086, C3646, C2327, C2040, C2059). Such members are now
+  renamed the way Dumper-7 does it (the second `Value` becomes `Value_0`), and the comment keeps the real name
+  (`[UE name: class]`). `StaticClass` / `StaticName` / `GetDefaultObj` and the `<windows.h>` macros that erase
+  a declaration are renamed too. `Name` / `Class` / `Flags` / `Outer` are left alone on purpose. Red first (11
+  tests and the compile rig), 5/5 mutants killed. The same problem in TYPE names is filed as `[SDK-TYPE-NAMES]`.
+- **Nine repo texts that contradicted the code or the record, one commit each:** Octopath's dxgi proxy works
+  since 3366 (test-games, handover); the sparse-delegate key is PDB-confirmed at 4.23–4.26 too (Aura, Ubel,
+  Genau, technical-notes); `GWLD_FD_1` sits at priority 102 (GROUND-TRUTH); `build.ps1 -Target DLL` builds every
+  proxy, winmm included (help text); Native-C P3 is fully verified (spec header); Locate-in-GWorld's
+  `ok_via_level` has fired live on Titan Quest II, only the drill to HP is unchecked (todo); the live-verification
+  checker and CI now name `docs/verification-register.md`; Class Pivot's Discover has run live
+  (`[AOTSORT-4-2026-08-20]`, todo reconciled); AOBMaker's CreateAAScript level is no longer hardcoded since its
+  a5aba68 (comments now say "older deployed plugins").
+- AOT `dist\UE5DumpUI.exe` 55.6 MB (58,330,112 B), sha256 `e86c5fa22c92`; `dist\UE5Dumper.dll` sha256 `2a32b94d66a3`.
+
 ## 2026-09-27 (builds 3578–3580) — Home / End / page keys with text selected keep the caret where it belongs; UI tests on real controls `[TEXTBOX-HOMEEND-CARET]`
 
 - **Every text field:** with text selected, End could put the caret at the START (and Home at the end) — e.g. a
