@@ -3673,11 +3673,10 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
             }
             // UE 5.0-5.2 keep the larger layout's defaults; probing measures the real one.
         }
-    } else {
-        // [UPROP-SUBCLASS-SLOT] A UProperty engine's family, from the version and the default Offset_Internal, so a
-        // give-up exit below ships the UProperty subclass start rather than the FProperty default.
-        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(DynOff::UPROPERTY_OFFSET, ueVersion,
-                                                               DynOff::bCasePreservingName));
+    } else if (DynOff::UPropertyHasDefaultFamily(ueVersion)) {
+        // [UPROP-SUBCLASS-SLOT] A UProperty engine's default family, so a give-up exit below ships the UProperty
+        // subclass start rather than the FProperty default (DynOff::UPropertyDefaultFamily says which versions).
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
     }
 
     // Step 3: Find "Guid" or "Vector" struct for probing

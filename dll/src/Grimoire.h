@@ -864,6 +864,17 @@ inline constexpr PropertyFamily UPropertyFamilyFor(int offsetInternal, unsigned 
     return PropertyFamilyAtBase(UPropertySubclassStartFor(offsetInternal, ueVersion, casePreservingName));
 }
 
+// The family a UProperty engine starts from before anything is measured -- what a give-up exit ships. Only for
+// 4.18+ (and an unknown version): stock Offset_Internal 0x44, 0x4C case-preserving (the 12-byte FName moves the
+// whole UObject head 8 on). 4.11-4.17 get none, because their stock start (Offset_Internal 0x50 + 0x28) IS the
+// FProperty default 0x78 already, and UPROPERTY_OFFSET's 0x44 default -- the 4.18+ layout -- derives 0x6C there.
+inline constexpr bool UPropertyHasDefaultFamily(unsigned ueVersion) {
+    return ueVersion == 0 || ueVersion >= 418;
+}
+inline constexpr PropertyFamily UPropertyDefaultFamily(unsigned ueVersion, bool casePreservingName) {
+    return UPropertyFamilyFor(casePreservingName ? 0x4C : 0x44, ueVersion, casePreservingName);
+}
+
 // Publish all five together. Never assign a member of this family directly.
 inline void ApplyPropertyFamily(const PropertyFamily& f) {
     FSTRUCTPROP_STRUCT  = f.structProp;
