@@ -6337,12 +6337,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     partial void OnSearchTextChanged(string value)
     {
-        // ApplySearch re-sets the grid's items, which puts it back on its first row and drops the
-        // selection. When the USER cleared a real keyword (2+ characters to empty in one edit:
-        // select all, Delete), capture what should survive -- the view, or the first selected
-        // row -- and hand it back afterwards [LW-SEARCH-CLEAR-KEEP]. Anything else -- typing,
-        // pasting, shortening, a partial delete, 1 -> 0 characters, a navigation clearing the
-        // box -- keeps the old behaviour.
+        // When the USER cleared a real keyword (2+ characters to empty in one edit: select all,
+        // Delete) while a selection that does NOT hold the stepped match is up, bring its first
+        // row to the top -- the maintainer's rule [LW-SEARCH-CLEAR-KEEP]. In every other case the
+        // grid simply stays where it is: a keyword edit no longer re-sets its items.
         var previous = _previousSearchText;
         _previousSearchText = value;
         var keep = !_clearingSearchForNavigation && string.IsNullOrEmpty(value)
@@ -6416,11 +6414,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// [LW-SEARCH-CLEAR-KEEP] What a user-cleared keyword should leave on screen. The
-    /// maintainer's rule: nothing selected, or the selection contains the match ▲/▼ last landed
-    /// on → the view stays exactly where it is (the same top row); otherwise the first selected
-    /// row, in grid order, comes to the top. Row identity is name + offset, as every view
-    /// restore here.
+    /// [LW-SEARCH-CLEAR-KEEP] The restore a user-cleared keyword asks for, or null when the view
+    /// should simply stay where it is: nothing selected, or the selection holds the match ▲/▼
+    /// last landed on (the maintainer's rule). Otherwise the first selected row, in grid order,
+    /// comes to the top. Row identity is name + offset, as every view restore here.
     /// </summary>
     private (List<BookmarkFieldRef> Selected, BookmarkFieldRef? Top, BookmarkFieldRef? Keep)? CaptureViewForSearchClear()
     {
@@ -6428,16 +6425,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (selected.Count == 0 && SelectedField != null)
             selected.Add(SelectedField);
 
+        if (selected.Count == 0 || (_searchStepTarget != null && selected.Contains(_searchStepTarget)))
+            return null;   // the grid does not move by itself any more: the view stays
+
         var refs = selected.Select(f => new BookmarkFieldRef(f.Name, f.Offset)).ToList();
-        bool stepTargetSelected = _searchStepTarget != null && selected.Contains(_searchStepTarget);
-        if (selected.Count == 0 || stepTargetSelected)
-        {
-            var anchor = new ViewAnchorRef();
-            CaptureViewAnchor?.Invoke(anchor);
-            var keep = stepTargetSelected
-                ? new BookmarkFieldRef(_searchStepTarget!.Name, _searchStepTarget.Offset) : null;
-            return (refs, anchor.TopRow, keep);
-        }
 
         var first = Fields.FirstOrDefault(selected.Contains) ?? selected[0];
         var firstRef = new BookmarkFieldRef(first.Name, first.Offset);
@@ -6507,9 +6498,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
         }
 
-        // Force DataGrid to re-evaluate row styles by resetting the collection
-        var items = new ObservableCollection<LiveFieldValue>(Fields);
-        Fields = items;
+        // No collection reset here. It used to re-set Fields "to re-evaluate row styles", from
+        // when the tint was painted per realized row; it is a style BOUND to IsSearchMatch since
+        // [LWREFRESH-2026-08-21], and the reset only threw the grid back to its first row and
+        // dropped the selection -- on the first character typed, on a clear, on every edit that
+        // did not end on a match to scroll to [LW-SEARCH-CLEAR-KEEP].
     }
 
     /// <summary>Move the selection to the next highlighted search match

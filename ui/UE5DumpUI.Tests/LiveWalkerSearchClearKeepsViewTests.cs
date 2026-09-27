@@ -16,8 +16,9 @@ namespace UE5DumpUI.Tests;
 /// </list>
 /// With nothing selected the view stays where it is too (the maintainer's follow-up). Typing,
 /// pasting, shortening, a partial delete, and 1 → 0 characters keep today's behaviour.
-/// The VM hands the View a restore (selection, top row, row to keep visible); these pin what it
-/// hands over — the scrolling itself is the View's, proven live.
+/// The grid stays put because no keyword edit re-sets its items any more; the one case that
+/// moves it, the VM hands the View as a restore (selection, top row, row to keep visible) —
+/// these pin that, and the scrolling itself is the View's, proven live.
 /// </summary>
 public class LiveWalkerSearchClearKeepsViewTests
 {
@@ -78,12 +79,15 @@ public class LiveWalkerSearchClearKeepsViewTests
         vm.NextSearchMatchCommand.Execute(null);                    // lands on I32
         vm.UpdateSelectedFields(new[] { vm.SelectedField });         // what the grid reports
 
+        var items = vm.Fields;
+        var selectedBefore = vm.SelectedField;
+
         vm.SearchText = "";                                          // select all, Delete
 
-        var r = Assert.Single(got);
-        Assert.Equal(new BookmarkFieldRef("Beta", 0x700), r.Top);    // the same top row: nothing moves
-        Assert.Equal(new BookmarkFieldRef("I32", 0x630), r.Keep);
-        Assert.Contains(new BookmarkFieldRef("I32", 0x630), r.Selected);
+        // Nothing re-sets the grid and nothing scrolls it: the view and the selection stay.
+        Assert.Same(items, vm.Fields);
+        Assert.Empty(got);
+        Assert.Same(selectedBefore, vm.SelectedField);
     }
 
     [Fact]
@@ -144,12 +148,12 @@ public class LiveWalkerSearchClearKeepsViewTests
         var got = AttachView(vm, new BookmarkFieldRef("Beta", 0x700));
         vm.SearchText = "I32";
 
+        var items = vm.Fields;
+
         vm.SearchText = "";
 
-        var r = Assert.Single(got);
-        Assert.Empty(r.Selected);
-        Assert.Equal(new BookmarkFieldRef("Beta", 0x700), r.Top);
-        Assert.Null(r.Keep);
+        Assert.Same(items, vm.Fields);
+        Assert.Empty(got);
     }
 
     [Fact]
