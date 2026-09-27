@@ -5117,6 +5117,99 @@ int main() {
         g_cachedUEVersion = svVer;
     }
 
+    // -- UPROPINNER-2026-09-27 -- a UProperty engine's container inners are named -------------------------------------
+    //
+    // ⛔ OWN name table (after UPROPSLOT). [UPROP-INNER-TYPENAME] WalkClassEx typed a container's inner / key / value /
+    // element with the FField reader, which on a UProperty (a UObject) reads ObjectFlags | InternalIndex at +0x8 and
+    // never names anything: UE423_Flying's export had 1,016 TArray<uint8_t> and 52 TMap<uint8_t, uint8_t>, and DQ XI S
+    // typed 0 of 77 array inners. Objects are sized as 4.23's: subclass start 0x70 (the family, since UPROPSLOT).
+    {
+        blk("UPROPINNER - on a UProperty engine WalkClassEx names Array / Map / Set inners, and reads their classes");
+
+        const auto svFProp = DynOff::bUseFProperty;       const auto svNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const auto svCpn = DynOff::bCasePreservingName;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+        DynOff::bUseFProperty = false;  DynOff::bCasePreservingName = false;  g_cachedUEVersion = 423;
+        DynOff::UFIELD_NEXT = 0x28;     DynOff::USTRUCT_CHILDREN = 0x48;      DynOff::USTRUCT_PROPSSIZE = 0x50;
+        DynOff::UPROPERTY_OFFSET = 0x44; DynOff::UPROPERTY_ELEMSIZE = 0x34;
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(0x44, 423, false));
+        const int S = DynOff::FSTRUCTPROP_STRUCT;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t uiEntry[14][0x40] = {};
+        const char* uiNames[14] = { "", "ArrayProperty", "MapProperty", "SetProperty", "IntProperty", "NameProperty",
+                                    "ObjectProperty", "ClassProperty", "Class", "Actor", "Scores", "ByName", "Kinds",
+                                    "Inner" };
+        static uintptr_t uiChunk[15] = {};
+        for (int i = 1; i <= 13; ++i) {
+            memcpy(uiEntry[i] + 0x10, uiNames[i], strlen(uiNames[i]) + 1);
+            uiChunk[i] = A(uiEntry[i]);
+        }
+        static uintptr_t uiChunks[2] = { reinterpret_cast<uintptr_t>(uiChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(uiChunks), 0x10);
+
+        // The property UClasses (named "ArrayProperty" ...), and the reflection objects Class / Actor.
+        static uint8_t uiPC[8][0x100] = {};
+        auto pcls = [&](int nameIdx) { put32(uiPC[nameIdx], Grimoire::OFF_UOBJECT_NAME, nameIdx); return A(uiPC[nameIdx]); };
+        static uint8_t uiClass[0x100] = {}, uiActor[0x100] = {};
+        put32(uiClass, Grimoire::OFF_UOBJECT_NAME, 8);  putP(uiClass, Grimoire::OFF_UOBJECT_CLASS, A(uiClass));
+        put32(uiActor, Grimoire::OFF_UOBJECT_NAME, 9);  putP(uiActor, Grimoire::OFF_UOBJECT_CLASS, A(uiClass));
+
+        // Inners: never chained into the class, each 4.23-sized, subclass members at S.
+        static uint8_t uiInt[0x100] = {}, uiKey[0x100] = {}, uiVal[0x100] = {}, uiElem[0x100] = {};
+        auto innerU = [&](uint8_t* p, uintptr_t cls) {
+            putP(p, Grimoire::OFF_UOBJECT_CLASS, cls);  put32(p, Grimoire::OFF_UOBJECT_NAME, 13);
+        };
+        innerU(uiInt, pcls(4));                                                        // int32
+        innerU(uiKey, pcls(5));                                                        // FName
+        innerU(uiVal, pcls(6));  putP(uiVal, S, A(uiActor));                           // AActor*
+        innerU(uiElem, pcls(7)); putP(uiElem, S, A(uiClass)); putP(uiElem, S + 8, A(uiActor));   // TSubclassOf<AActor>
+
+        // The class's three container properties: TArray<int32> Scores, TMap<FName, AActor*> ByName,
+        // TSet<TSubclassOf<AActor>> Kinds.
+        static uint8_t uiArr[0x100] = {}, uiMap[0x100] = {}, uiSet[0x100] = {}, uiCls[0x100] = {};
+        auto prop = [&](uint8_t* p, uintptr_t cls, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, Grimoire::OFF_UOBJECT_CLASS, cls);  put32(p, Grimoire::OFF_UOBJECT_NAME, nameIdx);
+            put32(p, DynOff::UPROPERTY_ELEMSIZE - 4, 1);  put32(p, DynOff::UPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::UPROPERTY_OFFSET, off);
+            putP(p, DynOff::UFIELD_NEXT, next ? A(next) : 0);
+        };
+        prop(uiArr, pcls(1), 10, 0x28, 0x10, uiMap);  putP(uiArr, S, A(uiInt));
+        prop(uiMap, pcls(2), 11, 0x38, 0x50, uiSet);  putP(uiMap, S, A(uiKey));  putP(uiMap, S + 8, A(uiVal));
+        prop(uiSet, pcls(3), 12, 0x88, 0x50, nullptr); putP(uiSet, S, A(uiElem));
+        put32(uiCls, DynOff::USTRUCT_PROPSSIZE, 0xD8);
+        putP(uiCls, DynOff::USTRUCT_CHILDREN, A(uiArr));
+
+        const auto& uiInfo = Ubel::WalkClassEx(A(uiCls));
+        auto field = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : uiInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fA = field("Scores"); const FieldInfo* fM = field("ByName"); const FieldInfo* fS = field("Kinds");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("UPROPINNER setup: the 4.23 class walked its three containers",
+              fA && fM && fS && fA->TypeName == "ArrayProperty" && fM->TypeName == "MapProperty"
+                && fS->TypeName == "SetProperty", std::to_string(uiInfo.Fields.size()).c_str());
+        check("UPROPINNER ⭐: a TArray's inner is named", fA && fA->innerType == "IntProperty", s(fA, &FieldInfo::innerType));
+        check("UPROPINNER ⭐: a TMap's key and value are named",
+              fM && fM->keyType == "NameProperty" && fM->valueType == "ObjectProperty", s(fM, &FieldInfo::keyType));
+        check("UPROPINNER ⭐: a TSet's element is named", fS && fS->elemType == "ClassProperty", s(fS, &FieldInfo::elemType));
+        check("UPROPINNER ⭐: ...and a class-valued element reads its MetaClass",
+              fS && fS->elemMetaClass == "Actor", s(fS, &FieldInfo::elemMetaClass));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;  g_cachedUEVersion = svVer;
+        DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
+        DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
