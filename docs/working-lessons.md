@@ -790,6 +790,24 @@ that the build number is the release number and advances on every build, so a re
 (memory: build number = release number). ⚠ This paragraph said the opposite until 2026-09-24, and build
 3548 was re-published under it; that was a breach of the rule, not a precedent.
 
+### 1.ai A path that CORRECTS ITSELF hides the defect from every check that goes through it — verify from a FRESH connect, against SOURCE
+
+Measured 2026-09-27 (`[UPROP-SUBCLASS-SLOT]`). On every UE 4.18–4.24 game `walk_class` read struct, object and enum
+types from the FProperty family's default slot, one pointer past the right one: UE423_Flying's SDK export straight
+after connect had 2,624 of 2,624 struct members as raw bytes and 1,038 of 1,038 object pointers as `UObject*`, and
+its `.usmap` named 0 of 2,628 struct slots. It survived months of UE4 verification because every UE4 check went
+through a path that heals it or never uses it: Live Walker's struct probe moves the family to the right slot on
+its first StructProperty (and logs it — DQ XI S said `delta=8` on 2026-09-24 and nobody read it as a defect),
+function walks and the bool slot each had their own correct offset, and the one UE4 title with the default right
+(4.11–4.17) got it right by coincidence. The offsets summary never printed the slot, so no log showed it.
+**How to apply:** (1) a live check of an export or any `walk_class` consumer starts from a FRESH inject and runs
+that consumer FIRST — no Live Walker, no instance walk before it; a later correction is also cached-around
+(`[FAMILY-EPOCH]`), so the order matters twice. (2) A `delta=` / "corrected" line in a walk log is a defect
+report about init, not a success. (3) Every offset a reader uses must appear in the offsets summary. (4) Check
+an export against the ENGINE SOURCE where it exists (`tools/verify/sdk_source_oracle.py`, fixture PDBs), not only
+against another dumper: agreement with a peer is not correctness, and this defect made both halves of an SDK
+line look plausible.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

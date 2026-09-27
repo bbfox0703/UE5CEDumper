@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (build 3589) — UE 4.18–4.24 games get struct, object and enum types back in every export `[UPROP-SUBCLASS-SLOT]`
+
+- **What was wrong:** on UE 4.18–4.24 (UProperty engines) the dumper read every struct / object / enum type from
+  the wrong slot straight after connecting. Only a Live Walker walk happened to repair it, and every class read
+  before that stayed wrong for the session. UE 4.23 fixture, SDK export after a fresh connect: 2,624 of 2,624
+  struct members were raw bytes, 1,038 of 1,038 object pointers `UObject*`, and the `.usmap` named none of its
+  2,628 struct slots. By the code, the same slot also fed the Class Struct panel, Property / Value Search struct
+  fields, snapshots and Dump All on those engines (not measured one by one).
+- **Now:** the slot is derived at init from the measured layout. Same fixture, same order: 0 raw struct members,
+  0 untyped object pointers, 774 enums typed, 2,628 of 2,628 struct slots named in the `.usmap`. DQ XI S (4.18,
+  shifted layout) gets its slot right at init too; NEKOPALIVE (4.11) is unchanged and right; a UE 4.27 control
+  is byte-for-byte the same.
+- Still open on those engines: container element types (`[UPROP-INNER-TYPENAME]`).
+- Build 3589: AOT `dist\UE5DumpUI.exe` 58,443,264 B, sha256 `374b78673b45`; `dist\UE5Dumper.dll` 3,031,552 B,
+  `554d58dad936`. C# 5797/5797, headless 15/15, dll_core 494 checks, dll_helpers 3015.
+
 ## 2026-09-27 (builds 3586–3588) — the USMAP export carries Blueprint structs and enums; a class-valued SDK member says which class it holds `[USMAP-UDS-MISSING]` `[USMAP-UDE-MISSING]` `[SDK-METACLASS]`
 
 - **USMAP export:** Blueprint user-defined structs and enums are written, and class-default objects
