@@ -4997,11 +4997,11 @@ int main() {
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
         auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
 
-        static uint8_t upEntry[11][0x40] = {};
-        const char* upNames[11] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D",
-                                    "StructProperty", "Where", "Decoy" };
-        static uintptr_t upChunk[12] = {};
-        for (int i = 1; i <= 10; ++i) {
+        static uint8_t upEntry[15][0x40] = {};
+        const char* upNames[15] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D",
+                                    "StructProperty", "Where", "Decoy", "ClassProperty", "Class", "Pawn", "Kind" };
+        static uintptr_t upChunk[16] = {};
+        for (int i = 1; i <= 14; ++i) {
             memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
             upChunk[i] = A(upEntry[i]);
         }
@@ -5104,6 +5104,36 @@ int main() {
         runGenau(422);
         check("UPROPSLOT ⭐: a 4.15 layout running under a misdetected 4.22 still gets 0x78 -- the layout decides",
               DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
+        // ...and so does every reader that takes the UProperty start without the family (review of build 3594, LOW): the
+        // class-valued names, WalkFunctions' parameters and Aura's parameter matcher recomputed it from the VERSION,
+        // 0x7C here, where the family and the layout say 0x78. A TSubclassOf<APawn> UClassProperty, PropertyClass
+        // `Class` at 0x78 and MetaClass `Pawn` at 0x80, walked under the misdetected label:
+        {
+            static uint8_t upClassCls[0x100] = {}, upPawnCls[0x100] = {}, upClassPropCls[0x100] = {}, upCP[0x100] = {},
+                           upCls2[0x100] = {};
+            putP(upClassCls, Grimoire::OFF_UOBJECT_CLASS, A(upClassCls));  put32(upClassCls, Grimoire::OFF_UOBJECT_NAME, 12);
+            putP(upPawnCls, Grimoire::OFF_UOBJECT_CLASS, A(upClassCls));   put32(upPawnCls, Grimoire::OFF_UOBJECT_NAME, 13);
+            put32(upClassPropCls, Grimoire::OFF_UOBJECT_NAME, 11);
+            putP(upCP, Grimoire::OFF_UOBJECT_CLASS, A(upClassPropCls));
+            put32(upCP, Grimoire::OFF_UOBJECT_NAME, 14);                    // "Kind"
+            put32(upCP, DynOff::UPROPERTY_ELEMSIZE - 4, 1);
+            put32(upCP, DynOff::UPROPERTY_ELEMSIZE, 8);
+            put32(upCP, DynOff::UPROPERTY_OFFSET, 0x28);
+            putP(upCP, 0x78, A(upClassCls));                                // UObjectPropertyBase::PropertyClass
+            putP(upCP, 0x80, A(upPawnCls));                                 // UClassProperty::MetaClass
+            put32(upCls2, DynOff::USTRUCT_PROPSSIZE, 0x30);
+            putP(upCls2, DynOff::USTRUCT_CHILDREN, A(upCP));
+            const uint32_t svVer2 = g_cachedUEVersion;
+            g_cachedUEVersion = 422;
+            const auto& upInfo2 = Ubel::WalkClassEx(A(upCls2));
+            g_cachedUEVersion = svVer2;
+            const FieldInfo* upK = nullptr;
+            for (const auto& f : upInfo2.Fields) if (f.Name == "Kind") upK = &f;
+            check("UPROPSLOT setup: the misdetected 4.15 class walked its ClassProperty",
+                  upK && upK->TypeName == "ClassProperty", std::to_string(upInfo2.Fields.size()).c_str());
+            check("UPROPSLOT ⭐: ...and reads its MetaClass at the layout's start, not the version's",
+                  upK && upK->metaClassName == "Pawn", upK ? upK->metaClassName.c_str() : "(no field)");
+        }
 
         // No Guid / Vector: Genau gives up on its defaults -- which must be the UProperty family, not FProperty's.
         layout(4, 0x28, 0x34, 0x44);
