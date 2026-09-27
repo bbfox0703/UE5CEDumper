@@ -1355,12 +1355,25 @@ static bool ClassChainHasName(uintptr_t cls, const char* name) {
     return false;
 }
 
+// The engine's own metaclasses are recognised by NAME first, the SuperStruct chain walked only for any other subclass:
+// a give-up session never measures USTRUCT_SUPER (its default is wrong on 4.11-4.21), and there the chain alone
+// dropped every UserDefinedStruct, Blueprint class and UserDefinedEnum that the name-only check before build 3595 kept
+// (review of build 3596).
+static bool MetaclassIsKind(uintptr_t obj, const char* root, bool (*knownMetaName)(const std::string&)) {
+    if (!obj || !Grimoire::IsUserspacePointer(obj)) return false;
+    const uintptr_t meta = GetClass(obj);
+    if (!meta) return false;
+    return knownMetaName(GetName(meta)) || ClassChainHasName(meta, root);
+}
+
+static bool IsEngineStructMetaName(const std::string& n) { return n == "ScriptStruct" || n == "UserDefinedStruct"; }
+
 bool IsScriptStructObject(uintptr_t obj) {
-    return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "ScriptStruct");
+    return MetaclassIsKind(obj, "ScriptStruct", IsEngineStructMetaName);
 }
 
 bool IsClassObject(uintptr_t obj) {
-    return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "Class");
+    return MetaclassIsKind(obj, "Class", Aura::IsClassLikeMeta);
 }
 
 // A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family an enum slot holds whatever sits
@@ -1368,7 +1381,7 @@ bool IsClassObject(uintptr_t obj) {
 // rest -- the enum names the exports write took any printable name -- and that the check itself matched two exact
 // class names, so an enum whose class is a UEnum subclass was dropped where the struct and class checks walk the chain.
 bool IsUEnumObject(uintptr_t obj) {
-    return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "Enum");
+    return MetaclassIsKind(obj, "Enum", Aura::IsListedEnumClass);
 }
 
 uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
