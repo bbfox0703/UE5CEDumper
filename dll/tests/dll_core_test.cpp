@@ -5154,6 +5154,20 @@ int main() {
         check("UPROPSLOT ⭐: a 4.15 give-up keeps 0x78 -- no default derived from the 4.18+ Offset_Internal",
               famAt(0x78), fam().c_str());
 
+        // Review wf_b99fb861-680 (F5), pinned after the review of build 3594 found it untested: a 4.18-4.24 title
+        // labelled 4.25+ (Square Enix's 427 bias) starts in FProperty mode, so Step 2.5 set no UProperty family; the
+        // ChildProperties scan then fails over to UProperty mode, and if the Offset_Internal probe fails too, the run
+        // shipped the FProperty default 0x78 against the UProperty start 0x70. The fixture's UProperties are UObjects,
+        // so the FField scan fails and the fallback flips; their Offset_Internal values are all 0, so the probe fails.
+        layout(2, 0x28, 0x34, 0x44);
+        for (auto& pr : upProp) put32(pr, 0x44, 0);
+        runGenau(427);
+        check("UPROPSLOT setup: a 4.27 label on a UProperty layout flipped to UProperty mode with Offset_Internal unmeasured",
+              !DynOff::bUseFProperty && DynOff::UPROPERTY_OFFSET == 0x44,
+              (std::to_string(DynOff::bUseFProperty) + " " + std::to_string(DynOff::UPROPERTY_OFFSET)).c_str());
+        check("UPROPSLOT ⭐: ...and still ships the UProperty default family 0x70, not FProperty's 0x78 (the F5 arm)",
+              famAt(0x70) && DynOff::UPROPERTY_SUBCLASS_START == 0x70, fam().c_str());
+
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bCasePreservingName = svCpn;  DynOff::UOBJECT_OUTER = svOuter;   DynOff::bUseFProperty = svFProp;
