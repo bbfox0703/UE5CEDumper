@@ -5360,7 +5360,7 @@ int main() {
         static uint8_t a1[0x100] = {}, i1[0x100] = {}, c1[0x100] = {}, n1[0x100] = {};
         const std::string r415 = walkAt(415, false, 0x28, 0x34, 0x50, -1, a1, i1, c1, n1);   // start 0x78, flat 0x7C
         check("UPROPFLAT setup: the 4.15 walk found the array and its StructProperty inner",
-              r415.size() > 15 && r415.substr(r415.find('|') + 1) == "StructProperty", r415.c_str());
+              r415.find('|') != std::string::npos && r415.substr(r415.find('|') + 1) == "StructProperty", r415.c_str());
         check("UPROPFLAT ⭐: 4.15 -- the element struct is read at 0x78, not at the flat 0x7C",
               r415.substr(0, r415.find('|')) == "Vector", r415.c_str());
 

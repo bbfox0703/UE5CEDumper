@@ -5446,9 +5446,11 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     Sein::Info("WALK:ArrayP", "  hex @+0x%X..+0x%X: %s", dumpStart, dumpStart+64, hexDump);
                 }
             } else {
-                // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass).
-                // Located at end of UProperty base class = UPROPERTY_OFFSET + 0x2C (standard delta).
-                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                // UProperty mode (UE4 <4.25): UArrayProperty::Inner is a UProperty* (UObject subclass), the first
+                // subclass member. [UPROP-CONTAINER-FLAT-2C] The base is the property family, derived per version since
+                // [UPROP-SUBCLASS-SLOT]: a flat UPROPERTY_OFFSET + 0x2C was right on stock 4.18-4.24 only (4.11-4.17 are
+                // + 0x28, case-preserving + 0x34), and the inner's Struct below is read at it UNPROBED.
+                int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
                 bool innerFound = false;
                 for (int delta : kUPropProbeOffsets) {
@@ -5840,8 +5842,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     }
                 }
             } else {
-                // UProperty mode (UE4 <4.25): UMapProperty has KeyProp + ValueProp as UProperty*.
-                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                // UProperty mode (UE4 <4.25): UMapProperty has KeyProp + ValueProp as UProperty*. The family base, as
+                // in the TArray arm above -- the key's / value's Struct is read at it unprobed. [UPROP-CONTAINER-FLAT-2C]
+                int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
                 for (int delta : kUPropProbeOffsets) {
                     int tryOff = baseOff + delta;
@@ -6117,8 +6120,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                     break;
                 }
             } else {
-                // UProperty mode (UE4 <4.25): USetProperty::ElementProp is a UProperty*.
-                int baseOff = DynOff::UPROPERTY_OFFSET + 0x2C;
+                // UProperty mode (UE4 <4.25): USetProperty::ElementProp is a UProperty*. The family base, as in the
+                // TArray arm above -- the element's Struct is read at it unprobed. [UPROP-CONTAINER-FLAT-2C]
+                int baseOff = DynOff::FSTRUCTPROP_STRUCT;
                 static const int kUPropProbeOffsets[] = { 0, 8, -8, 0x10, -0x10, 4, -4 };
                 for (int delta : kUPropProbeOffsets) {
                     int tryOff = baseOff + delta;
