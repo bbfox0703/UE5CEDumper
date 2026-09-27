@@ -365,6 +365,13 @@ int FunctionFlagsOffset();
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);
 
+// [STRUCTPROBE-ANY-NAME] What a property's subclass slot must hold before a reader accepts it: a UScriptStruct (or a
+// subclass -- UserDefinedStruct, ...) for a StructProperty, a UClass (or a subclass) for an object property's
+// PropertyClass. A printable name used to be enough, and on a shifted layout the slot probed first holds ANOTHER named
+// object -- on DQ XI S a Blueprint-owned property's PostConstructLinkNext, a named UProperty.
+bool IsScriptStructObject(uintptr_t obj);
+bool IsClassObject(uintptr_t obj);
+
 // Get the Outer object of a UObject
 uintptr_t GetOuter(uintptr_t uobjectAddr);
 

@@ -1339,15 +1339,18 @@ bool ResolvePropertyNameType(uintptr_t fieldAddr, std::string& outName, std::str
     return true;
 }
 
-// Helper: given an FProperty* for StructProperty/ObjectProperty/ClassProperty,
-// read the UScriptStruct*/UClass* at the subclass extension offset and return its name.
-static std::string ReadSubclassTypeName(uintptr_t propAddr) {
+// The name of the object in a property's subclass slot -- a StructProperty's UScriptStruct, an object property's
+// PropertyClass -- or "" when the slot does not hold that kind of object. [STRUCTPROBE-ANY-NAME] A printable name
+// was the whole test, so a named object of any other kind typed the member by ITS name.
+static std::string ReadSlotObjectName(uintptr_t propAddr, bool (*isKind)(uintptr_t)) {
     uintptr_t ptr = 0;
-    if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr) return "";
+    if (!Macht::ReadSafe(propAddr + DynOff::FSTRUCTPROP_STRUCT, ptr) || !ptr || !isKind(ptr)) return "";
     std::string name = GetName(ptr);
     if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return "";
     return name;
 }
+static std::string ReadStructTypeName(uintptr_t propAddr)    { return ReadSlotObjectName(propAddr, IsScriptStructObject); }
+static std::string ReadPropertyClassName(uintptr_t propAddr) { return ReadSlotObjectName(propAddr, IsClassObject); }
 
 // [SDK-METACLASS] True when `cls` or one of its supers is named `name`. A class of classes -- UClass and its
 // subclasses (BlueprintGeneratedClass, VerseClass, ...) -- is exactly a class whose chain reaches `Class`.
@@ -1359,6 +1362,14 @@ static bool ClassChainHasName(uintptr_t cls, const char* name) {
         cls = super;
     }
     return false;
+}
+
+bool IsScriptStructObject(uintptr_t obj) {
+    return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "ScriptStruct");
+}
+
+bool IsClassObject(uintptr_t obj) {
+    return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "Class");
 }
 
 static bool IsPrintableName(const std::string& n) {
@@ -1434,7 +1445,7 @@ static bool IsObjectFamilyProperty(const std::string& tn) {
 // by the validated PropertyClass -- and joined by the MetaClass -- for a class-valued one. A Map key / value and a Set
 // element used to get neither, so the SDK export wrote `class UObject*` for them. [SDK-CONTAINER-OBJCLASS]
 static void ReadSlotClassNames(uintptr_t prop, const std::string& tn, std::string& objClass, std::string& metaClass) {
-    if (IsObjectFamilyProperty(tn)) objClass = ReadSubclassTypeName(prop);
+    if (IsObjectFamilyProperty(tn)) objClass = ReadPropertyClassName(prop);
     if (IsClassValuedProperty(tn)) ApplyClassValuedNames(prop, objClass, metaClass);   // [SDK-METACLASS]
 }
 
@@ -1509,7 +1520,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // calibration only ran inside WalkInstance -- which meant any caller
     // that hit WalkClassEx without a prior WalkInstance (e.g. the Value
     // Search tab's GObjects walk, build 738+) saw uncalibrated reads:
-    // ReadSubclassTypeName returns "" for every StructProperty, the
+    // ReadStructTypeName returns "" for every StructProperty, the
     // nested-struct recursion in Aura::ScanForValue bails, and the user
     // gets 0 candidates on GAS / FGameplayAttributeData scans.
     //
@@ -1543,7 +1554,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
         // StructProperty -> UScriptStruct name
         if (tn == "StructProperty") {
-            fi.structType = ReadSubclassTypeName(fi.Address);
+            fi.structType = ReadStructTypeName(fi.Address);
         }
 
         // The object family -> target UClass name. FObjectPropertyBase::PropertyClass is at the same offset as
@@ -1558,7 +1569,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             if (innerProp) {
                 fi.innerType = innerTn;
                 if (innerTn == "StructProperty")
-                    fi.innerStructType = ReadSubclassTypeName(innerProp);
+                    fi.innerStructType = ReadStructTypeName(innerProp);
                 ReadSlotClassNames(innerProp, innerTn, fi.innerObjClass, fi.innerMetaClass);
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
@@ -1572,7 +1583,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             if (innerProp) {
                 fi.innerType = innerTn;
                 if (innerTn == "StructProperty")
-                    fi.innerStructType = ReadSubclassTypeName(innerProp);
+                    fi.innerStructType = ReadStructTypeName(innerProp);
                 ReadSlotClassNames(innerProp, innerTn, fi.innerObjClass, fi.innerMetaClass);
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
@@ -1598,8 +1609,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
                 fi.keyType = keyTn;
                 fi.valueType = valTn;
-                if (keyTn == "StructProperty")   fi.keyStructType = ReadSubclassTypeName(keyProp);
-                if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
+                if (keyTn == "StructProperty")   fi.keyStructType = ReadStructTypeName(keyProp);
+                if (valTn == "StructProperty")   fi.valueStructType = ReadStructTypeName(valueProp);
                 fi.keyEnumName   = innerEnumOf(keyProp, keyTn);     // [A4-USMAP-CONTAINER-ENUM]
                 fi.valueEnumName = innerEnumOf(valueProp, valTn);
                 ReadSlotClassNames(keyProp, keyTn, fi.keyObjClass, fi.keyMetaClass);
@@ -1614,7 +1625,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             if (elemProp) {
                 fi.elemType = elemTn;
                 if (elemTn == "StructProperty")
-                    fi.elemStructType = ReadSubclassTypeName(elemProp);
+                    fi.elemStructType = ReadStructTypeName(elemProp);
                 ReadSlotClassNames(elemProp, elemTn, fi.elemObjClass, fi.elemMetaClass);
                 fi.elemEnumName = innerEnumOf(elemProp, elemTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
@@ -1967,10 +1978,12 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             // StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
-                                param.structType = ReadSubclassTypeName(cur);
-                                // Phase B: walk the UScriptStruct to discover sub-fields
+                                param.structType = ReadStructTypeName(cur);
+                                // Phase B: walk the UScriptStruct to discover sub-fields -- only a struct
+                                // ([STRUCTPROBE-ANY-NAME]: the slot on a mis-derived family holds something else)
                                 uintptr_t structPtr = 0;
-                                if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr) && structPtr) {
+                                if (Macht::ReadSafe(cur + DynOff::FSTRUCTPROP_STRUCT, structPtr)
+                                    && IsScriptStructObject(structPtr)) {
                                     ClassInfo structInfo = WalkClass(structPtr);
                                     for (const auto& sf : structInfo.Fields)
                                         param.structFields.push_back({sf.Name, sf.TypeName, sf.Offset, sf.Size, sf.boolFieldMask});
@@ -1980,12 +1993,12 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // expose their target UClass name (FObjectPropertyBase::
                             // PropertyClass lives at the same FProperty subclass
                             // extension slot as FStructProperty::Struct — mirrors
-                            // the WalkClassEx field-side enrichment at line 599).
+                            // the WalkClassEx field-side enrichment, ReadSlotClassNames).
                             else if (param.typeName == "ObjectProperty"     || param.typeName == "ClassProperty"
                                   || param.typeName == "WeakObjectProperty" || param.typeName == "SoftObjectProperty"
                                   || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
                                   || param.typeName == "LazyObjectProperty") {
-                                param.objClassName = ReadSubclassTypeName(cur);
+                                param.objClassName = ReadPropertyClassName(cur);
                             }
 
                             if (param.isReturn)
@@ -4422,7 +4435,9 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
             if (tryOff < 0) continue;
             uintptr_t candidate = 0;
             if (!Macht::ReadSafe(fi.Address + tryOff, candidate) || !candidate) continue;
-            // Validate: must be a UScriptStruct (UObject) with a readable ASCII name
+            // Validate: must be a UScriptStruct with a readable ASCII name. [STRUCTPROBE-ANY-NAME] The name alone
+            // accepted any named object -- and at delta 0 it LATCHED the wrong family for the session.
+            if (!IsScriptStructObject(candidate)) continue;
             std::string sname = GetName(candidate);
             if (sname.empty() || sname[0] < 0x20 || sname[0] >= 0x7F) continue;
 
@@ -6254,7 +6269,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                 if (!Macht::ReadSafe(fi.Address + tryOffset, candidate) || !candidate) continue;
                 // Skip obvious garbage addresses to avoid SEH faults
                 if (!Grimoire::IsUserspacePointer(candidate)) continue;
-                // Validate: must be a UScriptStruct (inherits UObject), so GetName should return ASCII
+                // Validate: must be a UScriptStruct, with an ASCII name. [STRUCTPROBE-ANY-NAME] The name alone
+                // stopped this probe at delta 0 on any named object, before the struct beyond it.
+                if (!IsScriptStructObject(candidate)) continue;
                 std::string sname = GetName(candidate);
                 if (!sname.empty() && sname[0] >= 0x20 && sname[0] < 0x7F) {
                     fv.structClassAddr = candidate;

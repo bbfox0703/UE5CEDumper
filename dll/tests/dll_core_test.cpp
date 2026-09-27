@@ -5237,10 +5237,10 @@ int main() {
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
         auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
 
-        static uint8_t feEntry[7][0x40] = {};
-        const char* feNames[7] = { "", "ObjectProperty", "BoolProperty", "Actor", "Pawn", "Target", "Flag" };
-        static uintptr_t feChunk[8] = {};
-        for (int i = 1; i <= 6; ++i) {
+        static uint8_t feEntry[8][0x40] = {};
+        const char* feNames[8] = { "", "ObjectProperty", "BoolProperty", "Actor", "Pawn", "Target", "Flag", "Class" };
+        static uintptr_t feChunk[9] = {};
+        for (int i = 1; i <= 7; ++i) {
             memcpy(feEntry[i] + 0x10, feNames[i], strlen(feNames[i]) + 1);
             feChunk[i] = A(feEntry[i]);
         }
@@ -5252,6 +5252,12 @@ int main() {
         put32(feBoolFC, DynOff::FFIELDCLASS_NAME, 2);
         put32(feActor, Grimoire::OFF_UOBJECT_NAME, 3);
         put32(fePawn, Grimoire::OFF_UOBJECT_NAME, 4);
+        // Both are UClasses -- an object property's PropertyClass must be one to be read ([STRUCTPROBE-ANY-NAME]).
+        static uint8_t feClassCls[0x100] = {};
+        putP(feClassCls, Grimoire::OFF_UOBJECT_CLASS, A(feClassCls));
+        put32(feClassCls, Grimoire::OFF_UOBJECT_NAME, 7);
+        putP(feActor, Grimoire::OFF_UOBJECT_CLASS, A(feClassCls));
+        putP(fePawn, Grimoire::OFF_UOBJECT_CLASS, A(feClassCls));
 
         static uint8_t feTarget[0x100] = {}, feFlag[0x100] = {}, feCls[0x100] = {};
         auto fprop = [&](uint8_t* p, uintptr_t fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
