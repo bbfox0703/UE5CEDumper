@@ -1074,6 +1074,37 @@ inline bool IsListedEnumObject(const std::string& className, const std::string& 
     return IsListedEnumClass(className) && objName.rfind("Default__", 0) != 0;
 }
 
+// Identify "class-like" metas. UClass instances have meta-class name "Class",
+// but UE has several UClass subclasses whose own meta is a different string:
+//   * Class                           — regular C++ UClass
+//   * BlueprintGeneratedClass         — every BP-derived class (most games)
+//   * AnimBlueprintGeneratedClass     — Anim BP-derived classes
+//   * WidgetBlueprintGeneratedClass   — UMG widget BP-derived classes
+//   * DynamicClass                    — Shipping cooked dynamic classes
+// Before this whitelist, the class enumerators matched only "Class" and silently
+// dropped every game-specific BPGC — which is where 90%+ of game-specific Health /
+// Damage / Gold properties live. The user's TowerOfMask repro: `SearchProperties
+// 'Health': 0 matches` despite `Health @ AnimMan_Player_C` clearly existing in the
+// Class Struct view.
+inline bool IsClassLikeMeta(const std::string& metaClassName) {
+    return metaClassName == "Class"
+        || metaClassName == "BlueprintGeneratedClass"
+        || metaClassName == "AnimBlueprintGeneratedClass"
+        || metaClassName == "WidgetBlueprintGeneratedClass"
+        || metaClassName == "DynamicClass";
+}
+
+// IsListedClassObject -- which GObjects rows the class enumerators take for a class.
+// [LISTCLASSES-METACLASS-CDO] A class-like meta alone is not enough: a metaclass's
+// class-default object (Default__Class, Default__BlueprintGeneratedClass, ...) has that
+// metaclass as its own class, so it passed, and with "Game classes only" unticked
+// UE423_Flying's class list carried its five metaclass CDOs as classes. The same shape
+// IsListedEnumObject closes for list_enums. IsClassLikeMeta stays the cheap pre-filter,
+// run BEFORE the object's name is resolved.
+inline bool IsListedClassObject(const std::string& metaClassName, const std::string& objName) {
+    return IsClassLikeMeta(metaClassName) && objName.rfind("Default__", 0) != 0;
+}
+
 // IsReflectionMetaClass — true when a UObject's CLASS name denotes the reflection /
 // type layer (UClass family, UFunction family, UScriptStruct/UEnum descriptors,
 // UPackage) rather than a live gameplay instance. On UE4 (a priority target, where

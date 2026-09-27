@@ -3035,6 +3035,27 @@ static void Test_IsListedEnumObject() {
     EXPECT("enum class: not UserDefinedStruct", !Aura::IsListedEnumClass("UserDefinedStruct"));
 }
 
+// IsListedClassObject: what the class enumerators take for a class. [LISTCLASSES-METACLASS-CDO]
+// A metaclass's class-default object reads its metaclass as its own class, so the class-like
+// meta test alone admitted Default__Class and its siblings as classes.
+static void Test_IsListedClassObject() {
+    using Aura::IsListedClassObject;
+    EXPECT("class: a native class",                 IsListedClassObject("Class", "Actor"));
+    EXPECT("class: UClass itself",                  IsListedClassObject("Class", "Class"));
+    EXPECT("class: a Blueprint class",              IsListedClassObject("BlueprintGeneratedClass", "BP_Hero_C"));
+    EXPECT("class: a cooked dynamic class",         IsListedClassObject("DynamicClass", "BP_Door_C"));
+    EXPECT("class: not UClass's CDO",              !IsListedClassObject("Class", "Default__Class"));
+    EXPECT("class: not the BGC metaclass's CDO",   !IsListedClassObject("BlueprintGeneratedClass",
+                                                                         "Default__BlueprintGeneratedClass"));
+    EXPECT("class: not the Widget BGC's CDO",      !IsListedClassObject("WidgetBlueprintGeneratedClass",
+                                                                         "Default__WidgetBlueprintGeneratedClass"));
+    EXPECT("class: not an instance",               !IsListedClassObject("Actor", "Actor_0"));
+    EXPECT("class: not a struct",                  !IsListedClassObject("ScriptStruct", "Vector"));
+    // The meta-only pre-filter the enumerators run before resolving a name must agree with it.
+    EXPECT("class meta: AnimBlueprintGeneratedClass", Aura::IsClassLikeMeta("AnimBlueprintGeneratedClass"));
+    EXPECT("class meta: not ScriptStruct",           !Aura::IsClassLikeMeta("ScriptStruct"));
+}
+
 // IsReflectionMetaClass: the Object Tree "Instances only" server-side gate. MUST match
 // the C# Helpers/ReflectionMetaClassifier — excludes the FULL reflection/type layer, not
 // just class-like metas (else UFunction/UScriptStruct/UPackage/UEnum leak through).
@@ -9177,6 +9198,7 @@ int main() {
     RUN(Test_IsEnginePackage);
     RUN(Test_CanonicalizeObjectPath);
     RUN(Test_IsListedEnumObject);
+    RUN(Test_IsListedClassObject);
     RUN(Test_IsReflectionMetaClass);
     RUN(Test_KeywordMatch);
     RUN(Test_SnapshotNoise_GuardrailAndSets);

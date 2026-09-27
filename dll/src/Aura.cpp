@@ -4699,27 +4699,7 @@ GraphPathResult FindObjectGraphPath(uintptr_t rootObj, uintptr_t targetObj,
 
 // === Property Keyword Search ===
 
-// Identify "class-like" metas. UClass instances have meta-class name "Class",
-// but UE has several UClass subclasses whose own meta is a different string:
-//   * Class                           — regular C++ UClass
-//   * BlueprintGeneratedClass         — every BP-derived class (most games)
-//   * AnimBlueprintGeneratedClass     — Anim BP-derived classes
-//   * WidgetBlueprintGeneratedClass   — UMG widget BP-derived classes
-//   * DynamicClass                    — Shipping cooked dynamic classes
-// Before this whitelist, SearchProperties / ListClasses / EnumerateAllFunctions
-// matched only "Class" and silently dropped every game-specific BPGC — which
-// is where 90%+ of game-specific Health / Damage / Gold properties live. The
-// user's TowerOfMask repro: `SearchProperties 'Health': 0 matches` despite
-// `Health @ AnimMan_Player_C` clearly existing in the Class Struct view.
-static bool IsClassLikeMeta(const std::string& metaClassName) {
-    return metaClassName == "Class"
-        || metaClassName == "BlueprintGeneratedClass"
-        || metaClassName == "AnimBlueprintGeneratedClass"
-        || metaClassName == "WidgetBlueprintGeneratedClass"
-        || metaClassName == "DynamicClass";
-}
-
-// IsEnginePackage moved to Aura.h (header-inline, pure + unit-tested).
+// IsClassLikeMeta and IsListedClassObject live in Aura.h (header-inline, pure + unit-tested), as IsEnginePackage does.
 
 static std::string ToLower(const std::string& s) {
     std::string out = s;
@@ -4989,6 +4969,7 @@ PropertySearchResult SearchProperties(
 
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         // This object is a class. Skip if already visited.
         if (!visitedClasses.insert(obj).second) continue;
@@ -5493,6 +5474,7 @@ std::vector<PropertySearchResult> SearchPropertiesBatch(
         if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, clsNameIdx)) continue;
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         if (!visitedClasses.insert(obj).second) continue;
 
@@ -5783,6 +5765,7 @@ ClassListResult ListClasses(bool gameOnly, int maxResults) {
 
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         // Skip if already visited
         if (!visitedClasses.insert(obj).second) continue;
@@ -5966,6 +5949,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
 
         std::string metaClassName = Serie::GetString(clsNameIdx);
         if (!IsClassLikeMeta(metaClassName)) continue;
+        if (!IsListedClassObject(metaClassName, Ubel::GetName(obj))) continue;   // [LISTCLASSES-METACLASS-CDO]
 
         // Skip duplicates (same UClass can be referenced from multiple GObjects slots
         // when CDOs or hot-reload artefacts keep stale handles around).
