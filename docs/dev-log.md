@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3571, 3572) — Live Walker: clearing the search keyword no longer throws you back to the first row `[LW-SEARCH-CLEAR-KEEP]`
+
+- **The maintainer's request:** find a field with the search (say at 0x1138), clear the keyword to look for
+  something else, and the grid jumped to its first row — scroll all the way back by hand. `ApplySearch` re-sets
+  the grid's items on every change (so the highlight styles re-evaluate), which returns the grid to the top and
+  drops the selection; a non-empty keyword then scrolls to its first match, an empty one never did.
+- **Now**, only when the keyword goes from 2+ characters to empty in one edit (select all, Delete): the view
+  stays exactly where it is — whether nothing is selected (3572, the maintainer's follow-up) or the selection
+  holds the match ▲/▼ landed on — and a selection that does not hold it brings its first row to the top.
+  Typing, pasting, shortening, a partial delete, 1 → 0 characters and a navigation clearing the box behave as
+  before. It reuses the exact-position view restore of `[LW-BACK-SCROLL]`.
+- Tests: `LiveWalkerSearchClearKeepsViewTests` (3 red first, 6 controls). UI suite 5,656 run, 0 failed. Gates 28
+  run, 0 failed.
+- **AOT publish 3572:** `UE5DumpUI.exe` 58,225,152 B `450684c436e8`, `UE5Dumper.dll` `63a87743b364` (unchanged
+  source); proxies version `299740b87005`, dinput8 `549e780d6586`, dxgi `32862b0cd120`, winmm `e90d42ce4291`.
+  (3571 `998d6c537fc8` — superseded by the follow-up.) ✅ Live-checked on DumperTest 5.4 Shipping: all three cases.
+
 ## 2026-09-27 (builds 3569, 3570) — Live Walker: retyping the value on screen wrote a truncated number `[LW-EDIT-RETYPE-DROP]`
 
 - **Found while answering the maintainer's edit-vs-Auto-Refresh question**, once typing actually reached the
