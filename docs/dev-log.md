@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3578–3580) — Home / End / page keys with text selected keep the caret where it belongs; UI tests on real controls `[TEXTBOX-HOMEEND-CARET]`
+
+- **Every text field:** with text selected, End could put the caret at the START (and Home at the end) — e.g. a
+  click on a keyword box's padding selects its text, End, then typing went in front: `spawn` + ` act` became
+  ` actspawn`. PageUp / PageDown did the same, and in the multi-line Lua paste box Home / End after a selection
+  made across lines acted on the wrong line. A defect in Avalonia's TextBox, worked around for every text field
+  in the app; Shift+Home / Shift+End are unchanged.
+- **A second test project drives real Avalonia controls** (`ui/UE5DumpUI.HeadlessTests`, Avalonia.Headless), run
+  by `build.ps1` after the main suite. It pins Avalonia's own defect too, so the day an upgrade fixes it the
+  workaround can go.
+- An adversarial review of the first version (six agents, against Avalonia's decompiled source) found the page
+  keys and the cross-line case; both fixed red-first.
+- Live check PASSED on 3578 / 3579 (Interesting Funcs keyword box).
+
 ## 2026-09-27 (build 3577) — keyword boxes: a selection hidden by a typo comes back `[KEYWORD-BOX-VIEW-KEEP]`
 
 - **The maintainer's call: keep the last non-empty selection.** Before, a keyword that hid every selected row
