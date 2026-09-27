@@ -1069,11 +1069,15 @@ inline std::string PathLeafName(const std::string& raw) {
 // match (UE emits meta names exactly cased); pure / string-only so the lightweight DLL
 // test can exercise it without linking the whole DLL.
 // IsListedEnumObject -- which GObjects rows list_enums publishes. [USMAP-UDE-MISSING]
+// A native UEnum and a Blueprint UserDefinedEnum (its own UEnum subclass, so an exact
+// `== "Enum"` dropped every one), never a class-default object: a CDO's row reads its
+// metaclass, so Default__Enum passed. The USMAP export is list_enums' consumer, and a
+// .usmap that names an enum it does not define leaves that member unreadable.
 // Pure / string-only so dll_helpers_test can pin it; list_enums itself lives in Fern.cpp,
 // which no test target compiles.
 inline bool IsListedEnumObject(const std::string& className, const std::string& objName) {
-    (void)objName;
-    return className == "Enum";
+    if (className != "Enum" && className != "UserDefinedEnum") return false;
+    return objName.rfind("Default__", 0) != 0;
 }
 
 inline bool IsReflectionMetaClass(const std::string& className) {
