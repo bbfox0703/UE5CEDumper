@@ -5672,6 +5672,74 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- STRUCTENUM-2026-09-28 -- the struct-field cache keeps a ByteProperty's enum only if it IS a UEnum ------------------
+    //
+    // ⛔ OWN name table (after LISTCLASSES). [STRUCTCACHE-ENUM-UNCHECKED] GetCachedStructFields stored whatever pointer sat
+    // in a ByteProperty's Enum slot, unchecked, for the session; ResolveEnumValue then parsed that object as a UEnum and
+    // printed its "enumerators" for a plain byte inside a struct array. The WalkInstance twin and the array reader both
+    // require the pointer's class to be Enum / UserDefinedEnum (review wf_63e981ac-5e4, S4).
+    {
+        blk("STRUCTENUM - a struct's ByteProperty caches its enum only when the pointer is a UEnum");
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t seEntry[9][0x40] = {};
+        const char* seNames[9] = { "", "ByteProperty", "Mode", "Kind", "Enum", "EColor", "Actor", "Decoy",
+                                   "UserDefinedEnum" };
+        static uintptr_t seChunk[10] = {};
+        for (int i = 1; i <= 8; ++i) {
+            memcpy(seEntry[i] + 0x10, seNames[i], strlen(seNames[i]) + 1);
+            seChunk[i] = A(seEntry[i]);
+        }
+        static uintptr_t seChunks[2] = { A(seChunk), 0 };
+        Serie::InitUE4(A(seChunks), 0x10);
+
+        // UObjects: the Enum metaclass and one UEnum of it; an Actor class and a named Actor instance (the decoy).
+        static uint8_t seEnumCls[0x100] = {}, seEnum[0x100] = {}, seActorCls[0x100] = {}, seDecoy[0x100] = {};
+        putP(seEnumCls, Grimoire::OFF_UOBJECT_CLASS, A(seEnumCls));   put32(seEnumCls, Grimoire::OFF_UOBJECT_NAME, 4);
+        putP(seEnum, Grimoire::OFF_UOBJECT_CLASS, A(seEnumCls));      put32(seEnum, Grimoire::OFF_UOBJECT_NAME, 5);
+        putP(seActorCls, Grimoire::OFF_UOBJECT_CLASS, A(seActorCls)); put32(seActorCls, Grimoire::OFF_UOBJECT_NAME, 6);
+        putP(seDecoy, Grimoire::OFF_UOBJECT_CLASS, A(seActorCls));    put32(seDecoy, Grimoire::OFF_UOBJECT_NAME, 7);
+
+        static uint8_t seByteFC[0x20] = {};
+        put32(seByteFC, DynOff::FFIELDCLASS_NAME, 1);
+        static uint8_t seMode[0x100] = {}, seKind[0x100] = {}, seStruct[0x100] = {};
+        auto fprop = [&](uint8_t* p, int nameIdx, int32_t off, uint8_t* next, uintptr_t enumSlot) {
+            putP(p, DynOff::FFIELD_CLASS, A(seByteFC));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, 1);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+            putP(p, 0x78, enumSlot);                                   // FByteProperty::Enum at the family base
+        };
+        fprop(seMode, 2, 0x00, seKind, A(seDecoy));   // uint8 Mode -- the slot holds a named non-enum object
+        fprop(seKind, 3, 0x01, nullptr, A(seEnum));   // TEnumAsByte<EColor> Kind
+        put32(seStruct, DynOff::USTRUCT_PROPSSIZE, 0x02);
+        putP(seStruct, DynOff::USTRUCT_CHILDPROPS, A(seMode));
+
+        const auto& seFields = Ubel::GetCachedStructFields(A(seStruct));
+        auto enumOf = [&](const char* name) -> uintptr_t {
+            for (const auto& f : seFields) if (f.name == name) return f.enumAddr;
+            return ~uintptr_t(0);
+        };
+        check("STRUCTENUM setup: both byte fields were walked", seFields.size() == 2,
+              std::to_string(seFields.size()).c_str());
+        check("STRUCTENUM ⭐: a ByteProperty whose Enum slot holds a non-enum object caches NO enum",
+              enumOf("Mode") == 0, (std::string("Mode enumAddr=") + std::to_string(enumOf("Mode"))).c_str());
+        check("STRUCTENUM control: a real UEnum is still cached", enumOf("Kind") == A(seEnum));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
