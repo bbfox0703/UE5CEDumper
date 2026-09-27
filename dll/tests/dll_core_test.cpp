@@ -6005,6 +6005,86 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- OPTSTRUCT-2026-09-28 -- the two struct-slot readers [STRUCTPROBE-ANY-NAME] did not reach -------------------------
+    //
+    // ⛔ OWN name table (after ENUMSLOT). [OPTSTRUCT-ANY-NAME] ResolveOptionalLayout's probe for a TOptional<FStruct>'s
+    // UScriptStruct still took the first NAMED object -- and then read that object's "MinAlignment", so the optional's
+    // layout (where bIsSet sits) came out wrong or Unknown -- and the struct-field cache named a nested struct by
+    // whatever object its slot held (review of builds 3594-3595, LOW + INFO).
+    {
+        blk("OPTSTRUCT - the TOptional struct probe and the struct cache take only a struct");
+        ResetCancel();
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](const void* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t osEntry[10][0x40] = {};
+        const char* osNames[10] = { "", "OptionalProperty", "StructProperty", "ScriptStruct", "Transform8", "Actor",
+                                    "Decoy", "Opt", "Val", "Where" };
+        static uintptr_t osChunk[11] = {};
+        for (int i = 1; i <= 9; ++i) {
+            memcpy(osEntry[i] + 0x10, osNames[i], strlen(osNames[i]) + 1);
+            osChunk[i] = A(osEntry[i]);
+        }
+        static uintptr_t osChunks[2] = { A(osChunk), 0 };
+        Serie::InitUE4(A(osChunks), 0x10);
+
+        static uint8_t osSsCls[0x100] = {}, osStruct[0x100] = {}, osActorCls[0x100] = {}, osDecoy[0x100] = {};
+        putP(osSsCls, Grimoire::OFF_UOBJECT_CLASS, A(osSsCls));       put32(osSsCls, Grimoire::OFF_UOBJECT_NAME, 3);
+        putP(osStruct, Grimoire::OFF_UOBJECT_CLASS, A(osSsCls));      put32(osStruct, Grimoire::OFF_UOBJECT_NAME, 4);
+        put32(osStruct, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        const int16_t osAlign8 = 8;
+        memcpy(osStruct + DynOff::USTRUCT_PROPSSIZE + 4, &osAlign8, sizeof(osAlign8));   // UScriptStruct::MinAlignment
+        putP(osActorCls, Grimoire::OFF_UOBJECT_CLASS, A(osActorCls)); put32(osActorCls, Grimoire::OFF_UOBJECT_NAME, 5);
+        putP(osDecoy, Grimoire::OFF_UOBJECT_CLASS, A(osActorCls));    put32(osDecoy, Grimoire::OFF_UOBJECT_NAME, 6);
+
+        static uint8_t osOptFC[0x20] = {}, osStructFC[0x20] = {};
+        put32(osOptFC, DynOff::FFIELDCLASS_NAME, 1);
+        put32(osStructFC, DynOff::FFIELDCLASS_NAME, 2);
+        auto fprop = [&](uint8_t* p, const uint8_t* fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(p, DynOff::FFIELD_CLASS, A(fc));
+            put32(p, DynOff::FFIELD_NAME, nameIdx);
+            put32(p, DynOff::FPROPERTY_OFFSET, off);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(p, DynOff::FPROPERTY_ELEMSIZE - 4, 1);
+            putP(p, DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        // TOptional<Transform8>: a 0x10-byte, 8-aligned struct -> the value at 0, bIsSet at 0x10, sizeof 0x18.
+        static uint8_t osOpt[0x100] = {}, osVal[0x100] = {};
+        fprop(osOpt, osOptFC, 7, 0x00, 0x18, nullptr);
+        putP(osOpt, 0x78, A(osVal));                                   // ValueProperty (the Inner slot)
+        fprop(osVal, osStructFC, 8, 0x00, 0x10, nullptr);
+        putP(osVal, 0x78, A(osDecoy));                                 // the struct slot holds a named NON-struct...
+        putP(osVal, 0x80, A(osStruct));                                // ...and the struct is one pointer on
+        const auto osOl = Ubel::ResolveOptionalLayout(A(osOpt), 0x18, "");
+        check("OPTSTRUCT setup: the optional's value property is the StructProperty", osOl.innerProp == A(osVal)
+              && osOl.innerType == "StructProperty", osOl.innerType.c_str());
+        check("OPTSTRUCT ⭐: the TOptional probe passes over a named non-struct to the struct's alignment",
+              osOl.innerAlign == 8, std::to_string(osOl.innerAlign).c_str());
+        check("OPTSTRUCT ⭐: ...so the optional is laid out as the trailing-flag TOptional it is",
+              osOl.layout == Ubel::OptionalLayout::TrailingFlag, std::to_string(static_cast<int>(osOl.layout)).c_str());
+
+        // The struct-field cache: a StructProperty whose slot holds the decoy names no nested struct.
+        static uint8_t osWhere[0x100] = {}, osCls[0x100] = {};
+        fprop(osWhere, osStructFC, 9, 0x00, 0x10, nullptr);
+        putP(osWhere, 0x78, A(osDecoy));
+        put32(osCls, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        putP(osCls, DynOff::USTRUCT_CHILDPROPS, A(osWhere));
+        std::string osNested = "(no field)";
+        for (const auto& f : Ubel::GetCachedStructFields(A(osCls))) if (f.name == "Where") osNested = f.nestedTypeName;
+        check("OPTSTRUCT ⭐: the struct-field cache names no nested struct from a named non-struct",
+              osNested.empty(), osNested.c_str());
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
