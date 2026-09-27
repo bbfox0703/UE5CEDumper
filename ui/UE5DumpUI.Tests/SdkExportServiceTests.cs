@@ -257,6 +257,37 @@ public class SdkExportServiceTests
     }
 
     [Fact]
+    public void MapCppDecl_MapKeyValueAndSetElement_NameTheirObjectClass()
+    {
+        // [SDK-CONTAINER-OBJCLASS] The key / value / element class reached the wire only for an Array inner, so these were
+        // `class UObject*` (20 TMap<FName, class UObject*> and 28 TSet<class UObject*> in EVERSPACE 2's header), and a
+        // class-valued key whose PropertyClass is a UClass subclass -- ALevelVariantSetsActor::DirectorInstances,
+        // TMap<TObjectPtr<UBlueprintGeneratedClass>, ...> -- was UClass*.
+        Assert.Equal("TMap<FName, class Actor*>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "MapProperty", KeyType = "NameProperty", ValueType = "ObjectProperty", ValueObjClass = "Actor", Size = 80,
+        }).Type);
+        Assert.Equal("TSet<TWeakObjectPtr<class Pawn>>", SdkExportService.MapCppDecl(new FieldInfoModel
+        {
+            TypeName = "SetProperty", ElemType = "WeakObjectProperty", ElemObjClass = "Pawn", Size = 80,
+        }).Type);
+        Assert.Equal("TMap<class BlueprintGeneratedClass*, class LevelVariantSetsFunctionDirector*>",
+            SdkExportService.MapCppDecl(new FieldInfoModel
+            {
+                TypeName = "MapProperty",
+                KeyType = "ClassProperty", KeyObjClass = "BlueprintGeneratedClass", KeyMetaClass = "Object",
+                ValueType = "ObjectProperty", ValueObjClass = "LevelVariantSetsFunctionDirector", Size = 80,
+            }).Type);
+        Assert.Equal("TMap<TSubclassOf<class PlatformSettings>, TSoftObjectPtr<class Texture2D>>",
+            SdkExportService.MapCppDecl(new FieldInfoModel
+            {
+                TypeName = "MapProperty",
+                KeyType = "ClassProperty", KeyObjClass = "Class", KeyMetaClass = "PlatformSettings",
+                ValueType = "SoftObjectProperty", ValueObjClass = "Texture2D", Size = 80,
+            }).Type);
+    }
+
+    [Fact]
     public void MapCppDecl_MapAndSetInners_UseTheSameSpellings()
     {
         var map = new FieldInfoModel

@@ -879,6 +879,34 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task WalkClassAsync_CarriesEachContainerObjClass()
+    {
+        // [SDK-CONTAINER-OBJCLASS] key_obj_class / value_obj_class / elem_obj_class are new, additive wire keys.
+        _pipe.SetHandler(req => new JsonObject
+        {
+            ["ok"] = true,
+            ["class"] = new JsonObject { ["name"] = "C", ["fields"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "ByName", ["type"] = "MapProperty",
+                    ["key_type"] = "ClassProperty", ["key_obj_class"] = "BlueprintGeneratedClass",
+                    ["value_type"] = "ObjectProperty", ["value_obj_class"] = "Actor",
+                },
+                new JsonObject { ["name"] = "Watched", ["type"] = "SetProperty", ["elem_type"] = "WeakObjectProperty", ["elem_obj_class"] = "Pawn" },
+                new JsonObject { ["name"] = "Old", ["type"] = "SetProperty", ["elem_type"] = "ObjectProperty" },
+            } },
+        });
+
+        var model = await CreateService().WalkClassAsync("0x1", TestContext.Current.CancellationToken);
+
+        Assert.Equal("BlueprintGeneratedClass", model.Fields[0].KeyObjClass);
+        Assert.Equal("Actor", model.Fields[0].ValueObjClass);
+        Assert.Equal("Pawn", model.Fields[1].ElemObjClass);
+        Assert.Equal("", model.Fields[2].ElemObjClass);   // an older DLL sends none
+    }
+
+    [Fact]
     public async Task WalkClassAsync_CarriesEachMetaClass()
     {
         // [SDK-METACLASS] meta_class / inner_meta_class / key_meta_class / value_meta_class / elem_meta_class are

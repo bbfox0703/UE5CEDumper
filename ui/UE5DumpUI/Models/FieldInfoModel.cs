@@ -23,7 +23,11 @@ public sealed class FieldInfoModel
                                                          // ClassProperty that is `Class`, the VALUE's class)
     public string InnerType { get; init; } = "";         // ArrayProperty -> inner element type
     public string InnerStructType { get; init; } = "";   // ArrayProperty of struct -> struct name
-    public string InnerObjClass { get; init; } = "";     // ArrayProperty of object -> class name
+    public string InnerObjClass { get; init; } = "";     // ArrayProperty / OptionalProperty of the object family -> class name
+    // [SDK-CONTAINER-OBJCLASS] The PropertyClass of a Map key / value and a Set element of the object family.
+    public string KeyObjClass { get; init; } = "";
+    public string ValueObjClass { get; init; } = "";
+    public string ElemObjClass { get; init; } = "";
     public string KeyType { get; init; } = "";           // MapProperty -> key type
     public string KeyStructType { get; init; } = "";     // MapProperty key struct name
     public string ValueType { get; init; } = "";         // MapProperty -> value type
