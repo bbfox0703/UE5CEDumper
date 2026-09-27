@@ -848,8 +848,14 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 // WITH_CASE_PRESERVING_NAME, not 8, so the pointer run after it and the subclass extension start
 // 8 bytes later: +0x34. RE-UE4SS's 4.27 templates: Offset_Internal 0x4C -> FStructProperty::Struct
 // 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
+// [FPROP-FAMILY-ALIGN] The +0x2C / +0x34 were right only while Offset_Internal sat on an 8-byte boundary minus 4. The
+// four link pointers after RepNotifyFunc are 8-aligned, so the start is computed from the layout: Offset_Internal (4)
+// + RepNotifyFunc (FName, alignof 4), aligned up to 8, + the four pointers. A UE 5.7 build with WITH_EDITORONLY_DATA /
+// WITH_METADATA puts an int32 before Offset_Internal (UE_5.7 UnrealType.h) and moves it to 0x48: the flat +0x2C gave
+// 0x74 where the struct is at 0x78, and TQ2 logged the later correction (`CorrectSubclassOffsets: delta=4`).
 inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
-    return PropertyFamilyAtBase(propOffsetOff + (casePreservingName ? 0x34 : 0x2C));
+    const int afterRepNotify = propOffsetOff + 4 + (casePreservingName ? 12 : 8);
+    return PropertyFamilyAtBase(((afterRepNotify + 7) & ~7) + 4 * 8);
 }
 
 // [UPROP-SUBCLASS-SLOT] The same five slots on a UProperty engine (UE < 4.25), at the version's

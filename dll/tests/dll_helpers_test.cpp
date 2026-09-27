@@ -6713,6 +6713,9 @@ static void Test_PropertyFamilyForIsAligned() {
     EXPECT("FPROPALIGN control: UE 5.3+ stock, 0x44 -> 0x70", PropertyFamilyFor(0x44, false).structProp == 0x70);
     EXPECT("FPROPALIGN control: UE 4.25-5.2 stock, 0x4C -> 0x78", PropertyFamilyFor(0x4C, false).structProp == 0x78);
     EXPECT("FPROPALIGN control: 4.27 case-preserving, 0x4C -> 0x80", PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    // Case-preserving at 0x48: the 12-byte FName ends at 0x58, already aligned -- 0x78, not a rounded-up 0x80.
+    EXPECT("FPROPALIGN: case-preserving with Offset_Internal 0x48 -> 0x78, not a rounded 0x80",
+           PropertyFamilyFor(0x48, true).structProp == 0x78);
     for (int off = 0x30; off <= 0x68; off += 4)
         for (bool cpn : { false, true })
             EXPECT("FPROPALIGN: every derived family base is 8-aligned", (PropertyFamilyFor(off, cpn).structProp % 8) == 0);
