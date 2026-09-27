@@ -168,7 +168,10 @@ public static class DumpAllService
                 foreach (var obj in page.Objects)
                 {
                     scannedObjects++;
-                    if (!ClassLikeMetas.Contains(obj.ClassName))
+                    // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass
+                    // (Default__Class is a Class), so the meta test alone admitted it as a class.
+                    if (!ClassLikeMetas.Contains(obj.ClassName)
+                        || obj.Name.StartsWith("Default__", StringComparison.Ordinal))
                     {
                         continue;
                     }
