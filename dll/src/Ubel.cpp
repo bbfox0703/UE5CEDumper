@@ -1402,8 +1402,7 @@ struct ClassValuedNames { std::string propertyClass; std::string metaClass; };
 static ClassValuedNames ReadClassValuedNames(uintptr_t propAddr) {
     const int slot = DynOff::bUseFProperty
         ? DynOff::FSTRUCTPROP_STRUCT
-        : DynOff::UPropertySubclassStartFor(DynOff::UPROPERTY_OFFSET, g_cachedUEVersion,
-                                            DynOff::bCasePreservingName);
+        : DynOff::UPropertySubclassStart(g_cachedUEVersion);
     uintptr_t propertyClass = 0, meta = 0;
     if (!Macht::ReadSafe(propAddr + slot, propertyClass) || !propertyClass) return {};
     if (!ClassChainHasName(propertyClass, "Class")) {
@@ -2021,10 +2020,9 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDREN, paramChain) && paramChain) {
                         uintptr_t cur = paramChain;
                         // [A2-UFUNC-TAIL-4X]'s lead: the first subclass field (Struct /
-                        // PropertyClass) sits at the version's MEASURED delta, not a flat +0x2C
-                        // (+0x28 on 4.11-4.17). See DynOff::UPropertySubclassStartFor.
-                        const int subclassStart = DynOff::UPropertySubclassStartFor(
-                            DynOff::UPROPERTY_OFFSET, g_cachedUEVersion, DynOff::bCasePreservingName);
+                        // PropertyClass) sits at the MEASURED start, not a flat +0x2C (+0x28 on
+                        // 4.11-4.17). See DynOff::UPropertySubclassStart.
+                        const int subclassStart = DynOff::UPropertySubclassStart(g_cachedUEVersion);
                         int paramLimit = 256;
                         std::unordered_set<uintptr_t> seenParams;
                         while (cur != 0 && paramLimit-- > 0) {

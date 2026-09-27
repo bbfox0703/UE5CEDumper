@@ -3645,6 +3645,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
 
     // Step 2.5: Set version-based defaults BEFORE probing (so if probing fails, we have sane values)
     // These serve as the fallback if Guid/Vector structs can't be found.
+    DynOff::UPROPERTY_SUBCLASS_START = 0;   // none derived yet: a re-run must not keep the last run's
     if (DynOff::bUseFProperty) {
         if (ueVersion >= 501 || ueVersion == 0) {
             // [VND583-09] UE 5.3+ uses FFieldVariant=0x08 (smaller): Next=0x18, Name=0x20, Offset=0x44.
@@ -3677,6 +3678,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // [UPROP-SUBCLASS-SLOT] A UProperty engine's default family, so a give-up exit below ships the UProperty
         // subclass start rather than the FProperty default (DynOff::UPropertyDefaultFamily says which versions).
         DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
 
     // Step 3: Find "Guid" or "Vector" struct for probing
@@ -4473,6 +4475,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         const int start = DynOff::UPropertySubclassStartFromLayout(propOffsetOff, propElemSizeOff, ueVersion,
                                                                    DynOff::bCasePreservingName);
         DynOff::UBOOLPROP_FIELDSIZE = start;
+        DynOff::UPROPERTY_SUBCLASS_START = start;   // the readers outside the family take THIS start
         Sein::Info("DYNO", "ValidateAndFixOffsets: UBoolProperty::FieldSize derived at "
                    "+0x%02X (Offset_Internal +0x%02X, ElementSize +0x%02X, UE=%u%s)",
                    DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, propElemSizeOff, ueVersion,
@@ -4483,6 +4486,7 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // Offset_Internal probe would otherwise ship the FProperty default -- give it the UProperty one (review
         // wf_b99fb861-680, F5).
         DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
 
     // Infer tagged FFieldVariant from probed offsets:

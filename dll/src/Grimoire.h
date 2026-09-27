@@ -808,6 +808,9 @@ inline int UFIELD_NEXT        = 0x28;  // UField::Next (standard): 0x28
 inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
 inline int UPROPERTY_FLAGS    = 0x38;  // UProperty::PropertyFlags (uint64)
+// [UPROP-SUBCLASS-SLOT] The UProperty subclass start Genau derived for THIS run -- from the measured layout, or a
+// default family on a give-up -- and 0 when it derived none. Read it through UPropertySubclassStart (below).
+inline int UPROPERTY_SUBCLASS_START = 0;
 
 // === FEnumProperty / FByteProperty subclass fields ===
 // NOT at the same offset: FByteProperty's UEnum* is the first subclass field, FEnumProperty's one
@@ -966,6 +969,16 @@ inline std::atomic<bool> bUEnumNamesFailed{false};
 // ⚠ Member ORDER also moves and is a separate axis: Number is at +4 from UE 5.1, but at +8
 // on a CasePreserving build of UE <= 5.0 / UE4 (DisplayIndex comes second there).
 inline bool bCasePreservingName  = false;
+
+// [UPROP-SUBCLASS-SLOT] The start for a reader that does not go through the family: the one Genau derived, else the
+// version's. The readers used the version formula on its own, so on a layout whose version is misdetected -- a
+// 4.11-4.17 title relabelled 422 -- they read 0x7C where Genau had put the family at the layout's 0x78: a class-valued
+// member lost its MetaClass, a UFunction parameter its struct / class (review of build 3594).
+inline int UPropertySubclassStart(unsigned ueVersion) {
+    return UPROPERTY_SUBCLASS_START > 0
+        ? UPROPERTY_SUBCLASS_START
+        : UPropertySubclassStartFor(UPROPERTY_OFFSET, ueVersion, bCasePreservingName);
+}
 
 // ⭐ ASK THE QUESTION BY NAME. The rule above was already written down and was still copied
 // wrongly into EIGHT call sites, because both answers are spelled `bCasePreservingName ? … : 0x08`
