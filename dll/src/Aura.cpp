@@ -2501,6 +2501,13 @@ static void CollectContainersRecursive(
     }
 }
 
+// [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
+// before its publish, with the cache's name. Null in the product. dll_core_test, which #includes this file, sets it
+// to move the family at exactly that point -- the one way to prove a build that a concurrent move overtook is not
+// filed under the new epoch (review wf_b99fb861-680, F4). Not declared in the header, so nothing outside this
+// translation unit can set it.
+static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
+
 static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls) {
     {
         std::lock_guard<std::mutex> lk(s_classContainerMutex);
@@ -2537,6 +2544,7 @@ static const std::vector<ContainerCacheEntry>& GetClassContainers(uintptr_t cls)
     CollectContainersRecursive(cls, /*baseOffset*/ 0, /*namePrefix*/ "",
                                entries, /*depth*/ 0);
 
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("ClassContainers");
     std::lock_guard<std::mutex> lk(s_classContainerMutex);
     auto [ins, _] = s_classContainerCache.emplace(DynOff::FamilyCacheKey(cls), std::move(entries));
     return ins->second;
@@ -3590,6 +3598,7 @@ static const ClassReferenceMeta& GetClassRefMeta(uintptr_t cls) {
     ClassReferenceMeta meta;
     CollectRefMetaRecursive(cls, 0, "", meta, 0);
 
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("ClassRefMeta");
     std::lock_guard<std::mutex> lk(s_classRefMutex);
     auto [ins, _] = s_classRefCache.emplace(DynOff::FamilyCacheKey(cls), std::move(meta));
     return ins->second;

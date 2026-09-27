@@ -5301,6 +5301,86 @@ int main() {
         check("FAMILYEPOCH control: re-publishing the same family is a cache HIT, not a new walk",
               &Ubel::WalkClassEx(A(feCls)) == &after);
 
+        // Review wf_b99fb861-680 (F4): every builder worked its key out AT PUBLISH, after its reads. A move made by
+        // another thread in between (a pipe lane's WalkInstance struct probe, a scan worker's CorrectSubclassOffsets)
+        // filed the old slot's answer under the NEW epoch, where every later lookup found it. Each builder's test seam
+        // moves the family 0x78 -> 0x70 at exactly that point, once; the next call must read the class again.
+        static const char* s_raceCache = nullptr;
+        auto moveOnce = [](const char* cache) {
+            if (s_raceCache && strcmp(cache, s_raceCache) == 0) {
+                s_raceCache = nullptr;
+                DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x70));
+            }
+        };
+        auto armRace = [](const char* cache) {
+            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+            s_raceCache = cache;
+        };
+        static uint8_t feRace[5][0x100] = {};
+        for (auto& c : feRace) {
+            put32(c, DynOff::USTRUCT_PROPSSIZE, 0x38);
+            putP(c, DynOff::USTRUCT_CHILDPROPS, A(feTarget));
+        }
+        Ubel::g_beforeFamilyCachePublishForTest = moveOnce;
+        Aura::g_beforeFamilyCachePublishForTest = moveOnce;
+
+        armRace("WalkClass");
+        const int raceMask1 = flagMask(Ubel::WalkClass(A(feRace[0])));
+        const bool fired1 = s_raceCache == nullptr;
+        const int raceMask2 = flagMask(Ubel::WalkClass(A(feRace[0])));
+        check("FAMILYEPOCH race setup: the WalkClass seam fired, after a read at 0x78", fired1 && raceMask1 == 1,
+              std::to_string(raceMask1).c_str());
+        check("FAMILYEPOCH race ⭐: a plain walk overtaken by a move is NOT served under the new epoch",
+              raceMask2 == 4, std::to_string(raceMask2).c_str());
+
+        armRace("WalkClassEx");
+        const std::string raceTarget1 = target(Ubel::WalkClassEx(A(feRace[1])));
+        const bool fired2 = s_raceCache == nullptr;
+        const std::string raceTarget2 = target(Ubel::WalkClassEx(A(feRace[1])));
+        check("FAMILYEPOCH race setup: the WalkClassEx seam fired, after a read at 0x78",
+              fired2 && raceTarget1 == "Pawn", raceTarget1.c_str());
+        check("FAMILYEPOCH race ⭐: an enriched walk overtaken by a move is NOT served under the new epoch",
+              raceTarget2 == "Actor", raceTarget2.c_str());
+
+        auto structMask = [](const std::vector<Ubel::CachedStructField>& v) -> int {
+            for (const auto& f : v) if (f.name == "Flag") return f.boolFieldMask;
+            return -1;
+        };
+        armRace("StructFields");
+        const int raceSMask1 = structMask(Ubel::GetCachedStructFields(A(feRace[2])));
+        const bool fired3 = s_raceCache == nullptr;
+        const int raceSMask2 = structMask(Ubel::GetCachedStructFields(A(feRace[2])));
+        check("FAMILYEPOCH race setup: the struct-field seam fired, after a read at 0x78", fired3 && raceSMask1 == 1,
+              std::to_string(raceSMask1).c_str());
+        check("FAMILYEPOCH race ⭐: struct fields overtaken by a move are NOT served under the new epoch",
+              raceSMask2 == 4, std::to_string(raceSMask2).c_str());
+
+        // The two Aura memos hold no slot value this fixture can tell apart (no container, no reference), so they are
+        // pinned by identity: an entry built across the move must not be the one the next call is served.
+        armRace("ClassContainers");
+        const auto* raceC1 = &Aura::GetClassContainers(A(feRace[3]));
+        const bool fired4 = s_raceCache == nullptr;
+        const auto* raceC2 = &Aura::GetClassContainers(A(feRace[3]));
+        check("FAMILYEPOCH race setup: the container seam fired", fired4);
+        check("FAMILYEPOCH race ⭐: a container list built across a move is NOT served under the new epoch",
+              raceC1 != raceC2);
+        check("FAMILYEPOCH race control: ...and the rebuilt one is a plain cache hit",
+              &Aura::GetClassContainers(A(feRace[3])) == raceC2);
+
+        armRace("ClassRefMeta");
+        const auto* raceR1 = &Aura::GetClassRefMeta(A(feRace[4]));
+        const bool fired5 = s_raceCache == nullptr;
+        const auto* raceR2 = &Aura::GetClassRefMeta(A(feRace[4]));
+        check("FAMILYEPOCH race setup: the reference-meta seam fired", fired5);
+        check("FAMILYEPOCH race ⭐: reference meta built across a move is NOT served under the new epoch",
+              raceR1 != raceR2);
+        check("FAMILYEPOCH race control: ...and the rebuilt one is a plain cache hit",
+              &Aura::GetClassRefMeta(A(feRace[4])) == raceR2);
+
+        Ubel::g_beforeFamilyCachePublishForTest = nullptr;
+        Aura::g_beforeFamilyCachePublishForTest = nullptr;
+        s_raceCache = nullptr;
+
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;
     }

@@ -991,6 +991,13 @@ static void WalkUPropertyChain(uintptr_t firstField, std::vector<FieldInfo>& fie
 // back navigation for large classes (e.g., 182 fields → 0ms vs re-walking).
 static std::unordered_map<uintptr_t, ClassInfo> s_walkClassCache;
 
+// [FAMILY-EPOCH] Test seam: called by each epoch-keyed memo builder after its reads through the property family and
+// before its publish, with the cache's name. Null in the product. dll_core_test, which #includes this file, sets it
+// to move the family at exactly that point -- the one way to prove a build that a concurrent move overtook is not
+// filed under the new epoch (review wf_b99fb861-680, F4). Not declared in the header, so nothing outside this
+// translation unit can set it.
+static void (*g_beforeFamilyCachePublishForTest)(const char* cache) = nullptr;
+
 // --- LRU bound for the cache above (audit #5 U5) ---
 //
 // Legal here and ONLY here: WalkClass returns ClassInfo BY VALUE and every
@@ -1251,6 +1258,7 @@ static ClassInfo WalkClassImpl(uintptr_t uclassAddr, bool& readOk) {
     // turn "fields fine, size wrong" into "no fields at all". Refusing to memoize only
     // costs a re-walk.
     if (ShouldPublishClassWalk(propsSizeReadOk, info.PropertiesSize)) {
+        if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClass");
         std::lock_guard<std::mutex> lk(s_walkClassCacheMutex);
         PublishWalkClass(DynOff::FamilyCacheKey(uclassAddr), info);
     } else {
@@ -1636,6 +1644,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
     // keeping the existing one costs nothing and keeps every handed-out reference
     // valid. Node-based map + no erase/clear anywhere ⇒ entries never move. (B10)
     // Only reachable for a class that passed the memoization gate above.
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("WalkClassEx");
     std::lock_guard<std::mutex> lk(s_walkClassExCacheMutex);
     // Keyed AFTER CorrectSubclassOffsets above, so a walk that moved the family files its answer under the new epoch.
     return s_walkClassExCache.try_emplace(DynOff::FamilyCacheKey(uclassAddr), std::move(info)).first->second;
@@ -3444,6 +3453,7 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
     Sein::Debug("WALK:ArrayF", "Cached struct fields for 0x%llX: %d fields",
         static_cast<unsigned long long>(structAddr), static_cast<int>(cached.size()));
 
+    if (g_beforeFamilyCachePublishForTest) g_beforeFamilyCachePublishForTest("StructFields");
     std::lock_guard<std::mutex> lk(s_structFieldCacheMutex);
     auto [ins, _] = s_structFieldCache.emplace(DynOff::FamilyCacheKey(structAddr), std::move(cached));
     return ins->second;
