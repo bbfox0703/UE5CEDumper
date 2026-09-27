@@ -49,17 +49,43 @@ public static class FilterViewBinding
         Hook();
     }
 
+    /// <summary>One attached control's restore state.</summary>
+    private sealed class Session
+    {
+        public readonly FilterViewRestoreQueue Queue = new();
+
+        /// <summary>True from a capture to the end of its rebuild, and while a restore selects:
+        /// a selection change then is the detach, a view model's own re-select or the restore —
+        /// not the user, so it must not drop a parked selection.</summary>
+        public bool Ours;
+
+        public void UserChangedSelection(string name)
+        {
+            if (Ours || !Queue.HasParked) return;
+            Queue.Unpark();
+            Log?.Debug($"FilterView {name}: the user changed the selection, the hidden one is dropped");
+        }
+    }
+
+    private static FilterViewState Capture(Session session, Func<FilterViewState> live, string name)
+    {
+        session.Ours = true;
+        FilterViewState? shown = null;
+        var state = session.Queue.Capture(() => shown = live());
+        string source = ReferenceEquals(state, shown) ? "from the control" : "carried or parked";
+        Log?.Debug($"FilterView {name}: capture {state.Selected.Count} selected ({source}), the control shows {shown?.Selected.Count ?? 0}");
+        return state;
+    }
+
     public static void Attach(DataGrid grid, FilterViewKeeper keeper)
     {
-        var queue = new FilterViewRestoreQueue();
-        keeper.CaptureView = () =>
-        {
-            FilterViewState? live = null;
-            var state = queue.Capture(() => live = new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid)));
-            Log?.Debug($"FilterView {grid.Name}: capture {state.Selected.Count} selected ({(ReferenceEquals(state, live) ? "from the grid" : "carried from the queued restore")}), grid shows {live?.Selected.Count ?? 0}");
-            return state;
-        };
-        keeper.RestoreView = (state, mode) => Restore(queue,
+        var session = new Session();
+        string name = grid.Name ?? "grid";
+        grid.SelectionChanged += (_, _) => session.UserChangedSelection(name);
+        keeper.ForgetView = () => session.Queue.Unpark();
+        keeper.CaptureView = () => Capture(session,
+            () => new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid)), name);
+        keeper.RestoreView = (state, mode) => Restore(session,
             items: () => DisplayItems(grid),
             current: () => grid.SelectedItem,
             select: rows =>
@@ -71,36 +97,42 @@ public static class FilterViewBinding
             },
             scrollIntoView: row => grid.ScrollIntoView(row, null),
             selectedCount: () => grid.SelectedItems.Count,
-            name: grid.Name ?? "grid",
+            name,
             state, mode, keeper.KeyOf);
     }
 
     public static void Attach(ListBox list, FilterViewKeeper keeper)
     {
-        var queue = new FilterViewRestoreQueue();
-        keeper.CaptureView = () => queue.Capture(() =>
+        var session = new Session();
+        string name = list.Name ?? "list";
+        list.SelectionChanged += (_, _) => session.UserChangedSelection(name);
+        keeper.ForgetView = () => session.Queue.Unpark();
+        keeper.CaptureView = () => Capture(session, () =>
         {
             var selected = new List<object>();
             if (list.SelectedItems != null)
                 foreach (var o in list.SelectedItems) if (o != null) selected.Add(o);
             if (selected.Count == 0 && list.SelectedItem != null) selected.Add(list.SelectedItem);
             return new FilterViewState(OrderBy(selected, ListItems(list)), TopContainer<ListBoxItem>(list));
-        });
-        keeper.RestoreView = (state, mode) => Restore(queue,
+        }, name);
+        keeper.RestoreView = (state, mode) => Restore(session,
             items: () => ListItems(list),
             current: () => list.SelectedItem,
             select: rows => list.SelectedItem = rows.Count > 0 ? rows[0] : null,
             scrollIntoView: row => list.ScrollIntoView(row),
             selectedCount: () => list.SelectedItems?.Count ?? (list.SelectedItem != null ? 1 : 0),
-            name: list.Name ?? "list",
+            name,
             state, mode, keeper.KeyOf);
     }
 
-    private static void Restore(FilterViewRestoreQueue queue,
+    private static void Restore(Session session,
                                 Func<List<object>> items, Func<object?> current, Action<List<object>> select,
                                 Action<object> scrollIntoView, Func<int> selectedCount, string name,
                                 FilterViewState state, FilterViewRestore mode, Func<object, object>? keyOf)
     {
+        // The rebuild that followed the capture is done: selection changes are the user's again.
+        session.Ours = false;
+        var queue = session.Queue;
         // Keys typed faster than this runs rebuild again: only the newest restore of the burst
         // runs, carrying the selection the user had before it (FilterViewRestoreQueue).
         int ticket = queue.Schedule(state);
@@ -121,7 +153,8 @@ public static class FilterViewBinding
             var now = items();
             if (now.Count == 0)
             {
-                Log?.Debug($"FilterView {name}: #{ticket} ran on an empty list");
+                queue.Settle(state, 0);
+                Log?.Debug($"FilterView {name}: #{ticket} ran on an empty list, {(queue.HasParked ? "the selection parked" : "nothing to park")}");
                 return;
             }
             object Key(object o) => keyOf?.Invoke(o) ?? o;
@@ -130,6 +163,7 @@ public static class FilterViewBinding
             object? Find(object o) => byKey.TryGetValue(Key(o), out var hit) ? hit : null;
 
             var kept = OrderBy(state.Selected.Select(Find).OfType<object>().ToList(), now);
+            queue.Settle(state, kept.Count);
 
             // A rebuild leaves the list unselected, so a selection here was made after it. The
             // view model re-selecting the row it had (it does that itself where selecting has
@@ -146,9 +180,11 @@ public static class FilterViewBinding
             }
             else if (kept.Count > 0)
             {
-                select(kept);
+                session.Ours = true;
+                try { select(kept); }
+                finally { session.Ours = false; }
             }
-            Log?.Debug($"FilterView {name}: #{ticket} {mode} ran, {now.Count} rows, {kept.Count} of {state.Selected.Count} found, {selectedCount()} selected now");
+            Log?.Debug($"FilterView {name}: #{ticket} {mode} ran, {now.Count} rows, {kept.Count} of {state.Selected.Count} found, {selectedCount()} selected now{(queue.HasParked ? ", the selection parked" : "")}");
             Dispatcher.UIThread.Post(() =>
                 Log?.Debug($"FilterView {name}: #{ticket} settled, {selectedCount()} selected"),
                 DispatcherPriority.ApplicationIdle);

@@ -7,7 +7,8 @@ namespace UE5DumpUI.Helpers;
 public enum FilterViewRestore
 {
     /// <summary>An ordinary filter change: keep the rows that are still selected selected, and
-    /// keep the first of them visible. Rows that are gone stay unselected.</summary>
+    /// keep the first of them visible. A selection the filter hid entirely is parked by the View
+    /// and comes back when an edit shows its rows again (<c>FilterViewRestoreQueue</c>).</summary>
     Narrowed,
 
     /// <summary>The user cleared a real keyword (2+ characters to empty in one step): the first
@@ -53,6 +54,10 @@ public sealed class FilterViewKeeper
     /// <summary>Set by the View: re-select and scroll after the list changed.</summary>
     public Action<FilterViewState, FilterViewRestore>? RestoreView { get; set; }
 
+    /// <summary>Set by the View: drop whatever selection it keeps for rows the filter hides, when
+    /// <see cref="Forget"/> says the program reset the box.</summary>
+    public Action? ForgetView { get; set; }
+
     /// <summary>A stable identity for a row, for boxes whose rebuild creates NEW row objects
     /// (a key such as an address or a uid). Null means reference identity.</summary>
     public Func<object, object>? KeyOf { get; init; }
@@ -86,9 +91,14 @@ public sealed class FilterViewKeeper
         return true;
     }
 
-    /// <summary>Forget the applied keywords: call before the PROGRAM empties a box (a reload, a
-    /// navigation), so that is not taken for the user clearing it.</summary>
-    public void Forget() => _lastApplied = Array.Empty<string>();
+    /// <summary>Forget the applied keywords, and the View's parked selection: call before the
+    /// PROGRAM empties a box (a reload, a navigation), so that is not taken for the user clearing
+    /// it and a selection from before it does not come back.</summary>
+    public void Forget()
+    {
+        _lastApplied = Array.Empty<string>();
+        ForgetView?.Invoke();
+    }
 
     /// <summary>True when <paramref name="rows"/> are exactly <paramref name="current"/>'s items,
     /// in order, by reference.</summary>
