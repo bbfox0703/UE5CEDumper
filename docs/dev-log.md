@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3593) — UE 5.0 / 5.1: `TObjectPtr<UClass>` members are typed, and the `.usmap` no longer carries unreadable types `[UE51-CLASSPTRPROP]`
+
+- UE 5.0 and 5.1 give every `TObjectPtr<UClass-derived>` member a property kind of their own that nothing in the
+  dumper recognised: the SDK export wrote them as raw bytes and the USMAP export wrote a type no reader can size
+  (the UE 5.1 fixture: 29 members, 30 USMAP slots). They are treated as the class references they are now — 0
+  raw members, 0 unreadable slots, and every class-valued member of the fixture's engine classes matches UE 5.1's
+  own source (223 of 223).
+- Build 3593: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `5b7c48c53ef6`; `dist\UE5Dumper.dll` 3,037,184 B,
+  `a77169fd1c5a`. C# 5800/5800, headless 15/15, dll_core 517 checks, dll_helpers 3050.
+
 ## 2026-09-28 (build 3592) — map and set members name their object classes; UE 4.11–4.17 struct arrays show their element type; walk caches follow a late layout correction `[SDK-CONTAINER-OBJCLASS]` `[UPROP-CONTAINER-FLAT-2C]` `[FAMILY-EPOCH]`
 
 - **SDK export:** a TMap key or value and a TSet element that holds objects now says which class — EVERSPACE 2's
