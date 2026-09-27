@@ -1010,6 +1010,30 @@ public class ClassPivotViewModelTests : IDisposable
         Assert.Contains(vm.Results, r => r.KeyValue == "Ore");
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A result-filter edit that shows the same rows (a space)
+    /// must not re-set the grid -- that throws it to its first row and drops the pick.</summary>
+    [Fact]
+    public async Task ResultFilter_same_rows_keep_the_list_and_the_selection()
+    {
+        await SeedInventoryAsync();
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        await vm.PendingLoad!;
+        vm.SelectedClass = vm.Classes.First(c => c.ClassName == "BP_Item_C");
+        await vm.PendingLoad!;
+        await vm.RunPivotCommand.ExecuteAsync(null);
+        Assert.True(vm.Results.Count > 1);
+        vm.SelectedResult = vm.Results[1];
+        var picked = vm.SelectedResult;
+        int changes = 0;
+        vm.Results.CollectionChanged += (_, _) => changes++;
+
+        vm.ResultFilter = " ";                    // no term: the same rows
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedResult);
+    }
+
     [Fact]
     public async Task ResultFilter_FiltersAndRestores()
     {

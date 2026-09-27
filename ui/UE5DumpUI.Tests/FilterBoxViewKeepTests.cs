@@ -36,12 +36,13 @@ public class FilterBoxViewKeepTests
         IList Rows,
         Func<object?> Selected,
         Action<object?> Select,
-        FilterViewKeeper Keeper,
+        FilterViewKeeper? Keeper,
         string Wide, string Same, string Narrow);
 
     public static TheoryData<string> Boxes => new()
     {
         "Console", "InterestingFunctions", "InterestingProperties", "LiveFuncs", "DetectStats",
+        "ClassStruct", "GameClassFilter", "LiveWalkerFunctions",
     };
 
     private static Task<Box> Make(string name) => name switch
@@ -51,6 +52,9 @@ public class FilterBoxViewKeepTests
         "InterestingProperties" => InterestingPropertiesBox(),
         "LiveFuncs"             => LiveFuncsBox(),
         "DetectStats"           => Task.FromResult(DetectStatsBox()),
+        "ClassStruct"           => ClassStructBox(),
+        "GameClassFilter"       => GameClassFilterBox(),
+        "LiveWalkerFunctions"   => LiveWalkerFunctionsBox(),
         _ => throw new ArgumentException(name),
     };
 
@@ -58,6 +62,7 @@ public class FilterBoxViewKeepTests
     private static List<(FilterViewState State, FilterViewRestore Mode)> AttachView(Box box)
     {
         var got = new List<(FilterViewState, FilterViewRestore)>();
+        if (box.Keeper == null) return got;              // the box has no keeper yet
         box.Keeper.CaptureView = () => new FilterViewState(
             box.Selected() is { } s ? new[] { s } : Array.Empty<object>(),
             box.Rows.Count > 0 ? box.Rows[0] : null);
@@ -96,6 +101,7 @@ public class FilterBoxViewKeepTests
     public async Task A_narrowing_hands_the_View_its_selection_to_keep(string name)
     {
         var box = await Make(name);
+        Assert.NotNull(box.Keeper);
         box.SetFilter(box.Wide);
         box.Select(box.Rows[0]);
         var picked = box.Selected();
@@ -113,6 +119,7 @@ public class FilterBoxViewKeepTests
     public async Task Clearing_a_real_keyword_asks_the_View_for_Cleared(string name)
     {
         var box = await Make(name);
+        Assert.NotNull(box.Keeper);
         box.SetFilter(box.Narrow);
         box.Select(box.Rows[0]);
         var picked = box.Selected();
@@ -138,6 +145,15 @@ public class FilterBoxViewKeepTests
         public List<AllFunctionEntry> Functions = new();
         public List<PeProfileEntry> PeEntries = new();
         public List<PropertySearchMatch> Props = new();
+        public List<GameClassEntry> Classes = new();
+
+        public override Task<ClassListResult> ListClassesAsync(
+            bool gameOnly = true, int limit = 5000, CancellationToken ct = default)
+            => Task.FromResult(new ClassListResult
+            {
+                Classes = Classes, Total = Classes.Count, TotalClasses = Classes.Count,
+                RequestedLimit = limit,
+            });
 
         public override Task<AllFunctionsResult> ListAllFunctionsAsync(
             bool gameOnly = true, int limit = 100000, CancellationToken ct = default)
@@ -243,4 +259,73 @@ public class FilterBoxViewKeepTests
                        o => vm.SelectedResult = (DetectedStat?)o, vm.ResultsView,
                        "hea", "heal", "healthm");
     }
+
+    private sealed class FieldsDump : StubDumpService
+    {
+        public override Task<ClassInfoModel> WalkClassAsync(string classAddr, CancellationToken ct = default)
+            => Task.FromResult(new ClassInfoModel
+            {
+                Name = "BP_Hero_C", FullPath = "/Game/BP_Hero_C", SuperName = "Character",
+                PropertiesSize = 0x400,
+                Fields = new List<FieldInfoModel>
+                {
+                    new() { Name = "Health",   TypeName = "float",   Address = "0xAAA0" },
+                    new() { Name = "Stamina",  TypeName = "float",   Address = "0xAAA4" },
+                    new() { Name = "Nickname", TypeName = "FString", Address = "0xAAB0" },
+                },
+            });
+    }
+
+    private static async Task<Box> ClassStructBox()
+    {
+        // The filter matches the field name OR its type: "floa" is the two floats.
+        var vm = new ClassStructViewModel(new FieldsDump(), new MockLoggingService(),
+                                          new MockPlatformService(Path.GetTempPath()));
+        await vm.LoadClassCommand.ExecuteAsync("0x1000");
+        return new Box(t => vm.FieldFilter = t, vm.Fields, () => vm.SelectedField,
+                       o => vm.SelectedField = (FieldInfoModel?)o, KeeperOf(vm, "FieldsView"),
+                       "floa", "float", "health");
+    }
+
+    private static async Task<Box> GameClassFilterBox()
+    {
+        var dump = new LoadableDump();
+        foreach (var name in new[] { "BP_HeroA_C", "BP_HeroB_C", "BP_Enemy_C" })
+            dump.Classes.Add(new GameClassEntry { ClassName = name, SuperName = "Actor", ClassPath = "/Game/" + name });
+        var vm = new GameClassFilterViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await vm.LoadCommand.ExecuteAsync(null);
+        return new Box(t => vm.FilterText = t, vm.Results, () => vm.SelectedResult,
+                       o => vm.SelectedResult = (GameClassEntry?)o, KeeperOf(vm, "ResultsView"),
+                       "her", "hero", "heroa");
+    }
+
+    private sealed class FuncsStub : StubDumpService
+    {
+        public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+            => Task.FromResult(new List<FunctionInfoModel>
+            {
+                new() { Name = "ReceiveBeginPlay", Address = "0x7001" },
+                new() { Name = "ReceiveTick",      Address = "0x7002" },
+                new() { Name = "K2_Jump",          Address = "0x7003" },
+            });
+    }
+
+    private static async Task<Box> LiveWalkerFunctionsBox()
+    {
+        var dump = new FuncsStub();
+        dump.RegisterStruct("0x1000", new InstanceWalkResult
+        {
+            Address = "0x1000", Name = "Pawn_0", ClassName = "Pawn", ClassAddr = "0x5000",
+            Fields = new List<LiveFieldValue> { new() { Name = "Health", TypeName = "FloatProperty", Offset = 0x100, Size = 4 } },
+        });
+        var vm = new LiveWalkerViewModel(dump, new MockLoggingService(), new MockPlatformService(Path.GetTempPath()));
+        await vm.NavigateToAddressCommand.ExecuteAsync("0x1000");
+        return new Box(t => vm.FunctionFilter = t, vm.Functions, () => vm.SelectedFunction,
+                       o => vm.SelectedFunction = (FunctionInfoModel?)o, KeeperOf(vm, "FunctionsView"),
+                       "rec", "rece", "receivet");
+    }
+
+    /// <summary>The box's keeper, looked up by name so a box can be pinned before it has one.</summary>
+    private static FilterViewKeeper? KeeperOf(object vm, string property)
+        => vm.GetType().GetProperty(property)?.GetValue(vm) as FilterViewKeeper;
 }

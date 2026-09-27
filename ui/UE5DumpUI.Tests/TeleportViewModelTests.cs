@@ -2920,6 +2920,55 @@ public class TeleportViewModelTests
         Assert.Equal("Map01", vm.PoseMap);
     }
 
+    /// <summary>Three library rows named Cave / Castle / Beach ("ca" matches two).</summary>
+    private static async Task<TeleportViewModel> CoordLibraryVmAsync()
+    {
+        var vm = CreateVm(new FakeDumpService(), out _);
+        vm.LoadCoordLibraryForGame("Game.exe");
+        foreach (var label in new[] { "Cave", "Castle", "Beach" })
+        {
+            await vm.AddCoordFromFieldsCommand.ExecuteAsync(null);   // selects the new row
+            vm.EditCoordLabel = label;
+            vm.ApplyCoordEditCommand.Execute(null);
+        }
+        return vm;
+    }
+
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same rows must not re-set
+    /// the grid: that throws it to its first row. The rebuild also made new row objects, so the
+    /// selection survived only as a different object.</summary>
+    [Fact]
+    public async Task A_coord_filter_edit_showing_the_same_rows_keeps_the_rows_and_the_selection()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.CoordFilterText = "ca";
+        Assert.Equal(2, vm.CoordResults.Count);
+        vm.SelectedCoord = vm.CoordResults[1];
+        var picked = vm.SelectedCoord;
+        int changes = 0;
+        vm.CoordResults.CollectionChanged += (_, _) => changes++;
+
+        vm.CoordFilterText = "ca ";
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedCoord);
+    }
+
+    /// <summary>...while an edit that renames a row in place still repaints it: the same
+    /// entries, but the row shows new text.</summary>
+    [Fact]
+    public async Task Renaming_a_coord_still_rebuilds_its_row()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Cave");
+
+        vm.EditCoordLabel = "Grotto";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Contains(vm.CoordResults, r => r.Label == "Grotto");
+        Assert.DoesNotContain(vm.CoordResults, r => r.Label == "Cave");
+    }
+
     [Fact]
     public async Task An_unknown_current_map_is_not_a_different_map()
     {

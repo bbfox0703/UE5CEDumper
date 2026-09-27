@@ -48,6 +48,7 @@ public static class FilterViewBinding
         keeper.CaptureView = () => new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid));
         keeper.RestoreView = (state, mode) => Restore(
             items: () => DisplayItems(grid),
+            current: () => grid.SelectedItem,
             select: rows =>
             {
                 if (grid.SelectionMode == DataGridSelectionMode.Single || rows.Count == 1)
@@ -71,12 +72,14 @@ public static class FilterViewBinding
         };
         keeper.RestoreView = (state, mode) => Restore(
             items: () => ListItems(list),
+            current: () => list.SelectedItem,
             select: rows => list.SelectedItem = rows.Count > 0 ? rows[0] : null,
             scrollIntoView: row => list.ScrollIntoView(row),
             state, mode, keeper.KeyOf);
     }
 
-    private static void Restore(Func<List<object>> items, Action<List<object>> select, Action<object> scrollIntoView,
+    private static void Restore(Func<List<object>> items, Func<object?> current, Action<List<object>> select,
+                                Action<object> scrollIntoView,
                                 FilterViewState state, FilterViewRestore mode, Func<object, object>? keyOf)
     {
         // After the rebuild's own layout pass, like every restore in this UI.
@@ -84,12 +87,26 @@ public static class FilterViewBinding
         {
             var now = items();
             if (now.Count == 0) return;
+            object Key(object o) => keyOf?.Invoke(o) ?? o;
             var byKey = new Dictionary<object, object>();
-            foreach (var o in now) byKey.TryAdd(keyOf?.Invoke(o) ?? o, o);
-            object? Find(object o) => byKey.TryGetValue(keyOf?.Invoke(o) ?? o, out var hit) ? hit : null;
+            foreach (var o in now) byKey.TryAdd(Key(o), o);
+            object? Find(object o) => byKey.TryGetValue(Key(o), out var hit) ? hit : null;
 
             var kept = OrderBy(state.Selected.Select(Find).OfType<object>().ToList(), now);
-            if (kept.Count > 0) select(kept);
+
+            // A rebuild leaves the list unselected, so a selection here was made after it. The
+            // view model re-selecting the row it had (it does that itself where selecting has
+            // side effects -- an editor sync, a pipe walk) still gets the scroll; anything else
+            // -- a navigation that emptied the box and then picked its own row -- wins outright.
+            if (current() is { } picked)
+            {
+                var pickedKey = Key(picked);
+                if (!kept.Any(k => Equals(Key(k), pickedKey))) return;
+            }
+            else if (kept.Count > 0)
+            {
+                select(kept);
+            }
 
             var first = kept.Count > 0 ? kept[0] : null;
             if (mode == FilterViewRestore.Narrowed)
