@@ -221,7 +221,7 @@ def index_engine(engine: pathlib.Path, wanted: set[str]):
                 text = strip_comments(raw)
                 hits = list(DECL_RE.finditer(text))
                 for k, m in enumerate(hits):
-                    name = bare(m.group(3))
+                    name = bare(m.group(2))
                     if name not in wanted:
                         continue
                     end = hits[k + 1].start() if k + 1 < len(hits) else len(text)
