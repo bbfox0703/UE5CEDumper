@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3597) — Blueprint structs, classes and enums stay typed when the engine layout was only partly detected `[STRUCTPROBE-ANY-NAME]` `[UPROP-SUBCLASS-SLOT]`
+
+- When the dumper cannot measure the whole engine layout, members typed with a Blueprint struct, Blueprint class
+  or Blueprint enum keep their types. Builds 3595–3596 checked those through a part of the layout that is not
+  measured in that case, and could drop them there.
+- UE4 function parameters take their struct / class type only from a real struct or class, like members do.
+- UE 4.11–4.17 when the layout could not be measured: class-valued members and function parameters read the same
+  slot as everything else.
+- No change on any fixture: every member of every class (UE 4.11, 4.23, 4.27, 5.1, 5.8, DQ XI S) and every
+  function parameter (UE 4.23, DQ XI S) compares identical to build 3596.
+- Correction to build 3596's note: `TEnumAsByte` columns of DataTable rows never showed their enumerator names
+  before — "again" was wrong — and that part is fixed in the code but not checked on a game (no test table has
+  such a column).
+- Build 3597: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `581a75c206f6`; `dist\UE5Dumper.dll` 3,039,232 B,
+  `e3695d12cd0a`. C# 5800/5800, headless 15/15, dll_core 576 checks, dll_helpers 3073.
+
 ## 2026-09-28 (build 3596) — enum types, optional structs and UE4 class-valued members get the same checks `[ENUMSLOT-ANY-NAME]` `[OPTSTRUCT-ANY-NAME]` `[UPROP-SUBCLASS-SLOT]`
 
 - The check build 3595 added for struct and object members now also guards enum members: the enum a member is

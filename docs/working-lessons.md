@@ -816,11 +816,12 @@ can only break the RARE kinds — a Blueprint struct, an interface class, a stru
 eleven-core-class walk every earlier row in this family was checked with meets none of them: it would have passed a
 fix that rejected every `UserDefinedStruct`. `tools/verify/pool_walk_diff.py` walks EVERY class `list_classes` returns
 and keeps each field's slot-read metadata, so two builds compare row by row: six fixtures (UE 4.11 → 5.8, DQ XI S),
-~445,000 fields, about two minutes a fixture, 0 changed. The same night, the diff also showed 7 rows present in one
-DQ XI S capture only — per-session Blueprint loading, explained (the field LIST does not come from the slot), not ignored.
+~445,000 fields, about two minutes a fixture, 0 changed. The same night the diff showed 6–7 rows present in one DQ XI S
+capture only. Most were the RIG: it keyed rows by class NAME, and two class objects can share one, so whichever was
+walked last won; keyed by class PATH, one row was left (a widget Blueprint's field) — explained, not ignored.
 **How to apply:** (1) a change to a reader shared by every walk — a slot, a validator, a name resolver — gets a whole-pool
 capture with the old DLL and with the new one, fresh inject each (1.ai), and `changed` is the verdict. (2) Rows in one
-capture only are explained before the check is called. (3) A spot check of core classes is a smoke test, not the
+capture only are explained before the check is called — and a rig keys by something unique first. (3) A spot check of core classes is a smoke test, not the
 no-regression evidence.
 
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths

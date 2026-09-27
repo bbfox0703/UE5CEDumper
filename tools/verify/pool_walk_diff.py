@@ -78,10 +78,14 @@ def capture(label):
             print("WARNING: list_classes is truncated -- the capture is a page, not the pool")
         print("classes:", len(classes))
         addrs = [x["class_addr"] for x in classes]
+        # Rows are keyed by the class PATH, not its name: two class objects can share a name (a Blueprint class and
+        # its re-instanced copy), and keyed by name the one walked last won -- a per-session difference that reads as
+        # "fields only in one capture" (measured on DQ XI S, 2026-09-28).
+        paths = [x.get("class_path") or x.get("class_name", "?") for x in classes]
         for i in range(0, len(addrs), 200):
             r = c.request("walk_class_batch", addrs=addrs[i:i + 200])
-            for ci in r.get("classes", []):
-                cname = ci.get("name", "?")
+            for j, ci in enumerate(r.get("classes", [])):
+                cname = paths[i + j] if i + j < len(paths) else ci.get("name", "?")
                 for f in ci.get("fields", []):
                     rows[f"{cname}.{f.get('name')}@{f.get('offset')}"] = [f.get("type"),
                                                                           {k: f[k] for k in KEYS if f.get(k)}]
