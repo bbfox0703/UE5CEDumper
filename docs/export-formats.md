@@ -459,6 +459,24 @@ so a definition and every reference to it agree:
   struct that derived classes would silently sit on.
 - The comment above each struct still carries the UE path verbatim.
 
+### What the whole-pool export takes `[SDK-UDS-MISSING]`
+
+Every class-like meta, `ScriptStruct` and Blueprint `UserDefinedStruct` — the last two are both
+structs for the kind rule above — and never a class-default object: a CDO's row reads its
+metaclass (`Default__ScriptStruct` is a `ScriptStruct`), so it passed the meta test and came out as
+an empty `struct Default__X {}`. A by-value member prefers a holder whose size can be the member's
+(a struct member's size is its struct's size aligned up), and sharing only the mount point
+(`Game`, `Script`) is not locality.
+
+### Live Walker's Export .h declares the DECLARED types `[SDK-LIVE-VALUE-TYPES]`
+
+It walks the class on screen and exports that walk's rows, super included, exactly as a
+single-class schema export does. The rows on screen hold VALUES — an enum's value name, a pointer's
+runtime class — and a header built from them changed whenever a value did. When no walk of the
+class on screen is available (a container or GWorld view), it falls back to the live rows, where an
+enum of unknown type is an integer of its size and a pointee of unknown class is `UObject`.
+A `TSubclassOf` member is `UClass*`: `walk_class` does not carry the metaclass (`[SDK-METACLASS]`).
+
 ⚠ The whole-pool header is **not** a compilable unit: it is in GObjects order (a by-value member
 can name a struct defined further down) and emits no enums. It is an offsets reference; the
 single-class exports compile once the engine types are provided.
