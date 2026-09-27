@@ -8,7 +8,8 @@ namespace UE5DumpUI.Tests;
 /// [TEXTBOX-HOMEEND-CARET] Avalonia's TextBox puts the caret at the selection's START when a plain
 /// Home / End finds the caret already on its target (measured on build 3574: End after the
 /// AutoCompleteBox's select-all went to the start of the box). The fix collapses the selection
-/// onto the caret first; these pin WHEN it acts. The TextBox itself needs the live check.
+/// onto its active end first; these pin WHEN it acts. The TextBox itself is driven in
+/// UE5DumpUI.HeadlessTests (TextBoxHomeEndTests).
 /// </summary>
 public class TextBoxHomeEndFixTests
 {
@@ -40,21 +41,21 @@ public class TextBoxHomeEndFixTests
         => Assert.False(TextBoxHomeEndFix.IsPlainHomeOrEnd(Press(key, modifiers), Moves));
 
     [Fact]
-    public void A_select_all_collapses_onto_the_caret_so_End_stays_at_the_end()
+    public void A_select_all_collapses_onto_its_active_end_so_End_stays_at_the_end()
     {
-        // The measured case: "spawn" selected by AutoCompleteBox's SelectAll, caret still at 5.
-        Assert.Equal((5, 5), TextBoxHomeEndFix.CollapseOntoCaret(0, 5, 5));
+        // The measured case: "spawn" selected by AutoCompleteBox's SelectAll (0 -> 5).
+        Assert.Equal((5, 5), TextBoxHomeEndFix.CollapseOntoActiveEnd(0, 5));
     }
 
     [Fact]
-    public void A_right_to_left_selection_collapses_onto_the_caret_so_Home_stays_at_the_start()
+    public void A_right_to_left_selection_collapses_onto_its_active_end_so_Home_stays_at_the_start()
     {
-        Assert.Equal((0, 0), TextBoxHomeEndFix.CollapseOntoCaret(5, 0, 0));
+        Assert.Equal((0, 0), TextBoxHomeEndFix.CollapseOntoActiveEnd(5, 0));
     }
 
     [Fact]
     public void Nothing_selected_needs_nothing()
     {
-        Assert.Null(TextBoxHomeEndFix.CollapseOntoCaret(3, 3, 3));
+        Assert.Null(TextBoxHomeEndFix.CollapseOntoActiveEnd(3, 3));
     }
 }

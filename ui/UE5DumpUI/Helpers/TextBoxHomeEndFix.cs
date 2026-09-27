@@ -20,10 +20,14 @@ namespace UE5DumpUI.Helpers;
 /// first; but when the caret already sits at the target, <c>CaretIndex</c> does not change,
 /// nothing collapses, and the caret lands on the selection's start — End jumps to the start of a
 /// select-all, Home to the end of a selection made right to left.</para>
-/// <para>So the selection is collapsed onto the caret BEFORE the TextBox handles the key; its own
-/// move then lands on the target whether the caret moves or not. Every TextBox gets it — the
-/// inner boxes of AutoCompleteBox and NumericUpDown, and every window — through one tunnelling
-/// class handler registered at startup (<see cref="Register"/>).</para>
+/// <para>So the selection is collapsed BEFORE the TextBox handles the key; its own move then lands
+/// on the target whether the caret moves or not. It collapses onto the ACTIVE end,
+/// <c>SelectionEnd</c> — where the caret shows — not onto <c>CaretIndex</c>: keyboard selection
+/// (Shift+arrows) leaves <c>CaretIndex</c> at the anchor, so in a multi-line box a selection made
+/// down across lines would otherwise move on the anchor's line (found by review, pinned by the
+/// headless tests). Every TextBox gets it — the inner boxes of AutoCompleteBox and NumericUpDown,
+/// and every window — through one tunnelling class handler registered at startup
+/// (<see cref="Register"/>).</para>
 /// </remarks>
 public static class TextBoxHomeEndFix
 {
@@ -43,10 +47,10 @@ public static class TextBoxHomeEndFix
         return false;
     }
 
-    /// <summary>The selection to set before the TextBox moves the caret: collapsed onto the caret
-    /// when something is selected, null when nothing is (then the TextBox is already right).</summary>
-    public static (int Start, int End)? CollapseOntoCaret(int selectionStart, int selectionEnd, int caretIndex)
-        => selectionStart == selectionEnd ? null : (caretIndex, caretIndex);
+    /// <summary>The selection to set before the TextBox moves the caret: collapsed onto its active
+    /// end when something is selected, null when nothing is (then the TextBox is already right).</summary>
+    public static (int Start, int End)? CollapseOntoActiveEnd(int selectionStart, int selectionEnd)
+        => selectionStart == selectionEnd ? null : (selectionEnd, selectionEnd);
 
     private static void OnKeyDown(TextBox box, KeyEventArgs e)
     {
@@ -55,8 +59,10 @@ public static class TextBoxHomeEndFix
         if (keymap == null || !IsPlainHomeOrEnd(e,
                 keymap.MoveCursorToTheStartOfLine, keymap.MoveCursorToTheEndOfLine,
                 keymap.MoveCursorToTheStartOfDocument, keymap.MoveCursorToTheEndOfDocument)) return;
-        if (CollapseOntoCaret(box.SelectionStart, box.SelectionEnd, box.CaretIndex) is not { } sel) return;
+        if (CollapseOntoActiveEnd(box.SelectionStart, box.SelectionEnd) is not { } sel) return;
         // SetCurrentValue, as the TextBox itself does: a local value would replace a binding.
+        // SelectionStart first: meeting SelectionEnd, it moves CaretIndex there too, which
+        // collapses the selection and puts the presenter's caret on the active end.
         box.SetCurrentValue(TextBox.SelectionStartProperty, sel.Start);
         box.SetCurrentValue(TextBox.SelectionEndProperty, sel.End);
     }
