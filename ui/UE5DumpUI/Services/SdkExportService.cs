@@ -92,12 +92,10 @@ public static class SdkExportService
                 // [SDK-UDS-MISSING] A Blueprint UserDefinedStruct is its own UScriptStruct subclass, so its
                 // row reads "UserDefinedStruct": without it, every Blueprint member of that type named a
                 // struct the header never defined.
-                // A class-default object's row reads its METAclass (Default__ScriptStruct is a
-                // ScriptStruct, Default__Class a Class), so it passes the meta test -- but it is an
-                // object, not a type, and came out as an empty `struct Default__X {}`. UE reserves
-                // the prefix for CDOs.
-                if ((DumpAllService.IsClassLikeMetaName(obj.ClassName) || IsStructMeta(obj.ClassName))
-                    && !obj.Name.StartsWith("Default__", StringComparison.Ordinal))
+                // Shared with the USMAP collector: class-like metas, native and user-defined
+                // structs, never a class-default object (which came out as an empty
+                // `struct Default__X {}`).
+                if (DumpAllService.IsExportedTypeRow(obj.ClassName, obj.Name))
                     targets.Add((obj.Address, obj.Name, obj.ClassName));
             }
 
@@ -198,7 +196,7 @@ public static class SdkExportService
             var (addr, name, meta) = targets[i];
             var info = walks[i];
             entries[i] = new SdkTypeNames.Entry(
-                addr, info?.Name ?? name, !IsStructMeta(meta), info?.FullPath ?? "", info?.PropertiesSize ?? 0);
+                addr, info?.Name ?? name, !DumpAllService.IsStructMetaName(meta), info?.FullPath ?? "", info?.PropertiesSize ?? 0);
         }
         // A super the pool does not hold is a type the user must supply under its own name, so no
         // pool type may take that spelling (a pool type named like its missing super would otherwise
@@ -231,9 +229,6 @@ public static class SdkExportService
         progress?.Report($"Generated SDK with {walked} classes");
         return sb.ToString();
     }
-
-    /// <summary>The GObjects metas of a struct type: native, and a Blueprint user-defined one.</summary>
-    internal static bool IsStructMeta(string meta) => meta is "ScriptStruct" or "UserDefinedStruct";
 
     // --- Type Mapping ---
 
