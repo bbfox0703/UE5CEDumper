@@ -265,15 +265,6 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
     return result;
 }
 
-// A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family it holds whatever sits there -- so
-// every reader that keeps the pointer checks that its class is a UEnum's first. [STRUCTCACHE-ENUM-UNCHECKED] One
-// reader, the struct-field cache, skipped it and cached the pointer for the session.
-static bool IsUEnumObject(uintptr_t obj) {
-    const uintptr_t cls = obj ? GetClass(obj) : 0;
-    const std::string clsName = cls ? GetName(cls) : std::string();
-    return clsName == "Enum" || clsName == "UserDefinedEnum";
-}
-
 // ============================================================
 // ReadFString — read an FString (TArray<wchar_t>) from a live
 // instance and convert UTF-16 → UTF-8.
@@ -1372,6 +1363,22 @@ bool IsClassObject(uintptr_t obj) {
     return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "Class");
 }
 
+// A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family an enum slot holds whatever sits
+// there. [STRUCTCACHE-ENUM-UNCHECKED] fixed one reader that kept the pointer unchecked; [ENUMSLOT-ANY-NAME] found the
+// rest -- the enum names the exports write took any printable name -- and that the check itself matched two exact
+// class names, so an enum whose class is a UEnum subclass was dropped where the struct and class checks walk the chain.
+bool IsUEnumObject(uintptr_t obj) {
+    return obj && Grimoire::IsUserspacePointer(obj) && ClassChainHasName(GetClass(obj), "Enum");
+}
+
+uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
+    const int slot = typeName == "ByteProperty" ? DynOff::FBYTEPROP_ENUM
+                   : typeName == "EnumProperty" ? DynOff::FENUMPROP_ENUM : -1;
+    uintptr_t e = 0;
+    if (slot < 0 || !propAddr || !Macht::ReadSafe(propAddr + slot, e) || !IsUEnumObject(e)) return 0;
+    return e;
+}
+
 static bool IsPrintableName(const std::string& n) {
     return !n.empty() && static_cast<unsigned char>(n[0]) >= 0x20 && static_cast<unsigned char>(n[0]) < 0x7F;
 }
@@ -1544,9 +1551,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
         // [A4-USMAP-CONTAINER-ENUM] A container inner's UEnum: a TEnumAsByte inner carries it at FBYTEPROP_ENUM, an
         // EnumProperty inner at FENUMPROP_ENUM. Read and validated exactly like the field's own enumName below.
         auto innerEnumOf = [](uintptr_t prop, const std::string& ptn) -> std::string {
-            uintptr_t e = 0;
-            if (ptn == "ByteProperty")      Macht::ReadSafe(prop + DynOff::FBYTEPROP_ENUM, e);
-            else if (ptn == "EnumProperty") Macht::ReadSafe(prop + DynOff::FENUMPROP_ENUM, e);
+            const uintptr_t e = ReadPropertyEnum(prop, ptn);   // [ENUMSLOT-ANY-NAME]
             if (!e) return std::string();
             std::string n = GetName(e);
             return (!n.empty() && n[0] >= 0x20 && n[0] < 0x7F) ? n : std::string();
@@ -1633,8 +1638,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
         // EnumProperty -> UEnum name
         else if (tn == "EnumProperty") {
-            uintptr_t enumPtr = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr) && enumPtr) {
+            if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
                 if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
                     fi.enumName = ename;
@@ -1643,8 +1647,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
 
         // ByteProperty -> check if it has an associated UEnum
         else if (tn == "ByteProperty") {
-            uintptr_t enumPtr = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr) && enumPtr) {
+            if (const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, tn)) {   // [ENUMSLOT-ANY-NAME]
                 std::string ename = GetName(enumPtr);
                 if (!ename.empty() && ename[0] >= 0x20 && ename[0] < 0x7F)
                     fi.enumName = ename;
@@ -3034,16 +3037,7 @@ ReadArrayResult ReadArrayElements(
     if (end - offset > kArrayElementsPerRequestCap) end = offset + kArrayElementsPerRequestCap;  // hard cap per request
 
     // For enum arrays: read UEnum* once from Inner FProperty
-    uintptr_t enumPtr = 0;
-    if (innerFFieldAddr) {
-        if (innerTypeName == "EnumProperty") {
-            Macht::ReadSafe(innerFFieldAddr + DynOff::FENUMPROP_ENUM, enumPtr);
-        } else if (innerTypeName == "ByteProperty") {
-            uintptr_t candidateEnum = 0;
-            if (Macht::ReadSafe(innerFFieldAddr + DynOff::FBYTEPROP_ENUM, candidateEnum) && IsUEnumObject(candidateEnum))
-                enumPtr = candidateEnum;
-        }
-    }
+    const uintptr_t enumPtr = ReadPropertyEnum(innerFFieldAddr, innerTypeName);   // [ENUMSLOT-ANY-NAME]
     result.enumAddr = enumPtr;  // Expose for CE DropDownList sharing
 
     // Read elements
@@ -3453,17 +3447,9 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
             }
         }
 
-        // EnumProperty: read UEnum*
-        if (fi.TypeName == "EnumProperty" && fi.Address) {
-            Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, cf.enumAddr);
-        }
-
-        // ByteProperty: check for UEnum* (ByteProperty-with-enum) -- kept only if it IS one (IsUEnumObject)
-        if (fi.TypeName == "ByteProperty" && fi.Address) {
-            uintptr_t candidateEnum = 0;
-            if (Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, candidateEnum) && IsUEnumObject(candidateEnum))
-                cf.enumAddr = candidateEnum;
-        }
+        // EnumProperty / ByteProperty-with-enum: the UEnum*, kept only if it IS one (ReadPropertyEnum)
+        if (fi.TypeName == "EnumProperty" || fi.TypeName == "ByteProperty")
+            cf.enumAddr = ReadPropertyEnum(fi.Address, fi.TypeName);
 
         // StructProperty: read nested struct type name
         if (fi.TypeName == "StructProperty" && fi.Address) {
@@ -6440,8 +6426,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle EnumProperty: read underlying int, resolve via UEnum
         if (fi.TypeName == "EnumProperty") {
-            uintptr_t enumPtr = 0;
-            Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumPtr);
+            const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, fi.TypeName);   // [ENUMSLOT-ANY-NAME]
 
             // Validate enum size: FPROPERTY_ELEMSIZE can be garbage for fields in
             // UScriptStruct layouts. Default to 1 (uint8, most common for BP enums).
@@ -6504,10 +6489,9 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
 
         // Handle ByteProperty: check if it has a UEnum* (byte-sized enum)
         if (fi.TypeName == "ByteProperty") {
-            uintptr_t enumPtr = 0;
-            Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr);
+            const uintptr_t enumPtr = ReadPropertyEnum(fi.Address, fi.TypeName);   // a UEnum, or 0
             if (enumPtr) {
-                if (IsUEnumObject(enumPtr)) {
+                {
                     // Same gate, same reason, as the EnumProperty handler above: a faulted read
                     // leaves rawVal at 0, which this block then published as the NAME of
                     // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
@@ -8034,8 +8018,10 @@ DataTableWalkResult WalkDataTableRows(uintptr_t dataTableAddr, int32_t offset, i
                     else if (readSize == 8) { int64_t v = 0; memcpy(&v, p, 8); rawVal = v; }
                     fv.enumValue = rawVal;
                     // Resolve enum address and name
-                    uintptr_t enumAddr = 0;
-                    if (Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, enumAddr) && enumAddr) {
+                    // [ENUMSLOT-ANY-NAME] The TYPE's slot: a TEnumAsByte column used to be read at FENUMPROP_ENUM,
+                    // one pointer past the end of an FByteProperty.
+                    const uintptr_t enumAddr = ReadPropertyEnum(fi.Address, fi.TypeName);
+                    if (enumAddr) {
                         fv.enumAddr = enumAddr;
                         fv.enumName = ResolveEnumValue(enumAddr, rawVal);
                     }

@@ -2712,11 +2712,12 @@ int main() {
     {
         blk("CONTAINERENUM - WalkClassEx publishes a container inner's UEnum (Array / Set / Map)");
 
-        static uint8_t ceEntry[12][0x40] = {};
-        const char* ceNames[12] = { "", "ArrayProperty", "SetProperty", "MapProperty", "ByteProperty",
-                                    "EnumProperty", "IntProperty", "Items", "Tags", "Lookup", "EMyEnum", "EOther" };
-        static uintptr_t ceChunk[13] = {};
-        for (int i = 1; i <= 11; ++i) {
+        static uint8_t ceEntry[13][0x40] = {};
+        const char* ceNames[13] = { "", "ArrayProperty", "SetProperty", "MapProperty", "ByteProperty",
+                                    "EnumProperty", "IntProperty", "Items", "Tags", "Lookup", "EMyEnum", "EOther",
+                                    "Enum" };
+        static uintptr_t ceChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
             memcpy(ceEntry[i] + 0x10, ceNames[i], strlen(ceNames[i]) + 1);
             ceChunk[i] = reinterpret_cast<uintptr_t>(ceEntry[i]);
         }
@@ -2736,6 +2737,11 @@ int main() {
         static uint8_t ceEnumA[0x40] = {}, ceEnumB[0x40] = {};              // the two UEnum objects
         put32(ceEnumA, Grimoire::OFF_UOBJECT_NAME, 10);                      // "EMyEnum"
         put32(ceEnumB, Grimoire::OFF_UOBJECT_NAME, 11);                      // "EOther"
+        // ...of class Enum: an enum slot is read only when it holds a UEnum ([ENUMSLOT-ANY-NAME]).
+        static uint8_t ceEnumCls[0x40] = {};
+        put32(ceEnumCls, Grimoire::OFF_UOBJECT_NAME, 12);
+        putP(ceEnumA, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ceEnumCls));
+        putP(ceEnumB, Grimoire::OFF_UOBJECT_CLASS, reinterpret_cast<uintptr_t>(ceEnumCls));
 
         // Inners: a TEnumAsByte (ByteProperty + Enum), an EnumProperty (+ Enum), and a plain IntProperty.
         static uint8_t ceByteInner[0x100] = {}, ceEnumInner[0x100] = {}, ceByteKey[0x100] = {}, ceIntVal[0x100] = {};

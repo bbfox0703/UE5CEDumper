@@ -810,7 +810,9 @@ inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
 inline int UPROPERTY_FLAGS    = 0x38;  // UProperty::PropertyFlags (uint64)
 
 // === FEnumProperty / FByteProperty subclass fields ===
-// Both store UEnum* at the same offset relative to FProperty base.
+// NOT at the same offset: FByteProperty's UEnum* is the first subclass field, FEnumProperty's one
+// pointer later -- read either through Ubel::ReadPropertyEnum, which picks the type's own slot
+// ([ENUMSLOT-ANY-NAME]: the DataTable reader read a TEnumAsByte at the EnumProperty slot).
 // Derived from FSTRUCTPROP_STRUCT (same subclass extension offset).
 inline int FBYTEPROP_ENUM       = 0x78;  // FByteProperty::Enum (UEnum*) — first subclass field (== sizeof(FProperty))
 // FEnumProperty has FNumericProperty* UnderlyingProp BEFORE its UEnum* Enum, so Enum sits

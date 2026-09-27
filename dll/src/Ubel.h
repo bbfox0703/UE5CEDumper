@@ -371,6 +371,11 @@ uintptr_t GetClass(uintptr_t uobjectAddr);
 // object -- on DQ XI S a Blueprint-owned property's PostConstructLinkNext, a named UProperty.
 bool IsScriptStructObject(uintptr_t obj);
 bool IsClassObject(uintptr_t obj);
+// [ENUMSLOT-ANY-NAME] The same for an enum slot: a UEnum or a subclass (UserDefinedEnum, ...). ReadPropertyEnum reads the
+// slot the property TYPE has -- FByteProperty::Enum or FEnumProperty::Enum, one pointer apart -- and returns the UEnum*
+// only if it is one, else 0 (also for any other type). Every enum-slot reader goes through it.
+bool IsUEnumObject(uintptr_t obj);
+uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName);
 
 // Get the Outer object of a UObject
 uintptr_t GetOuter(uintptr_t uobjectAddr);

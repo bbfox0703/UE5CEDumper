@@ -5333,7 +5333,7 @@ PropertySearchResult SearchProperties(
             // Resolve EnumProperty: read UEnum* from FField for matches that need it
             for (auto& m : result.results) {
                 if (m.propType == "EnumProperty" && m.enumAddr == 0 && m.fieldAddr) {
-                    Macht::ReadSafe(m.fieldAddr + DynOff::FENUMPROP_ENUM, m.enumAddr);
+                    m.enumAddr = Ubel::ReadPropertyEnum(m.fieldAddr, m.propType);   // [ENUMSLOT-ANY-NAME]
                 }
             }
             Ubel::ResolvePropertyPreviews(result.results, instanceMap);
