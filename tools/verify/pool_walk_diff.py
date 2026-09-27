@@ -16,7 +16,9 @@ HOW TO USE IT
   Capture with the old DLL, kill the game, relaunch, inject the new DLL, capture again, diff. A fresh
   inject each time, and NOTHING else first (no Live Walker): a walk before the capture can move the
   property family and hide the very defect a slot change can cause (working-lessons 1.ai).
-  `changed` is the verdict; rows present in only one capture are per-session differences in the
+  `changed` is the verdict -- over the rows BOTH captures hold, so the two must be keyed alike: a capture records
+  its key format, and `diff` refuses (exit 2) two formats, or captures that share no row at all, rather than report
+  a vacuous "0 changed". Rows present in only one capture are per-session differences in the
   loaded classes (the field LIST comes from the plain chain walk, not the slot), and should be
   explained, not ignored. Captures go to out/sdk-live/pool_<label>.json (gitignored).
   Measured 2026-09-28, builds 3594 -> 3595: six fixtures, ~445,000 fields, 0 changed.
@@ -32,6 +34,7 @@ OUT_DIR = Path(__file__).resolve().parents[2] / "out" / "sdk-live"
 KEYS = ("struct_type", "obj_class", "meta_class", "inner_type", "inner_struct_type", "inner_obj_class",
         "key_type", "key_struct_type", "key_obj_class", "value_type", "value_struct_type", "value_obj_class",
         "elem_type", "elem_struct_type", "elem_obj_class", "enum_name", "inner_enum", "elem_enum", "key_enum")
+KEY_FORMAT = "class_path"   # how `capture` keys its rows; `diff` refuses to compare two formats
 OBJFAM = {"ObjectProperty", "ClassProperty", "WeakObjectProperty", "SoftObjectProperty", "SoftClassProperty",
           "InterfaceProperty", "LazyObjectProperty"}
 
@@ -92,13 +95,22 @@ def capture(label):
                     count(tot, f)
     print("totals:", dict(tot))
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    json.dump({"label": label, "totals": dict(tot), "rows": rows}, open(out_path(label), "w", encoding="utf-8"))
+    json.dump({"label": label, "key": KEY_FORMAT, "totals": dict(tot), "rows": rows},
+              open(out_path(label), "w", encoding="utf-8"))
     print("written:", out_path(label))
 
 
 def diff(la, lb):
     a = json.load(open(out_path(la), encoding="utf-8"))
     b = json.load(open(out_path(lb), encoding="utf-8"))
+    # Captures before the key was recorded were keyed by class name.
+    ka, kb = a.get("key", "class_name"), b.get("key", "class_name")
+    if ka != kb:
+        print(f"REFUSED: {la} is keyed by {ka}, {lb} by {kb} -- recapture one; a diff would compare nothing")
+        return 2
+    if not set(a["rows"]) & set(b["rows"]):
+        print(f"REFUSED: {la} and {lb} share no row -- not two captures of one fixture")
+        return 2
     print(la, a["totals"])
     print(lb, b["totals"])
     ra, rb = a["rows"], b["rows"]
