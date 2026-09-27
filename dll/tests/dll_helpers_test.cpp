@@ -6716,9 +6716,20 @@ static void Test_PropertyFamilyForIsAligned() {
     EXPECT("FPROPALIGN control: UE 5.3+ stock, 0x44 -> 0x70", PropertyFamilyFor(0x44, false).structProp == 0x70);
     EXPECT("FPROPALIGN control: UE 4.25-5.2 stock, 0x4C -> 0x78", PropertyFamilyFor(0x4C, false).structProp == 0x78);
     EXPECT("FPROPALIGN control: 4.27 case-preserving, 0x4C -> 0x80", PropertyFamilyFor(0x4C, true).structProp == 0x80);
-    // Case-preserving at 0x48: the 12-byte FName ends at 0x58, already aligned -- 0x78, not a rounded-up 0x80.
-    EXPECT("FPROPALIGN: case-preserving with Offset_Internal 0x48 -> 0x78, not a rounded 0x80",
-           PropertyFamilyFor(0x48, true).structProp == 0x78);
+    // Review wf_b99fb861-680 (F2): from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8
+    // UnrealType.h), and 4.25-5.2 always put Offset_Internal at 4 mod 8, so an 8-aligned Offset_Internal is a 5.3+
+    // editor-data layout: pointers first, then the FName, then sizeof rounds up to 8. Case-preserving at 0x48 is
+    // 0x50..0x70 + 0x70..0x7C -> 0x80 (this pin said 0x78 for a 4.25-5.2 order no engine builds at 0x48), and a
+    // 5.5+ editor at 0x50 (IndexInOwner) is 0x88. The plain round-up of Offset_Internal + 0x2C / + 0x34 is exact for
+    // both orders at every stock value.
+    EXPECT("FPROPALIGN: case-preserving with Offset_Internal 0x48 (5.3+ order) -> 0x80",
+           PropertyFamilyFor(0x48, true).structProp == 0x80);
+    EXPECT("FPROPALIGN: a 5.5+ editor-data build, case-preserving, Offset_Internal 0x50 -> 0x88",
+           PropertyFamilyFor(0x50, true).structProp == 0x88);
+    EXPECT("FPROPALIGN control: a 5.4 editor, case-preserving, Offset_Internal 0x4C -> 0x80 (the live UnrealEditor log)",
+           PropertyFamilyFor(0x4C, true).structProp == 0x80);
+    EXPECT("FPROPALIGN control: a 4.27 editor, case-preserving, Offset_Internal 0x54 -> 0x88 (the live UE4Editor log)",
+           PropertyFamilyFor(0x54, true).structProp == 0x88);
     for (int off = 0x30; off <= 0x68; off += 4)
         for (bool cpn : { false, true })
             EXPECT("FPROPALIGN: every derived family base is 8-aligned", (PropertyFamilyFor(off, cpn).structProp % 8) == 0);
