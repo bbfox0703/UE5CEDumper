@@ -292,8 +292,12 @@ def header_looks_classy(decl: str, kind: str) -> bool:
         re.search(r"TSubclassOf<|TSoftClassPtr<|\bUClass\*", decl))
 
 
-def source_looks_classy(t: str) -> bool:
-    return bool(re.search(r"TSubclassOf\s*<|TSoftClassPtr\s*<|\bUClass\b|Class\s*>|Class\s*\*", t))
+def has_class_node(n: TypeNode | None, classy: set[str]) -> bool:
+    """Parsed, not pattern-matched: USoundClass / FMetasoundFrontendClass end in "Class" and are
+    not UClass types -- a name regex selected eleven of them on EVERSPACE 2."""
+    if n is None:
+        return False
+    return is_class_node(n, classy) or any(has_class_node(a, classy) for a in n.args)
 
 
 def main() -> int:
@@ -328,12 +332,15 @@ def main() -> int:
         for decl, name, kind in s["members"]:
             src_type = None
             for _mod, path, body in cands:
-                t = source_members(body).get(name)
+                members = source_members(body)
+                # UHT strips the _DEPRECATED suffix from the property's FName, so the runtime
+                # name the header carries is the C++ member name WITHOUT it.
+                t = members.get(name, members.get(name + "_DEPRECATED"))
                 if t is not None:
                     src_type, src_file = t, path
                     break
             hclassy = header_looks_classy(decl, kind)
-            sclassy = src_type is not None and source_looks_classy(src_type)
+            sclassy = src_type is not None and has_class_node(parse_type(src_type), classy)
             if not hclassy and not sclassy:
                 continue
             row = {"module": s["module"], "class": s["uname"], "member": name, "kind": kind,
