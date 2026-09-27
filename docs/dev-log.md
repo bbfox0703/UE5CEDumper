@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (build 3582) — the SDK header's TYPE names: valid, unique across the whole export, and never inheriting from themselves `[SDK-TYPE-NAMES]`
+
+- **Measured first, on a real whole-pool export** (DumperTest 5.4, 7,894 structs): every AnimBlueprint carries its
+  own `AnimBlueprintGeneratedConstantData`, so two AnimBPs defined one struct twice, and the child ABP_Quinn's came
+  out as `struct AnimBlueprintGeneratedConstantData : public AnimBlueprintGeneratedConstantData`. The same
+  measurement showed the whole-pool header is not a compilable unit anyway (2,719 members name a struct defined
+  later; 1,152 enum types are never defined). The maintainer chose: fix the names only, UI only.
+- **Now:** every type spelling goes through one sanitiser (a `-` in an asset name, a keyword, or a type named like
+  the header's own `TArray` / `FName` no longer breaks it). A name held by several types gets the holder's outer
+  (`AnimBlueprintGeneratedConstantData_ABP_Quinn_C`), chosen so the result never depends on load order; the super
+  follows its address and is never the struct itself; a member's type goes to the nearest holder of the right
+  kind. A class the DLL refuses gets an `// ERROR` line instead of an empty struct.
+- **An adversarial review** (8 agents) found 19 issues, 12 confirmed: seven code fixes made red-first, three test
+  gaps closed, the compile rig's staleness check widened to the name services, and two rows filed —
+  `[SDK-UDS-MISSING]` (Blueprint user-defined structs never reach the export) and `[SDK-LIVE-VALUE-TYPES]` (MED,
+  pre-existing: Live Walker's SDK export takes a member's type from its current value). 17/17 mutants killed.
+- AOT `dist\UE5DumpUI.exe` 55.7 MB (58,436,608 B), sha256 `db57895beea8`; `dist\UE5Dumper.dll` sha256 `f7c9e802821a`.
+
 ## 2026-09-27 (build 3581) — the SDK header renames member names C++ would reject; nine docs brought back in line with the code `[SDK-MEMBER-NAMES]`
 
 Both halves came from the other PC's memory-refresh audit of build 3580; every item was checked against the
