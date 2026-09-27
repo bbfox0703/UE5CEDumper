@@ -39,7 +39,7 @@ public static class SdkExportService
     {
         var sb = new StringBuilder(classInfo.Fields.Count * 80 + 256);
         EmitFileHeader(sb);
-        EmitClassHeaderFromSchema(sb, classInfo, SdkTypeNames.Single(classInfo.Name, classInfo.FullPath), 0, isClass: null);
+        EmitClassHeaderFromSchema(sb, classInfo, SdkTypeNames.Single(classInfo.Name, classInfo.FullPath, classInfo.SuperName), 0);
         return sb.ToString();
     }
 
@@ -170,6 +170,19 @@ public static class SdkExportService
             }
         }
 
+        // A class the DLL refuses comes back as an EMPTY ClassInfo (Ubel::WalkClassEx), not an error.
+        // Emitted, it would be a real-looking `struct X {}` of size 0 that every derived class sits
+        // on; it gets the failed walk's ERROR line instead, and keeps its GObjects name for them.
+        var refused = new bool[targets.Count];
+        for (int i = 0; i < targets.Count; i++)
+        {
+            if (walks[i] is { } w && string.IsNullOrEmpty(w.Name))
+            {
+                walks[i] = null;
+                refused[i] = true;
+            }
+        }
+
         // 3. Name every type once, against the whole pool, then emit in GObjects order.
         var entries = new SdkTypeNames.Entry[targets.Count];
         for (int i = 0; i < targets.Count; i++)
@@ -177,9 +190,19 @@ public static class SdkExportService
             var (addr, name, meta) = targets[i];
             var info = walks[i];
             entries[i] = new SdkTypeNames.Entry(
-                addr, !string.IsNullOrEmpty(info?.Name) ? info.Name : name, meta != "ScriptStruct", info?.FullPath ?? "");
+                addr, info?.Name ?? name, meta != "ScriptStruct", info?.FullPath ?? "");
         }
-        var names = new SdkTypeNames(entries);
+        // A super the pool does not hold is a type the user must supply under its own name, so no
+        // pool type may take that spelling (a pool type named like its missing super would otherwise
+        // come out inheriting from itself).
+        var addresses = new HashSet<string>(targets.Select(t => t.addr), StringComparer.Ordinal);
+        var rawNames = new HashSet<string>(entries.Select(e => e.Name), StringComparer.Ordinal);
+        var outside = walks.Where(w => w is not null && !string.IsNullOrEmpty(w.SuperName)
+                                       && (string.IsNullOrEmpty(w.SuperAddress)
+                                               ? !rawNames.Contains(w.SuperName)
+                                               : !addresses.Contains(w.SuperAddress)))
+                           .Select(w => w!.SuperName);
+        var names = new SdkTypeNames(entries, outside);
 
         var sb = new StringBuilder(targets.Count * 512);
         EmitFileHeader(sb);
@@ -189,7 +212,9 @@ public static class SdkExportService
         for (int i = 0; i < targets.Count; i++)
         {
             if (walks[i] is { } info)
-                EmitClassHeaderFromSchema(sb, info, names, i, entries[i].IsClass);
+                EmitClassHeaderFromSchema(sb, info, names, i);
+            else if (refused[i])
+                sb.AppendLine($"// ERROR: Failed to walk {targets[i].name} at {targets[i].addr} (the DLL returned an empty class)");
             else
                 sb.AppendLine($"// ERROR: Failed to walk {targets[i].name} at {targets[i].addr}");
             sb.AppendLine();
@@ -398,14 +423,14 @@ public static class SdkExportService
     }
 
     private static void EmitClassHeaderFromSchema(StringBuilder sb, ClassInfoModel classInfo,
-                                                  SdkTypeNames names, int index, bool? isClass)
+                                                  SdkTypeNames names, int index)
     {
         var superName = classInfo.SuperName;
         var fullPath = classInfo.FullPath;
 
         EmitStructOpening(sb, !string.IsNullOrEmpty(fullPath) ? fullPath : classInfo.Name,
             names.NameAt(index),
-            string.IsNullOrEmpty(superName) ? "" : names.Super(classInfo.SuperAddress, superName, isClass, fullPath));
+            string.IsNullOrEmpty(superName) ? "" : names.Super(index, classInfo.SuperAddress, superName));
 
         // The RAW super name still decides whether there is a super at all (PropertyOwnership).
         EmitStructBody(
@@ -591,10 +616,10 @@ public static class SdkExportService
         int ownPropsStart)
     {
         // One struct, no pool: its own name is the only one references can resolve to.
-        var names = SdkTypeNames.Single(className, fullPath);
+        var names = SdkTypeNames.Single(className, fullPath, superName);
         EmitStructOpening(sb, !string.IsNullOrEmpty(fullPath) ? fullPath : className,
             names.NameAt(0),
-            string.IsNullOrEmpty(superName) ? "" : names.Super(null, superName, null, fullPath));
+            string.IsNullOrEmpty(superName) ? "" : names.Super(0, null, superName));
 
         EmitStructBody(
             sb,

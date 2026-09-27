@@ -13,17 +13,20 @@ namespace UE5DumpUI.Services;
 /// <c>-</c>, so an asset name can carry one into a class name; and a pool type named like a type
 /// this header spells itself (<c>TArray</c>) collides with it (C2990).</para>
 ///
-/// <para><b>Uniqueness</b> (whole pool only): a name held by more than one type is qualified with the
-/// holder's outers, nearest first — <c>AnimBlueprintGeneratedConstantData_ABP_Quinn_C</c> — at the
-/// smallest depth that tells every holder apart, so the result does not depend on GObjects order.
-/// The one exception keeps the plain name: the single native (<c>/Script</c>) holder, else the single
-/// holder whose UE name needed no sanitising. Dumper-7 puts such types in package namespaces; this
-/// header is flat, so the package goes into the name.</para>
+/// <para><b>Uniqueness</b>: a name held by more than one type is qualified with the holder's outers,
+/// nearest first — <c>AnimBlueprintGeneratedConstantData_ABP_Quinn_C</c>. Every decision depends on
+/// the set of types, never on GObjects order: a group of holders moves out a level together until its
+/// names differ from each other, from every other group's, and from every type's own name. The
+/// single native (<c>/Script</c>) holder, else the single holder whose UE name needed no sanitising,
+/// keeps the plain name — unless a type OUTSIDE the pool (a super the export does not define) is
+/// spelled that way. Dumper-7 puts such types in package namespaces; this header is flat, so the
+/// package goes into the name.</para>
 ///
-/// <para><b>References</b>: the super is found by <c>SuperAddress</c>, exactly. A member names only
-/// a short type name, so among several holders the one of the right kind (a pointer names a class,
-/// a by-value member a struct) whose path shares the most with the referring type's wins — a
-/// heuristic, and the only one the wire allows. A name outside the pool is sanitised only.</para>
+/// <para><b>References</b>: the super is found by <c>SuperAddress</c>, and is never the struct
+/// itself. A member names only a short type name on the wire, so among several holders the one of
+/// the right kind (a pointer names a class, a by-value member a struct) whose path shares the most
+/// with the referring type wins, ties to the lower path — a heuristic, and the only one the wire
+/// allows. With no holder of the right kind, or none at all, the name is sanitised only.</para>
 /// </summary>
 internal sealed class SdkTypeNames
 {
@@ -52,18 +55,30 @@ internal sealed class SdkTypeNames
     private readonly Entry[] _entries;
     private readonly string[] _names;
     private readonly string[][] _pathTokens;
+    private readonly HashSet<string> _outside;
     private readonly Dictionary<string, int> _byAddress = new(StringComparer.Ordinal);
     private readonly Dictionary<string, List<int>> _byName = new(StringComparer.Ordinal);
 
-    /// <summary>A pool of one: a single exported struct, so references to its own name follow it.</summary>
-    internal static SdkTypeNames Single(string name, string? fullPath) =>
-        new(new[] { new Entry("", name ?? "", null, fullPath ?? "") });
+    /// <summary>
+    /// A pool of one: a single exported struct. Its super is outside the pool — the type the user
+    /// already has under that name — so if the two share a spelling, the exported struct is the one
+    /// renamed.
+    /// </summary>
+    internal static SdkTypeNames Single(string name, string? fullPath, string? superName) =>
+        new(new[] { new Entry("", name ?? "", null, fullPath ?? "") },
+            string.IsNullOrEmpty(superName) ? null : new[] { superName });
 
-    internal SdkTypeNames(IReadOnlyList<Entry> entries)
+    /// <param name="entries">The types the header defines.</param>
+    /// <param name="outsideNames">UE names of types the header references but does not define (a super
+    /// missing from the pool). No entry may be spelled like one.</param>
+    internal SdkTypeNames(IReadOnlyList<Entry> entries, IEnumerable<string>? outsideNames = null)
     {
         _entries = entries.ToArray();
         _names = new string[_entries.Length];
         _pathTokens = _entries.Select(e => PathTokens(e.FullPath)).ToArray();
+        _outside = new HashSet<string>(
+            (outsideNames ?? Array.Empty<string>()).Where(n => !string.IsNullOrEmpty(n)).Select(Sanitised),
+            StringComparer.Ordinal);
 
         for (int i = 0; i < _entries.Length; i++)
         {
@@ -79,79 +94,110 @@ internal sealed class SdkTypeNames
     internal string NameAt(int index) => _names[index];
 
     /// <summary>
-    /// The emitted super name: the pool entry at <paramref name="superAddress"/> when there is one,
-    /// else a by-name reference of the same kind as the type that inherits.
+    /// The emitted super name of entry <paramref name="self"/>: the pool entry at
+    /// <paramref name="superAddress"/> when there is one, else a by-name reference of the same kind.
+    /// Never the struct itself — a type cannot inherit from itself, so a same-named super is another
+    /// type even when the pool cannot say which.
     /// </summary>
-    internal string Super(string? superAddress, string superName, bool? isClass, string? fromPath)
+    internal string Super(int self, string? superAddress, string superName)
     {
-        if (!string.IsNullOrEmpty(superAddress) && _byAddress.TryGetValue(superAddress, out int i))
+        if (!string.IsNullOrEmpty(superAddress) && _byAddress.TryGetValue(superAddress, out int i) && i != self)
             return _names[i];
-        var kind = isClass switch { true => Kind.Class, false => Kind.Struct, null => Kind.Any };
-        return Reference(superName, kind, fromPath);
+
+        var kind = _entries[self].IsClass switch { true => Kind.Class, false => Kind.Struct, null => Kind.Any };
+        var name = Reference(superName, kind, _entries[self].FullPath, exclude: self);
+
+        // Only reachable when the super is outside the pool, the caller did not declare it so, and
+        // it sanitises to this struct's own name: spell it apart rather than inherit from itself.
+        for (int n = 0; name == _names[self]; n++)
+            name = Sanitised(superName) + "_" + n.ToString(CultureInfo.InvariantCulture);
+        return name;
     }
 
     /// <summary>The emitted name for a type a member (or a super) names by its short UE name.</summary>
-    internal string Reference(string raw, Kind kind, string? fromPath)
+    internal string Reference(string raw, Kind kind, string? fromPath) => Reference(raw, kind, fromPath, -1);
+
+    private string Reference(string raw, Kind kind, string? fromPath, int exclude)
     {
         if (string.IsNullOrEmpty(raw)) return raw;
 
         // The pool holds classes and structs only; an enum of the same name is a different type.
         if (kind != Kind.Enum && _byName.TryGetValue(raw, out var holders))
         {
-            var fitting = kind switch
+            // A holder whose kind is unknown (a pool of one) fits either way. One whose kind is KNOWN
+            // to be the other never fits: a by-value member cannot name a class, nor a pointer a struct.
+            var fitting = holders.Where(h => h != exclude && kind switch
             {
-                Kind.Class => holders.Where(h => _entries[h].IsClass != false).ToList(),
-                Kind.Struct => holders.Where(h => _entries[h].IsClass != true).ToList(),
-                _ => holders,
-            };
-            if (fitting.Count == 0) fitting = holders;
-            if (fitting.Count == 1) return _names[fitting[0]];
+                Kind.Class => _entries[h].IsClass != false,
+                Kind.Struct => _entries[h].IsClass != true,
+                _ => true,
+            }).ToList();
 
-            var from = PathTokens(fromPath);
-            int best = fitting[0], bestScore = -1;
-            foreach (int h in fitting)
+            if (fitting.Count == 1) return _names[fitting[0]];
+            if (fitting.Count > 1)
             {
-                int score = CommonPrefix(_pathTokens[h], from) * 2 + (IsNative(h) ? 1 : 0);
-                if (score > bestScore) { best = h; bestScore = score; }
+                var from = PathTokens(fromPath);
+                int best = -1, bestScore = -1;
+                foreach (int h in fitting)
+                {
+                    int score = CommonPrefix(_pathTokens[h], from) * 2 + (IsNative(h) ? 1 : 0);
+                    if (score > bestScore || (score == bestScore && Before(h, best)))
+                    {
+                        best = h;
+                        bestScore = score;
+                    }
+                }
+                return _names[best];
             }
-            return _names[best];
         }
 
-        var id = SdkMemberNames.MakeIdentifier(raw);
-        return SdkMemberNames.IsReservedIdentifier(id) ? id + "_0" : id;
+        return Sanitised(raw);
     }
 
     // ------------------------------------------------------------------
+
+    /// <summary>A name that is not a pool type: sanitised, and moved off a keyword.</summary>
+    private static string Sanitised(string raw)
+    {
+        var id = SdkMemberNames.MakeIdentifier(raw);
+        return SdkMemberNames.IsReservedIdentifier(id) ? id + "_0" : id;
+    }
 
     private static bool Reserved(string name) =>
         SdkMemberNames.IsReservedIdentifier(name) || BuiltIns.Contains(name);
 
     private bool IsNative(int i) => _pathTokens[i].Length > 0 && _pathTokens[i][0] == "Script";
 
+    /// <summary>An order that does not depend on GObjects order: the path, then the emitted name.</summary>
+    private bool Before(int a, int b)
+    {
+        int c = string.CompareOrdinal(_entries[a].FullPath ?? "", _entries[b].FullPath ?? "");
+        if (c != 0) return c < 0;
+        c = string.CompareOrdinal(_names[a], _names[b]);
+        return c != 0 ? c < 0 : a < b;
+    }
+
     private void Assign()
     {
         var baseNames = _entries.Select(e => SdkMemberNames.MakeIdentifier(e.Name ?? "")).ToArray();
         var groups = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-        var order = new List<string>();
-        for (int i = 0; i < _entries.Length; i++)
+        foreach (var (name, i) in baseNames.Select((n, i) => (n, i)))
         {
-            if (!groups.TryGetValue(baseNames[i], out var g))
-            {
-                groups[baseNames[i]] = g = new List<int>();
-                order.Add(baseNames[i]);
-            }
+            if (!groups.TryGetValue(name, out var g)) groups[name] = g = new List<int>();
             g.Add(i);
         }
 
+        // Every type's own name, and every outside type's, is off limits to a qualified name.
+        var forbidden = new HashSet<string>(baseNames, StringComparer.Ordinal);
+        forbidden.UnionWith(_outside);
         var taken = new HashSet<string>(StringComparer.Ordinal);
 
         // Pass 1: the holder that keeps the plain name, if any.
         var toQualify = new Dictionary<string, List<int>>(StringComparer.Ordinal);
-        foreach (var name in order)
+        foreach (var (name, group) in groups)
         {
-            var group = groups[name];
             int keeper = -1;
-            if (!Reserved(name))
+            if (!Reserved(name) && !_outside.Contains(name))
             {
                 if (group.Count == 1)
                 {
@@ -174,35 +220,79 @@ internal sealed class SdkTypeNames
             if (rest.Count > 0) toQualify[name] = rest;
         }
 
-        // Pass 2: everyone else is qualified with its outers, at one depth for the whole group.
-        foreach (var name in order)
+        // Pass 2: every other holder is qualified with its outers. All groups step out together: a
+        // group moves one level out while its names collide with each other, with another group's,
+        // or with a forbidden name -- so no group wins a name by being met first.
+        var usable = new Dictionary<int, List<string>>();
+        var depth = new Dictionary<string, int>(StringComparer.Ordinal);
+        var exhausted = new List<string>();
+        foreach (var (name, group) in toQualify)
         {
-            if (!toQualify.TryGetValue(name, out var group)) continue;
-            var usable = group.ToDictionary(h => h, h => Qualifiers(h, name));
-            int maxDepth = usable.Values.Max(u => u.Count);
-            bool done = false;
+            var lists = group.Select(h => Qualifiers(h, name, skipSelfNamed: true)).ToList();
+            // Dropping a self-named outer must not erase the only difference between two paths.
+            if (HasDuplicateList(lists))
+                lists = group.Select(h => Qualifiers(h, name, skipSelfNamed: false)).ToList();
+            for (int k = 0; k < group.Count; k++) usable[group[k]] = lists[k];
 
-            for (int depth = 1; depth <= maxDepth && !done; depth++)
+            if (lists.Any(l => l.Count == 0)) exhausted.Add(name);   // a failed walk has no path
+            else depth[name] = 1;
+        }
+
+        while (depth.Count > 0)
+        {
+            var candidates = depth.ToDictionary(
+                g => g.Key,
+                g => toQualify[g.Key].Select(h => Qualified(g.Key, usable[h], g.Value)).ToList(),
+                StringComparer.Ordinal);
+            var uses = new Dictionary<string, int>(StringComparer.Ordinal);
+            foreach (var c in candidates.Values.SelectMany(l => l))
+                uses[c] = uses.TryGetValue(c, out int u) ? u + 1 : 1;
+
+            var bad = candidates
+                .Where(g => g.Value.Any(c => uses[c] > 1 || forbidden.Contains(c) || Reserved(c)))
+                .Select(g => g.Key).ToList();
+            if (bad.Count == 0)
             {
-                if (usable.Values.Any(u => u.Count == 0)) break;
-                var candidates = group.Select(h => Qualified(name, usable[h], depth)).ToList();
-                if (candidates.Distinct(StringComparer.Ordinal).Count() != candidates.Count) continue;
-                if (candidates.Any(c => taken.Contains(c) || Reserved(c))) continue;
-                for (int k = 0; k < group.Count; k++)
+                foreach (var (name, names) in candidates)
                 {
-                    _names[group[k]] = candidates[k];
-                    taken.Add(candidates[k]);
+                    var group = toQualify[name];
+                    for (int k = 0; k < group.Count; k++) _names[group[k]] = names[k];
+                    taken.UnionWith(names);
                 }
-                done = true;
+                break;
             }
-            if (done) continue;
+            foreach (var name in bad)
+            {
+                int next = depth[name] + 1;
+                if (next > toQualify[name].Max(h => usable[h].Count))
+                {
+                    depth.Remove(name);
+                    exhausted.Add(name);
+                }
+                else
+                {
+                    depth[name] = next;
+                }
+            }
+        }
 
-            // No path tells them apart (a failed walk has no path): number what is left, in order.
-            foreach (int h in group)
+        // What no path tells apart is numbered -- in path order, never GObjects order.
+        foreach (var name in exhausted.OrderBy(n => n, StringComparer.Ordinal))
+        {
+            var group = toQualify[name];
+            int maxDepth = group.Max(h => usable[h].Count);
+            var ordered = group.ToList();
+            ordered.Sort((a, b) =>
+            {
+                int c = string.CompareOrdinal(_entries[a].FullPath ?? "", _entries[b].FullPath ?? "");
+                return c != 0 ? c : a.CompareTo(b);
+            });
+            foreach (int h in ordered)
             {
                 var stem = usable[h].Count > 0 ? Qualified(name, usable[h], maxDepth) : name;
                 var candidate = stem;
-                for (int n = 0; taken.Contains(candidate) || Reserved(candidate); n++)
+                for (int n = 0; taken.Contains(candidate) || (forbidden.Contains(candidate) && candidate != name)
+                                || _outside.Contains(candidate) || Reserved(candidate); n++)
                     candidate = stem + "_" + n.ToString(CultureInfo.InvariantCulture);
                 _names[h] = candidate;
                 taken.Add(candidate);
@@ -210,19 +300,27 @@ internal sealed class SdkTypeNames
         }
     }
 
+    private static bool HasDuplicateList(List<List<string>> lists)
+    {
+        var seen = new HashSet<string>(StringComparer.Ordinal);
+        foreach (var l in lists)
+            if (!seen.Add(string.Join("\u0001", l))) return true;
+        return false;
+    }
+
     /// <summary>
-    /// The holder's outers, outermost first, as identifiers — without the ones that only repeat the
-    /// type's own name (a Blueprint's package <c>BP_Door</c> beside its class <c>BP_Door_C</c>, a
-    /// user-defined struct's package beside the struct), which would tell no two holders apart.
+    /// The holder's outers, outermost first, as identifiers. With <paramref name="skipSelfNamed"/>,
+    /// without the ones that only repeat the type's own name (a Blueprint's package <c>BP_Door</c>
+    /// beside its class <c>BP_Door_C</c>, a user-defined struct's package beside the struct).
     /// </summary>
-    private List<string> Qualifiers(int h, string baseName)
+    private List<string> Qualifiers(int h, string baseName, bool skipSelfNamed)
     {
         var tokens = _pathTokens[h];
         var result = new List<string>();
         for (int i = 0; i < tokens.Length - 1; i++)
         {
             var t = SdkMemberNames.MakeIdentifier(tokens[i]);
-            if (t == baseName || t + "_C" == baseName || t == baseName + "_C") continue;
+            if (skipSelfNamed && (t == baseName || t + "_C" == baseName || t == baseName + "_C")) continue;
             result.Add(t);
         }
         return result;

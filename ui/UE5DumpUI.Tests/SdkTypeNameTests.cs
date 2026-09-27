@@ -203,6 +203,19 @@ public class SdkTypeNameTests
     }
 
     [Fact]
+    public void Pool_TheSuperFollowsItsAddress_NotANearerNamesake()
+    {
+        // A third holder sits in Quinn's own package, nearer than Manny's: by name it would win.
+        // The super is the one SuperAddress points at.
+        var sdk = AnimBlueprintPool()
+            .Add("0x50", ConstData, "ScriptStruct", Quinn + "_Extra." + ConstData, size: 4,
+                 fields: new[] { Int("Extra", 0) })
+            .Sdk();
+
+        Assert.Contains($"struct {ConstData}_ABP_Quinn_C : public {ConstData}_ABP_Manny_C", sdk);
+    }
+
+    [Fact]
     public void Pool_MemberReferences_ResolveToTheNearestHolder()
     {
         // Each AnimBP's member names only the short type name; the holder under the same outer wins.
@@ -288,20 +301,21 @@ public class SdkTypeNameTests
     public void Pool_ReferenceKind_PicksTheClassOrTheStruct()
     {
         // A class and a struct may share a short name in different modules; a pointer names a class,
-        // a by-value member names a struct.
-        // Both orders: with the class listed first, a pointer that ignored kind would still land on it.
+        // a by-value member names a struct. Both are equally near the referrer, so the tie-break (the
+        // lower path) would pick the STRUCT's /ModA -- only the kind filter sends the pointer to the
+        // class. Both GObjects orders, so neither can win by being listed first.
         foreach (bool structFirst in new[] { false, true })
         {
             var d = new SdkPoolDump();
-            if (structFirst) d.Add("0x2", "Foo", "ScriptStruct", "//Script/ModB/Foo", fields: new[] { Int("B", 0) });
-            d.Add("0x1", "Foo", "Class", "//Script/ModA/Foo", fields: new[] { Int("A", 0) });
-            if (!structFirst) d.Add("0x2", "Foo", "ScriptStruct", "//Script/ModB/Foo", fields: new[] { Int("B", 0) });
+            if (structFirst) d.Add("0x2", "Foo", "ScriptStruct", "//Script/ModA/Foo", fields: new[] { Int("B", 0) });
+            d.Add("0x1", "Foo", "Class", "//Script/ModB/Foo", fields: new[] { Int("A", 0) });
+            if (!structFirst) d.Add("0x2", "Foo", "ScriptStruct", "//Script/ModA/Foo", fields: new[] { Int("B", 0) });
             var sdk = d.Add("0x3", "BP_Z_C", "BlueprintGeneratedClass", "//Game/Z/BP_Z/BP_Z_C", size: 0x10,
                             fields: new[] { PtrMember("P", "Foo", 0), StructMember("S", "Foo", 8) })
                        .Sdk();
 
-            Assert.Contains("class Foo_ModA* P;", sdk);
-            Assert.Contains("struct Foo_ModB S;", sdk);
+            Assert.Contains("class Foo_ModB* P;", sdk);
+            Assert.Contains("struct Foo_ModA S;", sdk);
         }
     }
 
@@ -434,6 +448,19 @@ public class SdkTypeNameTests
         Assert.Contains("// ERROR: Failed to walk MySaveGame at 0x200", n);
         Assert.DoesNotContain("struct MySaveGame\n", n);
         Assert.Contains("struct BP_Save_C : public MySaveGame\n", n);
+    }
+
+    [Fact]
+    public void Pool_ASuperWithoutAnAddress_NamedLikeTheClass_IsSpelledApart()
+    {
+        // No SuperAddress (an older DLL) and the super's name is the class's own, with no other holder:
+        // the name cannot pick a type, but it must not pick the class itself.
+        var n = new SdkPoolDump()
+            .Add("0x1", "BP_Door_C", "BlueprintGeneratedClass", "//Game/Level2/BP_Door/BP_Door_C", "", "BP_Door_C",
+                 fields: new[] { Int("V", 0) })
+            .Sdk().Replace("\r\n", "\n");
+
+        Assert.Contains("struct BP_Door_C : public BP_Door_C_0\n", n);
     }
 
     [Fact]
