@@ -4965,6 +4965,152 @@ int main() {
         }
     }
 
+    // -- UPROPSLOT-2026-09-27 -- a UProperty engine gets the property subclass family at ITS start -------------------
+    //
+    // ⛔ POOL-FAKING (own GObjects, own name table; the LAST block, and it restores every DynOff Genau writes).
+    // [UPROP-SUBCLASS-SLOT] Genau's UProperty arm derived the bool slot alone, so FSTRUCTPROP_STRUCT and the rest of the
+    // family kept the FProperty default 0x78 -- past the end of a 4.23 UStructProperty / UObjectProperty and ON a
+    // UClassProperty's MetaClass. Measured on UE423_Flying, SDK export straight after connect: 2,624 of 2,624 struct
+    // members raw bytes, 1,038 of 1,038 object pointers UObject*. Only a later Live Walker struct probe corrected it.
+    {
+        blk("UPROPSLOT - Genau publishes the UProperty subclass family at the version's start, and a walk reads it");
+
+        const auto svCpn = DynOff::bCasePreservingName;   const auto svOuter = DynOff::UOBJECT_OUTER;
+        const auto svFProp = DynOff::bUseFProperty;       const auto svNext = DynOff::UFIELD_NEXT;
+        const auto svChildren = DynOff::USTRUCT_CHILDREN; const auto svSuper = DynOff::USTRUCT_SUPER;
+        const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE; const auto svScript = DynOff::USTRUCT_SCRIPT;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET;     const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const auto svUFlags = DynOff::UPROPERTY_FLAGS;    const auto svUBool = DynOff::UBOOLPROP_FIELDSIZE;
+        const auto svTagged = DynOff::bTaggedFFieldVariant; const auto svFNum = DynOff::FNAME_NUMBER;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        const uint32_t svVer = g_cachedUEVersion;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t upEntry[11][0x40] = {};
+        const char* upNames[11] = { "", "ScriptStruct", "Guid", "IntProperty", "A", "B", "C", "D",
+                                    "StructProperty", "Where", "Decoy" };
+        static uintptr_t upChunk[12] = {};
+        for (int i = 1; i <= 10; ++i) {
+            memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
+            upChunk[i] = A(upEntry[i]);
+        }
+        static uintptr_t upChunks[2] = { A(upChunk), 0 };
+        Serie::InitUE4(A(upChunks), 0x10);
+
+        // Guid (a ScriptStruct) whose UStruct::Children at +0x48 heads A -> B -> C -> D, four IntProperty UObjects.
+        static uint8_t upScriptStructCls[0x100] = {}, upIntPropCls[0x100] = {}, upGuid[0x100] = {};
+        static uint8_t upProp[4][0x100] = {};
+        put32(upScriptStructCls, Grimoire::OFF_UOBJECT_NAME, 1);
+        put32(upIntPropCls, Grimoire::OFF_UOBJECT_NAME, 3);
+        putP(upGuid, Grimoire::OFF_UOBJECT_CLASS, A(upScriptStructCls));
+        putP(upGuid, 0x48, A(upProp[0]));
+        auto layout = [&](int nameIdxOfGuid, int nextOff, int elemOff, int offOff) {
+            put32(upGuid, Grimoire::OFF_UOBJECT_NAME, nameIdxOfGuid);
+            for (auto& p : upProp) memset(p, 0, sizeof(p));
+            for (int i = 0; i < 4; ++i) {
+                putP(upProp[i], Grimoire::OFF_UOBJECT_CLASS, A(upIntPropCls));
+                put32(upProp[i], Grimoire::OFF_UOBJECT_NAME, 4 + i);
+                if (i < 3) putP(upProp[i], nextOff, A(upProp[i + 1]));
+                put32(upProp[i], elemOff - 4, 1);        // ArrayDim
+                put32(upProp[i], elemOff, 4);            // ElementSize
+                put32(upProp[i], offOff, i * 4);         // Offset_Internal
+            }
+        };
+        FakePool upPool;
+        upPool.Build(2);
+        static uint8_t upZero[0x100] = {};
+        const uintptr_t upObjs[2] = { A(upZero), A(upGuid) };
+        for (int i = 0; i < 2; ++i)
+            memcpy(upPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &upObjs[i], sizeof(uintptr_t));
+        Aura::InitWithExtendedLayout(upPool.Addr(), FakePool::kItemSize);
+
+        auto runGenau = [&](uint32_t ver) {
+            DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));   // the FProperty default, as at load
+            DynOff::UPROPERTY_OFFSET = 0x44;
+            DynOff::UFIELD_NEXT = 0x28;
+            Genau::ValidateAndFixOffsets(ver);
+        };
+        auto fam = [] {
+            return std::to_string(DynOff::FSTRUCTPROP_STRUCT) + "/" + std::to_string(DynOff::FARRAYPROP_INNER) + "/"
+                 + std::to_string(DynOff::FBOOLPROP_FIELDSIZE) + "/" + std::to_string(DynOff::FBYTEPROP_ENUM) + "/"
+                 + std::to_string(DynOff::FENUMPROP_ENUM);
+        };
+        auto famAt = [](int s) {
+            return DynOff::FSTRUCTPROP_STRUCT == s && DynOff::FARRAYPROP_INNER == s && DynOff::FBOOLPROP_FIELDSIZE == s
+                && DynOff::FBYTEPROP_ENUM == s && DynOff::FENUMPROP_ENUM == s + 8;
+        };
+
+        // 4.23 stock: Next +0x28, ElementSize +0x34, Offset_Internal +0x44 -> subclass start 0x70.
+        layout(2, 0x28, 0x34, 0x44);
+        runGenau(423);
+        check("UPROPSLOT setup: 4.23 is UProperty mode and Offset_Internal was MEASURED at +0x44",
+              !DynOff::bUseFProperty && DynOff::UPROPERTY_OFFSET == 0x44 && DynOff::UPROPERTY_ELEMSIZE == 0x34,
+              std::to_string(DynOff::UPROPERTY_OFFSET).c_str());
+        check("UPROPSLOT control: the bool slot was already derived there (the A6 arm)",
+              DynOff::UBOOLPROP_FIELDSIZE == 0x70, std::to_string(DynOff::UBOOLPROP_FIELDSIZE).c_str());
+        check("UPROPSLOT ⭐: 4.23 stock -- the whole family at 0x70, UEnumProperty::Enum at 0x78", famAt(0x70),
+              fam().c_str());
+
+        // A walk now reads a 4.23-sized UStructProperty's Struct at +0x70 -- and not the NAMED object behind it at +0x78,
+        // which the old 0x78 read took for the struct (a real neighbour UObject has a name too).
+        static uint8_t upStructPropCls[0x100] = {}, upDecoy[0x100] = {}, upSP[0x100] = {}, upCls[0x100] = {};
+        put32(upStructPropCls, Grimoire::OFF_UOBJECT_NAME, 8);
+        put32(upDecoy, Grimoire::OFF_UOBJECT_NAME, 10);
+        putP(upSP, Grimoire::OFF_UOBJECT_CLASS, A(upStructPropCls));
+        put32(upSP, Grimoire::OFF_UOBJECT_NAME, 9);                  // "Where"
+        put32(upSP, DynOff::UPROPERTY_ELEMSIZE - 4, 1);
+        put32(upSP, DynOff::UPROPERTY_ELEMSIZE, 0x10);
+        put32(upSP, DynOff::UPROPERTY_OFFSET, 0x28);
+        putP(upSP, 0x70, A(upGuid));                                  // UStructProperty::Struct = Guid
+        putP(upSP, 0x78, A(upDecoy));                                 // the next object in memory
+        put32(upCls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+        putP(upCls, DynOff::USTRUCT_CHILDREN, A(upSP));
+        const auto& upInfo = Ubel::WalkClassEx(A(upCls));
+        const FieldInfo* upW = nullptr;
+        for (const auto& f : upInfo.Fields) if (f.Name == "Where") upW = &f;
+        check("UPROPSLOT setup: the 4.23 class walked its StructProperty",
+              upW && upW->TypeName == "StructProperty", std::to_string(upInfo.Fields.size()).c_str());
+        check("UPROPSLOT ⭐: ...and names its struct `Guid`, not the decoy object one pointer later",
+              upW && upW->structType == "Guid", upW ? upW->structType.c_str() : "(no field)");
+
+        // DQ XI S's shifted 4.18 layout: Next +0x38, ElementSize +0x44, Offset_Internal +0x54 -> start 0x80.
+        layout(2, 0x38, 0x44, 0x54);
+        runGenau(418);
+        check("UPROPSLOT setup: the shifted layout's Offset_Internal was measured at +0x54",
+              DynOff::UPROPERTY_OFFSET == 0x54, std::to_string(DynOff::UPROPERTY_OFFSET).c_str());
+        check("UPROPSLOT ⭐: a DQ XI S-style shifted 4.18 -- the family at 0x80", famAt(0x80), fam().c_str());
+
+        // 4.15 stock: Offset_Internal +0x50, delta 0x28 -> start 0x78, which the FProperty default happens to equal.
+        layout(2, 0x28, 0x34, 0x50);
+        runGenau(415);
+        check("UPROPSLOT control: 4.15 stock -- the family at 0x78 (right before the fix by coincidence)",
+              DynOff::UPROPERTY_OFFSET == 0x50 && famAt(0x78), fam().c_str());
+
+        // No Guid / Vector: Genau gives up on its defaults -- which must be the UProperty family, not FProperty's.
+        layout(4, 0x28, 0x34, 0x44);
+        runGenau(423);
+        check("UPROPSLOT setup: no Guid / Vector takes the give-up",
+              std::string(DynOff::g_offsetsFallbackReason) == "no-guid-or-vector-struct",
+              DynOff::g_offsetsFallbackReason);
+        check("UPROPSLOT ⭐: the give-up ships the 4.23 default family 0x70, not FProperty's 0x78", famAt(0x70),
+              fam().c_str());
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bCasePreservingName = svCpn;  DynOff::UOBJECT_OUTER = svOuter;   DynOff::bUseFProperty = svFProp;
+        DynOff::UFIELD_NEXT = svNext;         DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_SUPER = svSuper;
+        DynOff::USTRUCT_PROPSSIZE = svPropsSize; DynOff::USTRUCT_SCRIPT = svScript;
+        DynOff::UPROPERTY_OFFSET = svUOff;    DynOff::UPROPERTY_ELEMSIZE = svUElem; DynOff::UPROPERTY_FLAGS = svUFlags;
+        DynOff::UBOOLPROP_FIELDSIZE = svUBool; DynOff::bTaggedFFieldVariant = svTagged; DynOff::FNAME_NUMBER = svFNum;
+        DynOff::bOffsetsValidated.store(false); DynOff::bOffsetsProbeRan.store(false);
+        DynOff::g_offsetsFallbackReason = "";
+        g_cachedUEVersion = svVer;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
