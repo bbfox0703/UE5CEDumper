@@ -867,14 +867,17 @@ inline constexpr PropertyFamily PropertyFamilyAtBase(int base) {
 // WITH_CASE_PRESERVING_NAME, not 8, so the pointer run after it and the subclass extension start
 // 8 bytes later: +0x34. RE-UE4SS's 4.27 templates: Offset_Internal 0x4C -> FStructProperty::Struct
 // 0x78, and in the CasePreserving one 0x80. Genau passes DynOff::bCasePreservingName at all three sites.
-// [FPROP-FAMILY-ALIGN] The +0x2C / +0x34 were right only while Offset_Internal sat on an 8-byte boundary minus 4. The
-// four link pointers after RepNotifyFunc are 8-aligned, so the start is computed from the layout: Offset_Internal (4)
-// + RepNotifyFunc (FName, alignof 4), aligned up to 8, + the four pointers. A UE 5.7 build with WITH_EDITORONLY_DATA /
-// WITH_METADATA puts an int32 before Offset_Internal (UE_5.7 UnrealType.h) and moves it to 0x48: the flat +0x2C gave
-// 0x74 where the struct is at 0x78, and TQ2 logged the later correction (`CorrectSubclassOffsets: delta=4`).
+// [FPROP-FAMILY-ALIGN] The +0x2C / +0x34 were right only while Offset_Internal sat on an 8-byte boundary minus 4. A UE
+// 5.7 build with WITH_EDITORONLY_DATA / WITH_METADATA puts an int32 before Offset_Internal (UE_5.7 UnrealType.h) and
+// moves it to 0x48: the flat +0x2C gave 0x74 where the struct is at 0x78, and TQ2 logged the later correction
+// (`CorrectSubclassOffsets: delta=4`). The fix is the same sum rounded UP to 8, and the rounding is at the END on
+// purpose: from UE 5.3 RepNotifyFunc FOLLOWS the four link pointers (UE_5.4 / 5.8 UnrealType.h), so on an 8-aligned
+// Offset_Internal -- which only a 5.3+ editor-data build has; 4.25-5.2 keep it at 4 mod 8 -- the pointers start at the
+// next boundary and the FName ends the object, which sizeof rounds up. Case-preserving 0x48 is 0x80 and a 5.5+ editor's
+// 0x50 is 0x88; the first version of this fix modelled the 4.25-5.2 order (FName, then align) and gave 0x78 / 0x80
+// (review wf_b99fb861-680, F2). At the 4-mod-8 values every build uses, both orders give the same start.
 inline constexpr PropertyFamily PropertyFamilyFor(int propOffsetOff, bool casePreservingName = false) {
-    const int afterRepNotify = propOffsetOff + 4 + (casePreservingName ? 12 : 8);
-    return PropertyFamilyAtBase(((afterRepNotify + 7) & ~7) + 4 * 8);
+    return PropertyFamilyAtBase((propOffsetOff + (casePreservingName ? 0x34 : 0x2C) + 7) & ~7);
 }
 
 // [UPROP-SUBCLASS-SLOT] The same five slots on a UProperty engine (UE < 4.25), at the version's
