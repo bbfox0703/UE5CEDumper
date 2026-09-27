@@ -60,6 +60,9 @@ public partial class DetectStatsViewModel : ViewModelBase
     private List<DetectedStat> _allResults = new();
 
     [ObservableProperty] private ObservableCollection<DetectedStat> _results = new();
+    /// <summary>Keeps the Results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
     [ObservableProperty] private DetectedStat? _selectedResult;
     /// <summary>Client-side filter on property / class / category name (substring).</summary>
     [ObservableProperty] private string _filterText = "";
@@ -139,6 +142,7 @@ public partial class DetectStatsViewModel : ViewModelBase
         try
         {
             IsBusy = true;
+            SelectedResult = null;   // detach before clearing the selection-bound list
             Results.Clear();
             StatusText = "Scanning candidate stat fields…";
 
@@ -389,8 +393,8 @@ public partial class DetectStatsViewModel : ViewModelBase
     /// filter over the property / class / category names.</summary>
     private void ApplyFilter()
     {
-        Results.Clear();
         var terms = ObjectTreeFilter.SplitTerms(FilterText);
+        var rows = new List<DetectedStat>();
         foreach (var r in _allResults)
         {
             if (terms.Length > 0
@@ -398,8 +402,10 @@ public partial class DetectStatsViewModel : ViewModelBase
             {
                 continue;
             }
-            Results.Add(r);
+            rows.Add(r);
         }
+        // Detach before rebuilding the selection-bound list; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, rows, () => SelectedResult = null, FilterText);
     }
 
     // ------------------------------------------------------------------

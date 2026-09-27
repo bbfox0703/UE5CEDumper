@@ -35,6 +35,7 @@ public partial class InterestingFunctionsPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
+        this.AttachFilterView<InterestingFunctionsViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
     }
 
     private void InitializeComponent()
