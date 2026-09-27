@@ -54,14 +54,14 @@ def main():
         root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
     roadmap_path = os.path.join(root, "docs", "roadmap.md")
-    todo_path = os.path.join(root, "docs", "verification-register.md")
-    for p in (roadmap_path, todo_path):
+    register_path = os.path.join(root, "docs", "verification-register.md")
+    for p in (roadmap_path, register_path):
         if not os.path.isfile(p):
             print("CHECK FAILED: missing %s" % p)
             return 1
 
-    todo = read(todo_path)
-    body = register_body(todo)
+    register = read(register_path)
+    body = register_body(register)
     if body is None:
         # A renamed heading must not silently disable the whole check — that is the
         # failure mode this script is guarding against in the first place.
@@ -83,7 +83,7 @@ def main():
         key = m.group(1)
         if ("key: %s" % key) not in body and key not in body:
             failures.append(
-                "roadmap.md:%d is tagged '(key: %s)' but todo.md's register never mentions '%s' —\n"
+                "roadmap.md:%d is tagged '(key: %s)' but docs/verification-register.md never mentions '%s' —\n"
                 "    the caveat is untracked, which is exactly how V1a and NumericAll went missing." % (n, key, key))
         else:
             tracked.append((key, n))
@@ -92,7 +92,7 @@ def main():
         print("CHECK FAILED — live-verification register is out of sync:\n")
         for f in failures:
             print("  * %s" % f)
-        print("\nThe register is docs/todo.md '%s'." % SECTION)
+        print("\nThe register is docs/verification-register.md '%s'." % SECTION)
         print("It is the SINGLE owner of 'shipped but unproven on a real game'; roadmap.md keeps the")
         print("caveat next to the capability, the register keeps the status and the acceptance test.")
         return 1

@@ -82,7 +82,7 @@ jobs:
           # missing items roadmap.md had carried a caveat for since build 796. A doc convention
           # nobody enforces survives about one commit, so this one is enforced (build 2543).
           & $py tools/check_live_verification.py
-          if ($LASTEXITCODE -ne 0) { throw "check_live_verification.py FAILED ($LASTEXITCODE) - a roadmap 'In-game verification pending' caveat is untagged or untracked in todo.md's register" }
+          if ($LASTEXITCODE -ne 0) { throw "check_live_verification.py FAILED ($LASTEXITCODE) - a roadmap 'In-game verification pending' caveat is untagged or untracked in docs/verification-register.md" }
           # The authoring gate from aob-block-library-eval.md's build order, step 5 - the step that
           # was specified, never built, and then declared complete. Stdlib-only, no corpus, seconds.
           # Golden-file: ANY specificity change must be a deliberate baseline update, because a
