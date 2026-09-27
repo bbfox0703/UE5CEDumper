@@ -6713,6 +6713,13 @@ static void Test_UPropertyFamilyFor() {
     EXPECT("UPROPSLOT: 4.15 stock, 0x50 -> 0x78 (the 0x28 delta)", UPropertyFamilyFor(0x50, 415, false).structProp == 0x78);
     EXPECT("UPROPSLOT: case-preserving 4.23, 0x4C -> 0x80", UPropertyFamilyFor(0x4C, 423, true).structProp == 0x80);
     EXPECT("UPROPSLOT: an unknown version keeps +0x2C", UPropertyFamilyFor(0x44, 0, false).structProp == 0x70);
+    // The unmeasured default a give-up ships: none below 4.18, where the FProperty default 0x78 IS the stock start.
+    EXPECT("UPROPSLOT: 4.23 default family 0x70", DynOff::UPropertyDefaultFamily(423, false).structProp == 0x70);
+    EXPECT("UPROPSLOT: 4.23 case-preserving default 0x80", DynOff::UPropertyDefaultFamily(423, true).structProp == 0x80);
+    EXPECT("UPROPSLOT: an unknown version gets the 4.18+ default", DynOff::UPropertyHasDefaultFamily(0)
+           && DynOff::UPropertyDefaultFamily(0, false).structProp == 0x70);
+    EXPECT("UPROPSLOT: 4.18 gets a default", DynOff::UPropertyHasDefaultFamily(418));
+    EXPECT("UPROPSLOT: 4.17 gets NO default -- 0x44 would derive 0x6C there", !DynOff::UPropertyHasDefaultFamily(417));
     for (unsigned v : { 411u, 415u, 417u, 418u, 422u, 424u })
         for (bool cpn : { false, true })
             EXPECT("UPROPSLOT: the family's base IS the bool slot A6 derives, at every UProperty version",
