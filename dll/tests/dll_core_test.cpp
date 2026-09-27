@@ -5297,6 +5297,84 @@ int main() {
         DynOff::bUseFProperty = svFProp;
     }
 
+    // -- UPROPFLAT-2026-09-28 -- WalkInstance's UProperty container arms read an inner's struct at the family slot -------
+    //
+    // ⛔ OWN name table (after FAMILYEPOCH). [UPROP-CONTAINER-FLAT-2C] The UProperty TArray / TMap / TSet arms probed the
+    // inner pointer around a flat UPROPERTY_OFFSET + 0x2C and then read the inner's UScriptStruct at that SAME flat
+    // offset, unprobed. It is right on stock 4.18-4.24 only: 4.11-4.17 put the subclass start at Offset_Internal + 0x28
+    // and a case-preserving build at + 0x34, so a struct element's type came from the wrong slot.
+    {
+        blk("UPROPFLAT - a UProperty TArray<struct>'s element struct is read at the family slot on 4.15 and case-preserving 4.23");
+
+        const bool svFProp = DynOff::bUseFProperty;  const bool svCpn = DynOff::bCasePreservingName;
+        const auto svNext = DynOff::UFIELD_NEXT;     const auto svChildren = DynOff::USTRUCT_CHILDREN;
+        const auto svPropsSize = DynOff::USTRUCT_PROPSSIZE;
+        const auto svUOff = DynOff::UPROPERTY_OFFSET; const auto svUElem = DynOff::UPROPERTY_ELEMSIZE;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t ufEntry[6][0x40] = {};
+        const char* ufNames[6] = { "", "ArrayProperty", "StructProperty", "Vector", "Decoy", "Points" };
+        static uintptr_t ufChunk[7] = {};
+        for (int i = 1; i <= 5; ++i) {
+            memcpy(ufEntry[i] + 0x10, ufNames[i], strlen(ufNames[i]) + 1);
+            ufChunk[i] = A(ufEntry[i]);
+        }
+        static uintptr_t ufChunks[2] = { reinterpret_cast<uintptr_t>(ufChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(ufChunks), 0x10);
+
+        static uint8_t ufArrCls[0x40] = {}, ufStructCls[0x40] = {}, ufVector[0x100] = {}, ufDecoy[0x100] = {};
+        put32(ufArrCls, Grimoire::OFF_UOBJECT_NAME, 1);
+        put32(ufStructCls, Grimoire::OFF_UOBJECT_NAME, 2);
+        put32(ufVector, Grimoire::OFF_UOBJECT_NAME, 3);
+        put32(ufDecoy, Grimoire::OFF_UOBJECT_NAME, 4);
+
+        // One layout per call: an ArrayProperty "Points" whose Inner is a StructProperty of Vector, both UProperties
+        // with the subclass start at `start`; a named decoy sits at `decoyAt` in the inner when it does not overlap.
+        auto walkAt = [&](int ver, bool cpn, int next, int elem, int offInt, int decoyAt, uint8_t* arr, uint8_t* inner,
+                          uint8_t* cls, uint8_t* inst) -> std::string {
+            DynOff::bUseFProperty = false;  DynOff::bCasePreservingName = cpn;
+            DynOff::UFIELD_NEXT = next;     DynOff::UPROPERTY_ELEMSIZE = elem;  DynOff::UPROPERTY_OFFSET = offInt;
+            DynOff::USTRUCT_CHILDREN = 0x48; DynOff::USTRUCT_PROPSSIZE = 0x50;
+            DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(offInt, ver, cpn));
+            const int S = DynOff::FSTRUCTPROP_STRUCT;
+            putP(inner, Grimoire::OFF_UOBJECT_CLASS, A(ufStructCls));
+            put32(inner, elem, 12);
+            putP(inner, S, A(ufVector));                               // UStructProperty::Struct
+            if (decoyAt >= 0) putP(inner, decoyAt, A(ufDecoy));
+            putP(arr, Grimoire::OFF_UOBJECT_CLASS, A(ufArrCls));
+            put32(arr, Grimoire::OFF_UOBJECT_NAME, 5);
+            put32(arr, elem - 4, 1);  put32(arr, elem, 0x10);  put32(arr, offInt, 0x28);
+            putP(arr, S, A(inner));                                    // UArrayProperty::Inner
+            put32(cls, DynOff::USTRUCT_PROPSSIZE, 0x38);
+            putP(cls, DynOff::USTRUCT_CHILDREN, A(arr));
+            const auto r = Ubel::WalkInstance(A(inst), A(cls), 64, 2, false);   // an empty TArray: Data 0, Num 0
+            for (const auto& f : r.fields) if (f.name == "Points") return f.arrayInnerStructType + "|" + f.arrayInnerType;
+            return "(no field)";
+        };
+
+        static uint8_t a1[0x100] = {}, i1[0x100] = {}, c1[0x100] = {}, n1[0x100] = {};
+        const std::string r415 = walkAt(415, false, 0x28, 0x34, 0x50, -1, a1, i1, c1, n1);   // start 0x78, flat 0x7C
+        check("UPROPFLAT setup: the 4.15 walk found the array and its StructProperty inner",
+              r415.size() > 15 && r415.substr(r415.find('|') + 1) == "StructProperty", r415.c_str());
+        check("UPROPFLAT ⭐: 4.15 -- the element struct is read at 0x78, not at the flat 0x7C",
+              r415.substr(0, r415.find('|')) == "Vector", r415.c_str());
+
+        static uint8_t a2[0x100] = {}, i2[0x100] = {}, c2[0x100] = {}, n2[0x100] = {};
+        const std::string r423 = walkAt(423, true, 0x30, 0x3C, 0x4C, 0x78, a2, i2, c2, n2);   // start 0x80, flat 0x78
+        check("UPROPFLAT ⭐: case-preserving 4.23 -- the struct at 0x80, not the named object at the flat 0x78",
+              r423.substr(0, r423.find('|')) == "Vector", r423.c_str());
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;  DynOff::bCasePreservingName = svCpn;
+        DynOff::UFIELD_NEXT = svNext;     DynOff::USTRUCT_CHILDREN = svChildren; DynOff::USTRUCT_PROPSSIZE = svPropsSize;
+        DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
