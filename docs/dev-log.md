@@ -27,6 +27,18 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (build 3590) — UE 4.18–4.24 containers name their element types; Dump All drops the metaclasses' default objects `[UPROP-INNER-TYPENAME]` `[DUMPALL-METACLASS-CDO]`
+
+- **UE 4.18–4.24:** a TArray / TMap / TSet member now says what it holds. The UE 4.23 fixture's SDK export went
+  from 1,016 `TArray<uint8_t>` and 52 `TMap<uint8_t, uint8_t>` to 28 (byte arrays, and delegate elements the SDK
+  writes as bytes on every engine) and 0, and every
+  class-valued member of its engine classes now matches UE 4.23's own source (174 of 174). DQ XI S and
+  NEKOPALIVE name all their array elements; a UE 4.27 control is unchanged.
+- **Dump All:** `Default__Class`, `Default__BlueprintGeneratedClass` and their siblings are no longer written
+  as classes (checked live on the UE 4.23 fixture: five in GObjects, none in the `.jsonl`).
+- Build 3590: AOT `dist\UE5DumpUI.exe` 58,443,776 B, sha256 `8d112f81707e`; `dist\UE5Dumper.dll` 3,031,552 B,
+  `37353b2cf2fc`. C# 5798/5798, headless 15/15, dll_core 499 checks, dll_helpers 3015.
+
 ## 2026-09-27 (build 3589) — UE 4.18–4.24 games get struct, object and enum types back in every export `[UPROP-SUBCLASS-SLOT]`
 
 - **What was wrong:** on UE 4.18–4.24 (UProperty engines) the dumper read every struct / object / enum type from
