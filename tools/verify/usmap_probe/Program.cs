@@ -14,11 +14,32 @@
 //                                  in place of CUE4Parse's managed port. Nothing is downloaded.
 //   --errors N                     failure / log-error messages printed per run (default 10)
 //   --list N                       per-verdict lines printed by uds / holders (default 20)
-//   --control                      uds / holders POSITIVE CONTROL: every entry the mapping lacks
-//                                  is synthesized from the cooked schema, so every comparison
-//                                  must come out SAME. It proves the harness (lookup by name,
-//                                  seek-back, a deterministic comparison) and NOTHING about any
+//   --control                      uds / holders POSITIVE CONTROL: every entry the mapping lacks --
+//                                  the probed struct, its Blueprint parents, and each non-native
+//                                  struct a member names -- is synthesized from the cooked schema
+//                                  the way a .usmap spells it: types by NAME, with no loaded
+//                                  UStruct / UEnum, so a nested type resolves through the mapping
+//                                  exactly as it would from a real file. It proves the harness
+//                                  (lookup by name, seek-back, a deterministic comparison, a schema
+//                                  check that passes an identical entry) and NOTHING about any
 //                                  .usmap -- run it once before trusting a SAME from a real one.
+//                                  Enums are NOT synthesized: a member whose enum the mapping lacks
+//                                  renders as a number on the mapping side, so that row is DIFFER
+//                                  with [ENUM-MISSING:X] -- what a real mapping without X reads.
+//   --selftest                     uds NEGATIVE CONTROL for the schema check: every UDS's control
+//                                  entry is installed with ONE descriptor changed at a time, and
+//                                  each such entry must come out SCHEMA-DIFFER whatever the reading
+//                                  says. It counts the changes the reading ALONE calls SAME.
+//
+// uds / holders VERDICTS. A static check runs first and wins: SCHEMA-DIFFER when the mapping's
+// descriptors -- name, array size, type recursively, after the cooked-only type names are folded
+// onto the ones a .usmap can spell -- differ from the cooked schema's at ANY index, serialized or
+// not; SCHEMA-FAILED when the check itself threw. Otherwise the reading decides: SAME (identical,
+// and >= 1 property consumed bytes), SAME-ZERO-ONLY (identical, every listed property zero-mask),
+// EMPTY (the header listed nothing, so nothing was compared), DIFFER, FAILED, RENDER-FAILED, and
+// NESTED-MISSING(X) (the mapping lacks a type X that a member names). Before either: NO-MAPPINGS,
+// MAPPING-MISSING, COOKED-FAILED, and COOKED-NEEDS-MAPPING(X) -- the cooked read itself reached a
+// native X the mapping lacks, so there is no reference to compare against.
 //
 // `showKey` prints the actual JSON READING of every export whose key contains it, under
 // both mappings. Agreement is not the whole question: L30 and L39 ask what a consumer
@@ -67,16 +88,26 @@
 // cooked schema, once by NAME (FStructFallback(Ar, string) -> UScriptClass -> the mapping) --
 // and compare. The cooked read is the reference: it is what the game itself serialized against.
 //
-// ⚠ WHAT THE uds / holders COMPARISON CANNOT SEE. (1) A property the cooked header SKIPS: an
-// unversioned header lists only serialized properties, so a mapping descriptor for a skipped one
-// is exercised only as an index slot, never by type. (2) A zero-mask property consumes no bytes,
-// so its type is barely exercised -- which is why the "values" guard counts tags that consumed
-// bytes, not tags. (3) Native types reached from either read (a Vector member, a native parent
-// class) go through the SAME mapping or native reader on both sides and cancel; a wrong
-// descriptor there reads identically wrong twice. (4) `uds` looks the UDS up by its COOKED
-// object name; a consumer reading a holder looks it up by whatever name the mapping's own member
-// descriptor spells, so a mapping that is internally consistent but names a UDS differently is
-// MAPPING-MISSING here and fine in `holders` -- run both.
+// ⭐ WHY A SAME READING IS NOT ENOUGH, AND THE SCHEMA CHECK EXISTS. An unversioned header lists
+// only serialized properties, so a descriptor for a SKIPPED one is exercised only as an index
+// slot; a ZERO-MASK property consumes no bytes, so its type is never exercised; and a wrong type
+// of the right width (Int for UInt32, Object for Weak) decodes the same value. All three read
+// identically under a wrong descriptor -- measured on EVERSPACE 2's UDS with one descriptor
+// flipped at a time, 66 of 157 flips came out SAME: 59 zero-mask, a valued Int->UInt32 and six
+// valued Array<Object/Class>->Array<Weak>. The schema check compares the descriptors themselves
+// at every index, so none of that depends on what this instance happened to serialize.
+//
+// ⚠ WHAT THE uds / holders COMPARISON STILL CANNOT SEE. (1) The schema check compares descriptors
+// as CUE4Parse builds them from the cooked FProperty list: PropertyType(FProperty) keeps an
+// EnumProperty's underlying width only when it is 4 bytes, and SerializedStruct mis-indexes a
+// static array (ArrayDim > 1). Neither occurs in a UserDefinedStruct. (2) It recurses into a
+// member's struct type only when that type is non-native; native types reached from either read
+// (a Vector member, a native parent class) go through the SAME mapping or native reader on both
+// sides and cancel, so a wrong descriptor there reads identically wrong twice. (3) `uds` looks the
+// UDS up by its COOKED object name; a consumer reading a holder looks it up by whatever name the
+// mapping's own member descriptor spells, so a mapping that is internally consistent but names a
+// UDS differently is MAPPING-MISSING here and a StructProperty<name> SCHEMA-DIFFER in `holders`
+// -- run both.
 using CUE4Parse;
 using CUE4Parse.FileProvider;
 using CUE4Parse.MappingsProvider;
@@ -105,6 +136,11 @@ for (int i = 0; i < args.Length; i++)
     if (a0 == "--control")
     {
         Common.Control = true;
+        continue;
+    }
+    if (a0 == "--selftest")
+    {
+        Common.SelfTest = true;
         continue;
     }
     if (i + 1 >= args.Length)
@@ -159,6 +195,11 @@ bool TryGame(string[] a, int index, out EGame g)
     return false;
 }
 
+if (Common.SelfTest && mode != "uds")
+{
+    Console.Error.WriteLine("--selftest needs --mode uds");
+    return 2;
+}
 if (mode is "uds" or "holders")
 {
     if (args.Length < 2)
@@ -258,13 +299,7 @@ var differ = shared.Where(k => a[k] != b[k]).ToList();
 Console.WriteLine($"\nshared exports: {shared.Count}   IDENTICAL: {shared.Count - differ.Count}   " +
                   $"DIFFER: {differ.Count}");
 
-// A doubled enumerator prefix -- "EFoo::EFoo::Bar" against "EFoo::Bar" -- is the same VALUE
-// rendered differently, not a misread: it means one writer stored the member name fully
-// qualified and the other stored it bare, and the consumer qualifies it again. Report it
-// separately so a cosmetic difference is never counted as a misalignment.
-var doubled = new Regex(@"([A-Za-z_][A-Za-z0-9_]*)::\1::");
-string Collapse(string s) { string p; do { p = s; s = doubled.Replace(s, "$1::"); } while (s != p); return s; }
-var realDiffer = differ.Where(k => Collapse(a[k]) != Collapse(b[k])).ToList();
+var realDiffer = differ.Where(k => Common.Collapse(a[k]) != Common.Collapse(b[k])).ToList();
 Console.WriteLine($"   of those, differ ONLY by a doubled enumerator prefix: {differ.Count - realDiffer.Count}");
 Console.WriteLine($"   DIFFER for any other reason                        : {realDiffer.Count}");
 differ = realDiffer.Count > 0 ? realDiffer : differ;
@@ -312,12 +347,38 @@ static class Common
     public static int ShowErrors = 10;
     public static int ListPerVerdict = 20;
     public static bool Control;
+    public static bool SelfTest;
 
     public static void ControlBanner()
     {
         if (Control)
-            Console.WriteLine("*** CONTROL RUN: every entry the mapping lacks is synthesized from the COOKED " +
-                              "schema. SAME everywhere proves the harness only -- nothing about the .usmap. ***");
+            Console.WriteLine("*** CONTROL RUN: every struct entry the mapping lacks is synthesized BY NAME from " +
+                              "the COOKED schema (enums are not). A clean result proves the harness only -- " +
+                              "nothing about the .usmap. ***");
+    }
+
+    // A doubled enumerator prefix -- "EFoo::EFoo::Bar" against "EFoo::Bar" -- is the same VALUE
+    // rendered differently, not a misread: it means one writer stored the member name fully
+    // qualified and the other stored it bare, and the consumer qualifies it again. Folded before
+    // any comparison so a cosmetic difference is never counted as a misalignment.
+    static readonly Regex Doubled = new(@"([A-Za-z_][A-Za-z0-9_]*)::\1::");
+
+    public static string Collapse(string s)
+    {
+        string p;
+        do { p = s; s = Doubled.Replace(s, "$1::"); } while (s != p);
+        return s;
+    }
+
+    // CUE4Parse's wording for a struct it could not find by name -- thrown for a type the reader
+    // needed, logged as a warning for a missing native parent.
+    static readonly Regex MissingMappings = new(@"Missing prop mappings for type ([^\s|]+)");
+
+    public static string? MissingType(Exception ex)
+    {
+        for (Exception? e = ex; e != null; e = e.InnerException)
+            if (MissingMappings.Match(e.Message) is { Success: true } m) return m.Groups[1].Value;
+        return null;
     }
 
     static readonly List<string> _failures = new();
@@ -468,6 +529,11 @@ sealed class ProbeResult
     public string Key = "";
     public string? ClassName;
     public string Verdict = "";
+    // The type a "Missing prop mappings for type X" names (NESTED-MISSING / COOKED-NEEDS-MAPPING).
+    public string? Missing;
+    // What the two READS concluded on their own. The schema check overrides it in Verdict; keeping
+    // it is how --selftest shows a wrong descriptor that the reading alone calls SAME.
+    public string Reading = "";
     public string Detail = "";
     public int Tags, Values, UdsTags, UdsValues;
     public long CookedBytes = -1, MappedBytes = -1;
@@ -475,8 +541,18 @@ sealed class ProbeResult
     // misaligned start makes them agree on the WRONG bytes; ending exactly at the export's end is
     // the one independent witness that the compared bytes were the intended ones.
     public long? EndDelta;
+    public bool SchemaChecked, BothRead;
     public string? CookedJson, MappedJson;
+    // Bytes each cooked tag consumed, by property name: 0 is zero-mask, an absent name was skipped.
+    public readonly Dictionary<string, int> TagSizes = new(StringComparer.Ordinal);
+    public readonly List<string> SchemaDiffs = new();
     public readonly List<string> DifferingTags = new();
+
+    public string Label =>
+        Missing != null && Verdict is "NESTED-MISSING" or "COOKED-NEEDS-MAPPING" ? $"{Verdict}({Missing})" : Verdict;
+
+    public bool EnumMissingOnly =>
+        DifferingTags.Count > 0 && DifferingTags.All(t => t.Contains("[ENUM-MISSING:", StringComparison.Ordinal));
 }
 
 static class Dual
@@ -493,11 +569,14 @@ static class Dual
          (d.StructType != null && KnownUds.Contains(d.StructType)) ||
          RefersToUds(d.InnerTypeData) || RefersToUds(d.ValueTypeData));
 
+    static readonly HashSet<string> SameFamily = new(StringComparer.Ordinal) { "SAME", "SAME-ZERO-ONLY", "EMPTY" };
+
     // Reads the bytes at Ar.Position twice and leaves Ar.Position where it found it.
     //   cooked:  FStructFallback(Ar, UStruct) -> DeserializePropertiesUnversioned with a
     //            NON-UScriptClass -> SerializedStruct(cooked FProperty list): exactly the call
     //            UUserDefinedStruct.Deserialize / UObject.Deserialize make.
     //   mapping: FStructFallback(Ar, string) -> new UScriptClass(name) -> Mappings.Types[name].
+    // Between the two, the mapping's entry is compared with the cooked schema without reading a byte.
     public static ProbeResult ReadTwice(string key, FAssetArchive Ar, UStruct cookedSchema,
                                         string mappingName)
     {
@@ -508,11 +587,13 @@ static class Dual
         {
             cooked = new FStructFallback(Ar, cookedSchema);
             r.CookedBytes = Ar.Position - start;
-            r.CookedJson = JsonConvert.SerializeObject(cooked, Formatting.None);
         }
         catch (Exception ex)
         {
-            r.Verdict = "COOKED-FAILED";
+            // The cooked read looks a NATIVE member type up by name as well, so a native struct the
+            // mapping lacks leaves no reference to compare against: a gap, not a misread.
+            r.Missing = Common.MissingType(ex);
+            r.Verdict = r.Missing != null ? "COOKED-NEEDS-MAPPING" : "COOKED-FAILED";
             r.Detail = Common.Describe(ex);
             return r;
         }
@@ -522,54 +603,117 @@ static class Dual
         }
         r.Tags = cooked.Properties.Count;
         r.Values = cooked.Properties.Count(t => t.Size > 0);
+        foreach (var t in cooked.Properties)
+            r.TagSizes[t.Name.Text] = Math.Max(r.TagSizes.GetValueOrDefault(t.Name.Text), t.Size);
         var uds = cooked.Properties.Where(IsUdsTag).ToList();
         r.UdsTags = uds.Count;
         r.UdsValues = uds.Count(t => t.Size > 0);
 
+        var maps = Ar.Owner?.Mappings;
+        if (maps == null)
+        {
+            // Not an absent ENTRY: with no mapping loaded, nothing at all can be looked up by name.
+            r.Verdict = "NO-MAPPINGS";
+            return r;
+        }
+        if (Common.Control)
+        {
+            int made = Control.Synthesize(maps, cookedSchema, mappingName);
+            if (made > 0) r.Detail = $"control: {made} entr{(made == 1 ? "y" : "ies")} synthesized by name";
+        }
         // Asked EXPLICITLY, not inferred from an exception: DeserializePropertiesUnversioned
         // returns before the lookup when the header carries no values, so an absent name would
-        // otherwise come out as two empty readings -- SAME.
-        var types = Ar.Owner?.Mappings?.Types;
-        if (Common.Control && types != null && !types.ContainsKey(mappingName))
-        {
-            // The same SerializedStruct the cooked read builds, but REACHED BY NAME: whatever
-            // then differs is the harness's doing, never the mapping's.
-            types[mappingName] = new SerializedStruct(Ar.Owner!.Mappings, cookedSchema);
-            r.Detail = "control: entry synthesized from the cooked schema";
-        }
-        if (types == null || !types.ContainsKey(mappingName))
+        // otherwise come out as two empty readings that agree.
+        if (!maps.Types.TryGetValue(mappingName, out var entry))
         {
             r.Verdict = "MAPPING-MISSING";
             return r;
         }
 
+        var gaps = new SortedSet<string>(StringComparer.Ordinal);
+        string? schemaError = null;
+        try
+        {
+            Schema.Compare(maps, cookedSchema, entry, "", r.SchemaDiffs, gaps,
+                           new HashSet<string>(StringComparer.OrdinalIgnoreCase));
+            r.SchemaChecked = true;
+        }
+        catch (Exception ex)
+        {
+            // Building a descriptor list can load a parent or a member type; a throw there must
+            // cost this row its schema verdict, not the whole export its probe.
+            schemaError = Common.Describe(ex);
+        }
+
+        string reading = ReadMapped(r, Ar, start, maps, cooked, mappingName, out string? readMissing);
+        r.Reading = readMissing != null ? $"{reading}({readMissing})" : reading;
+        if (gaps.Count > 0)
+            r.Detail = Join(r.Detail, $"the mapping has no entry for {string.Join(", ", gaps)}, which a member names");
+        if (r.SchemaDiffs.Count > 0)
+        {
+            r.Verdict = "SCHEMA-DIFFER";
+        }
+        else if (schemaError != null)
+        {
+            r.Verdict = "SCHEMA-FAILED";
+            r.Detail = Join(r.Detail, $"schema check: {schemaError}; the reading alone: {r.Reading}");
+        }
+        else if (readMissing != null)
+        {
+            r.Verdict = reading;
+            r.Missing = readMissing;
+        }
+        else if (gaps.Count > 0 && SameFamily.Contains(reading))
+        {
+            // A zero-mask or skipped member never made the read look its type up; the mapping still
+            // cannot serve an instance that does serialize it.
+            r.Verdict = "NESTED-MISSING";
+            r.Missing = gaps.Min;
+        }
+        else
+        {
+            r.Verdict = reading;
+        }
+        return r;
+    }
+
+    static string Join(string a, string b) => a.Length == 0 ? b : a + "; " + b;
+
+    static string ReadMapped(ProbeResult r, FAssetArchive Ar, long start, TypeMappings maps,
+                             FStructFallback cooked, string mappingName, out string? missing)
+    {
+        missing = null;
         FStructFallback mapped;
         try
         {
             mapped = new FStructFallback(Ar, mappingName);
             r.MappedBytes = Ar.Position - start;
-            r.MappedJson = JsonConvert.SerializeObject(mapped, Formatting.None);
         }
         catch (Exception ex)
         {
-            r.Verdict = "FAILED";
-            r.Detail = Common.Describe(ex);
-            return r;
+            r.Detail = Join(r.Detail, Common.Describe(ex));
+            // The entry itself was checked present, so a type this names is a NESTED one.
+            missing = Common.MissingType(ex);
+            return missing != null ? "NESTED-MISSING" : "FAILED";
         }
         finally
         {
             Ar.Position = start;
         }
+        r.BothRead = true;
+
+        // Rendered only now, outside the reads' try: a JSON converter that throws is not a failed read.
+        try { r.CookedJson = Common.Collapse(JsonConvert.SerializeObject(cooked, Formatting.None)); }
+        catch (Exception ex) { r.Detail = Join(r.Detail, "cooked: " + Common.Describe(ex)); return "RENDER-FAILED"; }
+        try { r.MappedJson = Common.Collapse(JsonConvert.SerializeObject(mapped, Formatting.None)); }
+        catch (Exception ex) { r.Detail = Join(r.Detail, "mapping: " + Common.Describe(ex)); return "RENDER-FAILED"; }
 
         // The end position is compared as well as the JSON: a descriptor of the wrong WIDTH can
         // decode the same value from fewer bytes and leave the stream misaligned for whatever
         // follows, which the JSON of this struct alone cannot show.
         if (r.CookedJson == r.MappedJson && r.CookedBytes == r.MappedBytes)
-        {
-            r.Verdict = "SAME";
-            return r;
-        }
-        r.Verdict = "DIFFER";
+            return r.Tags == 0 ? "EMPTY" : r.Values == 0 ? "SAME-ZERO-ONLY" : "SAME";
+
         var c = TagMap(cooked);
         var m = TagMap(mapped);
         foreach (var k in c.Keys.Union(m.Keys))
@@ -578,9 +722,36 @@ static class Dual
             if (inC && inM && cv.json == mv.json) continue;
             string where = !inM ? " (cooked only)" : !inC ? " (mapping only)" : "";
             bool isUds = (inC && IsUdsTag(cv.tag)) || (inM && IsUdsTag(mv.tag));
-            r.DifferingTags.Add(k + (isUds ? " [UDS]" : "") + where);
+            var absent = new SortedSet<string>(StringComparer.Ordinal);
+            if (inC) EnumsAbsent(maps, cv.tag.TagData, null, absent);
+            if (inM) EnumsAbsent(maps, mv.tag.TagData, mv.json, absent);
+            r.DifferingTags.Add(k + (isUds ? " [UDS]" : "") + where +
+                                string.Concat(absent.Select(e => $" [ENUM-MISSING:{e}]")));
         }
-        return r;
+        return "DIFFER";
+    }
+
+    // An enum the mapping lacks renders as "EFoo::<index>" on the mapping side (EnumProperty's
+    // IndexToEnum fallback) against the loaded UEnum's member name on the cooked side: a GAP in the
+    // mapping, not a wrong descriptor. The tag's own type data finds a direct or container enum;
+    // the rendered text finds one inside a nested struct.
+    static readonly Regex NumericEnum = new(@"""([A-Za-z_][A-Za-z0-9_]*)::-?[0-9]+""");
+
+    static void EnumsAbsent(TypeMappings maps, FPropertyTagData? d, string? json, SortedSet<string> absent)
+    {
+        for (var stack = new Stack<FPropertyTagData?>(new[] { d }); stack.Count > 0;)
+        {
+            var x = stack.Pop();
+            if (x == null) continue;
+            if (x.EnumName is { Length: > 0 } e && !e.Equals("None", StringComparison.OrdinalIgnoreCase) &&
+                !maps.Enums.ContainsKey(e))
+                absent.Add(e);
+            stack.Push(x.InnerTypeData);
+            stack.Push(x.ValueTypeData);
+        }
+        if (json == null) return;
+        foreach (Match mt in NumericEnum.Matches(json))
+            if (!maps.Enums.ContainsKey(mt.Groups[1].Value)) absent.Add(mt.Groups[1].Value);
     }
 
     static Dictionary<string, (string json, FPropertyTag tag)> TagMap(FStructFallback s)
@@ -589,21 +760,32 @@ static class Dual
         foreach (var t in s.Properties)
         {
             string k = t.ArrayIndex > 0 ? $"{t.Name.Text}[{t.ArrayIndex}]" : t.Name.Text;
-            d[k] = (JsonConvert.SerializeObject(t.Tag, Formatting.None), t);
+            d[k] = (Common.Collapse(JsonConvert.SerializeObject(t.Tag, Formatting.None)), t);
         }
         return d;
     }
 
     public static readonly string[] VerdictOrder =
-        { "DIFFER", "FAILED", "COOKED-FAILED", "HEADER-FAILED", "MAPPING-MISSING", "VERSIONED",
-          "SKIPPED", "NO-DEFAULT-INSTANCE", "SAME" };
+    {
+        "SCHEMA-DIFFER", "SCHEMA-FAILED", "DIFFER", "FAILED", "NESTED-MISSING", "RENDER-FAILED", "COOKED-FAILED",
+        "COOKED-NEEDS-MAPPING", "HEADER-FAILED", "NO-MAPPINGS", "MAPPING-MISSING", "VERSIONED", "SKIPPED",
+        "NO-DEFAULT-INSTANCE", "EMPTY", "SAME-ZERO-ONLY", "SAME",
+    };
 
     public static void PrintResults(IReadOnlyCollection<ProbeResult> results, bool holders)
     {
         var counts = results.GroupBy(r => r.Verdict).ToDictionary(g => g.Key, g => g.Count());
-        Console.WriteLine("verdicts: " + string.Join("  ",
-            VerdictOrder.Where(counts.ContainsKey).Select(v => $"{v}={counts[v]}")));
-        foreach (var v in VerdictOrder.Where(counts.ContainsKey))
+        // A verdict absent from the order is still printed: a new one must never vanish silently.
+        var order = VerdictOrder.Where(counts.ContainsKey)
+                                .Concat(counts.Keys.Except(VerdictOrder).OrderBy(v => v, StringComparer.Ordinal))
+                                .ToList();
+        Console.WriteLine("verdicts: " + string.Join("  ", order.Select(v => $"{v}={counts[v]}")));
+        foreach (var v in new[] { "NESTED-MISSING", "COOKED-NEEDS-MAPPING" }.Where(counts.ContainsKey))
+            Console.WriteLine($"   {v} by type: " + string.Join("  ", results
+                .Where(r => r.Verdict == v).GroupBy(r => r.Missing ?? "?")
+                .OrderByDescending(g => g.Count()).ThenBy(g => g.Key, StringComparer.Ordinal)
+                .Select(g => $"{g.Key}={g.Count()}")));
+        foreach (var v in order)
         {
             var rows = results.Where(r => r.Verdict == v).OrderBy(r => r.Key, StringComparer.Ordinal).ToList();
             Console.WriteLine($"\n--- {v}: {rows.Count} (first {Math.Min(rows.Count, Common.ListPerVerdict)}) ---");
@@ -614,17 +796,263 @@ static class Dual
                                  (r.CookedBytes >= 0 ? $" cooked={r.CookedBytes}B" : "") +
                                  (r.MappedBytes >= 0 ? $" mapped={r.MappedBytes}B" : "") +
                                  (r.EndDelta is long d && d != 0 ? $" *** EXPORT END OFF BY {d}B ***" : "");
-                Console.WriteLine($"  {v,-16} {r.Key}  {counts2}" +
+                Console.WriteLine($"  {r.Label,-16} {r.Key}  {counts2}" +
                                   (r.Detail.Length > 0 ? $"\n      {r.Detail}" : ""));
-                if (v == "DIFFER")
+                if (v == "SCHEMA-DIFFER")
                 {
+                    Console.WriteLine($"      the reading alone: {r.Reading}");
+                    foreach (var s in r.SchemaDiffs.Take(8)) Console.WriteLine($"      schema {s}");
+                    if (r.SchemaDiffs.Count > 8) Console.WriteLine($"      schema (+{r.SchemaDiffs.Count - 8} more)");
+                }
+                if (r.DifferingTags.Count > 0)
                     Console.WriteLine($"      differing tags: {string.Join(", ", r.DifferingTags.Take(8))}" +
                                       (r.DifferingTags.Count > 8 ? $" (+{r.DifferingTags.Count - 8})" : ""));
-                    if (r.CookedJson != null && r.MappedJson != null)
-                        Common.PrintAround("      ", "cooked ", r.CookedJson, "mapping", r.MappedJson);
+                if (v == "DIFFER" && r.CookedJson != null && r.MappedJson != null)
+                    Common.PrintAround("      ", "cooked ", r.CookedJson, "mapping", r.MappedJson);
+            }
+        }
+    }
+}
+
+// ⭐ THE STATIC CHECK. The mapping's entry against the descriptors CUE4Parse builds from the cooked
+// FProperty list -- the very SerializedStruct the cooked read uses -- index by index over the whole
+// super chain, without reading a byte. See "WHY A SAME READING IS NOT ENOUGH" in the header.
+static class Schema
+{
+    public static void Compare(TypeMappings maps, UStruct cooked, Struct mapped, string prefix,
+                               List<string> diffs, SortedSet<string> gaps, HashSet<string> seen)
+    {
+        if (!seen.Add(cooked.Name)) return;
+        var c = new SerializedStruct(maps, cooked);
+        int nc = c.CountProperties(true), nm = mapped.CountProperties(true);
+        if (nc != nm) diffs.Add($"{prefix}property count (super chain included): cooked {nc}, mapping {nm}");
+        for (int i = 0; i < Math.Max(nc, nm); i++)
+        {
+            bool hc = c.TryGetValue(i, out var pc), hm = mapped.TryGetValue(i, out var pm);
+            if (!hc && !hm) continue;
+            if (!hc || !hm)
+            {
+                var p = hc ? pc : pm;
+                diffs.Add($"{prefix}#{i} {p.Name} {Canon(p.MappingType)}: {(hc ? "cooked" : "mapping")} only");
+                continue;
+            }
+            var why = new List<string>();
+            if (pc.Name != pm.Name) why.Add($"named {pm.Name} by the mapping");
+            if ((pc.ArraySize ?? 1) != (pm.ArraySize ?? 1))
+                why.Add($"array size {pc.ArraySize ?? 1} -> mapping {pm.ArraySize ?? 1}");
+            string tc = Canon(pc.MappingType), tm = Canon(pm.MappingType);
+            if (tc != tm) why.Add($"{tc} -> mapping {tm}");
+            if (why.Count > 0)
+            {
+                diffs.Add($"{prefix}#{i} {pc.Name}: {string.Join("; ", why)}");
+                continue;
+            }
+            // A non-native member type is read through the mapping's entry of that NAME (the loaded
+            // UStruct is only on the cooked side), so its descriptors are this struct's too.
+            foreach (var t in Walk(pc.MappingType))
+            {
+                if (t.Struct is not UStruct ns || ns is UScriptClass || t.StructType == null) continue;
+                if (maps.Types.TryGetValue(t.StructType, out var ne))
+                    Compare(maps, ns, ne, $"{prefix}{pc.Name}.", diffs, gaps, seen);
+                else
+                    gaps.Add(t.StructType);
+            }
+        }
+    }
+
+    // Cooked FProperty classes a .usmap has no separate spelling for; each reads the same bytes
+    // as the name it folds onto.
+    static string Fold(string type) => type switch
+    {
+        "ClassProperty" => "ObjectProperty",
+        "SoftClassProperty" => "SoftObjectProperty",
+        "MulticastInlineDelegateProperty" or "MulticastSparseDelegateProperty" => "MulticastDelegateProperty",
+        _ => type,
+    };
+
+    // One spelling per descriptor the READER treats alike: a ByteProperty carrying an enum
+    // (TEnumAsByte) is read as EnumProperty -- how a .usmap spells it, with a ByteProperty
+    // underlying type -- and an EnumProperty with no underlying type reads one byte.
+    public static string Canon(PropertyType? t)
+    {
+        if (t == null) return "?";
+        string type = Fold(t.Type);
+        string? en = t.EnumName is { Length: > 0 } e && !e.Equals("None", StringComparison.OrdinalIgnoreCase) ? e : null;
+        if (type == "ByteProperty" && en != null) type = "EnumProperty";
+        return type switch
+        {
+            "EnumProperty" => $"EnumProperty<{(t.InnerType == null ? "ByteProperty" : Canon(t.InnerType))}, {en ?? "?"}>",
+            "StructProperty" => $"StructProperty<{t.StructType ?? "?"}>",
+            "ArrayProperty" or "SetProperty" or "OptionalProperty" => $"{type}<{Canon(t.InnerType)}>",
+            "MapProperty" => $"MapProperty<{Canon(t.InnerType)}, {Canon(t.ValueType)}>",
+            _ => en != null ? $"{type}<{en}>" : type,
+        };
+    }
+
+    public static IEnumerable<PropertyType> Walk(PropertyType? t)
+    {
+        if (t == null) yield break;
+        yield return t;
+        foreach (var x in Walk(t.InnerType)) yield return x;
+        foreach (var x in Walk(t.ValueType)) yield return x;
+    }
+}
+
+// --control: the entry a .usmap would carry for a struct, made from its cooked schema. Every type
+// is rebuilt BY NAME, with no loaded UStruct / UEnum, because a real mapping has only names: a
+// loaded object lets a nested struct or enum resolve past the mapping. Measured on EVERSPACE 2's
+// 46 readable UDS: the loaded-object entry read 46 identical, the by-name one 43 identical + 3
+// DIFFER -- three rows whose enum no mapping entry covered.
+static class Control
+{
+    public static PropertyType ByName(PropertyType t) =>
+        new(t.Type, t.StructType, t.InnerType == null ? null : ByName(t.InnerType),
+            t.ValueType == null ? null : ByName(t.ValueType), t.EnumName, t.IsEnumAsByte, t.Bool);
+
+    public static Struct Entry(TypeMappings maps, UStruct s, SerializedStruct? ser = null)
+    {
+        ser ??= new SerializedStruct(maps, s);
+        var props = ser.Properties.ToDictionary(
+            kv => kv.Key,
+            kv => new PropertyInfo(kv.Value.Index, kv.Value.Name, ByName(kv.Value.MappingType), kv.Value.ArraySize));
+        string? super = s.SuperStruct is { IsNull: false } sp ? sp.Name : null;
+        return new Struct(maps, s.Name, super, props, ser.PropertyCount);
+    }
+
+    // Synthesizes `name` and every non-native struct it reaches -- Blueprint parents, member types --
+    // that the mapping lacks, so the control does not depend on which package happened to load first.
+    public static int Synthesize(TypeMappings maps, UStruct s, string name)
+    {
+        if (s is UScriptClass || s.ChildProperties == null || maps.Types.ContainsKey(name)) return 0;
+        var ser = new SerializedStruct(maps, s);
+        maps.Types[name] = Entry(maps, s, ser);
+        int made = 1;
+        UStruct? parent = null;
+        try { parent = s.SuperStruct is { IsNull: false } sp ? sp.Load<UStruct>() : null; }
+        catch { /* an unloadable parent stays unmapped, as it would in a real file */ }
+        if (parent != null) made += Synthesize(maps, parent, parent.Name);
+        foreach (var p in ser.Properties.Values)
+            foreach (var t in Schema.Walk(p.MappingType))
+                if (t.Struct is UStruct ns && t.StructType != null) made += Synthesize(maps, ns, t.StructType);
+        return made;
+    }
+}
+
+// --selftest: the NEGATIVE control for the schema check. Each UDS's control entry (identical to its
+// cooked schema, so it must pass) is installed with ONE descriptor changed at a time, and every
+// changed entry must come out SCHEMA-DIFFER. The reading's own verdict is tallied beside it: those
+// it calls SAME are exactly the wrong descriptors a reading-only verdict let through.
+static class SelfTest
+{
+    // Same width, other interpretation (Int / UInt, Object / Weak) -- invisible to a reading -- or
+    // another width. None is a pair the schema check folds together.
+    static readonly Dictionary<string, string> Swap = new(StringComparer.Ordinal)
+    {
+        ["IntProperty"] = "UInt32Property", ["UInt32Property"] = "IntProperty",
+        ["Int64Property"] = "UInt64Property", ["UInt64Property"] = "Int64Property",
+        ["Int16Property"] = "UInt16Property", ["UInt16Property"] = "Int16Property",
+        ["FloatProperty"] = "DoubleProperty", ["DoubleProperty"] = "FloatProperty",
+        ["ObjectProperty"] = "WeakObjectProperty", ["ClassProperty"] = "WeakObjectProperty",
+        ["WeakObjectProperty"] = "ObjectProperty",
+        ["ByteProperty"] = "Int8Property", ["BoolProperty"] = "ByteProperty",
+    };
+
+    static readonly HashSet<string> Done = new(StringComparer.Ordinal);
+    static readonly SortedDictionary<string, (int n, int caught)> Tally = new(StringComparer.Ordinal);
+    static readonly List<string> Missed = new();
+    static int _structs, _identityFlagged, _changes, _caught, _readingSame;
+
+    static PropertyType With(PropertyType t, string? type = null, string? structType = null,
+                             PropertyType? inner = null, string? enumName = null) =>
+        new(type ?? t.Type, structType ?? t.StructType, inner ?? t.InnerType, t.ValueType,
+            enumName ?? t.EnumName, t.IsEnumAsByte, t.Bool);
+
+    static IEnumerable<(string kind, PropertyInfo p)> Variants(PropertyInfo p)
+    {
+        var t = p.MappingType;
+        PropertyInfo P(PropertyType nt, string? name = null) => new(p.Index, name ?? p.Name, nt, p.ArraySize);
+        if (Swap.TryGetValue(t.Type, out var to))
+            yield return ($"{t.Type}->{to}", P(With(t, type: to)));
+        if (t.Type == "StructProperty")
+            yield return ("StructProperty<X>->StructProperty<NoSuch>", P(With(t, structType: "NoSuchStruct_SelfTest")));
+        if ((t.Type is "ArrayProperty" or "SetProperty" or "OptionalProperty") &&
+            t.InnerType != null && Swap.TryGetValue(t.InnerType.Type, out var ti))
+            yield return ($"{t.Type}<{t.InnerType.Type}>->{t.Type}<{ti}>", P(With(t, inner: With(t.InnerType, type: ti))));
+        if (t.EnumName is { Length: > 0 } en && !en.Equals("None", StringComparison.OrdinalIgnoreCase))
+            yield return ("enum name", P(With(t, enumName: "ENoSuchEnum_SelfTest")));
+        yield return ("property name", P(t, p.Name + "_SelfTest"));
+    }
+
+    public static void Run(FAssetArchive Ar, UStruct schema, string name, ProbeResult baseline)
+    {
+        var maps = Ar.Owner?.Mappings;
+        if (maps == null || baseline.CookedBytes < 0 || !Done.Add(baseline.Key)) return;
+        long start = Ar.Position;
+        maps.Types.TryGetValue(name, out var original);
+        try
+        {
+            _structs++;
+            var entry = Control.Entry(maps, schema);
+            if (Probe(maps, Ar, schema, name, entry).Verdict == "SCHEMA-DIFFER")
+            {
+                _identityFlagged++;
+                Missed.Add($"{baseline.Key}: the UNCHANGED control entry came out SCHEMA-DIFFER");
+            }
+            foreach (int idx in entry.Properties.Keys.OrderBy(k => k).ToList())
+            {
+                var p = entry.Properties[idx];
+                string ser = baseline.TagSizes.TryGetValue(p.Name, out int size)
+                    ? size > 0 ? "value" : "zero-mask"
+                    : "skipped";
+                foreach (var (kind, np) in Variants(p))
+                {
+                    var props = new Dictionary<int, PropertyInfo>(entry.Properties) { [idx] = np };
+                    var r = Probe(maps, Ar, schema, name,
+                                  new Struct(maps, entry.Name, entry.SuperType, props, entry.PropertyCount));
+                    bool caught = r.Verdict == "SCHEMA-DIFFER";
+                    string reading = r.Reading.Length > 0 ? r.Reading : r.Verdict;
+                    _changes++;
+                    if (caught) _caught++;
+                    if (reading.StartsWith("SAME", StringComparison.Ordinal) || reading == "EMPTY") _readingSame++;
+                    string key = $"{kind,-52} {ser,-9} reading alone {reading}";
+                    var (n, c) = Tally.GetValueOrDefault(key);
+                    Tally[key] = (n + 1, c + (caught ? 1 : 0));
+                    if (!caught) Missed.Add($"{baseline.Key} #{idx} {p.Name} {kind} [{ser}]: {r.Verdict}");
                 }
             }
         }
+        finally
+        {
+            if (original != null) maps.Types[name] = original;
+            else maps.Types.Remove(name);
+            Ar.Position = start;
+        }
+    }
+
+    static ProbeResult Probe(TypeMappings maps, FAssetArchive Ar, UStruct schema, string name, Struct entry)
+    {
+        maps.Types[name] = entry;
+        return Dual.ReadTwice(name, Ar, schema, name);
+    }
+
+    // True when the schema check held: every change caught, no unchanged entry flagged.
+    public static bool Print()
+    {
+        Console.WriteLine($"\nselftest: {_structs} UDS, {_changes} single-descriptor changes to the control entry" +
+                          $"   SCHEMA-DIFFER={_caught}  missed={_changes - _caught}" +
+                          $"   the reading ALONE called {_readingSame} of them SAME / SAME-ZERO-ONLY / EMPTY" +
+                          $"   unchanged entries flagged SCHEMA-DIFFER: {_identityFlagged} of {_structs}");
+        foreach (var kv in Tally)
+            Console.WriteLine($"  {kv.Value.n,4} x {kv.Key}  -> SCHEMA-DIFFER {kv.Value.caught}");
+        foreach (var m in Missed.Take(Common.ShowErrors)) Console.WriteLine($"   MISSED {m}");
+        if (_changes == 0)
+        {
+            Console.WriteLine("*** the self-test changed nothing: it proves nothing. ***");
+            return false;
+        }
+        if (_caught == _changes && _identityFlagged == 0) return true;
+        Console.WriteLine("*** SELF-TEST FAILED: the schema check is not trustworthy on this input. ***");
+        return false;
     }
 }
 
@@ -683,6 +1111,7 @@ public sealed class UdsProbe : UStruct
         }
         var r = Dual.ReadTwice(Common.Key(this), Ar, this, Name);
         UdsMode.Record(r);
+        if (Common.SelfTest) SelfTest.Run(Ar, this, Name, r);
         if (r.CookedBytes < 0)
             throw new InvalidOperationException($"cooked default instance of {Name}: {r.Detail}");
         Ar.Position += r.CookedBytes;
@@ -749,26 +1178,38 @@ static class UdsMode
                           $"   (+{imported} more read as imports of them; {_duplicates} repeat reads discarded)");
         foreach (var u in unprobed.Take(Common.ShowErrors)) Console.WriteLine($"   UNPROBED {u}");
 
-        var all = _results.Values.ToList();
-        Dual.PrintResults(all, holders: false);
-        PrintGuards(all, r => r.Values > 0, "serialized >= 1 value (a property that consumed bytes)");
+        // The iterated set only: a UDS read as an IMPORT of one is outside the filter, and counting it
+        // here would make the verdicts disagree with the "probed" line above.
+        Dual.PrintResults(inSet, holders: false);
+        PrintGuards(inSet, r => r.Values > 0, "serialized >= 1 value (a property that consumed bytes)");
         if (ver > 0 && unv == 0)
             Console.WriteLine("*** every package is VERSIONED: the mapping is never consulted. ***");
+        if (Common.SelfTest && !SelfTest.Print()) return 1;
         return 0;
     }
 
     public static void PrintGuards(List<ProbeResult> all, Func<ProbeResult, bool> hasValues, string what)
     {
         int withValues = all.Count(hasValues);
-        int compared = all.Count(r => r.Verdict is "SAME" or "DIFFER");
-        int comparedWithValues = all.Count(r => r.Verdict is "SAME" or "DIFFER" && hasValues(r));
+        int schemaChecked = all.Count(r => r.SchemaChecked);
+        int schemaSame = all.Count(r => r.SchemaChecked && r.SchemaDiffs.Count == 0);
+        // EMPTY is not a comparison: a header that lists nothing never consults the mapping.
+        int compared = all.Count(r => r.BothRead && r.Tags > 0);
+        int comparedWithValues = all.Count(r => r.BothRead && r.Tags > 0 && hasValues(r));
+        int cleared = all.Count(r => r.Verdict == "SAME" && hasValues(r));
+        int enumOnly = all.Count(r => r.Verdict == "DIFFER" && r.EnumMissingOnly);
         Console.WriteLine("\nguards:");
-        Console.WriteLine($"  {what,-62}: {withValues} of {all.Count}");
-        Console.WriteLine($"  {"compared (both reads completed: SAME + DIFFER)",-62}: {compared}");
+        Console.WriteLine($"  {what,-66}: {withValues} of {all.Count}");
+        Console.WriteLine($"  {"schema checked (the mapping has the entry)",-66}: {schemaChecked}");
+        Console.WriteLine($"  {"   of those, descriptors identical to the cooked schema",-66}: {schemaSame}");
+        Console.WriteLine($"  {"compared (both reads completed on a non-empty header)",-66}: {compared}");
         var ends = all.Where(r => r.EndDelta.HasValue).ToList();
-        Console.WriteLine($"  {"parse ended exactly at the export's end",-62}: " +
+        Console.WriteLine($"  {"parse ended exactly at the export's end",-66}: " +
                           $"{ends.Count(r => r.EndDelta == 0)} of {ends.Count}");
-        Console.WriteLine($"  {"compared AND serialized >= 1 value (what actually proves anything)",-62}: {comparedWithValues}");
+        Console.WriteLine($"  {"compared AND serialized >= 1 value",-66}: {comparedWithValues}");
+        Console.WriteLine($"  {"SAME on that value AND identical descriptors (what proves anything)",-66}: {cleared}");
+        if (enumOnly > 0)
+            Console.WriteLine($"  {"DIFFER whose every differing tag is [ENUM-MISSING] (a gap)",-66}: {enumOnly}");
         if (ends.Any(r => r.EndDelta != 0))
             Console.WriteLine("*** some parses did NOT end at the export's end: for those, both reads may " +
                               "have compared the WRONG bytes, and their SAME is worthless. ***");
@@ -931,6 +1372,7 @@ static class HolderMode
         provider = Common.Open(paks, usmap, game);
         int ok2 = 0, failed2 = 0, unv = 0, ver = 0, cdos = 0;
         var wrongType = new List<string>();
+        var seenCdos = new HashSet<string>(StringComparer.Ordinal);
         foreach (var kv in files.Take(max))
         {
             try
@@ -944,6 +1386,7 @@ static class HolderMode
                     if (!exp.Flags.HasFlag(EObjectFlags.RF_ClassDefaultObject) ||
                         !classes.ContainsKey(exp.ExportType)) continue;
                     cdos++;
+                    seenCdos.Add(Common.Key(exp));
                     if (exp is not HolderProbe)
                         wrongType.Add($"{Common.Key(exp)} (constructed as {exp.GetType().Name}: the hook did not take)");
                 }
@@ -967,7 +1410,10 @@ static class HolderMode
                           $"   ({_duplicates} repeat reads discarded)");
         foreach (var c in never.Take(Common.ShowErrors)) Console.WriteLine($"   UNPROBED {c}");
 
-        var all = _results.Values.ToList();
+        // The iterated set only, as in `uds`: a CDO probed while loading an import is outside the filter.
+        var all = _results.Values.Where(r => seenCdos.Contains(r.Key)).ToList();
+        if (all.Count < _results.Count)
+            Console.WriteLine($"   ({_results.Count - all.Count} more CDOs probed as imports, outside the filter: not counted)");
         Dual.PrintResults(all, holders: true);
         UdsMode.PrintGuards(all, r => r.UdsValues > 0,
                             "serialized >= 1 UDS-typed value (a UDS-typed tag that consumed bytes)");
