@@ -1395,6 +1395,23 @@ static bool IsClassValuedProperty(const std::string& tn) {
     return tn == "ClassProperty" || tn == "SoftClassProperty";
 }
 
+// [SDK-CONTAINER-OBJCLASS] Every property type whose first subclass member is a class pointer:
+// UObjectPropertyBase::PropertyClass for the object / class / weak / soft / lazy flavours, and
+// UInterfaceProperty::InterfaceClass at the same slot.
+static bool IsObjectFamilyProperty(const std::string& tn) {
+    return tn == "ObjectProperty" || tn == "ClassProperty" || tn == "WeakObjectProperty"
+        || tn == "SoftObjectProperty" || tn == "SoftClassProperty" || tn == "InterfaceProperty"
+        || tn == "LazyObjectProperty";
+}
+
+// One slot's class names, the field's own or a container's: the plain slot read for the object family, overridden
+// by the validated PropertyClass -- and joined by the MetaClass -- for a class-valued one. A Map key / value and a Set
+// element used to get neither, so the SDK export wrote `class UObject*` for them. [SDK-CONTAINER-OBJCLASS]
+static void ReadSlotClassNames(uintptr_t prop, const std::string& tn, std::string& objClass, std::string& metaClass) {
+    if (IsObjectFamilyProperty(tn)) objClass = ReadSubclassTypeName(prop);
+    if (IsClassValuedProperty(tn)) ApplyClassValuedNames(prop, objClass, metaClass);   // [SDK-METACLASS]
+}
+
 // Forward declaration -- definition lives further down this file (line ~2441).
 // WalkClassEx calls it at the top to ensure FSTRUCTPROP_STRUCT is calibrated
 // before any caller reads FProperty subclass extension fields.
@@ -1498,15 +1515,10 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
             fi.structType = ReadSubclassTypeName(fi.Address);
         }
 
-        // ObjectProperty / ClassProperty / WeakObjectProperty / SoftObjectProperty / SoftClassProperty
-        // / InterfaceProperty -> target UClass name
-        // FObjectPropertyBase::PropertyClass is at the same offset as FStructProperty::Struct
-        else if (tn == "ObjectProperty" || tn == "ClassProperty"
-              || tn == "WeakObjectProperty" || tn == "SoftObjectProperty"
-              || tn == "SoftClassProperty" || tn == "InterfaceProperty"
-              || tn == "LazyObjectProperty") {
-            fi.objClassName = ReadSubclassTypeName(fi.Address);
-            if (IsClassValuedProperty(tn)) ApplyClassValuedNames(fi.Address, fi.objClassName, fi.metaClassName);   // [SDK-METACLASS]
+        // The object family -> target UClass name. FObjectPropertyBase::PropertyClass is at the same offset as
+        // FStructProperty::Struct; a container slot reads the same way through the same helper.
+        else if (IsObjectFamilyProperty(tn)) {
+            ReadSlotClassNames(fi.Address, tn, fi.objClassName, fi.metaClassName);
         }
 
         // ArrayProperty -> inner type
@@ -1516,9 +1528,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.innerType = innerTn;
                 if (innerTn == "StructProperty")
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
-                else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
-                    fi.innerObjClass = ReadSubclassTypeName(innerProp);
-                if (IsClassValuedProperty(innerTn)) ApplyClassValuedNames(innerProp, fi.innerObjClass, fi.innerMetaClass);   // [SDK-METACLASS]
+                ReadSlotClassNames(innerProp, innerTn, fi.innerObjClass, fi.innerMetaClass);
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
@@ -1532,9 +1542,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.innerType = innerTn;
                 if (innerTn == "StructProperty")
                     fi.innerStructType = ReadSubclassTypeName(innerProp);
-                else if (innerTn == "ObjectProperty" || innerTn == "ClassProperty")
-                    fi.innerObjClass = ReadSubclassTypeName(innerProp);
-                if (IsClassValuedProperty(innerTn)) ApplyClassValuedNames(innerProp, fi.innerObjClass, fi.innerMetaClass);   // [SDK-METACLASS]
+                ReadSlotClassNames(innerProp, innerTn, fi.innerObjClass, fi.innerMetaClass);
                 fi.innerEnumName = innerEnumOf(innerProp, innerTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }
@@ -1563,8 +1571,8 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 if (valTn == "StructProperty")   fi.valueStructType = ReadSubclassTypeName(valueProp);
                 fi.keyEnumName   = innerEnumOf(keyProp, keyTn);     // [A4-USMAP-CONTAINER-ENUM]
                 fi.valueEnumName = innerEnumOf(valueProp, valTn);
-                if (IsClassValuedProperty(keyTn)) fi.keyMetaClass   = ReadClassValuedNames(keyProp).metaClass;     // [SDK-METACLASS]
-                if (IsClassValuedProperty(valTn)) fi.valueMetaClass = ReadClassValuedNames(valueProp).metaClass;
+                ReadSlotClassNames(keyProp, keyTn, fi.keyObjClass, fi.keyMetaClass);
+                ReadSlotClassNames(valueProp, valTn, fi.valueObjClass, fi.valueMetaClass);
                 break;
             }
         }
@@ -1576,7 +1584,7 @@ const ClassInfo& WalkClassEx(uintptr_t uclassAddr) {
                 fi.elemType = elemTn;
                 if (elemTn == "StructProperty")
                     fi.elemStructType = ReadSubclassTypeName(elemProp);
-                if (IsClassValuedProperty(elemTn)) fi.elemMetaClass = ReadClassValuedNames(elemProp).metaClass;   // [SDK-METACLASS]
+                ReadSlotClassNames(elemProp, elemTn, fi.elemObjClass, fi.elemMetaClass);
                 fi.elemEnumName = innerEnumOf(elemProp, elemTn);   // [A4-USMAP-CONTAINER-ENUM]
             }
         }

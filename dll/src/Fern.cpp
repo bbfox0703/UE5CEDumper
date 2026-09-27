@@ -2235,6 +2235,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (!f.innerType.empty())        fj["inner_type"]        = f.innerType;
                 if (!f.innerStructType.empty())  fj["inner_struct_type"] = f.innerStructType;
                 if (!f.innerObjClass.empty())    fj["inner_obj_class"]   = f.innerObjClass;
+                // [SDK-CONTAINER-OBJCLASS] a Map key / value's and a Set element's class (additive keys)
+                if (!f.keyObjClass.empty())      fj["key_obj_class"]     = f.keyObjClass;
+                if (!f.valueObjClass.empty())    fj["value_obj_class"]   = f.valueObjClass;
+                if (!f.elemObjClass.empty())     fj["elem_obj_class"]    = f.elemObjClass;
                 if (!f.keyType.empty())          fj["key_type"]          = f.keyType;
                 if (!f.keyStructType.empty())    fj["key_struct_type"]   = f.keyStructType;
                 if (!f.valueType.empty())        fj["value_type"]        = f.valueType;
