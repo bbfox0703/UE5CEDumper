@@ -959,6 +959,43 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Equal("", vm.DiffNewMax);
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same diff rows must not
+    /// re-set the grid (up to 50,000 rows): that throws it to its first row and drops the
+    /// selection.</summary>
+    [Fact]
+    public async Task Diff_filter_edit_showing_the_same_rows_keeps_the_list_and_the_selection()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("G4");
+        long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a" }, ct);
+        await _store.WriteChunkAsync(a, new[]
+        {
+            Obj(1, "HP", "IntProperty", "64000000"),
+            Obj(2, "Mana", "IntProperty", "0A000000"),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(a, 2, 2, ct);
+        long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b" }, ct);
+        await _store.WriteChunkAsync(b, new[]
+        {
+            Obj(1, "HP", "IntProperty", "5A000000"),
+            Obj(2, "Mana", "IntProperty", "14000000"),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(b, 2, 2, ct);
+        var vm = new SnapshotViewModel(new CaptureStub(), _store, new MockLoggingService());
+        await vm.RefreshCommand.ExecuteAsync(null);
+        await vm.RunDiffCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.DiffRows.Count);
+        vm.SelectedDiffRow = vm.DiffRows[1];
+        var picked = vm.SelectedDiffRow;
+        int changes = 0;
+        vm.DiffRows.CollectionChanged += (_, _) => changes++;
+
+        vm.DiffGlobalFilter = " ";                // no term: the same rows
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedDiffRow);
+    }
+
     [Fact]
     public async Task OpenInLiveWalker_RaisesNavigateWithObjectAddress()
     {

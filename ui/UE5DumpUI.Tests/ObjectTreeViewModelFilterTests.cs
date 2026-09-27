@@ -133,6 +133,30 @@ public class ObjectTreeViewModelFilterTests
         Assert.Equal("Enemy_Boss", vm.FilteredNodes[0].Name);
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same objects must not
+    /// re-set the list: that throws it to its first row and drops the selection.</summary>
+    [Fact]
+    public async Task A_filter_edit_showing_the_same_objects_keeps_the_list_and_the_selection()
+    {
+        var vm = await LoadVmAsync(new List<UObjectNode>
+        {
+            Node("BP_Enemy_C", "Enemy_0"), Node("BP_Enemy_C", "Enemy_1"), Node("BP_Ally_C", "Ally_0"),
+        });
+        vm.FilterText = "ene";
+        vm.ApplyFilter();                      // deterministic (bypass the 200 ms debounce)
+        Assert.Equal(2, vm.FilteredNodes.Count);
+        vm.SelectedNode = vm.FilteredNodes[1];
+        var picked = vm.SelectedNode;
+        int changes = 0;
+        vm.FilteredNodes.CollectionChanged += (_, _) => changes++;
+
+        vm.FilterText = "enem";
+        vm.ApplyFilter();
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedNode);
+    }
+
     private static bool ReflectionMetaClassName(string className) =>
         UE5DumpUI.Helpers.ReflectionMetaClassifier.IsReflectionMeta(className);
 

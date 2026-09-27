@@ -281,6 +281,29 @@ public class SpcQueryViewModelTests : IDisposable
         Assert.Equal("", vm.SeqFirstMin);
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same result rows must not
+    /// re-set the grid: that throws it to its first row and drops the selection.</summary>
+    [Fact]
+    public async Task ResultFilter_same_rows_keep_the_list_and_the_selection()
+    {
+        await SeedAsync("t1", ("HP", 100), ("Mana", 10));
+        await SeedAsync("t2", ("HP", 90),  ("Mana", 20));
+        var vm = NewVm();
+        await vm.RefreshAsync();
+        foreach (var p in vm.SnapshotPicks) p.IsSelected = true;
+        await vm.RunQueryCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.Results.Count);
+        vm.SelectedResult = vm.Results[1];
+        var picked = vm.SelectedResult;
+        int changes = 0;
+        vm.Results.CollectionChanged += (_, _) => changes++;
+
+        vm.ResultGlobalFilter = " ";              // no term: the same rows
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedResult);
+    }
+
     [Fact]
     public async Task RunQuery_FewerThanTwoSelected_NoQuery()
     {

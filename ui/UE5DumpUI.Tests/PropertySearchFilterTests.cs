@@ -52,6 +52,30 @@ public class PropertySearchFilterTests
     private static PropertySearchMatch Row(string cls, string prop, string type = "FloatProperty") =>
         new() { ClassName = cls, DefiningClassName = cls, PropName = prop, PropType = type };
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same rows must not re-set
+    /// the grid: that throws it to its first row and drops the selection.</summary>
+    [Fact]
+    public async Task ResultFilter_same_rows_keep_the_list_and_the_selection()
+    {
+        var vm = await SearchedVm(
+            Row("BP_PlayerState_C", "MaxHealth"),
+            Row("BP_PlayerState_C", "CurrentHealth"),
+            Row("BP_MaxCombo_C",    "Value", "IntProperty"));
+        vm.ResultFilter = "heal";
+        vm.ApplyResultFilter();
+        Assert.Equal(2, vm.Results.Count);
+        vm.SelectedResult = vm.Results[1];
+        var picked = vm.SelectedResult;
+        int changes = 0;
+        vm.Results.CollectionChanged += (_, _) => changes++;
+
+        vm.ResultFilter = "health";
+        vm.ApplyResultFilter();
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedResult);
+    }
+
     [Fact]
     public async Task ResultFilter_SpaceIsAnd_WithFieldLevelOr()
     {

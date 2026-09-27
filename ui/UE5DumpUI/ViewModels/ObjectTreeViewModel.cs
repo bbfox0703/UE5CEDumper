@@ -501,7 +501,9 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         StatusText = "";
     }
 
-    private void ApplyFilter()
+    /// <summary><c>internal</c> so a test can drive it without the 200 ms debounce — the
+    /// seam <c>PropertySearchViewModel.ApplyResultFilter</c> uses.</summary>
+    internal void ApplyFilter()
     {
         // Detach the bound selection before clearing: Avalonia's selection model
         // otherwise nulls SelectedNode DURING the Clear()'s CollectionChanged event,
