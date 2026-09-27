@@ -27,6 +27,28 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3569, 3570) — Live Walker: retyping the value on screen wrote a truncated number `[LW-EDIT-RETYPE-DROP]`
+
+- **Found while answering the maintainer's edit-vs-Auto-Refresh question**, once typing actually reached the
+  editor (a computer-use double-click leaves focus on the grid; `send_key.py --post` after a click INSIDE the
+  box does reach it): `I32` showing `1234568`, retype `1234568`, Enter → *"Written: I32 = 123456"*. The editor's
+  TwoWay binding re-reads `EditableValue` after each value it writes and skips a keystroke equal to what it last
+  read; the getter returned the live value, so a retype's final keystroke was lost. A wrong value in the game.
+- **3569** made the getter return the pending text — only when non-empty, which brought its own fault, caught
+  in the live check: deleting the last character fell back to the live value and the binding refilled the box
+  (`567` → Delete ×3 → `1234567`). **3570** keys it on "the editor has written in this edit" instead, so a cleared
+  box stays empty; the editor still opens on the live value (`ResetPendingEdit` at edit begin).
+- **The edit-vs-refresh question itself (`[LW-EDIT-UNDER-REFRESH]`)**: an open editor pauses Auto; Refresh while
+  typing commits the typed value first, as focus loss does.
+- Tests: `LiveWalkerEditPendingTests` (two new, each red first). UI suite 5,647 run, 0 failed. Gates 28 run, 0 failed.
+- **AOT publish 3570:** `UE5DumpUI.exe` 58,208,768 B `79830ceb39f7`, `UE5Dumper.dll` `dcec8433c030` (unchanged
+  source); proxies version `9c3f591470d2`, dinput8 `3a367186c67a`, dxgi `0c92a2c25178`, winmm `f7a4f53bbcaf`.
+  (3569: `UE5DumpUI.exe` `3afd4b2b8559` — superseded, do not hand over.) ✅ Live-checked on DumperTest 5.4
+  Shipping: opens on the live value, a cleared box stays empty, a retype writes the exact value, a different
+  value writes.
+- Also: `send_key.py` sends sequences (keys, `key*N`, `text=`), and the handover lists the non-game grants
+  (two ready batches, `nvidia overlay.exe` among them) and the game grants as optional — the user decides.
+
 ## 2026-09-27 (build 3568) — Live Walker: Back / Forward / breadcrumbs / bookmarks restore the view you left `[LW-BACK-SCROLL]`
 
 - **The maintainer's report:** after drilling into a row and pressing Back, the row was not on screen — you had
