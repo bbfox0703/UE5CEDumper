@@ -1637,11 +1637,12 @@ int main() {
     {
         blk("UFUNCWALK - WalkFunctions reads a UProperty param's subclass field at the version's delta");
 
-        static uint8_t wfEntry[9][0x40] = {};
-        const char* wfNames[9] = { "", "Function", "ObjectProperty", "Target", "Actor",
-                                   "StructProperty", "Hit", "HitResult", "DoIt" };
-        static uintptr_t wfChunk[10] = {};
-        for (int i = 1; i <= 8; ++i) {
+        static uint8_t wfEntry[13][0x40] = {};
+        const char* wfNames[13] = { "", "Function", "ObjectProperty", "Target", "Actor",
+                                    "StructProperty", "Hit", "HitResult", "DoIt",
+                                    "Class", "ScriptStruct", "Decoy", "Thing" };
+        static uintptr_t wfChunk[14] = {};
+        for (int i = 1; i <= 12; ++i) {
             memcpy(wfEntry[i] + 0x10, wfNames[i], strlen(wfNames[i]) + 1);
             wfChunk[i] = reinterpret_cast<uintptr_t>(wfEntry[i]);
         }
@@ -1654,23 +1655,33 @@ int main() {
         const bool     savedCpnW   = DynOff::bCasePreservingName;
         const int      savedOffW   = DynOff::UPROPERTY_OFFSET;
         const uint32_t savedVerW   = g_cachedUEVersion;
+        const int      savedStartW = DynOff::UPROPERTY_SUBCLASS_START;
+        DynOff::UPROPERTY_SUBCLASS_START = 0;   // no Genau run here: the version's start
         DynOff::bUseFProperty       = false;
         DynOff::bCasePreservingName = false;
 
         // Named objects: a zeroed UObject whose FName is the given pool index. 0x100 bytes, so a
         // WalkClass of the fake struct reads zeros, not a neighbour.
-        static uint8_t wfNamed[9][0x100] = {};
+        static uint8_t wfNamed[13][0x100] = {};
         auto named = [&](int idx) {
             *reinterpret_cast<int32_t*>(wfNamed[idx] + Grimoire::OFF_UOBJECT_NAME) = idx;
             return reinterpret_cast<uintptr_t>(wfNamed[idx]);
         };
         auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        // Actor is a UClass and HitResult a UScriptStruct -- a param's slot is read only when it holds that kind
+        // ([STRUCTPROBE-ANY-NAME]); Decoy is an instance of a class called Thing, neither.
+        put(wfNamed[9], Grimoire::OFF_UOBJECT_CLASS, named(9));     // Class : Class
+        put(wfNamed[4], Grimoire::OFF_UOBJECT_CLASS, named(9));     // Actor : Class
+        put(wfNamed[7], Grimoire::OFF_UOBJECT_CLASS, named(10));    // HitResult : ScriptStruct
+        put(wfNamed[11], Grimoire::OFF_UOBJECT_CLASS, named(12));   // Decoy : Thing
+        named(4); named(7); named(11);
 
         // ONE set of blobs per case: a class, its UFunction, two UProperty params.
-        static uint8_t wfCls[2][0x100] = {}, wfFn[2][0x100] = {};
-        static uint8_t wfObjP[2][0x100] = {}, wfStrP[2][0x100] = {};
-        auto walkAt = [&](int c, unsigned ver, int offsetInternal, int subclassStart) {
+        static uint8_t wfCls[4][0x100] = {}, wfFn[4][0x100] = {};
+        static uint8_t wfObjP[4][0x100] = {}, wfStrP[4][0x100] = {};
+        auto walkAt = [&](int c, unsigned ver, int offsetInternal, int subclassStart,
+                          uintptr_t objTarget = 0, uintptr_t structTarget = 0) {
             g_cachedUEVersion        = ver;
             DynOff::UPROPERTY_OFFSET = offsetInternal;
             put(wfCls[c], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(wfFn[c]));
@@ -1683,14 +1694,14 @@ int main() {
             put32(wfObjP[c], Grimoire::OFF_UOBJECT_NAME, 3);
             put32(wfObjP[c], DynOff::UPROPERTY_ELEMSIZE, 8);
             put32(wfObjP[c], offsetInternal, 0);
-            put(wfObjP[c], subclassStart, named(4));
+            put(wfObjP[c], subclassStart, objTarget ? objTarget : named(4));
             put(wfObjP[c], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfStrP[c]));
             // param 2: StructProperty "Hit" -> Struct "HitResult" at the REAL subclass start
             put(wfStrP[c], Grimoire::OFF_UOBJECT_CLASS, named(5));
             put32(wfStrP[c], Grimoire::OFF_UOBJECT_NAME, 6);
             put32(wfStrP[c], DynOff::UPROPERTY_ELEMSIZE, 0x88);
             put32(wfStrP[c], offsetInternal, 8);
-            put(wfStrP[c], subclassStart, named(7));
+            put(wfStrP[c], subclassStart, structTarget ? structTarget : named(7));
             return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(wfCls[c]));
         };
         // Anti-vacuity: every ⭐ is a string compare an empty walk would fail -- but say which.
@@ -1728,6 +1739,31 @@ int main() {
         g_cachedUEVersion = 418; DynOff::UPROPERTY_OFFSET = 0x44;
         check("UFUNCWALK control: ...and the 4.18 one, as before",
               Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
+
+        // [STRUCTPROBE-ANY-NAME] (review of build 3596): this UProperty param path took ANY named object as the
+        // param's struct / class -- and walked it as a struct. A named non-struct, non-class object in the slot:
+        const auto pDecoy = paramsOf("a decoy in the slot", walkAt(2, 418, 0x44, 0x70, named(11), named(11)));
+        if (pDecoy.size() == 2) {
+            check("UFUNCWALK ⭐: a UProperty param's slot holding a named NON-class names no PropertyClass",
+                  pDecoy[0].objClassName.empty(), pDecoy[0].objClassName.c_str());
+            check("UFUNCWALK ⭐: ...nor a named NON-struct a Struct", pDecoy[1].structType.empty(),
+                  pDecoy[1].structType.c_str());
+        }
+
+        // [UPROP-SUBCLASS-SLOT] (review of build 3596): the start Genau RECORDED, not the version's -- a 4.15 layout
+        // labelled 4.22 (the version formula says 0x7C, the layout 0x78). Pins the WalkFunctions and the
+        // ParamTargetType sites, which a revert to the version formula left green.
+        DynOff::UPROPERTY_SUBCLASS_START = 0x78;
+        const auto pMis = paramsOf("4.15 labelled 4.22", walkAt(3, 422, 0x50, 0x78));
+        if (pMis.size() == 2) {
+            check("UFUNCWALK ⭐: WalkFunctions reads a param at the recorded start, not the version's",
+                  pMis[0].objClassName == "Actor" && pMis[1].structType == "HitResult",
+                  (pMis[0].objClassName + "/" + pMis[1].structType).c_str());
+        }
+        g_cachedUEVersion = 422; DynOff::UPROPERTY_OFFSET = 0x50;
+        check("UFUNCWALK ⭐: ...and so does FindFunctionsByClassParam's matcher",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[3]), named(4), retMatch) == 1);
+        DynOff::UPROPERTY_SUBCLASS_START = savedStartW;
 
         g_cachedUEVersion           = savedVerW;
         DynOff::UPROPERTY_OFFSET    = savedOffW;
