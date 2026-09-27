@@ -338,11 +338,14 @@ int main() {
         // A minimal walkable "UClass": WalkClassEx caches whenever
         // ShouldPublishClassWalk(true, PropertiesSize) holds, and that is only
         // IsPlausiblePropertiesSize -- a range check. Name/super reads may fail harmlessly.
-        std::vector<uint8_t> blob(0x200, 0);
-        const uintptr_t X = reinterpret_cast<uintptr_t>(blob.data());
+        // STATIC, never a heap buffer: this class stays in s_walkClassExCache for the rest of the
+        // run, and a freed heap block's address is handed to the next same-sized allocation -- a
+        // later test's class then read THIS cached answer (SANEPROPS failed that way on 2026-09-27).
+        static uint8_t blob[0x200] = {};
+        const uintptr_t X = reinterpret_cast<uintptr_t>(blob);
 
         auto setPropsSize = [&](int32_t v) {
-            memcpy(blob.data() + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
+            memcpy(blob + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
         };
 
         setPropsSize(100);
@@ -394,12 +397,18 @@ int main() {
         // every case after the first read the FIRST case's memoised answer -- the A10
         // defect the fixture above demonstrates, hit here by accident while writing
         // this test.
-        std::vector<uint8_t> objBlob(0x200, 0);
-        const uintptr_t O = reinterpret_cast<uintptr_t>(objBlob.data());
-        std::vector<uint8_t> clsGarbage(0x200, 0), clsEmpty(0x200, 0), clsBig(0x200, 0);
-        auto setPropsSize = [](std::vector<uint8_t>& b, int32_t v) {
-            memcpy(b.data() + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
-            return reinterpret_cast<uintptr_t>(b.data());
+        // STATIC blobs, for the same reason one step further: a heap buffer can be handed the
+        // address of a class an EARLIER test walked and freed, and then reads that test's memoised
+        // answer. 2026-09-27: A10's 0x200-byte class vector is freed right before this block; in one
+        // build.ps1 run "garbage 827 MB is STILL judged stale" failed -- what reading A10's cached
+        // small PropertiesSize would produce -- and it passed in three standalone reruns. The address
+        // reuse was inferred from that, not logged; static storage removes it either way.
+        static uint8_t objBlob[0x200] = {};
+        const uintptr_t O = reinterpret_cast<uintptr_t>(objBlob);
+        static uint8_t clsGarbage[0x200] = {}, clsEmpty[0x200] = {}, clsBig[0x200] = {};
+        auto setPropsSize = [](uint8_t* b, int32_t v) {
+            memcpy(b + DynOff::USTRUCT_PROPSSIZE, &v, sizeof(v));
+            return reinterpret_cast<uintptr_t>(b);
         };
 
         // Order matters: prove the wedge case still bails BEFORE asking the walker to
