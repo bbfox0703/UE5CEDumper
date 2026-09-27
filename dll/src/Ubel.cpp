@@ -2064,8 +2064,9 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                             // UE4 StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
                                 uintptr_t structPtr = 0;
-                                // UStructProperty::Struct is at UPROPERTY subclass extension offset
-                                if (Macht::ReadSafe(cur + subclassStart, structPtr) && structPtr) {
+                                // UStructProperty::Struct is at UPROPERTY subclass extension offset -- a struct
+                                // only ([STRUCTPROBE-ANY-NAME]: this path named and WALKED any named object)
+                                if (Macht::ReadSafe(cur + subclassStart, structPtr) && IsScriptStructObject(structPtr)) {
                                     std::string sn = GetName(structPtr);
                                     if (!sn.empty() && sn[0] >= 0x20 && sn[0] < 0x7F)
                                         param.structType = sn;
@@ -2084,7 +2085,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                                   || param.typeName == "SoftClassProperty"  || param.typeName == "InterfaceProperty"
                                   || param.typeName == "LazyObjectProperty") {
                                 uintptr_t classPtr = 0;
-                                if (Macht::ReadSafe(cur + subclassStart, classPtr) && classPtr) {
+                                if (Macht::ReadSafe(cur + subclassStart, classPtr) && IsClassObject(classPtr)) {
                                     std::string cn = GetName(classPtr);
                                     if (!cn.empty() && cn[0] >= 0x20 && cn[0] < 0x7F)
                                         param.objClassName = cn;
