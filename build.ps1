@@ -14,9 +14,9 @@
 
 .PARAMETER Target
     Build target: All, DLL, UI, Test (default: All).
-    DLL builds the main UE5Dumper.dll AND all three proxy DLLs (version/dinput8/
-    dxgi) — the proxies are what actually get injected. ProxyDLL / ProxyDinput8 /
-    ProxyDxgi build a single proxy in isolation.
+    DLL builds the main UE5Dumper.dll AND every proxy DLL — the proxies are what
+    actually get injected. ProxyDLL / ProxyDinput8 / ProxyDxgi / ProxyWinmm build a
+    single proxy in isolation.
 
 .PARAMETER Clean
     Remove all build artifacts before building
@@ -29,7 +29,7 @@
     .\build.ps1 -Mode Debug             # Debug build
     .\build.ps1 -Mode Publish           # Optimized single-file publish
     .\build.ps1 -Mode Publish -Clean    # Clean + publish
-    .\build.ps1 -Target DLL             # Build the C++ DLL + all 3 proxy DLLs
+    .\build.ps1 -Target DLL             # Build the C++ DLL + every proxy DLL
     .\build.ps1 -Target UI -Mode Debug  # Debug build UI only
     .\build.ps1 -Target Test            # Build + run tests (also republishes UI to dist/)
 #>
@@ -581,10 +581,9 @@ $exitCode = 0
 # Map the requested -Target to the concrete Ninja targets to build. The configure
 # always enables every proxy target, so any subset can be built without a
 # reconfigure; we only compile the targets requested here.
-# -Target DLL builds the main DLL AND all three proxy DLLs (version/dinput8/dxgi)
-# — the proxies are the actually-injected artifacts, so "the DLL" means all of
-# them. The per-proxy targets (ProxyDLL/ProxyDinput8/ProxyDxgi) remain for
-# building a single proxy in isolation.
+# -Target DLL builds the main DLL AND every proxy DLL — the proxies are the
+# actually-injected artifacts, so "the DLL" means all of them. The per-proxy
+# targets remain for building a single proxy in isolation.
 $cppTargets = @()
 if ($Target -in "All", "DLL")               { $cppTargets += "UE5Dumper" }
 if ($Target -in "All", "DLL", "ProxyDLL")     { $cppTargets += "UE5Dumper_Proxy" }
