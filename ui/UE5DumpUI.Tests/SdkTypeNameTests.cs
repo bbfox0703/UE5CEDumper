@@ -501,6 +501,80 @@ public class SdkTypeNameTests
         Assert.Contains("struct TArray_Weird Arr;", sdk);
     }
 
+    // ------------------------------------------------------------------
+    // [SDK-UDS-MISSING] Blueprint user-defined structs join the pool.
+    // A UDS's GObjects row reads `UserDefinedStruct`; its members carry GUID-suffixed names.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void Pool_AUserDefinedStruct_IsDefined_AndItsReferencesFollowIt()
+    {
+        var n = new SdkPoolDump()
+            .Add("0x1", "S_Item", "UserDefinedStruct", "//Game/Data/S_Item/S_Item",
+                 fields: new[] { Int("Count_2_0123456789ABCDEF0123456789ABCDEF", 0) })
+            .Add("0x2", "BP_Bag_C", "BlueprintGeneratedClass", "//Game/Bag/BP_Bag/BP_Bag_C", size: 0x18,
+                 fields: new[]
+                 {
+                     StructMember("Item", "S_Item", 0, 4),
+                     new FieldInfoModel { Name = "Items", TypeName = "ArrayProperty", InnerType = "StructProperty", InnerStructType = "S_Item", Offset = 0x08, Size = 0x10 },
+                 })
+            .Sdk().Replace("\r\n", "\n");
+
+        Assert.Contains("// //Game/Data/S_Item/S_Item\nstruct S_Item\n", n);
+        Assert.Contains("struct S_Item Item;", n);
+        Assert.Contains("TArray<struct S_Item> Items;", n);
+    }
+
+    [Fact]
+    public void Pool_AUserDefinedStruct_IsAStruct_ForTheKindFilter()
+    {
+        // A native class and a UDS share the name Item: a by-value member names the UDS.
+        var sdk = new SdkPoolDump()
+            .Add("0x1", "Item", "Class", "//Script/M/Item", fields: new[] { Int("A", 0) })
+            .Add("0x2", "Item", "UserDefinedStruct", "//Game/Data/Item/Item", fields: new[] { Int("B", 0) })
+            .Add("0x3", "BP_Bag_C", "BlueprintGeneratedClass", "//Game/Bag/BP_Bag/BP_Bag_C", size: 0x10,
+                 fields: new[] { StructMember("Inv", "Item", 0, 4), PtrMember("Owner", "Item", 8) })
+            .Sdk();
+
+        Assert.Contains("struct Item_Data Inv;", sdk);
+        Assert.Contains("class Item* Owner;", sdk);
+    }
+
+    [Fact]
+    public void Pool_SharingOnlyTheMountPoint_IsNotLocality()
+    {
+        // A Blueprint in an unrelated /Game folder names `Vector` by value: sharing `Game` alone does not
+        // make a /Game UDS nearer than the engine struct.
+        var sdk = new SdkPoolDump()
+            .Add("0x1", "Vector", "ScriptStruct", "//Script/CoreUObject/Vector", size: 0x18, fields: new[] { Int("X", 0) })
+            .Add("0x2", "Vector", "UserDefinedStruct", "//Game/Maps/Stuff/Vector/Vector", size: 0x18, fields: new[] { Int("Mine", 0) })
+            .Add("0x3", "BP_Y_C", "BlueprintGeneratedClass", "//Game/Other/BP_Y/BP_Y_C", size: 0x18,
+                 fields: new[] { StructMember("Loc", "Vector", 0, 0x18) })
+            .Sdk();
+
+        var bp = sdk[sdk.IndexOf("struct BP_Y_C", StringComparison.Ordinal)..];
+        Assert.Contains("struct Vector Loc;", bp[..bp.IndexOf("};", StringComparison.Ordinal)]);
+    }
+
+    [Fact]
+    public void Pool_ANamesakeOfTheWrongSize_IsNotChosen()
+    {
+        // Same folder as a 4-byte UDS `Vector`, but the member is 0x18 bytes: it is the engine's.
+        // A struct member's size is its struct's aligned PropertiesSize, so a holder that cannot be
+        // that size is not the one it names.
+        var sdk = new SdkPoolDump()
+            .Add("0x1", "Vector", "ScriptStruct", "//Script/CoreUObject/Vector", size: 0x18, fields: new[] { Int("X", 0) })
+            .Add("0x2", "Vector", "UserDefinedStruct", "//Game/Maps/Stuff/Vector/Vector", size: 4, fields: new[] { Int("Mine", 0) })
+            .Add("0x3", "BP_X_C", "BlueprintGeneratedClass", "//Game/Maps/Stuff/BP_X/BP_X_C", size: 0x20,
+                 fields: new[] { StructMember("Loc", "Vector", 0, 0x18), StructMember("Mine", "Vector", 0x18, 4) })
+            .Sdk();
+
+        var bp = sdk[sdk.IndexOf("struct BP_X_C", StringComparison.Ordinal)..];
+        bp = bp[..bp.IndexOf("};", StringComparison.Ordinal)];
+        Assert.Contains("struct Vector Loc;", bp);
+        Assert.Contains("struct Vector_Stuff Mine;", bp);
+    }
+
     [Fact]
     public void BuiltIns_CoverEveryTypeTheEmitterSpellsItself()
     {
