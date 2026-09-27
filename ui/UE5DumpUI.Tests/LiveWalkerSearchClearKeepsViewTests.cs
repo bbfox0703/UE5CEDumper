@@ -48,6 +48,27 @@ public class LiveWalkerSearchClearKeepsViewTests
 
     private static LiveFieldValue Named(LiveWalkerViewModel vm, string name) => vm.Fields.First(f => f.Name == name);
 
+    [Theory]
+    [InlineData("", "I")]         // the first character: the maintainer's follow-up
+    [InlineData("I", "I3")]       // the search becomes active
+    [InlineData("I32", "I3")]
+    [InlineData("I3", "I")]       // down to one character
+    [InlineData("I", "")]
+    [InlineData("I32", "")]
+    public void No_keyword_edit_replaces_the_grid_items(string from, string to)
+    {
+        // [LW-SEARCH-CLEAR-KEEP] Re-setting the grid's items is what threw the grid back to its
+        // first row -- on the first character typed as much as on a clear. The highlight is a
+        // style BOUND to IsSearchMatch since [LWREFRESH-2026-08-21], so nothing needs re-setting.
+        var vm = VmWithRows();
+        vm.SearchText = from;
+        var items = vm.Fields;
+
+        vm.SearchText = to;
+
+        Assert.Same(items, vm.Fields);
+    }
+
     [Fact]
     public void Clearing_with_the_stepped_match_selected_keeps_the_view_where_it_is()
     {
