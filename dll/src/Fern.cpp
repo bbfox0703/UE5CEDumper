@@ -2327,10 +2327,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 uintptr_t cls = Ubel::GetClass(obj);
                 if (!cls) continue;
                 std::string clsName = Ubel::GetName(cls);
-                if (clsName != "Enum") continue;
-
                 std::string name = Ubel::GetName(obj);
-                if (name.empty()) continue;
+                if (name.empty() || !Aura::IsListedEnumObject(clsName, name)) continue;
 
                 // Read enum entries via cached resolver
                 auto entries = Ubel::GetEnumEntries(obj);

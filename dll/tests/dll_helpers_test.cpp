@@ -3017,6 +3017,20 @@ static void Test_CanonicalizeObjectPath() {
     EXPECT_EQ_STR("leaf: bare name is its own leaf", PathLeafName("Actor"), "Actor");
 }
 
+// IsListedEnumObject: what list_enums publishes, and so what a .usmap can name. [USMAP-UDE-MISSING]
+// A Blueprint UserDefinedEnum is its own UEnum subclass, so a `== "Enum"` test dropped every one
+// (EVERSPACE 2's STRCT_PlanetType.Type names EPlanetTypes, a cooked UserDefinedEnum); and the
+// class-default object Default__Enum passed it, because a CDO's row reads its metaclass.
+static void Test_IsListedEnumObject() {
+    using Aura::IsListedEnumObject;
+    EXPECT("enum: native UEnum",                 IsListedEnumObject("Enum", "EMovementMode"));
+    EXPECT("enum: Blueprint UserDefinedEnum",    IsListedEnumObject("UserDefinedEnum", "EPlanetTypes"));
+    EXPECT("enum: not the UEnum CDO",           !IsListedEnumObject("Enum", "Default__Enum"));
+    EXPECT("enum: not the UserDefinedEnum CDO", !IsListedEnumObject("UserDefinedEnum", "Default__UserDefinedEnum"));
+    EXPECT("enum: not a struct",                !IsListedEnumObject("UserDefinedStruct", "S_Item"));
+    EXPECT("enum: not a class",                 !IsListedEnumObject("Class", "Actor"));
+}
+
 // IsReflectionMetaClass: the Object Tree "Instances only" server-side gate. MUST match
 // the C# Helpers/ReflectionMetaClassifier — excludes the FULL reflection/type layer, not
 // just class-like metas (else UFunction/UScriptStruct/UPackage/UEnum leak through).
@@ -9075,6 +9089,7 @@ int main() {
     RUN(Test_ValueScan_OrderedView);
     RUN(Test_IsEnginePackage);
     RUN(Test_CanonicalizeObjectPath);
+    RUN(Test_IsListedEnumObject);
     RUN(Test_IsReflectionMetaClass);
     RUN(Test_KeywordMatch);
     RUN(Test_SnapshotNoise_GuardrailAndSets);

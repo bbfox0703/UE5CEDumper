@@ -1068,6 +1068,14 @@ inline std::string PathLeafName(const std::string& raw) {
 // MUST stay in sync with the C# mirror Helpers/ReflectionMetaClassifier. Exact-cased
 // match (UE emits meta names exactly cased); pure / string-only so the lightweight DLL
 // test can exercise it without linking the whole DLL.
+// IsListedEnumObject -- which GObjects rows list_enums publishes. [USMAP-UDE-MISSING]
+// Pure / string-only so dll_helpers_test can pin it; list_enums itself lives in Fern.cpp,
+// which no test target compiles.
+inline bool IsListedEnumObject(const std::string& className, const std::string& objName) {
+    (void)objName;
+    return className == "Enum";
+}
+
 inline bool IsReflectionMetaClass(const std::string& className) {
     if (className.empty()) return false;
     static const char* const kReflectionMetas[] = {
