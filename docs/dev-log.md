@@ -27,6 +27,18 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3592) — map and set members name their object classes; UE 4.11–4.17 struct arrays show their element type; walk caches follow a late layout correction `[SDK-CONTAINER-OBJCLASS]` `[UPROP-CONTAINER-FLAT-2C]` `[FAMILY-EPOCH]`
+
+- **SDK export:** a TMap key or value and a TSet element that holds objects now says which class — EVERSPACE 2's
+  header had 125 map sides, 28 set elements and 69 soft / weak pointers written as `UObject`; now none, and every
+  class-valued member of its engine classes matches UE 5.6's own source (304 of 304).
+- **UE 4.11–4.17 (and case-preserving UE4 builds):** Live Walker named no element struct of a struct array
+  (NEKOPALIVE: 0 of 13); it names all 13 now.
+- **Safety net:** if the engine layout the dumper derived is corrected at runtime, every class read before the
+  correction is read again instead of keeping the old answer.
+- Build 3592: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `97172b4c7d87`; `dist\UE5Dumper.dll` 3,036,672 B,
+  `296053b6c66a`. C# 5800/5800, headless 15/15, dll_core 515 checks, dll_helpers 3050.
+
 ## 2026-09-28 (build 3591) — the property type slot is derived right on UE 5.7 builds that keep editor data `[FPROP-FAMILY-ALIGN]`
 
 - A UE 5.7 build that keeps its editor data (Titan Quest II) moves one field of the engine's property layout, and
