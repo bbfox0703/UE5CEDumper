@@ -247,6 +247,43 @@ public class DumpExplorerTests
         finally { File.Delete(path); }
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A search edit that shows the same rows must not swap in
+    /// new collections: that throws both grids to their first row and drops the picks.</summary>
+    [Fact]
+    public async Task Vm_search_edit_showing_the_same_rows_keeps_both_lists_and_the_picks()
+    {
+        var path = await WriteTempAsync(SampleJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithPlayer(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            await vm.LoadFromPathAsync(path);
+            var matched = vm.Matched;
+            var unmatched = vm.Unmatched;
+            vm.MatchedSelected = matched[1];
+            vm.UnmatchedSelected = unmatched[1];
+            var pickedM = vm.MatchedSelected;
+            var pickedU = vm.UnmatchedSelected;
+
+            vm.SearchText = " ";                  // no term: the same rows
+
+            Assert.Same(matched, vm.Matched);
+            Assert.Same(unmatched, vm.Unmatched);
+            Assert.Same(pickedM, vm.MatchedSelected);
+            Assert.Same(pickedU, vm.UnmatchedSelected);
+
+            // A search that narrows one group rebuilds only that one; its clear asks for Cleared.
+            var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+            vm.MatchedView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { pickedM! }, null);
+            vm.MatchedView.RestoreView = (_, mode) => modes.Add(mode);
+            vm.SearchText = "health";
+            vm.SearchText = "";
+            Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                                 UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
+        }
+        finally { File.Delete(path); }
+    }
+
     [Fact]
     public async Task Vm_Disconnect_InvalidatesLiveMatch()
     {

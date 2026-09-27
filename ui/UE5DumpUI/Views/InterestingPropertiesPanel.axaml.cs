@@ -29,6 +29,7 @@ public partial class InterestingPropertiesPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
+        this.AttachFilterView<InterestingPropertiesViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
     }
 
     private void InitializeComponent()

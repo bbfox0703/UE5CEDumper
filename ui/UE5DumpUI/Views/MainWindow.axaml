@@ -344,7 +344,7 @@
           <TextBlock Text="{Binding DllBuildOkText}"
                      Foreground="#5A8C5A" FontSize="11" VerticalAlignment="Center"
                      IsVisible="{Binding ShowDllBuildOk}"
-                     ToolTip.Tip="Deployed DLL build matches the UI build"/>
+                     ToolTip.Tip="{StaticResource str.Tip.Toolbar.DeployedDLLBuildMatches}"/>
           <!-- UE5.7+ *** UNVERIFIED *** packed FUObjectItem layout: warn that reconstructed
                addresses and every export (CE XML / CSX / Teleport) are best-effort. -->
           <Border IsVisible="{Binding ShowPackedLayoutBadge}"

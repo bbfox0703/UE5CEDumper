@@ -121,6 +121,9 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     [ObservableProperty] private bool   _isLoading;
     [ObservableProperty] private string _statusText = "Click Load to scan all UFunctions";
     [ObservableProperty] private ObservableCollection<ScoredFunctionRow> _results = new();
+    /// <summary>Keeps the Results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
     [ObservableProperty] private ScoredFunctionRow? _selectedResult;
     [ObservableProperty] private bool _isXrefBatchRunning;
 
@@ -697,10 +700,6 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     /// </summary>
     private void ApplyFilter()
     {
-        SelectedResult = null;   // detach before rebuilding the selection-bound list
-        Results.Clear();
-        if (_allRows.Count == 0) return;
-
         // Space-separated terms are ANDed (each must hit FuncName or ClassName),
         // so "add money" narrows to entries matching both — the shared Object Tree
         // filter semantics. Cheat-table workflow: user usually remembers either
@@ -711,6 +710,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
 
         int hiddenByClass = 0;
         var callableOnly = CallableOnly;
+        var rows = new List<ScoredFunctionRow>();
         foreach (var row in _allRows)
         {
             if (row.FinalScore < threshold) continue;
@@ -726,8 +726,10 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             // Class-noise exclusion last, so the count reflects rows that would
             // otherwise be visible.
             if (ClassFilter.IsExcluded(row.ClassName)) { hiddenByClass++; continue; }
-            Results.Add(row);
+            rows.Add(row);
         }
+        // Detach before rebuilding the selection-bound list; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, rows, () => SelectedResult = null, FilterText);
         ClassFilterNote = hiddenByClass > 0 ? $"{hiddenByClass} hidden by class filter" : "";
     }
 
@@ -860,7 +862,7 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
     {
         if (selected is null || selected.Count == 0)
         {
-            StatusText = "Select 2+ rows first (Ctrl/Shift+click).";
+            StatusText = "Select at least one row first (Ctrl/Shift+click adds more).";
             return;
         }
 

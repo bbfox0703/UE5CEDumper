@@ -123,7 +123,7 @@
       <DataGrid.Columns>
         <!-- Order: call-stream position of the first fire (lower = earlier = more likely
              the causal entry point). Sort ascending to put openers on top. -->
-        <DataGridTemplateColumn Header="Order" Width="64" SortMemberPath="FirstSeq" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Order}" Width="64" SortMemberPath="FirstSeq" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding FirstSeq}"
@@ -132,7 +132,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="Calls" Width="80" SortMemberPath="Count" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Calls}" Width="80" SortMemberPath="Count" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding Count}"
@@ -143,7 +143,7 @@
         </DataGridTemplateColumn>
         <!-- Δ vs baseline — "NEW" / "+N" (green) surfaces action-specific funcs.
              Blank outside Diff mode. -->
-        <DataGridTemplateColumn Header="Δ vs base" Width="80" SortMemberPath="Delta" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.DeltaVsBase}" Width="80" SortMemberPath="Delta" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding DeltaLabel}"
@@ -153,7 +153,7 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <!-- Kind: "UI" marks a transient widget method (the created UI, not the opener). -->
-        <DataGridTemplateColumn Header="Kind" Width="44" SortMemberPath="Kind" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Kind}" Width="44" SortMemberPath="Kind" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding Kind}"
@@ -164,7 +164,7 @@
         </DataGridTemplateColumn>
         <!-- Type: Event/Deleg (a reaction the engine fires) vs Call (an imperative
              function you can invoke) vs native. -->
-        <DataGridTemplateColumn Header="Type" Width="56" SortMemberPath="TypeLabel" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Type}" Width="56" SortMemberPath="TypeLabel" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding TypeLabel}"
@@ -173,12 +173,12 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="240"/>
-        <DataGridTextColumn Header="Function" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="240"/>
-        <DataGridTextColumn Header="Params" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="90" CanUserSort="True"/>
+        <DataGridTextColumn Header="{StaticResource str.LF.Col.Class}" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="240"/>
+        <DataGridTextColumn Header="{StaticResource str.LF.Col.Function}" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="240"/>
+        <DataGridTextColumn Header="{StaticResource str.LF.Col.Params}" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="90" CanUserSort="True"/>
         <!-- Period: mean inter-arrival cadence (Phase E); "Timer" in the Kind column
              marks a regular timer-like callback. -->
-        <DataGridTextColumn Header="Period" Binding="{Binding PeriodLabel}" SortMemberPath="MeanPeriodMs" Width="72"/>
+        <DataGridTextColumn Header="{StaticResource str.LF.Col.Period}" Binding="{Binding PeriodLabel}" SortMemberPath="MeanPeriodMs" Width="72"/>
         <DataGridTemplateColumn Header="" Width="Auto" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">

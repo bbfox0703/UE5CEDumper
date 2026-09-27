@@ -27,6 +27,203 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3578–3580) — Home / End / page keys with text selected keep the caret where it belongs; UI tests on real controls `[TEXTBOX-HOMEEND-CARET]`
+
+- **Every text field:** with text selected, End could put the caret at the START (and Home at the end) — e.g. a
+  click on a keyword box's padding selects its text, End, then typing went in front: `spawn` + ` act` became
+  ` actspawn`. PageUp / PageDown did the same, and in the multi-line Lua paste box Home / End after a selection
+  made across lines acted on the wrong line. A defect in Avalonia's TextBox, worked around for every text field
+  in the app; Shift+Home / Shift+End are unchanged.
+- **A second test project drives real Avalonia controls** (`ui/UE5DumpUI.HeadlessTests`, Avalonia.Headless), run
+  by `build.ps1` after the main suite. It pins Avalonia's own defect too, so the day an upgrade fixes it the
+  workaround can go.
+- An adversarial review of the first version (six agents, against Avalonia's decompiled source) found the page
+  keys and the cross-line case; both fixed red-first.
+- Live check PASSED on 3578 / 3579 (Interesting Funcs keyword box).
+
+## 2026-09-27 (build 3577) — keyword boxes: a selection hidden by a typo comes back `[KEYWORD-BOX-VIEW-KEEP]`
+
+- **The maintainer's call: keep the last non-empty selection.** Before, a keyword that hid every selected row
+  (a typo, zero rows) dropped the selection for good, so clearing the typo brought nothing back. Now the hidden
+  selection is kept: clearing the keyword brings its first row to the top, and a Backspace that shows the rows
+  again selects them again. Picking another row yourself, or a reload that resets the box, lets it go. A
+  selection that is only partly hidden keeps the rows still shown.
+- Live check PASSED on 3577 (DumperTest 5.4 Shipping): Interesting Funcs with two rows picked (zero-row typo then
+  clear, typo then Backspace, a pick of your own in between) and the Object Tree.
+
+## 2026-09-27 (builds 3575, 3576) — keyword boxes: a clear typed faster than the view restores still lands right `[KEYWORD-BOX-VIEW-KEEP]`
+
+- **A race behind 3574's filter-box rules, found while retrying an unexplained live run.** A rebuild detaches the
+  selection and its view restore is queued behind keyboard input, so a key that arrives before the restore runs
+  captured an empty selection. Measured on 3574: a row picked, keys sent at once, and the clear left the row at
+  the bottom edge instead of the top. Now a capture taken while a restore is still queued carries that restore's
+  selection (a row picked after the rebuild still wins), and only the newest restore of a burst runs.
+- **Every restore decision is logged** at Debug in the `view` log (capture source, queued / dropped / ran,
+  rows found, selected afterwards), because the outcome depends on timing and is only visible on a live UI.
+- The unexplained run itself was not a bug: clicking the box's right-hand padding selects its text, End then put
+  the caret at the start, and the keyword became `actspawn` — no rows, so the pick was filtered out and the clear
+  had nothing to bring back, as the rules say. Whether a pick hidden by a typo should come back is open.
+- Live check PASSED on 3576 (DumperTest 5.4 Shipping, Interesting Funcs).
+
+## 2026-09-27 (builds 3573, 3574) — every keyword filter box keeps your place `[KEYWORD-BOX-VIEW-KEEP]` `[LW-SEARCH-CLEAR-KEEP]`
+
+- **3573 — Live Walker's field search no longer jumps on the FIRST character either** (the maintainer's second
+  follow-up to `[LW-SEARCH-CLEAR-KEEP]`). Every keyword edit re-set the grid's items to repaint the match tint,
+  a leftover from when the tint was painted per realized row; the tint has been a style bound to
+  `IsSearchMatch` since `[LWREFRESH-2026-08-21]`, so the re-set is simply gone.
+- **3574 — the same rules for every other keyword box** (the maintainer asked whether the other boxes had the
+  problem; a survey found all of them did, and nothing shared to fix it with). One shared helper now drives
+  them: `Helpers/FilterViewKeeper` decides, `Views/FilterViewBinding` does the selecting and scrolling.
+  - An edit that shows **the same rows** (a trailing space, one more letter every row already matches) does
+    not rebuild the list at all: nothing moves, the selection stays.
+  - A real rebuild **keeps the rows that are still selected** (multi-selection too) and keeps the first of
+    them visible.
+  - A keyword cleared **from 2+ characters to empty** brings the first selected row to the top; with nothing
+    selected, the row that was at the top stays at the top. In a list with several boxes (Game Classes,
+    Snapshot diff, SPC results) clearing one box while the others stay counts.
+  - Boxes: Object Tree, Class/Struct fields, Instances, Game Classes (3 boxes), Console, Live Walker
+    functions, Interesting Funcs / Props, Property Search, Live Funcs, Detect Stats, Dump Explorer (both
+    groups), Snapshot diff, SPC results, Class Pivot results, Teleport coordinates, and Value Search (server-
+    side: it always reloads, and finds your pick again by address).
+  - Side fixes on the way: Live Walker's Functions grid no longer jumps to the top on every (Auto) Refresh
+    tick — a walk that lists the same UFunctions keeps the rows; Teleport's coordinate filter detaches its
+    selection before clearing, inside the edit-sync suppression (an in-progress label edit survives typing in
+    the filter); Detect Stats and Live Walker's disconnect detach before clearing.
+  - Deliberately changed: Class/Struct's "the detach is unconditional" pin (AE14) — a surviving field is now
+    re-selected, which is safe because selecting a field starts nothing.
+- Live check PASSED on 3574 (DumperTest 5.4 Shipping): Object Tree, Console, Live Walker functions under Auto
+  Refresh, Interesting Funcs with a two-row selection, Teleport coordinates with an edit in progress.
+
+## 2026-09-27 (builds 3571, 3572) — Live Walker: clearing the search keyword no longer throws you back to the first row `[LW-SEARCH-CLEAR-KEEP]`
+
+- **The maintainer's request:** find a field with the search (say at 0x1138), clear the keyword to look for
+  something else, and the grid jumped to its first row — scroll all the way back by hand. `ApplySearch` re-sets
+  the grid's items on every change (so the highlight styles re-evaluate), which returns the grid to the top and
+  drops the selection; a non-empty keyword then scrolls to its first match, an empty one never did.
+- **Now**, only when the keyword goes from 2+ characters to empty in one edit (select all, Delete): the view
+  stays exactly where it is — whether nothing is selected (3572, the maintainer's follow-up) or the selection
+  holds the match ▲/▼ landed on — and a selection that does not hold it brings its first row to the top.
+  Typing, pasting, shortening, a partial delete, 1 → 0 characters and a navigation clearing the box behave as
+  before. It reuses the exact-position view restore of `[LW-BACK-SCROLL]`.
+- Tests: `LiveWalkerSearchClearKeepsViewTests` (3 red first, 6 controls). UI suite 5,656 run, 0 failed. Gates 28
+  run, 0 failed.
+- **AOT publish 3572:** `UE5DumpUI.exe` 58,225,152 B `450684c436e8`, `UE5Dumper.dll` `63a87743b364` (unchanged
+  source); proxies version `299740b87005`, dinput8 `549e780d6586`, dxgi `32862b0cd120`, winmm `e90d42ce4291`.
+  (3571 `998d6c537fc8` — superseded by the follow-up.) ✅ Live-checked on DumperTest 5.4 Shipping: all three cases.
+
+## 2026-09-27 (builds 3569, 3570) — Live Walker: retyping the value on screen wrote a truncated number `[LW-EDIT-RETYPE-DROP]`
+
+- **Found while answering the maintainer's edit-vs-Auto-Refresh question**, once typing actually reached the
+  editor (a computer-use double-click leaves focus on the grid; `send_key.py --post` after a click INSIDE the
+  box does reach it): `I32` showing `1234568`, retype `1234568`, Enter → *"Written: I32 = 123456"*. The editor's
+  TwoWay binding re-reads `EditableValue` after each value it writes and skips a keystroke equal to what it last
+  read; the getter returned the live value, so a retype's final keystroke was lost. A wrong value in the game.
+- **3569** made the getter return the pending text — only when non-empty, which brought its own fault, caught
+  in the live check: deleting the last character fell back to the live value and the binding refilled the box
+  (`567` → Delete ×3 → `1234567`). **3570** keys it on "the editor has written in this edit" instead, so a cleared
+  box stays empty; the editor still opens on the live value (`ResetPendingEdit` at edit begin).
+- **The edit-vs-refresh question itself (`[LW-EDIT-UNDER-REFRESH]`)**: an open editor pauses Auto; Refresh while
+  typing commits the typed value first, as focus loss does.
+- Tests: `LiveWalkerEditPendingTests` (two new, each red first). UI suite 5,647 run, 0 failed. Gates 28 run, 0 failed.
+- **AOT publish 3570:** `UE5DumpUI.exe` 58,208,768 B `79830ceb39f7`, `UE5Dumper.dll` `dcec8433c030` (unchanged
+  source); proxies version `9c3f591470d2`, dinput8 `3a367186c67a`, dxgi `0c92a2c25178`, winmm `f7a4f53bbcaf`.
+  (3569: `UE5DumpUI.exe` `3afd4b2b8559` — superseded, do not hand over.) ✅ Live-checked on DumperTest 5.4
+  Shipping: opens on the live value, a cleared box stays empty, a retype writes the exact value, a different
+  value writes.
+- Also: `send_key.py` sends sequences (keys, `key*N`, `text=`), and the handover lists the non-game grants
+  (two ready batches, `nvidia overlay.exe` among them) and the game grants as optional — the user decides.
+
+## 2026-09-27 (build 3568) — Live Walker: Back / Forward / breadcrumbs / bookmarks restore the view you left `[LW-BACK-SCROLL]`
+
+- **The maintainer's report:** after drilling into a row and pressing Back, the row was not on screen — you had
+  to scroll down to find it. Reproduced on 3567. The restore replayed the saved TOP row with `ScrollIntoView`,
+  which from the top of a rebuilt grid lands a row on the BOTTOM edge, so the view never came back and the
+  drilled row sat below it — since `7cc3d5e2` (build 2550), and before that a dead View callback (fixed in 3034)
+  restored nothing at all.
+- **Fix:** scroll to the end first, so the saved top row is above the viewport and returns as the FIRST row —
+  the exact view — then make sure the drilled row is on screen (Back passes its popped crumb, a breadcrumb jump
+  the target's child on the old spine). Forward and bookmark loads take the same exact-position restore. A
+  bookmark whose rows are gone later falls back to the first selected row still there, or stays at the top.
+- **The maintainer's other question — Auto Refresh while a cell is being edited (`[LW-EDIT-UNDER-REFRESH]`,
+  recorded, no code change):** measured, the edit pauses Auto (*paused (editing)*, the value held for 15 s), and
+  Refresh with the editor open closes it, writes nothing and resumes Auto. The narrower races a code-read
+  predicted need a real keyboard to reproduce: on this rig computer-use typing never reaches the editor binding.
+- Tests: `LiveWalkerForwardNavTests` pin the row the VM hands the View. UI suite 5,645 run, 0 failed. Gates 28
+  run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,208,768 B `83e699018eda`, `UE5Dumper.dll` `355af731e422` (unchanged
+  source); proxies version `8c402112eee6`, dinput8 `a798e4845a2e`, dxgi `97e4b2610f32`, winmm `437663780d7d`.
+  ✅ Live-checked on DumperTest 5.4 Shipping: Back, Back into the GWorld list, Forward, a two-level breadcrumb
+  jump and a bookmark load each returned the exact view.
+
+## 2026-09-26 (build 3567) — Auto snapshot stopped by hand says so `[AUTOSNAP-STOP-STALE-STATUS]`
+
+- Found by 3566's live check: turning Auto snapshot OFF left its status frozen on *"Auto: next snapshot in 28s ·
+  captured 1"* — the loop left on the cancellation without writing it, promising a capture that never came. Both
+  cancellation exits (the toggle, a disconnect) now write *"Auto snapshot stopped · captured N"*; the self-stops
+  keep their own reasons. A new view-model status string, so it is an en.axaml key (`str.Snapshot.Auto.Stopped`,
+  via `Res.Format`), per `[VM-INLINE-STRINGS]`.
+- Test: `SnapshotViewModelTests.AutoSnapshot_StoppedByHand_DoesNotKeepPromisingTheNextSnapshot` (red first). UI
+  suite 5,643 run, 0 failed. Gates 28 run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,206,720 B `97085fcb70e6`, `UE5Dumper.dll` 3,016,192 B `0c2a680e4ec3`
+  (unchanged source; rebuilt with the build number); proxies version `51cfc279fedf`, dinput8 `46e21220e534`, dxgi
+  `06803b971f27`, winmm `71eae26c0cbe`. ✅ Live-checked on DumperTest 5.4 Shipping: OFF mid-countdown shows the
+  stopped line, and it stays.
+
+## 2026-09-26 (build 3566) — the Wiki check's last batch, two behaviour fixes, and what an adversarial review found in the first two `[WIKI-TIPS-B3]` `[SNAPSHOT-MANUAL-GATE]` `[FLY-EXPORT-EXPERIMENTAL]`
+
+- **Behaviour:** manual Capture / Estimate stand down while Auto Snapshot runs — `CanManualCapture` existed and
+  was raised, but the panel had bound `CanCapture` since Auto Snapshot shipped (`[SNAPSHOT-MANUAL-GATE]`). The
+  Fly CE records follow the Experimental switch in Add action records and Save .CT, the maintainer's call
+  (`[FLY-EXPORT-EXPERIMENTAL]`).
+- **Text that contradicted the code (`[WIKI-TIPS-B3]`):** Teleport's export tips now count 17 teleport + 4
+  movement + 2 time (+ 4 Fly); Gravity Direction is UE5.3+ everywhere, as `Laufen.h` says; hotkey hints name
+  the section that holds each row; Run BugItGo runs the field; God Mode's refresh names its six badge states; no
+  UI string cites `docs/` or carries CJK text; each tab keeps its own noise denylist; Discover is a local
+  database query; Detect's filter is ANDed. Also `[LIVEFUNCS-CAP-ADVICE]` (the filter cannot recover rows below
+  the fetch cap) and `[TP-CURSORHK-TIP]` (the hotkey fallback reads as a range, not a key sequence).
+- **An adversarial review of builds 3565's fixes** (a 12-agent workflow; 9 of 13 findings skeptic-verified, the
+  rest checked by hand) found text half-fixed or missed — two more AND filters, seven `pre-5.4` comments, the
+  search floor on the whole query, Batch Props, IP's Timing category, the Add status legend
+  (`[WIKI-REVIEW-TEXT]`); two tests deriving from a proxy (`[WIKI-REVIEW-TESTS]`); and two gate blind spots
+  (`[WIKI-REVIEW-GATES]`): the view gate now reads binding text (three `StringFormat`s allow-listed rather than
+  moved, a cost/benefit call), and the status ratchet counts every status assignment carrying a literal —
+  558 grandfathered in 22 view models, where the one-line match had seen 388.
+- Tests: UI suite 5,642 run, 0 failed. Gates 28 run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,206,720 B `2e641eb08d76` (the new strings are in it), `UE5Dumper.dll`
+  3,016,192 B `ee31f4023b5d` (only a comment changed in `Solide.h`); proxies version `a23a3e00e927`, dinput8
+  `9bbe307aa01a`, dxgi `74235e067adb`, winmm `c154df98bf5f`.
+
+## 2026-09-26 (build 3565) — UI text checked against behaviour: 123 view strings move to en.axaml, nine tooltips corrected, a gate for inline strings `[AXAML-INLINE-STRINGS]` `[WIKI-TIPS-B2]`
+
+The Wiki re-translation pass checks every English page against the code and forwards what the UI text
+gets wrong; each item was confirmed against the source before it was fixed. Red before green throughout.
+
+- **`[AXAML-INLINE-STRINGS]`:** 123 user-visible attribute values were English literals in 15 views
+  (column headers, copy-button labels, range placeholders, Live Walker's tooltips, Class Struct's empty-class
+  banner). They now bind 111 new `en.axaml` keys, verbatim. `check_axaml_strings` checked keys only, which
+  is how they accumulated; it gains a third direction, INLINE, that fails on any such literal (a glyph-only
+  value passes).
+- **Tooltips that described behaviour the code does not have:** the Object Tree search suggests a fixed list
+  of class names, not recent searches (`[OBJTREE-SEARCH-TIP]`); Live Walker's field search matches name,
+  type, value and the class or struct behind a field, with a 2-character floor (`[LW-SEARCH-TIP]`); and
+  `[WIKI-TIPS-B2]`: three result filters are space = AND, not substring; Value Search's timeout is 10–90 s,
+  default 25 (was quoted as 10–60 / 15); native functions' Props are a disassembly heuristic, not empty;
+  Locate in GWorld has no client gate (audit #5 AE10); Clear also turns off BP/Exec only; the category
+  filter includes Gameplay and Other. The timeout text and the category list are now derived from the
+  slider, the VM default and `KeywordScoringTable` in the tests, so they cannot drift silently again.
+- **`[GENCT-ONE-ROW]`:** Generate CT's empty-selection refusal asked for "2+ rows"; one row works.
+- **`[UINT8PROP-DEAD]` (DLL + UI):** the Force-value gate accepted `UInt8Property`, a class no engine emits
+  (uint8 is `ByteProperty`). Dropped from `Solide::IntWidthOf` and `PropertySearchMatch.CanForceNumeric`;
+  a UI test reads the DLL's list out of `Solide.h` / `Solide.cpp` and requires the two to agree. No behaviour
+  change.
+- **Open, needs the maintainer:** `[VM-INLINE-STRINGS]`. 458 status literals in 22 view models; moving them
+  needs a test-time resource loader first.
+- Tests: UI suite 5,624 run, 0 failed; `dll_helpers_test` 0 failed. Gates 27 run, 0 failed.
+- **AOT publish:** `UE5DumpUI.exe` 58,203,136 B `383e5d8b9f97` (the new strings are in it), `UE5Dumper.dll`
+  3,016,192 B `49dba05e4013`; proxies version `3f12016e688c`, dinput8 `b810136d0ff9`, dxgi `eee40f37f75d`,
+  winmm `6d2d9aed918e`. ⬜ Live checks owed (the `todo.md` rows carry them): hover the corrected tooltips,
+  and open each of the 15 views to read the moved text.
+
 ## 2026-09-26 (build 3564) — the Console's CheatManager warning names the real cause: no live instance, not a compiled-out body `[CONSOLE-CHEATMGR-HINT]`
 
 - **3563's wording was wrong, and this build replaces it.** It said the engine's CheatManager execs are

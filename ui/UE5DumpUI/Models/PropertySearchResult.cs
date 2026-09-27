@@ -114,7 +114,7 @@ public partial class PropertySearchMatch : ObservableObject
     /// <summary>Row is a DLL-supported numeric type → "Force value…" applies.</summary>
     public bool CanForceNumeric => ShowScalarActions && PropType is
         "FloatProperty" or "DoubleProperty" or "IntProperty" or "Int64Property"
-        or "ByteProperty" or "UInt8Property" or "Int8Property";
+        or "ByteProperty" or "Int8Property";
 
     /// <summary>Any Force action applies to this row (gates the context submenu).</summary>
     public bool CanForceAny => CanForceBool || CanForceNull || CanForceNumeric;

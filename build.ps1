@@ -94,6 +94,10 @@ $DLL_DIR    = Join-Path $ROOT_DIR "dll"
 $UI_DIR     = Join-Path $ROOT_DIR "ui"
 $UI_PROJ    = Join-Path $UI_DIR  "UE5DumpUI\UE5DumpUI.csproj"
 $TEST_PROJ  = Join-Path $UI_DIR  "UE5DumpUI.Tests\UE5DumpUI.Tests.csproj"
+# Real Avalonia controls on the headless platform, in their OWN test process: a headless
+# session replaces the global UI Dispatcher, which the view-model tests above must not share
+# (the reason is spelled out in that csproj).
+$HEADLESS_TEST_PROJ = Join-Path $UI_DIR "UE5DumpUI.HeadlessTests\UE5DumpUI.HeadlessTests.csproj"
 $DIST_DIR   = Join-Path $ROOT_DIR "dist"
 $BUILD_DIR  = Join-Path $ROOT_DIR "build"
 
@@ -511,6 +515,9 @@ if ($Clean) {
         & dotnet clean $UI_PROJ -c $CSharpConfig --nologo -v q 2>$null
         if (Test-Path $TEST_PROJ) {
             & dotnet clean $TEST_PROJ -c $CSharpConfig --nologo -v q 2>$null
+        }
+        if (Test-Path $HEADLESS_TEST_PROJ) {
+            & dotnet clean $HEADLESS_TEST_PROJ -c $CSharpConfig --nologo -v q 2>$null
         }
     }
 
@@ -1119,6 +1126,36 @@ if ($Target -in "All", "Test") {
             }
             else {
                 Write-Ok "All tests passed"
+            }
+        }
+    }
+
+    # ----- C# headless UI tests -----
+    # Same rules as the project above: missing is a failure, not a skip, and the same
+    # forbidden transitive pins are refused before dotnet test runs.
+    if (-not (Test-Path $HEADLESS_TEST_PROJ)) {
+        Write-Fail "Headless UI test project not found at $HEADLESS_TEST_PROJ - no headless tests ran (this is a failure, not a skip)"
+        $exitCode = 1
+    }
+    else {
+        $forbiddenHeadless = Select-String -Path $HEADLESS_TEST_PROJ -Pattern 'PackageReference\s+Include="(Microsoft\.Testing\.(Platform|Extensions)|SkiaSharp|HarfBuzzSharp)' -ErrorAction SilentlyContinue
+        if ($forbiddenHeadless) {
+            Write-Fail "Forbidden explicit PackageReference(s) in the headless test csproj (see UE5DumpUI.Tests.csproj):"
+            $forbiddenHeadless | ForEach-Object { Write-Host "      line $($_.LineNumber): $($_.Line.Trim())" -ForegroundColor Red }
+            $exitCode = 1
+        }
+        else {
+            Write-Step "Building + running headless UI tests..."
+            $headlessArgs = @('test', '--project', $HEADLESS_TEST_PROJ, '-c', $CSharpConfig)
+            if ($SkipRestore) { $headlessArgs += '--no-restore' }
+            & dotnet @headlessArgs
+
+            if ($LASTEXITCODE -ne 0) {
+                Write-Fail "Headless UI tests failed"
+                $exitCode = 1
+            }
+            else {
+                Write-Ok "All headless UI tests passed"
             }
         }
     }

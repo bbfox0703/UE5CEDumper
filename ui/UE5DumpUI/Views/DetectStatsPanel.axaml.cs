@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -37,6 +38,7 @@ public partial class DetectStatsPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("DetectGrid")?.WireSortComparers(DetectSortComparers);
+        this.AttachFilterView<DetectStatsViewModel>(this.FindControl<DataGrid>("DetectGrid"), vm => vm.ResultsView);
     }
 
     private void InitializeComponent()

@@ -1,0 +1,50 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Tests that drive REAL Avalonia controls on the headless platform (Avalonia.Headless):
+       view-level behaviour that the plain test project can only pin as pure decision code
+       (a TextBox's caret after Home / End, a DataGrid's selection after a rebuild).
+
+       A SEPARATE project on purpose: a headless session creates Avalonia's Application and
+       replaces the global UI Dispatcher. In UE5DumpUI.Tests, thousands of view-model tests
+       run in parallel and several post work to Dispatcher.UIThread that is never meant to
+       run there (debounce timers); a live dispatcher in the same process would start running
+       it, on another thread, mid-test. One process per project keeps the two worlds apart.
+
+       Same framework / runtime / warning policy as UE5DumpUI.Tests, and the same pinning
+       rules: only test infrastructure is pinned here. -->
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <IsPackable>false</IsPackable>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <SelfContained>true</SelfContained>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="xunit.v3" Version="4.*" />
+    <PackageReference Include="xunit.runner.visualstudio" Version="4.*" />
+    <PackageReference Include="Microsoft.NET.Test.Sdk" Version="18.10.1" />
+    <!-- Must be the app's Avalonia version exactly (UE5DumpUI.csproj pins Avalonia 12.1.3):
+         the headless platform replaces the app's windowing backend in-process, and a
+         mismatched Avalonia.Base would be two copies of the framework in one test run. -->
+    <PackageReference Include="Avalonia.Headless" Version="12.1.3" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UE5DumpUI\UE5DumpUI.csproj" />
+  </ItemGroup>
+
+  <!-- The same guard as UE5DumpUI.Tests (see the comment there): SkiaSharp / HarfBuzzSharp
+       flow in from the UE5DumpUI reference, and Microsoft.Testing.* from xunit.v3. -->
+  <Target Name="_FailOnForbiddenTransitivePin" BeforeTargets="CollectPackageReferences">
+    <ItemGroup>
+      <_ForbiddenPin Include="@(PackageReference)"
+                     Condition="$([System.String]::Copy('%(Identity)').StartsWith('SkiaSharp'))
+                             Or $([System.String]::Copy('%(Identity)').StartsWith('HarfBuzzSharp'))
+                             Or $([System.String]::Copy('%(Identity)').StartsWith('Microsoft.Testing.'))" />
+    </ItemGroup>
+    <Error Condition="'@(_ForbiddenPin)' != ''"
+           Text="Forbidden transitive PackageReference(s) in the headless test project: @(_ForbiddenPin). See UE5DumpUI.Tests.csproj." />
+  </Target>
+</Project>

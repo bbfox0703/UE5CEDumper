@@ -697,12 +697,12 @@
                   MaxHeight="220" FontSize="11"
                   IsVisible="{Binding DiagCommands.Count}">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="Command" Binding="{Binding Cmd}" Width="*" MinWidth="120"/>
-            <DataGridTextColumn Header="Count" Binding="{Binding Count}" Width="80" MinWidth="50"/>
-            <DataGridTextColumn Header="Total ms" Binding="{Binding TotalMs}" Width="95" MinWidth="50"/>
-            <DataGridTextColumn Header="Avg ms" Binding="{Binding AvgMs, StringFormat='{}{0:N1}'}" Width="90" MinWidth="50"/>
-            <DataGridTextColumn Header="Max ms" Binding="{Binding MaxMs}" Width="90" MinWidth="50"/>
-            <DataGridTextColumn Header="% busy" Binding="{Binding SharePercent, StringFormat='{}{0:N1}'}" Width="85" MinWidth="50"/>
+            <DataGridTextColumn Header="{StaticResource str.System.Col.Command}" Binding="{Binding Cmd}" Width="*" MinWidth="120"/>
+            <DataGridTextColumn Header="{StaticResource str.System.Col.Count}" Binding="{Binding Count}" Width="80" MinWidth="50"/>
+            <DataGridTextColumn Header="{StaticResource str.System.Col.TotalMs}" Binding="{Binding TotalMs}" Width="95" MinWidth="50"/>
+            <DataGridTextColumn Header="{StaticResource str.System.Col.AvgMs}" Binding="{Binding AvgMs, StringFormat='{}{0:N1}'}" Width="90" MinWidth="50"/>
+            <DataGridTextColumn Header="{StaticResource str.System.Col.MaxMs}" Binding="{Binding MaxMs}" Width="90" MinWidth="50"/>
+            <DataGridTextColumn Header="{StaticResource str.System.Col.PctBusy}" Binding="{Binding SharePercent, StringFormat='{}{0:N1}'}" Width="85" MinWidth="50"/>
           </DataGrid.Columns>
         </DataGrid>
 

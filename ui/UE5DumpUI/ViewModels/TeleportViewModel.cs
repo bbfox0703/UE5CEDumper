@@ -96,7 +96,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugit",        DisplayName = "Copy BugItGo",
             Hint = "Copy the current position as a 'BugItGo X Y Z' string to the clipboard." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "bugitgo",      DisplayName = "Run BugItGo",
-            Hint = "Teleport to the position stored by the last BugIt." });
+            Hint = "Teleport to the coordinates in the BugItGo field (filled by Copy BugItGo, or pasted)." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "debugcam_on",  DisplayName = "Debug cam ON",
             Hint = "Turn the free-fly Debug Camera ON." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "debugcam_off", DisplayName = "Debug cam OFF",
@@ -112,7 +112,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "gravity_toggle",   DisplayName = "Gravity toggle",
             Hint = "Toggle the Gravity (GravityScale) override on/off." });
         HotkeyRows.Add(new TeleportHotkeyRow { ActionId = "gravdir_toggle",   DisplayName = "Gravity Dir toggle",
-            Hint = "Toggle the Gravity Direction override on/off (UE5.4+)." });
+            Hint = "Toggle the Gravity Direction override on/off (UE5.3+)." });
         // Experimental-gated hotkeys live in their own collection + card (below).
         ExperimentalHotkeyRows.Add(new TeleportHotkeyRow { ActionId = "fly_toggle", DisplayName = "Fly toggle",
             Hint = "Toggle Fly (no-gravity 3D flight) on/off. While flying, use the selected keyboard preset to move." });
@@ -709,7 +709,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private string _superJumpState = "Unknown";
     [ObservableProperty] private string _superJumpBadgeColor = "#888888";
 
-    /// <summary>Log-scale slider for jump HEIGHT (10%…1000%, 100% = base). Apex
+    /// <summary>Log-scale slider for jump HEIGHT (10%…3000%, 100% = base). Apex
     /// height h ∝ JumpZVelocity², so the applied velocity multiplier is
     /// √(heightMultiplier) — see <see cref="SuperJumpVelocityMultiplier"/>.</summary>
     [ObservableProperty]
@@ -747,8 +747,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// 1 = numpad, 2 = arrows. Turn is view-relative (the mouse).</summary>
     [ObservableProperty] private int _flyPresetIndex;
 
-    /// <summary>Noclip: position-drive (fly through walls, works even where the
-    /// game overrides velocity) vs the default velocity-drive (collision kept).</summary>
+    /// <summary>Noclip: the same velocity-drive with the actor's collision off, so the
+    /// flight passes through walls (Dunste.h); off = collision kept.</summary>
     [ObservableProperty] private bool _flyNoclip;
 
     [ObservableProperty] private string _flyCurrentText = "—";
@@ -784,7 +784,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     private bool _seeThroughActive;
 
     // ── Gravity Direction (Laufen, UE5.3+ GravityDirection vector) ─────
-    /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.4 / no
+    /// <summary>Tri-state badge: "ON" / "OFF" / "Unavailable" (pre-5.3 / no
     /// reflected GravityDirection).</summary>
     [ObservableProperty] private string _gravDirState = "Unknown";
     [ObservableProperty] private string _gravDirBadgeColor = "#888888";
@@ -3215,7 +3215,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         finally { IsBusy = false; }
     }
 
-    // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.4+) ──
+    // ── Gravity Direction (force GravityDirection vector, Laufen — UE5.3+) ──
 
     // [W2-GRAVDIR-VERDICT] -2 is the PERMANENT verdict (a CMC with no reflected GravityDirection: pre-5.3).
     // Any other negative is "not known right now" -- no pawn, a reset, a failed read -- and stays Unknown,
@@ -3229,7 +3229,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         {
             1                  => ("ON",          "#4EC9B0"),
             0                  => ("OFF",         "#999999"),
-            GravDirUnavailable => ("Unavailable", "#C9A04E"),   // pre-5.4 / no reflected GravityDirection
+            GravDirUnavailable => ("Unavailable", "#C9A04E"),   // pre-5.3 / no reflected GravityDirection
             _                  => ("Unknown",     "#888888"),   // no pawn right now / reset / failed read
         };
     }
@@ -3303,11 +3303,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                        "✓ Gravity direction held at ({0:0.00}, {1:0.00}, {2:0.00}).", g.X, g.Y, g.Z),
                 0 => "Gravity direction off (a zero vector = off).",
                 // [W2-GRAVDIR-VERDICT] The verdict needs BOTH signals. `resolved` alone comes from a fresh
-                // read and is false with no pawn as well as on a pre-5.4 engine; -4 alone is also returned
+                // read and is false with no pawn as well as on a pre-5.3 engine; -4 alone is also returned
                 // when the pawn / CMC class lookup or the vector read fails (Laufen.cpp ResolveCtx,
                 // SetGravityDirection). So: the set refused on reflection AND a live CMC lacks the field.
                 _ when r.State == Constants.LaufenErrReflect && mp.HasCmc && !g.Resolved
-                    => "Gravity direction unavailable — needs UE5.4+ (no reflected GravityDirection).",
+                    => "Gravity direction unavailable — needs UE5.3+ (no reflected GravityDirection).",
                 _ => "Gravity direction: no pawn / no CharacterMovement (enter gameplay first).",
             };
         }
@@ -3359,11 +3359,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             if (!g.HasAddr)
             {
                 // [W2-GRAVDIR-VERDICT] review follow-up: the readout's split, here too. No CMC right now
-                // is transient; only a CMC WITHOUT the reflected field is the pre-5.4 verdict.
+                // is transient; only a CMC WITHOUT the reflected field is the pre-5.3 verdict.
                 StatusText = !mp.HasCmc
                     ? "Gravity direction: no pawn / no CharacterMovement right now (enter gameplay first)."
                     : !g.Resolved
-                        ? "No GravityDirection field to locate (needs UE5.4+)."
+                        ? "No GravityDirection field to locate (needs UE5.3+)."
                         : "The GravityDirection field resolved without an address — press ↻ and try again.";
                 return;
             }
@@ -3605,12 +3605,20 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     partial void OnCoordFilterTextChanged(string value)
     {
-        ApplyCoordFilter();
+        ApplyCoordFilter(filterEdit: true);
         _coordFilterMemory.Schedule(value);
     }
-    partial void OnCoordGroupFilterChanged(string value) => ApplyCoordFilter();
+    partial void OnCoordGroupFilterChanged(string value) => ApplyCoordFilter(filterEdit: true);
     partial void OnCoordZToleranceChanged(double value) => PersistCoordLibrary();
-    partial void OnCoordCurrentMapOnlyChanged(bool value) => ApplyCoordFilter();
+    partial void OnCoordCurrentMapOnlyChanged(bool value) => ApplyCoordFilter(filterEdit: true);
+
+    /// <summary>Keeps the coordinate grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it. Keyed on the entry uid: every
+    /// rebuild makes new rows for the same entries.</summary>
+    public FilterViewKeeper CoordView { get; } = new()
+    {
+        KeyOf = o => o is CoordRow r ? r.Entry.Uid : o,
+    };
 
     partial void OnSelectedCoordChanged(CoordRow? value)
     {
@@ -3747,10 +3755,13 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// controlled by insertion order (the repo's VM-side sort convention) — the grid
     /// preserves it.
     /// </summary>
-    private void ApplyCoordFilter()
+    /// <param name="filterEdit">True from the filter controls: then the same entries, each
+    /// still on the same side of the current-map check, keep their rows. Every other caller
+    /// changed an entry in place (a rename, a re-capture) or the map, and needs new rows to
+    /// repaint.</param>
+    private void ApplyCoordFilter(bool filterEdit = false)
     {
         var keepUid = SelectedCoord?.Entry.Uid;
-        CoordResults.Clear();
 
         var terms = ObjectTreeFilter.SplitTerms(CoordFilterText);
         bool byGroup = !string.Equals(CoordGroupFilter, CoordAllGroups, StringComparison.Ordinal)
@@ -3772,27 +3783,34 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
 
         matched.Sort(CompareForDisplay);
-        foreach (var e in matched)
-            CoordResults.Add(new CoordRow(e, IsOnCurrentMap(e.Map)));
 
-        UpdateCoordDistances();
+        bool same = filterEdit && CoordResults.Count == matched.Count;
+        for (int i = 0; same && i < matched.Count; i++)
+            same = ReferenceEquals(CoordResults[i].Entry, matched[i])
+                   && CoordResults[i].OnCurrentMap == IsOnCurrentMap(matched[i].Map);
 
-        if (keepUid != null)
+        CoordView.Update(() =>
         {
-            // RESTORING the selection must not look like the user PICKING a row. The
-            // rebuild above makes fresh CoordRow objects, so SelectedCoord always changes
+            // Detaching and RESTORING the selection must not look like the user PICKING a
+            // row: the rebuild makes fresh CoordRow objects, so SelectedCoord always changes
             // reference and OnSelectedCoordChanged always fires — overwriting
-            // EditCoordLabel/Group from the stored entry. This runs per keystroke in the
-            // filter box, so typing while an edit was in progress silently reverted it.
-            // Same shape as _suppressCoordPersist. (B20)
+            // EditCoordLabel/Group from the stored entry (with "" for the detach). This runs
+            // per keystroke in the filter box, so typing while an edit was in progress
+            // silently reverted it. Same shape as _suppressCoordPersist. (B20)
             _suppressCoordEditorSync = true;
             try
             {
-                SelectedCoord = CoordResults.FirstOrDefault(r => r.Entry.Uid == keepUid);
+                SelectedCoord = null;   // detach before clearing the selection-bound grid
+                CoordResults.Clear();
+                foreach (var e in matched)
+                    CoordResults.Add(new CoordRow(e, IsOnCurrentMap(e.Map)));
+                if (keepUid != null)
+                    SelectedCoord = CoordResults.FirstOrDefault(r => r.Entry.Uid == keepUid);
             }
             finally { _suppressCoordEditorSync = false; }
-        }
+        }, rowsChanged: !same, CoordFilterText, CoordGroupFilter);
 
+        UpdateCoordDistances();
         OnPropertyChanged(nameof(CoordLibraryHeader));
     }
 
@@ -5119,22 +5137,29 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                     ok++;
             }
             // Fly (Dunste) — one row per key preset (WASD often collides with the game's
-            // own movement) + a Noclip toggle. DLL-driven; stateful on/off.
+            // own movement) + a Noclip toggle. DLL-driven; stateful on/off. Only while
+            // Experimental features is on: the Fly card is hidden otherwise, and a CE table
+            // should not carry records the UI does not show [FLY-EXPORT-EXPERIMENTAL].
             var flySpecs = new List<(string Desc, string Script)>();
-            for (int p = 0; p < FlyScriptGenerator.PresetNames.Length; p++)
-                flySpecs.Add(($"Fly: no-gravity 3D flight ({FlyScriptGenerator.PresetNames[p]})",
-                              FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled, p)));
-            flySpecs.Add(("Fly: Noclip (through walls)",
-                          FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip)));
+            if (ExperimentalEnabled)
+            {
+                for (int p = 0; p < FlyScriptGenerator.PresetNames.Length; p++)
+                    flySpecs.Add(($"Fly: no-gravity 3D flight ({FlyScriptGenerator.PresetNames[p]})",
+                                  FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Enabled, p)));
+                flySpecs.Add(("Fly: Noclip (through walls)",
+                              FlyScriptGenerator.Generate(FlyScriptGenerator.FlyToggle.Noclip)));
+            }
             foreach (var s in flySpecs)
             {
                 if (await _aobMaker!.CreateAAScriptAsync(s.Desc, s.Script, autoActivate: false, group: CeGroupDll))
                     ok++;
             }
             int total = specs.Length + moveSpecs.Length + 1 + timeSpecs.Length + flySpecs.Count;
-            StatusText = $"Added {ok}/{total} Teleport + Movement + Time + Fly records to CE " +
-                         "(teleport = momentary; movement/time/fly = on/off toggle; bind CE hotkeys as you like).";
-            _log.Info($"Teleport + Movement + Time + Fly actions -> CE via AOBMaker ({ok}/{total})");
+            string groups = flySpecs.Count > 0 ? "Teleport + Movement + Time + Fly" : "Teleport + Movement + Time";
+            string toggles = flySpecs.Count > 0 ? "movement/time/fly" : "movement/time";
+            StatusText = $"Added {ok}/{total} {groups} records to CE " +
+                         $"(teleport = momentary; {toggles} = on/off toggle; bind CE hotkeys as you like).";
+            _log.Info($"{groups} actions -> CE via AOBMaker ({ok}/{total})");
         }
         catch (Exception ex)
         {
@@ -5161,7 +5186,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // Time dilation (Hemmung) — World + Player levers baked at each lever's slider.
             rows.AddRange(TimeDilationScriptGenerator.BuildBatchRows(WorldTimeDilation, PawnTimeDilation));
             // Fly (Dunste) — DLL-driven no-gravity flight on/off + noclip on/off.
-            rows.AddRange(FlyScriptGenerator.BuildBatchRows());
+            if (ExperimentalEnabled)   // [FLY-EXPORT-EXPERIMENTAL], as in Add action records
+                rows.AddRange(FlyScriptGenerator.BuildBatchRows());
             string ct = CheatTableBuilder.Build("Teleport — UE5CEDumper", rows);
             var path = await _platform.ShowSaveFileDialogAsync(
                 defaultFileName: CheatTableBuilder.DefaultFileName("Teleport", DateTime.Now),

@@ -94,6 +94,7 @@ public partial class LiveWalkerPanel : UserControl
         DataContextChanged += OnDataContextChanged;
         AttachedToVisualTree += OnAttached;
         DetachedFromVisualTree += OnDetached;
+        this.AttachFilterView<LiveWalkerViewModel>(this.FindControl<DataGrid>("FunctionGrid"), vm => vm.FunctionsView);
     }
 
     /// <summary>
@@ -329,9 +330,11 @@ public partial class LiveWalkerPanel : UserControl
             anchor.TopRow = new BookmarkFieldRef(topField.Name, topField.Offset);
     }
 
-    // Bookmark load: re-select the saved rows (one or many) and scroll the saved
-    // anchor row back into view, so the bookmark returns to what was on screen.
-    private void OnRestoreBookmarkView(IReadOnlyList<BookmarkFieldRef> selected, BookmarkFieldRef? topRow)
+    // Bookmark load, Back, breadcrumb jump: re-select the saved rows (one or many), put
+    // the saved top row back at the top, then make sure `keepVisible` (the row the user
+    // drilled through, when the navigation came back out of one) is on screen.
+    private void OnRestoreBookmarkView(IReadOnlyList<BookmarkFieldRef> selected, BookmarkFieldRef? topRow,
+                                       BookmarkFieldRef? keepVisible)
     {
         Dispatcher.UIThread.Post(() =>
         {
@@ -366,12 +369,39 @@ public partial class LiveWalkerPanel : UserControl
             }
 
             // Restore the view position after selection-driven layout settles.
-            // Anchor on the saved top row, falling back to the first selected row.
+            //
+            // ScrollIntoView means "make visible", and WHERE the row lands depends on the
+            // direction: a row BELOW the viewport stops at the bottom edge, a row ABOVE it
+            // at the top edge. The rebuild left the grid at the top, so scrolling straight
+            // to the saved top row put it at the BOTTOM, and the row the user had drilled
+            // through (below it) stayed off screen: "press Back, then scroll down"
+            // [LW-BACK-SCROLL]. So scroll to the end first: the saved top row is then ABOVE
+            // the viewport and comes back as the first visible row -- the view the user left.
+            var keep = keepVisible != null ? Match(rows, keepVisible) : null;
+            var top = topRow != null ? Match(rows, topRow) : null;
+            if (top != null && rows.Count > 0)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    grid.ScrollIntoView(rows[^1], null);
+                    Dispatcher.UIThread.Post(() =>
+                    {
+                        grid.ScrollIntoView(top, null);
+                        // A no-op when the drilled row is already on screen, which it is
+                        // whenever the saved view was restored exactly.
+                        if (keep != null)
+                            Dispatcher.UIThread.Post(() => grid.ScrollIntoView(keep, null),
+                                                     DispatcherPriority.Background);
+                    }, DispatcherPriority.Background);
+                }, DispatcherPriority.Background);
+                return;
+            }
+
+            // No saved top row (or it is gone): keep the drilled row in view, else the
+            // first selected one.
             Dispatcher.UIThread.Post(() =>
             {
-                var anchor = topRow != null ? Match(rows, topRow) : null;
-                if (anchor == null && selected.Count > 0)
-                    anchor = Match(rows, selected[0]);
+                var anchor = keep ?? (selected.Count > 0 ? Match(rows, selected[0]) : null);
                 if (anchor != null)
                     grid.ScrollIntoView(anchor, null);
             }, DispatcherPriority.Background);

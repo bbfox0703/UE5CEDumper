@@ -383,6 +383,14 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// compiled column bindings infer the row type. Filter / sort / paging run
     /// server-side over the full session set held in the DLL.</summary>
     [ObservableProperty] private ObservableCollection<ValueCandidate> _candidates = new();
+    /// <summary>Keeps the results grid's selection and scroll position across filter reloads
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it. The filter runs server-side and every
+    /// window carries freshly read values, so it always rebuilds; the pick is found again by
+    /// its address.</summary>
+    public FilterViewKeeper CandidatesView { get; } = new()
+    {
+        KeyOf = o => o is ValueCandidate c && !string.IsNullOrEmpty(c.Addr) ? c.Addr : o,
+    };
     [ObservableProperty] private ValueCandidate? _selectedCandidate;
 
     /// <summary>Full candidate count held in the DLL session.</summary>
@@ -568,7 +576,8 @@ public partial class ValueSearchViewModel : ViewModelBase
             Total = w.Total;
             FilteredTotal = w.FilteredTotal;
             if (reset)
-                Candidates = new ObservableCollection<ValueCandidate>(w.Candidates);
+                CandidatesView.Update(() => Candidates = new ObservableCollection<ValueCandidate>(w.Candidates),
+                                      rowsChanged: true, q.Filter);
             else
                 foreach (var c in w.Candidates) Candidates.Add(c);
             // Stamp what is now on screen — INSIDE the success path, and with the query
@@ -1331,6 +1340,14 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// <summary>The bound group-result rows (current server window). Each row is
     /// one object; its Slots expand in the master-detail grid.</summary>
     [ObservableProperty] private ObservableCollection<GroupCandidate> _groupCandidates = new();
+    /// <summary>The group grid's twin of <see cref="CandidatesView"/>: a group is its instance
+    /// plus the offsets its slots matched.</summary>
+    public FilterViewKeeper GroupCandidatesView { get; } = new()
+    {
+        KeyOf = o => o is GroupCandidate g
+            ? g.InstanceAddr + "|" + string.Join(",", g.Slots.Select(s => s.FieldOffset))
+            : o,
+    };
     [ObservableProperty] private GroupCandidate? _selectedGroupCandidate;
 
     [ObservableProperty] private ulong _groupSessionId;
@@ -1607,7 +1624,8 @@ public partial class ValueSearchViewModel : ViewModelBase
             GroupTotal = w.Total;
             GroupFilteredTotal = w.FilteredTotal;
             if (reset)
-                GroupCandidates = new ObservableCollection<GroupCandidate>(w.Candidates);
+                GroupCandidatesView.Update(() => GroupCandidates = new ObservableCollection<GroupCandidate>(w.Candidates),
+                                           rowsChanged: true, q.Filter);
             else
                 foreach (var c in w.Candidates) GroupCandidates.Add(c);
             _loadedGroupWindow = q;

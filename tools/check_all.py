@@ -105,7 +105,13 @@ GATES = [
     ("check_axaml_strings",
      ["tools/check_axaml_strings.py"],
      "an en.axaml key is referenced-but-undefined (a load-time crash) or "
-     "defined-but-unreferenced (dead). Run 'py tools/check_axaml_strings.py --list'", False),
+     "defined-but-unreferenced (dead), or a view hard-codes a user-visible string. "
+     "Run 'py tools/check_axaml_strings.py --list'", False),
+
+    ("check_vm_status_literals",
+     ["tools/check_vm_status_literals.py"],
+     "a view model's StatusText literal count moved off the baseline -- a NEW literal belongs "
+     "in en.axaml ([VM-INLINE-STRINGS]); a removed one means 'py tools/check_vm_status_literals.py --update'", False),
 
     ("check_mailbox_contract",
      ["tools/check_mailbox_contract.py"],

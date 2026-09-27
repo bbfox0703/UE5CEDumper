@@ -50,7 +50,7 @@
               IsVisible="{Binding HasParent}"
               Padding="8,4"
               Foreground="#C586C0"
-              ToolTip.Tip="Navigate to parent (OuterPrivate)"/>
+              ToolTip.Tip="{StaticResource str.Tip.LiveWalker.NavigateToParentOuterPrivate}"/>
       <!-- Find References: reverse-scan all UObjects for ones that point to
            the current UObject (direct ObjectProperty fields + TArray<UObject*>
            elements, including nested in StructProperty). Resolves the
@@ -79,7 +79,7 @@
                     IsChecked="{Binding IsAutoRefreshing}"
                     IsVisible="{Binding HasData}"
                     Padding="8,4"
-                    ToolTip.Tip="Toggle automatic refresh"/>
+                    ToolTip.Tip="{StaticResource str.Tip.LiveWalker.ToggleAutomaticRefresh}"/>
       <NumericUpDown Value="{Binding AutoRefreshIntervalSecValue}"
                      Minimum="{Binding AutoRefreshMinSec}"
                      Maximum="60" Increment="1"
@@ -89,7 +89,7 @@
                      FormatString="0"
                      ShowButtonSpinner="True"
                      VerticalAlignment="Center" VerticalContentAlignment="Center"
-                     ToolTip.Tip="Auto-refresh interval (seconds)"/>
+                     ToolTip.Tip="{StaticResource str.Tip.LiveWalker.AutoRefreshIntervalSeconds}"/>
       <TextBlock Text="{Binding AutoRefreshStatusText}"
                  Foreground="#888" VerticalAlignment="Center" FontSize="11"
                  IsVisible="{Binding HasData}"/>
@@ -329,20 +329,20 @@
                   Foreground="#569CD6" Background="Transparent"
                   BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
           <!-- Copy buttons for current object -->
-          <Button Content="Addr"
+          <Button Content="{StaticResource str.LiveWalker.Addr}"
                   Command="{Binding CopyCurrentAddressCommand}"
                   Padding="3,1"
                   Foreground="#D4D4D4" Background="Transparent"
                   BorderThickness="1" BorderBrush="#555"
                   Cursor="Hand" FontSize="10"
-                  ToolTip.Tip="Copy CE address"/>
-          <Button Content="Name"
+                  ToolTip.Tip="{StaticResource str.Tip.LiveWalker.CopyCEAddress}"/>
+          <Button Content="{StaticResource str.LiveWalker.Name}"
                   Command="{Binding CopyCurrentNameCommand}"
                   Padding="3,1"
                   Foreground="#D4D4D4" Background="Transparent"
                   BorderThickness="1" BorderBrush="#555"
                   Cursor="Hand" FontSize="10"
-                  ToolTip.Tip="Copy object name"/>
+                  ToolTip.Tip="{StaticResource str.Tip.LiveWalker.CopyObjectName}"/>
           <!-- Copy the class name to clipboard -->
           <Button Content="{StaticResource str.LiveWalker.CopyClass}"
                   Command="{Binding CopyCurrentClassNameCommand}"
@@ -365,7 +365,7 @@
         <!-- Parent (Outer) info -->
         <StackPanel Orientation="Horizontal" Spacing="8"
                     IsVisible="{Binding HasParent}">
-          <TextBlock Text="Outer:" Foreground="#888" FontSize="11"/>
+          <TextBlock Text="{StaticResource str.LiveWalker.Outer}" Foreground="#888" FontSize="11"/>
           <Button Command="{Binding GoToParentCommand}"
                   Padding="2,0" Background="Transparent" BorderThickness="0"
                   Cursor="Hand">
@@ -386,14 +386,14 @@
                   FontSize="10" FontFamily="Consolas"
                   Foreground="#569CD6" Background="Transparent"
                   BorderThickness="1" BorderBrush="#555" Cursor="Hand"/>
-          <Button Content="Addr"
+          <Button Content="{StaticResource str.LiveWalker.Addr}"
                   Command="{Binding CopyOuterAddressCommand}"
                   Padding="3,1"
                   Foreground="#D4D4D4" Background="Transparent"
                   BorderThickness="1" BorderBrush="#555"
                   Cursor="Hand" FontSize="10"
-                  ToolTip.Tip="Copy Outer CE address"/>
-          <Button Content="Name"
+                  ToolTip.Tip="{StaticResource str.Tip.LiveWalker.CopyOuterCEAddress}"/>
+          <Button Content="{StaticResource str.LiveWalker.Name}"
                   Command="{Binding CopyOuterNameCommand}"
                   Padding="3,1"
                   Foreground="#D4D4D4" Background="Transparent"
@@ -428,7 +428,7 @@
                   Padding="4,0" FontSize="11"
                   Background="Transparent" BorderThickness="0"
                   Foreground="#888" Cursor="Hand"
-                  ToolTip.Tip="Hide references list"/>
+                  ToolTip.Tip="{StaticResource str.Tip.LiveWalker.HideReferencesList}"/>
         </StackPanel>
         <DataGrid x:Name="ReferencesGrid" ItemsSource="{Binding References}"
                   IsReadOnly="True"
@@ -442,22 +442,22 @@
                   MaxHeight="160"
                   HorizontalScrollBarVisibility="Auto">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="Reference Path"
+            <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.ReferencePath}"
                                 Binding="{Binding DisplayPath}" SortMemberPath="DisplayPath"
                                 Width="420" MinWidth="220"/>
-            <DataGridTextColumn Header="Owner Class"
+            <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.OwnerClass}"
                                 Binding="{Binding OwnerClassName}" SortMemberPath="OwnerClassName"
                                 Width="220" MinWidth="140"/>
-            <DataGridTextColumn Header="Field Type"
+            <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.FieldType}"
                                 Binding="{Binding FieldType}" SortMemberPath="FieldType"
                                 Width="120"/>
-            <DataGridTextColumn Header="Owner Addr"
+            <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.OwnerAddr}"
                                 Binding="{Binding OwnerAddress}" SortMemberPath="OwnerAddress"
                                 Width="140"/>
             <DataGridTemplateColumn Header="" Width="80" CanUserResize="False" CanUserSort="False">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:ReferenceMatch">
-                  <Button Content="Open"
+                  <Button Content="{StaticResource str.LiveWalker.Open}"
                           Command="{Binding $parent[DataGrid].((vm:LiveWalkerViewModel)DataContext).OpenReferenceOwnerCommand}"
                           CommandParameter="{Binding}"
                           Padding="6,2" FontSize="11"
@@ -647,7 +647,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellEditingTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Hex"
+        <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Hex}"
                             Binding="{Binding HexValue}" SortMemberPath="HexValue"
                             Width="130" IsReadOnly="True"/>
         <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Address}"
@@ -669,7 +669,7 @@
                         Foreground="#4EC9B0" Background="Transparent"
                         BorderThickness="1" BorderBrush="#4EC9B0"
                         Cursor="Hand" FontWeight="Bold"
-                        ToolTip.Tip="Navigate to pointer target"/>
+                        ToolTip.Tip="{StaticResource str.Tip.LiveWalker.NavigateToPointerTarget}"/>
                 <!-- Struct navigation: braces icon -->
                 <Button Content="{}{}"
                         Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToFieldCommand}"
@@ -679,7 +679,7 @@
                         Foreground="#E5C07B" Background="Transparent"
                         BorderThickness="1" BorderBrush="#E5C07B"
                         Cursor="Hand" FontWeight="Bold"
-                        ToolTip.Tip="Expand inline struct"/>
+                        ToolTip.Tip="{StaticResource str.Tip.LiveWalker.ExpandInlineStruct}"/>
                 <!-- Container navigation: bracket icon (Array/Map/Set) -->
                 <Button Content="[]"
                         Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).NavigateToContainerCommand}"
@@ -689,7 +689,7 @@
                         Foreground="#61AFEF" Background="Transparent"
                         BorderThickness="1" BorderBrush="#61AFEF"
                         Cursor="Hand" FontWeight="Bold"
-                        ToolTip.Tip="View container elements"/>
+                        ToolTip.Tip="{StaticResource str.Tip.LiveWalker.ViewContainerElements}"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
@@ -698,7 +698,7 @@
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
               <StackPanel Orientation="Horizontal">
-                <Button Content="Addr"
+                <Button Content="{StaticResource str.LiveWalker.Addr}"
                         Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).CopyFieldAddressCommand}"
                         CommandParameter="{Binding}"
                         ToolTip.Tip="{StaticResource str.Tip.LiveWalker.CopyFieldAddr}"
@@ -732,7 +732,7 @@
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:LiveFieldValue">
               <StackPanel Orientation="Horizontal">
-                <Button Content="Name"
+                <Button Content="{StaticResource str.LiveWalker.Name}"
                         Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).CopyFieldNameCommand}"
                         CommandParameter="{Binding}"
                         ToolTip.Tip="{StaticResource str.Tip.LiveWalker.CopyFieldName}"
@@ -761,14 +761,14 @@
             <DataTemplate x:DataType="m:LiveFieldValue">
               <StackPanel Orientation="Horizontal"
                           IsVisible="{Binding IsPointerNavigation}">
-                <Button Content="Ptr"
+                <Button Content="{StaticResource str.LiveWalker.Ptr}"
                         Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).CopyPtrAddressCommand}"
                         CommandParameter="{Binding}"
                         Padding="4,2" Margin="2"
                         Foreground="#4EC9B0" Background="Transparent"
                         BorderThickness="1" BorderBrush="#555"
                         Cursor="Hand" FontSize="10"
-                        ToolTip.Tip="Copy pointer target address"/>
+                        ToolTip.Tip="{StaticResource str.Tip.LiveWalker.CopyPointerTargetAddress}"/>
                 <Button Content="{StaticResource str.Pointers.AobMakerHex}"
                         Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).HexPtrAddressCommand}"
                         CommandParameter="{Binding}"
@@ -883,14 +883,14 @@
           <AutoCompleteBox Text="{Binding FunctionFilter, Mode=TwoWay}"
                    ItemsSource="{Binding FunctionFilterHistory}"
                    FilterMode="Contains"
-                   PlaceholderText="Filter by name..."
+                   PlaceholderText="{StaticResource str.LiveWalker.FuncFilterHint}"
                    Width="220" Padding="4,2" FontSize="12"
-                   ToolTip.Tip="Substring match on function name (case-insensitive)"/>
-          <Button Content="Clear"
+                   ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncFilter}"/>
+          <Button Content="{StaticResource str.LiveWalker.Clear}"
                   Command="{Binding ClearFunctionFilterCommand}"
                   Padding="6,2"
                   IsEnabled="{Binding FunctionFilter, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
-                  ToolTip.Tip="Clear filter"/>
+                  ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncFilterClear}"/>
           <TextBlock VerticalAlignment="Center" Foreground="#888" FontSize="11"
                      Text="{Binding Functions.Count, StringFormat='{}{0} shown'}"/>
           <!-- AOBMaker availability indicator — single place (build 688).
@@ -917,9 +917,9 @@
                 FontFamily="Consolas" FontSize="12"
                 Focusable="False">
         <DataGrid.Columns>
-          <DataGridTextColumn Header="Name" Binding="{Binding Name}" SortMemberPath="Name" Width="200" MinWidth="120"/>
-          <DataGridTextColumn Header="Return" Binding="{Binding ReturnType}" SortMemberPath="ReturnType" Width="100"/>
-          <DataGridTextColumn Header="Params" Width="90" SortMemberPath="NumParms">
+          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Name}" Binding="{Binding Name}" SortMemberPath="Name" Width="200" MinWidth="120"/>
+          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Return}" Binding="{Binding ReturnType}" SortMemberPath="ReturnType" Width="100"/>
+          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Params}" Width="90" SortMemberPath="NumParms">
             <DataGridTextColumn.Binding>
               <MultiBinding StringFormat="{}{0} ({1}B)">
                 <Binding Path="NumParms"/>
@@ -927,7 +927,7 @@
               </MultiBinding>
             </DataGridTextColumn.Binding>
           </DataGridTextColumn>
-          <DataGridTextColumn Header="Address" Binding="{Binding Address}" SortMemberPath="Address" Width="140"/>
+          <DataGridTextColumn Header="{StaticResource str.LiveWalker.Col.Address}" Binding="{Binding Address}" SortMemberPath="Address" Width="140"/>
           <DataGridTemplateColumn Header="" Width="320" CanUserSort="False">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:FunctionInfoModel">

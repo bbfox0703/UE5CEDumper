@@ -65,6 +65,11 @@ public class App : Application
             // dispatcher faults and are handled by the guard below; WRITES go through
             // the platform service, which needs somewhere to report a refused copy.
             _platform.Logger = _logging;
+            Views.FilterViewBinding.Log = _logging;
+
+            // Home / End with text selected must not throw the caret to the other end of the
+            // selection (an Avalonia TextBox defect; the helper's header has the measurement).
+            Helpers.TextBoxHomeEndFix.Register();
 
             // Attach the dispatcher fault guard as soon as there is somewhere to
             // log to, and before any window exists — a clipboard/IME fault must

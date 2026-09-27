@@ -32,6 +32,7 @@ public partial class PropertySearchPanel : UserControl
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
         Loaded += OnPanelLoaded;
         DataContextChanged += OnDataContextChanged;
+        this.AttachFilterView<PropertySearchViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
     }
 
     private void OnDataContextChanged(object? sender, System.EventArgs e)

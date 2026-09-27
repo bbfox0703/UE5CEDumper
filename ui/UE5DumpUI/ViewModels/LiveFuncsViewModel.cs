@@ -69,6 +69,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
     [ObservableProperty] private string _statusText = "Click Start, do an in-game action (open shop / dash), then Stop.";
     [ObservableProperty] private bool   _isBusy;
     [ObservableProperty] private ObservableCollection<PeProfileEntry> _results = new();
+    /// <summary>Keeps the Results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it. Keyed on the UFunction
+    /// address because every fetch makes new row objects for the same functions.</summary>
+    public FilterViewKeeper ResultsView { get; } = new()
+    {
+        KeyOf = o => o is PeProfileEntry e && !string.IsNullOrEmpty(e.FuncAddr) ? e.FuncAddr : o,
+    };
     [ObservableProperty] private PeProfileEntry? _selectedResult;
     /// <summary>When on (and a baseline exists), show Δ vs baseline and rank
     /// new/increased functions to the top instead of ranking by raw call count.</summary>
@@ -293,8 +300,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
-                    + "idle\" — a rare idle function below the cut also shows as NEW. Narrow the "
-                    + "window or use the filter before trusting the top rows."
+                    + "idle\" — a rare idle function below the cut also shows as NEW. Only a "
+                    + "shorter recording window brings it back; the filter narrows only the rows already fetched."
                   : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
@@ -370,12 +377,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// semantics). Order is preserved (the DLL already ranked by count desc).</summary>
     private void ApplyFilter()
     {
-        SelectedResult = null;
-        Results.Clear();
-        if (_allEntries.Count == 0) return;
-
         var terms = ObjectTreeFilter.SplitTerms(FilterText);
         bool diffNewOnly = DiffMode && _baseline.Count > 0 && NewChangedOnly;
+        var rows = new List<PeProfileEntry>();
         foreach (var e in _allEntries)
         {
             // In diff mode, "New/changed only" hides the unchanged baseline noise.
@@ -391,8 +395,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
             {
                 continue;
             }
-            Results.Add(e);
+            rows.Add(e);
         }
+        // Detach before rebuilding the selection-bound list; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, rows, () => SelectedResult = null, FilterText);
     }
 
     /// <summary>Per-row "Live" action: open this function on a live instance of its

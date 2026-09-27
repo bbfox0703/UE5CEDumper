@@ -22,6 +22,11 @@ they are the ground truth for tone.
    Microsoft's zh-TW Windows UI wording wins.
 4. **Rewrite the sentence, keep the meaning.** Split long English sentences; drop pronouns the
    Chinese does not need; turn nominalised English ("the loading of…") into verbs.
+   ⚠ **But do not compress until the subject is ambiguous.** The maintainer's web edits of
+   2026-09-26 (Proxy Deploy) put omitted subjects and objects back: 「這個不行」→「這個 Proxy DLL
+   不行」, 「選擇此類型時部署」→「UI 選擇 version.dll 類型時部署」, 「滑鼠移過去」→「滑鼠游標移到
+   該項目上面」, 「被複製到」→「被複製一份到」. Short sentences, yes — but each one names what it
+   is about.
 5. **Explain a term the reader will not know** rather than transliterate it — the maintainer added
    explanations in every hand edit (e.g. what flattening a GAS attribute means in CE).
 6. **UI element names stay in English, bold**, exactly as the English UI shows them (**Scan
@@ -89,6 +94,7 @@ they are the ground truth for tone.
 | memory | 記憶體 | 內存 | |
 | program / software | 程式 / 軟體 | 程序 / 軟件 | |
 | information | 資訊 | 信息 | |
+| occupy / take up / account for | 佔用、佔（全部的 X%） | 占用、占 | maintainer's choice 2026-09-26: always 佔, never 占 (MOE lists 占 as standard; this Wiki uses 佔) |
 
 ### From the Ministry of Education cross-strait table
 

@@ -84,6 +84,9 @@ public partial class ConsoleViewModel : ViewModelBase
     [ObservableProperty] private string _statusText =
         "Click Load to discover UFUNCTION(exec) commands in this game.";
     [ObservableProperty] private ObservableCollection<AllFunctionEntry> _results = new();
+    /// <summary>Keeps the Results grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it.</summary>
+    public FilterViewKeeper ResultsView { get; } = new();
     [ObservableProperty] private AllFunctionEntry? _selectedResult;
     [ObservableProperty] private ObservableCollection<ConsoleHistoryEntry> _history = new();
     [ObservableProperty] private string _commandInput = "";
@@ -331,20 +334,17 @@ public partial class ConsoleViewModel : ViewModelBase
 
     /// <summary>
     /// Rebuild <see cref="Results"/> from <see cref="_allExec"/> applying
-    /// the name substring filter. Order is preserved from the pre-sorted
+    /// the keyword filter (space = AND). Order is preserved from the pre-sorted
     /// underlying list.
     /// </summary>
     private void ApplyFilter()
     {
-        SelectedResult = null;   // detach before rebuilding the selection-bound list
-        Results.Clear();
-        if (_allExec.Count == 0) return;
-
         // Space-separated terms are ANDed (each must hit FuncName or ClassName),
         // so "add money" narrows to entries matching both — the shared Object Tree
         // filter semantics.
         var terms = ObjectTreeFilter.SplitTerms(FilterText);
 
+        var rows = new List<AllFunctionEntry>();
         foreach (var entry in _allExec)
         {
             if (terms.Length > 0 &&
@@ -352,8 +352,10 @@ public partial class ConsoleViewModel : ViewModelBase
             {
                 continue;
             }
-            Results.Add(entry);
+            rows.Add(entry);
         }
+        // Detach before rebuilding the selection-bound list; unchanged rows are not rebuilt.
+        ResultsView.Update(Results, rows, () => SelectedResult = null, FilterText);
     }
 
     [RelayCommand]

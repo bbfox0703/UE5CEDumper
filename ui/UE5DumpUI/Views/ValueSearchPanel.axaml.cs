@@ -26,6 +26,8 @@ public partial class ValueSearchPanel : UserControl
     public ValueSearchPanel()
     {
         InitializeComponent();
+        this.AttachFilterView<ValueSearchViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.CandidatesView);
+        this.AttachFilterView<ValueSearchViewModel>(this.FindControl<DataGrid>("GroupResultsGrid"), vm => vm.GroupCandidatesView);
     }
 
     private void InitializeComponent()

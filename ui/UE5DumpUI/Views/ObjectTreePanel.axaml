@@ -103,7 +103,8 @@
     </StackPanel>
 
     <!-- Object list (flat list with virtualization) -->
-    <ListBox ItemsSource="{Binding FilteredNodes}"
+    <ListBox x:Name="ObjectList"
+             ItemsSource="{Binding FilteredNodes}"
              SelectedItem="{Binding SelectedNode}"
              Background="Transparent">
       <!-- ContextMenu on ListBox: uses SelectedNode for commands (works on full row area) -->

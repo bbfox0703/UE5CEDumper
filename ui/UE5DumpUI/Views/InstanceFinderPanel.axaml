@@ -119,19 +119,19 @@
                   MaxHeight="160"
                   HorizontalScrollBarVisibility="Auto">
           <DataGrid.Columns>
-            <DataGridTextColumn Header="Path"
+            <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Col.Path}"
                                 Binding="{Binding DisplayPath}"
                                 SortMemberPath="DisplayPath"
                                 Width="420" MinWidth="220"/>
-            <DataGridTextColumn Header="Owner Class"
+            <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Col.OwnerClass}"
                                 Binding="{Binding OwnerClassName}"
                                 SortMemberPath="OwnerClassName"
                                 Width="220" MinWidth="140"/>
-            <DataGridTextColumn Header="Inner"
+            <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Col.Inner}"
                                 Binding="{Binding InnerType}"
                                 SortMemberPath="InnerType"
                                 Width="120"/>
-            <DataGridTextColumn Header="Owner Addr"
+            <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Col.OwnerAddr}"
                                 Binding="{Binding OwnerAddress}"
                                 SortMemberPath="OwnerAddress"
                                 Width="140"/>
@@ -233,7 +233,7 @@
                               Binding="{Binding ClassName}"
                               SortMemberPath="ClassName"
                               Width="200"/>
-          <DataGridTextColumn Header="Index"
+          <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Col.Index}"
                               Binding="{Binding Index}"
                               SortMemberPath="Index"
                               Width="80"/>
@@ -251,7 +251,7 @@
           <DataGridTemplateColumn Header="{StaticResource str.InstanceFinder.CopyAddress}" Width="50" CanUserSort="False">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:InstanceResult">
-                <Button Content="Addr"
+                <Button Content="{StaticResource str.InstanceFinder.Addr}"
                         Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyInstanceAddressCommand}"
                         CommandParameter="{Binding}"
                         ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyAddr}"
@@ -265,7 +265,7 @@
           <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.GenerateCeAA}" Width="60" CanUserSort="False">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:InstanceResult">
-                <Button Content="AA"
+                <Button Content="{StaticResource str.InstanceFinder.AA}"
                         Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).GenerateCeAAScriptCommand}"
                         CommandParameter="{Binding}"
                         ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.AA}"
@@ -384,7 +384,7 @@
                                 Binding="{Binding DisplayValue}"
                                 SortMemberPath="DisplayValue"
                                 Width="200"/>
-            <DataGridTextColumn Header="Hex"
+            <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Col.Hex}"
                                 Binding="{Binding HexValue}" SortMemberPath="HexValue" Width="160"/>
             <DataGridTextColumn Header="{StaticResource str.InstanceFinder.Address}"
                                 Binding="{Binding FieldAddress}"
@@ -393,7 +393,7 @@
             <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyAddress}" Width="50" CanUserSort="False">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:LiveFieldValue">
-                  <Button Content="Addr"
+                  <Button Content="{StaticResource str.InstanceFinder.Addr}"
                           Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyFieldAddressCommand}"
                           CommandParameter="{Binding}"
                           ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyFieldAddr}"

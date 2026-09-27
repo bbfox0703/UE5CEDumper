@@ -193,7 +193,7 @@ public sealed class MovementKnob
 
 /// <summary>
 /// Gravity DIRECTION vector (UE5.3+ UCharacterMovementComponent.GravityDirection).
-/// A unit vector — <see cref="Resolved"/> is false on pre-5.4 games where the
+/// A unit vector — <see cref="Resolved"/> is false on pre-5.3 games where the
 /// field isn't reflected.
 /// </summary>
 public sealed class MovementVectorKnob
@@ -241,7 +241,7 @@ public sealed class MovementParams
     public MovementKnob WalkSpeed { get; init; } = new();
     public MovementKnob Gravity { get; init; } = new();   // P2
     public MovementKnob Jump { get; init; } = new();      // P3
-    public MovementVectorKnob GravityDirection { get; init; } = new();  // UE5.4+
+    public MovementVectorKnob GravityDirection { get; init; } = new();  // UE5.3+
 }
 
 /// <summary>Result of a <c>set_movement_multiplier</c> / <c>reset_movement</c>

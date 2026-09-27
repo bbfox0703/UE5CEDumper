@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Threading;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -29,6 +30,8 @@ public partial class DumpExplorerPanel : UserControl
         InitializeComponent();
         this.FindControl<DataGrid>("MatchedGrid")?.WireSortComparers(DumpSortComparers);
         this.FindControl<DataGrid>("UnmatchedGrid")?.WireSortComparers(DumpSortComparers);
+        this.AttachFilterView<DumpExplorerViewModel>(this.FindControl<DataGrid>("MatchedGrid"), vm => vm.MatchedView);
+        this.AttachFilterView<DumpExplorerViewModel>(this.FindControl<DataGrid>("UnmatchedGrid"), vm => vm.UnmatchedView);
     }
 
     /// <summary>

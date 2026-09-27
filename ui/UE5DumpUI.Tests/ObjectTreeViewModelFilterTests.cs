@@ -133,6 +133,40 @@ public class ObjectTreeViewModelFilterTests
         Assert.Equal("Enemy_Boss", vm.FilteredNodes[0].Name);
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same objects must not
+    /// re-set the list: that throws it to its first row and drops the selection.</summary>
+    [Fact]
+    public async Task A_filter_edit_showing_the_same_objects_keeps_the_list_and_the_selection()
+    {
+        var vm = await LoadVmAsync(new List<UObjectNode>
+        {
+            Node("BP_Enemy_C", "Enemy_0"), Node("BP_Enemy_C", "Enemy_1"), Node("BP_Ally_C", "Ally_0"),
+        });
+        vm.FilterText = "ene";
+        vm.ApplyFilter();                      // deterministic (bypass the 200 ms debounce)
+        Assert.Equal(2, vm.FilteredNodes.Count);
+        vm.SelectedNode = vm.FilteredNodes[1];
+        var picked = vm.SelectedNode;
+        int changes = 0;
+        vm.FilteredNodes.CollectionChanged += (_, _) => changes++;
+
+        vm.FilterText = "enem";
+        vm.ApplyFilter();
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedNode);
+
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.NodesView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.NodesView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.FilterText = "enemy_1";
+        vm.ApplyFilter();
+        vm.FilterText = "";
+        vm.ApplyFilter();
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
+    }
+
     private static bool ReflectionMetaClassName(string className) =>
         UE5DumpUI.Helpers.ReflectionMetaClassifier.IsReflectionMeta(className);
 
@@ -210,5 +244,29 @@ public class ObjectTreeViewModelFilterTests
 
         Assert.DoesNotContain("capped", vm.StatusText);
         Assert.Contains("12", vm.StatusText);
+    }
+
+    // [OBJTREE-SEARCH-TIP] The top search box suggests a FIXED list of common UE class
+    // names (SearchSuggestions); the remembered-keyword memory belongs to the bottom filter
+    // box. The tooltip promised "recent searches", a feature this box does not have.
+    [Fact]
+    public void SearchFieldTooltip_describes_the_fixed_suggestion_list_the_box_binds()
+    {
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/ObjectTreePanel.axaml"));
+        Assert.Contains("ItemsSource=\"{Binding SearchSuggestions}\"", panel, StringComparison.Ordinal);
+
+        var tip = EnString("str.Tip.ObjectTree.SearchField");
+        Assert.DoesNotContain("recent", tip, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("common UE class names", tip, StringComparison.Ordinal);
+    }
+
+    private static string EnString(string key)
+    {
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var open = $"x:Key=\"{key}\">";
+        int start = axaml.IndexOf(open, StringComparison.Ordinal);
+        Assert.True(start >= 0, $"{key} missing from en.axaml");
+        start += open.Length;
+        return axaml[start..axaml.IndexOf("</sys:String>", start, StringComparison.Ordinal)];
     }
 }

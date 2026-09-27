@@ -132,7 +132,7 @@
         </ContextMenu>
       </DataGrid.ContextMenu>
       <DataGrid.Columns>
-        <DataGridTemplateColumn Header="Score" Width="60" SortMemberPath="FinalScore" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.IP.Col.Score}" Width="60" SortMemberPath="FinalScore" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredPropertyRow">
               <TextBlock Text="{Binding FinalScore}"
@@ -144,7 +144,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="Cat" Width="80" SortMemberPath="CategoryLabel" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.IP.Col.Cat}" Width="80" SortMemberPath="CategoryLabel" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredPropertyRow">
               <TextBlock Text="{Binding CategoryLabel}"
@@ -155,7 +155,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="⚠ Location" Width="100" SortMemberPath="UnusualBadge" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.IP.Col.Location}" Width="100" SortMemberPath="UnusualBadge" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredPropertyRow">
               <TextBlock Text="{Binding UnusualBadge}"
@@ -167,10 +167,10 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Class" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="220"/>
-        <DataGridTextColumn Header="Property" Binding="{Binding PropName}" SortMemberPath="PropName" Width="220"/>
-        <DataGridTextColumn Header="Type" Binding="{Binding TypeDisplay}" SortMemberPath="TypeDisplay" Width="160"/>
-        <DataGridTextColumn Header="Offset" Binding="{Binding OffsetHex}" SortMemberPath="PropOffset" CanUserSort="True" Width="80"/>
+        <DataGridTextColumn Header="{StaticResource str.IP.Col.Class}" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="220"/>
+        <DataGridTextColumn Header="{StaticResource str.IP.Col.Property}" Binding="{Binding PropName}" SortMemberPath="PropName" Width="220"/>
+        <DataGridTextColumn Header="{StaticResource str.IP.Col.Type}" Binding="{Binding TypeDisplay}" SortMemberPath="TypeDisplay" Width="160"/>
+        <DataGridTextColumn Header="{StaticResource str.IP.Col.Offset}" Binding="{Binding OffsetHex}" SortMemberPath="PropOffset" CanUserSort="True" Width="80"/>
         <DataGridTemplateColumn Header="{StaticResource str.Common.FuncsCol}" Width="200" CanUserSort="False">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:ScoredPropertyRow">

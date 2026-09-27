@@ -1657,7 +1657,7 @@ public class TeleportViewModelTests
 
         await vm.RefreshGravDirCommand.ExecuteAsync(null);
 
-        Assert.Equal("Unavailable", vm.GravDirState);   // pre-5.4 / not reflected
+        Assert.Equal("Unavailable", vm.GravDirState);   // pre-5.3 / not reflected
     }
 
     // ---- [W2-GRAVDIR-VERDICT] a transient absence is not a verdict about the engine ----
@@ -1677,12 +1677,12 @@ public class TeleportViewModelTests
         await vm.RefreshGravDirCommand.ExecuteAsync(null);
 
         Assert.Equal("Unknown", vm.GravDirState);
-        Assert.DoesNotContain("UE5.4", vm.GravDirCurrentText);
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.GravDirCurrentText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
     }
 
     [Fact]
-    public async Task ApplyGravDir_without_a_pawn_says_so_not_needs_UE54()
+    public async Task ApplyGravDir_without_a_pawn_says_so_not_needs_UE53()
     {
         var fake = new FakeDumpService
         {
@@ -1694,13 +1694,13 @@ public class TeleportViewModelTests
 
         await vm.ApplyGravDirCommand.ExecuteAsync(null);
 
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
         Assert.Contains("enter gameplay", vm.StatusText);
         Assert.Equal("Unknown", vm.GravDirState);
     }
 
     [Fact]
-    public async Task ApplyGravDir_on_a_pre_UE54_engine_still_says_so()
+    public async Task ApplyGravDir_on_a_pre_UE53_engine_still_says_so()
     {
         // The control, green before and after: a CMC without a reflected GravityDirection.
         var fake = new FakeDumpService
@@ -1716,7 +1716,7 @@ public class TeleportViewModelTests
 
         await vm.ApplyGravDirCommand.ExecuteAsync(null);
 
-        Assert.Contains("UE5.4", vm.StatusText);
+        Assert.Contains("UE5.3", vm.StatusText);
         Assert.Equal("Unavailable", vm.GravDirState);
     }
 
@@ -1724,10 +1724,10 @@ public class TeleportViewModelTests
     [InlineData(-4, false, false)]   // MR_ERR_REFLECT, but the fresh read finds no live CMC: ResolveCtx also
                                      // returns -4 when the pawn / CMC class lookup fails
     [InlineData(-4, true,  true)]    // MR_ERR_REFLECT from a failed vector read: the field IS reflected
-    [InlineData(-3, true,  false)]   // the SET saw no pawn; a (pre-5.4) pawn spawned before the read
-    public async Task ApplyGravDir_says_needs_UE54_only_when_both_signals_agree(int state, bool hasCmc, bool resolved)
+    [InlineData(-3, true,  false)]   // the SET saw no pawn; a (pre-5.3) pawn spawned before the read
+    public async Task ApplyGravDir_says_needs_UE53_only_when_both_signals_agree(int state, bool hasCmc, bool resolved)
     {
-        // -4 alone is not the pre-5.4 verdict (Laufen.cpp ResolveCtx and the ReadVec3At fallback return it
+        // -4 alone is not the pre-5.3 verdict (Laufen.cpp ResolveCtx and the ReadVec3At fallback return it
         // too), and the fresh read alone reports a later instant than the set. The verdict needs both.
         var fake = new FakeDumpService
         {
@@ -1742,7 +1742,7 @@ public class TeleportViewModelTests
 
         await vm.ApplyGravDirCommand.ExecuteAsync(null);
 
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
     }
 
     [Fact]
@@ -1756,12 +1756,12 @@ public class TeleportViewModelTests
 
         await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
 
-        Assert.DoesNotContain("UE5.4", vm.StatusText);
+        Assert.DoesNotContain("UE5.3", vm.StatusText);
         Assert.Contains("enter gameplay", vm.StatusText);
     }
 
     [Fact]
-    public async Task LocateGravDir_on_a_pre_UE54_engine_still_says_so()
+    public async Task LocateGravDir_on_a_pre_UE53_engine_still_says_so()
     {
         // The control, green before and after: a CMC without a reflected GravityDirection.
         var fake = new FakeDumpService
@@ -1776,7 +1776,7 @@ public class TeleportViewModelTests
 
         await vm.LocateGravDirInGWorldCommand.ExecuteAsync(null);
 
-        Assert.Contains("UE5.4", vm.StatusText);
+        Assert.Contains("UE5.3", vm.StatusText);
     }
 
     // ---- [W2-MS-PROMISE] a refused apply must not promise a queued override ----
@@ -2918,6 +2918,85 @@ public class TeleportViewModelTests
         await vm.ConnectPrime;
 
         Assert.Equal("Map01", vm.PoseMap);
+    }
+
+    /// <summary>Three library rows named Cave / Castle / Beach ("ca" matches two).</summary>
+    private static async Task<TeleportViewModel> CoordLibraryVmAsync()
+    {
+        var vm = CreateVm(new FakeDumpService(), out _);
+        vm.LoadCoordLibraryForGame("Game.exe");
+        foreach (var label in new[] { "Cave", "Castle", "Beach" })
+        {
+            await vm.AddCoordFromFieldsCommand.ExecuteAsync(null);   // selects the new row
+            vm.EditCoordLabel = label;
+            vm.ApplyCoordEditCommand.Execute(null);
+        }
+        return vm;
+    }
+
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same rows must not re-set
+    /// the grid: that throws it to its first row. The rebuild also made new row objects, so the
+    /// selection survived only as a different object.</summary>
+    [Fact]
+    public async Task A_coord_filter_edit_showing_the_same_rows_keeps_the_rows_and_the_selection()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.CoordFilterText = "ca";
+        Assert.Equal(2, vm.CoordResults.Count);
+        vm.SelectedCoord = vm.CoordResults[1];
+        var picked = vm.SelectedCoord;
+        int changes = 0;
+        vm.CoordResults.CollectionChanged += (_, _) => changes++;
+
+        vm.CoordFilterText = "ca ";
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedCoord);
+    }
+
+    /// <summary>A narrowing rebuilds the rows; the view model re-selects the kept entry itself
+    /// (selecting runs the editor sync, B20) and the View is handed it to keep visible, keyed
+    /// on the uid because the row objects are new.</summary>
+    [Fact]
+    public async Task A_coord_narrowing_keeps_the_entry_selected_and_hands_it_to_the_View()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.CoordFilterText = "ca";
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Castle");
+        var uid = vm.SelectedCoord!.Entry.Uid;
+        vm.EditCoordLabel = "Castle (edit in progress)";
+        var handed = new List<(object Row, UE5DumpUI.Helpers.FilterViewRestore Mode)>();
+        vm.CoordView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(
+            vm.SelectedCoord is { } s ? new object[] { s } : Array.Empty<object>(), null);
+        vm.CoordView.RestoreView = (state, mode) => handed.Add((state.Selected[0], mode));
+
+        vm.CoordFilterText = "cas";
+
+        Assert.Equal(uid, vm.SelectedCoord?.Entry.Uid);
+        Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);    // B20: not reverted
+        var (row, mode) = Assert.Single(handed);
+        Assert.Equal(UE5DumpUI.Helpers.FilterViewRestore.Narrowed, mode);
+        Assert.Equal(uid, vm.CoordView.KeyOf!(row));
+
+        handed.Clear();
+        vm.CoordFilterText = "";                                          // select all, Delete
+        Assert.Equal(UE5DumpUI.Helpers.FilterViewRestore.Cleared, Assert.Single(handed).Mode);
+        Assert.Equal("Castle (edit in progress)", vm.EditCoordLabel);
+    }
+
+    /// <summary>...while an edit that renames a row in place still repaints it: the same
+    /// entries, but the row shows new text.</summary>
+    [Fact]
+    public async Task Renaming_a_coord_still_rebuilds_its_row()
+    {
+        var vm = await CoordLibraryVmAsync();
+        vm.SelectedCoord = vm.CoordResults.First(r => r.Label == "Cave");
+
+        vm.EditCoordLabel = "Grotto";
+        vm.ApplyCoordEditCommand.Execute(null);
+
+        Assert.Contains(vm.CoordResults, r => r.Label == "Grotto");
+        Assert.DoesNotContain(vm.CoordResults, r => r.Label == "Cave");
     }
 
     [Fact]

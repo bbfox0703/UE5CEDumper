@@ -307,6 +307,43 @@ public class SnapshotViewModelTests : IDisposable
         Assert.Empty(await _store.ListSnapshotsAsync(ct));
     }
 
+    // [AUTOSNAP-STOP-STALE-STATUS] Turning Auto OFF by hand cancels the loop mid-countdown, and
+    // the loop left on OperationCanceledException without touching AutoStatusText, so the line
+    // stayed frozen on "Auto: next snapshot in Ns" -- a capture that would never come. (Measured
+    // on build 3566: frozen at 28 s, no capture 30 s later.)
+    [Fact]
+    public async Task AutoSnapshot_StoppedByHand_DoesNotKeepPromisingTheNextSnapshot()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var vm = new SnapshotViewModel(new CaptureStub(), _store, new MockLoggingService())
+        {
+            SelectedScope = "NumericNoByte", GameOnly = true,
+        };
+        vm.SetEngineState(new EngineState { PeHash = "PEHASH", UEVersion = 504, ModuleBase = "7FF600000000", ProcessCreationTime = "01D9ABCDEF012345" });
+
+        vm.AutoSnapshotEnabled = true;
+        var loop = vm.AutoLoopTaskForTests;
+        Assert.NotNull(loop);
+        // The first capture runs at once; then the loop counts down to the next one.
+        for (int i = 0; i < 300 && !vm.AutoStatusText.Contains("next snapshot", StringComparison.Ordinal); i++)
+            await Task.Delay(50, ct);
+        Assert.Contains("next snapshot", vm.AutoStatusText, StringComparison.Ordinal);
+
+        vm.AutoSnapshotEnabled = false;                 // the user's toggle
+        await loop!.WaitAsync(TimeSpan.FromSeconds(30), ct);
+
+        Assert.DoesNotContain("next snapshot", vm.AutoStatusText, StringComparison.Ordinal);
+
+        // The replacement text is en.axaml's (a NEW VM status string, [VM-INLINE-STRINGS]); Res
+        // resolves to "" without an Application, so pin the resource itself.
+        var axaml = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var stopped = System.Text.RegularExpressions.Regex.Match(axaml,
+            @"x:Key=""str\.Snapshot\.Auto\.Stopped"">([^<]*)</sys:String>");
+        Assert.True(stopped.Success, "str.Snapshot.Auto.Stopped missing from en.axaml");
+        Assert.Contains("stopped", stopped.Groups[1].Value, StringComparison.Ordinal);
+        Assert.Contains("{0}", stopped.Groups[1].Value, StringComparison.Ordinal);
+    }
+
     [Fact]
     public async Task Capture_StreamsAllChunks_PersistsWithCorrectCounts()
     {
@@ -920,6 +957,53 @@ public class SnapshotViewModelTests : IDisposable
         vm.ResetDiffRangeCommand.Execute(null);
         Assert.Equal(2, vm.DiffRows.Count);
         Assert.Equal("", vm.DiffNewMax);
+    }
+
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A filter edit that shows the same diff rows must not
+    /// re-set the grid (up to 50,000 rows): that throws it to its first row and drops the
+    /// selection.</summary>
+    [Fact]
+    public async Task Diff_filter_edit_showing_the_same_rows_keeps_the_list_and_the_selection()
+    {
+        var ct = TestContext.Current.CancellationToken;
+        _store.SetActiveGame("G4");
+        long a = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "a" }, ct);
+        await _store.WriteChunkAsync(a, new[]
+        {
+            Obj(1, "HP", "IntProperty", "64000000"),
+            Obj(2, "Mana", "IntProperty", "0A000000"),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(a, 2, 2, ct);
+        long b = await _store.CreateSnapshotAsync(new SnapshotMeta { Label = "b" }, ct);
+        await _store.WriteChunkAsync(b, new[]
+        {
+            Obj(1, "HP", "IntProperty", "5A000000"),
+            Obj(2, "Mana", "IntProperty", "14000000"),
+        }, ct);
+        await _store.FinalizeSnapshotAsync(b, 2, 2, ct);
+        var vm = new SnapshotViewModel(new CaptureStub(), _store, new MockLoggingService());
+        await vm.RefreshCommand.ExecuteAsync(null);
+        await vm.RunDiffCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.DiffRows.Count);
+        vm.SelectedDiffRow = vm.DiffRows[1];
+        var picked = vm.SelectedDiffRow;
+        int changes = 0;
+        vm.DiffRows.CollectionChanged += (_, _) => changes++;
+
+        vm.DiffGlobalFilter = " ";                // no term: the same rows
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedDiffRow);
+
+        // A real narrowing hands the View the pick; clearing a COLUMN box while the global
+        // one stays is a clear too.
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.DiffView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.DiffView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.DiffPropFilter = "HP";
+        vm.DiffPropFilter = "";
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
     }
 
     [Fact]

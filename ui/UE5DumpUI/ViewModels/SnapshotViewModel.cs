@@ -330,6 +330,9 @@ public partial class SnapshotViewModel : ViewModelBase
         new[] { "Any", "Increased", "Decreased" };
 
     public ObservableCollection<SnapshotDiffRow> DiffRows { get; } = new();
+    /// <summary>Keeps the diff grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches it.</summary>
+    public FilterViewKeeper DiffView { get; } = new();
 
     // --- N1: per-game class denylist (noise picker) ---
     public ObservableCollection<NoiseRowVm> NoiseRows { get; } = new();
@@ -405,8 +408,7 @@ public partial class SnapshotViewModel : ViewModelBase
         double? oldMin = ParseBound(DiffOldMin), oldMax = ParseBound(DiffOldMax);
         double? newMin = ParseBound(DiffNewMin), newMax = ParseBound(DiffNewMax);
 
-        SelectedDiffRow = null;   // detach before clearing the bound results grid
-        DiffRows.Clear();
+        var rows = new List<SnapshotDiffRow>();
         foreach (var r in _allDiff)
         {
             if (clsTerms.Length  > 0 && !ObjectTreeFilter.MatchesAllTerms(clsTerms, r.ClassName)) continue;
@@ -418,8 +420,11 @@ public partial class SnapshotViewModel : ViewModelBase
                 continue;
             if (!WithinRange(r.OldValue, oldMin, oldMax)) continue;
             if (!WithinRange(r.NewValue, newMin, newMax)) continue;
-            DiffRows.Add(r);
+            rows.Add(r);
         }
+        // Detach before clearing the bound results grid; unchanged rows are not rebuilt.
+        DiffView.Update(DiffRows, rows, () => SelectedDiffRow = null,
+                        DiffGlobalFilter, DiffClassFilter, DiffPropFilter, DiffObjectFilter);
         DiffStatusText = _diffSummary +
             (DiffRows.Count != _allDiff.Count ? $"  ·  showing {DiffRows.Count:N0}" : "");
     }
@@ -1372,8 +1377,15 @@ public partial class SnapshotViewModel : ViewModelBase
                     await Task.Delay(1000, ct);
                 }
             }
+            // Only a cancellation leaves the loop this way (the toggle, a disconnect); every
+            // self-stop above wrote its own reason and returned. Without this the countdown
+            // stayed frozen on "next snapshot in Ns" [AUTOSNAP-STOP-STALE-STATUS].
+            AutoStatusText = Res.Format("str.Snapshot.Auto.Stopped", captured);
         }
-        catch (OperationCanceledException) { /* stopped */ }
+        catch (OperationCanceledException)
+        {
+            AutoStatusText = Res.Format("str.Snapshot.Auto.Stopped", captured);   // as above
+        }
         catch (Exception ex)
         {
             _log.Error(Constants.LogCatView, "Snapshot: auto loop error", ex);

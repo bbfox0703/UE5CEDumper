@@ -325,7 +325,7 @@ public class BookmarkTests
         IReadOnlyList<BookmarkFieldRef>? gotSel = null;
         BookmarkFieldRef? gotTop = null;
         var raised = false;
-        vm.RestoreBookmarkView += (sel, top) => { gotSel = sel; gotTop = top; raised = true; };
+        vm.RestoreBookmarkView += (sel, top, _) => { gotSel = sel; gotTop = top; raised = true; };
 
         await vm.LoadBookmarkCommand.ExecuteAsync(slot);
 
@@ -472,7 +472,7 @@ public class BookmarkTests
         slot.IsOccupied = true;
 
         IReadOnlyList<BookmarkFieldRef>? gotSel = null;
-        vm.RestoreBookmarkView += (sel, _) => gotSel = sel;
+        vm.RestoreBookmarkView += (sel, _, _) => gotSel = sel;
 
         await vm.LoadBookmarkCommand.ExecuteAsync(slot);
 
@@ -521,7 +521,7 @@ public class BookmarkTests
         slot.IsOccupied = true;
 
         var restoreRaised = false;
-        vm.RestoreBookmarkView += (_, _) => restoreRaised = true;
+        vm.RestoreBookmarkView += (_, _, _) => restoreRaised = true;
 
         await vm.LoadBookmarkCommand.ExecuteAsync(slot);
 

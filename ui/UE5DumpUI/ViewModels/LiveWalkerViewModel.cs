@@ -171,6 +171,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     // those flows. SelectedField is still the focus anchor for search /
     // bookmark / scroll-to logic.
     private readonly List<LiveFieldValue> _selectedFieldsSnapshot = new();
+
+    // [LW-SEARCH-CLEAR-KEEP] The keyword as it stood before the current change, the match ▲/▼
+    // last landed on, and whether a navigation (not the user) is emptying the box.
+    private string _previousSearchText = "";
+    private LiveFieldValue? _searchStepTarget;
+    private bool _clearingSearchForNavigation;
     [ObservableProperty] private int _selectedFieldsCount;
 
     public bool HasSelectedFields => SelectedFieldsCount > 0;
@@ -217,6 +223,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private readonly List<FunctionInfoModel> _allFunctions = new();
     private Task? _pendingFunctionsLoad;
     [ObservableProperty] private ObservableCollection<FunctionInfoModel> _functions = new();
+    /// <summary>Keeps the Functions grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it. Keyed on the UFunction
+    /// address: a walk of another object of the same class lists new rows for the same
+    /// functions.</summary>
+    public FilterViewKeeper FunctionsView { get; } = new()
+    {
+        KeyOf = o => o is FunctionInfoModel f && !string.IsNullOrEmpty(f.Address) ? f.Address : o,
+    };
     [ObservableProperty] private bool _hasFunctions;
     [ObservableProperty] private FunctionInfoModel? _selectedFunction;
     [ObservableProperty] private string _functionFilter = "";
@@ -674,11 +688,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     public event Action<ViewAnchorRef>? CaptureViewAnchor;
 
     /// <summary>
-    /// Raised after a bookmark finishes loading: the View re-selects the saved
-    /// field rows (matched by name + offset) and scrolls the saved anchor row back
-    /// into view, so the bookmark returns to what the user was looking at.
+    /// Raised after a bookmark finishes loading, and by Back / a breadcrumb jump: the View
+    /// re-selects the saved field rows (matched by name + offset), puts the saved top row
+    /// back at the top, and then makes sure the third argument -- the row the user drilled
+    /// through, when the navigation came back out of one -- is on screen.
     /// </summary>
-    public event Action<IReadOnlyList<BookmarkFieldRef>, BookmarkFieldRef?>? RestoreBookmarkView;
+    public event Action<IReadOnlyList<BookmarkFieldRef>, BookmarkFieldRef?, BookmarkFieldRef?>? RestoreBookmarkView;
 
     /// <summary>Raised to show the currently-walked object's related objects
     /// (components, GAS ASC → AttributeSets, Controller↔Pawn) in the Related
@@ -2189,11 +2204,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // A breadcrumb jump is N Backs, so the truncated crumbs go onto the
             // forward history deepest-LAST — that puts the nearest one on top, and
             // repeated Forward walks back down the way we came.
+            BreadcrumbItem? cameBackFrom = null;   // ends as the target's child: the row drilled through
             while (Breadcrumbs.Count > idx + 1)
             {
                 var dropped = Breadcrumbs[^1];
                 Breadcrumbs.RemoveAt(Breadcrumbs.Count - 1);
                 PushForward(dropped);
+                cameBackFrom = dropped;
             }
 
             _log.Info($"NAV⇒BC[{idx}] {item.FieldName ?? item.Label} removed={removedCount} | BC={FormatBreadcrumbTrace()}");
@@ -2202,7 +2219,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (item.IsContainerView && item.ContainerField != null)
             {
                 RepopulateContainerView(item.ContainerField, item);
-                RestoreCrumbView(item);
+                RestoreCrumbView(item, cameBackFrom);
                 return;
             }
 
@@ -2212,7 +2229,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (item.IsContainerView && item.ContainerField == null
                 && await TryRepopulateSyntheticContainerAsync(item))
             {
-                RestoreCrumbView(item);
+                RestoreCrumbView(item, cameBackFrom);
                 return;
             }
 
@@ -2222,7 +2239,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (IsGWorldActorListRoot(item))
             {
                 PopulateFromWorld(_cachedWorld!);
-                RestoreCrumbView(item);
+                RestoreCrumbView(item, cameBackFrom);
                 return;
             }
 
@@ -2233,7 +2250,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (RenderSuperseded(item, "BC")) return;
             UpdateDisplay(result);
 
-            RestoreCrumbView(item);
+            RestoreCrumbView(item, cameBackFrom);
         }
         catch (Exception ex)
         {
@@ -2381,24 +2398,33 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// left it. Three rungs, most-faithful first:
     ///
     /// <list type="number">
-    /// <item>A captured view state (multi-selection + top-row scroll anchor),
-    /// replayed through the bookmark restore path — it matches rows by name+offset
-    /// with a name-only fallback and silently skips rows that are no longer there.</item>
+    /// <item>A captured view state (multi-selection + top-row scroll anchor) and/or the
+    /// row drilled through (<paramref name="cameBackFrom"/>), replayed through the
+    /// bookmark restore path — it matches rows by name+offset with a name-only fallback
+    /// and silently skips rows that are no longer there. A synthetic crumb (Locate in
+    /// GWorld, a bookmark re-resolution) has no capture, so on Back it gets the drilled
+    /// row alone.</item>
     /// <item>The legacy <see cref="BreadcrumbItem.ScrollHintFieldName"/> (the row the
-    /// user clicked to drill in). Every crumb that predates a capture has only this:
-    /// the synthetic spines from Locate-in-GWorld and from bookmark re-resolution,
-    /// plus any crumb the user reached without leaving it through a captured path.</item>
+    /// user clicked to drill in), for a restore that came back out of nothing: a crumb
+    /// never left through a captured path, reached by Forward or a re-root.</item>
     /// <item>Nothing — no selection, grid stays at the top. Correct when the user had
     /// nothing selected, and ALSO the automatic outcome when a Forward re-walk found
     /// the object gone: rung 1 then matches no rows and degrades to this by itself.</item>
     /// </list>
     /// </summary>
-    private void RestoreCrumbView(BreadcrumbItem crumb)
+    /// <param name="cameBackFrom">The crumb this navigation came back OUT of (Back's popped
+    /// crumb; for a breadcrumb jump, the target's child on the old spine). Its field name and
+    /// offset identify the row the user drilled through, which the View keeps on screen:
+    /// replaying the top row alone scrolled it to the BOTTOM edge ("make visible"), leaving
+    /// the drilled row below the viewport [LW-BACK-SCROLL].</param>
+    private void RestoreCrumbView(BreadcrumbItem crumb, BreadcrumbItem? cameBackFrom = null)
     {
-        if (crumb.ViewSelectedFields is { Count: > 0 } || crumb.ViewTopRow != null)
+        var drilled = string.IsNullOrEmpty(cameBackFrom?.FieldName)
+            ? null : new BookmarkFieldRef(cameBackFrom!.FieldName, cameBackFrom.FieldOffset);
+        if (crumb.ViewSelectedFields is { Count: > 0 } || crumb.ViewTopRow != null || drilled != null)
         {
             RestoreBookmarkView?.Invoke(
-                crumb.ViewSelectedFields ?? new List<BookmarkFieldRef>(), crumb.ViewTopRow);
+                crumb.ViewSelectedFields ?? new List<BookmarkFieldRef>(), crumb.ViewTopRow, drilled);
             return;
         }
         if (!string.IsNullOrEmpty(crumb.ScrollHintFieldName))
@@ -2527,7 +2553,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (prev.IsContainerView && prev.ContainerField != null)
             {
                 RepopulateContainerView(prev.ContainerField, prev);
-                RestoreCrumbView(prev);
+                RestoreCrumbView(prev, removed);
                 return;
             }
 
@@ -2536,7 +2562,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (prev.IsContainerView && prev.ContainerField == null
                 && await TryRepopulateSyntheticContainerAsync(prev))
             {
-                RestoreCrumbView(prev);
+                RestoreCrumbView(prev, removed);
                 return;
             }
 
@@ -2546,7 +2572,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (IsGWorldActorListRoot(prev))
             {
                 PopulateFromWorld(_cachedWorld!);
-                RestoreCrumbView(prev);
+                RestoreCrumbView(prev, removed);
                 return;
             }
 
@@ -2556,7 +2582,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (RenderSuperseded(prev, "Back")) return;
             UpdateDisplay(result);
 
-            RestoreCrumbView(prev);
+            RestoreCrumbView(prev, removed);
         }
         catch (Exception ex)
         {
@@ -4035,7 +4061,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (restoredFully)
             {
                 // Re-select the rows the user had selected + restore the scroll position.
-                RestoreBookmarkView?.Invoke(slot.SavedSelectedFields, slot.SavedTopRow);
+                RestoreBookmarkView?.Invoke(slot.SavedSelectedFields, slot.SavedTopRow, null);
                 StatusText = $"Bookmark {slot.DisplayNumber} loaded";
             }
             else
@@ -6208,6 +6234,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         // filter edit bring the previous game's UFunctions back. (The filter box is not blanked, so there is nothing
         // for the keyword memory to Flush.)
         _allFunctions.Clear();
+        SelectedFunction = null;   // detach before clearing the selection-bound grid
         Functions.Clear();
         HasFunctions = false;
         ClearForwardStack();
@@ -6319,7 +6346,21 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
     partial void OnSearchTextChanged(string value)
     {
+        // When the USER cleared a real keyword (2+ characters to empty in one edit: select all,
+        // Delete) while a selection that does NOT hold the stepped match is up, bring its first
+        // row to the top -- the maintainer's rule [LW-SEARCH-CLEAR-KEEP]. In every other case the
+        // grid simply stays where it is: a keyword edit no longer re-sets its items.
+        var previous = _previousSearchText;
+        _previousSearchText = value;
+        var keep = !_clearingSearchForNavigation && string.IsNullOrEmpty(value)
+                   && previous.Trim().Length >= 2
+            ? CaptureViewForSearchClear()
+            : null;
+
         ApplySearch(value);
+
+        if (keep != null)
+            RestoreBookmarkView?.Invoke(keep.Value.Selected, keep.Value.Top, keep.Value.Keep);
 
         // Schedule a "remember this keyword" pass once typing settles. Only the
         // keyword the user pauses on is kept (longest-valid), so intermediate
@@ -6376,7 +6417,31 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         if (string.IsNullOrEmpty(SearchText)) return;
         FlushPendingSearchKeyword();
-        SearchText = "";
+        _clearingSearchForNavigation = true;   // not the user clearing it: no view to keep
+        try { SearchText = ""; }
+        finally { _clearingSearchForNavigation = false; }
+    }
+
+    /// <summary>
+    /// [LW-SEARCH-CLEAR-KEEP] The restore a user-cleared keyword asks for, or null when the view
+    /// should simply stay where it is: nothing selected, or the selection holds the match ▲/▼
+    /// last landed on (the maintainer's rule). Otherwise the first selected row, in grid order,
+    /// comes to the top. Row identity is name + offset, as every view restore here.
+    /// </summary>
+    private (List<BookmarkFieldRef> Selected, BookmarkFieldRef? Top, BookmarkFieldRef? Keep)? CaptureViewForSearchClear()
+    {
+        var selected = _selectedFieldsSnapshot.ToList();
+        if (selected.Count == 0 && SelectedField != null)
+            selected.Add(SelectedField);
+
+        if (selected.Count == 0 || (_searchStepTarget != null && selected.Contains(_searchStepTarget)))
+            return null;   // the grid does not move by itself any more: the view stays
+
+        var refs = selected.Select(f => new BookmarkFieldRef(f.Name, f.Offset)).ToList();
+
+        var first = Fields.FirstOrDefault(selected.Contains) ?? selected[0];
+        var firstRef = new BookmarkFieldRef(first.Name, first.Offset);
+        return (refs, firstRef, firstRef);
     }
 
     /// <summary>
@@ -6442,9 +6507,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
         }
 
-        // Force DataGrid to re-evaluate row styles by resetting the collection
-        var items = new ObservableCollection<LiveFieldValue>(Fields);
-        Fields = items;
+        // No collection reset here. It used to re-set Fields "to re-evaluate row styles", from
+        // when the tint was painted per realized row; it is a style BOUND to IsSearchMatch since
+        // [LWREFRESH-2026-08-21], and the reset only threw the grid back to its first row and
+        // dropped the selection -- on the first character typed, on a clear, on every edit that
+        // did not end on a match to scroll to [LW-SEARCH-CLEAR-KEEP].
     }
 
     /// <summary>Move the selection to the next highlighted search match
@@ -6475,6 +6542,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
 
         var target = matches[next];
         SelectedField = target;
+        _searchStepTarget = target;   // "the record the search found", for a later keyword clear
         ScrollFieldIntoView?.Invoke(target);
     }
 
@@ -7254,6 +7322,14 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             var funcs = await _dump.WalkFunctionsAsync(classAddr);
+            // Every walk -- each Refresh and Auto Refresh tick included -- re-reads the class's
+            // functions. The same UFunctions keep their rows, so the Functions grid keeps its
+            // place instead of jumping to the top on every tick [KEYWORD-BOX-VIEW-KEEP].
+            if (funcs.Count > 0 && SameFunctions(_allFunctions, funcs))
+            {
+                HasFunctions = true;
+                return;
+            }
             _allFunctions.Clear();
             _allFunctions.AddRange(funcs);
             HasFunctions = funcs.Count > 0;
@@ -7276,23 +7352,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// </summary>
     private void ApplyFunctionFilter()
     {
-        Functions.Clear();
-        if (_allFunctions.Count == 0) return;
-
         // Space-separated terms are ANDed (each must hit the function name) — the
         // shared Object Tree filter semantics. Empty filter shows everything.
         var terms = ObjectTreeFilter.SplitTerms(FunctionFilter);
-        if (terms.Length == 0)
-        {
-            foreach (var f in _allFunctions) Functions.Add(f);
-            return;
-        }
+        var rows = terms.Length == 0
+            ? new List<FunctionInfoModel>(_allFunctions)
+            : _allFunctions.Where(f => ObjectTreeFilter.MatchesAllTerms(terms, f.Name)).ToList();
+        // Detach before rebuilding the selection-bound grid; unchanged rows are not rebuilt.
+        FunctionsView.Update(Functions, rows, () => SelectedFunction = null, FunctionFilter);
+    }
 
-        foreach (var f in _allFunctions)
+    /// <summary>True when <paramref name="fresh"/> lists the same UFunctions, in order.</summary>
+    private static bool SameFunctions(IReadOnlyList<FunctionInfoModel> shown, IReadOnlyList<FunctionInfoModel> fresh)
+    {
+        if (shown.Count != fresh.Count) return false;
+        for (int i = 0; i < fresh.Count; i++)
         {
-            if (ObjectTreeFilter.MatchesAllTerms(terms, f.Name))
-                Functions.Add(f);
+            if (!string.Equals(shown[i].Address, fresh[i].Address, StringComparison.Ordinal) ||
+                !string.Equals(shown[i].Name, fresh[i].Name, StringComparison.Ordinal))
+                return false;
         }
+        return true;
     }
 
     /// <summary>
@@ -7328,6 +7408,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         if (!string.IsNullOrEmpty(FunctionFilter))
         {
             _functionFilterMemory.Flush();
+            FunctionsView.Forget();   // the program empties the box, not the user
             FunctionFilter = "";
         }
 
@@ -7382,8 +7463,8 @@ public sealed class BreadcrumbItem
     /// records rather than <see cref="LiveFieldValue"/> references: the forward
     /// stack can hold several levels at once and must not pin their field lists
     /// alive. Null when never captured — crumbs built by Locate-in-GWorld or a
-    /// bookmark spine re-resolution only ever have <see cref="ScrollHintFieldName"/>,
-    /// and the restore ladder falls back to that.
+    /// bookmark spine re-resolution; the restore ladder then uses the row drilled
+    /// through (on Back / a jump) or <see cref="ScrollHintFieldName"/>.
     /// </summary>
     public List<BookmarkFieldRef>? ViewSelectedFields { get; set; }
 

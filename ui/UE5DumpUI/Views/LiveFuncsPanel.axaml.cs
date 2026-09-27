@@ -4,6 +4,7 @@ using Avalonia.Controls;
 using Avalonia.Markup.Xaml;
 using UE5DumpUI.Helpers;
 using UE5DumpUI.Models;
+using UE5DumpUI.ViewModels;
 
 namespace UE5DumpUI.Views;
 
@@ -48,6 +49,7 @@ public partial class LiveFuncsPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
+        this.AttachFilterView<LiveFuncsViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
     }
 
     private void InitializeComponent()

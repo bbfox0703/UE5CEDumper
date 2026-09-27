@@ -293,7 +293,7 @@
       </DockPanel>
 
       <!-- Results: one row per group -->
-      <DataGrid Grid.Row="1" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
+      <DataGrid x:Name="PivotResultsGrid" Grid.Row="1" ItemsSource="{Binding Results}" SelectedItem="{Binding SelectedResult}"
                 IsReadOnly="True" GridLinesVisibility="Horizontal" Background="#1E1E1E"
                 CanUserResizeColumns="True" CanUserSortColumns="True"
                 HorizontalScrollBarVisibility="Auto">

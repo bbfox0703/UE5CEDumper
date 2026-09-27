@@ -1,7 +1,9 @@
 r"""Send one virtual key to the FOREGROUND window through SendInput, from Python.
 
-    py tools/verify/send_key.py esc            # also: enter, tab, f5
+    py tools/verify/send_key.py esc            # also: enter, tab, f5, end, home, back, delete
     py tools/verify/send_key.py esc --front UE5DumpUI   # bring that process's window forward first
+    py tools/verify/send_key.py --post UE5DumpUI --seq end back*20 text=777 enter
+                                               # a sequence: keys, key*N, and text=... (typed as WM_CHAR)
 
 WHY. L6 step 2 (edit, Escape, reopen, Enter) was recorded NOT RUN on 2026-09-12 because the
 computer-use `key` action's Escape never reached the Live Walker cell editor. The editor stayed open,
@@ -9,6 +11,12 @@ still holding the typed text, with the caret verifiably inside it. This sends th
 plain SendInput keyboard event from this process instead, so the row does not need a human at the
 keyboard. It prints the foreground window's title before and after, so a key that went to the wrong
 window shows up in the output rather than as a silent no-op.
+
+EDITING A LIVE WALKER CELL (measured 2026-09-27): a computer-use double-click opens the editor but
+leaves keyboard focus on the DataGrid, so every key -- this tool's included -- goes to the grid
+(text is ignored, Enter moves to the next row). Click INSIDE the opened box first, then send. Prefer
+--post: a SendInput key hands the foreground to the NVIDIA overlay, after which computer-use refuses
+every call until the overlay is granted or the UI is brought forward again.
 """
 import argparse
 import ctypes
@@ -20,8 +28,9 @@ from ctypes import wintypes
 
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 HERE = os.path.dirname(os.path.abspath(__file__))
-VK = {"esc": 0x1B, "enter": 0x0D, "tab": 0x09, "f5": 0x74}
-INPUT_KEYBOARD, KEYEVENTF_KEYUP = 1, 0x0002
+VK = {"esc": 0x1B, "enter": 0x0D, "tab": 0x09, "f5": 0x74,
+      "end": 0x23, "home": 0x24, "back": 0x08, "delete": 0x2E}
+INPUT_KEYBOARD, KEYEVENTF_KEYUP, KEYEVENTF_UNICODE = 1, 0x0002, 0x0004
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
@@ -56,6 +65,17 @@ def send(vk):
     sent = user32.SendInput(2, arr, ctypes.sizeof(INPUT))
     if sent != 2:
         raise SystemExit("SendInput sent %d of 2 events (error %d)" % (sent, ctypes.get_last_error()))
+
+
+def send_text(text):
+    """Each character as a KEYEVENTF_UNICODE down/up pair: the app receives it as typed text."""
+    for ch in text:
+        ev = [INPUT(type=INPUT_KEYBOARD, u=_INPUTUNION(ki=KEYBDINPUT(wVk=0, wScan=ord(ch), dwFlags=f,
+                                                                     time=0, dwExtraInfo=0)))
+              for f in (KEYEVENTF_UNICODE, KEYEVENTF_UNICODE | KEYEVENTF_KEYUP)]
+        if user32.SendInput(2, (INPUT * 2)(*ev), ctypes.sizeof(INPUT)) != 2:
+            raise SystemExit("SendInput (text) failed (error %d)" % ctypes.get_last_error())
+        time.sleep(0.03)
 
 
 def windows_of(proc):
@@ -97,9 +117,35 @@ def post(hwnd, vk):
         raise SystemExit("PostMessage failed (error %d)" % ctypes.get_last_error())
 
 
+def post_text(hwnd, text):
+    """WM_CHAR per character: what a keyboard's key-down turns into after TranslateMessage.
+    Posted one at a time with a pause, so each keystroke is its own input event, as a
+    person's typing is (one TextInput per character, not one per string)."""
+    for ch in text:
+        if not user32.PostMessageW(hwnd, 0x0102, ord(ch), 1):
+            raise SystemExit("PostMessage WM_CHAR failed (error %d)" % ctypes.get_last_error())
+        time.sleep(0.05)
+
+
+def expand(seq):
+    """`back*20` -> 20 x back; `text=...` stays one step."""
+    out = []
+    for tok in seq:
+        if tok.startswith("text="):
+            out.append(("text", tok[5:]))
+            continue
+        name, _, n = tok.partition("*")
+        if name not in VK:
+            raise SystemExit("unknown key %r (known: %s)" % (name, ", ".join(sorted(VK))))
+        out.extend([("key", name)] * (int(n) if n else 1))
+    return out
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("key", choices=sorted(VK))
+    ap.add_argument("key", nargs="?", choices=sorted(VK))
+    ap.add_argument("--seq", nargs="+", metavar="STEP",
+                    help="several steps in order: a key name, key*N, or text=STRING")
     ap.add_argument("--front", help="process name whose window to bring forward first (front_window.py)")
     ap.add_argument("--post", metavar="PROC",
                     help="instead of SendInput, PostMessage WM_KEYDOWN/UP to PROC's top-level window. "
@@ -110,17 +156,26 @@ def main():
         subprocess.run([sys.executable, os.path.join(HERE, "front_window.py"), "front", a.front], check=True,
                        capture_output=True)
         time.sleep(0.3)
+    if not a.key and not a.seq:
+        ap.error("give a key or --seq")
+    steps = ([("key", a.key)] if a.key else []) + expand(a.seq or [])
     print("foreground before: %r" % foreground_title())
+    hwnd = None
     if a.post:
         wins = windows_of(a.post)
         if len(wins) != 1:
             raise SystemExit("--post %s: expected ONE visible titled window, found %r" % (a.post, wins))
-        post(wins[0][0], VK[a.key])
-        print("posted %s to %r" % (a.key, wins[0][1]))
-    else:
-        send(VK[a.key])
+        hwnd = wins[0][0]
+    for kind, val in steps:
+        if kind == "text":
+            post_text(hwnd, val) if hwnd else send_text(val)
+        else:
+            post(hwnd, VK[val]) if hwnd else send(VK[val])
+            time.sleep(0.05)
     time.sleep(0.2)
-    print("sent %s; foreground after: %r" % (a.key, foreground_title()))
+    how = "posted to %r" % wins[0][1] if hwnd else "sent"
+    print("%s: %s; foreground after: %r" % (how, " ".join(v if k == "key" else "text=" + v for k, v in steps),
+                                            foreground_title()))
     return 0
 
 

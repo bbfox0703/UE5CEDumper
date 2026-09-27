@@ -113,7 +113,7 @@
               FontSize="12"
               FontFamily="Consolas, Menlo, monospace">
       <DataGrid.Columns>
-        <DataGridTemplateColumn Header="Score" Width="55" SortMemberPath="Score" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.GameClassFilter.Col.Score}" Width="55" SortMemberPath="Score" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:GameClassEntry">
               <TextBlock Text="{Binding Score}" Foreground="#E5C07B"
@@ -121,27 +121,27 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Class"
+        <DataGridTextColumn Header="{StaticResource str.GameClassFilter.Col.Class}"
                             Binding="{Binding ClassName}"
                             SortMemberPath="ClassName"
                             Width="200"/>
-        <DataGridTextColumn Header="Super"
+        <DataGridTextColumn Header="{StaticResource str.GameClassFilter.Col.Super}"
                             Binding="{Binding SuperName}"
                             SortMemberPath="SuperName"
                             Width="140"/>
-        <DataGridTextColumn Header="Package"
+        <DataGridTextColumn Header="{StaticResource str.GameClassFilter.Col.Package}"
                             Binding="{Binding Package}"
                             SortMemberPath="Package"
                             Width="140"/>
-        <DataGridTextColumn Header="Path"
+        <DataGridTextColumn Header="{StaticResource str.GameClassFilter.Col.Path}"
                             Binding="{Binding ClassPath}"
                             SortMemberPath="ClassPath"
                             Width="220"/>
-        <DataGridTextColumn Header="Props"
+        <DataGridTextColumn Header="{StaticResource str.GameClassFilter.Col.Props}"
                             Binding="{Binding PropertyCount}"
                             SortMemberPath="PropertyCount"
                             Width="60"/>
-        <DataGridTextColumn Header="Size"
+        <DataGridTextColumn Header="{StaticResource str.GameClassFilter.Col.Size}"
                             Binding="{Binding SizeHex}"
                             SortMemberPath="PropertiesSize"
                             CanUserSort="True"

@@ -25,6 +25,7 @@ public partial class GameClassFilterPanel : UserControl
     {
         InitializeComponent();
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
+        this.AttachFilterView<GameClassFilterViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
     }
 
     /// <summary>Forward the grid's multi-select (empty = all filtered rows) to the

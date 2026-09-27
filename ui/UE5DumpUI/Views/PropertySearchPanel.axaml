@@ -209,7 +209,7 @@
         </ContextMenu>
       </DataGrid.ContextMenu>
       <DataGrid.Columns>
-        <DataGridTextColumn Header="Class"
+        <DataGridTextColumn Header="{StaticResource str.PropertySearch.Col.Class}"
                             Binding="{Binding ClassName}"
                             SortMemberPath="ClassName"
                             Width="200"/>
@@ -218,7 +218,7 @@
              this class (a strong hint that it's a game-specific addition
              rather than an engine-inherited field). Tooltip explains
              the relationship + shows the defining class path. -->
-        <DataGridTemplateColumn Header="Scope" Width="120" SortMemberPath="InheritedByCount" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.PropertySearch.Col.Scope}" Width="120" SortMemberPath="InheritedByCount" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PropertySearchMatch">
               <TextBlock Text="{Binding InheritanceBadge}"
@@ -231,7 +231,7 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Super"
+        <DataGridTextColumn Header="{StaticResource str.PropertySearch.Col.Super}"
                             Binding="{Binding SuperName}"
                             SortMemberPath="SuperName"
                             Width="120"/>
@@ -239,7 +239,7 @@
              deep (nested) match it's a synthetic dotted path
              (e.g. SaveSlotList[].MsTuneData.GP). The tooltip explains the path
              is a drill route, not a directly-addressable field. -->
-        <DataGridTemplateColumn Header="Property" Width="220" SortMemberPath="PropName" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.PropertySearch.Col.Property}" Width="220" SortMemberPath="PropName" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PropertySearchMatch">
               <TextBlock Text="{Binding PropName}"
@@ -250,20 +250,20 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTextColumn Header="Type"
+        <DataGridTextColumn Header="{StaticResource str.PropertySearch.Col.Type}"
                             Binding="{Binding TypeDisplay}"
                             SortMemberPath="TypeDisplay"
                             Width="200"/>
-        <DataGridTextColumn Header="Offset"
+        <DataGridTextColumn Header="{StaticResource str.PropertySearch.Col.Offset}"
                             Binding="{Binding OffsetHex}"
                             SortMemberPath="PropOffset"
                             CanUserSort="True"
                             Width="80"/>
-        <DataGridTextColumn Header="Size"
+        <DataGridTextColumn Header="{StaticResource str.PropertySearch.Col.Size}"
                             Binding="{Binding PropSize}"
                             SortMemberPath="PropSize"
                             Width="50"/>
-        <DataGridTemplateColumn Header="Preview" Width="200" SortMemberPath="Preview" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.PropertySearch.Col.Preview}" Width="200" SortMemberPath="Preview" CanUserSort="True">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PropertySearchMatch">
               <TextBlock Text="{Binding Preview}"

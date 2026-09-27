@@ -79,10 +79,10 @@
             Margin="0,4,0,8">
       <StackPanel Spacing="4">
         <TextBlock Foreground="#E0A050" FontSize="12" FontWeight="Bold"
-                   Text="This class has no instance fields"/>
+                   Text="{StaticResource str.ClassStruct.EmptyClassTitle}"/>
         <TextBlock Foreground="#CCCCCC" FontSize="11"
                    TextWrapping="Wrap"
-                   Text="Likely a BlueprintFunctionLibrary or utility class — its content is static methods, not data. Use the Interesting Funcs tab to invoke its functions; LiveWalker has nothing to walk because there is no instance."/>
+                   Text="{StaticResource str.ClassStruct.EmptyClassHint}"/>
       </StackPanel>
     </Border>
 
@@ -121,7 +121,7 @@
                             Binding="{Binding Size}"
                             SortMemberPath="Size"
                             Width="60"/>
-        <DataGridTextColumn Header="Address"
+        <DataGridTextColumn Header="{StaticResource str.ClassStruct.Col.Address}"
                             Binding="{Binding Address}"
                             SortMemberPath="Address"
                             Width="160"/>

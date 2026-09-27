@@ -50,5 +50,6 @@ public partial class ClassPivotPanel : UserControl
         this.FindControl<DataGrid>("FieldPickGrid")?.WireSortComparers(FieldPickSortComparers);
         if (this.FindControl<ScrollViewer>("SetupScroller") is { } setup)
             SizeChanged += (_, e) => setup.MaxHeight = Math.Max(SetupMinHeight, e.NewSize.Height * SetupShare);
+        this.AttachFilterView<ClassPivotViewModel>(this.FindControl<DataGrid>("PivotResultsGrid"), vm => vm.ResultsView);
     }
 }

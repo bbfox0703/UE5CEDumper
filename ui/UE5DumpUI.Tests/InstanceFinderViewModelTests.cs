@@ -195,6 +195,48 @@ public class InstanceFinderViewModelTests
     /// refetched it — and one class-noise tick cost TWO walks, because ApplyInstanceFilter
     /// runs immediately AND again when the server re-run lands.
     /// </summary>
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] A keyword edit that shows the same instances must not
+    /// re-set the grid at all: even with Z7's suppressed re-select, the Reset throws the grid
+    /// to its first row.</summary>
+    [Fact]
+    public async Task A_keyword_edit_showing_the_same_instances_keeps_the_list()
+    {
+        var dump = new FakeDump { NextSearch = Result(("Hero", "BP_Hero_C"), ("Rock", "BP_Rock_C")) };
+        var vm = NewVm(dump);
+        vm.SearchClassName = "BP";
+        await vm.SearchCommand.ExecuteAsync(null);
+        vm.InstanceFilterText = "bp";
+        vm.ApplyInstanceFilter();
+        Assert.Equal(2, vm.Instances.Count);
+        vm.SelectedInstance = vm.Instances[1];
+        await WaitFor(() => vm.HasFields);
+        var picked = vm.SelectedInstance;
+        int walks = dump.WalkInstanceCalls;
+        int changes = 0;
+        vm.Instances.CollectionChanged += (_, _) => changes++;
+
+        vm.InstanceFilterText = "bp_";
+        vm.ApplyInstanceFilter();
+
+        Assert.Equal(0, changes);
+        Assert.Same(picked, vm.SelectedInstance);
+        Assert.Equal(walks, dump.WalkInstanceCalls);
+
+        // A real narrowing that keeps the pick: the view model re-selects it (suppressed, no
+        // walk) and the View is handed it to keep visible; the clear asks for Cleared.
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.InstancesView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked! }, null);
+        vm.InstancesView.RestoreView = (_, mode) => modes.Add(mode);
+        vm.InstanceFilterText = picked!.Name;
+        vm.ApplyInstanceFilter();
+        Assert.Same(picked, vm.SelectedInstance);
+        vm.InstanceFilterText = "";
+        vm.ApplyInstanceFilter();
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
+        Assert.Equal(walks, dump.WalkInstanceCalls);
+    }
+
     [Fact]
     public async Task Filtering_keeps_a_surviving_selections_field_grid_without_a_second_walk()
     {

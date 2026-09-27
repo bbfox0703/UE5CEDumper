@@ -21,6 +21,9 @@ public partial class ClassStructViewModel : ViewModelBase
     [ObservableProperty] private string _superName = "";
     [ObservableProperty] private int _propertiesSize;
     [ObservableProperty] private ObservableCollection<FieldInfoModel> _fields = new();
+    /// <summary>Keeps the Fields grid's selection and scroll position across filter edits
+    /// [KEYWORD-BOX-VIEW-KEEP]; the panel attaches the grid to it.</summary>
+    public FilterViewKeeper FieldsView { get; } = new();
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private bool _hasClass;
     /// <summary>UClass* of the currently loaded class — for the per-class Find Func.</summary>
@@ -67,23 +70,23 @@ public partial class ClassStructViewModel : ViewModelBase
     private void ApplyFieldFilter()
     {
         var terms = ObjectTreeFilter.SplitTerms(FieldFilter);
-        // Detach before clearing the selection-bound grid (audit #5 AE14). This was
-        // the one panel of five missing the line its siblings carry verbatim —
-        // ConsoleViewModel:341, GameClassFilterViewModel:151,
-        // InterestingFunctionsViewModel:587, InterestingPropertiesViewModel:448.
-        // Avalonia's DataGrid keeps SelectedItem pointing at a row that is no longer
-        // in ItemsSource, so the xref context menu and the "Find Funcs" column kept
-        // acting on a FieldInfoModel the grid had stopped showing.
-        SelectedField = null;
-        Fields.Clear();
+        var rows = new List<FieldInfoModel>();
         foreach (var f in _allFields)
         {
             if (terms.Length == 0
                 || ObjectTreeFilter.MatchesAllTerms(terms, f.Name, f.TypeName))
             {
-                Fields.Add(f);
+                rows.Add(f);
             }
         }
+        // Detach before clearing the selection-bound grid (audit #5 AE14): Avalonia's
+        // DataGrid keeps SelectedItem pointing at a row that is no longer in ItemsSource,
+        // so the xref context menu and the "Find Funcs" column kept acting on a
+        // FieldInfoModel the grid had stopped showing. The keeper skips a rebuild that
+        // would show the same rows, and the View re-selects a row that survived one --
+        // safe here because selecting a field starts nothing (no walk, unlike Instance
+        // Finder's Z7).
+        FieldsView.Update(Fields, rows, () => SelectedField = null, FieldFilter);
     }
 
     /// <summary>

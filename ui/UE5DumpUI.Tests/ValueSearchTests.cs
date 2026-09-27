@@ -3006,6 +3006,34 @@ public class ValueSearchTests
         Assert.Equal(1, vm.FilteredTotal);
     }
 
+    /// <summary>[KEYWORD-BOX-VIEW-KEEP] The filter runs server-side, so every reload is a new
+    /// window of new row objects: the View is handed the pick to find again BY ADDRESS, and a
+    /// keyword cleared from 2+ characters asks for Cleared.</summary>
+    [Fact]
+    public async Task FilterReload_hands_the_View_the_pick_by_address()
+    {
+        var (vm, fake) = await StartSessionAsync(total: 2, inlineCount: 1);
+        var picked = new ValueCandidate { Addr = "0xA0", Value = "1" };
+        var modes = new List<UE5DumpUI.Helpers.FilterViewRestore>();
+        vm.CandidatesView.CaptureView = () => new UE5DumpUI.Helpers.FilterViewState(new object[] { picked }, null);
+        vm.CandidatesView.RestoreView = (_, mode) => modes.Add(mode);
+
+        fake.NextWindowResult = new ValueScanWindowResult
+        {
+            SessionId = 1UL, Total = 2, FilteredTotal = 1,
+            Candidates = { new ValueCandidate { Addr = "0xA0", Value = "2" } },   // same address, fresh value
+        };
+        vm.FilterText = "hp";
+        await WaitUntilAsync(() => modes.Count > 0);
+        Assert.Equal(vm.CandidatesView.KeyOf!(picked), vm.CandidatesView.KeyOf!(vm.Candidates[0]));
+        Assert.NotSame(picked, vm.Candidates[0]);
+
+        vm.FilterText = "";
+        await WaitUntilAsync(() => modes.Count > 1);
+        Assert.Equal(new[] { UE5DumpUI.Helpers.FilterViewRestore.Narrowed,
+                             UE5DumpUI.Helpers.FilterViewRestore.Cleared }, modes);
+    }
+
     [Fact]
     public async Task NewScan_ClearsWindowState()
     {

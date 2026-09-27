@@ -58,7 +58,7 @@
     <!-- Detect Stats tooltips -->
     <sys:String x:Key="str.Tip.Detect.Run">Shortlist likely player stats (HP/MP/Gold/…) and confirm each against the live game — find a live instance and read its current value. Reference only; verify before use.</sys:String>
     <sys:String x:Key="str.Tip.Detect.UseSnapshot">Cross-reference your two most-recent snapshots and boost fields whose value DECREASED. Workflow: capture a snapshot, take damage / spend in-game, capture again, then Detect. Needs ≥2 usable snapshots.</sys:String>
-    <sys:String x:Key="str.Tip.Detect.Filter">Substring filter over the property, class and category columns (case-insensitive).</sys:String>
+    <sys:String x:Key="str.Tip.Detect.Filter">Space-separated keywords are ANDed; each may match the property, class or category column (case-insensitive). Keywords that matched are remembered for this session.</sys:String>
     <sys:String x:Key="str.Tip.Detect.GWorld">Locate a live instance of this class in the GWorld object graph (opens Live Walker, where you can Copy CE Field).</sys:String>
     <sys:String x:Key="str.Tip.Detect.Finder">Find all live instances of this class in the Instance Finder.</sys:String>
     <sys:String x:Key="str.Tip.Detect.Copy">Copy the property name to the clipboard.</sys:String>
@@ -140,7 +140,7 @@
     <sys:String x:Key="str.VS.CrossObject">Cross-object (owned components)</sys:String>
     <sys:String x:Key="str.Tip.VS.CrossObject">Opt-in (default off, Group mode). Also folds in the numeric properties of the sub-objects each actor OWNS — its components and (for GAS games) its AbilitySystemComponent's AttributeSets — into the actor's match block, so a group whose values are split across {actor, components, attribute sets} is found (e.g. Health on the pawn + Gold on an InventoryComponent). Ownership-driven: only sub-objects whose Outer chains back to the actor are followed; selectivity comes from matching all N values, not from a class-name filter. A per-slot row's field name shows the path (e.g. HealthComp.CurrentHealth) and its handoffs open the owning sub-object.</sys:String>
     <sys:String x:Key="str.VS.MaxResults">Max:</sys:String>
-    <sys:String x:Key="str.Tip.VS.MaxResults">Upper bound on candidates returned by a scan, counted across ALL objects and TArray elements combined (not per array). When the limit is hit the scan stops early and the status row shows a truncation note — raise this, or narrow the value/predicate, to see the full set. Inside a single array every element (index 0..Num-1) is scanned — there is no per-array cap; only arrays with a corrupt/absurd length (over 10,000,000 elements) are skipped as a safety guard. Scans also bail after the Timeout deadline (10–60s, default 15 — see the Timeout slider).</sys:String>
+    <sys:String x:Key="str.Tip.VS.MaxResults">Upper bound on candidates returned by a scan, counted across ALL objects and TArray elements combined (not per array). When the limit is hit the scan stops early and the status row shows a truncation note — raise this, or narrow the value/predicate, to see the full set. Inside a single array every element (index 0..Num-1) is scanned — there is no per-array cap; only arrays with a corrupt/absurd length (over 10,000,000 elements) are skipped as a safety guard. Scans also bail after the Timeout deadline (10–90s, default 25 — see the Timeout slider).</sys:String>
     <sys:String x:Key="str.VS.Timeout">Timeout:</sys:String>
     <sys:String x:Key="str.VS.PerSlotCap">Leaves/slot:</sys:String>
     <sys:String x:Key="str.Tip.VS.Group.Matched">ONE example pairing, not the whole match.&#x0a;&#x0a;An object usually satisfies the group in many ways at once; this column shows a single witness, preferring fields from the SAME struct (Health.CurrentValue beside Health.BaseValue) and, when a filter is active, the field that matched it.&#x0a;&#x0a;"(+35)" after a value means 35 OTHER fields on this object also matched that slot — they are matched, just not displayed here. Select the row and press "All fields" to list them by name.</sys:String>
@@ -192,6 +192,17 @@
     <sys:String x:Key="str.VS.Group.NextScan">Group Next Scan</sys:String>
     <sys:String x:Key="str.VS.Group.NewScan">New Group Scan</sys:String>
     <sys:String x:Key="str.VS.Group.FilterWatermark">Filter matched objects — class / instance / field / value. Space = AND, e.g. "tickcount frozenint"…</sys:String>
+    <sys:String x:Key="str.VS.Col.ClassField">Class.Field</sys:String>
+    <sys:String x:Key="str.VS.Col.Type">Type</sys:String>
+    <sys:String x:Key="str.VS.Col.Origin">Origin</sys:String>
+    <sys:String x:Key="str.VS.Col.Value">Value</sys:String>
+    <sys:String x:Key="str.VS.Col.Offset">Offset</sys:String>
+    <sys:String x:Key="str.VS.Col.Address">Address</sys:String>
+    <sys:String x:Key="str.VS.Col.Instance">Instance</sys:String>
+    <sys:String x:Key="str.VS.ValueHint">value</sys:String>
+    <sys:String x:Key="str.VS.ToHint">to</sys:String>
+    <sys:String x:Key="str.VS.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.VS.Col.MatchedValues">Matched values</sys:String>
     <sys:String x:Key="str.Tip.VS.Group.Filter">Server-side filter over the whole result set. **Space = AND**: each term must match something on the object, but they may match DIFFERENT fields.&#x0a;&#x0a;This is also how you ask for a SPECIFIC pairing. A row shows one pairing out of the many an object satisfies — a Changed + Unchanged scan can hold 2 x 36 = 72 of them, and nothing in the data says which one you meant. Naming both fields is the request: type "tickcount frozenint" and the row becomes TickCount beside FrozenInt instead of whichever pair came first.&#x0a;&#x0a;One term still works as before, and matches class / instance / field name / value.</sys:String>
     <sys:String x:Key="str.Tip.VS.Group.FirstScan">Scan every object for one that simultaneously holds all of the entered values at distinct numeric-property offsets (in any order). Each value defaults to NumericNoByte (matches int16/int32/int64/float/double widths). Use Group Next Scan with the new values to narrow and lock each field's offset.</sys:String>
     <sys:String x:Key="str.Tip.VS.Group.ScanType">Per-value match predicate. First Scan: Exact / Bigger / Smaller (compares against the value). Next Scan also allows Changed / Unchanged / Increased / Decreased — these compare against the previous round instead of a value (the value box hides), so you can find objects where the values moved a known way without knowing the exact numbers.</sys:String>
@@ -241,6 +252,9 @@
     <sys:String x:Key="str.Xref.FindFuncsButton">Find Funcs</sys:String>
     <sys:String x:Key="str.ClassStruct.FilterLabel">Filter:</sys:String>
     <sys:String x:Key="str.ClassStruct.FilterHint">Filter fields by name or type</sys:String>
+    <sys:String x:Key="str.ClassStruct.EmptyClassTitle">This class has no instance fields</sys:String>
+    <sys:String x:Key="str.ClassStruct.EmptyClassHint">Likely a BlueprintFunctionLibrary or utility class — its content is static methods, not data. Use the Interesting Funcs tab to invoke its functions; LiveWalker has nothing to walk because there is no instance.</sys:String>
+    <sys:String x:Key="str.ClassStruct.Col.Address">Address</sys:String>
 
     <!-- Live Walker -->
     <sys:String x:Key="str.LiveWalker.StartWorld">Start from GWorld</sys:String>
@@ -322,6 +336,14 @@
     <sys:String x:Key="str.GameClassFilter.MaxResults">Max</sys:String>
     <sys:String x:Key="str.InstanceFinder.KeywordHint">Filter results (Name / Class / Addr)</sys:String>
     <sys:String x:Key="str.InstanceFinder.ContainerMatches">Container matches (address falls inside a TArray buffer):</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Col.Path">Path</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Col.OwnerClass">Owner Class</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Col.Inner">Inner</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Col.OwnerAddr">Owner Addr</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Col.Index">Index</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Addr">Addr</sys:String>
+    <sys:String x:Key="str.InstanceFinder.AA">AA</sys:String>
+    <sys:String x:Key="str.InstanceFinder.Col.Hex">Hex</sys:String>
 
     <!-- Pointer Panel -->
     <sys:String x:Key="str.Pointers.GObjects">GObjects Address</sys:String>
@@ -493,6 +515,12 @@
     <sys:String x:Key="str.System.RemoveAllSnapshots.Result">Removed {0} snapshot database file(s).</sys:String>
     <sys:String x:Key="str.System.RemoveAllSnapshots.ResultPartial">Removed {0} file(s); {1} still in use — stop any active capture and retry.</sys:String>
     <sys:String x:Key="str.System.RemoveAllSnapshots.Error">Error: {0}</sys:String>
+    <sys:String x:Key="str.System.Col.Command">Command</sys:String>
+    <sys:String x:Key="str.System.Col.Count">Count</sys:String>
+    <sys:String x:Key="str.System.Col.TotalMs">Total ms</sys:String>
+    <sys:String x:Key="str.System.Col.AvgMs">Avg ms</sys:String>
+    <sys:String x:Key="str.System.Col.MaxMs">Max ms</sys:String>
+    <sys:String x:Key="str.System.Col.PctBusy">% busy</sys:String>
 
     <!-- Credit footer (System tab + Live Walker empty state) -->
     <sys:String x:Key="str.Credit.AobMakerPrefix">AOBMaker: </sys:String>
@@ -515,7 +543,7 @@
     <sys:String x:Key="str.Snapshot.Family">Type:</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.Family">Type-family narrowing applied ON TOP of Scope. "All numeric" captures every eligible width; "Integers only" keeps Int8/16/32/64 (+ unsigned) and drops Float/Double; "Floats only" keeps Float/Double and drops every integer. A source-level cut that shrinks the snapshot DB when the hunt is type-specific — floats for HP/MP/coordinates, integers for counts/flags/IDs. Lossy by design: re-capture to bring the other family back.</sys:String>
     <sys:String x:Key="str.Snapshot.MaxDataset">Max size:</sys:String>
-    <sys:String x:Key="str.Tip.Snapshot.MaxDataset">Opt-in in-capture ceiling ("提前止血"). When the live database size crosses this, the capture stops early and KEEPS the partial snapshot (the first-N objects scanned). "Off" disables the cap. This is distinct from the per-game quota, which only evicts whole OLDER snapshots AFTER a capture finishes — it cannot bound a single oversized capture, so a huge game can balloon to many GB before any check. Use the cap (and Estimate size) on large games.</sys:String>
+    <sys:String x:Key="str.Tip.Snapshot.MaxDataset">Opt-in ceiling checked during a capture. When the live database size crosses this, the capture stops early and KEEPS the partial snapshot (the first-N objects scanned). "Off" disables the cap. This is distinct from the per-game quota, which only evicts whole OLDER snapshots AFTER a capture finishes — it cannot bound a single oversized capture, so a huge game can balloon to many GB before any check. Use the cap (and Estimate size) on large games.</sys:String>
     <sys:String x:Key="str.Snapshot.Estimate">Estimate size</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.Estimate">Pre-flight check: walks a small SAMPLE of objects (spread across the index space) with the current options, models the on-disk row cost, and extrapolates to the full object count — WITHOUT writing the database. Gives a "~X GB" go/no-go before committing to a multi-GB capture on a huge game.</sys:String>
     <sys:String x:Key="str.Snapshot.GameOnly">Game objects only</sys:String>
@@ -549,6 +577,7 @@
     <sys:String x:Key="str.Snapshot.Auto.AdjustQuota">Auto-adjust quota</sys:String>
     <sys:String x:Key="str.Tip.Snapshot.Auto.AdjustQuota">Off (default): total usage stays bound by the per-game quota; if the quota can only hold one snapshot while you want to keep more, auto snapshot stops. On: when the quota can't hold the wanted number of snapshots, it is raised to the next preset that fits (up to Unlimited). The free-disk-space guard is always the real ceiling regardless.</sys:String>
     <sys:String x:Key="str.Snapshot.Auto.Hint">Periodically capture snapshots unattended. This is a manual switch — it never auto-starts on connect or auto-resumes on the next launch; only the settings are remembered. Use Cancel to stop a running auto snapshot.</sys:String>
+    <sys:String x:Key="str.Snapshot.Auto.Stopped">Auto snapshot stopped  ·  captured {0}</sys:String>
     <sys:String x:Key="str.Snapshot.Saved">Saved snapshots</sys:String>
     <sys:String x:Key="str.Snapshot.Col.Size">Est. Size</sys:String>
     <sys:String x:Key="str.Snapshot.Col.Label">Label</sys:String>
@@ -612,6 +641,9 @@
     <sys:String x:Key="str.Snapshot.Group.CopyAddr">Addr</sys:String>
     <sys:String x:Key="str.Snapshot.Group.LocateGWorld">🌍</sys:String>
     <sys:String x:Key="str.Snapshot.Group.LocateGameEngine">⚙</sys:String>
+    <sys:String x:Key="str.Snapshot.GB">GB</sys:String>
+    <sys:String x:Key="str.Snapshot.MinHint">min</sys:String>
+    <sys:String x:Key="str.Snapshot.MaxHint">max</sys:String>
 
     <!-- SPC Query (experimental) -->
     <sys:String x:Key="str.Spc.Intro">Find fields whose value SEQUENCE across snapshots matches a direction chain — no type, no value. Pick two or more snapshots (they may span game sessions), set how each should compare to the previous one (Increased / Decreased / Unchanged / Changed), and run. This is CE's "Unknown Initial Value + Increased/Decreased" generalised across persisted snapshots and restarts.</sys:String>
@@ -667,10 +699,14 @@
     <sys:String x:Key="str.Spc.Group.Col.Object">Object</sys:String>
     <sys:String x:Key="str.Spc.Group.Col.Matched">Matched values</sys:String>
     <sys:String x:Key="str.Spc.Group.Detail.Pattern">Pattern</sys:String>
+    <sys:String x:Key="str.Spc.LoHint">lo</sys:String>
+    <sys:String x:Key="str.Spc.HiHint">hi</sys:String>
+    <sys:String x:Key="str.Spc.MinHint">min</sys:String>
+    <sys:String x:Key="str.Spc.MaxHint">max</sys:String>
 
     <!-- N1: per-game class denylist (noise picker) — shared by SPC + Diff -->
     <sys:String x:Key="str.Noise.PanelHeader">Noise picker — top classes in this result</sys:String>
-    <sys:String x:Key="str.Noise.PanelHint">Tick classes whose hits you consider noise (UI widgets, animation, tick state). Apply adds them to this game's denylist and re-runs the query. The denylist also filters Snapshot Diff and the Class Pivot picker.</sys:String>
+    <sys:String x:Key="str.Noise.PanelHint">Tick classes whose hits you consider noise (UI widgets, animation, tick state). Apply adds them to this tab's denylist for this game and re-runs the query. Snapshot Diff, SPC Query and the Class Pivot picker each keep their own list.</sys:String>
     <sys:String x:Key="str.Noise.Col.Pick">Hide</sys:String>
     <sys:String x:Key="str.Noise.Col.Class">Class</sys:String>
     <sys:String x:Key="str.Noise.Col.Hits">Hits</sys:String>
@@ -738,7 +774,7 @@
     <sys:String x:Key="str.Pivot.Discover.Use">Use → (pivot this)</sys:String>
     <!-- Usage limits, one click away: the toggle's label, then the text it shows. -->
     <sys:String x:Key="str.Pivot.Discover.LimitsToggle">ⓘ How it works &amp; limits</sys:String>
-    <sys:String x:Key="str.Pivot.Discover.Limits">How it works &amp; limits:&#10;• Capture 2-4 snapshots around the action you want to isolate (Before … After).&#10;• Use 3-4 to separate a one-time change from constant per-frame noise (rotation, timers, positions); with only 2, both just look "changed".&#10;• Only fields that MOVED appear — a value that never changed between your captures will not show.&#10;• Across a game restart, only objects that re-appear with a stable identity (GameInstance / PlayerState / Pawn / components / GAS) re-join reliably; randomly-spawned actors may not.&#10;• The scan covers the numeric fields captured in the snapshot and runs server-side; on a large capture it can take several seconds (cancellable).</sys:String>
+    <sys:String x:Key="str.Pivot.Discover.Limits">How it works &amp; limits:&#10;• Capture 2-4 snapshots around the action you want to isolate (Before … After).&#10;• Use 3-4 to separate a one-time change from constant per-frame noise (rotation, timers, positions); with only 2, both just look "changed".&#10;• Only fields that MOVED appear — a value that never changed between your captures will not show.&#10;• Across a game restart, only objects that re-appear with a stable identity (GameInstance / PlayerState / Pawn / components / GAS) re-join reliably; randomly-spawned actors may not.&#10;• The scan covers the numeric fields captured in the snapshot and runs as a query over the local snapshot database; on a large capture it can take several seconds (cancellable).</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Class">Class</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Prop">Property</sys:String>
     <sys:String x:Key="str.Pivot.Discover.Col.Changed">Changed</sys:String>
@@ -854,6 +890,14 @@
     <sys:String x:Key="str.Tip.PropertySearch.ForcedClearAll">Release every forced-field hold (best-effort restore each numeric field's captured base; a pointer forced to null is not put back).</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedRemove">Release this hold and stop re-asserting it (a numeric hold restores its captured base; a pointer forced to null is not put back).</sys:String>
     <sys:String x:Key="str.PropertySearch.ForcedCapped">⚠ capped</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Scope">Scope</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Super">Super</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Property">Property</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Type">Type</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Offset">Offset</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Size">Size</sys:String>
+    <sys:String x:Key="str.PropertySearch.Col.Preview">Preview</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.ForcedCapped">The instance pool hit the DLL's cap, so the held count is a FLOOR — more live instances of this class exist and are NOT being held. The pool is walked in ascending GObjects order, so the ones dropped are the most recently spawned.</sys:String>
 
     <!-- Value prompt (FreezeValueDialog). ONE dialog serves two actions, so every string
@@ -881,6 +925,13 @@
     <sys:String x:Key="str.GameClassFilter.PackageLabel">Package:</sys:String>
     <sys:String x:Key="str.GameClassFilter.PackageHint">(All)</sys:String>
     <sys:String x:Key="str.GameClassFilter.Clear">Clear</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Score">Score</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Super">Super</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Package">Package</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Path">Path</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Props">Props</sys:String>
+    <sys:String x:Key="str.GameClassFilter.Col.Size">Size</sys:String>
 
     <!-- Interesting Functions Finder -->
     <sys:String x:Key="str.IF.Load">Load</sys:String>
@@ -899,14 +950,14 @@
     <sys:String x:Key="str.IF.CopyName">Name</sys:String>
     <sys:String x:Key="str.Tip.IF.Load">Scan all UFunctions across all loaded UClasses. Takes 2-10s on large games (1M+ objects). Score is computed client-side from name keywords + class bonus + flag bonus.</sys:String>
     <sys:String x:Key="str.Tip.IF.GameOnly">Skip /Script/Engine, /Script/CoreUObject, etc. Typically reduces the result set ~5x for shipping games. Recheck + re-Load to refresh.</sys:String>
-    <sys:String x:Key="str.Tip.IF.Filter">Substring match against function name OR class name (case-insensitive). e.g. "Money" or "PlayerCharacter".</sys:String>
-    <sys:String x:Key="str.Tip.IF.ClearFilters">Clear the name filter, category, and Show-all toggle (reset to defaults).</sys:String>
+    <sys:String x:Key="str.Tip.IF.Filter">Space-separated keywords are ANDed; each may match the function name or the class name (case-insensitive). e.g. "Money", or "PlayerCharacter Health" for Health functions on PlayerCharacter classes.</sys:String>
+    <sys:String x:Key="str.Tip.IF.ClearFilters">Clear the name filter and the category, and turn off Show All and BP/Exec only (reset to defaults).</sys:String>
     <sys:String x:Key="str.Tip.IF.OpenInst">Open this row's class in the Instance Finder tab — pre-fills the class name and runs the search to list its live instances.</sys:String>
-    <sys:String x:Key="str.Tip.IF.Category">Filter by category. Categories are picked from the strongest-scoring keyword bucket per function (Stats &gt; Inventory &gt; Movement &gt; Combat &gt; Utility tied with same score).</sys:String>
+    <sys:String x:Key="str.Tip.IF.Category">Filter by category. Each function takes the category of its strongest-scoring keyword bucket; a tie goes to the first of Stats &gt; Inventory &gt; Movement &gt; Combat &gt; Utility &gt; Gameplay. Gameplay appears only while Gameplay Actions is on; Other means no bucket scored enough.</sys:String>
     <sys:String x:Key="str.Tip.IF.ShowAll">When off, hide rows with score below the InterestingThreshold (currently 5). When on, show every UFunction regardless of score.</sys:String>
     <sys:String x:Key="str.Tip.IF.GameplayActions">Opt-in (default off). Fold an extra keyword pack into scoring for character-control + world-interaction + shop verbs the default buckets skip — Dash / Dodge / Roll / Slide / Climb / Interact / Use / Open / Buy / Sell / Shop / Vendor / Merchant / Trade / Purchase. Lets a plain OpenShop() / Dash() / Interact() clear the threshold and show up (tip: combine with a name filter like "shop" or "buy"). Re-scores the loaded set in place — no reload needed. Noisier by design; turn off to return to the cheat-value default.</sys:String>
     <sys:String x:Key="str.Tip.IF.CallableOnly">Filter (default off): show only functions flagged BlueprintCallable or Exec. Gameplay/control/shop entry points are almost always one of these two, and both flags survive cooking — so this hides native getters/setters/engine plumbing noise. Pairs well with "Gameplay Actions" + "Show All" to browse callable action functions. Pure display filter — doesn't change scores.</sys:String>
-    <sys:String x:Key="str.Tip.IF.Props">List the properties this function reads/writes (static Blueprint-bytecode scan). Native functions have no bytecode and show nothing.</sys:String>
+    <sys:String x:Key="str.Tip.IF.Props">List the properties this function reads/writes. Blueprint functions: an exact bytecode scan. Native (C++) functions: a heuristic recovered from the machine code, shown with a Conf column (no analysis is possible only when this build cannot locate the function's native code).</sys:String>
     <sys:String x:Key="str.Tip.IF.OpenLive">Try to open this function in Live Walker. If the class has no live (non-CDO) instance, falls back to the Class Struct tab. Auto-expands the Functions section and selects the target row.</sys:String>
     <sys:String x:Key="str.Tip.IF.LocateGWorld">Locate in GWorld: find a live instance of this function's class, then show the shortest pointer path from GWorld down to it in Live Walker (stops at the parent that points to it)</sys:String>
     <sys:String x:Key="str.Tip.IF.LocateGameEngine">Locate in GameEngine: find a live instance of this function's class, then show the shortest pointer path from the live UGameEngine down to it in Live Walker (stops at the parent that points to it). Reaches engine-layer objects the GWorld graph can't — for most world actors, use Locate in GWorld.</sys:String>
@@ -915,8 +966,14 @@
     <sys:String x:Key="str.IF.GenerateCT">📦 Generate CT</sys:String>
     <sys:String x:Key="str.Tip.IF.GenerateCT">Generate one .CT file containing baked-invoke entries for every selected row. Use Ctrl/Shift+click in the grid to multi-select first. Functions with parameters: the helper zero-fills PARAMS; edit the baked PARAMS table in the generated entry before activating.</sys:String>
     <sys:String x:Key="str.IF.BatchProps">⤋ Props</sys:String>
-    <sys:String x:Key="str.Tip.IF.BatchProps">Fill the "Uses" column for the selected rows at once (or all rows if none selected), so you see which class fields each function reads/writes without opening the per-row popup. Fast — each call reads only that one function's bytecode. Most rows show 0 (native funcs / no field access).</sys:String>
+    <sys:String x:Key="str.Tip.IF.BatchProps">Fill the "Uses" column for the selected rows at once (or all rows if none selected), so you see which class fields each function reads/writes without opening the per-row popup. Each row runs the same analysis as Props: Blueprint functions exactly, native functions by the disassembly heuristic. 0 = analysed, no class field found; n/a = nothing could be analysed.</sys:String>
     <sys:String x:Key="str.IF.UsesCol">Uses</sys:String>
+    <sys:String x:Key="str.IF.Col.Score">Score</sys:String>
+    <sys:String x:Key="str.IF.Col.Cat">Cat</sys:String>
+    <sys:String x:Key="str.IF.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.IF.Col.Function">Function</sys:String>
+    <sys:String x:Key="str.IF.Col.Flags">Flags</sys:String>
+    <sys:String x:Key="str.IF.Col.Params">Params</sys:String>
     <sys:String x:Key="str.Common.CancelBatch">✕ Cancel</sys:String>
     <sys:String x:Key="str.Common.BatchFuncs">⤋ Funcs</sys:String>
     <sys:String x:Key="str.Common.BatchFindFunc">⤋ Find Func</sys:String>
@@ -940,6 +997,15 @@
     <sys:String x:Key="str.LF.HideEvents">Hide events/delegates</sys:String>
     <sys:String x:Key="str.LF.PeriodicOnly">Periodic only</sys:String>
     <sys:String x:Key="str.LF.EarliestFirst">Earliest first</sys:String>
+    <sys:String x:Key="str.LF.Col.Order">Order</sys:String>
+    <sys:String x:Key="str.LF.Col.Calls">Calls</sys:String>
+    <sys:String x:Key="str.LF.Col.DeltaVsBase">Δ vs base</sys:String>
+    <sys:String x:Key="str.LF.Col.Kind">Kind</sys:String>
+    <sys:String x:Key="str.LF.Col.Type">Type</sys:String>
+    <sys:String x:Key="str.LF.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.LF.Col.Function">Function</sys:String>
+    <sys:String x:Key="str.LF.Col.Params">Params</sys:String>
+    <sys:String x:Key="str.LF.Col.Period">Period</sys:String>
     <sys:String x:Key="str.Tip.LF.Start">Start recording which UFunctions the game dispatches through ProcessEvent. Forces the game-thread PE hook to install. After clicking, ALT-TAB to the game and perform ONE action (open the shop, dash, attack), then click Stop — behaviour-based discovery finds the exact function even when its name is unguessable.</sys:String>
     <sys:String x:Key="str.Tip.LF.Stop">Stop recording and show the UFunctions that fired, ranked by call count. The action-specific function is usually near the top with a low count (a handful of calls), while per-frame Tick/Update functions have huge counts.</sys:String>
     <sys:String x:Key="str.Tip.LF.Refresh">Re-fetch the current fire-count table without stopping — a live peek while recording, or a re-pull after Stop.</sys:String>
@@ -975,7 +1041,7 @@
     <sys:String x:Key="str.Tip.Con.Load">Scan every UFunction and surface those marked with UFUNCTION(exec) (FUNC_Exec=0x200). Many games leave these intact in cooked Shipping — they're the cheat surface the developer already curated.</sys:String>
     <sys:String x:Key="str.Tip.Con.GameOnly">When OFF (default), engine-side UCheatManager exec commands are included — usually what you want. Flip ON to see only game-specific exec commands.</sys:String>
     <sys:String x:Key="str.Tip.Con.ClearFilter">Clear the command-name filter and show the full list again.</sys:String>
-    <sys:String x:Key="str.Tip.Con.Filter">Substring match against command name OR class name (case-insensitive). Empty = show all.</sys:String>
+    <sys:String x:Key="str.Tip.Con.Filter">Space-separated keywords are ANDed; each may match the command name or the class name (case-insensitive). Empty = show all.</sys:String>
     <sys:String x:Key="str.Tip.Con.CommandInput">Type an exec command name and press Run. No-arg commands invoke directly; commands with parameters open the InvokeParamDialog. Leading slash is stripped (/fly == fly).</sys:String>
     <sys:String x:Key="str.Tip.Con.RunCommand">Resolve the typed command against the loaded list and invoke. Match is case-insensitive exact funcName; first match wins if multiple classes implement the same name.</sys:String>
     <sys:String x:Key="str.Tip.Con.RunSelected">Invoke the currently selected row. Same code path as Run on a row.</sys:String>
@@ -994,6 +1060,10 @@
     <sys:String x:Key="str.Con.DbgCam.ForceOff">Force Off</sys:String>
     <sys:String x:Key="str.Con.DbgCam.Refresh">↻</sys:String>
     <sys:String x:Key="str.Con.DbgCam.CopyCe">Copy CE Script</sys:String>
+    <sys:String x:Key="str.Con.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.Con.Col.Command">Command</sys:String>
+    <sys:String x:Key="str.Con.Col.Flags">Flags</sys:String>
+    <sys:String x:Key="str.Con.Col.Params">Params</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.State">Live Debug Camera state, read from the CheatManager's DebugCameraControllerRef member — the exact field ToggleDebugCamera branches on. ON = a DebugCameraController is active (next plain toggle would turn it OFF). Press ↻ to re-read.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.Refresh">Re-read the live Debug Camera state from the CheatManager instance.</sys:String>
     <sys:String x:Key="str.Tip.Con.DbgCam.ForceOn">Ensure Debug Camera is ON: read current state, and fire ToggleDebugCamera only if it is currently OFF. Idempotent — does nothing if already ON.</sys:String>
@@ -1043,7 +1113,7 @@
     <sys:String x:Key="str.TP.HkHeader">Hotkey Settings</sys:String>
     <sys:String x:Key="str.TP.HkHint">Global hotkeys for markers (Save / Recall / Recall-last), BugItGo, Debug camera, and the God Mode / Super Jump / Move Speed / Gravity toggles + teleport / cursor actions (fire while the game is focused). Click Set, then press the combo — hold Ctrl/Alt/Shift then a key (e.g. Ctrl+F7), or a single key (e.g. F7). Click Cancel or press Esc to abort. Keyboard only for now (mouse extra-buttons / gamepad not yet supported). Saved automatically. A combo marked ⚠ is held by another app — free it and reconnect, or bind a different one.</sys:String>
     <sys:String x:Key="str.TP.ExpHkHeader">Experimental Hotkeys</sys:String>
-    <sys:String x:Key="str.TP.ExpHkHint">Global hotkeys for the experimental features (Keep Foreground ON/OFF, Fly toggle). These are only active while Experimental features is enabled — turning it off unbinds them (and the emergency Keep-Foreground-OFF key). Bind them the same way: click Set, then press the combo.</sys:String>
+    <sys:String x:Key="str.TP.ExpHkHint">Global hotkeys for the experimental features (Keep Foreground ON, Keep Foreground OFF, Fly toggle, See-through toggle). These are only active while Experimental features is enabled — turning it off unbinds them (and the emergency Keep-Foreground-OFF key). Bind them the same way: click Set, then press the combo.</sys:String>
     <sys:String x:Key="str.TP.HkClear">Clear</sys:String>
     <sys:String x:Key="str.TP.CeHeader">CE Export</sys:String>
     <sys:String x:Key="str.TP.AddActions">Add action records to CE</sys:String>
@@ -1056,7 +1126,7 @@
     <sys:String x:Key="str.Tip.TP.PtrGWorld">Add a CE record that resolves the stable &amp;GWorld pointer slot via the DLL and registers it directly as the symbol UE_GWorld, so [UE_GWorld]+offset dereferences the slot to the CURRENT UWorld and chains into it — it auto-follows level transitions (no snapshot). Enable = register, disable = unregister (nothing to free — the slot is a game address). Pushed via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected. Uses the mailbox (CMD_QUERY_PTR), so it works where executeCodeEx can't read export returns.</sys:String>
     <sys:String x:Key="str.Tip.TP.PtrGameEngine">Add a CE record that resolves the live UEngine* (GameEngine instance) via the DLL and registers it as the symbol UE_GameEngine, so [UE_GameEngine]+offset chains straight into the engine. Resolved by walking GObjects — no static GEngine slot needed. Enable = register, disable = unregister + free. Pushed via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected. Uses the mailbox (CMD_QUERY_PTR).</sys:String>
     <sys:String x:Key="str.TP.Warning">⚠ Single-player only. Online games will rubber-band or may flag teleports.</sys:String>
-    <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort, per the design spec (docs/teleport-spec.md): the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
+    <sys:String x:Key="str.TP.BestEffort">ℹ Best-effort: the pawn is resolved by reflection and moved via the engine's own functions where available, with memory-write fallbacks. Works on most games, but some drive the character or the camera from separate internal systems — so on certain titles the character may not move, or it teleports but the camera (POV) doesn't follow.</sys:String>
     <sys:String x:Key="str.Tip.TP.Refresh">Read the current pawn's world location and control rotation (DLL resolves the local PlayerController → Pawn → RootComponent via reflection).</sys:String>
     <sys:String x:Key="str.Tip.TP.ParentRelative">These numbers are NOT world coordinates. The pawn is attached (vehicle / mount / moving platform) and the world-space read failed, so the DLL fell back to the raw RelativeLocation, which is relative to the parent. Do not save them as a marker or a library entry.</sys:String>
     <sys:String x:Key="str.Tip.TP.Auto">Re-read the pose every 0.5s, and the camera POV too (POV is skipped silently on games where it isn't available). Off by default; stops automatically on disconnect.</sys:String>
@@ -1080,13 +1150,13 @@
     <sys:String x:Key="str.Tip.TP.ZOffset">Height added above the hit point so the capsule doesn't spawn intersecting the ground (default 100).</sys:String>
     <sys:String x:Key="str.Tip.TP.Channel">ETraceTypeQuery byte. 0 = Visibility (default engine mapping). Games can remap channels — change this if cursor hits land on the wrong surface.</sys:String>
     <sys:String x:Key="str.Tip.TP.FallbackCenter">When the game has no cursor (HD-2D-style), trace from the screen center instead.</sys:String>
-    <sys:String x:Key="str.Tip.TP.CursorHotkey">Bind a system-wide hotkey for cursor teleport so you can keep the game focused (the cursor stays in the game). Auto-picks the first free combo: Ctrl+F8→F5, then Alt+F8→F5. The chosen combo shows beside this box.</sys:String>
+    <sys:String x:Key="str.Tip.TP.CursorHotkey">Bind a system-wide hotkey for cursor teleport so you can keep the game focused (the cursor stays in the game). Auto-picks the first free combo, trying Ctrl+F8 down to Ctrl+F5, then Alt+F8 down to Alt+F5. The chosen combo shows beside this box.</sys:String>
     <sys:String x:Key="str.Tip.TP.CopyBugItGo">Read the current pose, copy a 'BugItGo X Y Z' string to the clipboard, and paste it into the Run field so you can fire BugItGo immediately. (BugIt itself can't return data to the dumper — it writes to the game's own log/clipboard — so this reads the pose directly.)</sys:String>
     <sys:String x:Key="str.Tip.TP.RunBugItGo">Parse the pasted string and teleport there. Works without any CheatManager — feeds X/Y/Z into the same recall path as markers.</sys:String>
     <sys:String x:Key="str.Tip.TP.RecallLast">Undo the most recent teleport: jump back to the pose auto-saved just before your last Recall / Force / BugItGo / cursor teleport. One-way — recalling it doesn't change the saved spot, so you can press it repeatedly. The system writes this slot; you can't save into it.</sys:String>
     <sys:String x:Key="str.Tip.TP.HkSet">Click, then press the key combo you want for this action. Hold modifiers (Ctrl/Alt/Shift) then a key, or press a single key. Esc cancels. The combo is registered system-wide so it works while the game is focused.</sys:String>
-    <sys:String x:Key="str.Tip.TP.AddActions">Ship the 17 momentary teleport records (Save 1-3, Recall 1-3, Recall last, BugIt, BugItGo, Cursor, Get POV, Get current coords, TP facing direction, TP to coordinates, Cursor ON, Cursor OFF, Clear all) PLUS 3 movement on/off toggles (Move Speed, Gravity, Super Jump — baked at the current slider %, tick = apply, untick = OFF) into the open Cheat Engine table via AOBMaker. Teleport records fire once and auto-untick; movement records stay on while ticked (the DLL holds the value). The directional/coordinate/movement records bake the current field values. Requires the AOBMaker plugin connected.</sys:String>
-    <sys:String x:Key="str.Tip.TP.SaveCt">Backup: save a Cheat Engine .CT file with the 17 teleport records + 3 movement on/off toggles (Move Speed / Gravity / Super Jump baked at the current slider %), for when AOBMaker isn't connected. Import via CE File → Open.</sys:String>
+    <sys:String x:Key="str.Tip.TP.AddActions">Ship 17 teleport records (momentary: Save 1-3, Recall 1-3, Recall last, BugIt, BugItGo, Cursor, Get POV, Get current coords, TP facing direction, TP to coordinates, Cursor ON, Cursor OFF, Clear all), 4 movement toggles (Move Speed, Gravity and Super Jump baked at the current slider %, Gravity Direction at the current vector), 2 time toggles (World, Player) and, while Experimental features is on, 4 Fly toggles (the WASD / Numpad / Arrows presets and Noclip) into the open Cheat Engine table via AOBMaker. Teleport records fire once and auto-untick; the toggles stay on while ticked (the DLL holds the value). The directional/coordinate/movement records bake the current field values. Requires the AOBMaker plugin connected.</sys:String>
+    <sys:String x:Key="str.Tip.TP.SaveCt">Backup: save a Cheat Engine .CT file with the same records (17 teleport, 4 movement, 2 time and, while Experimental features is on, 4 Fly), for when AOBMaker isn't connected. Import via CE File → Open.</sys:String>
     <!-- Teleport: Debug Camera (free-look) -->
     <sys:String x:Key="str.TP.DcHeader">Debug Camera (free-look)</sys:String>
     <sys:String x:Key="str.TP.DcHint">Detach the view into a free-fly debug camera (UCheatManager::ToggleDebugCamera). Turning it back OFF is handled even on Shipping builds that stripped the disable path — the DLL switches the local player's controller back. Needs a live PlayerController, so enter gameplay first. Available only on games that kept ToggleDebugCamera.</sys:String>
@@ -1108,7 +1178,7 @@
     <sys:String x:Key="str.TP.GmCopyScript">Add to CE</sys:String>
     <sys:String x:Key="str.Tip.TP.GmOn">Turn God Mode ON (clear bCanBeDamaged). Idempotent; the DLL re-asserts the bit every ~300 ms so it survives respawns.</sys:String>
     <sys:String x:Key="str.Tip.TP.GmOff">Turn God Mode OFF (restore bCanBeDamaged) and stop the re-assert worker.</sys:String>
-    <sys:String x:Key="str.Tip.TP.GmRefresh">Re-read the live God Mode state (1=immune / 0=can be damaged / unknown if no pawn).</sys:String>
+    <sys:String x:Key="str.Tip.TP.GmRefresh">Re-read the live God Mode state. ON = held; ON (pending) = armed, no pawn yet; ON (contested) = the game just reset it and the hold takes it back; ON (not held) = immune, but not by us; OFF = can be damaged; Unknown = no pawn and nothing requested.</sys:String>
     <sys:String x:Key="str.Tip.TP.GmCopyScript">Add a self-contained Cheat Engine AA record (tick = ON, untick = OFF) that drives God Mode via the DLL mailbox. Pushed straight into CE via AOBMaker, or copied as paste-able CE memory-record XML if AOBMaker isn't connected (right-click the address list → Paste). Works offline — no pipe / UI connection needed.</sys:String>
 
     <!-- Player Stealth meter (Solide — auto-find + hold a stealth/visibility float at 0) -->
@@ -1174,7 +1244,7 @@
     <!-- Gravity multiplier (Laufen — force UCharacterMovementComponent.GravityScale) -->
     <sys:String x:Key="str.TP.GrHeader">Gravity</sys:String>
     <sys:String x:Key="str.TP.GrState">State:</sys:String>
-    <sys:String x:Key="str.TP.GrHint">Scales the player pawn's UCharacterMovementComponent.GravityScale by the slider (10%–1000%, log scale, 100% = base). Below 100% = floaty / moon-jump; above = heavy. Held against per-tick overwrites by the re-assert worker. Per-pawn only — it does not change world gravity for other actors. Extreme values can clip you through floors or break fall damage. Arbitrary gravity direction (UE5.4+) is not yet exposed. Needs a live pawn with a CharacterMovement. Single-player only.</sys:String>
+    <sys:String x:Key="str.TP.GrHint">Scales the player pawn's UCharacterMovementComponent.GravityScale by the slider (10%–1000%, log scale, 100% = base). Below 100% = floaty / moon-jump; above = heavy. Held against per-tick overwrites by the re-assert worker. Per-pawn only — it does not change world gravity for other actors. Extreme values can clip you through floors or break fall damage. To change the gravity DIRECTION (UE5.3+), use the Gravity Direction card. Needs a live pawn with a CharacterMovement. Single-player only.</sys:String>
     <sys:String x:Key="str.TP.GrApply">Apply</sys:String>
     <sys:String x:Key="str.TP.GrReset">Reset</sys:String>
     <sys:String x:Key="str.TP.GrRefresh">↻</sys:String>
@@ -1193,7 +1263,7 @@
     <sys:String x:Key="str.TP.SjReset">Reset</sys:String>
     <sys:String x:Key="str.TP.SjRefresh">↻</sys:String>
     <sys:String x:Key="str.TP.SjLocate">🌍 Locate</sys:String>
-    <sys:String x:Key="str.TP.SjHotkeyHint">Bind a global hotkey to "Super Jump toggle" in the Marker Hotkeys section above to toggle it in-game.</sys:String>
+    <sys:String x:Key="str.TP.SjHotkeyHint">Bind a global hotkey to "Super Jump toggle" in the Hotkey Settings section above to toggle it in-game.</sys:String>
     <sys:String x:Key="str.Tip.TP.SjOn">Turn Super Jump ON — set JumpZVelocity to base × √(slider height %) and hold it (survives respawns).</sys:String>
     <sys:String x:Key="str.Tip.TP.SjOff">Turn Super Jump OFF — restore JumpZVelocity to its captured base.</sys:String>
     <sys:String x:Key="str.Tip.TP.SjReset">Turn Super Jump OFF and snap the height slider back to 100%.</sys:String>
@@ -1210,7 +1280,7 @@
     <sys:String x:Key="str.TP.FlyOn">Fly ON</sys:String>
     <sys:String x:Key="str.TP.FlyOff">Fly OFF</sys:String>
     <sys:String x:Key="str.TP.FlyRefresh">↻</sys:String>
-    <sys:String x:Key="str.TP.FlyHotkeyHint">Bind a global hotkey to "Fly toggle" in the Hotkey Settings section above to toggle Fly in-game without alt-tabbing.</sys:String>
+    <sys:String x:Key="str.TP.FlyHotkeyHint">Bind a global hotkey to "Fly toggle" in the Experimental Hotkeys section to toggle Fly in-game without alt-tabbing.</sys:String>
     <sys:String x:Key="str.Tip.TP.FlyPreset">Which keys drive flight: WASD (+Q/E turn, Z/C up-down), the numeric keypad, or the arrow keys (+Ins/Del turn, PgUp/PgDn up-down).</sys:String>
     <sys:String x:Key="str.Tip.TP.FlyOn">Turn Fly ON — force MOVE_Flying and start reading the keyboard (held against the game re-asserting its own movement mode).</sys:String>
     <sys:String x:Key="str.Tip.TP.FlyOff">Turn Fly OFF — restore the pawn's captured MovementMode and stop.</sys:String>
@@ -1232,7 +1302,7 @@
     <sys:String x:Key="str.Tip.TP.SeeThroughRefresh">Re-read the live see-through state (active / whether it has a target / how many objects are hidden).</sys:String>
     <sys:String x:Key="str.Tip.TP.SeeThroughAddCe">Push a self-contained CE toggle script (tick = ON / untick = OFF) straight into Cheat Engine via AOBMaker. It drives the DLL's See-through through the mailbox, so no pipe connection is needed once added. Disabled when the AOBMaker CE plugin isn't detected.</sys:String>
 
-    <!-- Gravity Direction (Laufen — UE5.4+ UCharacterMovementComponent.GravityDirection) -->
+    <!-- Gravity Direction (Laufen — UE5.3+ UCharacterMovementComponent.GravityDirection) -->
     <sys:String x:Key="str.TP.GdHeader">Gravity Direction (UE5.3+)</sys:String>
     <sys:String x:Key="str.TP.GdState">State:</sys:String>
     <sys:String x:Key="str.TP.GdHint">Tilt gravity to any direction by setting the per-axis components (each −100%…+100%, i.e. −1.0…+1.0). This is DIRECTION only — the DLL normalizes to a unit vector, so a single-axis setting like (0,0,−62%) collapses to (0,0,−1): it only re-aims gravity, it does NOT change strength (use the Gravity card for strength). To tilt you must mix axes, e.g. X=+100%, Z=−100% → diagonal. Default (0,0,−100%) = straight down; X=+100%, Z=0 makes gravity pull along +X (walk on a wall). Apply holds the direction; Reset restores the game's captured default and snaps the sliders back to down. Needs UE5.3+ with a reflected GravityDirection (older games show Unavailable). Single-player only.</sys:String>
@@ -1243,7 +1313,7 @@
     <sys:String x:Key="str.TP.GdHotkeyHint">Bind a global hotkey to "Gravity Dir toggle" in the Hotkey Settings section to toggle it in-game.</sys:String>
     <sys:String x:Key="str.Tip.TP.GdApply">Force GravityDirection to the (X,Y,Z) sliders (normalized) and hold it (re-asserted on a timer). All-zero = off.</sys:String>
     <sys:String x:Key="str.Tip.TP.GdReset">Restore GravityDirection to the captured game default and snap the sliders to straight down (0,0,−100%).</sys:String>
-    <sys:String x:Key="str.Tip.TP.GdRefresh">Re-read the live GravityDirection and override state from the current pawn's CharacterMovement (UE5.4+).</sys:String>
+    <sys:String x:Key="str.Tip.TP.GdRefresh">Re-read the live GravityDirection and override state from the current pawn's CharacterMovement (UE5.3+).</sys:String>
     <sys:String x:Key="str.Tip.TP.GdLocate">Find the GravityDirection FVector in GWorld and select it in the Live Walker.</sys:String>
 
     <!-- Teleport: Camera POV (read-only) -->
@@ -1341,6 +1411,11 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.CursorOn">Force ON</sys:String>
     <sys:String x:Key="str.TP.CursorOff">Force OFF</sys:String>
     <sys:String x:Key="str.TP.CursorRefresh">↻</sys:String>
+    <sys:String x:Key="str.TP.Col.Label">Label</sys:String>
+    <sys:String x:Key="str.TP.Col.Group">Group</sys:String>
+    <sys:String x:Key="str.TP.Col.Map">Map</sys:String>
+    <sys:String x:Key="str.TP.Col.Yaw">Yaw</sys:String>
+    <sys:String x:Key="str.TP.Col.Dist">Dist</sys:String>
     <sys:String x:Key="str.Tip.TP.CursorOn">Show the mouse cursor (sets bShowMouseCursor = true on the local PlayerController).</sys:String>
     <sys:String x:Key="str.Tip.TP.CursorOff">Hide the mouse cursor (sets bShowMouseCursor = false).</sys:String>
     <sys:String x:Key="str.Tip.TP.CursorRefresh">Re-read the live bShowMouseCursor state (1=ON / 0=OFF / unknown if no live PlayerController).</sys:String>
@@ -1359,17 +1434,24 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.IP.CopyName">Name</sys:String>
     <sys:String x:Key="str.Tip.IP.Load">Fan-out search across the seed keyword list (HP/Damage/Gold/Speed/etc.) and score the results client-side. Highlights properties in non-canonical locations (LocalPlayer / HUD / GameViewportClient) — the kind of cheat-relevant fields a CE user would miss looking only in Character/Pawn.</sys:String>
     <sys:String x:Key="str.Tip.IP.GameOnly">Skip /Script/Engine, /Script/CoreUObject, etc. Recommended on — game-specific properties are the cheat-table targets.</sys:String>
-    <sys:String x:Key="str.Tip.IP.Filter">Substring match against property name OR class name (case-insensitive). e.g. "Health" or "PlayerState".</sys:String>
+    <sys:String x:Key="str.Tip.IP.Filter">Space-separated keywords are ANDed; each may match the property name or the class name (case-insensitive). e.g. "Health", or "PlayerState Score" for Score properties on PlayerState classes.</sys:String>
     <sys:String x:Key="str.Tip.IP.ClearFilters">Clear the name filter, category, and the Unusual-only / Show-all toggles (reset to defaults).</sys:String>
     <sys:String x:Key="str.Tip.IP.OpenInst">Open this row's class in the Instance Finder tab — pre-fills the class name and runs the search to list its live instances.</sys:String>
-    <sys:String x:Key="str.Tip.IP.Category">Filter by category. Stats / Combat / Resources / Movement / Utility / Other.</sys:String>
+    <sys:String x:Key="str.Tip.IP.Category">Filter by category. Stats / Combat / Resources / Movement / Utility / Timing / Other.</sys:String>
     <sys:String x:Key="str.Tip.IP.UnusualOnly">Show only properties whose owning class is in the Unusual Location list (LocalPlayer / GameViewportClient / HUD / CheatManager) — properties developers placed outside the conventional Character/Pawn/PlayerState containers.</sys:String>
     <sys:String x:Key="str.Tip.IP.ShowAll">When off, hide rows below the InterestingThreshold (currently 4). When on, show every property regardless of score.</sys:String>
     <sys:String x:Key="str.Tip.IP.OpenLive">Open this property's owning class in Live Walker (live instance lookup), or fall back to Class Struct if no live instance exists.</sys:String>
-    <sys:String x:Key="str.Tip.IP.LocateGWorld">Locate in GWorld: find a live instance of this property's class, then show the shortest pointer path from GWorld down to it in Live Walker (stops at the parent that points to it). Disabled until GWorld is resolved.</sys:String>
+    <sys:String x:Key="str.Tip.IP.LocateGWorld">Locate in GWorld: find a live instance of this property's class, then show the shortest pointer path from GWorld down to it in Live Walker (stops at the parent that points to it).</sys:String>
     <sys:String x:Key="str.Tip.IP.LocateGameEngine">Locate in GameEngine: find a live instance of this property's class, then show the shortest pointer path from the live UGameEngine down to it in Live Walker (stops at the parent that points to it). Reaches engine-layer objects the GWorld graph can't — for most world actors, use Locate in GWorld.</sys:String>
     <sys:String x:Key="str.Tip.IP.CopyName">Copy this property's name to the clipboard.</sys:String>
     <sys:String x:Key="str.IP.GenerateCT">📦 Generate CT</sys:String>
+    <sys:String x:Key="str.IP.Col.Score">Score</sys:String>
+    <sys:String x:Key="str.IP.Col.Cat">Cat</sys:String>
+    <sys:String x:Key="str.IP.Col.Location">⚠ Location</sys:String>
+    <sys:String x:Key="str.IP.Col.Class">Class</sys:String>
+    <sys:String x:Key="str.IP.Col.Property">Property</sys:String>
+    <sys:String x:Key="str.IP.Col.Type">Type</sys:String>
+    <sys:String x:Key="str.IP.Col.Offset">Offset</sys:String>
     <sys:String x:Key="str.Tip.IP.GenerateCT">Generate one .CT file containing freeze entries for every selected row. Use Ctrl/Shift+click in the grid to multi-select first. Each entry uses ue5_freeze_helper.lua — embed it in the resulting CT via Tools → Inject Freeze Helper, or open the CT in CE and edit CFG.value before enabling. Struct / array / non-scalar rows are skipped.</sys:String>
 
     <!-- Proxy DLL / Deferred Scan -->
@@ -1390,6 +1472,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
     <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy. 0-4 normal; 5-6 deep — output size grows exponentially per level (depth 6 on UWorld can produce multi-MB CE XML).</sys:String>
     <sys:String x:Key="str.Tip.Toolbar.Options">Export-shape settings: pointer-node collapse, array/dropdown/preview limits, drill depth. Set once per session.</sys:String>
+    <sys:String x:Key="str.Tip.Toolbar.DeployedDLLBuildMatches">Deployed DLL build matches the UI build</sys:String>
     <sys:String x:Key="str.Tip.Export">Export object data in various formats. ⓘ SDK Header, USMAP and Dump All cover only the classes loaded right now — Blueprint types appear once their asset loads, so load a level first for full coverage.</sys:String>
     <sys:String x:Key="str.Tip.Tools">Tools that don't depend on a live DLL connection (helper file export/inject, etc.)</sys:String>
     <sys:String x:Key="str.Tip.Tools.InjectCeBootstrap">Route ③ of 4 — a one-off record for the table you have open. If you work in Cheat Engine a lot, prefer Tools ▸ Install CE autorun Helper instead: that gives EVERY table an ue5_inject() permanently. (① is deploying a proxy DLL from the Proxy Deploy tab; ② is injecting into a running game; ④ is the standalone dist\UE5CEDumper.CT.) Adds an [ENABLE]/[DISABLE] record that injects UE5Dumper.dll and starts the pipe server, straight into the CE table you already have open — so you never have to load the standalone .CT first (Cheat Engine holds one table at a time). Tick the record to inject; it polls the DLL for readiness instead of sleeping a fixed 15s, and reports a real error on failure. The standalone .CT is still shipped for developer use. Needs the AOBMaker CE Plugin; without it the record is copied to the clipboard as CE XML to paste in.</sys:String>
@@ -1403,7 +1486,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ObjectTree.Reload">Reload all objects from game process</sys:String>
     <sys:String x:Key="str.Tip.ObjectTree.Cancel">Cancel current loading operation</sys:String>
     <sys:String x:Key="str.Tip.ObjectTree.Search">Search objects by name or class</sys:String>
-    <sys:String x:Key="str.Tip.ObjectTree.SearchField">Type a keyword and press Enter or the magnifier to search every object in the game server-side. Multiple space-separated terms are ANDed, each matching the object name OR class name. Respects the "Instances only" toggle. Results are capped (you'll be told if more exist — narrow, or Reload + use the bottom filter for the whole pool uncapped). Leave it empty and press the magnifier (or Reload) to list all objects again. Recent searches are suggested as you type.</sys:String>
+    <sys:String x:Key="str.Tip.ObjectTree.SearchField">Type a keyword and press Enter or the magnifier to search every object in the game server-side. Multiple space-separated terms are ANDed, each matching the object name OR class name. Respects the "Instances only" toggle. Results are capped (you'll be told if more exist — narrow, or Reload + use the bottom filter for the whole pool uncapped). Leave it empty and press the magnifier (or Reload) to list all objects again. As you type, it suggests common UE class names from a fixed list (not your past searches).</sys:String>
     <sys:String x:Key="str.Tip.ObjectTree.ClassFilter">Filter by class type</sys:String>
     <sys:String x:Key="str.Tip.ObjectTree.Collapse">Collapse the Object Tree to give the right-hand panels the full window width</sys:String>
     <sys:String x:Key="str.Tip.ObjectTree.Expand">Show the Object Tree</sys:String>
@@ -1438,7 +1521,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.PropertySearch.Query">Property name to search for (substring, case-insensitive), e.g. Health, Mana, Gold. Combine with the Type filter to narrow further. Press Enter or Search to run.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.Search">Search across all classes. Either Name or Type must be set; comma-separate multiple types.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.TypeFilter">Restrict by FProperty type. Type a few characters to filter the suggestion dropdown (e.g. 'opt' → OptionalProperty). Comma-separated for OR.</sys:String>
-    <sys:String x:Key="str.Tip.PropertySearch.ResultFilter">Filter the current result list locally (case-insensitive substring across Class / Property / Type / Super / Preview). No DLL roundtrip.</sys:String>
+    <sys:String x:Key="str.Tip.PropertySearch.ResultFilter">Filter the current result list locally: space-separated keywords are ANDed, and each may match the Class, Property, Type, Super or Preview column (case-insensitive). No DLL roundtrip.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.GameOnly">Show only game-specific classes (exclude engine)</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.Deep">Also descend into nested struct members and struct-typed container elements (TArray/TSet/TMap of structs), so a field buried inside a struct/array (e.g. SaveSlotList[].MsTuneData.GP) becomes findable by name. Slower; matches show a dotted path and an owning class. Off = fast direct-field search only.</sys:String>
     <sys:String x:Key="str.Tip.PropertySearch.FindInstances">Find in Instance Finder: switch to the Instance Finder tab, fill in this row's class name, and run the search to list all live instances of it.</sys:String>
@@ -1464,6 +1547,22 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.FuncCopyBaked">AA(Baked) = &quot;baked&quot; CE AA (Auto-Assembler) script: the param values you enter are inlined at generation time, so enabling the memory-record fires the call once with those fixed values — no runtime form. ~5x smaller than INV and redistributable. Requires ue5_invoke_helper.lua embedded in your .CT via Table -&gt; Add File... (Tools -&gt; Export CE Helper Lua File... to obtain it). Tick &quot;Verify return value&quot; in the dialog for a full before/after dump, or set UE5_DEBUG=1 to print the decoded return value.</sys:String>
 
     <sys:String x:Key="str.LiveWalker.GuessWhat">Guess?</sys:String>
+    <sys:String x:Key="str.LiveWalker.Addr">Addr</sys:String>
+    <sys:String x:Key="str.LiveWalker.Name">Name</sys:String>
+    <sys:String x:Key="str.LiveWalker.Outer">Outer:</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.ReferencePath">Reference Path</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.OwnerClass">Owner Class</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.FieldType">Field Type</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.OwnerAddr">Owner Addr</sys:String>
+    <sys:String x:Key="str.LiveWalker.Open">Open</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.Hex">Hex</sys:String>
+    <sys:String x:Key="str.LiveWalker.Ptr">Ptr</sys:String>
+    <sys:String x:Key="str.LiveWalker.FuncFilterHint">Filter by name...</sys:String>
+    <sys:String x:Key="str.LiveWalker.Clear">Clear</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.Name">Name</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.Return">Return</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.Params">Params</sys:String>
+    <sys:String x:Key="str.LiveWalker.Col.Address">Address</sys:String>
 
     <!-- Tooltips: Live Walker -->
     <sys:String x:Key="str.Tip.LiveWalker.StartWorld">Navigate to GWorld and list top-level objects</sys:String>
@@ -1498,7 +1597,20 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.GuessWhat">Fill gaps between known fields with guessed data types (pointer, float, int, etc.)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyFieldAddr">Copy field absolute address</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CopyFieldName">Copy field name to clipboard</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.Search">Search/highlight fields by name. Keywords that return matches are remembered for this session (up to 8, most-recent first) — type a few letters to pick one again. The box clears when you navigate to different data (drill-down / Back / Parent); it's kept across tab switches and refreshes.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.Search">Highlight the fields that match every keyword (space-separated terms are ANDed). A keyword can match a field's name, type or value, or the class or struct type behind it. Highlighting starts once the box holds at least 2 characters. Matching rows are highlighted, not hidden: ▲ / ▼ step between them. Keywords that return matches are remembered for this session (up to 8, most-recent first) — type a few letters to pick one again. The box clears when you navigate to different data (drill-down / Back / Parent); it's kept across tab switches and refreshes.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.NavigateToParentOuterPrivate">Navigate to parent (OuterPrivate)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ToggleAutomaticRefresh">Toggle automatic refresh</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.AutoRefreshIntervalSeconds">Auto-refresh interval (seconds)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CopyCEAddress">Copy CE address</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CopyObjectName">Copy object name</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CopyOuterCEAddress">Copy Outer CE address</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.HideReferencesList">Hide references list</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.NavigateToPointerTarget">Navigate to pointer target</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ExpandInlineStruct">Expand inline struct</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.ViewContainerElements">View container elements</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.CopyPointerTargetAddress">Copy pointer target address</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FuncFilter">Space-separated keywords are ANDed; each must match the function name (case-insensitive). e.g. "get health" for functions whose name holds both.</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.FuncFilterClear">Clear filter</sys:String>
 
     <!-- Tooltips: Pointer Panel -->
     <sys:String x:Key="str.Tip.Pointers.Copy">Copy address to clipboard</sys:String>

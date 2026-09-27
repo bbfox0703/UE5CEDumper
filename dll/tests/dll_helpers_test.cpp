@@ -4488,7 +4488,6 @@ static void Test_Solide_IntWidthAndRange() {
     // Its unsigned same-width siblings must NOT be dragged along by the fix.
     EXPECT("ByteProperty is 1 byte",  IntWidthOf("ByteProperty").bytes == 1);
     EXPECT("ByteProperty is unsigned", !IntWidthOf("ByteProperty").isSigned);
-    EXPECT("UInt8Property is unsigned", !IntWidthOf("UInt8Property").isSigned);
 
     EXPECT("IntProperty is 4 signed",
            IntWidthOf("IntProperty").bytes == 4 && IntWidthOf("IntProperty").isSigned);
@@ -4529,7 +4528,8 @@ static void Test_Solide_IntWidthAndRange() {
     // know would be accepted by Force and then fail every read and write silently.
     EXPECT("gate admits Int8Property",    Solide::IsIntType("Int8Property"));
     EXPECT("gate admits ByteProperty",    Solide::IsIntType("ByteProperty"));
-    EXPECT("gate admits UInt8Property",   Solide::IsIntType("UInt8Property"));
+    // No engine emits UInt8Property (uint8 is ByteProperty) [UINT8PROP-DEAD].
+    EXPECT("gate rejects UInt8Property",  !Solide::IsIntType("UInt8Property"));
     EXPECT("gate admits IntProperty",     Solide::IsIntType("IntProperty"));
     EXPECT("gate admits Int64Property",   Solide::IsIntType("Int64Property"));
     EXPECT("gate rejects FloatProperty",  !Solide::IsIntType("FloatProperty"));

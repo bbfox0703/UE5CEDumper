@@ -38,6 +38,7 @@ public partial class InstanceFinderPanel : UserControl
         this.FindControl<DataGrid>("InstancesGrid")?.WireSortComparers(InstancesSortComparers);
         this.FindControl<DataGrid>("ContainerMatchesGrid")?.WireSortComparers(ContainerMatchesSortComparers);
         this.FindControl<DataGrid>("InstanceFieldsGrid")?.WireSortComparers(InstanceFieldsSortComparers);
+        this.AttachFilterView<InstanceFinderViewModel>(this.FindControl<DataGrid>("InstancesGrid"), vm => vm.InstancesView);
     }
 
     /// <summary>Forward the grid's multi-select (empty = all filtered rows) to the
