@@ -4462,15 +4462,23 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         //
         // The `>= 0` guard mirrors the FProperty arm: an unmeasured probe must leave the
         // default alone rather than derive from -1.
-        DynOff::UBOOLPROP_FIELDSIZE = DynOff::UBoolPropFieldSizeFor(
-            propOffsetOff, ueVersion, DynOff::bCasePreservingName);
+        //
+        // [UPROP-SUBCLASS-SLOT] The start comes from the measured layout (DynOff::UPropertySubclassStartFromLayout:
+        // the Offset_Internal - ElementSize gap tells the tail order), the version only when ElementSize was not
+        // measured -- and the whole family goes there with the bool slot, which used to be the only one derived here.
+        const int start = DynOff::UPropertySubclassStartFromLayout(propOffsetOff, propElemSizeOff, ueVersion,
+                                                                   DynOff::bCasePreservingName);
+        DynOff::UBOOLPROP_FIELDSIZE = start;
         Sein::Info("DYNO", "ValidateAndFixOffsets: UBoolProperty::FieldSize derived at "
-                   "+0x%02X (Offset_Internal +0x%02X, UE=%u%s)",
-                   DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, ueVersion,
+                   "+0x%02X (Offset_Internal +0x%02X, ElementSize +0x%02X, UE=%u%s)",
+                   DynOff::UBOOLPROP_FIELDSIZE, propOffsetOff, propElemSizeOff, ueVersion,
                    DynOff::bCasePreservingName ? ", CPN" : "");
-        // [UPROP-SUBCLASS-SLOT] ...and the rest of the subclass family from the same start. The bool slot was the only
-        // one derived here, so every struct / object / enum reader kept the FProperty default (DynOff::UPropertyFamilyFor).
-        DynOff::ApplyPropertyFamily(DynOff::UPropertyFamilyFor(propOffsetOff, ueVersion, DynOff::bCasePreservingName));
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(start));
+    } else if (!DynOff::bUseFProperty && DynOff::UPropertyHasDefaultFamily(ueVersion)) {
+        // A run that entered UProperty mode AFTER Step 2.5 (the ChildProperties fallback flips it) and then failed the
+        // Offset_Internal probe would otherwise ship the FProperty default -- give it the UProperty one (review
+        // wf_b99fb861-680, F5).
+        DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
     }
 
     // Infer tagged FFieldVariant from probed offsets:

@@ -756,7 +756,9 @@ constexpr int FunctionTailShiftFor(unsigned ueVersion) {
 // Offset_Internal moves ahead of RepNotifyFunc, shortening the tail by 4. 4.11-4.17 is
 // SEVEN versions inside our supported range, so a flat +0x2C would have been wrong there.
 // The CPN +8 is the usual padded-FName SLOT delta (RepNotifyFunc is an FName followed by
-// 8-aligned pointers) -- see bCasePreservingName.
+// 8-aligned pointers) -- see bCasePreservingName -- and it exists from 4.18 only. Before 4.18 the
+// 12-byte FName sits BEFORE Offset_Internal and moves Offset_Internal itself (0x50 -> 0x58), so the
+// tail stays 0x28: case-preserving 4.15 starts at 0x80, not 0x88 (review wf_b99fb861-680, F3).
 //
 // ⚠ KEEP Ubel's { base, ±4, +8, -8 } probe spread. It is what makes a misdetected version
 // survivable: the two live deltas differ by exactly 4 and the CPN case by 8, so both are
@@ -766,7 +768,7 @@ constexpr int UBoolPropFieldSizeFor(int offsetInternal, unsigned ueVersion,
     const int delta = (ueVersion >= 418) ? 0x2C
                     : (ueVersion >= 411) ? 0x28
                     : 0x24;                       // 4.07-4.10, below the floor
-    return offsetInternal + delta + (casePreservingName ? 8 : 0);
+    return offsetInternal + delta + (casePreservingName && ueVersion >= 418 ? 8 : 0);
 }
 
 // The FIRST field of a UProperty subclass -- UStructProperty::Struct, UObjectPropertyBase::
@@ -779,6 +781,23 @@ constexpr int UPropertySubclassStartFor(int offsetInternal, unsigned ueVersion,
                                         bool casePreservingName) {
     return ueVersion >= 411 ? UBoolPropFieldSizeFor(offsetInternal, ueVersion, casePreservingName)
                             : offsetInternal + 0x2C + (casePreservingName ? 8 : 0);
+}
+
+// [UPROP-SUBCLASS-SLOT] The subclass start from the MEASURED layout, the version only as a fallback. Which of the two
+// UProperty tail orders a build has is readable from the two offsets Genau measures: Offset_Internal - ElementSize is
+// 0x10 when Offset_Internal comes first (4.18+: Offset_Internal, RepNotifyFunc, four pointers) and 0x1C when
+// RepNotifyFunc does (4.11-4.17: RepNotifyFunc, Offset_Internal, four pointers). Reading the order from the version
+// broke on a misdetected one: a 4.11-4.17 title whose detection fails is relabelled 422 and got the 4.18+ tail, a
+// misaligned 0x7C where its start is 0x78 (review wf_b99fb861-680, F1). The pointers are 8-aligned either way, which
+// also makes a case-preserving FName (12 bytes, alignof 4) come out right in both orders.
+constexpr int UPropertySubclassStartFromLayout(int offsetInternal, int elemSizeOff, unsigned ueVersion,
+                                               bool casePreservingName) {
+    const int gap = elemSizeOff >= 0 ? offsetInternal - elemSizeOff : -1;
+    if (gap == 0x10)   // 4.18+ order: Offset_Internal, then RepNotifyFunc
+        return ((offsetInternal + 4 + (casePreservingName ? 12 : 8) + 7) & ~7) + 4 * 8;
+    if (gap == 0x1C)   // 4.11-4.17 order: RepNotifyFunc already behind Offset_Internal
+        return ((offsetInternal + 4 + 7) & ~7) + 4 * 8;
+    return UPropertySubclassStartFor(offsetInternal, ueVersion, casePreservingName);
 }
 
 // === UE4 UProperty offsets (UProperty inherits UObject → UField → UProperty) ===

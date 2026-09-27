@@ -6685,11 +6685,14 @@ static void Test_UBoolPropFieldSize() {
                (trueBoth - wrongBoth) != 0 && (trueBoth - wrongBoth) != 4
                && (trueBoth - wrongBoth) != -4 && (trueBoth - wrongBoth) != 8
                && (trueBoth - wrongBoth) != -8);
-        // The counter-case, so the claim above is not mistaken for "any two errors escape":
-        const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x50, 420, false);
-        const int trueLoCpn     = UBoolPropFieldSizeFor(0x50, 415, true);
-        EXPECT("A6: a HIGH version miss partially cancels a missed CPN -- net 4, still inside",
-               trueLoCpn - hiMissCpnMiss == 4);
+        // The counter-case, so the claim above is not mistaken for "any two errors escape". It used a case-preserving
+        // 4.15 at Offset_Internal 0x50 with the +8, a layout no engine builds: before 4.18 the 12-byte FName moves
+        // Offset_Internal itself to 0x58 and adds nothing to the tail (review wf_b99fb861-680, F3). On the real layout
+        // a HIGH version miss that also misses CPN is off by 4 -- still inside.
+        const int hiMissCpnMiss = UBoolPropFieldSizeFor(0x58, 420, false);
+        const int trueLoCpn     = UBoolPropFieldSizeFor(0x58, 415, true);
+        EXPECT("A6: a HIGH version miss with a missed CPN on real case-preserving 4.15 is off by 4 -- still inside",
+               hiMissCpnMiss - trueLoCpn == 4);
     }
 
     // --- every result must be a plausible offset, and strictly past Offset_Internal ---
@@ -6737,6 +6740,24 @@ static void Test_UPropertyFamilyFor() {
            UPropertyFamilyFor(0x58, 415, true).structProp == 0x80);
     EXPECT("A6: case-preserving 4.15's bool slot is the same 0x80",
            DynOff::UBoolPropFieldSizeFor(0x58, 415, true) == 0x80);
+    // The layout decides the order (review F1): Offset_Internal - ElementSize is 0x1C before 4.18, 0x10 from 4.18.
+    using DynOff::UPropertySubclassStartFromLayout;
+    EXPECT("UPROPSLOT layout: 4.15 stock (0x50, ElementSize 0x34) -> 0x78, whatever the version says",
+           UPropertySubclassStartFromLayout(0x50, 0x34, 422, false) == 0x78
+           && UPropertySubclassStartFromLayout(0x50, 0x34, 0, false) == 0x78);
+    EXPECT("UPROPSLOT layout: case-preserving 4.15 (0x58, 0x3C) -> 0x80",
+           UPropertySubclassStartFromLayout(0x58, 0x3C, 415, true) == 0x80);
+    EXPECT("UPROPSLOT layout: 4.23 stock (0x44, 0x34) -> 0x70, even labelled 4.15",
+           UPropertySubclassStartFromLayout(0x44, 0x34, 415, false) == 0x70);
+    EXPECT("UPROPSLOT layout: case-preserving 4.23 (0x4C, 0x3C) -> 0x80",
+           UPropertySubclassStartFromLayout(0x4C, 0x3C, 423, true) == 0x80);
+    EXPECT("UPROPSLOT layout: DQ XI S shifted 4.18 (0x54, 0x44) -> 0x80",
+           UPropertySubclassStartFromLayout(0x54, 0x44, 418, false) == 0x80);
+    EXPECT("UPROPSLOT layout: STATS 4.18 (0x4C, 0x3C) -> 0x78",
+           UPropertySubclassStartFromLayout(0x4C, 0x3C, 418, false) == 0x78);
+    EXPECT("UPROPSLOT layout: an unmeasured ElementSize falls back to the version",
+           UPropertySubclassStartFromLayout(0x50, -1, 415, false) == 0x78
+           && UPropertySubclassStartFromLayout(0x44, -1, 423, false) == 0x70);
     EXPECT("UPROPSLOT: an unknown version keeps +0x2C", UPropertyFamilyFor(0x44, 0, false).structProp == 0x70);
     // The unmeasured default a give-up ships: none below 4.18, where the FProperty default 0x78 IS the stock start.
     EXPECT("UPROPSLOT: 4.23 default family 0x70", DynOff::UPropertyDefaultFamily(423, false).structProp == 0x70);
