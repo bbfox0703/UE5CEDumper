@@ -9998,9 +9998,19 @@ Phase 1 (the "Related" tab: given an actor, list Self/Class/Outer + Controller�
   top candidate IS the focused enemy and its AttributeSet/HP loads. Tune the score constants only if
   such a game motivates it. *Original note:* Built + unit-tested + AOT-green but unproven live. Verify on a **lock-on / soft-target action title** (the target lives in a `UPROPERTY` object field): click 🎯 Detect target → confirm the top candidate IS the focused enemy and its AttributeSet/HP shows in the grid; confirm the 🌍 Locate-in-GWorld now resolves for that target (it should — the player references it). On the named JP/CN test games (TQ2/SEED/DQ7R, mostly no target `UPROPERTY`) confirm the **graceful fallback** fires (note = "no clear target / weak guesses", nothing auto-loaded) rather than feeding a wrong actor. Tune the score constants / keyword tables only if a real game motivates it. *Parent: Edel shipped build 1400, dev-log 2026-06-20.*
 
-- **Locate in GWorld — streaming / World-Partition actors — the `ok_via_level` RECOVERY is still the
-  unverified half (Elliot 2026-07-23 exercised the normal path instead)** — Effort: **0** (verify only) ·
-  Risk: low. A 🌍 on Elliot **succeeded through the ordinary forward BFS**: `status: "ok"`, `found: true`,
+- **Locate in GWorld — streaming / World-Partition actors — the `ok_via_level` recovery FIRES live
+  (Titan Quest II); the drill from the recovered actor to its HP is still unchecked** — Effort: **0**
+  (verify only) · Risk: low. ✅ **Corrected 2026-09-27:** this row called the recovery itself
+  unverified, but it has fired on a real game. `Logs\TQ2-Win64-Shipping\ui-view-20260823-091415.log`
+  shows a 🌍 spine `(world level)(S,0xFFFFFFFF,A960) > (level actor)(S,0xFFFFFFFF,FA60)`, and the
+  re-run on **build 3361** (Titan Quest II, UE507, 279,587 objects; `Actor` → 🌍 Locate) produced
+  the same two hops (dev-log 2026-08-26 evening, row 5 of `[GWORLDACTORCHAIN-2026-08-26]`). Those
+  two hop types, `WorldLevel` / `LevelActor`, are emitted only by `RecoverViaWorldLevel`, whose
+  success status is `ok_via_level`. ⬜ **What neither run checked:** the target there was the
+  level actor itself, so no tail hop was built — the step below that is still open is 🌍 on an
+  enemy or other gameplay actor the forward BFS cannot reach, then drilling from the recovered
+  actor to its HP (the bounded tail BFS to an owned AttributeSet). The status note text was not
+  recorded either. *Earlier text, kept:* A 🌍 on Elliot **succeeded through the ordinary forward BFS**: `status: "ok"`, `found: true`,
   depth 5, 28 ms, 3,065 nodes visited, root `MainField_A2` — path `GWorld > GameState > PlayerArray[0]
   > PawnPrivate > SupportCharacter > DamageHit`. Worth banking: that request carried `deep: true` +
   `container_depth: 4` and the path hops **through a container ELEMENT** (`PlayerArray` ArrayProperty,
