@@ -30,8 +30,9 @@ namespace UE5DumpUI.Services;
 /// </summary>
 internal sealed class SdkTypeNames
 {
-    /// <summary>One type the header defines. <see cref="IsClass"/> is null when the caller does not know.</summary>
-    internal readonly record struct Entry(string Address, string Name, bool? IsClass, string FullPath);
+    /// <summary>One type the header defines. <see cref="IsClass"/> is null when the caller does not know;
+    /// <see cref="Size"/> is its PropertiesSize, 0 when unknown.</summary>
+    internal readonly record struct Entry(string Address, string Name, bool? IsClass, string FullPath, int Size = 0);
 
     /// <summary>What a reference names: a pointer or subclass names a class, a by-value member a struct.</summary>
     internal enum Kind { Any, Class, Struct, Enum }
@@ -105,7 +106,7 @@ internal sealed class SdkTypeNames
             return _names[i];
 
         var kind = _entries[self].IsClass switch { true => Kind.Class, false => Kind.Struct, null => Kind.Any };
-        var name = Reference(superName, kind, _entries[self].FullPath, exclude: self);
+        var name = Resolve(superName, kind, _entries[self].FullPath, exclude: self, size: 0);
 
         // Only reachable when the super is outside the pool, the caller did not declare it so, and
         // it sanitises to this struct's own name: spell it apart rather than inherit from itself.
@@ -115,9 +116,11 @@ internal sealed class SdkTypeNames
     }
 
     /// <summary>The emitted name for a type a member (or a super) names by its short UE name.</summary>
-    internal string Reference(string raw, Kind kind, string? fromPath) => Reference(raw, kind, fromPath, -1);
+    /// <param name="size">A by-value struct member's own size, 0 when unknown (a container inner).</param>
+    internal string Reference(string raw, Kind kind, string? fromPath, int size = 0) =>
+        Resolve(raw, kind, fromPath, exclude: -1, size);
 
-    private string Reference(string raw, Kind kind, string? fromPath, int exclude)
+    private string Resolve(string raw, Kind kind, string? fromPath, int exclude, int size)
     {
         if (string.IsNullOrEmpty(raw)) return raw;
 
@@ -133,6 +136,14 @@ internal sealed class SdkTypeNames
                 _ => true,
             }).ToList();
 
+            // A struct member's size is its struct's PropertiesSize aligned up (at most 16), so a holder
+            // that cannot be that size is not the one it names -- the strongest evidence the wire has.
+            if (kind == Kind.Struct && size > 0 && fitting.Count > 1)
+            {
+                var sized = fitting.Where(h => CanBeSize(h, size)).ToList();
+                if (sized.Count > 0) fitting = sized;
+            }
+
             if (fitting.Count == 1) return _names[fitting[0]];
             if (fitting.Count > 1)
             {
@@ -140,7 +151,10 @@ internal sealed class SdkTypeNames
                 int best = -1, bestScore = -1;
                 foreach (int h in fitting)
                 {
-                    int score = CommonPrefix(_pathTokens[h], from) * 2 + (IsNative(h) ? 1 : 0);
+                    // The first token is the mount point (Game, Script): every /Game type shares it, so
+                    // it is not locality -- counting it made any /Game holder beat the engine's own.
+                    int shared = Math.Max(0, CommonPrefix(_pathTokens[h], from) - 1);
+                    int score = shared * 2 + (IsNative(h) ? 1 : 0);
                     if (score > bestScore || (score == bestScore && Before(h, best)))
                     {
                         best = h;
@@ -167,6 +181,12 @@ internal sealed class SdkTypeNames
         SdkMemberNames.IsReservedIdentifier(name) || BuiltIns.Contains(name);
 
     private bool IsNative(int i) => _pathTokens[i].Length > 0 && _pathTokens[i][0] == "Script";
+
+    private bool CanBeSize(int h, int size)
+    {
+        int own = _entries[h].Size;
+        return own <= 0 || (own <= size && size - own < 16);
+    }
 
     /// <summary>An order that does not depend on GObjects order: the path, then the emitted name.</summary>
     private bool Before(int a, int b)

@@ -89,7 +89,10 @@ public static class SdkExportService
                 // BlueprintGeneratedClass — which is where 90%+ of
                 // game-specific cheat targets live. Same bug fixed in
                 // the DLL build 673; this is the C# mirror.
-                if (DumpAllService.IsClassLikeMetaName(obj.ClassName) || obj.ClassName == "ScriptStruct")
+                // [SDK-UDS-MISSING] A Blueprint UserDefinedStruct is its own UScriptStruct subclass, so its
+                // row reads "UserDefinedStruct": without it, every Blueprint member of that type named a
+                // struct the header never defined.
+                if (DumpAllService.IsClassLikeMetaName(obj.ClassName) || IsStructMeta(obj.ClassName))
                     targets.Add((obj.Address, obj.Name, obj.ClassName));
             }
 
@@ -190,7 +193,7 @@ public static class SdkExportService
             var (addr, name, meta) = targets[i];
             var info = walks[i];
             entries[i] = new SdkTypeNames.Entry(
-                addr, info?.Name ?? name, meta != "ScriptStruct", info?.FullPath ?? "");
+                addr, info?.Name ?? name, !IsStructMeta(meta), info?.FullPath ?? "", info?.PropertiesSize ?? 0);
         }
         // A super the pool does not hold is a type the user must supply under its own name, so no
         // pool type may take that spelling (a pool type named like its missing super would otherwise
@@ -224,6 +227,9 @@ public static class SdkExportService
         return sb.ToString();
     }
 
+    /// <summary>The GObjects metas of a struct type: native, and a Blueprint user-defined one.</summary>
+    internal static bool IsStructMeta(string meta) => meta is "ScriptStruct" or "UserDefinedStruct";
+
     // --- Type Mapping ---
 
     /// <summary>
@@ -249,10 +255,10 @@ public static class SdkExportService
     internal static CppDecl MapCppDecl(FieldInfoModel field, SdkTypeNames? names = null, string? fromPath = null)
     {
         var t = names ?? SdkTypeNames.None;
-        string S(string n) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath);
+        string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
         string C(string n) => t.Reference(n, SdkTypeNames.Kind.Class, fromPath);
         return MapCppDeclCore(
-            field.TypeName, S(field.StructType), C(field.ObjClassName),
+            field.TypeName, S(field.StructType, field.Size), C(field.ObjClassName),
             field.InnerType, S(field.InnerStructType), C(field.InnerObjClass),
             field.KeyType, S(field.KeyStructType), field.ValueType, S(field.ValueStructType),
             field.ElemType, S(field.ElemStructType), t.Reference(field.EnumName, SdkTypeNames.Kind.Enum, fromPath),
@@ -265,9 +271,9 @@ public static class SdkExportService
     internal static CppDecl MapCppDecl(LiveFieldValue field, SdkTypeNames? names = null, string? fromPath = null)
     {
         var t = names ?? SdkTypeNames.None;
-        string S(string n) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath);
+        string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
         return MapCppDeclCore(
-            field.TypeName, S(field.StructTypeName), t.Reference(field.PtrClassName, SdkTypeNames.Kind.Class, fromPath),
+            field.TypeName, S(field.StructTypeName, field.Size), t.Reference(field.PtrClassName, SdkTypeNames.Kind.Class, fromPath),
             field.ArrayInnerType, S(field.ArrayStructType), "",
             field.MapKeyType, S(field.MapKeyStructType), field.MapValueType, S(field.MapValueStructType),
             field.SetElemType, S(field.SetElemStructType), t.Reference(field.EnumName, SdkTypeNames.Kind.Enum, fromPath),
