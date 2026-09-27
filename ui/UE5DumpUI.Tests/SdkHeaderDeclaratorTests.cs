@@ -368,7 +368,14 @@ public class SdkHeaderDeclaratorTests
                      new FieldInfoModel { Name = "Doors", TypeName = "ArrayProperty", InnerType = "ObjectProperty", InnerObjClass = "BP_Door-Big_C", Offset = 0x18, Size = 0x10 },
                  })
             .Add("0x60", "BP_Door-Big_C", "BlueprintGeneratedClass", "//Game/Props/BP_Door-Big/BP_Door-Big_C",
-                 fields: new[] { new FieldInfoModel { Name = "Open", TypeName = "IntProperty", Offset = 0, Size = 4 } });
+                 fields: new[] { new FieldInfoModel { Name = "Open", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            // A pair whose depth-1 name (`Door_C_A`) is another type's kept name: they must go to depth 2.
+            .Add("0x70", "Door_C", "BlueprintGeneratedClass", "//Game/A/Door/Door_C",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x71", "Door_C", "BlueprintGeneratedClass", "//Game/B/Door/Door_C",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } })
+            .Add("0x72", "Door_C_A", "BlueprintGeneratedClass", "//Game/Z/Door_C_A/Door_C_A",
+                 fields: new[] { new FieldInfoModel { Name = "V", TypeName = "IntProperty", Offset = 0, Size = 4 } });
         var poolHeader = pool.Sdk().Replace("#pragma once", "").Replace("#include <cstdint>", "");
 
         return SdkExportService.GenerateClassHeaderFromSchema(schema)
