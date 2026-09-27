@@ -744,6 +744,10 @@ UDataTable* ADumperTestActor::BuildTable(const TCHAR* Name, int32 Rows)
 		// to a NAMED constant. An inlined escape is invisible to that hop, so the
 		// README row for `Caption` could not be attributed to any source line.
 		Row.Caption = FText::FromString(FString::Printf(TEXT("%s %d"), DumperTestStrings::Odd3_OneNull, i));
+		// Row_000 Lane_Left, Row_001 Lane_Center, Row_002 Lane_Right, repeating: the row name
+		// alone says which enumerator a cell must show.
+		static const EDumperTestLane RowLanes[] = { Lane_Left, Lane_Center, Lane_Right };
+		Row.RowLane = RowLanes[i % 3];
 
 		Table->AddRow(Row.Label, Row);
 	}
