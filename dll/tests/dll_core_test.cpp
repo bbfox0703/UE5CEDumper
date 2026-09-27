@@ -5375,6 +5375,105 @@ int main() {
         DynOff::UPROPERTY_OFFSET = svUOff; DynOff::UPROPERTY_ELEMSIZE = svUElem;
     }
 
+    // -- CONTAINEROBJ-2026-09-28 -- a Map key / value, a Set element and every object-family inner carry their class ------
+    //
+    // ⛔ OWN name table (after UPROPFLAT). [SDK-CONTAINER-OBJCLASS] walk_class published an object property's class for
+    // an Array inner of Object / Class type only, so EVERSPACE 2's SDK header had 20 TMap<FName, class UObject*>, 28
+    // TSet<class UObject*> and 50 TSoftObjectPtr<UObject>, and a class-valued map key whose PropertyClass is a UClass
+    // subclass -- ALevelVariantSetsActor::DirectorInstances -- came out UClass* (the source oracle's one MISMATCH).
+    {
+        blk("CONTAINEROBJ - Map key / value, Set element and object-family Array inners publish their PropertyClass");
+
+        const bool svFProp = DynOff::bUseFProperty;
+        const DynOff::PropertyFamily svFamily{ DynOff::FSTRUCTPROP_STRUCT, DynOff::FARRAYPROP_INNER,
+                                               DynOff::FBOOLPROP_FIELDSIZE, DynOff::FBYTEPROP_ENUM, DynOff::FENUMPROP_ENUM };
+        DynOff::bUseFProperty = true;
+        DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
+        const int slot = DynOff::FSTRUCTPROP_STRUCT;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto A     = [](uint8_t* b) { return reinterpret_cast<uintptr_t>(b); };
+
+        static uint8_t coEntry[19][0x40] = {};
+        const char* coNames[19] = { "", "MapProperty", "SetProperty", "ArrayProperty", "NameProperty", "ObjectProperty",
+                                    "WeakObjectProperty", "SoftObjectProperty", "ClassProperty", "IntProperty", "Class",
+                                    "BlueprintGeneratedClass", "Actor", "Object", "ByName", "Watched", "Softs",
+                                    "Directors", "Inner" };
+        static uintptr_t coChunk[20] = {};
+        for (int i = 1; i <= 18; ++i) {
+            memcpy(coEntry[i] + 0x10, coNames[i], strlen(coNames[i]) + 1);
+            coChunk[i] = A(coEntry[i]);
+        }
+        static uintptr_t coChunks[2] = { reinterpret_cast<uintptr_t>(coChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(coChunks), 0x10);
+
+        // Reflection objects: Class is its own class; BlueprintGeneratedClass is a Class whose super is Class.
+        static uint8_t coObj[14][0x100] = {};
+        auto obj = [&](int nameIdx) { return A(coObj[nameIdx]); };
+        for (int i = 10; i <= 13; ++i) { put32(coObj[i], Grimoire::OFF_UOBJECT_NAME, i); putP(coObj[i], Grimoire::OFF_UOBJECT_CLASS, obj(10)); }
+        putP(coObj[11], DynOff::USTRUCT_SUPER, obj(10));
+
+        static uint8_t coFC[10][0x20] = {};
+        auto fclass = [&](int nameIdx) { put32(coFC[nameIdx], DynOff::FFIELDCLASS_NAME, nameIdx); return A(coFC[nameIdx]); };
+
+        // Inners: FFields never chained into the class.
+        static uint8_t coKeyName[0x100] = {}, coValObj[0x100] = {}, coElemWeak[0x100] = {}, coInnerSoft[0x100] = {},
+                       coKeyDir[0x100] = {}, coValInt[0x100] = {};
+        auto inner = [&](uint8_t* p, uintptr_t fc, uintptr_t propertyClass, uintptr_t meta) {
+            putP(p, DynOff::FFIELD_CLASS, fc);  put32(p, DynOff::FFIELD_NAME, 18);
+            if (propertyClass) putP(p, slot, propertyClass);
+            if (meta)          putP(p, slot + 8, meta);
+        };
+        inner(coKeyName, fclass(4), 0, 0);                 // FName
+        inner(coValObj, fclass(5), obj(12), 0);            // AActor*
+        inner(coElemWeak, fclass(6), obj(12), 0);          // TWeakObjectPtr<AActor>
+        inner(coInnerSoft, fclass(7), obj(12), 0);         // TSoftObjectPtr<AActor>
+        inner(coKeyDir, fclass(8), obj(11), obj(13));      // TObjectPtr<UBlueprintGeneratedClass>: PropertyClass BGC, Meta Object
+        inner(coValInt, fclass(9), 0, 0);                  // int32
+
+        static uint8_t coP[4][0x100] = {};
+        auto prop = [&](int i, uintptr_t fc, int nameIdx, int32_t off, int32_t size, uint8_t* next) {
+            putP(coP[i], DynOff::FFIELD_CLASS, fc);          put32(coP[i], DynOff::FFIELD_NAME, nameIdx);
+            put32(coP[i], DynOff::FPROPERTY_OFFSET, off);    put32(coP[i], DynOff::FPROPERTY_ELEMSIZE, size);
+            put32(coP[i], DynOff::FPROPERTY_ELEMSIZE - 4, 1); putP(coP[i], DynOff::FFIELD_NEXT, next ? A(next) : 0);
+        };
+        prop(0, fclass(1), 14, 0x28, 0x50, coP[1]);  putP(coP[0], slot, A(coKeyName));  putP(coP[0], slot + 8, A(coValObj));
+        prop(1, fclass(2), 15, 0x78, 0x50, coP[2]);  putP(coP[1], slot, A(coElemWeak));
+        prop(2, fclass(3), 16, 0xC8, 0x10, coP[3]);  putP(coP[2], slot, A(coInnerSoft));
+        prop(3, fclass(1), 17, 0xD8, 0x50, nullptr); putP(coP[3], slot, A(coKeyDir));    putP(coP[3], slot + 8, A(coValInt));
+        static uint8_t coCls[0x100] = {};
+        put32(coCls, DynOff::USTRUCT_PROPSSIZE, 0x128);
+        putP(coCls, DynOff::USTRUCT_CHILDPROPS, A(coP[0]));
+
+        const auto& coInfo = Ubel::WalkClassEx(A(coCls));
+        auto field = [&](const char* n) -> const FieldInfo* {
+            for (const auto& f : coInfo.Fields) if (f.Name == n) return &f;
+            return nullptr;
+        };
+        const FieldInfo* fBy = field("ByName"); const FieldInfo* fW = field("Watched");
+        const FieldInfo* fS = field("Softs");   const FieldInfo* fD = field("Directors");
+        auto s = [](const FieldInfo* f, std::string FieldInfo::* m) { return f ? (f->*m).c_str() : "(no field)"; };
+        check("CONTAINEROBJ setup: the four containers walked with their inner types",
+              fBy && fW && fS && fD && fBy->valueType == "ObjectProperty" && fW->elemType == "WeakObjectProperty"
+                && fS->innerType == "SoftObjectProperty" && fD->keyType == "ClassProperty",
+              std::to_string(coInfo.Fields.size()).c_str());
+        check("CONTAINEROBJ ⭐: a Map's object VALUE publishes its class", fBy && fBy->valueObjClass == "Actor",
+              s(fBy, &FieldInfo::valueObjClass));
+        check("CONTAINEROBJ control: ...and its FName key none", fBy && fBy->keyObjClass.empty(), s(fBy, &FieldInfo::keyObjClass));
+        check("CONTAINEROBJ ⭐: a Set's weak-object ELEMENT publishes its class", fW && fW->elemObjClass == "Actor",
+              s(fW, &FieldInfo::elemObjClass));
+        check("CONTAINEROBJ ⭐: an Array's soft-object INNER publishes its class (the whole object family, not Object / Class)",
+              fS && fS->innerObjClass == "Actor", s(fS, &FieldInfo::innerObjClass));
+        check("CONTAINEROBJ ⭐: a class-valued Map KEY publishes its PropertyClass (a UClass subclass)",
+              fD && fD->keyObjClass == "BlueprintGeneratedClass", s(fD, &FieldInfo::keyObjClass));
+        check("CONTAINEROBJ control: ...beside its MetaClass Object", fD && fD->keyMetaClass == "Object",
+              s(fD, &FieldInfo::keyMetaClass));
+
+        DynOff::ApplyPropertyFamily(svFamily);
+        DynOff::bUseFProperty = svFProp;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

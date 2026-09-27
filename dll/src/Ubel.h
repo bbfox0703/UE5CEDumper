@@ -40,7 +40,12 @@ struct FieldInfo {
     std::string elemMetaClass;   // SetProperty element
     std::string innerType;       // ArrayProperty -> inner FProperty type name
     std::string innerStructType; // ArrayProperty of struct -> inner struct name
-    std::string innerObjClass;   // ArrayProperty of object -> inner class name
+    std::string innerObjClass;   // ArrayProperty / OptionalProperty of the object family -> inner class name
+    // [SDK-CONTAINER-OBJCLASS] The same for a Map's key / value and a Set's element: the PropertyClass of an
+    // object-family slot (for a Class / SoftClass slot, the validated one -- see ApplyClassValuedNames).
+    std::string keyObjClass;
+    std::string valueObjClass;
+    std::string elemObjClass;
     std::string keyType;         // MapProperty -> key FProperty type name
     std::string keyStructType;   // MapProperty key struct name (if StructProperty)
     std::string valueType;       // MapProperty -> value FProperty type name
