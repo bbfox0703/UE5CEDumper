@@ -405,7 +405,8 @@ public static class SdkExportService
     /// keeping two copies of it. They had two, and both carried the same two defects.
     /// </summary>
     private readonly record struct SdkField(
-        string Name, int Offset, int Size, string TypeName, int BoolMask, CppDecl Decl);
+        string Name, int Offset, int Size, string TypeName, int BoolMask, CppDecl Decl,
+        string? UeName = null);   // set only when Name had to differ from the UE name
 
     /// <summary>
     /// Emit the member list, padding and closing brace for one struct.
@@ -458,6 +459,17 @@ public static class SdkExportService
         var own = sorted.Where(f => f.Offset >= ownStart).ToList();
         int cursor = ownStart;
 
+        // [SDK-MEMBER-NAMES] A UE name is not a C++ identifier: keywords, duplicates, spaces, a
+        // generated Pad_XXXX and a type the struct spells all stopped the header compiling.
+        // Named once, here, so the plain and the bitfield paths below cannot disagree.
+        int layoutEnd = Math.Max(propsSize, own.Count > 0 ? own.Max(f => f.Offset + f.Size) : 0);
+        var names = SdkMemberNames.Assign(own.ConvertAll(f => f.Name), own.Select(f => f.Decl.Type), layoutEnd);
+        for (int k = 0; k < own.Count; k++)
+        {
+            if (!string.Equals(names[k], own[k].Name, StringComparison.Ordinal))
+                own[k] = own[k] with { Name = names[k], UeName = own[k].Name };
+        }
+
         for (int i = 0; i < own.Count; i++)
         {
             // Collect every field sharing this offset — a packed bitfield byte if they all
@@ -482,7 +494,7 @@ public static class SdkExportService
                     // `type name[extent];` — the extent MUST follow the identifier. See CppDecl.
                     sb.Append("    ").Append(f.Decl.Type).Append(' ').Append(f.Name)
                       .Append(f.Decl.ArraySuffix).Append(';')
-                      .Append(BuildFieldComment(f.Offset, f.Size, f.TypeName, f.BoolMask))
+                      .Append(BuildFieldComment(f.Offset, f.Size, f.TypeName, f.BoolMask, f.UeName))
                       .AppendLine();
                 }
                 cursor = own[i].Offset + group[^1].Size;
@@ -537,7 +549,7 @@ public static class SdkExportService
                 pendingFiller = 0;
             }
             sb.Append("    uint8_t ").Append(field.Name).Append(" : 1;")
-              .Append(BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolMask))
+              .Append(BuildFieldComment(field.Offset, field.Size, field.TypeName, field.BoolMask, field.UeName))
               .AppendLine();
         }
         // Trailing unused bits need no filler: the next member starts on a fresh byte anyway.
@@ -582,7 +594,8 @@ public static class SdkExportService
         sb.AppendLine();
     }
 
-    private static string BuildFieldComment(int offset, int size, string typeName, int boolMask)
+    private static string BuildFieldComment(int offset, int size, string typeName, int boolMask,
+                                            string? ueName = null)
     {
         var sb = new StringBuilder(60);
         sb.Append(" // 0x");
@@ -597,6 +610,10 @@ public static class SdkExportService
             sb.Append(boolMask.ToString("X2"));
             sb.Append(']');
         }
+        // A renamed member keeps its real name findable: that is what anyone searching the header
+        // types. A line break inside it would end the comment and put the rest of the name in code.
+        if (ueName is not null)
+            sb.Append(" [UE name: ").Append(ueName.Replace('\r', ' ').Replace('\n', ' ')).Append(']');
         return sb.ToString();
     }
 

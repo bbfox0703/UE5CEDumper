@@ -416,6 +416,27 @@ still gets its padding.
 that is the Itanium rule, and the same translation units compiled for Linux do show reuse — so
 EBO is the only shape that intrudes on a derived member's offset.*
 
+### Member names are made valid C++ `[SDK-MEMBER-NAMES]`
+
+A UE property name is not a C++ identifier, and `cl.exe` rejected the header when one was emitted
+verbatim. `Services/SdkMemberNames` names a struct's own members once, before they are written:
+
+- Characters that cannot continue an identifier become `_` (a Blueprint variable keeps the space it
+  was typed with); a leading digit gets `_` in front; an empty name becomes `Unnamed`. Letters
+  outside ASCII are kept.
+- Reserved, so renamed: C++20 keywords; `StaticClass` / `StaticName` / `GetDefaultObj`; the
+  `<windows.h>` object-like macros that erase a declarator (`NULL`, `TRUE`, `ERROR`, `IN`, …);
+  the fixed-width typedefs; every type the struct spells without `struct` / `class` in front
+  (`int32_t FName;` before `FName Tag;` is C2327); and every `Pad_XXXX` the layout could generate.
+- The first holder of a name keeps it, the next gets `_0`, then `_1` (Dumper-7's shape). A member
+  whose UE name is already clean is served first, so no rename takes a real member's name.
+- A renamed member's comment ends with `[UE name: …]`, so the header can still be searched by the
+  property's real name.
+
+Deliberately **not** reserved: `Name` / `Class` / `Flags` / `Outer`. Dumper-7 renames them on classes
+because its SDK emits a UObject base that holds them; this header emits no such base, and hiding a
+base member compiles. Type names are not sanitised yet — `[SDK-TYPE-NAMES]` in `docs/todo.md`.
+
 ### Features
 
 - Sorts fields by offset, inserts padding for gaps
