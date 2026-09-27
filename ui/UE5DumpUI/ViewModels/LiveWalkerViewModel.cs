@@ -6339,9 +6339,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         // ApplySearch re-sets the grid's items, which puts it back on its first row and drops the
         // selection. When the USER cleared a real keyword (2+ characters to empty in one edit:
-        // select all, Delete), capture what should survive and hand it back afterwards
-        // [LW-SEARCH-CLEAR-KEEP]. Anything else -- typing, pasting, shortening, a partial delete,
-        // 1 -> 0 characters, a navigation clearing the box -- keeps the old behaviour.
+        // select all, Delete), capture what should survive -- the view, or the first selected
+        // row -- and hand it back afterwards [LW-SEARCH-CLEAR-KEEP]. Anything else -- typing,
+        // pasting, shortening, a partial delete, 1 -> 0 characters, a navigation clearing the
+        // box -- keeps the old behaviour.
         var previous = _previousSearchText;
         _previousSearchText = value;
         var keep = !_clearingSearchForNavigation && string.IsNullOrEmpty(value)
@@ -6415,25 +6416,27 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     }
 
     /// <summary>
-    /// [LW-SEARCH-CLEAR-KEEP] What a user-cleared keyword should leave on screen, or null for
-    /// "nothing selected" (the grid then returns to its first row, as before). The maintainer's
-    /// rule: when the selection contains the match ▲/▼ last landed on, the view stays exactly
-    /// where it is (the same top row); otherwise the first selected row, in grid order, comes
-    /// to the top. Row identity is name + offset, as every view restore here.
+    /// [LW-SEARCH-CLEAR-KEEP] What a user-cleared keyword should leave on screen. The
+    /// maintainer's rule: nothing selected, or the selection contains the match ▲/▼ last landed
+    /// on → the view stays exactly where it is (the same top row); otherwise the first selected
+    /// row, in grid order, comes to the top. Row identity is name + offset, as every view
+    /// restore here.
     /// </summary>
     private (List<BookmarkFieldRef> Selected, BookmarkFieldRef? Top, BookmarkFieldRef? Keep)? CaptureViewForSearchClear()
     {
         var selected = _selectedFieldsSnapshot.ToList();
         if (selected.Count == 0 && SelectedField != null)
             selected.Add(SelectedField);
-        if (selected.Count == 0) return null;
 
         var refs = selected.Select(f => new BookmarkFieldRef(f.Name, f.Offset)).ToList();
-        if (_searchStepTarget != null && selected.Contains(_searchStepTarget))
+        bool stepTargetSelected = _searchStepTarget != null && selected.Contains(_searchStepTarget);
+        if (selected.Count == 0 || stepTargetSelected)
         {
             var anchor = new ViewAnchorRef();
             CaptureViewAnchor?.Invoke(anchor);
-            return (refs, anchor.TopRow, new BookmarkFieldRef(_searchStepTarget.Name, _searchStepTarget.Offset));
+            var keep = stepTargetSelected
+                ? new BookmarkFieldRef(_searchStepTarget!.Name, _searchStepTarget.Offset) : null;
+            return (refs, anchor.TopRow, keep);
         }
 
         var first = Fields.FirstOrDefault(selected.Contains) ?? selected[0];
