@@ -774,7 +774,9 @@ static std::string GetFieldTypeName(uintptr_t ffieldAddr) {
     // an FClassProperty subclass with no data of its own (UE_5.1 UnrealType.h) that serializes the same object
     // reference, and which 5.4 folded back into ClassProperty. No consumer knew the name -- DumperTest51's SDK export
     // wrote 29 such members as raw bytes and its .usmap 30 slots of type Unknown, which an unversioned reader cannot
-    // size. Every type-name reader in FProperty mode comes through here, so they all see the ClassProperty it is.
+    // size. The runtime readers of an FProperty's type name come through here and see the ClassProperty it is; Genau's
+    // discovery-time alignment probe reads the raw name before this module is set up, and lists ClassPtrProperty
+    // itself (review wf_b99fb861-680, INFO).
     if (name == "ClassPtrProperty") return "ClassProperty";
     return name;
 }

@@ -3807,7 +3807,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
                     tn == "MulticastInlineDelegateProperty" || tn == "MulticastSparseDelegateProperty" ||
                     tn == "WeakObjectProperty"  || tn == "LazyObjectProperty" ||
                     tn == "SoftObjectProperty"  || tn == "SoftClassProperty" ||
-                    tn == "InterfaceProperty")
+                    tn == "InterfaceProperty" ||
+                    // [UE51-CLASSPTRPROP] UE 5.0 / 5.1's TObjectPtr<UClass> property. This probe reads the raw
+                    // FFieldClass name, not Ubel::GetFieldTypeName's alias, and "ClassPtrProperty" does not contain
+                    // "ClassProperty".
+                    tn == "ClassPtrProperty")
                     return 8;
                 // 4-byte: int/uint32/float/enum
                 if (tn == "IntProperty" || tn == "UInt32Property" || tn == "FloatProperty" ||
