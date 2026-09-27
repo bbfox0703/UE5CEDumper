@@ -32,6 +32,9 @@ public class TextBoxHomeEndTests
         {
             Key.Home => PhysicalKey.Home,
             Key.End => PhysicalKey.End,
+            Key.PageUp => PhysicalKey.PageUp,
+            Key.PageDown => PhysicalKey.PageDown,
+            Key.Down => PhysicalKey.ArrowDown,
             _ => PhysicalKey.None,
         };
         top.KeyPress(key, modifiers, physical, null);
@@ -173,6 +176,23 @@ public class TextBoxHomeEndTests
         Press(box, key);
 
         Assert.Equal(line2.CaretIndex, box.CaretIndex);
+    });
+
+    [Theory]
+    [InlineData(Key.PageDown)]
+    [InlineData(Key.PageUp)]
+    public Task A_page_key_with_a_select_all_leaves_the_caret_on_the_active_end(Key key) => Headless.Run(() =>
+    {
+        // Same sink as Home / End (found by review): the page moves only scroll, then
+        // ClearSelection puts the caret at SelectionStart -- the start of a select-all.
+        using var fix = TextBoxHomeEndFix.Register();
+        var box = ShowBox("spawn");
+        SelectAllWithCaretAtEnd(box);
+
+        Press(box, key);
+        Type(box, " act");
+
+        Assert.Equal("spawn act", box.Text);
     });
 
     [Fact]
