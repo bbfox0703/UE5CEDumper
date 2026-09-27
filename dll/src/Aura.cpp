@@ -6272,8 +6272,8 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
         pType == "InterfaceProperty"  || pType == "LazyObjectProperty";
     if (!classBearing) return 0;
     // FStructProperty::Struct and FObjectPropertyBase::PropertyClass share the
-    // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the MEASURED start
-    // behind Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
+    // FProperty subclass-extension slot. UE4 (<4.25) UProperty puts them at the start Genau
+    // derived behind Offset_Internal -- +0x28 on 4.11-4.17, +0x2C from 4.18 -- the same
     // DynOff::UPropertySubclassStart WalkFunctions uses. A flat +0x2C here left this mirror
     // unable to match any 4.11-4.17 param ([A2-UFUNC-TAIL-4X] review follow-up).
     const int slot = DynOff::bUseFProperty

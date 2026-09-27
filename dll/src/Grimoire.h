@@ -808,8 +808,9 @@ inline int UFIELD_NEXT        = 0x28;  // UField::Next (standard): 0x28
 inline int UPROPERTY_OFFSET   = 0x44;  // UProperty::Offset_Internal
 inline int UPROPERTY_ELEMSIZE = 0x34;  // UProperty::ElementSize
 inline int UPROPERTY_FLAGS    = 0x38;  // UProperty::PropertyFlags (uint64)
-// [UPROP-SUBCLASS-SLOT] The UProperty subclass start Genau derived for THIS run -- from the measured layout, or a
-// default family on a give-up -- and 0 when it derived none. Read it through UPropertySubclassStart (below).
+// [UPROP-SUBCLASS-SLOT] The UProperty subclass start Genau derived for THIS run -- from the measured layout, or the
+// family it ships on a give-up -- set on every UProperty-mode run; 0 before Genau has run and in FProperty mode. Read it
+// through UPropertySubclassStart (below).
 inline int UPROPERTY_SUBCLASS_START = 0;
 
 // === FEnumProperty / FByteProperty subclass fields ===

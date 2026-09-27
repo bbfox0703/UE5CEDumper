@@ -3679,6 +3679,11 @@ bool ValidateAndFixOffsets(uint32_t ueVersion) {
         // subclass start rather than the FProperty default (DynOff::UPropertyDefaultFamily says which versions).
         DynOff::ApplyPropertyFamily(DynOff::UPropertyDefaultFamily(ueVersion, DynOff::bCasePreservingName));
         DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
+    } else {
+        // 4.11-4.17: no default family, because the untouched one IS their stock start (UPropertyHasDefaultFamily).
+        // Record it all the same, or a give-up leaves the readers outside the family on the version formula over the
+        // 4.18+ Offset_Internal default -- 0x6C against this 0x78 (review of build 3596).
+        DynOff::UPROPERTY_SUBCLASS_START = DynOff::FSTRUCTPROP_STRUCT;
     }
 
     // Step 3: Find "Guid" or "Vector" struct for probing
