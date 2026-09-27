@@ -27,6 +27,35 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3573, 3574) — every keyword filter box keeps your place `[KEYWORD-BOX-VIEW-KEEP]` `[LW-SEARCH-CLEAR-KEEP]`
+
+- **3573 — Live Walker's field search no longer jumps on the FIRST character either** (the maintainer's second
+  follow-up to `[LW-SEARCH-CLEAR-KEEP]`). Every keyword edit re-set the grid's items to repaint the match tint,
+  a leftover from when the tint was painted per realized row; the tint has been a style bound to
+  `IsSearchMatch` since `[LWREFRESH-2026-08-21]`, so the re-set is simply gone.
+- **3574 — the same rules for every other keyword box** (the maintainer asked whether the other boxes had the
+  problem; a survey found all of them did, and nothing shared to fix it with). One shared helper now drives
+  them: `Helpers/FilterViewKeeper` decides, `Views/FilterViewBinding` does the selecting and scrolling.
+  - An edit that shows **the same rows** (a trailing space, one more letter every row already matches) does
+    not rebuild the list at all: nothing moves, the selection stays.
+  - A real rebuild **keeps the rows that are still selected** (multi-selection too) and keeps the first of
+    them visible.
+  - A keyword cleared **from 2+ characters to empty** brings the first selected row to the top; with nothing
+    selected, the row that was at the top stays at the top. In a list with several boxes (Game Classes,
+    Snapshot diff, SPC results) clearing one box while the others stay counts.
+  - Boxes: Object Tree, Class/Struct fields, Instances, Game Classes (3 boxes), Console, Live Walker
+    functions, Interesting Funcs / Props, Property Search, Live Funcs, Detect Stats, Dump Explorer (both
+    groups), Snapshot diff, SPC results, Class Pivot results, Teleport coordinates, and Value Search (server-
+    side: it always reloads, and finds your pick again by address).
+  - Side fixes on the way: Live Walker's Functions grid no longer jumps to the top on every (Auto) Refresh
+    tick — a walk that lists the same UFunctions keeps the rows; Teleport's coordinate filter detaches its
+    selection before clearing, inside the edit-sync suppression (an in-progress label edit survives typing in
+    the filter); Detect Stats and Live Walker's disconnect detach before clearing.
+  - Deliberately changed: Class/Struct's "the detach is unconditional" pin (AE14) — a surviving field is now
+    re-selected, which is safe because selecting a field starts nothing.
+- Live check PASSED on 3574 (DumperTest 5.4 Shipping): Object Tree, Console, Live Walker functions under Auto
+  Refresh, Interesting Funcs with a two-row selection, Teleport coordinates with an edit in progress.
+
 ## 2026-09-27 (builds 3571, 3572) — Live Walker: clearing the search keyword no longer throws you back to the first row `[LW-SEARCH-CLEAR-KEEP]`
 
 - **The maintainer's request:** find a field with the search (say at 0x1138), clear the keyword to look for
