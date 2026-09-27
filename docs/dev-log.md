@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3591) — the property type slot is derived right on UE 5.7 builds that keep editor data `[FPROP-FAMILY-ALIGN]`
+
+- A UE 5.7 build that keeps its editor data (Titan Quest II) moves one field of the engine's property layout, and
+  the dumper derived the struct / object type slot 4 bytes short there, only correcting itself later at runtime.
+  It is now computed from the layout's alignment and is right at init. Other engines keep exactly the value they
+  had (checked live on UE 4.27 and UE 5.8 fixtures: identical). The Titan Quest II check itself waits on its
+  deployed proxy DLL (build 3553) being updated.
+- Build 3591: AOT `dist\UE5DumpUI.exe` 58,443,776 B, sha256 `d0f6c39d4ea6`; `dist\UE5Dumper.dll` 3,031,552 B,
+  `46d028df7a51`. C# 5798/5798, headless 15/15, dll_core 499 checks, dll_helpers 3050.
+
 ## 2026-09-27 (build 3590) — UE 4.18–4.24 containers name their element types; Dump All drops the metaclasses' default objects `[UPROP-INNER-TYPENAME]` `[DUMPALL-METACLASS-CDO]`
 
 - **UE 4.18–4.24:** a TArray / TMap / TSet member now says what it holds. The UE 4.23 fixture's SDK export went
