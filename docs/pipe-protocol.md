@@ -742,6 +742,8 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily â
 
 Extended per-field keys are emitted **only when non-default**: `struct_type`,
 `obj_class`, `inner_type`, `inner_struct_type`, `inner_obj_class`,
+`key_obj_class` / `value_obj_class` / `elem_obj_class` (the class of an object-family Map key / value / Set
+element `[SDK-CONTAINER-OBJCLASS]`),
 `key_type`/`key_struct_type`, `value_type`/`value_struct_type`,
 `elem_type`/`elem_struct_type`, `enum_name`, `bool_mask`, the **MetaClass** of a
 class-valued property â€” `meta_class` on the field itself, `inner_meta_class` /
