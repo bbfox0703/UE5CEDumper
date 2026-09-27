@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3583–3585) — the SDK export defines Blueprint user-defined structs, and Live Walker's Export .h declares the declared types `[SDK-UDS-MISSING]` `[SDK-LIVE-VALUE-TYPES]`
+
+- **Whole-pool SDK export:** Blueprint `UserDefinedStruct`s are now defined, so a Blueprint member of such a type
+  names a struct the header contains. Verified live on EVERSPACE 2 at the main menu, same game state before and
+  after: 22 of 22 user-defined structs defined (was 0), 36 of 36 references resolved (was 0). The metaclasses'
+  class-default objects (`Default__ScriptStruct`, `Default__Class`, …) are no longer emitted as empty structs —
+  found by that same live check.
+- **Live Walker → Export .h:** a member's type is its DECLARED type, not what the instance holds right now — an enum
+  was declared as its current value's name (`EDumperTestGrade__Elite Grade;`) and a pointer as the class it happened
+  to point at. An object's header now also names its super and leaves inherited members to it (220 → 129 lines on
+  DumperTestActor). Verified live on DumperTest 5.4 Shipping, before and after in one session.
+- **Every SDK export:** `TSubclassOf<class Class>` (320 of 324 in EVERSPACE 2's export) is now `UClass*` — the
+  metaclass is not on the wire yet (`[SDK-METACLASS]`); an enum of unknown type is an integer of its real size.
+- Filed: `[USMAP-UDS-MISSING]` (the USMAP export shares the old filter) and `[SDK-METACLASS]`.
+- Build 3583 carried both fixes for the live checks; **3584 was consumed by a failed publish** (the running game held
+  `dist\UE5Dumper.dll`, so the copy step failed — no artifact); **3585** adds the CDO fix. AOT `dist\UE5DumpUI.exe`
+  58,439,680 B, sha256 `66a02654acb9`; `dist\UE5Dumper.dll` sha256 `42c2781e3fb8`. C# 5788/5788, headless 15/15.
+
 ## 2026-09-27 (build 3582) — the SDK header's TYPE names: valid, unique across the whole export, and never inheriting from themselves `[SDK-TYPE-NAMES]`
 
 - **Measured first, on a real whole-pool export** (DumperTest 5.4, 7,894 structs): every AnimBlueprint carries its
