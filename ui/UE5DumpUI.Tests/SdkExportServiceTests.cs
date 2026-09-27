@@ -228,13 +228,15 @@ public class SdkExportServiceTests
     // --- MapCppDecl (LiveFieldValue) ---
 
     [Fact]
-    public void MapCppDeclLive_ObjectProperty_WithClass()
+    public void MapCppDeclLive_ObjectProperty_TheRuntimeClassIsNotTheType()
     {
+        // [SDK-LIVE-VALUE-TYPES] A live row's PtrClassName is the class of what the pointer holds
+        // NOW, not what it is declared to hold -- this test used to pin it as the type.
         var field = new LiveFieldValue
         {
             TypeName = "ObjectProperty", PtrClassName = "USceneComponent", Size = 8,
         };
-        Assert.Equal("class USceneComponent*", SdkExportService.MapCppDecl(field).Type);
+        Assert.Equal("class UObject*", SdkExportService.MapCppDecl(field).Type);
     }
 
     [Fact]

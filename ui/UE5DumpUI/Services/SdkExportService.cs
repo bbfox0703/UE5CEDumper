@@ -258,8 +258,8 @@ public static class SdkExportService
         string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
         string C(string n) => t.Reference(n, SdkTypeNames.Kind.Class, fromPath);
         return MapCppDeclCore(
-            field.TypeName, S(field.StructType, field.Size), C(field.ObjClassName),
-            field.InnerType, S(field.InnerStructType), C(field.InnerObjClass),
+            field.TypeName, S(field.StructType, field.Size), C(KnownClass(field.TypeName, field.ObjClassName)),
+            field.InnerType, S(field.InnerStructType), C(KnownClass(field.InnerType, field.InnerObjClass)),
             field.KeyType, S(field.KeyStructType), field.ValueType, S(field.ValueStructType),
             field.ElemType, S(field.ElemStructType), t.Reference(field.EnumName, SdkTypeNames.Kind.Enum, fromPath),
             field.BoolFieldMask, field.Size);
@@ -267,18 +267,42 @@ public static class SdkExportService
 
     /// <summary>
     /// Map a UE property to its C++ declaration, using LiveFieldValue metadata.
+    /// <para>[SDK-LIVE-VALUE-TYPES] A live row describes what the instance HOLDS: its
+    /// <c>EnumName</c> is the enum VALUE's name and its <c>PtrClassName</c> the pointee's RUNTIME
+    /// class. Neither is a type, so neither is used as one: an enum is an integer of its size and a
+    /// pointee is UObject. The struct names a live row carries are read from the declared property
+    /// and stay. Live Walker exports from <c>walk_class</c> whenever it can; this is its fallback.</para>
     /// </summary>
     internal static CppDecl MapCppDecl(LiveFieldValue field, SdkTypeNames? names = null, string? fromPath = null)
     {
         var t = names ?? SdkTypeNames.None;
         string S(string n, int size = 0) => t.Reference(n, SdkTypeNames.Kind.Struct, fromPath, size);
         return MapCppDeclCore(
-            field.TypeName, S(field.StructTypeName, field.Size), t.Reference(field.PtrClassName, SdkTypeNames.Kind.Class, fromPath),
+            field.TypeName, S(field.StructTypeName, field.Size), "",
             field.ArrayInnerType, S(field.ArrayStructType), "",
             field.MapKeyType, S(field.MapKeyStructType), field.MapValueType, S(field.MapValueStructType),
-            field.SetElemType, S(field.SetElemStructType), t.Reference(field.EnumName, SdkTypeNames.Kind.Enum, fromPath),
+            field.SetElemType, S(field.SetElemStructType), "",
             field.BoolFieldMask, field.Size);
     }
+
+    /// <summary>
+    /// A class-valued property's target class, or "" when the wire does not carry it:
+    /// <c>walk_class</c> sends a ClassProperty's PropertyClass, which is always <c>Class</c> -- its
+    /// MetaClass never reaches the UI -- so <c>TSubclassOf&lt;class Class&gt;</c> would declare a
+    /// subclass of UClass. "" falls back to <c>UClass*</c> / <c>TSoftClassPtr&lt;UObject&gt;</c>.
+    /// </summary>
+    private static string KnownClass(string propertyType, string className) =>
+        propertyType is "ClassProperty" or "SoftClassProperty" && className == "Class" ? "" : className;
+
+    /// <summary>An unsigned integer of the given byte size, or null for a size no integer has.</summary>
+    private static string? UnsignedOfSize(int size) => size switch
+    {
+        1 => "uint8_t",
+        2 => "uint16_t",
+        4 => "uint32_t",
+        8 => "uint64_t",
+        _ => null,
+    };
 
     /// <summary>
     /// The raw-byte fallback: a property we have no C++ spelling for is declared as a byte array
@@ -351,7 +375,9 @@ public static class SdkExportService
             "MapProperty" => $"TMap<{MapInnerCppType(keyType, keyStructType, "")}, {MapInnerCppType(valueType, valueStructType, "")}>",
             "SetProperty" => $"TSet<{MapInnerCppType(elemType, elemStructType, "")}>",
 
-            "EnumProperty" => !string.IsNullOrEmpty(enumName) ? enumName : "uint8_t",
+            // With no known enum type, an integer of the property's own size: a 4-byte enum declared
+            // uint8_t shifts every member after it, because the padding pass trusts the row's Size.
+            "EnumProperty" => !string.IsNullOrEmpty(enumName) ? enumName : UnsignedOfSize(size),
             "ByteProperty" => !string.IsNullOrEmpty(enumName) ? enumName : "uint8_t",
 
             "DelegateProperty" => "FScriptDelegate",

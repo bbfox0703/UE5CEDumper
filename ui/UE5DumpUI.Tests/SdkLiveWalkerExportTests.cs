@@ -141,6 +141,28 @@ public class SdkLiveWalkerExportTests : IDisposable
         Assert.DoesNotContain("BP_ThirdPersonCharacter_C", code);
     }
 
+    [Fact]
+    public async Task AWalkOfAnotherClass_IsNotExported()
+    {
+        // Container, DataTable and GWorld views change the class on screen without updating the
+        // class address, so the address can still name the object before. A walk that answers for a
+        // different class is not this view's layout: the export falls back to the live rows.
+        var dump = new StubDumpService();
+        dump.RegisterStruct(ActorAddr, ActorInstance());
+        var other = ActorClass();
+        dump.RegisterClass(ActorClassAddr, new ClassInfoModel
+        {
+            Name = "Pawn", FullPath = "//Script/Engine/Pawn", SuperName = "Actor", PropertiesSize = other.PropertiesSize,
+            Fields = { new FieldInfoModel { Name = "Grade", TypeName = "EnumProperty", Offset = 0x10, Size = 1, EnumName = "EPawnThing" } },
+        });
+
+        var code = Code(await ExportAsync(dump));
+
+        Assert.Contains("struct DumperTestActor", code);
+        Assert.DoesNotContain("Pawn", code);
+        Assert.Contains("uint8_t Grade;", code);
+    }
+
     // ------------------------------------------------------------------
     // The declarations themselves.
     // ------------------------------------------------------------------

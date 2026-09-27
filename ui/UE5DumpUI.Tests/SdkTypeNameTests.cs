@@ -148,12 +148,15 @@ public class SdkTypeNameTests
         var header = SdkExportService.GenerateClassHeader("BP_Door-Big_C", "Actor-X", 0x48, fields);
 
         Assert.Contains("struct BP_Door_Big_C : public Actor_X", header);
-        Assert.Contains("class BP_Enemy_Boss_C* Target;", header);
+        // [SDK-LIVE-VALUE-TYPES] A live row's pointee class and enum name are VALUES (the runtime
+        // class, the value's name), so they are not types at all -- only the struct names a live
+        // row reads from the declared property are, and those are sanitised.
+        Assert.Contains("class UObject* Target;", header);
         Assert.Contains("struct S_Item_Data Item;", header);
         Assert.Contains("TArray<struct S_Item_Data> Items;", header);
         Assert.Contains("TMap<struct S_Key_X, struct S_Item_Data> Bag;", header);
         Assert.Contains("TSet<struct S_Item_Data> Kinds;", header);
-        Assert.Contains("E_Type_A Kind;", header);
+        Assert.Contains("uint8_t Kind;", header);
         Assert.DoesNotContain(CodeLines(header), l => l.Contains('-'));
     }
 

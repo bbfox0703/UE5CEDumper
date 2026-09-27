@@ -5364,43 +5364,48 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             IsLoading = true;
             StatusText = "Generating SDK header...";
 
-            // Get the superclass name from the first breadcrumb's class info if available
-            var superName = "";
-            var superPropsSize = 0;
-            var ownPropsStart = -1;   // -1 = no information; see ClassInfoModel
-            if (Breadcrumbs.Count > 0)
+            // [SDK-LIVE-VALUE-TYPES] A header declares TYPES, and the rows on screen hold VALUES: an
+            // enum's value name, a pointer's runtime class. So the class is walked -- a struct view's
+            // crumb carries its struct, an object view's class is _currentClassAddr -- and its
+            // declared rows are exported, super and own-property boundary included (audit #5 W2).
+            // The walk must be the class on screen: container, DataTable and GWorld views change
+            // CurrentClassName without touching _currentClassAddr, which can still be the object
+            // before. Anything else falls back to the live rows, which no longer lend a value to a type.
+            var classAddr = Breadcrumbs.Count > 0 && !string.IsNullOrEmpty(Breadcrumbs[^1].ClassAddr)
+                ? Breadcrumbs[^1].ClassAddr
+                : _currentClassAddr;
+            ClassInfoModel? schema = null;
+            if (!string.IsNullOrEmpty(classAddr))
             {
-                var bc = Breadcrumbs[^1];
-                if (!string.IsNullOrEmpty(bc.ClassAddr))
+                try
                 {
-                    try
-                    {
-                        var classInfo = await _dump.WalkClassAsync(bc.ClassAddr);
-                        superName = classInfo.SuperName;
-                        // Where this class's own properties start — without it the header
-                        // re-declares every inherited property (audit #5 W2).
-                        superPropsSize = classInfo.SuperPropertiesSize;
-                        // Lower floor for an EMPTY super -- see ClassInfoModel.OwnPropertiesStart.
-                        ownPropsStart = classInfo.OwnPropertiesStart;
-                    }
-                    catch
-                    {
-                        // Non-critical — just emit without super
-                    }
+                    var walked = await _dump.WalkClassAsync(classAddr);
+                    if (!string.IsNullOrEmpty(walked.Name)
+                        && string.Equals(walked.Name, CurrentClassName, StringComparison.Ordinal))
+                        schema = walked;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException)
+                {
+                    _log.Warn($"SDK header export: walk_class {classAddr} failed ({ex.Message}); exporting the live rows");
                 }
             }
 
-            // Estimate properties size from the last field end or use a safe heuristic
-            var propsSize = 0;
-            if (Fields.Count > 0)
+            string header;
+            if (schema is not null)
             {
-                var lastField = Fields.OrderByDescending(f => f.Offset + f.Size).First();
-                propsSize = lastField.Offset + lastField.Size;
+                header = SdkExportService.GenerateClassHeaderFromSchema(schema);
             }
-
-            var header = SdkExportService.GenerateClassHeader(
-                CurrentClassName, superName, propsSize, Fields.ToList(),
-                fullPath: null, superPropsSize: superPropsSize, ownPropsStart: ownPropsStart);
+            else
+            {
+                // Estimate properties size from the last field end.
+                var propsSize = 0;
+                if (Fields.Count > 0)
+                {
+                    var lastField = Fields.OrderByDescending(f => f.Offset + f.Size).First();
+                    propsSize = lastField.Offset + lastField.Size;
+                }
+                header = SdkExportService.GenerateClassHeader(CurrentClassName, "", propsSize, Fields.ToList());
+            }
 
             await File.WriteAllTextAsync(filePath, header);
 
