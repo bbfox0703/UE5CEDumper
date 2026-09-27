@@ -9603,8 +9603,13 @@ before being written down.*
   Effort: **M** (memory) · Risk: low. The bounded N-snapshot discovery + shape ranking +
   Locate-in-GWorld/GameEngine + resizable/filterable results shipped build 1742; the class
   picker freeze was fixed + in-game verified build 1764 (filter TextBox + ListBox — see
-  dev-log). The **change-driven discovery ("Suggest Targets") path itself is still NOT in-game
-  verified** end-to-end. Separately: the post-capture compacting `GC.Collect` (build 1742) is a
+  dev-log). The **change-driven discovery ("Suggest targets" → 🔍 Discover) HAS run live** —
+  corrected 2026-09-27; this row used to call it unverified. `docs/verification-register.md`
+  `[AOTSORT-4-2026-08-20]` records Discover over two DumperTest captures (4½ h and a game restart
+  apart, AOT build) returning **17 changed targets** — the sample's genuinely ticking fields,
+  `TickCount`, `F32_Ticking`, `F64_Ticking`, `Health.CurrentValue` — and its grid sorting. That
+  record is DumperTest only, and it does not cover **Use →** pivoting a result. Separately: the
+  post-capture compacting `GC.Collect` (build 1742) is a
   **mitigation** for the multi-snapshot working-set bloat — the *deeper* fix is to stop the
   transient allocation at the source by replacing the capture's JSON-DOM parse with a streaming
   `Utf8JsonReader` (`SnapshotChunkAsync` / the chunk parse). Only pursue the streaming rewrite if
