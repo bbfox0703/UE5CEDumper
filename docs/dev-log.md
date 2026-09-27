@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-09-27 (builds 3575, 3576) — keyword boxes: a clear typed faster than the view restores still lands right `[KEYWORD-BOX-VIEW-KEEP]`
+
+- **A race behind 3574's filter-box rules, found while retrying an unexplained live run.** A rebuild detaches the
+  selection and its view restore is queued behind keyboard input, so a key that arrives before the restore runs
+  captured an empty selection. Measured on 3574: a row picked, keys sent at once, and the clear left the row at
+  the bottom edge instead of the top. Now a capture taken while a restore is still queued carries that restore's
+  selection (a row picked after the rebuild still wins), and only the newest restore of a burst runs.
+- **Every restore decision is logged** at Debug in the `view` log (capture source, queued / dropped / ran,
+  rows found, selected afterwards), because the outcome depends on timing and is only visible on a live UI.
+- The unexplained run itself was not a bug: clicking the box's right-hand padding selects its text, End then put
+  the caret at the start, and the keyword became `actspawn` — no rows, so the pick was filtered out and the clear
+  had nothing to bring back, as the rules say. Whether a pick hidden by a typo should come back is open.
+- Live check PASSED on 3576 (DumperTest 5.4 Shipping, Interesting Funcs).
+
 ## 2026-09-27 (builds 3573, 3574) — every keyword filter box keeps your place `[KEYWORD-BOX-VIEW-KEEP]` `[LW-SEARCH-CLEAR-KEEP]`
 
 - **3573 — Live Walker's field search no longer jumps on the FIRST character either** (the maintainer's second
