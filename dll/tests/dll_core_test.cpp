@@ -5099,6 +5099,11 @@ int main() {
               DynOff::g_offsetsFallbackReason);
         check("UPROPSLOT ⭐: the give-up ships the 4.23 default family 0x70, not FProperty's 0x78", famAt(0x70),
               fam().c_str());
+        // 4.11-4.17 stock put Offset_Internal at 0x50, not the 4.18+ 0x44 UPROPERTY_OFFSET defaults to: a default derived
+        // from 0x44 there is 0x6C, where the untouched 0x78 was right.
+        runGenau(415);
+        check("UPROPSLOT ⭐: a 4.15 give-up keeps 0x78 -- no default derived from the 4.18+ Offset_Internal",
+              famAt(0x78), fam().c_str());
 
         Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);
         DynOff::ApplyPropertyFamily(svFamily);
