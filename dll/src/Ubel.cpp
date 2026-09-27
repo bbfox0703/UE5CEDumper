@@ -265,6 +265,15 @@ std::vector<LiveFieldValue::EnumEntry> GetEnumEntries(uintptr_t enumAddr) {
     return result;
 }
 
+// A ByteProperty's Enum slot is null for a plain byte, and on a mis-derived family it holds whatever sits there -- so
+// every reader that keeps the pointer checks that its class is a UEnum's first. [STRUCTCACHE-ENUM-UNCHECKED] One
+// reader, the struct-field cache, skipped it and cached the pointer for the session.
+static bool IsUEnumObject(uintptr_t obj) {
+    const uintptr_t cls = obj ? GetClass(obj) : 0;
+    const std::string clsName = cls ? GetName(cls) : std::string();
+    return clsName == "Enum" || clsName == "UserDefinedEnum";
+}
+
 // ============================================================
 // ReadFString — read an FString (TArray<wchar_t>) from a live
 // instance and convert UTF-16 → UTF-8.
@@ -3018,13 +3027,8 @@ ReadArrayResult ReadArrayElements(
             Macht::ReadSafe(innerFFieldAddr + DynOff::FENUMPROP_ENUM, enumPtr);
         } else if (innerTypeName == "ByteProperty") {
             uintptr_t candidateEnum = 0;
-            if (Macht::ReadSafe(innerFFieldAddr + DynOff::FBYTEPROP_ENUM, candidateEnum) && candidateEnum) {
-                // Validate it's a UEnum
-                uintptr_t enumClass = GetClass(candidateEnum);
-                std::string enumClassName = enumClass ? GetName(enumClass) : "";
-                if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum")
-                    enumPtr = candidateEnum;
-            }
+            if (Macht::ReadSafe(innerFFieldAddr + DynOff::FBYTEPROP_ENUM, candidateEnum) && IsUEnumObject(candidateEnum))
+                enumPtr = candidateEnum;
         }
     }
     result.enumAddr = enumPtr;  // Expose for CE DropDownList sharing
@@ -3441,9 +3445,11 @@ static const std::vector<CachedStructField>& GetCachedStructFields(uintptr_t str
             Macht::ReadSafe(fi.Address + DynOff::FENUMPROP_ENUM, cf.enumAddr);
         }
 
-        // ByteProperty: check for UEnum* (ByteProperty-with-enum)
+        // ByteProperty: check for UEnum* (ByteProperty-with-enum) -- kept only if it IS one (IsUEnumObject)
         if (fi.TypeName == "ByteProperty" && fi.Address) {
-            Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, cf.enumAddr);
+            uintptr_t candidateEnum = 0;
+            if (Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, candidateEnum) && IsUEnumObject(candidateEnum))
+                cf.enumAddr = candidateEnum;
         }
 
         // StructProperty: read nested struct type name
@@ -6484,10 +6490,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             uintptr_t enumPtr = 0;
             Macht::ReadSafe(fi.Address + DynOff::FBYTEPROP_ENUM, enumPtr);
             if (enumPtr) {
-                // Validate it's actually a UEnum by checking its class name
-                uintptr_t enumClass = GetClass(enumPtr);
-                std::string enumClassName = enumClass ? GetName(enumClass) : "";
-                if (enumClassName == "Enum" || enumClassName == "UserDefinedEnum") {
+                if (IsUEnumObject(enumPtr)) {
                     // Same gate, same reason, as the EnumProperty handler above: a faulted read
                     // leaves rawVal at 0, which this block then published as the NAME of
                     // enumerator 0 plus a hex column reading "00". The UEnum* metadata came from
