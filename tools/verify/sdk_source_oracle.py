@@ -24,8 +24,9 @@ WHAT "CLASS-VALUED" MEANS, AND WHAT THE HEADER MUST SAY
       TObjectPtr<UXxxClass>          -> class XxxClass*           (a UClass SUBCLASS is the PropertyClass;
                                                                     its MetaClass is Object)
   Only the class-valued slots of a container are compared, so a TMap's non-class key or value is
-  never judged here. Type names are compared without the U/A prefix; the header's outer-qualified
-  spelling (`Name_Qualifier`) of an ambiguous name counts as the same name.
+  never judged here. Type names are compared without the U/A prefix; a header name the export
+  outer-qualified (`Name_Qualifier`) is resolved to its UE name through the header's own path
+  comment. A C++ member `Foo_DEPRECATED` is looked up as `Foo`, the FName UHT gives it.
 
 FAILING LOUDLY (working-lessons Sec.1)
   A header or engine root that does not exist, or a header with no native struct, is an error.
@@ -109,8 +110,15 @@ def bare(name: str) -> str:
     return name
 
 
+# header type name -> the UE name its //Script/ path comment carries; filled by main() from the header
+HEADER_UNAME: dict[str, str] = {}
+
+
 def same_name(header: str, source_bare: str) -> bool:
-    return header == source_bare or header.startswith(source_bare + "_")
+    """The header names a type by its pool name, which is the UE name unless an ambiguity made the
+    export qualify it (`Name_Qualifier`). Resolved through the header's OWN path comments, not a
+    prefix test: a prefix would also accept a different class that happens to be called `Pawn_X`."""
+    return HEADER_UNAME.get(header, header) == source_bare
 
 
 # ---------------------------------------------------------------------------------------------
@@ -319,6 +327,7 @@ def main() -> int:
     if not native:
         print("ERROR: no //Script/ struct in the header -- nothing to check"); return 2
     classy = class_subclasses(structs)
+    HEADER_UNAME.update({s["hname"]: s["uname"] for s in native})
     wanted = {s["uname"] for s in native}
     print(f"header : {header} -- {len(native)} native structs, {len(classy)} UClass types")
     idx, nfiles = index_engine(engine, wanted)
