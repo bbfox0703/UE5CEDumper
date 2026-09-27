@@ -183,9 +183,10 @@ public class SdkLiveWalkerExportTests : IDisposable
     [Fact]
     public void AClassProperty_WhoseMetaclassIsUnknown_IsAPlainUClassPointer()
     {
-        // walk_class sends a ClassProperty's PropertyClass, which is always `Class`; its MetaClass is
-        // not on the wire. `TSubclassOf<class Class>` (222 of 224 TSubclassOf in a real 5.4 export)
-        // declares a subclass of UClass, which no property holds.
+        // A DLL older than [SDK-METACLASS], or a MetaClass read that did not validate, sends no
+        // meta_class -- only the PropertyClass, `Class` for a TSubclassOf. Declaring that as
+        // `TSubclassOf<class Class>` (222 of 224 TSubclassOf in a real 5.4 export, before the
+        // MetaClass reached the wire) names a subclass of UClass, which no property holds.
         Assert.Equal("UClass*", SdkExportService.MapCppDecl(
             new FieldInfoModel { Name = "C", TypeName = "ClassProperty", ObjClassName = "Class", Size = 8 }).Type);
         Assert.Equal("TSoftClassPtr<UObject>", SdkExportService.MapCppDecl(
