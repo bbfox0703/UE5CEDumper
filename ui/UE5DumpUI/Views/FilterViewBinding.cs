@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
+using UE5DumpUI.Core;
 using UE5DumpUI.Helpers;
 
 namespace UE5DumpUI.Views;
@@ -21,6 +22,11 @@ namespace UE5DumpUI.Views;
 /// </remarks>
 public static class FilterViewBinding
 {
+    /// <summary>Where every restore decision is logged (Debug, "view"), set once at startup: the
+    /// selection and scroll outcome is timing-dependent and only visible on a live UI, and the
+    /// first failure measured on it could not be explained without it.</summary>
+    public static ILoggingService? Log { get; set; }
+
     /// <summary>Attach <paramref name="grid"/> to the keeper <paramref name="pick"/> returns from
     /// <paramref name="owner"/>'s view model, now and whenever the DataContext changes (a panel is
     /// built before its view model arrives).</summary>
@@ -46,7 +52,13 @@ public static class FilterViewBinding
     public static void Attach(DataGrid grid, FilterViewKeeper keeper)
     {
         var queue = new FilterViewRestoreQueue();
-        keeper.CaptureView = () => queue.Capture(() => new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid)));
+        keeper.CaptureView = () =>
+        {
+            FilterViewState? live = null;
+            var state = queue.Capture(() => live = new FilterViewState(SelectedInDisplayOrder(grid), TopRow(grid)));
+            Log?.Debug($"FilterView {grid.Name}: capture {state.Selected.Count} selected ({(ReferenceEquals(state, live) ? "from the grid" : "carried from the queued restore")}), grid shows {live?.Selected.Count ?? 0}");
+            return state;
+        };
         keeper.RestoreView = (state, mode) => Restore(queue,
             items: () => DisplayItems(grid),
             current: () => grid.SelectedItem,
@@ -58,6 +70,8 @@ public static class FilterViewBinding
                     foreach (var r in rows) grid.SelectedItems.Add(r);
             },
             scrollIntoView: row => grid.ScrollIntoView(row, null),
+            selectedCount: () => grid.SelectedItems.Count,
+            name: grid.Name ?? "grid",
             state, mode, keeper.KeyOf);
     }
 
@@ -77,17 +91,20 @@ public static class FilterViewBinding
             current: () => list.SelectedItem,
             select: rows => list.SelectedItem = rows.Count > 0 ? rows[0] : null,
             scrollIntoView: row => list.ScrollIntoView(row),
+            selectedCount: () => list.SelectedItems?.Count ?? (list.SelectedItem != null ? 1 : 0),
+            name: list.Name ?? "list",
             state, mode, keeper.KeyOf);
     }
 
     private static void Restore(FilterViewRestoreQueue queue,
                                 Func<List<object>> items, Func<object?> current, Action<List<object>> select,
-                                Action<object> scrollIntoView,
+                                Action<object> scrollIntoView, Func<int> selectedCount, string name,
                                 FilterViewState state, FilterViewRestore mode, Func<object, object>? keyOf)
     {
         // Keys typed faster than this runs rebuild again: only the newest restore of the burst
         // runs, carrying the selection the user had before it (FilterViewRestoreQueue).
         int ticket = queue.Schedule(state);
+        Log?.Debug($"FilterView {name}: queued #{ticket} {mode}, carrying {state.Selected.Count} selected, top row {(state.TopRow != null ? "known" : "none")}");
         void Scroll(object row)
         {
             if (queue.IsNewest(ticket)) scrollIntoView(row);
@@ -96,9 +113,17 @@ public static class FilterViewBinding
         // After the rebuild's own layout pass, like every restore in this UI.
         Dispatcher.UIThread.Post(() =>
         {
-            if (!queue.Begin(ticket)) return;
+            if (!queue.Begin(ticket))
+            {
+                Log?.Debug($"FilterView {name}: #{ticket} dropped, a newer restore replaces it");
+                return;
+            }
             var now = items();
-            if (now.Count == 0) return;
+            if (now.Count == 0)
+            {
+                Log?.Debug($"FilterView {name}: #{ticket} ran on an empty list");
+                return;
+            }
             object Key(object o) => keyOf?.Invoke(o) ?? o;
             var byKey = new Dictionary<object, object>();
             foreach (var o in now) byKey.TryAdd(Key(o), o);
@@ -113,12 +138,20 @@ public static class FilterViewBinding
             if (current() is { } picked)
             {
                 var pickedKey = Key(picked);
-                if (!kept.Any(k => Equals(Key(k), pickedKey))) return;
+                if (!kept.Any(k => Equals(Key(k), pickedKey)))
+                {
+                    Log?.Debug($"FilterView {name}: #{ticket} {mode} backs off, {now.Count} rows, {kept.Count} of {state.Selected.Count} found, another row was picked after the rebuild");
+                    return;
+                }
             }
             else if (kept.Count > 0)
             {
                 select(kept);
             }
+            Log?.Debug($"FilterView {name}: #{ticket} {mode} ran, {now.Count} rows, {kept.Count} of {state.Selected.Count} found, {selectedCount()} selected now");
+            Dispatcher.UIThread.Post(() =>
+                Log?.Debug($"FilterView {name}: #{ticket} settled, {selectedCount()} selected"),
+                DispatcherPriority.ApplicationIdle);
 
             var first = kept.Count > 0 ? kept[0] : null;
             if (mode == FilterViewRestore.Narrowed)

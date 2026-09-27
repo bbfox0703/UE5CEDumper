@@ -65,6 +65,7 @@ public class App : Application
             // dispatcher faults and are handled by the guard below; WRITES go through
             // the platform service, which needs somewhere to report a refused copy.
             _platform.Logger = _logging;
+            Views.FilterViewBinding.Log = _logging;
 
             // Attach the dispatcher fault guard as soon as there is somewhere to
             // log to, and before any window exists — a clipboard/IME fault must
