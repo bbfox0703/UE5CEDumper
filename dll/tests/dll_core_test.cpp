@@ -6234,13 +6234,12 @@ int main() {
 
     // -- PROBEOVERRUN-2026-09-28 -- the C-ABI subclass getters read no further than a proven slot ---------------------
     //
-    // ⛔ OWN name table (after KINDNAMES). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot -- UE5_GetFieldStructClass and
-    // UE5_GetFieldPropertyClass -- tried eight slots around FSTRUCTPROP_STRUCT (0, -8, +8, -16, +16 and three misaligned)
-    // and returned the first object of the wanted kind. On EVERSPACE 2 the PropertyClass getter, asked about a Blueprint
-    // UberGraphFrame StructProperty (0x78 bytes), returned the component class at +0x80 -- the NEXT heap block -- and a
-    // null PropertyClass would have done the same. A slot a real struct was found in (CorrectSubclassOffsets, or
-    // WalkInstance's persisted correction) now gives the final answer; an unproven one is tried one pointer either side
-    // and no further, which covers every measured family move (UE423 0x78 -> 0x70, DQ XI S 0x78 -> 0x80).
+    // ⛔ OWN name table (after KINDNAMES). [FRIEREN-PROBE-OVERRUN] ProbeSubclassSlot tried eight slots around
+    // FSTRUCTPROP_STRUCT (0, -8, +8, -16, +16 and three misaligned) and returned the first object of the wanted kind. On
+    // EVERSPACE 2 the PropertyClass getter, asked about a Blueprint UberGraphFrame StructProperty (0x78 bytes), returned
+    // the component class at +0x80 -- the NEXT heap block -- and a null PropertyClass would have done the same. A slot a
+    // real struct was read out of now gives the final answer; an unproven one is tried one aligned pointer either side
+    // and no further (the UE423 0x78 -> 0x70 and DQ XI S 0x78 -> 0x80 moves).
     {
         blk("PROBEOVERRUN - the subclass getters read no further than a proven slot");
         ResetCancel();
@@ -6304,7 +6303,7 @@ int main() {
         putP(poObj, 0x78, A(poActor));
         putP(poShiftDown, 0x70, A(poVector));     // the family one pointer too high
 
-        Ubel::MarkSubclassSlotConfirmed();
+        Ubel::MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load());
         check("PROBEOVERRUN ⭐: proven slot -- a StructProperty has no PropertyClass, not the class past its end",
               C(poStructEnd) == 0, nm(C(poStructEnd)).c_str());
         check("PROBEOVERRUN ⭐: proven slot -- a null PropertyClass stays null, not the class one pointer on",
@@ -6324,7 +6323,7 @@ int main() {
         check("PROBEOVERRUN ⭐: unproven slot -- no misaligned read (+12, +4, -4)", noMisaligned().empty(),
               noMisaligned().c_str());
 
-        Ubel::MarkSubclassSlotConfirmed();
+        Ubel::MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load());
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x80));
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x78));
         check("PROBEOVERRUN control: a family move withdraws the proof -- the neighbour is tried again",
