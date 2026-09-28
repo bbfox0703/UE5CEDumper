@@ -27,6 +27,18 @@ builds ≤696 in
 
 -----
 
+## 2026-09-28 (build 3598) — Cheat Engine's struct and class getters no longer answer with an object from outside the property `[FRIEREN-PROBE-OVERRUN]`
+
+- `UE5_GetFieldStructClass` / `UE5_GetFieldPropertyClass` (the exports CE Lua calls): when a property's slot does
+  not hold the kind asked for, or holds nothing, they return 0 instead of an unrelated class read from the memory
+  after the property. Found on EVERSPACE 2, where seven Blueprint members answered with a component class.
+- UE4 games: the dumper now checks the property slot it derived against a real struct instead of assuming it. What
+  is dumped does not change.
+- Checked on the games: EVERSPACE 2 7,506 / 7,506 properties, DumperTest 5.4 81 / 81, UE 4.23 2,265 / 2,265; the
+  UE 4.23 whole-pool walk is identical to build 3597.
+- Build 3598: AOT `dist\UE5DumpUI.exe` 58,445,824 B, sha256 `14c0d797fa8b`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `2fbdffa8f424`. C# 5800/5800, headless 15/15, dll_core 593 checks, dll_helpers 3073.
+
 ## 2026-09-28 (build 3597) — Blueprint structs, classes and enums stay typed when the engine layout was only partly detected `[STRUCTPROBE-ANY-NAME]` `[UPROP-SUBCLASS-SLOT]`
 
 - When the dumper cannot measure the whole engine layout, members typed with a Blueprint struct, Blueprint class

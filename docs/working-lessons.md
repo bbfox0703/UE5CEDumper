@@ -824,6 +824,19 @@ capture with the old DLL and with the new one, fresh inject each (1.ai), and `ch
 capture only are explained before the check is called — and a rig keys by something unique first. (3) A spot check of core classes is a smoke test, not the
 no-regression evidence.
 
+### 1.ak A kind check bounds WHAT a neighbour probe accepts, not WHERE it reads — ask the getter for the wrong kind
+
+Measured 2026-09-28 (`[FRIEREN-PROBE-OVERRUN]`, build 3597). Frieren's two slot getters had just gained a kind check
+(`[STRUCTPROBE-ANY-NAME]`), and every own-kind call on EVERSPACE 2 was right. Asked for the OTHER kind — the class of a
+StructProperty — seven answered with a real UClass: the probe tried ±16 and misaligned slots whenever the slot did not
+hold the kind, and 16 bytes past a Blueprint `UberGraphFrame` lies the next heap block. The object WAS a class, so the
+kind check had nothing to refuse. The same walk answers an in-contract call whose slot is null.
+Two rig lessons from the same pass: `walk_class` lists inherited fields under every subclass (22,342 rows were 7,506
+properties), so count distinct addresses; and the expected answer came from `ReadProcessMemory`, not the DLL.
+**How to apply:** (1) test a probe with the call it should REFUSE — the wrong kind, a null slot — not only the one it
+should answer. (2) A probe around a slot is bounded by position (the object's own bytes, aligned) and stops once the
+slot is proven; a validator on the result is not a bound. (3) A verification tally counts each object once.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

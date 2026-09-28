@@ -1,6 +1,7 @@
 """Frieren's subclass-slot getters, called live the way Cheat Engine calls them.
 
     py tools/verify/frieren_getters_live.py --pid <game pid> --build <N> --label <name>
+    py tools/verify/frieren_getters_live.py --pid <game pid> --build <N> --label <name> --slot 0x78   # UProperty
 
 WHY THIS EXISTS. `UE5_GetFieldStructClass` and `UE5_GetFieldPropertyClass` are C-ABI exports reached
 only from CE Lua (`ue5_dissect.lua` flattens a StructProperty through the first), so no pipe rig had
@@ -22,7 +23,8 @@ starts no pipe server (its DllMain refuses when the host is CE).
 
 Needs the game injected with the build under test (nothing else first) and ONE Cheat Engine running
 with the AOBMaker plugin (working-lessons 3.wa: never a second one). The record is left ticked; kill CE
-afterwards. FProperty engines only (the slot offset below is PropertyFamilyFor's).
+afterwards. On an FProperty engine the slot is derived as PropertyFamilyFor derives it; a UProperty engine (UE4 before
+4.25) needs `--slot`, the `SubclassStart=` of the session's offsets-log SUMMARY line -- the pipe does not report it.
 Exit 0 = every call answered as above, 1 = at least one did not, 2 = the rig could not run.
 Output: out/frieren_getters/<label>_*.txt|json (gitignored).
 """
@@ -108,13 +110,19 @@ def bridge_call(req, tries=20):
     raise SystemExit("frieren: the AOBMaker bridge did not answer: %s -- is CE running with the plugin?" % last)
 
 
-def collect(c, h):
+def collect(c, h, slot_arg, all_classes=False):
     off = c.request("get_offsets")
-    if not off.get("use_fproperty"):
-        raise SystemExit("frieren: not an FProperty engine -- this rig derives the FProperty slot only")
-    slot = (off["fproperty_offset"] + (0x34 if off.get("case_preserving") else 0x2C) + 7) & ~7
+    if off.get("use_fproperty"):
+        slot = (off["fproperty_offset"] + (0x34 if off.get("case_preserving") else 0x2C) + 7) & ~7
+        if slot_arg is not None and slot_arg != slot:
+            raise SystemExit("frieren: --slot 0x%X disagrees with the derived FProperty slot 0x%X" % (slot_arg, slot))
+    elif slot_arg is None:
+        raise SystemExit("frieren: a UProperty engine -- pass --slot, the SubclassStart= of the offsets-log SUMMARY")
+    else:
+        slot = slot_arg
     classes = c.request("list_classes", game_only=False, limit=50000)["classes"]
-    pick = [x for x in classes if x.get("class_name") in NATIVE_CLASSES or "/Game/" in (x.get("class_path") or "")]
+    pick = [x for x in classes if all_classes or x.get("class_name") in NATIVE_CLASSES
+            or "/Game/" in (x.get("class_path") or "")]
     # Keyed by the FProperty's ADDRESS: walk_class lists inherited fields too, so a Blueprint base's
     # `UberGraphFrame` came back once per subclass -- 22,342 rows for 7,506 properties on EVERSPACE 2.
     by_addr = {}
@@ -147,6 +155,10 @@ def main():
     ap.add_argument("--pid", type=int, required=True)
     ap.add_argument("--build", required=True, help="the build injected into the game (assert_build)")
     ap.add_argument("--label", required=True)
+    ap.add_argument("--all-classes", action="store_true",
+                    help="every class list_classes returns, not only the fixture's own and the /Game/ ones")
+    ap.add_argument("--slot", type=lambda v: int(v, 0), default=None,
+                    help="the subclass slot, e.g. 0x78 -- required on a UProperty engine")
     a = ap.parse_args()
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     fin, fres = OUT_DIR / ("%s_fields.txt" % a.label), OUT_DIR / ("%s_ce.txt" % a.label)
@@ -158,7 +170,7 @@ def main():
         raise SystemExit("frieren: OpenProcess(%d) failed" % a.pid)
     with PipeClient(timeout=300.0) as c:
         print("build:", c.assert_build(a.build))
-        slot, nclasses, fields = collect(c, h)
+        slot, nclasses, fields = collect(c, h, a.slot, a.all_classes)
     print("slot +0x%X; %d classes list %d rows = %d distinct properties (%s)" % (
         slot, nclasses, sum(f["listed_by"] for f in fields), len(fields),
         dict(collections.Counter(f["type"] for f in fields))))

@@ -85,6 +85,31 @@ static std::mutex s_walkClassCacheMutex;
 static std::mutex s_structFieldCacheMutex;
 static std::mutex s_calibrationMutex;
 
+// CorrectSubclassOffsets' once-per-process latch. At namespace scope so dll_core_test, which compiles this file into its
+// own translation unit, can re-arm it.
+static std::atomic<bool> s_subclassCalibrated{false};
+// [FRIEREN-PROBE-OVERRUN] The newest family epoch at which a real UScriptStruct was read out of the slot: proof that
+// DynOff::FSTRUCTPROP_STRUCT is right, which a MEASURED layout is not (TQ2 derived 0x74 from measured offsets and the
+// struct sat at 0x78). Tagged with bit 32 so "never" (0) cannot equal epoch 0; a later family move changes the epoch
+// and so withdraws the proof. The epoch passed is the one loaded BEFORE the slot was read -- ApplyPropertyFamily
+// writes the family before it bumps the epoch, so evidence a move overtook is filed under a dead epoch, never under
+// the new one -- and a proof never goes back to an older epoch.
+static std::atomic<uint64_t> s_subclassSlotConfirmed{0};
+static void MarkSubclassSlotConfirmed(uint32_t epoch) {
+    const uint64_t tag = (uint64_t{1} << 32) | epoch;
+    uint64_t cur = s_subclassSlotConfirmed.load(std::memory_order_acquire);
+    while ((cur >> 32) == 0 || static_cast<uint32_t>(cur) < epoch) {
+        if (s_subclassSlotConfirmed.compare_exchange_weak(cur, tag, std::memory_order_acq_rel,
+                                                          std::memory_order_acquire))
+            break;
+    }
+}
+static bool IsSubclassSlotConfirmed() {
+    const uint64_t v = s_subclassSlotConfirmed.load(std::memory_order_acquire);
+    return (v >> 32) != 0
+        && static_cast<uint32_t>(v) == DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
+}
+
 // Read FName from an address and resolve to string
 static std::string ReadFName(uintptr_t fnameAddr) {
     // FName is typically: int32 ComparisonIndex, int32 Number
@@ -1382,6 +1407,30 @@ bool IsClassObject(uintptr_t obj) {
 // class names, so an enum whose class is a UEnum subclass was dropped where the struct and class checks walk the chain.
 bool IsUEnumObject(uintptr_t obj) {
     return MetaclassIsKind(obj, "Enum", Aura::IsListedEnumClass);
+}
+
+// [STRUCTPROBE-ANY-NAME] It accepted any object with a name other than "None", so on a shifted layout the first slot's
+// named neighbour won. [FRIEREN-PROBE-OVERRUN] It also tried eight slots whatever the slot itself held -- +-16 and three
+// misaligned ones among them -- so on EVERSPACE 2 a StructProperty's "PropertyClass" was the class at +0x80 of the
+// NEXT heap block, and a null PropertyClass would have been answered the same way. A proven slot answers alone. An
+// unproven one is tried one aligned pointer either side: the UE423 (0x78 -> 0x70) and DQ XI S (0x78 -> 0x80) moves.
+// The one misaligned move measured, TQ2's 0x74 -> 0x78, was a derivation defect [FPROP-FAMILY-ALIGN] removed -- the
+// family start is 8-aligned -- so a +-4 read can only land inside a pointer.
+uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t)) {
+    if (!fieldAddr) return 0;
+    const bool proven = IsSubclassSlotConfirmed();
+    constexpr int kDeltas[] = { 0, -8, 8 };
+    for (int delta : kDeltas) {
+        if (proven && delta != 0) break;
+        int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+        if (tryOff < 0) continue;
+        uintptr_t ptr = 0;
+        if (Macht::ReadSafe(fieldAddr + tryOff, ptr) && ptr && isKind(ptr)) {
+            std::string name = GetName(ptr);
+            if (!name.empty() && name != "None") return ptr;
+        }
+    }
+    return 0;
 }
 
 uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
@@ -4415,20 +4464,24 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 // If a non-zero delta is found, all subclass offsets are updated.
 // ============================================================
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
-    static std::atomic<bool> s_checked{false};
-    if (s_checked.load(std::memory_order_acquire)) return;  // fast path: already calibrated
+    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;  // fast path: already calibrated
 
     // Slow path: serialize calibration so the parallel GObjects walkers can't
     // race on the DynOff:: writes below. Double-checked under the lock.
     std::lock_guard<std::mutex> lk(s_calibrationMutex);
-    if (s_checked.load(std::memory_order_acquire)) return;
-    if (!DynOff::bUseFProperty) { s_checked.store(true, std::memory_order_release); return; }
+    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;
+    // [FRIEREN-PROBE-OVERRUN] A UProperty family is derived from the measured layout ([UPROP-SUBCLASS-SLOT]) and is
+    // never moved here -- but it is CHECKED, where this used to latch without looking, so a UE4 session can be proven
+    // too. Until a struct is found in the slot the latch stays open, as it does for FProperty.
+    const bool uprop = !DynOff::bUseFProperty;
+    const uint32_t epoch = DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
 
     static const int kProbeDeltas[] = { 0, 4, -4, 8, -8, 0xC, -0xC };
     for (const auto& fi : fields) {
         if (fi.TypeName != "StructProperty") continue;
 
         for (int delta : kProbeDeltas) {
+            if (uprop && delta != 0) break;
             int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
             if (tryOff < 0) continue;
             uintptr_t candidate = 0;
@@ -4450,8 +4503,12 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 // this file re-probes it with delta=8. That probe is deliberately NOT routed
                 // through the helper for exactly that reason.
                 DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected));
+                // The corrected family's epoch, read after the move.
+                MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire));
+            } else {
+                MarkSubclassSlotConfirmed(epoch);
             }
-            s_checked.store(true, std::memory_order_release);
+            s_subclassCalibrated.store(true, std::memory_order_release);
             return;
         }
         // This StructProperty probe failed — try next one
@@ -6260,6 +6317,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
             // Try the derived offset first, then probe nearby offsets
             static const int kStructPtrProbeOffsets[] = { 0, 4, -4, 8, -8, 0x10, -0x10 };
             bool found = false;
+            const uint32_t probeEpoch = DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
             for (int delta : kStructPtrProbeOffsets) {
                 int tryOffset = DynOff::FSTRUCTPROP_STRUCT + delta;
                 if (tryOffset < 0) continue;
@@ -6300,7 +6358,12 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         {
                             std::lock_guard<std::mutex> lk(s_calibrationMutex);
                             DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(tryOffset));
+                            MarkSubclassSlotConfirmed(DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire));
                         }
+                    } else {
+                        // [FRIEREN-PROBE-OVERRUN] A struct IN the slot is the same proof: on a family derived right --
+                        // the usual case -- nothing is ever corrected, and without this the slot stayed unproven.
+                        MarkSubclassSlotConfirmed(probeEpoch);
                     }
                     found = true;
                     break;
