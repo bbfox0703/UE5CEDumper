@@ -6287,11 +6287,19 @@ int main() {
 
         // Property bodies: only the slot (0x78) and what surrounds it matter to the probe.
         static uint8_t poStructEnd[0x100] = {}, poNullNext[0x100] = {}, poMisaligned[0x100] = {}, poFar[0x100] = {},
-                       poObj[0x100] = {}, poShiftDown[0x100] = {};
+                       poObj[0x100] = {}, poShiftDown[0x100] = {}, poMisP4[0x100] = {}, poMisM4[0x100] = {};
         putP(poStructEnd, 0x78, A(poVector));
         putP(poStructEnd, 0x88, A(poStranger));   // EVERSPACE 2's UberGraphFrame: a class 16 bytes past the struct
         putP(poNullNext, 0x80, A(poStranger));    // a null slot, a class one pointer on
-        putP(poMisaligned, 0x84, A(poStranger));  // only a misaligned read reaches it
+        putP(poMisaligned, 0x84, A(poStranger));  // only a misaligned read reaches it: +12, +4 and -4
+        putP(poMisP4, 0x7C, A(poStranger));
+        putP(poMisM4, 0x74, A(poStranger));
+        const uint8_t* poMis[3] = { poMisaligned, poMisP4, poMisM4 };
+        auto noMisaligned = [&]() {
+            std::string got;
+            for (const uint8_t* m : poMis) if (C(m)) got += nm(C(m)) + " ";
+            return got;
+        };
         putP(poFar, 0x88, A(poStranger));         // a null slot, a class two pointers on
         putP(poObj, 0x78, A(poActor));
         putP(poShiftDown, 0x70, A(poVector));     // the family one pointer too high
@@ -6301,7 +6309,8 @@ int main() {
               C(poStructEnd) == 0, nm(C(poStructEnd)).c_str());
         check("PROBEOVERRUN ⭐: proven slot -- a null PropertyClass stays null, not the class one pointer on",
               C(poNullNext) == 0, nm(C(poNullNext)).c_str());
-        check("PROBEOVERRUN ⭐: proven slot -- no misaligned read", C(poMisaligned) == 0, nm(C(poMisaligned)).c_str());
+        check("PROBEOVERRUN ⭐: proven slot -- no misaligned read (+12, +4, -4)", noMisaligned().empty(),
+              noMisaligned().c_str());
         check("PROBEOVERRUN control: proven slot -- the struct in it", S(poStructEnd) == A(poVector),
               nm(S(poStructEnd)).c_str());
         check("PROBEOVERRUN control: proven slot -- the class in it", C(poObj) == A(poActor), nm(C(poObj)).c_str());
@@ -6312,7 +6321,8 @@ int main() {
         check("PROBEOVERRUN control: unproven slot -- the class one pointer above (a family one slot too low)",
               C(poNullNext) == A(poStranger), nm(C(poNullNext)).c_str());
         check("PROBEOVERRUN ⭐: unproven slot -- nothing two pointers away", C(poFar) == 0, nm(C(poFar)).c_str());
-        check("PROBEOVERRUN ⭐: unproven slot -- no misaligned read", C(poMisaligned) == 0, nm(C(poMisaligned)).c_str());
+        check("PROBEOVERRUN ⭐: unproven slot -- no misaligned read (+12, +4, -4)", noMisaligned().empty(),
+              noMisaligned().c_str());
 
         Ubel::MarkSubclassSlotConfirmed();
         DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(0x80));
@@ -6340,6 +6350,45 @@ int main() {
         (void)Ubel::WalkClassEx(A(poCls));
         check("PROBEOVERRUN ⭐: CorrectSubclassOffsets' struct in the slot is the proof", C(poNullNext) == 0,
               nm(C(poNullNext)).c_str());
+
+        // WalkInstance finding the struct IN the slot proves it too -- on a family Genau derived right, the usual case
+        // since [UPROP-SUBCLASS-SLOT] and [FPROP-FAMILY-ALIGN], nothing ever needs correcting. The latch stays set, so
+        // CorrectSubclassOffsets cannot be the one proving it.
+        static uint8_t poAt[0x100] = {}, poClsAt[0x100] = {}, poInstAt[0x100] = {};
+        fprop(poAt, 7, A(poVector));
+        put32(poClsAt, DynOff::USTRUCT_PROPSSIZE, 0x10);
+        putP(poClsAt, DynOff::USTRUCT_CHILDPROPS, A(poAt));
+        putP(poInstAt, Grimoire::OFF_UOBJECT_CLASS, A(poClsAt));
+        Ubel::s_subclassSlotConfirmed.store(0);
+        (void)Ubel::WalkInstance(A(poInstAt), A(poClsAt), 64, 2, false);
+        check("PROBEOVERRUN ⭐: WalkInstance's struct in the slot is the proof", C(poNullNext) == 0,
+              nm(C(poNullNext)).c_str());
+
+        // UProperty engines: Genau measures the family from the layout, and CorrectSubclassOffsets used to latch there
+        // without looking -- no UE4 session could ever be proven. It checks the slot now, and never moves a UProperty
+        // family. Called directly: a UProperty class is not walked through the FProperty chain these fixtures build.
+        DynOff::bUseFProperty = false;
+        FieldInfo poFi{};
+        poFi.Address = A(poPos);
+        poFi.Name = "Pos";
+        poFi.TypeName = "StructProperty";
+        Ubel::s_subclassSlotConfirmed.store(0);
+        Ubel::s_subclassCalibrated.store(false);
+        Ubel::CorrectSubclassOffsets({ poFi });
+        check("PROBEOVERRUN ⭐: UProperty -- a struct in the slot proves it", C(poNullNext) == 0, nm(C(poNullNext)).c_str());
+        static uint8_t poPosOff[0x100] = {};
+        fprop(poPosOff, 7, 0);
+        putP(poPosOff, 0x80, A(poVector));
+        poFi.Address = A(poPosOff);
+        Ubel::s_subclassSlotConfirmed.store(0);
+        Ubel::s_subclassCalibrated.store(false);
+        Ubel::CorrectSubclassOffsets({ poFi });
+        check("PROBEOVERRUN ⭐: UProperty -- a struct one pointer on neither moves the family nor latches",
+              DynOff::FSTRUCTPROP_STRUCT == 0x78 && !Ubel::s_subclassCalibrated.load() && C(poNullNext) == A(poStranger),
+              (std::to_string(DynOff::FSTRUCTPROP_STRUCT) + " latched=" + std::to_string(Ubel::s_subclassCalibrated.load())
+               + " " + nm(C(poNullNext))).c_str());
+        Ubel::s_subclassCalibrated.store(true);
+        DynOff::bUseFProperty = true;
 
         // WalkInstance's persisted correction: the struct one pointer on moves the family there, and proves it. The
         // calibration latch stays set, so only WalkInstance's own probe can move it.
