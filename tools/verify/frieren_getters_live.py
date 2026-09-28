@@ -115,15 +115,22 @@ def collect(c, h):
     slot = (off["fproperty_offset"] + (0x34 if off.get("case_preserving") else 0x2C) + 7) & ~7
     classes = c.request("list_classes", game_only=False, limit=50000)["classes"]
     pick = [x for x in classes if x.get("class_name") in NATIVE_CLASSES or "/Game/" in (x.get("class_path") or "")]
-    fields = []
+    # Keyed by the FProperty's ADDRESS: walk_class lists inherited fields too, so a Blueprint base's
+    # `UberGraphFrame` came back once per subclass -- 22,342 rows for 7,506 properties on EVERSPACE 2.
+    by_addr = {}
     for i in range(0, len(pick), 200):
         r = c.request("walk_class_batch", addrs=[x["class_addr"] for x in pick[i:i + 200]])
         for j, ci in enumerate(r.get("classes", [])):
             owner = pick[i + j]["class_name"]
             for f in ci.get("fields", []):
                 if f.get("type") == "StructProperty" or f.get("type") in OBJFAM:
-                    fields.append({"owner": owner, "name": f["name"], "type": f["type"], "addr": int(f["addr"], 16),
-                                   "want_name": f.get("struct_type") or f.get("obj_class") or ""})
+                    addr = int(f["addr"], 16)
+                    if addr in by_addr:
+                        by_addr[addr]["listed_by"] += 1
+                        continue
+                    by_addr[addr] = {"owner": owner, "name": f["name"], "type": f["type"], "addr": addr,
+                                     "want_name": f.get("struct_type") or f.get("obj_class") or "", "listed_by": 1}
+    fields = list(by_addr.values())
     names = {}
     for f in fields:
         raw = read_ptr(h, f["addr"] + slot)
@@ -152,8 +159,9 @@ def main():
     with PipeClient(timeout=300.0) as c:
         print("build:", c.assert_build(a.build))
         slot, nclasses, fields = collect(c, h)
-    print("slot +0x%X; %d classes, %d fields (%s)" % (
-        slot, nclasses, len(fields), dict(collections.Counter(f["type"] for f in fields))))
+    print("slot +0x%X; %d classes list %d rows = %d distinct properties (%s)" % (
+        slot, nclasses, sum(f["listed_by"] for f in fields), len(fields),
+        dict(collections.Counter(f["type"] for f in fields))))
     fin.write_text("".join("%X\n" % f["addr"] for f in fields), encoding="ascii")
 
     if fres.exists():
@@ -196,7 +204,7 @@ def main():
         print("   MISMATCH %s.%s (%s, wants %s; slot %s=0x%s) own-kind getter 0x%s, other getter 0x%s" % b)
     json.dump({"build": a.build, "slot": slot, "fields": fields, "ce": {"%X" % k: v for k, v in got.items()}},
               open(OUT_DIR / ("%s.json" % a.label), "w", encoding="utf-8"))
-    print("VERDICT: %d of %d fields answered right by both getters" % (len(fields) - len(bad), len(fields)))
+    print("VERDICT: %d of %d distinct properties answered right by both getters" % (len(fields) - len(bad), len(fields)))
     return 1 if bad else 0
 
 
