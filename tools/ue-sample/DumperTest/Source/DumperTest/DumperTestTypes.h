@@ -204,6 +204,13 @@ struct FDumperTestTableRow : public FTableRowBase
 
 	/// 走一步 — odd (3), contains U+4E00. Escaped, per the file header rule.
 	UPROPERTY() FText Caption;
+
+	/// The TEnumAsByte column no table had. A TEnumAsByte member is a ByteProperty whose
+	/// UEnum sits in FByteProperty's own slot; the DataTable row reader looked one pointer
+	/// further, where FEnumProperty keeps its UEnum, so such a column never showed an
+	/// enumerator name [ENUMSLOT-ANY-NAME]. Set to Lane_Left / Lane_Center / Lane_Right by
+	/// row index mod 3 -- never Lane_None, so a zeroed or unread cell cannot pass for a value.
+	UPROPERTY() TEnumAsByte<EDumperTestLane> RowLane = Lane_None;
 };
 
 // ============================================================

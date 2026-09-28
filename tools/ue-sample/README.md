@@ -457,6 +457,7 @@ walk may simply never have reached them.
 | `Map_Churn` / `Arr_Churn` | grow together, one entry per call | a container that changes **between** two scans, for Next-Scan pruning and Snapshot Mode B |
 | `Index` (on `FDumperTestTableRow`) | `int32` row index | the scalar leaf inside a DataTable row |
 | `Caption` (on `FDumperTestTableRow`) | 走一步 — **odd (3) chars, contains U+4E00** | the B28 FText trigger **inside a DataTable row**, i.e. reached through a container rather than off the actor directly |
+| `RowLane` (on `FDumperTestTableRow`) | `TEnumAsByte<EDumperTestLane>`: `Lane_Left` · `Lane_Center` · `Lane_Right` (11 · 33 · 22) by row index mod 3 — `Row_000` is `Lane_Left` | **`[ENUMSLOT-ANY-NAME]`'s DataTable witness** — `walk_datatable_rows` must name each cell's enumerator. A TEnumAsByte column is a ByteProperty, whose UEnum sits one pointer before where an EnumProperty keeps its own; before build 3596 the row reader looked in the EnumProperty slot |
 
 ### Numerics, flags, layout
 
