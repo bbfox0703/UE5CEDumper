@@ -40,8 +40,10 @@ def check_table(c, label, addr):
         raise SystemExit("enumslot: FAILED -- walk_datatable_rows(%s): %s" % (label, r.get("error")))
     bad_bytes, bad_names, shown = [], [], 0
     for row in r["rows"]:
-        fields = {f["name"]: f for f in row["fields"]}
-        lane, idx = fields.get("RowLane"), fields.get("Index", {}).get("value")
+        # Keyed case-insensitively, as UE compares FNames: the pool keeps the casing registered
+        # FIRST, and the Development package names this column `index` (measured 2026-09-28).
+        fields = {f["name"].lower(): f for f in row["fields"]}
+        lane, idx = fields.get("rowlane"), fields.get("index", {}).get("value")
         if lane is None or idx is None:
             raise SystemExit("enumslot: FAILED -- %s row %s has no RowLane / Index column: the package "
                              "predates the column" % (label, row["row_name"]))
