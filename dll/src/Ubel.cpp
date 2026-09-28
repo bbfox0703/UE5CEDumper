@@ -98,6 +98,11 @@ static void MarkSubclassSlotConfirmed() {
                                       | DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire),
                                   std::memory_order_release);
 }
+static bool IsSubclassSlotConfirmed() {
+    const uint64_t v = s_subclassSlotConfirmed.load(std::memory_order_acquire);
+    return (v >> 32) != 0
+        && static_cast<uint32_t>(v) == DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire);
+}
 
 // Read FName from an address and resolve to string
 static std::string ReadFName(uintptr_t fnameAddr) {
@@ -1398,13 +1403,19 @@ bool IsUEnumObject(uintptr_t obj) {
     return MetaclassIsKind(obj, "Enum", Aura::IsListedEnumClass);
 }
 
-// The subclass slot and a few slots around it, first hit of the kind the property holds. [STRUCTPROBE-ANY-NAME] It
-// accepted any object with a name other than "None" -- the struct getter and the PropertyClass getter alike -- so on a
-// shifted layout the first slot's named neighbour won.
+// The C-ABI getters' slot read; the contract is in Ubel.h. [STRUCTPROBE-ANY-NAME] It accepted any object with a name
+// other than "None", so on a shifted layout the first slot's named neighbour won. [FRIEREN-PROBE-OVERRUN] It also tried
+// eight slots whatever the slot itself held -- +-16 and three misaligned ones among them -- so on EVERSPACE 2 a
+// StructProperty's "PropertyClass" was the class at +0x80 of the NEXT heap block, and a null PropertyClass would have
+// been answered the same way. A slot a real struct was found in answers alone; an unproven one (a give-up session, or
+// no walk yet) is tried one pointer either side, which covers every measured family move (UE423 0x78 -> 0x70, DQ XI S
+// 0x78 -> 0x80).
 uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t)) {
     if (!fieldAddr) return 0;
-    constexpr int kDeltas[] = { 0, -8, 8, -16, 16, 4, -4, 12 };
+    const bool proven = IsSubclassSlotConfirmed();
+    constexpr int kDeltas[] = { 0, -8, 8 };
     for (int delta : kDeltas) {
+        if (proven && delta != 0) break;
         int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
         if (tryOff < 0) continue;
         uintptr_t ptr = 0;

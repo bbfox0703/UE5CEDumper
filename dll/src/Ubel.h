@@ -378,6 +378,8 @@ bool IsUEnumObject(uintptr_t obj);
 uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName);
 // The object in a property's subclass slot (DynOff::FSTRUCTPROP_STRUCT) of the kind `isKind` tests, else 0: the C-ABI
 // struct / PropertyClass getters. It lives here rather than in Frieren because a test target compiles this file.
+// [FRIEREN-PROBE-OVERRUN] Once a real struct has been found in the slot, the slot's own answer is final; before that,
+// one pointer either side is tried as well -- never further, which reads into whatever follows the property.
 uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t));
 
 // Get the Outer object of a UObject
