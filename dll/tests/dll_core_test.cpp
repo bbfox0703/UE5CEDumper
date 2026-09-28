@@ -6404,6 +6404,14 @@ int main() {
         check("PROBEOVERRUN ⭐: WalkInstance's corrected slot is the proof -- a null slot there stays null",
               C(poFar) == 0, nm(C(poFar)).c_str());
 
+        // A proof never goes back: evidence read under an older epoch, filed late, must not withdraw a newer proof.
+        const uint32_t poNow = DynOff::g_propertyFamilyEpoch.load();
+        Ubel::s_subclassSlotConfirmed.store(0);
+        Ubel::MarkSubclassSlotConfirmed(poNow);
+        Ubel::MarkSubclassSlotConfirmed(poNow - 1);
+        check("PROBEOVERRUN: a proof filed late under an older epoch leaves the newer one standing",
+              Ubel::IsSubclassSlotConfirmed(), std::to_string(Ubel::s_subclassSlotConfirmed.load()).c_str());
+
         DynOff::ApplyPropertyFamily(svFamily);
         DynOff::bUseFProperty = svFProp;
         Ubel::s_subclassCalibrated.store(svCalibrated);
