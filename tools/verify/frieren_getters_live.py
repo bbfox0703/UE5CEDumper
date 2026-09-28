@@ -110,7 +110,7 @@ def bridge_call(req, tries=20):
     raise SystemExit("frieren: the AOBMaker bridge did not answer: %s -- is CE running with the plugin?" % last)
 
 
-def collect(c, h, slot_arg):
+def collect(c, h, slot_arg, all_classes=False):
     off = c.request("get_offsets")
     if off.get("use_fproperty"):
         slot = (off["fproperty_offset"] + (0x34 if off.get("case_preserving") else 0x2C) + 7) & ~7
@@ -121,7 +121,8 @@ def collect(c, h, slot_arg):
     else:
         slot = slot_arg
     classes = c.request("list_classes", game_only=False, limit=50000)["classes"]
-    pick = [x for x in classes if x.get("class_name") in NATIVE_CLASSES or "/Game/" in (x.get("class_path") or "")]
+    pick = [x for x in classes if all_classes or x.get("class_name") in NATIVE_CLASSES
+            or "/Game/" in (x.get("class_path") or "")]
     # Keyed by the FProperty's ADDRESS: walk_class lists inherited fields too, so a Blueprint base's
     # `UberGraphFrame` came back once per subclass -- 22,342 rows for 7,506 properties on EVERSPACE 2.
     by_addr = {}
@@ -154,6 +155,8 @@ def main():
     ap.add_argument("--pid", type=int, required=True)
     ap.add_argument("--build", required=True, help="the build injected into the game (assert_build)")
     ap.add_argument("--label", required=True)
+    ap.add_argument("--all-classes", action="store_true",
+                    help="every class list_classes returns, not only the fixture's own and the /Game/ ones")
     ap.add_argument("--slot", type=lambda v: int(v, 0), default=None,
                     help="the subclass slot, e.g. 0x78 -- required on a UProperty engine")
     a = ap.parse_args()
@@ -167,7 +170,7 @@ def main():
         raise SystemExit("frieren: OpenProcess(%d) failed" % a.pid)
     with PipeClient(timeout=300.0) as c:
         print("build:", c.assert_build(a.build))
-        slot, nclasses, fields = collect(c, h, a.slot)
+        slot, nclasses, fields = collect(c, h, a.slot, a.all_classes)
     print("slot +0x%X; %d classes list %d rows = %d distinct properties (%s)" % (
         slot, nclasses, sum(f["listed_by"] for f in fields), len(fields),
         dict(collections.Counter(f["type"] for f in fields))))
