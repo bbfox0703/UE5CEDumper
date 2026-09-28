@@ -1059,33 +1059,15 @@ int32_t UE5_GetFieldBoolMask(uintptr_t fieldAddr) {
     return 0;
 }
 
-// The subclass slot (DynOff::FSTRUCTPROP_STRUCT) and a few slots around it, first hit of the kind the property
-// holds. [STRUCTPROBE-ANY-NAME] It accepted any object with a name other than "None" -- the struct getter and the
-// PropertyClass getter alike -- so on a shifted layout the first slot's named neighbour won.
-static uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t)) {
-    if (!fieldAddr) return 0;
-    constexpr int kDeltas[] = { 0, -8, 8, -16, 16, 4, -4, 12 };
-    for (int delta : kDeltas) {
-        int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
-        if (tryOff < 0) continue;
-        uintptr_t ptr = 0;
-        if (Macht::ReadSafe(fieldAddr + tryOff, ptr) && ptr && isKind(ptr)) {
-            std::string name = Ubel::GetName(ptr);
-            if (!name.empty() && name != "None") return ptr;
-        }
-    }
-    return 0;
-}
-
 uintptr_t UE5_GetFieldStructClass(uintptr_t fieldAddr) {
     // FStructProperty stores UScriptStruct* at DynOff::FSTRUCTPROP_STRUCT.
-    return ProbeSubclassSlot(fieldAddr, Ubel::IsScriptStructObject);
+    return Ubel::ProbeSubclassSlot(fieldAddr, Ubel::IsScriptStructObject);
 }
 
 uintptr_t UE5_GetFieldPropertyClass(uintptr_t fieldAddr) {
     // FObjectPropertyBase::PropertyClass sits at the same offset as
     // FStructProperty::Struct (DynOff::FSTRUCTPROP_STRUCT), and holds a UClass.
-    return ProbeSubclassSlot(fieldAddr, Ubel::IsClassObject);
+    return Ubel::ProbeSubclassSlot(fieldAddr, Ubel::IsClassObject);
 }
 
 int32_t UE5_GetClassPropsSize(uintptr_t classAddr) {

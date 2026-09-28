@@ -376,6 +376,9 @@ bool IsClassObject(uintptr_t obj);
 // only if it is one, else 0 (also for any other type). Every enum-slot reader goes through it.
 bool IsUEnumObject(uintptr_t obj);
 uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName);
+// The object in a property's subclass slot (DynOff::FSTRUCTPROP_STRUCT) of the kind `isKind` tests, else 0: the C-ABI
+// struct / PropertyClass getters. It lives here rather than in Frieren because a test target compiles this file.
+uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t));
 
 // Get the Outer object of a UObject
 uintptr_t GetOuter(uintptr_t uobjectAddr);

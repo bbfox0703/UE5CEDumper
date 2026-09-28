@@ -85,6 +85,20 @@ static std::mutex s_walkClassCacheMutex;
 static std::mutex s_structFieldCacheMutex;
 static std::mutex s_calibrationMutex;
 
+// CorrectSubclassOffsets' once-per-process latch. At namespace scope so dll_core_test, which compiles this file into its
+// own translation unit, can re-arm it.
+static std::atomic<bool> s_subclassCalibrated{false};
+// [FRIEREN-PROBE-OVERRUN] The family epoch at which CorrectSubclassOffsets found a real struct in the slot -- the one
+// proof that DynOff::FSTRUCTPROP_STRUCT is right, which a MEASURED layout is not (TQ2 derived 0x74 from measured
+// offsets and the struct sat at 0x78). Tagged with bit 32 so "never confirmed" (0) cannot equal epoch 0; a later
+// family move changes the epoch and so withdraws the proof.
+static std::atomic<uint64_t> s_subclassSlotConfirmed{0};
+static void MarkSubclassSlotConfirmed() {
+    s_subclassSlotConfirmed.store((uint64_t{1} << 32)
+                                      | DynOff::g_propertyFamilyEpoch.load(std::memory_order_acquire),
+                                  std::memory_order_release);
+}
+
 // Read FName from an address and resolve to string
 static std::string ReadFName(uintptr_t fnameAddr) {
     // FName is typically: int32 ComparisonIndex, int32 Number
@@ -1382,6 +1396,24 @@ bool IsClassObject(uintptr_t obj) {
 // class names, so an enum whose class is a UEnum subclass was dropped where the struct and class checks walk the chain.
 bool IsUEnumObject(uintptr_t obj) {
     return MetaclassIsKind(obj, "Enum", Aura::IsListedEnumClass);
+}
+
+// The subclass slot and a few slots around it, first hit of the kind the property holds. [STRUCTPROBE-ANY-NAME] It
+// accepted any object with a name other than "None" -- the struct getter and the PropertyClass getter alike -- so on a
+// shifted layout the first slot's named neighbour won.
+uintptr_t ProbeSubclassSlot(uintptr_t fieldAddr, bool (*isKind)(uintptr_t)) {
+    if (!fieldAddr) return 0;
+    constexpr int kDeltas[] = { 0, -8, 8, -16, 16, 4, -4, 12 };
+    for (int delta : kDeltas) {
+        int tryOff = DynOff::FSTRUCTPROP_STRUCT + delta;
+        if (tryOff < 0) continue;
+        uintptr_t ptr = 0;
+        if (Macht::ReadSafe(fieldAddr + tryOff, ptr) && ptr && isKind(ptr)) {
+            std::string name = GetName(ptr);
+            if (!name.empty() && name != "None") return ptr;
+        }
+    }
+    return 0;
 }
 
 uintptr_t ReadPropertyEnum(uintptr_t propAddr, const std::string& typeName) {
@@ -4415,14 +4447,13 @@ ReadArrayResult ReadMulticastDelegateArrayElements(
 // If a non-zero delta is found, all subclass offsets are updated.
 // ============================================================
 static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
-    static std::atomic<bool> s_checked{false};
-    if (s_checked.load(std::memory_order_acquire)) return;  // fast path: already calibrated
+    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;  // fast path: already calibrated
 
     // Slow path: serialize calibration so the parallel GObjects walkers can't
     // race on the DynOff:: writes below. Double-checked under the lock.
     std::lock_guard<std::mutex> lk(s_calibrationMutex);
-    if (s_checked.load(std::memory_order_acquire)) return;
-    if (!DynOff::bUseFProperty) { s_checked.store(true, std::memory_order_release); return; }
+    if (s_subclassCalibrated.load(std::memory_order_acquire)) return;
+    if (!DynOff::bUseFProperty) { s_subclassCalibrated.store(true, std::memory_order_release); return; }
 
     static const int kProbeDeltas[] = { 0, 4, -4, 8, -8, 0xC, -0xC };
     for (const auto& fi : fields) {
@@ -4451,7 +4482,8 @@ static void CorrectSubclassOffsets(const std::vector<FieldInfo>& fields) {
                 // through the helper for exactly that reason.
                 DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(corrected));
             }
-            s_checked.store(true, std::memory_order_release);
+            MarkSubclassSlotConfirmed();   // after the move, so the proof carries the corrected family's epoch
+            s_subclassCalibrated.store(true, std::memory_order_release);
             return;
         }
         // This StructProperty probe failed — try next one
@@ -6300,6 +6332,7 @@ InstanceWalkResult WalkInstance(uintptr_t instanceAddr, uintptr_t classAddr, int
                         {
                             std::lock_guard<std::mutex> lk(s_calibrationMutex);
                             DynOff::ApplyPropertyFamily(DynOff::PropertyFamilyAtBase(tryOffset));
+                            MarkSubclassSlotConfirmed();   // a real struct sits at the new slot
                         }
                     }
                     found = true;
