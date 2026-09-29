@@ -3124,7 +3124,8 @@ public class TeleportViewModelTests
     /// [AOBM-TRAINER-SETUP-MODAL] The standalone trainer lands in CE with every entry unticked, Setup included. A
     /// Setup that fails raises <c>showMessage</c>; activated by the push, that modal ran on CE's main thread while the
     /// plugin's single bridge worker waited on it, so every bridge client stalled until the user closed it. Ticked by
-    /// the user, no bridge call waits on the activation -- so the status has to tell the user to tick Setup.
+    /// the user, no bridge call waits on the activation and the bridge keeps serving other clients while the modal is
+    /// open (measured live 2026-09-29, build 3603) -- so the status has to tell the user to tick Setup.
     /// </summary>
     [Fact]
     public async Task Standalone_trainer_push_leaves_Setup_for_the_user_to_tick()

@@ -306,7 +306,9 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // bridge worker waits, so that modal blocks every bridge client until the user closes it (seen live
                 // 2026-09-29: a bridge-triggered activation whose record raised a modal timed the bridge call out), and
                 // an immediate read-back still sees Active=true. Ticked by the user in CE, no bridge call waits on the
-                // activation.
+                // activation, and the bridge keeps serving other clients while that modal is open (measured live
+                // 2026-09-29, build 3603: a GetAttachedProcess and a CreateAAScript whose Lua runs on CE's main
+                // thread both answered at once) -- only the worker that is itself waiting on the activation stalls.
                 var sent = await _aobMaker.CreateAAScriptAsync(e.Description, e.Script, autoActivate: false,
                                                                group: CeGroupTrainer);
                 if (sent) { ok++; }
