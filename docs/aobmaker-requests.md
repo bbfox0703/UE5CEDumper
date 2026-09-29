@@ -29,8 +29,9 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
   `showAsHex` rolled out (see [aobmaker-integration.md](aobmaker-integration.md)), and a client cannot tell
   "applied" from "ignored". Every new field below should appear in R1's `features` list.
 - **No new modal dialogs.** The bridge has one worker and no handler timeout, so a dialog blocks every client. A
-  request that makes CE do more work must not add a path that can raise one. UE5CEDumper breaks this rule itself
-  today: the standalone trainer's Setup (`[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md); AOBMaker reply §2.4).
+  request that makes CE do more work must not add a path that can raise one. UE5CEDumper broke this rule itself
+  with the standalone trainer's Setup, pushed ticked; since `1f9cf2ef` it is pushed unticked
+  (`[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md); AOBMaker reply §2.4).
 
 ## Summary
 
@@ -171,10 +172,11 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
     An exception there replies `success:false` although the records exist.
 - **Consumers in UE5CEDumper:**
   - the Pointer panel's Register GWorld and Register &GEngine symbol buttons;
-  - the standalone trainer's Setup row.
+  - the standalone trainer's Setup row, until `1f9cf2ef` pushed it unticked.
 
-  Both use `autoActivate:true`, and today both report success whatever happened. The trainer Setup's own failure
-  path also raises a modal over the bridge: our defect, `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md).
+  Both used `autoActivate:true`, and both reported success whatever happened. The trainer Setup's own failure
+  path also raised a modal over the bridge: our defect, `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md), fixed
+  in source by leaving Setup for the user to tick.
 - **Acceptance:** send a script with a deliberate syntax error and `autoActivate:true`. The reply is
   `success:true, activated:false`, with the reason in `message`. With no pre-check, nothing guarantees that no dialog
   appears; whether a failed activation raises one is not measured yet (AOBMaker eval §6).
