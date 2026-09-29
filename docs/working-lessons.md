@@ -2627,6 +2627,10 @@ is fast and gives exact bytes. Two traps, one of which the maintainer caught on 
   without killing the old one -- TWO CE instances, both loading the AOBMaker plugin, both serving the same pipe name.
   The maintainer saw it ("multiple CE"). `tasklist | grep -ic cheatengine` first; kill ALL
   `cheatengine-x86_64-SSE4-AVX2.exe` (the shim `Cheat Engine.exe` exits at once) before starting exactly one.
+  ⚠ **computer-use's `open_application` is the same trap (2026-09-29):** asked to bring the running CE forward, it
+  STARTED A SECOND ONE, with an empty table and no process -- and it took a moment to see that the bridge still
+  answered from the first. Front a running CE with `py tools/verify/front_window.py front cheatengine`, never
+  `open_application`.
 - ⚠ **`OSError: [Errno 22] Invalid argument` on `open(pipe)` means BUSY, not absent** (absent is errno 2). The plugin
   serves one request per connection and re-creates the instance, so a second connection right after the first can
   land in that gap. Retry for a few seconds; do not read it as "the plugin is not loaded".
@@ -2700,6 +2704,16 @@ satisfies it against a locally rebuilt 3263 dist. The two checks disagree by des
 
 A size-or-build-number comparison, or the embedded `1.0.0.NNNN` string, would be the honest
 predicate here; SHA-256 answers a question nobody asked.
+
+### 3.xa A publish with a game still injected fails at the LAST step — after it spent a build number
+
+2026-09-29: `build.ps1 -Mode Publish` ran while DumperTest still had `dist\UE5Dumper.dll` loaded (`inject.py` loads the
+`dist\` copy by path, and a loaded DLL cannot be overwritten). Everything compiled and linked; the copy into `dist\`
+failed (`Copy-Item … IOException`, exit 1) — and `build_number.txt` had already been bumped to 3601 at the start. The
+old `dist\` stayed in place, so a quick "sizes look right" check passed on the PREVIOUS build.
+**How to apply:** (1) before a publish, close every game injected from `dist\` and the UI (`tasklist`). (2) Read the
+publish's exit code and `dist\build_number.txt` before calling it done — a size that matches the last build is not
+evidence. (3) A number spent this way is gone: say so in its commit and in the dev-log, and do not reuse it.
 
 -----
 
