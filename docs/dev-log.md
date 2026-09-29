@@ -44,6 +44,9 @@ builds ≤696 in
   automatic Structure Dissect on and off.
 - Not built on Windows and not checked on a game yet: `verification-register.md` `[AOBMAKER-A1-A9-LIVE]`. Commit
   `90c732e5`; C# 5895 on linux-x64 with the 107 Windows-only failures the tree already had, headless 15/15.
+- The AOT and trim analyzers (a Release build with `-p:PublishAot=true`, warnings as errors) report nothing on the
+  new code; a reflection-based `JsonSerializer` call dropped in as a control fails that build with IL2026 / IL3050.
+  The analyzers do not see Avalonia's own reflection, so the trimmed publish itself is still owed.
 
 ## 2026-09-28 (build 3598) — Cheat Engine's struct and class getters no longer answer with an object from outside the property `[FRIEREN-PROBE-OVERRUN]`
 

@@ -962,7 +962,8 @@ values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sen
 Shipped in `90c732e5`, UI only; the rows are in `todo.md` `[AOBMAKER-EVAL-2026-09-29]` and the design in
 `aobmaker-integration-eval.md`. Unit tests pin what each button sends to a scripted bridge and what the status line
 then says; what is owed is the plugin, AOBMaker.UI and the game. ⚠ It has also never run AOT-trimmed: the first live
-run needs a `-Mode Publish` build. On DumperTest with the NEW UI, Cheat Engine with the AOBMaker plugin, CE attached
+run needs a `-Mode Publish` build. (The AOT / trim analyzers are clean on it — a `-p:PublishAot=true` build — but they
+do not see Avalonia's own reflection.) On DumperTest with the NEW UI, Cheat Engine with the AOBMaker plugin, CE attached
 to the game:
 
 1. **+CE / HEX on result rows (A2, A3).** Value Search a known float, then +CE on the candidate.
