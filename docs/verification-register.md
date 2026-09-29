@@ -978,10 +978,12 @@ AOBMaker.UI of the same build; UE5DumpUI build 3599 (AOT, 58,864,640 B), the fix
 | A7, build 3602 | ✅ **Live Funcs**, the refusal path only: a 6-function recording held Blueprint events alone; ASM on one says "No native code address for BlueprintModifyCamera" and CE's disassembler stays put. The native path is the shared one proven above: a native UFUNCTION invoked through the pipe during a recording was not captured, so this panel never had one to press |
 | A8 GObjects / GNames SYM | ✅ seeds = scan hit + 4 (GObjects) and the scan hit (GNames); `getAddress` equals the DLL's address for both; AOBMaker.UI closed → "not running", nothing pushed; busy (3600) → "busy" |
 | A9 Auto Structure Dissect | ✅ file + unticked record; ticked, Define new structure uses reflected names. ❌ on 3599 when CE opened the game before the inject (false "not loaded"); fixed in 3600, ✅ live in that order |
+| A9, build 3602 | ✅ **untick**: `_ue5_dissect_state`'s two callback ids go from set to `nil`, and Define new structure is CE's own again ("unnamed structure 1", `Pointer` / `4 Bytes` guesses). ⚠ **CE 7.7 has its own UE dissector** (`Extensions\UETools`, the "Unreal Engine → Use when dissecting structures" item, on by default once it recognizes the game): it registers a name lookup and a `registerStructureDissectOverride2`, and with both on **it wins** -- the structure appears at once as `DumperTestActor` with its fields (`vftable`, `Name`, `PersistentLevel`), no name dialog, ours never called. With that item off, ticking ours gives `DumperTestActor_0` with ours (`VTable`, `ObjectFlags`, `FNameIndex`, `PrimaryActorTick.TickGroup`, bit masks). The 3599 PASS was ours: the object name shows UETools had not registered yet. → `[AOBM-DISSECT-UETOOLS]` |
 
 The first round (3599 / 3600) left some paths to unit tests; the ", build 3602" rows above close them, on the same
 fixture with UE5DumpUI build 3602. Still not covered live: Live Funcs' ASM on a *native* function (above), and A8's
-adjusted-signature refusal (needs Avowed). New rows it produced: `[AOBM-UI-BUSY]`, `[AOBM-SYSTAB-ASM-SILENT]`.
+adjusted-signature refusal (needs Avowed). A9's rows are read with CE 7.7's UETools dissect hooks switched off unless
+they say otherwise, and switched back on afterwards. New rows it produced: `[AOBM-UI-BUSY]`, `[AOBM-SYSTAB-ASM-SILENT]`.
 
 *The plan as it was written before the check:*
 

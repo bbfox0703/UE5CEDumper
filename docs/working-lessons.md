@@ -3158,6 +3158,26 @@ so the game thread pumps ProcessEvent, and prefer simple scalar returns.
 > should now be treated as **evidence of a bad slot first**, since that is what it turned out to be
 > every time we have actually chased it.
 
+### 4.5 CE 7.7 has its own UE dissector: find out WHICH hook answered before crediting ours
+
+CE 7.7 ships `Extensions\UETools` (the **Unreal Engine** menu on CE's main window). Once its background
+scan recognizes the game it registers a structure **name lookup** and a
+`registerStructureDissectOverride2`, and adds "Use when dissecting structures", **checked**. From then
+on, Define new structure in Structure Dissect is answered by UETools **before ours is asked**: the
+structure appears at once, with no name dialog and with UETools' field names. Measured 2026-09-29 on
+DumperTest, build 3602 (`[AOBM-DISSECT-UETOOLS]`): with both on, ticking our Auto Structure Dissect
+changed nothing. The first round's A9 PASS was genuinely ours only because UETools had not registered yet.
+
+**How to apply.** Any live check of a CE structure-dissect feature reads the result's **signature**, not
+just "fields have real names": UETools names a structure by its **class** (`DumperTestActor`) and uses
+`vftable` / `Name` / `PersistentLevel`; ours names it by the **object** (`DumperTestActor_0`) and uses
+`VTable` / `ObjectFlags` / `FNameIndex` / bit masks. Read the hook state from CE's Lua first
+(`UEngineStructNameLookup`, `UEngineStructDissect`, `_ue5_dissect_state`). To isolate ours, call
+`unregisterUEngineStructureLookupCallbacks()` and uncheck the item, then put both back afterwards. The
+maintainer runs CE with UETools on. ⚠ A callback id is not a slot number you can reason about: in 7.7,
+`registerStructureNameLookup(fn, true)` returned **2** while slot 0 was free, which our local CE clone
+(older than 7.7) cannot explain.
+
 -----
 
 ## 5. Triage recipes
