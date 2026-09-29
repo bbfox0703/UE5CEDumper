@@ -1099,6 +1099,30 @@ do
   dissect.disableAutoCallback()
 end
 
+uetCase('UETOOLS: an item the user turned off BEFORE our enable is theirs: re-checking it later is left alone', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  userClicksItem()   -- the user turns UETools off (working-lessons 4.5's "to isolate ours")
+  eq(UET.unreg, 1, 'their click unregistered it')
+  local r = dissect.enableAutoCallback()
+  eq(r, true, 'a clean enable')
+  eq(UET.unreg, 1, 'nothing to suspend')
+  local t = ST_().uetoolsWatch
+  check(t ~= nil, 'the watch runs for a later scan')
+  userClicksItem()   -- and back on, deliberately, to compare with ours
+  tick(t)
+  eq(UET.unreg, 1, "the user's re-check of the item they had turned off is not fought")
+  eq(item.Checked, true, 'the item keeps the tick they gave it')
+  check(UEngineStructDissect ~= nil, "UETools' hooks stay on")
+  -- A real late registration still comes with a new item, and is suspended.
+  uetStartsOver(false)
+  uetScanCompletes()
+  tick(t)
+  eq(UET.unreg, 2, 'a new scan is suspended')
+  eq(UEngine.GUI.miStructureDissectCallbackStatus.Checked, false, 'its new item unchecked')
+  dissect.disableAutoCallback()
+end
+
 uetCase('UETOOLS: the game restarts with ours still ticked -> the new process\'s UETools is suspended too', 'live')
 do
   dissect.enableAutoCallback()
