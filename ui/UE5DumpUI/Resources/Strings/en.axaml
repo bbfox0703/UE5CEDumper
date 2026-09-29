@@ -234,6 +234,8 @@
     <sys:String x:Key="str.LiveWalker.SearchHint">Search fields...</sys:String>
     <sys:String x:Key="str.LiveWalker.MatchPrev">▲</sys:String>
     <sys:String x:Key="str.LiveWalker.MatchNext">▼</sys:String>
+    <!-- [AOBM-LIVEWALKER-HEX-SILENT] What the HEX status line calls a pointer field's target ({0} = the field). -->
+    <sys:String x:Key="str.LiveWalker.PtrTargetLabel">{0} target</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchPrev">Jump to the previous matching field (wraps to the last match)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.MatchNext">Jump to the next matching field (wraps to the first match)</sys:String>
     <sys:String x:Key="str.LiveWalker.GenerateCeAA">Copy CE AA Script</sys:String>
