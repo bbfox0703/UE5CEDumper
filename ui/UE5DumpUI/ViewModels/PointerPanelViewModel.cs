@@ -1098,39 +1098,24 @@ public partial class PointerPanelViewModel : ViewModelBase
     // --- AOBMaker CE Plugin: data pointer → hex view (memory dump) ---
 
     [RelayCommand]
-    private async Task HexGObjectsAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GObjectsAddress)) return;
-        await _aobMaker.NavigateHexViewAsync(StripHexPrefix(GObjectsAddress));
-    }
+    private Task HexGObjectsAsync()
+        => MoveCeViewAsync(GObjectsAddress, "GObjects", disassembler: false);
 
     [RelayCommand]
-    private async Task HexGNamesAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GNamesAddress)) return;
-        await _aobMaker.NavigateHexViewAsync(StripHexPrefix(GNamesAddress));
-    }
+    private Task HexGNamesAsync()
+        => MoveCeViewAsync(GNamesAddress, "GNames", disassembler: false);
 
     [RelayCommand]
-    private async Task HexGWorldAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GWorldAddress)) return;
-        await _aobMaker.NavigateHexViewAsync(StripHexPrefix(GWorldAddress));
-    }
+    private Task HexGWorldAsync()
+        => MoveCeViewAsync(GWorldAddress, "GWorld", disassembler: false);
 
     [RelayCommand]
-    private async Task HexSparseDelegatesAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(SparseDelegatesAddress)) return;
-        await _aobMaker.NavigateHexViewAsync(StripHexPrefix(SparseDelegatesAddress));
-    }
+    private Task HexSparseDelegatesAsync()
+        => MoveCeViewAsync(SparseDelegatesAddress, "FSparseDelegateStorage", disassembler: false);
 
     [RelayCommand]
-    private async Task HexGEngineAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GEngineAddress)) return;
-        await _aobMaker.NavigateHexViewAsync(StripHexPrefix(GEngineAddress));
-    }
+    private Task HexGEngineAsync()
+        => MoveCeViewAsync(GEngineAddress, "&GEngine", disassembler: false);
 
     // --- AOBMaker CE Plugin: scan address → disassembler (code) ---
 
