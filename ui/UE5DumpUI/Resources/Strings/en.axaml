@@ -473,7 +473,7 @@
     <sys:String x:Key="str.AobMaker.GenAob.NoReply">AOBMaker.UI did not answer: an older build may not have GenerateAob</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Failed">AOBMaker.UI could not make a unique AOB for '{0}': {1}</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.NotRipRelative">Not pushed: AOBMaker.UI did not decode the instruction at 0x{1:X} as RIP-relative, so no symbol script can replay '{0}'</sys:String>
-    <sys:String x:Key="str.AobMaker.GenAob.NoDirectRip">Not pushed: no instruction in the scan hit for '{0}' points straight at it (its signature adjusts the address or follows a call), so a symbol script cannot replay it</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.NoDirectRip">Not pushed: no instruction in the scan hit for '{0}' points straight at it (its signature adjusts the address, dereferences it or follows a call), so a symbol script cannot replay it</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Unreadable">Not pushed: could not read game memory at 0x{1:X} to check where '{0}' would land</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Mismatch">Not pushed: the AOB would register '{0}' at 0x{1:X}, but the DLL resolved {2} (this signature dereferences or adjusts)</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Injecting">Adding {0} to the current CE table…</sys:String>

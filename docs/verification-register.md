@@ -250,7 +250,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -956,6 +956,51 @@ ladder as runtime-only and re-applied on every init, so no cached detection need
 values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sentence above stands.
 
 -----
+
+### ⬜ SHIPPED 2026-09-29, NEEDS A LIVE CHECK — `[AOBMAKER-A1-A9-LIVE]`: the AOBMaker buttons of Eval A1–A9
+
+Shipped in `90c732e5`, UI only; the rows are in `todo.md` `[AOBMAKER-EVAL-2026-09-29]` and the design in
+`aobmaker-integration-eval.md`. Unit tests pin what each button sends to a scripted bridge and what the status line
+then says; what is owed is the plugin, AOBMaker.UI and the game. ⚠ It has also never run AOT-trimmed: the first live
+run needs a `-Mode Publish` build. On DumperTest with the NEW UI, Cheat Engine with the AOBMaker plugin, CE attached
+to the game:
+
+1. **+CE / HEX on result rows (A2, A3).** Value Search a known float, then +CE on the candidate.
+   - **CE side:** a Float record at the candidate's address, reading the value the grid shows. HEX moves the Memory
+     Viewer's hex pane to that address.
+   - **UI side:** "Added to CE: <name>".
+   - Repeat on a Snapshot diff row and an SPC row captured THIS launch. A row from an earlier launch has both buttons
+     disabled; an `Arr[3]` row is refused with "is an array element".
+   - Instance Finder: +CE on a delegate field lands on its payload (FieldAddress + 8 on a Development build).
+2. **AA push (A1).** Instance Finder → AA on an instance.
+   - **CE side:** an unticked AA record named `"<Class>"`; ticking it registers the symbol at the instance.
+   - With CE closed: the XML is on the clipboard and the status says copied.
+3. **HEX / ASM (A4, A5, A7).**
+   - Object Tree's context-menu HEX, Class Pivot's HEX, Related Objects' HEX: the hex pane moves to the object.
+   - Pointer panel ASM on the FSparseDelegateStorage and &GEngine scan hits: the disassembler moves there.
+   - ASM on a native function in Live Walker, Interesting Functions, Live Funcs and the function-properties dialog:
+     a `"<function> (code)"` ByteArray record appears and the disassembler shows the exec thunk.
+4. **Attach check (A6).** Open another process in CE and press ⟳.
+   - **UI side:** the toolbar shows "⚠ CE is not on this game"; its tooltip names CE's pid and the game's. With no
+     process open in CE: "has no process open". Reattach and ⟳: the warning clears.
+   - **CE side:** the plugin log has `GetAttachedProcess: pid=…` for each ⟳.
+5. **GObjects / GNames SYM (A8).** AOBMaker.UI running at the same elevation; SYM on GObjects.
+   - **AOBMaker.UI side:** its log has `GenerateAob request: … address=0x…` naming the INSTRUCTION inside the scan
+     hit (not the scan hit itself when the pattern has leading context), then `GenerateAob: SUCCESS — aob=…`.
+   - **CE side:** an enabled `GObjects → gobjects_addr` record, and `getAddress('gobjects_addr')` in CE's Lua console
+     equals the GObjects address on the Pointer panel. The same for GNames.
+   - AOBMaker.UI closed: "AOBMaker.UI is not running", and nothing is pushed.
+   - A game whose winning GObjects signature has a non-zero `adjustment` in Himmel: the refusal says the signature
+     adjusts, and AOBMaker.UI's log shows no request.
+6. **Auto Structure Dissect (A9).** Tools → Add Auto Structure Dissect to Current CE Table.
+   - **CE side:** `ue5_dissect.lua` among the table's files, and an unticked `UE5CEDumper: Auto Structure Dissect
+     (UObjects)` record in the `UE5CEDumper (DLL)` group.
+   - Tick it: the Lua Engine window does not stay open. Structure Dissect on a UObject address names the object in its
+     title and fills the fields from reflection. Untick it: CE's own guessing is back.
+   - With the DLL not injected, ticking shows "UE5Dumper.dll is not loaded in this game" and the record unticks
+     itself.
+
+Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4).
 
 ### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
 

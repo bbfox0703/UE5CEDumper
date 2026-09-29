@@ -126,6 +126,8 @@ Create an Auto Assembler script entry in CE's address list.
 **Used by:**
 - LiveWalker: `GenerateInvokeScriptAsync` sends UFunction invoke scripts directly to CE (falls back to clipboard if AOBMaker unavailable)
 - Teleport tab: **Add records to CE** nests the DLL-mailbox Teleport / Movement / Fly scripts under `group` = `"UE5CEDumper (DLL)"`, and **Export standalone trainer** nests the no-DLL trainer entries under `"UE5CEDumper (no-DLL trainer)"` — so the many pushed scripts collapse into two folders (pure-Lua vs DLL-call), not littering the address-list root.
+- Instance Finder: **AA** (register a symbol at the instance) pushes like Live Walker's AA and falls back to the clipboard (`[AOBM-INSTFINDER-AA]`, `AobMakerActions.PushAaScriptOrCopyAsync`).
+- Tools menu **Add Auto Structure Dissect to Current CE Table**: the unticked record that switches `ue5_dissect.lua`'s auto mode, under `"UE5CEDumper (DLL)"` (`[AOBM-DISSECT-INJECT]`, `DissectScriptGenerator`).
 
 ### 4. `InjectTableFile`
 
@@ -152,6 +154,8 @@ The plugin handler runs `synchronize(function() ... end)` so all CE Lua APIs (`f
 
 **Used by:**
 - Tools menu **Inject Helper into Current CE Table** — UE5DumpUI ships the embedded `ue5_invoke_helper.lua` straight into the user's open .CT. Falls back to "use Export to disk + Add File..." if AOBMaker plugin isn't loaded.
+- Tools menu **Inject Freeze Helper into Current CE Table** — the same for `ue5_freeze_helper.lua`.
+- Tools menu **Add Auto Structure Dissect to Current CE Table** — embeds `ue5_dissect.lua`, then adds its enable record with `CreateAAScript`. No clipboard fallback: the record is useless without the file (`[AOBM-DISSECT-INJECT]`).
 
 ### 5. `CreateSymbolScript`
 
@@ -187,7 +191,9 @@ Create an AOB-scan-based symbol registration AA script. The CE Plugin's `BuildSy
 The generated script performs: `AOBScanModule` → read RIP-relative displacement at `pos` → calculate `match + pos + 4 + [displacement]` → register as CE symbol. Survives game restarts (re-scans on script enable).
 
 **Used by:**
-- PointerPanel: SYM button registers GWorld pointer as persistent CE symbol
+- PointerPanel: SYM buttons register GWorld and &GEngine from the DLL's own AOB triple.
+- PointerPanel: SYM on GObjects and GNames, with an AOB from AOBMaker.UI's `GenerateAob` (see "AOBMaker.UI's own
+  pipe" below).
 
 ### 6. `CreateMemoryRecord`
 
@@ -231,11 +237,82 @@ record's `0` still serializes), and omits `isSigned` / `showAsHex` when `false`.
   `CreateMemoryRecord` over the multi-selection, one top-level record per field, early-bails
   if the pipe drops mid-batch). It does NOT reproduce the hierarchical pointer-chain layout —
   Copy CE XML / Copy CE Field stay clipboard-only for that.
+- The **+CE** buttons of Value Search, Snapshot, SPC and Instance Finder, typed from the row's type name through
+  `CeXmlExportService.MapTypeNameToCeRecordType` (an enum of unknown width goes as one byte). See "Other panels"
+  under UI Integration Points.
+- **ASM** on a function row (Live Walker, Interesting Functions, Live Funcs, the function-properties dialog and the
+  xref dialog): a ByteArray record `"<function> (code)"` at the native entry, then `NavigateDisassembler`.
 
 > **Minimum AOBMaker build:** the typed-record push works against any plugin that handles
 > `CreateMemoryRecord`, but the `showAsHex` flag (pointer / 8-byte fields shown as hex)
 > needs a plugin **compiled on/after 2026-06-07**. On older plugins the record is still
 > created — it just displays in decimal.
+
+### 7. `GetAttachedProcess`
+
+Which process Cheat Engine has open. The plugin reads CE's `OpenedProcessID` and the image name.
+
+```json
+// Request
+{ "type": "GetAttachedProcess" }
+
+// Response
+{ "type": "AttachedProcessResult", "success": true, "processId": 12345, "processName": "Game-Win64-Shipping.exe" }
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `processId` | int | CE's open process; `0` when it has none |
+| `processName` | string | Image file name, or empty. Read through the ANSI API, so a non-ASCII name arrives with `?` in it: compare by id, never by name |
+
+**Used by** (`[AOBM-ATTACH-CHECK]`, `AobMakerStatus.CheckAttachAsync`): the toolbar's **⚠ CE is not on this game**,
+checked at connect and on ⟳, and the text of a +CE that CE refused. A warning only — a push into a CE with nothing
+open is sometimes exactly right (the DLL bootstrap), so nothing is refused on its account. No reply, or no
+`processId`, reads as "cannot tell" and says nothing.
+
+---
+
+## AOBMaker.UI's own pipe (`\\.\pipe\AOBMaker`)
+
+A different server from everything above: **AOBMaker.UI**, the desktop app, not the Cheat Engine plugin. It exists
+only while that app is open. UE5DumpUI uses one command on it, through `Services/AobMakerUiClient`.
+
+| Item | Value |
+|------|-------|
+| Pipe name | `\\.\pipe\AOBMaker` (AOBMaker's default; a renamed pipe reads as "not running") |
+| Framing | the same: 4-byte LE length + UTF-8 JSON, one request per connection |
+| Caller check | same user, integrity at least the server's; otherwise a message starting `Rejected:` |
+| Quirks | `success` is left out when false; an unknown `type` gets **no reply** |
+| Deadlines | connect 2 s; reply 30 s (the uniqueness scan is handler work and can be slow) |
+
+### `GenerateAob`
+
+```json
+// Request
+{ "type": "GenerateAob", "address": "0x7FF6100000C", "processId": 12345 }
+
+// Response (RIP-relative seed)
+{ "type": "GenerateAobResult", "success": true, "aob": "48 89 5C 24 ?? 48 8B 05 ?? ?? ?? ??",
+  "injectionOffset": 5, "matchCount": 1, "pos": 8, "aoblen": 12, "module": "Game-Win64-Shipping.exe",
+  "message": "Unique AOB found in Game-Win64-Shipping.exe (+...)" }
+```
+
+AOBMaker decodes the instruction **at** `address` (the seed), then grows context until the AOB is unique (mask
+Mode A, `MaxResults` 2). `pos` and `aoblen` are relative to the AOB's start, which lies `injectionOffset` bytes
+before the seed, and are present only for a RIP-relative seed.
+
+**Used by** the GObjects / GNames **SYM** buttons (`[AOBM-GNAMES-SYMBOL]`,
+`PointerPanelViewModel.RegisterSymbolViaGenerateAobAsync`):
+
+1. Read 64 bytes at the scan hit. It is where the DLL's PATTERN matched, and the RIP instruction can sit further
+   in, so find the one whose `[rip+disp32]` lands exactly on the address the DLL resolved
+   (`AobMakerActions.FindRipSeed`). None → refuse: the signature adjusts, dereferences or follows a call.
+2. `GenerateAob` on that instruction.
+3. Replay what CE's script will do — `disp = [aob + pos]`, `aob + aoblen + disp` — against game memory, and push
+   `CreateSymbolScript` only when it lands on the DLL's address.
+
+Every failure names its remedy: AOBMaker.UI not running, refused (elevation), no reply (an older build without
+`GenerateAob`), no unique AOB (AOBMaker's own words), not RIP-relative, replay mismatch.
 
 ---
 
@@ -317,6 +394,9 @@ Each `NavigateHexViewAsync` / `NavigateDisassemblerAsync` / `CreateAAScriptAsync
 | GNames **ASM** | `NavigateDisassembler` | `GNamesScanAddr` | `IsAobMakerAvailable && addr != 0` |
 | GWorld **ASM** | `NavigateDisassembler` | `GWorldScanAddr` | `IsAobMakerAvailable && addr != 0` |
 | GWorld **SYM** | `CreateSymbolScript` | `GWorldAob` + metadata | `IsAobMakerAvailable && addr != 0 && AOB != ""` |
+| &GEngine **SYM** | `CreateSymbolScript` | `GEngineAob` + metadata | as GWorld |
+| GObjects / GNames **SYM** | `GenerateAob` (AOBMaker.UI) → `CreateSymbolScript` | the RIP instruction inside `<X>ScanAddr` | `IsAobMakerAvailable && addr != 0 && scan addr != 0` |
+| FSparseDelegateStorage / &GEngine scan hit **ASM** | `NavigateDisassembler` | `SparseDelegatesScanAddr` / `GEngineScanAddr` | `IsAobMakerAvailable && addr != 0` |
 
 - **HEX** = data address → CE hex dump
 - **ASM** = code address (AOB scan hit) → CE disassembler
@@ -332,13 +412,27 @@ Each `NavigateHexViewAsync` / `NavigateDisassemblerAsync` / `CreateAAScriptAsync
 | Field **+CE** | `CreateMemoryRecord` | `field.FieldAddress` — typed via `MapFieldToCeRecordType` |
 | Ptr **+CE** | `CreateMemoryRecord` | `field.PtrAddress` — 8 Bytes / ShowAsHex (`PointerRecordType`) |
 
+### Other panels `[AOBMAKER-EVAL-2026-09-29]`
+
+These share one availability flag, `Helpers/AobMakerStatus`: probed when their tab is opened (5 s cooldown),
+repainted by the toolbar ⟳, and re-learned by every push. The actions themselves are `Helpers/AobMakerActions`.
+
+| Panel | Buttons | Address | Notes |
+|-------|---------|---------|-------|
+| Value Search | HEX, +CE on candidates and group slots | the candidate / leaf address | a slot only when the decoder gave it a leaf address |
+| Snapshot diff, SPC | HEX, +CE on rows and group slots | owner + offset | the Copy button's session gate; an array-element row (`Name[3]`) is refused: it has only its owner's address |
+| Instance Finder | HEX, +CE on fields; HEX on instances and container owners; AA pushes | `PayloadAddress` for fields | no +CE on an object base: it would show a vtable pointer |
+| Object Tree, Class Pivot, Related Objects | HEX | the object | Class Pivot keeps its session gate |
+| Live Walker functions, Interesting Functions, Live Funcs, function-properties dialog | ASM | the native entry | see `CreateMemoryRecord` above |
+
 ### Top-Toolbar Status Chip
 
 `MainWindow.axaml` carries an always-visible AOBMaker status chip (colored dot +
 Connected/Offline + **⟳** refresh) bound to `MainWindowViewModel.IsAobMakerAvailable`.
 It mirrors the per-tab availability (LiveWalker / Pointers each probe on tab activation),
 and the **⟳** button re-probes on demand (`RefreshAobMakerCommand`). The System-tab
-indicator (PointerPanel) stays as the detailed in-tab status.
+indicator (PointerPanel) stays as the detailed in-tab status. Beside it, **⚠ CE is not on this game** appears when
+`GetAttachedProcess` says Cheat Engine has another process open, or none; its tooltip says which.
 
 ### Invoke Script Delivery
 
@@ -395,7 +489,10 @@ AOBMaker CE Plugin
 
 | File | Role |
 |------|------|
-| `ui/UE5DumpUI/Core/IAobMakerBridge.cs` | Interface — 7 methods (incl. `CreateMemoryRecordAsync`, `InjectTableFileAsync`) |
+| `ui/UE5DumpUI/Core/IAobMakerBridge.cs` | Interface — 8 methods (incl. `CreateMemoryRecordAsync`, `InjectTableFileAsync`, `GetAttachedProcessAsync`) |
+| `ui/UE5DumpUI/Core/IAobMakerUiClient.cs`, `Services/AobMakerUiClient.cs`, `Models/AobMakerUiMessage.cs` | AOBMaker.UI's own pipe: `GenerateAob` |
+| `ui/UE5DumpUI/Helpers/AobMakerStatus.cs`, `Helpers/AobMakerActions.cs` | The shared flag and actions of the panels added 2026-09-29 |
+| `ui/UE5DumpUI/Services/DissectScriptGenerator.cs`, `Services/DissectLuaResource.cs` | Auto Structure Dissect record + the embedded `ue5_dissect.lua` |
 | `ui/UE5DumpUI/Services/CeXmlExportService.cs` | `MapFieldToCeRecordType` / `PointerRecordType` — UE→CE record-type mapping shared with Copy CE XML/Field |
 | `ui/UE5DumpUI/Services/AobMakerBridgeService.cs` | Implementation — pipe client, per-request reconnect |
 | `ui/UE5DumpUI/Models/AobMakerMessage.cs` | Wire model + AOT-safe `JsonSerializerContext` |

@@ -214,7 +214,7 @@ internal static class AobMakerActions
 
     internal static string GenerateAobNoDirectRipText(string symbol)
         => AobMakerStatus.Say(KeyGenAobNoDirectRip,
-            "Not pushed: no instruction in the scan hit for '{0}' points straight at it (its signature adjusts the address or follows a call), so a symbol script cannot replay it",
+            "Not pushed: no instruction in the scan hit for '{0}' points straight at it (its signature adjusts the address, dereferences it or follows a call), so a symbol script cannot replay it",
             symbol);
 
     internal static string GenerateAobUnreadableText(string symbol, ulong addr)

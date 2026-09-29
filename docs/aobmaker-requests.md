@@ -42,6 +42,7 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
 | R14 | P3 | new command | Find the instructions that reference an address | `[AOBM-EXPORT-GWORLD-AOB]` | |
 | R15 | P3 | schema | `customType` on records | `[AOBM-CUSTOMTYPE]` | |
 | R16 | P2 | defects / docs | Protocol hygiene: whitespace, key order, number types, nulls, missing replies, doc drift | any client of the bridge | |
+| R17 | P3 | schema | `CreateSymbolScript` adds a constant after the RIP resolution | `[AOBM-GWORLD-GENAOB]` (adjusted signatures) | |
 
 ---
 
@@ -303,6 +304,18 @@ external client a debugging session.
     `docs/Bulk-Records-Protocol-Spec.md` describes.
   - A batch's timestamp is set only at `Begin`. So another client's `Begin` more than 10 minutes into a long import
     sweeps the live batch.
+
+## R17 — `CreateSymbolScript` with an offset (P3, schema)
+
+- **Why:** found while implementing Eval A8 (UE5CEDumper `90c732e5`). Nine of UE5CEDumper's signatures (eight
+  GObjects, one GNames) resolve to the RIP target PLUS a constant (−0x14 to +0x0C), because the instruction
+  addresses a member of the structure, not its start. `CreateSymbolScript` registers `aob + aoblen + disp` and
+  nothing else, so for those games UE5CEDumper refuses to register `gobjects_addr` / `gnames_addr` rather than
+  register a wrong one.
+- **Request:** an optional `offset` (signed integer, default 0) added to the resolved address before
+  `registersymbol`. Omitted, the script is byte-identical to today's.
+- **Alternative:** UE5CEDumper can emit its own symbol script through `CreateAAScript`. It would then duplicate the
+  plugin's generator, including its module-name fallback, which is why this is filed.
 
 ## Not requested
 

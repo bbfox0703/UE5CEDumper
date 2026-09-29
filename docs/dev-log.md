@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-09-29 (not built yet — the next build carries it) — AOBMaker where the app only copied: +CE / HEX / ASM on nine more panels, GObjects and GNames symbols, Auto Structure Dissect `[AOBMAKER-EVAL-2026-09-29]`
+
+- Value Search, Snapshot, SPC and Instance Finder rows get **+CE** (a typed record in Cheat Engine's address list) and
+  **HEX** (CE's hex view) beside Copy. Snapshot and SPC keep their "this launch only" rule; a snapshot row for an
+  array element is refused, because the snapshot kept only its owner's address.
+- **HEX** in Object Tree, Class Pivot and Related Objects; **ASM** (disassembler) on the FSparseDelegateStorage and
+  &GEngine scan hits, and on native functions in Live Walker, Interesting Functions, Live Funcs and the
+  function-properties dialog.
+- Instance Finder's **AA** goes straight into CE when the AOBMaker plugin is up, like Live Walker's.
+- The toolbar warns **"⚠ CE is not on this game"** when Cheat Engine has another process open, or none.
+- **SYM** on GObjects and GNames registers `gobjects_addr` / `gnames_addr`, with an AOB from AOBMaker.UI (the app must
+  be open). Nothing is registered unless the AOB lands on the address the DLL found; games whose signature adjusts
+  the address are refused for now (AOBMaker request R17).
+- **Tools → Add Auto Structure Dissect** puts `ue5_dissect.lua` into the open CE table with a record that turns its
+  automatic Structure Dissect on and off.
+- Not built on Windows and not checked on a game yet: `verification-register.md` `[AOBMAKER-A1-A9-LIVE]`. Commit
+  `90c732e5`; C# 5895 on linux-x64 with the 107 Windows-only failures the tree already had, headless 15/15.
+
 ## 2026-09-28 (build 3598) — Cheat Engine's struct and class getters no longer answer with an object from outside the property `[FRIEREN-PROBE-OVERRUN]`
 
 - `UE5_GetFieldStructClass` / `UE5_GetFieldPropertyClass` (the exports CE Lua calls): when a property's slot does

@@ -1,6 +1,9 @@
 # AOBMaker — what else UE5CEDumper could hand to it (evaluation)
 
-**Status: EVALUATED 2026-09-29, nothing built.** Code reading only: no build, no live run.
+**Status: EVALUATED 2026-09-29. Section A implemented the same day in `90c732e5`** (UI only; not yet built on
+Windows, not yet checked on a running game — [verification-register.md](verification-register.md)
+`[AOBMAKER-A1-A9-LIVE]`). Each A item's **Done** line says what shipped and where it differs from the plan below.
+The evaluation itself was code reading only.
 Baseline: UE5CEDumper `dev` at build 3598, AOBMaker `dev` at `2528712`. AOBMaker line numbers are
 pinned to that commit. UE5CEDumper sites are named by `Type.Method`, which survives edits.
 
@@ -25,7 +28,7 @@ Related documents:
 - [aobmaker-integration.md](aobmaker-integration.md) lists the six commands already in use and their UI entry points.
 - [working-lessons.md](working-lessons.md) §6 holds the one related settled decision: *"Hierarchical Copy CE XML direct-push to CE — DEFERRED, not refused"*. B1 is about that item.
 - **Follow-ups.** Every item is a row in [todo.md](todo.md) under `[AOBMAKER-EVAL-2026-09-29]`. What AOBMaker would
-  have to change is filed as R1–R16 in [aobmaker-requests.md](aobmaker-requests.md). The B and C items below name
+  have to change is filed as R1–R17 in [aobmaker-requests.md](aobmaker-requests.md). The B and C items below name
   their request.
 
 ---
@@ -72,6 +75,8 @@ below: B5, and a CE modal dialog (B4).
 ## A. Fully doable with AOBMaker as it is
 
 UE5CEDumper-only work: every command named here exists and carries everything the item needs.
+All nine shipped in `90c732e5`; the new buttons share one `Helpers/AobMakerStatus` (probed on tab switch, repainted
+by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
 
 ### A1 — Instance Finder "AA" pushes like Live Walker's
 - **Today:** clipboard only.
@@ -80,6 +85,7 @@ UE5CEDumper-only work: every command named here exists and carries everything th
 - **Template:** `LiveWalkerViewModel.GenerateCeAAScriptAsync` already does exactly this.
   It calls `ExtractAssemblerScript`, pushes the script, and copies the wrapped XML to the clipboard if the push fails.
 - **Effort:** S.
+- **Done** (`90c732e5`): as planned, through `AobMakerActions.PushAaScriptOrCopyAsync`. The record arrives unticked.
 
 ### A2 — "+CE" and "HEX" on value-result rows
 - **Today:** clipboard only. The copy commands are:
@@ -99,6 +105,14 @@ UE5CEDumper-only work: every command named here exists and carries everything th
   `MapInnerTypeToCeField` documents.
 - **Fidelity:** the same as Live Walker's +CE today. What +CE cannot express is B3.
 - **Effort:** S–M.
+- **Done** (`90c732e5`): HEX and +CE on all five, with the Copy button kept. The type entry point is
+  `CeXmlExportService.MapTypeNameToCeRecordType`; an enum of unknown width goes to CE as one byte. Two refusals the
+  plan did not foresee:
+  - a snapshot row that names an array element (`Inventory[3]`, `Inventory[3].Count`) carries its OWNER's base, not
+    an address of its own, so it is refused with that reason;
+  - a Value Search group slot is sent only when the live decoder gave it a leaf address (`HasLeafAddress`).
+
+  Snapshot and SPC use the same session gate as their Copy buttons.
 
 ### A3 — Instance Finder: +CE and HEX on fields, instances and container owners
 - **Today:** clipboard only, and the panel has no AOBMaker path at all.
@@ -106,6 +120,8 @@ UE5CEDumper-only work: every command named here exists and carries everything th
 - **Why it is cheap:** fields are `LiveFieldValue`, so Live Walker's `MapFieldToCeRecordType` and
   `LiveFieldValue.PayloadAddress` apply unchanged. That includes the delegate-pad rule, [A4-PUSHCE-UNPADDED].
 - **Effort:** S.
+- **Done** (`90c732e5`): HEX and +CE on fields. Instances and container owners get HEX only: a +CE record of an
+  object's base would show its vtable pointer.
 
 ### A4 — HEX on object-address rows
 - **Today:** clipboard only.
@@ -113,6 +129,8 @@ UE5CEDumper-only work: every command named here exists and carries everything th
   `RelatedObjectsViewModel.CopyAddress`.
 - **Command:** `NavigateHexView`. A +CE for an object base adds little.
 - **Effort:** S.
+- **Done** (`90c732e5`): Object Tree's context menu, Class Pivot's toolbar (same session gate as its Copy), and a
+  per-row button in Related Objects.
 
 ### A5 — Pointer panel: the two missing ASM buttons
 - **Today:** clipboard only for one row, nothing for the other.
@@ -120,6 +138,8 @@ UE5CEDumper-only work: every command named here exists and carries everything th
   - &GEngine has no scan-hit button at all, although `EngineState.GEngineScanAddr` is published.
 - **Command:** `NavigateDisassembler`, exactly as on the GObjects, GNames and GWorld rows.
 - **Effort:** XS.
+- **Done** (`90c732e5`). **Correction:** the &GEngine scan-hit row already existed and showed the address; what it
+  lacked was the buttons. It now has ASM and Copy, and the FSparseDelegateStorage row has ASM.
 
 ### A6 — Check which process CE is attached to before pushing
 - **Today:** not wired.
@@ -130,12 +150,18 @@ UE5CEDumper-only work: every command named here exists and carries everything th
   - [todo.md](todo.md) CEB-2 closed "the bridge does not establish WHICH Cheat Engine it reached" as *"an enhancement request, not a defect"*. This item is that enhancement.
 - **Fallback:** none. The result is a warning in the status line.
 - **Effort:** S. It needs a seventh `IAobMakerBridge` method, one round trip. C4 would let the same check also fix the mismatch.
+- **Done** (`90c732e5`), as a warning that never refuses: `IAobMakerBridge.GetAttachedProcessAsync` (a default
+  interface method, so older doubles answer "cannot tell"). The toolbar shows "⚠ CE is not on this game" at connect
+  and on ⟳, and a +CE that CE refuses appends the reason. It is not asked before every push: that would cost a
+  round trip on each, and a push into a CE with nothing open is sometimes right (the DLL bootstrap).
 
 ### A7 — "Disassemble in CE" for native UFunctions everywhere
 - **Today:** not wired, except in one dialog.
   `PropertyXrefDialog.OnDisassembleClicked` has it: `GetFunctionCodeAddrAsync`, then a ByteArray record, then `NavigateDisassembler`.
   These have none: Live Walker's function rows, Interesting Functions, Live Funcs, and `FunctionPropsDialog`.
   `FunctionPropsDialog` is the one that lists the fields a native function touches.
+- **Done** (`90c732e5`): an ASM button on all four, through the shared `AobMakerActions.DisassembleFunctionAsync`.
+  `PropertyXrefDialog` keeps its own copy, because it colours each outcome.
 - **Bonus:** once CE shows the code, the plugin's own **Send to AOBMaker** menu item (Ctrl+Shift+A, which sends `SendDisassembly`)
   moves the selection into AOBMaker.UI. So "UE function → AOB or AA script" works with no new command.
 - **Effort:** S.
@@ -156,6 +182,19 @@ UE5CEDumper-only work: every command named here exists and carries everything th
   - `GenerateAob` is fixed to mask Mode A with a 2-hit uniqueness scan (`MaxResults = 2`), with no options.
 - **Use:** a CE-side GNames anchor is what the todo's "UE FName to String" custom type would need (C7).
 - **Effort:** M. **Value:** medium.
+- **Done** (`90c732e5`) for GObjects and GNames: a SYM button on each, and `Services/AobMakerUiClient` for
+  AOBMaker.UI's own pipe. Implementing it turned up two things the route above missed:
+  - **The scan hit is where the PATTERN matched, not the instruction.** Himmel's signatures put their RIP
+    instruction up to 21 bytes in (`instrOffset`), and `GenerateAob` decodes the instruction at the address it is
+    given. So the UI reads 64 bytes at the scan hit and seeds `GenerateAob` with the instruction whose
+    `[rip+disp32]` lands exactly on the resolved address (`AobMakerActions.FindRipSeed`).
+  - **Some signatures adjust the target** (`adjustment` −0x14 to +0x0C on eight GObjects entries and one GNames
+    entry).
+    `CreateSymbolScript` registers the raw RIP target, so those are refused before AOBMaker is asked. Supporting
+    them needs AOBMaker R17, or a symbol script of our own through `CreateAAScript`.
+
+  Nothing is pushed unless the returned AOB replays (`disp = [aob+pos]`, `aob + aoblen + disp`) to the address the
+  DLL resolved. The GWorld / &GEngine withheld-triple case is not done: `[AOBM-GWORLD-GENAOB]` in todo.md.
 
 ### A9 — Deliver the live Structure Dissect builder into the open table
 - **Today:** manual.
@@ -170,6 +209,10 @@ UE5CEDumper-only work: every command named here exists and carries everything th
   rules in CLAUDE.md (`CeLuaHygiene` emitters).
 - **Why it is here:** this is the Structure Dissect path current AOBMaker can already serve. See C3 for what it cannot.
 - **Effort:** M.
+- **Done** (`90c732e5`): Tools → "Add Auto Structure Dissect to Current CE Table" (`DissectScriptGenerator`,
+  `DissectLuaResource`). The record arrives unticked, checks that `UE5Dumper.dll` is loaded before anything else, and
+  keeps the module in the Lua global `UE5Dissect`, so `UE5Dissect.createInteractive()` works from CE's Lua console
+  while it is ticked.
 
 ---
 
@@ -364,13 +407,14 @@ These already push through AOBMaker and are not re-evaluated here (B3 and B4 sti
 ## E. Suggested order
 
 1. **UE5CEDumper only, existing commands:** A1, A2, A3, A6, A7. All small. A4 and A5 are optional polish.
+   ✅ Done, together with A8 and A9, in `90c732e5`.
 2. **Ask AOBMaker for the P1 requests** in [aobmaker-requests.md](aobmaker-requests.md):
    - R1, capability discovery, so every later field can be feature-gated;
    - R2, B1's bits and dropdowns;
    - R3, B2's address-less headers;
    - R4, B4's activation result;
    - R5, C1's find and delete.
-3. **Then:** B1's push, B2, A8 and A9.
+3. **Then:** B1's push and B2 (A8 and A9 went ahead with step 1).
 4. **Hold:** B5, until R9 lands and it is checked live.
 
 **Where each item is tracked.** The todo rows are in [todo.md](todo.md) `[AOBMAKER-EVAL-2026-09-29]`; the requests
@@ -385,7 +429,7 @@ are in [aobmaker-requests.md](aobmaker-requests.md).
 | A5 | `[AOBM-PTR-SCANASM]` | — |
 | A6 | `[AOBM-ATTACH-CHECK]` | R11, for a one-click fix |
 | A7 | `[AOBM-FUNC-DISASM]` | — |
-| A8 | `[AOBM-GNAMES-SYMBOL]` | — |
+| A8 | `[AOBM-GNAMES-SYMBOL]`; the rest in `[AOBM-GWORLD-GENAOB]` | R17, for adjusted signatures |
 | A9 | `[AOBM-DISSECT-INJECT]` | — |
 | B1 | `[AOBM-CEXML-PUSH]` | R2, R8 |
 | B2 | `[AOBM-CT-PUSH]` | R3, R7 |
