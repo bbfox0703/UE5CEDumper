@@ -745,12 +745,31 @@ local function callbackBarrier(what, fn, ...)
     end
     callbackFailStreak = callbackFailStreak + 1
     if callbackFailStreak >= CALLBACK_MAX_FAIL_STREAK and ST.callbackIdOverride then
+        local ownerId = ST.ownerRecordId   -- read first: the disable below lets the record go
         -- The DLL is gone: stop intercepting CE's dissect. disableAutoCallback is a
         -- dissect.* method resolved at call time, so the forward reference is fine.
         dissect.disableAutoCallback()
-        warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
-             "dissect is back. Re-run dissect.enableAutoCallback() once UE5Dumper.dll " ..
-             "is injected again.", callbackFailStreak)
+        -- The record that turned auto mode on still shows ticked. Its untick and tick
+        -- hand it in again through [ENABLE]; an enable from the Lua console follows no
+        -- record, so a later CE untick without [DISABLE] would leave auto mode on under it.
+        -- Looked up by ID, as the watch does: a deleted record's userdata is freed.
+        local okDesc, desc = false, nil
+        if ownerId ~= nil then
+            okDesc, desc = pcall(function() return getAddressList().getMemoryRecordByID(ownerId).Description end)
+        end
+        if okDesc and type(desc) == "string" and desc ~= "" then
+            warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
+                 "dissect is back. Once UE5Dumper.dll is injected again, untick and tick '%s' " ..
+                 "to turn it back on (an enableAutoCallback() from the Lua console would not " ..
+                 "follow that record).", callbackFailStreak, desc)
+        else
+            -- No record to name, and no name for the module either: a record keeps it
+            -- in a global of its own, a console user in whatever variable they chose.
+            warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
+                 "dissect is back. Once UE5Dumper.dll is injected again, call " ..
+                 "enableAutoCallback() again, or untick and tick the record that turned it on.",
+                 callbackFailStreak)
+        end
     end
     return nil
 end

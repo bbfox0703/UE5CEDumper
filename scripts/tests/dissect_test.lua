@@ -1528,9 +1528,9 @@ do
   eq(item.Checked, true, 'and its item re-checked')
   eq(liveTimers(), 0, 'the watch stops')
   eq(ST_().ownerRecordId, nil, 'the record is let go')
-  -- The record still shows ticked, and only its own [ENABLE] follows it again:
-  -- a console enable follows no record, so it would never turn itself off when
-  -- CE later unticks the record without [DISABLE].
+  -- The record still shows ticked, and its untick and tick hand it in again
+  -- through [ENABLE]; a console enable follows no record, so it would never turn
+  -- itself off when CE later unticks the record without [DISABLE].
   check(warnedWith("untick and tick '" .. RECORD_DESCRIPTION .. "'"),
         'the give-up warning sends the user to the record, by the name the list shows', table.concat(PRINTS, ' | '))
   check(not warnedWith('dissect.enableAutoCallback'),
@@ -1575,6 +1575,18 @@ do
         'the warning gives both ways back', table.concat(PRINTS, ' | '))
   check(not warnedWith("untick and tick '"), 'and names no record that is gone')
   eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase("OWNER: our override gives up under a record with no description -> the warning does not name it ''", 'live')
+do
+  local rec = newRecord(7, '')
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  check(warnedWith('call enableAutoCallback() again, or untick and tick the record that turned it on'),
+        'an empty description names nothing, so the warning gives both ways back', table.concat(PRINTS, ' | '))
 end
 
 uetCase('OWNER: our override gives up with no record followed -> the warning gives both ways back', 'live')
