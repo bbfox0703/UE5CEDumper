@@ -151,6 +151,10 @@
       <Link>Resources\CE\ue5_freeze_helper.lua</Link>
       <LogicalName>UE5DumpUI.Resources.CE.ue5_freeze_helper.lua</LogicalName>
     </EmbeddedResource>
+    <EmbeddedResource Include="..\..\scripts\ue5_dissect.lua">
+      <Link>Resources\CE\ue5_dissect.lua</Link>
+      <LogicalName>UE5DumpUI.Resources.CE.ue5_dissect.lua</LogicalName>
+    </EmbeddedResource>
   </ItemGroup>
 
   <!-- Native AOT static CRT — `build.cmd publish` should produce an exe

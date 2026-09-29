@@ -734,6 +734,12 @@ public partial class MainWindow : Window
         if (tag is "Snapshot" or "SpcQuery" or "ClassPivot")
             vm.LockExperimental();
 
+        // [AOBMAKER-EVAL-2026-09-29] Tabs whose HEX / +CE / ASM buttons read the shared AobMakerStatus.
+        // TryProbe carries its own cooldown, so a burst of tab switches costs one pipe connect.
+        if (tag is "InstanceFinder" or "ValueSearch" or "RelatedObjects" or "Snapshot" or "SpcQuery"
+                or "ClassPivot" or "LiveFuncs")
+            vm.AobMakerShared.TryProbe();
+
         // Refresh AOBMaker state for tabs whose toolbar / per-row buttons
         // depend on it. LiveWalker / InterestingFunctions throttle via
         // TryCheckAobMaker; PointerPanel has no cooldown wrapper, so call

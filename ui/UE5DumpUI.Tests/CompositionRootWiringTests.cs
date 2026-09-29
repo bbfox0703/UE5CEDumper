@@ -77,7 +77,8 @@ public class CompositionRootWiringTests : IDisposable
             globalHotkeys: null,
             bookmarks: null,
             coordLibrary: new CoordinateLibraryStore(platform),
-            logCompression: null);
+            logCompression: null,
+            aobMakerUi: null);
     }
 
     [Fact]

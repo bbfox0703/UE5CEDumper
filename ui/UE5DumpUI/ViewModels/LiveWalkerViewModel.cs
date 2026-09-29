@@ -5885,6 +5885,15 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    /// <summary>[AOBM-FUNC-DISASM] This UFunction's native code in CE's disassembler, plus a record to right-click.</summary>
+    [RelayCommand]
+    private async Task AsmFunctionAsync(FunctionInfoModel? func)
+    {
+        if (_aobMaker == null || func == null || string.IsNullOrEmpty(func.Address)) return;
+        StatusText = await AobMakerActions.DisassembleFunctionAsync(_aobMaker, _dump, func.Address, func.Name, _log);
+        ApplyAobMakerProbe(_aobMaker.IsAvailable);
+    }
+
     // --- AOBMaker CE Plugin: one-click "Add to CE" memory record ---
 
     /// <summary>

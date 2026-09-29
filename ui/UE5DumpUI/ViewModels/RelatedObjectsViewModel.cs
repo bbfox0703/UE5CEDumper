@@ -60,11 +60,17 @@ public partial class RelatedObjectsViewModel : ViewModelBase
     /// <summary>Find all instances of the selected row's class. Payload = class name.</summary>
     public event Action<string>? NavigateToInstanceFinder;
 
-    public RelatedObjectsViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX buttons read. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public Helpers.AobMakerStatus AobMaker { get; }
+
+    public RelatedObjectsViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,
+                                   Helpers.AobMakerStatus? aobMaker = null)
     {
         _dump = dump;
         _log = log;
         _platform = platform;
+        AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
     }
 
     /// <summary>Drop the related-objects graph + detected-target candidates so a
@@ -191,6 +197,15 @@ public partial class RelatedObjectsViewModel : ViewModelBase
         if (row == null || string.IsNullOrEmpty(row.Address)) return;
         await _platform.CopyToClipboardAsync(row.Address);
         StatusText = $"Copied {row.Address}";
+    }
+
+    /// <summary>[AOBM-OBJECT-HEX] The related object in CE's hex view.</summary>
+    [RelayCommand]
+    private async Task HexAddressAsync(RelatedObject? row)
+    {
+        row ??= SelectedRelated;
+        if (row == null || string.IsNullOrEmpty(row.Address)) return;
+        StatusText = await Helpers.AobMakerActions.HexAsync(AobMaker, row.Address, row.Name, _log);
     }
 
     /// <summary>

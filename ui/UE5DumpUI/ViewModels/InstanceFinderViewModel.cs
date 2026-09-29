@@ -249,11 +249,17 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> InstanceFilterHistory => _filterMemory.History;
 
-    public InstanceFinderViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the AA push and the HEX / +CE buttons
+    /// read. Never null: without a bridge it simply stays unavailable.</summary>
+    public Helpers.AobMakerStatus AobMaker { get; }
+
+    public InstanceFinderViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,
+                                   Helpers.AobMakerStatus? aobMaker = null)
     {
         _dump = dump;
         _log = log;
         _platform = platform;
+        AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (InstanceFilterText, Instances.Count > 0));
         ClassFilter = new ClassFacetFilter(OnClassFilterChanged)
         {
@@ -1154,6 +1160,61 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         }
     }
 
+    // --- [AOBM-INSTFINDER-CE] AOBMaker row actions ---
+
+    /// <summary>
+    /// The address a CE-facing action should use for a walked field: its payload, which on a checked build sits past
+    /// a delegate's access detector (<see cref="LiveFieldValue.PayloadAddress"/>). The fields can outlive a newer
+    /// selection ([R7-S14]), so a field with no address of its own is placed on the instance it was walked from, not
+    /// on the one selected now.
+    /// </summary>
+    private string FieldCeAddress(LiveFieldValue field)
+    {
+        if (!string.IsNullOrEmpty(field.FieldAddress)) return field.PayloadAddress;
+        var owner = _fieldsInstance?.Address;
+        if (string.IsNullOrEmpty(owner)) return "";
+        return ulong.TryParse(AobMakerActions.StripHexPrefix(owner), System.Globalization.NumberStyles.HexNumber,
+                              System.Globalization.CultureInfo.InvariantCulture, out var baseAddr)
+            ? $"0x{baseAddr + (ulong)field.Offset:X}"
+            : "";
+    }
+
+    [RelayCommand]
+    private async Task HexFieldAddressAsync(LiveFieldValue? field)
+    {
+        if (field == null) return;
+        var addr = FieldCeAddress(field);
+        if (addr.Length == 0) return;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, addr, field.Name, _log);
+    }
+
+    [RelayCommand]
+    private async Task AddFieldToCeAsync(LiveFieldValue? field)
+    {
+        if (field == null) return;
+        var addr = FieldCeAddress(field);
+        if (addr.Length == 0) return;
+        StatusText = await AobMakerActions.AddRecordAsync(AobMaker, field.Name, addr,
+            CeXmlExportService.MapFieldToCeRecordType(field), _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
+    }
+
+    /// <summary>HEX only: a +CE record of an object's base would show its vtable pointer, which is rarely what
+    /// the user wanted to watch.</summary>
+    [RelayCommand]
+    private async Task HexInstanceAddressAsync(InstanceResult? instance)
+    {
+        if (instance == null || string.IsNullOrEmpty(instance.Address)) return;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, instance.Address, instance.Name, _log);
+    }
+
+    [RelayCommand]
+    private async Task HexContainerAddressAsync(ContainerMatch? match)
+    {
+        if (match == null || string.IsNullOrEmpty(match.OwnerAddress)) return;
+        LookupStatusText = await AobMakerActions.HexAsync(AobMaker, match.OwnerAddress, match.OwnerClassName, _log);
+    }
+
     [RelayCommand]
     private async Task GenerateCeAAScriptAsync(InstanceResult? instance)
     {
@@ -1168,14 +1229,19 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
             var xml = CeXmlExportService.GenerateRegisterSymbolXml(symbolName, formattedAddr);
 
-            if (!await Helpers.ClipboardDelivery.TryAsync(_platform, xml))
+            // [AOBM-INSTFINDER-AA] Push when the plugin is reachable, as Live Walker's AA button does; the clipboard
+            // stays the fallback. The description is quoted the way Live Walker's is.
+            var (text, isError) = await Helpers.AobMakerActions.PushAaScriptOrCopyAsync(
+                AobMaker, _platform, "\"" + symbolName + "\"", xml, _log);
+            if (isError)
             {
-                SetError(Helpers.ClipboardDelivery.FailureText("the CE AA script"));
-                _log.Warn($"CE AA script for {instance.ClassName} was generated but the " +
-                          "clipboard refused the write");
+                SetError(text);
+                _log.Warn($"CE AA script for {instance.ClassName} was generated but neither Cheat Engine nor the " +
+                          "clipboard took it");
                 return;
             }
-            _log.Info($"CE AA script copied to clipboard for {instance.ClassName}");
+            StatusText = text;
+            _log.Info($"CE AA script delivered for {instance.ClassName}: {text}");
         }
         catch (Exception ex)
         {

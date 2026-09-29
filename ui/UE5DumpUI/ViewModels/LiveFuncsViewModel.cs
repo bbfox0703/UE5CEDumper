@@ -137,10 +137,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// </summary>
     public event Func<string, Task<bool>>? RequestCopyText;
 
-    public LiveFuncsViewModel(IDumpService dump, ILoggingService log, IPlatformService? platform = null)
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the ASM button reads. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public Helpers.AobMakerStatus AobMaker { get; }
+
+    public LiveFuncsViewModel(IDumpService dump, ILoggingService log, IPlatformService? platform = null,
+                              Helpers.AobMakerStatus? aobMaker = null)
     {
         _dump = dump;
         _log = log;
+        AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
 
@@ -420,6 +426,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
         StatusText = copied
             ? $"Copied function name: {row.FuncName}"
             : $"Could not copy '{row.FuncName}' -- the clipboard refused the write.";
+    }
+
+    /// <summary>[AOBM-FUNC-DISASM] The function that fired, in CE's disassembler, plus a record to right-click.</summary>
+    [RelayCommand]
+    private async Task AsmFuncAsync(PeProfileEntry? row)
+    {
+        if (row == null || string.IsNullOrEmpty(row.FuncAddr)) return;
+        StatusText = await Helpers.AobMakerActions.DisassembleFunctionAsync(AobMaker, _dump, row.FuncAddr, row.FuncName, _log);
     }
 
     /// <summary>Called when the user navigates away from the Live Funcs tab. Flushes

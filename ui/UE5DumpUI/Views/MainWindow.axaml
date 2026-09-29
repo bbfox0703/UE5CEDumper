@@ -87,6 +87,12 @@
           <TextBlock Text="{StaticResource str.Toolbar.AobMakerOffline}"
                      Foreground="#888888" FontSize="12" VerticalAlignment="Center"
                      IsVisible="{Binding !IsAobMakerAvailable}"/>
+          <!-- [AOBM-ATTACH-CHECK] Reachable but aimed elsewhere: CE has another process open, or none.
+               The tooltip carries the full sentence, with both process names and ids. -->
+          <TextBlock Text="{StaticResource str.Toolbar.AobMakerWrongProcess}"
+                     Foreground="#E0A050" FontSize="12" VerticalAlignment="Center"
+                     IsVisible="{Binding AobMakerShared.HasAttachWarning}"
+                     ToolTip.Tip="{Binding AobMakerShared.AttachWarning}"/>
           <Button Content="{StaticResource str.Toolbar.AobMakerRefresh}"
                   Command="{Binding RefreshAobMakerCommand}"
                   ToolTip.Tip="{StaticResource str.Tip.Toolbar.AobMakerRefresh}"
@@ -319,6 +325,10 @@
                 <MenuItem Header="{StaticResource str.Tools.ExportFreezeHelperLua}"
                           Command="{Binding ExportFreezeHelperLuaCommand}"
                           ToolTip.Tip="{StaticResource str.Tip.Tools.ExportFreezeHelperLua}"/>
+                <Separator/>
+                <MenuItem Header="{StaticResource str.Tools.InjectDissectAuto}"
+                          Command="{Binding InjectDissectAutoCommand}"
+                          ToolTip.Tip="{StaticResource str.Tip.Tools.InjectDissectAuto}"/>
               </MenuFlyout>
             </DropDownButton.Flyout>
           </DropDownButton>
@@ -444,7 +454,7 @@
         <TabItem Header="{StaticResource str.Tab.LiveWalker}" Tag="LiveWalker">
           <views:LiveWalkerPanel DataContext="{Binding LiveWalker}"/>
         </TabItem>
-        <TabItem Header="{StaticResource str.Tab.InstanceFinder}">
+        <TabItem Header="{StaticResource str.Tab.InstanceFinder}" Tag="InstanceFinder">
           <views:InstanceFinderPanel DataContext="{Binding InstanceFinder}"/>
         </TabItem>
         <TabItem Header="{StaticResource str.Tab.PropertySearch}">
@@ -456,7 +466,7 @@
         <TabItem Header="{StaticResource str.Tab.InterestingProperties}">
           <views:InterestingPropertiesPanel DataContext="{Binding InterestingProperties}"/>
         </TabItem>
-        <TabItem Header="{StaticResource str.Tab.ValueSearch}">
+        <TabItem Header="{StaticResource str.Tab.ValueSearch}" Tag="ValueSearch">
           <views:ValueSearchPanel DataContext="{Binding ValueSearch}"/>
         </TabItem>
         <TabItem Header="{StaticResource str.Tab.Console}">
@@ -471,7 +481,7 @@
         <TabItem Header="{StaticResource str.Tab.ClassStruct}">
           <views:ClassStructPanel DataContext="{Binding ClassStruct}"/>
         </TabItem>
-        <TabItem Header="{StaticResource str.Tab.RelatedObjects}">
+        <TabItem Header="{StaticResource str.Tab.RelatedObjects}" Tag="RelatedObjects">
           <views:RelatedObjectsPanel DataContext="{Binding RelatedObjects}"/>
         </TabItem>
         <TabItem Header="{StaticResource str.Tab.DumpExplorer}">

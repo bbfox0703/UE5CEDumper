@@ -152,6 +152,15 @@
                             Foreground="#DCDCAA" Background="Transparent"
                             BorderThickness="1" BorderBrush="#DCDCAA"
                             Padding="6,2" FontSize="11" Cursor="Hand"/>
+                    <!-- [AOBM-INSTFINDER-CE] The owning object in CE's hex view. -->
+                    <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                            Command="{Binding $parent[DataGrid].((vm:InstanceFinderViewModel)DataContext).HexContainerAddressCommand}"
+                            CommandParameter="{Binding}"
+                            IsEnabled="{Binding $parent[DataGrid].((vm:InstanceFinderViewModel)DataContext).AobMaker.IsAvailable}"
+                            ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                            Foreground="#569CD6" Background="Transparent"
+                            BorderThickness="1" BorderBrush="#569CD6"
+                            Padding="6,2" FontSize="11" Cursor="Hand"/>
                     <Button Content="{StaticResource str.InstanceFinder.LocateGWorldShort}"
                             Command="{Binding $parent[DataGrid].((vm:InstanceFinderViewModel)DataContext).LocateContainerOwnerInGWorldCommand}"
                             CommandParameter="{Binding}"
@@ -248,17 +257,29 @@
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
-          <DataGridTemplateColumn Header="{StaticResource str.InstanceFinder.CopyAddress}" Width="50" CanUserSort="False">
+          <DataGridTemplateColumn Header="{StaticResource str.InstanceFinder.CopyAddress}" Width="84" CanUserSort="False">
             <DataGridTemplateColumn.CellTemplate>
               <DataTemplate x:DataType="m:InstanceResult">
-                <Button Content="{StaticResource str.InstanceFinder.Addr}"
-                        Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyInstanceAddressCommand}"
-                        CommandParameter="{Binding}"
-                        ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyAddr}"
-                        Padding="4,2" Margin="2"
-                        Foreground="#D4D4D4" Background="Transparent"
-                        BorderThickness="1" BorderBrush="#555"
-                        Cursor="Hand" FontSize="10"/>
+                <StackPanel Orientation="Horizontal">
+                  <Button Content="{StaticResource str.InstanceFinder.Addr}"
+                          Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyInstanceAddressCommand}"
+                          CommandParameter="{Binding}"
+                          ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyAddr}"
+                          Padding="4,2" Margin="2"
+                          Foreground="#D4D4D4" Background="Transparent"
+                          BorderThickness="1" BorderBrush="#555"
+                          Cursor="Hand" FontSize="10"/>
+                  <!-- [AOBM-INSTFINDER-CE] -->
+                  <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                          Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).HexInstanceAddressCommand}"
+                          CommandParameter="{Binding}"
+                          IsEnabled="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).AobMaker.IsAvailable}"
+                          ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                          Padding="3,2" Margin="0,2,2,2"
+                          Foreground="#569CD6" Background="Transparent"
+                          BorderThickness="1" BorderBrush="#555"
+                          Cursor="Hand" FontSize="9" FontFamily="Consolas"/>
+                </StackPanel>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>
           </DataGridTemplateColumn>
@@ -390,17 +411,38 @@
                                 Binding="{Binding FieldAddress}"
                                 SortMemberPath="FieldAddress"
                                 Width="140"/>
-            <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyAddress}" Width="50" CanUserSort="False">
+            <DataGridTemplateColumn Header="{StaticResource str.LiveWalker.CopyAddress}" Width="112" CanUserSort="False">
               <DataGridTemplateColumn.CellTemplate>
                 <DataTemplate x:DataType="m:LiveFieldValue">
-                  <Button Content="{StaticResource str.InstanceFinder.Addr}"
-                          Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyFieldAddressCommand}"
-                          CommandParameter="{Binding}"
-                          ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyFieldAddr}"
-                          Padding="4,2" Margin="2"
-                          Foreground="#D4D4D4" Background="Transparent"
-                          BorderThickness="1" BorderBrush="#555"
-                          Cursor="Hand" FontSize="10"/>
+                  <StackPanel Orientation="Horizontal">
+                    <Button Content="{StaticResource str.InstanceFinder.Addr}"
+                            Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).CopyFieldAddressCommand}"
+                            CommandParameter="{Binding}"
+                            ToolTip.Tip="{StaticResource str.Tip.InstanceFinder.CopyFieldAddr}"
+                            Padding="4,2" Margin="2"
+                            Foreground="#D4D4D4" Background="Transparent"
+                            BorderThickness="1" BorderBrush="#555"
+                            Cursor="Hand" FontSize="10"/>
+                    <!-- [AOBM-INSTFINDER-CE] The same pair Live Walker's field rows carry. -->
+                    <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                            Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).HexFieldAddressCommand}"
+                            CommandParameter="{Binding}"
+                            IsEnabled="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).AobMaker.IsAvailable}"
+                            ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                            Padding="3,2" Margin="0,2,2,2"
+                            Foreground="#569CD6" Background="Transparent"
+                            BorderThickness="1" BorderBrush="#555"
+                            Cursor="Hand" FontSize="9" FontFamily="Consolas"/>
+                    <Button Content="{StaticResource str.LiveWalker.AddToCe}"
+                            Command="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).AddFieldToCeCommand}"
+                            CommandParameter="{Binding}"
+                            IsEnabled="{Binding $parent[UserControl].((vm:InstanceFinderViewModel)DataContext).AobMaker.IsAvailable}"
+                            ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowAddCe}"
+                            Padding="3,2" Margin="0,2,2,2"
+                            Foreground="#C586C0" Background="Transparent"
+                            BorderThickness="1" BorderBrush="#555"
+                            Cursor="Hand" FontSize="9" FontFamily="Consolas"/>
+                  </StackPanel>
                 </DataTemplate>
               </DataGridTemplateColumn.CellTemplate>
             </DataGridTemplateColumn>

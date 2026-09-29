@@ -810,6 +810,15 @@ public partial class InterestingFunctionsViewModel : ViewModelBase
             : $"Could not copy '{row.FuncName}' -- the clipboard refused the write.";
     }
 
+    /// <summary>[AOBM-FUNC-DISASM] This function's native code in CE's disassembler, plus a record to right-click.</summary>
+    [RelayCommand]
+    private async Task AsmRowAsync(ScoredFunctionRow? row)
+    {
+        if (_aobMaker == null || row == null || string.IsNullOrEmpty(row.FuncAddr)) return;
+        StatusText = await AobMakerActions.DisassembleFunctionAsync(_aobMaker, _dump, row.FuncAddr, row.FuncName, _log);
+        ApplyAobMakerProbe(_aobMaker.IsAvailable);
+    }
+
     // ------------------------------------------------------------------
     // Multi-row batch: turn the user's current DataGrid selection into a
     // single CT file (one baked-invoke entry per row, grouped by

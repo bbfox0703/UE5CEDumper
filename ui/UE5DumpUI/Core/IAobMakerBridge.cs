@@ -24,6 +24,13 @@ public enum AobMakerFailure
 }
 
 /// <summary>
+/// [AOBM-ATTACH-CHECK] The process Cheat Engine has open, as the plugin's <c>GetAttachedProcess</c> reports it.
+/// <see cref="ProcessId"/> 0 means CE has no process open. The plugin reads the name through the ANSI API, so a
+/// non-ASCII exe name arrives with <c>?</c> in it: compare by id, show the name.
+/// </summary>
+public readonly record struct CeAttachedProcess(int ProcessId, string ProcessName);
+
+/// <summary>
 /// Bridge to AOBMaker CE Plugin for navigating CE Memory Viewer.
 /// Communicates via <c>\\.\pipe\AOBMakerCEBridge</c> named pipe.
 /// </summary>
@@ -131,4 +138,13 @@ public interface IAobMakerBridge
     /// </returns>
     Task<(bool Ok, string? ErrorMessage)> InjectTableFileAsync(string fileName, string content,
         CancellationToken ct = default);
+
+    /// <summary>
+    /// [AOBM-ATTACH-CHECK] Which process Cheat Engine has open. Sends <c>GetAttachedProcess</c>.
+    /// Null means "cannot tell" (bridge unreachable, no reply), which every caller treats as nothing to report.
+    /// <para>The default is that same "cannot tell", so a test double that models only the other commands needs
+    /// no change.</para>
+    /// </summary>
+    Task<CeAttachedProcess?> GetAttachedProcessAsync(CancellationToken ct = default)
+        => Task.FromResult<CeAttachedProcess?>(null);
 }

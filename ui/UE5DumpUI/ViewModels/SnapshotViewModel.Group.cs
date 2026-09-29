@@ -44,6 +44,7 @@ public partial class SnapshotViewModel
         // session-validity gate must re-evaluate when the compare pick changes.
         OnPropertyChanged(nameof(CanUseGroupRowActions));
         OnPropertyChanged(nameof(CanLocateGroupRowInGWorld));
+        OnPropertyChanged(nameof(CanPushGroupRowToCe));
     }
 
     [ObservableProperty] private bool _isGroupMatching;
@@ -131,11 +132,16 @@ public partial class SnapshotViewModel
     // NOT gated on the client IsGWorldAvailable flag (audit #5 AE10).
     public bool CanLocateGroupRowInGWorld => CanUseGroupRowActions;
 
+    /// <summary>[AOBM-VALUE-ROWS-CE] The slots' HEX / +CE buttons: the same session gate as Copy, and a reachable
+    /// plugin.</summary>
+    public bool CanPushGroupRowToCe => CanUseGroupRowActions && AobMaker.IsAvailable;
+
     partial void OnGroupSnapshotChanged(SnapshotMeta? value)
     {
         OnPropertyChanged(nameof(CanRunGroupMatch));
         OnPropertyChanged(nameof(CanUseGroupRowActions));
         OnPropertyChanged(nameof(CanLocateGroupRowInGWorld));
+        OnPropertyChanged(nameof(CanPushGroupRowToCe));
         OnPropertyChanged(nameof(IsGroupCompareMode));   // depends on both snapshots
     }
 
@@ -296,6 +302,42 @@ public partial class SnapshotViewModel
         {
             _log.Error(Constants.LogCatView, "Snapshot: copy group slot address failed", ex);
         }
+    }
+
+    // --- [AOBM-VALUE-ROWS-CE] AOBMaker slot actions (same address as Copy, same session gate) ---
+
+    /// <summary>The slot's own address, or empty when it has none: an array-element slot carries only its owner's
+    /// base, and the status line says so.</summary>
+    private string SlotCeAddress(GroupSlotMatch slot)
+    {
+        if (Helpers.AobMakerActions.IsSnapshotElementRow(slot.FieldName))
+        {
+            GroupStatusText = Helpers.AobMakerActions.NoOwnAddressText(slot.FieldName);
+            return "";
+        }
+        return slot.Addr;
+    }
+
+    [RelayCommand]
+    private async Task HexGroupSlotAsync(GroupSlotMatch? slot)
+    {
+        if (slot == null || !CanUseGroupRowActions || string.IsNullOrEmpty(slot.Addr)) return;
+        var addr = SlotCeAddress(slot);
+        if (addr.Length == 0) return;
+        var label = slot.ClassName + "::" + slot.FieldName;
+        GroupStatusText = await Helpers.AobMakerActions.HexAsync(AobMaker, addr, label, _log);
+    }
+
+    [RelayCommand]
+    private async Task AddGroupSlotToCeAsync(GroupSlotMatch? slot)
+    {
+        if (slot == null || !CanUseGroupRowActions || string.IsNullOrEmpty(slot.Addr)) return;
+        var addr = SlotCeAddress(slot);
+        if (addr.Length == 0) return;
+        var label = slot.ClassName + "::" + slot.FieldName;
+        var type = Services.CeXmlExportService.MapTypeNameToCeRecordType(slot.FieldType);
+        GroupStatusText = await Helpers.AobMakerActions.AddRecordAsync(AobMaker, label, addr, type, _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
     }
 
     /// <summary>Locate the slot's owning object in the GWorld graph (in-session only).</summary>

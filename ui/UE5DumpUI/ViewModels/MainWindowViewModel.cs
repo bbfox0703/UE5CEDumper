@@ -195,6 +195,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     // Always-visible top-toolbar AOBMaker status (mirrors the per-tab indicators).
     [ObservableProperty] private bool _isAobMakerAvailable;
 
+    /// <summary>
+    /// [AOBMAKER-EVAL-2026-09-29] The availability flag and the [AOBM-ATTACH-CHECK] warning shared by the panels that
+    /// hold an <see cref="Helpers.AobMakerStatus"/>. It mirrors <see cref="IsAobMakerAvailable"/> in both directions, so the
+    /// toolbar chip and those panels' buttons agree whichever side learned the news first.
+    /// </summary>
+    public Helpers.AobMakerStatus AobMakerShared { get; }
+
+    partial void OnIsAobMakerAvailableChanged(bool value) => AobMakerShared.Apply(value);
+
     /// <summary>True when an AOBMaker bridge was supplied — gates the toolbar status chip.</summary>
     public bool IsAobMakerConfigured => _aobMaker != null;
 
@@ -491,7 +500,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         IGlobalHotkeyService? globalHotkeys = null,
         BookmarkStore? bookmarks = null,
         CoordinateLibraryStore? coordLibrary = null,
-        ILogCompressionService? logCompression = null)
+        ILogCompressionService? logCompression = null,
+        IAobMakerUiClient? aobMakerUi = null)
     {
         _pipeClient = pipeClient;
         _dump = dump;
@@ -500,6 +510,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _aobUsage = aobUsage;
         _aobMaker = aobMaker;
         _experimentalGate = experimentalGate;
+        // Before any panel is built: they take it as a constructor argument, and the availability mirror below
+        // writes to it.
+        AobMakerShared = new Helpers.AobMakerStatus(aobMaker);
+        AobMakerShared.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(Helpers.AobMakerStatus.IsAvailable))
+                IsAobMakerAvailable = AobMakerShared.IsAvailable;
+        };
 
         // Keep tab visibility in sync when the toggle is flipped elsewhere
         // (the checkbox lives on the System tab / PointerPanelViewModel). Also
@@ -511,18 +529,18 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 UpdatePivotHandoffEnabled();
             };
 
-        ObjectTree = new ObjectTreeViewModel(dump, log, platform);
+        ObjectTree = new ObjectTreeViewModel(dump, log, platform, AobMakerShared);
         ClassStruct = new ClassStructViewModel(dump, log, platform);
-        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage, experimentalGate, snapshotStore, pipeClient, logCompression);
+        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage, experimentalGate, snapshotStore, pipeClient, logCompression, aobMakerUi);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker, bookmarks);
-        InstanceFinder = new InstanceFinderViewModel(dump, log, platform);
+        InstanceFinder = new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
         PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
         GameClassFilter = new GameClassFilterViewModel(dump, log, platform);
         InterestingFunctions = new InterestingFunctionsViewModel(dump, log, aobMaker, platform);
-        LiveFuncs = new LiveFuncsViewModel(dump, log, platform);
+        LiveFuncs = new LiveFuncsViewModel(dump, log, platform, AobMakerShared);
         InterestingProperties = new InterestingPropertiesViewModel(dump, log, platform);
-        ValueSearch = new ValueSearchViewModel(dump, log);
-        RelatedObjects = new RelatedObjectsViewModel(dump, log, platform);
+        ValueSearch = new ValueSearchViewModel(dump, log, AobMakerShared);
+        RelatedObjects = new RelatedObjectsViewModel(dump, log, platform, AobMakerShared);
         DumpExplorer = new DumpExplorerViewModel(dump, log, platform);
         // Detect Player Stats (P4). snapshotStore is optional — the behavioral
         // signal is opt-in and no-ops (with a note) when it's null.
@@ -531,7 +549,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Teleport = new TeleportViewModel(dump, log, platform, aobMaker, globalHotkeys, experimentalGate, coordLibrary);
         if (snapshotStore != null)
         {
-            Snapshot = new SnapshotViewModel(dump, snapshotStore, log, experimentalGate, platform);
+            Snapshot = new SnapshotViewModel(dump, snapshotStore, log, experimentalGate, platform, AobMakerShared);
             // Diff row -> open its object in Live Walker (same shape as ValueSearch).
             Snapshot.NavigateToInstance += async (addr) =>
             {
@@ -572,7 +590,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
             };
 
-            Spc = new SpcQueryViewModel(snapshotStore, log, platform);
+            Spc = new SpcQueryViewModel(snapshotStore, log, platform, AobMakerShared);
             // SPC hit -> open its object in Live Walker (newest snapshot's addr).
             Spc.NavigateToInstance += async (addr) =>
             {
@@ -613,7 +631,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 }
             };
 
-            Pivot = new ClassPivotViewModel(snapshotStore, log, platform, dump);
+            Pivot = new ClassPivotViewModel(snapshotStore, log, platform, dump, AobMakerShared);
             // Pivot group -> open its representative object in Live Walker.
             Pivot.NavigateToInstance += async (addr) =>
             {
@@ -754,6 +772,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
                 _ = LiveWalker.CheckAobMakerAsync();
                 _ = Teleport.CheckAobMakerAsync();
+                _ = CheckCeAttachAsync();   // [AOBM-ATTACH-CHECK]
 
                 StatusText = $"Connected — UE{state.UEVersion} ({state.ObjectCount} objects)";
                 _ = CheckForCompetingDumperHostsAsync(state);
@@ -1358,6 +1377,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // resolving a live (non-CDO) instance + navigating to Live Walker — same
         // class-name path as the Interesting Functions locate just above.
         Views.PropertyXrefDialog.SharedAobMaker = aobMaker;
+        Views.FunctionPropsDialog.SharedAobMaker = aobMaker;   // [AOBM-FUNC-DISASM]
         _xrefLocateHandler = async (className) =>
         {
             try
@@ -2136,6 +2156,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Detach from the static xref-dialog hooks so this VM doesn't leak.
         Views.PropertyXrefDialog.LocateClassInGWorldRequested -= _xrefLocateHandler;
         Views.PropertyXrefDialog.SharedAobMaker = null;
+        Views.FunctionPropsDialog.SharedAobMaker = null;
 
         ObjectTree.Dispose();
         LiveWalker.Dispose();
@@ -2812,6 +2833,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Fire-and-forget: check AOBMaker availability for Live Walker + Teleport
         _ = LiveWalker.CheckAobMakerAsync();
         _ = Teleport.CheckAobMakerAsync();
+        _ = CheckCeAttachAsync();   // [AOBM-ATTACH-CHECK]
 
         // Fire-and-forget: persist AOB usage data (failure must not block UI)
         if (_aobUsage != null)
@@ -3120,14 +3142,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             var ok = await _aobMaker.CheckAvailabilityAsync();
             IsAobMakerAvailable = ok;
+            AobMakerShared.Apply(ok);
             // [R7-S7] [R7-S12] Every panel that shows WHY it is unreachable repaints, even when its flag is unchanged.
             LiveWalker.ApplyAobMakerProbe(ok);
             Pointers.ApplyAobMakerProbe(ok);
             InterestingFunctions.ApplyAobMakerProbe(ok);
             Teleport.ApplyAobMakerProbe(ok);
+            // [AOBM-ATTACH-CHECK] Reachable is not enough: CE may have another process open, or none.
+            var attach = ok ? await CheckCeAttachAsync() : "";
             // [W1-PIPEBUSY-STATUS] The remedy depends on WHY: a busy pipe is not "open Cheat Engine".
             StatusText = ok
-                ? "AOBMaker plugin connected"
+                ? (attach.Length > 0 ? attach : "AOBMaker plugin connected")
                 : Helpers.AobMakerUnavailable.Text(_aobMaker);
         }
         catch (Exception ex)
@@ -3135,6 +3160,21 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             IsAobMakerAvailable = false;
             _log.Error("Refresh AOBMaker status failed", ex);
         }
+    }
+
+    /// <summary>
+    /// [AOBM-ATTACH-CHECK] Ask which process Cheat Engine has open, compare it with the game this UI is connected to,
+    /// and publish the verdict to the toolbar. Returns the warning, or empty when all is well or it cannot tell.
+    /// Safe to fire and forget: a check that fails says nothing.
+    /// </summary>
+    private async Task<string> CheckCeAttachAsync()
+    {
+        var state = _engineState;
+        if (state == null || _aobMaker == null) return "";
+        var warning = await AobMakerShared.CheckAttachAsync(state.ProcessId, state.ModuleName);
+        if (warning.Length > 0)
+            _log.Warn(Constants.LogCatInit, $"[AOBM-ATTACH-CHECK] {warning}");
+        return warning;
     }
 
     /// <summary>
@@ -3486,6 +3526,55 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         {
             _log.Error("Inject Freeze Helper Lua failed", ex);
             StatusText = $"Inject freeze helper failed: {ex.Message}";
+        }
+    }
+
+    /// <summary>
+    /// [AOBM-DISSECT-INJECT] Tools menu: embed <c>ue5_dissect.lua</c> in the CE table the user has open and add the
+    /// record that switches its auto mode (<see cref="Services.DissectScriptGenerator"/>). The record arrives
+    /// unticked: while on it answers every Structure Dissect in Cheat Engine, so turning it on is the user's call.
+    /// <para>No clipboard fallback: the record is useless without the embedded file, and without the plugin that file
+    /// has to be added by hand anyway (<c>scripts/README.md</c>, ue5_dissect.lua).</para>
+    /// </summary>
+    [RelayCommand]
+    private async Task InjectDissectAutoAsync()
+    {
+        StatusText = Helpers.AobMakerActions.DissectInjectingText();
+        try
+        {
+            if (_aobMaker == null)
+            {
+                StatusText = Helpers.AobMakerActions.DissectUnavailableText(null);
+                return;
+            }
+            await _aobMaker.CheckAvailabilityAsync();
+            if (!_aobMaker.IsAvailable)
+            {
+                StatusText = Helpers.AobMakerActions.DissectUnavailableText(_aobMaker);
+                return;
+            }
+
+            var content = Services.DissectLuaResource.Read();
+            var (ok, error) = await _aobMaker.InjectTableFileAsync(Services.DissectLuaResource.DefaultFileName, content);
+            if (!ok)
+            {
+                StatusText = Helpers.AobMakerActions.DissectFileFailedText(error);
+                return;
+            }
+
+            bool pushed = await _aobMaker.CreateAAScriptAsync(
+                Services.DissectScriptGenerator.RecordDescription, Services.DissectScriptGenerator.Generate(),
+                autoActivate: false, group: Services.DissectScriptGenerator.RecordGroup);
+            StatusText = pushed
+                ? Helpers.AobMakerActions.DissectAddedText()
+                : Helpers.AobMakerActions.DissectRecordFailedText();
+            _log.Info($"Auto Structure Dissect: {Services.DissectLuaResource.DefaultFileName} embedded " +
+                      $"({content.Length:N0} chars), record {(pushed ? "added" : "NOT added")}");
+        }
+        catch (Exception ex)
+        {
+            _log.Error("Add Auto Structure Dissect failed", ex);
+            StatusText = Helpers.AobMakerActions.DissectFailedText(ex.Message);
         }
     }
 

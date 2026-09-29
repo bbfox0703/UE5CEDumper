@@ -452,6 +452,46 @@
     <sys:String x:Key="str.AobMaker.Unavailable.Busy">AOBMaker pipe busy — it exists, but another program holds its only connection. Close that program, then press &#x27F3; (starting another Cheat Engine will not help)</sys:String>
     <sys:String x:Key="str.AobMaker.Unavailable.Denied">AOBMaker pipe refused this app (access denied) — the pipe exists, so starting Cheat Engine will not help; the UI init log names the error</sys:String>
     <sys:String x:Key="str.AobMaker.Unavailable.Failed">AOBMaker not connected — the connection attempt failed; the UI init log names the error</sys:String>
+    <!-- [AOBMAKER-EVAL-2026-09-29] Row actions shared by the panels that hold an AobMakerStatus (Helpers/AobMakerActions.cs),
+         and the [AOBM-ATTACH-CHECK] verdict (Helpers/AobMakerStatus.cs). The numbered holes are filled in code. -->
+    <sys:String x:Key="str.AobMaker.Hex.Done">CE hex view: {0} @ {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Asm.Done">CE disassembler: {0} @ {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Nav.Refused">Cheat Engine did not move its view to {0} @ {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Record.Done">Added to CE: {0}</sys:String>
+    <sys:String x:Key="str.AobMaker.Record.Refused">Cheat Engine refused the record for {0}</sys:String>
+    <sys:String x:Key="str.ObjectTree.HexInCe">Show in CE hex view (AOBMaker)</sys:String>
+    <sys:String x:Key="str.AobMaker.Row.NoOwnAddress">{0} is an array element: the snapshot kept only its owner's address, so there is nothing of its own to send to CE</sys:String>
+    <sys:String x:Key="str.AobMaker.Disasm.NoCode">No native code address for {0} (a Blueprint-only function, or UFunction::Func is not detected on this engine)</sys:String>
+    <sys:String x:Key="str.AobMaker.Disasm.Done">{0}: CE disassembler @ {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Disasm.RecordOnly">Added {0} to the CE table @ {1}, but CE did not open its disassembler there: find the record and browse to it</sys:String>
+    <sys:String x:Key="str.AobMaker.Disasm.Refused">Cheat Engine refused the push for {0}: nothing was added</sys:String>
+    <sys:String x:Key="str.FunctionProps.AsmInCe">&#x2699; Disassemble in CE</sys:String>
+    <sys:String x:Key="str.Tip.AobMaker.FuncAsm">Open this function's native code in Cheat Engine's disassembler (via the AOBMaker CE plugin), and add it to the table as a record you can right-click. From there, CE's Ctrl+Shift+A sends the selection to AOBMaker.</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.Pending">Asking AOBMaker.UI for a unique AOB for '{0}'…</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.NotRunning">AOBMaker.UI is not running: '{0}' needs the AOBMaker app open, which makes the AOB (Cheat Engine alone is not enough)</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.Refused">AOBMaker.UI refused this app: run both at the same elevation (an elevated AOBMaker rejects an unelevated caller)</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.NoReply">AOBMaker.UI did not answer: an older build may not have GenerateAob</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.Failed">AOBMaker.UI could not make a unique AOB for '{0}': {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.NotRipRelative">Not pushed: AOBMaker.UI did not decode the instruction at 0x{1:X} as RIP-relative, so no symbol script can replay '{0}'</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.NoDirectRip">Not pushed: no instruction in the scan hit for '{0}' points straight at it (its signature adjusts the address or follows a call), so a symbol script cannot replay it</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.Unreadable">Not pushed: could not read game memory at 0x{1:X} to check where '{0}' would land</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.Mismatch">Not pushed: the AOB would register '{0}' at 0x{1:X}, but the DLL resolved {2} (this signature dereferences or adjusts)</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.Injecting">Adding {0} to the current CE table…</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.Added">Auto Structure Dissect added to the current CE table: tick '{0}' to turn it on</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.FileFailed">Could not embed {0} in the CE table: {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.RecordFailed">{0} is embedded, but its enable record did not reach CE (CE closed?): run this again</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.Unavailable">Auto Structure Dissect needs the AOBMaker CE plugin: {0}</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.Failed">Adding Auto Structure Dissect failed: {0}</sys:String>
+    <sys:String x:Key="str.Pointers.RegisterGObjectsSymbolTip">Create a CE AA script that registers GObjects as the symbol 'gobjects_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GObjects.</sys:String>
+    <sys:String x:Key="str.Pointers.RegisterGNamesSymbolTip">Create a CE AA script that registers GNames as the symbol 'gnames_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GNames.</sys:String>
+    <sys:String x:Key="str.AobMaker.Aa.Pushed">AA script added to CE's address list: {0} — tick it to register the symbol</sys:String>
+    <sys:String x:Key="str.AobMaker.Aa.Copied">CE AA script copied: {0} — paste it into CE's address list</sys:String>
+    <sys:String x:Key="str.AobMaker.Aa.CopiedAfterRefusal">Cheat Engine did not take the AA script, so it was copied to the clipboard instead: {0}</sys:String>
+    <sys:String x:Key="str.AobMaker.Attach.None">Cheat Engine has no process open: open {0} in CE before pushing to it</sys:String>
+    <sys:String x:Key="str.AobMaker.Attach.Other">Cheat Engine has {0} (pid {1}) open, not {2} (pid {3}): records pushed now point into the wrong process</sys:String>
+    <sys:String x:Key="str.Tip.AobMaker.RowHex">Show this address in Cheat Engine's hex view (via the AOBMaker CE plugin)</sys:String>
+    <sys:String x:Key="str.Tip.AobMaker.RowAddCe">Add this address to Cheat Engine's address list as a typed memory record (via the AOBMaker CE plugin), then use CE's "Find out what accesses this address"</sys:String>
+    <sys:String x:Key="str.Toolbar.AobMakerWrongProcess">&#x26A0; CE is not on this game</sys:String>
     <sys:String x:Key="str.System.SelfTest.Button">Run Self-Test</sys:String>
     <sys:String x:Key="str.System.SelfTest.Hint">Auto-picks a KismetMathLibrary helper, invokes it via static-native fast path, and verifies the return value. Confirms the ProcessEvent hook is on the correct vtable slot.</sys:String>
     <sys:String x:Key="str.System.SelfTest.Running">Probing KismetMathLibrary helpers...</sys:String>
@@ -867,6 +907,7 @@
     <sys:String x:Key="str.Tools.ExportCeHelperLua">Export CE Helper Lua File...</sys:String>
     <sys:String x:Key="str.Tools.InjectFreezeHelperLua">Inject Freeze Helper into Current CE Table</sys:String>
     <sys:String x:Key="str.Tools.ExportFreezeHelperLua">Export Freeze Helper Lua File...</sys:String>
+    <sys:String x:Key="str.Tools.InjectDissectAuto">Add Auto Structure Dissect to Current CE Table</sys:String>
 
     <!-- Property Search -->
     <sys:String x:Key="str.PropertySearch.QueryHint">Property name (e.g. Health, Mana, Gold)</sys:String>
@@ -1481,6 +1522,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.Tools.ExportCeHelperLua">Save ue5_invoke_helper.lua to a file you can drop next to your .CT and add via Cheat Engine's Table -&gt; Add File... menu. Required by every "Copy AA Script (Baked)" output -- one-time setup per cheat table.</sys:String>
     <sys:String x:Key="str.Tip.Tools.InjectFreezeHelperLua">One-click: send ue5_freeze_helper.lua into the currently open CE table via the AOBMaker plugin. Required once per .CT by every Property Search "Freeze" script. Coexists with ue5_invoke_helper.lua.</sys:String>
     <sys:String x:Key="str.Tip.Tools.ExportFreezeHelperLua">Save ue5_freeze_helper.lua to a file you can drop next to your .CT and add via Cheat Engine's Table -&gt; Add File... menu. Manual fallback when AOBMaker plugin is unavailable.</sys:String>
+    <sys:String x:Key="str.Tip.Tools.InjectDissectAuto">One-click, via the AOBMaker plugin: embed ue5_dissect.lua in the currently open CE table and add an unticked record. While that record is ticked, Cheat Engine's Structure Dissect fills itself from UE reflection for any UObject address. Needs UE5Dumper.dll injected. Without AOBMaker, load ue5_dissect.lua (shipped next to UE5CEDumper.CT) yourself and call its enableAutoCallback().</sys:String>
 
     <!-- Tooltips: Object Tree -->
     <sys:String x:Key="str.Tip.ObjectTree.Reload">Reload all objects from game process</sys:String>
@@ -1513,7 +1555,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.InstanceFinder.LocateGameEngineContainer">Locate in GameEngine: find the shortest pointer path from the live UGameEngine down to this container's owning object, then drill into the element so you land next to the value. Reaches engine-layer objects the GWorld graph can't — for most world actors, use Locate in GWorld.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.ExportCE">Export instance as CE XML pointer chain</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.CopyFieldAddr">Copy field absolute address</sys:String>
-    <sys:String x:Key="str.Tip.InstanceFinder.AA">Generate CE Auto Assembler script</sys:String>
+    <sys:String x:Key="str.Tip.InstanceFinder.AA">Generate a CE Auto Assembler script that registers this instance as a symbol. With the AOBMaker CE plugin connected it lands in CE's address list; otherwise it is copied to the clipboard.</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.CopyName">Copy the object name to clipboard</sys:String>
     <sys:String x:Key="str.Tip.InstanceFinder.FindFunc">Find UFunctions that take this instance's class as a parameter or return value (reflection scan — includes native functions, unlike the per-field bytecode xref)</sys:String>
 

@@ -27,6 +27,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     private const string TypeCreateSymbolScript = "CreateSymbolScript";
     private const string TypeCreateMemoryRecord = "CreateMemoryRecord";
     private const string TypeInjectTableFile = "InjectTableFile";
+    private const string TypeGetAttachedProcess = "GetAttachedProcess";
 
     // Inject ships an entire helper Lua file payload, runs CE Lua via
     // synchronize() (which yields to CE's main thread), and verifies the
@@ -481,6 +482,59 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
                 IsAvailable = false;
                 CleanupPipe();
                 return (false, ex.Message);
+            }
+        }
+        finally
+        {
+            _opLock.Release();
+        }
+    }
+
+    /// <inheritdoc/>
+    public async Task<CeAttachedProcess?> GetAttachedProcessAsync(CancellationToken ct = default)
+    {
+        await _opLock.WaitAsync(ct);
+        try
+        {
+            if (!await ReconnectAsync(ct))
+            {
+                IsAvailable = false;
+                return null;
+            }
+
+            try
+            {
+                await WriteMessageAsync(_pipe!, new AobMakerMessage { Type = TypeGetAttachedProcess }, ct);
+
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(ResponseTimeoutMs);
+
+                var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+                CleanupPipe();
+                if (response == null || !response.Success || response.ProcessId is not int pid)
+                {
+                    _log?.Warn(Constants.LogCatInit,
+                        $"AOBMaker GetAttachedProcess failed: {response?.Message ?? "no process id in the reply"}");
+                    return null;
+                }
+
+                IsAvailable = true;
+                _log?.Debug(Constants.LogCatInit,
+                    $"AOBMaker: Cheat Engine has pid {pid} ('{response.ProcessName}') open");
+                return new CeAttachedProcess(pid, response.ProcessName ?? "");
+            }
+            catch (OperationCanceledException)
+            {
+                _log?.Warn(Constants.LogCatInit, "AOBMaker GetAttachedProcess timed out");
+                CleanupPipe();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _log?.Warn(Constants.LogCatInit, $"AOBMaker GetAttachedProcess error: {ex.Message}");
+                IsAvailable = false;
+                CleanupPipe();
+                return null;
             }
         }
         finally

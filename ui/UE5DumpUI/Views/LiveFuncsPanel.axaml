@@ -197,6 +197,15 @@
                         Foreground="#DCDCAA" Background="Transparent"
                         BorderThickness="1" BorderBrush="#DCDCAA"
                         Padding="6,2" FontSize="11" Cursor="Hand"/>
+                <!-- [AOBM-FUNC-DISASM] -->
+                <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
+                        Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).AsmFuncCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).AobMaker.IsAvailable}"
+                        ToolTip.Tip="{StaticResource str.Tip.AobMaker.FuncAsm}"
+                        Foreground="#E5C07B" Background="Transparent"
+                        BorderThickness="1" BorderBrush="#E5C07B"
+                        Padding="6,2" FontSize="11" FontFamily="Consolas" Cursor="Hand"/>
               </StackPanel>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>

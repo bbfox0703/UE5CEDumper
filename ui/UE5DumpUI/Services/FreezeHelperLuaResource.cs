@@ -8,9 +8,9 @@ namespace UE5DumpUI.Services;
 /// link in <c>UE5DumpUI.csproj</c>.
 ///
 /// Sister to <see cref="HelperLuaResource"/> (which reads the invoke
-/// helper). Both share the same pattern: single source of truth lives
-/// under <c>scripts/</c> in the repo, .csproj links them in as embedded
-/// resources with a stable LogicalName.
+/// helper), and built the same way: the single source of truth lives
+/// under <c>scripts/</c> in the repo, and .csproj links it in as an
+/// embedded resource with a stable LogicalName.
 ///
 /// Consumers:
 ///   * <see cref="ViewModels.MainWindowViewModel"/> -- Tools menu inject /

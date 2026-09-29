@@ -279,6 +279,7 @@ public class CeMailboxBailoutTests
 
         yield return new object[] { "CeInject", CeInjectScriptGenerator.Generate(@"C:\x\UE5Dumper.dll") };
         yield return new object[] { "CeInject.Reminder", CeInjectScriptGenerator.GenerateReminder() };
+        yield return new object[] { "Dissect", DissectScriptGenerator.Generate() };
 
         // StandaloneTrainerScriptGenerator returns a LIST of records rather than one script, so
         // every entry is yielded separately — a per-entry name makes a failure say which row.

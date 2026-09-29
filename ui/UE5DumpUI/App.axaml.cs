@@ -19,6 +19,7 @@ public class App : Application
     private DumpService? _dumpService;
     private AobUsageService? _aobUsage;
     private AobMakerBridgeService? _aobMakerBridge;
+    private AobMakerUiClient? _aobMakerUi;
     private ProxyDeployService? _proxyDeploy;
     private ExperimentalGate? _experimentalGate;
     private SnapshotStore? _snapshotStore;
@@ -86,6 +87,7 @@ public class App : Application
             _dumpService = new DumpService(_pipeClient, _logging, new WindowsSystemCodePage());
             _aobUsage = new AobUsageService(_platform, _logging);
             _aobMakerBridge = new AobMakerBridgeService(_logging);
+            _aobMakerUi = new AobMakerUiClient(_logging);
             _proxyDeploy = new ProxyDeployService(_logging, _platform);
             _experimentalGate = new ExperimentalGate(_platform, _logging);
             _snapshotStore = new SnapshotStore(_platform, _logging);
@@ -127,7 +129,7 @@ public class App : Application
             var mainVm = AppComposition.BuildMainWindowViewModel(
                 _pipeClient, _dumpService, _logging, _platform, _aobUsage, _aobMakerBridge,
                 _proxyDeploy, _experimentalGate, _snapshotStore, globalHotkeys, _bookmarkStore,
-                _coordLibraryStore, _logCompression);
+                _coordLibraryStore, _logCompression, _aobMakerUi);
 
             // Load + apply persisted panel options, then track changes for
             // debounced save-on-change. Done before the window is shown so the

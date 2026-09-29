@@ -91,7 +91,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (217 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (224 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT
@@ -132,6 +132,8 @@ UE5CEDumper/
 │       │   ├── VdfParser.cs         ← Valve VDF format parser (Steam library detection)
 │       │   ├── ProxyDeployService.cs ← Proxy DLL deploy/undeploy/detect
 │       │   ├── AobMakerBridgeService.cs ← CE AOBMaker plugin bridge
+│       │   ├── AobMakerUiClient.cs  ← AOBMaker.UI's own pipe (GenerateAob, for the GObjects / GNames symbols)
+│       │   ├── DissectScriptGenerator.cs ← CE record that switches ue5_dissect.lua's auto mode
 │       │   ├── AobUsageService.cs   ← AOB pattern usage tracking
 │       │   ├── KnownStructLayouts.cs ← Hardcoded UE struct layouts for invoke dialog
 │       │   ├── InvokeScriptGenerator.cs ← CE Lua invoke script generation
@@ -248,6 +250,7 @@ CE Lua (UE5CEDumper.CT)               UE5DumpUI.exe (Avalonia)
   ├── injectDLL()                      ├── PipeClient       — async connect/send/recv
   └── ue5_dissect.lua (optional)       ├── DumpService      — request helpers
                                        ├── AobMakerBridgeService — \\.\pipe\AOBMakerCEBridge (optional)
+                                       ├── AobMakerUiClient — \\.\pipe\AOBMaker, AOBMaker.UI's own (optional)
                                        ├── CeXmlExportService / CsxExportService
                                        ├── SdkExportService / SymbolExportService
                                        ├── UsmapExportService / CheatTableBuilder / DumpAllService

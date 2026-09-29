@@ -120,6 +120,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// displayed, real name.</summary>
     private string _ceModuleName = "";
 
+    /// <summary>[AOBM-GNAMES-SYMBOL] AOBMaker.UI's own pipe, which makes the AOB; the CE plugin then registers it.</summary>
+    private readonly IAobMakerUiClient? _aobMakerUi;
+
+    /// <summary>The game's pid, which <c>GenerateAob</c> reads memory from.</summary>
+    private int _gamePid;
+
     // --- GEngine (&GEngine slot) + its AOB metadata, same contract as GWorld's ---
     [ObservableProperty] private string _gEngineAddress = "";
     [ObservableProperty] private string _gEngineMethod = "not_found";
@@ -518,6 +524,16 @@ public partial class PointerPanelViewModel : ViewModelBase
     public bool CanAsmGNamesScan => IsAobMakerAvailable && IsNonZeroAddr(GNamesScanAddr);
     /// <summary>Can send GWorld AOB scan hit address to CE disassembler (code address).</summary>
     public bool CanAsmGWorldScan => IsAobMakerAvailable && IsNonZeroAddr(GWorldScanAddr);
+    /// <summary>[AOBM-GNAMES-SYMBOL] GObjects has no AOB triple from the DLL; AOBMaker.UI makes one from the scan hit.</summary>
+    public bool CanRegisterGObjectsSymbol => IsAobMakerAvailable && _aobMakerUi != null
+        && IsNonZeroAddr(GObjectsAddress) && IsNonZeroAddr(GObjectsScanAddr);
+    /// <summary>[AOBM-GNAMES-SYMBOL] As <see cref="CanRegisterGObjectsSymbol"/>, for GNames.</summary>
+    public bool CanRegisterGNamesSymbol => IsAobMakerAvailable && _aobMakerUi != null
+        && IsNonZeroAddr(GNamesAddress) && IsNonZeroAddr(GNamesScanAddr);
+    /// <summary>[AOBM-PTR-SCANASM] Can send the FSparseDelegateStorage scan hit to CE's disassembler.</summary>
+    public bool CanAsmSparseDelegatesScan => IsAobMakerAvailable && IsNonZeroAddr(SparseDelegatesScanAddr);
+    /// <summary>[AOBM-PTR-SCANASM] Can send the &amp;GEngine scan hit to CE's disassembler.</summary>
+    public bool CanAsmGEngineScan => IsAobMakerAvailable && IsNonZeroAddr(GEngineScanAddr);
 
     /// <summary>True when cache management buttons should be shown (connected + has AobUsageService).</summary>
     public bool CanManageCache => HasData && _aobUsage != null;
@@ -539,12 +555,14 @@ public partial class PointerPanelViewModel : ViewModelBase
                                 IExperimentalGate? experimentalGate = null,
                                 ISnapshotStore? snapshotStore = null,
                                 IPipeClient? pipeClient = null,
-                                ILogCompressionService? logCompression = null)
+                                ILogCompressionService? logCompression = null,
+                                IAobMakerUiClient? aobMakerUi = null)
     {
         _platform = platform;
         _dump = dump;
         _log = log;
         _aobMaker = aobMaker;
+        _aobMakerUi = aobMakerUi;
         _aobUsage = aobUsage;
         _experimentalGate = experimentalGate;
         _snapshotStore = snapshotStore;
@@ -647,6 +665,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GengineAobLen = state.GEngineAobLen;
         ModuleName = state.ModuleName;
         _ceModuleName = state.CeModuleName;
+        _gamePid = state.ProcessId;
         PeHash = state.PeHash;
         DllBuildNumber = state.DllBuildNumber;
         // Re-sync the invoke timeout from the DLL (already-applied per-game override or default).
@@ -815,8 +834,12 @@ public partial class PointerPanelViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanAsmGObjectsScan));
         OnPropertyChanged(nameof(CanAsmGNamesScan));
         OnPropertyChanged(nameof(CanAsmGWorldScan));
+        OnPropertyChanged(nameof(CanAsmSparseDelegatesScan));
+        OnPropertyChanged(nameof(CanAsmGEngineScan));
         OnPropertyChanged(nameof(CanRegisterGWorldSymbol));
         OnPropertyChanged(nameof(CanRegisterGEngineSymbol));
+        OnPropertyChanged(nameof(CanRegisterGObjectsSymbol));
+        OnPropertyChanged(nameof(CanRegisterGNamesSymbol));
         OnPropertyChanged(nameof(AobMakerOfflineText));   // [R7-D-04] the reason moves with every probe
     }
 
@@ -1187,6 +1210,114 @@ public partial class PointerPanelViewModel : ViewModelBase
             $"AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen}");
     }
 
+    // --- [AOBM-GNAMES-SYMBOL] GObjects / GNames symbols through AOBMaker.UI's GenerateAob ---
+
+    [RelayCommand]
+    private Task RegisterGObjectsSymbolAsync()
+        => RegisterSymbolViaGenerateAobAsync("GObjects", "gobjects_addr", GObjectsScanAddr, GObjectsAddress);
+
+    [RelayCommand]
+    private Task RegisterGNamesSymbolAsync()
+        => RegisterSymbolViaGenerateAobAsync("GNames", "gnames_addr", GNamesScanAddr, GNamesAddress);
+
+    /// <summary>
+    /// The DLL publishes a CE-replayable AOB triple for GWorld and &amp;GEngine only. For the others, ask AOBMaker.UI to
+    /// make a unique AOB around the instruction our scan hit resolved through, then have the CE plugin register it the
+    /// same way the GWorld button does.
+    /// <para>Nothing is pushed unless the replay lands where the DLL resolved the pointer: a signature that
+    /// dereferences or adjusts after the RIP target would otherwise register a plausible, wrong address.</para>
+    /// </summary>
+    internal async Task RegisterSymbolViaGenerateAobAsync(string label, string symbolName, string scanAddr,
+                                                          string resolvedAddr)
+    {
+        if (_aobMaker == null || _aobMakerUi == null || _dump == null) return;
+        if (!TryParseHex(scanAddr, out var matchAddr) || !TryParseHex(resolvedAddr, out var expected)) return;
+        ClearError();
+        SymbolStatusText = AobMakerActions.GenerateAobPendingText(symbolName);
+
+        // The scan hit is where the PATTERN matched; the instruction it resolved through can sit further in.
+        var window = await TryReadAsync(matchAddr, AobMakerActions.ScanHitWindowBytes);
+        if (window == null)
+        {
+            FailSymbol(AobMakerActions.GenerateAobUnreadableText(symbolName, matchAddr));
+            return;
+        }
+        if (AobMakerActions.FindRipSeed(matchAddr, window, expected) is not { } seed)
+        {
+            _log?.Warn(Constants.LogCatInit,
+                $"[AOBM-GNAMES-SYMBOL] {symbolName}: no RIP operand in {AobMakerActions.ScanHitWindowBytes} bytes at 0x{matchAddr:X} lands on {resolvedAddr}; not asked");
+            FailSymbol(AobMakerActions.GenerateAobNoDirectRipText(symbolName));
+            return;
+        }
+
+        var result = await _aobMakerUi.GenerateAobAsync($"0x{seed.InstructionAddr:X}", _gamePid);
+        if (result.Aob is not { } aob)
+        {
+            FailSymbol(AobMakerActions.GenerateAobFailureText(result, symbolName));
+            return;
+        }
+        if (aob.Pos is not int pos || aob.AobLen is not int len)
+        {
+            FailSymbol(AobMakerActions.GenerateAobNotRipText(symbolName, seed.InstructionAddr));
+            return;
+        }
+
+        // Re-derive the target from what AOBMaker.UI decoded, not from our own guess at the instruction start.
+        var dispAddr = seed.InstructionAddr - (ulong)aob.InjectionOffset + (ulong)pos;
+        var dispBytes = await TryReadAsync(dispAddr, 4);
+        if (dispBytes == null)
+        {
+            FailSymbol(AobMakerActions.GenerateAobUnreadableText(symbolName, dispAddr));
+            return;
+        }
+        var target = AobMakerActions.SymbolTarget(seed.InstructionAddr, aob.InjectionOffset, len,
+                                                  BitConverter.ToInt32(dispBytes, 0));
+        if (target != expected)
+        {
+            _log?.Warn(Constants.LogCatInit,
+                $"[AOBM-GNAMES-SYMBOL] {symbolName}: AOB {aob.Aob} replays to 0x{target:X}, DLL resolved 0x{expected:X}; not pushed");
+            FailSymbol(AobMakerActions.GenerateAobMismatchText(symbolName, target, resolvedAddr));
+            return;
+        }
+
+        string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : aob.Module;
+        bool success = await _aobMaker.CreateSymbolScriptAsync(
+            name: $"{label} → {symbolName}",
+            aob: aob.Aob,
+            pos: pos,
+            aoblen: len,
+            symbol: symbolName,
+            module: module,
+            autoActivate: true);
+        ReportSymbolRegistration(success, symbolName,
+            $"AOB (AOBMaker.UI GenerateAob): {aob.Aob}, pos={pos}, len={len}, seed=0x{seed.InstructionAddr:X}");
+    }
+
+    private void FailSymbol(string message)
+    {
+        SymbolStatusText = "";
+        SetError(message);
+    }
+
+    /// <summary>Null on any failure, including a short read: the callers only need to know they cannot check.</summary>
+    private async Task<byte[]?> TryReadAsync(ulong addr, int size)
+    {
+        try
+        {
+            var bytes = await _dump!.ReadMemAsync($"0x{addr:X}", size);
+            return bytes.Length >= size ? bytes : null;
+        }
+        catch (Exception ex)
+        {
+            _log?.Warn(Constants.LogCatInit, $"[AOBM-GNAMES-SYMBOL] reading {size} bytes at 0x{addr:X}: {ex.Message}");
+            return null;
+        }
+    }
+
+    private static bool TryParseHex(string addr, out ulong value)
+        => ulong.TryParse(StripHexPrefix(addr ?? ""), System.Globalization.NumberStyles.HexNumber,
+                          System.Globalization.CultureInfo.InvariantCulture, out value) && value != 0;
+
     /// <summary>
     /// Surface a "Register symbol" outcome to the USER, not only to the log.
     ///
@@ -1194,7 +1325,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// vs <c>_log.Warn</c>, so the panel looked identical whether CE had registered
     /// the symbol or the bridge never reached CE at all — and the user's next action
     /// (rooting a CE record on that symbol) then resolved to nothing with no hint why
-    /// (audit #5 V11). Shared so the two cards cannot report differently.</para>
+    /// (audit #5 V11). Shared so the cards cannot report differently.</para>
     /// </summary>
     /// <param name="detail">AOB triple, for the log line only — not shown to the user.</param>
     internal void ReportSymbolRegistration(bool success, string symbolName, string detail)
@@ -1636,6 +1767,29 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         if (!string.IsNullOrEmpty(SparseDelegatesScanAddr))
             await _platform.CopyToClipboardAsync(StripHexPrefix(SparseDelegatesScanAddr));
+    }
+
+    // --- [AOBM-PTR-SCANASM] the two scan hits that had no ASM button ---
+
+    [RelayCommand]
+    private async Task AsmSparseDelegatesScanAsync()
+    {
+        if (_aobMaker == null || !IsNonZeroAddr(SparseDelegatesScanAddr)) return;
+        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(SparseDelegatesScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task AsmGEngineScanAsync()
+    {
+        if (_aobMaker == null || !IsNonZeroAddr(GEngineScanAddr)) return;
+        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GEngineScanAddr));
+    }
+
+    [RelayCommand]
+    private async Task CopyGEngineScanAddrAsync()
+    {
+        if (!string.IsNullOrEmpty(GEngineScanAddr))
+            await _platform.CopyToClipboardAsync(StripHexPrefix(GEngineScanAddr));
     }
 
     // ===================================================================

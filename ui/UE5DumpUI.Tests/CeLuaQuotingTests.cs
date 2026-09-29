@@ -454,6 +454,7 @@ public class CeLuaQuotingTests
         new object[] { "PtrQuery eng", PointerQueryScriptGenerator.Generate(PointerQueryScriptGenerator.Target.GameEngine) },
         new object[] { "TimeDilation", TimeDilationScriptGenerator.Generate(TimeDilationScriptGenerator.Target.Global, 0.5) },
         new object[] { "TimeDil pawn", TimeDilationScriptGenerator.Generate(TimeDilationScriptGenerator.Target.Pawn, 2.0) },
+        new object[] { "Dissect",      DissectScriptGenerator.Generate() },
     };
 
     [Theory]
