@@ -50,7 +50,19 @@ public class DissectScriptGeneratorTests
         Assert.Equal(1, Count(enable, CeLuaHygiene.CloseCall));
         Assert.True(enable.LastIndexOf("  return\n", StringComparison.Ordinal)
                     < enable.IndexOf(CeLuaHygiene.CloseCall, StringComparison.Ordinal));
-        Assert.Contains("if DEBUG == 0 then " + CeLuaHygiene.CloseCall, enable);
+        Assert.Contains("DEBUG == 0 then " + CeLuaHygiene.CloseCall, enable);
+    }
+
+    [Fact]
+    public void A_UETools_warning_at_enable_keeps_the_window_open_without_unticking()
+    {
+        // [AOBM-DISSECT-UETOOLS] enableAutoCallback returns false plus a reason when CE 7.7's own UE dissector could
+        // not be suspended. The module prints that ungated, and a success-close straight after would shut the Lua
+        // Engine window over it. Our callbacks DID register, so it is no bail-out: the record stays ticked.
+        var enable = EnableBlock;
+        Assert.Contains("local eok, eres = pcall(mod.enableAutoCallback)", enable);
+        Assert.Contains("if eres ~= false and DEBUG == 0 then " + CeLuaHygiene.CloseCall, enable);
+        Assert.Equal(5, Count(enable, CeLuaHygiene.DeferredUntickLua("  ")));
     }
 
     [Fact]
@@ -88,7 +100,10 @@ public class DissectScriptGeneratorTests
     {
         var disable = DisableBlock;
         Assert.Contains("print('[UE5Dissect] the auto-dissect callbacks are still registered: '", disable);
-        Assert.Contains("if disOk and DEBUG == 0 then " + CeLuaHygiene.CloseCall, disable);
+        // [AOBM-DISSECT-UETOOLS] A disable that could not put CE 7.7's own UE dissector back returns false: its
+        // ungated warning has to stay readable too.
+        Assert.Contains("disOk, disRes = pcall(", disable);
+        Assert.Contains("if disOk and disRes ~= false and DEBUG == 0 then " + CeLuaHygiene.CloseCall, disable);
     }
 
     [Fact]
@@ -121,6 +136,8 @@ public class DissectScriptGeneratorTests
         Assert.False(rec.AutoActivate);
         Assert.Equal(DissectScriptGenerator.RecordGroup, rec.Group);
         Assert.StartsWith("Auto Structure Dissect added", vm.StatusText);
+        // [AOBM-DISSECT-UETOOLS] The record suspends CE's own UE dissector while ticked; the user is told up front.
+        Assert.Contains("Use when dissecting structures", vm.StatusText);
     }
 
     [Fact]
