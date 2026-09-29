@@ -14,7 +14,8 @@ namespace UE5DumpUI.Services;
 /// <para>[AOBM-DISSECT-UETOOLS] While ticked, the module suspends CE 7.7's own UE dissector (UETools), which CE would
 /// otherwise ask first, and puts it back on untick. A suspend or restore that fails is not a failed toggle -- the
 /// module returns <c>false</c> and prints why -- so the block keeps the window open on it, and <c>[ENABLE]</c> does not
-/// untick.</para>
+/// untick. <c>[ENABLE]</c> hands the module its own memory record, so auto mode also turns itself off when CE unticks
+/// or deletes the record without running <c>[DISABLE]</c>.</para>
 /// </summary>
 public static class DissectScriptGenerator
 {
@@ -89,7 +90,10 @@ public static class DissectScriptGenerator
             $"'[UE5Dissect] {TableFileName} did not load:\\n' .. tostring(mod)", "  ");
         Line(sb, "end");
         Line(sb, $"{ModuleGlobal} = mod");
-        Line(sb, "local eok, eres = pcall(mod.enableAutoCallback)");
+        // [AOBM-DISSECT-UETOOLS] CE can untick this record without running [DISABLE] (a process change answered Yes)
+        // or free it while ticked; the module follows the record it is handed and turns auto mode off then. memrec
+        // is the local CE's auto assembler declares ahead of a {$lua} block; nil when the block runs without one.
+        Line(sb, "local eok, eres = pcall(mod.enableAutoCallback, memrec)");
         Line(sb, "if not eok then");
         CeLuaHygiene.AppendFailedEnable(sb,
             "'[UE5Dissect] enableAutoCallback failed:\\n' .. tostring(eres)", "  ");

@@ -60,7 +60,7 @@ public class DissectScriptGeneratorTests
         // not be suspended. The module prints that ungated, and a success-close straight after would shut the Lua
         // Engine window over it. Our callbacks DID register, so it is no bail-out: the record stays ticked.
         var enable = EnableBlock;
-        Assert.Contains("local eok, eres = pcall(mod.enableAutoCallback)", enable);
+        Assert.Contains("local eok, eres = pcall(mod.enableAutoCallback, memrec)", enable);
         Assert.Contains("if eres ~= false and DEBUG == 0 then " + CeLuaHygiene.CloseCall, enable);
         Assert.Equal(5, Count(enable, CeLuaHygiene.DeferredUntickLua("  ")));
     }
@@ -164,7 +164,7 @@ public class DissectScriptGeneratorTests
         var repo = File.ReadAllText(NumericInputCoercionTests.RepoFile("scripts/ue5_dissect.lua"));
         Assert.Equal(CeLuaHygiene.NormalizeTableFilePayload(repo), embedded);
         Assert.DoesNotContain("\r", embedded);
-        Assert.Contains("function dissect.enableAutoCallback()", embedded);
+        Assert.Contains("function dissect.enableAutoCallback(", embedded);
         Assert.EndsWith("return dissect\n", embedded);
     }
 
