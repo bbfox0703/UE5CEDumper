@@ -968,16 +968,19 @@ AOBMaker.UI of the same build; UE5DumpUI build 3599 (AOT, 58,864,640 B), the fix
 |---|---|
 | A1 AA push | ✅ an unticked AA record `"DumperTestActor"`; ticked, `getAddress('DumperTestActor')` = the instance; unticked, gone |
 | A2 +CE / HEX | ✅ Value Search (`DumperTestActor_0.I32`, 4 Bytes, value 1234567), Snapshot diff and SPC rows (`DumperTestActor::TickCount` at actor + 0x698) |
+| A2, build 3602 | ✅ **group slots**, one `I32 = 1234567` + `U16 = 54321` group on the actor in all three: Value Search (HEX on U16 → hex top = actor + 0x62E; +CE on I32 → `DumperTestActor.I32`, vtDword, 1234567), Snapshot (HEX on I32 → actor + 0x630; +CE on U16 → `DumperTestActor::U16`, vtWord, 54321), SPC (HEX on U16 → actor + 0x62E; +CE on I32 → `DumperTestActor::I32`, vtDword, 1234567). ✅ **array element**: `V1a_GrowContainers(3)` between two snapshots, `Arr_Churn[0]` written 7001 → 7777; its diff row's HEX and +CE both say "Arr_Churn[0] is an array element: …nothing of its own to send to CE" and `CEPlugin.log` gains no line. ✅ **earlier launch**: a diff against the 19:19 snapshots (the previous launch) leaves Live / Addr / HEX / +CE disabled on every row |
 | A3 Instance Finder | ✅ instance HEX; field +CE typed right (I32 → 4 Bytes, F32 → Float 513.36) and HEX |
+| A3, build 3602 | ✅ **delegate +CE** on Shipping (pad 0): `Del_Unicast` → actor + 0x980, `Multicast_Inline` → actor + 0x970, both 8 Bytes hex. ✅ **container owner HEX**: a lookup of an address inside `Arr_Churn`'s buffer names `DumperTestActor.Arr_Churn[2]`; HEX puts CE's hex view on the owner (`NavigateHexView … 0x1F5E8509A00`, hex top = the actor) |
 | A4 object HEX | ✅ Object Tree, Related Objects, Class Pivot |
 | A5 scan-hit ASM / Copy | ✅ FSparseDelegateStorage and &GEngine: the disassembler lands on the DLL's scan address; Copy gives the bare hex |
 | A6 attach check | ✅ CE on another process → ⚠ with both pids; reattach clears. ❌ on 3599: the ⚠ outlived CE; fixed in 3600, ✅ live (also re-checked when the plugin comes back) |
 | A7 function ASM | ✅ Interesting Functions, the function-properties dialog, Live Walker: a `(code)` ByteArray record and the disassembler on `ADumperTestActor::exec…` (PDB names) |
+| A7, build 3602 | ✅ **Live Funcs**, the refusal path only: a 6-function recording held Blueprint events alone; ASM on one says "No native code address for BlueprintModifyCamera" and CE's disassembler stays put. The native path is the shared one proven above: a native UFUNCTION invoked through the pipe during a recording was not captured, so this panel never had one to press |
 | A8 GObjects / GNames SYM | ✅ seeds = scan hit + 4 (GObjects) and the scan hit (GNames); `getAddress` equals the DLL's address for both; AOBMaker.UI closed → "not running", nothing pushed; busy (3600) → "busy" |
 | A9 Auto Structure Dissect | ✅ file + unticked record; ticked, Define new structure uses reflected names. ❌ on 3599 when CE opened the game before the inject (false "not loaded"); fixed in 3600, ✅ live in that order |
 
-Not covered live (unit tests only): the Value Search / Snapshot / SPC group slots, Live Funcs' ASM, Instance Finder's
-container-owner HEX and a delegate field's +CE, the "array element" and "earlier launch" refusals, and A8's
+The first round (3599 / 3600) left some paths to unit tests; the ", build 3602" rows above close them, on the same
+fixture with UE5DumpUI build 3602. Still not covered live: Live Funcs' ASM on a *native* function (above), and A8's
 adjusted-signature refusal (needs Avowed). New rows it produced: `[AOBM-UI-BUSY]`, `[AOBM-SYSTAB-ASM-SILENT]`.
 
 *The plan as it was written before the check:*
