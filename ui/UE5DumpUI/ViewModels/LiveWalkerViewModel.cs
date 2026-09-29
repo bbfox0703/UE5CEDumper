@@ -5857,6 +5857,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         }
     }
 
+    internal const string KeyPtrTargetLabel = "str.LiveWalker.PtrTargetLabel";
+
+    /// <summary>A pointer field's HEX lands on what it points at; the field's name alone would read as the field.</summary>
+    internal static string PtrTargetLabel(string field) => AobMakerStatus.Say(KeyPtrTargetLabel, "{0} target", field);
+
     [RelayCommand]
     private async Task HexPtrAddressAsync(LiveFieldValue? field)
     {

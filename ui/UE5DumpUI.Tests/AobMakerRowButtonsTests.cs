@@ -291,4 +291,69 @@ public class AobMakerRowButtonsTests : IDisposable
         Assert.Equal("Pawn:Jump (code)", Assert.Single(bridge.Records).Description);
         Assert.Equal("Pawn:Jump: CE disassembler @ 0x7FF601230000", vm.StatusText);
     }
+
+    // ---- [AOBM-LIVEWALKER-HEX-SILENT] Live Walker's four HEX buttons dropped the bridge's answer ----
+
+    private LiveWalkerViewModel Walker(ScriptedAobMakerBridge bridge)
+    {
+        var vm = new LiveWalkerViewModel(new StubDumpService(), _log, new MockPlatformService(_dir), bridge);
+        vm.ApplyAobMakerProbe(bridge.Available);
+        return vm;
+    }
+
+    private static LiveFieldValue Hp => new()
+    {
+        Name = "HP", TypeName = "FloatProperty", Offset = 0x400, FieldAddress = "0x7FF600001400",
+        PtrAddress = "0x7FF600009000",
+    };
+
+    [Fact]
+    public async Task LiveWalker_HEX_says_where_CE_went()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = Walker(bridge);
+        vm.CurrentObjectName = "Pawn_0";
+        vm.CurrentAddress = "0x7FF600001000";
+        vm.CurrentOuterName = "Level_0";
+        vm.CurrentOuterAddr = "0x7FF600002000";
+
+        await vm.HexFieldAddressCommand.ExecuteAsync(Hp);
+        Assert.Equal("7FF600001400", bridge.LastHex);
+        Assert.Equal("CE hex view: HP @ 0x7FF600001400", vm.StatusText);
+
+        await vm.HexPtrAddressCommand.ExecuteAsync(Hp);
+        Assert.Equal("7FF600009000", bridge.LastHex);
+        Assert.Equal("CE hex view: HP target @ 0x7FF600009000", vm.StatusText);
+
+        await vm.HexObjectAddressCommand.ExecuteAsync(null);
+        Assert.Equal("7FF600001000", bridge.LastHex);
+        Assert.Equal("CE hex view: Pawn_0 @ 0x7FF600001000", vm.StatusText);
+
+        await vm.HexOuterAddressCommand.ExecuteAsync(null);
+        Assert.Equal("7FF600002000", bridge.LastHex);
+        Assert.Equal("CE hex view: Level_0 @ 0x7FF600002000", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task LiveWalker_HEX_that_CE_refuses_says_so()
+    {
+        var vm = Walker(new ScriptedAobMakerBridge { Available = true, NavigateResult = false });
+
+        await vm.HexFieldAddressCommand.ExecuteAsync(Hp);
+
+        Assert.Equal("Cheat Engine did not move its view to HP @ 0x7FF600001400", vm.StatusText);
+        Assert.True(vm.IsAobMakerAvailable);
+    }
+
+    [Fact]
+    public async Task LiveWalker_HEX_that_finds_the_plugin_gone_says_why_and_turns_the_buttons_off()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true, NavigateResult = false, AvailableAfterCall = false };
+        var vm = Walker(bridge);
+
+        await vm.HexFieldAddressCommand.ExecuteAsync(Hp);
+
+        Assert.Equal(AobMakerUnavailable.Text(bridge), vm.StatusText);
+        Assert.False(vm.IsAobMakerAvailable);
+    }
 }
