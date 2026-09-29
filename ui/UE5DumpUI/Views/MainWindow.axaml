@@ -90,7 +90,9 @@
           <StackPanel Orientation="Horizontal" Spacing="3" Background="Transparent"
                       IsVisible="{Binding IsAobMakerUiConfigured}"
                       ToolTip.Tip="{Binding AobMakerUi.Tip}">
-            <TextBlock Text="/" Foreground="#666666" FontSize="12" VerticalAlignment="Center"/>
+            <!-- #999999, not darker: at #666666 the separator did not show at all on the 225 % laptop (measured
+                 2026-09-29), and the maintainer's layout is "DLL (dot) / UI (dot)". -->
+            <TextBlock Text="/" Foreground="#999999" FontSize="12" VerticalAlignment="Center"/>
             <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}"
                        Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
             <Ellipse Width="9" Height="9" Fill="#4EC9B0" VerticalAlignment="Center"
