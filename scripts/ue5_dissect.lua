@@ -981,9 +981,12 @@ end
 --
 -- The record's ID is kept, never the record: the userdata of a deleted record
 -- points at a freed object. In the CE source we have (older than 7.7) a new
--- record is numbered one past the highest ID in the list, so a deleted owner's
--- ID can come back on the next record added; that record starts unticked, so
--- the watch still turns auto mode off.
+-- record is numbered one past the highest ID in the list, and a pasted one keeps
+-- its ID when no record holds it, so a deleted owner's ID can come back on the
+-- next record added. That record starts unticked. Once a tick has seen the owner
+-- ticked, the watch reads it as the owner unticked and turns auto mode off; an ID
+-- taken over before then is followed as the owner -- the same first-interval
+-- window as an untick that lands before any tick has seen the record ticked.
 --
 -- The latest enable names the record followed. A re-tick after CE's untick lands
 -- on the already-registered path and is followed from then on; an enable with

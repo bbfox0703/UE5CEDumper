@@ -1394,6 +1394,51 @@ do
   eq(FREED_READS, 0, 'the freed record is never read')
 end
 
+-- In the CE source we have (older than 7.7) a new record takes max(ID)+1 and a
+-- pasted one keeps its ID when no record holds it, so a deleted owner's ID can
+-- come back on the next record added -- unticked.
+uetCase("OWNER: the record deleted and its ID taken by a new record, after a tick saw it ticked -> auto dissect off", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  deleteRecord(rec)
+  newRecord(7)                                  -- the next record added takes the freed ID
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'the unticked newcomer reads as the owner unticked')
+  eq(item.Checked, true, 'UETools is put back')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase("OWNER: the record deleted and its ID taken before any tick saw it ticked -> not caught (the first-interval window)", 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  deleteRecord(rec)
+  newRecord(7)
+  tick(theWatch()); tick(theWatch())
+  -- The documented limit, pinned so the comments that describe it stay true: an
+  -- unticked record never seen ticked is what a tick landing before CE marks the
+  -- owner looks like. Closing the window changes this case on purpose.
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered')
+  eq(ST_().ownerRecordId, 7, 'following the record that took the ID')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase('OWNER: an enable whose registration raised follows no record', 'live')
+do
+  REGISTER_FAIL = true
+  local ok = pcall(dissect.enableAutoCallback, newRecord(7))
+  REGISTER_FAIL = false
+  eq(ok, false, 'the enable fails')
+  eq(ST_().ownerRecordId, nil, 'no record is followed: nothing of ours is registered to turn off')
+  eq(liveTimers(), 0, 'and no watch runs')
+end
+
 uetCase('OWNER: a tick before CE marks the record ticked changes nothing', 'live')
 do
   local item = UEngine.GUI.miStructureDissectCallbackStatus
