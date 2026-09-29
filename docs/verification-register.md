@@ -250,7 +250,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -957,7 +957,31 @@ values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sen
 
 -----
 
-### ⬜ SHIPPED 2026-09-29, NEEDS A LIVE CHECK — `[AOBMAKER-A1-A9-LIVE]`: the AOBMaker buttons of Eval A1–A9
+### ✅ FIXED + LIVE-VERIFIED 2026-09-29 `[AOBMAKER-A1-A9-LIVE]` — the AOBMaker buttons of Eval A1–A9, and the two defects the check found
+
+**Result, 2026-09-29.** DumperTest 5.4 Shipping; CE 7.7 with the AOBMaker plugin v2026.9.25.153 (`9431370`);
+AOBMaker.UI of the same build; UE5DumpUI build 3599 (AOT, 58,864,640 B), the fixes on 3600. CE's state was read with
+`tools/verify/ce_lua_eval.py --state` (the address list, the hex and disassembler views) beside the plugin's
+`CEPlugin.log` and AOBMaker.UI's `log.txt`, not from screenshots.
+
+| Item | Result |
+|---|---|
+| A1 AA push | ✅ an unticked AA record `"DumperTestActor"`; ticked, `getAddress('DumperTestActor')` = the instance; unticked, gone |
+| A2 +CE / HEX | ✅ Value Search (`DumperTestActor_0.I32`, 4 Bytes, value 1234567), Snapshot diff and SPC rows (`DumperTestActor::TickCount` at actor + 0x698) |
+| A3 Instance Finder | ✅ instance HEX; field +CE typed right (I32 → 4 Bytes, F32 → Float 513.36) and HEX |
+| A4 object HEX | ✅ Object Tree, Related Objects, Class Pivot |
+| A5 scan-hit ASM / Copy | ✅ FSparseDelegateStorage and &GEngine: the disassembler lands on the DLL's scan address; Copy gives the bare hex |
+| A6 attach check | ✅ CE on another process → ⚠ with both pids; reattach clears. ❌ on 3599: the ⚠ outlived CE; fixed in 3600, ✅ live (also re-checked when the plugin comes back) |
+| A7 function ASM | ✅ Interesting Functions, the function-properties dialog, Live Walker: a `(code)` ByteArray record and the disassembler on `ADumperTestActor::exec…` (PDB names) |
+| A8 GObjects / GNames SYM | ✅ seeds = scan hit + 4 (GObjects) and the scan hit (GNames); `getAddress` equals the DLL's address for both; AOBMaker.UI closed → "not running", nothing pushed; busy (3600) → "busy" |
+| A9 Auto Structure Dissect | ✅ file + unticked record; ticked, Define new structure uses reflected names. ❌ on 3599 when CE opened the game before the inject (false "not loaded"); fixed in 3600, ✅ live in that order |
+
+Not covered live (unit tests only): the Value Search / Snapshot / SPC group slots, Live Funcs' ASM, Instance Finder's
+container-owner HEX and a delegate field's +CE, the "array element" and "earlier launch" refusals, and A8's
+adjusted-signature refusal (needs Avowed). New rows it produced: `[AOBM-UI-BUSY]`, `[AOBM-SYSTAB-ASM-SILENT]`.
+
+*The plan as it was written before the check:*
+
 
 Shipped in `90c732e5`, UI only; the rows are in `todo.md` `[AOBMAKER-EVAL-2026-09-29]` and the design in
 `aobmaker-integration-eval.md`. Unit tests pin what each button sends to a scripted bridge and what the status line
