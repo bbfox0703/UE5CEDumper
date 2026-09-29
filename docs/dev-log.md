@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-09-30 (build 3604) — Auto Structure Dissect works beside Cheat Engine 7.7's own Unreal Engine dissector `[AOBM-DISSECT-UETOOLS]`
+
+- Cheat Engine 7.7 has its own Unreal Engine dissector (Unreal Engine → Use when dissecting structures), and it
+  answered Define new structure before ours could. While "UE5CEDumper: Auto Structure Dissect (UObjects)" is
+  ticked, ours now stands in for it; untick, and Cheat Engine's is back exactly as it was. Turning Cheat Engine's
+  back on yourself while ours is ticked is respected.
+- Restarting the game: if Cheat Engine unticks the record for you (answering Yes to disabling its entries), ours
+  really turns off too, and Cheat Engine's dissector comes back. Deleting the ticked record does the same.
+- If UE5Dumper.dll is gone, the warning now names the record to untick and tick once the DLL is back.
+- Checked live on DumperTest with Cheat Engine 7.7 (2026-09-29/30).
+- Build 3604: AOT `dist\UE5DumpUI.exe` 58,889,216 B, sha256 `c465a08a8256`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `a61abc114a7e`. C# 5941/5941, headless 15/15, dll_core 593 checks, the Lua suites 11/11 (dissect 351 checks).
+
 ## 2026-09-29 (build 3603) — AOBMaker: the trainer's Setup is left for you to tick; the System tab and Live Walker say where Cheat Engine went `[AOBM-TRAINER-SETUP-MODAL]` `[AOBM-SYSTAB-ASM-SILENT]` `[AOBM-LIVEWALKER-HEX-SILENT]`
 
 - Teleport → Standalone Trainer → Export to CE: every entry arrives unticked, Setup included (now named "tick this
