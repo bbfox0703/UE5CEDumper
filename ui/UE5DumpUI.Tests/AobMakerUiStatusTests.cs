@@ -11,11 +11,13 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class AobMakerUiStatusTests
 {
+    private static CancellationToken Ct => TestContext.Current.CancellationToken;
+
     [Fact]
     public async Task A_listed_pipe_is_running_at_once()
     {
         var status = new AobMakerUiStatus(new ListedUiClient { Listed = true });
-        Assert.True(await status.PollAsync());
+        Assert.True(await status.PollAsync(Ct));
         Assert.True(status.IsRunning);
     }
 
@@ -24,18 +26,18 @@ public class AobMakerUiStatusTests
     {
         var client = new ListedUiClient { Listed = true };
         var status = new AobMakerUiStatus(client);
-        await status.PollAsync();
+        await status.PollAsync(Ct);
 
         client.Listed = false;
-        await status.PollAsync();
+        await status.PollAsync(Ct);
         Assert.True(status.IsRunning);          // the accept loop's gap, not a closed app
-        await status.PollAsync();
+        await status.PollAsync(Ct);
         Assert.False(status.IsRunning);
 
         client.Listed = true;
-        await status.PollAsync();
+        await status.PollAsync(Ct);
         client.Listed = false;
-        await status.PollAsync();
+        await status.PollAsync(Ct);
         Assert.True(status.IsRunning);          // the earlier misses do not count any more
     }
 
@@ -44,8 +46,8 @@ public class AobMakerUiStatusTests
     {
         var status = new AobMakerUiStatus(new ListedUiClient { Throws = true });
         status.Observe(true);
-        await status.PollAsync();
-        await status.PollAsync();
+        await status.PollAsync(Ct);
+        await status.PollAsync(Ct);
         Assert.False(status.IsRunning);
     }
 
@@ -53,7 +55,7 @@ public class AobMakerUiStatusTests
     public async Task No_client_is_never_running_and_says_so()
     {
         var status = new AobMakerUiStatus(null);
-        Assert.False(await status.PollAsync());
+        Assert.False(await status.PollAsync(Ct));
         Assert.False(status.IsRunning);
         Assert.Contains("not running", status.Tip);
     }
@@ -63,8 +65,8 @@ public class AobMakerUiStatusTests
     {
         var client = new ListedUiClient { Listed = true, Gate = new TaskCompletionSource<bool>() };
         var status = new AobMakerUiStatus(client);
-        var first = status.PollAsync();
-        var second = status.PollAsync();        // arrives while the first still waits on the listing
+        var first = status.PollAsync(Ct);
+        var second = status.PollAsync(Ct);        // arrives while the first still waits on the listing
         client.Gate.SetResult(true);
         await Task.WhenAll(first, second);
         Assert.Equal(1, client.ListCalls);
@@ -77,7 +79,7 @@ public class AobMakerUiStatusTests
         var client = new ListedUiClient { Answer = answer };
         var status = new AobMakerUiStatus(client);
 
-        var result = await status.GenerateAobAsync("0x1234", 42);
+        var result = await status.GenerateAobAsync("0x1234", 42, Ct);
 
         Assert.Same(answer, result);
         Assert.Equal(("0x1234", 42), client.GenerateCalls.Single());
@@ -89,11 +91,11 @@ public class AobMakerUiStatusTests
     {
         var client = new ListedUiClient { Listed = true };
         var status = new AobMakerUiStatus(client);
-        await status.PollAsync();
+        await status.PollAsync(Ct);
 
         client.Listed = false;
         client.Answer = new GenerateAobResult(null, GenerateAobFailure.NotRunning, null);
-        await status.GenerateAobAsync("0x1", 1);
+        await status.GenerateAobAsync("0x1", 1, Ct);
 
         Assert.False(status.IsRunning);         // the connect's miss plus the re-list's: two
     }
@@ -107,7 +109,7 @@ public class AobMakerUiStatusTests
     {
         var client = new ListedUiClient { Answer = new GenerateAobResult(null, failure, "m") };
         var status = new AobMakerUiStatus(client);
-        await status.GenerateAobAsync("0x1", 1);
+        await status.GenerateAobAsync("0x1", 1, Ct);
         Assert.True(status.IsRunning);
     }
 
@@ -118,7 +120,7 @@ public class AobMakerUiStatusTests
         var raised = new List<string?>();
         status.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
 
-        await status.PollAsync();
+        await status.PollAsync(Ct);
 
         Assert.Contains(nameof(AobMakerUiStatus.Tip), raised);
         Assert.Contains("running", status.Tip);
