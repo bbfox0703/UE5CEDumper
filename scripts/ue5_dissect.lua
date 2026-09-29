@@ -902,7 +902,11 @@ local function restoreUETools()
     end
     -- Back on already: the user re-checked the item while auto mode was on.
     -- There is nothing to restore, and re-registering would only churn its ids.
-    if UEngineStructNameLookup ~= nil or UEngineStructDissect ~= nil then
+    -- Both hooks, not either: UETools' unregister clears its name lookup before
+    -- touching the dissect override, so a suspension that raised halfway leaves
+    -- the override alone set -- and its register unregisters first, so calling
+    -- it over that half state cannot register anything twice.
+    if UEngineStructNameLookup ~= nil and UEngineStructDissect ~= nil then
         log("CE's own UE dissector (UETools) is already back on; left as it is")
         return true
     end
