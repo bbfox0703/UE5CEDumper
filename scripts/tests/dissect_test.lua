@@ -180,7 +180,9 @@ end
 -- A fake of CE 7.7's Extensions\UETools, shaped on its own source
 -- (UEInfoStructureDissect.LUA and UEInfoScanner.LUA, CE 7.7):
 --   * two globals hold its registrations, and its unregister function clears
---     both;
+--     both, in order: the name lookup is unregistered and set to nil BEFORE the
+--     dissect override is touched, so a raise in the second call leaves UETools
+--     half suspended;
 --   * its scanner, once it recognizes the game, registers them and creates the
 --     "Use when dissecting structures" item, AutoCheck and Checked, in one
 --     synchronize() call;
@@ -201,10 +203,15 @@ end
 -- 'stale' (rebuilt after a process change, the old name lookup still set).
 local function installUETools(state)
   UET = { reg = 0, unreg = 0, failRegister = false, failUnregister = false }
+  -- failUnregister = 'first' raises in its first call, before anything is
+  -- cleared; any other true value raises in the second, as a rejected
+  -- unregisterStructureDissectOverride2 would, after the name lookup is gone.
   function unregisterUEngineStructureLookupCallbacks()
+    if UET.failUnregister == 'first' then error('unregisterStructureNameLookup: invalid id') end
+    UEngineStructNameLookup = nil
     if UET.failUnregister then error('unregisterStructureDissectOverride2: invalid id') end
     UET.unreg = UET.unreg + 1
-    UEngineStructNameLookup, UEngineStructDissect = nil, nil
+    UEngineStructDissect = nil
   end
   function registerUEngineStructureLookupCallbacks()
     if UET.failRegister then error('registerStructureDissectOverride2 failed') end
@@ -1015,18 +1022,35 @@ end
 uetCase('UETOOLS: a suspension that fails is reported UNGATED, and ours stays registered', 'live')
 do
   local item = UEngine.GUI.miStructureDissectCallbackStatus
-  UET.failUnregister = true
+  UET.failUnregister = 'first'
   local ok, r, why = pcall(dissect.enableAutoCallback)
   eq(ok, true, 'it does not raise: our callbacks are registered')
   eq(REGISTERED.overrideCount, 1, 'ours is registered')
   eq(r, false, 'it tells the caller, so the record keeps its window open without unticking')
-  contains(why, 'unregisterStructureDissectOverride2: invalid id', "the reason carries UETools' own error")
-  check(warnedWith('unregisterStructureDissectOverride2: invalid id'), 'printed with UE5_DEBUG unset',
+  contains(why, 'unregisterStructureNameLookup: invalid id', "the reason carries UETools' own error")
+  check(warnedWith('unregisterStructureNameLookup: invalid id'), 'printed with UE5_DEBUG unset',
         table.concat(PRINTS, ' | '))
   eq(item.Checked, true, 'the item is left alone: its hooks may still be live')
   UET.failUnregister = false
   dissect.disableAutoCallback()
   eq(UET.reg, 0, 'hooks still live at disable are not registered twice')
+end
+
+uetCase('UETOOLS: a suspension that fails HALFWAY is put back whole on disable', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  UET.failUnregister = true   -- raises after its name lookup is already gone
+  local r, why = dissect.enableAutoCallback()
+  eq(r, false, 'the enable reports it')
+  contains(why, 'unregisterStructureDissectOverride2: invalid id', "the reason carries UETools' own error")
+  eq(UEngineStructNameLookup, nil, 'half suspended: its name lookup is gone')
+  check(UEngineStructDissect ~= nil, 'and its dissect override is still registered')
+  UET.failUnregister = false
+  local r2 = dissect.disableAutoCallback()
+  eq(UET.reg, 1, "disable registers UETools' hooks again: half on is not 'already back on'")
+  check(UEngineStructNameLookup ~= nil and UEngineStructDissect ~= nil, 'both of its hooks are live again')
+  eq(item.Checked, true, 'its item keeps its tick')
+  eq(r2, true, 'a clean disable')
 end
 
 uetCase('UETOOLS: if our own registration fails, UETools is left alone', 'live')
