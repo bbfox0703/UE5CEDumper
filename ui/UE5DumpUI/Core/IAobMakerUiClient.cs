@@ -8,6 +8,9 @@ public enum GenerateAobFailure
     None,
     /// <summary>No AOBMaker.UI pipe to connect to: the app is not running (Cheat Engine alone is not enough).</summary>
     NotRunning,
+    /// <summary>The pipe is listed but no instance came free in time: AOBMaker.UI serves one client at a time, so it is
+    /// busy (a scan of its own, or Cheat Engine's "Send to AOBMaker"), not absent.</summary>
+    Busy,
     /// <summary>AOBMaker.UI refused this caller: it serves only the same user at the same or a higher integrity level,
     /// so an elevated AOBMaker rejects an unelevated UE5DumpUI.</summary>
     Refused,
@@ -38,4 +41,11 @@ public interface IAobMakerUiClient
     /// Never throws.
     /// </summary>
     Task<GenerateAobResult> GenerateAobAsync(string hexAddress, int processId, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AOBM-UI-INDICATOR] Is AOBMaker.UI's pipe listed under <c>\\.\pipe\</c>? It never connects: AOBMaker.UI has ONE
+    /// pipe instance, logs every connection, and a probe holding it could turn Cheat Engine's own "Send to AOBMaker"
+    /// away. Listed is not "will accept GenerateAob" (that is decided by its caller check). Never throws.
+    /// </summary>
+    Task<bool> IsPipeListedAsync(CancellationToken ct = default) => Task.FromResult(false);
 }

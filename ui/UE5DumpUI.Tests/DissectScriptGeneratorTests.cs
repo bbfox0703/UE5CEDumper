@@ -67,6 +67,23 @@ public class DissectScriptGeneratorTests
     }
 
     [Fact]
+    public void A_DLL_injected_after_CE_opened_the_game_is_found_before_any_verdict()
+    {
+        // Measured 2026-09-29 on DumperTest: CE opened the game, then the DLL was injected; the pipe answered, and
+        // ticking this record said "UE5Dumper.dll is not loaded". CE lists modules when it opens a process, so the
+        // DLL's exports appear only after the symbol handler is re-enumerated -- which must come before the verdict.
+        var enable = EnableBlock;
+        int firstProbe = enable.IndexOf("getAddressSafe('UE5_GetObjectClass')", StringComparison.Ordinal);
+        int reinit = enable.IndexOf("reinitializeSymbolhandler()", StringComparison.Ordinal);
+        int secondProbe = enable.IndexOf("getAddressSafe('UE5_GetObjectClass')", reinit < 0 ? 0 : reinit,
+                                         StringComparison.Ordinal);
+        int verdict = enable.IndexOf("is not loaded in this game", StringComparison.Ordinal);
+        Assert.True(firstProbe >= 0 && reinit > firstProbe, "no re-enumeration after the first probe");
+        Assert.True(secondProbe > reinit, "no second probe after the re-enumeration");
+        Assert.True(verdict > secondProbe, "the verdict comes before the second probe");
+    }
+
+    [Fact]
     public void A_failed_disable_is_said_ungated_and_keeps_the_window_open()
     {
         var disable = DisableBlock;

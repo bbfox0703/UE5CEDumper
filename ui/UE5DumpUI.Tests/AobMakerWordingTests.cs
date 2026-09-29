@@ -68,6 +68,8 @@ public class AobMakerWordingTests
         Same(AobMakerActions.KeyGenAobPending, AobMakerActions.GenerateAobPendingText("s"), "s");
         Same(AobMakerActions.KeyGenAobNotRunning, AobMakerActions.GenerateAobFailureText(
              new GenerateAobResult(null, GenerateAobFailure.NotRunning, null), "s"), "s");
+        Same(AobMakerActions.KeyGenAobBusy, AobMakerActions.GenerateAobFailureText(
+             new GenerateAobResult(null, GenerateAobFailure.Busy, null), "s"), "s");
         Same(AobMakerActions.KeyGenAobRefused, AobMakerActions.GenerateAobFailureText(
              new GenerateAobResult(null, GenerateAobFailure.Refused, null), "s"));
         Same(AobMakerActions.KeyGenAobNoReply, AobMakerActions.GenerateAobFailureText(
@@ -106,8 +108,17 @@ public class AobMakerWordingTests
              AobMakerUnavailable.Text(null));
         Same(AobMakerActions.KeyDissectFailed, AobMakerActions.DissectFailedText("r"), "r");
 
+        // [AOBM-UI-INDICATOR] The toolbar dots' tooltips
+        var dllUp = new AobMakerStatus(new ScriptedAobMakerBridge { Available = true });
+        dllUp.Apply(true);
+        Same(AobMakerStatus.KeyDllOn, dllUp.DllTip);
+        var uiUp = new AobMakerUiStatus(new ListedUiClient { Listed = true });
+        await uiUp.PollAsync(TestContext.Current.CancellationToken);
+        Same(AobMakerUiStatus.KeyTipOn, uiUp.Tip);
+        Same(AobMakerUiStatus.KeyTipOff, new AobMakerUiStatus(null).Tip);
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(30, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(34, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =

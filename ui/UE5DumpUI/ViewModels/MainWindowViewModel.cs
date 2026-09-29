@@ -207,6 +207,33 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// <summary>True when an AOBMaker bridge was supplied — gates the toolbar status chip.</summary>
     public bool IsAobMakerConfigured => _aobMaker != null;
 
+    /// <summary>[AOBM-UI-INDICATOR] Is the AOBMaker app (AOBMaker.UI) running? The toolbar chip's "UI" dot, beside the
+    /// plugin's "DLL" dot. It also stands between <see cref="Pointers"/> and the real client, so each GenerateAob
+    /// answer repaints the dot.</summary>
+    public Helpers.AobMakerUiStatus AobMakerUi { get; }
+
+    /// <summary>True when an AOBMaker.UI client was supplied — gates the chip's "UI" half.</summary>
+    public bool IsAobMakerUiConfigured => AobMakerUi.Client != null;
+
+    private Avalonia.Threading.DispatcherTimer? _aobMakerUiTimer;
+
+    /// <summary>[AOBM-UI-INDICATOR] Start listing AOBMaker.UI's pipe every <see cref="Helpers.AobMakerUiStatus.PollInterval"/>,
+    /// and once now. Called when the window opens rather than from the constructor, so a view model built by a test
+    /// never owns a dispatcher timer.</summary>
+    public void StartAobMakerUiPolling()
+    {
+        if (_disposed || AobMakerUi.Client == null) return;
+        if (_aobMakerUiTimer == null)
+        {
+            _aobMakerUiTimer = new Avalonia.Threading.DispatcherTimer { Interval = Helpers.AobMakerUiStatus.PollInterval };
+            _aobMakerUiTimer.Tick += OnAobMakerUiTimerTick;
+        }
+        _aobMakerUiTimer.Start();
+        _ = AobMakerUi.PollAsync();
+    }
+
+    private void OnAobMakerUiTimerTick(object? sender, EventArgs e) => _ = AobMakerUi.PollAsync();
+
     /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..16384).</summary>
     public int ArrayLimit => 1 << ArrayLimitExponent;
 
@@ -518,6 +545,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             if (e.PropertyName == nameof(Helpers.AobMakerStatus.IsAvailable))
                 IsAobMakerAvailable = AobMakerShared.IsAvailable;
         };
+        AobMakerUi = new Helpers.AobMakerUiStatus(aobMakerUi);
+        AobMakerUi.PropertyChanged += (_, e) =>
+        {
+            // Transitions only: the poll itself runs every few seconds and must not fill the log.
+            if (e.PropertyName == nameof(Helpers.AobMakerUiStatus.IsRunning))
+                _log.Info(Constants.LogCatInit,
+                    $"[AOBM-UI-INDICATOR] AOBMaker.UI {(AobMakerUi.IsRunning ? "is running" : "is not running")}");
+        };
 
         // Keep tab visibility in sync when the toggle is flipped elsewhere
         // (the checkbox lives on the System tab / PointerPanelViewModel). Also
@@ -531,7 +566,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         ObjectTree = new ObjectTreeViewModel(dump, log, platform, AobMakerShared);
         ClassStruct = new ClassStructViewModel(dump, log, platform);
-        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage, experimentalGate, snapshotStore, pipeClient, logCompression, aobMakerUi);
+        Pointers = new PointerPanelViewModel(platform, dump, log, aobMaker, aobUsage, experimentalGate, snapshotStore, pipeClient, logCompression,
+            aobMakerUi == null ? null : AobMakerUi);
         LiveWalker = new LiveWalkerViewModel(dump, log, platform, aobMaker, bookmarks);
         InstanceFinder = new InstanceFinderViewModel(dump, log, platform, AobMakerShared);
         PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
@@ -2169,6 +2205,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Teleport owns a DispatcherTimer (auto-refresh) — dispose so it can't
         // tick after the window closes.
         Teleport.Dispose();
+        if (_aobMakerUiTimer != null)
+        {
+            _aobMakerUiTimer.Stop();
+            _aobMakerUiTimer.Tick -= OnAobMakerUiTimerTick;
+            _aobMakerUiTimer = null;
+        }
         // Cancel a pending LKG proxy-confirm dwell so its callback can't fire after
         // the window is gone. (M8)
         _proxyConfirmTimer?.Dispose();
@@ -3132,6 +3174,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private async Task RefreshAobMakerAsync()
     {
+        // [AOBM-UI-INDICATOR] The app's dot too, now rather than at the next tick; listing costs AOBMaker.UI nothing.
+        _ = AobMakerUi.PollAsync();
         if (_aobMaker == null)
         {
             IsAobMakerAvailable = false;
@@ -3143,6 +3187,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var ok = await _aobMaker.CheckAvailabilityAsync();
             IsAobMakerAvailable = ok;
             AobMakerShared.Apply(ok);
+            AobMakerShared.NotifyReasonChanged();
             // [R7-S7] [R7-S12] Every panel that shows WHY it is unreachable repaints, even when its flag is unchanged.
             LiveWalker.ApplyAobMakerProbe(ok);
             Pointers.ApplyAobMakerProbe(ok);

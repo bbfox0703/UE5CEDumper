@@ -140,6 +140,69 @@ public class AobMakerStatusTests
         return await serve;
     }
 
+    [Fact]
+    public async Task The_attach_warning_goes_when_the_plugin_does()
+    {
+        // Measured 2026-09-29: with the warning showing, Cheat Engine closed, and the chip went Offline with
+        // "CE is not on this game" still beside it. Unreachable means nothing can tell, and a check that cannot tell
+        // must not accuse.
+        var bridge = new ScriptedAobMakerBridge { Available = true, Attached = new CeAttachedProcess(999, "Other.exe") };
+        var status = new AobMakerStatus(bridge);
+        status.Apply(true);
+        await status.CheckAttachAsync(4242, "Game.exe");
+        Assert.True(status.HasAttachWarning);
+
+        bridge.Available = false;
+        await status.ProbeAsync();
+
+        Assert.False(status.IsAvailable);
+        Assert.False(status.HasAttachWarning);
+        Assert.Equal("", status.AttachWarning);
+    }
+
+    [Fact]
+    public void A_push_that_finds_the_pipe_gone_clears_the_warning_too()
+    {
+        var status = new AobMakerStatus(new ScriptedAobMakerBridge { Available = true });
+        status.Apply(true);
+        status.AttachWarning = "Cheat Engine has Other.exe (pid 999) open";
+
+        status.Apply(false);
+
+        Assert.False(status.HasAttachWarning);
+    }
+
+    [Fact]
+    public async Task The_DLL_tip_says_what_the_plugin_is_for_or_why_it_is_unreachable()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var status = new AobMakerStatus(bridge);
+        await status.ProbeAsync();
+        Assert.Contains("connected", status.DllTip);
+
+        bridge.Available = false;
+        var raised = new List<string?>();
+        status.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        await status.ProbeAsync();
+
+        Assert.Equal(AobMakerUnavailable.Text(bridge), status.DllTip);
+        Assert.Contains(nameof(AobMakerStatus.DllTip), raised);
+    }
+
+    [Fact]
+    public async Task A_second_failure_repaints_the_reason_although_the_flag_did_not_change()
+    {
+        var status = new AobMakerStatus(new ScriptedAobMakerBridge { Available = false });
+        await status.ProbeAsync();
+        var raised = new List<string?>();
+        status.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        await status.ProbeAsync();
+
+        Assert.DoesNotContain(nameof(AobMakerStatus.IsAvailable), raised);
+        Assert.Contains(nameof(AobMakerStatus.DllTip), raised);
+    }
+
     private sealed class BridgeWithoutAttachQuery : IAobMakerBridge
     {
         public bool ThrowOnCheck { get; init; }

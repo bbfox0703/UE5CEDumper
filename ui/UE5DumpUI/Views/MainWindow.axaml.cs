@@ -80,6 +80,9 @@ public partial class MainWindow : Window
         // window closes, so background DispatcherTimers and Threading.Timer
         // callbacks don't fire post-close on torn-down state.
         Closed += OnClosed;
+        // [AOBM-UI-INDICATOR] The AOBMaker.UI dot's timer starts with the window, not with the view model, so a view
+        // model a test builds never owns one. Dispose (OnClosed) stops it.
+        Opened += (_, _) => (DataContext as MainWindowViewModel)?.StartAobMakerUiPolling();
         // Track the ObjectTree sub-VM so the Object Tree collapse toggle can
         // resize the left grid column from code-behind (Width/MinWidth can't be
         // both bound and splitter-dragged cleanly).

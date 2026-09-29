@@ -83,6 +83,56 @@ public class AobMakerUiClientTests
     }
 
     [Fact]
+    public async Task A_timeout_on_a_listed_pipe_is_Busy_not_NotRunning()
+    {
+        // [AOBM-UI-BUSY] AOBMaker.UI has ONE pipe instance. While it serves someone else a connect times out although
+        // the app runs, and the user was told to start an app that was already open.
+        var client = new AobMakerUiClient(new MockLoggingService(), NobodysPipe(), 150, 500, _ => true);
+        var r = await client.GenerateAobAsync(Address, 4242, TestContext.Current.CancellationToken);
+        Assert.Equal(GenerateAobFailure.Busy, r.Failure);
+    }
+
+    [Fact]
+    public async Task A_timeout_on_an_unlisted_pipe_stays_NotRunning()
+    {
+        var client = new AobMakerUiClient(new MockLoggingService(), NobodysPipe(), 150, 500, _ => false);
+        var r = await client.GenerateAobAsync(Address, 4242, TestContext.Current.CancellationToken);
+        Assert.Equal(GenerateAobFailure.NotRunning, r.Failure);
+    }
+
+    [Fact]
+    public async Task IsPipeListed_asks_for_its_own_pipe()
+    {
+        var name = NobodysPipe();
+        string? asked = null;
+        var client = new AobMakerUiClient(new MockLoggingService(), name, 150, 500, n => { asked = n; return true; });
+        Assert.True(await client.IsPipeListedAsync(TestContext.Current.CancellationToken));
+        Assert.Equal(name, asked);
+    }
+
+    [Fact]
+    public async Task Listing_sees_a_live_pipe_without_connecting_to_it()
+    {
+        Assert.SkipUnless(OperatingSystem.IsWindows(), "the \\\\.\\pipe\\ namespace is Windows-only");
+        var name = NobodysPipe();
+        var ct = TestContext.Current.CancellationToken;
+        var client = new AobMakerUiClient(new MockLoggingService(), name, 150, 500);
+        using (var server = new NamedPipeServerStream(name, PipeDirection.InOut, 1, PipeTransmissionMode.Byte,
+                                                      PipeOptions.Asynchronous))
+        {
+            var waiting = server.WaitForConnectionAsync(ct);
+
+            Assert.True(await client.IsPipeListedAsync(ct));
+            await Task.Delay(100, ct);
+            Assert.False(waiting.IsCompleted);   // nobody connected: AOBMaker.UI would have logged nothing
+
+            server.Dispose();
+            try { await waiting; } catch (Exception) { /* the dispose ends the wait */ }
+        }
+        Assert.False(await client.IsPipeListedAsync(ct));
+    }
+
+    [Fact]
     public async Task A_round_trip_sends_the_prefixed_address_and_reads_the_answer()
     {
         var name = NobodysPipe();

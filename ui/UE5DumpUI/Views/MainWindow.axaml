@@ -68,25 +68,36 @@
                     VerticalAlignment="Center"/>
         </StackPanel>
 
-        <!-- AOBMaker plugin status + manual refresh. Mirrors the System-tab
-             indicator but stays visible from every tab so the user can confirm
-             CE connectivity at a glance before using HEX/ASM/Add-to-CE actions.
-             Only shown when the bridge is configured. -->
+        <!-- [AOBM-UI-INDICATOR] AOBMaker status, one dot per program, visible from every tab: "DLL" is the plugin
+             inside Cheat Engine (HEX / ASM / +CE / SYM pushes), "UI" is the AOBMaker app (the AOB that SYM for
+             GObjects / GNames needs). The state is the dot's colour and its tooltip, not a word: a word per dot would
+             widen the toolbar, and a state word of changing length reflowed the WrapPanel on every flip. The
+             transparent backgrounds make the whole group hoverable. Only shown when the bridge is configured. -->
         <StackPanel Orientation="Horizontal" Spacing="4"
                     VerticalAlignment="Center" Margin="8,2"
                     IsVisible="{Binding IsAobMakerConfigured}">
-          <Ellipse Width="9" Height="9" Fill="#4EC9B0" VerticalAlignment="Center"
-                   IsVisible="{Binding IsAobMakerAvailable}"/>
-          <Ellipse Width="9" Height="9" Fill="#888888" VerticalAlignment="Center"
-                   IsVisible="{Binding !IsAobMakerAvailable}"/>
           <TextBlock Text="{StaticResource str.Toolbar.AobMakerLabel}"
                      Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
-          <TextBlock Text="{StaticResource str.Toolbar.AobMakerConnected}"
-                     Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"
+          <StackPanel Orientation="Horizontal" Spacing="3" Background="Transparent"
+                      ToolTip.Tip="{Binding AobMakerShared.DllTip}">
+            <TextBlock Text="{StaticResource str.Toolbar.AobMakerDll}"
+                       Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+            <Ellipse Width="9" Height="9" Fill="#4EC9B0" VerticalAlignment="Center"
                      IsVisible="{Binding IsAobMakerAvailable}"/>
-          <TextBlock Text="{StaticResource str.Toolbar.AobMakerOffline}"
-                     Foreground="#888888" FontSize="12" VerticalAlignment="Center"
+            <Ellipse Width="9" Height="9" Fill="#888888" VerticalAlignment="Center"
                      IsVisible="{Binding !IsAobMakerAvailable}"/>
+          </StackPanel>
+          <StackPanel Orientation="Horizontal" Spacing="3" Background="Transparent"
+                      IsVisible="{Binding IsAobMakerUiConfigured}"
+                      ToolTip.Tip="{Binding AobMakerUi.Tip}">
+            <TextBlock Text="/" Foreground="#666666" FontSize="12" VerticalAlignment="Center"/>
+            <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}"
+                       Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+            <Ellipse Width="9" Height="9" Fill="#4EC9B0" VerticalAlignment="Center"
+                     IsVisible="{Binding AobMakerUi.IsRunning}"/>
+            <Ellipse Width="9" Height="9" Fill="#888888" VerticalAlignment="Center"
+                     IsVisible="{Binding !AobMakerUi.IsRunning}"/>
+          </StackPanel>
           <!-- [AOBM-ATTACH-CHECK] Reachable but aimed elsewhere: CE has another process open, or none.
                The tooltip carries the full sentence, with both process names and ids. -->
           <TextBlock Text="{StaticResource str.Toolbar.AobMakerWrongProcess}"

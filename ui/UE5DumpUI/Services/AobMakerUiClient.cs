@@ -34,17 +34,25 @@ public sealed class AobMakerUiClient : IAobMakerUiClient
     private readonly string _pipeName;
     private readonly int _connectTimeoutMs;
     private readonly int _generateTimeoutMs;
+    private readonly Func<string, bool> _pipeExists;
 
     public AobMakerUiClient(ILoggingService? log = null) : this(log, PipeName, ConnectTimeoutMs, GenerateTimeoutMs) { }
 
-    /// <summary>Test seam: the pipe to reach and both deadlines, so a test never waits out the real ones.</summary>
-    internal AobMakerUiClient(ILoggingService? log, string pipeName, int connectTimeoutMs, int generateTimeoutMs)
+    /// <summary>Test seam: the pipe to reach, both deadlines (so a test never waits out the real ones), and how to tell
+    /// a listed pipe from an absent one.</summary>
+    internal AobMakerUiClient(ILoggingService? log, string pipeName, int connectTimeoutMs, int generateTimeoutMs,
+                              Func<string, bool>? pipeExists = null)
     {
         _log = log;
         _pipeName = pipeName;
         _connectTimeoutMs = connectTimeoutMs;
         _generateTimeoutMs = generateTimeoutMs;
+        _pipeExists = pipeExists ?? AobMakerBridgeService.PipeExists;
     }
+
+    /// <inheritdoc/>
+    public Task<bool> IsPipeListedAsync(CancellationToken ct = default)
+        => Task.Run(() => _pipeExists(_pipeName), ct);
 
     /// <inheritdoc/>
     public async Task<GenerateAobResult> GenerateAobAsync(string hexAddress, int processId, CancellationToken ct = default)
@@ -57,6 +65,13 @@ public sealed class AobMakerUiClient : IAobMakerUiClient
         }
         catch (TimeoutException)
         {
+            // [AOBM-UI-BUSY] A connect waits for a FREE instance and AOBMaker.UI has only one, so a timeout alone cannot
+            // tell "not running" from "serving someone else". The listing can: a busy pipe is still listed.
+            if (_pipeExists(_pipeName))
+            {
+                _log?.Info(Constants.LogCatInit, $"AOBMaker.UI: '{_pipeName}' is running but busy with another client");
+                return new GenerateAobResult(null, GenerateAobFailure.Busy, null);
+            }
             _log?.Debug(Constants.LogCatInit, $"AOBMaker.UI: no server on '{_pipeName}' (the app is not running)");
             return new GenerateAobResult(null, GenerateAobFailure.NotRunning, null);
         }

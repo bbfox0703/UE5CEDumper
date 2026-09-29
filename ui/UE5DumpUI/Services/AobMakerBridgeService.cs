@@ -78,8 +78,9 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     /// <summary>[W1-PIPEBUSY-LOG] Does a server instance of this pipe exist at all -- busy or not? The pipe namespace
     /// lists every pipe that has at least one instance. A refused enumeration answers "cannot tell" (false), which
-    /// keeps the old "not running" reading rather than inventing a busy one.</summary>
-    private static bool PipeExists(string name)
+    /// keeps the old "not running" reading rather than inventing a busy one. It only lists names, never opens a pipe,
+    /// which is why AOBMaker.UI's status dot can afford to call it on a timer.</summary>
+    internal static bool PipeExists(string name)
     {
         try
         {

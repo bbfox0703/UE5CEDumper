@@ -37,6 +37,27 @@ public sealed partial class AobMakerStatus : ObservableObject
 
     partial void OnAttachWarningChanged(string value) => OnPropertyChanged(nameof(HasAttachWarning));
 
+    partial void OnIsAvailableChanged(bool value)
+    {
+        // [AOBM-ATTACH-CHECK] With the plugin out of reach nothing can tell which process CE has open, and a check that
+        // cannot tell must not accuse (DescribeAttach). The warning used to outlive Cheat Engine itself: measured
+        // 2026-09-29, CE closed with it showing and the chip went Offline beside "CE is not on this game".
+        if (!value) AttachWarning = "";
+        OnPropertyChanged(nameof(DllTip));
+    }
+
+    internal const string KeyDllOn = "str.Tip.Toolbar.AobMakerDllOn";
+
+    /// <summary>[AOBM-UI-INDICATOR] The DLL dot's tooltip: what the plugin is for when it is reachable, and WHY it is not
+    /// otherwise (absent, busy, refused), which is the remedy the dot alone cannot say.</summary>
+    public string DllTip => IsAvailable
+        ? Say(KeyDllOn, "AOBMaker DLL (its Cheat Engine plugin): connected. HEX, ASM, +CE and SYM push into Cheat Engine")
+        : AobMakerUnavailable.Text(Bridge);
+
+    /// <summary>A second failure for a NEW reason leaves <see cref="IsAvailable"/> false and so raises nothing; the
+    /// tooltip that names the reason must repaint anyway ([R7-S7]).</summary>
+    public void NotifyReasonChanged() => OnPropertyChanged(nameof(DllTip));
+
     /// <summary>Publish what a probe or a push just learned. Writing the same value raises nothing.</summary>
     public void Apply(bool available) => IsAvailable = available;
 
@@ -53,6 +74,7 @@ public sealed partial class AobMakerStatus : ObservableObject
         try { ok = await Bridge.CheckAvailabilityAsync(); }
         catch (Exception) { ok = false; }
         IsAvailable = ok;
+        NotifyReasonChanged();
         return ok;
     }
 

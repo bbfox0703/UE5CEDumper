@@ -182,6 +182,7 @@ internal static class AobMakerActions
 
     internal const string KeyGenAobPending = "str.AobMaker.GenAob.Pending";
     internal const string KeyGenAobNotRunning = "str.AobMaker.GenAob.NotRunning";
+    internal const string KeyGenAobBusy = "str.AobMaker.GenAob.Busy";
     internal const string KeyGenAobRefused = "str.AobMaker.GenAob.Refused";
     internal const string KeyGenAobNoReply = "str.AobMaker.GenAob.NoReply";
     internal const string KeyGenAobFailed = "str.AobMaker.GenAob.Failed";
@@ -199,6 +200,8 @@ internal static class AobMakerActions
         GenerateAobFailure.NotRunning => AobMakerStatus.Say(KeyGenAobNotRunning,
             "AOBMaker.UI is not running: '{0}' needs the AOBMaker app open, which makes the AOB (Cheat Engine alone is not enough)",
             symbol),
+        GenerateAobFailure.Busy => AobMakerStatus.Say(KeyGenAobBusy,
+            "AOBMaker.UI is busy with another request: try '{0}' again in a moment", symbol),
         GenerateAobFailure.Refused => AobMakerStatus.Say(KeyGenAobRefused,
             "AOBMaker.UI refused this app: run both at the same elevation (an elevated AOBMaker rejects an unelevated caller)"),
         GenerateAobFailure.NoReply => AobMakerStatus.Say(KeyGenAobNoReply,

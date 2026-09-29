@@ -440,12 +440,16 @@
     <sys:String x:Key="str.System.BuildUnknown">&#x26A0; DLL pre-dates build-number probe — assume stale</sys:String>
     <sys:String x:Key="str.System.AobMakerStatus">AOBMaker plugin</sys:String>
     <sys:String x:Key="str.System.AobMakerConnected">&#x25CF; Connected</sys:String>
-    <!-- Always-visible top-toolbar mirror of the System-tab AOBMaker indicator -->
+    <!-- [AOBM-UI-INDICATOR] Always-visible top-toolbar chip: "AOBMaker DLL (dot) / UI (dot)". The state lives in the
+         dots and their tooltips, so the chip keeps one short width whatever the state. -->
     <sys:String x:Key="str.Toolbar.AobMakerLabel">AOBMaker</sys:String>
-    <sys:String x:Key="str.Toolbar.AobMakerConnected">Connected</sys:String>
-    <sys:String x:Key="str.Toolbar.AobMakerOffline">Offline</sys:String>
+    <sys:String x:Key="str.Toolbar.AobMakerDll">DLL</sys:String>
+    <sys:String x:Key="str.Toolbar.AobMakerUi">UI</sys:String>
+    <sys:String x:Key="str.Tip.Toolbar.AobMakerDllOn">AOBMaker DLL (its Cheat Engine plugin): connected. HEX, ASM, +CE and SYM push into Cheat Engine</sys:String>
+    <sys:String x:Key="str.Tip.Toolbar.AobMakerUiOn">AOBMaker UI (the AOBMaker app): running. SYM for GObjects / GNames asks it for a unique AOB</sys:String>
+    <sys:String x:Key="str.Tip.Toolbar.AobMakerUiOff">AOBMaker UI (the AOBMaker app): not running. Only SYM for GObjects / GNames needs it; run it at the same elevation as this app</sys:String>
     <sys:String x:Key="str.Toolbar.AobMakerRefresh">&#x27F3;</sys:String>
-    <sys:String x:Key="str.Tip.Toolbar.AobMakerRefresh">Re-check whether Cheat Engine is running with the AOBMaker plugin loaded. Navigation/record buttons also re-probe on use, so this is just for an at-a-glance status.</sys:String>
+    <sys:String x:Key="str.Tip.Toolbar.AobMakerRefresh">Re-check both dots now. DLL is the AOBMaker plugin inside Cheat Engine; UI is the AOBMaker app, which also re-checks itself every 3 s without connecting to it.</sys:String>
     <!-- [W1-PIPEBUSY-STATUS] "AOBMaker not reachable" status, by WHY the connect failed (Helpers/AobMakerUnavailable.cs).
          The toolbar shows ~50 characters, so the discriminating word comes first. No trailing period: callers append. -->
     <sys:String x:Key="str.AobMaker.Unavailable.Absent">AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded</sys:String>
@@ -469,6 +473,7 @@
     <sys:String x:Key="str.Tip.AobMaker.FuncAsm">Open this function's native code in Cheat Engine's disassembler (via the AOBMaker CE plugin), and add it to the table as a record you can right-click. From there, CE's Ctrl+Shift+A sends the selection to AOBMaker.</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Pending">Asking AOBMaker.UI for a unique AOB for '{0}'…</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.NotRunning">AOBMaker.UI is not running: '{0}' needs the AOBMaker app open, which makes the AOB (Cheat Engine alone is not enough)</sys:String>
+    <sys:String x:Key="str.AobMaker.GenAob.Busy">AOBMaker.UI is busy with another request: try '{0}' again in a moment</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Refused">AOBMaker.UI refused this app: run both at the same elevation (an elevated AOBMaker rejects an unelevated caller)</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.NoReply">AOBMaker.UI did not answer: an older build may not have GenerateAob</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Failed">AOBMaker.UI could not make a unique AOB for '{0}': {1}</sys:String>
