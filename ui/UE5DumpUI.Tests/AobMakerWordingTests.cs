@@ -121,8 +121,12 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerPushed,
              UE5DumpUI.ViewModels.TeleportViewModel.TrainerPushedText(12), 12);
 
+        // [AOBM-SYSTAB-ASM-SILENT] The System tab's ASM label
+        Same(UE5DumpUI.ViewModels.PointerPanelViewModel.KeyScanHitLabel,
+             UE5DumpUI.ViewModels.PointerPanelViewModel.ScanHitLabel("P"), "P");
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(35, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(36, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =

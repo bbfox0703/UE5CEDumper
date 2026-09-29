@@ -161,8 +161,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private bool _scanComplete;
     [ObservableProperty] private string _scanResultText = "";
 
-    /// <summary>Outcome of the last "Register symbol" click (GWorld or &amp;GEngine).
-    /// Bound at the top of PointerPanel.axaml next to <c>ErrorMessage</c>.
+    /// <summary>The last AOBMaker push from this tab that worked: a "Register symbol" click, or a CE view move
+    /// ([AOBM-SYSTAB-ASM-SILENT]). Bound at the top of PointerPanel.axaml next to <c>ErrorMessage</c>.
     ///
     /// <para>Before this existed, <c>CreateSymbolScriptAsync</c>'s bool was branched on
     /// only to pick <c>_log.Info</c> vs <c>_log.Warn</c> — neither touched a bound
@@ -171,8 +171,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// symbol) silently resolved to nothing. Success lands here; FAILURE goes to
     /// <c>ErrorMessage</c>, which the panel already renders in red (audit #5 V11).</para>
     ///
-    /// <para>One property serves both cards deliberately: every message names its
-    /// symbol, so there is nothing to disambiguate.</para></summary>
+    /// <para>One line for the whole tab, deliberately: each message names the symbol or
+    /// the address it pushed, so there is nothing to disambiguate.</para></summary>
     [ObservableProperty] private string _symbolStatusText = "";
 
     // --- Cache management ---
@@ -1135,24 +1135,45 @@ public partial class PointerPanelViewModel : ViewModelBase
     // --- AOBMaker CE Plugin: scan address → disassembler (code) ---
 
     [RelayCommand]
-    private async Task AsmGObjectsScanAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GObjectsScanAddr)) return;
-        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GObjectsScanAddr));
-    }
+    private Task AsmGObjectsScanAsync()
+        => MoveCeViewAsync(GObjectsScanAddr, ScanHitLabel("GObjects"), disassembler: true);
 
     [RelayCommand]
-    private async Task AsmGNamesScanAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GNamesScanAddr)) return;
-        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GNamesScanAddr));
-    }
+    private Task AsmGNamesScanAsync()
+        => MoveCeViewAsync(GNamesScanAddr, ScanHitLabel("GNames"), disassembler: true);
 
     [RelayCommand]
-    private async Task AsmGWorldScanAsync()
+    private Task AsmGWorldScanAsync()
+        => MoveCeViewAsync(GWorldScanAddr, ScanHitLabel("GWorld"), disassembler: true);
+
+    internal const string KeyScanHitLabel = "str.Pointers.ScanHitLabel";
+
+    /// <summary>[AOBM-SYSTAB-ASM-SILENT] What an ASM line calls a scan hit. The pointer's name alone would read as the
+    /// card's own address, and the disassembler lands somewhere else: on the instruction that resolved it.</summary>
+    internal static string ScanHitLabel(string pointer)
+        => AobMakerStatus.Say(KeyScanHitLabel, "{0} AOB scan hit", pointer);
+
+    /// <summary>
+    /// [AOBM-SYSTAB-ASM-SILENT] Move CE's hex view or disassembler and say what happened; these buttons used to drop
+    /// the bridge's answer, so CE was the only witness. Success goes to the green line and a refusal to the red one,
+    /// the split <see cref="ReportSymbolRegistration"/> uses. What the push learned about the pipe reaches this panel's
+    /// own flag, so a plugin that has gone away turns the buttons off.
+    /// </summary>
+    private async Task MoveCeViewAsync(string address, string label, bool disassembler)
     {
-        if (_aobMaker == null || !IsNonZeroAddr(GWorldScanAddr)) return;
-        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GWorldScanAddr));
+        if (_aobMaker == null || !IsNonZeroAddr(address)) return;
+        var (text, ok) = await AobMakerActions.MoveViewAsync(_aobMaker, address, label, _log, disassembler);
+        ApplyAobMakerProbe(_aobMaker.IsAvailable);
+        if (ok)
+        {
+            ClearError();
+            SymbolStatusText = text;
+        }
+        else
+        {
+            SymbolStatusText = "";
+            SetError(text);
+        }
     }
 
     // --- AOBMaker CE Plugin: register GWorld as AOB-scan-based CE symbol ---
@@ -1772,18 +1793,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     // --- [AOBM-PTR-SCANASM] the two scan hits that had no ASM button ---
 
     [RelayCommand]
-    private async Task AsmSparseDelegatesScanAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(SparseDelegatesScanAddr)) return;
-        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(SparseDelegatesScanAddr));
-    }
+    private Task AsmSparseDelegatesScanAsync()
+        => MoveCeViewAsync(SparseDelegatesScanAddr, ScanHitLabel("FSparseDelegateStorage"), disassembler: true);
 
     [RelayCommand]
-    private async Task AsmGEngineScanAsync()
-    {
-        if (_aobMaker == null || !IsNonZeroAddr(GEngineScanAddr)) return;
-        await _aobMaker.NavigateDisassemblerAsync(StripHexPrefix(GEngineScanAddr));
-    }
+    private Task AsmGEngineScanAsync()
+        => MoveCeViewAsync(GEngineScanAddr, ScanHitLabel("&GEngine"), disassembler: true);
 
     [RelayCommand]
     private async Task CopyGEngineScanAddrAsync()

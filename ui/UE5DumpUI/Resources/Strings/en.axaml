@@ -390,6 +390,8 @@
     <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerAsm">ASM</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerScanAsmTip">Navigate CE disassembler to AOB scan hit instruction (via AOBMaker CE Plugin)</sys:String>
+    <!-- [AOBM-SYSTAB-ASM-SILENT] What the ASM status line calls the address it moved to ({0} = the pointer, e.g. GObjects). -->
+    <sys:String x:Key="str.Pointers.ScanHitLabel">{0} AOB scan hit</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbol">SYM</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbolTip">Create CE AA Script that registers GWorld address as 'gworld_addr' symbol (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.RegisterGEngineSymbolTip">Create CE AA Script that registers the &amp;GEngine SLOT as 'gengine_addr' symbol — the slot is restart-stable, so a GameEngine-rooted record auto-follows engine recreation (via AOBMaker CE Plugin)</sys:String>
