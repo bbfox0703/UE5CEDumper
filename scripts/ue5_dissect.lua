@@ -14,6 +14,8 @@
 --                         it back. Handed the CE record that enabled it, auto
 --                         mode also turns itself off once that record is
 --                         unticked or deleted without running its [DISABLE]
+--                         (the first watch interval aside: see "The CE
+--                         record that turned auto mode on")
 --   * Full type mapping — 20+ UE property types
 --   * StructProperty    — recursive flattening via UE5_GetFieldStructClass
 --   * BoolProperty      — ChildStructStart bitmask via UE5_GetFieldBoolMask
