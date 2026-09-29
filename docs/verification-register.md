@@ -961,10 +961,11 @@ values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sen
 
 Shipped in `90c732e5`, UI only; the rows are in `todo.md` `[AOBMAKER-EVAL-2026-09-29]` and the design in
 `aobmaker-integration-eval.md`. Unit tests pin what each button sends to a scripted bridge and what the status line
-then says; what is owed is the plugin, AOBMaker.UI and the game. ⚠ It has also never run AOT-trimmed: the first live
-run needs a `-Mode Publish` build. (The AOT / trim analyzers are clean on it — a `-p:PublishAot=true` build — but they
-do not see Avalonia's own reflection.) On DumperTest with the NEW UI, Cheat Engine with the AOBMaker plugin, CE attached
-to the game:
+then says; what is owed is the plugin, AOBMaker.UI and the game. The AOT-trimmed publish exists: build 3599
+(`21687f7c`), `dist\UE5DumpUI.exe` 58,864,640 B, C# 5895/5895 on Windows. Run the check on that binary and confirm its
+size first. (The AOT / trim analyzers were clean too — a `-p:PublishAot=true` build — but they do not see Avalonia's
+own reflection, so only the trimmed binary counts.) On DumperTest with the NEW UI, Cheat Engine with the AOBMaker
+plugin, CE attached to the game:
 
 1. **+CE / HEX on result rows (A2, A3).** Value Search a known float, then +CE on the candidate.
    - **CE side:** a Float record at the candidate's address, reading the value the grid shows. HEX moves the Memory
@@ -972,7 +973,9 @@ to the game:
    - **UI side:** "Added to CE: <name>".
    - Repeat on a Snapshot diff row and an SPC row captured THIS launch. A row from an earlier launch has both buttons
      disabled; an `Arr[3]` row is refused with "is an array element".
-   - Instance Finder: +CE on a delegate field lands on its payload (FieldAddress + 8 on a Development build).
+   - Instance Finder: +CE on a delegate field lands on its payload (FieldAddress + 8 on a Development build). On
+     **Shipping** the pad is 0, so the record lands exactly on FieldAddress (`LiveFieldValue.DelegatePad`: 8 on a
+     checked build, 0 on Shipping/Test and every UE ≤ 5.2). Say which build the check ran on.
 2. **AA push (A1).** Instance Finder → AA on an instance.
    - **CE side:** an unticked AA record named `"<Class>"`; ticking it registers the symbol at the instance.
    - With CE closed: the XML is on the clipboard and the status says copied.
@@ -985,14 +988,29 @@ to the game:
    - **UI side:** the toolbar shows "⚠ CE is not on this game"; its tooltip names CE's pid and the game's. With no
      process open in CE: "has no process open". Reattach and ⟳: the warning clears.
    - **CE side:** the plugin log has `GetAttachedProcess: pid=…` for each ⟳.
+   - ⚠ **Expected to FAIL — record it as a finding, not a pass:** with the ⚠ showing, close CE and press ⟳. The chip
+     goes Offline but the ⚠ stays. `RefreshAobMakerAsync` re-runs the attach check only when the probe succeeds
+     (`MainWindowViewModel.cs:3152`), so the stale warning stays until CE is back and ⟳ is pressed, or the UI
+     reconnects to the game.
 5. **GObjects / GNames SYM (A8).** AOBMaker.UI running at the same elevation; SYM on GObjects.
    - **AOBMaker.UI side:** its log has `GenerateAob request: … address=0x…` naming the INSTRUCTION inside the scan
      hit (not the scan hit itself when the pattern has leading context), then `GenerateAob: SUCCESS — aob=…`.
-   - **CE side:** an enabled `GObjects → gobjects_addr` record, and `getAddress('gobjects_addr')` in CE's Lua console
-     equals the GObjects address on the Pointer panel. The same for GNames.
+     On DumperTest, when the scan log names `GOBJ_ES53_1` as the GObjects winner, its pattern starts
+     `48 83 EC 28 48 8D 0D` (`instrOffset` 4; `Himmel.h:539`, `:1712`), so the logged address must be the GObjects
+     scan hit **+ 4**. A `GNAM_V8` GNames winner has `instrOffset` 0, so it seeds at the scan hit itself.
+   - **CE side — the proof is the address, not the tick:** `getAddress('gobjects_addr')` in CE's Lua console equals
+     the GObjects address on the Pointer panel, CE's output has `[SymbolScanner] GObjects → gobjects_addr registered
+     at: <address>`, and it has **no** `[SymbolScanner] WARNING: AOB scan failed`. The same for GNames. ⚠ A ticked
+     `GObjects → gobjects_addr` record proves nothing: the plugin never reads `Active` back, and a failed scan still
+     leaves the record ticked (AOBMaker `EXT-4`). The UI's "Registered CE symbol …" message is no proof either, for
+     the same reason.
    - AOBMaker.UI closed: "AOBMaker.UI is not running", and nothing is pushed.
    - A game whose winning GObjects signature has a non-zero `adjustment` in Himmel: the refusal says the signature
-     adjusts, and AOBMaker.UI's log shows no request.
+     adjusts, and AOBMaker.UI's log shows no request. DumperTest cannot show this (its winners have adjustment 0).
+     Host: **Avowed**, whose logged GObjects winner is `GOBJ_AV1`, adjustment −0x10 (`Himmel.h:1722`). Expected: the
+     "Not pushed: no instruction in the scan hit for 'gobjects_addr' points straight at it …" refusal, and a
+     UE5DumpUI Warn line `[AOBM-GNAMES-SYMBOL] gobjects_addr: no RIP operand … not asked`. Avowed's GNames
+     (`GNAM_V5`, adjustment 0) should register there.
 6. **Auto Structure Dissect (A9).** Tools → Add Auto Structure Dissect to Current CE Table.
    - **CE side:** `ue5_dissect.lua` among the table's files, and an unticked `UE5CEDumper: Auto Structure Dissect
      (UObjects)` record in the `UE5CEDumper (DLL)` group.
@@ -1000,8 +1018,15 @@ to the game:
      title and fills the fields from reflection. Untick it: CE's own guessing is back.
    - With the DLL not injected, ticking shows "UE5Dumper.dll is not loaded in this game" and the record unticks
      itself.
+   - ⚠ **Injection order — test both.** The `[ENABLE]` block probes `getAddressSafe('UE5_GetObjectClass')` once,
+     with no `reinitializeSymbolhandler()` retry (`DissectScriptGenerator.cs:53`). CE snapshots a process's modules
+     when it opens it, so a DLL injected after that has no exports in CE's symbol table (measured on DumperTest
+     2026-08-07; `CeLuaHygiene.AppendContractCheck` retries for exactly this). Inject first, then open the game in CE:
+     expected to pass. Open the game in CE first, then inject: expected to say wrongly "not loaded" — a finding, not a
+     pass. `reinitializeSymbolhandler()` in CE's Lua console, or reopening the process, clears it.
 
-Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4).
+Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4), Avowed
+(step 5's adjusted-signature case).
 
 ### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
 

@@ -1,11 +1,14 @@
 # AOBMaker — what else UE5CEDumper could hand to it (evaluation)
 
-**Status: EVALUATED 2026-09-29. Section A implemented the same day in `90c732e5`** (UI only; not yet built on
-Windows, not yet checked on a running game — [verification-register.md](verification-register.md)
-`[AOBMAKER-A1-A9-LIVE]`). Each A item's **Done** line says what shipped and where it differs from the plan below.
-The evaluation itself was code reading only.
+**Status: EVALUATED 2026-09-29. Section A implemented the same day in `90c732e5`** (UI only). Built and published
+AOT-trimmed on Windows as build 3599 (`21687f7c`); not yet checked on a running game —
+[verification-register.md](verification-register.md) `[AOBMAKER-A1-A9-LIVE]`. Each A item's **Done** line says what
+shipped and where it differs from the plan below. The evaluation itself was code reading only.
+**AOBMaker replied in `9431370`** (its `docs/UE5CEDumper-Requests-Reply.md`). The B and C items below carry its
+verdicts; [aobmaker-requests.md](aobmaker-requests.md) has them per request.
 Baseline: UE5CEDumper `dev` at build 3598, AOBMaker `dev` at `2528712`. AOBMaker line numbers are
-pinned to that commit. UE5CEDumper sites are named by `Type.Method`, which survives edits.
+pinned to that commit, except in the notes taken from AOBMaker's answer, which cite `9431370`.
+UE5CEDumper sites are named by `Type.Method`, which survives edits.
 
 The question was where UE5CEDumper can still use AOBMaker. It covers three kinds of place:
 - places that copy to the clipboard and never try AOBMaker;
@@ -25,7 +28,8 @@ Each item's **Today** line keeps the original question's split. The values are:
 - `AOBMaker, lossy`.
 
 Related documents:
-- [aobmaker-integration.md](aobmaker-integration.md) lists the six commands already in use and their UI entry points.
+- [aobmaker-integration.md](aobmaker-integration.md) lists the commands in use and their UI entry points: seven on the
+  CE bridge (`GetAttachedProcess` joined the first six in `90c732e5`), and `GenerateAob` on AOBMaker.UI's own pipe.
 - [working-lessons.md](working-lessons.md) §6 holds the one related settled decision: *"Hierarchical Copy CE XML direct-push to CE — DEFERRED, not refused"*. B1 is about that item.
 - **Follow-ups.** Every item is a row in [todo.md](todo.md) under `[AOBMAKER-EVAL-2026-09-29]`. What AOBMaker would
   have to change is filed as R1–R17 in [aobmaker-requests.md](aobmaker-requests.md). The B and C items below name
@@ -37,8 +41,8 @@ Related documents:
 
 | Pipe | Hosted by | Commands | We use |
 |---|---|---|---|
-| `\\.\pipe\AOBMakerCEBridge` | the CE plugin, inside Cheat Engine | 15, listed after this table | the first six |
-| `\\.\pipe\AOBMaker` | AOBMaker.UI, a separate app | 5, listed after this table | none |
+| `\\.\pipe\AOBMakerCEBridge` | the CE plugin, inside Cheat Engine | 15, listed after this table | the first six; since `90c732e5` also `GetAttachedProcess` |
+| `\\.\pipe\AOBMaker` | AOBMaker.UI, a separate app | 5, listed after this table | none at evaluation time; since `90c732e5`, `GenerateAob` |
 
 The 15 CE-bridge commands, in the order the "We use" column counts them:
 - `NavigateHexView`, `NavigateDisassembler`, `CreateMemoryRecord`, `CreateAAScript`, `CreateSymbolScript`, `InjectTableFile`;
@@ -61,8 +65,10 @@ Four facts about the second pipe decide what is feasible:
 - AOBMaker.UI must be running, **in addition to** CE with the plugin loaded.
 - `GenerateAob` and `ImportCheatTableXml` accept a caller only if it is the same user at the same or a higher integrity level.
   An elevated AOBMaker therefore rejects an unelevated UE5DumpUI.
-- A failure reply **omits** `success` (`PipeMessage.Success` is `JsonIgnore(WhenWritingDefault)`).
-- An unknown `type` gets **no reply at all**: the dispatcher only logs it.
+- A failure reply **omits** `success` (`PipeMessage.Success` is `JsonIgnore(WhenWritingDefault)`). A `Rejected:`
+  reply omits it too, and `Pong` never carries it: detect `Pong` by its `type`.
+- An unknown `type` gets **no reply at all**: the dispatcher only logs it. Neither do malformed JSON, a length
+  mismatch, a JSON `null` body or an oversize request (AOBMaker `EXT-11`, `EXT-5`).
   A client must treat a missing field as false, and must bound every read with a timeout.
 
 Both pipes are single-instance. The bridge is `CreateNamedPipeA` with max instances 1, it has one worker thread,
@@ -164,6 +170,8 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
   `PropertyXrefDialog` keeps its own copy, because it colours each outcome.
 - **Bonus:** once CE shows the code, the plugin's own **Send to AOBMaker** menu item (Ctrl+Shift+A, which sends `SendDisassembly`)
   moves the selection into AOBMaker.UI. So "UE function → AOB or AA script" works with no new command.
+  `SendDisassembly`'s `selectedAddress` is only logged, so the user still picks the injection point in AOBMaker
+  (`API-AOBMaker-UI.md:65`, AOBMaker `EV-5`).
 - **Effort:** S.
 
 ### A8 — GObjects and GNames symbols through `GenerateAob`
@@ -237,20 +245,38 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
     position instead of its own, so it can show the **wrong value**. That is a correctness loss, not a cosmetic one.
   - `<DropDownList>` and `<DropDownListLink>` are dropped, so enum and FName names are gone.
   - `<Color>` is dropped: the alternating row colours.
-  - `<CodePage>` and `<ZeroTerminate>` are dropped, which changes how strings display.
+  - `<CodePage>` and `<ZeroTerminate>` are dropped, which changes how strings display. The `ZeroTerminate` loss is
+    permanent: AOBMaker declined it, because CE's Lua cannot set it (R2).
+  - The child-activation options are rewritten: `moActivateChildrenAsWell` is dropped, `moDeactivateChildrenAsWell`
+    alone is dropped, and a header with only `moHideChildren` gains "deactivate children too". That changes what
+    ticking a header does (AOBMaker `EV-1`: 71, 51 and 360 cases in its corpus).
+  - `ByteLength`, `ShowAsBinary` and `Hotkeys` are dropped, and a `VariableType=Custom` record becomes CE's default
+    4 Bytes (AOBMaker `EXT-15`).
   - `<ID>` values are renumbered. That is harmless here.
   - None of it is reported. The reply counts only absolute-address warnings.
 - **Size limit:** one request holds at most 10 MiB of JSON-escaped XML. `CeXmlExportService.MaxEmitEntries` is 60,000,
   and a large export can exceed that. Going around the limit means talking `CreateRecordTree*` directly, which
   brings back the tree-model work §6 describes.
-- **AOBMaker's side:** its `docs/Known-Scope-Limits.md` records these drops as intentional. The importer "targets
-  structural tree rebuild … not byte-perfect display-metadata fidelity". Bit parameters, though, are not display
-  metadata: they select which bit is read.
+  - Splitting the export into several `ImportCheatTableXml` calls does not help: each call builds a new tree at the
+    root (AOBMaker reply §2.8).
+  - AOBMaker measured about 710 bytes per entry with .NET's default encoder, so about 14,700 entries fit in 10 MiB.
+    The default encoder writes `<` and `>` as 6-byte escapes. Sent with `UnsafeRelaxedJsonEscaping` (our CE-bridge
+    client's encoder; `AobMakerUiClient` uses the default one today), the XML should need fewer bytes per entry; not
+    measured.
+- **AOBMaker's side:** its `docs/Known-Scope-Limits.md` records these drops as a scope decision. The importer
+  "targets structural tree rebuild … not byte-perfect display-metadata fidelity". Since `e75562d` it carries a
+  correction: bit parameters and the child-activation options are not display metadata (`Known-Scope-Limits.md:118-124`).
+  The drops themselves are unchanged.
 - **AOBMaker change (R2, R8):**
   - carry `bitStart`/`bitLength`, `dropDownList` (with its link and `DisplayValueAsItem`), `color` and
-    `codePage`/`zeroTerminate` through `BulkRecordNode`, the importer and the plugin's Lua;
+    `codePage` through `BulkRecordNode`, the importer and the plugin's Lua;
   - report what it drops;
   - stream imports larger than 10 MiB.
+
+  AOBMaker's answer: bits and `dropped` P1; dropdown after R3; colour and `codePage` P2–P3; streaming P3. Stage 1 of
+  R3 also ships with a loud reject (or a `dropped` report) of the records the importer cannot carry. Our bit-field
+  bools are Binary records, so they may be refused outright until R2's bits ship. Reply §4 keeps
+  `[AOBM-CEXML-PUSH]` blocked on R3 too without saying why; that reject is our reading of it (reply §2.3).
 - **Verdict:** hold the push until at least bits and dropdowns survive. A push that shows wrong bools is worse than a paste.
 
 ### B2 — Generated .CT files straight into CE
@@ -262,12 +288,15 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
   ("address is empty"), and one error aborts the whole import.
 
   This is a general AOBMaker defect, not our format. AOBMaker's own `samples/cheat_tables` hold **573**
-  address-less non-script entries across 19 tables.
+  address-less `GroupHeader=1` entries across **18** of the 19 tables (AOBMaker's re-measurement, `EXT-2`).
+  AOBMaker accepted R3 in two stages. Our `.CT` imports after stage 1, with its folders looking like address headers
+  until stage 2.
 - **What works today:** one `CreateAAScript` + `group` call per row. Every row `CheatTableBuilder.EmitRowEntry` writes is
   an Auto Assembler script, and Teleport's "Add actions" already works this way. It loses three things:
-  - the two-level nesting (root → category), because `group` is a single level;
+  - the two-level nesting (root → category), because `group` names one group, not a path: it matches that name at
+    any depth, and creates a missing one at the root;
   - the colours, because `CreateAAScript` has no colour field;
-  - certainty about the parent: `group` attaches to the **first** record of that description whose type is not 11, which may be a value record rather than a header.
+  - certainty about the parent: `group` attaches to the **first** record, at any depth, of that description whose type is not 11, which may be a value record rather than a header.
 - **AOBMaker change (R3, R7):**
   - accept an address-less `GroupHeader` as a plain folder (`IsGroupHeader`), both in the import and in bulk nodes;
   - support nested group paths;
@@ -283,24 +312,38 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 | Bit-field bool | The containing byte | Deliberate: `CeXmlExportService.KeywordToValueType` maps `Binary` to Byte |
 | Enum, FName | A number, with no dropdown | `CreateMemoryRecord` has no dropdown field |
 | FString | An 8-byte hex pointer | `MapCeField` has no `StrProperty` case. The XML path emits a string leaf with `Offsets [0]`, `Length` and `Unicode` |
-| Any field | An absolute address, which does not survive a restart | The XML path is GWorld-rooted |
+| Any field | An absolute address, which does not survive a restart | The XML path is GWorld-rooted. AOBMaker notes the plugin passes `address` straight to `mr.Address`, and CE accepts expressions such as `[x]+off` there; unproven through the bridge |
 
 - **Partial workaround today:** a one-node `CreateRecordTree*` batch carries offsets, length and unicode. It still cannot carry bits or dropdowns.
-- **AOBMaker change (R6):** give `CreateMemoryRecord` `bitStart`/`bitLength`, `dropDownList`, `length`/`unicode`/`codePage`
-  and `offsets`. Or document a single-call tree for one node.
+- **AOBMaker change:** R2's node fields, sent as a one-node `Begin` / `Chunk` / `End`. We asked (R6) to give
+  `CreateMemoryRecord` `bitStart`/`bitLength`, `dropDownList`, `length`/`unicode`/`codePage` and `offsets`; AOBMaker
+  keeps `CreateMemoryRecord` as it is and re-targets the item to that batch (reply §2.6, P3).
 
 ### B4 — `autoActivate` reports success whether or not CE enabled the script
 - **The code:** with `autoActivate:true`, the plugin runs `if ok then mr.Active = true end` and never reads `Active` back.
   This is in `pipe_server.cpp` 1262–1265, and the same pattern is in `CreateSymbolScript`.
   A script that CE failed to enable still replies `success:true`.
+- **A third site AOBMaker found:** `CreateAAScriptWithRecords` activates unconditionally, before its own check. An
+  exception there replies `success:false` although the records exist.
 - **Where we depend on it:**
-  - the Pointer panel's Register GWorld and Register &GEngine symbol buttons;
+  - the Pointer panel's Register GWorld and Register &GEngine symbol buttons, and since A8 its GObjects / GNames SYM;
   - the standalone trainer's Setup row.
 - **Blocking risk:** activation runs on CE's main thread while the single worker waits.
   - AOBMaker's own live test saw an `Active=true` enable raise CE's "Nearby allocation error" Yes/No dialog,
-    and its driver stopped at that dialog (`docs/Live-Verification-Multi-Apply.md`).
+    and its driver stopped at that dialog (`docs/Live-Verification-Multi-Apply.md`). That driver enabled the record
+    from CE Lua directly, not through the bridge.
   - While a dialog is open, the bridge is busy for every client.
-- **AOBMaker change (R4):** read `Active` back, and return `activated` together with CE's error text.
+  - **Our own defect, found by AOBMaker (reply §2.4):** the trainer Setup's failure paths call `showMessage` (a modal)
+    and untick 50 ms later. Over the bridge that modal holds the single worker, and an immediate read-back still sees
+    `Active=true`. AOBMaker cannot fix it from the plugin: `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md).
+- **AOBMaker change (R4):** read `Active` back and return `activated`, with CE's text in the existing `message`.
+  AOBMaker's answer (reply §2.4, `EXT-4`; P1, batch B, not started):
+  - `activated` is tri-state: `true`, `false`, or absent = unknown (an older plugin, no `autoActivate`, or a client
+    timeout);
+  - no `autoAssembleCheck` pre-check: it sees an empty script in both our consumers, and runs unguarded `{$lua}`
+    twice;
+  - `CreateSymbolScript` will also say whether the symbol resolves after activation, since a failed scan only prints a
+    warning and leaves `Active` true.
 
 ### B5 — `FindMostAccessed` ("what accesses this field")
 - **Status:** it exists, but AOBMaker itself never calls it. `FindMostAccessedAsync` has no caller, and there is no live-verification record.
@@ -311,13 +354,23 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
   - Probably the accessing instruction itself. It records `ExceptionAddress`, and x86 data breakpoints are traps,
     so that is normally the instruction **after** the access. CE's own "Find out what accesses" compensates for this;
     the plugin does not. **This is inferred, not measured. Check it live before building on it.**
+  - Found by AOBMaker while checking our list:
+    - hit counts are unfiltered: every single-step exception in the window counts (`EV-2`);
+    - a failed debugger attach cannot be told apart: CE's breakpoint export always reports success, so the plugin
+      sleeps the whole window and replies "No accesses detected" (`EV-3`). It also scrolls CE's disassembler from the
+      pipe thread.
 - **Blocking risk:** it holds the single-instance bridge for the whole window.
+- ⚠ **It attaches a debugger without asking:** the plugin calls `startdebuggerifneeded(false)` before it sets the
+  breakpoint. Keep it away from games with anti-debug checks.
 - **Until it is fixed:** use +CE (A2, A3, B3), then CE's own "Find out what accesses". Live Walker's +CE tooltip already suggests that.
-- **AOBMaker change (R9):**
-  - return all hits with their counts;
-  - add access/write and size options;
-  - apply the previous-instruction correction;
+- **AOBMaker change (R9), as corrected by AOBMaker:**
+  - return all hits with their counts, as parallel arrays;
+  - `kind: access|write` only (x86 debug registers have no read-only mode); no answer on size;
+  - keep the raw trap address and add a separate, best-effort instruction address (a blanket "previous instruction"
+    is wrong for `call` / `jmp [mem]` / `ret` and REP string instructions);
   - stop blocking the bridge.
+
+  **R9 is on hold** at AOBMaker until a live check (P3; the `durationMs` clamp P2).
 
 ---
 
@@ -334,11 +387,11 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
     The fix made `[DISABLE]` check ownership. The Global Pointers buttons also remember their own pushes (`_pushedQuerySymbols`),
     but that memory cannot see CE's table. It is empty again after UE5DumpUI restarts, and a repeat click has to fall back
     to the clipboard in case the user deleted the record.
-- **Proposal (R5):**
-  - `FindRecords(description, group)` returning IDs;
-  - `DeleteRecords(ids)`;
-  - an `ifExists: skip | replace` option on every create;
-  - the record `id` in every create reply.
+- **Proposal (R5), with AOBMaker's corrections:**
+  - the record `id` in every single create reply, and `recordIds` (an array in node order) on bulk chunks (P1);
+  - `FindRecords(description, group, valueType)` returning IDs, scoped to a group and with a result limit (P2);
+  - an `ifExists: skip` option on every create, after R7;
+  - `DeleteRecords(ids)` and `ifExists: replace`: **on hold** at AOBMaker.
 
 ### C2 — Record hotkeys on push (low priority)
 - **Why it could matter:** `TeleportScriptGenerator`'s header calls a CE **record-level** hotkey the reliable way to
@@ -348,14 +401,17 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
   with CE's `createHotkey` "worked on some games' CE sessions and silently did nothing on others". Since then the
   app's own OS-level hotkeys are the primary path, and user-bound CE record hotkeys are "a fine secondary path". A
   hotkey that AOBMaker sets would first have to be proven to behave like a user-bound one.
-- **Request:** R10.
+- **Request:** R10. **Not accepted for now** (AOBMaker reply §2.10): the Lua call that creates a record hotkey is
+  unverified in both repositories. Risk: our own `RegisterHotKey` Teleport keys may fire twice, or never reach CE.
 
 ### C3 — Structure Dissect from the UI's own CSX
 - **Today:** file only. `LiveWalkerViewModel.ExportCsxCoreAsync` writes a .CSX for CE's "Import from file".
   No plugin command creates a structure.
 - **Why it is low priority:** A9 already puts live dissection in CE with today's commands. This item would add only
   a one-click push of Live Walker's *exported view* of a structure.
-- **Request:** R12 (`CreateStructure` from CSX XML).
+- **Request:** R12 (`CreateStructure` from CSX XML). **Declined** (AOBMaker reply §2.12): no XML parsing inside CE.
+  The CSX half is now our own work: generate `createStructure` / `addElement` Lua from `CsxExportService`'s model,
+  and push it as `{$lua}` through `CreateAAScript`. It inherits B4's gap.
 - **README:** its AOBMaker paragraph claimed the plugin delivers "Structure Dissect data". That was corrected
   2026-09-29.
 
@@ -368,7 +424,8 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 - **AOBMaker's side:** no pipe command exposes AOBMaker's injection-script generator (`TemplateEngine`).
   `SendDisassembly` only fills AOBMaker.UI's input box.
 - **Needs:**
-  - a `GenerateInjectionScript(address, template)` command (R13);
+  - a `GenerateInjectionScript(address, …)` command (R13). AOBMaker accepted it in principle, P3, design first;
+    our `template` maps to none of its generator options;
   - on our side, instruction addresses kept in Denken. `NativeFieldAccess` merges accesses by offset today.
     With the addresses, native write sites are found statically, with no debugger. That matters in games that fight one.
 - **Assessment:** probably the most valuable combination of the two tools, and the most work.
@@ -376,12 +433,16 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 ### C6 — A GWorld AOB when GWorld came from an exported symbol
 - **Gap:** when Genau resolves GWorld through an export (Satisfactory, `?GWorld@@3VUWorldProxy@@A`), there is no referencing instruction to seed `GenerateAob`.
 - **Needs:** either a "find code that references address X" search in AOBMaker (R14), or an xref pass in Genau (our side).
+  AOBMaker accepted R14 as P2, batch A. It finds RIP-relative references inside the scanned module only, so for an
+  exported GWorld only the defining module's own references show. Whether that helps Satisfactory needs a live check.
 
 ### C7 — Custom-type records
 - **Motivation:** the todo item "CE export drilldown — remaining gaps" wants FName shown live through a "UE FName to String" custom type.
 - **Gap:** neither `CreateMemoryRecord` nor `BulkRecordNode` can carry `CustomType`, and the importer drops it.
   Registering the type is already possible through a `{$lua}` `CreateAAScript`; setting it on records is not.
-- **Proposal:** a `customType` field (R15).
+- **Proposal:** a `customType` field (R15). AOBMaker accepted it after a CE-source check (P3), with two warnings:
+  reading `NumericalValue` from a record whose custom type is not registered yet crashes CE (`pcall` cannot catch it),
+  and `showAsHex` on a custom-type record silently breaks `Value` both ways, so never push the two together.
 
 ---
 
@@ -413,7 +474,7 @@ These already push through AOBMaker and are not re-evaluated here (B3 and B4 sti
    - R2, B1's bits and dropdowns;
    - R3, B2's address-less headers;
    - R4, B4's activation result;
-   - R5, C1's find and delete.
+   - R5, C1's record IDs. AOBMaker made only the IDs P1: `FindRecords` is P2, and delete is on hold.
 3. **Then:** B1's push and B2 (A8 and A9 went ahead with step 1).
 4. **Hold:** B5, until R9 lands and it is checked live.
 
@@ -429,16 +490,16 @@ are in [aobmaker-requests.md](aobmaker-requests.md).
 | A5 | `[AOBM-PTR-SCANASM]` | — |
 | A6 | `[AOBM-ATTACH-CHECK]` | R11, for a one-click fix |
 | A7 | `[AOBM-FUNC-DISASM]` | — |
-| A8 | `[AOBM-GNAMES-SYMBOL]`; the rest in `[AOBM-GWORLD-GENAOB]` | R17, for adjusted signatures |
+| A8 | `[AOBM-GNAMES-SYMBOL]`; the rest in `[AOBM-GWORLD-GENAOB]` | R17 (unanswered), for adjusted signatures |
 | A9 | `[AOBM-DISSECT-INJECT]` | — |
 | B1 | `[AOBM-CEXML-PUSH]` | R2, R8 |
 | B2 | `[AOBM-CT-PUSH]` | R3, R7 |
-| B3 | `[AOBM-PLUSCE-FIDELITY]` | R6 |
+| B3 | `[AOBM-PLUSCE-FIDELITY]` | R2 (one-node batch; R6 re-targeted) |
 | B4 | `[AOBM-ACTIVATE-RESULT]` | R4 |
 | B5 | `[AOBM-FIND-ACCESS]` | R9 |
 | C1 | `[AOBM-DEDUP-TABLE]` | R5 |
 | C2 | `[AOBM-RECORD-HOTKEYS]` | R10 |
-| C3 | the CSX half of `[AOBM-DISSECT-INJECT]` | R12 |
+| C3 | the CSX half of `[AOBM-DISSECT-INJECT]` | R12 declined — our side |
 | C4 | `[AOBM-ATTACH-CHECK]` | R11 |
 | C5 | `[DENKEN-WRITE-SITES]` (our half) | R13 |
 | C6 | `[AOBM-EXPORT-GWORLD-AOB]` | R14 |
@@ -449,15 +510,32 @@ R1 (capability discovery) and R16 (protocol hygiene) serve every row rather than
 ## F. Protocol traps for a client that talks to the bridge directly
 
 These matter for B1, B2 or B3's one-node workaround. Our serializer is compact JSON, but a hand-built string is not.
+AOBMaker's reply §3 is the current client contract; the list below follows it.
 
 - **Array keys must be compact.** The plugin finds `"nodes":[`, `"offsets":[`, `"records":[` and `"ids":[` by literal
   search, so a space after the colon is not tolerated:
   - with `"nodes": [`, a chunk replies success with `created:0`;
   - a spaced `offsets` or `records` key silently drops the offsets or the child records.
 
-  AOBMaker's `docs/API-CEPlugin.md` claims whitespace is fine, but that holds only for scalar fields.
-- **The envelope `type` must come before any nested `type`.** The extractor takes the first string-valued `type`.
+  AOBMaker's `docs/API-CEPlugin.md` used to claim whitespace is fine. Since `e75562d` it states the real rule
+  (`API-CEPlugin.md:41-52`): whitespace after the colon is fine for string, int and bool values on plugins built
+  2026-09-08 or later; after an array key's colon, or before any colon, it breaks.
+- **The envelope `type` (and `description`) must come before any nested object.** The extractor takes the first
+  occurrence of a key.
 - **A numeric CE type in a node must be a string** (`"2"`, not `2`).
-- **Omit `parent` for a root.** `"parent": null` counts as present and attaches the node under node 0.
-- **Oversized requests get no reply.** The plugin's oversize path returns without a reply.
-  The client-side 10 MiB pre-flight check is already an open item in [todo.md](todo.md).
+- **Omit `parent` for a root.** `"parent": null` counts as present. The node then attaches under node 0 when a node
+  with id 0 exists, and otherwise stays at the root.
+- **Oversized requests get no reply, on both pipes.** The CE bridge and the AOBMaker.UI pipe both drop them without a
+  reply. The client-side 10 MiB pre-flight check is already an open item in [todo.md](todo.md).
+- **Colours are CE `TColor` hex, BGR order**, at most 6 digits. The plugin writes them as-is.
+- **One bulk import stays under 10 minutes from its `Begin`, and sends `End` once.** Chunks do not refresh the batch's
+  age, and a repeated `End` replies `success:true, totalCreated:0`.
+- **On the AOBMaker.UI pipe, a missing `success` means false.** Always use a read timeout there.
+- **With `autoActivate`, `success` means "created", not "enabled".** On `CreateAAScriptWithRecords`, `success:false` can
+  still leave the records in CE.
+- **`totalCreated` after a failed import is not the real count.** AOBMaker.UI discards the plugin's count.
+- **Expect one bridge client at a time.** One pipe instance, one worker.
+- **`group` binds to the first same-named non-script record at any depth.**
+- **`GenerateAob` takes instruction addresses only.** It does not check that the address is code.
+- **Call `FindMostAccessed` only where a debugger on the game is acceptable.** It attaches CE's debugger without
+  asking, and holds the single bridge worker for `durationMs`.

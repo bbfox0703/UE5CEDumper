@@ -7,10 +7,10 @@
 ## Architecture Overview
 
 ```
-UE5DumpUI (C# Avalonia)                AOBMaker CE Plugin (Lua)
+UE5DumpUI (C# Avalonia)                AOBMaker CE Plugin (C++ DLL)
 ┌──────────────────────┐                ┌─────────────────────┐
 │  AobMakerBridgeService│──── pipe ────▶│  Named Pipe Server   │
-│  (IAobMakerBridge)   │◀─── pipe ─────│  (Lua JSON handler)  │
+│  (IAobMakerBridge)   │◀─── pipe ─────│  (C++ JSON parser)   │
 │                      │                │                      │
 │  PointerPanelVM      │                │  Memory Viewer nav   │
 │   - HEX buttons      │                │  Disassembler nav    │
@@ -26,6 +26,10 @@ UE5DumpUI (C# Avalonia)                AOBMaker CE Plugin (Lua)
        \\.\pipe\AOBMakerCEBridge
 ```
 
+The plugin is a C++ DLL. It parses JSON in C++ (`json_parse.h`), and its handlers run CE Lua on CE's main thread
+through `synchronize`. AOBMaker's answer to our requests, and the rules a client must follow today, are its
+`docs/UE5CEDumper-Requests-Reply.md` (`9431370`); ours are [aobmaker-requests.md](aobmaker-requests.md).
+
 ---
 
 ## Wire Protocol
@@ -38,27 +42,30 @@ UE5DumpUI (C# Avalonia)                AOBMaker CE Plugin (Lua)
 | Framing | 4-byte LE `uint32` length prefix + UTF-8 JSON payload |
 | Connect timeout | 2000 ms |
 | Response timeout | 5000 ms |
-| Max message size | 10 MB |
-| JSON encoder | `UnsafeRelaxedJsonEscaping` for requests (CE Lua parser cannot handle `\uXXXX` escapes) |
+| Max message size | 10 MiB (`10 * 1024 * 1024`). An oversize request gets **no reply**, on either pipe (AOBMaker `EXT-5`) |
+| JSON encoder | `UnsafeRelaxedJsonEscaping` for requests. Not required: see "JSON Encoding Note" |
 
 ### Message Format
 
-Every message (request and response) uses the same `AobMakerMessage` model:
+Every message (request and response) uses the same `AobMakerMessage` model. For the commands below, a reply's
+`type` is the command's name with `Result` appended, except that `GetAttachedProcess` answers
+`AttachedProcessResult`. An unknown type gets
+`{"type":"Error","success":false,"message":"Unknown type"}` (AOBMaker `API-CEPlugin.md:23-25`,
+`plugins/CEPlugin/src/protocol.h:44-58`).
 
 ```json
-{
-  "type": "NavigateHexView",
-  "address": "7FF769E29110",
-  "success": true,
-  "message": "OK"
-}
+// Request
+{ "type": "NavigateHexView", "address": "7FF769E29110" }
+
+// Response
+{ "type": "NavigateHexViewResult", "success": true }
 ```
 
 Common fields:
 
 | Field | Type | Direction | Description |
 |-------|------|-----------|-------------|
-| `type` | string | request | Message type identifier |
+| `type` | string | both | Message type identifier (`<Command>Result` on a reply) |
 | `address` | string? | request | Hex address without `0x` prefix |
 | `success` | bool | response | Whether the operation succeeded |
 | `message` | string? | response | Error detail on failure |
@@ -76,7 +83,7 @@ Navigate CE Memory Viewer hex dump (bottom pane) to a specific address.
 { "type": "NavigateHexView", "address": "2DA53B24970" }
 
 // Response
-{ "type": "NavigateHexView", "success": true }
+{ "type": "NavigateHexViewResult", "success": true }
 ```
 
 **Used by:**
@@ -92,7 +99,7 @@ Navigate CE Memory Viewer disassembler (top pane) to a specific code address.
 { "type": "NavigateDisassembler", "address": "7FF7F3456789" }
 
 // Response
-{ "type": "NavigateDisassembler", "success": true }
+{ "type": "NavigateDisassemblerResult", "success": true }
 ```
 
 **Used by:**
@@ -113,15 +120,15 @@ Create an Auto Assembler script entry in CE's address list.
 }
 
 // Response
-{ "type": "CreateAAScript", "success": true }
+{ "type": "CreateAAScriptResult", "success": true }
 ```
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `description` | string | Display name in CE address list |
 | `script` | string | Full AA script content (`[ENABLE]`/`[DISABLE]` sections) |
-| `autoActivate` | bool | Whether to activate immediately after creation |
-| `group` | string | *(optional)* Target **group-node** description. Non-empty → the record is nested **under** a single-level `IsGroupHeader` folder of that description (created if absent). A name-collision with an existing **AA-script** (Type-11) node yields a *fresh* group rather than nesting under it. Empty/omitted → address-list **root** (back-compatible). **Requires an AOBMaker CE plugin whose `CreateAAScript` handler reads `group`** — older builds ignore the field and land the record at root. |
+| `autoActivate` | bool | Whether to activate immediately after creation. ⚠ `success` then means "created", not "enabled": the plugin never reads `Active` back (AOBMaker `EXT-4`, open; its reply rule 8). A `CreateSymbolScript` whose AOB scan fails still ends ticked, because its template only prints `[SymbolScanner] WARNING: AOB scan failed`. |
+| `group` | string | *(optional)* Target group description. Non-empty → the record goes **under the first record, at any depth, whose description matches and that is not an AA script** (Type 11). That can be a value record or an `IsAddressGroupHeader`, and the plugin's parent self-check passes even on such a wrong match. Only when none matches is a new plain `IsGroupHeader` folder created, at the root (`pipe_server.cpp:1201-1217` at AOBMaker `9431370`; its `K7-13` and reply rule 11). AOBMaker's own `API-CEPlugin.md:142` and `:191` still say "single-level". Our Teleport, trainer and Dissect pushes use `group`, so keep "UE5CEDumper (DLL)" and "UE5CEDumper (no-DLL trainer)" unique across the whole table. Empty/omitted → address-list **root** (back-compatible). **Requires an AOBMaker CE plugin whose `CreateAAScript` handler reads `group`** — older builds ignore the field and land the record at root. |
 
 **Used by:**
 - LiveWalker: `GenerateInvokeScriptAsync` sends UFunction invoke scripts directly to CE (falls back to clipboard if AOBMaker unavailable)
@@ -131,7 +138,16 @@ Create an Auto Assembler script entry in CE's address list.
 
 ### 4. `InjectTableFile`
 
-Embed an arbitrary text/Lua file straight into the currently open Cheat Engine table. Replaces existing TableFile of the same name (delete-if-exists), then `createTableFile` + `Stream.write` + verify `Stream.Size`. Used by the **Tools -> Inject Helper into Current CE Table** menu so the user no longer has to save the helper to disk and `Table -> Add File...` it manually.
+Embed an arbitrary text/Lua file straight into the currently open Cheat Engine table. Used by the **Tools -> Inject Helper into Current CE Table** menu so the user no longer has to save the helper to disk and `Table -> Add File...` it manually.
+
+- **Replacing a file.** The plugin stages the new file as `<fileName>.aobmaker-tmpN`, fills it, verifies its size and
+  renames it into place. It deletes an existing file of the same name only after that succeeds, so a failure leaves
+  the old file untouched. A failed rename or a crash can leave a `.aobmaker-tmpN` orphan in the table; deleting it is
+  safe (AOBMaker `aa846c0`, `API-CEPlugin.md:231-241`).
+- **Re-injecting does not re-run code.** CE has one Lua state, so globals the first load defined stay alive, and an
+  `if not X then … end` guard keeps the old code (`API-CEPlugin.md:248-268`). Our invoke and freeze helpers gate
+  their definitions on a version number for exactly this (`ue5_invoke_helper.lua`, `ue5_freeze_helper.lua`
+  `THIS_HELPER_VERSION`).
 
 ```json
 // Request
@@ -175,7 +191,7 @@ Create an AOB-scan-based symbol registration AA script. The CE Plugin's `BuildSy
 }
 
 // Response
-{ "type": "CreateSymbolScript", "success": true }
+{ "type": "CreateSymbolScriptResult", "success": true }
 ```
 
 | Field | Type | Description |
@@ -186,9 +202,9 @@ Create an AOB-scan-based symbol registration AA script. The CE Plugin's `BuildSy
 | `aoblen` | int | Instruction end relative to AOB match (instrOffset + totalLen) |
 | `symbol` | string | CE symbol name to register (e.g. `"gworld_addr"`) |
 | `module` | string | Module name for `AOBScanModule` |
-| `autoActivate` | bool | Whether to activate immediately |
+| `autoActivate` | bool | Whether to activate immediately. `success` means "created", not "enabled" (see `CreateAAScript`) |
 
-The generated script performs: `AOBScanModule` → read RIP-relative displacement at `pos` → calculate `match + pos + 4 + [displacement]` → register as CE symbol. Survives game restarts (re-scans on script enable).
+The generated script performs: `AOBScanModule` → read the signed 32-bit displacement at `match + pos` → calculate `final = [match + pos] + match + aoblen` → register as CE symbol (`pipe_server.cpp:1449-1450` at AOBMaker `9431370`; `API-CEPlugin.md:153`). That equals `match + pos + 4 + [displacement]` only when no immediate follows the disp32. Survives game restarts (re-scans on script enable). A failed scan prints `[SymbolScanner] WARNING: AOB scan failed for <name>` and registers nothing, yet the record stays ticked.
 
 **Used by:**
 - PointerPanel: SYM buttons register GWorld and &GEngine from the DLL's own AOB triple.
@@ -263,7 +279,7 @@ Which process Cheat Engine has open. The plugin reads CE's `OpenedProcessID` and
 | Field | Type | Description |
 |-------|------|-------------|
 | `processId` | int | CE's open process; `0` when it has none |
-| `processName` | string | Image file name, or empty. Read through the ANSI API, so a non-ASCII name arrives with `?` in it: compare by id, never by name |
+| `processName` | string | Image file name, or empty. Read through the ANSI API (`QueryFullProcessImageNameA`, `pipe_server.cpp:491-519` at AOBMaker `9431370`). A character the system code page cannot represent arrives as `?`. One it can represent (Big5 on code page 950) arrives as raw ANSI bytes: the plugin's `json.h` does not transcode them, so the JSON is not valid UTF-8, and our `Encoding.UTF8.GetString` (`AobMakerBridgeService.ReadMessageAsync`) garbles them: U+FFFD, or wrong characters where a Big5 pair happens to be a valid UTF-8 pair. Compare by id, never by name |
 
 **Used by** (`[AOBM-ATTACH-CHECK]`, `AobMakerStatus.CheckAttachAsync`): the toolbar's **⚠ CE is not on this game**,
 checked at connect and on ⟳, and the text of a +CE that CE refused. A warning only — a push into a CE with nothing
@@ -282,7 +298,10 @@ only while that app is open. UE5DumpUI uses one command on it, through `Services
 | Pipe name | `\\.\pipe\AOBMaker` (AOBMaker's default; a renamed pipe reads as "not running") |
 | Framing | the same: 4-byte LE length + UTF-8 JSON, one request per connection |
 | Caller check | same user, integrity at least the server's; otherwise a message starting `Rejected:` |
-| Quirks | `success` is left out when false; an unknown `type` gets **no reply** |
+| Missing `success` | left out whenever it is false (`PipeMessage.Success` is `JsonIgnore(WhenWritingDefault)`), a `Rejected:` reply included. `Pong` never carries it: detect `Pong` by its `type`. Treat a missing `success` as false (AOBMaker `EXT-11`, reply rule 7) |
+| No reply at all | an unknown `type`, malformed JSON, a length mismatch, a JSON `null` body, and an oversize request (`WindowsPipeServer.cs:283`, `:366-368`, `:784-788` at AOBMaker `9431370`; `EXT-11`, `EXT-5`) |
+| Idle timeout | the server drops a connection that makes no I/O progress for 5 s, so send the request right after connecting (`API-AOBMaker-UI.md:17-25`) |
+| One client at a time | a single pipe instance: a slow `GenerateAob` makes every other client wait (`GenerateAob-Pipe-Command.md:96`) |
 | Deadlines | connect 2 s; reply 30 s (the uniqueness scan is handler work and can be slow) |
 
 ### `GenerateAob`
@@ -297,9 +316,14 @@ only while that app is open. UE5DumpUI uses one command on it, through `Services
   "message": "Unique AOB found in Game-Win64-Shipping.exe (+...)" }
 ```
 
-AOBMaker decodes the instruction **at** `address` (the seed), then grows context until the AOB is unique (mask
-Mode A, `MaxResults` 2). `pos` and `aoblen` are relative to the AOB's start, which lies `injectionOffset` bytes
+AOBMaker decodes the instruction **at** `address` (the seed), then runs Mode D (`DynamicAobOptimizer`) to grow
+context until the AOB is unique (mask Mode A, `MaxResults` 2; `API-AOBMaker-UI.md:69-73`,
+`WindowsPipeServer.cs:554-562`). `pos` and `aoblen` are relative to the AOB's start, which lies `injectionOffset` bytes
 before the seed, and are present only for a RIP-relative seed.
+
+**Pass instruction addresses only.** `GenerateAob` does not check that the address is code: given a data address, it
+decodes the data bytes as instructions and still returns a "unique AOB" (AOBMaker `EV-4`, reply rule 12). The SYM
+buttons below always pass an instruction (`FindRipSeed`).
 
 **Used by** the GObjects / GNames **SYM** buttons (`[AOBM-GNAMES-SYMBOL]`,
 `PointerPanelViewModel.RegisterSymbolViaGenerateAobAsync`):
@@ -313,6 +337,18 @@ before the seed, and are present only for a RIP-relative seed.
 
 Every failure names its remedy: AOBMaker.UI not running, refused (elevation), no reply (an older build without
 `GenerateAob`), no unique AOB (AOBMaker's own words), not RIP-relative, replay mismatch.
+
+### `Ping` (not used yet)
+
+The probe for an AOBMaker.UI status light. `{"type":"Ping"}` → `{"type":"Pong","version":"2.0"}`, with no `success`
+field (`API-AOBMaker-UI.md:53-54`; `WindowsPipeServer.cs:323-329`).
+- It is the only command with neither a caller check nor a side effect: `SendDisassembly` fills AOBMaker.UI's input
+  box (`API-AOBMaker-UI.md:56-58`), and `GetRelocationSelection` advances a copy cursor (`:172-178`).
+- Having no caller check, it cannot detect the elevation refusal. Only `GenerateAob` or `ImportCheatTableXml` can.
+- A connect timeout while a `GenerateAob` runs means busy, not absent.
+- An older AOBMaker.UI answers `Ping` normally, without `features[]`. Every read on this pipe needs a timeout
+  (reply §3 rule 7).
+- `AobMakerUiMessage` has no `version` property yet, and `AobMakerUiClient` hard-codes the pipe name `AOBMaker`.
 
 ---
 
@@ -506,9 +542,9 @@ AOBMaker CE Plugin
 
 ## JSON Encoding Note
 
-The CE Plugin's Lua-side JSON parser does not handle `\uXXXX` Unicode escape sequences. For example, a single quote `'` serialized as `\u0027` would break AA script parsing.
+The CE plugin parses JSON in C++ (`json_parse.h`), not in Lua. It has decoded `\uXXXX` escapes to UTF-8 since AOBMaker `3ac12c2` (2026-03-05), and surrogate pairs since `56b308f` (2026-08-29). A string value that decodes to a NUL is refused whole (`json_parse.h:186-197` at `9431370`). So a single quote sent as `\u0027` arrives as `'`.
 
-Solution: `AobMakerJsonContext.Relaxed` uses `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` to emit literal characters instead of escape sequences:
+`AobMakerJsonContext.Relaxed` still uses `JavaScriptEncoder.UnsafeRelaxedJsonEscaping` to emit literal characters instead of escape sequences. That is harmless and helps a plugin built before March 2026, but it is not required:
 
 ```csharp
 public static AobMakerJsonContext Relaxed => _relaxed ??= new(new JsonSerializerOptions
