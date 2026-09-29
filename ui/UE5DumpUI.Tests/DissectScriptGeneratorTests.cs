@@ -66,6 +66,57 @@ public class DissectScriptGeneratorTests
     }
 
     [Fact]
+    public void The_enable_hands_the_module_its_own_memory_record()
+    {
+        // [AOBM-DISSECT-UETOOLS] CE can untick this record without running [DISABLE] (a process change answered Yes)
+        // or free it while ticked (a delete), leaving ours registered and UETools suspended under a record showing
+        // auto mode off. The module follows the record it is handed, and CE's auto assembler runs a {$lua} block
+        // behind `local syntaxcheck,memrec=...` (autoassembler.pas, luacode) -- so memrec is what the enable passes on.
+        Assert.Contains("pcall(mod.enableAutoCallback, memrec)", EnableBlock);
+    }
+
+    [Fact]
+    public void The_enable_block_run_as_CE_runs_it_passes_memrec_through_and_nil_when_there_is_none()
+    {
+        // Behavioural twin of the text check above, on CE's own Lua VM: the ENABLE block is loaded behind CE's own
+        // prefix line and called as CE calls it -- (syntaxcheck, memrec). A chunk run without a record (autoAssemble()
+        // from Lua) gets memrec = nil, and must hand the module nil rather than fail.
+        string enable = EnableBlock;
+        int from = enable.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        int to = enable.IndexOf("{$asm}", from, StringComparison.Ordinal);
+        string body = enable[from..to];
+        Assert.DoesNotContain("]==]", body);
+        string lua = """
+            UE5_DEBUG = 0
+            function getAddressSafe() return 0x1000 end
+            function reinitializeSymbolhandler() end
+            function findTableFile() return { Stream = { Size = 1 } } end
+            function createStringStream()
+              return { copyFrom = function() end, destroy = function() end,
+                DataString = "return { enableAutoCallback = function(...) GOT_N = select('#', ...); GOT = ...; return true end }" }
+            end
+            function showMessage(m) SHOWN = m end
+            function createTimer() return {} end
+            function synchronize() end
+            function getLuaEngine() return { Close = function() end } end
+            local chunk = assert(load('local syntaxcheck,memrec=...\n' .. [==[
+            """ + body + """
+            ]==]))
+            local REC = { ID = 7, Active = false }
+            chunk(false, REC)
+            assert(SHOWN == nil, 'the enable bailed out: ' .. tostring(SHOWN))
+            assert(GOT == REC, 'enableAutoCallback was not handed the memory record: ' .. tostring(GOT))
+            GOT, GOT_N = 'unset', nil
+            chunk(false, nil)
+            assert(SHOWN == nil, 'the enable bailed out without a record: ' .. tostring(SHOWN))
+            assert(GOT == nil and GOT_N == 1, 'without a record the module gets nil: ' .. tostring(GOT))
+            print('OK')
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0 && output.Contains("OK"), output);
+    }
+
+    [Fact]
     public void Enable_checks_the_DLL_first_and_keeps_the_module_where_DISABLE_can_reach_it()
     {
         var enable = EnableBlock;
