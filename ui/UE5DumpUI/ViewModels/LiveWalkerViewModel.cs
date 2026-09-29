@@ -5844,45 +5844,47 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task HexFieldAddressAsync(LiveFieldValue? field)
     {
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.FieldAddress)) return;
-        try
-        {
-            // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
-            // 8 bytes after the field, and parking CE's hex view on the access detector shows
-            // a qword that reads 0. See LiveFieldValue.PayloadAddress.
-            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.PayloadAddress));
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"AOBMaker HEX field failed for {field.Name}", ex);
-        }
+        // PayloadAddress, not FieldAddress: on a checked build a delegate's bytes start
+        // 8 bytes after the field, and parking CE's hex view on the access detector shows
+        // a qword that reads 0. See LiveFieldValue.PayloadAddress.
+        await HexAsync(field.PayloadAddress, field.Name);
     }
+
+    /// <summary>[AOBM-LIVEWALKER-HEX-SILENT] Move CE's hex view and say so, or say why not: CE refusing and the plugin
+    /// being gone read the same from a dropped result, and only the status line can tell the user which.</summary>
+    private async Task HexAsync(string address, string label)
+    {
+        var (text, _) = await AobMakerActions.MoveViewAsync(_aobMaker!, address, label, _log, disassembler: false);
+        StatusText = text;
+        ApplyAobMakerProbe(_aobMaker!.IsAvailable);
+    }
+
+    internal const string KeyPtrTargetLabel = "str.LiveWalker.PtrTargetLabel";
+
+    /// <summary>A pointer field's HEX lands on what it points at; the field's name alone would read as the field.</summary>
+    internal static string PtrTargetLabel(string field) => AobMakerStatus.Say(KeyPtrTargetLabel, "{0} target", field);
 
     [RelayCommand]
     private async Task HexPtrAddressAsync(LiveFieldValue? field)
     {
         if (_aobMaker == null || field == null || string.IsNullOrEmpty(field.PtrAddress)) return;
-        try
-        {
-            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(field.PtrAddress));
-        }
-        catch (Exception ex)
-        {
-            _log.Error($"AOBMaker HEX ptr failed for {field.Name}", ex);
-        }
+        await HexAsync(field.PtrAddress, PtrTargetLabel(field.Name));
     }
 
     [RelayCommand]
     private async Task HexObjectAddressAsync()
     {
         if (_aobMaker == null || string.IsNullOrEmpty(CurrentAddress)) return;
-        try
-        {
-            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(CurrentAddress));
-        }
-        catch (Exception ex)
-        {
-            _log.Error("AOBMaker HEX object address failed", ex);
-        }
+        await HexAsync(CurrentAddress, CurrentObjectName);
+    }
+
+    /// <summary>[AOBM-FUNC-DISASM] This UFunction's native code in CE's disassembler, plus a record to right-click.</summary>
+    [RelayCommand]
+    private async Task AsmFunctionAsync(FunctionInfoModel? func)
+    {
+        if (_aobMaker == null || func == null || string.IsNullOrEmpty(func.Address)) return;
+        StatusText = await AobMakerActions.DisassembleFunctionAsync(_aobMaker, _dump, func.Address, func.Name, _log);
+        ApplyAobMakerProbe(_aobMaker.IsAvailable);
     }
 
     // --- AOBMaker CE Plugin: one-click "Add to CE" memory record ---
@@ -6045,14 +6047,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     private async Task HexOuterAddressAsync()
     {
         if (_aobMaker == null || string.IsNullOrEmpty(CurrentOuterAddr) || CurrentOuterAddr == "0x0") return;
-        try
-        {
-            await _aobMaker.NavigateHexViewAsync(StripHexPrefix(CurrentOuterAddr));
-        }
-        catch (Exception ex)
-        {
-            _log.Error("AOBMaker HEX outer address failed", ex);
-        }
+        await HexAsync(CurrentOuterAddr, CurrentOuterName);
     }
 
     // ========================================

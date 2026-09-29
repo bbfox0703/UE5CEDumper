@@ -61,7 +61,7 @@ public class CompositionRootWiringTests : IDisposable
     /// <see cref="MainWindowViewModel"/> directly here would prove nothing: it would
     /// assert that <i>this test</i> passes the store, not that <c>App</c> does.
     /// </summary>
-    private MainWindowViewModel BuildVmAsAppDoes()
+    private MainWindowViewModel BuildVmAsAppDoes(IAobMakerUiClient? aobMakerUi = null)
     {
         var platform = new MockPlatformService(_dir);
         return AppComposition.BuildMainWindowViewModel(
@@ -77,7 +77,8 @@ public class CompositionRootWiringTests : IDisposable
             globalHotkeys: null,
             bookmarks: null,
             coordLibrary: new CoordinateLibraryStore(platform),
-            logCompression: null);
+            logCompression: null,
+            aobMakerUi: aobMakerUi);
     }
 
     [Fact]
@@ -91,6 +92,31 @@ public class CompositionRootWiringTests : IDisposable
             "feature will appear to work in-session and lose everything on restart. Check that " +
             "App.axaml.cs still passes _coordLibraryStore to MainWindowViewModel — this is " +
             "audit #4 B27.");
+    }
+
+    [Fact]
+    public async Task The_AOBMaker_UI_dot_is_wired_and_the_toolbar_refresh_checks_it()
+    {
+        // [AOBM-UI-INDICATOR] The unit tests exercise AobMakerUiStatus alone; this is the app's own wiring: the client
+        // App passes reaches the dot, and the toolbar's refresh lists the pipe at once instead of waiting for the timer.
+        var client = new ListedUiClient { Listed = true };
+        var vm = BuildVmAsAppDoes(client);
+
+        Assert.True(vm.IsAobMakerUiConfigured);
+        Assert.Same(client, vm.AobMakerUi.Client);
+
+        await vm.RefreshAobMakerCommand.ExecuteAsync(null);
+
+        Assert.True(client.ListCalls >= 1, "the refresh did not list AOBMaker.UI's pipe");
+        Assert.True(vm.AobMakerUi.IsRunning);
+    }
+
+    [Fact]
+    public void Without_an_AOBMaker_UI_client_the_UI_half_of_the_chip_stays_hidden()
+    {
+        var vm = BuildVmAsAppDoes();
+        Assert.False(vm.IsAobMakerUiConfigured);
+        Assert.False(vm.AobMakerUi.IsRunning);
     }
 
     [Fact]

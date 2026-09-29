@@ -107,7 +107,7 @@ public class StubDumpService : IDumpService
     public virtual Task<GWorldPathResult> FindPathFromGWorldAsync(string target, string? objectAddr = null, int maxDepth = 5, CancellationToken ct = default, string rootKind = "gworld", bool deep = false, int containerDepth = 1) => throw new NotImplementedException();
     public virtual Task<FindPropertyXrefsResult> FindPropertyXrefsAsync(string propAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<FindPropertyXrefsResult> FindFunctionsByClassAsync(string classAddr, bool gameOnly = true, int maxResults = 200, CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<string> GetFunctionCodeAddrAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<string> GetFunctionCodeAddrAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<FunctionPropRefsResult> WalkFunctionPropsAsync(string funcAddr, CancellationToken ct = default) => throw new NotImplementedException();
     // virtual: the USMAP exporter collects enums before it collects classes, so a test of
     // the CLASS collector (audit #5 W8) has to be able to answer this without throwing.

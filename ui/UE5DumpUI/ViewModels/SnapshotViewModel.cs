@@ -353,6 +353,20 @@ public partial class SnapshotViewModel : ViewModelBase
     // NOT gated on the client IsGWorldAvailable flag — see AE10 in ClassPivotViewModel.
     public bool CanLocateDiffRowInGWorld => CanUseDiffRowActions;
 
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX / +CE buttons read. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public AobMakerStatus AobMaker { get; }
+
+    /// <summary>[AOBM-VALUE-ROWS-CE] The diff rows' HEX / +CE buttons: the SAME session gate as Copy (a row's address
+    /// means nothing in a later launch) and a reachable plugin.</summary>
+    public bool CanPushDiffRowToCe => CanUseDiffRowActions && AobMaker.IsAvailable;
+
+    private void RaiseAobMakerGates()
+    {
+        OnPropertyChanged(nameof(CanPushDiffRowToCe));
+        OnPropertyChanged(nameof(CanPushGroupRowToCe));
+    }
+
     partial void OnDiffAChanged(SnapshotMeta? value)   => OnPropertyChanged(nameof(CanRunDiff));
     partial void OnDiffBChanged(SnapshotMeta? value)
     {
@@ -365,6 +379,7 @@ public partial class SnapshotViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanLocateDiffRowInGWorld));
         OnPropertyChanged(nameof(CanUseGroupRowActions));
         OnPropertyChanged(nameof(CanLocateGroupRowInGWorld));
+        RaiseAobMakerGates();
     }
     partial void OnIsDiffingChanged(bool value)
     {
@@ -520,12 +535,18 @@ public partial class SnapshotViewModel : ViewModelBase
     private long QuotaBytes => QuotaMb <= 0 ? 0 : (long)QuotaMb * 1024 * 1024;
 
     public SnapshotViewModel(IDumpService dump, ISnapshotStore store, ILoggingService log,
-                             IExperimentalGate? gate = null, IPlatformService? platform = null)
+                             IExperimentalGate? gate = null, IPlatformService? platform = null,
+                             AobMakerStatus? aobMaker = null)
     {
         _dump = dump;
         _store = store;
         _log = log;
         _gate = gate;
+        AobMaker = aobMaker ?? new AobMakerStatus(null);
+        AobMaker.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(AobMakerStatus.IsAvailable)) RaiseAobMakerGates();
+        };
         _platform = platform;
         _globalMemory = new KeywordSearchMemory(() => (DiffGlobalFilter, DiffRows.Count > 0));
         if (_gate != null) _selectedQuotaLabel = MbToLabel(_gate.SnapshotQuotaMb);
@@ -1609,6 +1630,42 @@ public partial class SnapshotViewModel : ViewModelBase
         {
             _log.Error(Constants.LogCatView, "Snapshot: copy address failed", ex);
         }
+    }
+
+    // --- [AOBM-VALUE-ROWS-CE] AOBMaker row actions (same address as Copy, same session gate) ---
+
+    /// <summary>The row's own address, or empty when it has none: an array-element row carries only its owner's
+    /// base, and the status line says so.</summary>
+    private string DiffRowCeAddress(SnapshotDiffRow row)
+    {
+        if (AobMakerActions.IsSnapshotElementRow(row.PropName))
+        {
+            DiffStatusText = AobMakerActions.NoOwnAddressText(row.PropName);
+            return "";
+        }
+        return AobMakerActions.OffsetAddress(row.ObjAddr, row.PropOffset);
+    }
+
+    [RelayCommand]
+    private async Task HexDiffRowAsync(SnapshotDiffRow? row)
+    {
+        if (row == null || !CanUseDiffRowActions) return;
+        var addr = DiffRowCeAddress(row);
+        if (addr.Length == 0) return;
+        var label = row.ClassName + "::" + row.PropName;
+        DiffStatusText = await AobMakerActions.HexAsync(AobMaker, addr, label, _log);
+    }
+
+    [RelayCommand]
+    private async Task AddDiffRowToCeAsync(SnapshotDiffRow? row)
+    {
+        if (row == null || !CanUseDiffRowActions) return;
+        var addr = DiffRowCeAddress(row);
+        if (addr.Length == 0) return;
+        var label = row.ClassName + "::" + row.PropName;
+        var type = CeXmlExportService.MapTypeNameToCeRecordType(row.DeclaredType);
+        DiffStatusText = await AobMakerActions.AddRecordAsync(AobMaker, label, addr, type, _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
     }
 
     [RelayCommand]

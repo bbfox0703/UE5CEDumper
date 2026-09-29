@@ -61,6 +61,33 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private int _lastUnmapped;
     private bool _lastBudgetHit;
 
+    /// <summary>[AOBM-FUNC-DISASM] App-global AOBMaker bridge for the "Disassemble in CE" button, set by the main window
+    /// the same way as <see cref="PropertyXrefDialog.SharedAobMaker"/>. Null hides nothing: the button just stays off.</summary>
+    public static IAobMakerBridge? SharedAobMaker;
+
+    internal const string KeyAsmLabel = "str.FunctionProps.AsmInCe";
+    internal const string KeyAsmTip = "str.Tip.AobMaker.FuncAsm";
+
+    private async void OnAsmClicked(object? sender, RoutedEventArgs e)
+    {
+        var bridge = SharedAobMaker;
+        if (bridge == null || sender is not Button button) return;
+        button.IsEnabled = false;
+        try
+        {
+            _statusLabel.Text = await Helpers.AobMakerActions.DisassembleFunctionAsync(
+                bridge, _dump, _funcAddr, _funcName, null);
+        }
+        catch (Exception ex)
+        {
+            _statusLabel.Text = ex.Message;
+        }
+        finally
+        {
+            button.IsEnabled = bridge.IsAvailable;
+        }
+    }
+
     /// <summary>Resolve owner window + show. No-op without an address/platform/window.</summary>
     public static async Task ShowForFunctionAsync(
         string funcName, string funcAddr, IDumpService dump, IPlatformService? platform)
@@ -161,6 +188,19 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
             HorizontalAlignment = HorizontalAlignment.Right,
             Margin = new Thickness(0, 8, 0, 0),
         };
+        // [AOBM-FUNC-DISASM] The dialog is about ONE function, so this button needs no selection. Its state is read once:
+        // the dialog is modal, so nothing can re-probe the bridge while it is open, and a click on a stale "on" reports
+        // the failure rather than vanishing.
+        var btnAsm = new Button
+        {
+            Content = Res.Get(KeyAsmLabel) is { Length: > 0 } label ? label : "Disassemble in CE",
+            Padding = new Thickness(12, 6),
+            Margin = new Thickness(0, 0, 8, 0),
+            IsEnabled = SharedAobMaker?.IsAvailable == true && !string.IsNullOrEmpty(_funcAddr),
+        };
+        btnAsm.Click += OnAsmClicked;
+        btnRow.Children.Add(btnAsm);
+        ToolTip.SetTip(btnAsm, Res.Get(KeyAsmTip));
         _btnCopy = new Button
         {
             Content = "Copy property name",

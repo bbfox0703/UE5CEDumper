@@ -223,6 +223,42 @@ public partial class SpcQueryViewModel
         }
     }
 
+    // --- [AOBM-VALUE-ROWS-CE] AOBMaker slot actions (same address as Copy, same session gate) ---
+
+    /// <summary>The slot's own address, or empty when it has none: an array-element slot carries only its owner's
+    /// base, and the status line says so.</summary>
+    private string SlotCeAddress(GroupSlotMatch slot)
+    {
+        if (Helpers.AobMakerActions.IsSnapshotElementRow(slot.FieldName))
+        {
+            GroupStatusText = Helpers.AobMakerActions.NoOwnAddressText(slot.FieldName);
+            return "";
+        }
+        return slot.Addr;
+    }
+
+    [RelayCommand]
+    private async Task HexGroupSlotAsync(GroupSlotMatch? slot)
+    {
+        if (slot == null || !CanUseResultRowActions || string.IsNullOrEmpty(slot.Addr)) return;
+        var addr = SlotCeAddress(slot);
+        if (addr.Length == 0) return;
+        var label = slot.ClassName + "::" + slot.FieldName;
+        GroupStatusText = await Helpers.AobMakerActions.HexAsync(AobMaker, addr, label, _log);
+    }
+
+    [RelayCommand]
+    private async Task AddGroupSlotToCeAsync(GroupSlotMatch? slot)
+    {
+        if (slot == null || !CanUseResultRowActions || string.IsNullOrEmpty(slot.Addr)) return;
+        var addr = SlotCeAddress(slot);
+        if (addr.Length == 0) return;
+        var label = slot.ClassName + "::" + slot.FieldName;
+        var type = Services.CeXmlExportService.MapTypeNameToCeRecordType(slot.FieldType);
+        GroupStatusText = await Helpers.AobMakerActions.AddRecordAsync(AobMaker, label, addr, type, _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
+    }
+
     /// <summary>Locate the slot's owning object in the GWorld graph (in-session only).</summary>
     [RelayCommand]
     private void LocateGroupSlotInGWorld(GroupSlotMatch? slot)

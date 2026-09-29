@@ -173,6 +173,12 @@
         <Button Content="{StaticResource str.Pivot.CopyAddr}" Command="{Binding CopyAddressCommand}"
                 CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanUseResultRowActions}"
                 Padding="8,4"/>
+        <!-- [AOBM-OBJECT-HEX] Same session gate as Copy, plus a reachable plugin. -->
+        <Button Content="{StaticResource str.Pointers.AobMakerHex}" Command="{Binding HexResultCommand}"
+                CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanHexResult}"
+                ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                Foreground="#569CD6" Background="Transparent" BorderThickness="1" BorderBrush="#569CD6"
+                Padding="8,4" Margin="8,0,0,0"/>
         <!-- Locate the selected group's representative object in the world/engine graph. -->
         <Button Content="{StaticResource str.Pivot.LocateGWorld}" Command="{Binding LocateResultInGWorldCommand}"
                 CommandParameter="{Binding SelectedResult}" IsEnabled="{Binding CanLocateResultInGWorld}"

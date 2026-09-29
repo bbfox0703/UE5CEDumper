@@ -957,6 +957,110 @@ values detection cannot produce (`[REVBUMP6-2026-09-06]`, `dev-log.md`). The sen
 
 -----
 
+### ✅ FIXED + LIVE-VERIFIED 2026-09-29 `[AOBMAKER-A1-A9-LIVE]` — the AOBMaker buttons of Eval A1–A9, and the two defects the check found
+
+**Result, 2026-09-29.** DumperTest 5.4 Shipping; CE 7.7 with the AOBMaker plugin v2026.9.25.153 (`9431370`);
+AOBMaker.UI of the same build; UE5DumpUI build 3599 (AOT, 58,864,640 B), the fixes on 3600. CE's state was read with
+`tools/verify/ce_lua_eval.py --state` (the address list, the hex and disassembler views) beside the plugin's
+`CEPlugin.log` and AOBMaker.UI's `log.txt`, not from screenshots.
+
+| Item | Result |
+|---|---|
+| A1 AA push | ✅ an unticked AA record `"DumperTestActor"`; ticked, `getAddress('DumperTestActor')` = the instance; unticked, gone |
+| A2 +CE / HEX | ✅ Value Search (`DumperTestActor_0.I32`, 4 Bytes, value 1234567), Snapshot diff and SPC rows (`DumperTestActor::TickCount` at actor + 0x698) |
+| A2, build 3602 | ✅ **group slots**, one `I32 = 1234567` + `U16 = 54321` group on the actor in all three: Value Search (HEX on U16 → hex top = actor + 0x62E; +CE on I32 → `DumperTestActor.I32`, vtDword, 1234567), Snapshot (HEX on I32 → actor + 0x630; +CE on U16 → `DumperTestActor::U16`, vtWord, 54321), SPC (HEX on U16 → actor + 0x62E; +CE on I32 → `DumperTestActor::I32`, vtDword, 1234567). ✅ **array element**: `V1a_GrowContainers(3)` between two snapshots, `Arr_Churn[0]` written 7001 → 7777; its diff row's HEX and +CE both say "Arr_Churn[0] is an array element: …nothing of its own to send to CE" and `CEPlugin.log` gains no line. ✅ **earlier launch**: a diff against the 19:19 snapshots (the previous launch) leaves Live / Addr / HEX / +CE disabled on every row |
+| A3 Instance Finder | ✅ instance HEX; field +CE typed right (I32 → 4 Bytes, F32 → Float 513.36) and HEX |
+| A3, build 3602 | ✅ **delegate +CE** on Shipping (pad 0): `Del_Unicast` → actor + 0x980, `Multicast_Inline` → actor + 0x970, both 8 Bytes hex. ✅ **container owner HEX**: a lookup of an address inside `Arr_Churn`'s buffer names `DumperTestActor.Arr_Churn[2]`; HEX puts CE's hex view on the owner (`NavigateHexView … 0x1F5E8509A00`, hex top = the actor) |
+| A4 object HEX | ✅ Object Tree, Related Objects, Class Pivot |
+| A5 scan-hit ASM / Copy | ✅ FSparseDelegateStorage and &GEngine: the disassembler lands on the DLL's scan address; Copy gives the bare hex |
+| A6 attach check | ✅ CE on another process → ⚠ with both pids; reattach clears. ❌ on 3599: the ⚠ outlived CE; fixed in 3600, ✅ live (also re-checked when the plugin comes back) |
+| A7 function ASM | ✅ Interesting Functions, the function-properties dialog, Live Walker: a `(code)` ByteArray record and the disassembler on `ADumperTestActor::exec…` (PDB names) |
+| A7, build 3602 | ✅ **Live Funcs**, the refusal path only: a 6-function recording held Blueprint events alone; ASM on one says "No native code address for BlueprintModifyCamera" and CE's disassembler stays put. The native path is the shared one proven above: a native UFUNCTION invoked through the pipe during a recording was not captured, so this panel never had one to press |
+| A8 GObjects / GNames SYM | ✅ seeds = scan hit + 4 (GObjects) and the scan hit (GNames); `getAddress` equals the DLL's address for both; AOBMaker.UI closed → "not running", nothing pushed; busy (3600) → "busy" |
+| A8 adjusted signature, build 3603 | ✅ **Avowed** (UE 5.3, 92,036 objects; its stale dxgi proxy refreshed to 3603 first). GObjects' winner `GOBJ_AV1` (adjustment −0x10): SYM says "Not pushed: no instruction in the scan hit for 'gobjects_addr' points straight at it (its signature adjusts the address, dereferences it or follows a call), so a symbol script cannot replay it"; the UI log has `[WARN] [AOBM-GNAMES-SYMBOL] gobjects_addr: no RIP operand in 64 bytes at 0x7FF79FF90666 lands on 0x7FF7A3AEE398; not asked`; AOBMaker.UI's `log.txt` gains no line. GNames (`GNAM_V5`, adjustment 0) registers: AOBMaker.UI logs `GenerateAob: SUCCESS`, CE's `gnames_addr` = `7FF7A3A22F40`, the DLL's GNames |
+| A9 Auto Structure Dissect | ✅ file + unticked record; ticked, Define new structure uses reflected names. ❌ on 3599 when CE opened the game before the inject (false "not loaded"); fixed in 3600, ✅ live in that order |
+| A9, build 3602 | ✅ **untick**: `_ue5_dissect_state`'s two callback ids go from set to `nil`, and Define new structure is CE's own again ("unnamed structure 1", `Pointer` / `4 Bytes` guesses). ⚠ **CE 7.7 has its own UE dissector** (`Extensions\UETools`, the "Unreal Engine → Use when dissecting structures" item, on by default once it recognizes the game): it registers a name lookup and a `registerStructureDissectOverride2`, and with both on **it wins** -- the structure appears at once as `DumperTestActor` with its fields (`vftable`, `Name`, `PersistentLevel`), no name dialog, ours never called. With that item off, ticking ours gives `DumperTestActor_0` with ours (`VTable`, `ObjectFlags`, `FNameIndex`, `PrimaryActorTick.TickGroup`, bit masks). The 3599 PASS was ours: the object name shows UETools had not registered yet. → `[AOBM-DISSECT-UETOOLS]` |
+| A9 with CE 7.7's UETools, build 3604 | ✅ option (a), `[AOBM-DISSECT-UETOOLS]`: ticked, ours stands in for UETools' dissector (its item unchecked, Define new structure gives `DumperTestActor_0`); unticked, UETools is back exactly as it was; a UETools re-scan while ticked, both hand re-check cases, a game restart with CE's *disable entries* answered No and Yes, a deleted record and the DLL going away all end in the right state -- the eight steps and their readings are in that todo row |
+| A9 not injected, build 3602 | ✅ CE on a live process without the DLL (UE5DumpUI itself): ticking says "[UE5Dissect] UE5Dumper.dll is not loaded in this game. Inject it first, then tick this again.", the record stays unticked, both ids `nil`. ⚠ A **dead** game is not this case: CE keeps the dead process's symbols, the probe resolves and the record ticks -- test the negative on a live process |
+| Toolbar dots off, build 3602 | ✅ AOBMaker.UI not running → the UI dot's tooltip is `str.Tip.Toolbar.AobMakerUiOff` word for word; CE closed + ⟳ → the DLL dot greys and its tooltip gives the reason, "AOBMaker not connected — open Cheat Engine with the AOBMaker plugin loaded" |
+
+The first round (3599 / 3600) left some paths to unit tests; the ", build 3602" rows above close them, on the same
+fixture with UE5DumpUI build 3602, and A8's adjusted-signature row on Avowed with 3603. Still not covered live:
+Live Funcs' ASM on a *native* function (above). A9's rows are read with CE 7.7's UETools dissect hooks switched off unless
+they say otherwise, and switched back on afterwards. New rows it produced: `[AOBM-UI-BUSY]`, `[AOBM-SYSTAB-ASM-SILENT]`.
+
+*The plan as it was written before the check:*
+
+
+Shipped in `90c732e5`, UI only; the rows are in `todo.md` `[AOBMAKER-EVAL-2026-09-29]` and the design in
+`aobmaker-integration-eval.md`. Unit tests pin what each button sends to a scripted bridge and what the status line
+then says; what is owed is the plugin, AOBMaker.UI and the game. The AOT-trimmed publish exists: build 3599
+(`21687f7c`), `dist\UE5DumpUI.exe` 58,864,640 B, C# 5895/5895 on Windows. Run the check on that binary and confirm its
+size first. (The AOT / trim analyzers were clean too — a `-p:PublishAot=true` build — but they do not see Avalonia's
+own reflection, so only the trimmed binary counts.) On DumperTest with the NEW UI, Cheat Engine with the AOBMaker
+plugin, CE attached to the game:
+
+1. **+CE / HEX on result rows (A2, A3).** Value Search a known float, then +CE on the candidate.
+   - **CE side:** a Float record at the candidate's address, reading the value the grid shows. HEX moves the Memory
+     Viewer's hex pane to that address.
+   - **UI side:** "Added to CE: <name>".
+   - Repeat on a Snapshot diff row and an SPC row captured THIS launch. A row from an earlier launch has both buttons
+     disabled; an `Arr[3]` row is refused with "is an array element".
+   - Instance Finder: +CE on a delegate field lands on its payload (FieldAddress + 8 on a Development build). On
+     **Shipping** the pad is 0, so the record lands exactly on FieldAddress (`LiveFieldValue.DelegatePad`: 8 on a
+     checked build, 0 on Shipping/Test and every UE ≤ 5.2). Say which build the check ran on.
+2. **AA push (A1).** Instance Finder → AA on an instance.
+   - **CE side:** an unticked AA record named `"<Class>"`; ticking it registers the symbol at the instance.
+   - With CE closed: the XML is on the clipboard and the status says copied.
+3. **HEX / ASM (A4, A5, A7).**
+   - Object Tree's context-menu HEX, Class Pivot's HEX, Related Objects' HEX: the hex pane moves to the object.
+   - Pointer panel ASM on the FSparseDelegateStorage and &GEngine scan hits: the disassembler moves there.
+   - ASM on a native function in Live Walker, Interesting Functions, Live Funcs and the function-properties dialog:
+     a `"<function> (code)"` ByteArray record appears and the disassembler shows the exec thunk.
+4. **Attach check (A6).** Open another process in CE and press ⟳.
+   - **UI side:** the toolbar shows "⚠ CE is not on this game"; its tooltip names CE's pid and the game's. With no
+     process open in CE: "has no process open". Reattach and ⟳: the warning clears.
+   - **CE side:** the plugin log has `GetAttachedProcess: pid=…` for each ⟳.
+   - ⚠ **Expected to FAIL — record it as a finding, not a pass:** with the ⚠ showing, close CE and press ⟳. The chip
+     goes Offline but the ⚠ stays. `RefreshAobMakerAsync` re-runs the attach check only when the probe succeeds
+     (`MainWindowViewModel.cs:3152`), so the stale warning stays until CE is back and ⟳ is pressed, or the UI
+     reconnects to the game.
+5. **GObjects / GNames SYM (A8).** AOBMaker.UI running at the same elevation; SYM on GObjects.
+   - **AOBMaker.UI side:** its log has `GenerateAob request: … address=0x…` naming the INSTRUCTION inside the scan
+     hit (not the scan hit itself when the pattern has leading context), then `GenerateAob: SUCCESS — aob=…`.
+     On DumperTest, when the scan log names `GOBJ_ES53_1` as the GObjects winner, its pattern starts
+     `48 83 EC 28 48 8D 0D` (`instrOffset` 4; `Himmel.h:539`, `:1712`), so the logged address must be the GObjects
+     scan hit **+ 4**. A `GNAM_V8` GNames winner has `instrOffset` 0, so it seeds at the scan hit itself.
+   - **CE side — the proof is the address, not the tick:** `getAddress('gobjects_addr')` in CE's Lua console equals
+     the GObjects address on the Pointer panel, CE's output has `[SymbolScanner] GObjects → gobjects_addr registered
+     at: <address>`, and it has **no** `[SymbolScanner] WARNING: AOB scan failed`. The same for GNames. ⚠ A ticked
+     `GObjects → gobjects_addr` record proves nothing: the plugin never reads `Active` back, and a failed scan still
+     leaves the record ticked (AOBMaker `EXT-4`). The UI's "Registered CE symbol …" message is no proof either, for
+     the same reason.
+   - AOBMaker.UI closed: "AOBMaker.UI is not running", and nothing is pushed.
+   - A game whose winning GObjects signature has a non-zero `adjustment` in Himmel: the refusal says the signature
+     adjusts, and AOBMaker.UI's log shows no request. DumperTest cannot show this (its winners have adjustment 0).
+     Host: **Avowed**, whose logged GObjects winner is `GOBJ_AV1`, adjustment −0x10 (`Himmel.h:1722`). Expected: the
+     "Not pushed: no instruction in the scan hit for 'gobjects_addr' points straight at it …" refusal, and a
+     UE5DumpUI Warn line `[AOBM-GNAMES-SYMBOL] gobjects_addr: no RIP operand … not asked`. Avowed's GNames
+     (`GNAM_V5`, adjustment 0) should register there.
+6. **Auto Structure Dissect (A9).** Tools → Add Auto Structure Dissect to Current CE Table.
+   - **CE side:** `ue5_dissect.lua` among the table's files, and an unticked `UE5CEDumper: Auto Structure Dissect
+     (UObjects)` record in the `UE5CEDumper (DLL)` group.
+   - Tick it: the Lua Engine window does not stay open. Structure Dissect on a UObject address names the object in its
+     title and fills the fields from reflection. Untick it: CE's own guessing is back.
+   - With the DLL not injected, ticking shows "UE5Dumper.dll is not loaded in this game" and the record unticks
+     itself.
+   - ⚠ **Injection order — test both.** The `[ENABLE]` block probes `getAddressSafe('UE5_GetObjectClass')` once,
+     with no `reinitializeSymbolhandler()` retry (`DissectScriptGenerator.cs:53`). CE snapshots a process's modules
+     when it opens it, so a DLL injected after that has no exports in CE's symbol table (measured on DumperTest
+     2026-08-07; `CeLuaHygiene.AppendContractCheck` retries for exactly this). Inject first, then open the game in CE:
+     expected to pass. Open the game in CE first, then inject: expected to say wrongly "not loaded" — a finding, not a
+     pass. `reinitializeSymbolhandler()` in CE's Lua console, or reopening the process, clears it.
+
+Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4), Avowed
+(step 5's adjusted-signature case).
+
 ### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
 
 Fixed in `2093ea91` (red `85c9e8ed`); the row and its mechanism are in `todo.md`. Unit tests pin the UI half and

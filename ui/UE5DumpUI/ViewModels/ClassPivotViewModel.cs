@@ -191,6 +191,14 @@ public partial class ClassPivotViewModel : ViewModelBase
     /// flag disabled this button on games where GWorld WAS resolved (audit #5 AE10).</summary>
     public bool CanLocateResultInGWorld => CanUseResultRowActions;
 
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX button reads. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public AobMakerStatus AobMaker { get; }
+
+    /// <summary>[AOBM-OBJECT-HEX] The HEX button: the same [W1-PIVOT-SESSION] gate as the other row handoffs, and a
+    /// reachable plugin.</summary>
+    public bool CanHexResult => CanUseResultRowActions && AobMaker.IsAvailable;
+
     partial void OnSelectedResultChanged(PivotResultRow? value) => RaiseResultRowActionGates();
 
     private void RaiseResultRowActionGates()
@@ -198,6 +206,7 @@ public partial class ClassPivotViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanUseResultRowActions));
         OnPropertyChanged(nameof(CanLocateResult));
         OnPropertyChanged(nameof(CanLocateResultInGWorld));
+        OnPropertyChanged(nameof(CanHexResult));
     }
     partial void OnResultFilterChanged(string value)
     {
@@ -242,12 +251,18 @@ public partial class ClassPivotViewModel : ViewModelBase
     public ObservableCollection<string> ResultFilterHistory => _resultFilterMemory.History;
 
     public ClassPivotViewModel(ISnapshotStore store, ILoggingService log,
-                               IPlatformService? platform = null, IDumpService? dump = null)
+                               IPlatformService? platform = null, IDumpService? dump = null,
+                               AobMakerStatus? aobMaker = null)
     {
         _store = store;
         _log = log;
         _platform = platform;
         _dump = dump;
+        AobMaker = aobMaker ?? new AobMakerStatus(null);
+        AobMaker.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(AobMakerStatus.IsAvailable)) OnPropertyChanged(nameof(CanHexResult));
+        };
         _classFilterMemory  = new KeywordSearchMemory(() => (ClassFilter, Classes.Count > 0));
         _resultFilterMemory = new KeywordSearchMemory(() => (ResultFilter, Results.Count > 0));
     }
@@ -1403,6 +1418,14 @@ public partial class ClassPivotViewModel : ViewModelBase
     {
         if (row == null || string.IsNullOrEmpty(row.ObjAddr)) return;
         LocateInGameEngine?.Invoke(row.ObjAddr);
+    }
+
+    /// <summary>[AOBM-OBJECT-HEX] The representative instance in CE's hex view.</summary>
+    [RelayCommand]
+    private async Task HexResultAsync(PivotResultRow? row)
+    {
+        if (row == null || !CanUseResultRowActions || string.IsNullOrEmpty(row.ObjAddr)) return;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, row.ObjAddr, row.KeyValue, _log);
     }
 
     /// <summary>Copy the representative instance's base address to the clipboard.</summary>

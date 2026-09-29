@@ -7,7 +7,15 @@
 --
 -- Features:
 --   * Manual creation   — user inputs class address / UE path
---   * Auto callback     — registerStructureDissectOverride
+--   * Auto callback     — registerStructureDissectOverride; while it is on,
+--                         CE 7.7's own UE dissector (UETools) is suspended so
+--                         ours is the one CE asks -- again whenever UETools
+--                         re-registers after a new scan -- and disable puts
+--                         it back. Handed the CE record that enabled it, auto
+--                         mode also turns itself off once that record is
+--                         unticked or deleted without running its [DISABLE]
+--                         (the first watch interval aside: see "The CE
+--                         record that turned auto mode on")
 --   * Full type mapping — 20+ UE property types
 --   * StructProperty    — recursive flattening via UE5_GetFieldStructClass
 --   * BoolProperty      — ChildStructStart bitmask via UE5_GetFieldBoolMask
@@ -24,12 +32,14 @@
 -- list (audit #5 AA21) and re-registering the dissect override while the previous
 -- registration still stands, leaving disableAutoCallback able to unregister only
 -- the newest (audit #5 AA22). One shared global table makes a re-load idempotent:
--- the caches and the single pair of callback ids survive it.
+-- the caches and the single pair of callback ids survive it. So does the rest of
+-- the auto-mode state: a re-loaded module has to be able to undo what the
+-- previous load did, and to follow what it was following.
 -- ----------------------------------------------------------------
 _ue5_dissect_state = _ue5_dissect_state or {
   structList  = {},   -- saved CE structure references
   structCache = {},   -- name -> CE structure (avoids duplicates)
-  -- callbackIdOverride / callbackIdNameLookup are added on demand (nil until enabled)
+  -- auto-mode state is added on demand and is nil while auto mode is off
 }
 local ST = _ue5_dissect_state
 local dissect = {}            -- public API table (re-created per load; state is global)
@@ -715,8 +725,9 @@ end
 local warnedCallbackFailure = false
 local callbackFailStreak = 0
 -- After this many CONSECUTIVE failures the DLL is treated as gone and the callbacks
--- unregister THEMSELVES, so CE returns to its own autoGuessStruct for the rest of the
--- session instead of routing every dissect through a dead barrier (audit #5 AA27). The
+-- unregister THEMSELVES, so CE returns to its own dissect for the rest of the session --
+-- autoGuessStruct, or UETools again where auto mode had suspended it -- instead of
+-- routing every dissect through a dead barrier (audit #5 AA27). The
 -- AA4 barrier already makes each failure DECLINE cleanly rather than break CE's dissect;
 -- this additionally sheds the per-node pcall overhead and the stale override once the DLL
 -- is clearly gone (unloaded / game exited). One later success resets the streak.
@@ -736,12 +747,31 @@ local function callbackBarrier(what, fn, ...)
     end
     callbackFailStreak = callbackFailStreak + 1
     if callbackFailStreak >= CALLBACK_MAX_FAIL_STREAK and ST.callbackIdOverride then
+        local ownerId = ST.ownerRecordId   -- read first: the disable below lets the record go
         -- The DLL is gone: stop intercepting CE's dissect. disableAutoCallback is a
         -- dissect.* method resolved at call time, so the forward reference is fine.
         dissect.disableAutoCallback()
-        warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
-             "guessing is back. Re-run dissect.enableAutoCallback() once UE5Dumper.dll " ..
-             "is injected again.", callbackFailStreak)
+        -- The record that turned auto mode on still shows ticked. Its untick and tick
+        -- hand it in again through [ENABLE]; an enable from the Lua console follows no
+        -- record, so a later CE untick without [DISABLE] would leave auto mode on under it.
+        -- Looked up by ID, as the watch does: a deleted record's userdata is freed.
+        local okDesc, desc = false, nil
+        if ownerId ~= nil then
+            okDesc, desc = pcall(function() return getAddressList().getMemoryRecordByID(ownerId).Description end)
+        end
+        if okDesc and type(desc) == "string" and desc ~= "" then
+            warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
+                 "dissect is back. Once UE5Dumper.dll is injected again, untick and tick '%s' " ..
+                 "to turn it back on (an enableAutoCallback() from the Lua console would not " ..
+                 "follow that record).", callbackFailStreak, desc)
+        else
+            -- No record to name, and no name for the module either: a record keeps it
+            -- in a global of its own, a console user in whatever variable they chose.
+            warn("auto-dissect disabled after %d consecutive failures -- CE's own structure " ..
+                 "dissect is back. Once UE5Dumper.dll is injected again, call " ..
+                 "enableAutoCallback() again, or untick and tick the record that turned it on.",
+                 callbackFailStreak)
+        end
     end
     return nil
 end
@@ -777,21 +807,319 @@ local function nameLookupCallback(address)
 end
 
 -- ----------------------------------------------------------------
--- PUBLIC: Enable/disable auto-dissect callbacks
+-- CE 7.7's own UE dissector (Extensions\UETools). [AOBM-DISSECT-UETOOLS]
+--
+-- Once its background scan recognizes the game, UETools registers a structure
+-- name lookup and a registerStructureDissectOverride2 and adds "Unreal Engine ->
+-- Use when dissecting structures", checked. CE asks those before our override,
+-- so with them on, ticking auto dissect changed nothing (measured on DumperTest,
+-- CE 7.7). While auto mode is on they are suspended, and disable puts back
+-- exactly what was taken.
+--
+-- A suspension is spent per UETools REGISTRATION, not per enable. UETools starts
+-- over on every process open (a restarted game, or CE re-opening the same one),
+-- and each scan that finishes registers again under a NEW menu item, while a
+-- user's click re-uses the item it is on. So a registration under an item this
+-- enable has not dealt with yet is UETools' own, and is suspended; one under an
+-- item it has dealt with -- suspended already, or found with its hooks off -- is
+-- the user's, and is left alone.
+--
+-- Always through UETools' OWN functions and globals, never CE's callback lists:
+-- 7.7 hands out callback ids by a rule the older CE source does not explain, so
+-- an id is not a slot to reason about. Every UETools name is read at call time:
+-- its functions exist only where the extension is installed, its registration
+-- only once its scan has finished.
 -- ----------------------------------------------------------------
-function dissect.enableAutoCallback()
-    if ST.callbackIdOverride then
-        log("Auto callback already registered")
+-- Its functions are globals the extension defines; an older CE, or a CE without
+-- the extension loaded, has none, and then nothing here is touched.
+local function uetoolsPresent()
+    return type(unregisterUEngineStructureLookupCallbacks) == "function"
+end
+
+local function uetoolsMenuItem()
+    local ue = UEngine
+    local gui = type(ue) == "table" and ue.GUI or nil
+    if type(gui) ~= "table" then return nil end
+    return gui.miStructureDissectCallbackStatus
+end
+
+-- Live = its hooks registered AND its menu item present. UETools creates the item
+-- in the same synchronize() call that registers the hooks, so the item marks a
+-- finished registration for the CURRENT engine; the hooks alone do not. On a
+-- process change UEInfoScanner rebuilds UEngine and drops its dissect override
+-- but not its name lookup, and creates the item again only when the new scan
+-- ends. Suspending that leftover would record a suspension with no item, and
+-- restoring it would register UETools' callbacks against an engine it has not
+-- scanned.
+local function uetoolsLive()
+    return (UEngineStructNameLookup ~= nil or UEngineStructDissect ~= nil)
+        and uetoolsMenuItem() ~= nil
+end
+
+-- Has this enable already dealt with the UETools item that is current now?
+-- ST.uetoolsSeen names the engine and item it dealt with last; a different
+-- engine or item is UETools starting over, not the user.
+local function uetoolsIsSeen()
+    local seen = ST.uetoolsSeen
+    return seen ~= nil and seen.engine == UEngine and seen.item == uetoolsMenuItem()
+end
+
+-- Returns true, or false plus the reason. A failure is warned ungated here AND
+-- returned: the CE record closes the Lua Engine window after a clean enable, and
+-- has to know not to close it over the warning.
+local function suspendUETools()
+    local item = uetoolsMenuItem()
+    -- Recorded BEFORE the call: an unregister that raises halfway still leaves
+    -- something for disable to put back. It replaces any earlier record, which
+    -- names a registration UETools has since started over from.
+    local rec = { engine = UEngine, item = item, unchecked = false }
+    ST.suspendedUETools = rec
+    -- Seen even when the call fails, or the watch would retry it -- and warn --
+    -- on every tick.
+    ST.uetoolsSeen = { engine = rec.engine, item = item }
+    local ok, err = pcall(unregisterUEngineStructureLookupCallbacks)
+    if not ok then
+        -- Its hooks may still be registered, so the item keeps its tick: an
+        -- unchecked item over live hooks would misreport UETools' state.
+        local msg = "could not suspend CE's own UE dissector (UETools), so it may still answer " ..
+                    "Define new structure instead of UE5Dumper: " .. tostring(err)
+        warn("%s", msg)
+        return false, msg
+    end
+    -- Assigning Checked does not fire the item's OnClick (LCL's TMenuItem.SetChecked
+    -- never calls Click; only a user's click does), so this cannot re-enter UETools'
+    -- own register / unregister handler. An item that was already unchecked stays
+    -- that way on restore: disable puts back what it found.
+    local okC, errC = pcall(function()
+        if item.Checked then
+            item.Checked = false
+            rec.unchecked = true
+        end
+    end)
+    if not okC then
+        local msg = "CE's own UE dissector (UETools) is suspended, but its 'Use when dissecting " ..
+                    "structures' item could not be unchecked: " .. tostring(errC)
+        warn("%s", msg)
+        return false, msg
+    end
+    log("CE's own UE dissector (UETools) suspended while auto dissect is on")
+    return true
+end
+
+-- Returns true, or false plus the reason, warned ungated for the same reason as
+-- suspendUETools -- and because a failed restore leaves the user's CE setting
+-- changed.
+local function restoreUETools()
+    local rec = ST.suspendedUETools
+    ST.suspendedUETools = nil   -- cleared on every path: a stale record must not outlive this disable
+    if not rec then return true end
+    -- A rebuilt UEngine or a new item means UETools started over after the last
+    -- suspension recorded here: its scan has not finished, or finished after the
+    -- watch's last tick. Either way it registers itself when the scan finishes,
+    -- and what was suspended belonged to a registration that is gone.
+    if UEngine ~= rec.engine or uetoolsMenuItem() ~= rec.item then
+        log("UETools started over while auto dissect was on; left to register itself")
+        return true
+    end
+    -- Back on already: the user re-checked the item while auto mode was on.
+    -- There is nothing to restore, and re-registering would only churn its ids.
+    -- Both hooks, not either: UETools' unregister clears its name lookup before
+    -- touching the dissect override, so a suspension that raised halfway leaves
+    -- the override alone set -- and its register unregisters first, so calling
+    -- it over that half state cannot register anything twice.
+    if UEngineStructNameLookup ~= nil and UEngineStructDissect ~= nil then
+        log("CE's own UE dissector (UETools) is already back on; left as it is")
+        return true
+    end
+    local ok, err = pcall(registerUEngineStructureLookupCallbacks)
+    if not ok then
+        -- The item keeps the unchecked state that matches its unregistered hooks,
+        -- so a click on it is the user's way back.
+        local msg = "could not put CE's own UE dissector (UETools) back on: " .. tostring(err) ..
+                    " -- turn it on again from Unreal Engine -> Use when dissecting structures"
+        warn("%s", msg)
+        return false, msg
+    end
+    if rec.unchecked then
+        local okC, errC = pcall(function() rec.item.Checked = true end)
+        if not okC then
+            local msg = "CE's own UE dissector (UETools) is back on, but its 'Use when dissecting " ..
+                        "structures' item could not be re-checked: " .. tostring(errC)
+            warn("%s", msg)
+            return false, msg
+        end
+    end
+    log("CE's own UE dissector (UETools) restored")
+    return true
+end
+
+-- Deals with the UETools item that is current now, once: a live registration
+-- under it is suspended, and one found with its hooks off is left to the user.
+-- Either way a later re-check of that item is the user's: they can turn UETools
+-- on again from its menu, and fighting that would take the choice away from them.
+-- Returns as suspendUETools does.
+local function dealWithUETools()
+    if uetoolsIsSeen() then return true end
+    local item = uetoolsMenuItem()
+    if item == nil then return true end   -- no finished scan for this engine yet
+    if uetoolsLive() then return suspendUETools() end
+    -- A finished scan with its hooks off: the user turned UETools off, or a
+    -- restore of ours failed and said so. Nothing to suspend, nothing to put back.
+    ST.uetoolsSeen = { engine = UEngine, item = item }
+    return true
+end
+
+-- ----------------------------------------------------------------
+-- The CE record that turned auto mode on. [AOBM-DISSECT-UETOOLS]
+--
+-- CE can take a record's tick away without running its [DISABLE]: on opening
+-- another process, when the user agrees to disable the table's entries
+-- (addresslist.disableAllWithoutExecute only clears Active), and when a ticked
+-- record is deleted (it is freed, not deactivated). Ours then stayed registered
+-- -- and UETools suspended -- under a record showing auto mode off. So the record
+-- hands enableAutoCallback its memrec, and the watch turns auto mode off once
+-- that record is gone, or unticked after the watch has seen it ticked: CE sets
+-- Active only after [ENABLE] returns, so a tick can land before that.
+--
+-- The record's ID is kept, never the record: the userdata of a deleted record
+-- points at a freed object. In the CE source we have (older than 7.7) a new
+-- record is numbered one past the highest ID in the list, and a pasted one keeps
+-- its ID when no record holds it, so a deleted owner's ID can come back on the
+-- next record added. That record starts unticked. Once a tick has seen the owner
+-- ticked, the watch reads it as the owner unticked and turns auto mode off; an ID
+-- taken over before then is followed as the owner -- the same first-interval
+-- window as an untick that lands before any tick has seen the record ticked.
+--
+-- The latest enable names the record followed. A re-tick after CE's untick lands
+-- on the already-registered path and is followed from then on; an enable with
+-- no record (an older record, CE's Lua console) is followed by nobody, and auto
+-- mode then stays on until something disables it, as before.
+-- ----------------------------------------------------------------
+local AUTO_WATCH_MS = 2000   -- UETools can finish a scan or start over, and CE can untick the record, at any time
+
+local function adoptOwner(rec)
+    ST.ownerRecordId, ST.ownerSeenActive = nil, false
+    if rec == nil then return end
+    local ok, id = pcall(function() return rec.ID end)
+    if ok and type(id) == "number" then
+        ST.ownerRecordId = id
+    else
+        log("the enabling record's ID could not be read (%s); auto dissect follows no record", tostring(id))
+    end
+end
+
+-- "gone", "off" or "on"; nil when no record is followed, or when the address
+-- list could not be read -- nothing is decided from what could not be seen.
+local function ownerState()
+    local id = ST.ownerRecordId
+    if id == nil then return nil end
+    local ok, state = pcall(function()
+        local mr = getAddressList().getMemoryRecordByID(id)
+        if mr == nil then return "gone" end
+        return mr.Active and "on" or "off"
+    end)
+    if not ok then
+        log("the Auto Structure Dissect record could not be looked up: %s", tostring(state))
+        return nil
+    end
+    return state
+end
+
+-- One watch however many times the module is loaded: ST holds it, so disable --
+-- or a re-loaded module's disable -- can destroy it.
+local function stopAutoWatch()
+    local t = ST.autoWatch
+    ST.autoWatch = nil
+    if t then pcall(function() t.Enabled = false; t.destroy() end) end
+end
+
+-- One tick of the watch that runs while ours are registered: it follows the
+-- record, catches a UETools scan finishing after our enable, and UETools
+-- starting over on a process open. The record comes first: turning auto mode
+-- off restores UETools, so suspending a new registration first would be undone
+-- at once.
+local function autoWatchTick()
+    if not ST.callbackIdOverride then
+        stopAutoWatch()   -- ours are gone: nothing to follow, nothing to stand in for
         return
     end
-    ST.callbackIdOverride    = registerStructureDissectOverride(dissectOverrideCallback)
-    ST.callbackIdNameLookup  = registerStructureNameLookup(nameLookupCallback)
-    warnedCallbackFailure = false   -- fresh registration: allow the one-time warning again
-    callbackFailStreak    = 0
-    log("Auto dissect callbacks registered")
+    local owner = ownerState()
+    if owner == "on" then
+        ST.ownerSeenActive = true
+    elseif owner == "gone" or (owner == "off" and ST.ownerSeenActive) then
+        log("the Auto Structure Dissect record was %s without its [DISABLE]; turning auto dissect off",
+            owner == "gone" and "deleted" or "unticked")
+        -- A restore that fails warns ungated inside; a timer has no caller to tell.
+        dissect.disableAutoCallback()
+        return
+    end
+    if uetoolsPresent() then
+        dealWithUETools()   -- reports its own failure, for the same reason
+    end
+end
+
+-- A re-load re-points the running watch at this load's tick.
+local function ensureAutoWatch()
+    local t = ST.autoWatch
+    if not t then
+        t = createTimer(nil, false)   -- no owner: ST holds it
+        t.Interval = AUTO_WATCH_MS
+        ST.autoWatch = t
+    end
+    t.OnTimer = function() autoWatchTick() end
+    t.Enabled = true
+end
+
+-- Called with ours registered: a registration of ours that raises must not leave
+-- the user with neither dissector. Starts or stops the watch for what there is
+-- to watch now, and deals with UETools. Returns as suspendUETools does.
+local function watchAutoMode()
+    if ST.ownerRecordId == nil and not uetoolsPresent() then
+        stopAutoWatch()   -- no record to follow, and no UETools to stand in for
+        return true
+    end
+    -- From here the watch runs until ours are unregistered, or a later enable
+    -- finds nothing to watch: the record it follows can change with each enable,
+    -- and UETools can re-register after any scan.
+    ensureAutoWatch()
+    if not uetoolsPresent() then return true end
+    return dealWithUETools()
+end
+
+-- ----------------------------------------------------------------
+-- PUBLIC: Enable/disable auto-dissect callbacks
+--
+-- enableAutoCallback takes the CE memory record that turned auto mode on -- the
+-- record's [ENABLE] passes its memrec -- or nothing; see "The CE record that
+-- turned auto mode on" above for what it is used for.
+--
+-- Each returns true, or false plus a reason when CE's own UE dissector could not
+-- be suspended (enable) or put back (disable). That is RETURNED, not raised: our
+-- callbacks are registered or unregistered either way, so a raise would make the
+-- CE record untick over live callbacks or claim they are still registered.
+-- ----------------------------------------------------------------
+function dissect.enableAutoCallback(ownerRecord)
+    if ST.callbackIdOverride then
+        -- Still adopts the record and stands in for UETools below: a re-tick
+        -- after CE's process-change untick lands here, with UETools registered
+        -- again for the new game.
+        log("Auto callback already registered")
+    else
+        ST.callbackIdOverride    = registerStructureDissectOverride(dissectOverrideCallback)
+        ST.callbackIdNameLookup  = registerStructureNameLookup(nameLookupCallback)
+        warnedCallbackFailure = false   -- fresh registration: allow the one-time warning again
+        callbackFailStreak    = 0
+        log("Auto dissect callbacks registered")
+    end
+    -- Adopted only once ours are registered: an enable that raised above follows
+    -- nothing.
+    adoptOwner(ownerRecord)
+    return watchAutoMode()
 end
 
 function dissect.disableAutoCallback()
+    stopAutoWatch()
+    ST.ownerRecordId, ST.ownerSeenActive = nil, nil   -- the next enable names its own
     if ST.callbackIdOverride then
         unregisterStructureDissectOverride(ST.callbackIdOverride)
         ST.callbackIdOverride = nil
@@ -800,7 +1128,9 @@ function dissect.disableAutoCallback()
         unregisterStructureNameLookup(ST.callbackIdNameLookup)
         ST.callbackIdNameLookup = nil
     end
+    ST.uetoolsSeen = nil   -- the next enable deals with whatever UETools has then
     log("Auto dissect callbacks unregistered")
+    return restoreUETools()
 end
 
 -- ----------------------------------------------------------------

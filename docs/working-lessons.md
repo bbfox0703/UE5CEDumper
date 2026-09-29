@@ -2627,6 +2627,10 @@ is fast and gives exact bytes. Two traps, one of which the maintainer caught on 
   without killing the old one -- TWO CE instances, both loading the AOBMaker plugin, both serving the same pipe name.
   The maintainer saw it ("multiple CE"). `tasklist | grep -ic cheatengine` first; kill ALL
   `cheatengine-x86_64-SSE4-AVX2.exe` (the shim `Cheat Engine.exe` exits at once) before starting exactly one.
+  ⚠ **computer-use's `open_application` is the same trap (2026-09-29):** asked to bring the running CE forward, it
+  STARTED A SECOND ONE, with an empty table and no process -- and it took a moment to see that the bridge still
+  answered from the first. Front a running CE with `py tools/verify/front_window.py front cheatengine`, never
+  `open_application`.
 - ⚠ **`OSError: [Errno 22] Invalid argument` on `open(pipe)` means BUSY, not absent** (absent is errno 2). The plugin
   serves one request per connection and re-creates the instance, so a second connection right after the first can
   land in that gap. Retry for a few seconds; do not read it as "the plugin is not loaded".
@@ -2700,6 +2704,16 @@ satisfies it against a locally rebuilt 3263 dist. The two checks disagree by des
 
 A size-or-build-number comparison, or the embedded `1.0.0.NNNN` string, would be the honest
 predicate here; SHA-256 answers a question nobody asked.
+
+### 3.xa A publish with a game still injected fails at the LAST step — after it spent a build number
+
+2026-09-29: `build.ps1 -Mode Publish` ran while DumperTest still had `dist\UE5Dumper.dll` loaded (`inject.py` loads the
+`dist\` copy by path, and a loaded DLL cannot be overwritten). Everything compiled and linked; the copy into `dist\`
+failed (`Copy-Item … IOException`, exit 1) — and `build_number.txt` had already been bumped to 3601 at the start. The
+old `dist\` stayed in place, so a quick "sizes look right" check passed on the PREVIOUS build.
+**How to apply:** (1) before a publish, close every game injected from `dist\` and the UI (`tasklist`). (2) Read the
+publish's exit code and `dist\build_number.txt` before calling it done — a size that matches the last build is not
+evidence. (3) A number spent this way is gone: say so in its commit and in the dev-log, and do not reuse it.
 
 -----
 
@@ -3143,6 +3157,37 @@ so the game thread pumps ProcessEvent, and prefer simple scalar returns.
 > from elision from the outside. What changes is the inverse reading — a KismetMathLibrary failure
 > should now be treated as **evidence of a bad slot first**, since that is what it turned out to be
 > every time we have actually chased it.
+
+### 4.5 CE 7.7 has its own UE dissector: find out WHICH hook answered before crediting ours
+
+CE 7.7 ships `Extensions\UETools` (the **Unreal Engine** menu on CE's main window). Once its background
+scan recognizes the game it registers a structure **name lookup** and a
+`registerStructureDissectOverride2`, and adds "Use when dissecting structures", **checked**. From then
+on, Define new structure in Structure Dissect is answered by UETools **before ours is asked**: the
+structure appears at once, with no name dialog and with UETools' field names. Measured 2026-09-29 on
+DumperTest, build 3602 (`[AOBM-DISSECT-UETOOLS]`): with both on, ticking our Auto Structure Dissect
+changed nothing. The first round's A9 PASS was genuinely ours only because UETools had not registered yet.
+
+**How to apply.** Any live check of a CE structure-dissect feature reads the result's **signature**, not
+just "fields have real names": UETools names a structure by its **class** (`DumperTestActor`) and uses
+`vftable` / `Name` / `PersistentLevel`; ours names it by the **object** (`DumperTestActor_0`) and uses
+`VTable` / `ObjectFlags` / `FNameIndex` / bit masks. Read the hook state from CE's Lua first
+(`UEngineStructNameLookup`, `UEngineStructDissect`, `_ue5_dissect_state`). To isolate ours, call
+`unregisterUEngineStructureLookupCallbacks()` and uncheck the item, then put both back afterwards. The
+maintainer runs CE with UETools on. Option (a) now does that for you: while our Auto Structure Dissect is
+ticked it suspends UETools' two hooks and unchecks the item -- again each time UETools re-registers after
+a new scan (a game restart, a re-opened process: every scan makes a NEW item) -- and unticking puts back
+what it took (`[AOBM-DISSECT-UETOOLS]`), within ~2 s also when CE unticks or deletes the record without
+running its `[DISABLE]` (a process change with "disable the table's entries" answered Yes); not an
+untick, nor a delete whose ID another record takes, in the first ~2 s after the tick, before the
+watch has seen the record ticked. Ours also
+turns itself off, with the record still showing ticked, after three failed dissects in a row (the
+DLL gone). So check `_ue5_dissect_state.callbackIdOverride` before reading a result after a process
+change or a failed dissect; an item you turned off
+yourself before ticking ours, or re-check while ours is on, is left to you. So with ours ticked and the item still unchecked, a UETools-shaped result
+is itself a finding. ⚠ A callback id is not a slot number you can reason about: in 7.7,
+`registerStructureNameLookup(fn, true)` returned **2** while slot 0 was free, which our local CE clone
+(older than 7.7) cannot explain.
 
 -----
 

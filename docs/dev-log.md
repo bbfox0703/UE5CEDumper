@@ -27,6 +27,82 @@ builds ≤696 in
 
 -----
 
+## 2026-09-30 (build 3604) — Auto Structure Dissect works beside Cheat Engine 7.7's own Unreal Engine dissector `[AOBM-DISSECT-UETOOLS]`
+
+- Cheat Engine 7.7 has its own Unreal Engine dissector (Unreal Engine → Use when dissecting structures), and it
+  answered Define new structure before ours could. While "UE5CEDumper: Auto Structure Dissect (UObjects)" is
+  ticked, ours now stands in for it; untick, and Cheat Engine's is back exactly as it was. Turning Cheat Engine's
+  back on yourself while ours is ticked is respected.
+- Restarting the game: if Cheat Engine unticks the record for you (answering Yes to disabling its entries), ours
+  really turns off too, and Cheat Engine's dissector comes back. Deleting the ticked record does the same.
+- If UE5Dumper.dll is gone, the warning now names the record to untick and tick once the DLL is back.
+- Checked live on DumperTest with Cheat Engine 7.7 (2026-09-29/30).
+- Build 3604: AOT `dist\UE5DumpUI.exe` 58,889,216 B, sha256 `c465a08a8256`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `a61abc114a7e`. C# 5941/5941, headless 15/15, dll_core 593 checks, the Lua suites 11/11 (dissect 351 checks).
+
+## 2026-09-29 (build 3603) — AOBMaker: the trainer's Setup is left for you to tick; the System tab and Live Walker say where Cheat Engine went `[AOBM-TRAINER-SETUP-MODAL]` `[AOBM-SYSTAB-ASM-SILENT]` `[AOBM-LIVEWALKER-HEX-SILENT]`
+
+- Teleport → Standalone Trainer → Export to CE: every entry arrives unticked, Setup included (now named "tick this
+  first"), and the status says to tick Setup first. A Setup that fails no longer holds up the AOBMaker plugin for
+  UE5DumpUI's other buttons while its message is open.
+- System tab: ASM and HEX now say where Cheat Engine's view went, or why it did not; if the plugin has gone, the
+  buttons switch off.
+- Live Walker: the four HEX buttons (field, pointer target, object, Outer) do the same.
+- Checked live on DumperTest and Avowed with Cheat Engine and the AOBMaker plugin (2026-09-29), together with the
+  AOBMaker items the earlier check left to unit tests, and SYM's refusal of an adjusted GObjects signature on Avowed.
+- Build 3603: AOT `dist\UE5DumpUI.exe` 58,872,320 B, sha256 `2222c0cd4261`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `61d0f065c75a`. C# 5938/5938, headless 15/15, dll_core 593 checks.
+
+## 2026-09-29 (not built yet — the next build carries it) — AOBMaker where the app only copied: +CE / HEX / ASM on nine more panels, GObjects and GNames symbols, Auto Structure Dissect `[AOBMAKER-EVAL-2026-09-29]`
+
+- Value Search, Snapshot, SPC and Instance Finder rows get **+CE** (a typed record in Cheat Engine's address list) and
+  **HEX** (CE's hex view) beside Copy. Snapshot and SPC keep their "this launch only" rule; a snapshot row for an
+  array element is refused, because the snapshot kept only its owner's address.
+- **HEX** in Object Tree, Class Pivot and Related Objects; **ASM** (disassembler) on the FSparseDelegateStorage and
+  &GEngine scan hits, and on native functions in Live Walker, Interesting Functions, Live Funcs and the
+  function-properties dialog.
+- Instance Finder's **AA** goes straight into CE when the AOBMaker plugin is up, like Live Walker's.
+- The toolbar warns **"⚠ CE is not on this game"** when Cheat Engine has another process open, or none.
+- **SYM** on GObjects and GNames registers `gobjects_addr` / `gnames_addr`, with an AOB from AOBMaker.UI (the app must
+  be open). Nothing is registered unless the AOB lands on the address the DLL found; games whose signature adjusts
+  the address are refused for now (AOBMaker request R17).
+- **Tools → Add Auto Structure Dissect** puts `ue5_dissect.lua` into the open CE table with a record that turns its
+  automatic Structure Dissect on and off.
+- Not built on Windows and not checked on a game yet: `verification-register.md` `[AOBMAKER-A1-A9-LIVE]`. Commit
+  `90c732e5`; C# 5895 on linux-x64 with the 107 Windows-only failures the tree already had, headless 15/15.
+- The AOT and trim analyzers (a Release build with `-p:PublishAot=true`, warnings as errors) report nothing on the
+  new code; a reflection-based `JsonSerializer` call dropped in as a control fails that build with IL2026 / IL3050.
+  The analyzers do not see Avalonia's own reflection, so the trimmed publish itself is still owed.
+
+## 2026-09-29 (builds 3600–3602) — AOBMaker status for both programs on the toolbar; a busy AOBMaker app is not "not running" `[AOBM-UI-INDICATOR]` `[AOBM-UI-BUSY]`
+
+- The toolbar's AOBMaker chip now reads `AOBMaker DLL ● / UI ●`: one dot for the plugin inside Cheat Engine, one for
+  the AOBMaker app. Hover a dot for what it is for, or why it is off. The chip is no wider than before and keeps one
+  width. The app's dot checks every 3 seconds without connecting to it, so AOBMaker logs nothing and is never held up.
+- SYM for GObjects / GNames: when the AOBMaker app is busy with another request it now says so, instead of "not
+  running".
+- "CE is not on this game" no longer stays on the toolbar after Cheat Engine closes, and comes back by itself when
+  Cheat Engine returns on the wrong process.
+- Auto Structure Dissect works when Cheat Engine opened the game before the DLL was injected (it said the DLL was not
+  loaded).
+- Checked live on DumperTest with Cheat Engine and the AOBMaker app (2026-09-29).
+- Build 3601 was spent on a publish that failed (the game had `dist\UE5Dumper.dll` open); nothing shipped under it.
+- Build 3602: AOT `dist\UE5DumpUI.exe` 58,887,680 B, sha256 `44fb4abea218`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `fb98205e8dc2`. C# 5921/5921, headless 15/15, dll_core 593 checks, dll_helpers 3073.
+
+## 2026-09-29 (build 3599) — AOBMaker: push to Cheat Engine where the app only copied `[AOBMAKER-EVAL-2026-09-29]`
+
+- Instance Finder's AA goes straight into Cheat Engine's address list.
+- HEX and +CE on Value Search, Snapshot and SPC rows and on Instance Finder's fields; HEX in Object Tree, Class Pivot
+  and Related Objects; ASM on the two new scan-hit rows and on functions (Live Walker, Interesting Functions, Live
+  Funcs, the function-properties dialog).
+- The toolbar warns when Cheat Engine has another process open, or none.
+- SYM on GObjects / GNames registers a Cheat Engine symbol that finds them again after a game restart (needs the
+  AOBMaker app).
+- Tools → Add Auto Structure Dissect to Current CE Table.
+- Build 3599: AOT `dist\UE5DumpUI.exe` 58,864,640 B, sha256 `e8b48efa6f02`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `983164989511`. C# 5895/5895, headless 15/15.
+
 ## 2026-09-28 (build 3598) — Cheat Engine's struct and class getters no longer answer with an object from outside the property `[FRIEREN-PROBE-OVERRUN]`
 
 - `UE5_GetFieldStructClass` / `UE5_GetFieldPropertyClass` (the exports CE Lua calls): when a property's slot does

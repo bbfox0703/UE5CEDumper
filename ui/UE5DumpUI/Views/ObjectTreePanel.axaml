@@ -119,6 +119,11 @@
           <MenuItem Header="{StaticResource str.ObjectTree.CopyAddress}"
                     Command="{Binding CopyAddressCommand}"
                     CommandParameter="{Binding SelectedNode}"/>
+          <!-- [AOBM-OBJECT-HEX] -->
+          <MenuItem Header="{StaticResource str.ObjectTree.HexInCe}"
+                    Command="{Binding HexAddressCommand}"
+                    CommandParameter="{Binding SelectedNode}"
+                    IsEnabled="{Binding AobMaker.IsAvailable}"/>
           <Separator/>
           <MenuItem Header="{StaticResource str.ObjectTree.FindInstancesByType}"
                     Command="{Binding FindInstancesByTypeCommand}"

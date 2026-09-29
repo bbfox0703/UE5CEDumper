@@ -973,6 +973,17 @@
                           Cursor="Hand" FontWeight="Bold" FontSize="11"
                           ToolTip.Tip="{StaticResource str.Tip.LiveWalker.FuncCopyBaked}"
                           ClickMode="Press"/>
+                  <!-- [AOBM-FUNC-DISASM] -->
+                  <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
+                          Command="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).AsmFunctionCommand}"
+                          CommandParameter="{Binding}"
+                          IsEnabled="{Binding $parent[UserControl].((vm:LiveWalkerViewModel)DataContext).IsAobMakerAvailable}"
+                          Padding="6,2" Margin="0,2,2,2"
+                          Foreground="#E5C07B" Background="Transparent"
+                          BorderThickness="1" BorderBrush="#E5C07B"
+                          Cursor="Hand" FontSize="11" FontFamily="Consolas"
+                          ToolTip.Tip="{StaticResource str.Tip.AobMaker.FuncAsm}"
+                          ClickMode="Press"/>
                 </StackPanel>
               </DataTemplate>
             </DataGridTemplateColumn.CellTemplate>

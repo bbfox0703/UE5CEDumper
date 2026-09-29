@@ -27,6 +27,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     private const string TypeCreateSymbolScript = "CreateSymbolScript";
     private const string TypeCreateMemoryRecord = "CreateMemoryRecord";
     private const string TypeInjectTableFile = "InjectTableFile";
+    private const string TypeGetAttachedProcess = "GetAttachedProcess";
 
     // Inject ships an entire helper Lua file payload, runs CE Lua via
     // synchronize() (which yields to CE's main thread), and verifies the
@@ -77,8 +78,9 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     /// <summary>[W1-PIPEBUSY-LOG] Does a server instance of this pipe exist at all -- busy or not? The pipe namespace
     /// lists every pipe that has at least one instance. A refused enumeration answers "cannot tell" (false), which
-    /// keeps the old "not running" reading rather than inventing a busy one.</summary>
-    private static bool PipeExists(string name)
+    /// keeps the old "not running" reading rather than inventing a busy one. It only lists names, never opens a pipe,
+    /// which is why AOBMaker.UI's status dot can afford to call it on a timer.</summary>
+    internal static bool PipeExists(string name)
     {
         try
         {
@@ -489,6 +491,59 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         }
     }
 
+    /// <inheritdoc/>
+    public async Task<CeAttachedProcess?> GetAttachedProcessAsync(CancellationToken ct = default)
+    {
+        await _opLock.WaitAsync(ct);
+        try
+        {
+            if (!await ReconnectAsync(ct))
+            {
+                IsAvailable = false;
+                return null;
+            }
+
+            try
+            {
+                await WriteMessageAsync(_pipe!, new AobMakerMessage { Type = TypeGetAttachedProcess }, ct);
+
+                using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                timeoutCts.CancelAfter(ResponseTimeoutMs);
+
+                var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+                CleanupPipe();
+                if (response == null || !response.Success || response.ProcessId is not int pid)
+                {
+                    _log?.Warn(Constants.LogCatInit,
+                        $"AOBMaker GetAttachedProcess failed: {response?.Message ?? "no process id in the reply"}");
+                    return null;
+                }
+
+                IsAvailable = true;
+                _log?.Debug(Constants.LogCatInit,
+                    $"AOBMaker: Cheat Engine has pid {pid} ('{response.ProcessName}') open");
+                return new CeAttachedProcess(pid, response.ProcessName ?? "");
+            }
+            catch (OperationCanceledException)
+            {
+                _log?.Warn(Constants.LogCatInit, "AOBMaker GetAttachedProcess timed out");
+                CleanupPipe();
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _log?.Warn(Constants.LogCatInit, $"AOBMaker GetAttachedProcess error: {ex.Message}");
+                IsAvailable = false;
+                CleanupPipe();
+                return null;
+            }
+        }
+        finally
+        {
+            _opLock.Release();
+        }
+    }
+
     // --- Per-request reconnect (CE Plugin disconnects after each request) ---
 
     /// <summary>
@@ -587,8 +642,8 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     private static async Task WriteMessageAsync(Stream stream, AobMakerMessage message, CancellationToken ct)
     {
-        // Use Relaxed encoder to avoid \uXXXX escaping of single quotes and non-ASCII
-        // — CE Plugin's Lua JSON parser doesn't handle \uXXXX sequences
+        // Relaxed encoder: quotes and non-ASCII go as UTF-8, not \uXXXX. The plugin's C++ parser has decoded \uXXXX
+        // since AOBMaker 3ac12c2 (2026-03-05), so this is no longer required; it keeps plugins older than that working.
         var json = JsonSerializer.Serialize(message, AobMakerJsonContext.Relaxed.AobMakerMessage);
         var payload = Encoding.UTF8.GetBytes(json);
         var lengthBuf = BitConverter.GetBytes((uint)payload.Length);

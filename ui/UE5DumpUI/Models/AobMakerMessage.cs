@@ -6,7 +6,7 @@ namespace UE5DumpUI.Models;
 /// <summary>
 /// Minimal pipe message model for AOBMaker CE Plugin bridge.
 /// Wire format: 4-byte LE uint32 length prefix + UTF-8 JSON payload.
-/// Includes fields for NavigateHexView, NavigateDisassembler, CreateAAScript, and CreateSymbolScript.
+/// One class carries the request and reply fields of every command this app sends; each is written only when set.
 /// </summary>
 public class AobMakerMessage
 {
@@ -107,6 +107,19 @@ public class AobMakerMessage
     [JsonPropertyName("showAsHex")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingDefault)]
     public bool ShowAsHex { get; set; }
+
+    // --- GetAttachedProcess reply fields [AOBM-ATTACH-CHECK] ---
+    // Read-only for us: the plugin fills them, we never send them. Nullable so a reply that
+    // lacks the field reads as "cannot tell" rather than as pid 0, which means "CE has no
+    // process open" -- a real answer the check reports.
+
+    [JsonPropertyName("processId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? ProcessId { get; set; }
+
+    [JsonPropertyName("processName")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? ProcessName { get; set; }
 }
 
 /// <summary>

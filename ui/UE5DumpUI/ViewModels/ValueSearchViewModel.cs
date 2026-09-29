@@ -885,10 +885,18 @@ public partial class ValueSearchViewModel : ViewModelBase
     /// candidate's object-level class).</summary>
     public ClassFacetFilter GroupClassFilter { get; }
 
-    public ValueSearchViewModel(IDumpService dump, ILoggingService log)
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX / +CE buttons read. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public AobMakerStatus AobMaker { get; }
+
+    /// <summary>Only the game's pid and module are read, by the [AOBM-ATTACH-CHECK] a refused +CE runs.</summary>
+    private EngineState? _engineState;
+
+    public ValueSearchViewModel(IDumpService dump, ILoggingService log, AobMakerStatus? aobMaker = null)
     {
         _dump = dump;
         _log  = log;
+        AobMaker = aobMaker ?? new AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, FilteredTotal > 0));
         _groupFilterMemory = new KeywordSearchMemory(() => (GroupFilterText, GroupFilteredTotal > 0));
         _selectedSortOption = SortOptions[0];  // scan order
@@ -905,6 +913,7 @@ public partial class ValueSearchViewModel : ViewModelBase
 
     public void SetEngineState(EngineState state)
     {
+        _engineState = state;
     }
 
     /// <summary>Forget both live scan sessions + drop their candidate windows so a
@@ -1738,6 +1747,54 @@ public partial class ValueSearchViewModel : ViewModelBase
         // so the copy is no longer fire-and-forget.
         var handler = RequestCopyText;
         if (handler is not null) await handler(slot.Addr);
+    }
+
+    // --- [AOBM-VALUE-ROWS-CE] AOBMaker row actions ---
+
+    /// <summary>A CE record label a user can place among many hits: the object first, then the field.</summary>
+    private static string CandidateLabel(ValueCandidate c)
+        => $"{(string.IsNullOrEmpty(c.InstanceName) ? c.ClassName : c.InstanceName)}.{c.FieldName}";
+
+    /// <summary>A native-C hit has no reflected field, but the DLL still stamps the canonical property type of the
+    /// width it matched at ("IntProperty" for Int32), so the same table maps it. An empty type falls to the table's
+    /// 8-byte hex view.</summary>
+    private static string CandidateType(ValueCandidate c) => c.FieldType;
+
+    [RelayCommand]
+    private async Task HexCandidateAsync(ValueCandidate? candidate)
+    {
+        if (candidate == null || string.IsNullOrEmpty(candidate.Addr)) return;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, candidate.Addr, CandidateLabel(candidate), _log);
+    }
+
+    [RelayCommand]
+    private async Task AddCandidateToCeAsync(ValueCandidate? candidate)
+    {
+        if (candidate == null || string.IsNullOrEmpty(candidate.Addr)) return;
+        StatusText = await AobMakerActions.AddRecordAsync(AobMaker, CandidateLabel(candidate), candidate.Addr,
+            Services.CeXmlExportService.MapTypeNameToCeRecordType(CandidateType(candidate)), _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
+    }
+
+    /// <summary>A group slot's <see cref="GroupSlotMatch.Addr"/> is the leaf's own address only when the live decoder
+    /// says so (<see cref="GroupSlotMatch.HasLeafAddress"/>); otherwise there is nothing to send.</summary>
+    private static string SlotLabel(GroupSlotMatch s)
+        => $"{(string.IsNullOrEmpty(s.OwnerClass) ? s.ClassName : s.OwnerClass)}.{s.FieldName}";
+
+    [RelayCommand]
+    private async Task HexGroupSlotAsync(GroupSlotMatch? slot)
+    {
+        if (slot == null || !slot.HasLeafAddress || string.IsNullOrEmpty(slot.Addr)) return;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, slot.Addr, SlotLabel(slot), _log);
+    }
+
+    [RelayCommand]
+    private async Task AddGroupSlotToCeAsync(GroupSlotMatch? slot)
+    {
+        if (slot == null || !slot.HasLeafAddress || string.IsNullOrEmpty(slot.Addr)) return;
+        StatusText = await AobMakerActions.AddRecordAsync(AobMaker, SlotLabel(slot), slot.Addr,
+            Services.CeXmlExportService.MapTypeNameToCeRecordType(slot.FieldType), _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
     }
 
     [RelayCommand]

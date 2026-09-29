@@ -188,6 +188,21 @@
                         IsEnabled="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).CanUseResultRowActions}"
                         Foreground="#DCDCAA" Background="Transparent" BorderThickness="1" BorderBrush="#DCDCAA"
                         Padding="6,2" FontSize="11" Cursor="Hand"/>
+                <!-- [AOBM-VALUE-ROWS-CE] Same address and session gate as Copy, plus a reachable plugin. -->
+                <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                        Command="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).HexResultRowCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).CanPushResultRowToCe}"
+                        ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                        Foreground="#569CD6" Background="Transparent" BorderThickness="1" BorderBrush="#569CD6"
+                        Padding="6,2" FontSize="11" Cursor="Hand"/>
+                <Button Content="{StaticResource str.LiveWalker.AddToCe}"
+                        Command="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).AddResultRowToCeCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).CanPushResultRowToCe}"
+                        ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowAddCe}"
+                        Foreground="#C586C0" Background="Transparent" BorderThickness="1" BorderBrush="#C586C0"
+                        Padding="6,2" FontSize="11" Cursor="Hand"/>
                 <Button Content="{StaticResource str.Spc.LocateGWorld}"
                         Command="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).LocateRowInGWorldCommand}"
                         CommandParameter="{Binding}"
@@ -456,6 +471,20 @@
                               CommandParameter="{Binding}"
                               IsEnabled="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).CanUseResultRowActions}"
                               Foreground="#DCDCAA" Background="Transparent" BorderThickness="1" BorderBrush="#DCDCAA"
+                              Padding="6,2" FontSize="11" Cursor="Hand"/>
+                      <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                              Command="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).HexGroupSlotCommand}"
+                              CommandParameter="{Binding}"
+                              IsEnabled="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).CanPushResultRowToCe}"
+                              ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                              Foreground="#569CD6" Background="Transparent" BorderThickness="1" BorderBrush="#569CD6"
+                              Padding="6,2" FontSize="11" Cursor="Hand"/>
+                      <Button Content="{StaticResource str.LiveWalker.AddToCe}"
+                              Command="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).AddGroupSlotToCeCommand}"
+                              CommandParameter="{Binding}"
+                              IsEnabled="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).CanPushResultRowToCe}"
+                              ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowAddCe}"
+                              Foreground="#C586C0" Background="Transparent" BorderThickness="1" BorderBrush="#C586C0"
                               Padding="6,2" FontSize="11" Cursor="Hand"/>
                       <Button Content="{StaticResource str.Spc.LocateGWorld}"
                               Command="{Binding $parent[UserControl].((vm:SpcQueryViewModel)DataContext).LocateGroupSlotInGWorldCommand}"

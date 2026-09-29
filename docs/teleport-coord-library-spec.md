@@ -306,13 +306,14 @@ Four AOBMaker defects to **not** inherit:
 
 | Input | Why |
 |---|---|
-| `NUL` (U+0000) | The CE plugin compiles with `luaL_dostring`, which takes no length → `strlen` truncates the chunk (`pipe_server.cpp:881`) |
+| `NUL` (U+0000) | The plugin used to compile with `luaL_dostring`, whose `strlen` would truncate the chunk; since AOBMaker `a338813` it loads over the explicit length (`LuaDoBuffer`, `pipe_server.cpp:39-60` at `9431370`). Since `56b308f` its JSON parser refuses a NUL-bearing value (`json_parse.h:186-197`), so `CreateAAScript` replies `success:false` (`pipe_server.cpp:1139-1147`). Either way a NUL cannot get through |
 | `CR` / `LF` | A raw newline inside a Lua single-quoted literal is a **compile error**. Reachable from CSV: Excel's Alt+Enter writes a quoted `"Chest 3\r\n(upper floor)"`, which an RFC-4180-correct reader accepts |
 | Other C0 controls | Illegal in XML 1.0 with no entity form; `EscapeXml` passes them through unchanged |
 
 **Everything else is escaped, not blocked** — including `]==]`, `'`, `"`, `\`,
-`<`, `>`, `&`, and **CJK**. (The AOBMaker JSON encoder is `UnsafeRelaxedJsonEscaping`
-precisely because CE's Lua parser can't decode `\uXXXX`; Crimson Desert ships a
+`<`, `>`, `&`, and **CJK**. (Our AOBMaker JSON encoder is `UnsafeRelaxedJsonEscaping`,
+but CJK does not depend on it: the plugin parses JSON in C++ and has decoded `\uXXXX`
+to UTF-8 since AOBMaker `3ac12c2`, surrogate pairs since `56b308f`. Crimson Desert ships a
 6 508-entry zh-TW dropdown CE renders fine. The repo's ASCII-only rule covers
 generated **comments**, not user data.)
 
@@ -335,9 +336,9 @@ Verified limits on the `CreateAAScript` path:
 
 | Limit | Value | Source |
 |---|---|---|
-| Max JSON message | **10 MiB**, hard reject | `pipe_server.cpp:61`; `PipeProtocol.cs:69` |
+| Max JSON message | **10 MiB**, hard reject with no reply, on both AOBMaker pipes | CE bridge `pipe_server.cpp:140-141`; AOBMaker.UI pipe `WindowsPipeServer.cs:784-788` (both at AOBMaker `9431370`); `PipeProtocol.cs:69` |
 | JSON escape expansion | **+2.3 … 4.6 %** measured | `UnsafeRelaxedJsonEscaping` — only `\n` expands |
-| Server read deadline | **5 000 ms** total, 10 ms sleep per stall | `pipe_server.cpp:30,55,78` |
+| Server read deadline | **5 000 ms** total, 10 ms sleep per stall | `ReadMessage` (`pipe_server.cpp:107`), the 5000 ms passed at `:3108`, `Sleep(10)` at `:136` and `:159` (AOBMaker `9431370`) |
 | Our response timeout | **5 000 ms** vs **15 000 ms** for `InjectTableFile` | `AobMakerBridgeService.cs:19,35` |
 
 4 000 named-field entries ≈ **480 KB**, ~4.6 % of the cap. Corroborated:
@@ -673,9 +674,11 @@ in, and the import-report machinery it forces is reused by P4.
 5. **CE Lua `readString`** — the DLL-flavour picker reads the map name from
    `mailbox + 0x358`. Confirm against CE's API reference before use.
 6. **Client-side pre-flight size check** — `AobMakerBridgeService.WriteMessageAsync`
-   (`:495-506`) has **no** send-side cap, and the plugin's oversize path
-   (`pipe_server.cpp:61`) returns *without writing a response*, so an oversized push
-   surfaces as a confusing *timeout*. Worth adding regardless of this feature.
+   (`:495-506`) has **no** send-side cap, and both AOBMaker pipes drop an oversize
+   request *without writing a response* (CE bridge `pipe_server.cpp:140-141`;
+   AOBMaker.UI `WindowsPipeServer.cs:784-788`, both at AOBMaker `9431370`), so an
+   oversized push surfaces as a confusing *timeout*. Worth adding regardless of this
+   feature; AOBMaker's reply (§2.8) asks us to keep this check.
 
 -----
 

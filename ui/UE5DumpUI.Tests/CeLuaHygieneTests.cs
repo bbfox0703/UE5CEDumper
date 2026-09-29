@@ -478,6 +478,7 @@ public class CeLuaHygieneTests
         data.Add("SeeThrough", SeeThroughScriptGenerator.Generate());
         data.Add("Foreground", ForegroundScriptGenerator.Generate());
         data.Add("DebugCamera", DebugCameraScriptGenerator.Generate());
+        data.Add("Dissect", DissectScriptGenerator.Generate());
         return data;
     }
 

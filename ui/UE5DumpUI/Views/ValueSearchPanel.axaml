@@ -373,6 +373,25 @@
                             BorderThickness="1" BorderBrush="#DCDCAA"
                             Padding="6,2" FontSize="11"
                             Cursor="Hand"/>
+                    <!-- [AOBM-VALUE-ROWS-CE] The hit in CE: its bytes, or a typed record to watch. -->
+                    <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                            Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).HexCandidateCommand}"
+                            CommandParameter="{Binding}"
+                            IsEnabled="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AobMaker.IsAvailable}"
+                            ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                            Foreground="#569CD6" Background="Transparent"
+                            BorderThickness="1" BorderBrush="#569CD6"
+                            Padding="6,2" FontSize="11"
+                            Cursor="Hand"/>
+                    <Button Content="{StaticResource str.LiveWalker.AddToCe}"
+                            Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AddCandidateToCeCommand}"
+                            CommandParameter="{Binding}"
+                            IsEnabled="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AobMaker.IsAvailable}"
+                            ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowAddCe}"
+                            Foreground="#C586C0" Background="Transparent"
+                            BorderThickness="1" BorderBrush="#C586C0"
+                            Padding="6,2" FontSize="11"
+                            Cursor="Hand"/>
                     <!-- Show the hit's owning object's related objects
                          (components, GAS ASC → AttributeSets, counterpart). -->
                     <Button Content="{StaticResource str.Related.IconButton}"
@@ -720,6 +739,25 @@
                                 Foreground="#DCDCAA" Background="Transparent"
                                 BorderThickness="1" BorderBrush="#DCDCAA"
                                 Padding="6,2" FontSize="11" Cursor="Hand"/>
+                        <!-- [AOBM-VALUE-ROWS-CE] Only a slot whose address is the leaf's own. -->
+                        <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                                Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).HexGroupSlotCommand}"
+                                CommandParameter="{Binding}"
+                                IsVisible="{Binding HasLeafAddress}"
+                                IsEnabled="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AobMaker.IsAvailable}"
+                                ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                                Foreground="#569CD6" Background="Transparent"
+                                BorderThickness="1" BorderBrush="#569CD6"
+                                Padding="6,2" FontSize="11" Cursor="Hand"/>
+                        <Button Content="{StaticResource str.LiveWalker.AddToCe}"
+                                Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AddGroupSlotToCeCommand}"
+                                CommandParameter="{Binding}"
+                                IsVisible="{Binding HasLeafAddress}"
+                                IsEnabled="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AobMaker.IsAvailable}"
+                                ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowAddCe}"
+                                Foreground="#C586C0" Background="Transparent"
+                                BorderThickness="1" BorderBrush="#C586C0"
+                                Padding="6,2" FontSize="11" Cursor="Hand"/>
                         <Button Content="{StaticResource str.VS.PivotThis}"
                                 Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).PivotGroupSlotCommand}"
                                 CommandParameter="{Binding}"
@@ -771,6 +809,24 @@
                                       CommandParameter="{Binding}"
                                       Foreground="#DCDCAA" Background="Transparent"
                                       BorderThickness="1" BorderBrush="#DCDCAA"
+                                      Padding="6,1" FontSize="11" Cursor="Hand"/>
+                              <Button Content="{StaticResource str.Pointers.AobMakerHex}"
+                                      Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).HexGroupSlotCommand}"
+                                      CommandParameter="{Binding}"
+                                      IsVisible="{Binding HasLeafAddress}"
+                                      IsEnabled="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AobMaker.IsAvailable}"
+                                      ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowHex}"
+                                      Foreground="#569CD6" Background="Transparent"
+                                      BorderThickness="1" BorderBrush="#569CD6"
+                                      Padding="6,1" FontSize="11" Cursor="Hand"/>
+                              <Button Content="{StaticResource str.LiveWalker.AddToCe}"
+                                      Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AddGroupSlotToCeCommand}"
+                                      CommandParameter="{Binding}"
+                                      IsVisible="{Binding HasLeafAddress}"
+                                      IsEnabled="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).AobMaker.IsAvailable}"
+                                      ToolTip.Tip="{StaticResource str.Tip.AobMaker.RowAddCe}"
+                                      Foreground="#C586C0" Background="Transparent"
+                                      BorderThickness="1" BorderBrush="#C586C0"
                                       Padding="6,1" FontSize="11" Cursor="Hand"/>
                               <Button Content="{StaticResource str.VS.PivotThis}"
                                       Command="{Binding $parent[UserControl].((vm:ValueSearchViewModel)DataContext).PivotGroupSlotCommand}"

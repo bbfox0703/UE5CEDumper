@@ -157,6 +157,45 @@ public class PanelSpaceBudgetTests
         Assert.Matches(@"var\s*\(\s*saved\s*,\s*lower\s*\)\s*=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
     }
 
+    [Fact]
+    public void Toolbar_AobMakerChip_IsNoWiderThanBefore()
+    {
+        // [AOBM-UI-INDICATOR] The maintainer's condition for the AOBMaker app's dot: the toolbar gets no wider. The old
+        // chip read "AOBMaker" + "Connected" (17 characters) and changed width whenever the state flipped. The new one
+        // keeps its state in two dots and their tooltips: "AOBMaker" + "DLL" + "/" + "UI".
+        const int OldWidestText = 17;
+        var chip = Axaml("MainWindow.axaml").Descendants()
+            .Single(e => e.Name.LocalName == "StackPanel" && Attr(e, "IsVisible") == "{Binding IsAobMakerConfigured}");
+        var en = XDocument.Load(RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        string Text(string? value)
+        {
+            if (value is null) return "";
+            if (!value.StartsWith("{StaticResource ", StringComparison.Ordinal)) return value;
+            var key = value["{StaticResource ".Length..^1];
+            return en.Descendants().Single(e => Attr(e, X + "Key") == key).Value;
+        }
+
+        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ has one -- it shows only with an
+        // attach warning -- and it was conditional before this change too.
+        var shown = chip.Descendants().Where(e => e.Name.LocalName == "TextBlock" && Attr(e, "IsVisible") is null)
+                        .Select(e => Text(Attr(e, "Text"))).ToList();
+        Assert.Equal(new[] { "AOBMaker", "DLL", "/", "UI" }, shown);
+        Assert.True(shown.Sum(s => s.Length) <= OldWidestText, string.Join("", shown));
+        Assert.DoesNotContain("AobMakerConnected", chip.ToString());
+        Assert.DoesNotContain("AobMakerOffline", chip.ToString());
+
+        var dots = chip.Descendants().Where(e => e.Name.LocalName == "Ellipse").ToList();
+        Assert.Equal(4, dots.Count);
+        Assert.All(dots, d => Assert.True(Attr(d, "Width") == "9" && Attr(d, "Height") == "9"));
+        Assert.Equal(2, dots.Count(d => Attr(d, "Fill") == "#4EC9B0"));
+        Assert.Equal(2, dots.Count(d => Attr(d, "Fill") == "#888888"));
+
+        // The state is in the tooltips now, so each dot's group must carry one.
+        var groups = dots.Select(d => d.Parent!).Distinct().ToList();
+        Assert.Equal(2, groups.Count);
+        Assert.All(groups, g => Assert.StartsWith("{Binding ", Attr(g, "ToolTip.Tip") ?? ""));
+    }
+
     /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
     private static string StripComments(string code) =>
         System.Text.RegularExpressions.Regex.Replace(code, @"/\*[\s\S]*?\*/|//[^\n]*", "");

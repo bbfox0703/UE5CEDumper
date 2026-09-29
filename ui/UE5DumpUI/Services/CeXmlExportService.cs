@@ -4116,6 +4116,22 @@ public static class CeXmlExportService
     }
 
     /// <summary>
+    /// [AOBM-VALUE-ROWS-CE] The +CE record type for a row that carries only a property TYPE NAME, not a
+    /// <see cref="LiveFieldValue"/>: search and snapshot results. Same table as <see cref="MapFieldToCeRecordType"/>,
+    /// so the two pushes cannot disagree about a type.
+    /// <para><paramref name="size"/> matters for an enum only, whose width is not in its name. These rows never know it,
+    /// so an unknown-size enum is pushed as ONE byte, not the table's 4-byte default: UE requires a BlueprintType enum to
+    /// be uint8, and on a little-endian target one byte of a wider enum still reads a small enumerator correctly,
+    /// while four bytes of a uint8 enum read its three neighbours too.</para>
+    /// </summary>
+    public static CeRecordType MapTypeNameToCeRecordType(string typeName, int size = 0)
+        => MapFieldToCeRecordType(new LiveFieldValue
+        {
+            TypeName = typeName,
+            Size = size > 0 ? size : (typeName == "EnumProperty" ? 1 : 0),
+        });
+
+    /// <summary>
     /// CE record type for a raw 8-byte pointer target (a dereferenced object/struct base):
     /// 8 Bytes shown as hex. Used by the one-click "Add ptr target to CE" push.
     /// </summary>

@@ -58,12 +58,23 @@ local ALLOC_FAIL   -- when true, allocateMemory returns nil
 local STRUCTS      -- every createStructure() handed out, in creation order
 local GLOBAL_LIST  -- structures registered via addToGlobalStructureList()
 local REGISTERED   -- active structure-callback registrations (id-counted, see below)
+local REGISTER_FAIL -- when true, registerStructureDissectOverride raises
+local TIMERS       -- every createTimer() handed out, in creation order
+local UET          -- the fake UETools' call counters and failure switches (installUETools)
+local RECORDS      -- the fake address list: memory-record ID -> record (absent = deleted)
+local FREED_READS  -- reads and writes of a deleted record's userdata (see deleteRecord)
 
 local function resetWorld()
   SYMBOLS, CALLS, RESULTS, MEM, PRINTS = {}, {}, {}, {}, {}
   ALLOCS, ALLOC_NEXT, ALLOC_FAIL = {}, 0x10000, false
   STRUCTS, GLOBAL_LIST = {}, {}
   REGISTERED = { override = nil, nameLookup = nil, overrideCount = 0, nameLookupCount = 0 }
+  REGISTER_FAIL, TIMERS, UET = false, {}, nil
+  RECORDS, FREED_READS = {}, 0
+  -- CE 7.7's UETools is absent unless a case installs it (see installUETools).
+  UEngine, UEngineStructNameLookup, UEngineStructDissect = nil, nil, nil
+  registerUEngineStructureLookupCallbacks, unregisterUEngineStructureLookupCallbacks = nil, nil
+  UE5_DEBUG = nil
 end
 
 function allocateMemory(size)
@@ -131,6 +142,7 @@ function inputQuery() return nil end
 -- cleared it. Here `override`/`nameLookup` keep the LATEST fn (so callable, as the
 -- AA4 cases need) while the *Count fields track how many registrations are live.
 function registerStructureDissectOverride(f)
+  if REGISTER_FAIL then error('registerStructureDissectOverride refused') end
   REGISTERED.override = f
   REGISTERED.overrideCount = REGISTERED.overrideCount + 1
   return REGISTERED.overrideCount               -- a distinct id per active registration
@@ -147,6 +159,141 @@ end
 function unregisterStructureNameLookup(_)
   REGISTERED.nameLookupCount = math.max(0, REGISTERED.nameLookupCount - 1)
   if REGISTERED.nameLookupCount == 0 then REGISTERED.nameLookup = nil end
+end
+
+-- CE's createTimer(owner, enabled): a TTimer starts with Interval 1000 and, given
+-- enabled=false, disabled. A case fires one with tick(); a destroyed or disabled
+-- timer does not fire, as in CE.
+function createTimer(owner, enabled)
+  local t = { Interval = 1000, OnTimer = nil, Enabled = (enabled ~= false), owner = owner }
+  t.destroy = function() t.destroyed = true; t.Enabled = false end
+  TIMERS[#TIMERS + 1] = t
+  return t
+end
+local function tick(t)
+  if t and not t.destroyed and t.Enabled and type(t.OnTimer) == 'function' then t.OnTimer(t) end
+end
+local function liveTimers()
+  local n = 0
+  for _, t in ipairs(TIMERS) do if not t.destroyed then n = n + 1 end end
+  return n
+end
+-- The module's live watch timer, found among the timers CE handed out rather
+-- than through a state key: a case pins what runs, not what it is called.
+local function theWatch()
+  local live = nil
+  for _, t in ipairs(TIMERS) do if not t.destroyed then live = t end end
+  return live
+end
+
+-- CE's address list, shaped on the older CE clone's source (LuaAddresslist.pas,
+-- addresslist.pas): getAddressList() returns MainForm's list, and
+-- getMemoryRecordByID takes the id from its LAST argument (lua_tointeger(L,-1)),
+-- whichever call syntax put it there, and hands back nil for an ID no record has
+-- (getRecordWithID returns nil, and luaclass_newClass pushes nil for it).
+function getAddressList()
+  return {
+    getMemoryRecordByID = function(...)
+      local n = select('#', ...)
+      if n == 0 then return nil end
+      return RECORDS[(select(n, ...))]
+    end,
+  }
+end
+
+-- A memory record as an [ENABLE] block's memrec hands it in. ID is CE's unique
+-- id; Active is fActive, which CE sets only AFTER the [ENABLE] block returned;
+-- Description is the text the address list shows, by default the one
+-- DissectScriptGenerator gives the record.
+local RECORD_DESCRIPTION = 'UE5CEDumper: Auto Structure Dissect (UObjects)'
+local function newRecord(id, description)
+  local r = { ID = id, Active = false, Description = description or RECORD_DESCRIPTION }
+  RECORDS[id] = r
+  return r
+end
+-- The record's [ENABLE] returned: CE marks it ticked.
+local function ceTicks(r) r.Active = true end
+-- CE opened another process and the user agreed to disable the table's entries:
+-- disableAllWithoutExecute clears fActive and runs no [DISABLE].
+local function ceUnticksWithoutDisable(r) r.Active = false end
+-- The user deletes the record while it is ticked: TMemoryRecord.destroy runs no
+-- [DISABLE], and a userdata still held for it points at freed memory, so any
+-- read or write of it is counted and raises.
+local function deleteRecord(r)
+  RECORDS[r.ID] = nil
+  for k in pairs(r) do r[k] = nil end
+  setmetatable(r, {
+    __index = function() FREED_READS = FREED_READS + 1; error('read of a freed TMemoryRecord') end,
+    __newindex = function() FREED_READS = FREED_READS + 1; error('write to a freed TMemoryRecord') end,
+  })
+end
+
+-- ============================================================
+-- A fake of CE 7.7's Extensions\UETools, shaped on its own source
+-- (UEInfoStructureDissect.LUA and UEInfoScanner.LUA, CE 7.7):
+--   * two globals hold its registrations, and its unregister function clears
+--     both, in order: the name lookup is unregistered and set to nil BEFORE the
+--     dissect override is touched, so a raise in the second call leaves UETools
+--     half suspended;
+--   * its scanner, once it recognizes the game, registers them and creates the
+--     "Use when dissecting structures" item, AutoCheck and Checked, in one
+--     synchronize() call;
+--   * on a process change it rebuilds UEngine, dropping its dissect override but
+--     NOT its name lookup, and creates the item again only when the new scan
+--     finishes.
+-- The item is a plain table: assigning Checked runs nothing, as LCL's
+-- TMenuItem.SetChecked never calls Click (only a user's click fires OnClick).
+-- The fake register does not call unregister first, so UET.unreg counts
+-- suspensions and UET.reg counts registrations, nothing else.
+-- ============================================================
+local function uetScanCompletes()
+  UEngineStructNameLookup, UEngineStructDissect = 2, 1
+  UEngine.GUI.miStructureDissectCallbackStatus = { Checked = true }
+end
+
+-- state: 'live' (scan done), 'scanning' (installed, game not recognized yet) or
+-- 'stale' (rebuilt after a process change, the old name lookup still set).
+local function installUETools(state)
+  UET = { reg = 0, unreg = 0, failRegister = false, failUnregister = false }
+  -- failUnregister = 'first' raises in its first call, before anything is
+  -- cleared; any other true value raises in the second, as a rejected
+  -- unregisterStructureDissectOverride2 would, after the name lookup is gone.
+  function unregisterUEngineStructureLookupCallbacks()
+    if UET.failUnregister == 'first' then error('unregisterStructureNameLookup: invalid id') end
+    UEngineStructNameLookup = nil
+    if UET.failUnregister then error('unregisterStructureDissectOverride2: invalid id') end
+    UET.unreg = UET.unreg + 1
+    UEngineStructDissect = nil
+  end
+  function registerUEngineStructureLookupCallbacks()
+    if UET.failRegister then error('registerStructureDissectOverride2 failed') end
+    UET.reg = UET.reg + 1
+    UEngineStructNameLookup, UEngineStructDissect = 2, 1
+  end
+  UEngine = { GUI = {} }
+  if state == 'live' then uetScanCompletes() end
+  if state == 'stale' then UEngineStructNameLookup = 2 end
+end
+
+-- UEInfoScanner starting over, as its OnProcessOpened makes it. A NEW process
+-- rebuilds UEngine and drops the dissect override but not the name lookup; a
+-- re-scan of the same process keeps UEngine. Either way createUEMenu() replaces
+-- UEngine.GUI, so there is no item until uetScanCompletes() makes a NEW one.
+local function uetStartsOver(newProcess)
+  if newProcess then
+    UEngineStructDissect = nil
+    UEngine = { GUI = {} }
+  else
+    UEngine.GUI = {}
+  end
+end
+
+-- The user clicks the item: LCL's AutoCheck flips Checked, then UETools' OnClick.
+local function userClicksItem()
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  item.Checked = not item.Checked
+  if item.Checked then registerUEngineStructureLookupCallbacks()
+  else unregisterUEngineStructureLookupCallbacks() end
 end
 
 -- ============================================================
@@ -751,6 +898,867 @@ do
   pcall(REGISTERED.override, createStructure('x'), 0xBEEF)   -- one failure only
   eq(REGISTERED.overrideCount, 1, 'AA27: one failure leaves the override registered')
   dissect.disableAutoCallback()
+end
+
+-- ============================================================
+-- [AOBM-DISSECT-UETOOLS] CE 7.7's own UE dissector answers Define new structure
+-- before ours is asked, so while auto dissect is enabled its two hooks are
+-- suspended through its OWN functions, and disable puts back what was taken.
+-- Measured on DumperTest, CE 7.7: with UETools' hooks on, our override was never
+-- called.
+-- ============================================================
+
+local ST_ = function() return _ue5_dissect_state end
+
+local function uetCase(name, state)
+  case(name)
+  resetWorld(); dissect.clearAll()
+  dissect.disableAutoCallback()    -- ST is CE-global: isolate from the cases before
+  resetWorld()
+  if state then installUETools(state) end
+end
+
+local function warnedWith(needle)
+  for _, p in ipairs(PRINTS) do
+    if p:find('[UE5Dissect WARN]', 1, true) and p:find(needle, 1, true) then return true end
+  end
+  return false
+end
+
+uetCase('UETOOLS: live at enable -> its hooks are suspended and its menu item unchecked', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local ok, r = pcall(dissect.enableAutoCallback)
+  eq(ok, true, 'enable does not raise')
+  eq(REGISTERED.overrideCount, 1, 'ours is registered')
+  eq(UET.unreg, 1, "UETools' own unregister function was called once")
+  eq(UEngineStructNameLookup, nil, "UETools' name lookup is off")
+  eq(UEngineStructDissect, nil, "UETools' dissect override is off")
+  eq(item.Checked, false, "its 'Use when dissecting structures' item is unchecked")
+  check(ST_().suspendedUETools ~= nil, 'the suspension is remembered in the CE-global state')
+  local t = ST_().autoWatch
+  check(t ~= nil and t.Enabled == true, 'the watch runs anyway: UETools can start over while ours is on')
+  eq(r, true, 'a clean enable says so')
+  eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
+  dissect.disableAutoCallback()
+end
+
+uetCase('UETOOLS: disable restores exactly what enable suspended', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  local ok, r = pcall(dissect.disableAutoCallback)
+  eq(ok, true, 'disable does not raise')
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  eq(UET.reg, 1, "UETools' own register function was called once")
+  check(UEngineStructNameLookup ~= nil and UEngineStructDissect ~= nil, "UETools' hooks are live again")
+  eq(item.Checked, true, 'its menu item is checked again')
+  eq(ST_().suspendedUETools, nil, 'the suspension is forgotten')
+  eq(r, true, 'a clean disable says so')
+  eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
+end
+
+uetCase('UETOOLS: untick, then tick again on the same UETools -> suspended again', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  dissect.disableAutoCallback()
+  eq(item.Checked, true, 'set-up: restored by the untick')
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 2, 'the second enable suspends it again: the first one\'s dealings end with its disable')
+  eq(item.Checked, false, 'and unchecks its item')
+  dissect.disableAutoCallback()
+  eq(item.Checked, true, 'and the second untick puts it back')
+end
+
+uetCase('UETOOLS: absent (older CE, or the extension not loaded) -> nothing touched, no error')
+do
+  local ok1, r1 = pcall(dissect.enableAutoCallback)
+  eq(ok1, true, 'enable does not raise')
+  eq(REGISTERED.overrideCount, 1, 'ours is registered')
+  eq(#TIMERS, 0, 'no watch timer is created without UETools or a record to follow')
+  eq(UEngine, nil, 'no UETools global is created')
+  local ok2, r2 = pcall(dissect.disableAutoCallback)
+  eq(ok2, true, 'disable does not raise')
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  check(r1 ~= false and r2 ~= false, 'neither end reports a problem')
+  eq(#PRINTS, 0, 'and nothing is printed')
+end
+
+uetCase('UETOOLS: registering AFTER our enable -> the watch suspends it once, then leaves the user alone', 'scanning')
+do
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 0, 'nothing to suspend while UETools has not recognized the game')
+  local t = ST_().autoWatch
+  check(t ~= nil and t.Enabled == true and type(t.OnTimer) == 'function', 'a watch timer is running')
+  check(t ~= nil and t.Interval >= 1000 and t.Interval <= 5000, 'it ticks every few seconds',
+        t and t.Interval)
+  tick(t)
+  eq(UET.unreg, 0, 'a tick before UETools registers does nothing')
+
+  uetScanCompletes()
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  tick(t)
+  eq(UET.unreg, 1, 'the next tick suspends it')
+  eq(item.Checked, false, 'and unchecks its item')
+  check(ST_().suspendedUETools ~= nil, 'the suspension is remembered')
+  check(t ~= nil and not t.destroyed and ST_().autoWatch == t,
+        'the watch keeps running: UETools can still start over')
+
+  -- The user turns UETools back on from its menu: a deliberate choice, on the
+  -- SAME item. A new item comes with a new scan, not with a click.
+  userClicksItem()
+  tick(t)
+  eq(UET.unreg, 1, "the user's re-check is not fought")
+  check(UEngineStructDissect ~= nil, "UETools' hooks stay on")
+
+  local regBefore = UET.reg
+  dissect.disableAutoCallback()
+  eq(UET.reg, regBefore, 'disable does not register hooks that are already live')
+  eq(ST_().suspendedUETools, nil, 'the flag is cleared anyway')
+end
+
+uetCase("UETOOLS: a hand re-check after an enable-time suspension is left alone, and not registered twice", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  eq(item.Checked, false, 'suspended at enable')
+  userClicksItem()
+  eq(UET.reg, 1, "the user's click registered UETools' hooks")
+  local r = dissect.disableAutoCallback()
+  eq(UET.reg, 1, 'disable does not register them a second time')
+  eq(item.Checked, true, 'the item keeps the state the user gave it')
+  eq(r, true, 'nothing to report')
+end
+
+uetCase("UETOOLS: the stale name lookup a process change leaves behind is not spent as the one suspension", 'stale')
+do
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 0, 'no item yet: UETools has not finished scanning this game, so nothing is suspended')
+  local t = ST_().autoWatch
+  check(t ~= nil, 'the watch runs')
+  uetScanCompletes()
+  tick(t)
+  eq(UET.unreg, 1, 'the real registration is suspended when it arrives')
+  eq(UEngine.GUI.miStructureDissectCallbackStatus.Checked, false, 'and its item unchecked')
+  dissect.disableAutoCallback()
+  eq(UEngine.GUI.miStructureDissectCallbackStatus.Checked, true, 'then restored')
+end
+
+uetCase('UETOOLS: restore is skipped, without error, when UETools rebuilt itself meanwhile', 'live')
+do
+  dissect.enableAutoCallback()
+  -- The user opened another process: UEInfoScanner destroys its menu and starts over.
+  UEngine = { GUI = {} }
+  local ok, r = pcall(dissect.disableAutoCallback)
+  eq(ok, true, 'no error')
+  eq(r, true, 'nothing to report: UETools registers itself when it recognizes the game')
+  eq(UET.reg, 0, 'no registration against an engine UETools has not scanned')
+  eq(ST_().suspendedUETools, nil, 'the flag is cleared')
+  eq(#PRINTS, 0, 'quiet')
+end
+
+uetCase('UETOOLS: restore is skipped, without error, when its menu item is gone', 'live')
+do
+  dissect.enableAutoCallback()
+  UEngine.GUI.miStructureDissectCallbackStatus = nil
+  local ok = pcall(dissect.disableAutoCallback)
+  eq(ok, true, 'no error')
+  eq(UET.reg, 0, 'nothing registered')
+  eq(ST_().suspendedUETools, nil, 'the flag is cleared')
+end
+
+uetCase('UETOOLS: a restore that fails is reported UNGATED and returned to the caller', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  UET.failRegister = true
+  local ok, r, why = pcall(dissect.disableAutoCallback)
+  eq(ok, true, 'it does not raise: our own callbacks ARE unregistered')
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  eq(r, false, 'it tells the caller the restore failed, so the record keeps its window open')
+  contains(why, 'registerStructureDissectOverride2 failed', "the reason carries UETools' own error")
+  check(warnedWith('registerStructureDissectOverride2 failed'), 'printed with UE5_DEBUG unset',
+        table.concat(PRINTS, ' | '))
+  eq(item.Checked, false, 'the item is not re-checked over hooks that are not registered')
+  eq(ST_().suspendedUETools, nil, 'the flag is cleared in every case')
+end
+
+uetCase('UETOOLS: a suspension that fails is reported UNGATED, and ours stays registered', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  UET.failUnregister = 'first'
+  local ok, r, why = pcall(dissect.enableAutoCallback)
+  eq(ok, true, 'it does not raise: our callbacks are registered')
+  eq(REGISTERED.overrideCount, 1, 'ours is registered')
+  eq(r, false, 'it tells the caller, so the record keeps its window open without unticking')
+  contains(why, 'unregisterStructureNameLookup: invalid id', "the reason carries UETools' own error")
+  check(warnedWith('unregisterStructureNameLookup: invalid id'), 'printed with UE5_DEBUG unset',
+        table.concat(PRINTS, ' | '))
+  eq(item.Checked, true, 'the item is left alone: its hooks may still be live')
+  local printed = #PRINTS
+  tick(ST_().autoWatch); tick(ST_().autoWatch)
+  eq(#PRINTS, printed, 'the watch does not retry it, and warn again, on every tick')
+  UET.failUnregister = false
+  dissect.disableAutoCallback()
+  eq(UET.reg, 0, 'hooks still live at disable are not registered twice')
+end
+
+uetCase('UETOOLS: a suspension that fails HALFWAY is put back whole on disable', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  UET.failUnregister = true   -- raises after its name lookup is already gone
+  local r, why = dissect.enableAutoCallback()
+  eq(r, false, 'the enable reports it')
+  contains(why, 'unregisterStructureDissectOverride2: invalid id', "the reason carries UETools' own error")
+  eq(UEngineStructNameLookup, nil, 'half suspended: its name lookup is gone')
+  check(UEngineStructDissect ~= nil, 'and its dissect override is still registered')
+  UET.failUnregister = false
+  local r2 = dissect.disableAutoCallback()
+  eq(UET.reg, 1, "disable registers UETools' hooks again: half on is not 'already back on'")
+  check(UEngineStructNameLookup ~= nil and UEngineStructDissect ~= nil, 'both of its hooks are live again')
+  eq(item.Checked, true, 'its item keeps its tick')
+  eq(r2, true, 'a clean disable')
+end
+
+uetCase('UETOOLS: if our own registration fails, UETools is left alone', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  REGISTER_FAIL = true
+  local ok = pcall(dissect.enableAutoCallback)
+  REGISTER_FAIL = false
+  eq(ok, false, 'the enable fails')
+  eq(UET.unreg, 0, 'UETools is not suspended in favour of nothing')
+  eq(item.Checked, true, 'its item is untouched')
+end
+
+uetCase('UETOOLS: disable destroys the watch timer', 'scanning')
+do
+  dissect.enableAutoCallback()
+  local t = ST_().autoWatch
+  check(t ~= nil, 'a watch was started')
+  dissect.disableAutoCallback()
+  check(t ~= nil and t.destroyed == true, 'the timer is destroyed')
+  eq(ST_().autoWatch, nil, 'and dropped from the state')
+end
+
+uetCase('UETOOLS: a re-load of the module re-uses the running watch instead of starting a second', 'scanning')
+do
+  dissect.enableAutoCallback()
+  local t = ST_().autoWatch
+  local firstTick = t and t.OnTimer
+  local dissect2 = assert(loadfile(HELPER))()      -- re-add the same file
+  -- The already-registered path reaches the watch too (a re-tick after CE's
+  -- process-change untick), so this is where a second timer would come from.
+  dissect2.enableAutoCallback()
+  eq(#TIMERS, 1, 'one watch timer across the re-load')
+  eq(ST_().autoWatch, t, 'the same one')
+  check(t ~= nil and t.OnTimer ~= firstTick, "it now runs the re-loaded module's tick")
+  uetScanCompletes()
+  tick(t)
+  eq(UET.unreg, 1, 'and still suspends a registration that arrives')
+  dissect2.disableAutoCallback()
+  eq(liveTimers(), 0, "the re-loaded module's disable destroys it")
+end
+
+uetCase('UETOOLS: an item that was already unchecked over live hooks stays unchecked after restore', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  userClicksItem()                              -- the user turns UETools off ...
+  registerUEngineStructureLookupCallbacks()     -- ... and its hooks come back from CE's Lua console
+  eq(item.Checked, false, 'set-up: live hooks under an unchecked item')
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 2, 'the live hooks are suspended')
+  dissect.disableAutoCallback()
+  eq(UET.reg, 2, 'and registered again on disable')
+  eq(item.Checked, false, 'the item is not re-checked: auto mode never unchecked it')
+end
+
+uetCase('UETOOLS: restore is skipped when UEngine was rebuilt, even if the item object is the same one', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  -- A new engine that happens to hand back the same item object: the item alone
+  -- cannot tell, so the engine has to.
+  UEngine = { GUI = { miStructureDissectCallbackStatus = item } }
+  local r = dissect.disableAutoCallback()
+  eq(r, true, 'nothing to report')
+  eq(UET.reg, 0, 'no registration against an engine UETools has not scanned')
+end
+
+uetCase('UETOOLS: the watch treats a rebuilt UEngine as UETools starting over, even with the same item object', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  UEngine = { GUI = { miStructureDissectCallbackStatus = item } }
+  UEngineStructNameLookup, UEngineStructDissect = 2, 1   -- its scan of the new process registered
+  item.Checked = true
+  tick(ST_().autoWatch)
+  eq(UET.unreg, 2, 'the new engine\'s registration is suspended')
+  eq(UEngineStructDissect, nil, "UETools' dissect override is off")
+  dissect.disableAutoCallback()
+end
+
+uetCase("UETOOLS: when our override gives up (DLL gone), UETools' is put back", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  injectDll()
+  dissect.enableAutoCallback()
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'ours unregistered itself')
+  eq(UET.reg, 1, "UETools' hooks are registered again")
+  eq(item.Checked, true, 'and its item re-checked')
+end
+
+-- A suspension is spent per UETools REGISTRATION, not per enable. UETools starts
+-- over on every process open (UEInfoScanner's OnProcessOpened), and each finished
+-- scan registers again under a NEW item; a user's click re-uses the item it is on.
+
+uetCase('UETOOLS: a re-scan of the same process while ours is on is suspended again; the user re-checking it is not', 'live')
+do
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 1, 'suspended at enable')
+  local t = ST_().autoWatch
+  check(t ~= nil, 'the watch runs')
+  uetStartsOver(false)
+  tick(t)
+  eq(UET.unreg, 1, 'nothing to suspend while it scans')
+  uetScanCompletes()
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  tick(t)
+  eq(UET.unreg, 2, "the watch suspends the re-scan's registration")
+  eq(UEngineStructDissect, nil, "UETools' dissect override is off again")
+  eq(item.Checked, false, 'and the NEW item is unchecked')
+  eq(ST_().suspendedUETools and ST_().suspendedUETools.item, item, 'the record names the newest item')
+  userClicksItem()
+  tick(t)
+  eq(UET.unreg, 2, "the user's re-check of that item is left alone")
+  check(UEngineStructDissect ~= nil, "UETools' hooks stay on")
+  dissect.disableAutoCallback()
+end
+
+uetCase('UETOOLS: an item the user turned off BEFORE our enable is theirs: re-checking it later is left alone', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  userClicksItem()   -- the user turns UETools off (working-lessons 4.5's "to isolate ours")
+  eq(UET.unreg, 1, 'their click unregistered it')
+  local r = dissect.enableAutoCallback()
+  eq(r, true, 'a clean enable')
+  eq(UET.unreg, 1, 'nothing to suspend')
+  local t = ST_().autoWatch
+  check(t ~= nil, 'the watch runs for a later scan')
+  userClicksItem()   -- and back on, deliberately, to compare with ours
+  tick(t)
+  eq(UET.unreg, 1, "the user's re-check of the item they had turned off is not fought")
+  eq(item.Checked, true, 'the item keeps the tick they gave it')
+  check(UEngineStructDissect ~= nil, "UETools' hooks stay on")
+  -- A real late registration still comes with a new item, and is suspended.
+  uetStartsOver(false)
+  uetScanCompletes()
+  tick(t)
+  eq(UET.unreg, 2, 'a new scan is suspended')
+  eq(UEngine.GUI.miStructureDissectCallbackStatus.Checked, false, 'its new item unchecked')
+  dissect.disableAutoCallback()
+end
+
+uetCase('UETOOLS: the game restarts with ours still ticked -> the new process\'s UETools is suspended too', 'live')
+do
+  dissect.enableAutoCallback()
+  local t = ST_().autoWatch
+  -- CE kept the record ticked (the user answered No to disabling the table's
+  -- entries), and UETools scans the restarted game.
+  uetStartsOver(true)
+  tick(t)
+  uetScanCompletes()
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  tick(t)
+  eq(UET.unreg, 2, 'suspended again after the restart')
+  eq(UEngineStructNameLookup, nil, "UETools' name lookup is off")
+  eq(UEngineStructDissect, nil, "UETools' dissect override is off")
+  eq(item.Checked, false, 'its new item is unchecked')
+  local r = dissect.disableAutoCallback()
+  eq(r, true, 'a clean disable')
+  eq(UET.reg, 1, "disable puts the new process's UETools back")
+  eq(item.Checked, true, 'and re-checks its item')
+end
+
+uetCase('UETOOLS: re-ticking after CE unticked the record without [DISABLE] suspends the restarted UETools', 'live')
+do
+  dissect.enableAutoCallback()   -- no record handed in (an older record), so none is followed
+  -- CE opened the restarted game and ran disableAllWithoutExecute: the record is
+  -- unticked, [DISABLE] never ran, so ours are still registered. UETools rescans.
+  -- (A record that hands itself in is turned off by the watch instead: the OWNER
+  -- cases below.)
+  uetStartsOver(true)
+  uetScanCompletes()
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  -- The user ticks the record again: [ENABLE] re-loads the module and enables.
+  local dissect2 = assert(loadfile(HELPER))()
+  local ok, r = pcall(dissect2.enableAutoCallback)
+  eq(ok, true, 'enable does not raise')
+  eq(r, true, 'a clean enable')
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered once')
+  eq(UET.unreg, 2, 'the restarted UETools is suspended by the enable itself')
+  eq(UEngineStructDissect, nil, "UETools' dissect override is off")
+  eq(item.Checked, false, 'its new item is unchecked')
+  eq(liveTimers(), 1, 'one watch runs')
+  dissect2.disableAutoCallback()
+  eq(UET.reg, 1, 'disable puts it back')
+  eq(item.Checked, true, 'and re-checks its item')
+  eq(liveTimers(), 0, 'and stops the watch')
+end
+
+-- ============================================================
+-- [AOBM-DISSECT-UETOOLS] The record that turned auto mode on. CE unticks its
+-- ticked auto-assembler records WITHOUT running their [DISABLE] when it opens
+-- another process and the user agrees to disable the table's entries
+-- (disableAllWithoutExecute), and a record deleted while ticked is freed without
+-- it too. Ours then stayed registered, and UETools suspended, under a record
+-- showing auto mode off. The record hands the module its memrec, and the watch
+-- turns auto mode off -- ours unregistered, UETools put back -- once that record
+-- is gone, or unticked after the watch has seen it ticked.
+-- ============================================================
+
+uetCase('OWNER: the record unticked without [DISABLE] -> the watch turns auto dissect off and puts UETools back', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  local r = dissect.enableAutoCallback(rec)
+  eq(r, true, 'a clean enable')
+  ceTicks(rec)
+  local t = theWatch()
+  check(t ~= nil, 'a watch runs')
+  tick(t)
+  eq(REGISTERED.overrideCount, 1, 'a tick with the record ticked changes nothing')
+  eq(item.Checked, false, 'UETools stays suspended')
+  ceUnticksWithoutDisable(rec)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'our dissect override is unregistered')
+  eq(REGISTERED.nameLookupCount, 0, 'and our name lookup')
+  eq(UET.reg, 1, "UETools' hooks are registered again")
+  check(UEngineStructNameLookup ~= nil and UEngineStructDissect ~= nil, 'both of its hooks are live')
+  eq(item.Checked, true, 'its item is checked again')
+  eq(ST_().suspendedUETools, nil, 'the suspension is forgotten')
+  eq(liveTimers(), 0, 'the watch stops')
+  eq(ST_().ownerRecordId, nil, 'the record is let go')
+  eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
+end
+
+uetCase('OWNER: turning auto dissect off from the watch is logged with UE5_DEBUG on', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  UE5_DEBUG = 1
+  local before = #PRINTS
+  ceUnticksWithoutDisable(rec)
+  tick(t)
+  local said = false
+  for i = before + 1, #PRINTS do
+    if PRINTS[i]:find('[UE5Dissect]', 1, true) and PRINTS[i]:find('without its [DISABLE]', 1, true) then said = true end
+  end
+  check(said, 'a gated line says why auto dissect went off', table.concat(PRINTS, ' | '))
+  eq(REGISTERED.overrideCount, 0, 'and it did')
+end
+
+uetCase('OWNER: the record deleted while ticked -> the same, and the freed record is never read', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  deleteRecord(rec)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  eq(REGISTERED.nameLookupCount, 0, 'both of ours')
+  eq(UET.reg, 1, "UETools' hooks are registered again")
+  eq(item.Checked, true, 'its item is checked again')
+  eq(liveTimers(), 0, 'the watch stops')
+  eq(FREED_READS, 0, "the module kept the record's ID, not the record")
+  eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
+end
+
+uetCase('OWNER: a record deleted before the watch saw it ticked still turns auto dissect off', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  deleteRecord(rec)
+  tick(theWatch())
+  eq(REGISTERED.overrideCount, 0, 'gone is gone, ticked or not')
+  eq(UET.reg, 1, 'UETools is put back')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+-- In the CE source we have (older than 7.7) a new record takes max(ID)+1 and a
+-- pasted one keeps its ID when no record holds it, so a deleted owner's ID can
+-- come back on the next record added -- unticked.
+uetCase("OWNER: the record deleted and its ID taken by a new record, after a tick saw it ticked -> auto dissect off", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  deleteRecord(rec)
+  newRecord(7)                                  -- the next record added takes the freed ID
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'the unticked newcomer reads as the owner unticked')
+  eq(item.Checked, true, 'UETools is put back')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase("OWNER: the record deleted and its ID taken before any tick saw it ticked -> not caught (the first-interval window)", 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  deleteRecord(rec)
+  newRecord(7)
+  tick(theWatch()); tick(theWatch())
+  -- The documented limit, pinned so the comments that describe it stay true: an
+  -- unticked record never seen ticked is what a tick landing before CE marks the
+  -- owner looks like. Closing the window changes this case on purpose.
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered')
+  eq(ST_().ownerRecordId, 7, 'following the record that took the ID')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase('OWNER: an enable whose registration raised follows no record', 'live')
+do
+  REGISTER_FAIL = true
+  local ok = pcall(dissect.enableAutoCallback, newRecord(7))
+  REGISTER_FAIL = false
+  eq(ok, false, 'the enable fails')
+  eq(ST_().ownerRecordId, nil, 'no record is followed: nothing of ours is registered to turn off')
+  eq(liveTimers(), 0, 'and no watch runs')
+end
+
+uetCase('OWNER: a tick before CE marks the record ticked changes nothing', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  -- CE sets Active only after the [ENABLE] block returned; a tick can land first.
+  tick(theWatch()); tick(theWatch())
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered')
+  eq(item.Checked, false, 'UETools stays suspended')
+  check(theWatch() ~= nil, 'the watch keeps running')
+  ceTicks(rec); tick(theWatch())
+  ceUnticksWithoutDisable(rec); tick(theWatch())
+  eq(REGISTERED.overrideCount, 0, 'once seen ticked, an untick without [DISABLE] is acted on')
+end
+
+uetCase('OWNER: re-ticked before the watch noticed the untick -> the record is followed again from scratch', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  ceUnticksWithoutDisable(rec)
+  -- The user ticks it again before the next tick: its [ENABLE] lands on the
+  -- already-registered path, and CE marks it ticked only after that returns.
+  local r = dissect.enableAutoCallback(rec)
+  eq(r, true, 'a clean enable')
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered once')
+  tick(t)
+  eq(REGISTERED.overrideCount, 1, 'the re-tick reset the seen-ticked guard: a tick before CE marks it does nothing')
+  eq(item.Checked, false, 'UETools stays suspended')
+  ceTicks(rec); tick(t)
+  ceUnticksWithoutDisable(rec); tick(t)
+  eq(REGISTERED.overrideCount, 0, 'an untick after CE marked it again is acted on')
+  eq(liveTimers(), 0, 'and the watch stops')
+end
+
+uetCase('OWNER: an enable from another record makes that record the one followed', 'live')
+do
+  local a, b = newRecord(7), newRecord(9)
+  dissect.enableAutoCallback(a)
+  ceTicks(a)
+  local t = theWatch()
+  tick(t)
+  dissect.enableAutoCallback(b)
+  ceTicks(b)
+  tick(t)
+  deleteRecord(a)
+  tick(t)
+  eq(REGISTERED.overrideCount, 1, 'the earlier record no longer decides')
+  eq(FREED_READS, 0, 'and its freed userdata is never read')
+  ceUnticksWithoutDisable(b)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'the record that enabled last does')
+end
+
+uetCase('OWNER: none (an older record, or the Lua console) -> the watch never turns auto dissect off', 'live')
+do
+  local rec = newRecord(7)   -- in the list, but not handed in
+  local r = dissect.enableAutoCallback()
+  eq(r, true, 'a clean enable')
+  ceTicks(rec)
+  local t = theWatch()
+  check(t ~= nil, 'the watch runs for UETools')
+  tick(t)
+  ceUnticksWithoutDisable(rec); tick(t)
+  deleteRecord(rec); tick(t)
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered, as before a record was handed in')
+  eq(UEngine.GUI.miStructureDissectCallbackStatus.Checked, false, 'UETools stays suspended')
+  check(theWatch() ~= nil, 'the watch still runs')
+  eq(FREED_READS, 0, 'no record is read')
+end
+
+uetCase('OWNER: an enable with no record after one with a record follows no record', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  tick(theWatch())
+  dissect.enableAutoCallback()      -- CE's Lua console, say
+  ceUnticksWithoutDisable(rec)
+  tick(theWatch())
+  eq(REGISTERED.overrideCount, 1, 'the latest enable named no record, so none decides')
+end
+
+uetCase('OWNER: no UETools at all -> the watch still runs for the record, and turns ours off on its untick')
+do
+  local rec = newRecord(7)
+  local r = dissect.enableAutoCallback(rec)
+  eq(r, true, 'a clean enable')
+  local t = theWatch()
+  check(t ~= nil and t.Enabled == true, 'a watch runs for the record, with no UETools to stand in for')
+  ceTicks(rec); tick(t)
+  eq(REGISTERED.overrideCount, 1, 'a tick with the record ticked changes nothing')
+  ceUnticksWithoutDisable(rec); tick(t)
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered by the tick')
+  eq(REGISTERED.nameLookupCount, 0, 'both of ours')
+  eq(liveTimers(), 0, 'the watch stops')
+  eq(UEngine, nil, 'no UETools global is created')
+  eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
+end
+
+uetCase('OWNER: no UETools and no record -> still no watch timer')
+do
+  dissect.enableAutoCallback(nil)
+  eq(#TIMERS, 0, 'nothing to watch, so no timer')
+  dissect.disableAutoCallback()
+end
+
+uetCase('OWNER: no UETools, and an enable with no record after one with a record -> the watch stops')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  check(theWatch() ~= nil, 'set-up: a watch runs for the record')
+  dissect.enableAutoCallback()
+  eq(liveTimers(), 0, 'nothing is left to watch, so no timer keeps ticking')
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered')
+end
+
+uetCase("OWNER: when our override gives up (DLL gone), UETools is put back and the record let go", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'ours unregistered itself')
+  eq(UET.reg, 1, "UETools' hooks are registered again")
+  eq(item.Checked, true, 'and its item re-checked')
+  eq(liveTimers(), 0, 'the watch stops')
+  eq(ST_().ownerRecordId, nil, 'the record is let go')
+  -- The record still shows ticked, and its untick and tick hand it in again
+  -- through [ENABLE]; a console enable follows no record, so it would never turn
+  -- itself off when CE later unticks the record without [DISABLE].
+  check(warnedWith("untick and tick '" .. RECORD_DESCRIPTION .. "'"),
+        'the give-up warning sends the user to the record, by the name the list shows', table.concat(PRINTS, ' | '))
+  check(not warnedWith('dissect.enableAutoCallback'),
+        'and not to a console enable -- under a name that is no global where the record loaded the module')
+end
+
+uetCase("OWNER: after our override gave up, the untick and tick the warning asks for follow the record again", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  injectDll()                                   -- UE5Dumper.dll is injected again
+  rec.Active = false                            -- the untick runs [DISABLE]: nothing is left to undo
+  eq(dissect.disableAutoCallback(), true, 'the untick is clean')
+  eq(dissect.enableAutoCallback(rec), true, 'the tick is clean')
+  ceTicks(rec)
+  eq(ST_().ownerRecordId, 7, 'the record is followed again')
+  eq(item.Checked, false, 'UETools is suspended again')
+  local t = theWatch()
+  tick(t)
+  ceUnticksWithoutDisable(rec)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'so a later untick without [DISABLE] turns ours off')
+  eq(item.Checked, true, 'and puts UETools back')
+end
+
+uetCase("OWNER: our override gives up with its record already deleted -> the warning names no record, and the freed one is never read", 'live')
+do
+  local rec = newRecord(7)
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  deleteRecord(rec)                             -- before a watch tick noticed
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'ours unregistered itself')
+  check(warnedWith('call enableAutoCallback() again, or untick and tick the record that turned it on'),
+        'the warning gives both ways back', table.concat(PRINTS, ' | '))
+  check(not warnedWith("untick and tick '"), 'and names no record that is gone')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase("OWNER: our override gives up under a record with no description -> the warning does not name it ''", 'live')
+do
+  local rec = newRecord(7, '')
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  check(warnedWith('call enableAutoCallback() again, or untick and tick the record that turned it on'),
+        'an empty description names nothing, so the warning gives both ways back', table.concat(PRINTS, ' | '))
+end
+
+uetCase('OWNER: our override gives up with no record followed -> the warning gives both ways back', 'live')
+do
+  injectDll()
+  dissect.enableAutoCallback()                  -- CE's Lua console, or a record older than memrec
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'ours unregistered itself')
+  check(warnedWith('call enableAutoCallback() again, or untick and tick the record that turned it on'),
+        'the warning gives both ways back', table.concat(PRINTS, ' | '))
+  check(not warnedWith('dissect.enableAutoCallback'),
+        'under no name that is no global where a record loaded the module')
+end
+
+uetCase('OWNER: a restore that fails when the watch turns auto dissect off is still reported ungated', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  tick(theWatch())
+  UET.failRegister = true
+  ceUnticksWithoutDisable(rec)
+  tick(theWatch())
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  check(warnedWith('registerStructureDissectOverride2 failed'), 'the failed restore is printed with UE5_DEBUG unset',
+        table.concat(PRINTS, ' | '))
+  eq(item.Checked, false, 'the item is not re-checked over hooks that are not registered')
+  eq(liveTimers(), 0, 'the watch stops anyway')
+end
+
+uetCase('OWNER: [DISABLE] lets the record go', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  dissect.disableAutoCallback()
+  eq(ST_().ownerRecordId, nil, 'no record is followed after a disable')
+  eq(liveTimers(), 0, 'and no watch runs')
+end
+
+uetCase('OWNER: a re-load of the module keeps one watch, following the record its enable was handed', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local dissect2 = assert(loadfile(HELPER))()      -- the record re-loads the module on every [ENABLE]
+  dissect2.enableAutoCallback(rec)
+  eq(#TIMERS, 1, 'one watch timer across the re-load')
+  ceTicks(rec); tick(theWatch())
+  ceUnticksWithoutDisable(rec); tick(theWatch())
+  eq(REGISTERED.overrideCount, 0, "the re-loaded module's watch turns ours off")
+  eq(liveTimers(), 0, 'and stops')
+end
+
+uetCase('OWNER: a game restart answered Yes -> ours goes off, the restarted UETools is left to itself; a re-tick suspends it', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  -- CE opens the restarted game: UETools starts over, and the user's Yes unticks
+  -- the record without [DISABLE].
+  uetStartsOver(true)
+  ceUnticksWithoutDisable(rec)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  eq(UET.reg, 0, 'nothing is registered against an engine UETools has not scanned')
+  eq(liveTimers(), 0, 'the watch stops')
+  uetScanCompletes()
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  eq(item.Checked, true, "the restarted UETools' item stays checked")
+  check(UEngineStructDissect ~= nil, 'and its hooks answer Define new structure')
+  local r = dissect.enableAutoCallback(rec)    -- the user ticks the record again
+  eq(r, true, 'a clean enable')
+  eq(REGISTERED.overrideCount, 1, 'ours is registered again')
+  eq(item.Checked, false, 'the re-tick suspends the restarted UETools')
+  eq(liveTimers(), 1, 'one watch')
+  dissect.disableAutoCallback()
+  eq(item.Checked, true, 'and the untick puts it back')
+end
+
+uetCase("OWNER: unticked in the same tick a restarted UETools finished its scan -> UETools is left on, not suspended and put back", 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  local t = theWatch()
+  tick(t)
+  uetStartsOver(true)
+  uetScanCompletes()
+  ceUnticksWithoutDisable(rec)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'ours is unregistered')
+  eq(UET.unreg, 1, 'the new registration is not suspended on the way out')
+  eq(UET.reg, 0, 'so there is nothing to register again')
+  eq(UEngine.GUI.miStructureDissectCallbackStatus.Checked, true, 'its item keeps its tick')
+end
+
+uetCase('OWNER: an address list that cannot be read decides nothing', 'live')
+do
+  local rec = newRecord(7)
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  tick(theWatch())
+  local saved = getAddressList
+  getAddressList = function() error('no address list') end
+  ceUnticksWithoutDisable(rec)
+  tick(theWatch())
+  getAddressList = saved
+  eq(REGISTERED.overrideCount, 1, 'ours stays registered: nothing was learnt about the record')
+  check(theWatch() ~= nil, 'the watch keeps running')
+  eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
+end
+
+uetCase('OWNER: a record whose ID cannot be read -> followed by nobody, and the enable is still clean', 'live')
+do
+  local odd = setmetatable({}, { __index = function() error('no ID here') end })
+  local ok, r = pcall(dissect.enableAutoCallback, odd)
+  eq(ok, true, 'enable does not raise')
+  eq(r, true, 'a clean enable')
+  eq(REGISTERED.overrideCount, 1, 'ours is registered')
+  eq(ST_().ownerRecordId, nil, 'no record is followed')
+  tick(theWatch())
+  eq(REGISTERED.overrideCount, 1, 'and the watch does not turn ours off')
 end
 
 -- ============================================================

@@ -388,11 +388,19 @@ public partial class SpcQueryViewModel : ViewModelBase
     // NOT gated on the client IsGWorldAvailable flag (audit #5 AE10).
     public bool CanLocateResultRowInGWorld => CanUseResultRowActions;
 
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX / +CE buttons read. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public AobMakerStatus AobMaker { get; }
+
+    /// <summary>[AOBM-VALUE-ROWS-CE] The result rows' and slots' HEX / +CE buttons: the SAME session gate as Copy (a
+    /// row's address means nothing in a later launch) and a reachable plugin.</summary>
+    public bool CanPushResultRowToCe => CanUseResultRowActions && AobMaker.IsAvailable;
 
     private void RaiseResultRowActionGates()
     {
         OnPropertyChanged(nameof(CanUseResultRowActions));
         OnPropertyChanged(nameof(CanLocateResultRowInGWorld));
+        OnPropertyChanged(nameof(CanPushResultRowToCe));
     }
 
     public int SelectedCount => SnapshotPicks.Count(p => p.IsSelected);
@@ -401,11 +409,16 @@ public partial class SpcQueryViewModel : ViewModelBase
     public bool CanRunQuery => SelectedCount >= 2 && !IsQuerying;
 
     public SpcQueryViewModel(ISnapshotStore store, ILoggingService log,
-                             IPlatformService? platform = null)
+                             IPlatformService? platform = null, AobMakerStatus? aobMaker = null)
     {
         _store = store;
         _log = log;
         _platform = platform;
+        AobMaker = aobMaker ?? new AobMakerStatus(null);
+        AobMaker.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(AobMakerStatus.IsAvailable)) RaiseResultRowActionGates();
+        };
         _resultGlobalMemory = new KeywordSearchMemory(() => (ResultGlobalFilter, Results.Count > 0));
         // Don't list yet — the per-game DB isn't known until a game connects.
     }
@@ -810,6 +823,42 @@ public partial class SpcQueryViewModel : ViewModelBase
         {
             _log.Error(Constants.LogCatView, "SPC: copy address failed", ex);
         }
+    }
+
+    // --- [AOBM-VALUE-ROWS-CE] AOBMaker row actions (same address as Copy, same session gate) ---
+
+    /// <summary>The row's own address, or empty when it has none: an array-element row carries only its owner's
+    /// base, and the status line says so.</summary>
+    private string ResultRowCeAddress(SpcResultRow row)
+    {
+        if (AobMakerActions.IsSnapshotElementRow(row.PropName))
+        {
+            StatusText = AobMakerActions.NoOwnAddressText(row.PropName);
+            return "";
+        }
+        return AobMakerActions.OffsetAddress(row.ObjAddr, row.PropOffset);
+    }
+
+    [RelayCommand]
+    private async Task HexResultRowAsync(SpcResultRow? row)
+    {
+        if (row == null || !CanUseResultRowActions) return;
+        var addr = ResultRowCeAddress(row);
+        if (addr.Length == 0) return;
+        var label = row.ClassName + "::" + row.PropName;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, addr, label, _log);
+    }
+
+    [RelayCommand]
+    private async Task AddResultRowToCeAsync(SpcResultRow? row)
+    {
+        if (row == null || !CanUseResultRowActions) return;
+        var addr = ResultRowCeAddress(row);
+        if (addr.Length == 0) return;
+        var label = row.ClassName + "::" + row.PropName;
+        var type = CeXmlExportService.MapTypeNameToCeRecordType(row.DeclaredType);
+        StatusText = await AobMakerActions.AddRecordAsync(AobMaker, label, addr, type, _log,
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
     }
 
     private static SpcPredicateKind ParsePredicate(string s) => s switch

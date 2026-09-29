@@ -221,11 +221,17 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         ApplyFilter();
     }
 
-    public ObjectTreeViewModel(IDumpService dump, ILoggingService log, IPlatformService platform)
+    /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the HEX menu item reads. Never null:
+    /// without a bridge it simply stays unavailable.</summary>
+    public AobMakerStatus AobMaker { get; }
+
+    public ObjectTreeViewModel(IDumpService dump, ILoggingService log, IPlatformService platform,
+                               AobMakerStatus? aobMaker = null)
     {
         _dump = dump;
         _log = log;
         _platform = platform;
+        AobMaker = aobMaker ?? new AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, FilteredNodes.Count > 0));
     }
 
@@ -256,6 +262,15 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
             node.Address, _engineState?.CeModuleName, _engineState?.ModuleBase,
             (AddressFormat)SelectedAddressFormatIndex);
         await _platform.CopyToClipboardAsync(formatted);
+    }
+
+    /// <summary>[AOBM-OBJECT-HEX] The object in CE's hex view. HEX only: a +CE record of an object's base would
+    /// show its vtable pointer, which is rarely what the user wanted to watch.</summary>
+    [RelayCommand]
+    private async Task HexAddressAsync(UObjectNode? node)
+    {
+        if (node == null || string.IsNullOrEmpty(node.Address)) return;
+        StatusText = await AobMakerActions.HexAsync(AobMaker, node.Address, node.Name, _log);
     }
 
     /// <summary>Right-click "Find Instances (Type)": hand the node's ClassName to

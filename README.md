@@ -132,7 +132,7 @@ Inject `UE5Dumper.dll` into an **already-running** game — the quickest path (n
 
 ### Optional: AOBMaker CE plugin integration
 
-[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) generates AOB patterns + CE AA scripts. Its CE DLL plugin lets UE5CEDumper one-click browse memory / code in CE, and emit dynamic GWorld-AOB AA scripts, CE memory records for UE types & fields, and Structure Dissect data. Entirely optional — the core features work without it.
+[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) generates AOB patterns + CE AA scripts. Its CE DLL plugin lets UE5CEDumper one-click browse memory / code in CE, register restart-stable GWorld / &GEngine symbols from their AOBs, push AA scripts and typed memory records for UE fields and search / snapshot results into the open table, warn when CE has another process open, and embed the helper Lua files those scripts need. With the AOBMaker app open as well, GObjects / GNames get restart-stable symbols too. Structure Dissect data does not go through the plugin: export a `.CSX` file and import it in CE, or let `scripts/ue5_dissect.lua` build it live (Tools → Add Auto Structure Dissect puts it into the open table). Entirely optional — the core features work without it.
 
 ## Requirements
 
