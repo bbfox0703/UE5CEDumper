@@ -7,8 +7,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// The Pointer panel's newer AOBMaker buttons: [AOBM-GNAMES-SYMBOL] (a GObjects / GNames symbol from AOBMaker.UI's
-/// GenerateAob) and [AOBM-PTR-SCANASM] (ASM on the FSparseDelegateStorage and &amp;GEngine scan hits).
+/// The Pointer panel's AOBMaker buttons, each section under its finding tag: a GObjects / GNames symbol from
+/// AOBMaker.UI's GenerateAob, the scan-hit ASM buttons, and what HEX / ASM report.
 /// <para>The symbol is the dangerous one: a plausible, wrong symbol roots every CE record the user builds on it. So the
 /// rule under test is that NOTHING is pushed unless replaying the AOB lands exactly where the DLL resolved the pointer.</para>
 /// </summary>
@@ -167,6 +167,120 @@ public class PointerPanelAobMakerTests
 
         await rig.Vm.CopyGEngineScanAddrCommand.ExecuteAsync(null);
         Assert.Equal("7FF610003000", rig.Platform.LastClipboard);
+    }
+
+    // ---- [AOBM-SYSTAB-ASM-SILENT] ----
+    // The ASM buttons dropped the bridge's answer, so neither a success nor a refusal said anything and CE was the only
+    // witness. They report as every other HEX / ASM in the app does: success on the green line the symbol buttons use,
+    // a refusal on the red one.
+
+    private static EngineState EveryScanHit() => new()
+    {
+        GObjectsAddr = $"0x{GObjects:X}", GObjectsScanAddr = $"0x{Match:X}",
+        GNamesAddr = "0x7FF613000000", GNamesScanAddr = "0x7FF610001000",
+        GWorldAddr = "0x7FF614000000", GWorldScanAddr = "0x7FF610004000",
+        SparseDelegatesAddr = "0x7FF615000000", SparseDelegatesScanAddr = "0x7FF610002000",
+        GEngine = "0x7FF616000000", GEngineScanAddr = "0x7FF610003000",
+        ProcessId = 4242, ModuleName = "Game.exe",
+    };
+
+    private static CommunityToolkit.Mvvm.Input.IAsyncRelayCommand Asm(PointerPanelViewModel vm, string pointer)
+        => pointer switch
+        {
+            "GObjects" => vm.AsmGObjectsScanCommand,
+            "GNames" => vm.AsmGNamesScanCommand,
+            "GWorld" => vm.AsmGWorldScanCommand,
+            "FSparseDelegateStorage" => vm.AsmSparseDelegatesScanCommand,
+            "&GEngine" => vm.AsmGEngineScanCommand,
+            _ => throw new ArgumentOutOfRangeException(nameof(pointer), pointer, null),
+        };
+
+    [Theory]
+    [InlineData("GObjects", "0x7FF610000000")]
+    [InlineData("GNames", "0x7FF610001000")]
+    [InlineData("GWorld", "0x7FF610004000")]
+    [InlineData("FSparseDelegateStorage", "0x7FF610002000")]
+    [InlineData("&GEngine", "0x7FF610003000")]
+    public async Task ASM_on_a_scan_hit_says_where_CE_went(string pointer, string scanAddr)
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+
+        await Asm(rig.Vm, pointer).ExecuteAsync(null);
+
+        Assert.Equal(scanAddr[2..], rig.Bridge.LastAsm);
+        Assert.Equal($"CE disassembler: {pointer} AOB scan hit @ {scanAddr}", rig.Vm.SymbolStatusText);
+        Assert.Null(rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task ASM_that_CE_refuses_says_so_in_red()
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+        await rig.Vm.AsmGWorldScanCommand.ExecuteAsync(null);      // a success line to replace
+        rig.Bridge.NavigateResult = false;
+
+        await rig.Vm.AsmGObjectsScanCommand.ExecuteAsync(null);
+
+        Assert.Equal($"Cheat Engine did not move its view to GObjects AOB scan hit @ 0x{Match:X}", rig.Vm.ErrorMessage);
+        Assert.Equal("", rig.Vm.SymbolStatusText);
+        Assert.True(rig.Vm.IsAobMakerAvailable);   // a refusal is not a lost plugin
+    }
+
+    [Fact]
+    public async Task ASM_that_finds_the_plugin_gone_says_why_and_turns_the_buttons_off()
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+        Assert.True(rig.Vm.CanAsmGObjectsScan);
+        rig.Bridge.NavigateResult = false;
+        rig.Bridge.AvailableAfterCall = false;
+
+        await rig.Vm.AsmGObjectsScanCommand.ExecuteAsync(null);
+
+        Assert.Equal(AobMakerUnavailable.Text(rig.Bridge), rig.Vm.ErrorMessage);
+        Assert.False(rig.Vm.IsAobMakerAvailable);
+        Assert.False(rig.Vm.CanAsmGObjectsScan);
+    }
+
+    // The HEX buttons beside them had the same silence.
+
+    private static CommunityToolkit.Mvvm.Input.IAsyncRelayCommand Hex(PointerPanelViewModel vm, string pointer)
+        => pointer switch
+        {
+            "GObjects" => vm.HexGObjectsCommand,
+            "GNames" => vm.HexGNamesCommand,
+            "GWorld" => vm.HexGWorldCommand,
+            "FSparseDelegateStorage" => vm.HexSparseDelegatesCommand,
+            "&GEngine" => vm.HexGEngineCommand,
+            _ => throw new ArgumentOutOfRangeException(nameof(pointer), pointer, null),
+        };
+
+    [Theory]
+    [InlineData("GObjects", "0x7FF612345670")]
+    [InlineData("GNames", "0x7FF613000000")]
+    [InlineData("GWorld", "0x7FF614000000")]
+    [InlineData("FSparseDelegateStorage", "0x7FF615000000")]
+    [InlineData("&GEngine", "0x7FF616000000")]
+    public async Task HEX_on_a_pointer_says_where_CE_went(string pointer, string addr)
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+
+        await Hex(rig.Vm, pointer).ExecuteAsync(null);
+
+        Assert.Equal(addr[2..], rig.Bridge.LastHex);
+        Assert.Equal($"CE hex view: {pointer} @ {addr}", rig.Vm.SymbolStatusText);
+        Assert.Null(rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task HEX_that_CE_refuses_says_so_in_red()
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+        rig.Bridge.NavigateResult = false;
+
+        await rig.Vm.HexGWorldCommand.ExecuteAsync(null);
+
+        Assert.Equal("Cheat Engine did not move its view to GWorld @ 0x7FF614000000", rig.Vm.ErrorMessage);
+        Assert.Equal("", rig.Vm.SymbolStatusText);
     }
 
     [Fact]

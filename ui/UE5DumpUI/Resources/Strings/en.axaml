@@ -390,6 +390,8 @@
     <sys:String x:Key="str.Pointers.AobMakerHexTip">Navigate CE hex view to pointer address (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerAsm">ASM</sys:String>
     <sys:String x:Key="str.Pointers.AobMakerScanAsmTip">Navigate CE disassembler to AOB scan hit instruction (via AOBMaker CE Plugin)</sys:String>
+    <!-- [AOBM-SYSTAB-ASM-SILENT] What the ASM status line calls the address it moved to ({0} = the pointer, e.g. GObjects). -->
+    <sys:String x:Key="str.Pointers.ScanHitLabel">{0} AOB scan hit</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbol">SYM</sys:String>
     <sys:String x:Key="str.Pointers.RegisterSymbolTip">Create CE AA Script that registers GWorld address as 'gworld_addr' symbol (via AOBMaker CE Plugin)</sys:String>
     <sys:String x:Key="str.Pointers.RegisterGEngineSymbolTip">Create CE AA Script that registers the &amp;GEngine SLOT as 'gengine_addr' symbol — the slot is restart-stable, so a GameEngine-rooted record auto-follows engine recreation (via AOBMaker CE Plugin)</sys:String>
@@ -1253,6 +1255,8 @@
     <sys:String x:Key="str.TP.TrainerHeader">Standalone Trainer (no DLL)</sys:String>
     <sys:String x:Key="str.TP.TrainerExport">Export to CE (this game/version)</sys:String>
     <sys:String x:Key="str.Tip.TP.TrainerExport">Bake this game's GWorld chain + offsets into a self-contained CE Lua trainer (Move Speed / Gravity / Super Jump / GodMode / coordinate TP) and push it straight into Cheat Engine via the AOBMaker plugin. Runs WITHOUT the DLL afterwards. Valid only for this exact game build — regenerate after a patch. Requires the AOBMaker plugin.</sys:String>
+    <!-- [AOBM-TRAINER-SETUP-MODAL] Every entry lands unticked, Setup included. {0} = entries pushed. -->
+    <sys:String x:Key="str.TP.Trainer.Pushed">Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.</sys:String>
 
     <!-- Move Speed multiplier (Laufen — force UCharacterMovementComponent.MaxWalkSpeed) -->
     <sys:String x:Key="str.TP.MsHeader">Move Speed</sys:String>

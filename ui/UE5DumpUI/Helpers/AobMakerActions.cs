@@ -5,7 +5,8 @@ namespace UE5DumpUI.Helpers;
 
 /// <summary>
 /// [AOBMAKER-EVAL-2026-09-29] The HEX / ASM / +CE row actions for panels that hold an <see cref="AobMakerStatus"/>.
-/// Each returns the status line to show, and publishes what the call learned about the pipe.
+/// Each returns the status line to show, and publishes what the call learned about the pipe. A panel that keeps its own
+/// availability flag calls the form that takes the bridge, and publishes <c>IsAvailable</c> itself.
 ///
 /// <para><b>Why the text comes back instead of being set here.</b> Every panel has its own status property, and
 /// the status strings live in en.axaml ([VM-INLINE-STRINGS]): a view model assigning the returned string adds no
@@ -61,6 +62,20 @@ internal static class AobMakerActions
     {
         var bridge = status.Bridge;
         if (bridge == null || string.IsNullOrEmpty(address)) return "";
+        var (text, _) = await MoveViewAsync(bridge, address, label, log, disassembler);
+        status.Apply(bridge.IsAvailable);
+        return text;
+    }
+
+    /// <summary>
+    /// [AOBM-SYSTAB-ASM-SILENT] Move CE's hex view or disassembler to <paramref name="address"/> for a panel that keeps
+    /// its own availability flag instead of an <see cref="AobMakerStatus"/>: the caller publishes
+    /// <c>bridge.IsAvailable</c> itself. <c>Ok</c> says whether the view moved, so a panel that shows success and
+    /// failure on different lines can tell them apart without parsing the text.
+    /// </summary>
+    internal static async Task<(string Text, bool Ok)> MoveViewAsync(IAobMakerBridge bridge, string address,
+        string label, ILoggingService? log, bool disassembler)
+    {
         var bare = StripHexPrefix(address);
         bool ok;
         try
@@ -71,17 +86,16 @@ internal static class AobMakerActions
         }
         catch (Exception ex)
         {
-            log.Error($"AOBMaker {(disassembler ? "ASM" : "HEX")} failed for {label} @ {address}", ex);
+            log?.Error($"AOBMaker {(disassembler ? "ASM" : "HEX")} failed for {label} @ {address}", ex);
             ok = false;
         }
-        status.Apply(bridge.IsAvailable);
         if (ok)
-            return disassembler
+            return (disassembler
                 ? AobMakerStatus.Say(KeyAsmDone, "CE disassembler: {0} @ {1}", label, address)
-                : AobMakerStatus.Say(KeyHexDone, "CE hex view: {0} @ {1}", label, address);
-        return bridge.IsAvailable
+                : AobMakerStatus.Say(KeyHexDone, "CE hex view: {0} @ {1}", label, address), true);
+        return (bridge.IsAvailable
             ? AobMakerStatus.Say(KeyNavRefused, "Cheat Engine did not move its view to {0} @ {1}", label, address)
-            : AobMakerUnavailable.Text(bridge);   // [W1-PIPEBUSY-STATUS] busy is not "open Cheat Engine"
+            : AobMakerUnavailable.Text(bridge), false);   // [W1-PIPEBUSY-STATUS] busy is not "open Cheat Engine"
     }
 
     /// <summary>

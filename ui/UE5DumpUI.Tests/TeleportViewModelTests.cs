@@ -3119,6 +3119,46 @@ public class TeleportViewModelTests
         vm.LoadCoordLibraryForGame("Game.exe");
         Assert.Empty(vm.CoordEntries);
     }
+
+    /// <summary>
+    /// [AOBM-TRAINER-SETUP-MODAL] The standalone trainer lands in CE with every entry unticked, Setup included. A
+    /// Setup that fails raises <c>showMessage</c>; activated by the push, that modal ran on CE's main thread while the
+    /// plugin's single bridge worker waited on it, so every bridge client stalled until the user closed it. Ticked by
+    /// the user, the same modal blocks nobody -- so the status has to tell the user to tick Setup.
+    /// </summary>
+    [Fact]
+    public async Task Standalone_trainer_push_leaves_Setup_for_the_user_to_tick()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = new TeleportViewModel(new TrainerDump(), new NoopLogger(), new FakePlatform(), aobMaker: bridge);
+        vm.SetEngineState(new EngineState
+        {
+            ModuleName = "Game.exe", GWorldAob = "48 8B 1D ?? ?? ?? ??", GWorldAobPos = 3, GWorldAobLen = 7,
+        });
+
+        await vm.ExportTrainerCommand.ExecuteAsync(null);
+
+        Assert.True(bridge.AaScripts.Count > 1, vm.StatusText);
+        Assert.Equal(StandaloneTrainerScriptGenerator.SetupDescription, bridge.AaScripts[0].Description);
+        Assert.All(bridge.AaScripts, s => Assert.False(s.AutoActivate, $"'{s.Description}' was pushed ticked"));
+        Assert.Contains("tick Setup first", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    /// <summary>Offsets <see cref="TrainerOffsets.IsUsable"/> accepts, with every optional feature resolved.</summary>
+    private sealed class TrainerDump : StubDumpService
+    {
+        public override Task<TrainerOffsets> GetTrainerOffsetsAsync(CancellationToken ct = default)
+            => Task.FromResult(new TrainerOffsets
+            {
+                Code = 0,
+                Chain = { new TrainerChainHop { Field = "OwningGameInstance", Offset = 0x1B8, Deref = true } },
+                PawnToRoot = 0x1A0, RootToRelLoc = 0x120, FVectorWidth = 24,
+                PawnToCmc = 0x520, WalkSpeedOff = 0x1B0, GravityOff = 0x100, JumpOff = 0x1A4,
+                CtrlRotOff = 0x2C8, CtrlRotSize = 24, PawnToController = 0x210,
+                MoveModeOff = 0x1F4, VelocityOff = 0x160, VelocitySize = 24,
+                GodBits = { new TrainerProtectBit { Name = "bCanBeDamaged", ByteOffset = 0x9C, Mask = 0x1, Protect = 0 } },
+            });
+    }
     /// <summary>
     /// [BADGEPRIME] — connect must PRIME every badge the disconnect branch
     /// resets, not three of twelve.

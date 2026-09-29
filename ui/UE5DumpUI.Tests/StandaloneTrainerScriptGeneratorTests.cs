@@ -28,14 +28,14 @@ public class StandaloneTrainerScriptGeneratorTests
         Module = "Game.exe", GWorldAob = "48 8B 1D ?? ?? ?? ??", GWorldAobPos = 3, GWorldAobLen = 7,
     };
 
+    /// <summary>Setup is first because the user ticks it before anything else. Nothing is ticked on arrival
+    /// ([AOBM-TRAINER-SETUP-MODAL]); <c>TeleportViewModelTests</c> pins that on the push.</summary>
     [Fact]
-    public void Setup_is_first_entry_and_auto_activates()
+    public void Setup_is_the_first_entry()
     {
         var entries = StandaloneTrainerScriptGenerator.Generate(Usable());
         Assert.Equal(StandaloneTrainerScriptGenerator.SetupDescription, entries[0].Description);
-        Assert.True(entries[0].AutoActivate);
-        // Only Setup auto-activates; every feature toggle stays off.
-        Assert.All(entries.Skip(1), e => Assert.False(e.AutoActivate));
+        Assert.Single(entries, e => e.Description == StandaloneTrainerScriptGenerator.SetupDescription);
     }
 
     [Fact]

@@ -327,7 +327,7 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
   exception there replies `success:false` although the records exist.
 - **Where we depend on it:**
   - the Pointer panel's Register GWorld and Register &GEngine symbol buttons, and since A8 its GObjects / GNames SYM;
-  - the standalone trainer's Setup row.
+  - the standalone trainer's Setup row, until `1f9cf2ef` pushed it unticked (`[AOBM-TRAINER-SETUP-MODAL]`).
 - **Blocking risk:** activation runs on CE's main thread while the single worker waits.
   - AOBMaker's own live test saw an `Active=true` enable raise CE's "Nearby allocation error" Yes/No dialog,
     and its driver stopped at that dialog (`docs/Live-Verification-Multi-Apply.md`). That driver enabled the record
@@ -335,7 +335,8 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
   - While a dialog is open, the bridge is busy for every client.
   - **Our own defect, found by AOBMaker (reply §2.4):** the trainer Setup's failure paths call `showMessage` (a modal)
     and untick 50 ms later. Over the bridge that modal holds the single worker, and an immediate read-back still sees
-    `Active=true`. AOBMaker cannot fix it from the plugin: `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md).
+    `Active=true`. AOBMaker cannot fix it from the plugin: `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md), fixed
+    in source in `1f9cf2ef` by pushing Setup unticked.
 - **AOBMaker change (R4):** read `Active` back and return `activated`, with CE's text in the existing `message`.
   AOBMaker's answer (reply §2.4, `EXT-4`; P1, batch B, not started):
   - `activated` is tri-state: `true`, `false`, or absent = unknown (an older plugin, no `autoActivate`, or a client

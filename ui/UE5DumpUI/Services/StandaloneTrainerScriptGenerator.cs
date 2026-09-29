@@ -5,8 +5,10 @@ using UE5DumpUI.Models;
 
 namespace UE5DumpUI.Services;
 
-/// <summary>One generated CE address-list entry (an [ENABLE]/[DISABLE] AA script).</summary>
-public readonly record struct TrainerEntry(string Description, string Script, bool AutoActivate);
+/// <summary>One generated CE address-list entry (an [ENABLE]/[DISABLE] AA script).
+/// <para>It carries no activation flag: whether a record lands ticked is decided where it is pushed, and a trainer
+/// entry must land unticked, Setup included ([AOBM-TRAINER-SETUP-MODAL]).</para></summary>
+public readonly record struct TrainerEntry(string Description, string Script);
 
 /// <summary>
 /// Emits a NO-DLL standalone CE-Lua trainer for ONE game+version from baked
@@ -23,30 +25,30 @@ public readonly record struct TrainerEntry(string Description, string Script, bo
 /// </summary>
 public static class StandaloneTrainerScriptGenerator
 {
-    public const string SetupDescription = "UE5 Trainer: Setup (auto — runs on activate)";
+    public const string SetupDescription = "UE5 Trainer: Setup (tick this first)";
     private const string SaveDescription = "UE5 Trainer: TP Save position";
     private const string RecallDescription = "UE5 Trainer: TP Recall position";
 
     private const string Close = CeLuaHygiene.CloseCall;
 
-    /// <summary>Build the ordered trainer entries. Setup is first and auto-activates
+    /// <summary>Build the ordered trainer entries. Setup is first: the user ticks it before anything else
     /// (it AOB-scans GWorld + defines globals); the rest are opt-in toggles that
     /// no-op until Setup has run. Features whose offsets didn't resolve are omitted.</summary>
     public static List<TrainerEntry> Generate(TrainerOffsets o)
     {
         var entries = new List<TrainerEntry>
         {
-            new(SetupDescription, BuildSetup(o), AutoActivate: true),
+            new(SetupDescription, BuildSetup(o)),
         };
 
         if (o.PawnToCmc >= 0 && o.WalkSpeedOff >= 0)
-            entries.Add(new("UE5 Trainer: Move Speed x3", BuildKnob("speed", o.WalkSpeedOff, "3.0"), false));
+            entries.Add(new("UE5 Trainer: Move Speed x3", BuildKnob("speed", o.WalkSpeedOff, "3.0")));
         if (o.PawnToCmc >= 0 && o.GravityOff >= 0)
-            entries.Add(new("UE5 Trainer: Low Gravity x0.25", BuildKnob("grav", o.GravityOff, "0.25"), false));
+            entries.Add(new("UE5 Trainer: Low Gravity x0.25", BuildKnob("grav", o.GravityOff, "0.25")));
         if (o.PawnToCmc >= 0 && o.JumpOff >= 0)
-            entries.Add(new("UE5 Trainer: Super Jump (4x height)", BuildJump(o.JumpOff, "4.0"), false));
+            entries.Add(new("UE5 Trainer: Super Jump (4x height)", BuildJump(o.JumpOff, "4.0")));
         if (o.GodBits.Count > 0)
-            entries.Add(new("UE5 Trainer: God Mode", BuildGodMode(), false));
+            entries.Add(new("UE5 Trainer: God Mode", BuildGodMode()));
         // Pure-Lua velocity fly (no DLL, no ProcessEvent) — needs the CMC MovementMode
         // + Velocity offsets and a Controller back-ref for the view-relative basis.
         // One entry per key preset (WASD often collides with the game's own movement).
@@ -54,11 +56,11 @@ public static class StandaloneTrainerScriptGenerator
             && o.CtrlRotOff >= 0 && o.PawnToController >= 0)
             for (int p = 0; p < FlyKeyPresets.Length; p++)
                 entries.Add(new($"UE5 Trainer: Fly ({FlyKeyPresets[p].Name}, view-relative)",
-                                BuildFly(p, FlyKeyPresets[p]), false));
+                                BuildFly(p, FlyKeyPresets[p])));
 
         // Coordinate teleport (Save/Recall) — IsUsable already guarantees these.
-        entries.Add(new(SaveDescription, BuildTpSave(), false));
-        entries.Add(new(RecallDescription, BuildTpRecall(), false));
+        entries.Add(new(SaveDescription, BuildTpSave()));
+        entries.Add(new(RecallDescription, BuildTpRecall()));
 
         return entries;
     }
