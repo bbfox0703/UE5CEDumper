@@ -202,9 +202,12 @@ function getAddressList()
 end
 
 -- A memory record as an [ENABLE] block's memrec hands it in. ID is CE's unique
--- id; Active is fActive, which CE sets only AFTER the [ENABLE] block returned.
-local function newRecord(id)
-  local r = { ID = id, Active = false }
+-- id; Active is fActive, which CE sets only AFTER the [ENABLE] block returned;
+-- Description is the text the address list shows, by default the one
+-- DissectScriptGenerator gives the record.
+local RECORD_DESCRIPTION = 'UE5CEDumper: Auto Structure Dissect (UObjects)'
+local function newRecord(id, description)
+  local r = { ID = id, Active = false, Description = description or RECORD_DESCRIPTION }
   RECORDS[id] = r
   return r
 end
@@ -1525,6 +1528,66 @@ do
   eq(item.Checked, true, 'and its item re-checked')
   eq(liveTimers(), 0, 'the watch stops')
   eq(ST_().ownerRecordId, nil, 'the record is let go')
+  -- The record still shows ticked, and only its own [ENABLE] follows it again:
+  -- a console enable follows no record, so it would never turn itself off when
+  -- CE later unticks the record without [DISABLE].
+  check(warnedWith("untick and tick '" .. RECORD_DESCRIPTION .. "'"),
+        'the give-up warning sends the user to the record, by the name the list shows', table.concat(PRINTS, ' | '))
+  check(not warnedWith('dissect.enableAutoCallback'),
+        'and not to a console enable -- under a name that is no global where the record loaded the module')
+end
+
+uetCase("OWNER: after our override gave up, the untick and tick the warning asks for follow the record again", 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  local rec = newRecord(7)
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  injectDll()                                   -- UE5Dumper.dll is injected again
+  rec.Active = false                            -- the untick runs [DISABLE]: nothing is left to undo
+  eq(dissect.disableAutoCallback(), true, 'the untick is clean')
+  eq(dissect.enableAutoCallback(rec), true, 'the tick is clean')
+  ceTicks(rec)
+  eq(ST_().ownerRecordId, 7, 'the record is followed again')
+  eq(item.Checked, false, 'UETools is suspended again')
+  local t = theWatch()
+  tick(t)
+  ceUnticksWithoutDisable(rec)
+  tick(t)
+  eq(REGISTERED.overrideCount, 0, 'so a later untick without [DISABLE] turns ours off')
+  eq(item.Checked, true, 'and puts UETools back')
+end
+
+uetCase("OWNER: our override gives up with its record already deleted -> the warning names no record, and the freed one is never read", 'live')
+do
+  local rec = newRecord(7)
+  injectDll()
+  dissect.enableAutoCallback(rec)
+  ceTicks(rec)
+  deleteRecord(rec)                             -- before a watch tick noticed
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'ours unregistered itself')
+  check(warnedWith('call enableAutoCallback() again, or untick and tick the record that turned it on'),
+        'the warning gives both ways back', table.concat(PRINTS, ' | '))
+  check(not warnedWith("untick and tick '"), 'and names no record that is gone')
+  eq(FREED_READS, 0, 'the freed record is never read')
+end
+
+uetCase('OWNER: our override gives up with no record followed -> the warning gives both ways back', 'live')
+do
+  injectDll()
+  dissect.enableAutoCallback()                  -- CE's Lua console, or a record older than memrec
+  SYMBOLS = {}
+  for _ = 1, 3 do pcall(REGISTERED.override, createStructure('x'), 0xBEEF) end
+  eq(REGISTERED.overrideCount, 0, 'ours unregistered itself')
+  check(warnedWith('call enableAutoCallback() again, or untick and tick the record that turned it on'),
+        'the warning gives both ways back', table.concat(PRINTS, ' | '))
+  check(not warnedWith('dissect.enableAutoCallback'),
+        'under no name that is no global where a record loaded the module')
 end
 
 uetCase('OWNER: a restore that fails when the watch turns auto dissect off is still reported ungated', 'live')
