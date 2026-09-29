@@ -953,8 +953,8 @@ do
   check(t ~= nil and not t.destroyed and ST_().uetoolsWatch == t,
         'the watch keeps running: UETools can still start over')
 
-  -- The user turns UETools back on from its menu: a deliberate choice, and the
-  -- SAME item -- only a new scan makes a new one.
+  -- The user turns UETools back on from its menu: a deliberate choice, on the
+  -- SAME item. A new item comes with a new scan, not with a click.
   userClicksItem()
   tick(t)
   eq(UET.unreg, 1, "the user's re-check is not fought")
