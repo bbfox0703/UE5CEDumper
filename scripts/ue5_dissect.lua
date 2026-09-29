@@ -798,7 +798,8 @@ end
 -- and each scan that finishes registers again under a NEW menu item, while a
 -- user's click re-uses the item it is on. So a registration under an item this
 -- enable has not dealt with yet is UETools' own, and is suspended; one under an
--- item it has dealt with is the user's, and is left alone.
+-- item it has dealt with -- suspended already, or found with its hooks off -- is
+-- the user's, and is left alone.
 --
 -- Always through UETools' OWN functions and globals, never CE's callback lists:
 -- 7.7 hands out callback ids by a rule the older CE source does not explain, so
@@ -828,9 +829,9 @@ local function uetoolsLive()
         and uetoolsMenuItem() ~= nil
 end
 
--- Has this enable already dealt with the UETools registration that is current
--- now? ST.uetoolsSeen names the engine and item of the last one it did; a
--- different engine or item is UETools starting over, not the user.
+-- Has this enable already dealt with the UETools item that is current now?
+-- ST.uetoolsSeen names the engine and item it dealt with last; a different
+-- engine or item is UETools starting over, not the user.
 local function uetoolsIsSeen()
     local seen = ST.uetoolsSeen
     return seen ~= nil and seen.engine == UEngine and seen.item == uetoolsMenuItem()
@@ -927,19 +928,30 @@ local function restoreUETools()
     return true
 end
 
--- One tick of the watch that runs while auto mode is on. A UETools registration
--- this enable has not dealt with -- a scan finishing after our enable, or UETools
--- starting over on a process open -- is suspended. A re-check of an item already
--- dealt with is the user's and is left alone: they can turn UETools on again from
--- its menu, and fighting that would take the choice away from them.
+-- Deals with the UETools item that is current now, once: a live registration
+-- under it is suspended, and one found with its hooks off is left to the user.
+-- Either way a later re-check of that item is the user's: they can turn UETools
+-- on again from its menu, and fighting that would take the choice away from them.
+-- Returns as suspendUETools does.
+local function dealWithUETools()
+    if uetoolsIsSeen() then return true end
+    local item = uetoolsMenuItem()
+    if item == nil then return true end   -- no finished scan for this engine yet
+    if uetoolsLive() then return suspendUETools() end
+    -- A finished scan with its hooks off: the user turned UETools off, or a
+    -- restore of ours failed and said so. Nothing to suspend, nothing to put back.
+    ST.uetoolsSeen = { engine = UEngine, item = item }
+    return true
+end
+
+-- One tick of the watch that runs while auto mode is on: it catches a scan
+-- finishing after our enable, and UETools starting over on a process open.
 local function uetoolsWatchTick()
     if not ST.callbackIdOverride then
         stopUEToolsWatch()   -- ours are gone: there is nothing to stand in for
         return
     end
-    if uetoolsLive() and not uetoolsIsSeen() then
-        suspendUETools()   -- reports its own failure; a timer has no caller to tell
-    end
+    dealWithUETools()   -- reports its own failure; a timer has no caller to tell
 end
 
 -- One watch however many times the module is loaded: ST holds it, so disable --
@@ -966,8 +978,7 @@ local function standInForUETools()
     -- process change (disableAllWithoutExecute) skips [DISABLE], so ours can stay
     -- registered with the record unticked, and it is ours that UETools would pre-empt.
     ensureUEToolsWatch()
-    if uetoolsLive() and not uetoolsIsSeen() then return suspendUETools() end
-    return true
+    return dealWithUETools()
 end
 
 -- ----------------------------------------------------------------
