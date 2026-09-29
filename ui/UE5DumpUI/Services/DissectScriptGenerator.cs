@@ -11,6 +11,10 @@ namespace UE5DumpUI.Services;
 /// <para><c>[ENABLE]</c> is a stateful toggle, so every bail-out that registered nothing unticks the record and keeps
 /// the Lua Engine window open on its reason; only a clean enable closes it. <c>[DISABLE]</c> reports a failed
 /// unregister ungated, because the callbacks would then still be live.</para>
+/// <para>[AOBM-DISSECT-UETOOLS] While ticked, the module suspends CE 7.7's own UE dissector (UETools), which CE would
+/// otherwise ask first, and puts it back on untick. A suspend or restore that fails is not a failed toggle -- the
+/// module returns <c>false</c> and prints why -- so the block keeps the window open on it, and <c>[ENABLE]</c> does not
+/// untick.</para>
 /// </summary>
 public static class DissectScriptGenerator
 {
@@ -85,27 +89,32 @@ public static class DissectScriptGenerator
             $"'[UE5Dissect] {TableFileName} did not load:\\n' .. tostring(mod)", "  ");
         Line(sb, "end");
         Line(sb, $"{ModuleGlobal} = mod");
-        Line(sb, "local eok, eerr = pcall(mod.enableAutoCallback)");
+        Line(sb, "local eok, eres = pcall(mod.enableAutoCallback)");
         Line(sb, "if not eok then");
         CeLuaHygiene.AppendFailedEnable(sb,
-            "'[UE5Dissect] enableAutoCallback failed:\\n' .. tostring(eerr)", "  ");
+            "'[UE5Dissect] enableAutoCallback failed:\\n' .. tostring(eres)", "  ");
         Line(sb, "end");
         Line(sb, "dbg('[UE5Dissect] auto Structure Dissect on')");
-        CeLuaHygiene.AppendCloseOnSuccess(sb);
+        // [AOBM-DISSECT-UETOOLS] false = our callbacks registered, but CE 7.7's own UE dissector could not be
+        // suspended. The module has printed why, ungated; closing now would shut the window over it. No untick:
+        // the callbacks are live.
+        CeLuaHygiene.AppendCloseOnSuccess(sb, "eres ~= false");
         Line(sb, "{$asm}");
         Line(sb, "[DISABLE]");
         Line(sb, "{$lua}");
         Line(sb, "if syntaxcheck then return end");
         CeLuaHygiene.AppendDebugPreamble(sb);
-        Line(sb, "local disOk, disErr = true, nil");
+        Line(sb, "local disOk, disRes = true, nil");
         Line(sb, $"if {ModuleGlobal} and type({ModuleGlobal}.disableAutoCallback) == 'function' then");
-        Line(sb, $"  disOk, disErr = pcall({ModuleGlobal}.disableAutoCallback)");
+        Line(sb, $"  disOk, disRes = pcall({ModuleGlobal}.disableAutoCallback)");
         Line(sb, "end");
         Line(sb, "if not disOk then");
-        Line(sb, "  print('[UE5Dissect] the auto-dissect callbacks are still registered: ' .. tostring(disErr))");
+        Line(sb, "  print('[UE5Dissect] the auto-dissect callbacks are still registered: ' .. tostring(disRes))");
         Line(sb, "end");
         Line(sb, "dbg('[UE5Dissect] auto Structure Dissect off')");
-        CeLuaHygiene.AppendCloseOnSuccess(sb, "disOk");
+        // [AOBM-DISSECT-UETOOLS] false = ours unregistered, but CE 7.7's own UE dissector could not be put back; the
+        // module has printed why, ungated.
+        CeLuaHygiene.AppendCloseOnSuccess(sb, "disOk and disRes ~= false");
         Line(sb, "{$asm}");
 
         return sb.ToString();

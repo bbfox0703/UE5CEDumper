@@ -3174,7 +3174,12 @@ just "fields have real names": UETools names a structure by its **class** (`Dump
 `VTable` / `ObjectFlags` / `FNameIndex` / bit masks. Read the hook state from CE's Lua first
 (`UEngineStructNameLookup`, `UEngineStructDissect`, `_ue5_dissect_state`). To isolate ours, call
 `unregisterUEngineStructureLookupCallbacks()` and uncheck the item, then put both back afterwards. The
-maintainer runs CE with UETools on. ⚠ A callback id is not a slot number you can reason about: in 7.7,
+maintainer runs CE with UETools on. Option (a) now does that for you: while our Auto Structure Dissect is
+ticked it suspends UETools' two hooks and unchecks the item -- again each time UETools re-registers after
+a new scan (a game restart, a re-opened process: every scan makes a NEW item) -- and unticking puts back
+what it took (`[AOBM-DISSECT-UETOOLS]`); an item you turned off yourself before ticking ours, or re-check
+while ours is on, is left to you. So with ours ticked and the item still unchecked, a UETools-shaped result
+is itself a finding. ⚠ A callback id is not a slot number you can reason about: in 7.7,
 `registerStructureNameLookup(fn, true)` returned **2** while slot 0 was free, which our local CE clone
 (older than 7.7) cannot explain.
 
