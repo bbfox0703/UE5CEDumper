@@ -251,10 +251,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(AobMakerNote));
     }
 
+    internal const string KeyTrainerPushed = "str.TP.Trainer.Pushed";
+
+    /// <summary>[AOBM-TRAINER-SETUP-MODAL] The trainer arrives unticked, so the success line has to say what to tick.</summary>
+    internal static string TrainerPushedText(int entries)
+        => AobMakerStatus.Say(KeyTrainerPushed,
+            "Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.",
+            entries);
+
     /// <summary>
     /// Fetch baked offsets from the DLL, emit a no-DLL standalone CE-Lua trainer
     /// (Move Speed / Gravity / Super Jump / GodMode / coordinate TP), and push each
-    /// entry into CE via AOBMaker (Setup auto-activates). Gated on AOBMaker — no
+    /// entry into CE via AOBMaker, every one unticked. Gated on AOBMaker — no
     /// clipboard/disk fallback by design (see project-standalone-ce-lua-trainer).
     /// </summary>
     [RelayCommand]
@@ -293,13 +301,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             int ok = 0;
             foreach (var e in entries)
             {
-                var sent = await _aobMaker.CreateAAScriptAsync(e.Description, e.Script, e.AutoActivate, group: CeGroupTrainer);
+                // [AOBM-TRAINER-SETUP-MODAL] Unticked, Setup included. A Setup that fails calls showMessage, the house
+                // style for refusals. Activated by the push, the plugin runs it on CE's main thread while its single
+                // bridge worker waits, so that modal blocks every bridge client until the user closes it (seen live
+                // 2026-09-29: a bridge-triggered activation whose record raised a modal timed the bridge call out), and
+                // an immediate read-back still sees Active=true. Ticked by the user in CE, the same modal blocks nobody.
+                var sent = await _aobMaker.CreateAAScriptAsync(e.Description, e.Script, autoActivate: false,
+                                                               group: CeGroupTrainer);
                 if (sent) { ok++; }
                 else { break; }   // pipe dropped mid-push (CE closed?)
             }
             IsAobMakerAvailable = _aobMaker.IsAvailable;
             StatusText = ok == entries.Count
-                ? $"Standalone trainer pushed to CE ({ok} entries). Setup ran; toggle the rest. No DLL needed henceforth."
+                ? TrainerPushedText(ok)
                 : $"⚠ Pushed {ok}/{entries.Count} entries — AOBMaker pipe dropped (CE closed?).";
             _log.Info($"Standalone trainer export: {ok}/{entries.Count} entries pushed to CE");
         }

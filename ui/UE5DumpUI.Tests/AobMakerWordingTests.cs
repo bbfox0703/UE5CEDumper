@@ -117,8 +117,12 @@ public class AobMakerWordingTests
         Same(AobMakerUiStatus.KeyTipOn, uiUp.Tip);
         Same(AobMakerUiStatus.KeyTipOff, new AobMakerUiStatus(null).Tip);
 
+        // [AOBM-TRAINER-SETUP-MODAL] The standalone trainer's push
+        Same(UE5DumpUI.ViewModels.TeleportViewModel.KeyTrainerPushed,
+             UE5DumpUI.ViewModels.TeleportViewModel.TrainerPushedText(12), 12);
+
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(34, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(35, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =

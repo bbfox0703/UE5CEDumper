@@ -1253,6 +1253,8 @@
     <sys:String x:Key="str.TP.TrainerHeader">Standalone Trainer (no DLL)</sys:String>
     <sys:String x:Key="str.TP.TrainerExport">Export to CE (this game/version)</sys:String>
     <sys:String x:Key="str.Tip.TP.TrainerExport">Bake this game's GWorld chain + offsets into a self-contained CE Lua trainer (Move Speed / Gravity / Super Jump / GodMode / coordinate TP) and push it straight into Cheat Engine via the AOBMaker plugin. Runs WITHOUT the DLL afterwards. Valid only for this exact game build — regenerate after a patch. Requires the AOBMaker plugin.</sys:String>
+    <!-- [AOBM-TRAINER-SETUP-MODAL] Every entry lands unticked, Setup included. {0} = entries pushed. -->
+    <sys:String x:Key="str.TP.Trainer.Pushed">Standalone trainer pushed to CE ({0} entries): tick Setup first, then the features you want. No DLL needed henceforth.</sys:String>
 
     <!-- Move Speed multiplier (Laufen — force UCharacterMovementComponent.MaxWalkSpeed) -->
     <sys:String x:Key="str.TP.MsHeader">Move Speed</sys:String>
