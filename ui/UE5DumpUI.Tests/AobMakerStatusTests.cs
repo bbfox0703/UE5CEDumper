@@ -173,12 +173,46 @@ public class AobMakerStatusTests
     }
 
     [Fact]
+    public async Task The_attach_warning_comes_back_when_the_plugin_does()
+    {
+        // A busy pipe or one failed push also makes the plugin unreachable -- with CE still on the wrong process. The
+        // cleared warning must not stay cleared once the plugin answers again.
+        var bridge = new ScriptedAobMakerBridge { Available = true, Attached = new CeAttachedProcess(999, "Other.exe") };
+        var status = new AobMakerStatus(bridge);
+        status.Apply(true);
+        await status.CheckAttachAsync(4242, "Game.exe");
+
+        status.Apply(false);
+        Assert.False(status.HasAttachWarning);
+        status.Apply(true);
+
+        Assert.True(status.HasAttachWarning);
+        Assert.Contains("Other.exe (pid 999)", status.AttachWarning);
+    }
+
+    [Fact]
+    public void Apply_repaints_the_reason_even_when_the_flag_does_not_change()
+    {
+        var status = new AobMakerStatus(new ScriptedAobMakerBridge { Available = false });
+        status.Apply(false);
+        var raised = new List<string?>();
+        status.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+
+        status.Apply(false);
+
+        Assert.DoesNotContain(nameof(AobMakerStatus.IsAvailable), raised);
+        Assert.Contains(nameof(AobMakerStatus.DllTip), raised);
+    }
+
+    [Fact]
     public async Task The_DLL_tip_says_what_the_plugin_is_for_or_why_it_is_unreachable()
     {
         var bridge = new ScriptedAobMakerBridge { Available = true };
         var status = new AobMakerStatus(bridge);
         await status.ProbeAsync();
-        Assert.Contains("connected", status.DllTip);
+        // Not merely "connected": the unreachable sentence says "not connected".
+        Assert.StartsWith("AOBMaker DLL", status.DllTip);
+        Assert.DoesNotContain("not connected", status.DllTip);
 
         bridge.Available = false;
         var raised = new List<string?>();

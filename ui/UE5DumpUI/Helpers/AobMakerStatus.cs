@@ -42,14 +42,22 @@ public sealed partial class AobMakerStatus : ObservableObject
         // [AOBM-ATTACH-CHECK] With the plugin out of reach nothing can tell which process CE has open, and a check that
         // cannot tell must not accuse (DescribeAttach). The warning used to outlive Cheat Engine itself: measured
         // 2026-09-29, CE closed with it showing and the chip went Offline beside "CE is not on this game".
+        // And the way back: a busy pipe or one failed push also lands here, with CE still on the wrong process, so
+        // regaining the plugin asks again rather than leaving the warning cleared until the next ⟳.
         if (!value) AttachWarning = "";
+        else if (_checkedPid > 0) _ = CheckAttachAsync(_checkedPid, _checkedModule);
         OnPropertyChanged(nameof(DllTip));
     }
 
+    /// <summary>The game the last attach check compared against, so a regained plugin can be asked again.</summary>
+    private int _checkedPid;
+    private string _checkedModule = "";
+
     internal const string KeyDllOn = "str.Tip.Toolbar.AobMakerDllOn";
 
-    /// <summary>[AOBM-UI-INDICATOR] The DLL dot's tooltip: what the plugin is for when it is reachable, and WHY it is not
-    /// otherwise (absent, busy, refused), which is the remedy the dot alone cannot say.</summary>
+    /// <summary>[AOBM-UI-INDICATOR] The DLL dot's tooltip: what the plugin is for when it is reachable, and otherwise
+    /// <see cref="AobMakerUnavailable"/>'s sentence for the bridge's last failure -- the remedy the dot alone cannot
+    /// say.</summary>
     public string DllTip => IsAvailable
         ? Say(KeyDllOn, "AOBMaker DLL (its Cheat Engine plugin): connected. HEX, ASM, +CE and SYM push into Cheat Engine")
         : AobMakerUnavailable.Text(Bridge);
@@ -58,8 +66,13 @@ public sealed partial class AobMakerStatus : ObservableObject
     /// tooltip that names the reason must repaint anyway ([R7-S7]).</summary>
     public void NotifyReasonChanged() => OnPropertyChanged(nameof(DllTip));
 
-    /// <summary>Publish what a probe or a push just learned. Writing the same value raises nothing.</summary>
-    public void Apply(bool available) => IsAvailable = available;
+    /// <summary>Publish what a probe or a push just learned. The flag raises only on a change, but the reason behind a
+    /// false one may have moved (a busy pipe that is now absent), so the tooltip that names it repaints every time.</summary>
+    public void Apply(bool available)
+    {
+        IsAvailable = available;
+        NotifyReasonChanged();
+    }
 
     /// <summary>Probe the pipe now and publish the result.</summary>
     public async Task<bool> ProbeAsync()
@@ -98,6 +111,8 @@ public sealed partial class AobMakerStatus : ObservableObject
             AttachWarning = "";
             return "";
         }
+        _checkedPid = gamePid;
+        _checkedModule = gameModule;
         CeAttachedProcess? ce;
         try { ce = await Bridge.GetAttachedProcessAsync(); }
         catch (Exception) { ce = null; }

@@ -157,7 +157,6 @@ public class PanelSpaceBudgetTests
         Assert.Matches(@"var\s*\(\s*saved\s*,\s*lower\s*\)\s*=\s*RowFloors\(\s*root\.Bounds\.Height\s*-\s*autos\s*\)", code);
     }
 
-    /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
     [Fact]
     public void Toolbar_AobMakerChip_IsNoWiderThanBefore()
     {
@@ -176,8 +175,8 @@ public class PanelSpaceBudgetTests
             return en.Descendants().Single(e => Attr(e, X + "Key") == key).Value;
         }
 
-        // Always shown: every TextBlock without a visibility binding of its own (the ⚠ has one: it appears only when CE
-        // is on another process, and it said so before this change too).
+        // Always shown: every TextBlock without a visibility binding of its own. The ⚠ has one -- it shows only with an
+        // attach warning -- and it was conditional before this change too.
         var shown = chip.Descendants().Where(e => e.Name.LocalName == "TextBlock" && Attr(e, "IsVisible") is null)
                         .Select(e => Text(Attr(e, "Text"))).ToList();
         Assert.Equal(new[] { "AOBMaker", "DLL", "/", "UI" }, shown);
@@ -197,6 +196,7 @@ public class PanelSpaceBudgetTests
         Assert.All(groups, g => Assert.StartsWith("{Binding ", Attr(g, "ToolTip.Tip") ?? ""));
     }
 
+    /// <summary>Drop // and /* */ comments, so a pin cannot be satisfied by a commented-out line.</summary>
     private static string StripComments(string code) =>
         System.Text.RegularExpressions.Regex.Replace(code, @"/\*[\s\S]*?\*/|//[^\n]*", "");
 

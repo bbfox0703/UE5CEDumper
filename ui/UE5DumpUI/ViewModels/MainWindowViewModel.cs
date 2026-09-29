@@ -232,7 +232,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         _ = AobMakerUi.PollAsync();
     }
 
-    private void OnAobMakerUiTimerTick(object? sender, EventArgs e) => _ = AobMakerUi.PollAsync();
+    private void OnAobMakerUiTimerTick(object? sender, EventArgs e)
+    {
+        _ = AobMakerUi.PollAsync();
+        // The DLL dot's tooltip names the bridge's last failure, which every panel's own probe rewrites without
+        // telling the toolbar; repainting it on the same tick keeps it at most one interval behind.
+        AobMakerShared.NotifyReasonChanged();
+    }
 
     /// <summary>Computed array element limit: 2^ArrayLimitExponent (2..16384).</summary>
     public int ArrayLimit => 1 << ArrayLimitExponent;
