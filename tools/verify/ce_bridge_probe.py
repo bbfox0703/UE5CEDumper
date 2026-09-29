@@ -29,7 +29,7 @@ PIPE = r"\\.\pipe\AOBMakerCEBridge"
 
 def call(req):
     with open(PIPE, "r+b", buffering=0) as p:
-        b = json.dumps(req).encode("utf-8")
+        b = json.dumps(req, separators=(",", ":")).encode("utf-8")
         p.write(struct.pack("<I", len(b)) + b)
         n = struct.unpack("<I", p.read(4))[0]
         return json.loads(p.read(n))

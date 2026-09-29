@@ -61,7 +61,6 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
     private int _lastUnmapped;
     private bool _lastBudgetHit;
 
-    /// <summary>Resolve owner window + show. No-op without an address/platform/window.</summary>
     /// <summary>[AOBM-FUNC-DISASM] App-global AOBMaker bridge for the "Disassemble in CE" button, set by the main window
     /// the same way as <see cref="PropertyXrefDialog.SharedAobMaker"/>. Null hides nothing: the button just stays off.</summary>
     public static IAobMakerBridge? SharedAobMaker;
@@ -89,6 +88,7 @@ public sealed class FunctionPropsDialog : ManagedDialogWindow
         }
     }
 
+    /// <summary>Resolve owner window + show. No-op without an address/platform/window.</summary>
     public static async Task ShowForFunctionAsync(
         string funcName, string funcAddr, IDumpService dump, IPlatformService? platform)
     {

@@ -642,8 +642,8 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
     private static async Task WriteMessageAsync(Stream stream, AobMakerMessage message, CancellationToken ct)
     {
-        // Use Relaxed encoder to avoid \uXXXX escaping of single quotes and non-ASCII
-        // — CE Plugin's Lua JSON parser doesn't handle \uXXXX sequences
+        // Relaxed encoder: quotes and non-ASCII go as UTF-8, not \uXXXX. The plugin's C++ parser has decoded \uXXXX
+        // since AOBMaker 3ac12c2 (2026-03-05), so this is no longer required; it keeps plugins older than that working.
         var json = JsonSerializer.Serialize(message, AobMakerJsonContext.Relaxed.AobMakerMessage);
         var payload = Encoding.UTF8.GetBytes(json);
         var lengthBuf = BitConverter.GetBytes((uint)payload.Length);

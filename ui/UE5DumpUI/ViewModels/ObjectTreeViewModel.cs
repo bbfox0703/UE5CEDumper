@@ -264,8 +264,6 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         await _platform.CopyToClipboardAsync(formatted);
     }
 
-    /// <summary>Right-click "Find Instances (Type)": hand the node's ClassName to
-    /// the Instances tab and auto-run the search (no clipboard round-trip).</summary>
     /// <summary>[AOBM-OBJECT-HEX] The object in CE's hex view. HEX only: a +CE record of an object's base would
     /// show its vtable pointer, which is rarely what the user wanted to watch.</summary>
     [RelayCommand]
@@ -275,6 +273,8 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
         StatusText = await AobMakerActions.HexAsync(AobMaker, node.Address, node.Name, _log);
     }
 
+    /// <summary>Right-click "Find Instances (Type)": hand the node's ClassName to
+    /// the Instances tab and auto-run the search (no clipboard round-trip).</summary>
     [RelayCommand]
     private void FindInstancesByType(UObjectNode? node)
     {

@@ -111,7 +111,8 @@ public sealed partial class AobMakerStatus : ObservableObject
     /// <summary>
     /// [AOBM-ATTACH-CHECK] The warning for what CE reports, or empty. Empty whenever either side is unknown: a check
     /// that cannot tell must not accuse. The comparison is by process id; the name is display only, because the
-    /// plugin reads it through the ANSI API and a non-ASCII exe name arrives with <c>?</c> in it.
+    /// plugin reads it through the ANSI API: a non-ASCII exe name arrives as <c>?</c> or, where the code page can
+    /// hold it, as raw ANSI bytes that our UTF-8 decode garbles.
     /// </summary>
     internal static string DescribeAttach(CeAttachedProcess? ce, int gamePid, string gameModule)
     {
