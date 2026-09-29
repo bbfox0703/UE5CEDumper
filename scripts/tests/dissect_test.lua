@@ -906,6 +906,19 @@ do
   eq(#PRINTS, 0, 'quiet with UE5_DEBUG unset')
 end
 
+uetCase('UETOOLS: untick, then tick again on the same UETools -> suspended again', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  dissect.disableAutoCallback()
+  eq(item.Checked, true, 'set-up: restored by the untick')
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 2, 'the second enable suspends it again: the first one\'s dealings end with its disable')
+  eq(item.Checked, false, 'and unchecks its item')
+  dissect.disableAutoCallback()
+  eq(item.Checked, true, 'and the second untick puts it back')
+end
+
 uetCase('UETOOLS: absent (older CE, or the extension not loaded) -> nothing touched, no error')
 do
   local ok1, r1 = pcall(dissect.enableAutoCallback)
@@ -1031,6 +1044,9 @@ do
   check(warnedWith('unregisterStructureNameLookup: invalid id'), 'printed with UE5_DEBUG unset',
         table.concat(PRINTS, ' | '))
   eq(item.Checked, true, 'the item is left alone: its hooks may still be live')
+  local printed = #PRINTS
+  tick(ST_().uetoolsWatch); tick(ST_().uetoolsWatch)
+  eq(#PRINTS, printed, 'the watch does not retry it, and warn again, on every tick')
   UET.failUnregister = false
   dissect.disableAutoCallback()
   eq(UET.reg, 0, 'hooks still live at disable are not registered twice')
@@ -1074,14 +1090,61 @@ do
   eq(ST_().uetoolsWatch, nil, 'and dropped from the state')
 end
 
-uetCase('UETOOLS: a re-load of the module does not start a second watch', 'scanning')
+uetCase('UETOOLS: a re-load of the module re-uses the running watch instead of starting a second', 'scanning')
 do
   dissect.enableAutoCallback()
+  local t = ST_().uetoolsWatch
+  local firstTick = t and t.OnTimer
   local dissect2 = assert(loadfile(HELPER))()      -- re-add the same file
+  -- The already-registered path reaches the watch too (a re-tick after CE's
+  -- process-change untick), so this is where a second timer would come from.
   dissect2.enableAutoCallback()
   eq(#TIMERS, 1, 'one watch timer across the re-load')
+  eq(ST_().uetoolsWatch, t, 'the same one')
+  check(t ~= nil and t.OnTimer ~= firstTick, "it now runs the re-loaded module's tick")
+  uetScanCompletes()
+  tick(t)
+  eq(UET.unreg, 1, 'and still suspends a registration that arrives')
   dissect2.disableAutoCallback()
   eq(liveTimers(), 0, "the re-loaded module's disable destroys it")
+end
+
+uetCase('UETOOLS: an item that was already unchecked over live hooks stays unchecked after restore', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  userClicksItem()                              -- the user turns UETools off ...
+  registerUEngineStructureLookupCallbacks()     -- ... and its hooks come back from CE's Lua console
+  eq(item.Checked, false, 'set-up: live hooks under an unchecked item')
+  dissect.enableAutoCallback()
+  eq(UET.unreg, 2, 'the live hooks are suspended')
+  dissect.disableAutoCallback()
+  eq(UET.reg, 2, 'and registered again on disable')
+  eq(item.Checked, false, 'the item is not re-checked: auto mode never unchecked it')
+end
+
+uetCase('UETOOLS: restore is skipped when UEngine was rebuilt, even if the item object is the same one', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  -- A new engine that happens to hand back the same item object: the item alone
+  -- cannot tell, so the engine has to.
+  UEngine = { GUI = { miStructureDissectCallbackStatus = item } }
+  local r = dissect.disableAutoCallback()
+  eq(r, true, 'nothing to report')
+  eq(UET.reg, 0, 'no registration against an engine UETools has not scanned')
+end
+
+uetCase('UETOOLS: the watch treats a rebuilt UEngine as UETools starting over, even with the same item object', 'live')
+do
+  local item = UEngine.GUI.miStructureDissectCallbackStatus
+  dissect.enableAutoCallback()
+  UEngine = { GUI = { miStructureDissectCallbackStatus = item } }
+  UEngineStructNameLookup, UEngineStructDissect = 2, 1   -- its scan of the new process registered
+  item.Checked = true
+  tick(ST_().uetoolsWatch)
+  eq(UET.unreg, 2, 'the new engine\'s registration is suspended')
+  eq(UEngineStructDissect, nil, "UETools' dissect override is off")
+  dissect.disableAutoCallback()
 end
 
 uetCase("UETOOLS: when our override gives up (DLL gone), UETools' is put back", 'live')
