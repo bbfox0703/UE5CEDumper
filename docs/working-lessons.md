@@ -3177,8 +3177,14 @@ just "fields have real names": UETools names a structure by its **class** (`Dump
 maintainer runs CE with UETools on. Option (a) now does that for you: while our Auto Structure Dissect is
 ticked it suspends UETools' two hooks and unchecks the item -- again each time UETools re-registers after
 a new scan (a game restart, a re-opened process: every scan makes a NEW item) -- and unticking puts back
-what it took (`[AOBM-DISSECT-UETOOLS]`); an item you turned off yourself before ticking ours, or re-check
-while ours is on, is left to you. So with ours ticked and the item still unchecked, a UETools-shaped result
+what it took (`[AOBM-DISSECT-UETOOLS]`), within ~2 s also when CE unticks or deletes the record without
+running its `[DISABLE]` (a process change with "disable the table's entries" answered Yes); not an
+untick, nor a delete whose ID another record takes, in the first ~2 s after the tick, before the
+watch has seen the record ticked. Ours also
+turns itself off, with the record still showing ticked, after three failed dissects in a row (the
+DLL gone). So check `_ue5_dissect_state.callbackIdOverride` before reading a result after a process
+change or a failed dissect; an item you turned off
+yourself before ticking ours, or re-check while ours is on, is left to you. So with ours ticked and the item still unchecked, a UETools-shaped result
 is itself a finding. ⚠ A callback id is not a slot number you can reason about: in 7.7,
 `registerStructureNameLookup(fn, true)` returned **2** while slot 0 was free, which our local CE clone
 (older than 7.7) cannot explain.

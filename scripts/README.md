@@ -189,7 +189,7 @@ dissect.enableAutoCallback()
 | `dissect.createFromClass(classAddr, [structName])` | Create CE structure from a UClass address |
 | `dissect.createFromPath(fullPath)` | Create CE structure from a full UE object path |
 | `dissect.createInteractive()` | Show input dialog, create structure from user input |
-| `dissect.enableAutoCallback()` | Register CE dissect override — auto-fills on any UObject. While on, it suspends CE 7.7's own UE dissector (Unreal Engine → Use when dissecting structures), which CE would otherwise ask first -- again whenever UETools re-registers after a new scan; your own clicks on that item are left alone |
+| `dissect.enableAutoCallback([memrec])` | Register CE dissect override — auto-fills on any UObject. While on, it suspends CE 7.7's own UE dissector (Unreal Engine → Use when dissecting structures), which CE would otherwise ask first -- again whenever UETools re-registers after a new scan; your own clicks on that item are left alone. Pass the CE memory record that turns it on (the Auto Structure Dissect record passes its `memrec`) and auto mode also turns itself off, within ~2 s, when CE unticks or deletes that record without running its `[DISABLE]` (not an untick, nor a delete whose ID another record takes, before the watch has seen the record ticked -- its first ~2 s); called with no argument it stays on until disabled |
 | `dissect.disableAutoCallback()` | Unregister the auto-fill callbacks, and put CE's own UE dissector back as it was |
 | `dissect.clearAll()` | Destroy all created structures and clear cache |
 
