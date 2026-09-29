@@ -9,7 +9,9 @@
 --   * Manual creation   — user inputs class address / UE path
 --   * Auto callback     — registerStructureDissectOverride; while it is on,
 --                         CE 7.7's own UE dissector (UETools) is suspended so
---                         ours is the one CE asks, and disable puts it back
+--                         ours is the one CE asks -- again whenever UETools
+--                         re-registers after a new scan -- and disable puts
+--                         it back
 --   * Full type mapping — 20+ UE property types
 --   * StructProperty    — recursive flattening via UE5_GetFieldStructClass
 --   * BoolProperty      — ChildStructStart bitmask via UE5_GetFieldBoolMask
@@ -26,9 +28,9 @@
 -- list (audit #5 AA21) and re-registering the dissect override while the previous
 -- registration still stands, leaving disableAutoCallback able to unregister only
 -- the newest (audit #5 AA22). One shared global table makes a re-load idempotent:
--- the caches and the single pair of callback ids survive it. So does anything
--- auto mode holds while it is on (the UETools suspension and its watch timer):
--- a re-loaded module has to be able to undo what the previous load did.
+-- the caches and the single pair of callback ids survive it. So does everything
+-- auto mode holds about UETools while it is on: a re-loaded module has to be
+-- able to undo what the previous load did.
 -- ----------------------------------------------------------------
 _ue5_dissect_state = _ue5_dissect_state or {
   structList  = {},   -- saved CE structure references
@@ -791,13 +793,20 @@ end
 -- CE 7.7). While auto mode is on they are suspended, and disable puts back
 -- exactly what was taken.
 --
+-- A suspension is spent per UETools REGISTRATION, not per enable. UETools starts
+-- over on every process open (a restarted game, or CE re-opening the same one),
+-- and each scan that finishes registers again under a NEW menu item, while a
+-- user's click re-uses the item it is on. So a registration under an item this
+-- enable has not dealt with yet is UETools' own, and is suspended; one under an
+-- item it has dealt with is the user's, and is left alone.
+--
 -- Always through UETools' OWN functions and globals, never CE's callback lists:
 -- 7.7 hands out callback ids by a rule the older CE source does not explain, so
 -- an id is not a slot to reason about. Every UETools name is read at call time:
 -- its functions exist only where the extension is installed, its registration
 -- only once its scan has finished.
 -- ----------------------------------------------------------------
-local UETOOLS_WATCH_MS = 2000   -- UETools can finish its scan after our enable
+local UETOOLS_WATCH_MS = 2000   -- UETools can finish a scan, or start over, at any time
 
 local function uetoolsMenuItem()
     local ue = UEngine
@@ -811,12 +820,20 @@ end
 -- finished registration for the CURRENT engine; the hooks alone do not. On a
 -- process change UEInfoScanner rebuilds UEngine and drops its dissect override
 -- but not its name lookup, and creates the item again only when the new scan
--- ends. Suspending that leftover would spend this enable's one suspension before
--- the real registration arrives, and restoring it would register UETools'
--- callbacks against an engine it has not scanned.
+-- ends. Suspending that leftover would record a suspension with no item, and
+-- restoring it would register UETools' callbacks against an engine it has not
+-- scanned.
 local function uetoolsLive()
     return (UEngineStructNameLookup ~= nil or UEngineStructDissect ~= nil)
         and uetoolsMenuItem() ~= nil
+end
+
+-- Has this enable already dealt with the UETools registration that is current
+-- now? ST.uetoolsSeen names the engine and item of the last one it did; a
+-- different engine or item is UETools starting over, not the user.
+local function uetoolsIsSeen()
+    local seen = ST.uetoolsSeen
+    return seen ~= nil and seen.engine == UEngine and seen.item == uetoolsMenuItem()
 end
 
 local function stopUEToolsWatch()
@@ -831,9 +848,13 @@ end
 local function suspendUETools()
     local item = uetoolsMenuItem()
     -- Recorded BEFORE the call: an unregister that raises halfway still leaves
-    -- something for disable to put back.
+    -- something for disable to put back. It replaces any earlier record, which
+    -- names a registration UETools has since started over from.
     local rec = { engine = UEngine, item = item, unchecked = false }
     ST.suspendedUETools = rec
+    -- Seen even when the call fails, or the watch would retry it -- and warn --
+    -- on every tick.
+    ST.uetoolsSeen = { engine = rec.engine, item = item }
     local ok, err = pcall(unregisterUEngineStructureLookupCallbacks)
     if not ok then
         -- Its hooks may still be registered, so the item keeps its tick: an
@@ -870,9 +891,10 @@ local function restoreUETools()
     local rec = ST.suspendedUETools
     ST.suspendedUETools = nil   -- cleared on every path: a stale record must not outlive this disable
     if not rec then return true end
-    -- A rebuilt UEngine (the user opened another process) or a new item means
-    -- UETools started over. It registers itself when it recognizes the game, and
-    -- what was suspended belonged to an engine that is gone.
+    -- A rebuilt UEngine or a new item means UETools started over after the last
+    -- suspension recorded here: its scan has not finished, or finished after the
+    -- watch's last tick. Either way it registers itself when the scan finishes,
+    -- and what was suspended belonged to a registration that is gone.
     if UEngine ~= rec.engine or uetoolsMenuItem() ~= rec.item then
         log("UETools started over while auto dissect was on; left to register itself")
         return true
@@ -905,29 +927,47 @@ local function restoreUETools()
     return true
 end
 
--- One tick of the watch that enable starts when UETools is installed but has not
--- registered yet. It suspends at most once per enable: UETools coming back on
--- after that is left alone, because the user can turn it on again from its menu
--- and fighting that would take the choice away from them.
+-- One tick of the watch that runs while auto mode is on. A UETools registration
+-- this enable has not dealt with -- a scan finishing after our enable, or UETools
+-- starting over on a process open -- is suspended. A re-check of an item already
+-- dealt with is the user's and is left alone: they can turn UETools on again from
+-- its menu, and fighting that would take the choice away from them.
 local function uetoolsWatchTick()
-    if not ST.callbackIdOverride or ST.suspendedUETools then
-        stopUEToolsWatch()
+    if not ST.callbackIdOverride then
+        stopUEToolsWatch()   -- ours are gone: there is nothing to stand in for
         return
     end
-    if not uetoolsLive() then return end
-    stopUEToolsWatch()
-    suspendUETools()   -- reports its own failure; a timer has no caller to tell
+    if uetoolsLive() and not uetoolsIsSeen() then
+        suspendUETools()   -- reports its own failure; a timer has no caller to tell
+    end
 end
 
-local function startUEToolsWatch()
-    stopUEToolsWatch()
-    -- No owner: ST holds it, so disable -- or a re-loaded module's disable --
-    -- can destroy it.
-    local t = createTimer(nil, false)
-    t.Interval = UETOOLS_WATCH_MS
+-- One watch however many times the module is loaded: ST holds it, so disable --
+-- or a re-loaded module's disable -- can destroy it. A re-load re-points the
+-- running one at this load's tick.
+local function ensureUEToolsWatch()
+    local t = ST.uetoolsWatch
+    if not t then
+        t = createTimer(nil, false)   -- no owner: ST holds it
+        t.Interval = UETOOLS_WATCH_MS
+        ST.uetoolsWatch = t
+    end
     t.OnTimer = function() uetoolsWatchTick() end
     t.Enabled = true
-    ST.uetoolsWatch = t
+end
+
+-- Called with ours registered: a registration of ours that raises must not leave
+-- the user with neither dissector. Returns as suspendUETools does.
+local function standInForUETools()
+    if type(unregisterUEngineStructureLookupCallbacks) ~= "function" then
+        return true   -- no UETools here: an older CE, or the extension is not loaded
+    end
+    -- The watch follows OUR registration, not the record's tick: CE's untick on a
+    -- process change (disableAllWithoutExecute) skips [DISABLE], so ours can stay
+    -- registered with the record unticked, and it is ours that UETools would pre-empt.
+    ensureUEToolsWatch()
+    if uetoolsLive() and not uetoolsIsSeen() then return suspendUETools() end
+    return true
 end
 
 -- ----------------------------------------------------------------
@@ -940,22 +980,17 @@ end
 -- ----------------------------------------------------------------
 function dissect.enableAutoCallback()
     if ST.callbackIdOverride then
+        -- Still stands in for UETools below: a re-tick after CE's process-change
+        -- untick lands here with UETools registered again for the new game.
         log("Auto callback already registered")
-        return true
+    else
+        ST.callbackIdOverride    = registerStructureDissectOverride(dissectOverrideCallback)
+        ST.callbackIdNameLookup  = registerStructureNameLookup(nameLookupCallback)
+        warnedCallbackFailure = false   -- fresh registration: allow the one-time warning again
+        callbackFailStreak    = 0
+        log("Auto dissect callbacks registered")
     end
-    ST.callbackIdOverride    = registerStructureDissectOverride(dissectOverrideCallback)
-    ST.callbackIdNameLookup  = registerStructureNameLookup(nameLookupCallback)
-    warnedCallbackFailure = false   -- fresh registration: allow the one-time warning again
-    callbackFailStreak    = 0
-    log("Auto dissect callbacks registered")
-    -- UETools only AFTER ours are in: a registration of ours that raises must not
-    -- leave the user with neither dissector.
-    if type(unregisterUEngineStructureLookupCallbacks) ~= "function" then
-        return true   -- no UETools here: an older CE, or the extension is not loaded
-    end
-    if uetoolsLive() then return suspendUETools() end
-    startUEToolsWatch()   -- installed, but it has not recognized this game (yet)
-    return true
+    return standInForUETools()
 end
 
 function dissect.disableAutoCallback()
@@ -968,6 +1003,7 @@ function dissect.disableAutoCallback()
         unregisterStructureNameLookup(ST.callbackIdNameLookup)
         ST.callbackIdNameLookup = nil
     end
+    ST.uetoolsSeen = nil   -- the next enable deals with whatever UETools has then
     log("Auto dissect callbacks unregistered")
     return restoreUETools()
 end
