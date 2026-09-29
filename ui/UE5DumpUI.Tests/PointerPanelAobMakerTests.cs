@@ -7,8 +7,8 @@ using Xunit;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// The Pointer panel's newer AOBMaker buttons: [AOBM-GNAMES-SYMBOL] (a GObjects / GNames symbol from AOBMaker.UI's
-/// GenerateAob) and [AOBM-PTR-SCANASM] (ASM on the FSparseDelegateStorage and &amp;GEngine scan hits).
+/// The Pointer panel's AOBMaker buttons, each section under its finding tag: a GObjects / GNames symbol from
+/// AOBMaker.UI's GenerateAob, the scan-hit ASM buttons, and what HEX / ASM report.
 /// <para>The symbol is the dangerous one: a plausible, wrong symbol roots every CE record the user builds on it. So the
 /// rule under test is that NOTHING is pushed unless replaying the AOB lands exactly where the DLL resolved the pointer.</para>
 /// </summary>
@@ -179,7 +179,8 @@ public class PointerPanelAobMakerTests
         GObjectsAddr = $"0x{GObjects:X}", GObjectsScanAddr = $"0x{Match:X}",
         GNamesAddr = "0x7FF613000000", GNamesScanAddr = "0x7FF610001000",
         GWorldAddr = "0x7FF614000000", GWorldScanAddr = "0x7FF610004000",
-        SparseDelegatesScanAddr = "0x7FF610002000", GEngineScanAddr = "0x7FF610003000",
+        SparseDelegatesAddr = "0x7FF615000000", SparseDelegatesScanAddr = "0x7FF610002000",
+        GEngine = "0x7FF616000000", GEngineScanAddr = "0x7FF610003000",
         ProcessId = 4242, ModuleName = "Game.exe",
     };
 
@@ -238,6 +239,48 @@ public class PointerPanelAobMakerTests
         Assert.Equal(AobMakerUnavailable.Text(rig.Bridge), rig.Vm.ErrorMessage);
         Assert.False(rig.Vm.IsAobMakerAvailable);
         Assert.False(rig.Vm.CanAsmGObjectsScan);
+    }
+
+    // The HEX buttons beside them had the same silence.
+
+    private static CommunityToolkit.Mvvm.Input.IAsyncRelayCommand Hex(PointerPanelViewModel vm, string pointer)
+        => pointer switch
+        {
+            "GObjects" => vm.HexGObjectsCommand,
+            "GNames" => vm.HexGNamesCommand,
+            "GWorld" => vm.HexGWorldCommand,
+            "FSparseDelegateStorage" => vm.HexSparseDelegatesCommand,
+            "&GEngine" => vm.HexGEngineCommand,
+            _ => throw new ArgumentOutOfRangeException(nameof(pointer), pointer, null),
+        };
+
+    [Theory]
+    [InlineData("GObjects", "0x7FF612345670")]
+    [InlineData("GNames", "0x7FF613000000")]
+    [InlineData("GWorld", "0x7FF614000000")]
+    [InlineData("FSparseDelegateStorage", "0x7FF615000000")]
+    [InlineData("&GEngine", "0x7FF616000000")]
+    public async Task HEX_on_a_pointer_says_where_CE_went(string pointer, string addr)
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+
+        await Hex(rig.Vm, pointer).ExecuteAsync(null);
+
+        Assert.Equal(addr[2..], rig.Bridge.LastHex);
+        Assert.Equal($"CE hex view: {pointer} @ {addr}", rig.Vm.SymbolStatusText);
+        Assert.Null(rig.Vm.ErrorMessage);
+    }
+
+    [Fact]
+    public async Task HEX_that_CE_refuses_says_so_in_red()
+    {
+        var rig = Build(Answer(), Code(), EveryScanHit());
+        rig.Bridge.NavigateResult = false;
+
+        await rig.Vm.HexGWorldCommand.ExecuteAsync(null);
+
+        Assert.Equal("Cheat Engine did not move its view to GWorld @ 0x7FF614000000", rig.Vm.ErrorMessage);
+        Assert.Equal("", rig.Vm.SymbolStatusText);
     }
 
     [Fact]
