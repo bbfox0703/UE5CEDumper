@@ -147,8 +147,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// read it. A change hook alone misses false -> false with a new reason; <see cref="ApplyAobMakerProbe"/> covers it.</summary>
     partial void OnIsAobMakerAvailableChanged(bool value) => NotifyAobMakerProperties();
 
-    /// <summary>[R7-S7] Publish a probe another panel ran on the SHARED bridge: set the flag AND repaint, even when the
-    /// flag is unchanged, because the reason behind "not reachable" may have moved (absent -> busy).</summary>
+    /// <summary>[R7-S7] Publish what a probe or a push on the SHARED bridge learned: set the flag AND repaint, even when
+    /// the flag is unchanged, because the reason behind "not reachable" may have moved (absent -> busy).</summary>
     public void ApplyAobMakerProbe(bool available)
     {
         IsAobMakerAvailable = available;
@@ -1134,7 +1134,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     internal const string KeyScanHitLabel = "str.Pointers.ScanHitLabel";
 
     /// <summary>[AOBM-SYSTAB-ASM-SILENT] What an ASM line calls a scan hit. The pointer's name alone would read as the
-    /// card's own address, and the disassembler lands somewhere else: on the instruction that resolved it.</summary>
+    /// card's own address, and the disassembler lands somewhere else: where the AOB pattern matched, at or a few bytes
+    /// before the instruction that resolved the pointer.</summary>
     internal static string ScanHitLabel(string pointer)
         => AobMakerStatus.Say(KeyScanHitLabel, "{0} AOB scan hit", pointer);
 

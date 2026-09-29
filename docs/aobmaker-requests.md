@@ -171,12 +171,12 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
   - A third activation site we missed: `CreateAAScriptWithRecords` activates unconditionally, before its own check.
     An exception there replies `success:false` although the records exist.
 - **Consumers in UE5CEDumper:**
-  - the Pointer panel's Register GWorld and Register &GEngine symbol buttons;
+  - the Pointer panel's symbol buttons: Register GWorld, Register &GEngine, and SYM on GObjects / GNames;
   - the standalone trainer's Setup row, until `1f9cf2ef` pushed it unticked.
 
-  Both used `autoActivate:true`, and both reported success whatever happened. The trainer Setup's own failure
-  path also raised a modal over the bridge: our defect, `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md), fixed
-  in source by leaving Setup for the user to tick.
+  The symbol buttons use `autoActivate:true` and report success whatever happened. The trainer Setup did the same
+  until `1f9cf2ef`, and its own failure path also raised a modal over the bridge: our defect,
+  `[AOBM-TRAINER-SETUP-MODAL]` in [todo.md](todo.md), fixed in source by leaving Setup for the user to tick.
 - **Acceptance:** send a script with a deliberate syntax error and `autoActivate:true`. The reply is
   `success:true, activated:false`, with the reason in `message`. With no pre-check, nothing guarantees that no dialog
   appears; whether a failed activation raises one is not measured yet (AOBMaker eval §6).

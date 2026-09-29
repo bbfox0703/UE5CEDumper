@@ -171,8 +171,8 @@ public class PointerPanelAobMakerTests
 
     // ---- [AOBM-SYSTAB-ASM-SILENT] ----
     // The ASM buttons dropped the bridge's answer, so neither a success nor a refusal said anything and CE was the only
-    // witness. They report as every other HEX / ASM in the app does: success on the green line the symbol buttons use,
-    // a refusal on the red one.
+    // witness. They now report on this panel's two lines: success on the green one the symbol buttons use, a refusal
+    // on the red one.
 
     private static EngineState EveryScanHit() => new()
     {

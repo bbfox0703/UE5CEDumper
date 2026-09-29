@@ -305,7 +305,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
                 // style for refusals. Activated by the push, the plugin runs it on CE's main thread while its single
                 // bridge worker waits, so that modal blocks every bridge client until the user closes it (seen live
                 // 2026-09-29: a bridge-triggered activation whose record raised a modal timed the bridge call out), and
-                // an immediate read-back still sees Active=true. Ticked by the user in CE, the same modal blocks nobody.
+                // an immediate read-back still sees Active=true. Ticked by the user in CE, no bridge call waits on the
+                // activation.
                 var sent = await _aobMaker.CreateAAScriptAsync(e.Description, e.Script, autoActivate: false,
                                                                group: CeGroupTrainer);
                 if (sent) { ok++; }
