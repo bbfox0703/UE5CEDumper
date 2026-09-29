@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-09-29 (build 3603) — AOBMaker: the trainer's Setup is left for you to tick; the System tab and Live Walker say where Cheat Engine went `[AOBM-TRAINER-SETUP-MODAL]` `[AOBM-SYSTAB-ASM-SILENT]` `[AOBM-LIVEWALKER-HEX-SILENT]`
+
+- Teleport → Standalone Trainer → Export to CE: every entry arrives unticked, Setup included (now named "tick this
+  first"), and the status says to tick Setup first. A Setup that fails no longer holds up the AOBMaker plugin for
+  UE5DumpUI's other buttons while its message is open.
+- System tab: ASM and HEX now say where Cheat Engine's view went, or why it did not; if the plugin has gone, the
+  buttons switch off.
+- Live Walker: the four HEX buttons (field, pointer target, object, Outer) do the same.
+- Checked live on DumperTest and Avowed with Cheat Engine and the AOBMaker plugin (2026-09-29), together with the
+  AOBMaker items the earlier check left to unit tests, and SYM's refusal of an adjusted GObjects signature on Avowed.
+- Build 3603: AOT `dist\UE5DumpUI.exe` 58,872,320 B, sha256 `2222c0cd4261`; `dist\UE5Dumper.dll` 3,039,744 B,
+  `61d0f065c75a`. C# 5938/5938, headless 15/15, dll_core 593 checks.
+
 ## 2026-09-29 (not built yet — the next build carries it) — AOBMaker where the app only copied: +CE / HEX / ASM on nine more panels, GObjects and GNames symbols, Auto Structure Dissect `[AOBMAKER-EVAL-2026-09-29]`
 
 - Value Search, Snapshot, SPC and Instance Finder rows get **+CE** (a typed record in Cheat Engine's address list) and
