@@ -486,7 +486,7 @@
     <sys:String x:Key="str.AobMaker.GenAob.Unreadable">Not pushed: could not read game memory at 0x{1:X} to check where '{0}' would land</sys:String>
     <sys:String x:Key="str.AobMaker.GenAob.Mismatch">Not pushed: the AOB would register '{0}' at 0x{1:X}, but the DLL resolved {2} (this signature dereferences or adjusts)</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Injecting">Adding {0} to the current CE table…</sys:String>
-    <sys:String x:Key="str.AobMaker.Dissect.Added">Auto Structure Dissect added to the current CE table: tick '{0}' to turn it on</sys:String>
+    <sys:String x:Key="str.AobMaker.Dissect.Added">Auto Structure Dissect added to the current CE table: tick '{0}' to turn it on. While ticked it stands in for CE's own Unreal Engine → Use when dissecting structures, and puts it back when unticked</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.FileFailed">Could not embed {0} in the CE table: {1}</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.RecordFailed">{0} is embedded, but its enable record did not reach CE (CE closed?): run this again</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Unavailable">Auto Structure Dissect needs the AOBMaker CE plugin: {0}</sys:String>

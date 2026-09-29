@@ -346,7 +346,8 @@ internal static class AobMakerActions
 
     internal static string DissectAddedText()
         => AobMakerStatus.Say(KeyDissectAdded,
-            "Auto Structure Dissect added to the current CE table: tick '{0}' to turn it on",
+            "Auto Structure Dissect added to the current CE table: tick '{0}' to turn it on. While ticked it stands " +
+            "in for CE's own Unreal Engine → Use when dissecting structures, and puts it back when unticked",
             DissectScriptGenerator.RecordDescription);
 
     /// <param name="pluginError">The plugin's own reason, or null when the failure was a connect or timeout here.</param>
