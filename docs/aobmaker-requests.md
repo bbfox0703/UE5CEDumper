@@ -278,8 +278,9 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
 ## R8 — Large imports and honest failure counts (P2, defect / limit)
 
 - **Today:**
-  - `ImportCheatTableXml` is one message of at most 10 MiB, JSON-escaped. UE5CEDumper's CE XML export is capped at
-    60,000 entries (`CeXmlExportService.MaxEmitEntries`), and a large export can exceed 10 MiB.
+  - `ImportCheatTableXml` is one message of at most 10 MiB, JSON-escaped. UE5CEDumper's CE XML export was capped at
+    60,000 entries; since 2026-10-01 its only stop is a 256 Mi-character crash guard (`CeXmlExportService.MaxEmitChars`,
+    `[CEXML-CAP-60K]`), and a large export exceeds 10 MiB: DumperTest's NestedBag is 98,890 entries, 30.35 M characters.
   - When a chunk fails, CE keeps the records already made, because nothing rolls back. The reply still says
     `totalCreated: 0`: `WindowsCEPluginClient` sets `TotalCreated` only on the End success path. **Root cause, per
     AOBMaker (`EXT-5`):** the plugin's recovery `End` does report the real count; AOBMaker.UI's

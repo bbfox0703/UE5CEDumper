@@ -3189,6 +3189,20 @@ is itself a finding. ⚠ A callback id is not a slot number you can reason about
 `registerStructureNameLookup(fn, true)` returned **2** while slot 0 was free, which our local CE clone
 (older than 7.7) cannot explain.
 
+### 4.6 Cheat Engine's paste has no size limit -- ours had one, and it read like CE's
+
+Copy CE XML stopped at 60,000 entries, and by 2026-10-01 the belief was that CE limits the XML it accepts. It does
+not: `TMainForm.paste` reads the whole clipboard, `TAddresslist.AddTableXMLAsText` parses it with no size check,
+and `TMemoryRecord.setXMLnode` recurses with no counter -- no cap on size, entries, depth, offsets or a
+DropDownList in the 7.5 source, and the same files are byte-identical in the public upstream master (7.5.1; the
+7.6/7.7 source is not published). Measured on CE 7.7.0.10621 (`[CEXML-CAP-60K]`): 98,890 entries, 30 MB, pasted
+whole in under 229 s, CE at ~1.7 GB. The 60,000 was our own out-of-memory backstop.
+
+**How to apply.** Before calling a limit CE's, find it in CE's code. What CE's paste does have is **cost**, since
+every pasted ID is checked against the whole list, and **silence**: any exception, a malformed document or one
+non-numeric `<ID>` / `<Length>`, is swallowed (`don't complain`) and leaves whatever was pasted before it.
+Size a guard on what the generator's memory can hold, and say in the message that the guard is ours.
+
 -----
 
 ## 5. Triage recipes

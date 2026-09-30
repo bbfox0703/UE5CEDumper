@@ -27,6 +27,17 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3607) — Copy CE XML no longer stops at 60,000 entries `[CEXML-CAP-60K]`
+
+- Copy CE XML, Copy CE Field and Instance Finder's Copy CE XML stopped at 60,000 entries, and real tables go past
+  that: a big TMap or TArray is enough. Cheat Engine itself has no such limit. The only stop now is a guard against
+  a runaway export running the app out of memory, at 256 million characters of XML (800,000 entries or more).
+- Checked live on DumperTest: a 98,890-entry export (30 MB) is copied whole, and Cheat Engine 7.7 pasted all of it
+  in under four minutes.
+- The Fabricate slider no longer warns that a large value can truncate the export.
+- Build 3607: AOT `dist\UE5DumpUI.exe` 58,923,008 B, sha256 `d41d5ffcf63e`; `dist\UE5Dumper.dll` `fa379822dd55`.
+  C# 5955/5955, 29 gates.
+
 ## 2026-09-30 (build 3606) — SYM says whether Cheat Engine actually enabled the symbol `[AOBM-ACTIVATE-RESULT]`
 
 - SYM on GWorld, &GEngine, GObjects and GNames used to say "Registered" whenever the record was created, even when
