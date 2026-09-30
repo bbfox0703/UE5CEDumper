@@ -28,7 +28,10 @@ UE5DumpUI (C# Avalonia)                AOBMaker CE Plugin (C++ DLL)
 
 The plugin is a C++ DLL. It parses JSON in C++ (`json_parse.h`), and its handlers run CE Lua on CE's main thread
 through `synchronize`. AOBMaker's answer to our requests, and the rules a client must follow today, are its
-`docs/UE5CEDumper-Requests-Reply.md` (`9431370`); ours are [aobmaker-requests.md](aobmaker-requests.md).
+`docs/UE5CEDumper-Requests-Reply.md` (first `9431370`; updated for release `v20260930` (build 157) at `f8cad7d`); ours are
+[aobmaker-requests.md](aobmaker-requests.md). Its §3 is the current client contract, one rule per build range: a
+user may still run a DLL from `v20260925` or earlier ("build 153 and earlier"), and the only build signal the
+bridge gives is the bulk `features[]` list, so a client that cannot tell keeps the old-build form of each rule.
 
 ---
 

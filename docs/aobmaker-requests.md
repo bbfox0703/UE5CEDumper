@@ -13,6 +13,15 @@ list are `EV-1`–`EV-5` (its `docs/Bug-Leak-Audit-Control-Table.md` §5).
 The reply answers R1–R16. R17 was filed after it and is not answered. Each request below now carries an
 **AOBMaker's answer** line.
 
+**Updated for AOBMaker release `v20260930` (build 157), 2026-09-30** (reply at AOBMaker `dev` `f8cad7d`): the first shipped
+fixes. Shipped in full: R3, R4, R15 (bulk nodes and import), R16 (a)–(e) and (g); in part: R1 (bulk `features[]`),
+R2, R7 (steps 1–2), R8 and R9. The reply's §0 names the builds: **155** has the first batch, **156** adds import
+fidelity and the `FindMostAccessed` replies, and both first ship in v20260930; "build 153 and earlier" is every
+release up to `v20260925`. Its §3 is the client contract now, rule by build -- read rules **8** (`activated`,
+`symbolRegistered`), **16** (read `features` before sending a new node member) and **20** (scripts verbatim when
+the DLL lists `bulk.scriptVerbatim`) before any new bridge call. A rule that is lifted on 155+ still applies to a
+user on an older build, and no command reports the DLL's build except `features`.
+
 **When a request ships:**
 1. Write the AOBMaker commit into its row in the summary table.
 2. Flip the UE5CEDumper todo row it unblocks.
@@ -39,22 +48,22 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
 
 | ID | Asked | Kind | Request | AOBMaker (reply §1) | Unblocks in UE5CEDumper | Shipped in |
 |---|---|---|---|---|---|---|
-| R1 | P1 | new command | Capability discovery on the CE bridge | Accepted, narrowed · P1 · not started | every row below — feature gating | |
-| R2 | P1 | defect / schema | Import keeps bit fields, dropdowns, colours, string flags; reports what it drops | Split: bits and `dropped` P1; dropdown, colour, `codePage` P2–P3; `zeroTerminate` declined · not started | `[AOBM-CEXML-PUSH]` | |
-| R3 | P1 | defect | An address-less `GroupHeader` imports as a plain folder | Accepted, its own defect (`EXT-2`) · P1 · not started | `[AOBM-CT-PUSH]` | |
-| R4 | P1 | defect | `autoActivate` reports whether CE actually enabled the script | Accepted with changes (`EXT-4`) · P1 · not started | `[AOBM-ACTIVATE-RESULT]` | |
+| R1 | P1 | new command | Capability discovery on the CE bridge | Accepted, narrowed · P1 · bulk `features[]` shipped: 4 names on build 155, 8 on 156 | every row below — feature gating | `d34abac` (155), `3f09138` `00a3ec0` `db934b6` (156) · v20260930 -- bulk only |
+| R2 | P1 | defect / schema | Import keeps bit fields, dropdowns, colours, string flags; reports what it drops | Partly shipped: bits, child options (155); symbolic pointer offsets, `ByteLength`, `Async`, header type, verbatim scripts (156) · not started: `dropped`, dropdown, colour, `codePage` | `[AOBM-CEXML-PUSH]` | `d34abac` `f383dd1` (155), `3f09138` `e69a8fb` `00a3ec0` `db934b6` (156) · v20260930 |
+| R3 | P1 | defect | An address-less `GroupHeader` imports as a plain folder | Shipped (`EXT-2`); import needs AOBMaker.UI + DLL of the same build, 155+ (156 for symbolic offsets, `ByteLength`, `Async`; reply §3 rule 15) | `[AOBM-CT-PUSH]` | `d34abac` · v20260930 |
+| R4 | P1 | defect | `autoActivate` reports whether CE actually enabled the script | Shipped (`EXT-4`): `activated` tri-state + CE's reason in `message`; `symbolRegistered` on `CreateSymbolScript` (reply §3 rule 8) | `[AOBM-ACTIVATE-RESULT]` | `ad247a2` `f383dd1` · v20260930 |
 | R5 | P1 | new commands | Record IDs in replies; find, delete, and skip-or-replace on create | IDs accepted under other names · P1; `FindRecords` scoped · P2; delete and `replace` on hold · not started | `[AOBM-DEDUP-TABLE]` | |
 | R6 | P2 | schema | `CreateMemoryRecord` carries bits, dropdowns, string flags, offsets, colour | Not extended: R2's node fields in a one-node batch · P3 · not started | `[AOBM-PLUSCE-FIDELITY]` | |
-| R7 | P2 | defect / schema | `group` matches headers only; nested group paths; colour on AA scripts | Accepted (`K7-13`; `K7-14` first) · P2 · not started | `[AOBM-CT-PUSH]` | |
-| R8 | P2 | defect / limit | Imports over 10 MiB; honest partial-failure counts; a reply to oversize requests | Count fix P1; oversize reply P2; streaming P3 (`EXT-5`) · not started | `[AOBM-CEXML-PUSH]` | |
-| R9 | P2 | defect / schema | `FindMostAccessed`: every hit, read vs write, size, the right instruction, no long hold | On hold until a live check · P3; the clamp P2 (`EXT-6`, `EV-2`, `EV-3`) | `[AOBM-FIND-ACCESS]` | |
+| R7 | P2 | defect / schema | `group` matches headers only; nested group paths; colour on AA scripts | Partly shipped: steps 1–2 (a failed call cleans up; plain `group` matches root-level headers only) · `groupPath`, `color` not started | `[AOBM-CT-PUSH]` | `d28a4d0` · v20260930 -- steps 1–2 |
+| R8 | P2 | defect / limit | Imports over 10 MiB; honest partial-failure counts; a reply to oversize requests | Partly shipped: the count fix, an oversize reply on both pipes, a chunk's `created` on a Lua error · streaming import not started | `[AOBM-CEXML-PUSH]` | `f5c57da` `f2730bb` `7e26152` `89c8edd` · v20260930 |
+| R9 | P2 | defect / schema | `FindMostAccessed`: every hit, read vs write, size, the right instruction, no long hold | Partly shipped: 30 s clamp, own-hit filter, failure replies (155); an exited process and a failed attach get their own replies, navigation on CE's main thread (156) · extension not started | `[AOBM-FIND-ACCESS]` | `5276da8` (155), `1bbcac6` (156) · v20260930 |
 | R10 | P3 | schema | A record-level hotkey at creation — only if proven reliable | Not accepted for now: the creating Lua call is unverified · on hold | `[AOBM-RECORD-HOTKEYS]` | |
 | R11 | P3 | new command | Attach CE to a process id | Accepted · P3 · not started | `[AOBM-ATTACH-CHECK]` (its one-click fix) | |
 | R12 | P3 | new command | Create a Structure Dissect structure from CSX XML | Declined as specified; the workaround is ours | `[AOBM-DISSECT-INJECT]` (the CSX half — now our own work) | |
 | R13 | P3 | new command | An injection AA script from an address, over the UI pipe | Accepted in principle, design first · P3 · not started | `[DENKEN-WRITE-SITES]` | |
 | R14 | P3 | new command | Find the instructions that reference an address | Accepted, C# only · P2 · not started | `[AOBM-EXPORT-GWORLD-AOB]` | |
-| R15 | P3 | schema | `customType` on records | Accepted after a CE-source check (`EXT-15`) · P3 · not started | `[AOBM-CUSTOMTYPE]` | |
-| R16 | P2 | defects / docs | Protocol hygiene: whitespace, key order, number types, nulls, missing replies, doc drift | Split per item, P1–P3; docs fixed in `e75562d` for (a), (c), (f), (g) · code open | any client of the bridge | |
+| R15 | P3 | schema | `customType` on records | Shipped for bulk nodes and import (`EXT-15`); `CreateMemoryRecord` has none -- use a one-node batch | `[AOBM-CUSTOMTYPE]` | `d34abac` · v20260930 |
+| R16 | P2 | defects / docs | Protocol hygiene: whitespace, key order, number types, nulls, missing replies, doc drift | Shipped (a)–(e), (g); (f) closed as docs (AOBMaker's own colours are correct) | any client of the bridge | `3ba4729` `9b3f522` `7e26152` `b9af932` · v20260930 |
 | R17 | P3 | schema | `CreateSymbolScript` adds a constant after the RIP resolution | Not in the reply: filed after it | `[AOBM-GWORLD-GENAOB]` (adjusted signatures) | |
 
 ---

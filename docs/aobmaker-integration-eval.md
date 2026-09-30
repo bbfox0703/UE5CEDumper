@@ -5,7 +5,9 @@ AOT-trimmed on Windows as build 3599 (`21687f7c`); not yet checked on a running 
 [verification-register.md](verification-register.md) `[AOBMAKER-A1-A9-LIVE]`. Each A item's **Done** line says what
 shipped and where it differs from the plan below. The evaluation itself was code reading only.
 **AOBMaker replied in `9431370`** (its `docs/UE5CEDumper-Requests-Reply.md`). The B and C items below carry its
-verdicts; [aobmaker-requests.md](aobmaker-requests.md) has them per request.
+verdicts; [aobmaker-requests.md](aobmaker-requests.md) has them per request. **AOBMaker release `v20260930` (build 157)** ships
+R3, R4, R15 and most of R16, and parts of R1, R2, R7, R8, R9; the per-request status is in aobmaker-requests.md,
+and the B rows it unblocks are flipped in [todo.md](todo.md).
 Baseline: UE5CEDumper `dev` at build 3598, AOBMaker `dev` at `2528712`. AOBMaker line numbers are
 pinned to that commit, except in the notes taken from AOBMaker's answer, which cite `9431370`.
 UE5CEDumper sites are named by `Type.Method`, which survives edits.
