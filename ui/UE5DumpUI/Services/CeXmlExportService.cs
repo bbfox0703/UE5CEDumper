@@ -187,26 +187,20 @@ public static class CeXmlExportService
     private static int _emitPointerDepth;
 
     /// <summary>
-    /// Global safety ceiling on the number of CE entries one Generate* call may emit.
-    /// A densely-connected object graph (a field that reaches GWorld → PersistentLevel
-    /// → Actors[…] → components → …) makes the drilldown re-expand shared sub-objects
-    /// combinatorially — the per-path cycle guard (_emitPath) and per-pointer depth cap
-    /// (MaxEmitPointerDepth) don't bound the BREADTH, so the StringBuilder previously
-    /// grew until OutOfMemory (Copy CE XML on a full character view). Once this many
-    /// entries are emitted the recursion stops and the export is flagged truncated.
-    /// Generous enough that any legitimate single-object export fits; only a runaway
-    /// deep-drill on a dense graph trips it.
+    /// Global safety ceiling on how much XML one Generate* call may build. A densely-connected object graph (a field
+    /// that reaches GWorld → PersistentLevel → Actors[…] → components → …) makes the drilldown re-expand shared
+    /// sub-objects combinatorially when shared-object dedup is off — the per-path cycle guard (_emitPath) and the
+    /// per-pointer depth cap (MaxEmitPointerDepth) don't bound the BREADTH, so the StringBuilder once grew until
+    /// OutOfMemory (Copy CE XML on a full character view). Once the guard is reached the recursion stops and the
+    /// export is flagged truncated.
+    /// <para>[CEXML-CAP-60K] It is a crash guard in characters, not an entry count. It was 60,000 entries -- about
+    /// 16 M characters -- and real tables passed that: DumperTest's NestedBag needs 98,890 entries. Cheat Engine's
+    /// paste has no size or entry limit (7.5 and the public 7.5.1 source), so this bounds only OUR memory: 256 Mi
+    /// characters is 512 MiB of UTF-16 in the StringBuilder, as much again for ToString and for the clipboard, and well
+    /// under the ~1 Gi-character .NET string limit the runaway export threw at. At the ~270-340 characters an entry
+    /// measured on real exports that is 800,000 entries or more; a real 21,000-entry table is under 9 MB.</para>
     /// </summary>
-    internal const int MaxEmitEntries = 60_000;   // internal: Instance Finder's warning quotes it
-
-    /// <summary>
-    /// [CEXML-CAP-60K] The crash guard, in characters of XML. Cheat Engine's paste has no size or entry limit (7.5 and
-    /// the public 7.5.1 source), so this bounds only OUR memory: 256 Mi characters is 512 MiB of UTF-16 in the
-    /// StringBuilder, as much again for ToString and for the clipboard, and well under the ~1 Gi-character .NET string
-    /// limit that made the runaway export throw. At the ~310 characters an entry measured on real exports that is about
-    /// 860,000 entries; a real 21,000-entry table is under 9 MB.
-    /// </summary>
-    internal const int MaxEmitChars = 256 * 1024 * 1024;
+    internal const int MaxEmitChars = 256 * 1024 * 1024;   // internal: Instance Finder's warning quotes it
 
     /// <summary>A test's lower guard. AsyncLocal, not ThreadStatic: the Instance Finder tests reach the generator
     /// through an awaited command, and a test must not lower the guard for another test's thread.</summary>
@@ -226,13 +220,18 @@ public static class CeXmlExportService
         public void Dispose() => _emitCharBudgetOverride.Value = previous;
     }
 
+    /// <summary>The builder's length when the last entry was started: the guard's measure. Kept by the four entry
+    /// emitters, so every check site reads it without holding the builder.</summary>
     [ThreadStatic]
-    private static int _emitEntryCount;
+    private static int _emitChars;
+    /// <summary>The guard for this Generate* call: <see cref="MaxEmitChars"/>, or a test's lower one.</summary>
+    [ThreadStatic]
+    private static int _emitCharBudget;
     [ThreadStatic]
     private static bool _emitTruncated;
 
     /// <summary>
-    /// True when the most recent Generate* call hit <see cref="MaxEmitEntries"/> and
+    /// True when the most recent Generate* call hit <see cref="MaxEmitChars"/> and
     /// stopped emitting early (the export is incomplete). The caller reads this right
     /// after the synchronous Generate* call (same thread) to warn the user.
     /// </summary>
@@ -1198,7 +1197,8 @@ public static class CeXmlExportService
         _emitPath = new HashSet<string>(StringComparer.Ordinal);
         _emitPointerDepth = 0;
         _emitDepth = 0;
-        _emitEntryCount = 0;
+        _emitChars = 0;
+        _emitCharBudget = _emitCharBudgetOverride.Value ?? MaxEmitChars;
         _systemFieldsSkipped = 0;
         _emitTruncated = false;
         _emittedInstances = new HashSet<string>(StringComparer.Ordinal);
@@ -1329,7 +1329,8 @@ public static class CeXmlExportService
         _emitPath = new HashSet<string>(StringComparer.Ordinal);
         _emitPointerDepth = 0;
         _emitDepth = 0;
-        _emitEntryCount = 0;
+        _emitChars = 0;
+        _emitCharBudget = _emitCharBudgetOverride.Value ?? MaxEmitChars;
         _systemFieldsSkipped = 0;
         _emitTruncated = false;
         _emittedInstances = new HashSet<string>(StringComparer.Ordinal);
@@ -1476,7 +1477,8 @@ public static class CeXmlExportService
         _emitPath = new HashSet<string>(StringComparer.Ordinal);
         _emitPointerDepth = 0;
         _emitDepth = 0;
-        _emitEntryCount = 0;
+        _emitChars = 0;
+        _emitCharBudget = _emitCharBudgetOverride.Value ?? MaxEmitChars;
         _systemFieldsSkipped = 0;
         _emitTruncated = false;
         _emittedInstances = new HashSet<string>(StringComparer.Ordinal);
@@ -2194,11 +2196,11 @@ public static class CeXmlExportService
         foreach (var field in fields)
         {
             // Global safety budget: a dense object graph can fan the drilldown out
-            // combinatorially. Once the cap is hit, stop emitting (the per-path cycle
+            // combinatorially. Once the guard is hit, stop emitting (the per-path cycle
             // guard + depth cap don't bound breadth) so the StringBuilder can't grow
             // to OutOfMemory. Every recursive emitter funnels its children through
             // EmitFields, so this single break bounds the whole tree.
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             // Guessed ("Guess?") fields are CE-exportable only when the user explicitly
             // focuses a single guessed field (Copy CE Field sets _includeGuessed). In any
@@ -2443,11 +2445,11 @@ public static class CeXmlExportService
         Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
         Dictionary<string, List<LiveFieldValue>> resolvedInstances)
     {
-        // Global emit budget (see MaxEmitEntries): once tripped, drilled pointers
+        // Global emit budget (see MaxEmitChars): once tripped, drilled pointers
         // stop expanding entirely — emit nothing and unwind. Caller loops that don't
         // route through EmitFields (object-array elements) reach here per element, so
         // this is the second backstop against the StringBuilder OOM.
-        if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; return; }
+        if (_emitChars >= _emitCharBudget) { _emitTruncated = true; return; }
 
         // ---- Shared-object dedup (see _dedupShared) ----
         // Each distinct object's subtree is emitted ONCE; a later reference to the
@@ -2647,7 +2649,7 @@ public static class CeXmlExportService
         foreach (var child in children)
         {
             // Same global emit budget as EmitFields — each promoted child is one CE entry.
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             // Per-segment +Offset (allowType:false so the type isn't repeated on each part);
             // the struct type is appended once via typeSuffix below. "▸" = ▸ (U+25B8).
@@ -2753,7 +2755,7 @@ public static class CeXmlExportService
             {
                 foreach (var elem in field.ArrayElements)
                 {
-                    if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+                    if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
                     int elemByteOffset = elem.Index * field.ArrayElemSize;
                     EmitGroupPlaceholder(sb, elemIndent,
                         DecorateDesc($"[{elem.Index}]", elemByteOffset, field.ArrayStructType),
@@ -2815,7 +2817,7 @@ public static class CeXmlExportService
             var strIndent = indent + "  ";
             foreach (var elem in field.ArrayElements)
             {
-                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+                if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
                 int elemByteOffset = elem.Index * field.ArrayElemSize;
                 EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{elem.Index}]", elemByteOffset, null),
                     $"+{elemByteOffset:X}", field.ArrayInnerType);
@@ -2828,7 +2830,7 @@ public static class CeXmlExportService
                 : walkedStr;
             for (int i = walkedStr; i < targetStr; i++)
             {
-                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+                if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
                 int elemByteOffset = i * field.ArrayElemSize;
                 EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{i}]", elemByteOffset, null),
                     $"+{elemByteOffset:X}", field.ArrayInnerType);
@@ -2955,7 +2957,7 @@ public static class CeXmlExportService
         int elemPad = ElemDelegatePad(field);
         foreach (var elem in field.ArrayElements)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
 
             // Element: simple offset from the already-dereferenced Data pointer.
             int elemByteOffset = elem.Index * field.ArrayElemSize;
@@ -2986,7 +2988,7 @@ public static class CeXmlExportService
         // past-the-end memory (harmless, CE shows unknowns) until the game grows the array.
         for (int i = walkedLeaf; i < targetLeaf; i++)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
             int elemByteOffset = i * field.ArrayElemSize;
             var elemDesc = DecorateDesc($"[{i}]", elemByteOffset, null);
             if (dropDownLinkTarget != null)
@@ -3055,7 +3057,7 @@ public static class CeXmlExportService
         {
             // The per-element foreach is not otherwise budget-checked; a large fabricate
             // count must stop cleanly (and honestly flag truncation) rather than overshoot.
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             int elemByteOffset = i * field.ArrayElemSize;
             // Bare index name; EmitDrilledPointer / DecorateDesc re-add the class only under
@@ -3166,7 +3168,7 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements ?? new List<ArrayElementValue>())
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
 
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // The soft-path string is a meaningful asset identity (not an object
@@ -3243,7 +3245,7 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements!)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
 
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // Bare index for the synth field (EmitResolvedStruct re-decorates it via
@@ -3333,7 +3335,7 @@ public static class CeXmlExportService
             {
                 for (int i = walkedStruct; i < targetStruct; i++)
                 {
-                    if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+                    if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
                     int elemByteOffset = i * field.ArrayElemSize;
                     // StructDataAddr = the template's addr (keys the resolved layout, never
                     // emitted); Offset = i*ElemSize places the group at the fabricated slot.
@@ -3428,7 +3430,7 @@ public static class CeXmlExportService
         {
             // [R7-X6] The budget is checked per element here too: EmitFields only checks BETWEEN fields, so a big
             // map emitted last ran past the ceiling unflagged (98,890 entries, measured on DumperTest's NestedBag).
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             int elemByteOffset = elem.Index * stride;
 
@@ -3582,7 +3584,7 @@ public static class CeXmlExportService
 
         foreach (var elem in field.SetElements)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
 
             int elemByteOffset = elem.Index * stride;
             // An object element's instance name is dropped (its class returns via +Type
@@ -3649,7 +3651,7 @@ public static class CeXmlExportService
 
         foreach (var row in field.DataTableRowData)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
 
             // Level 2: Row — deref uint8* at sparseIndex*stride+fnameSize. The row's
             // FName key is its identity, kept as the name; +Offset annotates.
@@ -3721,7 +3723,7 @@ public static class CeXmlExportService
         string address, int[]? offsets, bool showAsHex = false, string? varType = null,
         string? dropDownContent = null, string? dropDownListLink = null)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{EscapeXmlContent(description)}\"</Description>");
@@ -3761,7 +3763,7 @@ public static class CeXmlExportService
     private static void EmitGroupPlaceholder(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool showAsHex = false)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{EscapeXmlContent(description)}\"</Description>");
@@ -3785,7 +3787,7 @@ public static class CeXmlExportService
         CeFieldInfo ceField, string address, int[]? offsets,
         string? dropDownContent = null, string? dropDownListLink = null)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{EscapeXmlContent(description)}\"</Description>");
@@ -3830,7 +3832,7 @@ public static class CeXmlExportService
     private static void EmitStringLeaf(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool unicode, bool codepage = false)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         // CE String display window: the per-export "String Length" option (default 256,
         // floored at 16 by the toolbar slider); 0 (unset) falls back to 256. With
         // ZeroTerminate=1 a generous length never truncates a shorter live string — it
