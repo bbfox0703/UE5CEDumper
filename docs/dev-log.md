@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-09-30 (build 3606) — SYM says whether Cheat Engine actually enabled the symbol `[AOBM-ACTIVATE-RESULT]`
+
+- SYM on GWorld, &GEngine, GObjects and GNames used to say "Registered" whenever the record was created, even when
+  Cheat Engine could not enable it (for example when its AOB scan found nothing). With AOBMaker v20260930 or later
+  it now says so in red, with Cheat Engine's own reason, and also when the script is on but the symbol is not usable.
+- With an older AOBMaker plugin, which does not report this, the message says it cannot tell and asks you to check
+  that the record is ticked.
+- If the plugin does not answer in time, SYM no longer says it failed: the script may still have been added, so
+  check Cheat Engine's address list before pressing SYM again.
+- Checked live on DumperTest with Cheat Engine 7.7 and AOBMaker v20260930 (2026-09-30).
+- Build 3606: AOT `dist\UE5DumpUI.exe` 58,920,960 B, sha256 `6a2e9d35df4e`; `dist\UE5Dumper.dll` `683008c80e10`.
+  C# 5953/5953, headless 15/15, dll_core 593 checks.
+
 ## 2026-09-30 (build 3605) — buttons that need the AOBMaker app look different from those that need only its Cheat Engine plugin `[AOBM-UI-FUNC-VISUAL]`
 
 - The AOBMaker app (AOBMaker.UI) has a colour of its own: the toolbar's "UI" label, and the buttons that need the
