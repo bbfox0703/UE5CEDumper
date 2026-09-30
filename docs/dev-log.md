@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-09-30 (build 3605) — buttons that need the AOBMaker app look different from those that need only its Cheat Engine plugin `[AOBM-UI-FUNC-VISUAL]`
+
+- The AOBMaker app (AOBMaker.UI) has a colour of its own: the toolbar's "UI" label, and the buttons that need the
+  app, are pink. Today those are SYM on GObjects and GNames in the System tab; every other AOBMaker button needs only
+  the Cheat Engine plugin and looks as before.
+- Those buttons carry a small "UI" tag that turns grey with the toolbar's UI dot, so a SYM that will fail because
+  the AOBMaker app is closed says so before you press it.
+- Docs follow AOBMaker release v20260930 (build 157), which fixes most of what UE5CEDumper asked for; the rows it
+  unblocks are ready to be picked up one by one.
+- Checked live on DumperTest with Cheat Engine 7.7 and AOBMaker v20260930 (2026-09-30).
+- Build 3605: AOT `dist\UE5DumpUI.exe` 58,896,896 B, sha256 `490e3965a076`; `dist\UE5Dumper.dll` `547fb83acf2a`.
+  C# 5943/5943, headless 15/15, dll_core 593 checks.
+
 ## 2026-09-30 (build 3604) — Auto Structure Dissect works beside Cheat Engine 7.7's own Unreal Engine dissector `[AOBM-DISSECT-UETOOLS]`
 
 - Cheat Engine 7.7 has its own Unreal Engine dissector (Unreal Engine → Use when dissecting structures), and it
