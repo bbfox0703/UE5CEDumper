@@ -1340,6 +1340,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// (audit #5 V11). Shared so the cards cannot report differently.</para>
     /// </summary>
     /// <param name="detail">AOB triple, for the log line only — not shown to the user.</param>
+    /// <summary>[AOBM-ACTIVATE-RESULT] Red-phase stub: reports creation only.</summary>
+    internal void ReportSymbolRegistration(SymbolScriptResult result, string symbolName, string detail)
+        => ReportSymbolRegistration(result.Created, symbolName, detail);
+
     internal void ReportSymbolRegistration(bool success, string symbolName, string detail)
     {
         if (success)

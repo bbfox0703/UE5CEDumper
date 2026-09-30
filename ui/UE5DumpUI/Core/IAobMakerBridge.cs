@@ -98,6 +98,15 @@ public interface IAobMakerBridge
         string symbol, string module, bool autoActivate = true, CancellationToken ct = default);
 
     /// <summary>
+    /// [AOBM-ACTIVATE-RESULT] <see cref="CreateSymbolScriptAsync"/>, keeping what the reply says about activation.
+    /// A client that cannot read it answers "created, activation not known".
+    /// </summary>
+    async Task<SymbolScriptResult> CreateSymbolScriptDetailedAsync(string name, string aob, int pos, int aoblen,
+        string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
+        => SymbolScriptResult.FromCreated(
+            await CreateSymbolScriptAsync(name, aob, pos, aoblen, symbol, module, autoActivate, ct));
+
+    /// <summary>
     /// Add a single typed memory record to CE's address list.
     /// Sends <c>CreateMemoryRecord</c> — the CE Plugin calls
     /// <c>addresslist.createMemoryRecord()</c>, sets Description / Address / Type /

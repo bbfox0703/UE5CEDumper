@@ -498,6 +498,18 @@ internal sealed class ScriptedAobMakerBridge : IAobMakerBridge
         return Task.FromResult(After(SymbolResult));
     }
 
+    /// <summary>[AOBM-ACTIVATE-RESULT] What the detailed call answers; null answers as a current plugin would for
+    /// <see cref="SymbolResult"/>: created, active and registered, or not created.</summary>
+    public SymbolScriptResult? SymbolDetail { get; set; }
+
+    public Task<SymbolScriptResult> CreateSymbolScriptDetailedAsync(string name, string aob, int pos, int aoblen,
+        string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
+    {
+        Symbols.Add((name, aob, pos, aoblen, symbol, module, autoActivate));
+        return Task.FromResult(After(SymbolDetail
+            ?? new SymbolScriptResult(SymbolResult, SymbolResult ? true : null, SymbolResult ? true : null, null)));
+    }
+
     public Task<bool> CreateMemoryRecordAsync(string description, string address, int valueType, bool isSigned = false,
                                               bool showAsHex = false, CancellationToken ct = default)
     {

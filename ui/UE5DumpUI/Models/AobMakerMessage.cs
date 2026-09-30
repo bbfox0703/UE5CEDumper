@@ -120,6 +120,18 @@ public class AobMakerMessage
     [JsonPropertyName("processName")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public string? ProcessName { get; set; }
+
+    // --- activation result [AOBM-ACTIVATE-RESULT] ---
+    // Read-only for us. A plugin from AOBMaker v20260930 (build 155) on sends them on a success reply to an
+    // autoActivate request; older ones never do. Nullable so an absent field reads as "not known", never as false.
+
+    [JsonPropertyName("activated")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Activated { get; set; }
+
+    [JsonPropertyName("symbolRegistered")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? SymbolRegistered { get; set; }
 }
 
 /// <summary>

@@ -297,6 +297,10 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         }
     }
 
+    /// <summary>[AOBM-ACTIVATE-RESULT] What a <c>CreateSymbolScript</c> reply says. Red-phase stub: creation only.</summary>
+    internal static SymbolScriptResult ToSymbolScriptResult(AobMakerMessage? response)
+        => SymbolScriptResult.FromCreated(response?.Success == true);
+
     public async Task<bool> CreateSymbolScriptAsync(string name, string aob, int pos, int aoblen,
         string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
     {
