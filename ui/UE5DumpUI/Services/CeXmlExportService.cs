@@ -199,6 +199,33 @@ public static class CeXmlExportService
     /// </summary>
     internal const int MaxEmitEntries = 60_000;   // internal: Instance Finder's warning quotes it
 
+    /// <summary>
+    /// [CEXML-CAP-60K] The crash guard, in characters of XML. Cheat Engine's paste has no size or entry limit (7.5 and
+    /// the public 7.5.1 source), so this bounds only OUR memory: 256 Mi characters is 512 MiB of UTF-16 in the
+    /// StringBuilder, as much again for ToString and for the clipboard, and well under the ~1 Gi-character .NET string
+    /// limit that made the runaway export throw. At the ~310 characters an entry measured on real exports that is about
+    /// 860,000 entries; a real 21,000-entry table is under 9 MB.
+    /// </summary>
+    internal const int MaxEmitChars = 256 * 1024 * 1024;
+
+    /// <summary>A test's lower guard. AsyncLocal, not ThreadStatic: the Instance Finder tests reach the generator
+    /// through an awaited command, and a test must not lower the guard for another test's thread.</summary>
+    private static readonly AsyncLocal<int?> _emitCharBudgetOverride = new();
+
+    /// <summary>Test seam: lower the guard for the calling flow until the returned scope is disposed, so the per-loop
+    /// checks can be exercised without building 256 Mi characters.</summary>
+    internal static IDisposable OverrideEmitCharBudgetForTest(int chars)
+    {
+        var previous = _emitCharBudgetOverride.Value;
+        _emitCharBudgetOverride.Value = chars;
+        return new BudgetScope(previous);
+    }
+
+    private sealed class BudgetScope(int? previous) : IDisposable
+    {
+        public void Dispose() => _emitCharBudgetOverride.Value = previous;
+    }
+
     [ThreadStatic]
     private static int _emitEntryCount;
     [ThreadStatic]
