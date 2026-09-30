@@ -125,12 +125,19 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.PointerPanelViewModel.KeyScanHitLabel,
              UE5DumpUI.ViewModels.PointerPanelViewModel.ScanHitLabel("P"), "P");
 
+        // [AOBM-ACTIVATE-RESULT] SYM beyond "created"
+        Same(AobMakerActions.KeySymbolNotActivated, AobMakerActions.SymbolNotActivatedText("s", "r"), "s", "r");
+        Same(AobMakerActions.KeySymbolNotRegistered, AobMakerActions.SymbolNotRegisteredText("s", "r"), "s", "r");
+        Same(AobMakerActions.KeySymbolActivationUnknown, AobMakerActions.SymbolActivationUnknownText("s"), "s");
+        Same(AobMakerActions.KeySymbolTimedOut, AobMakerActions.SymbolTimedOutText("s"), "s");
+        Same(AobMakerActions.KeySymbolNoReason, AobMakerActions.SymbolNoReasonText());
+
         // [AOBM-LIVEWALKER-HEX-SILENT] Live Walker's pointer-target HEX label
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPtrTargetLabel,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.PtrTargetLabel("P"), "P");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(37, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(42, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =

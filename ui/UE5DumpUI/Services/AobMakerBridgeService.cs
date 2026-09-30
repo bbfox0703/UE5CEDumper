@@ -297,11 +297,25 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         }
     }
 
-    /// <summary>[AOBM-ACTIVATE-RESULT] What a <c>CreateSymbolScript</c> reply says. Red-phase stub: creation only.</summary>
+    /// <summary>
+    /// [AOBM-ACTIVATE-RESULT] What a <c>CreateSymbolScript</c> reply says. <c>activated</c> and
+    /// <c>symbolRegistered</c> only mean something beside <c>success:true</c>, and a plugin older than build 155 sends
+    /// neither: absent stays null, "not known".
+    /// </summary>
     internal static SymbolScriptResult ToSymbolScriptResult(AobMakerMessage? response)
-        => SymbolScriptResult.FromCreated(response?.Success == true);
+    {
+        if (response is null) return new SymbolScriptResult(false, null, null, null);
+        var reason = string.IsNullOrEmpty(response.Message) ? null : response.Message;
+        return response.Success
+            ? new SymbolScriptResult(true, response.Activated, response.SymbolRegistered, reason)
+            : new SymbolScriptResult(false, null, null, reason);
+    }
 
     public async Task<bool> CreateSymbolScriptAsync(string name, string aob, int pos, int aoblen,
+        string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
+        => (await CreateSymbolScriptDetailedAsync(name, aob, pos, aoblen, symbol, module, autoActivate, ct)).Created;
+
+    public async Task<SymbolScriptResult> CreateSymbolScriptDetailedAsync(string name, string aob, int pos, int aoblen,
         string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
     {
         await _opLock.WaitAsync(ct);
@@ -310,7 +324,7 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
             if (!await ReconnectAsync(ct))
             {
                 IsAvailable = false;
-                return false;
+                return new SymbolScriptResult(false, null, null, null);
             }
 
             try
@@ -334,30 +348,40 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
 
                 var response = await ReadMessageAsync(_pipe!, timeoutCts.Token);
                 CleanupPipe();
-                if (response == null || !response.Success)
+                var result = ToSymbolScriptResult(response);
+                if (!result.Created)
                 {
                     _log?.Warn(Constants.LogCatInit,
                         $"AOBMaker CreateSymbolScript failed: {response?.Message ?? "no response"}");
-                    return false;
+                    return result;
                 }
 
                 IsAvailable = true;
                 _log?.Info(Constants.LogCatInit,
-                    $"AOBMaker: created symbol script '{name}' → {symbol} (AOB: {aob})");
-                return true;
+                    $"AOBMaker: created symbol script '{name}' → {symbol} (AOB: {aob}); activated=" +
+                    $"{result.Activated?.ToString() ?? "not reported"}, symbolRegistered=" +
+                    $"{result.SymbolRegistered?.ToString() ?? "not reported"}{(result.Message is null ? "" : ": " + result.Message)}");
+                return result;
+            }
+            catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+            {
+                // No reply in time: CE may still be scanning, and the record may exist and be active, so the caller
+                // must not read this as "nothing happened" (AOBMaker reply §3 rule 8).
+                _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateSymbolScript timed out for '{name}'");
+                CleanupPipe();
+                return new SymbolScriptResult(false, null, null, null, TimedOut: true);
             }
             catch (OperationCanceledException)
             {
-                _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateSymbolScript timed out for '{name}'");
                 CleanupPipe();
-                return false;
+                return new SymbolScriptResult(false, null, null, null);
             }
             catch (Exception ex)
             {
                 _log?.Warn(Constants.LogCatInit, $"AOBMaker CreateSymbolScript error: {ex.Message}");
                 IsAvailable = false;
                 CleanupPipe();
-                return false;
+                return new SymbolScriptResult(false, null, null, null);
             }
         }
         finally

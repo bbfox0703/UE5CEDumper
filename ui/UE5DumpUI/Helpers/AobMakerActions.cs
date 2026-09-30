@@ -243,6 +243,34 @@ internal static class AobMakerActions
             "Not pushed: the AOB would register '{0}' at 0x{1:X}, but the DLL resolved {2} (this signature dereferences or adjusts)",
             symbol, target, resolved);
 
+    // [AOBM-ACTIVATE-RESULT] What SYM says about a symbol script beyond "created" (AOBMaker v20260930 reports it).
+    internal const string KeySymbolNotActivated = "str.Pointers.Symbol.NotActivated";
+    internal const string KeySymbolNotRegistered = "str.Pointers.Symbol.NotRegistered";
+    internal const string KeySymbolActivationUnknown = "str.Pointers.Symbol.ActivationUnknown";
+    internal const string KeySymbolTimedOut = "str.Pointers.Symbol.TimedOut";
+    internal const string KeySymbolNoReason = "str.Pointers.Symbol.NoReason";
+
+    /// <summary>Stands in for CE's reason when the plugin gave none.</summary>
+    internal static string SymbolNoReasonText() => AobMakerStatus.Say(KeySymbolNoReason, "no reason given");
+
+    internal static string SymbolNotActivatedText(string symbol, string reason)
+        => AobMakerStatus.Say(KeySymbolNotActivated,
+            "CE symbol script '{0}' was added, but Cheat Engine did not enable it: {1}", symbol, reason);
+
+    internal static string SymbolNotRegisteredText(string symbol, string reason)
+        => AobMakerStatus.Say(KeySymbolNotRegistered,
+            "CE symbol script '{0}' is enabled, but the symbol is not usable: {1}", symbol, reason);
+
+    internal static string SymbolActivationUnknownText(string symbol)
+        => AobMakerStatus.Say(KeySymbolActivationUnknown,
+            "Added CE symbol script '{0}'. This AOBMaker plugin does not say whether Cheat Engine enabled it: " +
+            "check that the record is ticked (AOBMaker v20260930 or later reports it)", symbol);
+
+    internal static string SymbolTimedOutText(string symbol)
+        => AobMakerStatus.Say(KeySymbolTimedOut,
+            "No answer from the AOBMaker plugin in time for '{0}': the script may still have been added. " +
+            "Check Cheat Engine's address list before pressing SYM again", symbol);
+
     /// <summary>
     /// [AOBM-GNAMES-SYMBOL] Where a CE symbol script built from a <see cref="GeneratedAob"/> lands, replaying what the
     /// plugin's script does: <c>disp = [aob + pos]</c>, <c>target = aob + aoblen + disp</c>. The AOB starts

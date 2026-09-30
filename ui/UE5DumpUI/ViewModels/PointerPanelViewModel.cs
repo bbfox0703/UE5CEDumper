@@ -1176,7 +1176,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         // a full AA script that: AOBScanModule for the pattern, reads the RIP-relative
         // displacement at 'pos', calculates final address using 'aoblen', and registers
         // it as a CE symbol. This survives game restarts (re-scans on enable).
-        bool success = await _aobMaker.CreateSymbolScriptAsync(
+        var registration = await _aobMaker.CreateSymbolScriptDetailedAsync(
             name: $"GWorld → {symbolName}",
             aob: GworldAob,
             pos: GworldAobPos,
@@ -1185,7 +1185,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             module: module,
             autoActivate: true);
 
-        ReportSymbolRegistration(success, symbolName,
+        ReportSymbolRegistration(registration, symbolName,
             $"AOB: {GworldAob}, pos={GworldAobPos}, len={GworldAobLen}");
     }
 
@@ -1204,7 +1204,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         string symbolName = "gengine_addr";
         string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
 
-        bool success = await _aobMaker.CreateSymbolScriptAsync(
+        var registration = await _aobMaker.CreateSymbolScriptDetailedAsync(
             name: $"&GEngine → {symbolName}",
             aob: GengineAob,
             pos: GengineAobPos,
@@ -1213,7 +1213,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             module: module,
             autoActivate: true);
 
-        ReportSymbolRegistration(success, symbolName,
+        ReportSymbolRegistration(registration, symbolName,
             $"AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen}");
     }
 
@@ -1293,7 +1293,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
 
         string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : aob.Module;
-        bool success = await _aobMaker.CreateSymbolScriptAsync(
+        var registration = await _aobMaker.CreateSymbolScriptDetailedAsync(
             name: $"{label} → {symbolName}",
             aob: aob.Aob,
             pos: pos,
@@ -1301,7 +1301,7 @@ public partial class PointerPanelViewModel : ViewModelBase
             symbol: symbolName,
             module: module,
             autoActivate: true);
-        ReportSymbolRegistration(success, symbolName,
+        ReportSymbolRegistration(registration, symbolName,
             $"AOB (AOBMaker.UI GenerateAob): {aob.Aob}, pos={pos}, len={len}, seed=0x{seed.InstructionAddr:X}");
     }
 
@@ -1340,9 +1340,52 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// (audit #5 V11). Shared so the cards cannot report differently.</para>
     /// </summary>
     /// <param name="detail">AOB triple, for the log line only — not shown to the user.</param>
-    /// <summary>[AOBM-ACTIVATE-RESULT] Red-phase stub: reports creation only.</summary>
+    /// <summary>
+    /// [AOBM-ACTIVATE-RESULT] Report what the plugin said, and no more. <c>success</c> only ever meant "the record
+    /// exists": "Registered" needs <c>activated</c> and <c>symbolRegistered</c> as well, and a plugin that sends
+    /// neither (older than AOBMaker v20260930) gets a success that says it is not known whether CE enabled it.
+    /// </summary>
     internal void ReportSymbolRegistration(SymbolScriptResult result, string symbolName, string detail)
-        => ReportSymbolRegistration(result.Created, symbolName, detail);
+    {
+        string reason = result.Message ?? AobMakerActions.SymbolNoReasonText();
+        if (result.TimedOut)
+        {
+            FailSymbolRegistration(symbolName, detail, AobMakerActions.SymbolTimedOutText(symbolName));
+            return;
+        }
+        if (!result.Created)
+        {
+            ReportSymbolRegistration(false, symbolName, $"{detail}; {reason}");
+            return;
+        }
+        if (result.Activated == false)
+        {
+            FailSymbolRegistration(symbolName, detail, AobMakerActions.SymbolNotActivatedText(symbolName, reason));
+            return;
+        }
+        if (result.Activated == true && result.SymbolRegistered == false)
+        {
+            FailSymbolRegistration(symbolName, detail, AobMakerActions.SymbolNotRegisteredText(symbolName, reason));
+            return;
+        }
+        if (result.Activated == true)
+        {
+            ReportSymbolRegistration(true, symbolName, detail);
+            return;
+        }
+        ClearError();
+        SymbolStatusText = AobMakerActions.SymbolActivationUnknownText(symbolName);
+        _log?.Info(Constants.LogCatInit,
+            $"Created CE symbol script '{symbolName}' ({detail}); the plugin did not report activation");
+    }
+
+    /// <summary>The red line, as <see cref="ReportSymbolRegistration(bool, string, string)"/> uses it.</summary>
+    private void FailSymbolRegistration(string symbolName, string detail, string message)
+    {
+        SymbolStatusText = "";
+        SetError(message);
+        _log?.Warn(Constants.LogCatInit, $"CE symbol script '{symbolName}' ({detail}): {message}");
+    }
 
     internal void ReportSymbolRegistration(bool success, string symbolName, string detail)
     {

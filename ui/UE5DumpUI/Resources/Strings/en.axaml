@@ -427,6 +427,12 @@
          chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
     <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
+    <!-- [AOBM-ACTIVATE-RESULT] What SYM says once AOBMaker v20260930+ reports activation ({0} = the symbol, {1} = CE's reason). -->
+    <sys:String x:Key="str.Pointers.Symbol.NotActivated">CE symbol script '{0}' was added, but Cheat Engine did not enable it: {1}</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.NotRegistered">CE symbol script '{0}' is enabled, but the symbol is not usable: {1}</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.ActivationUnknown">Added CE symbol script '{0}'. This AOBMaker plugin does not say whether Cheat Engine enabled it: check that the record is ticked (AOBMaker v20260930 or later reports it)</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.NoReason">no reason given</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.TimedOut">No answer from the AOBMaker plugin in time for '{0}': the script may still have been added. Check Cheat Engine's address list before pressing SYM again</sys:String>
 
     <!-- Pointer Panel: Cache management status messages (code-behind via Res.Get) -->
     <sys:String x:Key="str.Pointers.Cache.GameCleared">Cache cleared for this game. Next scan will do a full search.</sys:String>
