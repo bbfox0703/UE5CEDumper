@@ -1219,6 +1219,11 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     // --- [AOBM-GNAMES-SYMBOL] GObjects / GNames symbols through AOBMaker.UI's GenerateAob ---
 
+    /// <summary>[AOBM-UI-FUNC-VISUAL] The toolbar's UI dot, when the client is its status wrapper: the "UI" tag on
+    /// the buttons that need AOBMaker.UI greys out with it, so a SYM that is bound to fail says so before it is
+    /// pressed.</summary>
+    public AobMakerUiStatus? AobMakerUi => _aobMakerUi as AobMakerUiStatus;
+
     [RelayCommand]
     private Task RegisterGObjectsSymbolAsync()
         => RegisterSymbolViaGenerateAobAsync("GObjects", "gobjects_addr", GObjectsScanAddr, GObjectsAddress);
