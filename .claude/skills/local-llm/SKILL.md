@@ -1,6 +1,6 @@
 ---
 name: local-llm
-description: Offload bulk text work to this machine's local Ollama model -- summarising or extracting from large on-disk logs/dumps/docs, zh-TW translation drafts, first-pass triage of many similar items -- and keep that model's VRAM away from commercial games. Use when a task would otherwise pull a large file into context, or before launching, injecting or running a rig against a commercial game (not a test fixture the machine exempts). Does nothing on a machine that has not installed it.
+description: Offload bulk text work to this machine's local Ollama model -- summarising or extracting from large on-disk logs/dumps/docs, zh-TW / ja-JP translation drafts, first-pass triage of many similar items -- and keep that model's VRAM away from commercial games. Use when a task would otherwise pull a large file into context, or before launching, injecting or running a rig against a commercial game (not a test fixture the machine exempts). Does nothing on a machine that has not installed it.
 ---
 
 # Local LLM (Ollama): when to use it, and when the GPU belongs to the game
@@ -68,7 +68,9 @@ Never install anything, pull a model or start a server to make it ready.
 **Good fits**
 - Summarise / extract the gist of large on-disk text: logs, dumps, long docs. Anything over the
   window: add `--chunked`.
-- zh-TW translation **drafts**, which you then review.
+- zh-TW and ja-JP translation **drafts**, which you then review. The style rules are
+  `docs/wiki-zh-TW-style.md` and `docs/wiki-ja-JP-style.md` when the repo has them; put the
+  target language and the relevant rules in the prompt, and say which of the two it is.
 - First-pass triage of many similar items; spot-check a sample yourself.
 
 **Never**

@@ -283,7 +283,7 @@ lua scripts/tests/freeze_helper_test.lua
 ## `llm/` — an opt-in local Ollama model, and the guard that keeps it off a game's GPU
 
 [`llm/ollama_local.py`](llm/ollama_local.py) lets a session hand bulk text work (large logs, dumps,
-translation drafts) to a local model, reading the files itself so they never enter the session's
+zh-TW / ja-JP translation drafts) to a local model, reading the files itself so they never enter the session's
 context. It is **installed once per machine** (`install --model TAG`, from this checkout) into
 `%LOCALAPPDATA%\claude-local-llm\`; without that every subcommand answers `disabled` and touches
 nothing. Its one PreToolUse hook (user-level, so every session on the machine) unloads the model and

@@ -1,7 +1,7 @@
 # Local LLM helper — adopting it in another repo
 
 [`ollama_local.py`](ollama_local.py) lets a Claude Code session hand bulk text work (large logs,
-dumps, long docs, translation drafts) to a local Ollama model, and keeps that model's VRAM away from
+dumps, long docs, zh-TW / ja-JP translation drafts) to a local Ollama model, and keeps that model's VRAM away from
 commercial games. **When** a session should use it is the skill's job:
 [`.claude/skills/local-llm/SKILL.md`](../../.claude/skills/local-llm/SKILL.md). This page is **how a
 machine installs it and how any repo joins or leaves**.

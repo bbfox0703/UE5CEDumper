@@ -200,7 +200,7 @@ table，因此會直接顯示為不支援，而不是讓它以難以理解的方
 
 ### Claude Code 共用的本機 LLM — 任何 repo 都能加入
 
-Session 可把大量文字工作（大型 log、dump、翻譯草稿）交給本機的 Ollama model，並由一個全機共用的 hook 確保 model 不佔用商業遊戲的 GPU。它**每台 PC 只從本 repo 安裝一次**；**其他 repo 各用一個指令即可加入（join）或離開（leave）**，加入時只會收到一個不含任何機器或個人資料的 skill 檔。其他 repo 的 Claude Code session 請閱讀 **[tools/llm/README.md](tools/llm/README.md)**，並照其最後一節操作。
+Session 可把大量文字工作（大型 log、dump、繁中／日文翻譯草稿）交給本機的 Ollama model，並由一個全機共用的 hook 確保 model 不佔用商業遊戲的 GPU。它**每台 PC 只從本 repo 安裝一次**；**其他 repo 各用一個指令即可加入（join）或離開（leave）**，加入時只會收到一個不含任何機器或個人資料的 skill 檔。其他 repo 的 Claude Code session 請閱讀 **[tools/llm/README.md](tools/llm/README.md)**，並照其最後一節操作。
 
 ```bash
 py tools/llm/ollama_local.py install --model <tag>                 # 每台 PC 一次，在本 repo 執行（model tag 由使用者指定）
