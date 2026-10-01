@@ -34,6 +34,17 @@ Every gate must pass; read the count from its own `N gate(s) run` line. When the
 removes a caller, a field, a pipe key or an enum value, also run
 `py tools/verify/comment_impact.py --staged` and fix the starred comments.
 
+⚠ **The gates do not run the test suites, and CI does.** If the change adds, moves or edits ANY file
+under `ui/`, `dll/` or `scripts/` — a `.md` included — run the tests before pushing:
+
+```bash
+dotnet test ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj -c Release
+```
+
+This runs the C# suite without touching `dist\` or the build number. Measured 2026-10-01: a new
+`ui/CLAUDE.md` passed every gate and failed CI, because one test found the repository root by
+walking up to the first folder that held a `CLAUDE.md`. Use step 3's publish when code changed.
+
 ## 3. If the UI or the DLL changed: publish, then bump
 
 `CLAUDE.md` § Build & Deploy is the rule. In short: run `build.ps1 -Mode Publish`, confirm
