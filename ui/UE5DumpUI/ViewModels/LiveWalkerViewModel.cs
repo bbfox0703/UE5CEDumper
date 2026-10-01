@@ -4654,8 +4654,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // so we fall back to direct-address mode to avoid generating a wrong base.
             var isGWorldRoot = rootBc.FieldName == "GWorld";
             var useAob = UseAobSymbol && isGWorldRoot && !string.IsNullOrEmpty(_engineState?.GWorldAob);
-            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead.
-            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob ? GWorldExportSymbol : "";
+            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead,
+            // DEREFERENCED. The address root is the UWorld object (the GWorld crumb's Address); the export names the
+            // slot holding it, so [GWorld] is the same object -- a root at GWorld reads every child one level short.
+            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob && GWorldExportSymbol.Length > 0
+                ? $"[{GWorldExportSymbol}]" : "";
             if (UseAobSymbol && !isGWorldRoot)
                 _log.Info("CEXML: AOB requested but root is not GWorld — falling back to direct address");
 
@@ -5013,8 +5016,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Same GWorld-root guard as ExportCeXmlAsync
             var isGWorldRoot = rootBc.FieldName == "GWorld";
             var useAob = UseAobSymbol && isGWorldRoot && !string.IsNullOrEmpty(_engineState?.GWorldAob);
-            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead.
-            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob ? GWorldExportSymbol : "";
+            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead,
+            // DEREFERENCED. The address root is the UWorld object (the GWorld crumb's Address); the export names the
+            // slot holding it, so [GWorld] is the same object -- a root at GWorld reads every child one level short.
+            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob && GWorldExportSymbol.Length > 0
+                ? $"[{GWorldExportSymbol}]" : "";
             if (UseAobSymbol && !isGWorldRoot)
                 _log.Info("CEFieldXML: AOB requested but root is not GWorld — falling back to direct address");
 
