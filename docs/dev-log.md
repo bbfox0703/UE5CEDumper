@@ -27,6 +27,25 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3611) — Exports anchor GObjects' SYM and Live Walker's "AOB" option too `[AOBM-EXPORT-SYM-REST]`
+
+- On games where UE5CEDumper finds its pointers through the game's exports (Satisfactory and other modular builds):
+  - the System tab's SYM for GObjects now works without the AOBMaker app, from the game's `GUObjectArray` export,
+    and its button only shows the pink "UI" mark when it really needs the app;
+  - Live Walker's "AOB" export option is no longer greyed out: Copy CE XML and Copy CE Field root the table at
+    the exported GWorld, and Copy CE AA Script walks from it, so the tables survive game restarts and patches.
+- A symbol made from an export now says so (it is re-resolved by name, not re-scanned).
+- Checked live on Satisfactory with Cheat Engine 7.7: the pasted table and the walked symbol land on the same
+  objects Live Walker shows.
+- Build 3611: AOT `dist\UE5DumpUI.exe` 59,076,608 B, sha256 `1c21858d1755`; `dist\UE5Dumper.dll` `d734e54ec3c5`.
+  C# 6001/6001, 29 gates.
+
+## 2026-10-01 (build 3610) — first cut of the above, superseded by 3611 `[AOBM-EXPORT-SYM-REST]`
+
+- Build 3610 rooted an export-anchored Copy CE XML / Copy CE Field at the GWorld slot instead of the UWorld it
+  holds, so the table read one level off; found by its live check and fixed in 3611 before any hand-over.
+- Build 3610: AOT `dist\UE5DumpUI.exe` 59,076,608 B, sha256 `7ae5645dc4a1`; `dist\UE5Dumper.dll` `56af9ebd46e8`.
+
 ## 2026-10-01 (build 3609) — SYM for GWorld and &GEngine on games that export them `[AOBM-EXPORT-GWORLD-AOB]`
 
 - On games where UE5CEDumper finds GWorld and &GEngine through the game's exports (Satisfactory and other modular
