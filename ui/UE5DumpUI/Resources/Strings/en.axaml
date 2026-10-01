@@ -291,6 +291,7 @@
     <sys:String x:Key="str.LiveWalker.ExportCsx">Export CSX</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCsxPre77">CSX — Pre-CE 7.7 (Byte)</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCsx77">CSX — CE 7.7+ (Binary bitfields)</sys:String>
+    <sys:String x:Key="str.LiveWalker.PushCsxToCe">Push to CE Structure Dissect</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>
@@ -1659,6 +1660,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.CollapseLeafPointers">Collapse a drilled pointer one level in Copy CE XML / Copy CE Field when its target holds a SINGLE watchable value. If an Object/Weak/etc. pointer resolves to an object whose only field is a scalar, an FName, or an FString, it is emitted as one "Pointer ▸ Field" record at the pointer offset with a dereference chain (scalar/name: Offsets=[fieldOffset]; FString: Offsets=[0, fieldOffset]) instead of a folder containing a lone child — the "pointer to a string" case. A pointer whose target has two or more fields keeps its group (its object identity is worth a boundary). Off = keep the nested pointer group.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsx">Export CE Structure Dissect script (.csx). Pick the CE format version from the dropdown.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsxPre77">Legacy format for CE before 7.7: a bit-field bool is exported as a whole Byte with the bit index noted in its description (no bit switch).</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.PushCsxToCe">Build this structure straight in Cheat Engine's Structure Dissect instead of saving a .CSX file: the CE 7.7+ form, sent through the AOBMaker CE plugin and built at once (on a CE older than 7.7 a bit-field bool becomes its byte). It adds a record 'UE5CEDumper: Structure &lt;name&gt;' under 'UE5CEDumper (DLL)'; tick it to rebuild the structure. Pushing the same structure again replaces it.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsx77">CE 7.7 and later: a bit-field bool is exported as a real Binary element (Vartype=Binary, BitStart/BitSize) — a proper bit switch in CE's Structure Dissect.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportHeader">Export C++ SDK header (.h)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CeAA">Copy an Auto Assembler script that registers this object as a CE symbol. On a GWorld-rooted path it emits a RESTART-STABLE script: it walks GWorld → … → this object at enable time (Lua), so it keeps working after the game restarts — AOB-anchored when GWorld came from an AOB scan (AOB symbol ticked), or with a hardcoded GWorld base you update after a restart. Off a non-GWorld path it falls back to a hardcoded absolute address (breaks on restart).</sys:String>

@@ -265,7 +265,7 @@ public class CsxStructurePushTests : IDisposable
         Assert.Equal(CsxStructurePushGenerator.RecordPrefix + "BP_Hero_C_Hero_0", aa.Description);
         Assert.True(aa.AutoActivate);
         Assert.Equal(CeInjectScriptGenerator.RecordGroup, aa.Group);
-        Assert.Contains("createStructure('BP_Hero_C_Hero_0')", aa.Script);
+        Assert.Contains("local NAME = 'BP_Hero_C_Hero_0'", aa.Script);
         Assert.StartsWith("Structure 'BP_Hero_C_Hero_0' added to CE's Structure Dissect", vm.StatusText);
     }
 

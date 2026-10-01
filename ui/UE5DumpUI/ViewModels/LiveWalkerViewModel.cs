@@ -4779,9 +4779,81 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private Task ExportCsx77Async() => ExportCsxCoreAsync(CsxFormat.Ce77Plus);
 
-    /// <summary>[AOBM-DISSECT-INJECT] The CSX half: build the same structure straight in CE's Structure Dissect.</summary>
+    /// <summary>
+    /// [AOBM-DISSECT-INJECT] The CSX half: build the structure Export CSX would write straight in CE's Structure
+    /// Dissect -- the CE 7.7+ form (the script falls back to a bit's byte on an older CE itself), translated to CE Lua
+    /// by <see cref="CsxStructurePushGenerator"/> and pushed through the CE plugin, enabled at once so its answer
+    /// says whether CE built it.
+    /// </summary>
     [RelayCommand]
-    private Task PushCsxToCeAsync() => Task.CompletedTask;
+    private async Task PushCsxToCeAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress) || !HasData) return;
+        if (IsExporting) return;   // an export is already running -- its Cancel button is showing
+        if (RefuseWhileGridBehindSpine("Push to CE Structure Dissect")) return;   // [A4-NAV-BACKFIRST-GRAFT]
+        if (_aobMaker == null || !_aobMaker.IsAvailable)
+        {
+            StatusText = AobMakerUnavailable.Text(_aobMaker);
+            return;
+        }
+        var cts = _exportCts = new CancellationTokenSource();
+        try
+        {
+            ClearStatus();
+            IsLoading = true;
+            IsExporting = true;
+            var csx = await CsxExportService.GenerateCsxAsync(
+                _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
+                format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, ct: cts.Token);
+            var push = CsxStructurePushGenerator.Generate(csx);
+            var result = await _aobMaker.CreateAAScriptDetailedAsync(
+                CsxStructurePushGenerator.RecordPrefix + push.RootName, push.Script, autoActivate: true,
+                group: CeInjectScriptGenerator.RecordGroup);
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
+            var (text, isError) = AobMakerActions.StructPushText(result, push);
+            if (isError)
+            {
+                SetError(text);
+            }
+            else
+            {
+                // The same truncation note Export CSX gives: a container clipped by the Array Limit is part-built.
+                var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit);
+                StatusText = limitWarn != null ? string.Join(' ', text, limitWarn) : text;
+            }
+            _log.Info($"[AOBM-DISSECT-INJECT] structure push '{push.RootName}' ({push.Structures} structures, " +
+                      $"{push.Elements} elements, {push.Script.Length} chars): created={result.Created}, " +
+                      $"activated={result.Activated?.ToString() ?? "unknown"}, timedOut={result.TimedOut}" +
+                      (result.Message != null ? $" ({result.Message})" : ""));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            StatusText = "";
+            _log.Info("[AOBM-DISSECT-INJECT] structure push cancelled by user");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error("[AOBM-DISSECT-INJECT] structure push failed", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+            IsExporting = false;
+            if (ReferenceEquals(_exportCts, cts)) _exportCts = null;
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>The structure name Export CSX and the push share: "Class_Object", or the class alone, made safe
+    /// for a file name and an XML attribute.</summary>
+    private string CsxStructName()
+    {
+        var structName = !string.IsNullOrEmpty(CurrentObjectName)
+            ? $"{CurrentClassName}_{CurrentObjectName}".Replace(" ", "_")
+            : CurrentClassName.Replace(" ", "_");
+        return structName.Replace("<", "").Replace(">", "").Replace("\"", "");
+    }
 
     private async Task ExportCsxCoreAsync(CsxFormat format)
     {
@@ -4796,12 +4868,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             ClearStatus();
 
-            // Build struct name: "ClassName_ObjectName" or "ClassName"
-            var structName = !string.IsNullOrEmpty(CurrentObjectName)
-                ? $"{CurrentClassName}_{CurrentObjectName}".Replace(" ", "_")
-                : CurrentClassName.Replace(" ", "_");
-            // Sanitize for file name and XML attribute
-            structName = structName.Replace("<", "").Replace(">", "").Replace("\"", "");
+            // "ClassName_ObjectName" or "ClassName", the name the structure push uses too
+            var structName = CsxStructName();
             // Sanitize for file system: remove invalid chars
             var safeFileName = string.Join("_",
                 structName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
