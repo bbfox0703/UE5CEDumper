@@ -501,6 +501,8 @@ say which part is already fixed.
 - **Not in AOBMaker's reply.** The reply answers R1–R16 as filed at our `e070c166`; R17 came later, in `217ecf70`.
   It touches the same template R4 will change: the plugin's `BuildSymbolScanScript` and its C# twin
   `SymbolScannerScriptGenerator`, which AOBMaker's `SymbolScanTemplateTwinTests` pins together.
+- **Workaround shipped 2026-10-01** (build 3614, `[AOBM-GWORLD-GENAOB]`): the Alternative above, our own
+  script through `CreateAAScript`. R17 would still let us drop it.
 
 ## Not requested
 

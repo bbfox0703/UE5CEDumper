@@ -202,6 +202,8 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
     entry).
     `CreateSymbolScript` registers the raw RIP target, so those are refused before AOBMaker is asked. Supporting
     them needs AOBMaker R17, or a symbol script of our own through `CreateAAScript`.
+    **Done 2026-10-01** (build 3614, `[AOBM-GWORLD-GENAOB]` part 2) the second way: the DLL publishes the
+    adjustment and the UI pushes its own symbol script that adds it. Live on Avowed (`GOBJ_AV1`, -0x10).
 
   Nothing is pushed unless the returned AOB replays (`disp = [aob+pos]`, `aob + aoblen + disp`) to the address the
   DLL resolved. The GWorld / &GEngine withheld-triple case is not done: `[AOBM-GWORLD-GENAOB]` in todo.md.

@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3614) — GObjects symbol in Cheat Engine for games like Avowed `[AOBM-GWORLD-GENAOB]`
+
+- The System tab's GObjects / GNames SYM button now works on games whose signature points a little beside the
+  real address (Avowed's GObjects is one). It used to refuse there; it now registers the right address in
+  Cheat Engine with a script that finds it again every time it is ticked, so it survives a game restart.
+- Checked live on Avowed with Cheat Engine 7.7 and AOBMaker.UI: `gobjects_addr` landed exactly on the dumper's
+  GObjects, and re-ticking the record found it again.
+- Build 3614: AOT `dist\UE5DumpUI.exe` 59,163,136 B, sha256 `1053af5b20cd`; `dist\UE5Dumper.dll` `87dc24552e2f`.
+  C# 6021/6021, 29 gates.
+
 ## 2026-10-01 (build 3613) — Push a Live Walker structure straight into CE's Structure Dissect `[AOBM-DISSECT-INJECT]`
 
 - Live Walker's Export CSX menu has a new item, "Push to CE Structure Dissect". Instead of saving a .CSX file and
