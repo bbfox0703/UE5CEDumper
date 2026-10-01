@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3608) — +CE adds bit-field bools and strings as they are `[AOBM-PLUSCE-FIDELITY]`
+
+- +CE (Live Walker, its "+CE Field (flat)" batch, Instance Finder, and the Value Search / Snapshot / SPC rows) now
+  adds a bit-field bool as a Binary record at its own bit, and an FString as a real String record (it follows the
+  string's pointer and uses the String Len setting). Before, a bool arrived as its whole byte (96 instead of 1)
+  and an FString as an 8-byte pointer. This needs the AOBMaker plugin from v20260930 or later for bits; with an
+  older plugin the record arrives the old way and the status line says why.
+- Enums and FNames are still added as numbers.
+- Checked live on DumperTest with Cheat Engine 7.7 and AOBMaker v20260930: two bit-field bools and two Japanese /
+  Chinese FStrings came out right.
+- Build 3608: AOT `dist\UE5DumpUI.exe` 59,054,592 B, sha256 `0209b0cf739c`; `dist\UE5Dumper.dll` `0acf0977af57`.
+  C# 5978/5978, 29 gates.
+
 ## 2026-10-01 (build 3607) — Copy CE XML no longer stops at 60,000 entries `[CEXML-CAP-60K]`
 
 - Copy CE XML, Copy CE Field and Instance Finder's Copy CE XML stopped at 60,000 entries, and real tables go past

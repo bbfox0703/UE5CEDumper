@@ -354,6 +354,9 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 | Any field | An absolute address, which does not survive a restart | The XML path is GWorld-rooted. AOBMaker notes the plugin passes `address` straight to `mr.Address`, and CE accepts expressions such as `[x]+off` there; unproven through the bridge |
 
 - **Partial workaround today:** a one-node `CreateRecordTree*` batch carries offsets, length and unicode. It still cannot carry bits or dropdowns.
+- **Done 2026-10-01 (`[AOBM-PLUSCE-FIDELITY]`, build 3608):** +CE sends a bit-field bool and an FString as a
+  one-node record tree, so they arrive as a Binary record at their bit and a String record; enum and FName stay
+  numbers, and the address stays absolute.
 - **AOBMaker change:** R2's node fields, sent as a one-node `Begin` / `Chunk` / `End`. We asked (R6) to give
   `CreateMemoryRecord` `bitStart`/`bitLength`, `dropDownList`, `length`/`unicode`/`codePage` and `offsets`; AOBMaker
   keeps `CreateMemoryRecord` as it is and re-targets the item to that batch (reply §2.6, P3).
