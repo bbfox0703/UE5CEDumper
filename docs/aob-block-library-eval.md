@@ -1,5 +1,9 @@
 # AOB code-block library — §4 and §6 BUILT and CI-gated; ONE decision still open
 
+> **Status (2026-10-01).** The n-gram index is now built from EVERY UE program on the build
+> machine, not from self-built templates only: §8 has the measurement behind that and what it
+> cost. §6 and §7 are kept as written; where §8 supersedes a statement, the statement says so.
+
 > **Status (2026-08-05).** The title said "NOT BUILT (decision pending)" while two of its
 > proposals were already shipped *and enforced by CI*: the **§4 block library**
 > (`tools/ghidra/blocks/blocks.json`, `.github/workflows/ci.yml`) and the **§6 n-gram
@@ -255,6 +259,7 @@ Honest summary: thresholding is a **strong barrier, not a proof of impossibility
 the threshold, and do not repeat the "nothing can be reconstructed" phrasing.
 
 Build it from the self-built tier anyway (§2): it costs nothing and keeps provenance clean.
+*(Superseded 2026-10-01: it did cost something, measured in §8.)*
 
 ### How it works
 
@@ -327,13 +332,15 @@ unsound. Stock engine code is similar enough across versions that version covera
 
 **`CLEAR` is a proof on the index's own sources and a strong prior everywhere else.** The tail is
 real: `GNAM_UD2` bounds at ≤15 and takes **932** hits on FF7 Remake; `GOBJ_AV2` bounds at ≤15 and
-takes 510 on Avowed.
+takes 510 on Avowed. *(Since the 2026-10-01 rebuild the two patterns bound at 2,048 and 512, §8.)*
 
 **The cause is code coverage, not version.** The index is built from *content-free stock templates*,
 so it has seen UE engine code and essentially **no game code**, while a shipped title adds 100+ MB
 of studio code on top. The worst offenders are exactly the most non-standard binaries in the corpus
 (FF7R, Avowed). Since §1/§2 mean third-party code can never be indexed, **this limit is STRUCTURAL
 and permanent — not a threshold to tune, not a bug to fix.**
+*(Superseded 2026-10-01. The premise was a choice, not a fact about the artifact; the maintainer
+reversed it, and §8 measures what indexing more programs buys.)*
 
 **What that changes:** nothing about the build order, and everything about the wording. The tool
 must never say "certified"; it says *quiet in stock engine code*, with the measured unseen-binary
@@ -425,3 +432,110 @@ no assembly target to recover. Thresholding is a second, tunable barrier layered
 Practical note: `build_ngram_index.py` cannot build a mixed corpus as written — `pick_sources()`
 hardcodes a single root, Shipping-only, `\Engine\`-excluded, ≥5 MB, with no `--roots`. Adding one
 would be the prerequisite, and §7.3 says not to bother.
+*(Superseded 2026-10-01: the builder walks `--roots` now. §7.3's algebra still holds — a merged
+index is never tighter than two separate ones — but on UE programs the difference measured as
+nothing: the same violations and the same CLEAR count either way, §8.)*
+
+-----
+
+## 8. MEASURED 2026-10-01 — the index is built from every program the machine has
+
+**The decision (the maintainer's).** §6 built the index from 11 self-built Shipping templates and
+called the resulting blind spot permanent. It is a blind spot of the SOURCE SET, so the set was
+changed: `build_ngram_index.py` now walks its roots and indexes every UE program under them, all
+build configs, a modular build's module DLLs included. The file records the roots, the number of
+files, their total code size and one digest of the whole set. **It does not name its sources, and
+neither does this document**: the set is whatever was on disk that day, it will differ on the next
+rebuild and on anyone else's machine, and it is not part of what the index claims.
+
+Everything below is `tools/pe/ngram_corpus_eval.py`. It does not rebuild an index per question: it
+records each binary's exact counts for the patterns' own literal windows, which is all a bound
+depends on, and answers any source subset from that. The shortcut was checked rather than trusted
+— against a real index it agrees on **1,369 of 1,369 windows**, and the index the production
+builder wrote from the PEs is byte-identical, table for table, to the one assembled from the
+shortcut's cache.
+
+### 8.1 Does a bigger source set bound an unseen program better? Yes
+
+153 patterns; 84 programs, 40 self-built and 44 others in 30 developer groups. A group's programs are
+judged by an index built WITHOUT that group; a pair is (pattern, group), and it counts as exceeded
+when any program of the group takes more hits than the bound.
+
+| index built from | exceeded | of which the verdict was `CLEAR` |
+|---|---|---|
+| 11 self-built Shipping templates — the index until this date | 20 / 3,105 (0.64%) | 4 / 1,296 (0.31%) |
+| every self-built build config | 21 / 3,450 (0.61%) | 1 / 1,320 (0.08%) |
+| + the other programs, one group held out | **8 / 3,450 (0.23%)** | 1 / 968 (0.10%) |
+
+* **Build configs fix `CLEAR`.** A Shipping-only index has never seen non-Shipping codegen: it
+  certified patterns `CLEAR` that non-Shipping builds exceed (2 of 624 pairs on the self-built
+  non-Shipping builds, 4 of 1,296 on other programs). Indexing every config leaves 1.
+* **Other programs fix the rest.** 21 → 8. The curve had not flattened when the corpus ran out
+  (20 random orders, a fixed third of the groups as the test set): 0.66% with no other program,
+  0.42% with 8 groups, 0.28% with 20.
+* **What does not improve.** The 8 that remain sit in two groups whose code resembles nothing else
+  indexed. Such a program is bounded badly until it is itself a source — which it now is.
+* **Separate indexes buy nothing here.** §7.3's two-index design gave the same 8 violations and the
+  same number of `CLEAR` patterns as one merged index, at both thresholds. One file.
+* **Grouping by publisher instead of developer** (25 groups) gives the same 21 → 8.
+
+⚠ **Read these as a floor on the error, not as the error.** The patterns were authored on, and
+swept against, most of these programs, and only the survivors are scored. On the five groups no
+sweep ever covered, the same comparison is 5 → 3 of 575.
+
+### 8.2 What it cost
+
+* **Bounds only rose.** Against the old index, 77 of 160 baseline rows changed and every change is
+  a rise; 16 patterns lost `CLEAR` (47 → 32). That is the index learning, not patterns getting
+  noisier (§7.1) — the two rows that were known to be wrong are among them: `GNAM_UD2` 15 → 2,048,
+  `GOBJ_AV2` 15 → 512.
+* **On its own sources the bound is still a proof:** 0 violations / 14,490 pairs
+  (`verify_ngram_bound.py`), and the worst a `CLEAR` pattern takes on any source is 3 hits.
+* **Size.** 126 binaries, 9,641 MB of code, 18.2 M records:
+
+  | | records as rows (format 1) | records as columns (format 2) |
+  |---|---|---|
+  | threshold 16 | 51.4 MB | **26.5 MB** — committed |
+  | threshold 8 | 107.7 MB | 54.9 MB |
+
+  The old index was 10.3 MB. Format 2 stores each table column by column: the keys are sorted, so
+  the leading columns are long runs. The reader turns them back into rows in memory, stdlib only.
+  Threshold 8 changes no `CLEAR` violation count here (1 either way) and doubles the file.
+* **A rebuild is a different index.** It depends on what is on disk, so the baseline TSV is
+  regenerated with it, in the same commit, and the two are only meaningful together.
+
+### 8.3 What the file gives away — measured, with the binary in hand
+
+§6 measured one self-built source against a one-source table. The question now is what a
+many-program index holds of a THIRD-PARTY program. Four of them (68 to 398 MB of code), each
+measured against the full index and against the same index built without that program's group:
+
+| | range over the four |
+|---|---|
+| positions whose 6-gram is in the index | 51 – 57% |
+| …and is there ONLY because this program's group is a source | 6 – 17% |
+| longest run of those group-only positions, by distinct content | **41 – 100 bytes** |
+| longest run where the index allows exactly one next byte | 52 bytes, the same in all four |
+| …allowing 16 bits of search | 100 – 106 bytes |
+| …allowing 64 bits of search | 148 – 232 bytes |
+
+How to read it:
+
+* A sequence is in the index only if some program repeats it 16 times or more. The group-only
+  share is therefore that program's own REPEATED code — an inlined template, a macro expansion —
+  and never a one-off function.
+* The 52-byte forced run is identical in all four programs, so it is engine code every UE build
+  carries. The longest stretch that belongs to one group alone is 100 bytes.
+* Every row is an upper view of what an index holder has. The binary chose the starting point and
+  told the measurement where each run stops; someone holding only the index has neither, no
+  positions, no order, and a count that is a log2 bucket of the maximum across 126 files.
+* "Longest run" is ranked by DISTINCT sequences and stops at a repeat (period 16 or less). Ranked
+  by length alone the answer is padding and repeated tables, which is why §6's 686-byte figure
+  should not be compared with these.
+* **Mixing did not make the index say more about any one program.** The same three figures for a
+  self-built template against the OLD template-only index, which held that very binary, are 57,
+  119 and 259 bytes. Against a third-party program the many-program index reaches 52, 100–106
+  and 148–232.
+
+So: fragments of tens of bytes, the repeated kind, with no way to place them. Not "nothing" — do
+not write "nothing can be reconstructed" — and not a program.

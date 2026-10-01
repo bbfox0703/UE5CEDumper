@@ -1490,9 +1490,12 @@ built and reported SKIPPED where it is not; see below). And a pure helper needs 
 `dist/UE5CEDumper.CT` and running them against the two real DLLs.
 
 **Run them on CE's Lua VM, not only on the stock `lua` (measured 2026-09-25).** The `lua` on this PC is a stock
-**5.4.6**; the scripts run inside CE's **`lua53-64.dll`**. `py tools/verify/ce_lua53_host.py` builds CE's own `lua.c`
+**5.4.6**; the scripts run inside CE's **`lua53-64.dll`**. `py tools/verify/ce_lua53_host.py` builds a small host
 against an import library generated from the INSTALLED DLL and runs every suite on that exact binary (all 10
-passed the day it was written). Its `--probe` measured what actually differs: `_VERSION` "Lua 5.3"; **none** of the
+passed the day it was written). *(Since 2026-10-01 the host is our own `ce_lua53_host.c`, not CE's `lua.c`: it
+needs only a Cheat Engine install, and `build.ps1` builds it before the C# tests. Until then a machine with Cheat
+Engine but no clone of its source tree skipped fourteen tests and said so only in "skipped" lines. A helper the
+tests skip without belongs in the build, not in someone's memory.)* Its `--probe` measured what actually differs: `_VERSION` "Lua 5.3"; **none** of the
 5.1/5.2 compat functions (`bit32`, `math.pow`, `unpack`, `loadstring` are nil -- the source tree's Makefile says
 `LUA_COMPAT_5_2`, the shipped DLL was not built with it); no `warn` / `coroutine.close` / `<const>`; and
 **string arithmetic yields a FLOAT** -- `"10"+1` is `11.0` on CE's VM, `11` on 5.4 -- so `tostring` of such a value

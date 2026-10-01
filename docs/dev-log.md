@@ -27,6 +27,56 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3615) — the build makes the Cheat Engine Lua test host itself
+
+- Some tests run the scripts this program generates on Cheat Engine's own Lua engine. They need a small
+  helper program that each PC has to build once. On a PC that never built it those tests were skipped, even
+  with Cheat Engine installed, and the only sign was a list of "skipped" lines.
+- `build.ps1` now builds that helper before the tests whenever Cheat Engine is installed, and rebuilds it only
+  when Cheat Engine or the helper's source changed. Without Cheat Engine it says so in one line and the tests
+  skip as before. If Cheat Engine is installed and the helper cannot be built, the build fails.
+- The helper no longer needs a copy of Cheat Engine's source code, only the installed program. It is a small
+  program of our own now; on every test it gives exactly the output the old one did.
+- No change to the dumper or the UI. Build 3615: AOT `dist\UE5DumpUI.exe` 59,163,136 B, sha256
+  `eac4f3c9fac8`; `dist\UE5Dumper.dll` `b3b1ae536328`. C# 6021/6021 with 0 skipped, headless 15/15, 29 gates.
+
+## 2026-10-01 (no build change) — the Ghidra projects' backup is on the NAS, `Y:\GHIDRA_Projs`
+
+- All 63 Ghidra projects are copied to the NAS, which is mapped as drive `Y:`. The folder is
+  `Y:\GHIDRA_Projs` (63 `.rep` and 63 `.gpr`, listed and counted that day). This is the backup
+  "kept elsewhere" that the cleanup entry below mentions.
+- If `Y:` does not exist, or `GHIDRA_Projs` is not under it, the NAS is not mounted. It does not
+  mean the backup is gone.
+
+## 2026-10-01 (no build change) — the AOB specificity index is built from far more programs
+
+- The index that tells how noisy an AOB pattern can be was built from 11 engine templates. It is now built
+  from every UE program on the build machine (126 binaries, all build configs). The file does not record
+  which programs, only where the builder looked and how much code it read.
+- Measured on programs the index had not seen: patterns that take more hits than the index allows fell
+  from 21 to 8 (of 3,450 pattern-and-developer pairs), and wrongly certified "quiet" patterns from 4 to 1.
+  The two known wrong entries (`GNAM_UD2`, `GOBJ_AV2`) are now bounded correctly.
+- The price: 77 pattern bounds rose and 16 patterns lost their "quiet" verdict, because the index now
+  knows more code; none got tighter. The file grew from 10.3 MB to 26.5 MB, and would be 51.4 MB without
+  the new column layout.
+- The two non-Shipping GNames patterns added on 2026-09-26 were being scored by an index with no
+  non-Shipping code in it. They are scored against all build configs now.
+- New tool `tools/pe/ngram_corpus_eval.py` re-derives these numbers; the write-up is
+  `docs/aob-block-library-eval.md` §8. C# 6021/6021, 29 gates.
+
+## 2026-10-01 (no build change) — the Ghidra projects were cleaned up: five kept, the rest removed from this machine
+
+- `D:\Tools\GHIDRA_Projs` held 63 Ghidra projects, 171 GB. 58 of them (146 GB) were removed from this
+  machine. The five UE 5.8 self-built projects (19 GB) stay, because their game binaries are no longer on disk.
+- Before the cleanup the maintainer shrank the project files and kept a backup of them elsewhere, so the
+  removed projects are not lost: this frees space here, nothing more.
+- Nothing in daily use needed them. The pattern regression sweep and the n-gram index are both built from the
+  game binaries under `D:\UE_Analyze_data`. Ghidra was only needed to read code when writing a new pattern,
+  and every pattern in use is recorded in `Himmel.h`.
+- For a new engine (UE6 is the likely next case) the plan is to package a new DumperTest for it and compare
+  against `Himmel.h`, not to analyse a shipped game.
+- Details and what the Ghidra-based tools will now report: the top note of `docs/corpus-preservation.md`.
+
 ## 2026-10-01 (build 3614) — GObjects symbol in Cheat Engine for games like Avowed `[AOBM-GWORLD-GENAOB]`
 
 - The System tab's GObjects / GNames SYM button now works on games whose signature points a little beside the

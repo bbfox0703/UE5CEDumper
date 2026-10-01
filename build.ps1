@@ -1067,6 +1067,36 @@ if ($Target -in "All", "Test") {
         $exitCode = 1
     }
     else {
+        # ----- CE Lua test host -----
+        # The C# tests that call CeLua53Host run generated scripts on Cheat Engine's OWN Lua VM,
+        # through out\ce_lua53\lua53ce.exe. That host is gitignored build output, one per machine, so
+        # a machine that had never built it SKIPPED those tests -- with Cheat Engine installed,
+        # and with nothing but "skipped" lines to say so (seen on the second PC, 2026-10-01).
+        # So the build makes it: ce_lua53_host.py finds the install, and compiles only when the
+        # host is missing, Cheat Engine's DLL changed, or the host's source changed.
+        #   exit 0 = ready    3 = no Cheat Engine on this machine    anything else = failed
+        # No Cheat Engine is a legitimate skip (CI has none). A FAILED build is not: Cheat
+        # Engine is installed, so those tests were meant to run, and letting them skip quietly
+        # is the AD1/AD2 defect this script's other steps already refuse.
+        Write-Step "CE Lua test host (the tests that run on Cheat Engine's own Lua VM)..."
+        $pyHost = @('py','python','python3') | Where-Object { Get-Command $_ -ErrorAction SilentlyContinue } | Select-Object -First 1
+        if (-not $pyHost) {
+            Write-Info "no Python on PATH - the host was not checked; the tests that need it will SKIP"
+        }
+        else {
+            & $pyHost (Join-Path $ROOT_DIR "tools/verify/ce_lua53_host.py") --build-only
+            if ($LASTEXITCODE -eq 0) {
+                Write-Ok "CE Lua test host ready"
+            }
+            elseif ($LASTEXITCODE -eq 3) {
+                Write-Info "Cheat Engine is not installed here - the tests that run on its Lua VM will SKIP"
+            }
+            else {
+                Write-Fail "the CE Lua test host did not build although Cheat Engine is installed (see above)"
+                $exitCode = 1
+            }
+        }
+
         Write-Step "Building + running tests..."
 
         # Guard: a NuGet "Update all packages" pass keeps re-adding explicit

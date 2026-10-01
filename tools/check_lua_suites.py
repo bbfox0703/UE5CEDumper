@@ -48,7 +48,8 @@ def main(argv):
         return 0
     if not HOST.exists():
         print(f"SKIPPED: CE's Lua host is not built here ({HOST.relative_to(ROOT)}). "
-              "Build it with 'py tools/verify/ce_lua53_host.py' (needs a local Cheat Engine + MSVC).")
+              "build.ps1 builds it when Cheat Engine is installed; by hand: "
+              "'py tools/verify/ce_lua53_host.py --build-only' (needs a Cheat Engine install + MSVC).")
         return 0
     failed = []
     for p in suites():

@@ -5,10 +5,12 @@ using System.Text;
 namespace UE5DumpUI.Tests;
 
 /// <summary>
-/// Runs a Lua chunk on Cheat Engine's OWN Lua VM: out/ce_lua53/lua53ce.exe, the stock lua.c linked against the
-/// installed CE's lua53-64.dll (built by <c>py tools/verify/ce_lua53_host.py</c>, gitignored). A test that needs it
-/// calls <see cref="RequireHost"/> first, which SKIPS -- never fails -- on a machine without the host (CI, a fresh
-/// clone): the host needs a local CE install, and a test must not reach outside the repo for it.
+/// Runs a Lua chunk on Cheat Engine's OWN Lua VM: out/ce_lua53/lua53ce.exe, a small driver of our own
+/// (tools/verify/ce_lua53_host.c) linked against the installed CE's lua53-64.dll. <c>build.ps1</c> builds it before
+/// the tests whenever Cheat Engine is installed (<c>py tools/verify/ce_lua53_host.py --build-only</c>); it is
+/// gitignored. A test that needs it calls <see cref="RequireHost"/> first, which SKIPS -- never fails -- on a machine
+/// without the host (CI, or a bare <c>dotnet test</c> on a fresh clone): the host needs a local CE install, and a
+/// test must not reach outside the repo for it.
 /// Why not a stock interpreter: CE's VM is 5.3 without the 5.1/5.2 compat functions, and string arithmetic yields
 /// floats there -- a script can pass on 5.4 and fail in CE (ce_lua53_host.py's header has the measurements).
 /// </summary>
@@ -28,7 +30,8 @@ internal static class CeLua53Host
     {
         string? h = HostPath();
         if (h == null)
-            Xunit.Assert.Skip("CE's Lua host is not built here (py tools/verify/ce_lua53_host.py); it needs a local CE install.");
+            Xunit.Assert.Skip("CE's Lua host is not built here. build.ps1 builds it when Cheat Engine is installed; "
+                              + "by hand: py tools/verify/ce_lua53_host.py --build-only");
         return h!;
     }
 

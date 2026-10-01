@@ -8,6 +8,37 @@
 > are proven by which binary) and [tools/ghidra/sweep.sh](../tools/ghidra/sweep.sh) (the corpus
 > list itself, and the source of truth for it).
 
+> ### ⚠ 2026-10-01 — the Ghidra projects were dropped, except five (the maintainer's decision)
+>
+> **58 of the 63 `.rep` (146 GB) left the corpus root.** Five stay (19 GB): the self-built UE 5.8
+> projects `StackOBot_Shipping_UE58`, `StackOBot_DebugGame_UE58`, `StackOBot_Shipping_UE581`,
+> `StackOBot_Development_UE581` and `Titan_DebugGame_UE58`. Their binaries are no longer on disk
+> (`py tools/ghidra/corpus_relocate.py`: 52/57 rows recoverable, these five `EXE-MISSING`), so
+> each `.rep` is the only copy of that row on this machine.
+>
+> **The removed projects are not lost.** Before the cleanup the maintainer shrank the project
+> files and copied all 63 projects to the NAS, mapped as drive `Y:` — `Y:\GHIDRA_Projs`
+> (63 `.rep` + 63 `.gpr`, listed 2026-10-01). This machine no longer holds the 58; that is all.
+> ⚠ If `Y:` does not exist, or `GHIDRA_Projs` is not under it, the NAS is NOT MOUNTED. That is
+> not a missing backup: mount it and look again before concluding anything.
+>
+> **Why.** Nothing routine reads a `.rep` any more: the regression sweep is `pe_sweep.py` over the
+> binaries (§0a), and the n-gram index has always been built from the binaries. The one use left
+> was reading code to author a NEW pattern, and every pattern in use is already recorded in
+> `Himmel.h`. The next new pattern is expected for a new engine generation; the plan then is to
+> package a DumperTest for that engine and compare it against `Himmel.h`, not to analyse a
+> shipped game.
+>
+> **What follows from it.**
+> * `sweep.sh`, `preflight.py`, `run_headless_export.py` and `run_all_aob_export.py` open the
+>   `.rep` and will report 52 rows' projects missing. That is the expected state, not damage.
+> * To read one game's code again: re-import it from the archived binary (§0b shows it works);
+>   budget hours of Auto Analyze for that one project.
+> * `D:\UE_Analyze_data` is now the whole corpus for 52 rows. The rules below about its two
+>   archive roots and about uninstalling a corpus Steam title matter MORE, not less.
+> * Everything below that calls a `.rep` the artifact of record, the drop order and the
+>   never-drop set describe the corpus before this date. Read them as history.
+
 > ### ⚠ THE PATHS IN THIS DOCUMENT ARE ONE MACHINE'S — not a property of this repo
 >
 > The corpus root does **not** follow a clone. Every tool resolves it from the `GHIDRA_PROJS`

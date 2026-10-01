@@ -29,23 +29,31 @@ windows, so the frequency of the RAREST window is an UPPER BOUND on the pattern'
 code the index was built from*. Deliberately loose — wildcards constrain far more than literal runs
 do — so read it as "at most this many", never as an estimate.
 
-⚠ THE BOUND IS A PROOF ONLY ON THE INDEX'S OWN SOURCES, AND A PRIOR EVERYWHERE ELSE. Measured:
+⚠ THE BOUND IS A PROOF ONLY ON THE INDEX'S OWN SOURCES, AND A PRIOR EVERYWHERE ELSE. Measured
+2026-10-01, for the index built that day (126 binaries, 9,641 MB of code, every build config):
 
-    on the 11 source binaries      0 violations / 1,243 pairs      (proof)   [re-measured 2026-08-01]
-    on 58 binaries never indexed   27 violations / 7,345  (0.37%)  (prior)   [NOT re-measured]
-      of which CLEAR-verdict        6 violations / 3,055  (0.20%)  median 0, 99th pct 10, MAX 932
+    on its own sources      0 violations / 14,490 pairs, CLEAR 0 / 4,032      (proof)
+        `py tools/pe/verify_ngram_bound.py`; a pair is (scoreable pattern x source binary), 115 x 126.
 
-Re-derive the first line with `py tools/pe/verify_ngram_bound.py` — it was hand-measured once, and
-the zero is the part that matters: it still holds. A PAIR is (scoreable pattern x distinct source
-binary), which is 113 x 11 = 1,243 exactly; the earlier "1,017" carried no written definition and
-is not a product of anything (1,017/11 = 92.45). The second and third lines are from the original
-hand measurement and have NOT been re-derived — there is no script for them yet.
+    on programs it has NOT seen — `tools/pe/ngram_corpus_eval.py`, each developer's titles judged by
+    an index built without them; a pair is (pattern, developer group), 153 patterns x 30 groups:
 
-The failures are NOT a version problem — a 4.27-only index bounds a 5.4 binary with 0 violations
-in 113. They are a CODE-COVERAGE problem: the index is built from content-free stock templates, so
-it has seen UE engine code and essentially no game code, while a shipped title adds 100+ MB of
-studio code. Licensing means that half can never be indexed, so this limit is STRUCTURAL and
-permanent, not a tuning knob. GNAM_UD2 bounds at 15 and takes 932 hits on FF7 Remake.
+        index built from                                    exceeded        of which CLEAR
+        11 self-built Shipping templates (until 2026-10-01)  20 / 3,105  0.64%   4 / 1,296  0.31%
+        every self-built build config                        21 / 3,450  0.61%   1 / 1,320  0.08%
+        + the other programs, one group held out              8 / 3,450  0.23%   1 /   968  0.10%
+
+The failures were never a version problem — a 4.27-only index bounds a 5.4 binary with 0 violations
+in 113. They are a CODE-COVERAGE problem: an index built from content-free engine templates has
+seen engine code and no game code, while a shipped title adds 100+ MB of studio code. That is why
+the index is now built from every UE program the build machine has, and why the rate fell: the old
+index certified GNAM_UD2 at <= 15 where one game takes 932 hits, and GOBJ_AV2 at <= 15 where another
+takes 510; both are bounded now. The rate does not reach zero, and it was still falling when the
+corpus ran out: a program whose code resembles nothing indexed is bounded badly until it is a source.
+
+⚠ The patterns were authored on, and swept against, most of those same programs, and only the
+survivors are scored — so every out-of-sample figure above flatters a genuinely new game. On the
+five groups no sweep ever covered the same comparison reads 5 -> 3 of 575.
 
 WHAT IT CANNOT TELL YOU: whether the pattern hits the RIGHT address. `GNAM_XX_1` bounds at a clean
 57 and is DECOY-ONLY. This is a PRE-FILTER, not an acceptance gate — `Himmel.h` rule 5 keeps meaning
@@ -87,6 +95,20 @@ class Index:
             off += 10
         self.meta = json.loads(self.buf[off:off + metalen].decode("utf-8"))
         off += metalen
+        if ver >= 2:
+            # Format 2 stores each table COLUMN by column (build_ngram_index.write_index: the same
+            # records gzip to about half that way). Turn the columns back into record rows, so
+            # everything below, and every caller that reads `buf` + `tables`, sees format 1.
+            rows = bytearray(self.buf[:off])
+            src = off
+            for n, _thr, cnt in heads:
+                stride = n + 1
+                tab = bytearray(cnt * stride)
+                for j in range(stride):
+                    tab[j::stride] = self.buf[src + j * cnt:src + (j + 1) * cnt]
+                rows += tab
+                src += cnt * stride
+            self.buf = bytes(rows)
         self.tables = {}
         for n, thr, cnt in heads:
             self.tables[n] = (off, cnt, thr, n + 1)
@@ -158,18 +180,16 @@ def score(idx, pat):
 def verdict(bound, longest, lit, floor):
     """THE GUARANTEE IS ONE-DIRECTIONAL: this can CERTIFY a pattern quiet, and cannot CONDEMN one.
 
-    Worst hits per pattern over 151 patterns x 11 source binaries
-    (re-measured 2026-08-01 by `tools/pe/verify_ngram_bound.py`):
+    Worst hits per pattern over 153 patterns x the index's 126 source binaries
+    (2026-10-01, `tools/pe/verify_ngram_bound.py`):
 
-        CLEAR (bound <= floor)   n=47  median 0   90th  2   99th  13   MAX   13
-        UNPROVEN (bound > floor) n=66  median 1   90th 16   99th 554   MAX 1366
-        NO-ANCHOR                n=38  median 1   90th 33   99th 3302  MAX 3302
+        CLEAR (bound <= floor)   n=32  median 1   90th    1   99th     3   MAX      3
+        UNPROVEN (bound > floor) n=83  median 2   90th  619   99th  6069   MAX  26942
+        NO-ANCHOR                n=38  median 2   90th 5329   99th 19501   MAX  19501
 
-    The CLEAR row reproduced exactly. The other one did not: this used to be a single "UNPROVEN"
-    row reading `median 1 / 90th 33 / MAX 3302`, and those are the **NO-ANCHOR** numbers — the old
-    measurement lumped every non-CLEAR pattern together, so the alarming 3,302 belonged to a
-    pattern with no 4-byte literal run at all, not to one the index had scored and failed to
-    certify. Split out, UNPROVEN tops out at 1,366.
+    NO-ANCHOR is its own row for a reason: an earlier measurement lumped every non-CLEAR pattern
+    together, and its alarming maximum belonged to a pattern with no 4-byte literal run at all, not
+    to one the index had scored and failed to certify.
 
     So CLEAR is tight and trustworthy. Above the floor the bound is far too loose to mean anything:
     the buckets an earlier version called NOISY and VERY NOISY had MEDIANS of 0 and 2 — quieter than
@@ -188,11 +208,11 @@ def verdict(bound, longest, lit, floor):
     if bound is None:
         return ("UNSCOREABLE", "no window the index can size. NOT the same as 'rare' — unknown.")
     if bound <= floor:
-        return ("CLEAR", f"quiet in STOCK ENGINE CODE — under {floor + 1} occurrences of its rarest "
-                         "window in every source binary (proven there: 0 violations / 1,243 pairs). "
-                         "On a real game it is a STRONG PRIOR, not a proof: 0.20% violation rate "
-                         "over 3,055 unseen pairs, median 0 and 99th pct 10 hits, but the tail is "
-                         "real — GNAM_UD2 bounds at 15 and takes 932 on FF7 Remake.")
+        return ("CLEAR", f"quiet in every program the index was built from — under {floor + 1} "
+                         "occurrences of its rarest window in each (proven there: 0 violations / "
+                         "14,490 pairs). On a program it has not seen it is a STRONG PRIOR, not a "
+                         "proof: with each developer's titles held out in turn, 1 of 968 CLEAR "
+                         "pairs was exceeded.")
     return ("UNPROVEN", f"cannot certify (rarest window bounds at {bound}). This is NOT evidence "
                         "the pattern is noisy — the bound is very loose, and most patterns landing "
                         "here measure in single digits. Sweep it to find out.")
@@ -224,17 +244,23 @@ def main():
               f"(needs numpy + the corpus).")
         return 2
     idx = Index(idxpath)
+    if "source_files" in idx.meta:
+        # An index built since 2026-10-01 does not list its sources (build_ngram_index.py says
+        # why): it records how many, how much code, and where the builder looked.
+        print(f"index: {os.path.basename(idxpath)}  threshold {idx.threshold}  n={idx.ns}  "
+              f"{idx.meta['source_files']} source binaries, "
+              f"{idx.meta.get('source_exec_mb', 0):,.0f} MB of code")
     src = idx.meta.get("sources", [])
-    # DISTINCT, not len(src). The index records 12 entries but 11 binaries:
-    # UE423_Flying-Win64-Shipping.exe exists twice under the 4.23.1 tree and build_ngram_index.py's
-    # pick_sources() globs `**/*.exe`, so it was indexed twice. Printing the entry count made this
-    # line disagree with the docstring's "11 source binaries" — and the DOCSTRING was right. The
-    # data is unaffected: merge_max() takes the MAX bucket per key, so a repeat is a no-op.
+    # An index from before 2026-10-01 lists its sources, and listed one twice: the builder globbed
+    # `**/*.exe` and the same build sat in two folders. DISTINCT, not len(src), is the number of
+    # binaries. The data is unaffected: merge_max() takes the MAX bucket per key, so a repeat is a
+    # no-op. (The builder deduplicates by content now.)
     distinct = {(s.get("binary"), s.get("engine"), s.get("config"), s.get("exec_mb")) for s in src}
     dupes = len(src) - len(distinct)
-    print(f"index: {os.path.basename(idxpath)}  threshold {idx.threshold}  n={idx.ns}  "
-          f"{len(distinct)} source binaries"
-          + (f" ({len(src)} entries, {dupes} duplicate)" if dupes else ""))
+    if "source_files" not in idx.meta:
+        print(f"index: {os.path.basename(idxpath)}  threshold {idx.threshold}  n={idx.ns}  "
+              f"{len(distinct)} source binaries"
+              + (f" ({len(src)} entries, {dupes} duplicate)" if dupes else ""))
 
     if "--tsv" in args:
         tsv = args[args.index("--tsv") + 1]
