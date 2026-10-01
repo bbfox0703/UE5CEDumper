@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — the AOB specificity index is built from far more programs
+
+- The index that tells how noisy an AOB pattern can be was built from 11 engine templates. It is now built
+  from every UE program on the build machine (126 binaries, all build configs). The file does not record
+  which programs, only where the builder looked and how much code it read.
+- Measured on programs the index had not seen: patterns that take more hits than the index allows fell
+  from 21 to 8 (of 3,450 pattern-and-developer pairs), and wrongly certified "quiet" patterns from 4 to 1.
+  The two known wrong entries (`GNAM_UD2`, `GOBJ_AV2`) are now bounded correctly.
+- The price: 77 pattern bounds rose and 16 patterns lost their "quiet" verdict, because the index now
+  knows more code; none got tighter. The file grew from 10.3 MB to 26.5 MB, and would be 51.4 MB without
+  the new column layout.
+- The two non-Shipping GNames patterns added on 2026-09-26 were being scored by an index with no
+  non-Shipping code in it. They are scored against all build configs now.
+- New tool `tools/pe/ngram_corpus_eval.py` re-derives these numbers; the write-up is
+  `docs/aob-block-library-eval.md` §8. C# 6021/6021, 29 gates.
+
 ## 2026-10-01 (no build change) — the Ghidra projects were cleaned up: five kept, the rest removed from this machine
 
 - `D:\Tools\GHIDRA_Projs` held 63 Ghidra projects, 171 GB. 58 of them (146 GB) were removed from this
