@@ -273,7 +273,8 @@ lua scripts/tests/invoke_helper_test.lua
 Exit 0 = all pass, 1 = a failure (with the case named). `luac -p <file>` syntax-checks any script.
 
 **A gate since 2026-09-25** (`check_lua_suites`, `2448a3f5`): the suites run on CE's own Lua VM
-(`out/ce_lua53/lua53ce.exe`, built by `tools/verify/ce_lua53_host.py`). Where that host is not built --
+(`out/ce_lua53/lua53ce.exe`, built by `tools/verify/ce_lua53_host.py`; `build.ps1` builds it before the C# tests
+whenever Cheat Engine is installed). Where that host is not built --
 CI included -- the gate prints SKIPPED and `check_all.py` counts a skip, not a pass (a step that skipped
 quietly was audit #5's AD1/AD2 defect). So a green CI run says nothing about them: run them whenever you
 touch the script they cover.
