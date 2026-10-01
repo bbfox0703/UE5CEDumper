@@ -611,7 +611,7 @@ public class ProxyOrphanScannerTests
         DllPath = Common + @"\G\Game\Binaries\Win64\version.dll",
         DllDirectory = Common + @"\G\Game\Binaries\Win64",
         DllNames = "version.dll",
-        AuthorisedFiles = new[] { Common + @"\G\Game\Binaries\Win64ersion.dll" },
+        AuthorisedFiles = new[] { Common + @"\G\Game\Binaries\Win64\version.dll" },
         SizeBytes = 2_789_376,
         FileVersion = "1.0.0.2518",
         ChainDirs = new[]
