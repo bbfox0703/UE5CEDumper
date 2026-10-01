@@ -27,6 +27,17 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — a gate for corrupted text files, and a `ship` skill
+
+- New gate `check_text_integrity`: no tracked text file may contain a control character. Patch scripts
+  run through a shell heredoc have written such characters in place of a backslash sequence, and
+  nothing noticed. Its first run found one that had sat in a test file since 2026-07-30; that is fixed.
+- `CLAUDE.md` gains four short rules that sessions kept re-learning: write patch scripts as files, no
+  new PowerShell, read a command's own exit code, and fetch before stating what is pushed.
+- New project skill `ship` (`.claude/skills/ship`): the repo's push, pull request and merge routine in
+  one place, so "push and merge" follows the same steps on either PC.
+- C# 6021/6021, 30 gates.
+
 ## 2026-10-01 (no build change) — folder-only rules moved out of the root `CLAUDE.md`
 
 - `CLAUDE.md` is read at the start of every session. Nine of its rules apply to one folder only, so they

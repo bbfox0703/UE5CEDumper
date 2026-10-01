@@ -1524,6 +1524,11 @@ Two rules, both cheap:
 * When you must use text, **read with `utf-8-sig` and write with `utf-8`** — never the same codec
   for both.
 
+*(2026-10-01: it kept happening — four more times in one session — so it is now a rule in
+`CLAUDE.md` § Code Changes ("a patch script is a FILE, never a heredoc") and a gate,
+`tools/check_text_integrity.py`, which fails on a control byte in any tracked text file. Its first run
+found a vertical tab that had been a `\v` in `ProxyOrphanScannerTests.cs` since 2026-07-30.)*
+
 ⚠ The same session hit the sibling trap **four times**: a bash heredoc mangles backslash escapes, so
 `b"...
 ..."` in a Python source becomes a real newline and the anchor silently stops matching.

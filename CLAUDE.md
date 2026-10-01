@@ -30,16 +30,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Code Changes
 - When asked to refactor or rename modules/files, make actual code changes (move files, update imports, rename classes) — not just documentation updates. Confirm structural changes before proceeding to docs.
+- ⚠ **A patch script is a FILE, never a heredoc.** Write it with the file-writing tool and run it. A
+  shell heredoc collapses backslash escapes before Python sees them, so the script writes the character
+  the escape names: a `\v` in a path sat in a test as a vertical tab from 2026-07-30 to 2026-10-01 with
+  every test green. In the script: turn CRLF into LF before matching and put it back after, and assert
+  each anchor matches exactly once. `check_text_integrity` catches a stray control byte; nothing catches
+  a patch that matched nothing.
+- ⛔ **No new PowerShell: every helper is Python** (`build.ps1` is the one exception). Bitdefender
+  quarantined six files when a new `.ps1` ran. **Commit before executing anything newly written.**
+  The rest of the session rules: [handover §4](docs/handover-2026-08-22.md).
 
 -----
 
 ## Debugging
 - When fixing bugs, verify the fix against the actual memory layout or data structure rather than assuming. If the first fix doesn't work, re-examine fundamental assumptions about the data format before iterating.
+- Read a command's OWN exit code: `cmd | tee log` reports `tee`'s, and a failed build behind it reads as
+  success. A test run that executed zero tests is a failure, not a pass.
 
 -----
 
 ## Git Operations
 - When creating PRs, check for branch divergence and resolve merge conflicts before attempting `gh pr create`. Run `git status` and `git log --oneline -5` first.
+- Before saying what is pushed, merged or on a branch: `git fetch`, then compare with `origin/<branch>`.
+  The other PC and peer sessions push to `dev`; a statement from memory has been wrong. The whole
+  push-and-merge routine is the `ship` skill.
 - ⚠ **Line endings are pinned by `.gitattributes` (`* text=auto eol=lf`), NOT by your git config
   — never "fix" them with `core.autocrlf`, which is machine-local (`true` at `--system` here) and
   does not travel between the two PCs.** Before the pin, `git checkout` silently rewrote an
