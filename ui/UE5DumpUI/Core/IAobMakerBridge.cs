@@ -126,6 +126,17 @@ public interface IAobMakerBridge
         bool isSigned = false, bool showAsHex = false, CancellationToken ct = default);
 
     /// <summary>
+    /// [AOBM-PLUSCE-FIDELITY] Add records through the plugin's record tree (<c>CreateRecordTreeBegin</c> /
+    /// <c>Chunk</c> / <c>End</c>), which carries what <see cref="CreateMemoryRecordAsync"/> cannot: bits, a pointer hop
+    /// and a string length. Every node becomes a top-level record, unticked.
+    /// <para>The default answers "no record tree", so a test double that models only the other commands sends its
+    /// callers down their <see cref="CreateMemoryRecordAsync"/> fallback.</para>
+    /// </summary>
+    Task<RecordTreeResult> CreateRecordTreeAsync(string description, IReadOnlyList<CeRecordNode> nodes,
+        CancellationToken ct = default)
+        => Task.FromResult(RecordTreeResult.NotSupported);
+
+    /// <summary>
     /// Embed an arbitrary text/Lua file into the currently open CE table.
     /// Sends <c>InjectTableFile</c> — the CE Plugin handler runs
     /// <c>findTableFile</c> (delete-if-exists) + <c>createTableFile</c> +

@@ -132,6 +132,85 @@ public class AobMakerMessage
     [JsonPropertyName("symbolRegistered")]
     [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
     public bool? SymbolRegistered { get; set; }
+
+    // --- CreateRecordTreeBegin / Chunk / End [AOBM-PLUSCE-FIDELITY] ---
+    // The batch outlives the connection: Begin's reply names it, and Chunk and End quote it back. Begin's reply also
+    // lists the plugin's features; a plugin from before build 155 lists none, which reads as an empty list.
+
+    [JsonPropertyName("totalNodes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TotalNodes { get; set; }
+
+    [JsonPropertyName("batchId")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public string? BatchId { get; set; }
+
+    [JsonPropertyName("seq")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Seq { get; set; }
+
+    [JsonPropertyName("nodes")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<AobMakerRecordNode>? Nodes { get; set; }
+
+    [JsonPropertyName("features")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public List<string>? Features { get; set; }
+
+    [JsonPropertyName("created")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Created { get; set; }
+
+    [JsonPropertyName("totalCreated")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? TotalCreated { get; set; }
+}
+
+/// <summary>
+/// [AOBM-PLUSCE-FIDELITY] One node of a <c>CreateRecordTreeChunk</c>, under the plugin's own SHORT names (<c>desc</c>,
+/// <c>addr</c>, <c>hex</c>, <c>signed</c>): it reads exactly these and silently ignores anything else, so a long name
+/// would build a record without the field and still answer success. No <c>parent</c>: every node is a root.
+/// </summary>
+public class AobMakerRecordNode
+{
+    [JsonPropertyName("id")]
+    public int Id { get; set; }
+
+    [JsonPropertyName("desc")]
+    public string Desc { get; set; } = "";
+
+    [JsonPropertyName("addr")]
+    public string Addr { get; set; } = "";
+
+    [JsonPropertyName("type")]
+    public string Type { get; set; } = "";
+
+    [JsonPropertyName("hex")]
+    public bool Hex { get; set; }
+
+    [JsonPropertyName("signed")]
+    public bool Signed { get; set; }
+
+    [JsonPropertyName("offsets")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int[]? Offsets { get; set; }
+
+    /// <summary>A string's length in characters. The plugin applies <see cref="Unicode"/> only together with it.</summary>
+    [JsonPropertyName("length")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? Length { get; set; }
+
+    [JsonPropertyName("unicode")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public bool? Unicode { get; set; }
+
+    [JsonPropertyName("bitStart")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BitStart { get; set; }
+
+    [JsonPropertyName("bitLength")]
+    [JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)]
+    public int? BitLength { get; set; }
 }
 
 /// <summary>

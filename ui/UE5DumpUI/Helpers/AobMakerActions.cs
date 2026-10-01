@@ -105,29 +105,66 @@ internal static class AobMakerActions
     /// wrong one, is the refusal a user can actually fix. <paramref name="gamePid"/> 0 skips that question.</para>
     /// </summary>
     internal static async Task<string> AddRecordAsync(AobMakerStatus status, string name, string address,
-        CeXmlExportService.CeRecordType type, ILoggingService log, int gamePid = 0, string gameModule = "")
+        CeXmlExportService.CeRecordType type, ILoggingService log, int gamePid = 0, string gameModule = "",
+        int stringLength = 0)
     {
         var bridge = status.Bridge;
         if (bridge == null || string.IsNullOrEmpty(address)) return "";
-        bool ok;
-        try
-        {
-            ok = await bridge.CreateMemoryRecordAsync(PackedLayoutNotice.RecordNamePrefix + name,
-                StripHexPrefix(address), type.ValueType, type.IsSigned, type.ShowAsHex);
-        }
-        catch (Exception ex)
-        {
-            log.Error($"AOBMaker +CE failed for {name} @ {address}", ex);
-            ok = false;
-        }
+        var push = await PushRecordAsync(bridge, PackedLayoutNotice.RecordNamePrefix + name, address, type,
+                                         stringLength, log);
+        bool ok = push.Added;
         status.Apply(bridge.IsAvailable);
-        if (ok) return AobMakerStatus.Say(KeyRecordDone, "Added to CE: {0}", name);
+        if (ok) return AobMakerStatus.Say(KeyRecordDone, "Added to CE: {0}", name) + DegradedSuffix(push);
         if (!bridge.IsAvailable) return AobMakerUnavailable.Text(bridge);
 
         var refused = AobMakerStatus.Say(KeyRecordRefused, "Cheat Engine refused the record for {0}", name);
         var why = await status.CheckAttachAsync(gamePid, gameModule);
         return string.IsNullOrEmpty(why) ? refused : refused + " — " + why;
     }
+
+    internal const string KeyRecordAsByte = "str.AobMaker.Record.AsByte";
+    internal const string KeyRecordAsPointer = "str.AobMaker.Record.AsPointer";
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] What a +CE push did. <c>Degraded</c> is set when the record went in, but in the
+    /// <c>CreateMemoryRecord</c> form because the plugin could not build it as it is (see
+    /// <see cref="CeXmlExportService.CeRecordType.NeedsRecordTree"/>).</summary>
+    internal readonly record struct RecordPush(bool Added, bool Degraded, CeXmlExportService.CeRecordType Type);
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] The one +CE push every site shares.</summary>
+    internal static async Task<RecordPush> PushRecordAsync(IAobMakerBridge bridge, string description,
+        string address, CeXmlExportService.CeRecordType type, int stringLength, ILoggingService log)
+    {
+        bool ok;
+        try
+        {
+            ok = await bridge.CreateMemoryRecordAsync(description, StripHexPrefix(address), type.ValueType,
+                                                      type.IsSigned, type.ShowAsHex);
+        }
+        catch (Exception ex)
+        {
+            log.Error($"AOBMaker +CE failed for {description} @ {address}", ex);
+            ok = false;
+        }
+        return new RecordPush(ok, false, type);
+    }
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] The note a degraded push adds after "Added to CE: …", or "".</summary>
+    internal static string DegradedSuffix(RecordPush push)
+    {
+        if (!push.Added || !push.Degraded) return "";
+        return " — " + (push.Type.BitStart >= 0 ? AsByteText() : AsPointerText());
+    }
+
+    internal static string AsByteText() => AobMakerStatus.Say(KeyRecordAsByte,
+        "as its whole byte: this AOBMaker plugin cannot set a bit (needs AOBMaker v20260930 or later)");
+
+    internal static string AsPointerText() => AobMakerStatus.Say(KeyRecordAsPointer,
+        "as its data pointer: this AOBMaker plugin cannot build a string record (update AOBMaker)");
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] The record-tree node for a +CE record that needs one.</summary>
+    internal static CeRecordNode ToRecordNode(string description, string address,
+        CeXmlExportService.CeRecordType type, int stringLength)
+        => new(description, StripHexPrefix(address), "8 Bytes");
 
     internal const string KeyDisasmNoCode = "str.AobMaker.Disasm.NoCode";
     internal const string KeyDisasmDone = "str.AobMaker.Disasm.Done";

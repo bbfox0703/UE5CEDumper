@@ -517,6 +517,17 @@ internal sealed class ScriptedAobMakerBridge : IAobMakerBridge
         return Task.FromResult(After(RecordResult));
     }
 
+    /// <summary>[AOBM-PLUSCE-FIDELITY] What a record-tree push answers; null answers as a plugin without the tree.</summary>
+    public RecordTreeResult? TreeResult { get; set; }
+    public List<(string Description, IReadOnlyList<CeRecordNode> Nodes)> Trees { get; } = new();
+
+    public Task<RecordTreeResult> CreateRecordTreeAsync(string description, IReadOnlyList<CeRecordNode> nodes,
+                                                        CancellationToken ct = default)
+    {
+        Trees.Add((description, nodes));
+        return Task.FromResult(After(TreeResult ?? RecordTreeResult.NotSupported));
+    }
+
     public Task<(bool Ok, string? ErrorMessage)> InjectTableFileAsync(string fileName, string content,
                                                                       CancellationToken ct = default)
     {

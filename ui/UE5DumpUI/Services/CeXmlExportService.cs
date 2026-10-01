@@ -4119,8 +4119,21 @@ public static class CeXmlExportService
     /// <summary>
     /// CE memory-record type descriptor for the AOBMaker <c>CreateMemoryRecord</c> pipe
     /// command: a numeric CE <c>TVariableType</c> plus the signed / hex display flags.
+    /// <para>[AOBM-PLUSCE-FIDELITY] <see cref="BitStart"/> / <see cref="BitLength"/> and <see cref="String"/> say what the
+    /// record really is when that command cannot express it: a bit-field bool, or a string behind the FString's data
+    /// pointer. The three leading fields stay the <c>CreateMemoryRecord</c> form -- the containing byte, the 8-byte
+    /// pointer -- so a plugin without the record tree still gets the record +CE always sent.</para>
     /// </summary>
-    public readonly record struct CeRecordType(int ValueType, bool IsSigned, bool ShowAsHex);
+    public readonly record struct CeRecordType(int ValueType, bool IsSigned, bool ShowAsHex,
+        int BitStart = -1, int BitLength = 0, CeStringKind String = CeStringKind.None)
+    {
+        /// <summary>Only the plugin's record tree can carry this record as it is.</summary>
+        public bool NeedsRecordTree => BitStart >= 0 || String != CeStringKind.None;
+    }
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] Which FString-family string a record reads. CE's String type can say UTF-16 or
+    /// one-byte; the plugin cannot set <c>CodePage</c>, so a UTF-8 string arrives as a one-byte one.</summary>
+    public enum CeStringKind { None, Utf16, Ansi, Utf8 }
 
     // CE TVariableType numeric codes for AOBMaker CreateMemoryRecord.
     // Source: AOBMaker docs/API-CEPlugin.md (the CE plugin SDK header is WRONG — use these).

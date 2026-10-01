@@ -132,12 +132,16 @@ public class AobMakerWordingTests
         Same(AobMakerActions.KeySymbolTimedOut, AobMakerActions.SymbolTimedOutText("s"), "s");
         Same(AobMakerActions.KeySymbolNoReason, AobMakerActions.SymbolNoReasonText());
 
+        // [AOBM-PLUSCE-FIDELITY] +CE in the CreateMemoryRecord form when the plugin cannot build the record as it is
+        Same(AobMakerActions.KeyRecordAsByte, AobMakerActions.AsByteText());
+        Same(AobMakerActions.KeyRecordAsPointer, AobMakerActions.AsPointerText());
+
         // [AOBM-LIVEWALKER-HEX-SILENT] Live Walker's pointer-target HEX label
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPtrTargetLabel,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.PtrTargetLabel("P"), "P");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(42, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(44, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =
