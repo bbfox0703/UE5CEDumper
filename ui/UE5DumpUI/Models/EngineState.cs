@@ -216,6 +216,12 @@ public sealed class EngineState
     /// <summary>[AOBM-EXPORT-SYM-REST] As <see cref="GWorldExport"/>, for GObjects
     /// ("?GUObjectArray@@3VFUObjectArray@@A" on Satisfactory).</summary>
     public string GObjectsExport { get; init; } = "";
+    /// <summary>[AOBM-GWORLD-GENAOB] The winning GObjects signature's <c>adjustment</c> (Himmel), 0 when it has none or
+    /// the DLL predates the field: the DLL's GObjects is the RIP target PLUS this, when the adjusted address is the one
+    /// that validated (GOBJ_AV1 on Avowed: -0x10).</summary>
+    public int GObjectsAdjustment { get; init; }
+    /// <summary>[AOBM-GWORLD-GENAOB] As <see cref="GObjectsAdjustment"/>, for GNames (GNAM_IWB_1: -8).</summary>
+    public int GNamesAdjustment { get; init; }
 
     // --- GEngine (&GEngine — the static slot, not the UEngine object) ---
     // Same contract as the GWorld triple above. A non-empty GEngineAob means a
