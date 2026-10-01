@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — the bundled Quick Start no longer ties Structure Dissect to Cheat Engine injection
+
+- `README.html` in the release zip (its source is `scripts/DEPLOY_README.html`) said Structure Dissect and
+  memory editing in Cheat Engine were for the Cheat Engine injection method only. They work with a proxy DLL
+  and with "Inject into running game" too, once Cheat Engine has the game open. The comparison table, the
+  Option A notes and the script section now say so.
+- New section "Structure Dissect in Cheat Engine" for what was added after v3598: Tools → Add Auto Structure
+  Dissect to Current CE Table, Live Walker → Export CSX → Push to CE Structure Dissect, and that auto dissect
+  stands in for Cheat Engine 7.7's own Unreal Engine dissector while it is on and puts it back when turned off.
+- Three troubleshooting rows now name Option C beside Option A: it also scans when it injects.
+- `Feature-Guide.html` is unchanged. It carries no such statement; it is stamped build 2375 and needs its own
+  pass (noted in the commit message).
+
 ## 2026-10-01 (no build change) — a gate for corrupted text files, and a `ship` skill
 
 - New gate `check_text_integrity`: no tracked text file may contain a control character. Patch scripts

@@ -51,11 +51,11 @@ It injects a DLL into the game process, then communicates with a standalone UI v
   <thead><tr><th>File</th><th>Description</th></tr></thead>
   <tbody>
     <tr><td><code>UE5DumpUI.exe</code></td><td>Standalone UI application (connect, browse, export)</td></tr>
-    <tr><td><code>UE5Dumper.dll</code></td><td>Injected DLL — used with Cheat Engine (Option A)</td></tr>
+    <tr><td><code>UE5Dumper.dll</code></td><td>Injected DLL — used with Cheat Engine (Option A) or injected into a running game (Option C)</td></tr>
     <tr><td><code>proxy\version.dll</code><br><code>proxy\dxgi.dll</code><br><code>proxy\dinput8.dll</code><br><code>proxy\winmm.dll</code></td><td>Proxy DLLs — auto-load without CE (Option B). Use <strong>one</strong> the game's EXE imports and whose filename isn't already taken by another tool: <code>version.dll</code> (default), <code>dxgi.dll</code> (D3D11/12 games), <code>winmm.dll</code>, or <code>dinput8.dll</code>.</td></tr>
     <tr><td><code>UE5CEDumper.CT</code></td><td>CE Cheat Table — loads and injects the DLL (Option A)</td></tr>
     <tr><td><code>inject-ue.ps1</code></td><td>Command-line injector — inject <code>UE5Dumper.dll</code> into a running UE game (Option C). No Cheat Engine needed.</td></tr>
-    <tr><td><code>ue5_dissect.lua</code></td><td>CE Structure Dissect builder (optional, for advanced CE users)</td></tr>
+    <tr><td><code>ue5_dissect.lua</code></td><td>Cheat Engine script that fills Structure Dissect from the game's class data (optional — see <em>Structure Dissect in Cheat Engine</em> below)</td></tr>
   </tbody>
 </table>
 
@@ -68,7 +68,7 @@ Use <strong>one at a time</strong>. If you're not sure, <strong>Option C</strong
 
 <h3>Option A: Cheat Engine Injection</h3>
 
-<p>Best for: CE power users who want full CE integration (Structure Dissect, memory editing, Lua scripting).</p>
+<p>Best for: users who already work in Cheat Engine and want to load the DLL from a cheat table.</p>
 
 <p><strong>Required files</strong>: <code>UE5Dumper.dll</code>, <code>UE5CEDumper.CT</code>, <code>UE5DumpUI.exe</code></p>
 
@@ -81,8 +81,8 @@ Use <strong>one at a time</strong>. If you're not sure, <strong>Option C</strong
   <li>Launch <code>UE5DumpUI.exe</code> and click <strong>Connect</strong>.</li>
 </ol>
 
-<blockquote><strong>CE-specific extras</strong>: With CE injection, you can also use <code>ue5_dissect.lua</code> to generate
-CE Structure Dissect entries from UE class reflection. See the <em>CE Scripts</em> section below.</blockquote>
+<blockquote><strong>Cheat Engine features</strong>: Structure Dissect and memory editing in Cheat Engine do not need this option.
+They work with Option B and C as well, once Cheat Engine has the game open. See <em>Structure Dissect in Cheat Engine</em> below.</blockquote>
 
 <h3>Option B: Proxy DLL (No Cheat Engine)</h3>
 
@@ -135,8 +135,8 @@ CE Structure Dissect entries from UE class reflection. See the <em>CE Scripts</e
     <tr><td>Requires Cheat Engine</td><td>Yes</td><td>No</td><td>No</td></tr>
     <tr><td>Needs game restart</td><td>No</td><td>Yes (launch with proxy)</td><td>No (inject on demand)</td></tr>
     <tr><td>Auto-loads on game start</td><td>No (manual inject)</td><td>Yes</td><td>No</td></tr>
-    <tr><td>CE Structure Dissect</td><td>Yes (<code>ue5_dissect.lua</code>)</td><td>No</td><td>No</td></tr>
-    <tr><td>CE memory editing</td><td>Yes</td><td>No (UI read-only browse)</td><td>No (UI read-only browse)</td></tr>
+    <tr><td>CE Structure Dissect</td><td>Yes</td><td>Yes — open the game in Cheat Engine too</td><td>Yes — open the game in Cheat Engine too</td></tr>
+    <tr><td>CE memory editing</td><td>Yes</td><td>Yes — open the game in Cheat Engine too</td><td>Yes — open the game in Cheat Engine too</td></tr>
     <tr><td>Scan timing</td><td>Immediate on inject</td><td>Deferred (click Start Scan)</td><td>Immediate on inject</td></tr>
     <tr><td>Anti-cheat risk</td><td>CE may be detected</td><td>Lower profile (common DLL name)</td><td><code>CreateRemoteThread</code> may be flagged</td></tr>
   </tbody>
@@ -156,14 +156,37 @@ CE Structure Dissect entries from UE class reflection. See the <em>CE Scripts</e
 
 <hr>
 
-<h2>CE Scripts (Option A Only)</h2>
+<h2>Structure Dissect in Cheat Engine</h2>
 
-<h3>ue5_dissect.lua</h3>
+<p>UE5CEDumper can fill Cheat Engine's <strong>Structure Dissect</strong> with the game's own field names, types and offsets.
+This works with every injection option (A, B or C). Two things are needed: Cheat Engine has the game open, and the DLL has scanned the game (with a proxy DLL, click <strong>Start Scan</strong> in the UI first).</p>
 
-<p>A CE Lua module that creates <strong>Structure Dissect</strong> entries from UE class reflection.
-Only works when <code>UE5Dumper.dll</code> is injected via CE.</p>
+<p>The first two ways below send the result into Cheat Engine for you. They need the optional <a href="https://github.com/bbfox0703/AOBMaker-Release">AOBMaker</a> Cheat Engine plugin. The third needs nothing extra.</p>
 
-<pre><code>-- In CE Lua Engine (after DLL is injected):
+<h3>Auto Structure Dissect</h3>
+
+<ol>
+  <li>In the UI, choose <strong>Tools → Add Auto Structure Dissect to Current CE Table</strong>. It adds <code>ue5_dissect.lua</code> and a record named <code>UE5CEDumper: Auto Structure Dissect (UObjects)</code> to the table open in Cheat Engine. The record arrives unticked.</li>
+  <li>Tick the record. From then on, Structure Dissect fills itself in when you open it on an Unreal object's address.</li>
+  <li>Untick the record to turn it off.</li>
+</ol>
+
+<blockquote><strong>Cheat Engine 7.7</strong> has its own Unreal Engine dissector (<strong>Unreal Engine → Use when dissecting structures</strong>). While the record is ticked, ours is used in its place. When you untick the record, Cheat Engine's is put back as it was.</blockquote>
+
+<h3>Push one structure from Live Walker</h3>
+
+<p>In the <strong>Live Walker</strong> tab, open <strong>Export CSX</strong> and choose <strong>Push to CE Structure Dissect</strong>.
+The structure you are looking at is built in Cheat Engine directly, with its nested structures, so there is no <code>.CSX</code> file to save and import.
+Pushing the same structure again replaces it, and the record it adds can be ticked to rebuild it.
+On Cheat Engine older than 7.7, a bit-field bool is shown as its whole byte.</p>
+
+<h3>ue5_dissect.lua by hand</h3>
+
+<p>Without the AOBMaker plugin, run the script yourself in Cheat Engine's Lua Engine window.</p>
+
+<pre><code>-- In CE Lua Engine, with the game open in Cheat Engine and the DLL loaded.
+-- If the DLL was loaded after Cheat Engine opened the game, run this once first:
+--   reinitializeSymbolhandler()
 local dissect = dofile("ue5_dissect.lua")
 
 -- Interactive: shows dialog to enter class address or UE path
@@ -172,8 +195,11 @@ dissect.createInteractive()
 -- By UE path
 dissect.createFromPath("/Script/Engine.Actor")
 
--- Auto mode: CE auto-fills Structure Dissect for any UObject address
-dissect.enableAutoCallback()</code></pre>
+-- Auto mode: what the Auto Structure Dissect record turns on
+dissect.enableAutoCallback()
+
+-- Auto mode off (also puts Cheat Engine 7.7's own dissector back)
+dissect.disableAutoCallback()</code></pre>
 
 <p>Features: 25+ UE property type mappings, struct flattening (6 levels), BoolProperty bitmask, Array/Map/Set helpers, UObject header, auto-callback, caching.</p>
 
@@ -184,10 +210,10 @@ dissect.enableAutoCallback()</code></pre>
 <table>
   <thead><tr><th>Issue</th><th>Root Cause</th><th>Fix</th></tr></thead>
   <tbody>
-    <tr><td>UI says "Connection failed"</td><td>Pipe server not running</td><td>Make sure DLL is injected (Option A) or a proxy DLL is in the game folder (Option B)</td></tr>
+    <tr><td>UI says "Connection failed"</td><td>Pipe server not running</td><td>Make sure DLL is injected (Option A / C) or a proxy DLL is in the game folder (Option B)</td></tr>
     <tr><td>Game runs but UI never connects (proxy mode)</td><td>The EXE doesn't import the chosen proxy DLL (so Windows never loads it), or that filename is already taken by another tool (e.g. ReShade owns <code>dxgi.dll</code>)</td><td>Switch to another proxy the EXE imports and that is free — <code>dxgi.dll</code> (every D3D11/D3D12 UE game imports it), <code>winmm.dll</code>, or <code>dinput8.dll</code>. All taken or none work — use DLL injection (Option C), which needs no free filename.</td></tr>
-    <tr><td>UI connects but shows 0 objects</td><td>Scan not run or game data not loaded</td><td>Load a save first, then inject (A) or click Start Scan (B)</td></tr>
-    <tr><td>Start Scan button not visible</td><td>Already scanned, or CE inject mode</td><td>Normal — button only appears in proxy DLL mode before first scan</td></tr>
+    <tr><td>UI connects but shows 0 objects</td><td>Scan not run or game data not loaded</td><td>Load a save first, then inject (A / C) or click Start Scan (B)</td></tr>
+    <tr><td>Start Scan button not visible</td><td>Already scanned, or the DLL was injected (Option A / C), which scans on inject</td><td>Normal — button only appears in proxy DLL mode before first scan</td></tr>
     <tr><td>Game crashes on launch with a proxy DLL</td><td>Rare DLL conflict / anti-tamper</td><td>Try a different proxy (<code>dxgi.dll</code> / <code>winmm.dll</code> / <code>dinput8.dll</code> / <code>version.dll</code>); if all fail, inject the DLL instead (Option A / C) and file a bug report</td></tr>
     <tr><td>Inject fails: "OpenProcess failed (Win32 5)"</td><td>The game runs as Administrator (higher integrity)</td><td>The UI / <code>inject-ue.ps1</code> auto-relaunch elevated — just accept the UAC prompt. Or start them as Administrator up front.</td></tr>
     <tr><td>Game freezes / UI actions (POV, teleport, invokes) time out when the game is not focused</td><td>The game idles its game thread when it loses foreground (<code>t.IdleWhenNotForeground</code>)</td><td>In the <strong>Teleport</strong> tab, turn on <strong>Keep Foreground</strong> (Force ON) so the game keeps running while it's in the background.</td></tr>
