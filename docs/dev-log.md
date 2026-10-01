@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3615) — the build makes the Cheat Engine Lua test host itself
+
+- Some tests run the scripts this program generates on Cheat Engine's own Lua engine. They need a small
+  helper program that each PC has to build once. On a PC that never built it those tests were skipped, even
+  with Cheat Engine installed, and the only sign was a list of "skipped" lines.
+- `build.ps1` now builds that helper before the tests whenever Cheat Engine is installed, and rebuilds it only
+  when Cheat Engine or the helper's source changed. Without Cheat Engine it says so in one line and the tests
+  skip as before. If Cheat Engine is installed and the helper cannot be built, the build fails.
+- The helper no longer needs a copy of Cheat Engine's source code, only the installed program. It is a small
+  program of our own now; on every test it gives exactly the output the old one did.
+- No change to the dumper or the UI. Build 3615: AOT `dist\UE5DumpUI.exe` 59,163,136 B, sha256
+  `eac4f3c9fac8`; `dist\UE5Dumper.dll` `b3b1ae536328`. C# 6021/6021 with 0 skipped, headless 15/15, 29 gates.
+
 ## 2026-10-01 (no build change) — the Ghidra projects' backup is on the NAS, `Y:\GHIDRA_Projs`
 
 - All 63 Ghidra projects are copied to the NAS, which is mapped as drive `Y:`. The folder is
