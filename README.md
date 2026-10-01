@@ -96,9 +96,9 @@ After that: browse the object tree, find a class or an instance, and export what
 
 - Windows 10/11 x64
 - An Unreal Engine 4 or 5 game (x64)
-- Cheat Engine 7.6+, only for Option A
+- Cheat Engine, only for Option A (last tested with Cheat Engine 7.7)
 
-To build from source, see [CONTRIBUTING.md](CONTRIBUTING.md) § Development Setup.
+To build from source: `bootstrap.cmd` shows what the machine needs, then `build.cmd`. Details are in [docs/toolchain.md](docs/toolchain.md).
 
 ---
 
@@ -114,12 +114,9 @@ Per-game notes are in [docs/test-games.md](docs/test-games.md).
 
 ---
 
-## Contributing
+## Reporting a problem
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- **Reporting detection failures** — what logs and info to include (most helpful!)
-- **Submitting AOB patterns** — for reverse engineers who want to contribute directly
-- **Code contributions** — PR process and code style
+Open an [issue](https://github.com/bbfox0703/UE5CEDumper/issues) with the game's name, what you did and what happened, and attach the log folders `%LOCALAPPDATA%\UE5CEDumper\Logs\<game exe name>` and `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI`. The game's `scan` log is the most useful one.
 
 ---
 

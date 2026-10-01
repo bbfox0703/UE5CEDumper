@@ -94,9 +94,9 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 
 - Windows 10/11 x64
 - 執行中的 Unreal Engine 4 或 5 遊戲 (x64)
-- Cheat Engine 7.6+（僅方式 A 需要）
+- Cheat Engine（僅方式 A 需要；最後測試版本為 Cheat Engine 7.7）
 
-要從原始碼建置，請見 [CONTRIBUTING.md](CONTRIBUTING.md) 的 Development Setup 一節。
+要從原始碼建置：先執行 `bootstrap.cmd` 查看這台機器需要什麼，再執行 `build.cmd`。詳見 [docs/toolchain.md](docs/toolchain.md)。
 
 ---
 
@@ -112,12 +112,9 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 
 ---
 
-## 專案貢獻 (Contributing)
+## 回報問題 (Reporting a problem)
 
-請參閱 [CONTRIBUTING.md](CONTRIBUTING.md) 以瞭解：
-- **回報偵測失敗** — 需要附上哪些日誌與資訊（最有幫助！）。
-- **提交 AOB 特徵碼** — 給想直接貢獻的逆向工程者。
-- **程式碼貢獻** — PR 流程與程式碼風格規範。
+請開一個 [issue](https://github.com/bbfox0703/UE5CEDumper/issues)，寫明遊戲名稱、做了什麼、發生了什麼，並附上這兩個 log 資料夾：`%LOCALAPPDATA%\UE5CEDumper\Logs\<遊戲 exe 名稱>` 與 `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI`。其中遊戲的 `scan` log 最有幫助。
 
 ---
 
