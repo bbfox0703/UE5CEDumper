@@ -1,13 +1,9 @@
-# UE5CEDumper
-<img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper"/>  
+# UE5CEDumper — a UE Dumper for Unreal Engine 4 / 5 and Cheat Engine
+<img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper, a UE Dumper for Unreal Engine 4 and 5"/>  
 
-**The Live Bridge between Unreal Engine Runtime and Cheat Engine.**
+UE5CEDumper is a UE Dumper (an Unreal Engine dumper) for Windows x64 games built on Unreal Engine 4.11 to 5.8. A DLL loaded into the game finds the engine's global tables (GObjects, GNames, GWorld) and reads its reflection data. A standalone UI connects to that DLL to browse objects and classes with their live property values, to search by name or by value, and to export what it finds.
 
-UE5CEDumper is a interactive inspector toolchain. It provides a **live window** into the game's memory, allowing you to browse objects, find instances, and export CE-ready structures in real-time.
-
-> It's built for the *active* table maker. It bridges the gap between seeing an offset and actually using it in Cheat Engine.
-
-> *UE5CEDumper is not meant to be a another dumper that extracts large amounts of data for analysis. Instead, it focuses on quickly finding UE structures and integrating with CE for live development. Think of it as a general-purpose UE tool rather than a specialized dumper.*
+It is made to be used with Cheat Engine. It exports pointer-chain records, Structure Dissect definitions and Auto Assembler scripts, and with the optional AOBMaker plugin it sends them straight into a running Cheat Engine. It also exports SDK headers, USMAP files and a full metadata dump (`.jsonl`) for offline use.
 
 > ### Scope of use
 >
@@ -54,127 +50,73 @@ Games grouped by UE version range. Per-game detail — layout quirks, proxy note
 
 | UE Version | GObjects | GNames | DynOff | Verified Games |
 |---|:---:|:---:|:---:|---|
-| **4.11 – 4.14** | ✅ | ✅† | ✅ | NEKOPALIVE |
+| **4.11 – 4.14** | ✅ | ✅ | ✅ | NEKOPALIVE |
 | **4.15 – 4.17** | ✅ | ✅ | ✅ | Extinction |
 | **4.18 – 4.20** | ✅ | ✅ | ✅ | FF7 Remake Intergrade, The Occupation, DQ XI S, Octopath Traveler |
 | **4.21 – 4.24** | ✅ | ✅ | ✅ | Star Wars Jedi, IDOLM@STER STARLIT SEASON |
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | FF7 Rebirth, DQ I&II / III HD-2D Remake, Stellar Blade (劍星), Tower of Mask, Hogwarts Legacy, Romancing SaGa 2 RotS, Ghostwire: Tokyo, TimeSplitters Rewind, The Artisan of Glimmith, Barn Finders, MOBILE SUIT GUNDAM SEED Battle Destiny Remastered, Persona 3 Reload |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
-| **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1), Colossal, Avowed, Echoes of Aincrad Demo, The Adventures of Elliot, MindsEye, DragonSword Awakening‡ |
-| **5.5 – 5.7** | ✅ | ✅* | ✅** | Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk, Pionero Capital Demo, Satisfactory (v1.2.3.1), Star Trek Voyager – Across the Unknown |
+| **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1), Colossal, Avowed, Echoes of Aincrad Demo, The Adventures of Elliot, MindsEye, DragonSword Awakening |
+| **5.5 – 5.7** | ✅ | ✅ | ✅ | Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk, Pionero Capital Demo, Satisfactory (v1.2.3.1), Star Trek Voyager – Across the Unknown |
 
-*\*GNames uses .data pointer-scan fallback for 5.5+.*
-*\**DynOff supports **CasePreservingName (FName = 16 bytes)** layout.*
-*‡Needs the **`dxgi.dll`** proxy, not the default `version.dll` — its .exe never asks for `version.dll`
-by name, so that proxy loads in no way at all and leaves **zero log**. If a game connects but produces
-no log folder under `%LOCALAPPDATA%\UE5CEDumper\Logs\`, that is the symptom: switch proxy flavour.
-See [docs/test-games.md](docs/test-games.md).*
-*†Pre-4.23 has no `FNamePool` — GNames is the `TNameEntryArray` that `FName::GetNames` lazily allocates, and
-sparse delegates do not exist at all (they arrived in 4.23). **UE 4.11 is the supported floor**: 4.10 and below
-have no `FUObjectItem` and use an inline chunk table the scanner cannot express, so they are reported as
-unsupported rather than left to fail confusingly.*
+*UE 4.11 is the supported floor; 4.10 and older are reported as unsupported.*
 
 ---
 
-## Features for Table Makers
+## Getting started
 
-One row per feature — AOB scanning, DynOff, Live Walker, Value Search (single + group), Teleport, movement tuning + God Mode + Time Dilation, the Live function profiler, multi-format CE export, and the rest — in **[docs/Features.md](docs/Features.md)**.
+Load the DLL into the game in one of three ways. Use one at a time, and load a save first so that the game's objects exist.
 
----
+### Option A: Cheat Engine
 
-## Architecture & Workflow
+1. Attach Cheat Engine to the game and open `UE5CEDumper.CT`.
+2. Enable `init <== enable after process attached`, then `Inject DLL + Start Pipe Server`.
+3. Start **UE5DumpUI.exe** and click **Connect**.
 
-### Option A: Cheat Engine DLL injection
+### Option B: Proxy DLL (recommended, no Cheat Engine)
 
-1.  **Inject DLL**: Run Cheat Engine, attach game process, load a save. Make sure game data is loaded first. Open `UE5CEDumper.CT`.
-2.  **Enable Script**: Enable `init <== enable after process attached`, then `Inject DLL + Start Pipe Server`. The DLL locates global engine pointers and detects the UE version/layout automatically.
-3.  **Connect UI**: Wait a few seconds for the scan to finish. Launch **UE5DumpUI.exe** and click **Connect**. Live data streams to the UI via Named Pipes (JSON-RPC).
-4.  **Navigate & Analyze**: Browse the `UObject` hierarchy, find a class, drill into containers, or paste an address from CE to reverse-lookup and export.
+1. In **UE5DumpUI.exe**, open the **Proxy Deploy** tab and deploy to the game. It suggests the proxy DLL the game needs and copies it next to the game's `.exe`.
+2. Start the game and load a save.
+3. Click **Connect**, then **Start Scan**.
 
-### Option B: Proxy DLL (Recommended)
+### Option C: Inject into a running game (no Cheat Engine, no restart)
 
-1.  **Place DLL**: Copy `version.dll` (from `build.ps1 -Target ProxyDLL`) into the game's root folder (next to the `.exe`).
-2.  **Launch Game**: Start the game normally. The proxy DLL loads automatically and starts the pipe server.
-3.  **Load a Save**: Reach the main game world so UE objects are populated in memory.
-4.  **Connect + Scan**: Launch **UE5DumpUI.exe**, click **Connect**, then click **Start Scan**. The DLL performs the AOB scan and returns engine data to the UI.
-5.  **Navigate & Analyze**: Same workflow as Option A — browse objects, find instances, export CE structures.
+- **From the UI**: Proxy Deploy tab → **Inject into running game…** → pick the game → **Inject**.
+- **From the command line**: `.\inject-ue.ps1` (`-List` shows the detected games, `-ProcessId <pid>` picks one), then start **UE5DumpUI.exe** and click **Connect**.
 
-> **Note**: Do not use both methods simultaneously. If the proxy DLL is in the game folder, do not also inject `UE5Dumper.dll` via CE. The DLL detects duplicate instances and skips auto-start to prevent conflicts.
+After that: browse the object tree, find a class or an instance, and export what you need. Step-by-step guides are in the [Wiki](https://github.com/bbfox0703/UE5CEDumper/wiki), and every feature is listed in [docs/Features.md](docs/Features.md).
 
-> **Which proxy DLL?** Start with `version.dll`. If the game launches but the UI can't connect, its EXE doesn't import `version.dll` — use **`dxgi.dll`** (every D3D11/D3D12 UE game imports it), or **`winmm.dll`** as a spare when the `dxgi` / `version` filename is already taken by ReShade or another mod loader (`dinput8.dll` is a last resort). `build.ps1` builds all four into `dist\proxy\`; the **Proxy Deploy** tab deploys the right one per game, and its **Suggested proxy** column remembers what worked. All names taken, or none load? Use Option C (inject).
+> **x64 games only.** Like any injection, this may be flagged by anti-virus and is blocked by kernel anti-cheat (EAC / BattlEye). See *Scope of use* at the top.
 
-### Option C: Inject into a running game (no CE, no restart)
+### Optional: AOBMaker
 
-Inject `UE5Dumper.dll` into an **already-running** game — the quickest path (no Cheat Engine, no pre-deployed proxy, no game restart). Two front-ends share one technique (`CreateRemoteThread` + `LoadLibraryW`) — the **UI's Proxy Deploy tab is the easy path**, with a command-line tool for scripting / headless use:
-
-- **From the UI**: Proxy Deploy tab → **Inject into running game…** → pick the game in the process picker → **Inject**. The UI auto-connects. If the game runs as Administrator you get a UAC prompt to inject elevated — no manual restart.
-- **From the command line** — `inject-ue.ps1` (ships in `dist\` next to `UE5Dumper.dll`):
-
-  ```powershell
-  .\inject-ue.ps1                 # auto: inject the single running UE game
-  .\inject-ue.ps1 -List           # list detected UE games
-  .\inject-ue.ps1 -ProcessId 1234 # inject a specific PID
-  ```
-
-  Then launch **UE5DumpUI.exe** and **Connect**. On Access-Denied (an elevated game) the script auto-relaunches itself elevated (one UAC prompt).
-
-> **x64 games only.** See the scope note at the top of this README — like all injection, `CreateRemoteThread` may be flagged by anti-virus and is blocked/banned by kernel anti-cheat (EAC / BattlEye).
-
-| **Game Process (Injected)** |
-| :---: |
-| DLL + CE Lua Bridge (or Proxy DLL) |
-| ⬇️ |
-| **Named Pipe IPC (JSON-RPC Protocol)** |
-| ⬇️ |
-| **External GUI (Avalonia UI App)** |
-
----
-
-### Optional: AOBMaker CE plugin integration
-
-[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) generates AOB patterns + CE AA scripts. Its CE DLL plugin lets UE5CEDumper one-click browse memory / code in CE, register restart-stable GWorld / &GEngine symbols from their AOBs, push AA scripts and typed memory records for UE fields and search / snapshot results into the open table, warn when CE has another process open, and embed the helper Lua files those scripts need. With the AOBMaker app open as well, GObjects / GNames get restart-stable symbols too. Structure Dissect data does not go through the plugin: export a `.CSX` file and import it in CE, or let `scripts/ue5_dissect.lua` build it live (Tools → Add Auto Structure Dissect puts it into the open table). Entirely optional — the core features work without it.
+[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) and its Cheat Engine plugin let UE5CEDumper send what it finds straight into the open CE table: memory records, AA scripts, symbols for GObjects / GNames / GWorld, and a Live Walker structure into Structure Dissect. It also moves CE's memory view and disassembler to an address. Everything else works without it.
 
 ## Requirements
 
-### Build
-
-| Tool | Version |
-|---|---|
-| Visual Studio / MSVC | **2026 (v18, MSVC 19.50)** — what this is built and tested with |
-| CMake | 3.25+ |
-| Ninja | any recent |
-| .NET SDK | 10.0 |
-
-> `build.cmd` / `build.ps1` locate MSVC automatically via `vswhere`, so any installed toolset is
-> found without hardcoded paths. Older Visual Studio versions are not tested — the build has been
-> on 2026 for a while now.
-
-### Runtime
-
 - Windows 10/11 x64
-- Cheat Engine 7.6+ (for CE injection method) *or* Proxy DLL (no CE required)
-- A running Unreal Engine 4 or 5 game process (x64)
+- An Unreal Engine 4 or 5 game (x64)
+- Cheat Engine, only for Option A (last tested with Cheat Engine 7.7)
+
+To build from source: `bootstrap.cmd` shows what the machine needs, then `build.cmd`. Details are in [docs/toolchain.md](docs/toolchain.md).
 
 ---
 
-## Important Notes
+## Notes
 
-* **Custom Data Structures**: In games like *FF7 Rebirth*, some critical data (e.g., HP) is stored in custom structures outside standard `UObjects`. The Live Walker can help investigate these regions, but direct discovery is not possible.
-* **GWorld Connectivity**: `GWorld` traversal works in **100% of tested games (40 / 40)** as of 2026-07-27, across every supported engine from UE 4.11 to UE 5.7. For a game that is not on the list, fall back to **Object Tree** or **Instance Finder** as the entry point.
-* **Proxy DLL caveat for EA-launcher games**: *Star Wars Jedi: Fallen Order* (UE 4.21) starts through the EA app, which restricts where Windows looks for DLLs, so no proxy is ever loaded. Inject with Cheat Engine after the game is running instead — everything else behaves normally. Other EA-launched titles are likely the same; please open an issue if you find one.
-* **`dxgi.dll` proxy for games that import neither `version.dll` nor `dinput8.dll`**: a few titles — *The Adventures of Elliot* (UE 5.4) and *Echoes of Aincrad Demo* (UE 5.4) among them — never load those two proxies at all. Pick **dxgi.dll** in the Proxy Deploy tab instead: every D3D11/D3D12 UE game imports it, so it loads reliably. Verified end to end on Elliot, Echoes of Aincrad Demo, *Pionero Capital Demo* (UE 5.7) and *Star Trek Voyager – Across the Unknown* (UE 5.6).
-* **`winmm.dll` proxy — the spare slot when `dxgi` or `version` is already taken**: a proxy only works if its filename is free, and often it is not — *ReShade* commonly installs itself as `dxgi.dll`, and some games ship their own `version.dll`. Pick **winmm.dll** in the Proxy Deploy tab when that happens. Verified on *The Adventures of Elliot* (UE 5.4) and *MOBILE SUIT GUNDAM SEED Battle Destiny Remastered* (UE 4.27). ⚠ It reaches **no game that `dxgi` cannot** — choose it for slot availability, not for coverage.
-* **Games that pause when backgrounded**: some titles — *Persona 3 Reload* (UE 4.27) among them — freeze their game thread whenever they are not the foreground window, so anything that calls into the game times out. The tool **detects the stall** and shows an amber "game thread stalled" banner rather than hanging, and the experimental **Keep Foreground** toggle works around it so those actions keep working while the game sits in the background.
-* **Container Limits**: Array/Map/Set element reading respects a configurable limit to avoid excessive memory reads. Adjust the **Array Limit** slider in the Live Walker when working with large containers.
+* **Data outside `UObject`s**: some games (*FF7 Rebirth*, for one) keep important values such as HP in their own structures. The Live Walker can help you look at those regions, but it cannot find them for you.
+* **When *Start from GWorld* does not work** on a game that is not in the table above, use **Object Tree** or **Instance Finder** as the way in.
+* **Games started through the EA app** load no proxy DLL. Use Option A or C once the game is running.
+* **Games that pause in the background** make anything that calls into the game time out. The UI shows a "game thread stalled" banner when that happens, and the experimental **Keep Foreground** toggle works around it.
+* **Large arrays, maps and sets** are read up to the **Array Limit** slider in the Live Walker.
+
+Per-game notes are in [docs/test-games.md](docs/test-games.md).
 
 ---
 
-## Contributing
+## Reporting a problem
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
-- **Reporting detection failures** — what logs and info to include (most helpful!)
-- **Submitting AOB patterns** — for reverse engineers who want to contribute directly
-- **Code contributions** — PR process and code style
+Open an [issue](https://github.com/bbfox0703/UE5CEDumper/issues) with the game's name, what you did and what happened, and attach the log folders `%LOCALAPPDATA%\UE5CEDumper\Logs\<game exe name>` and `%LOCALAPPDATA%\UE5CEDumper\Logs\UE5DumpUI`. The game's `scan` log is the most useful one.
 
 ---
 
@@ -190,7 +132,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 | [nlohmann/json](https://github.com/nlohmann/json) | Header-only JSON library used in DLL |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua scripting API reference |
 | **AOBMaker (private)** | AOB pattern generation tooling, AA script generation and fast CE-Goto (not a must) |
-| UE4 Dumper.CT | Cake-san's cheat table — additional UE4 AOB patterns (CT-series in Signatures.h) |
+| UE4 Dumper.CT | Cake-san's cheat table — additional UE4 AOB patterns (the CT series in `Himmel.h`) |
 
 **Testing** — thanks to **Marc@OCT** and **SeryogaSK@OCT** ([OCT](https://opencheattables.com/)) for helping test this tool.
 
@@ -198,16 +140,7 @@ See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on:
 
 ## Built with Claude Code
 
-This project is developed with the assistance of [Claude Code](https://claude.ai/code) by Anthropic. The C++ DLL, C# Avalonia UI, build scripts, and documentation are collaboratively authored by the developer and Claude Code.
-
-### Shared local LLM for Claude Code sessions — any repo can join
-
-Sessions can hand bulk text work (large logs, dumps, zh-TW / ja-JP translation drafts) to a local Ollama model, and a machine-wide hook keeps that model off a commercial game's GPU. It is installed **once per machine** from this repo; **any other repo joins or leaves with one command** and receives only a skill file that holds no machine or personal data. For a Claude Code session in another repo: read **[tools/llm/README.md](tools/llm/README.md)** and follow its last section.
-
-```bash
-py tools/llm/ollama_local.py install --model <tag>                 # once per machine, in this repo (the user names the tag)
-py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" join           # in any other repo; `leave` undoes it
-```
+This project is developed with the assistance of [Claude Code](https://claude.ai/code) by Anthropic. The C++ DLL, C# Avalonia UI, build scripts, and documentation are collaboratively authored by the developer and Claude Code. The repo also carries a local-LLM helper that Claude Code sessions in any repo can share: see [tools/llm/README.md](tools/llm/README.md).
 
 ---
 

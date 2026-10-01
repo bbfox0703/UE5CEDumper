@@ -30,16 +30,33 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Code Changes
 - When asked to refactor or rename modules/files, make actual code changes (move files, update imports, rename classes) — not just documentation updates. Confirm structural changes before proceeding to docs.
+- ⚠ **A patch script is a FILE, never a heredoc.** Write it with the file-writing tool and run it. A
+  shell heredoc collapses backslash escapes before Python sees them, so the script writes the character
+  the escape names: a `\v` in a path sat in a test as a vertical tab from 2026-07-30 to 2026-10-01 with
+  every test green. In the script: turn CRLF into LF before matching and put it back after, and assert
+  each anchor matches exactly once. `check_text_integrity` catches a stray control byte; nothing catches
+  a patch that matched nothing.
+- ⛔ **No new PowerShell: every helper is Python** (`build.ps1` is the one exception). Bitdefender
+  quarantined six files when a new `.ps1` ran. **Commit before executing anything newly written.**
+  The rest of the session rules: [handover §4](docs/handover-2026-08-22.md).
 
 -----
 
 ## Debugging
 - When fixing bugs, verify the fix against the actual memory layout or data structure rather than assuming. If the first fix doesn't work, re-examine fundamental assumptions about the data format before iterating.
+- Read a command's OWN exit code: `cmd | tee log` reports `tee`'s, and a failed build behind it reads as
+  success. A test run that executed zero tests is a failure, not a pass.
 
 -----
 
 ## Git Operations
 - When creating PRs, check for branch divergence and resolve merge conflicts before attempting `gh pr create`. Run `git status` and `git log --oneline -5` first.
+- Before saying what is pushed, merged or on a branch: `git fetch`, then compare with `origin/<branch>`.
+  The other PC and peer sessions push to `dev`; a statement from memory has been wrong. The whole
+  push-and-merge routine is the `ship` skill.
+- **Standing instructions** ([working-lessons §7.3](docs/working-lessons.md)): a release is left as a
+  DRAFT and the maintainer publishes it · in a verification pass, commit after every closed item ·
+  keep agent fan-out small (about 3–6) and ask before launching more than 10.
 - ⚠ **Line endings are pinned by `.gitattributes` (`* text=auto eol=lf`), NOT by your git config
   — never "fix" them with `core.autocrlf`, which is machine-local (`true` at `--system` here) and
   does not travel between the two PCs.** Before the pin, `git checkout` silently rewrote an
@@ -104,50 +121,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 
 > ⚠ **CONFIGURE through `build.ps1` too, not bare `cmake`.** On a localized MSVC the `/showIncludes` prefix is localized, and CMake bakes whatever bytes it observed **at configure time** into `build/CMakeFiles/rules.ninja` as `msvc_deps_prefix`. Configure from a stock cmd/Git Bash shell and the bytes differ, Ninja matches nothing, and **a `.h` edit silently stops triggering a rebuild** — header-pinned tests then go green against objects that were never recompiled. `build.ps1` pins the console codepage before configuring and re-configures a mismatched tree itself; its `Repair-NinjaHeaderDeps` header carries the full explanation. To check by hand: `py tools/verify/build_dll.py --deps-check`. ⚠ **`#deps 0` alone is NOT the bad state** — `.rc.res`, `.asm.obj` and an **empty translation unit** legitimately have none, and mistaking that cost a whole spurious finding (`[PROXYDEPS]`). The discriminator is the object's CONTENT; `deps_health` in `build_dll.py` explains why and classifies on exactly that.
 
-### Manual Commands (reference only — prefer build.ps1)
-
-```bash
-# C++ DLL (requires VS DevShell loaded first)
-cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
-cmake --build build --config Release
-
-# C# UI
-dotnet build "ui/UE5DumpUI/UE5DumpUI.csproj" -c Release
-dotnet test "ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj"
-```
-
-### Git Submodules
-
-```bash
-git submodule update --init --recursive
-```
-
 -----
 
 ## Rules
 
 - **Language**: Code comments and UI strings in English
-- **Single Instance**: UI app uses Mutex to ensure only one instance runs
-- **Async everywhere**: All I/O, pipe operations, and alert actions must be async
-- **Platform Abstraction**: Any system/OS-dependent call (P/Invoke, Registry, OS commands) MUST go through an interface in `Core` project. `Core` must NEVER contain direct platform-specific code
 - **Log output**: all logs go to `%LOCALAPPDATA%\UE5CEDumper\Logs\<Process>\`, split by category — DLL 5 (init, scan, offsets, pipe, walk), UI 3 (init, pipe, view). Root `Logs\` has no loose files, only subfolders. **Retention is by AGE (21 days), not generation count** — `Grimoire::LOG_RETENTION_DAYS` / `Constants.LogMaxAgeDays`; the 8 MB per-file cap still rotates mid-session. Archive naming, folder staleness, and why a generation count could not express this: [docs/architecture.md](docs/architecture.md) § Logging
-- **App-data layout**: the `%LOCALAPPDATA%\UE5CEDumper` root holds ONLY files that are **app-wide and fixed in number** (`Constants.cs` enumerates them). Anything **per-game** — one more set on every game patch, forever — gets its own PascalCase subfolder beside `Logs\` / `Reports\`: today `Snapshots\`, `Bookmarks\`, `TeleportCoords\`. A new per-game family MUST add a subfolder, not a root file, via `Services/AppDataFolderMaintenance.Prepare` called **from the store's constructor** — a composition-root call site is one reorder away from silently reading the folder before it is migrated. Three invariants, each with its measurement in `AppDataFolderMaintenance.cs` / `Constants.cs`: a game's files **move and expire as a GROUP**; **"unused" = `LastWriteTimeUtc`, STAMPED by the store on use** — never last-access, which every AV/backup/indexer read refreshes; and **retention is the STORE's call, not the folder's** (`Snapshots\` 21 days; `Bookmarks\` and `TeleportCoords\` pass `0` — sweep off deliberately, do not "finish" it by enabling it)
 - **Magic words management**: All magic strings kept in one file per project with proper comments
 - **Code comments** ([working-lessons §8](docs/working-lessons.md)): say WHY; never enumerate callers / fields / keys, claim "only" / "both" without an assert, keep plan-phase wording, or cite an in-repo line number (`check_comment_refs` gates the last). Before committing a change that adds or removes a caller, field, pipe key or enum value, run `py tools/verify/comment_impact.py --staged` and fix the starred comments it lists.
-- **UI Strings**: English only. All UI strings in `Resources/Strings/en.axaml`, referenced via `StaticResource` bindings
-- **Keyword search boxes (space = AND + per-keyword memory)**: Every client-side keyword/filter box in the UI MUST behave identically:
-  - **space = AND**: split with `Helpers/ObjectTreeFilter.SplitTerms`, match with `MatchesAllTerms` (term-level AND, field-level OR) — never one `.Contains`/`IndexOf` over a concatenated string. Server-side matchers that can't AND client-side (ValueSearch, SPC query-time) are the only exemption.
-  - **per-keyword memory**: `Helpers/KeywordSearchMemory` — remember only keywords the user typed *and that matched*. Its header carries the 4-line VM wiring and the `TextBox`→`AutoCompleteBox` AXAML swap verbatim; `Flush()` before clearing the box on tab-switch/navigation.
-  - **an async / server-side count calls `Commit()`, never `Schedule()`** — a debounce probe races the async reload and reads a stale count.
-- **UE offsets**: All UObject/UStruct offsets must be dynamically verified via OffsetFinder, never hardcoded
-- **AOT compatible**: All C# code must be Native AOT / trimming compatible. No reflection-based APIs — use source generators instead (e.g. `[JsonSerializable]` context for `System.Text.Json`, `[ObservableProperty]` for MVVM). The UI is published as a self-contained trimmed binary
-- **Module naming (Frieren convention)**: every new C++ DLL module (a file with its own namespace) MUST take an unused name from the **Frieren roster** in [docs/naming-convention.md](docs/naming-convention.md) — never a plain-English name — carry the header comment that doc specifies, and flip that name to 🟢 in the roster. The kept-English exceptions and the finished plain-English migrations are that doc's own tables
 - **CE Lua output hygiene**: every CE Lua script we emit — the C# generators (`*ScriptGenerator.cs`, `CeXmlExportService`), the standalone `scripts/*.lua`, `scripts/UE5CEDumper.CT` — MUST be quiet by default so the CE Lua Engine window never covers Cheat Engine.
   - **Gate every diagnostic/progress `print()`** behind `local DEBUG = UE5_DEBUG or 0` and a `dbg()` wrapper (standalone `.lua`/`.CT` gate inline on `(UE5_DEBUG or 0) ~= 0`); **real failures, and warnings that flag a genuine problem, stay ungated**.
   - **Auto-close on clean success ONLY** — `CeLuaHygiene.CloseCall` when `DEBUG == 0` and nothing failed. On ANY error path, **a timeout included**, the close MUST be unreachable.
   - **A bail-out that applied NOTHING must untick the record**, and the two script shapes are **not interchangeable** — *stateful toggles* untick-and-return, *momentary actions* (Teleport) flag and break so their **deferred** untick still runs. Pass the right `MailboxTimeout`. **Never report a mailbox failure by guessing**: `status` already says which failure it is, and a timeout must be a real `getTickCount()` deadline (`sleep(1)` is nowhere near 1 ms).
   - ⛔ **Never hand-roll any of this** — call the `CeLuaHygiene.Append*` emitters, in every `{$lua}` block (locals don't cross `[ENABLE]`/`[DISABLE]`). Every rule above, with the measurement that produced it and the build-2743 story: the `Services/CeLuaHygiene.cs` header + its `MailboxTimeout` enum doc; `CeMailboxBailoutTests` / `CeLuaHygieneTests` assert them.
 - **CE Lua ↔ DLL contract version**: versioned on the **CONTRACT**, never the build number — a `.CT` saved months ago stays valid against a newer DLL until something it depends on moves. `Mimic::MAILBOX_CONTRACT` + `MAILBOX_CONTRACT_MIN` publish a **range** via the exported `g_mailboxContract`; scripts bake `CeMailboxLayout.ContractVersion` and check `MIN ≤ script ≤ CONTRACT` **before the first write**. Bump rules, what counts as the contract, and the rationale for every version so far live in [`dll/src/Mimic.h`](dll/src/Mimic.h); `tools/check_mailbox_contract.py` hashes that surface and fails CI on a forgotten bump, which is **worse than no versioning**. ⚠ **The hash covers field LAYOUT, not field MEANING** — a command that starts using a field it never touched is a real contract change the hash cannot see, so its "bumped but surface unchanged" branch refuses the bump until you record WHY.
+- **Folder rules**: the rules that apply to one folder only live beside it and load when you work there — [ui/CLAUDE.md](ui/CLAUDE.md) (single instance, async, platform abstraction, app-data layout, UI strings, keyword search boxes, AOT) and [dll/CLAUDE.md](dll/CLAUDE.md) (UE offsets, Frieren module naming). Read the one for the folder before changing code in it.
 
 -----
 

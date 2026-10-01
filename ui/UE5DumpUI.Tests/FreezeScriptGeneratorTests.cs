@@ -893,8 +893,12 @@ public class FreezeScriptGeneratorTests
 
     private static string FindRepoDir()
     {
+        // The marker is build.ps1, which exists at the repository root and nowhere else. It was
+        // CLAUDE.md until 2026-10-01: a folder's own rules now live in a CLAUDE.md beside it
+        // (ui/CLAUDE.md), so the walk up from the test output stopped at ui/ and looked for the
+        // fixture under ui\scripts.
         var d = new System.IO.DirectoryInfo(System.AppContext.BaseDirectory);
-        while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "CLAUDE.md")))
+        while (d != null && !System.IO.File.Exists(System.IO.Path.Combine(d.FullName, "build.ps1")))
             d = d.Parent;
         Assert.NotNull(d);
         return d!.FullName;

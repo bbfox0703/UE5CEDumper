@@ -13,7 +13,7 @@ gate it has never heard of. Measured 2026-08-22: an entire day's work was commit
 against 4 of the then-12.
 
 ⛔ DERIVE THE COUNT, never type it. This docstring said "the 12 pre-build gates" while
-the list held 13, and `CONTRIBUTING.md` said "All 13 gates" for the same reason: a
+the list held 13, and the contributing guide of the time said "All 13 gates" for the same reason: a
 number in prose does not move when someone appends a tuple. `--list` prints it, and the
 run's own final line reports "N gate(s) run".
 
@@ -139,6 +139,11 @@ GATES = [
      ["tools/check_no_local_paths.py"],
      "a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / "
      "%APPDATA% / %USERPROFILE%, or a placeholder", False),
+
+    ("check_text_integrity",
+     ["tools/check_text_integrity.py"],
+     "a tracked text file holds a control byte (NUL, backspace, vertical tab ...): a backslash escape that a "
+     "shell heredoc collapsed before a patch script ran. The output names the file, line and byte", False),
 
     ("check_md_links",
      ["tools/check_md_links.py"],

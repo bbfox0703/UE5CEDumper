@@ -27,6 +27,27 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — a gate for corrupted text files, and a `ship` skill
+
+- New gate `check_text_integrity`: no tracked text file may contain a control character. Patch scripts
+  run through a shell heredoc have written such characters in place of a backslash sequence, and
+  nothing noticed. Its first run found one that had sat in a test file since 2026-07-30; that is fixed.
+- `CLAUDE.md` gains four short rules that sessions kept re-learning: write patch scripts as files, no
+  new PowerShell, read a command's own exit code, and fetch before stating what is pushed.
+- New project skill `ship` (`.claude/skills/ship`): the repo's push, pull request and merge routine in
+  one place, so "push and merge" follows the same steps on either PC.
+- C# 6021/6021, 30 gates.
+
+## 2026-10-01 (no build change) — folder-only rules moved out of the root `CLAUDE.md`
+
+- `CLAUDE.md` is read at the start of every session. Nine of its rules apply to one folder only, so they
+  moved beside that folder and are read when work happens there: seven to the new `ui/CLAUDE.md` (single
+  instance, async, platform abstraction, app-data layout, UI strings, keyword search boxes, AOT) and two to
+  the new `dll/CLAUDE.md` (UE offsets, Frieren module naming). The wording of each rule is unchanged.
+- The root file keeps one "Folder rules" line pointing at both, and lost two blocks of standard commands
+  (plain `cmake` / `dotnet`, and `git submodule update`). It went from 21,918 to 18,700 characters.
+- Rules that span folders (CE Lua output, the contract version, logging, code comments) stay in the root.
+
 ## 2026-10-01 (build 3615) — the build makes the Cheat Engine Lua test host itself
 
 - Some tests run the scripts this program generates on Cheat Engine's own Lua engine. They need a small
