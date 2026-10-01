@@ -4146,15 +4146,27 @@ public static class CeXmlExportService
     /// push (AOBMaker <c>CreateMemoryRecord</c>). Reuses the same UE→CE mapping that drives
     /// Copy CE XML / Copy CE Field so the single-record push stays consistent with the
     /// clipboard exports. Non-scalar fields (struct/array/etc.) fall back to 8 Bytes /
-    /// ShowAsHex; bit-field bools — which the single-record command can't fully express —
-    /// fall back to the containing Byte.
+    /// ShowAsHex. [AOBM-PLUSCE-FIDELITY] A bit-field bool carries its bit and an FString-family
+    /// field its string kind, for the plugin's record tree; their <c>CreateMemoryRecord</c> form
+    /// stays the containing Byte and the 8-byte data pointer.
     /// </summary>
     public static CeRecordType MapFieldToCeRecordType(LiveFieldValue field)
     {
+        if (IsStringProperty(field.TypeName))
+            return PointerRecordType with
+            {
+                String = field.TypeName switch
+                {
+                    "StrProperty" => CeStringKind.Utf16,
+                    "Utf8StrProperty" => CeStringKind.Utf8,
+                    _ => CeStringKind.Ansi,
+                },
+            };
         var info = MapCeField(field);
         if (info == null)
             return PointerRecordType; // non-scalar (struct/array/etc.) -> 8 Bytes hex
-        return new CeRecordType(KeywordToValueType(info.VariableType), info.IsSigned, info.ShowAsHex);
+        return new CeRecordType(KeywordToValueType(info.VariableType), info.IsSigned, info.ShowAsHex,
+                                info.BitStart, info.BitStart >= 0 ? info.BitLength : 0);
     }
 
     /// <summary>

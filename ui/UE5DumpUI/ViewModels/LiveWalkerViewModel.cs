@@ -5144,7 +5144,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             ClearStatus();
-            int ok = 0, fail = 0, skipped = 0;
+            int ok = 0, fail = 0, skipped = 0, degraded = 0;
             foreach (var field in selected)
             {
                 // Fields without a resolved address (e.g. container/struct headers) can't
@@ -5154,10 +5154,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 var t = CeXmlExportService.MapFieldToCeRecordType(field);
                 // [A4-PUSHCE-UNPADDED] PayloadAddress, as the per-row +CE and HEX already do: on a checked build a
                 // delegate's bytes start past an 8-byte access detector that reads 0. See LiveFieldValue.PayloadAddress.
-                var added = await _aobMaker.CreateMemoryRecordAsync(
-                    Services.PackedLayoutNotice.RecordNamePrefix + field.Name,
-                    StripHexPrefix(field.PayloadAddress), t.ValueType, t.IsSigned, t.ShowAsHex);
-                if (added)
+                // [AOBM-PLUSCE-FIDELITY] The shared push: a bit-field bool or an FString goes through the record tree.
+                var push = await AobMakerActions.PushRecordAsync(_aobMaker,
+                    Services.PackedLayoutNotice.RecordNamePrefix + field.Name, field.PayloadAddress, t,
+                    CeStringLength, _log);
+                if (push.Degraded) degraded++;
+                if (push.Added)
                 {
                     ok++;
                 }
@@ -5178,7 +5180,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 var extra = (fail > 0 ? $", {fail} failed" : "") + (skipped > 0 ? $", {skipped} skipped" : "");
-                StatusText = $"Added to CE: {ok} record(s){extra}";
+                var fallback = AobMakerActions.DegradedCountText(degraded);
+                StatusText = $"Added to CE: {ok} record(s){extra}" + (fallback.Length > 0 ? " — " + fallback : "");
             }
             _log.Info($"CE Field push: {ok} added, {fail} failed, {skipped} skipped (of {selected.Count} selected)");
         }
@@ -5930,12 +5933,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var ok = await _aobMaker!.CreateMemoryRecordAsync(
-                Services.PackedLayoutNotice.RecordNamePrefix + name,
-                StripHexPrefix(address), t.ValueType, t.IsSigned, t.ShowAsHex);
-            ApplyAobMakerProbe(_aobMaker.IsAvailable);
+            // [AOBM-PLUSCE-FIDELITY] The shared push: a bit-field bool or an FString goes through the record tree.
+            var push = await AobMakerActions.PushRecordAsync(_aobMaker!,
+                Services.PackedLayoutNotice.RecordNamePrefix + name, address, t, CeStringLength, _log);
+            var ok = push.Added;
+            ApplyAobMakerProbe(_aobMaker!.IsAvailable);
             StatusText = ok
-                ? $"Added to CE: {name}"
+                ? $"Added to CE: {name}" + AobMakerActions.DegradedSuffix(push)
                 : (_aobMaker.IsAvailable
                     ? $"CE rejected record for {name}"
                     : AobMakerUnavailable.Text(_aobMaker));   // [W1-PIPEBUSY-STATUS]

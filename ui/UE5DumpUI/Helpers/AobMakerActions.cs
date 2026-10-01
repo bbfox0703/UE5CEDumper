@@ -130,10 +130,45 @@ internal static class AobMakerActions
     /// <see cref="CeXmlExportService.CeRecordType.NeedsRecordTree"/>).</summary>
     internal readonly record struct RecordPush(bool Added, bool Degraded, CeXmlExportService.CeRecordType Type);
 
-    /// <summary>[AOBM-PLUSCE-FIDELITY] The one +CE push every site shares.</summary>
+    /// <summary>
+    /// [AOBM-PLUSCE-FIDELITY] The one +CE push every site shares. A record <c>CreateMemoryRecord</c> cannot express goes
+    /// through the plugin's record tree; only a plugin that cannot build it -- no tree at all, or no bits -- gets the
+    /// <c>CreateMemoryRecord</c> form instead, flagged <c>Degraded</c> so the status can say what arrived.
+    /// <para>A tree Cheat Engine refused is NOT retried in the old form: the refusal is the answer the user needs, and
+    /// a byte record on top of it would read as success.</para>
+    /// </summary>
     internal static async Task<RecordPush> PushRecordAsync(IAobMakerBridge bridge, string description,
         string address, CeXmlExportService.CeRecordType type, int stringLength, ILoggingService log)
     {
+        bool degraded = false;
+        if (type.NeedsRecordTree)
+        {
+            RecordTreeResult tree;
+            try
+            {
+                tree = await bridge.CreateRecordTreeAsync(description,
+                    new[] { ToRecordNode(description, address, type, stringLength) });
+            }
+            catch (Exception ex)
+            {
+                log.Error($"AOBMaker +CE record tree failed for {description} @ {address}", ex);
+                return new RecordPush(false, false, type);
+            }
+            switch (tree.Outcome)
+            {
+                case RecordTreeOutcome.Created:
+                    return new RecordPush(true, false, type);
+                case RecordTreeOutcome.Failed:
+                    log.Warn($"AOBMaker +CE: Cheat Engine did not build {description} @ {address}: {tree.Message}");
+                    return new RecordPush(tree.Created > 0, false, type);
+                case RecordTreeOutcome.Unavailable:
+                    return new RecordPush(false, false, type);
+            }
+            log.Info($"AOBMaker +CE: {description} goes as its CreateMemoryRecord form ({tree.Outcome}" +
+                     (tree.MissingFeatures.Count > 0 ? ": " + string.Join(", ", tree.MissingFeatures) : "") + ")");
+            degraded = true;
+        }
+
         bool ok;
         try
         {
@@ -145,7 +180,7 @@ internal static class AobMakerActions
             log.Error($"AOBMaker +CE failed for {description} @ {address}", ex);
             ok = false;
         }
-        return new RecordPush(ok, false, type);
+        return new RecordPush(ok, degraded && ok, type);
     }
 
     /// <summary>[AOBM-PLUSCE-FIDELITY] The note a degraded push adds after "Added to CE: …", or "".</summary>
@@ -161,10 +196,30 @@ internal static class AobMakerActions
     internal static string AsPointerText() => AobMakerStatus.Say(KeyRecordAsPointer,
         "as its data pointer: this AOBMaker plugin cannot build a string record (update AOBMaker)");
 
-    /// <summary>[AOBM-PLUSCE-FIDELITY] The record-tree node for a +CE record that needs one.</summary>
+    /// <summary>
+    /// [AOBM-PLUSCE-FIDELITY] The record-tree node for a +CE record that needs one, shaped like the Copy CE XML leaf for
+    /// the same field: a string reads through the FString's data pointer (<c>Offsets [0]</c>) at the String Len the
+    /// exports use (<paramref name="stringLength"/>, or their default when 0); a bit-field bool is a Binary record at
+    /// its byte.
+    /// </summary>
     internal static CeRecordNode ToRecordNode(string description, string address,
         CeXmlExportService.CeRecordType type, int stringLength)
-        => new(description, StripHexPrefix(address), "8 Bytes");
+    {
+        var bare = StripHexPrefix(address);
+        if (type.String != CeXmlExportService.CeStringKind.None)
+            return new CeRecordNode(description, bare, "String", Offsets: new[] { 0 },
+                StringLength: stringLength > 0 ? stringLength : Constants.DefaultCeStringLength,
+                Unicode: type.String == CeXmlExportService.CeStringKind.Utf16);
+        return new CeRecordNode(description, bare, "Binary", ShowAsHex: type.ShowAsHex, IsSigned: type.IsSigned,
+                                BitStart: type.BitStart, BitLength: type.BitLength);
+    }
+
+    internal const string KeyRecordsDegraded = "str.AobMaker.Record.SomeDegraded";
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] The batch form of <see cref="DegradedSuffix"/>, or "" when none was.</summary>
+    internal static string DegradedCountText(int degraded) => degraded <= 0 ? "" : AobMakerStatus.Say(KeyRecordsDegraded,
+        "{0} of them as a whole byte or a data pointer: this AOBMaker plugin cannot build them as they are (update AOBMaker)",
+        degraded);
 
     internal const string KeyDisasmNoCode = "str.AobMaker.Disasm.NoCode";
     internal const string KeyDisasmDone = "str.AobMaker.Disasm.Done";

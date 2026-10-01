@@ -475,6 +475,7 @@
     <sys:String x:Key="str.AobMaker.Record.Refused">Cheat Engine refused the record for {0}</sys:String>
     <sys:String x:Key="str.AobMaker.Record.AsByte">as its whole byte: this AOBMaker plugin cannot set a bit (needs AOBMaker v20260930 or later)</sys:String>
     <sys:String x:Key="str.AobMaker.Record.AsPointer">as its data pointer: this AOBMaker plugin cannot build a string record (update AOBMaker)</sys:String>
+    <sys:String x:Key="str.AobMaker.Record.SomeDegraded">{0} of them as a whole byte or a data pointer: this AOBMaker plugin cannot build them as they are (update AOBMaker)</sys:String>
     <sys:String x:Key="str.ObjectTree.HexInCe">Show in CE hex view (AOBMaker)</sys:String>
     <sys:String x:Key="str.AobMaker.Row.NoOwnAddress">{0} is an array element: the snapshot kept only its owner's address, so there is nothing of its own to send to CE</sys:String>
     <sys:String x:Key="str.AobMaker.Disasm.NoCode">No native code address for {0} (a Blueprint-only function, or UFunction::Func is not detected on this engine)</sys:String>

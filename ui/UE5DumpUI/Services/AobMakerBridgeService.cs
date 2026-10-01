@@ -28,6 +28,14 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     private const string TypeCreateMemoryRecord = "CreateMemoryRecord";
     private const string TypeInjectTableFile = "InjectTableFile";
     private const string TypeGetAttachedProcess = "GetAttachedProcess";
+    private const string TypeRecordTreeBegin = "CreateRecordTreeBegin";
+    private const string TypeRecordTreeChunk = "CreateRecordTreeChunk";
+    private const string TypeRecordTreeEnd = "CreateRecordTreeEnd";
+    /// <summary>The reply type a plugin gives a request it cannot read, "Unknown type" among them.</summary>
+    private const string TypeError = "Error";
+
+    // A chunk is one synchronize() on CE's main thread; AOBMaker's own client allows a minute for one.
+    private const int ChunkResponseTimeoutMs = 60000;
 
     // Inject ships an entire helper Lua file payload, runs CE Lua via
     // synchronize() (which yields to CE's main thread), and verifies the
@@ -450,6 +458,132 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
         finally
         {
             _opLock.Release();
+        }
+    }
+
+    /// <inheritdoc/>
+    /// <remarks>
+    /// [AOBM-PLUSCE-FIDELITY] Three connections -- the plugin answers one request per connection and keeps the batch in
+    /// CE's Lua between them -- held under one <see cref="_opLock"/>, so none of this app's other requests lands in the
+    /// middle. The rules come from AOBMaker's reply §3 and its record-tree spec:
+    /// <list type="bullet">
+    /// <item>"Unknown type" to the Begin is a plugin from before the record tree;</item>
+    /// <item>a Begin that does not list a feature a node needs is closed with End before any record exists (rule 16)
+    /// -- a build-153 plugin lists none and would build a Binary record without its bit and still say success;</item>
+    /// <item>after a failed chunk, End is sent ONCE and its count reported: the plugin does not roll records back, so
+    /// a retry would duplicate them (rule 9).</item>
+    /// </list>
+    /// </remarks>
+    public async Task<RecordTreeResult> CreateRecordTreeAsync(string description, IReadOnlyList<CeRecordNode> nodes,
+        CancellationToken ct = default)
+    {
+        if (nodes.Count == 0) return new RecordTreeResult(RecordTreeOutcome.Created, 0, null, Array.Empty<string>());
+        await _opLock.WaitAsync(ct);
+        try
+        {
+            var (begin, reached) = await RoundTripAsync(
+                new AobMakerMessage { Type = TypeRecordTreeBegin, Description = description, TotalNodes = nodes.Count },
+                ResponseTimeoutMs, ct);
+            if (!reached) return new RecordTreeResult(RecordTreeOutcome.Unavailable, 0, null, Array.Empty<string>());
+            if (begin == null)
+                return new RecordTreeResult(RecordTreeOutcome.Failed, 0, "no reply to CreateRecordTreeBegin",
+                                            Array.Empty<string>());
+            if (begin.Type == TypeError && begin.Message?.Contains("Unknown type", StringComparison.Ordinal) == true)
+            {
+                _log?.Info(Constants.LogCatInit, "AOBMaker: this CE plugin has no record tree (Unknown type)");
+                return RecordTreeResult.NotSupported;
+            }
+            if (!begin.Success || string.IsNullOrEmpty(begin.BatchId))
+                return new RecordTreeResult(RecordTreeOutcome.Failed, 0, begin.Message ?? "CreateRecordTreeBegin failed",
+                                            Array.Empty<string>());
+
+            var batch = begin.BatchId;
+            var features = begin.Features ?? new List<string>();
+            var missing = nodes.Select(n => n.RequiredFeature).OfType<string>().Distinct()
+                               .Where(f => !features.Contains(f)).ToList();
+            if (missing.Count > 0)
+            {
+                await RoundTripAsync(new AobMakerMessage { Type = TypeRecordTreeEnd, BatchId = batch },
+                                     ResponseTimeoutMs, ct);
+                _log?.Info(Constants.LogCatInit,
+                    $"AOBMaker: the CE plugin lacks {string.Join(", ", missing)}; '{description}' was not built");
+                return new RecordTreeResult(RecordTreeOutcome.MissingFeature, 0, null, missing);
+            }
+
+            var (chunk, _) = await RoundTripAsync(new AobMakerMessage
+            {
+                Type = TypeRecordTreeChunk, BatchId = batch, Seq = 0,
+                Nodes = nodes.Select((n, i) => ToWireNode(n, i)).ToList(),
+            }, ChunkResponseTimeoutMs, ct);
+            var (end, _) = await RoundTripAsync(new AobMakerMessage { Type = TypeRecordTreeEnd, BatchId = batch },
+                                                ResponseTimeoutMs, ct);
+
+            int created = end?.TotalCreated is > 0 ? end.TotalCreated.Value : chunk?.Created ?? 0;
+            if (chunk?.Success == true && created >= nodes.Count)
+            {
+                _log?.Info(Constants.LogCatInit, $"AOBMaker: record tree '{description}': {created} record(s)");
+                return new RecordTreeResult(RecordTreeOutcome.Created, created, null, Array.Empty<string>());
+            }
+            var why = chunk?.Message ?? end?.Message ?? "no reply to CreateRecordTreeChunk";
+            _log?.Warn(Constants.LogCatInit,
+                $"AOBMaker: record tree '{description}': {created} of {nodes.Count} record(s) built: {why}");
+            return new RecordTreeResult(RecordTreeOutcome.Failed, created, why, Array.Empty<string>());
+        }
+        finally
+        {
+            _opLock.Release();
+        }
+    }
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] A node under the plugin's own names. <c>unicode</c> goes only with a length:
+    /// the plugin applies it only together with one.</summary>
+    internal static AobMakerRecordNode ToWireNode(CeRecordNode n, int id) => new()
+    {
+        Id = id,
+        Desc = n.Description,
+        Addr = n.Address,
+        Type = n.TypeKeyword,
+        Hex = n.ShowAsHex,
+        Signed = n.IsSigned,
+        Offsets = n.Offsets,
+        Length = n.StringLength,
+        Unicode = n.StringLength != null ? n.Unicode : null,
+        BitStart = n.BitStart,
+        BitLength = n.BitLength,
+    };
+
+    /// <summary>One request on its own connection. <c>Reached</c> is false only when the pipe could not be opened; a
+    /// reply that never came is (null, true).</summary>
+    private async Task<(AobMakerMessage? Reply, bool Reached)> RoundTripAsync(AobMakerMessage request, int timeoutMs,
+        CancellationToken ct)
+    {
+        if (!await ReconnectAsync(ct))
+        {
+            IsAvailable = false;
+            return (null, false);
+        }
+        try
+        {
+            await WriteMessageAsync(_pipe!, request, ct);
+            using var timeoutCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            timeoutCts.CancelAfter(timeoutMs);
+            var reply = await ReadMessageAsync(_pipe!, timeoutCts.Token);
+            IsAvailable = true;
+            return (reply, true);
+        }
+        catch (OperationCanceledException) when (!ct.IsCancellationRequested)
+        {
+            _log?.Warn(Constants.LogCatInit, $"AOBMaker {request.Type}: no reply within {timeoutMs} ms");
+            return (null, true);
+        }
+        catch (IOException ex)
+        {
+            _log?.Warn(Constants.LogCatInit, $"AOBMaker {request.Type} error: {ex.Message}");
+            return (null, true);
+        }
+        finally
+        {
+            CleanupPipe();
         }
     }
 

@@ -1197,7 +1197,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         if (addr.Length == 0) return;
         StatusText = await AobMakerActions.AddRecordAsync(AobMaker, field.Name, addr,
             CeXmlExportService.MapFieldToCeRecordType(field), _log,
-            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "", CeStringLength);
     }
 
     /// <summary>HEX only: a +CE record of an object's base would show its vtable pointer, which is rarely what
