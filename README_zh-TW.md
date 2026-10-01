@@ -1,13 +1,13 @@
-# UE5CEDumper
-<img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper"/>  
+# UE5CEDumper — 搭配 Cheat Engine 的 UE Dumper（Unreal Engine 4 / 5）
+<img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper：Unreal Engine 4 與 5 的 UE Dumper"/>  
 
-一套針對 Unreal Engine 4 & 5 遊戲的**執行期結構探查工具**、配合 Cheat Engine、可更方便的開發 Table。
+一套針對 Unreal Engine 4 & 5 遊戲的 **UE Dumper（執行期結構探查工具）**、配合 Cheat Engine、可更方便的開發 Table。
 
-UE5CEDumper 是一款UE資料的互動式的檢查工具。不同於其它 Dumper，它為遊戲記憶體提供了一個**即時視窗**，讓你能即時瀏覽物件、尋找實例，並匯出支援 Cheat Engine (CE) 的結構定義。
+UE5CEDumper 是一款 UE Dumper，也是 UE 資料的互動式檢查工具。不同於其它 UE Dumper，它為遊戲記憶體提供了一個**即時視窗**，讓你能即時瀏覽物件、尋找實例，並匯出支援 Cheat Engine (CE) 的結構定義。
 
 > 本工具為「實戰型」的 Table 製作人員打造，旨在消除UE物件的偵測、識別到在 CE 中的實作之間的鴻溝。
 
-> 這並不是一般 Dumper、無法把大量資料倒出並分析，其集中在簡單找到 UE 結構，並和 CE 開發配合使用。故請視為是一個通用型的 UE 工具。
+> 它是一款功能偏向 CE 的 UE Dumper：重點不在把大量資料倒出來離線分析，而是快速找到 UE 結構，並配合 CE 即時開發。
 
 > ### 使用範圍
 >

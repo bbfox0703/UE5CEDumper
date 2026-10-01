@@ -1,13 +1,13 @@
-# UE5CEDumper
-<img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper"/>  
+# UE5CEDumper — a UE Dumper for Unreal Engine 4 / 5 and Cheat Engine
+<img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper, a UE Dumper for Unreal Engine 4 and 5"/>  
 
 **The Live Bridge between Unreal Engine Runtime and Cheat Engine.**
 
-UE5CEDumper is a interactive inspector toolchain. It provides a **live window** into the game's memory, allowing you to browse objects, find instances, and export CE-ready structures in real-time.
+UE5CEDumper is a **UE Dumper** (an Unreal Engine dumper) for UE4 and UE5 games, built as an interactive inspector toolchain. It provides a **live window** into the game's memory, allowing you to browse objects, find instances, and export CE-ready structures in real-time.
 
 > It's built for the *active* table maker. It bridges the gap between seeing an offset and actually using it in Cheat Engine.
 
-> *UE5CEDumper is not meant to be a another dumper that extracts large amounts of data for analysis. Instead, it focuses on quickly finding UE structures and integrating with CE for live development. Think of it as a general-purpose UE tool rather than a specialized dumper.*
+> *UE5CEDumper is a UE dumper whose features lean toward Cheat Engine: rather than exporting large amounts of data for offline analysis, it focuses on quickly finding UE structures and putting them to use in CE during live development.*
 
 > ### Scope of use
 >
