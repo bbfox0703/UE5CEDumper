@@ -84,6 +84,12 @@ git fetch origin main:main
 `dev` is not fast-forwarded to `main`. After a merge the two branches have the same files and `main`
 is one merge commit ahead; that is this repo's normal state, not a divergence to repair.
 
+## A release is a separate request
+
+Merging is not releasing. When the user asks for a release: tag `v<build>` on `main`'s merge commit,
+write the notes, and **leave the release a draft** for the maintainer to publish. The steps and the
+notes' format are `docs/working-lessons.md` §7.3.
+
 ## 8. Report
 
 What was pushed, the PR link written as a full URL, whether it merged, and the commit ids read from

@@ -54,6 +54,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - Before saying what is pushed, merged or on a branch: `git fetch`, then compare with `origin/<branch>`.
   The other PC and peer sessions push to `dev`; a statement from memory has been wrong. The whole
   push-and-merge routine is the `ship` skill.
+- **Standing instructions** ([working-lessons §7.3](docs/working-lessons.md)): a release is left as a
+  DRAFT and the maintainer publishes it · in a verification pass, commit after every closed item ·
+  keep agent fan-out small (about 3–6) and ask before launching more than 10.
 - ⚠ **Line endings are pinned by `.gitattributes` (`* text=auto eol=lf`), NOT by your git config
   — never "fix" them with `core.autocrlf`, which is machine-local (`true` at `--system` here) and
   does not travel between the two PCs.** Before the pin, `git checkout` silently rewrote an

@@ -3468,6 +3468,7 @@ being silently truncated past ~140 lines, so the section map went too).
 | What shipped, when, and why | `dev-log.md` (append-only) |
 | Open work, effort/risk, pending live verification | `todo.md` |
 | What a *game* does differently | `lessons-learned.md` |
+| A standing instruction from the maintainer on how to work, whose loss costs something | **This file**, §7.3 |
 | A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
 | In-flight project state that has no home in the repo yet | memory |
 | Which doc to read next, and where the current work is | `MEMORY.md`, as a **pointer**, not a copy |
@@ -3505,6 +3506,64 @@ nobody does. A row saying *when you would open it* survives. That is why the rul
 question ("when would I open this?") and capped in bytes.
 
 -----
+
+### 7.3 Standing instructions from the maintainer — here so both machines have them
+
+Each of these is something the maintainer said once, in a session, about HOW the work is to be done.
+A session cannot derive any of them from the code, and the assistant's memory holds them on one
+machine only (§7.1) — so the session on the other machine would do the thing the maintainer had
+already corrected. They live here instead. A new one belongs here when forgetting it costs something;
+a preference that only saves a question can stay in memory.
+
+⚠ **These are the instructions in force today, not settled decisions** (§6 is where those are). Each
+carries the date it was given, and the maintainer changes them. What the maintainer says in the
+current session wins over this section; when it does, edit the item here in the same commit, so the
+other machine does not keep following the old one.
+
+**1. A release is left as a DRAFT. The maintainer publishes it.** (2026-09-26)
+
+1. Merge `dev` into `main` through a PR, as a merge commit, once its CI is green.
+2. Tag `v<build>` on `main`'s merge commit. `release.yml` builds the AOT binary and creates a **draft**
+   release whose body is a generated commit list.
+3. Replace that body with prepared notes in the format of the previous two releases
+   (`gh release view v<N> --json body`): an intro line, `## About this release`, an optional `## New`,
+   `## Fixed`, a compare link, the fall-back-to-the-previous-release line, the `## Setup` block and
+   the unsigned-exe notes.
+4. Leave it a draft. The maintainer checks the build and publishes.
+
+*Why.* The notes are for users, not a changelog, and the maintainer publishes only after trying the
+build.
+
+*How.* Take the items from the dev-log entries and the product commits since the last tag
+(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`). The notes are all English. Aim for 20–30
+user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
+kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
+hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
+maintainer may have edited after publishing, not from a local draft. Check each claim against its row
+before writing it, name a game only where the fix was measured on it, and say so when the previous
+release shipped a regression. Neither the merge nor the release run wakes the session; the maintainer
+says when CI is done.
+
+**2. Keep agent fan-out small.** (2026-09-24)
+
+An 80-agent workflow used up the maintainer's usage window in about an hour. The limit then killed
+eleven of its agents — verifiers, the synthesis, the critic — and stopped everything else that was
+waiting on that window, the live-check backlog included.
+
+*How.* About three to six agents per workflow, even when a session default asks for more. At most
+one verifier per finding that someone can act on; batch or self-check the informational ones. Build
+digests with a local script over the run's journal, not with an agent that reads the whole of it.
+Before launching more than ten agents, say the count and ask. Commit what is finished before a long
+run, since a limit can end the session in the middle.
+
+**3. In a verification pass, commit after every closed item.** (2026-08-17)
+
+One item, one commit: the message names the finding and what the evidence actually was. Do not batch
+several items into one commit, and do not move on with a closed item still uncommitted. An item that
+closes only in part is committed as a partial, with the untested half stated.
+
+*Why.* The machine can hang in the middle of a long, unattended session. A result that exists only
+in the working tree is lost when it does, and the evidence is what cost the time, not the edit.
 
 ## 8. Writing code comments
 
