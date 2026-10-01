@@ -48,118 +48,67 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 
 | UE 版本 | GObjects | GNames | DynOff | 已驗證遊戲 |
 |---|:---:|:---:|:---:|---|
-| **4.11 – 4.14** | ✅ | ✅† | ✅ | NEKOPALIVE (ネコパラ) |
+| **4.11 – 4.14** | ✅ | ✅ | ✅ | NEKOPALIVE (ネコパラ) |
 | **4.15 – 4.17** | ✅ | ✅ | ✅ | Extinction |
 | **4.18 – 4.20** | ✅ | ✅ | ✅ | Final Fantasy VII Remake Intergrade, The Occupation, 勇者鬥惡龍 XI S, 八方旅人 |
 | **4.21 – 4.24** | ✅ | ✅ | ✅ | 《STAR WARS 絕地：組織殞落™》, 偶像大師 星耀季節 |
 | **4.25 – 4.27** | ✅ | ✅ | ✅ | Final Fantasy VII Rebirth, 勇者鬥惡龍 I&II / III HD-2D 重製版, 劍星 (Stellar Blade), Tower of Mask, 霍格華茲的傳承, 復活邪神 2 七英雄的復仇, Ghostwire: Tokyo, TimeSplitters Rewind, The Artisan of Glimmith, Barn Finders, 機動戰士 GUNDAM SEED 激鬥命運 復刻版, 女神異聞錄３ Reload (Persona 3 Reload) |
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
-| **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1 滿意工廠), Colossal, Avowed, 艾恩葛朗特 迴盪新聲 Demo (Echoes of Aincrad), 冒險家艾略特的千年奇譚 (The Adventures of Elliot), MindsEye, DragonSword Awakening‡ |
-| **5.5 – 5.7** | ✅ | ✅* | ✅** | 泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk (太陽龐克), Pionero Capital Demo, Satisfactory (滿意工廠 v1.2.3.1), Star Trek Voyager – Across the Unknown |
+| **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1 滿意工廠), Colossal, Avowed, 艾恩葛朗特 迴盪新聲 Demo (Echoes of Aincrad), 冒險家艾略特的千年奇譚 (The Adventures of Elliot), MindsEye, DragonSword Awakening |
+| **5.5 – 5.7** | ✅ | ✅ | ✅ | 泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk (太陽龐克), Pionero Capital Demo, Satisfactory (滿意工廠 v1.2.3.1), Star Trek Voyager – Across the Unknown |
 
-*\*GNames 在 5.5+ 版本使用 .data 指標掃描回退機制。*
-*\**DynOff 支援 **CasePreservingName (FName = 16 bytes)** 佈局。
-*‡ 需使用 **`dxgi.dll`** proxy，預設的 `version.dll` 不行 —— 該遊戲的 .exe 從未以名稱請求 `version.dll`，
-所以那個 proxy 根本不會被載入，且**完全不產生 log**。若遊戲已啟動卻沒有在
-`%LOCALAPPDATA%\UE5CEDumper\Logs\` 下產生對應資料夾，就是這個症狀：換一種 proxy 類型即可。
-詳見 [docs/test-games.md](docs/test-games.md)。*
-*†4.23 以前沒有 `FNamePool`，GNames 是 `FName::GetNames` 延遲配置的 `TNameEntryArray`；sparse delegate 也完全
-不存在（4.23 才引入）。**UE 4.11 是支援下限**：4.10 以下沒有 `FUObjectItem`，且採用掃描器無法表達的 inline chunk
-table，因此會直接顯示為不支援，而不是讓它以難以理解的方式失敗。*
+*UE 4.11 是支援下限；4.10 以下會直接顯示為不支援。*
 
 ---
 
-## 專為 Table 製作人員設計的功能
+## 開始使用 (Getting started)
 
-一列一功能 — AOB 掃描、DynOff、Live Walker、Value Search（單值 + 群組）、Teleport、移動調整 + God Mode + Time Dilation、即時函式剖析器、多格式 CE 匯出，以及其餘全部 — 收錄於 **[docs/Features_zh-TW.md](docs/Features_zh-TW.md)**。
+把 DLL 載入遊戲有三種方式，一次只用一種；請先載入存檔，確保遊戲物件已存在於記憶體。
 
----
+### 方式 A：Cheat Engine
 
-## 架構與工作流程 (Architecture & Workflow)
-
-### 方式 A：Cheat Engine 注入
-
-1. **注入 DLL**: 開啟 Cheat Engine 附加遊戲，確保遊戲存檔已載入。開啟 `UE5CEDumper.CT`。
-2. **啟用 CE 腳本**: 先啟用 `init <== enable after process attached`，再啟用 `Inject DLL + Start Pipe Server`。DLL 自動定位引擎全域指標，並偵測 UE 版本與記憶體佈局。
-3. **連接 UI**: 等待數秒讓掃描完成。啟動 **UE5DumpUI.exe** 並點擊 **Connect**。即時數據透過具名管道 (Named Pipe, JSON-RPC) 串流至 UI。
-4. **瀏覽及分析**: 瀏覽 `UObject` 階層，找到目標 Class，深入容器查看元素，或由 CE 中的位址反查並匯出。
+1. 用 Cheat Engine 附加遊戲，開啟 `UE5CEDumper.CT`。
+2. 先啟用 `init <== enable after process attached`，再啟用 `Inject DLL + Start Pipe Server`。
+3. 啟動 **UE5DumpUI.exe** 並點擊 **Connect**。
 
 ### 方式 B：Proxy DLL（推薦，免 Cheat Engine）
 
-1. **放置 DLL**: 將 `version.dll`（由 `build.ps1 -Target ProxyDLL` 產生）複製到遊戲根目錄（與 `.exe` 同層）。
-2. **啟動遊戲**: 正常啟動遊戲。Proxy DLL 會自動載入並啟動管道伺服器。
-3. **載入存檔**: 進入遊戲世界，確保 UE 物件已載入記憶體。
-4. **連接 + 掃描**: 啟動 **UE5DumpUI.exe**，點擊 **Connect**，再點擊 **Start Scan**。DLL 執行 AOB 掃描並將引擎資料回傳至 UI。
-5. **瀏覽及分析**: 與方式 A 相同 — 瀏覽物件、尋找實例、匯出 CE 結構。
-
-> **注意**: 請勿同時使用兩種方式。若 Proxy DLL 已放在遊戲目錄中，請勿再透過 CE 注入 `UE5Dumper.dll`。DLL 會偵測重複實例並跳過自動啟動以避免衝突。
-
-> **該用哪個 Proxy DLL？** 先試 `version.dll`。若遊戲能啟動但 UI 無法連接，代表該 EXE 沒有匯入 `version.dll` — 改用 **`dxgi.dll`**（每款 D3D11/D3D12 UE 遊戲都會匯入），或在 `dxgi` / `version` 檔名已被 ReShade 或其他 mod loader 佔用時改用 **`winmm.dll`** 這個備用槽位（`dinput8.dll` 為最後手段）。`build.ps1` 會把四種都建置到 `dist\proxy\`；**Proxy Deploy** 分頁會為每款遊戲部署正確的 proxy，其 **Suggested proxy** 欄位會記住哪個有效。四個檔名都被佔、或都載入不了？改用方式 C（注入）。
+1. 在 **UE5DumpUI.exe** 開啟 **Proxy Deploy** 分頁，部署到該遊戲。它會建議這款遊戲適用的 proxy DLL，並複製到遊戲 `.exe` 旁邊。
+2. 啟動遊戲並載入存檔。
+3. 點擊 **Connect**，再點擊 **Start Scan**。
 
 ### 方式 C：對執行中的遊戲注入（免 CE、免重開）
 
-把 `UE5Dumper.dll` 注入到**正在執行**的遊戲 — 最快的方式（免 Cheat Engine、免預先部署 proxy、免重開遊戲）。兩種入口、同一種技術（`CreateRemoteThread` + `LoadLibraryW`）：
+- **從 UI**：Proxy Deploy 分頁 → **Inject into running game…** → 選遊戲 → **Inject**。
+- **從命令列**：`.\inject-ue.ps1`（`-List` 列出偵測到的遊戲，`-ProcessId <pid>` 指定其中一個），接著啟動 **UE5DumpUI.exe** 並 **Connect**。
 
-- **從 UI**: Proxy Deploy 分頁 → **Inject into running game…** → 在 process picker 選遊戲 → **Inject**。UI 會自動連線。若遊戲以系統管理員執行，會跳 UAC 讓你提權注入 — 不用手動重開。
-- **從命令列** — `inject-ue.ps1`（隨發佈放在 `dist\`，與 `UE5Dumper.dll` 同層）：
+之後就能瀏覽物件樹、尋找類別或實例，並匯出需要的內容。逐步教學請見 [Wiki](https://github.com/bbfox0703/UE5CEDumper/wiki)，完整功能列表請見 [docs/Features_zh-TW.md](docs/Features_zh-TW.md)。
 
-  ```powershell
-  .\inject-ue.ps1                 # 自動：注入唯一在跑的 UE 遊戲
-  .\inject-ue.ps1 -List           # 列出偵測到的 UE 遊戲
-  .\inject-ue.ps1 -ProcessId 1234 # 注入指定 PID
-  ```
+> **僅限 x64 遊戲。** 與所有注入方式相同，可能被防毒標記，並會被 kernel 反作弊（EAC / BattlEye）擋下。使用範圍請見本文件開頭的說明。
 
-  接著啟動 **UE5DumpUI.exe** 並 **Connect**。遇到 Access Denied（遊戲以系統管理員執行）時，腳本會自動以系統管理員身分重新啟動（跳一次 UAC）。
+### 選用：AOBMaker
 
-> **僅限 x64 遊戲。** 使用範圍請見本文件開頭的說明 — 與所有注入方式相同，`CreateRemoteThread` 可能被防毒標記，並會被 kernel 反作弊（EAC / BattlEye）擋下或封鎖。
-
-| **Game Process (Injected)** |
-| :---: |
-| DLL + CE Lua Bridge（或 Proxy DLL）|
-| ⬇️ |
-| **Named Pipe IPC (JSON-RPC Protocol)** |
-| ⬇️ |
-| **External GUI (Avalonia UI App)** |
-
----
-
-### 選用：與 AOBMaker CE 外掛整合
-
-[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) 用於產生 AOB 特徵碼與 CE AA 腳本。其 CE DLL 外掛可讓 UE5CEDumper 一鍵在 CE 中瀏覽記憶體 / 程式碼，並產生動態 GWorld-AOB AA 腳本、UE 型別與欄位的 CE 記憶體紀錄，以及 Structure Dissect 資料。完全選用 — 核心功能不需它也能運作。
-
----
+[AOBMaker](https://github.com/bbfox0703/AOBMaker-Release) 與它的 Cheat Engine 外掛，可讓 UE5CEDumper 把找到的內容直接送進開啟中的 CE table：記憶體記錄、AA 腳本、GObjects / GNames / GWorld 的符號，以及把 Live Walker 的結構送進 Structure Dissect；也能讓 CE 的記憶體檢視與反組譯器跳到指定位址。其餘功能不需要它也能運作。
 
 ## 系統需求 (Requirements)
 
-### 編譯環境 (Build)
-
-| 工具 | 版本要求 |
-|---|---|
-| Visual Studio / MSVC | **2026 (v18, MSVC 19.50)** —實際建置與測試所用版本 |
-| CMake | 3.25+ |
-| Ninja | 任何近期版本 |
-| .NET SDK | 10.0 |
-
-> `build.cmd` / `build.ps1` 會透過 `vswhere` 自動定位 MSVC，無需手動設定路徑，因此任何已安裝的
-> toolset 都找得到。較舊的 Visual Studio 版本未經測試 —— 本專案已在 2026 上建置一段時間了。
-
-### 執行環境 (Runtime)
-
 - Windows 10/11 x64
-- Cheat Engine 7.6+（CE 注入方式）*或* Proxy DLL（免 CE）
-- 執行中的 Unreal Engine 4 或 5 遊戲作業程序 (x64)
+- 執行中的 Unreal Engine 4 或 5 遊戲 (x64)
+- Cheat Engine 7.6+（僅方式 A 需要）
+
+要從原始碼建置，請見 [CONTRIBUTING.md](CONTRIBUTING.md) 的 Development Setup 一節。
 
 ---
 
-## 重要注意事項 (Important Notes)
+## 注意事項 (Notes)
 
-* **自定義數據結構**: 在如《FF7 Rebirth》等遊戲中，部分關鍵數據（如 HP）存儲在標準 `UObject` 之外的自定義結構中。Live Walker 可協助探查這些區域，但無法直接自動發現。
-* **GWorld 連通性**: 截至 2026-07-27，`GWorld` 遍歷在 **100% 實測遊戲中正常運作（40 / 40）**，涵蓋 UE 4.11 到 UE 5.7 的所有支援版本。若遇到清單以外的遊戲，請改用 **Object Tree** 或 **Instance Finder** 作為進入點。
-* **EA 啟動器遊戲的 Proxy DLL 限制**: 《STAR WARS 絕地：組織殞落》(UE 4.21) 透過 EA 啟動器啟動，而它限制了 Windows 尋找 DLL 的路徑，因此任何 proxy 都不會被載入。請改在遊戲執行後用 Cheat Engine 注入 —— 其餘功能一切正常。其他透過 EA 啟動器的遊戲很可能相同，若遇到請開 issue 回報。
-* **針對既不匯入 `version.dll` 也不匯入 `dinput8.dll` 的遊戲使用 `dxgi.dll` proxy**: 少數遊戲 —— 例如《冒險家艾略特的千年奇譚》(UE 5.4) 與《艾恩葛朗特 迴盪新聲 Demo》(UE 5.4) —— 根本不會載入那兩個 proxy。請在 Proxy Deploy 分頁改選 **dxgi.dll**：每款 D3D11/D3D12 UE 遊戲都會匯入它，載入可靠。已在 Elliot、Echoes of Aincrad Demo、*Pionero Capital Demo* (UE 5.7) 與《Star Trek Voyager – Across the Unknown》(UE 5.6) 端到端驗證。
-* **`winmm.dll` proxy — 當 `dxgi` 或 `version` 檔名已被佔用時的備用槽位**: proxy 必須檔名沒被佔用才有效，而這在實務上經常不成立 —— *ReShade* 常以 `dxgi.dll` 形式安裝，部分遊戲本身也附帶自己的 `version.dll`。遇到這種情況請在 Proxy Deploy 分頁選 **winmm.dll**。已在《冒險家艾略特的千年奇譚》(UE 5.4) 與《機動戰士 GUNDAM SEED 激鬥命運 復刻版》(UE 4.27) 實機驗證。⚠ 它**無法觸及任何 `dxgi` 觸及不到的遊戲** —— 選它是為了槽位可用性，不是為了覆蓋率。
-* **切到背景就暫停的遊戲**: 部分遊戲 —— 例如《女神異聞錄３ Reload》(UE 4.27) —— 只要不是前景視窗就會凍結遊戲執行緒，因此任何需要呼叫遊戲的操作都會逾時。本工具會**偵測到這個停滯**並顯示琥珀色的「game thread stalled」提示，而不是卡住；實驗性的 **Keep Foreground** 開關則可繞過它，讓遊戲在背景時那些操作仍能運作。
-* **容器元素限制**: Array/Map/Set 的元素讀取受可調限制值控制，避免過度記憶體存取。如需處理大型容器，請在 Live Walker 中調整 **Array Limit** 滑桿。
+* **`UObject` 之外的資料**：部分遊戲（例如《FF7 Rebirth》）把 HP 這類重要數值存在自己的結構裡。Live Walker 可協助查看這些區域，但無法自動找出來。
+* **Start from GWorld 無法使用時**：若遊戲不在上方表格內，請改用 **Object Tree** 或 **Instance Finder** 作為進入點。
+* **透過 EA app 啟動的遊戲**不會載入任何 proxy DLL，請在遊戲執行後改用方式 A 或 C。
+* **切到背景就暫停的遊戲**會讓需要呼叫遊戲的操作逾時。此時 UI 會顯示「game thread stalled」提示，實驗性的 **Keep Foreground** 開關可繞過它。
+* **大型 Array / Map / Set** 的讀取數量受 Live Walker 的 **Array Limit** 滑桿限制。
+
+各遊戲的註記收錄於 [docs/test-games.md](docs/test-games.md)。
 
 ---
 
@@ -184,7 +133,7 @@ table，因此會直接顯示為不支援，而不是讓它以難以理解的方
 | [nlohmann/json](https://github.com/nlohmann/json) | DLL 使用的 JSON 函式庫 |
 | [cheat-engine/cheat-engine](https://github.com/cheat-engine/cheat-engine) | CE Lua 腳本 API 參考 |
 | **AOBMaker (內部工具)** | AOB 特徵碼產生工具，AA 腳本產生工具、快速 CE-goto 功能 (非必備) |
-| UE4 Dumper.CT | Cake-san 的 Cheat Table — 額外的 UE4 AOB 特徵碼（Signatures.h 中的 CT 系列） |
+| UE4 Dumper.CT | Cake-san 的 Cheat Table — 額外的 UE4 AOB 特徵碼（`Himmel.h` 中的 CT 系列） |
 
 **測試** — 感謝 **Marc@OCT** 與 **SeryogaSK@OCT**（[OCT](https://opencheattables.com/)）協助測試本工具。
 
@@ -192,16 +141,7 @@ table，因此會直接顯示為不支援，而不是讓它以難以理解的方
 
 ## 使用 Claude Code 開發
 
-本專案在 Anthropic 的 [Claude Code](https://claude.ai/code) 協助下開發。C++ DLL、C# Avalonia UI、建置腳本及文件均由開發者與 Claude Code 協作完成。
-
-### Claude Code 共用的本機 LLM — 任何 repo 都能加入
-
-Session 可把大量文字工作（大型 log、dump、繁中／日文翻譯草稿）交給本機的 Ollama model，並由一個全機共用的 hook 確保 model 不佔用商業遊戲的 GPU。它**每台 PC 只從本 repo 安裝一次**；**其他 repo 各用一個指令即可加入（join）或離開（leave）**，加入時只會收到一個不含任何機器或個人資料的 skill 檔。其他 repo 的 Claude Code session 請閱讀 **[tools/llm/README.md](tools/llm/README.md)**，並照其最後一節操作。
-
-```bash
-py tools/llm/ollama_local.py install --model <tag>                 # 每台 PC 一次，在本 repo 執行（model tag 由使用者指定）
-py "$LOCALAPPDATA/claude-local-llm/ollama_local.py" join           # 在其他任何 repo 執行；`leave` 可撤銷
-```
+本專案在 Anthropic 的 [Claude Code](https://claude.ai/code) 協助下開發。C++ DLL、C# Avalonia UI、建置腳本及文件均由開發者與 Claude Code 協作完成。本 repo 另附一個本機 LLM 輔助工具，任何 repo 的 Claude Code session 都能共用，詳見 [tools/llm/README.md](tools/llm/README.md)。
 
 ---
 
