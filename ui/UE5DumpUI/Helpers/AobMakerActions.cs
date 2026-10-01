@@ -151,6 +151,41 @@ internal static class AobMakerActions
             "Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.",
             symbolName, ceSymbol);
 
+    // --- [AOBM-DISSECT-INJECT] the CSX half: Live Walker's structure pushed into Structure Dissect ---
+
+    internal const string KeyStructPushed = "str.AobMaker.Struct.Pushed";
+    internal const string KeyStructNotBuilt = "str.AobMaker.Struct.NotBuilt";
+    internal const string KeyStructUnknown = "str.AobMaker.Struct.Unknown";
+    internal const string KeyStructTimedOut = "str.AobMaker.Struct.TimedOut";
+    internal const string KeyStructRefused = "str.AobMaker.Struct.Refused";
+
+    /// <summary>
+    /// [AOBM-DISSECT-INJECT] What a structure push says, from what the plugin reported about the script that builds
+    /// it (<see cref="IAobMakerBridge.CreateAAScriptDetailedAsync"/>). <c>IsError</c> marks the outcomes that are not
+    /// a success; "activation not known" is not one of them, since an older plugin still ran the script.
+    /// </summary>
+    internal static (string Text, bool IsError) StructPushText(SymbolScriptResult r, CsxPushScript push)
+    {
+        string reason = r.Message ?? SymbolNoReasonText();
+        if (r.TimedOut)
+            return (AobMakerStatus.Say(KeyStructTimedOut,
+                "No reply from Cheat Engine for structure '{0}'; it may still have been added -- check Structure Dissect before pushing again",
+                push.RootName), true);
+        if (!r.Created)
+            return (AobMakerStatus.Say(KeyStructRefused,
+                "Cheat Engine did not take the structure script for '{0}': {1}", push.RootName, reason), true);
+        if (r.Activated == false)
+            return (AobMakerStatus.Say(KeyStructNotBuilt,
+                "Cheat Engine could not build structure '{0}': {1}", push.RootName, reason), true);
+        if (r.Activated == true)
+            return (AobMakerStatus.Say(KeyStructPushed,
+                "Structure '{0}' added to CE's Structure Dissect ({1} structures, {2} elements)",
+                push.RootName, push.Structures, push.Elements), false);
+        return (AobMakerStatus.Say(KeyStructUnknown,
+            "Structure script '{0}' added to Cheat Engine; this AOBMaker plugin does not say whether it ran -- check Structure Dissect, or tick the record",
+            push.RootName), false);
+    }
+
     internal const string KeyRecordAsByte = "str.AobMaker.Record.AsByte";
     internal const string KeyRecordAsPointer = "str.AobMaker.Record.AsPointer";
 

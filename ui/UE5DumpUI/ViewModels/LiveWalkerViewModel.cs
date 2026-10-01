@@ -4779,6 +4779,10 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private Task ExportCsx77Async() => ExportCsxCoreAsync(CsxFormat.Ce77Plus);
 
+    /// <summary>[AOBM-DISSECT-INJECT] The CSX half: build the same structure straight in CE's Structure Dissect.</summary>
+    [RelayCommand]
+    private Task PushCsxToCeAsync() => Task.CompletedTask;
+
     private async Task ExportCsxCoreAsync(CsxFormat format)
     {
         if (string.IsNullOrEmpty(CurrentAddress) || !HasData) return;
