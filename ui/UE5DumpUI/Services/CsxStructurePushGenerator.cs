@@ -1,6 +1,5 @@
 using System.Globalization;
 using System.Text;
-using System.Xml.Linq;
 
 namespace UE5DumpUI.Services;
 
@@ -38,7 +37,7 @@ public static class CsxStructurePushGenerator
 
     public static CsxPushScript Generate(string csx)
     {
-        var root = XDocument.Parse(csx).Root?.Element("Structure")
+        var root = CsxReader.Parse(csx).Child("Structures")?.Child("Structure")
             ?? throw new FormatException("the CSX has no <Structure>");
         var model = ParseStruct(root);
 
@@ -119,20 +118,22 @@ public static class CsxStructurePushGenerator
         return new CsxPushScript(sb.ToString(), model.Name, order.Count, order.Sum(x => x.Elements.Count));
     }
 
-    private static Struct ParseStruct(XElement node)
+    private static Struct ParseStruct(CsxReader.Node node)
     {
-        var s = new Struct((string?)node.Attribute("Name") ?? "", new List<Elem>());
-        foreach (var e in node.Element("Elements")?.Elements("Element") ?? Enumerable.Empty<XElement>())
+        var s = new Struct(node.Attr("Name") ?? "", new List<Elem>());
+        var elements = node.Child("Elements")?.Children.Where(c => c.Name == "Element")
+                       ?? Enumerable.Empty<CsxReader.Node>();
+        foreach (var e in elements)
         {
-            string vartype = (string?)e.Attribute("Vartype") ?? "";
+            string vartype = e.Attr("Vartype") ?? "";
             // As CE's import: a nested structure counts only under a Pointer element.
-            var childNode = vartype == "Pointer" ? e.Element("Structure") : null;
+            var childNode = vartype == "Pointer" ? e.Child("Structure") : null;
             s.Elements.Add(new Elem(
                 Int(e, "Offset") ?? 0,
-                (string?)e.Attribute("Description") ?? "",
+                e.Attr("Description") ?? "",
                 vartype,
                 Int(e, "Bytesize") ?? 0,
-                ((string?)e.Attribute("DisplayMethod")) switch
+                e.Attr("DisplayMethod") switch
                 {
                     "signed integer" => 's',
                     "hexadecimal" => 'h',
@@ -145,9 +146,8 @@ public static class CsxStructurePushGenerator
         return s;
     }
 
-    private static int? Int(XElement e, string attr)
-        => int.TryParse((string?)e.Attribute(attr), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v)
-            ? v : null;
+    private static int? Int(CsxReader.Node e, string attr)
+        => int.TryParse(e.Attr(attr), NumberStyles.Integer, CultureInfo.InvariantCulture, out var v) ? v : null;
 
     private static void Collect(Struct s, List<Struct> order)
     {
@@ -184,4 +184,113 @@ public static class CsxStructurePushGenerator
     }
 
     private static void Line(StringBuilder sb, string text) => sb.Append(text).Append('\n');
+}
+
+/// <summary>
+/// [AOBM-DISSECT-INJECT] Just enough XML for the CSX <see cref="CsxExportService"/> writes: elements with double-quoted
+/// attributes, the five entities it escapes (plus numeric ones), and the comment or declaration it may lead with.
+/// XDocument did this job first and pulled System.Private.Xml into the trimmed binary -- +3.3 MB, measured on build
+/// 3612, for one parse of our own output. Anything outside that subset is refused, not guessed at.
+/// </summary>
+internal static class CsxReader
+{
+    internal sealed class Node(string name)
+    {
+        public string Name { get; } = name;
+        public Dictionary<string, string> Attributes { get; } = new(StringComparer.Ordinal);
+        public List<Node> Children { get; } = new();
+        public string? Attr(string name) => Attributes.TryGetValue(name, out var v) ? v : null;
+        public Node? Child(string name) => Children.FirstOrDefault(c => c.Name == name);
+    }
+
+    /// <summary>A nameless document node whose children are the top-level elements.</summary>
+    public static Node Parse(string xml)
+    {
+        var doc = new Node("");
+        var stack = new Stack<Node>();
+        stack.Push(doc);
+        int i = 0;
+        while (i < xml.Length)
+        {
+            int lt = xml.IndexOf('<', i);
+            if (lt < 0) break;
+            if (Starts(xml, lt, "<!--")) { i = After(xml, lt, "-->"); continue; }
+            if (Starts(xml, lt, "<?")) { i = After(xml, lt, "?>"); continue; }
+            if (Starts(xml, lt, "</"))
+            {
+                int gt = xml.IndexOf('>', lt);
+                if (gt < 0) throw Bad(lt, "an unterminated end tag");
+                var name = xml[(lt + 2)..gt].Trim();
+                if (stack.Count < 2 || stack.Peek().Name != name)
+                    throw Bad(lt, $"</{name}> does not close an open element");
+                stack.Pop();
+                i = gt + 1;
+                continue;
+            }
+            i = lt + 1;
+            int n = i;
+            while (n < xml.Length && (char.IsLetterOrDigit(xml[n]) || xml[n] is '_' or '-' or '.' or ':')) n++;
+            if (n == i) throw Bad(lt, "a '<' that starts no element");
+            var node = new Node(xml[i..n]);
+            i = n;
+            while (true)
+            {
+                while (i < xml.Length && char.IsWhiteSpace(xml[i])) i++;
+                if (i >= xml.Length) throw Bad(lt, "an unterminated start tag");
+                if (Starts(xml, i, "/>")) { stack.Peek().Children.Add(node); i += 2; break; }
+                if (xml[i] == '>') { stack.Peek().Children.Add(node); stack.Push(node); i++; break; }
+                int eq = xml.IndexOf('=', i);
+                if (eq < 0 || eq + 1 >= xml.Length || xml[eq + 1] != '"')
+                    throw Bad(i, "an attribute without a double-quoted value");
+                int close = xml.IndexOf('"', eq + 2);
+                if (close < 0) throw Bad(i, "an unterminated attribute value");
+                node.Attributes[xml[i..eq].Trim()] = Decode(xml[(eq + 2)..close], i);
+                i = close + 1;
+            }
+        }
+        if (stack.Count != 1) throw new FormatException($"the CSX ends with <{stack.Peek().Name}> still open");
+        return doc;
+    }
+
+    private static string Decode(string s, int at)
+    {
+        if (s.IndexOf('&') < 0) return s;
+        var sb = new StringBuilder(s.Length);
+        for (int i = 0; i < s.Length; i++)
+        {
+            if (s[i] != '&') { sb.Append(s[i]); continue; }
+            int semi = s.IndexOf(';', i);
+            if (semi < 0) throw Bad(at, "an unterminated entity");
+            var ent = s[(i + 1)..semi];
+            sb.Append(ent switch
+            {
+                "amp" => "&",
+                "lt" => "<",
+                "gt" => ">",
+                "quot" => "\"",
+                "apos" => "'",
+                _ when ent.StartsWith("#x", StringComparison.Ordinal)
+                       && int.TryParse(ent[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out var hx)
+                    => char.ConvertFromUtf32(hx),
+                _ when ent.StartsWith('#')
+                       && int.TryParse(ent[1..], NumberStyles.Integer, CultureInfo.InvariantCulture, out var dc)
+                    => char.ConvertFromUtf32(dc),
+                _ => throw Bad(at, $"the unknown entity &{ent};"),
+            });
+            i = semi;
+        }
+        return sb.ToString();
+    }
+
+    private static bool Starts(string s, int at, string what)
+        => string.CompareOrdinal(s, at, what, 0, what.Length) == 0;
+
+    private static int After(string s, int at, string end)
+    {
+        int e = s.IndexOf(end, at, StringComparison.Ordinal);
+        if (e < 0) throw Bad(at, $"no closing {end}");
+        return e + end.Length;
+    }
+
+    private static FormatException Bad(int at, string what) => new($"CSX at character {at}: {what}");
 }

@@ -223,6 +223,29 @@ public class CsxStructurePushTests : IDisposable
         Assert.Equal(7, push.Elements);
     }
 
+    [Fact]
+    public void Escaped_names_and_a_leading_comment_are_read_as_the_CSX_writer_wrote_them()
+    {
+        // CsxExportService escapes & < > " ' and may prepend PackedLayoutNotice's XML comment: the reader must give back
+        // the original text, whatever parses it (it was XDocument; a purpose-built reader keeps 3 MB of
+        // System.Private.Xml out of the trimmed binary).
+        const string csx = """
+
+            <!-- UE 5.7+ packed layout: best effort -->
+            <Structures>
+              <Structure Name="A&amp;B" AutoFill="0">
+                <Elements>
+                  <Element Offset="8" Vartype="4 Bytes" Bytesize="4" OffsetHex="00000008" Description="x &lt;y&gt; &quot;q&quot; &apos;s&apos; &amp;&amp;" DisplayMethod="signed integer"/>
+                </Elements>
+              </Structure>
+            </Structures>
+            """;
+        var push = CsxStructurePushGenerator.Generate(csx);
+        Assert.Equal("A&B", push.RootName);
+        Assert.Contains("'x <y> \"q\" \\'s\\' &&'", push.Script);   // the Lua literal: ' escaped, the rest as is
+        Assert.Equal(1, push.Elements);
+    }
+
     // ---- the status line ----
 
     private static readonly CsxPushScript Pushed = new("s", "BP_Hero", 2, 7);
