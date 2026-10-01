@@ -478,6 +478,9 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 - **Needs:** either a "find code that references address X" search in AOBMaker (R14), or an xref pass in Genau (our side).
   AOBMaker accepted R14 as P2, batch A. It finds RIP-relative references inside the scanned module only, so for an
   exported GWorld only the defining module's own references show. Whether that helps Satisfactory needs a live check.
+- **Done 2026-10-01 (`[AOBM-EXPORT-GWORLD-AOB]`, build 3609) without R14 or an xref pass:** CE resolves the
+  export under its undecorated name (`GWorld`, measured on Satisfactory), so SYM registers `gworld_addr` /
+  `gengine_addr` from it with a define + registersymbol script. Restart- and patch-stable; no AOB needed.
 
 ### C7 — Custom-type records
 - **Motivation:** the todo item "CE export drilldown — remaining gaps" wants FName shown live through a "UE FName to String" custom type.

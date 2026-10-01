@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3609) — SYM for GWorld and &GEngine on games that export them `[AOBM-EXPORT-GWORLD-AOB]`
+
+- On games where UE5CEDumper finds GWorld and &GEngine through the game's exports (Satisfactory and other modular
+  builds), the System tab's SYM buttons for them were disabled, because there is no AOB to scan for. They now
+  register `gworld_addr` / `gengine_addr` from the export itself, which Cheat Engine resolves by name every time,
+  so the symbol survives game restarts and patches.
+- Checked live on Satisfactory with Cheat Engine 7.7: both symbols land exactly on the addresses the DLL found.
+- Build 3609: AOT `dist\UE5DumpUI.exe` 59,069,440 B, sha256 `7535a70e9339`; `dist\UE5Dumper.dll` `92071b3a04cd`.
+  C# 5993/5993, 29 gates.
+
 ## 2026-10-01 (build 3608) — +CE adds bit-field bools and strings as they are `[AOBM-PLUSCE-FIDELITY]`
 
 - +CE (Live Walker, its "+CE Field (flat)" batch, Instance Finder, and the Value Search / Snapshot / SPC rows) now

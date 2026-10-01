@@ -405,6 +405,9 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
   instruction to seed `GenerateAob`.
 - **Request:** `FindReferences { module, address, max? }` → the RIP-relative instructions in that module that address
   it.
+- **No longer needed for the exported-GWorld case (2026-10-01):** CE resolves the export under its undecorated
+  name, so `[AOBM-EXPORT-GWORLD-AOB]` registers the symbol from the export itself (build 3609). R14 stays useful
+  for other "who references X" questions.
 - **Alternative:** the same search could be built in UE5CEDumper's Genau instead. `[AOBM-EXPORT-GWORLD-AOB]` records
   both routes.
 - **AOBMaker's answer (reply §2.14):** accepted, **P2**, batch A (C# only; it reuses AOBMaker's `RipReferenceScanner`
