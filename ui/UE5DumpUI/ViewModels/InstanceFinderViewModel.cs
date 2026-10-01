@@ -893,15 +893,16 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
                 return;
             }
             // [W5-INSTEXPORT-TRUNC] The copy SUCCEEDED, so say whether it is complete -- in this panel's terms.
-            // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] ...naming a lever only when it changes the ENTRY COUNT. Collapse Pointer
-            // Nodes (group folding) and the DropDown Limit (dropdown attached or not) emit the same entries; the Array
-            // Limit shrinks the export only when a walked container is bound by it. Otherwise no toolbar setting helps.
+            // [INSTEXPORT-TRUNC-ADVICE] [R7-S6] ...naming a lever only when it changes the ENTRY COUNT, which is what
+            // the size guard's measure mostly is [CEXML-CAP-60K]. Collapse Pointer Nodes (group folding) and the DropDown
+            // Limit (dropdown attached or not) emit the same entries; the Array Limit shrinks the export only when a
+            // walked container is bound by it. Otherwise no toolbar setting helps.
             // [R7-S11] ...over every field the export emitted: the top level AND the containers the resolved structs
             // carry, which are walked at the same Array Limit.
             StatusText = ExportStatus(truncated, fields.Concat(resolvedStructs.Values.SelectMany(v => v)).ToList(),
                                       arrayLimit);
             _log.Info($"CE XML copied to clipboard for instance {inst.Name} ({resolvedStructs.Count} structs resolved)"
-                      + (truncated ? " — TRUNCATED at the entry cap" : ""));
+                      + (truncated ? " — TRUNCATED at the size guard" : ""));
         }
         catch (Exception ex)
         {
@@ -944,7 +945,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
 
         if (truncated)
         {
-            string head = $"⚠ Copied, but TRUNCATED at the {CeXmlExportService.MaxEmitEntries:N0}-entry export cap — "
+            string head = $"⚠ Copied, but TRUNCATED at the export's {CeXmlExportService.MaxEmitChars / (1024 * 1024):N0} M-character size guard — "
                         + "the CE table is incomplete";
             var levers = containers.Where(c => c.Loaded > Constants.MinArrayLimit)
                                    .OrderByDescending(c => c.Loaded)   // the ones that pay most, first
@@ -1196,7 +1197,7 @@ public partial class InstanceFinderViewModel : ViewModelBase, IDisposable
         if (addr.Length == 0) return;
         StatusText = await AobMakerActions.AddRecordAsync(AobMaker, field.Name, addr,
             CeXmlExportService.MapFieldToCeRecordType(field), _log,
-            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "");
+            _engineState?.ProcessId ?? 0, _engineState?.ModuleName ?? "", CeStringLength);
     }
 
     /// <summary>HEX only: a +CE record of an object's base would show its vtable pointer, which is rarely what

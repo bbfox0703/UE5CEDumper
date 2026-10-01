@@ -28,7 +28,10 @@ UE5DumpUI (C# Avalonia)                AOBMaker CE Plugin (C++ DLL)
 
 The plugin is a C++ DLL. It parses JSON in C++ (`json_parse.h`), and its handlers run CE Lua on CE's main thread
 through `synchronize`. AOBMaker's answer to our requests, and the rules a client must follow today, are its
-`docs/UE5CEDumper-Requests-Reply.md` (`9431370`); ours are [aobmaker-requests.md](aobmaker-requests.md).
+`docs/UE5CEDumper-Requests-Reply.md` (first `9431370`; updated for release `v20260930` (build 157) at `f8cad7d`); ours are
+[aobmaker-requests.md](aobmaker-requests.md). Its §3 is the current client contract, one rule per build range: a
+user may still run a DLL from `v20260925` or earlier ("build 153 and earlier"), and the only build signal the
+bridge gives is the bulk `features[]` list, so a client that cannot tell keeps the old-build form of each rule.
 
 ---
 
@@ -127,7 +130,7 @@ Create an Auto Assembler script entry in CE's address list.
 |-------|------|-------------|
 | `description` | string | Display name in CE address list |
 | `script` | string | Full AA script content (`[ENABLE]`/`[DISABLE]` sections) |
-| `autoActivate` | bool | Whether to activate immediately after creation. ⚠ `success` then means "created", not "enabled": the plugin never reads `Active` back (AOBMaker `EXT-4`, open; its reply rule 8). A `CreateSymbolScript` whose AOB scan fails still ends ticked, because its template only prints `[SymbolScanner] WARNING: AOB scan failed`. |
+| `autoActivate` | bool | Whether to activate immediately after creation. ⚠ `success` means "created", not "enabled". AOBMaker v20260930 (build 155) and later read `Active` back and add `activated` (plus `symbolRegistered` on `CreateSymbolScript`) and CE's reason in `message`; a missing `activated` -- every older plugin -- is "not known", never true (its reply §3 rule 8, `EXT-4`). On those older plugins a `CreateSymbolScript` whose AOB scan fails still ends ticked, because the template only prints the warning; from build 155 the script raises and the record stays unticked. UE5CEDumper reads all of it: `[AOBM-ACTIVATE-RESULT]`. |
 | `group` | string | *(optional)* Target group description. Non-empty → the record goes **under the first record, at any depth, whose description matches and that is not an AA script** (Type 11). That can be a value record or an `IsAddressGroupHeader`, and the plugin's parent self-check passes even on such a wrong match. Only when none matches is a new plain `IsGroupHeader` folder created, at the root (`pipe_server.cpp:1201-1217` at AOBMaker `9431370`; its `K7-13` and reply rule 11). AOBMaker's own `API-CEPlugin.md:142` and `:191` still say "single-level". Our Teleport, trainer and Dissect pushes use `group`, so keep "UE5CEDumper (DLL)" and "UE5CEDumper (no-DLL trainer)" unique across the whole table. Empty/omitted → address-list **root** (back-compatible). **Requires an AOBMaker CE plugin whose `CreateAAScript` handler reads `group`** — older builds ignore the field and land the record at root. |
 
 **Used by:**
@@ -202,7 +205,7 @@ Create an AOB-scan-based symbol registration AA script. The CE Plugin's `BuildSy
 | `aoblen` | int | Instruction end relative to AOB match (instrOffset + totalLen) |
 | `symbol` | string | CE symbol name to register (e.g. `"gworld_addr"`) |
 | `module` | string | Module name for `AOBScanModule` |
-| `autoActivate` | bool | Whether to activate immediately. `success` means "created", not "enabled" (see `CreateAAScript`) |
+| `autoActivate` | bool | Whether to activate immediately. `success` means "created", not "enabled"; `activated` / `symbolRegistered` on build 155+ (see `CreateAAScript`) |
 
 The generated script performs: `AOBScanModule` → read the signed 32-bit displacement at `match + pos` → calculate `final = [match + pos] + match + aoblen` → register as CE symbol (`pipe_server.cpp:1449-1450` at AOBMaker `9431370`; `API-CEPlugin.md:153`). That equals `match + pos + 4 + [displacement]` only when no immediate follows the disp32. Survives game restarts (re-scans on script enable). A failed scan prints `[SymbolScanner] WARNING: AOB scan failed for <name>` and registers nothing, yet the record stays ticked.
 
@@ -502,6 +505,8 @@ PipeServer.cpp (get_pointers / scan_status)
   │    "gworld_aob": "48 8B 1D ?? ?? ?? ??",
   │    "gworld_aob_pos": 3,
   │    "gworld_aob_len": 7,
+  │    "gworld_export": "",          (a symbol-export winner's MSVC name, e.g. Satisfactory's
+  │                                   "?GWorld@@3VUWorldProxy@@A"; SYM then defines CE's "GWorld")
   │    "module_name": "Game-Win64-Shipping.exe",
   │    ...
   │  }

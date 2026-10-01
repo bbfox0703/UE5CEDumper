@@ -53,7 +53,7 @@ echo(
 :: --fullpath so --not-match-d matches the path, not just the leaf directory name.
 "%CLOC_EXE%" "%TARGET_DIR%" ^
     --fullpath ^
-    --not-match-d="(\.claude|\.git|\.vs|build|bin|obj|ui/UE5DumpUI/bin|ui/UE5DumpUI/obj|ui/UE5DumpUI.Tests/bin|ui/UE5DumpUI.Tests/obj|vendor)" ^
+    --not-match-d="(\.claude|\.git|\.vs|out|build|bin|obj|ui/UE5DumpUI/bin|ui/UE5DumpUI/obj|ui/UE5DumpUI.Tests/bin|ui/UE5DumpUI.Tests/obj|vendor)" ^
     --exclude-lang="JSON,XML"
 
 exit /b %ERRORLEVEL%

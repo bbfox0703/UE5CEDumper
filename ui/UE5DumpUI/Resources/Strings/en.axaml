@@ -291,6 +291,7 @@
     <sys:String x:Key="str.LiveWalker.ExportCsx">Export CSX</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCsxPre77">CSX — Pre-CE 7.7 (Byte)</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportCsx77">CSX — CE 7.7+ (Binary bitfields)</sys:String>
+    <sys:String x:Key="str.LiveWalker.PushCsxToCe">Push to CE Structure Dissect</sys:String>
     <sys:String x:Key="str.LiveWalker.Value">Value</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyAddress">Addr</sys:String>
     <sys:String x:Key="str.LiveWalker.CopyName">Name</sys:String>
@@ -425,8 +426,15 @@
     <!-- Pointer Panel: "Register symbol" outcome (code-behind via Res.Format).
          Success goes to SymbolStatusText, failure to ErrorMessage — a bool that only
          chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
+    <sys:String x:Key="str.Pointers.Symbol.RegisteredFromExport">Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
+    <!-- [AOBM-ACTIVATE-RESULT] What SYM says once AOBMaker v20260930+ reports activation ({0} = the symbol, {1} = CE's reason). -->
+    <sys:String x:Key="str.Pointers.Symbol.NotActivated">CE symbol script '{0}' was added, but Cheat Engine did not enable it: {1}</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.NotRegistered">CE symbol script '{0}' is enabled, but the symbol is not usable: {1}</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.ActivationUnknown">Added CE symbol script '{0}'. This AOBMaker plugin does not say whether Cheat Engine enabled it: check that the record is ticked (AOBMaker v20260930 or later reports it)</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.NoReason">no reason given</sys:String>
+    <sys:String x:Key="str.Pointers.Symbol.TimedOut">No answer from the AOBMaker plugin in time for '{0}': the script may still have been added. Check Cheat Engine's address list before pressing SYM again</sys:String>
 
     <!-- Pointer Panel: Cache management status messages (code-behind via Res.Get) -->
     <sys:String x:Key="str.Pointers.Cache.GameCleared">Cache cleared for this game. Next scan will do a full search.</sys:String>
@@ -467,6 +475,14 @@
     <sys:String x:Key="str.AobMaker.Nav.Refused">Cheat Engine did not move its view to {0} @ {1}</sys:String>
     <sys:String x:Key="str.AobMaker.Record.Done">Added to CE: {0}</sys:String>
     <sys:String x:Key="str.AobMaker.Record.Refused">Cheat Engine refused the record for {0}</sys:String>
+    <sys:String x:Key="str.AobMaker.Struct.Pushed">Structure '{0}' added to CE's Structure Dissect ({1} structures, {2} elements)</sys:String>
+    <sys:String x:Key="str.AobMaker.Struct.NotBuilt">Cheat Engine could not build structure '{0}': {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Struct.Unknown">Structure script '{0}' added to Cheat Engine; this AOBMaker plugin does not say whether it ran -- check Structure Dissect, or tick the record</sys:String>
+    <sys:String x:Key="str.AobMaker.Struct.TimedOut">No reply from Cheat Engine for structure '{0}'; it may still have been added -- check Structure Dissect before pushing again</sys:String>
+    <sys:String x:Key="str.AobMaker.Struct.Refused">Cheat Engine did not take the structure script for '{0}': {1}</sys:String>
+    <sys:String x:Key="str.AobMaker.Record.AsByte">as its whole byte: this AOBMaker plugin cannot set a bit (needs AOBMaker v20260930 or later)</sys:String>
+    <sys:String x:Key="str.AobMaker.Record.AsPointer">as its data pointer: this AOBMaker plugin cannot build a string record (update AOBMaker)</sys:String>
+    <sys:String x:Key="str.AobMaker.Record.SomeDegraded">{0} of them as a whole byte or a data pointer: this AOBMaker plugin cannot build them as they are (update AOBMaker)</sys:String>
     <sys:String x:Key="str.ObjectTree.HexInCe">Show in CE hex view (AOBMaker)</sys:String>
     <sys:String x:Key="str.AobMaker.Row.NoOwnAddress">{0} is an array element: the snapshot kept only its owner's address, so there is nothing of its own to send to CE</sys:String>
     <sys:String x:Key="str.AobMaker.Disasm.NoCode">No native code address for {0} (a Blueprint-only function, or UFunction::Func is not detected on this engine)</sys:String>
@@ -491,7 +507,7 @@
     <sys:String x:Key="str.AobMaker.Dissect.RecordFailed">{0} is embedded, but its enable record did not reach CE (CE closed?): run this again</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Unavailable">Auto Structure Dissect needs the AOBMaker CE plugin: {0}</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Failed">Adding Auto Structure Dissect failed: {0}</sys:String>
-    <sys:String x:Key="str.Pointers.RegisterGObjectsSymbolTip">Create a CE AA script that registers GObjects as the symbol 'gobjects_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GObjects.</sys:String>
+    <sys:String x:Key="str.Pointers.RegisterGObjectsSymbolTip">Create a CE AA script that registers GObjects as the symbol 'gobjects_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GObjects. On a game that exports GUObjectArray (modular builds such as Satisfactory) the symbol is defined from that export instead, and the AOBMaker app is not needed.</sys:String>
     <sys:String x:Key="str.Pointers.RegisterGNamesSymbolTip">Create a CE AA script that registers GNames as the symbol 'gnames_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GNames.</sys:String>
     <sys:String x:Key="str.AobMaker.Aa.Pushed">AA script added to CE's address list: {0} — tick it to register the symbol</sys:String>
     <sys:String x:Key="str.AobMaker.Aa.Copied">CE AA script copied: {0} — paste it into CE's address list</sys:String>
@@ -1520,7 +1536,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.ArrayLimit">Max array elements to read inline (2^N)</sys:String>
     <sys:String x:Key="str.Tip.DropDownLimit">Max CE DropDownList entries (2^N)</sys:String>
     <sys:String x:Key="str.Tip.StringLength">CE String field display length in characters (2^N; 16-4096). Applies to Copy CE XML / Copy CE Field. A generous value never truncates a shorter live string (CE stops at the null terminator) — it reserves room for strings that grow between saves.</sys:String>
-    <sys:String x:Key="str.Tip.Fabricate">Copy CE Field only: 0 = Off. When set (2^N = 2..4096), the SELECTED top-level TArray is padded to this many element rows — null pointers and indices beyond the live Num are fabricated using a resolved element's field layout, so the CE table already has slots for items a later save/ship will hold. Only the selected array is padded, never nested arrays inside its elements. TArray only (Map/Set are sparse and never fabricated). Rows past the current Num read past-the-end memory (harmless) until the game grows the array. Values above 256 (use at your own risk) can produce very large tables that slow Cheat Engine or hit the export entry cap.</sys:String>
+    <sys:String x:Key="str.Tip.Fabricate">Copy CE Field only: 0 = Off. When set (2^N = 2..4096), the SELECTED top-level TArray is padded to this many element rows — null pointers and indices beyond the live Num are fabricated using a resolved element's field layout, so the CE table already has slots for items a later save/ship will hold. Only the selected array is padded, never nested arrays inside its elements. TArray only (Map/Set are sparse and never fabricated). Rows past the current Num read past-the-end memory (harmless) until the game grows the array. Values above 256 (use at your own risk) can produce very large tables that slow Cheat Engine's paste down.</sys:String>
     <sys:String x:Key="str.Tip.PreviewLimit">Struct sub-fields shown in Value column (0 = no preview)</sys:String>
     <sys:String x:Key="str.Tip.CsxDepth">Pointer drill-down depth (0 = flat). Applies to both CSX export and CE XML / CE Field copy. 0-4 normal; 5-6 deep — output size grows exponentially per level (depth 6 on UWorld can produce multi-MB CE XML).</sys:String>
     <sys:String x:Key="str.Tip.Toolbar.Options">Export-shape settings: pointer-node collapse, array/dropdown/preview limits, drill depth. Set once per session.</sys:String>
@@ -1630,7 +1646,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for the selected field(s) only (Ctrl/Shift-click to multi-select)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CancelExport">Abort the in-progress export (Copy CE XML / Copy CE Field / Export CSX) — stops resolving the object graph; the clipboard/file is left untouched</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.AobToggle">Use AOB-scanned GWorld symbol instead of hardcoded address (survives game restarts)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.AobToggle">Use AOB-scanned GWorld symbol instead of hardcoded address (survives game restarts). On a game that exports GWorld (modular builds such as Satisfactory) the export is used instead: Cheat Engine resolves it by name, so it survives restarts and patches.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportOptions">Copy CE XML / Copy CE Field options: memory-record Description format (+Offset / +Type) and the AOB / Collapse chain / Guess? toggles.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.DescShowOffset">Append each node's field offset (hex) to its CE Description — e.g. "AbilitySystemComponent (7E0)". Off = name only.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.DescShowType">Append each node's class / struct / element type to its CE Description — e.g. "AbilitySystemComponent (LSAbilitySystemComponent)", "[0] (ShieldAttributeSet)". The folded (Collapse chain) spine never adds a type. Off = name only.</sys:String>
@@ -1644,6 +1660,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.CollapseLeafPointers">Collapse a drilled pointer one level in Copy CE XML / Copy CE Field when its target holds a SINGLE watchable value. If an Object/Weak/etc. pointer resolves to an object whose only field is a scalar, an FName, or an FString, it is emitted as one "Pointer ▸ Field" record at the pointer offset with a dereference chain (scalar/name: Offsets=[fieldOffset]; FString: Offsets=[0, fieldOffset]) instead of a folder containing a lone child — the "pointer to a string" case. A pointer whose target has two or more fields keeps its group (its object identity is worth a boundary). Off = keep the nested pointer group.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsx">Export CE Structure Dissect script (.csx). Pick the CE format version from the dropdown.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsxPre77">Legacy format for CE before 7.7: a bit-field bool is exported as a whole Byte with the bit index noted in its description (no bit switch).</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.PushCsxToCe">Build this structure straight in Cheat Engine's Structure Dissect instead of saving a .CSX file: the CE 7.7+ form, sent through the AOBMaker CE plugin and built at once (on a CE older than 7.7 a bit-field bool becomes its byte). It adds a record 'UE5CEDumper: Structure &lt;name&gt;' under 'UE5CEDumper (DLL)'; tick it to rebuild the structure. Pushing the same structure again replaces it.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCsx77">CE 7.7 and later: a bit-field bool is exported as a real Binary element (Vartype=Binary, BitStart/BitSize) — a proper bit switch in CE's Structure Dissect.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportHeader">Export C++ SDK header (.h)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CeAA">Copy an Auto Assembler script that registers this object as a CE symbol. On a GWorld-rooted path it emits a RESTART-STABLE script: it walks GWorld → … → this object at enable time (Lua), so it keeps working after the game restarts — AOB-anchored when GWorld came from an AOB scan (AOB symbol ticked), or with a hardcoded GWorld base you update after a restart. Off a non-GWorld path it falls back to a hardcoded absolute address (breaks on restart).</sys:String>

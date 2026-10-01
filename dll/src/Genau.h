@@ -261,7 +261,14 @@ struct EnginePointers {
 
     // Winning pattern IDs (point to AobSignature::id constexpr strings in Signatures.h)
     const char* gobjectsPatternId        = nullptr;
+    // [AOBM-EXPORT-SYM-REST] As gworldExport, for GObjects ("?GUObjectArray@@3VFUObjectArray@@A").
+    const char* gobjectsExport           = nullptr;
     const char* gnamesPatternId          = nullptr;
+    // [AOBM-GWORLD-GENAOB] The winning RIP signature's `adjustment` (0 for any other kind): a CE symbol script
+    // decodes the RIP target and must add this back (GOBJ_AV1: -0x10). Whether Genau actually applied it is the UI's
+    // question -- RipDirect/RipBoth try target + adjustment first and the bare target second.
+    int         gobjectsAdjustment       = 0;
+    int         gnamesAdjustment         = 0;
     const char* gworldPatternId          = nullptr;
     const char* sparseDelegatesPatternId = nullptr;
 
@@ -283,12 +290,17 @@ struct EnginePointers {
     const char* gworldAob    = nullptr;  // AOB pattern string (e.g. "48 8B 1D ?? ?? ?? ??")
     int         gworldAobPos = 0;        // instrOffset + opcodeLen: displacement offset within match
     int         gworldAobLen = 0;        // instrOffset + totalLen: instruction end for RIP calculation
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name ("?GWorld@@3VUWorldProxy@@A"), else nullptr.
+    // It has no AOB triple, yet the export is itself restart- and patch-stable: Cheat Engine resolves it under
+    // its undecorated name. String-literal lifetime, like gworldAob.
+    const char* gworldExport = nullptr;
 
     // GEngine winning pattern AOB metadata — same contract as the GWorld triple above, so
     // a GameEngine-rooted CE export can be AOB-wrapped exactly like a GWorld-rooted one.
     const char* gengineAob    = nullptr;
     int         gengineAobPos = 0;
     int         gengineAobLen = 0;
+    const char* gengineExport = nullptr;  // [AOBM-EXPORT-GWORLD-AOB] as gworldExport
     const char* genginePatternId = nullptr;
     uintptr_t   gengineScanAddr  = 0;
 };

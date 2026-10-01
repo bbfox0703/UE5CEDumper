@@ -98,6 +98,24 @@ public interface IAobMakerBridge
         string symbol, string module, bool autoActivate = true, CancellationToken ct = default);
 
     /// <summary>
+    /// [AOBM-EXPORT-GWORLD-AOB] <see cref="CreateAAScriptAsync"/>, keeping what the reply says about activation
+    /// (<c>SymbolRegistered</c> stays null: only <c>CreateSymbolScript</c> reports it). A client that cannot read it
+    /// answers "created, activation not known".
+    /// </summary>
+    async Task<SymbolScriptResult> CreateAAScriptDetailedAsync(string description, string script,
+        bool autoActivate = true, string? group = null, CancellationToken ct = default)
+        => SymbolScriptResult.FromCreated(await CreateAAScriptAsync(description, script, autoActivate, group, ct));
+
+    /// <summary>
+    /// [AOBM-ACTIVATE-RESULT] <see cref="CreateSymbolScriptAsync"/>, keeping what the reply says about activation.
+    /// A client that cannot read it answers "created, activation not known".
+    /// </summary>
+    async Task<SymbolScriptResult> CreateSymbolScriptDetailedAsync(string name, string aob, int pos, int aoblen,
+        string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
+        => SymbolScriptResult.FromCreated(
+            await CreateSymbolScriptAsync(name, aob, pos, aoblen, symbol, module, autoActivate, ct));
+
+    /// <summary>
     /// Add a single typed memory record to CE's address list.
     /// Sends <c>CreateMemoryRecord</c> — the CE Plugin calls
     /// <c>addresslist.createMemoryRecord()</c>, sets Description / Address / Type /
@@ -115,6 +133,17 @@ public interface IAobMakerBridge
     /// on/after 2026-06-07</b> — older builds silently ignore it (default false is back-compatible).</param>
     Task<bool> CreateMemoryRecordAsync(string description, string address, int valueType,
         bool isSigned = false, bool showAsHex = false, CancellationToken ct = default);
+
+    /// <summary>
+    /// [AOBM-PLUSCE-FIDELITY] Add records through the plugin's record tree (<c>CreateRecordTreeBegin</c> /
+    /// <c>Chunk</c> / <c>End</c>), which carries what <see cref="CreateMemoryRecordAsync"/> cannot: bits, a pointer hop
+    /// and a string length. Every node becomes a top-level record, unticked.
+    /// <para>The default answers "no record tree", so a test double that models only the other commands sends its
+    /// callers down their <see cref="CreateMemoryRecordAsync"/> fallback.</para>
+    /// </summary>
+    Task<RecordTreeResult> CreateRecordTreeAsync(string description, IReadOnlyList<CeRecordNode> nodes,
+        CancellationToken ct = default)
+        => Task.FromResult(RecordTreeResult.NotSupported);
 
     /// <summary>
     /// Embed an arbitrary text/Lua file into the currently open CE table.

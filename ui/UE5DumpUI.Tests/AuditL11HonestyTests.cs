@@ -267,8 +267,11 @@ public class AuditL11HonestyTests
 
     // ══ [W5-INSTEXPORT-TRUNC] -- Instance Finder's CE XML export says when it was truncated ══
     //
-    // GenerateInstanceXml stops at its entry cap and says so through LastExportTruncated. Live Walker's two exports read
-    // it; Instance Finder's copied a truncated table without a word -- and then blanked its status.
+    // GenerateInstanceXml stops at its crash guard and says so through LastExportTruncated. Live Walker's two exports
+    // read it; Instance Finder's copied a truncated table without a word -- and then blanked its status.
+    // [CEXML-CAP-60K] The guard is 256 Mi characters of XML now (it was 60,000 entries), so these run under a lowered
+    // one: the fixtures below overshoot it many times over, the real one they would have to build a gigabyte to reach.
+    private const int TruncationBudget = 500_000;
 
     private static (InstanceFinderViewModel vm, MockPlatformService platform) FinderWith(int fieldCount)
     {
@@ -296,7 +299,8 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_TruncatedByScalars_SaysSo_AndNamesNoToolbarLever()
     {
-        var (vm, platform) = FinderWith(61_000);   // past the 60,000-entry cap: one entry per int field
+        using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
+        var (vm, platform) = FinderWith(61_000);   // far past the lowered guard: one entry per int field
         Assert.Equal(61_000, vm.Fields.Count);    // the walk landed
 
         await vm.ExportCeXmlCommand.ExecuteAsync(null);
@@ -317,6 +321,7 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_TruncatedByAClippedContainer_NamesTheArrayLimit_AndWhatItCosts()
     {
+        using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
         // [INSTEXPORT-TRUNC-ADVICE] A container the walk clipped (61,000 of 70,000 elements back): lowering the Array
         // Limit really shrinks the export, and the notice says what that trades away.
         var elems = new List<ArrayElementValue>();
@@ -325,7 +330,7 @@ public class AuditL11HonestyTests
         {
             new() { Name = "Big", TypeName = "ArrayProperty", Offset = 0x28, Size = 0x10,
                     ArrayCount = 70_000, ArrayInnerType = "IntProperty", ArrayElemSize = 4, ArrayElements = elems },
-            // The cap is tested between fields, so the field after the one that crosses it is the one dropped.
+            // The guard is checked between fields too, so a field after the one that crosses it is dropped.
             new() { Name = "Tail", TypeName = "IntProperty", Offset = 0x38, Size = 4 },
         });
 
@@ -342,6 +347,7 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_TruncatedByCompleteContainersUnderTheLimit_StillNamesTheArrayLimit()
     {
+        using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
         // [R7-X8] Found live (DumperTest's NestedBag, 16,000 pairs at Array Limit 16384): every container came back
         // whole and under the limit, so none was "bound", and the notice said no toolbar setting shrinks the export --
         // but the same copy at 8192 was complete. Lowering the limit shrinks every container LONGER than the new
@@ -375,7 +381,7 @@ public class AuditL11HonestyTests
         var fields = new List<LiveFieldValue>();
         for (int i = 0; i < 61_000; i++)
             fields.Add(new LiveFieldValue { Name = $"F{i}", TypeName = "IntProperty", Offset = 0x28 + i * 4, Size = 4 });
-        fields.Insert(0, extra);   // first, so it is emitted before the cap
+        fields.Insert(0, extra);   // first, so it is emitted before the guard trips
         return fields;
     }
 
@@ -389,6 +395,7 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_TruncatedByScalarsBesideASmallContainer_StillOffersCopyCeField()
     {
+        using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
         var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
         {
             Name = "Tiny", TypeName = "ArrayProperty", Offset = 0x10, Size = 0x10, ArrayCount = 3,
@@ -407,6 +414,7 @@ public class AuditL11HonestyTests
     [InlineData("ArrayProperty", "FieldPathProperty")]    // no CE type for the element: one placeholder entry
     public async Task InstanceFinder_CeXmlExport_AContainerEmittedAsOneEntry_IsNoLever(string type, string inner)
     {
+        using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
         // [R7-X8] The X8 skeptic's INFO: the DLL fills these elements up to the Array Limit, but the export writes
         // the field as a single entry at any limit, so lowering the limit shrinks nothing.
         var (vm, platform) = FinderWithFields(ScalarsPlus(new LiveFieldValue
@@ -449,6 +457,7 @@ public class AuditL11HonestyTests
     [Fact]
     public async Task InstanceFinder_CeXmlExport_TruncatedByAContainerInAStruct_NamesTheArrayLimit()
     {
+        using var guard = CeXmlExportService.OverrideEmitCharBudgetForTest(TruncationBudget);
         var (vm, platform) = FinderWithFields(TuneStruct(), NestedArray(total: 70_000, loaded: 61_000));
 
         await vm.ExportCeXmlCommand.ExecuteAsync(null);

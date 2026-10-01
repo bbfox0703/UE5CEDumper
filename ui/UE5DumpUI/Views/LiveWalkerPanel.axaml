@@ -273,6 +273,12 @@
             <MenuItem Header="{StaticResource str.LiveWalker.ExportCsx77}"
                       Command="{Binding ExportCsx77Command}"
                       ToolTip.Tip="{StaticResource str.Tip.LiveWalker.ExportCsx77}"/>
+            <!-- [AOBM-DISSECT-INJECT] The same structure built straight in CE, through the CE plugin (not AOBMaker.UI). -->
+            <Separator/>
+            <MenuItem Header="{StaticResource str.LiveWalker.PushCsxToCe}"
+                      Command="{Binding PushCsxToCeCommand}"
+                      IsEnabled="{Binding IsAobMakerAvailable}"
+                      ToolTip.Tip="{StaticResource str.Tip.LiveWalker.PushCsxToCe}"/>
           </MenuFlyout>
         </DropDownButton.Flyout>
       </DropDownButton>

@@ -125,12 +125,39 @@ public class AobMakerWordingTests
         Same(UE5DumpUI.ViewModels.PointerPanelViewModel.KeyScanHitLabel,
              UE5DumpUI.ViewModels.PointerPanelViewModel.ScanHitLabel("P"), "P");
 
+        // [AOBM-ACTIVATE-RESULT] SYM beyond "created"
+        Same(AobMakerActions.KeySymbolNotActivated, AobMakerActions.SymbolNotActivatedText("s", "r"), "s", "r");
+        Same(AobMakerActions.KeySymbolNotRegistered, AobMakerActions.SymbolNotRegisteredText("s", "r"), "s", "r");
+        Same(AobMakerActions.KeySymbolActivationUnknown, AobMakerActions.SymbolActivationUnknownText("s"), "s");
+        Same(AobMakerActions.KeySymbolTimedOut, AobMakerActions.SymbolTimedOutText("s"), "s");
+        Same(AobMakerActions.KeySymbolNoReason, AobMakerActions.SymbolNoReasonText());
+        Same(AobMakerActions.KeySymbolFromExport,   // [AOBM-EXPORT-SYM-REST]
+             AobMakerActions.SymbolRegisteredFromExportText("s", "GWorld"), "s", "GWorld");
+
+        // [AOBM-PLUSCE-FIDELITY] +CE in the CreateMemoryRecord form when the plugin cannot build the record as it is
+        Same(AobMakerActions.KeyRecordAsByte, AobMakerActions.AsByteText());
+        Same(AobMakerActions.KeyRecordAsPointer, AobMakerActions.AsPointerText());
+        Same(AobMakerActions.KeyRecordsDegraded, AobMakerActions.DegradedCountText(2), 2);
+
+        // [AOBM-DISSECT-INJECT] the CSX half's status line
+        var push = new CsxPushScript("x", "N", 2, 7);
+        Same(AobMakerActions.KeyStructPushed,
+             AobMakerActions.StructPushText(new SymbolScriptResult(true, true, null, null), push).Text, "N", 2, 7);
+        Same(AobMakerActions.KeyStructNotBuilt,
+             AobMakerActions.StructPushText(new SymbolScriptResult(true, false, null, "r"), push).Text, "N", "r");
+        Same(AobMakerActions.KeyStructUnknown,
+             AobMakerActions.StructPushText(new SymbolScriptResult(true, null, null, null), push).Text, "N");
+        Same(AobMakerActions.KeyStructTimedOut, AobMakerActions.StructPushText(
+             new SymbolScriptResult(false, null, null, null, TimedOut: true), push).Text, "N");
+        Same(AobMakerActions.KeyStructRefused,
+             AobMakerActions.StructPushText(new SymbolScriptResult(false, null, null, "r"), push).Text, "N", "r");
+
         // [AOBM-LIVEWALKER-HEX-SILENT] Live Walker's pointer-target HEX label
         Same(UE5DumpUI.ViewModels.LiveWalkerViewModel.KeyPtrTargetLabel,
              UE5DumpUI.ViewModels.LiveWalkerViewModel.PtrTargetLabel("P"), "P");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(37, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(51, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =

@@ -202,7 +202,7 @@ This project is developed with the assistance of [Claude Code](https://claude.ai
 
 ### Shared local LLM for Claude Code sessions — any repo can join
 
-Sessions can hand bulk text work (large logs, dumps, translation drafts) to a local Ollama model, and a machine-wide hook keeps that model off a commercial game's GPU. It is installed **once per machine** from this repo; **any other repo joins or leaves with one command** and receives only a skill file that holds no machine or personal data. For a Claude Code session in another repo: read **[tools/llm/README.md](tools/llm/README.md)** and follow its last section.
+Sessions can hand bulk text work (large logs, dumps, zh-TW / ja-JP translation drafts) to a local Ollama model, and a machine-wide hook keeps that model off a commercial game's GPU. It is installed **once per machine** from this repo; **any other repo joins or leaves with one command** and receives only a skill file that holds no machine or personal data. For a Claude Code session in another repo: read **[tools/llm/README.md](tools/llm/README.md)** and follow its last section.
 
 ```bash
 py tools/llm/ollama_local.py install --model <tag>                 # once per machine, in this repo (the user names the tag)

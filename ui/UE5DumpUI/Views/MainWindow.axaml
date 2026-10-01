@@ -94,7 +94,7 @@
                  2026-09-29), and the maintainer's layout is "DLL (dot) / UI (dot)". -->
             <TextBlock Text="/" Foreground="#999999" FontSize="12" VerticalAlignment="Center"/>
             <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}"
-                       Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+                       Foreground="{StaticResource AobMakerUiAccent}" FontSize="12" VerticalAlignment="Center"/>
             <Ellipse Width="9" Height="9" Fill="#4EC9B0" VerticalAlignment="Center"
                      IsVisible="{Binding AobMakerUi.IsRunning}"/>
             <Ellipse Width="9" Height="9" Fill="#888888" VerticalAlignment="Center"

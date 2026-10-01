@@ -1293,6 +1293,8 @@ static void FillPointerSnapshot(json& data) {
     extern char        g_cachedPeHash[17];
     extern const char* g_cachedGObjectsPatternId;
     extern const char* g_cachedGNamesPatternId;
+    extern int         g_cachedGObjectsAdjustment;
+    extern int         g_cachedGNamesAdjustment;
     extern const char* g_cachedGWorldPatternId;
     extern const char* g_cachedSparseDelegatesPatternId;
     extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
@@ -1305,6 +1307,8 @@ static void FillPointerSnapshot(json& data) {
     extern const char* g_cachedGWorldAob;
     extern int         g_cachedGWorldAobPos;
     extern int         g_cachedGWorldAobLen;
+    extern const char* g_cachedGWorldExport;
+    extern const char* g_cachedGObjectsExport;
     extern uintptr_t   g_cachedGEngine;
     extern const char* g_cachedGEngineMethod;
     extern const char* g_cachedGEnginePatternId;
@@ -1312,6 +1316,7 @@ static void FillPointerSnapshot(json& data) {
     extern const char* g_cachedGEngineAob;
     extern int         g_cachedGEngineAobPos;
     extern int         g_cachedGEngineAobLen;
+    extern const char* g_cachedGEngineExport;
 
     data["gobjects"]             = Renge::AddrToStr(g_cachedGObjects);
     data["gnames"]               = Renge::AddrToStr(g_cachedGNames);
@@ -1349,6 +1354,9 @@ static void FillPointerSnapshot(json& data) {
     data["pe_hash"]                     = g_cachedPeHash;
     data["gobjects_pattern_id"]         = g_cachedGObjectsPatternId        ? g_cachedGObjectsPatternId        : "";
     data["gnames_pattern_id"]           = g_cachedGNamesPatternId          ? g_cachedGNamesPatternId          : "";
+    // [AOBM-GWORLD-GENAOB] The winning RIP signature's adjustment, for a symbol script that adds it back.
+    data["gobjects_adjustment"]         = g_cachedGObjectsAdjustment;
+    data["gnames_adjustment"]           = g_cachedGNamesAdjustment;
     data["gworld_pattern_id"]           = g_cachedGWorldPatternId          ? g_cachedGWorldPatternId          : "";
     data["sparse_delegates_pattern_id"] = g_cachedSparseDelegatesPatternId ? g_cachedSparseDelegatesPatternId : "";
     json scanStats;
@@ -1368,6 +1376,10 @@ static void FillPointerSnapshot(json& data) {
     data["gworld_aob"]     = g_cachedGWorldAob ? g_cachedGWorldAob : "";
     data["gworld_aob_pos"] = g_cachedGWorldAobPos;
     data["gworld_aob_len"] = g_cachedGWorldAobLen;
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name, "" otherwise: the restart-stable anchor when
+    // there is no AOB triple.
+    data["gworld_export"]  = g_cachedGWorldExport ? g_cachedGWorldExport : "";
+    data["gobjects_export"] = g_cachedGObjectsExport ? g_cachedGObjectsExport : "";   // [AOBM-EXPORT-SYM-REST]
 
     // &GEngine (the slot, not the object). Empty aob == no AOB hit, in which case the UI
     // must treat a GameEngine-rooted export the way it treats a recovered GWorld: address
@@ -1379,6 +1391,7 @@ static void FillPointerSnapshot(json& data) {
     data["gengine_aob"]        = g_cachedGEngineAob ? g_cachedGEngineAob : "";
     data["gengine_aob_pos"]    = g_cachedGEngineAobPos;
     data["gengine_aob_len"]    = g_cachedGEngineAobLen;
+    data["gengine_export"]     = g_cachedGEngineExport ? g_cachedGEngineExport : "";
 
     data["invoke_timeout_ms"] = Stark::GetInvokeTimeoutMs();
 
@@ -5399,6 +5412,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 extern const char* g_cachedGEngineAob;
                 extern int         g_cachedGEngineAobPos;
                 extern int         g_cachedGEngineAobLen;
+                extern const char* g_cachedGEngineExport;
                 if (g_cachedGEngine == 0) {
                     Genau::EnginePointers eng;   // scratch — carries the AOB metadata triple
                     if (Genau::ResolveGEngineDeferred(eng)) {
@@ -5409,6 +5423,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         g_cachedGEngineAob       = eng.gengineAob;
                         g_cachedGEngineAobPos    = eng.gengineAobPos;
                         g_cachedGEngineAobLen    = eng.gengineAobLen;
+                        g_cachedGEngineExport    = eng.gengineExport;
                         Sein::Info("PIPE:cmd", "apply_rescan: Applied GEngine=0x%llX (%s)",
                                    (unsigned long long)g_cachedGEngine, g_cachedGEngineMethod);
                         applied = true;

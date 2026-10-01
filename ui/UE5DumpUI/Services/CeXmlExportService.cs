@@ -187,25 +187,51 @@ public static class CeXmlExportService
     private static int _emitPointerDepth;
 
     /// <summary>
-    /// Global safety ceiling on the number of CE entries one Generate* call may emit.
-    /// A densely-connected object graph (a field that reaches GWorld → PersistentLevel
-    /// → Actors[…] → components → …) makes the drilldown re-expand shared sub-objects
-    /// combinatorially — the per-path cycle guard (_emitPath) and per-pointer depth cap
-    /// (MaxEmitPointerDepth) don't bound the BREADTH, so the StringBuilder previously
-    /// grew until OutOfMemory (Copy CE XML on a full character view). Once this many
-    /// entries are emitted the recursion stops and the export is flagged truncated.
-    /// Generous enough that any legitimate single-object export fits; only a runaway
-    /// deep-drill on a dense graph trips it.
+    /// Global safety ceiling on how much XML one Generate* call may build. A densely-connected object graph (a field
+    /// that reaches GWorld → PersistentLevel → Actors[…] → components → …) makes the drilldown re-expand shared
+    /// sub-objects combinatorially when shared-object dedup is off — the per-path cycle guard (_emitPath) and the
+    /// per-pointer depth cap (MaxEmitPointerDepth) don't bound the BREADTH, so the StringBuilder once grew until
+    /// OutOfMemory (Copy CE XML on a full character view). Once the guard is reached the recursion stops and the
+    /// export is flagged truncated.
+    /// <para>[CEXML-CAP-60K] It is a crash guard in characters, not an entry count. It was 60,000 entries -- about
+    /// 16 M characters -- and real tables passed that: DumperTest's NestedBag needs 98,890 entries. Cheat Engine's
+    /// paste has no size or entry limit (7.5 and the public 7.5.1 source), so this bounds only OUR memory: 256 Mi
+    /// characters is 512 MiB of UTF-16 in the StringBuilder, as much again for ToString and for the clipboard, and well
+    /// under the ~1 Gi-character .NET string limit the runaway export threw at. At the ~270-340 characters an entry
+    /// measured on real exports that is 800,000 entries or more; a real 21,000-entry table is under 9 MB.</para>
     /// </summary>
-    internal const int MaxEmitEntries = 60_000;   // internal: Instance Finder's warning quotes it
+    internal const int MaxEmitChars = 256 * 1024 * 1024;   // internal: Instance Finder's warning quotes it
 
+    /// <summary>A test's lower guard. AsyncLocal, not ThreadStatic: the Instance Finder tests reach the generator
+    /// through an awaited command, and a test must not lower the guard for another test's thread.</summary>
+    private static readonly AsyncLocal<int?> _emitCharBudgetOverride = new();
+
+    /// <summary>Test seam: lower the guard for the calling flow until the returned scope is disposed, so the per-loop
+    /// checks can be exercised without building 256 Mi characters.</summary>
+    internal static IDisposable OverrideEmitCharBudgetForTest(int chars)
+    {
+        var previous = _emitCharBudgetOverride.Value;
+        _emitCharBudgetOverride.Value = chars;
+        return new BudgetScope(previous);
+    }
+
+    private sealed class BudgetScope(int? previous) : IDisposable
+    {
+        public void Dispose() => _emitCharBudgetOverride.Value = previous;
+    }
+
+    /// <summary>The builder's length when the last entry was started: the guard's measure. Kept by the four entry
+    /// emitters, so every check site reads it without holding the builder.</summary>
     [ThreadStatic]
-    private static int _emitEntryCount;
+    private static int _emitChars;
+    /// <summary>The guard for this Generate* call: <see cref="MaxEmitChars"/>, or a test's lower one.</summary>
+    [ThreadStatic]
+    private static int _emitCharBudget;
     [ThreadStatic]
     private static bool _emitTruncated;
 
     /// <summary>
-    /// True when the most recent Generate* call hit <see cref="MaxEmitEntries"/> and
+    /// True when the most recent Generate* call hit <see cref="MaxEmitChars"/> and
     /// stopped emitting early (the export is incomplete). The caller reads this right
     /// after the synchronous Generate* call (same thread) to warn the user.
     /// </summary>
@@ -1171,7 +1197,8 @@ public static class CeXmlExportService
         _emitPath = new HashSet<string>(StringComparer.Ordinal);
         _emitPointerDepth = 0;
         _emitDepth = 0;
-        _emitEntryCount = 0;
+        _emitChars = 0;
+        _emitCharBudget = _emitCharBudgetOverride.Value ?? MaxEmitChars;
         _systemFieldsSkipped = 0;
         _emitTruncated = false;
         _emittedInstances = new HashSet<string>(StringComparer.Ordinal);
@@ -1302,7 +1329,8 @@ public static class CeXmlExportService
         _emitPath = new HashSet<string>(StringComparer.Ordinal);
         _emitPointerDepth = 0;
         _emitDepth = 0;
-        _emitEntryCount = 0;
+        _emitChars = 0;
+        _emitCharBudget = _emitCharBudgetOverride.Value ?? MaxEmitChars;
         _systemFieldsSkipped = 0;
         _emitTruncated = false;
         _emittedInstances = new HashSet<string>(StringComparer.Ordinal);
@@ -1449,7 +1477,8 @@ public static class CeXmlExportService
         _emitPath = new HashSet<string>(StringComparer.Ordinal);
         _emitPointerDepth = 0;
         _emitDepth = 0;
-        _emitEntryCount = 0;
+        _emitChars = 0;
+        _emitCharBudget = _emitCharBudgetOverride.Value ?? MaxEmitChars;
         _systemFieldsSkipped = 0;
         _emitTruncated = false;
         _emittedInstances = new HashSet<string>(StringComparer.Ordinal);
@@ -1691,7 +1720,9 @@ public static class CeXmlExportService
     /// The GWorld slot (&amp;GWorld) is recovered either by an AOB scan
     /// (<paramref name="useAob"/>=true — survives restart automatically) or
     /// hardcoded from <paramref name="gworldSlotAddr"/> (useAob=false — the user
-    /// updates that value after a restart). The Lua then deref's *GWorld → UWorld*
+    /// updates that value after a restart), or [AOBM-EXPORT-SYM-REST] resolved by name from
+    /// <paramref name="gworldExport"/> (useAob=false, the game exports GWorld — survives restarts
+    /// and patches). The Lua then deref's *GWorld → UWorld*
     /// and applies each breadcrumb step (readQword on a pointer-deref crumb, plain
     /// add on an inline-struct crumb), null-guarding every hop, and finally
     /// registerSymbol's the resulting leaf address.
@@ -1710,7 +1741,8 @@ public static class CeXmlExportService
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         bool useAob,
         string aob, int aobPos, int aobLen,
-        string gworldSlotAddr)
+        string gworldSlotAddr,
+        string gworldExport = "")
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
         // Unique GWorld symbol per script so two enabled tables can't unregister
@@ -1738,7 +1770,22 @@ public static class CeXmlExportService
         AppendCloseLuaEngineHelper(sb);
 
         // ---- Resolve the GWorld slot (&GWorld) into gworld_base + register it ----
-        if (useAob)
+        if (!useAob && !string.IsNullOrEmpty(gworldExport))
+        {
+            // [AOBM-EXPORT-SYM-REST] The game exports GWorld: CE resolves the export by name in every run, so the base
+            // needs neither an AOB nor a hand-updated address. Nil while CE has not loaded the module's exports yet.
+            sb.AppendLine($"local gworld_base = getAddressSafe('{gworldExport}')   -- the game's exported GWorld");
+            sb.AppendLine("if gworld_base then");
+            sb.AppendLine("  synchronize(function()");
+            sb.AppendLine($"    unregisterSymbol('{gworldSymbol}')");
+            sb.AppendLine($"    registerSymbol('{gworldSymbol}', gworld_base)");
+            sb.AppendLine("  end)");
+            sb.AppendLine($"  dbg(string.format('[GWorldWalk] {gworldSymbol} = %X', gworld_base))");
+            sb.AppendLine("else");
+            sb.AppendLine($"  print('[GWorldWalk] WARNING: Cheat Engine could not resolve the export {gworldExport} (its exports may still be loading)')");
+            sb.AppendLine("end");
+        }
+        else if (useAob)
         {
             sb.AppendLine($"local entry = {{aob='{aob}', pos={aobPos}, aoblen={aobLen}, symbol='{gworldSymbol}'}}");
             sb.AppendLine("local gworld_base = nil");
@@ -2167,11 +2214,11 @@ public static class CeXmlExportService
         foreach (var field in fields)
         {
             // Global safety budget: a dense object graph can fan the drilldown out
-            // combinatorially. Once the cap is hit, stop emitting (the per-path cycle
+            // combinatorially. Once the guard is hit, stop emitting (the per-path cycle
             // guard + depth cap don't bound breadth) so the StringBuilder can't grow
             // to OutOfMemory. Every recursive emitter funnels its children through
             // EmitFields, so this single break bounds the whole tree.
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             // Guessed ("Guess?") fields are CE-exportable only when the user explicitly
             // focuses a single guessed field (Copy CE Field sets _includeGuessed). In any
@@ -2416,11 +2463,11 @@ public static class CeXmlExportService
         Dictionary<string, List<LiveFieldValue>>? resolvedStructs,
         Dictionary<string, List<LiveFieldValue>> resolvedInstances)
     {
-        // Global emit budget (see MaxEmitEntries): once tripped, drilled pointers
+        // Global emit budget (see MaxEmitChars): once tripped, drilled pointers
         // stop expanding entirely — emit nothing and unwind. Caller loops that don't
         // route through EmitFields (object-array elements) reach here per element, so
         // this is the second backstop against the StringBuilder OOM.
-        if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; return; }
+        if (_emitChars >= _emitCharBudget) { _emitTruncated = true; return; }
 
         // ---- Shared-object dedup (see _dedupShared) ----
         // Each distinct object's subtree is emitted ONCE; a later reference to the
@@ -2620,7 +2667,7 @@ public static class CeXmlExportService
         foreach (var child in children)
         {
             // Same global emit budget as EmitFields — each promoted child is one CE entry.
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             // Per-segment +Offset (allowType:false so the type isn't repeated on each part);
             // the struct type is appended once via typeSuffix below. "▸" = ▸ (U+25B8).
@@ -2726,7 +2773,7 @@ public static class CeXmlExportService
             {
                 foreach (var elem in field.ArrayElements)
                 {
-                    if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+                    if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
                     int elemByteOffset = elem.Index * field.ArrayElemSize;
                     EmitGroupPlaceholder(sb, elemIndent,
                         DecorateDesc($"[{elem.Index}]", elemByteOffset, field.ArrayStructType),
@@ -2788,7 +2835,7 @@ public static class CeXmlExportService
             var strIndent = indent + "  ";
             foreach (var elem in field.ArrayElements)
             {
-                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+                if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
                 int elemByteOffset = elem.Index * field.ArrayElemSize;
                 EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{elem.Index}]", elemByteOffset, null),
                     $"+{elemByteOffset:X}", field.ArrayInnerType);
@@ -2801,7 +2848,7 @@ public static class CeXmlExportService
                 : walkedStr;
             for (int i = walkedStr; i < targetStr; i++)
             {
-                if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+                if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
                 int elemByteOffset = i * field.ArrayElemSize;
                 EmitContainerStringLeaf(sb, strIndent, DecorateDesc($"[{i}]", elemByteOffset, null),
                     $"+{elemByteOffset:X}", field.ArrayInnerType);
@@ -2928,7 +2975,7 @@ public static class CeXmlExportService
         int elemPad = ElemDelegatePad(field);
         foreach (var elem in field.ArrayElements)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
 
             // Element: simple offset from the already-dereferenced Data pointer.
             int elemByteOffset = elem.Index * field.ArrayElemSize;
@@ -2959,7 +3006,7 @@ public static class CeXmlExportService
         // past-the-end memory (harmless, CE shows unknowns) until the game grows the array.
         for (int i = walkedLeaf; i < targetLeaf; i++)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
             int elemByteOffset = i * field.ArrayElemSize;
             var elemDesc = DecorateDesc($"[{i}]", elemByteOffset, null);
             if (dropDownLinkTarget != null)
@@ -3028,7 +3075,7 @@ public static class CeXmlExportService
         {
             // The per-element foreach is not otherwise budget-checked; a large fabricate
             // count must stop cleanly (and honestly flag truncation) rather than overshoot.
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             int elemByteOffset = i * field.ArrayElemSize;
             // Bare index name; EmitDrilledPointer / DecorateDesc re-add the class only under
@@ -3139,7 +3186,7 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements ?? new List<ArrayElementValue>())
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
 
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // The soft-path string is a meaningful asset identity (not an object
@@ -3216,7 +3263,7 @@ public static class CeXmlExportService
 
         foreach (var elem in field.ArrayElements!)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
 
             int elemByteOffset = elem.Index * field.ArrayElemSize;
             // Bare index for the synth field (EmitResolvedStruct re-decorates it via
@@ -3306,7 +3353,7 @@ public static class CeXmlExportService
             {
                 for (int i = walkedStruct; i < targetStruct; i++)
                 {
-                    if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+                    if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
                     int elemByteOffset = i * field.ArrayElemSize;
                     // StructDataAddr = the template's addr (keys the resolved layout, never
                     // emitted); Offset = i*ElemSize places the group at the fabricated slot.
@@ -3401,7 +3448,7 @@ public static class CeXmlExportService
         {
             // [R7-X6] The budget is checked per element here too: EmitFields only checks BETWEEN fields, so a big
             // map emitted last ran past the ceiling unflagged (98,890 entries, measured on DumperTest's NestedBag).
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }
 
             int elemByteOffset = elem.Index * stride;
 
@@ -3555,7 +3602,7 @@ public static class CeXmlExportService
 
         foreach (var elem in field.SetElements)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6], as the map loop
 
             int elemByteOffset = elem.Index * stride;
             // An object element's instance name is dropped (its class returns via +Type
@@ -3622,7 +3669,7 @@ public static class CeXmlExportService
 
         foreach (var row in field.DataTableRowData)
         {
-            if (_emitEntryCount >= MaxEmitEntries) { _emitTruncated = true; break; }   // [R7-X6]
+            if (_emitChars >= _emitCharBudget) { _emitTruncated = true; break; }   // [R7-X6]
 
             // Level 2: Row — deref uint8* at sparseIndex*stride+fnameSize. The row's
             // FName key is its identity, kept as the name; +Offset annotates.
@@ -3694,7 +3741,7 @@ public static class CeXmlExportService
         string address, int[]? offsets, bool showAsHex = false, string? varType = null,
         string? dropDownContent = null, string? dropDownListLink = null)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{EscapeXmlContent(description)}\"</Description>");
@@ -3734,7 +3781,7 @@ public static class CeXmlExportService
     private static void EmitGroupPlaceholder(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool showAsHex = false)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{EscapeXmlContent(description)}\"</Description>");
@@ -3758,7 +3805,7 @@ public static class CeXmlExportService
         CeFieldInfo ceField, string address, int[]? offsets,
         string? dropDownContent = null, string? dropDownListLink = null)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         sb.AppendLine($"{indent}<CheatEntry>");
         sb.AppendLine($"{indent}  <ID>{_nextId++}</ID>");
         sb.AppendLine($"{indent}  <Description>\"{EscapeXmlContent(description)}\"</Description>");
@@ -3803,7 +3850,7 @@ public static class CeXmlExportService
     private static void EmitStringLeaf(StringBuilder sb, string indent, string description,
         string address, int[]? offsets, bool unicode, bool codepage = false)
     {
-        _emitEntryCount++;
+        _emitChars = sb.Length;
         // CE String display window: the per-export "String Length" option (default 256,
         // floored at 16 by the toolbar slider); 0 (unset) falls back to 256. With
         // ZeroTerminate=1 a generous length never truncates a shorter live string — it
@@ -4090,8 +4137,21 @@ public static class CeXmlExportService
     /// <summary>
     /// CE memory-record type descriptor for the AOBMaker <c>CreateMemoryRecord</c> pipe
     /// command: a numeric CE <c>TVariableType</c> plus the signed / hex display flags.
+    /// <para>[AOBM-PLUSCE-FIDELITY] <see cref="BitStart"/> / <see cref="BitLength"/> and <see cref="String"/> say what the
+    /// record really is when that command cannot express it: a bit-field bool, or a string behind the FString's data
+    /// pointer. The three leading fields stay the <c>CreateMemoryRecord</c> form -- the containing byte, the 8-byte
+    /// pointer -- so a plugin without the record tree still gets the record +CE always sent.</para>
     /// </summary>
-    public readonly record struct CeRecordType(int ValueType, bool IsSigned, bool ShowAsHex);
+    public readonly record struct CeRecordType(int ValueType, bool IsSigned, bool ShowAsHex,
+        int BitStart = -1, int BitLength = 0, CeStringKind String = CeStringKind.None)
+    {
+        /// <summary>Only the plugin's record tree can carry this record as it is.</summary>
+        public bool NeedsRecordTree => BitStart >= 0 || String != CeStringKind.None;
+    }
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] Which FString-family string a record reads. CE's String type can say UTF-16 or
+    /// one-byte; the plugin cannot set <c>CodePage</c>, so a UTF-8 string arrives as a one-byte one.</summary>
+    public enum CeStringKind { None, Utf16, Ansi, Utf8 }
 
     // CE TVariableType numeric codes for AOBMaker CreateMemoryRecord.
     // Source: AOBMaker docs/API-CEPlugin.md (the CE plugin SDK header is WRONG — use these).
@@ -4104,15 +4164,27 @@ public static class CeXmlExportService
     /// push (AOBMaker <c>CreateMemoryRecord</c>). Reuses the same UE→CE mapping that drives
     /// Copy CE XML / Copy CE Field so the single-record push stays consistent with the
     /// clipboard exports. Non-scalar fields (struct/array/etc.) fall back to 8 Bytes /
-    /// ShowAsHex; bit-field bools — which the single-record command can't fully express —
-    /// fall back to the containing Byte.
+    /// ShowAsHex. [AOBM-PLUSCE-FIDELITY] A bit-field bool carries its bit and an FString-family
+    /// field its string kind, for the plugin's record tree; their <c>CreateMemoryRecord</c> form
+    /// stays the containing Byte and the 8-byte data pointer.
     /// </summary>
     public static CeRecordType MapFieldToCeRecordType(LiveFieldValue field)
     {
+        if (IsStringProperty(field.TypeName))
+            return PointerRecordType with
+            {
+                String = field.TypeName switch
+                {
+                    "StrProperty" => CeStringKind.Utf16,
+                    "Utf8StrProperty" => CeStringKind.Utf8,
+                    _ => CeStringKind.Ansi,
+                },
+            };
         var info = MapCeField(field);
         if (info == null)
             return PointerRecordType; // non-scalar (struct/array/etc.) -> 8 Bytes hex
-        return new CeRecordType(KeywordToValueType(info.VariableType), info.IsSigned, info.ShowAsHex);
+        return new CeRecordType(KeywordToValueType(info.VariableType), info.IsSigned, info.ShowAsHex,
+                                info.BitStart, info.BitStart >= 0 ? info.BitLength : 0);
     }
 
     /// <summary>

@@ -491,6 +491,18 @@ internal sealed class ScriptedAobMakerBridge : IAobMakerBridge
         return Task.FromResult(After(AaResult));
     }
 
+    /// <summary>[AOBM-EXPORT-GWORLD-AOB] What the detailed AA call answers; null answers as a current plugin would for
+    /// <see cref="AaResult"/>: created and active, or not created.</summary>
+    public SymbolScriptResult? AaDetail { get; set; }
+
+    public Task<SymbolScriptResult> CreateAAScriptDetailedAsync(string description, string script,
+        bool autoActivate = true, string? group = null, CancellationToken ct = default)
+    {
+        AaScripts.Add((description, script, autoActivate, group));
+        return Task.FromResult(After(AaDetail
+            ?? new SymbolScriptResult(AaResult, AaResult ? true : null, null, null)));
+    }
+
     public Task<bool> CreateSymbolScriptAsync(string name, string aob, int pos, int aoblen, string symbol,
                                               string module, bool autoActivate = true, CancellationToken ct = default)
     {
@@ -498,11 +510,34 @@ internal sealed class ScriptedAobMakerBridge : IAobMakerBridge
         return Task.FromResult(After(SymbolResult));
     }
 
+    /// <summary>[AOBM-ACTIVATE-RESULT] What the detailed call answers; null answers as a current plugin would for
+    /// <see cref="SymbolResult"/>: created, active and registered, or not created.</summary>
+    public SymbolScriptResult? SymbolDetail { get; set; }
+
+    public Task<SymbolScriptResult> CreateSymbolScriptDetailedAsync(string name, string aob, int pos, int aoblen,
+        string symbol, string module, bool autoActivate = true, CancellationToken ct = default)
+    {
+        Symbols.Add((name, aob, pos, aoblen, symbol, module, autoActivate));
+        return Task.FromResult(After(SymbolDetail
+            ?? new SymbolScriptResult(SymbolResult, SymbolResult ? true : null, SymbolResult ? true : null, null)));
+    }
+
     public Task<bool> CreateMemoryRecordAsync(string description, string address, int valueType, bool isSigned = false,
                                               bool showAsHex = false, CancellationToken ct = default)
     {
         Records.Add((description, address, valueType, isSigned, showAsHex));
         return Task.FromResult(After(RecordResult));
+    }
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] What a record-tree push answers; null answers as a plugin without the tree.</summary>
+    public RecordTreeResult? TreeResult { get; set; }
+    public List<(string Description, IReadOnlyList<CeRecordNode> Nodes)> Trees { get; } = new();
+
+    public Task<RecordTreeResult> CreateRecordTreeAsync(string description, IReadOnlyList<CeRecordNode> nodes,
+                                                        CancellationToken ct = default)
+    {
+        Trees.Add((description, nodes));
+        return Task.FromResult(After(TreeResult ?? RecordTreeResult.NotSupported));
     }
 
     public Task<(bool Ok, string? ErrorMessage)> InjectTableFileAsync(string fileName, string content,

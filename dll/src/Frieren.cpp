@@ -57,7 +57,10 @@ const char* g_cachedSparseDelegatesMethod = "not_found";  // "aob", "not_found"
 // AOB Usage Tracking: PE hash, winning pattern IDs, scan statistics
 char        g_cachedPeHash[17] = {0};
 const char* g_cachedGObjectsPatternId        = nullptr;
+const char* g_cachedGObjectsExport           = nullptr;   // [AOBM-EXPORT-SYM-REST]
 const char* g_cachedGNamesPatternId          = nullptr;
+int         g_cachedGObjectsAdjustment       = 0;   // [AOBM-GWORLD-GENAOB]
+int         g_cachedGNamesAdjustment         = 0;
 const char* g_cachedGWorldPatternId          = nullptr;
 const char* g_cachedSparseDelegatesPatternId = nullptr;
 int         g_cachedGObjectsTried = 0, g_cachedGObjectsHit = 0;
@@ -70,6 +73,7 @@ uintptr_t   g_cachedSparseDelegatesScanAddr = 0;
 const char* g_cachedGWorldAob    = nullptr;
 int         g_cachedGWorldAobPos = 0;
 int         g_cachedGWorldAobLen = 0;
+const char* g_cachedGWorldExport = nullptr;   // [AOBM-EXPORT-GWORLD-AOB]
 // &GEngine — the static slot. Same triple as GWorld so a GameEngine-rooted CE export
 // can be AOB-wrapped instead of baking in a stale UEngine* snapshot.
 uintptr_t   g_cachedGEngine          = 0;
@@ -79,6 +83,7 @@ uintptr_t   g_cachedGEngineScanAddr  = 0;
 const char* g_cachedGEngineAob       = nullptr;
 int         g_cachedGEngineAobPos    = 0;
 int         g_cachedGEngineAobLen    = 0;
+const char* g_cachedGEngineExport    = nullptr;   // [AOBM-EXPORT-GWORLD-AOB]
 
 // The init latch is set only at the very END of UE5_Init, after a multi-second scan,
 // so it can never serialize two callers on its own — and there IS a designed-in second
@@ -201,7 +206,10 @@ bool UE5_Init() {
     // AOB Usage Tracking
     memcpy(g_cachedPeHash, ptrs.peHash, sizeof(g_cachedPeHash));
     g_cachedGObjectsPatternId        = ptrs.gobjectsPatternId;
+    g_cachedGObjectsExport           = ptrs.gobjectsExport;
     g_cachedGNamesPatternId          = ptrs.gnamesPatternId;
+    g_cachedGObjectsAdjustment       = ptrs.gobjectsAdjustment;
+    g_cachedGNamesAdjustment         = ptrs.gnamesAdjustment;
     g_cachedGWorldPatternId          = ptrs.gworldPatternId;
     g_cachedSparseDelegatesPatternId = ptrs.sparseDelegatesPatternId;
     g_cachedGObjectsTried = ptrs.gobjectsPatternsTried;
@@ -217,6 +225,7 @@ bool UE5_Init() {
     g_cachedGWorldAob    = ptrs.gworldAob;
     g_cachedGWorldAobPos = ptrs.gworldAobPos;
     g_cachedGWorldAobLen = ptrs.gworldAobLen;
+    g_cachedGWorldExport = ptrs.gworldExport;
     g_cachedGEngine          = ptrs.GEngine;
     g_cachedGEngineMethod    = ptrs.gengineMethod;
     g_cachedGEnginePatternId = ptrs.genginePatternId;
@@ -224,6 +233,7 @@ bool UE5_Init() {
     g_cachedGEngineAob       = ptrs.gengineAob;
     g_cachedGEngineAobPos    = ptrs.gengineAobPos;
     g_cachedGEngineAobLen    = ptrs.gengineAobLen;
+    g_cachedGEngineExport    = ptrs.gengineExport;
 
     // Initialize subsystems — only when their pointer was found
     ScanProgress::Set(5, "Initializing subsystems...");
@@ -317,6 +327,8 @@ bool UE5_Init() {
                     g_cachedGObjects = staticBase;
                     g_cachedGObjectsMethod = "static_struct_recovery";
                     g_cachedGObjectsPatternId = nullptr;
+                    g_cachedGObjectsExport    = nullptr;   // a recovered array is not the export either
+                    g_cachedGObjectsAdjustment = 0;      // ...nor the signature's
                     Flamme::UpdateGObjectsMethod(g_cachedPeHash, "static_struct_recovery");
                 }
             }
@@ -381,6 +393,8 @@ bool UE5_Init() {
                 // method and CLEAR the now-misleading patternId so neither the DLL hint
                 // cache nor the UI's re-save prioritises the decoy-only AOB pattern.
                 g_cachedGObjectsPatternId = nullptr;
+                g_cachedGObjectsExport    = nullptr;
+                g_cachedGObjectsAdjustment = 0;
                 Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_scan_recovery");
             } else {
                 LOG_WARN("UE5_Init: Recovery failed — no candidate qualified as an object array; "
@@ -408,6 +422,7 @@ bool UE5_Init() {
         g_cachedGEngineAob       = ptrs.gengineAob;
         g_cachedGEngineAobPos    = ptrs.gengineAobPos;
         g_cachedGEngineAobLen    = ptrs.gengineAobLen;
+        g_cachedGEngineExport    = ptrs.gengineExport;
 
         // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
         // Structural detection beats user input here — wrong offsets break exports far worse
@@ -607,6 +622,7 @@ bool UE5_Init() {
                 g_cachedGWorldAob      = nullptr;
                 g_cachedGWorldAobPos   = 0;
                 g_cachedGWorldAobLen   = 0;
+                g_cachedGWorldExport   = nullptr;   // a recovered slot is not the export either
                 g_cachedGWorldScanAddr = 0;
                 LOG_INFO("UE5_Init: GWorld recovered via %s -> 0x%llX",
                          method, static_cast<unsigned long long>(rec));

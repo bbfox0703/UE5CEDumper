@@ -105,29 +105,185 @@ internal static class AobMakerActions
     /// wrong one, is the refusal a user can actually fix. <paramref name="gamePid"/> 0 skips that question.</para>
     /// </summary>
     internal static async Task<string> AddRecordAsync(AobMakerStatus status, string name, string address,
-        CeXmlExportService.CeRecordType type, ILoggingService log, int gamePid = 0, string gameModule = "")
+        CeXmlExportService.CeRecordType type, ILoggingService log, int gamePid = 0, string gameModule = "",
+        int stringLength = 0)
     {
         var bridge = status.Bridge;
         if (bridge == null || string.IsNullOrEmpty(address)) return "";
-        bool ok;
-        try
-        {
-            ok = await bridge.CreateMemoryRecordAsync(PackedLayoutNotice.RecordNamePrefix + name,
-                StripHexPrefix(address), type.ValueType, type.IsSigned, type.ShowAsHex);
-        }
-        catch (Exception ex)
-        {
-            log.Error($"AOBMaker +CE failed for {name} @ {address}", ex);
-            ok = false;
-        }
+        var push = await PushRecordAsync(bridge, PackedLayoutNotice.RecordNamePrefix + name, address, type,
+                                         stringLength, log);
+        bool ok = push.Added;
         status.Apply(bridge.IsAvailable);
-        if (ok) return AobMakerStatus.Say(KeyRecordDone, "Added to CE: {0}", name);
+        if (ok) return AobMakerStatus.Say(KeyRecordDone, "Added to CE: {0}", name) + DegradedSuffix(push);
         if (!bridge.IsAvailable) return AobMakerUnavailable.Text(bridge);
 
         var refused = AobMakerStatus.Say(KeyRecordRefused, "Cheat Engine refused the record for {0}", name);
         var why = await status.CheckAttachAsync(gamePid, gameModule);
         return string.IsNullOrEmpty(why) ? refused : refused + " — " + why;
     }
+
+    /// <summary>
+    /// [AOBM-EXPORT-GWORLD-AOB] Cheat Engine's name for an export the DLL found a pointer through, or "" when it
+    /// cannot be named. Measured on Satisfactory with CE 7.7 (2026-10-01): CE lists exports UNDECORATED, so
+    /// <c>?GWorld@@3VUWorldProxy@@A</c> resolves as <c>GWorld</c> and never under its MSVC name.
+    /// </summary>
+    internal static string CeExportSymbol(string mangled)
+    {
+        // "?<name>@@3<type>": a global variable in no namespace, the shape of every export Himmel looks up. A scoped
+        // name ("?Foo@Bar@@3...") would undecorate to Bar::Foo, which CE's lookup was never measured on, so it gets
+        // no name rather than a guessed one; so does a function ("@@Q...", "@@Y...").
+        if (string.IsNullOrEmpty(mangled) || mangled[0] != '?') return "";
+        int at = mangled.IndexOf("@@3", 1, StringComparison.Ordinal);
+        if (at <= 1 || at + 3 >= mangled.Length) return "";
+        var name = mangled.Substring(1, at - 1);
+        if (char.IsAsciiDigit(name[0])) return "";
+        foreach (var ch in name)
+            if (!char.IsAsciiLetterOrDigit(ch) && ch != '_') return "";
+        return name;
+    }
+
+    internal const string KeySymbolFromExport = "str.Pointers.Symbol.RegisteredFromExport";
+
+    /// <summary>[AOBM-EXPORT-SYM-REST] The success line for a symbol defined from an export: it does not re-scan
+    /// anything on enable, it re-resolves the export by name.</summary>
+    internal static string SymbolRegisteredFromExportText(string symbolName, string ceSymbol)
+        => AobMakerStatus.Say(KeySymbolFromExport,
+            "Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.",
+            symbolName, ceSymbol);
+
+    // --- [AOBM-DISSECT-INJECT] the CSX half: Live Walker's structure pushed into Structure Dissect ---
+
+    internal const string KeyStructPushed = "str.AobMaker.Struct.Pushed";
+    internal const string KeyStructNotBuilt = "str.AobMaker.Struct.NotBuilt";
+    internal const string KeyStructUnknown = "str.AobMaker.Struct.Unknown";
+    internal const string KeyStructTimedOut = "str.AobMaker.Struct.TimedOut";
+    internal const string KeyStructRefused = "str.AobMaker.Struct.Refused";
+
+    /// <summary>
+    /// [AOBM-DISSECT-INJECT] What a structure push says, from what the plugin reported about the script that builds
+    /// it (<see cref="IAobMakerBridge.CreateAAScriptDetailedAsync"/>). <c>IsError</c> marks the outcomes that are not
+    /// a success; "activation not known" is not one of them, since an older plugin still ran the script.
+    /// </summary>
+    internal static (string Text, bool IsError) StructPushText(SymbolScriptResult r, CsxPushScript push)
+    {
+        string reason = r.Message ?? SymbolNoReasonText();
+        if (r.TimedOut)
+            return (AobMakerStatus.Say(KeyStructTimedOut,
+                "No reply from Cheat Engine for structure '{0}'; it may still have been added -- check Structure Dissect before pushing again",
+                push.RootName), true);
+        if (!r.Created)
+            return (AobMakerStatus.Say(KeyStructRefused,
+                "Cheat Engine did not take the structure script for '{0}': {1}", push.RootName, reason), true);
+        if (r.Activated == false)
+            return (AobMakerStatus.Say(KeyStructNotBuilt,
+                "Cheat Engine could not build structure '{0}': {1}", push.RootName, reason), true);
+        if (r.Activated == true)
+            return (AobMakerStatus.Say(KeyStructPushed,
+                "Structure '{0}' added to CE's Structure Dissect ({1} structures, {2} elements)",
+                push.RootName, push.Structures, push.Elements), false);
+        return (AobMakerStatus.Say(KeyStructUnknown,
+            "Structure script '{0}' added to Cheat Engine; this AOBMaker plugin does not say whether it ran -- check Structure Dissect, or tick the record",
+            push.RootName), false);
+    }
+
+    internal const string KeyRecordAsByte = "str.AobMaker.Record.AsByte";
+    internal const string KeyRecordAsPointer = "str.AobMaker.Record.AsPointer";
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] What a +CE push did. <c>Degraded</c> is set when the record went in, but in the
+    /// <c>CreateMemoryRecord</c> form because the plugin could not build it as it is (see
+    /// <see cref="CeXmlExportService.CeRecordType.NeedsRecordTree"/>).</summary>
+    internal readonly record struct RecordPush(bool Added, bool Degraded, CeXmlExportService.CeRecordType Type);
+
+    /// <summary>
+    /// [AOBM-PLUSCE-FIDELITY] The one +CE push every site shares. A record <c>CreateMemoryRecord</c> cannot express goes
+    /// through the plugin's record tree; only a plugin that cannot build it -- no tree at all, or no bits -- gets the
+    /// <c>CreateMemoryRecord</c> form instead, flagged <c>Degraded</c> so the status can say what arrived.
+    /// <para>A tree Cheat Engine refused is NOT retried in the old form: the refusal is the answer the user needs, and
+    /// a byte record on top of it would read as success.</para>
+    /// </summary>
+    internal static async Task<RecordPush> PushRecordAsync(IAobMakerBridge bridge, string description,
+        string address, CeXmlExportService.CeRecordType type, int stringLength, ILoggingService log)
+    {
+        bool degraded = false;
+        if (type.NeedsRecordTree)
+        {
+            RecordTreeResult tree;
+            try
+            {
+                tree = await bridge.CreateRecordTreeAsync(description,
+                    new[] { ToRecordNode(description, address, type, stringLength) });
+            }
+            catch (Exception ex)
+            {
+                log.Error($"AOBMaker +CE record tree failed for {description} @ {address}", ex);
+                return new RecordPush(false, false, type);
+            }
+            switch (tree.Outcome)
+            {
+                case RecordTreeOutcome.Created:
+                    return new RecordPush(true, false, type);
+                case RecordTreeOutcome.Failed:
+                    log.Warn($"AOBMaker +CE: Cheat Engine did not build {description} @ {address}: {tree.Message}");
+                    return new RecordPush(tree.Created > 0, false, type);
+                case RecordTreeOutcome.Unavailable:
+                    return new RecordPush(false, false, type);
+            }
+            log.Info($"AOBMaker +CE: {description} goes as its CreateMemoryRecord form ({tree.Outcome}" +
+                     (tree.MissingFeatures.Count > 0 ? ": " + string.Join(", ", tree.MissingFeatures) : "") + ")");
+            degraded = true;
+        }
+
+        bool ok;
+        try
+        {
+            ok = await bridge.CreateMemoryRecordAsync(description, StripHexPrefix(address), type.ValueType,
+                                                      type.IsSigned, type.ShowAsHex);
+        }
+        catch (Exception ex)
+        {
+            log.Error($"AOBMaker +CE failed for {description} @ {address}", ex);
+            ok = false;
+        }
+        return new RecordPush(ok, degraded && ok, type);
+    }
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] The note a degraded push adds after "Added to CE: …", or "".</summary>
+    internal static string DegradedSuffix(RecordPush push)
+    {
+        if (!push.Added || !push.Degraded) return "";
+        return " — " + (push.Type.BitStart >= 0 ? AsByteText() : AsPointerText());
+    }
+
+    internal static string AsByteText() => AobMakerStatus.Say(KeyRecordAsByte,
+        "as its whole byte: this AOBMaker plugin cannot set a bit (needs AOBMaker v20260930 or later)");
+
+    internal static string AsPointerText() => AobMakerStatus.Say(KeyRecordAsPointer,
+        "as its data pointer: this AOBMaker plugin cannot build a string record (update AOBMaker)");
+
+    /// <summary>
+    /// [AOBM-PLUSCE-FIDELITY] The record-tree node for a +CE record that needs one, shaped like the Copy CE XML leaf for
+    /// the same field: a string reads through the FString's data pointer (<c>Offsets [0]</c>) at the String Len the
+    /// exports use (<paramref name="stringLength"/>, or their default when 0); a bit-field bool is a Binary record at
+    /// its byte.
+    /// </summary>
+    internal static CeRecordNode ToRecordNode(string description, string address,
+        CeXmlExportService.CeRecordType type, int stringLength)
+    {
+        var bare = StripHexPrefix(address);
+        if (type.String != CeXmlExportService.CeStringKind.None)
+            return new CeRecordNode(description, bare, "String", Offsets: new[] { 0 },
+                StringLength: stringLength > 0 ? stringLength : Constants.DefaultCeStringLength,
+                Unicode: type.String == CeXmlExportService.CeStringKind.Utf16);
+        return new CeRecordNode(description, bare, "Binary", ShowAsHex: type.ShowAsHex, IsSigned: type.IsSigned,
+                                BitStart: type.BitStart, BitLength: type.BitLength);
+    }
+
+    internal const string KeyRecordsDegraded = "str.AobMaker.Record.SomeDegraded";
+
+    /// <summary>[AOBM-PLUSCE-FIDELITY] The batch form of <see cref="DegradedSuffix"/>, or "" when none was.</summary>
+    internal static string DegradedCountText(int degraded) => degraded <= 0 ? "" : AobMakerStatus.Say(KeyRecordsDegraded,
+        "{0} of them as a whole byte or a data pointer: this AOBMaker plugin cannot build them as they are (update AOBMaker)",
+        degraded);
 
     internal const string KeyDisasmNoCode = "str.AobMaker.Disasm.NoCode";
     internal const string KeyDisasmDone = "str.AobMaker.Disasm.Done";
@@ -242,6 +398,34 @@ internal static class AobMakerActions
         => AobMakerStatus.Say(KeyGenAobMismatch,
             "Not pushed: the AOB would register '{0}' at 0x{1:X}, but the DLL resolved {2} (this signature dereferences or adjusts)",
             symbol, target, resolved);
+
+    // [AOBM-ACTIVATE-RESULT] What SYM says about a symbol script beyond "created" (AOBMaker v20260930 reports it).
+    internal const string KeySymbolNotActivated = "str.Pointers.Symbol.NotActivated";
+    internal const string KeySymbolNotRegistered = "str.Pointers.Symbol.NotRegistered";
+    internal const string KeySymbolActivationUnknown = "str.Pointers.Symbol.ActivationUnknown";
+    internal const string KeySymbolTimedOut = "str.Pointers.Symbol.TimedOut";
+    internal const string KeySymbolNoReason = "str.Pointers.Symbol.NoReason";
+
+    /// <summary>Stands in for CE's reason when the plugin gave none.</summary>
+    internal static string SymbolNoReasonText() => AobMakerStatus.Say(KeySymbolNoReason, "no reason given");
+
+    internal static string SymbolNotActivatedText(string symbol, string reason)
+        => AobMakerStatus.Say(KeySymbolNotActivated,
+            "CE symbol script '{0}' was added, but Cheat Engine did not enable it: {1}", symbol, reason);
+
+    internal static string SymbolNotRegisteredText(string symbol, string reason)
+        => AobMakerStatus.Say(KeySymbolNotRegistered,
+            "CE symbol script '{0}' is enabled, but the symbol is not usable: {1}", symbol, reason);
+
+    internal static string SymbolActivationUnknownText(string symbol)
+        => AobMakerStatus.Say(KeySymbolActivationUnknown,
+            "Added CE symbol script '{0}'. This AOBMaker plugin does not say whether Cheat Engine enabled it: " +
+            "check that the record is ticked (AOBMaker v20260930 or later reports it)", symbol);
+
+    internal static string SymbolTimedOutText(string symbol)
+        => AobMakerStatus.Say(KeySymbolTimedOut,
+            "No answer from the AOBMaker plugin in time for '{0}': the script may still have been added. " +
+            "Check Cheat Engine's address list before pressing SYM again", symbol);
 
     /// <summary>
     /// [AOBM-GNAMES-SYMBOL] Where a CE symbol script built from a <see cref="GeneratedAob"/> lands, replaying what the

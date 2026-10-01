@@ -5,7 +5,9 @@ AOT-trimmed on Windows as build 3599 (`21687f7c`); not yet checked on a running 
 [verification-register.md](verification-register.md) `[AOBMAKER-A1-A9-LIVE]`. Each A item's **Done** line says what
 shipped and where it differs from the plan below. The evaluation itself was code reading only.
 **AOBMaker replied in `9431370`** (its `docs/UE5CEDumper-Requests-Reply.md`). The B and C items below carry its
-verdicts; [aobmaker-requests.md](aobmaker-requests.md) has them per request.
+verdicts; [aobmaker-requests.md](aobmaker-requests.md) has them per request. **AOBMaker release `v20260930` (build 157)** ships
+R3, R4, R15 and most of R16, and parts of R1, R2, R7, R8, R9; the per-request status is in aobmaker-requests.md,
+and the B rows it unblocks are flipped in [todo.md](todo.md).
 Baseline: UE5CEDumper `dev` at build 3598, AOBMaker `dev` at `2528712`. AOBMaker line numbers are
 pinned to that commit, except in the notes taken from AOBMaker's answer, which cite `9431370`.
 UE5CEDumper sites are named by `Type.Method`, which survives edits.
@@ -200,6 +202,8 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
     entry).
     `CreateSymbolScript` registers the raw RIP target, so those are refused before AOBMaker is asked. Supporting
     them needs AOBMaker R17, or a symbol script of our own through `CreateAAScript`.
+    **Done 2026-10-01** (build 3614, `[AOBM-GWORLD-GENAOB]` part 2) the second way: the DLL publishes the
+    adjustment and the UI pushes its own symbol script that adds it. Live on Avowed (`GOBJ_AV1`, -0x10).
 
   Nothing is pushed unless the returned AOB replays (`disp = [aob+pos]`, `aob + aoblen + disp`) to the address the
   DLL resolved. The GWorld / &GEngine withheld-triple case is not done: `[AOBM-GWORLD-GENAOB]` in todo.md.
@@ -254,8 +258,9 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
     4 Bytes (AOBMaker `EXT-15`).
   - `<ID>` values are renumbered. That is harmless here.
   - None of it is reported. The reply counts only absolute-address warnings.
-- **Size limit:** one request holds at most 10 MiB of JSON-escaped XML. `CeXmlExportService.MaxEmitEntries` is 60,000,
-  and a large export can exceed that. Going around the limit means talking `CreateRecordTree*` directly, which
+- **Size limit:** one request holds at most 10 MiB of JSON-escaped XML. Our export's guard is now 256 Mi characters
+  (`CeXmlExportService.MaxEmitChars`, `[CEXML-CAP-60K]`; it was 60,000 entries), and a large export exceeds 10 MiB:
+  DumperTest's NestedBag is 98,890 entries, 30.35 M characters. Going around the limit means talking `CreateRecordTree*` directly, which
   brings back the tree-model work §6 describes.
   - Splitting the export into several `ImportCheatTableXml` calls does not help: each call builds a new tree at the
     root (AOBMaker reply §2.8).
@@ -278,6 +283,42 @@ by the toolbar ⟳) and one set of actions, `Helpers/AobMakerActions`.
   bools are Binary records, so they may be refused outright until R2's bits ship. Reply §4 keeps
   `[AOBM-CEXML-PUSH]` blocked on R3 too without saying why; that reject is our reading of it (reply §2.3).
 - **Verdict:** hold the push until at least bits and dropdowns survive. A push that shows wrong bools is worse than a paste.
+- **Findings 2026-10-01 (item on hold, recorded for when it resumes).** The maintainer asked for the push, then held
+  it the same day in favour of `[CEXML-CAP-60K]`. Two read-only research passes (CE source; AOBMaker at `f8cad7d`,
+  whose `src` equals the `v20260930` tag) found:
+  - **The design the maintainer set.** The clipboard route stays. AOBMaker.UI is preferred only while it runs, and
+    the three buttons show it the way SYM does (`AobMakerUiAccent` border, a "UI" tag). Anything else falls back to
+    the clipboard: not running, busy, `Rejected:`, no reply, over the size limit, or `Begin failed` with nothing made.
+  - **Cheat Engine is not the limit.** Its paste (`TMainForm.paste` → `TAddresslist.AddTableXMLAsText` →
+    `TMemoryRecord.setXMLnode`) has no size, entry, depth or DropDownList cap in the 7.5 source, and those files are
+    byte-identical in the public upstream master (7.5.1; no 7.6/7.7 source is published). Measured on 7.7.0.10621:
+    98,890 entries pasted whole in under 229 s. Its cost grows with the list, because every pasted ID is checked
+    against every record; any exception, even one bad number, is swallowed and leaves a partial table.
+  - **Request** on `\\.\pipe\AOBMaker` (same framing as `GenerateAob`):
+    `{"type":"ImportCheatTableXml","xml":"…","description":"…","autoActivate":false}`. Our clipboard XML is
+    accepted as-is (`<CheatTable>` or a bare `<CheatEntries>`; not a bare `<CheatEntry>`). `description` only reaches
+    AOBMaker's log; `autoActivate` is ignored; there is no process or parent target. Records land at the bottom of
+    CE's address list, unticked, against whatever process CE has open, so check the attach first (`[AOBM-ATTACH-CHECK]`).
+    Do not send `"processId": null`.
+  - **Reply** `ImportCheatTableXmlResult`: `success`, `message`, `totalCreated` (only once CE was reached). No
+    warnings list, no `dropped`, no build number. `Refused, nothing was created: …` (UI 155+ on an older plugin) is
+    the one failure whose 0 really means none; any other failure may leave records, and the import keeps running
+    after a client gives up, so never retry automatically (reply §3 rule 9).
+  - **Size.** 10 MiB of the serialized UTF-8 JSON (`PipeProtocol.MaxMessageSize`, both pipes): pre-flight it and
+    copy instead. UI 154+ answers an oversize request with an `Error` after draining up to 64 MiB. The default JSON
+    encoder writes `<` `>` `"` as 6-byte escapes (~710 B an entry, ~14,700 entries); `UnsafeRelaxedJsonEscaping`
+    should need far less (not measured). Raising the constant (e.g. to the 64 MiB it already drains) would carry a
+    NestedBag-sized export without R8's streaming; ask AOBMaker when the item resumes.
+  - **Time.** No async mode: chunks of at most 5,000 nodes / 4 MiB, each one `synchronize` on CE's main thread (CE
+    frozen meanwhile), 60 s budget per chunk, so a 10 MiB import can take minutes. AOBMaker.UI's single pipe is
+    busy throughout (`GenerateAob` and CE's Send to AOBMaker time out on connect), and UE5DumpUI must not use the
+    CE bridge while it runs (rule 10).
+  - **Builds.** No handshake: UI and plugin must be the same build, 155+ (156 for symbolic offsets, `ByteLength`,
+    `Async`). An unknown-type probe tells UI 154+ (an `Error` reply) from 153 and older (silence), which separates
+    the releases v20260925 and v20260930; nothing tells 155 from 157.
+  - **Still dropped at 157, silently:** `DropDownList`/`DropDownListLink`, `Color`, `CodePage` (our UTF-8 strings),
+    `Hotkeys`, `ShowAsBinary`, `ZeroTerminate` (declined). Bits, child options, custom types, symbolic offsets,
+    `ByteLength` and `Async` now arrive.
 
 ### B2 — Generated .CT files straight into CE
 - **Today:** file only. roadmap.md: *"AOBMaker direct-inject of the generated CT is also v2"*. The sources are:
@@ -315,6 +356,9 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 | Any field | An absolute address, which does not survive a restart | The XML path is GWorld-rooted. AOBMaker notes the plugin passes `address` straight to `mr.Address`, and CE accepts expressions such as `[x]+off` there; unproven through the bridge |
 
 - **Partial workaround today:** a one-node `CreateRecordTree*` batch carries offsets, length and unicode. It still cannot carry bits or dropdowns.
+- **Done 2026-10-01 (`[AOBM-PLUSCE-FIDELITY]`, build 3608):** +CE sends a bit-field bool and an FString as a
+  one-node record tree, so they arrive as a Binary record at their bit and a String record; enum and FName stay
+  numbers, and the address stays absolute.
 - **AOBMaker change:** R2's node fields, sent as a one-node `Begin` / `Chunk` / `End`. We asked (R6) to give
   `CreateMemoryRecord` `bitStart`/`bitLength`, `dropDownList`, `length`/`unicode`/`codePage` and `offsets`; AOBMaker
   keeps `CreateMemoryRecord` as it is and re-targets the item to that batch (reply §2.6, P3).
@@ -415,6 +459,9 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
   and push it as `{$lua}` through `CreateAAScript`. It inherits B4's gap.
 - **README:** its AOBMaker paragraph claimed the plugin delivers "Structure Dissect data". That was corrected
   2026-09-29.
+- **Done 2026-10-01 (`[AOBM-DISSECT-INJECT]`, build 3613):** Live Walker → Export CSX → "Push to CE Structure
+  Dissect" builds the structure in CE through `CreateAAScript`; live on DumperTest, 366 structures / 3,959
+  elements, exactly what the CSX describes.
 
 ### C4 — Attach CE to the game's process
 - **Gap:** there is no `openProcess` equivalent. `GetAttachedProcess` only reads.
@@ -436,6 +483,9 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
 - **Needs:** either a "find code that references address X" search in AOBMaker (R14), or an xref pass in Genau (our side).
   AOBMaker accepted R14 as P2, batch A. It finds RIP-relative references inside the scanned module only, so for an
   exported GWorld only the defining module's own references show. Whether that helps Satisfactory needs a live check.
+- **Done 2026-10-01 (`[AOBM-EXPORT-GWORLD-AOB]`, build 3609) without R14 or an xref pass:** CE resolves the
+  export under its undecorated name (`GWorld`, measured on Satisfactory), so SYM registers `gworld_addr` /
+  `gengine_addr` from it with a define + registersymbol script. Restart- and patch-stable; no AOB needed.
 
 ### C7 — Custom-type records
 - **Motivation:** the todo item "CE export drilldown — remaining gaps" wants FName shown live through a "UE FName to String" custom type.

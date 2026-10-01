@@ -322,8 +322,9 @@ public class CeXmlExportDescriptionTests
         // 10 fully-connected objects: every field points to one of the 10. The
         // per-PATH cycle guard (_emitPath) permits a shared object under many parents,
         // so without a global budget the drilldown re-expands them into millions of
-        // entries → StringBuilder OutOfMemory (the in-game Copy CE XML crash). The cap
-        // must stop it and flag the export truncated.
+        // entries → StringBuilder OutOfMemory (the in-game Copy CE XML crash). The guard
+        // must stop it and flag the export truncated. [CEXML-CAP-60K] The guard is 256 Mi
+        // characters now, so this runs under a lowered one rather than build half a gigabyte.
         var addrs = Enumerable.Range(0, 10).Select(i => $"0x{0x1000 + i:X}").ToArray();
         var resolved = new Dictionary<string, List<LiveFieldValue>>(System.StringComparer.Ordinal);
         foreach (var a in addrs)
@@ -346,12 +347,15 @@ public class CeXmlExportDescriptionTests
             },
         };
 
-        var xml = CeXmlExportService.GenerateInstanceXml(
-            "\"Game.exe\"+1000", "MyObj", "UMyClass", root, resolvedInstances: resolved);
+        const int budget = 2_000_000;
+        string xml;
+        using (CeXmlExportService.OverrideEmitCharBudgetForTest(budget))
+            xml = CeXmlExportService.GenerateInstanceXml(
+                "\"Game.exe\"+1000", "MyObj", "UMyClass", root, resolvedInstances: resolved);
 
         Assert.True(CeXmlExportService.LastExportTruncated);
-        // Completed (no OOM/hang) and bounded — ~60k entries, not millions.
-        Assert.True(xml.Length < 50_000_000, $"xml unexpectedly large: {xml.Length} chars");
+        // Completed (no OOM/hang) and bounded by the guard, not millions of entries.
+        Assert.True(xml.Length < budget + 16_384, $"xml unexpectedly large: {xml.Length} chars");
     }
 
     [Fact]

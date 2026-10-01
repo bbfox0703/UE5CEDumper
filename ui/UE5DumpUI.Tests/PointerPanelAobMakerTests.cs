@@ -10,7 +10,8 @@ namespace UE5DumpUI.Tests;
 /// The Pointer panel's AOBMaker buttons, each section under its finding tag: a GObjects / GNames symbol from
 /// AOBMaker.UI's GenerateAob, the scan-hit ASM buttons, and what HEX / ASM report.
 /// <para>The symbol is the dangerous one: a plausible, wrong symbol roots every CE record the user builds on it. So the
-/// rule under test is that NOTHING is pushed unless replaying the AOB lands exactly where the DLL resolved the pointer.</para>
+/// rule under test is that NOTHING is pushed unless replaying the AOB lands exactly where the DLL resolved the pointer
+/// (once the signature's own published adjustment is added back, [AOBM-GWORLD-GENAOB]).</para>
 /// </summary>
 public class PointerPanelAobMakerTests
 {
@@ -323,5 +324,144 @@ public class PointerPanelAobMakerTests
                     return Task.FromResult(bytes.AsSpan((int)(a - b), size).ToArray());
             throw new InvalidOperationException($"read_mem failed at {addr}");
         }
+    }
+
+    // ---- [AOBM-GWORLD-GENAOB] part 2: a signature that ADJUSTS the RIP target (GOBJ_AV1 on Avowed: -0x10) ----
+    //
+    // CreateSymbolScript registers the raw RIP target, so an adjusted pointer gets a symbol script of our own: the DLL
+    // publishes the winning signature's adjustment, the replay is checked against the RIP target, and the script adds
+    // the adjustment back. Without the published adjustment (an older DLL) nothing changes: the refusal above stands.
+
+    private static EngineState AdjustedState(int adjustment = -0x10) => new()
+    {
+        GObjectsAddr = $"0x{GObjects - 0x10:X}", GObjectsScanAddr = $"0x{Match:X}", GObjectsAdjustment = adjustment,
+        ProcessId = 4242, ModuleName = "Game.exe",
+    };
+
+    [Fact]
+    public async Task An_adjusted_signature_the_DLL_published_is_pushed_as_our_own_symbol_script()
+    {
+        var rig = Build(Answer(), Code(), AdjustedState());
+        rig.Bridge.AaDetail = new SymbolScriptResult(true, true, null, null);
+
+        await rig.Vm.RegisterGObjectsSymbolCommand.ExecuteAsync(null);
+
+        Assert.Equal($"0x{Match + Context:X}", Assert.Single(rig.Ui.Calls).Address);   // the instruction, as before
+        Assert.Empty(rig.Bridge.Symbols);   // CreateSymbolScript cannot add the -0x10
+        var aa = Assert.Single(rig.Bridge.AaScripts);
+        Assert.Equal("GObjects → gobjects_addr", aa.Description);
+        Assert.True(aa.AutoActivate);
+        Assert.Contains("AOBScanModuleUnique('Game.exe', '48 89 5C 24 ?? 48 8B 05 ?? ?? ?? ??'", aa.Script);
+        Assert.Contains("-0x10", aa.Script);
+        Assert.Null(rig.Vm.ErrorMessage);
+        Assert.Contains("gobjects_addr", rig.Vm.SymbolStatusText);
+    }
+
+    [Fact]
+    public async Task An_adjustment_that_did_not_apply_falls_back_to_the_plain_RIP_target()
+    {
+        // Genau tries target + adjustment first and the target itself second: when the second won, the DLL's GObjects
+        // IS the RIP target and the plugin's own symbol script is exact.
+        var rig = Build(Answer(), Code(), new EngineState
+        {
+            GObjectsAddr = $"0x{GObjects:X}", GObjectsScanAddr = $"0x{Match:X}", GObjectsAdjustment = -0x10,
+            ProcessId = 4242, ModuleName = "Game.exe",
+        });
+
+        await rig.Vm.RegisterGObjectsSymbolCommand.ExecuteAsync(null);
+
+        Assert.Single(rig.Bridge.Symbols);
+        Assert.Empty(rig.Bridge.AaScripts);
+    }
+
+    [Fact]
+    public async Task An_adjusted_replay_that_misses_the_RIP_target_is_not_pushed()
+    {
+        var rig = Build(Answer(aoblen: 4 + 8), Code(), AdjustedState());
+
+        await rig.Vm.RegisterGObjectsSymbolCommand.ExecuteAsync(null);
+
+        Assert.Empty(rig.Bridge.Symbols);
+        Assert.Empty(rig.Bridge.AaScripts);
+        Assert.StartsWith("Not pushed: the AOB would register 'gobjects_addr' at 0x", rig.Vm.ErrorMessage);
+    }
+
+    // ---- the script itself, RUN on CE's own Lua VM against stubs ----
+
+    private static string EnableOf(string script)
+    {
+        int from = script.IndexOf("{$lua}\n", StringComparison.Ordinal) + "{$lua}\n".Length;
+        return script[from..script.IndexOf("{$asm}", from, StringComparison.Ordinal)];
+    }
+
+    private static string DisableOf(string script)
+    {
+        int d = script.IndexOf("[DISABLE]", StringComparison.Ordinal);
+        int from = script.IndexOf("{$lua}\n", d, StringComparison.Ordinal) + "{$lua}\n".Length;
+        return script[from..script.IndexOf("{$asm}", from, StringComparison.Ordinal)];
+    }
+
+    private static string RunScript(string body, string scanResult)
+    {
+        string lua = $$"""
+            UE5_DEBUG = 0
+            SYMS, SHOWN, SCANNED = {}, nil, nil
+            function AOBScanModuleUnique(m, aob, flags) SCANNED = m .. '|' .. aob .. '|' .. tostring(flags) return {{scanResult}} end
+            function readInteger(a, signed) if a == 0x1000 + 3 and signed then return 0x200 end return nil end   -- disp32 at pos 3
+            function registerSymbol(n, a) SYMS[n] = a end
+            function unregisterSymbol(n) SYMS[n] = nil end
+            function showMessage(m) SHOWN = m end
+            function synchronize(f) f() end
+            function getLuaEngine() return { Close = function() end } end
+            local chunk = assert(load('local syntaxcheck,memrec=...\n' .. [==[
+            {{body}}
+            ]==]))
+            local ok, err = pcall(chunk, false, { ID = 3 })
+            print('OK=' .. tostring(ok) .. '|' .. tostring(err))
+            print('SCANNED=' .. tostring(SCANNED))
+            print('SYM=' .. (SYMS.gobjects_addr and string.format('0x%X', SYMS.gobjects_addr) or 'nil'))
+            print('SHOWN=' .. tostring(SHOWN))
+            """;
+        var (exit, output) = CeLua53Host.Run(lua);
+        Assert.True(exit == 0, output);
+        return output.Replace("\r\n", "\n");
+    }
+
+    private static string AdjustedScript()
+        => Services.AdjustedSymbolScriptGenerator.Generate("gobjects_addr", "Game.exe", "48 8B 05 ?? ?? ?? ??", 3, 7, -0x10);
+
+    [Fact]
+    public void The_adjusted_script_registers_the_RIP_target_plus_the_adjustment()
+    {
+        var output = RunScript(EnableOf(AdjustedScript()), "0x1000");
+
+        Assert.Contains("OK=true|nil", output);
+        Assert.Contains("SCANNED=Game.exe|48 8B 05 ?? ?? ?? ??|+X", output);
+        // hit 0x1000 + instruction end 7 + disp 0x200 = 0x1207, the RIP target; -0x10 makes it 0x11F7
+        Assert.Contains("SYM=0x11F7", output);
+        Assert.Contains("SHOWN=nil", output);
+    }
+
+    [Fact]
+    public void A_scan_that_finds_nothing_raises_registers_nothing_and_shows_no_modal()
+    {
+        // Enabled THROUGH the plugin: a showMessage would hold its pipe ([AOBM-TRAINER-SETUP-MODAL]); the raise makes
+        // CE refuse the activation, and the plugin reports the reason.
+        var output = RunScript(EnableOf(AdjustedScript()), "nil");
+
+        Assert.Contains("OK=false|", output);
+        Assert.Contains("gobjects_addr", output);
+        Assert.Contains("SYM=nil", output);
+        Assert.Contains("SHOWN=nil", output);
+    }
+
+    [Fact]
+    public void Disabling_unregisters_the_symbol()
+    {
+        var script = AdjustedScript();
+        Assert.StartsWith("if syntaxcheck then return end", EnableOf(script));
+        Assert.StartsWith("if syntaxcheck then return end", DisableOf(script));
+        Assert.Contains("unregisterSymbol('gobjects_addr')", DisableOf(script));
+        Assert.Contains(Services.CeLuaHygiene.Attribution, script);
     }
 }

@@ -809,11 +809,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         IsEditing = false;
     }
 
+    /// <summary>[AOBM-EXPORT-SYM-REST] CE's name for the export GWorld was found through, or "" (an AOB, or no game).
+    /// The AOB option's anchor when there is no AOB: the three exports root at it instead of an absolute address.</summary>
+    private string GWorldExportSymbol => AobMakerActions.CeExportSymbol(_engineState?.GWorldExport ?? "");
+
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
         _activePeHash = state?.PeHash ?? "";
-        IsAobSymbolAvailable = !string.IsNullOrEmpty(state?.GWorldAob);
+        // [AOBM-EXPORT-SYM-REST] ...or an export CE resolves by name: the same restart-stable anchor for the option.
+        IsAobSymbolAvailable = !string.IsNullOrEmpty(state?.GWorldAob) || GWorldExportSymbol.Length > 0;
     }
 
     partial void OnIsAobSymbolAvailableChanged(bool value)
@@ -4649,6 +4654,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // so we fall back to direct-address mode to avoid generating a wrong base.
             var isGWorldRoot = rootBc.FieldName == "GWorld";
             var useAob = UseAobSymbol && isGWorldRoot && !string.IsNullOrEmpty(_engineState?.GWorldAob);
+            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead,
+            // DEREFERENCED. The address root is the UWorld object (the GWorld crumb's Address); the export names the
+            // slot holding it, so [GWorld] is the same object -- a root at GWorld reads every child one level short.
+            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob && GWorldExportSymbol.Length > 0
+                ? $"[{GWorldExportSymbol}]" : "";
             if (UseAobSymbol && !isGWorldRoot)
                 _log.Info("CEXML: AOB requested but root is not GWorld — falling back to direct address");
 
@@ -4680,7 +4690,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                var rootAddress = AddressHelper.FormatAddress(
+                var rootAddress = exportRoot.Length > 0 ? exportRoot : AddressHelper.FormatAddress(
                     rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
@@ -4769,6 +4779,82 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     [RelayCommand]
     private Task ExportCsx77Async() => ExportCsxCoreAsync(CsxFormat.Ce77Plus);
 
+    /// <summary>
+    /// [AOBM-DISSECT-INJECT] The CSX half: build the structure Export CSX would write straight in CE's Structure
+    /// Dissect -- the CE 7.7+ form (the script falls back to a bit's byte on an older CE itself), translated to CE Lua
+    /// by <see cref="CsxStructurePushGenerator"/> and pushed through the CE plugin, enabled at once so its answer
+    /// says whether CE built it.
+    /// </summary>
+    [RelayCommand]
+    private async Task PushCsxToCeAsync()
+    {
+        if (string.IsNullOrEmpty(CurrentAddress) || !HasData) return;
+        if (IsExporting) return;   // an export is already running -- its Cancel button is showing
+        if (RefuseWhileGridBehindSpine("Push to CE Structure Dissect")) return;   // [A4-NAV-BACKFIRST-GRAFT]
+        if (_aobMaker == null || !_aobMaker.IsAvailable)
+        {
+            StatusText = AobMakerUnavailable.Text(_aobMaker);
+            return;
+        }
+        var cts = _exportCts = new CancellationTokenSource();
+        try
+        {
+            ClearStatus();
+            IsLoading = true;
+            IsExporting = true;
+            var csx = await CsxExportService.GenerateCsxAsync(
+                _dump, CsxStructName(), Fields, arrayLimit: ArrayLimit, drilldownDepth: CsxDrilldownDepth,
+                format: CsxFormat.Ce77Plus, ceStringLength: CeStringLength, ct: cts.Token);
+            var push = CsxStructurePushGenerator.Generate(csx);
+            var result = await _aobMaker.CreateAAScriptDetailedAsync(
+                CsxStructurePushGenerator.RecordPrefix + push.RootName, push.Script, autoActivate: true,
+                group: CeInjectScriptGenerator.RecordGroup);
+            ApplyAobMakerProbe(_aobMaker.IsAvailable);
+            var (text, isError) = AobMakerActions.StructPushText(result, push);
+            if (isError)
+            {
+                SetError(text);
+            }
+            else
+            {
+                // The same truncation note Export CSX gives: a container clipped by the Array Limit is part-built.
+                var limitWarn = BuildContainerLimitWarning(Fields, ArrayLimit);
+                StatusText = limitWarn != null ? string.Join(' ', text, limitWarn) : text;
+            }
+            _log.Info($"[AOBM-DISSECT-INJECT] structure push '{push.RootName}' ({push.Structures} structures, " +
+                      $"{push.Elements} elements, {push.Script.Length} chars): created={result.Created}, " +
+                      $"activated={result.Activated?.ToString() ?? "unknown"}, timedOut={result.TimedOut}" +
+                      (result.Message != null ? $" ({result.Message})" : ""));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            StatusText = "";
+            _log.Info("[AOBM-DISSECT-INJECT] structure push cancelled by user");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            _log.Error("[AOBM-DISSECT-INJECT] structure push failed", ex);
+        }
+        finally
+        {
+            IsLoading = false;
+            IsExporting = false;
+            if (ReferenceEquals(_exportCts, cts)) _exportCts = null;
+            cts.Dispose();
+        }
+    }
+
+    /// <summary>The structure name Export CSX and the push share: "Class_Object", or the class alone, made safe
+    /// for a file name and an XML attribute.</summary>
+    private string CsxStructName()
+    {
+        var structName = !string.IsNullOrEmpty(CurrentObjectName)
+            ? $"{CurrentClassName}_{CurrentObjectName}".Replace(" ", "_")
+            : CurrentClassName.Replace(" ", "_");
+        return structName.Replace("<", "").Replace(">", "").Replace("\"", "");
+    }
+
     private async Task ExportCsxCoreAsync(CsxFormat format)
     {
         if (string.IsNullOrEmpty(CurrentAddress) || !HasData) return;
@@ -4782,12 +4868,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             ClearStatus();
 
-            // Build struct name: "ClassName_ObjectName" or "ClassName"
-            var structName = !string.IsNullOrEmpty(CurrentObjectName)
-                ? $"{CurrentClassName}_{CurrentObjectName}".Replace(" ", "_")
-                : CurrentClassName.Replace(" ", "_");
-            // Sanitize for file name and XML attribute
-            structName = structName.Replace("<", "").Replace(">", "").Replace("\"", "");
+            // "ClassName_ObjectName" or "ClassName", the name the structure push uses too
+            var structName = CsxStructName();
             // Sanitize for file system: remove invalid chars
             var safeFileName = string.Join("_",
                 structName.Split(Path.GetInvalidFileNameChars(), StringSplitOptions.RemoveEmptyEntries));
@@ -5006,6 +5088,11 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Same GWorld-root guard as ExportCeXmlAsync
             var isGWorldRoot = rootBc.FieldName == "GWorld";
             var useAob = UseAobSymbol && isGWorldRoot && !string.IsNullOrEmpty(_engineState?.GWorldAob);
+            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead,
+            // DEREFERENCED. The address root is the UWorld object (the GWorld crumb's Address); the export names the
+            // slot holding it, so [GWorld] is the same object -- a root at GWorld reads every child one level short.
+            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob && GWorldExportSymbol.Length > 0
+                ? $"[{GWorldExportSymbol}]" : "";
             if (UseAobSymbol && !isGWorldRoot)
                 _log.Info("CEFieldXML: AOB requested but root is not GWorld — falling back to direct address");
 
@@ -5039,7 +5126,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                var rootAddress = AddressHelper.FormatAddress(
+                var rootAddress = exportRoot.Length > 0 ? exportRoot : AddressHelper.FormatAddress(
                     rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
@@ -5144,7 +5231,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         try
         {
             ClearStatus();
-            int ok = 0, fail = 0, skipped = 0;
+            int ok = 0, fail = 0, skipped = 0, degraded = 0;
             foreach (var field in selected)
             {
                 // Fields without a resolved address (e.g. container/struct headers) can't
@@ -5154,10 +5241,12 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 var t = CeXmlExportService.MapFieldToCeRecordType(field);
                 // [A4-PUSHCE-UNPADDED] PayloadAddress, as the per-row +CE and HEX already do: on a checked build a
                 // delegate's bytes start past an 8-byte access detector that reads 0. See LiveFieldValue.PayloadAddress.
-                var added = await _aobMaker.CreateMemoryRecordAsync(
-                    Services.PackedLayoutNotice.RecordNamePrefix + field.Name,
-                    StripHexPrefix(field.PayloadAddress), t.ValueType, t.IsSigned, t.ShowAsHex);
-                if (added)
+                // [AOBM-PLUSCE-FIDELITY] The shared push: a bit-field bool or an FString goes through the record tree.
+                var push = await AobMakerActions.PushRecordAsync(_aobMaker,
+                    Services.PackedLayoutNotice.RecordNamePrefix + field.Name, field.PayloadAddress, t,
+                    CeStringLength, _log);
+                if (push.Degraded) degraded++;
+                if (push.Added)
                 {
                     ok++;
                 }
@@ -5178,7 +5267,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             else
             {
                 var extra = (fail > 0 ? $", {fail} failed" : "") + (skipped > 0 ? $", {skipped} skipped" : "");
-                StatusText = $"Added to CE: {ok} record(s){extra}";
+                var fallback = AobMakerActions.DegradedCountText(degraded);
+                StatusText = $"Added to CE: {ok} record(s){extra}" + (fallback.Length > 0 ? " — " + fallback : "");
             }
             _log.Info($"CE Field push: {ok} added, {fail} failed, {skipped} skipped (of {selected.Count} selected)");
         }
@@ -5267,7 +5357,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Build the "Copy CE AA Script" output. When the live path is rooted at
     /// GWorld and forward-walkable, emit a RESTART-STABLE script that walks
     /// GWorld → … → this object at enable time — AOB-anchored when GWorld itself
-    /// came from an AOB scan (UseAobSymbol + a known GWorld AOB), otherwise a
+    /// came from an AOB scan (UseAobSymbol + a known GWorld AOB), export-anchored when
+    /// the game exports GWorld (UseAobSymbol + no AOB, [AOBM-EXPORT-SYM-REST]), otherwise a
     /// hardcoded GWorld base the user updates after a restart. Any other path
     /// keeps the legacy hardcoded absolute address (dies on ASLR, but is all we
     /// can do off a non-GWorld root). Returns the XML + a one-line status note.
@@ -5292,6 +5383,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Respect the AOB checkbox (same condition as Copy CE Field's useAob):
             // unchecked → hardcoded GWorld base even when an AOB is available.
             var useAob = UseAobSymbol && !string.IsNullOrEmpty(_engineState?.GWorldAob);
+            if (!useAob && UseAobSymbol && GWorldExportSymbol.Length > 0)
+            {
+                return (CeXmlExportService.GenerateGWorldWalkedSymbolXml(
+                            symbolName, spine, useAob: false, aob: "", aobPos: 0, aobLen: 0,
+                            gworldSlotAddr: "", gworldExport: GWorldExportSymbol),
+                        "GWorld export walk (restart-stable)");
+            }
             if (useAob)
             {
                 return (CeXmlExportService.GenerateGWorldWalkedSymbolXml(
@@ -5930,12 +6028,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var ok = await _aobMaker!.CreateMemoryRecordAsync(
-                Services.PackedLayoutNotice.RecordNamePrefix + name,
-                StripHexPrefix(address), t.ValueType, t.IsSigned, t.ShowAsHex);
-            ApplyAobMakerProbe(_aobMaker.IsAvailable);
+            // [AOBM-PLUSCE-FIDELITY] The shared push: a bit-field bool or an FString goes through the record tree.
+            var push = await AobMakerActions.PushRecordAsync(_aobMaker!,
+                Services.PackedLayoutNotice.RecordNamePrefix + name, address, t, CeStringLength, _log);
+            var ok = push.Added;
+            ApplyAobMakerProbe(_aobMaker!.IsAvailable);
             StatusText = ok
-                ? $"Added to CE: {name}"
+                ? $"Added to CE: {name}" + AobMakerActions.DegradedSuffix(push)
                 : (_aobMaker.IsAvailable
                     ? $"CE rejected record for {name}"
                     : AobMakerUnavailable.Text(_aobMaker));   // [W1-PIPEBUSY-STATUS]

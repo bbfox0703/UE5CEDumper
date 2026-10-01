@@ -31,6 +31,10 @@
             <ResourceDictionary.MergedDictionaries>
                 <ResourceInclude Source="/Resources/Strings/en.axaml"/>
             </ResourceDictionary.MergedDictionaries>
+            <!-- [AOBM-UI-FUNC-VISUAL] The AOBMaker app's colour. The toolbar's "UI" label and the controls that call
+                 AOBMaker.UI share it, so a user can tell them from the ones that need only the CE plugin. Pink because
+                 no other colour in the app means anything by it. -->
+            <SolidColorBrush x:Key="AobMakerUiAccent" Color="#F78FB3"/>
         </ResourceDictionary>
     </Application.Resources>
 

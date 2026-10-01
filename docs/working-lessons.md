@@ -2705,6 +2705,18 @@ satisfies it against a locally rebuilt 3263 dist. The two checks disagree by des
 A size-or-build-number comparison, or the embedded `1.0.0.NNNN` string, would be the honest
 predicate here; SHA-256 answers a question nobody asked.
 
+### 3.xb Check the AOT size after adding a framework API: one XDocument cost 3.3 MB
+
+`[AOBM-DISSECT-INJECT]` read a CSX string with `XDocument` -- the UI's first XML parser -- and the trimmed
+`UE5DumpUI.exe` went from 59,076,608 B (build 3611) to 62,412,800 B (build 3612): System.Private.Xml(.Linq)
+came along for one parse of our own output. A 70-line reader for exactly the subset our writer emits brought it
+back to 59,153,408 B (build 3613), with the same tests passing before and after.
+
+**How to apply.** `-Mode Publish` prints the exe size; compare it with the last dev-log entry every time. A jump
+of megabytes after a small change means a new framework area was pulled in (XML, Regex source-less, Reflection.
+Emit paths, LINQ Expressions). Prefer what the binary already carries; when the input is our own machine output,
+a purpose-built reader that refuses anything else is usually smaller and stricter than the general parser.
+
 ### 3.xa A publish with a game still injected fails at the LAST step — after it spent a build number
 
 2026-09-29: `build.ps1 -Mode Publish` ran while DumperTest still had `dist\UE5Dumper.dll` loaded (`inject.py` loads the
@@ -3188,6 +3200,20 @@ yourself before ticking ours, or re-check while ours is on, is left to you. So w
 is itself a finding. ⚠ A callback id is not a slot number you can reason about: in 7.7,
 `registerStructureNameLookup(fn, true)` returned **2** while slot 0 was free, which our local CE clone
 (older than 7.7) cannot explain.
+
+### 4.6 Cheat Engine's paste has no size limit -- ours had one, and it read like CE's
+
+Copy CE XML stopped at 60,000 entries, and by 2026-10-01 the belief was that CE limits the XML it accepts. It does
+not: `TMainForm.paste` reads the whole clipboard, `TAddresslist.AddTableXMLAsText` parses it with no size check,
+and `TMemoryRecord.setXMLnode` recurses with no counter -- no cap on size, entries, depth, offsets or a
+DropDownList in the 7.5 source, and the same files are byte-identical in the public upstream master (7.5.1; the
+7.6/7.7 source is not published). Measured on CE 7.7.0.10621 (`[CEXML-CAP-60K]`): 98,890 entries, 30 MB, pasted
+whole in under 229 s, CE at ~1.7 GB. The 60,000 was our own out-of-memory backstop.
+
+**How to apply.** Before calling a limit CE's, find it in CE's code. What CE's paste does have is **cost**, since
+every pasted ID is checked against the whole list, and **silence**: any exception, a malformed document or one
+non-numeric `<ID>` / `<Length>`, is swallowed (`don't complain`) and leaves whatever was pasted before it.
+Size a guard on what the generator's memory can hold, and say in the message that the guard is ours.
 
 -----
 

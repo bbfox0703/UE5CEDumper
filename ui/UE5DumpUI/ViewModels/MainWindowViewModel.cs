@@ -254,11 +254,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public int FabricateArrayCount => FabricateArrayCountExponent <= 0 ? 0 : (1 << FabricateArrayCountExponent);
 
     /// <summary>Toolbar readout for the fabricate slider — "Off" at 0, the count otherwise,
-    /// plus a warning past 256 (large exports slow Cheat Engine and can hit the entry cap).</summary>
+    /// plus a warning past 256 (large exports slow Cheat Engine's paste down).</summary>
     public string FabricateArrayCountLabel => FabricateArrayCount switch
     {
         0 => "Off",
-        > 256 => $"{FabricateArrayCount} ⚠ large — CE may lag / truncate",
+        > 256 => $"{FabricateArrayCount} ⚠ large — CE may lag",
         _ => FabricateArrayCount.ToString(),
     };
 

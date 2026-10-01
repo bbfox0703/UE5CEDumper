@@ -27,6 +27,112 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3614) — GObjects symbol in Cheat Engine for games like Avowed `[AOBM-GWORLD-GENAOB]`
+
+- The System tab's GObjects / GNames SYM button now works on games whose signature points a little beside the
+  real address (Avowed's GObjects is one). It used to refuse there; it now registers the right address in
+  Cheat Engine with a script that finds it again every time it is ticked, so it survives a game restart.
+- Checked live on Avowed with Cheat Engine 7.7 and AOBMaker.UI: `gobjects_addr` landed exactly on the dumper's
+  GObjects, and re-ticking the record found it again.
+- Build 3614: AOT `dist\UE5DumpUI.exe` 59,163,136 B, sha256 `1053af5b20cd`; `dist\UE5Dumper.dll` `87dc24552e2f`.
+  C# 6021/6021, 29 gates.
+
+## 2026-10-01 (build 3613) — Push a Live Walker structure straight into CE's Structure Dissect `[AOBM-DISSECT-INJECT]`
+
+- Live Walker's Export CSX menu has a new item, "Push to CE Structure Dissect". Instead of saving a .CSX file and
+  importing it in Cheat Engine by hand, it builds the same structure (with its nested child structures, bit
+  fields and strings) straight in Cheat Engine, through the AOBMaker CE plugin. Pushing again replaces it, and the
+  record it adds can be ticked to rebuild it. On Cheat Engine before 7.7 a bit field is shown as its byte.
+- Checked live on DumperTest with Cheat Engine 7.7: a 366-structure, 3,959-element structure arrived exactly as
+  exported.
+- Build 3613: AOT `dist\UE5DumpUI.exe` 59,153,408 B, sha256 `a37a918570cb`; `dist\UE5Dumper.dll` `f52edf4944c8`.
+  C# 6012/6012, 29 gates.
+
+## 2026-10-01 (build 3612) — first cut of the above, superseded by 3613 `[AOBM-DISSECT-INJECT]`
+
+- Build 3612 read the CSX with .NET's XDocument, which added 3.3 MB to the program (62,412,800 B). 3613 reads it
+  with a small reader of its own and is back to the usual size. 3612 was never handed over.
+- Build 3612: AOT `dist\UE5DumpUI.exe` 62,412,800 B, sha256 `111ef389be0e`; `dist\UE5Dumper.dll` `660a6cb27bde`.
+
+## 2026-10-01 (build 3611) — Exports anchor GObjects' SYM and Live Walker's "AOB" option too `[AOBM-EXPORT-SYM-REST]`
+
+- On games where UE5CEDumper finds its pointers through the game's exports (Satisfactory and other modular builds):
+  - the System tab's SYM for GObjects now works without the AOBMaker app, from the game's `GUObjectArray` export,
+    and its button only shows the pink "UI" mark when it really needs the app;
+  - Live Walker's "AOB" export option is no longer greyed out: Copy CE XML and Copy CE Field root the table at
+    the exported GWorld, and Copy CE AA Script walks from it, so the tables survive game restarts and patches.
+- A symbol made from an export now says so (it is re-resolved by name, not re-scanned).
+- Checked live on Satisfactory with Cheat Engine 7.7: the pasted table and the walked symbol land on the same
+  objects Live Walker shows.
+- Build 3611: AOT `dist\UE5DumpUI.exe` 59,076,608 B, sha256 `1c21858d1755`; `dist\UE5Dumper.dll` `d734e54ec3c5`.
+  C# 6001/6001, 29 gates.
+
+## 2026-10-01 (build 3610) — first cut of the above, superseded by 3611 `[AOBM-EXPORT-SYM-REST]`
+
+- Build 3610 rooted an export-anchored Copy CE XML / Copy CE Field at the GWorld slot instead of the UWorld it
+  holds, so the table read one level off; found by its live check and fixed in 3611 before any hand-over.
+- Build 3610: AOT `dist\UE5DumpUI.exe` 59,076,608 B, sha256 `7ae5645dc4a1`; `dist\UE5Dumper.dll` `56af9ebd46e8`.
+
+## 2026-10-01 (build 3609) — SYM for GWorld and &GEngine on games that export them `[AOBM-EXPORT-GWORLD-AOB]`
+
+- On games where UE5CEDumper finds GWorld and &GEngine through the game's exports (Satisfactory and other modular
+  builds), the System tab's SYM buttons for them were disabled, because there is no AOB to scan for. They now
+  register `gworld_addr` / `gengine_addr` from the export itself, which Cheat Engine resolves by name every time,
+  so the symbol survives game restarts and patches.
+- Checked live on Satisfactory with Cheat Engine 7.7: both symbols land exactly on the addresses the DLL found.
+- Build 3609: AOT `dist\UE5DumpUI.exe` 59,069,440 B, sha256 `7535a70e9339`; `dist\UE5Dumper.dll` `92071b3a04cd`.
+  C# 5993/5993, 29 gates.
+
+## 2026-10-01 (build 3608) — +CE adds bit-field bools and strings as they are `[AOBM-PLUSCE-FIDELITY]`
+
+- +CE (Live Walker, its "+CE Field (flat)" batch, Instance Finder, and the Value Search / Snapshot / SPC rows) now
+  adds a bit-field bool as a Binary record at its own bit, and an FString as a real String record (it follows the
+  string's pointer and uses the String Len setting). Before, a bool arrived as its whole byte (96 instead of 1)
+  and an FString as an 8-byte pointer. This needs the AOBMaker plugin from v20260930 or later for bits; with an
+  older plugin the record arrives the old way and the status line says why.
+- Enums and FNames are still added as numbers.
+- Checked live on DumperTest with Cheat Engine 7.7 and AOBMaker v20260930: two bit-field bools and two Japanese /
+  Chinese FStrings came out right.
+- Build 3608: AOT `dist\UE5DumpUI.exe` 59,054,592 B, sha256 `0209b0cf739c`; `dist\UE5Dumper.dll` `0acf0977af57`.
+  C# 5978/5978, 29 gates.
+
+## 2026-10-01 (build 3607) — Copy CE XML no longer stops at 60,000 entries `[CEXML-CAP-60K]`
+
+- Copy CE XML, Copy CE Field and Instance Finder's Copy CE XML stopped at 60,000 entries, and real tables go past
+  that: a big TMap or TArray is enough. Cheat Engine itself has no such limit. The only stop now is a guard against
+  a runaway export running the app out of memory, at 256 million characters of XML (800,000 entries or more).
+- Checked live on DumperTest: a 98,890-entry export (30 MB) is copied whole, and Cheat Engine 7.7 pasted all of it
+  in under four minutes.
+- The Fabricate slider no longer warns that a large value can truncate the export.
+- Build 3607: AOT `dist\UE5DumpUI.exe` 58,923,008 B, sha256 `d41d5ffcf63e`; `dist\UE5Dumper.dll` `fa379822dd55`.
+  C# 5955/5955, 29 gates.
+
+## 2026-09-30 (build 3606) — SYM says whether Cheat Engine actually enabled the symbol `[AOBM-ACTIVATE-RESULT]`
+
+- SYM on GWorld, &GEngine, GObjects and GNames used to say "Registered" whenever the record was created, even when
+  Cheat Engine could not enable it (for example when its AOB scan found nothing). With AOBMaker v20260930 or later
+  it now says so in red, with Cheat Engine's own reason, and also when the script is on but the symbol is not usable.
+- With an older AOBMaker plugin, which does not report this, the message says it cannot tell and asks you to check
+  that the record is ticked.
+- If the plugin does not answer in time, SYM no longer says it failed: the script may still have been added, so
+  check Cheat Engine's address list before pressing SYM again.
+- Checked live on DumperTest with Cheat Engine 7.7 and AOBMaker v20260930 (2026-09-30).
+- Build 3606: AOT `dist\UE5DumpUI.exe` 58,920,960 B, sha256 `6a2e9d35df4e`; `dist\UE5Dumper.dll` `683008c80e10`.
+  C# 5953/5953, headless 15/15, dll_core 593 checks.
+
+## 2026-09-30 (build 3605) — buttons that need the AOBMaker app look different from those that need only its Cheat Engine plugin `[AOBM-UI-FUNC-VISUAL]`
+
+- The AOBMaker app (AOBMaker.UI) has a colour of its own: the toolbar's "UI" label, and the buttons that need the
+  app, are pink. Today those are SYM on GObjects and GNames in the System tab; every other AOBMaker button needs only
+  the Cheat Engine plugin and looks as before.
+- Those buttons carry a small "UI" tag that turns grey with the toolbar's UI dot, so a SYM that will fail because
+  the AOBMaker app is closed says so before you press it.
+- Docs follow AOBMaker release v20260930 (build 157), which fixes most of what UE5CEDumper asked for; the rows it
+  unblocks are ready to be picked up one by one.
+- Checked live on DumperTest with Cheat Engine 7.7 and AOBMaker v20260930 (2026-09-30).
+- Build 3605: AOT `dist\UE5DumpUI.exe` 58,896,896 B, sha256 `490e3965a076`; `dist\UE5Dumper.dll` `547fb83acf2a`.
+  C# 5943/5943, headless 15/15, dll_core 593 checks.
+
 ## 2026-09-30 (build 3604) — Auto Structure Dissect works beside Cheat Engine 7.7's own Unreal Engine dissector `[AOBM-DISSECT-UETOOLS]`
 
 - Cheat Engine 7.7 has its own Unreal Engine dissector (Unreal Engine → Use when dissecting structures), and it

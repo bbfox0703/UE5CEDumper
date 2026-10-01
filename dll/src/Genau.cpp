@@ -5104,6 +5104,14 @@ static bool ValidateGEngineSlot(uintptr_t slotAddr) {
 // Replaying is cheap (one SEH-guarded 4-byte read of memory we just scanned) and it fails
 // CLOSED: if the read fails, ResolveRIP returns 0, 0 never equals a validated address, and
 // the triple is withheld — the same outcome as a symbol-export winner.
+// [AOBM-GWORLD-GENAOB] The `adjustment` a CE symbol script must add after decoding the winner's RIP target -- 0
+// for any signature that is not RIP-decoded (exports, call-follow), where the field means nothing.
+static int SignatureAdjustment(const ScanReport& rep) {
+    const AobSignature* s = rep.winningSig;
+    if (!s || !rep.finalAddress) return 0;
+    return (s->resolve == AobResolve::RipDirect || s->resolve == AobResolve::RipBoth) ? s->adjustment : 0;
+}
+
 static bool CeReplayMatchesResolved(const ScanReport& rep) {
     const AobSignature* s = rep.winningSig;
     if (!s || !rep.finalAddress || !rep.scanAddr) return false;
@@ -5123,6 +5131,10 @@ static void PublishGEngineMetadata(EnginePointers& out) {
     out.gengineAob    = nullptr;
     out.gengineAobPos = 0;
     out.gengineAobLen = 0;
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner has no triple, but its export name is a symbol CE can use.
+    out.gengineExport = (s_gengineReport.winningSig &&
+                         s_gengineReport.winningSig->resolve == AobResolve::SymbolExport)
+                        ? s_gengineReport.winningSig->pattern : nullptr;
     // Same replayability gate as the GWorld triple above — a symbol/call-follow winner
     // is a perfectly good way for US to find &GEngine, and a useless thing to hand CE.
     if (auto* es = s_gengineReport.winningSig; es && CeReplayMatchesResolved(s_gengineReport)) {
@@ -5516,6 +5528,12 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     out.gnamesScanAddr           = s_gnamesReport.scanAddr;
     out.gworldScanAddr           = s_gworldReport.scanAddr;
     out.sparseDelegatesScanAddr  = s_sparseReport.scanAddr;
+    // [AOBM-EXPORT-SYM-REST] A symbol-export GObjects winner: its export is the CE symbol GenerateAob cannot make.
+    out.gobjectsAdjustment = SignatureAdjustment(s_gobjectsReport);   // [AOBM-GWORLD-GENAOB]
+    out.gnamesAdjustment   = SignatureAdjustment(s_gnamesReport);
+    out.gobjectsExport = (s_gobjectsReport.winningSig &&
+                          s_gobjectsReport.winningSig->resolve == AobResolve::SymbolExport)
+                         ? s_gobjectsReport.winningSig->pattern : nullptr;
 
     // (MA1) Aggregate the cancel verdict in ONE place, in the same block that already reads
     // all four reports, rather than at the four call sites — C++ has no `required`, and a
@@ -5549,6 +5567,11 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
                  s_gworldReport.winningId,
                  static_cast<unsigned long long>(s_gworldReport.finalAddress));
     }
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner (Satisfactory's ?GWorld@@3VUWorldProxy@@A) gets no triple
+    // above, but its export name is itself a restart-stable CE symbol, so publish that instead.
+    out.gworldExport = (s_gworldReport.winningSig &&
+                        s_gworldReport.winningSig->resolve == AobResolve::SymbolExport)
+                       ? s_gworldReport.winningSig->pattern : nullptr;
     // Same triple for GEngine, so a GameEngine-rooted CE export can be AOB-wrapped
     // exactly like a GWorld-rooted one instead of baking in a stale UEngine* snapshot.
     // Shared with ResolveGEngineDeferred — GEngine is normally resolved THERE, not here,

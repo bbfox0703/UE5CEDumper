@@ -209,6 +209,19 @@ public sealed class EngineState
     public int GWorldAobPos { get; init; }
     /// <summary>Instruction end relative to AOB match (instrOffset + totalLen, for RIP calculation).</summary>
     public int GWorldAobLen { get; init; }
+    /// <summary>[AOBM-EXPORT-GWORLD-AOB] The export GWorld was found through, as an MSVC name
+    /// ("?GWorld@@3VUWorldProxy@@A" on Satisfactory), or "". Such a winner has no AOB triple, but Cheat Engine
+    /// resolves the export under its undecorated name, which is as restart-stable as an AOB.</summary>
+    public string GWorldExport { get; init; } = "";
+    /// <summary>[AOBM-EXPORT-SYM-REST] As <see cref="GWorldExport"/>, for GObjects
+    /// ("?GUObjectArray@@3VFUObjectArray@@A" on Satisfactory).</summary>
+    public string GObjectsExport { get; init; } = "";
+    /// <summary>[AOBM-GWORLD-GENAOB] The winning GObjects signature's <c>adjustment</c> (Himmel), 0 when it has none or
+    /// the DLL predates the field: the DLL's GObjects is the RIP target PLUS this, when the adjusted address is the one
+    /// that validated (GOBJ_AV1 on Avowed: -0x10).</summary>
+    public int GObjectsAdjustment { get; init; }
+    /// <summary>[AOBM-GWORLD-GENAOB] As <see cref="GObjectsAdjustment"/>, for GNames (GNAM_IWB_1: -8).</summary>
+    public int GNamesAdjustment { get; init; }
 
     // --- GEngine (&GEngine — the static slot, not the UEngine object) ---
     // Same contract as the GWorld triple above. A non-empty GEngineAob means a
@@ -223,6 +236,8 @@ public sealed class EngineState
     public string GEngineAob { get; init; } = "";
     public int GEngineAobPos { get; init; }
     public int GEngineAobLen { get; init; }
+    /// <summary>[AOBM-EXPORT-GWORLD-AOB] As <see cref="GWorldExport"/>, for &amp;GEngine.</summary>
+    public string GEngineExport { get; init; } = "";
 
     /// <summary>
     /// Effective GameThreadDispatch invoke timeout in ms (default 5000 = Stark::kDefaultInvokeTimeoutMs).
