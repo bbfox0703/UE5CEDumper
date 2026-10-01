@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — folder-only rules moved out of the root `CLAUDE.md`
+
+- `CLAUDE.md` is read at the start of every session. Nine of its rules apply to one folder only, so they
+  moved beside that folder and are read when work happens there: seven to the new `ui/CLAUDE.md` (single
+  instance, async, platform abstraction, app-data layout, UI strings, keyword search boxes, AOT) and two to
+  the new `dll/CLAUDE.md` (UE offsets, Frieren module naming). The wording of each rule is unchanged.
+- The root file keeps one "Folder rules" line pointing at both, and lost two blocks of standard commands
+  (plain `cmake` / `dotnet`, and `git submodule update`). It went from 21,918 to 18,700 characters.
+- Rules that span folders (CE Lua output, the contract version, logging, code comments) stay in the root.
+
 ## 2026-10-01 (build 3615) — the build makes the Cheat Engine Lua test host itself
 
 - Some tests run the scripts this program generates on Cheat Engine's own Lua engine. They need a small
