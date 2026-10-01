@@ -27,6 +27,48 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — corrections to the entries for builds 3599–3614
+
+The entries below stay as written (this log is append-only). Reading the v3598…3615 code against them found
+nothing they describe that the program does not do, but several say less than it does, or say it loosely.
+What they should have said:
+
+- **HEX reaches further than the 3599 entry lists.** Instance Finder has HEX on each instance row and each
+  container-lookup row, as well as HEX and +CE on its fields. Value Search has both buttons on its group slots
+  too; a slot with no address of its own shows neither.
+- **Object Tree has no HEX button.** It is a right-click item, "Show in CE hex view (AOBMaker)". In the
+  function-properties dialog the button reads "Disassemble in CE", not ASM.
+- **ASM on a function also adds a record** named `<function> (code)` to the Cheat Engine table. A
+  Blueprint-only function has no native code and the status line says so.
+- **System tab:** the &GEngine scan-hit row also got a Copy button beside ASM.
+- **Instance Finder's AA (3599)** arrives unticked. If Cheat Engine does not take it, it is copied to the
+  clipboard instead, and the status line says which happened; a plain copy used to say nothing.
+- **SYM for GObjects / GNames (3599, 3614):** the AOBMaker app must run at the same elevation as UE5DumpUI, or
+  it refuses the request. SYM still registers nothing when the result would not land on the address the DLL
+  found, and then says "Not pushed" with the reason.
+- **"CE is not on this game" (3600–3602)** is not checked on a timer; only the UI dot is. It is re-checked on
+  connect, by the refresh button beside the chip, when the plugin comes back and after a refused +CE. So
+  after you open the right game in Cheat Engine it stays until one of those.
+- **Builds 3609–3611 and 3614 need their own DLL in the game.** SYM from a game's exports, Live Walker's "AOB"
+  option on such games and SYM through an adjusted signature read five new fields of the DLL's reply. A proxy
+  DLL left from an older build does not send them, and those features then behave as before; the existing
+  "DLL outdated" warning is the only hint. Redeploy the proxy.
+- **Auto Structure Dissect (3599, 3604):**
+  - Tools → Add Auto Structure Dissect needs the AOBMaker Cheat Engine plugin, not the AOBMaker app, and the
+    record arrives unticked. Once the script and the record are in the table they need neither.
+  - The record is followed by a 2-second watch, so after Cheat Engine unticks or deletes it, ours can stay on
+    for about two seconds more.
+  - "Turning Cheat Engine's back on yourself while ours is ticked is respected" means only that the script
+    leaves it on. Both dissectors are then registered, and what Define new structure gives in that state was
+    not measured. The one measurement with both on (build 3602, Cheat Engine's registered first) got Cheat
+    Engine's answer and nothing of ours.
+  - A Cheat Engine with no Unreal Engine extension (7.6 and older) has nothing to suspend and nothing is
+    touched. That path has a unit test; it was not checked on a 7.6 install.
+- **Push to CE Structure Dissect (3613)** needs the AOBMaker Cheat Engine plugin. The record it adds is named
+  "UE5CEDumper: Structure `<name>`".
+- **Copy CE XML (3607):** two more texts changed with the limit. The Fabricate readout above 256 reads "CE may
+  lag", and Instance Finder's truncation warning names the 256 M-character guard.
+
 ## 2026-10-01 (no build change) — the bundled Quick Start no longer ties Structure Dissect to Cheat Engine injection
 
 - `README.html` in the release zip (its source is `scripts/DEPLOY_README.html`) said Structure Dissect and
