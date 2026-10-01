@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (build 3613) — Push a Live Walker structure straight into CE's Structure Dissect `[AOBM-DISSECT-INJECT]`
+
+- Live Walker's Export CSX menu has a new item, "Push to CE Structure Dissect". Instead of saving a .CSX file and
+  importing it in Cheat Engine by hand, it builds the same structure (with its nested child structures, bit
+  fields and strings) straight in Cheat Engine, through the AOBMaker CE plugin. Pushing again replaces it, and the
+  record it adds can be ticked to rebuild it. On Cheat Engine before 7.7 a bit field is shown as its byte.
+- Checked live on DumperTest with Cheat Engine 7.7: a 366-structure, 3,959-element structure arrived exactly as
+  exported.
+- Build 3613: AOT `dist\UE5DumpUI.exe` 59,153,408 B, sha256 `a37a918570cb`; `dist\UE5Dumper.dll` `f52edf4944c8`.
+  C# 6012/6012, 29 gates.
+
+## 2026-10-01 (build 3612) — first cut of the above, superseded by 3613 `[AOBM-DISSECT-INJECT]`
+
+- Build 3612 read the CSX with .NET's XDocument, which added 3.3 MB to the program (62,412,800 B). 3613 reads it
+  with a small reader of its own and is back to the usual size. 3612 was never handed over.
+- Build 3612: AOT `dist\UE5DumpUI.exe` 62,412,800 B, sha256 `111ef389be0e`; `dist\UE5Dumper.dll` `660a6cb27bde`.
+
 ## 2026-10-01 (build 3611) — Exports anchor GObjects' SYM and Live Walker's "AOB" option too `[AOBM-EXPORT-SYM-REST]`
 
 - On games where UE5CEDumper finds its pointers through the game's exports (Satisfactory and other modular builds):

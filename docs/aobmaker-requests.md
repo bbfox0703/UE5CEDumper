@@ -382,6 +382,8 @@ Everything was read from source; nothing was run. Where a claim is inferred, it 
     (`CsxExportService`) and push it as `{$lua}` through `CreateAAScript` with `autoActivate`. It inherits R4's gap.
     So the CSX half of `[AOBM-DISSECT-INJECT]` is now our own work.
   - If still needed later: a command that takes a validated JSON element list (P3).
+  - **Workaround shipped 2026-10-01** (build 3613, `[AOBM-DISSECT-INJECT]`): Live Walker's "Push to CE Structure
+    Dissect". No AOBMaker change is needed.
 
 ## R13 — An injection AA script from an address, over the UI pipe (P3, new command)
 

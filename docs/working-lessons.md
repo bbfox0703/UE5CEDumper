@@ -2705,6 +2705,18 @@ satisfies it against a locally rebuilt 3263 dist. The two checks disagree by des
 A size-or-build-number comparison, or the embedded `1.0.0.NNNN` string, would be the honest
 predicate here; SHA-256 answers a question nobody asked.
 
+### 3.xb Check the AOT size after adding a framework API: one XDocument cost 3.3 MB
+
+`[AOBM-DISSECT-INJECT]` read a CSX string with `XDocument` -- the UI's first XML parser -- and the trimmed
+`UE5DumpUI.exe` went from 59,076,608 B (build 3611) to 62,412,800 B (build 3612): System.Private.Xml(.Linq)
+came along for one parse of our own output. A 70-line reader for exactly the subset our writer emits brought it
+back to 59,153,408 B (build 3613), with the same tests passing before and after.
+
+**How to apply.** `-Mode Publish` prints the exe size; compare it with the last dev-log entry every time. A jump
+of megabytes after a small change means a new framework area was pulled in (XML, Regex source-less, Reflection.
+Emit paths, LINQ Expressions). Prefer what the binary already carries; when the input is our own machine output,
+a purpose-built reader that refuses anything else is usually smaller and stricter than the general parser.
+
 ### 3.xa A publish with a game still injected fails at the LAST step — after it spent a build number
 
 2026-09-29: `build.ps1 -Mode Publish` ran while DumperTest still had `dist\UE5Dumper.dll` loaded (`inject.py` loads the

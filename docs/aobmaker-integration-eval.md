@@ -457,6 +457,9 @@ Applies to the existing Live Walker `+CE` and `Push CE Field`, and to every A2 a
   and push it as `{$lua}` through `CreateAAScript`. It inherits B4's gap.
 - **README:** its AOBMaker paragraph claimed the plugin delivers "Structure Dissect data". That was corrected
   2026-09-29.
+- **Done 2026-10-01 (`[AOBM-DISSECT-INJECT]`, build 3613):** Live Walker → Export CSX → "Push to CE Structure
+  Dissect" builds the structure in CE through `CreateAAScript`; live on DumperTest, 366 structures / 3,959
+  elements, exactly what the CSX describes.
 
 ### C4 — Attach CE to the game's process
 - **Gap:** there is no `openProcess` equivalent. `GetAttachedProcess` only reads.
