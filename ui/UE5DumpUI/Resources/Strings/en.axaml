@@ -425,6 +425,7 @@
     <!-- Pointer Panel: "Register symbol" outcome (code-behind via Res.Format).
          Success goes to SymbolStatusText, failure to ErrorMessage — a bool that only
          chose a log LEVEL made the two states identical on screen (audit #5 V11). -->
+    <sys:String x:Key="str.Pointers.Symbol.RegisteredFromExport">Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Registered">Registered CE symbol '{0}' — it re-scans on enable, so it survives a game restart.</sys:String>
     <sys:String x:Key="str.Pointers.Symbol.Failed">Could not register CE symbol '{0}'. AOBMaker accepted the request but CE did not create the script — check that Cheat Engine is still open and attached to this game, then try again.</sys:String>
     <!-- [AOBM-ACTIVATE-RESULT] What SYM says once AOBMaker v20260930+ reports activation ({0} = the symbol, {1} = CE's reason). -->

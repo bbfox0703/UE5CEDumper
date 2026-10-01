@@ -532,6 +532,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>[AOBM-GNAMES-SYMBOL] GObjects has no AOB triple from the DLL; AOBMaker.UI makes one from the scan hit.</summary>
     public bool CanRegisterGObjectsSymbol => IsAobMakerAvailable && _aobMakerUi != null
         && IsNonZeroAddr(GObjectsAddress) && IsNonZeroAddr(GObjectsScanAddr);
+    /// <summary>[AOBM-EXPORT-SYM-REST] Does GObjects' SYM go through AOBMaker.UI? Not when GObjects came from an export:
+    /// the button's AOBMaker.UI mark binds to this.</summary>
+    public bool GObjectsSymbolUsesUi => true;
     /// <summary>[AOBM-GNAMES-SYMBOL] As <see cref="CanRegisterGObjectsSymbol"/>, for GNames.</summary>
     public bool CanRegisterGNamesSymbol => IsAobMakerAvailable && _aobMakerUi != null
         && IsNonZeroAddr(GNamesAddress) && IsNonZeroAddr(GNamesScanAddr);

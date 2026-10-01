@@ -1739,7 +1739,8 @@ public static class CeXmlExportService
         IReadOnlyList<BreadcrumbItem> breadcrumbs,
         bool useAob,
         string aob, int aobPos, int aobLen,
-        string gworldSlotAddr)
+        string gworldSlotAddr,
+        string gworldExport = "")
     {
         var cleanedBc = CleanBreadcrumbs(breadcrumbs);
         // Unique GWorld symbol per script so two enabled tables can't unregister

@@ -142,6 +142,15 @@ internal static class AobMakerActions
         return name;
     }
 
+    internal const string KeySymbolFromExport = "str.Pointers.Symbol.RegisteredFromExport";
+
+    /// <summary>[AOBM-EXPORT-SYM-REST] The success line for a symbol defined from an export: it does not re-scan
+    /// anything on enable, it re-resolves the export by name.</summary>
+    internal static string SymbolRegisteredFromExportText(string symbolName, string ceSymbol)
+        => AobMakerStatus.Say(KeySymbolFromExport,
+            "Registered CE symbol '{0}' from the game's export '{1}' — Cheat Engine resolves the export by name on enable, so it survives restarts and patches.",
+            symbolName, ceSymbol);
+
     internal const string KeyRecordAsByte = "str.AobMaker.Record.AsByte";
     internal const string KeyRecordAsPointer = "str.AobMaker.Record.AsPointer";
 

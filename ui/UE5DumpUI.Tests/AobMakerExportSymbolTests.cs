@@ -77,7 +77,9 @@ public class AobMakerExportSymbolTests
         Assert.Contains("registersymbol(gworld_addr)", aa.Script);
         Assert.Contains("unregistersymbol(gworld_addr)", aa.Script);
         Assert.True(aa.AutoActivate);
-        Assert.Equal("Registered CE symbol 'gworld_addr'.", vm.SymbolStatusText);
+        // [AOBM-EXPORT-SYM-REST] Not the AOB route's "re-scans on enable": this one re-resolves the export by name.
+        Assert.Equal(AobMakerActions.SymbolRegisteredFromExportText("gworld_addr", "GWorld"), vm.SymbolStatusText);
+        Assert.DoesNotContain("re-scan", vm.SymbolStatusText);
         Assert.Null(vm.ErrorMessage);
     }
 
@@ -91,7 +93,7 @@ public class AobMakerExportSymbolTests
         var aa = Assert.Single(bridge.AaScripts);
         Assert.Equal("&GEngine → gengine_addr", aa.Description);
         Assert.Contains("define(gengine_addr,GEngine)", aa.Script);
-        Assert.Equal("Registered CE symbol 'gengine_addr'.", vm.SymbolStatusText);
+        Assert.Equal(AobMakerActions.SymbolRegisteredFromExportText("gengine_addr", "GEngine"), vm.SymbolStatusText);
     }
 
     [Fact]
@@ -130,5 +132,37 @@ public class AobMakerExportSymbolTests
             GWorldAddr = "0x7FF8B739CB88", GWorldExport = "?Foo@Bar@@3HA", ModuleName = "Game.exe",
         });
         Assert.False(vm.CanRegisterGWorldSymbol);
+    }
+
+    // ---- [AOBM-EXPORT-SYM-REST] GObjects from its export ----
+
+    private static EngineState SatisfactoryGObjects => new()
+    {
+        GObjectsAddr = "0x7FF8BA7B3620", GObjectsExport = "?GUObjectArray@@3VFUObjectArray@@A",
+        ModuleName = "FactoryGameSteam-Win64-Shipping.exe", ProcessId = 4242,
+    };
+
+    [Fact]
+    public async Task SYM_on_GObjects_registers_the_export_without_AOBMaker_UI()
+    {
+        // No AOBMaker.UI client at all: an export needs none, and GenerateAob has no instruction to seed on one.
+        var (vm, bridge) = Panel(SatisfactoryGObjects, Active);
+
+        Assert.True(vm.CanRegisterGObjectsSymbol);
+        Assert.False(vm.GObjectsSymbolUsesUi);
+        await vm.RegisterGObjectsSymbolCommand.ExecuteAsync(null);
+
+        var aa = Assert.Single(bridge.AaScripts);
+        Assert.Equal("GObjects → gobjects_addr", aa.Description);
+        Assert.Contains("define(gobjects_addr,GUObjectArray)", aa.Script);
+        Assert.Equal(AobMakerActions.SymbolRegisteredFromExportText("gobjects_addr", "GUObjectArray"), vm.SymbolStatusText);
+    }
+
+    [Fact]
+    public void Without_an_export_GObjects_SYM_is_still_the_AOBMaker_UI_route()
+    {
+        var (vm, _) = Panel(new EngineState { GObjectsAddr = "0x7FF8BA7B3620", ModuleName = "Game.exe" });
+        Assert.True(vm.GObjectsSymbolUsesUi);
+        Assert.False(vm.CanRegisterGObjectsSymbol);   // no AOBMaker.UI client and no scan hit here
     }
 }

@@ -32,12 +32,15 @@ public class AobMakerUiVisualTests
 
     private static XDocument Axaml(string name) => XDocument.Load(RepoFile($"ui/UE5DumpUI/Views/{name}"));
 
-    /// <summary>Commands whose method hands its work to AOBMaker.UI's GenerateAob.</summary>
-    private static string[] UiBackedCommands()
+    /// <summary>Commands whose method hands its work to AOBMaker.UI's GenerateAob. <c>Always</c> is false for one that
+    /// does so only when there is no export to anchor on ([AOBM-EXPORT-SYM-REST]): that button's mark has to follow the
+    /// route it will take.</summary>
+    private static (string Command, bool Always)[] UiBackedCommands()
     {
         var code = File.ReadAllText(RepoFile("ui/UE5DumpUI/ViewModels/PointerPanelViewModel.cs"));
-        return Regex.Matches(code, @"Task\s+(\w+)Async\(\)\s*\r?\n?\s*=>\s*RegisterSymbolViaGenerateAobAsync\(")
-            .Select(m => m.Groups[1].Value + "Command")
+        return Regex.Matches(code, @"Task\s+(\w+)Async\(\)\s*=>([^;]*);")
+            .Where(m => m.Groups[2].Value.Contains("RegisterSymbolViaGenerateAobAsync("))
+            .Select(m => (m.Groups[1].Value + "Command", !m.Groups[2].Value.Contains("RegisterSymbolFromExportAsync(")))
             .ToArray();
     }
 
@@ -50,6 +53,13 @@ public class AobMakerUiVisualTests
     private static bool HasUiClass(XElement e)
         => (e.Attribute("Classes")?.Value ?? "").Split(' ', StringSplitOptions.RemoveEmptyEntries).Contains(UiClass);
 
+    /// <summary>The property a conditional mark (<c>Classes.aobmUi="{Binding X}"</c>) binds to, or null.</summary>
+    private static string? ConditionalMark(XElement e)
+    {
+        var m = Regex.Match(e.Attribute("Classes." + UiClass)?.Value ?? "", @"^\{Binding\s+(\w+UsesUi)\}$");
+        return m.Success ? m.Groups[1].Value : null;
+    }
+
     [Fact]
     public void Exactly_the_buttons_that_call_AOBMaker_UI_carry_its_mark()
     {
@@ -60,12 +70,40 @@ public class AobMakerUiVisualTests
             .Where(e => e.Name.LocalName == "Button" && CommandOf(e) is not null)
             .ToList();
 
-        foreach (var cmd in uiBacked)
-            Assert.True(buttons.Any(b => CommandOf(b) == cmd && HasUiClass(b)),
-                $"{cmd} calls AOBMaker.UI but its button does not carry Classes=\"{UiClass}\"");
+        foreach (var (cmd, always) in uiBacked)
+        {
+            var b = buttons.Single(x => CommandOf(x) == cmd);
+            if (always)
+                Assert.True(HasUiClass(b), $"{cmd} always calls AOBMaker.UI but its button does not carry Classes=\"{UiClass}\"");
+            else
+                Assert.True(!HasUiClass(b) && ConditionalMark(b) != null,
+                    $"{cmd} calls AOBMaker.UI only without an export, so its mark must be Classes.{UiClass}=\"{{Binding ...UsesUi}}\"");
+        }
 
-        var wronglyMarked = buttons.Where(b => HasUiClass(b) && !uiBacked.Contains(CommandOf(b))).Select(CommandOf);
+        var wronglyMarked = buttons
+            .Where(b => (HasUiClass(b) || ConditionalMark(b) != null) && !uiBacked.Any(u => u.Command == CommandOf(b)))
+            .Select(CommandOf);
         Assert.Empty(wronglyMarked);
+    }
+
+    [Fact]
+    public void A_conditionally_marked_button_shows_its_UI_tag_only_when_it_uses_the_UI()
+    {
+        // [AOBM-EXPORT-SYM-REST] The "UI" tag beside SYM says "this needs the AOBMaker app"; on a game whose GObjects
+        // came from an export it does not, so the tag must hide with the mark.
+        var conditional = Axaml("PointerPanel.axaml").Descendants()
+            .Where(e => e.Name.LocalName == "Button" && ConditionalMark(e) != null).ToList();
+        Assert.NotEmpty(conditional);
+        foreach (var b in conditional)
+        {
+            var prop = ConditionalMark(b)!;
+            var tags = b.Descendants().Where(e => e.Name.LocalName == "TextBlock"
+                && e.Attribute("Text")?.Value == "{StaticResource str.Toolbar.AobMakerUi}").ToList();
+            Assert.NotEmpty(tags);
+            foreach (var t in tags)
+                Assert.True(t.Ancestors().TakeWhile(a => a != b).Any(a => a.Attribute("IsVisible")?.Value == "{Binding " + prop + "}"),
+                    $"{CommandOf(b)}'s UI tag is not inside an element whose IsVisible binds to {prop}");
+        }
     }
 
     [Fact]

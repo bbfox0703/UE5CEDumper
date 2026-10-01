@@ -324,6 +324,7 @@ public class DumpServiceTests
                     ["gworld_export"] = "?GWorld@@3VUWorldProxy@@A",
                     ["gengine"] = "0x7FF8B739F768",
                     ["gengine_export"] = "?GEngine@@3PEAVUEngine@@EA",
+                    ["gobjects_export"] = "?GUObjectArray@@3VFUObjectArray@@A",
                     ["object_count"] = 0,
                 };
             return new JsonObject { ["ok"] = true };
@@ -333,6 +334,7 @@ public class DumpServiceTests
 
         Assert.Equal("?GWorld@@3VUWorldProxy@@A", state.GWorldExport);
         Assert.Equal("?GEngine@@3PEAVUEngine@@EA", state.GEngineExport);
+        Assert.Equal("?GUObjectArray@@3VFUObjectArray@@A", state.GObjectsExport);   // [AOBM-EXPORT-SYM-REST]
     }
 
     [Fact]

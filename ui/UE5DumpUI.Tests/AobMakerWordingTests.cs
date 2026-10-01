@@ -131,6 +131,8 @@ public class AobMakerWordingTests
         Same(AobMakerActions.KeySymbolActivationUnknown, AobMakerActions.SymbolActivationUnknownText("s"), "s");
         Same(AobMakerActions.KeySymbolTimedOut, AobMakerActions.SymbolTimedOutText("s"), "s");
         Same(AobMakerActions.KeySymbolNoReason, AobMakerActions.SymbolNoReasonText());
+        Same(AobMakerActions.KeySymbolFromExport,   // [AOBM-EXPORT-SYM-REST]
+             AobMakerActions.SymbolRegisteredFromExportText("s", "GWorld"), "s", "GWorld");
 
         // [AOBM-PLUSCE-FIDELITY] +CE in the CreateMemoryRecord form when the plugin cannot build the record as it is
         Same(AobMakerActions.KeyRecordAsByte, AobMakerActions.AsByteText());
@@ -142,7 +144,7 @@ public class AobMakerWordingTests
              UE5DumpUI.ViewModels.LiveWalkerViewModel.PtrTargetLabel("P"), "P");
 
         Assert.True(mismatches.Count == 0, string.Join("\n", mismatches));
-        Assert.Equal(45, checkedCount);   // guard the guard: a skipped block must not pass silently
+        Assert.Equal(46, checkedCount);   // guard the guard: a skipped block must not pass silently
     }
 
     private const string RecordXml =

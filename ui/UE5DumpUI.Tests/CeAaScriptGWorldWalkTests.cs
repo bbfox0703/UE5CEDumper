@@ -490,4 +490,85 @@ public class CeAaScriptGWorldWalkTests
         vm.AobSymbolPreference = true;            // as ApplyOptions would set it
         Assert.True(vm.UseAobSymbol);
     }
+
+    // ── [AOBM-EXPORT-SYM-REST] GWorld from an export (Satisfactory): the export is the restart-stable anchor ──
+
+    private static EngineState ExportOnly => new()
+    {
+        GWorldExport = "?GWorld@@3VUWorldProxy@@A",
+        GWorldAddr = "0x150000000",
+        ModuleName = "Game.exe",
+        ModuleBase = "0x140000000",
+    };
+
+    [Fact]
+    public void Export_branch_resolves_GWorld_by_name_and_walks()
+    {
+        var xml = CeXmlExportService.GenerateGWorldWalkedSymbolXml(
+            "BP_Test", SampleSpine(), useAob: false, aob: "", aobPos: 0, aobLen: 0, gworldSlotAddr: "",
+            gworldExport: "GWorld");
+
+        Assert.Contains("getAddressSafe('GWorld')", xml);
+        Assert.DoesNotContain("AOBScanModuleUE", xml);
+        Assert.DoesNotContain("UPDATE THIS after a game restart", xml);   // not the hardcoded base
+        Assert.Contains("local addr = gworld_base and readQword(gworld_base)", xml);
+        Assert.Contains("registerSymbol('BP_Test', addr)", xml);
+    }
+
+    [Fact]
+    public void An_export_alone_makes_the_AOB_option_available_on_a_GWorld_root()
+    {
+        var vm = MakeVm(out _);
+        LoadGWorldSpine(vm);
+        vm.SetEngineState(ExportOnly);
+
+        Assert.True(vm.IsAobSymbolAvailable);
+        Assert.True(vm.CanUseAobSymbol);
+    }
+
+    [Fact]
+    public async Task Dispatch_gworld_root_with_an_export_walks_from_the_export()
+    {
+        var vm = MakeVm(out var platform);
+        LoadGWorldSpine(vm);
+        vm.SetEngineState(ExportOnly);
+        vm.UseAobSymbol = true;
+
+        await vm.GenerateCeAAScriptCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("getAddressSafe('GWorld')", platform.LastClipboard);
+        Assert.DoesNotContain("UPDATE THIS after a game restart", platform.LastClipboard);
+        Assert.Contains("registerSymbol('BP_Player', addr)", platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task Copy_CE_XML_on_a_GWorld_root_with_an_export_roots_at_the_export()
+    {
+        var vm = MakeVm(out var platform);
+        LoadGWorldSpine(vm);
+        vm.Fields.Add(new LiveFieldValue { Name = "Health", TypeName = "IntProperty", Offset = 0x10, Size = 4 });
+        vm.SetEngineState(ExportOnly);
+        vm.UseAobSymbol = true;
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.Contains("<Address>GWorld</Address>", platform.LastClipboard);
+    }
+
+    [Fact]
+    public async Task Copy_CE_XML_with_the_option_off_keeps_the_address_root()
+    {
+        var vm = MakeVm(out var platform);
+        LoadGWorldSpine(vm);
+        vm.Fields.Add(new LiveFieldValue { Name = "Health", TypeName = "IntProperty", Offset = 0x10, Size = 4 });
+        vm.SetEngineState(ExportOnly);
+        vm.UseAobSymbol = false;
+
+        await vm.ExportCeXmlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(platform.LastClipboard);
+        Assert.DoesNotContain("<Address>GWorld</Address>", platform.LastClipboard);
+    }
 }

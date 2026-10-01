@@ -213,6 +213,9 @@ public sealed class EngineState
     /// ("?GWorld@@3VUWorldProxy@@A" on Satisfactory), or "". Such a winner has no AOB triple, but Cheat Engine
     /// resolves the export under its undecorated name, which is as restart-stable as an AOB.</summary>
     public string GWorldExport { get; init; } = "";
+    /// <summary>[AOBM-EXPORT-SYM-REST] As <see cref="GWorldExport"/>, for GObjects
+    /// ("?GUObjectArray@@3VFUObjectArray@@A" on Satisfactory).</summary>
+    public string GObjectsExport { get; init; } = "";
 
     // --- GEngine (&GEngine — the static slot, not the UEngine object) ---
     // Same contract as the GWorld triple above. A non-empty GEngineAob means a
