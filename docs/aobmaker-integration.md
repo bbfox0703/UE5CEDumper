@@ -505,6 +505,8 @@ PipeServer.cpp (get_pointers / scan_status)
   │    "gworld_aob": "48 8B 1D ?? ?? ?? ??",
   │    "gworld_aob_pos": 3,
   │    "gworld_aob_len": 7,
+  │    "gworld_export": "",          (a symbol-export winner's MSVC name, e.g. Satisfactory's
+  │                                   "?GWorld@@3VUWorldProxy@@A"; SYM then defines CE's "GWorld")
   │    "module_name": "Game-Win64-Shipping.exe",
   │    ...
   │  }

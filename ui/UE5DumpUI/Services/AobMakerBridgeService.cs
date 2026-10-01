@@ -462,6 +462,36 @@ public sealed class AobMakerBridgeService : IAobMakerBridge, IDisposable
     }
 
     /// <inheritdoc/>
+    public async Task<SymbolScriptResult> CreateAAScriptDetailedAsync(string description, string script,
+        bool autoActivate = true, string? group = null, CancellationToken ct = default)
+    {
+        await _opLock.WaitAsync(ct);
+        try
+        {
+            var (reply, reached) = await RoundTripAsync(new AobMakerMessage
+            {
+                Type = TypeCreateAAScript,
+                Description = description,
+                Script = script,
+                AutoActivate = autoActivate,
+                Group = string.IsNullOrEmpty(group) ? null : group,
+            }, ResponseTimeoutMs, ct);
+            if (!reached) return new SymbolScriptResult(false, null, null, null);
+            // No reply in time: the plugin may still have made the record (reply §3 rule 8).
+            if (reply == null) return new SymbolScriptResult(false, null, null, null, TimedOut: true);
+            var result = ToSymbolScriptResult(reply);
+            _log?.Info(Constants.LogCatInit,
+                $"AOBMaker: AA script '{description}': created={result.Created}, activated={result.Activated?.ToString() ?? "unknown"}"
+                + (result.Message != null ? $" ({result.Message})" : ""));
+            return result;
+        }
+        finally
+        {
+            _opLock.Release();
+        }
+    }
+
+    /// <inheritdoc/>
     /// <remarks>
     /// [AOBM-PLUSCE-FIDELITY] Three connections -- the plugin answers one request per connection and keeps the batch in
     /// CE's Lua between them -- held under one <see cref="_opLock"/>, so none of this app's other requests lands in the

@@ -283,12 +283,17 @@ struct EnginePointers {
     const char* gworldAob    = nullptr;  // AOB pattern string (e.g. "48 8B 1D ?? ?? ?? ??")
     int         gworldAobPos = 0;        // instrOffset + opcodeLen: displacement offset within match
     int         gworldAobLen = 0;        // instrOffset + totalLen: instruction end for RIP calculation
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name ("?GWorld@@3VUWorldProxy@@A"), else nullptr.
+    // It has no AOB triple, yet the export is itself restart- and patch-stable: Cheat Engine resolves it under
+    // its undecorated name. String-literal lifetime, like gworldAob.
+    const char* gworldExport = nullptr;
 
     // GEngine winning pattern AOB metadata — same contract as the GWorld triple above, so
     // a GameEngine-rooted CE export can be AOB-wrapped exactly like a GWorld-rooted one.
     const char* gengineAob    = nullptr;
     int         gengineAobPos = 0;
     int         gengineAobLen = 0;
+    const char* gengineExport = nullptr;  // [AOBM-EXPORT-GWORLD-AOB] as gworldExport
     const char* genginePatternId = nullptr;
     uintptr_t   gengineScanAddr  = 0;
 };

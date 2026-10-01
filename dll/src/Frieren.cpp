@@ -70,6 +70,7 @@ uintptr_t   g_cachedSparseDelegatesScanAddr = 0;
 const char* g_cachedGWorldAob    = nullptr;
 int         g_cachedGWorldAobPos = 0;
 int         g_cachedGWorldAobLen = 0;
+const char* g_cachedGWorldExport = nullptr;   // [AOBM-EXPORT-GWORLD-AOB]
 // &GEngine — the static slot. Same triple as GWorld so a GameEngine-rooted CE export
 // can be AOB-wrapped instead of baking in a stale UEngine* snapshot.
 uintptr_t   g_cachedGEngine          = 0;
@@ -79,6 +80,7 @@ uintptr_t   g_cachedGEngineScanAddr  = 0;
 const char* g_cachedGEngineAob       = nullptr;
 int         g_cachedGEngineAobPos    = 0;
 int         g_cachedGEngineAobLen    = 0;
+const char* g_cachedGEngineExport    = nullptr;   // [AOBM-EXPORT-GWORLD-AOB]
 
 // The init latch is set only at the very END of UE5_Init, after a multi-second scan,
 // so it can never serialize two callers on its own — and there IS a designed-in second
@@ -217,6 +219,7 @@ bool UE5_Init() {
     g_cachedGWorldAob    = ptrs.gworldAob;
     g_cachedGWorldAobPos = ptrs.gworldAobPos;
     g_cachedGWorldAobLen = ptrs.gworldAobLen;
+    g_cachedGWorldExport = ptrs.gworldExport;
     g_cachedGEngine          = ptrs.GEngine;
     g_cachedGEngineMethod    = ptrs.gengineMethod;
     g_cachedGEnginePatternId = ptrs.genginePatternId;
@@ -224,6 +227,7 @@ bool UE5_Init() {
     g_cachedGEngineAob       = ptrs.gengineAob;
     g_cachedGEngineAobPos    = ptrs.gengineAobPos;
     g_cachedGEngineAobLen    = ptrs.gengineAobLen;
+    g_cachedGEngineExport    = ptrs.gengineExport;
 
     // Initialize subsystems — only when their pointer was found
     ScanProgress::Set(5, "Initializing subsystems...");
@@ -408,6 +412,7 @@ bool UE5_Init() {
         g_cachedGEngineAob       = ptrs.gengineAob;
         g_cachedGEngineAobPos    = ptrs.gengineAobPos;
         g_cachedGEngineAobLen    = ptrs.gengineAobLen;
+        g_cachedGEngineExport    = ptrs.gengineExport;
 
         // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
         // Structural detection beats user input here — wrong offsets break exports far worse
@@ -607,6 +612,7 @@ bool UE5_Init() {
                 g_cachedGWorldAob      = nullptr;
                 g_cachedGWorldAobPos   = 0;
                 g_cachedGWorldAobLen   = 0;
+                g_cachedGWorldExport   = nullptr;   // a recovered slot is not the export either
                 g_cachedGWorldScanAddr = 0;
                 LOG_INFO("UE5_Init: GWorld recovered via %s -> 0x%llX",
                          method, static_cast<unsigned long long>(rec));

@@ -113,6 +113,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gworldAob = "";
     [ObservableProperty] private int _gworldAobPos;
     [ObservableProperty] private int _gworldAobLen;
+    /// <summary>[AOBM-EXPORT-GWORLD-AOB] Cheat Engine's name for the export GWorld was found through, or "".</summary>
+    [ObservableProperty] private string _gworldExportSymbol = "";
     [ObservableProperty] private string _moduleName = "";
 
     /// <summary>[PATH-CE-MODULE-VIEW] CE's name for the module (<see cref="EngineState.CeModuleName"/>), for the
@@ -134,6 +136,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private string _gengineAob = "";
     [ObservableProperty] private int _gengineAobPos;
     [ObservableProperty] private int _gengineAobLen;
+    /// <summary>[AOBM-EXPORT-GWORLD-AOB] As <see cref="GworldExportSymbol"/>, for &amp;GEngine.</summary>
+    [ObservableProperty] private string _gengineExportSymbol = "";
 
     // --- AOBMaker CE Plugin bridge ---
     [ObservableProperty] private bool _isAobMakerAvailable;
@@ -497,9 +501,10 @@ public partial class PointerPanelViewModel : ViewModelBase
         && (IsPointerMissing(GObjectsAddress) || GWorldMethod == "not_found");
 
     // --- AOBMaker button enable state ---
-    /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data).</summary>
+    /// <summary>Can register GWorld address as CE symbol via CreateSymbolScript (requires AOB data), or
+    /// [AOBM-EXPORT-GWORLD-AOB] from the export it was found through.</summary>
     public bool CanRegisterGWorldSymbol => IsAobMakerAvailable
-        && IsNonZeroAddr(GWorldAddress) && !string.IsNullOrEmpty(GworldAob);
+        && IsNonZeroAddr(GWorldAddress) && (!string.IsNullOrEmpty(GworldAob) || !string.IsNullOrEmpty(GworldExportSymbol));
 
     /// <summary>Can send GObjects pointer to CE hex view (data address).</summary>
     public bool CanHexGObjects => IsAobMakerAvailable && IsNonZeroAddr(GObjectsAddress);
@@ -516,7 +521,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// Same contract as GWorld: the AOB triple is what makes the symbol restart-proof, so a
     /// resolved address alone is not enough.</summary>
     public bool CanRegisterGEngineSymbol => IsAobMakerAvailable
-        && IsNonZeroAddr(GEngineAddress) && !string.IsNullOrEmpty(GengineAob);
+        && IsNonZeroAddr(GEngineAddress) && (!string.IsNullOrEmpty(GengineAob) || !string.IsNullOrEmpty(GengineExportSymbol));
 
     /// <summary>Can send GObjects AOB scan hit address to CE disassembler (code address).</summary>
     public bool CanAsmGObjectsScan => IsAobMakerAvailable && IsNonZeroAddr(GObjectsScanAddr);
@@ -656,6 +661,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GworldAob = state.GWorldAob;
         GworldAobPos = state.GWorldAobPos;
         GworldAobLen = state.GWorldAobLen;
+        GworldExportSymbol = AobMakerActions.CeExportSymbol(state.GWorldExport);
         GEngineAddress = state.GEngine;
         GEngineMethod = state.GEngineMethod;
         GEnginePatternId = state.GEnginePatternId;
@@ -663,6 +669,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GengineAob = state.GEngineAob;
         GengineAobPos = state.GEngineAobPos;
         GengineAobLen = state.GEngineAobLen;
+        GengineExportSymbol = AobMakerActions.CeExportSymbol(state.GEngineExport);
         ModuleName = state.ModuleName;
         _ceModuleName = state.CeModuleName;
         _gamePid = state.ProcessId;
@@ -1167,7 +1174,13 @@ public partial class PointerPanelViewModel : ViewModelBase
     [RelayCommand]
     private async Task RegisterGWorldSymbolAsync()
     {
-        if (_aobMaker == null || string.IsNullOrEmpty(GworldAob)) return;
+        if (_aobMaker == null) return;
+        if (string.IsNullOrEmpty(GworldAob))
+        {
+            if (!string.IsNullOrEmpty(GworldExportSymbol))
+                await RegisterSymbolFromExportAsync("GWorld", "gworld_addr", GworldExportSymbol);
+            return;
+        }
 
         string symbolName = "gworld_addr";
         string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
@@ -1199,7 +1212,13 @@ public partial class PointerPanelViewModel : ViewModelBase
     [RelayCommand]
     private async Task RegisterGEngineSymbolAsync()
     {
-        if (_aobMaker == null || string.IsNullOrEmpty(GengineAob)) return;
+        if (_aobMaker == null) return;
+        if (string.IsNullOrEmpty(GengineAob))
+        {
+            if (!string.IsNullOrEmpty(GengineExportSymbol))
+                await RegisterSymbolFromExportAsync("&GEngine", "gengine_addr", GengineExportSymbol);
+            return;
+        }
 
         string symbolName = "gengine_addr";
         string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : "game.exe";
@@ -1215,6 +1234,22 @@ public partial class PointerPanelViewModel : ViewModelBase
 
         ReportSymbolRegistration(registration, symbolName,
             $"AOB: {GengineAob}, pos={GengineAobPos}, len={GengineAobLen}");
+    }
+
+    /// <summary>
+    /// [AOBM-EXPORT-GWORLD-AOB] A pointer Genau found through an EXPORT has no AOB triple and no referencing
+    /// instruction to seed GenerateAob -- but the export is a symbol Cheat Engine already resolves, under its
+    /// undecorated name, in every run and across patches. So the symbol is a define of it, pushed through the CE
+    /// plugin (not AOBMaker.UI) and enabled at once; CE's own answer says whether it resolved (a press before CE
+    /// has loaded the module's exports fails with CE's reason, not with a wrong address).
+    /// </summary>
+    private async Task RegisterSymbolFromExportAsync(string label, string symbolName, string ceSymbol)
+    {
+        var script = CeXmlExportService.ExtractAssemblerScript(
+            CeXmlExportService.GenerateRegisterSymbolXml(symbolName, ceSymbol));
+        var registration = await _aobMaker!.CreateAAScriptDetailedAsync($"{label} → {symbolName}", script,
+                                                                       autoActivate: true);
+        ReportSymbolRegistration(registration, symbolName, $"export: {ceSymbol}");
     }
 
     // --- [AOBM-GNAMES-SYMBOL] GObjects / GNames symbols through AOBMaker.UI's GenerateAob ---

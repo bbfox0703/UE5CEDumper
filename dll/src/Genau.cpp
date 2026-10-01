@@ -5123,6 +5123,10 @@ static void PublishGEngineMetadata(EnginePointers& out) {
     out.gengineAob    = nullptr;
     out.gengineAobPos = 0;
     out.gengineAobLen = 0;
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner has no triple, but its export name is a symbol CE can use.
+    out.gengineExport = (s_gengineReport.winningSig &&
+                         s_gengineReport.winningSig->resolve == AobResolve::SymbolExport)
+                        ? s_gengineReport.winningSig->pattern : nullptr;
     // Same replayability gate as the GWorld triple above — a symbol/call-follow winner
     // is a perfectly good way for US to find &GEngine, and a useless thing to hand CE.
     if (auto* es = s_gengineReport.winningSig; es && CeReplayMatchesResolved(s_gengineReport)) {
@@ -5549,6 +5553,11 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
                  s_gworldReport.winningId,
                  static_cast<unsigned long long>(s_gworldReport.finalAddress));
     }
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner (Satisfactory's ?GWorld@@3VUWorldProxy@@A) gets no triple
+    // above, but its export name is itself a restart-stable CE symbol, so publish that instead.
+    out.gworldExport = (s_gworldReport.winningSig &&
+                        s_gworldReport.winningSig->resolve == AobResolve::SymbolExport)
+                       ? s_gworldReport.winningSig->pattern : nullptr;
     // Same triple for GEngine, so a GameEngine-rooted CE export can be AOB-wrapped
     // exactly like a GWorld-rooted one instead of baking in a stale UEngine* snapshot.
     // Shared with ResolveGEngineDeferred — GEngine is normally resolved THERE, not here,

@@ -1305,6 +1305,7 @@ static void FillPointerSnapshot(json& data) {
     extern const char* g_cachedGWorldAob;
     extern int         g_cachedGWorldAobPos;
     extern int         g_cachedGWorldAobLen;
+    extern const char* g_cachedGWorldExport;
     extern uintptr_t   g_cachedGEngine;
     extern const char* g_cachedGEngineMethod;
     extern const char* g_cachedGEnginePatternId;
@@ -1312,6 +1313,7 @@ static void FillPointerSnapshot(json& data) {
     extern const char* g_cachedGEngineAob;
     extern int         g_cachedGEngineAobPos;
     extern int         g_cachedGEngineAobLen;
+    extern const char* g_cachedGEngineExport;
 
     data["gobjects"]             = Renge::AddrToStr(g_cachedGObjects);
     data["gnames"]               = Renge::AddrToStr(g_cachedGNames);
@@ -1368,6 +1370,9 @@ static void FillPointerSnapshot(json& data) {
     data["gworld_aob"]     = g_cachedGWorldAob ? g_cachedGWorldAob : "";
     data["gworld_aob_pos"] = g_cachedGWorldAobPos;
     data["gworld_aob_len"] = g_cachedGWorldAobLen;
+    // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name, "" otherwise: the restart-stable anchor when
+    // there is no AOB triple.
+    data["gworld_export"]  = g_cachedGWorldExport ? g_cachedGWorldExport : "";
 
     // &GEngine (the slot, not the object). Empty aob == no AOB hit, in which case the UI
     // must treat a GameEngine-rooted export the way it treats a recovered GWorld: address
@@ -1379,6 +1384,7 @@ static void FillPointerSnapshot(json& data) {
     data["gengine_aob"]        = g_cachedGEngineAob ? g_cachedGEngineAob : "";
     data["gengine_aob_pos"]    = g_cachedGEngineAobPos;
     data["gengine_aob_len"]    = g_cachedGEngineAobLen;
+    data["gengine_export"]     = g_cachedGEngineExport ? g_cachedGEngineExport : "";
 
     data["invoke_timeout_ms"] = Stark::GetInvokeTimeoutMs();
 
@@ -5399,6 +5405,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 extern const char* g_cachedGEngineAob;
                 extern int         g_cachedGEngineAobPos;
                 extern int         g_cachedGEngineAobLen;
+                extern const char* g_cachedGEngineExport;
                 if (g_cachedGEngine == 0) {
                     Genau::EnginePointers eng;   // scratch — carries the AOB metadata triple
                     if (Genau::ResolveGEngineDeferred(eng)) {
@@ -5409,6 +5416,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         g_cachedGEngineAob       = eng.gengineAob;
                         g_cachedGEngineAobPos    = eng.gengineAobPos;
                         g_cachedGEngineAobLen    = eng.gengineAobLen;
+                        g_cachedGEngineExport    = eng.gengineExport;
                         Sein::Info("PIPE:cmd", "apply_rescan: Applied GEngine=0x%llX (%s)",
                                    (unsigned long long)g_cachedGEngine, g_cachedGEngineMethod);
                         applied = true;

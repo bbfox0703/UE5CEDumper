@@ -127,7 +127,20 @@ internal static class AobMakerActions
     /// cannot be named. Measured on Satisfactory with CE 7.7 (2026-10-01): CE lists exports UNDECORATED, so
     /// <c>?GWorld@@3VUWorldProxy@@A</c> resolves as <c>GWorld</c> and never under its MSVC name.
     /// </summary>
-    internal static string CeExportSymbol(string mangled) => "";
+    internal static string CeExportSymbol(string mangled)
+    {
+        // "?<name>@@3<type>": a global variable in no namespace, the shape of every export Himmel looks up. A scoped
+        // name ("?Foo@Bar@@3...") would undecorate to Bar::Foo, which CE's lookup was never measured on, so it gets
+        // no name rather than a guessed one; so does a function ("@@Q...", "@@Y...").
+        if (string.IsNullOrEmpty(mangled) || mangled[0] != '?') return "";
+        int at = mangled.IndexOf("@@3", 1, StringComparison.Ordinal);
+        if (at <= 1 || at + 3 >= mangled.Length) return "";
+        var name = mangled.Substring(1, at - 1);
+        if (char.IsAsciiDigit(name[0])) return "";
+        foreach (var ch in name)
+            if (!char.IsAsciiLetterOrDigit(ch) && ch != '_') return "";
+        return name;
+    }
 
     internal const string KeyRecordAsByte = "str.AobMaker.Record.AsByte";
     internal const string KeyRecordAsPointer = "str.AobMaker.Record.AsPointer";
