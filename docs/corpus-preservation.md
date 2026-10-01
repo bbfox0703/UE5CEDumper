@@ -17,7 +17,10 @@
 > each `.rep` is the only copy of that row on this machine.
 >
 > **The removed projects are not lost.** Before the cleanup the maintainer shrank the project
-> files and kept a backup of them elsewhere. This machine no longer holds them; that is all.
+> files and copied all 63 projects to the NAS, mapped as drive `Y:` — `Y:\GHIDRA_Projs`
+> (63 `.rep` + 63 `.gpr`, listed 2026-10-01). This machine no longer holds the 58; that is all.
+> ⚠ If `Y:` does not exist, or `GHIDRA_Projs` is not under it, the NAS is NOT MOUNTED. That is
+> not a missing backup: mount it and look again before concluding anything.
 >
 > **Why.** Nothing routine reads a `.rep` any more: the regression sweep is `pe_sweep.py` over the
 > binaries (§0a), and the n-gram index has always been built from the binaries. The one use left

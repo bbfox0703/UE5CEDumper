@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — the Ghidra projects' backup is on the NAS, `Y:\GHIDRA_Projs`
+
+- All 63 Ghidra projects are copied to the NAS, which is mapped as drive `Y:`. The folder is
+  `Y:\GHIDRA_Projs` (63 `.rep` and 63 `.gpr`, listed and counted that day). This is the backup
+  "kept elsewhere" that the cleanup entry below mentions.
+- If `Y:` does not exist, or `GHIDRA_Projs` is not under it, the NAS is not mounted. It does not
+  mean the backup is gone.
+
 ## 2026-10-01 (no build change) — the AOB specificity index is built from far more programs
 
 - The index that tells how noisy an AOB pattern can be was built from 11 engine templates. It is now built
