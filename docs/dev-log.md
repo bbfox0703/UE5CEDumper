@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-01 (no build change) — the Ghidra projects were cleaned up: five kept, the rest removed from this machine
+
+- `D:\Tools\GHIDRA_Projs` held 63 Ghidra projects, 171 GB. 58 of them (146 GB) were removed from this
+  machine. The five UE 5.8 self-built projects (19 GB) stay, because their game binaries are no longer on disk.
+- Before the cleanup the maintainer shrank the project files and kept a backup of them elsewhere, so the
+  removed projects are not lost: this frees space here, nothing more.
+- Nothing in daily use needed them. The pattern regression sweep and the n-gram index are both built from the
+  game binaries under `D:\UE_Analyze_data`. Ghidra was only needed to read code when writing a new pattern,
+  and every pattern in use is recorded in `Himmel.h`.
+- For a new engine (UE6 is the likely next case) the plan is to package a new DumperTest for it and compare
+  against `Himmel.h`, not to analyse a shipped game.
+- Details and what the Ghidra-based tools will now report: the top note of `docs/corpus-preservation.md`.
+
 ## 2026-10-01 (build 3614) — GObjects symbol in Cheat Engine for games like Avowed `[AOBM-GWORLD-GENAOB]`
 
 - The System tab's GObjects / GNames SYM button now works on games whose signature points a little beside the

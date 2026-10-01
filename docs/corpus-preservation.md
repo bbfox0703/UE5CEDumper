@@ -16,6 +16,9 @@
 > (`py tools/ghidra/corpus_relocate.py`: 52/57 rows recoverable, these five `EXE-MISSING`), so
 > each `.rep` is the only copy of that row on this machine.
 >
+> **The removed projects are not lost.** Before the cleanup the maintainer shrank the project
+> files and kept a backup of them elsewhere. This machine no longer holds them; that is all.
+>
 > **Why.** Nothing routine reads a `.rep` any more: the regression sweep is `pe_sweep.py` over the
 > binaries (§0a), and the n-gram index has always been built from the binaries. The one use left
 > was reading code to author a NEW pattern, and every pattern in use is already recorded in
