@@ -140,6 +140,11 @@ GATES = [
      "a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / "
      "%APPDATA% / %USERPROFILE%, or a placeholder", False),
 
+    ("check_text_integrity",
+     ["tools/check_text_integrity.py"],
+     "a tracked text file holds a control byte (NUL, backspace, vertical tab ...): a backslash escape that a "
+     "shell heredoc collapsed before a patch script ran. The output names the file, line and byte", False),
+
     ("check_md_links",
      ["tools/check_md_links.py"],
      "a relative link in a tracked .md file does not resolve. Run "

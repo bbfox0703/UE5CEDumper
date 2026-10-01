@@ -154,6 +154,12 @@ jobs:
           # usage examples, and nothing else in CI looks. Placeholders and %ENVVAR% forms pass.
           & $py tools/check_no_local_paths.py
           if ($LASTEXITCODE -ne 0) { throw "check_no_local_paths FAILED ($LASTEXITCODE) - a tracked file carries a concrete user home path. Use %LOCALAPPDATA% / %APPDATA% / %USERPROFILE%, or a placeholder. The failure names each hit." }
+          # Control bytes in text files. A patch script passed through a shell heredoc has its backslash
+          # escapes collapsed, and then writes the character the escape names: a NUL, a backspace, a
+          # vertical tab. The file still compiles and every test can still pass (one sat in a test for
+          # two months), so nothing else here notices.
+          & $py tools/check_text_integrity.py
+          if ($LASTEXITCODE -ne 0) { throw "check_text_integrity FAILED ($LASTEXITCODE) - a tracked text file holds a control byte: a backslash escape collapsed by a shell heredoc. The output names the file, line and byte." }
           # Markdown link integrity. A broken relative link is invisible to whoever wrote it
           # (no compiler, and the author sees the target in the folder they had in mind), and
           # they arrive in BULK on a file move - docs/x.md -> docs/archive/x.md leaves every
