@@ -10,7 +10,8 @@ namespace UE5DumpUI.Tests;
 /// The Pointer panel's AOBMaker buttons, each section under its finding tag: a GObjects / GNames symbol from
 /// AOBMaker.UI's GenerateAob, the scan-hit ASM buttons, and what HEX / ASM report.
 /// <para>The symbol is the dangerous one: a plausible, wrong symbol roots every CE record the user builds on it. So the
-/// rule under test is that NOTHING is pushed unless replaying the AOB lands exactly where the DLL resolved the pointer.</para>
+/// rule under test is that NOTHING is pushed unless replaying the AOB lands exactly where the DLL resolved the pointer
+/// (once the signature's own published adjustment is added back, [AOBM-GWORLD-GENAOB]).</para>
 /// </summary>
 public class PointerPanelAobMakerTests
 {
@@ -406,7 +407,7 @@ public class PointerPanelAobMakerTests
             UE5_DEBUG = 0
             SYMS, SHOWN, SCANNED = {}, nil, nil
             function AOBScanModuleUnique(m, aob, flags) SCANNED = m .. '|' .. aob .. '|' .. tostring(flags) return {{scanResult}} end
-            function readInteger(a, signed) if a == 0x1000 + 7 and signed then return 0x200 end return nil end
+            function readInteger(a, signed) if a == 0x1000 + 3 and signed then return 0x200 end return nil end   -- disp32 at pos 3
             function registerSymbol(n, a) SYMS[n] = a end
             function unregisterSymbol(n) SYMS[n] = nil end
             function showMessage(m) SHOWN = m end

@@ -132,6 +132,9 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>The game's pid, which <c>GenerateAob</c> reads memory from.</summary>
     private int _gamePid;
 
+    /// <summary>[AOBM-GWORLD-GENAOB] The winning GObjects / GNames signatures' adjustments, as the DLL published them.</summary>
+    private int _gobjectsAdjustment, _gnamesAdjustment;
+
     // --- GEngine (&GEngine slot) + its AOB metadata, same contract as GWorld's ---
     [ObservableProperty] private string _gEngineAddress = "";
     [ObservableProperty] private string _gEngineMethod = "not_found";
@@ -663,6 +666,8 @@ public partial class PointerPanelViewModel : ViewModelBase
         GWorldPatternsHit = state.GWorldPatternsHit;
         GObjectsScanAddr = state.GObjectsScanAddr;
         GNamesScanAddr = state.GNamesScanAddr;
+        _gobjectsAdjustment = state.GObjectsAdjustment;
+        _gnamesAdjustment = state.GNamesAdjustment;
         GWorldScanAddr = state.GWorldScanAddr;
         SparseDelegatesScanAddr = state.SparseDelegatesScanAddr;
         GworldAob = state.GWorldAob;
@@ -1273,11 +1278,13 @@ public partial class PointerPanelViewModel : ViewModelBase
     private Task RegisterGObjectsSymbolAsync()
         => !GObjectsSymbolUsesUi
             ? RegisterSymbolFromExportAsync("GObjects", "gobjects_addr", GobjectsExportSymbol)
-            : RegisterSymbolViaGenerateAobAsync("GObjects", "gobjects_addr", GObjectsScanAddr, GObjectsAddress);
+            : RegisterSymbolViaGenerateAobAsync("GObjects", "gobjects_addr", GObjectsScanAddr, GObjectsAddress,
+                                                _gobjectsAdjustment);
 
     [RelayCommand]
     private Task RegisterGNamesSymbolAsync()
-        => RegisterSymbolViaGenerateAobAsync("GNames", "gnames_addr", GNamesScanAddr, GNamesAddress);
+        => RegisterSymbolViaGenerateAobAsync("GNames", "gnames_addr", GNamesScanAddr, GNamesAddress,
+                                             _gnamesAdjustment);
 
     /// <summary>
     /// The DLL publishes a CE-replayable AOB triple for GWorld and &amp;GEngine only. For the others, ask AOBMaker.UI to
@@ -1287,7 +1294,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// dereferences or adjusts after the RIP target would otherwise register a plausible, wrong address.</para>
     /// </summary>
     internal async Task RegisterSymbolViaGenerateAobAsync(string label, string symbolName, string scanAddr,
-                                                          string resolvedAddr)
+                                                          string resolvedAddr, int adjustment = 0)
     {
         if (_aobMaker == null || _aobMakerUi == null || _dump == null) return;
         if (!TryParseHex(scanAddr, out var matchAddr) || !TryParseHex(resolvedAddr, out var expected)) return;
@@ -1301,7 +1308,20 @@ public partial class PointerPanelViewModel : ViewModelBase
             FailSymbol(AobMakerActions.GenerateAobUnreadableText(symbolName, matchAddr));
             return;
         }
-        if (AobMakerActions.FindRipSeed(matchAddr, window, expected) is not { } seed)
+        // [AOBM-GWORLD-GENAOB] With a published adjustment the instruction reads expected - adjustment, when that is
+        // the arm that validated; Genau tries it first and the bare RIP target second, so the seed is looked for in
+        // that order, and the replay below is checked against whichever RIP target it found.
+        int applied = 0;
+        ulong ripTarget = expected;
+        AobMakerActions.RipSeed? found = null;
+        if (adjustment != 0)
+        {
+            ulong adjustedTarget = unchecked(expected - (ulong)(long)adjustment);
+            found = AobMakerActions.FindRipSeed(matchAddr, window, adjustedTarget);
+            if (found != null) { applied = adjustment; ripTarget = adjustedTarget; }
+        }
+        found ??= AobMakerActions.FindRipSeed(matchAddr, window, expected);
+        if (found is not { } seed)
         {
             _log?.Warn(Constants.LogCatInit,
                 $"[AOBM-GNAMES-SYMBOL] {symbolName}: no RIP operand in {AobMakerActions.ScanHitWindowBytes} bytes at 0x{matchAddr:X} lands on {resolvedAddr}; not asked");
@@ -1331,15 +1351,27 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
         var target = AobMakerActions.SymbolTarget(seed.InstructionAddr, aob.InjectionOffset, len,
                                                   BitConverter.ToInt32(dispBytes, 0));
-        if (target != expected)
+        if (target != ripTarget)
         {
             _log?.Warn(Constants.LogCatInit,
-                $"[AOBM-GNAMES-SYMBOL] {symbolName}: AOB {aob.Aob} replays to 0x{target:X}, DLL resolved 0x{expected:X}; not pushed");
-            FailSymbol(AobMakerActions.GenerateAobMismatchText(symbolName, target, resolvedAddr));
+                $"[AOBM-GNAMES-SYMBOL] {symbolName}: AOB {aob.Aob} replays to 0x{target:X}, the RIP target is 0x{ripTarget:X} " +
+                $"(DLL resolved 0x{expected:X}, adjustment {applied}); not pushed");
+            FailSymbol(AobMakerActions.GenerateAobMismatchText(symbolName, unchecked(target + (ulong)(long)applied), resolvedAddr));
             return;
         }
 
         string module = !string.IsNullOrEmpty(_ceModuleName) ? _ceModuleName : aob.Module;
+        if (applied != 0)
+        {
+            // [AOBM-GWORLD-GENAOB] CreateSymbolScript registers the raw RIP target and cannot add the adjustment
+            // (AOBMaker R17): our own script does the same scan and decode, then adds it.
+            var script = AdjustedSymbolScriptGenerator.Generate(symbolName, module, aob.Aob, pos, len, applied);
+            var adjusted = await _aobMaker.CreateAAScriptDetailedAsync($"{label} → {symbolName}", script,
+                                                                     autoActivate: true);
+            ReportSymbolRegistration(adjusted, symbolName,
+                $"AOB (AOBMaker.UI GenerateAob): {aob.Aob}, pos={pos}, len={len}, adjustment={applied}, seed=0x{seed.InstructionAddr:X}");
+            return;
+        }
         var registration = await _aobMaker.CreateSymbolScriptDetailedAsync(
             name: $"{label} → {symbolName}",
             aob: aob.Aob,

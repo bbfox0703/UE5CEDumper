@@ -1293,6 +1293,8 @@ static void FillPointerSnapshot(json& data) {
     extern char        g_cachedPeHash[17];
     extern const char* g_cachedGObjectsPatternId;
     extern const char* g_cachedGNamesPatternId;
+    extern int         g_cachedGObjectsAdjustment;
+    extern int         g_cachedGNamesAdjustment;
     extern const char* g_cachedGWorldPatternId;
     extern const char* g_cachedSparseDelegatesPatternId;
     extern int         g_cachedGObjectsTried, g_cachedGObjectsHit;
@@ -1352,6 +1354,9 @@ static void FillPointerSnapshot(json& data) {
     data["pe_hash"]                     = g_cachedPeHash;
     data["gobjects_pattern_id"]         = g_cachedGObjectsPatternId        ? g_cachedGObjectsPatternId        : "";
     data["gnames_pattern_id"]           = g_cachedGNamesPatternId          ? g_cachedGNamesPatternId          : "";
+    // [AOBM-GWORLD-GENAOB] The winning RIP signature's adjustment, for a symbol script that adds it back.
+    data["gobjects_adjustment"]         = g_cachedGObjectsAdjustment;
+    data["gnames_adjustment"]           = g_cachedGNamesAdjustment;
     data["gworld_pattern_id"]           = g_cachedGWorldPatternId          ? g_cachedGWorldPatternId          : "";
     data["sparse_delegates_pattern_id"] = g_cachedSparseDelegatesPatternId ? g_cachedSparseDelegatesPatternId : "";
     json scanStats;

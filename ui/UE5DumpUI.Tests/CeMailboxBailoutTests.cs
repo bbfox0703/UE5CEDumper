@@ -280,6 +280,8 @@ public class CeMailboxBailoutTests
         yield return new object[] { "CeInject", CeInjectScriptGenerator.Generate(@"C:\x\UE5Dumper.dll") };
         yield return new object[] { "CeInject.Reminder", CeInjectScriptGenerator.GenerateReminder() };
         yield return new object[] { "Dissect", DissectScriptGenerator.Generate() };
+        yield return new object[] { RaiseOnlyRow, AdjustedSymbolScriptGenerator.Generate(
+            "gobjects_addr", "Game.exe", "48 8B 05 ?? ?? ?? ??", 3, 7, -0x10) };
 
         // StandaloneTrainerScriptGenerator returns a LIST of records rather than one script, so
         // every entry is yielded separately — a per-entry name makes a failure say which row.
@@ -349,8 +351,12 @@ public class CeMailboxBailoutTests
         //
         // ⚠ The "Trainer.*" exemption that used to sit here is GONE, because
         // [TRAINERUNTICK-2026-08-21] is fixed. Do not reinstate it to make a red run green.
+        // A SECOND, narrower fact: a stateful toggle whose every bail-out RAISES. CE's
+        // TMemoryRecord.setActive sets fActive only when autoassemble returns true, and an exception
+        // leaves it false (MemoryRecordUnit.pas) -- the record is never ticked, so there is nothing
+        // to untick. It is exempt only while that stays true: see A_raise_only_script_has_no_return_bailout.
         var unexpected = barren
-            .Where(n => !n.Contains("Reminder", StringComparison.Ordinal))
+            .Where(n => !n.Contains("Reminder", StringComparison.Ordinal) && n != RaiseOnlyRow)
             .ToList();
         Assert.True(unexpected.Count == 0,
             "no untick found in the [ENABLE] block of: " + string.Join(", ", unexpected)
@@ -358,6 +364,27 @@ public class CeMailboxBailoutTests
             + "vacuously for these.");
     }
 
+
+    /// <summary>[AOBM-GWORLD-GENAOB] The adjusted symbol script is enabled through the AOBMaker plugin, so it raises
+    /// instead of showing a modal ([AOBM-TRAINER-SETUP-MODAL]) and carries no untick.</summary>
+    private const string RaiseOnlyRow = "Symbol.Adjusted";
+
+    /// <summary>
+    /// What keeps <see cref="RaiseOnlyRow"/> exempt from the untick check: no bail-out in its [ENABLE] block
+    /// RETURNS (a return completes the block, so CE would tick a record that applied nothing). The only return
+    /// allowed is the syntax-check guard, which runs before anything is applied.
+    /// </summary>
+    [Fact]
+    public void A_raise_only_script_has_no_return_bailout()
+    {
+        var script = (string)EveryEnableScript().Single(r => (string)r[0] == RaiseOnlyRow)[1];
+        var returns = EnableBlock(script).Split('\n')
+            .Where(l => Regex.IsMatch(l, @"\breturn\b"))
+            .Where(l => l.Trim() != "if syntaxcheck then return end")
+            .ToList();
+        Assert.True(returns.Count == 0, "a return bail-out needs an untick: " + string.Join(" | ", returns));
+        Assert.Contains("error(", EnableBlock(script));
+    }
 
     /// <summary>
     /// The trainer keeps BOTH untick shapes, and they are not interchangeable.

@@ -264,6 +264,11 @@ struct EnginePointers {
     // [AOBM-EXPORT-SYM-REST] As gworldExport, for GObjects ("?GUObjectArray@@3VFUObjectArray@@A").
     const char* gobjectsExport           = nullptr;
     const char* gnamesPatternId          = nullptr;
+    // [AOBM-GWORLD-GENAOB] The winning RIP signature's `adjustment` (0 for any other kind): a CE symbol script
+    // decodes the RIP target and must add this back (GOBJ_AV1: -0x10). Whether Genau actually applied it is the UI's
+    // question -- RipDirect/RipBoth try target + adjustment first and the bare target second.
+    int         gobjectsAdjustment       = 0;
+    int         gnamesAdjustment         = 0;
     const char* gworldPatternId          = nullptr;
     const char* sparseDelegatesPatternId = nullptr;
 

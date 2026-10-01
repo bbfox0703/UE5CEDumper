@@ -59,6 +59,8 @@ char        g_cachedPeHash[17] = {0};
 const char* g_cachedGObjectsPatternId        = nullptr;
 const char* g_cachedGObjectsExport           = nullptr;   // [AOBM-EXPORT-SYM-REST]
 const char* g_cachedGNamesPatternId          = nullptr;
+int         g_cachedGObjectsAdjustment       = 0;   // [AOBM-GWORLD-GENAOB]
+int         g_cachedGNamesAdjustment         = 0;
 const char* g_cachedGWorldPatternId          = nullptr;
 const char* g_cachedSparseDelegatesPatternId = nullptr;
 int         g_cachedGObjectsTried = 0, g_cachedGObjectsHit = 0;
@@ -206,6 +208,8 @@ bool UE5_Init() {
     g_cachedGObjectsPatternId        = ptrs.gobjectsPatternId;
     g_cachedGObjectsExport           = ptrs.gobjectsExport;
     g_cachedGNamesPatternId          = ptrs.gnamesPatternId;
+    g_cachedGObjectsAdjustment       = ptrs.gobjectsAdjustment;
+    g_cachedGNamesAdjustment         = ptrs.gnamesAdjustment;
     g_cachedGWorldPatternId          = ptrs.gworldPatternId;
     g_cachedSparseDelegatesPatternId = ptrs.sparseDelegatesPatternId;
     g_cachedGObjectsTried = ptrs.gobjectsPatternsTried;
@@ -324,6 +328,7 @@ bool UE5_Init() {
                     g_cachedGObjectsMethod = "static_struct_recovery";
                     g_cachedGObjectsPatternId = nullptr;
                     g_cachedGObjectsExport    = nullptr;   // a recovered array is not the export either
+                    g_cachedGObjectsAdjustment = 0;      // ...nor the signature's
                     Flamme::UpdateGObjectsMethod(g_cachedPeHash, "static_struct_recovery");
                 }
             }
@@ -389,6 +394,7 @@ bool UE5_Init() {
                 // cache nor the UI's re-save prioritises the decoy-only AOB pattern.
                 g_cachedGObjectsPatternId = nullptr;
                 g_cachedGObjectsExport    = nullptr;
+                g_cachedGObjectsAdjustment = 0;
                 Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_scan_recovery");
             } else {
                 LOG_WARN("UE5_Init: Recovery failed — no candidate qualified as an object array; "

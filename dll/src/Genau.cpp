@@ -5104,6 +5104,14 @@ static bool ValidateGEngineSlot(uintptr_t slotAddr) {
 // Replaying is cheap (one SEH-guarded 4-byte read of memory we just scanned) and it fails
 // CLOSED: if the read fails, ResolveRIP returns 0, 0 never equals a validated address, and
 // the triple is withheld — the same outcome as a symbol-export winner.
+// [AOBM-GWORLD-GENAOB] The `adjustment` a CE symbol script must add after decoding the winner's RIP target -- 0
+// for any signature that is not RIP-decoded (exports, call-follow), where the field means nothing.
+static int SignatureAdjustment(const ScanReport& rep) {
+    const AobSignature* s = rep.winningSig;
+    if (!s || !rep.finalAddress) return 0;
+    return (s->resolve == AobResolve::RipDirect || s->resolve == AobResolve::RipBoth) ? s->adjustment : 0;
+}
+
 static bool CeReplayMatchesResolved(const ScanReport& rep) {
     const AobSignature* s = rep.winningSig;
     if (!s || !rep.finalAddress || !rep.scanAddr) return false;
@@ -5521,6 +5529,8 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     out.gworldScanAddr           = s_gworldReport.scanAddr;
     out.sparseDelegatesScanAddr  = s_sparseReport.scanAddr;
     // [AOBM-EXPORT-SYM-REST] A symbol-export GObjects winner: its export is the CE symbol GenerateAob cannot make.
+    out.gobjectsAdjustment = SignatureAdjustment(s_gobjectsReport);   // [AOBM-GWORLD-GENAOB]
+    out.gnamesAdjustment   = SignatureAdjustment(s_gnamesReport);
     out.gobjectsExport = (s_gobjectsReport.winningSig &&
                           s_gobjectsReport.winningSig->resolve == AobResolve::SymbolExport)
                          ? s_gobjectsReport.winningSig->pattern : nullptr;
