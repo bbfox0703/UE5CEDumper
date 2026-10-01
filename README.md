@@ -1,13 +1,9 @@
 # UE5CEDumper — a UE Dumper for Unreal Engine 4 / 5 and Cheat Engine
 <img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper, a UE Dumper for Unreal Engine 4 and 5"/>  
 
-**The Live Bridge between Unreal Engine Runtime and Cheat Engine.**
+UE5CEDumper is a UE Dumper (an Unreal Engine dumper) for Windows x64 games built on Unreal Engine 4.11 to 5.8. A DLL loaded into the game finds the engine's global tables (GObjects, GNames, GWorld) and reads its reflection data. A standalone UI connects to that DLL to browse objects and classes with their live property values, to search by name or by value, and to export what it finds.
 
-UE5CEDumper is a **UE Dumper** (an Unreal Engine dumper) for UE4 and UE5 games, built as an interactive inspector toolchain. It provides a **live window** into the game's memory, allowing you to browse objects, find instances, and export CE-ready structures in real-time.
-
-> It's built for the *active* table maker. It bridges the gap between seeing an offset and actually using it in Cheat Engine.
-
-> *UE5CEDumper is a UE dumper whose features lean toward Cheat Engine: rather than exporting large amounts of data for offline analysis, it focuses on quickly finding UE structures and putting them to use in CE during live development.*
+It is made to be used with Cheat Engine. It exports pointer-chain records, Structure Dissect definitions and Auto Assembler scripts, and with the optional AOBMaker plugin it sends them straight into a running Cheat Engine. It also exports SDK headers, USMAP files and a full metadata dump (`.jsonl`) for offline use.
 
 > ### Scope of use
 >

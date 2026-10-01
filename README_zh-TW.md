@@ -1,13 +1,9 @@
 # UE5CEDumper — 搭配 Cheat Engine 的 UE Dumper（Unreal Engine 4 / 5）
 <img src="./img/UE5CEDumper.jpg" alt="UE5CEDumper：Unreal Engine 4 與 5 的 UE Dumper"/>  
 
-一套針對 Unreal Engine 4 & 5 遊戲的 **UE Dumper（執行期結構探查工具）**、配合 Cheat Engine、可更方便的開發 Table。
+UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal Engine 4.11 到 5.8 製作的 Windows x64 遊戲。載入遊戲的 DLL 會找出引擎的全域表（GObjects、GNames、GWorld）並讀取反射資料；獨立的 UI 連上這個 DLL 後，可以瀏覽物件與類別及其即時屬性值、依名稱或數值搜尋，並把找到的結果匯出。
 
-UE5CEDumper 是一款 UE Dumper，也是 UE 資料的互動式檢查工具。不同於其它 UE Dumper，它為遊戲記憶體提供了一個**即時視窗**，讓你能即時瀏覽物件、尋找實例，並匯出支援 Cheat Engine (CE) 的結構定義。
-
-> 本工具為「實戰型」的 Table 製作人員打造，旨在消除UE物件的偵測、識別到在 CE 中的實作之間的鴻溝。
-
-> 它是一款功能偏向 CE 的 UE Dumper：重點不在把大量資料倒出來離線分析，而是快速找到 UE 結構，並配合 CE 即時開發。
+它是設計來搭配 Cheat Engine 使用的：可匯出指標鏈記錄、Structure Dissect 定義與 Auto Assembler 腳本，裝了選用的 AOBMaker 外掛時還能直接送進執行中的 Cheat Engine。另外也能匯出 SDK headers、USMAP 檔，以及完整的中繼資料傾印（Dump All，`.jsonl`）供離線使用。
 
 > ### 使用範圍
 >
