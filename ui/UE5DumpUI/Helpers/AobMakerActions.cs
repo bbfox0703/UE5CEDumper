@@ -122,6 +122,13 @@ internal static class AobMakerActions
         return string.IsNullOrEmpty(why) ? refused : refused + " — " + why;
     }
 
+    /// <summary>
+    /// [AOBM-EXPORT-GWORLD-AOB] Cheat Engine's name for an export the DLL found a pointer through, or "" when it
+    /// cannot be named. Measured on Satisfactory with CE 7.7 (2026-10-01): CE lists exports UNDECORATED, so
+    /// <c>?GWorld@@3VUWorldProxy@@A</c> resolves as <c>GWorld</c> and never under its MSVC name.
+    /// </summary>
+    internal static string CeExportSymbol(string mangled) => "";
+
     internal const string KeyRecordAsByte = "str.AobMaker.Record.AsByte";
     internal const string KeyRecordAsPointer = "str.AobMaker.Record.AsPointer";
 

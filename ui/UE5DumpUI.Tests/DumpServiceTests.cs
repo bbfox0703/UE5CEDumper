@@ -305,6 +305,37 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task InitAsync_ReadsTheSymbolExportNames()
+    {
+        // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner has no AOB triple; its export name is what SYM can anchor on.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "init")
+                return new JsonObject { ["ok"] = true, ["ue_version"] = 506 };
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                    ["gworld"] = "0x7FF8B739CB88",
+                    ["gworld_aob"] = "",
+                    ["gworld_export"] = "?GWorld@@3VUWorldProxy@@A",
+                    ["gengine"] = "0x7FF8B739F768",
+                    ["gengine_export"] = "?GEngine@@3PEAVUEngine@@EA",
+                    ["object_count"] = 0,
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().InitAsync(TestContext.Current.CancellationToken);
+
+        Assert.Equal("?GWorld@@3VUWorldProxy@@A", state.GWorldExport);
+        Assert.Equal("?GEngine@@3PEAVUEngine@@EA", state.GEngineExport);
+    }
+
+    [Fact]
     public async Task InitAsync_ParsesLowConfidenceFlag()
     {
         _pipe.SetHandler(req =>

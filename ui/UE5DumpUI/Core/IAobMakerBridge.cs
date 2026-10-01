@@ -98,6 +98,15 @@ public interface IAobMakerBridge
         string symbol, string module, bool autoActivate = true, CancellationToken ct = default);
 
     /// <summary>
+    /// [AOBM-EXPORT-GWORLD-AOB] <see cref="CreateAAScriptAsync"/>, keeping what the reply says about activation
+    /// (<c>SymbolRegistered</c> stays null: only <c>CreateSymbolScript</c> reports it). A client that cannot read it
+    /// answers "created, activation not known".
+    /// </summary>
+    async Task<SymbolScriptResult> CreateAAScriptDetailedAsync(string description, string script,
+        bool autoActivate = true, string? group = null, CancellationToken ct = default)
+        => SymbolScriptResult.FromCreated(await CreateAAScriptAsync(description, script, autoActivate, group, ct));
+
+    /// <summary>
     /// [AOBM-ACTIVATE-RESULT] <see cref="CreateSymbolScriptAsync"/>, keeping what the reply says about activation.
     /// A client that cannot read it answers "created, activation not known".
     /// </summary>
