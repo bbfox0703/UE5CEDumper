@@ -57,6 +57,7 @@ const char* g_cachedSparseDelegatesMethod = "not_found";  // "aob", "not_found"
 // AOB Usage Tracking: PE hash, winning pattern IDs, scan statistics
 char        g_cachedPeHash[17] = {0};
 const char* g_cachedGObjectsPatternId        = nullptr;
+const char* g_cachedGObjectsExport           = nullptr;   // [AOBM-EXPORT-SYM-REST]
 const char* g_cachedGNamesPatternId          = nullptr;
 const char* g_cachedGWorldPatternId          = nullptr;
 const char* g_cachedSparseDelegatesPatternId = nullptr;
@@ -203,6 +204,7 @@ bool UE5_Init() {
     // AOB Usage Tracking
     memcpy(g_cachedPeHash, ptrs.peHash, sizeof(g_cachedPeHash));
     g_cachedGObjectsPatternId        = ptrs.gobjectsPatternId;
+    g_cachedGObjectsExport           = ptrs.gobjectsExport;
     g_cachedGNamesPatternId          = ptrs.gnamesPatternId;
     g_cachedGWorldPatternId          = ptrs.gworldPatternId;
     g_cachedSparseDelegatesPatternId = ptrs.sparseDelegatesPatternId;
@@ -321,6 +323,7 @@ bool UE5_Init() {
                     g_cachedGObjects = staticBase;
                     g_cachedGObjectsMethod = "static_struct_recovery";
                     g_cachedGObjectsPatternId = nullptr;
+                    g_cachedGObjectsExport    = nullptr;   // a recovered array is not the export either
                     Flamme::UpdateGObjectsMethod(g_cachedPeHash, "static_struct_recovery");
                 }
             }
@@ -385,6 +388,7 @@ bool UE5_Init() {
                 // method and CLEAR the now-misleading patternId so neither the DLL hint
                 // cache nor the UI's re-save prioritises the decoy-only AOB pattern.
                 g_cachedGObjectsPatternId = nullptr;
+                g_cachedGObjectsExport    = nullptr;
                 Flamme::UpdateGObjectsMethod(g_cachedPeHash, "data_scan_recovery");
             } else {
                 LOG_WARN("UE5_Init: Recovery failed — no candidate qualified as an object array; "

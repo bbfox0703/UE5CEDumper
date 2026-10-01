@@ -193,8 +193,10 @@
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4"
                       VerticalAlignment="Center">
             <!-- [AOBM-UI-FUNC-VISUAL] Needs the AOBMaker app, not only the CE plugin: the accent border and the
-                 "UI" tag match the toolbar's UI label, and the tag greys out with the UI dot. -->
-            <Button Classes="aobmUi"
+                 "UI" tag match the toolbar's UI label, and the tag greys out with the UI dot.
+                 [AOBM-EXPORT-SYM-REST] ...unless GObjects came from an export, which the CE plugin registers by
+                 itself: the mark and the tag follow GObjectsSymbolUsesUi. -->
+            <Button Classes.aobmUi="{Binding GObjectsSymbolUsesUi}"
                     Command="{Binding RegisterGObjectsSymbolCommand}"
                     IsEnabled="{Binding CanRegisterGObjectsSymbol}"
                     ToolTip.Tip="{StaticResource str.Pointers.RegisterGObjectsSymbolTip}"
@@ -202,12 +204,14 @@
                     Foreground="#C586C0" Background="Transparent" BorderThickness="1">
               <StackPanel Orientation="Horizontal" Spacing="2">
                 <TextBlock Text="{StaticResource str.Pointers.RegisterSymbol}" VerticalAlignment="Center"/>
-                <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}" FontSize="8" VerticalAlignment="Top"
-                           Foreground="{StaticResource AobMakerUiAccent}"
-                           IsVisible="{Binding AobMakerUi.IsRunning, FallbackValue=False}"/>
-                <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}" FontSize="8" VerticalAlignment="Top"
-                           Foreground="#888888"
-                           IsVisible="{Binding !AobMakerUi.IsRunning, FallbackValue=False}"/>
+                <Panel IsVisible="{Binding GObjectsSymbolUsesUi}">
+                  <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}" FontSize="8" VerticalAlignment="Top"
+                             Foreground="{StaticResource AobMakerUiAccent}"
+                             IsVisible="{Binding AobMakerUi.IsRunning, FallbackValue=False}"/>
+                  <TextBlock Text="{StaticResource str.Toolbar.AobMakerUi}" FontSize="8" VerticalAlignment="Top"
+                             Foreground="#888888"
+                             IsVisible="{Binding !AobMakerUi.IsRunning, FallbackValue=False}"/>
+                </Panel>
               </StackPanel>
             </Button>
             <Button Content="{StaticResource str.Pointers.AobMakerHex}"

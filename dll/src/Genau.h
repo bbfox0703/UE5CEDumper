@@ -261,6 +261,8 @@ struct EnginePointers {
 
     // Winning pattern IDs (point to AobSignature::id constexpr strings in Signatures.h)
     const char* gobjectsPatternId        = nullptr;
+    // [AOBM-EXPORT-SYM-REST] As gworldExport, for GObjects ("?GUObjectArray@@3VFUObjectArray@@A").
+    const char* gobjectsExport           = nullptr;
     const char* gnamesPatternId          = nullptr;
     const char* gworldPatternId          = nullptr;
     const char* sparseDelegatesPatternId = nullptr;

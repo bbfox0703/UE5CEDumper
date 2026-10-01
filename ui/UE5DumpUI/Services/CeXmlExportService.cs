@@ -1720,7 +1720,9 @@ public static class CeXmlExportService
     /// The GWorld slot (&amp;GWorld) is recovered either by an AOB scan
     /// (<paramref name="useAob"/>=true — survives restart automatically) or
     /// hardcoded from <paramref name="gworldSlotAddr"/> (useAob=false — the user
-    /// updates that value after a restart). The Lua then deref's *GWorld → UWorld*
+    /// updates that value after a restart), or [AOBM-EXPORT-SYM-REST] resolved by name from
+    /// <paramref name="gworldExport"/> (useAob=false, the game exports GWorld — survives restarts
+    /// and patches). The Lua then deref's *GWorld → UWorld*
     /// and applies each breadcrumb step (readQword on a pointer-deref crumb, plain
     /// add on an inline-struct crumb), null-guarding every hop, and finally
     /// registerSymbol's the resulting leaf address.
@@ -1768,7 +1770,22 @@ public static class CeXmlExportService
         AppendCloseLuaEngineHelper(sb);
 
         // ---- Resolve the GWorld slot (&GWorld) into gworld_base + register it ----
-        if (useAob)
+        if (!useAob && !string.IsNullOrEmpty(gworldExport))
+        {
+            // [AOBM-EXPORT-SYM-REST] The game exports GWorld: CE resolves the export by name in every run, so the base
+            // needs neither an AOB nor a hand-updated address. Nil while CE has not loaded the module's exports yet.
+            sb.AppendLine($"local gworld_base = getAddressSafe('{gworldExport}')   -- the game's exported GWorld");
+            sb.AppendLine("if gworld_base then");
+            sb.AppendLine("  synchronize(function()");
+            sb.AppendLine($"    unregisterSymbol('{gworldSymbol}')");
+            sb.AppendLine($"    registerSymbol('{gworldSymbol}', gworld_base)");
+            sb.AppendLine("  end)");
+            sb.AppendLine($"  dbg(string.format('[GWorldWalk] {gworldSymbol} = %X', gworld_base))");
+            sb.AppendLine("else");
+            sb.AppendLine($"  print('[GWorldWalk] WARNING: Cheat Engine could not resolve the export {gworldExport} (its exports may still be loading)')");
+            sb.AppendLine("end");
+        }
+        else if (useAob)
         {
             sb.AppendLine($"local entry = {{aob='{aob}', pos={aobPos}, aoblen={aobLen}, symbol='{gworldSymbol}'}}");
             sb.AppendLine("local gworld_base = nil");

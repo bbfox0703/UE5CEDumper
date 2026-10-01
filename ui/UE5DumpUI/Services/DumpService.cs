@@ -216,6 +216,7 @@ public sealed class DumpService : IDumpService
             GWorldAobLen = ptrs["gworld_aob_len"]?.GetValue<int>() ?? 0,
             // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name (build 3609+; older DLLs omit it -> "")
             GWorldExport = ptrs["gworld_export"]?.GetValue<string>() ?? "",
+            GObjectsExport = ptrs["gobjects_export"]?.GetValue<string>() ?? "",   // [AOBM-EXPORT-SYM-REST] build 3610+
             // GEngine slot + AOB metadata (build 2394+; older DLLs omit these → "" / 0)
             GEngine = ptrs["gengine"]?.GetValue<string>() ?? "",
             GEngineMethod = ptrs["gengine_method"]?.GetValue<string>() ?? "not_found",

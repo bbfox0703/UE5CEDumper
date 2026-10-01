@@ -809,11 +809,16 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         IsEditing = false;
     }
 
+    /// <summary>[AOBM-EXPORT-SYM-REST] CE's name for the export GWorld was found through, or "" (an AOB, or no game).
+    /// The AOB option's anchor when there is no AOB: the three exports root at it instead of an absolute address.</summary>
+    private string GWorldExportSymbol => AobMakerActions.CeExportSymbol(_engineState?.GWorldExport ?? "");
+
     public void SetEngineState(EngineState state)
     {
         _engineState = state;
         _activePeHash = state?.PeHash ?? "";
-        IsAobSymbolAvailable = !string.IsNullOrEmpty(state?.GWorldAob);
+        // [AOBM-EXPORT-SYM-REST] ...or an export CE resolves by name: the same restart-stable anchor for the option.
+        IsAobSymbolAvailable = !string.IsNullOrEmpty(state?.GWorldAob) || GWorldExportSymbol.Length > 0;
     }
 
     partial void OnIsAobSymbolAvailableChanged(bool value)
@@ -4649,6 +4654,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // so we fall back to direct-address mode to avoid generating a wrong base.
             var isGWorldRoot = rootBc.FieldName == "GWorld";
             var useAob = UseAobSymbol && isGWorldRoot && !string.IsNullOrEmpty(_engineState?.GWorldAob);
+            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead.
+            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob ? GWorldExportSymbol : "";
             if (UseAobSymbol && !isGWorldRoot)
                 _log.Info("CEXML: AOB requested but root is not GWorld — falling back to direct address");
 
@@ -4680,7 +4687,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                var rootAddress = AddressHelper.FormatAddress(
+                var rootAddress = exportRoot.Length > 0 ? exportRoot : AddressHelper.FormatAddress(
                     rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
@@ -5006,6 +5013,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Same GWorld-root guard as ExportCeXmlAsync
             var isGWorldRoot = rootBc.FieldName == "GWorld";
             var useAob = UseAobSymbol && isGWorldRoot && !string.IsNullOrEmpty(_engineState?.GWorldAob);
+            // [AOBM-EXPORT-SYM-REST] No AOB, but the game exports GWorld: root the table at that CE symbol instead.
+            var exportRoot = UseAobSymbol && isGWorldRoot && !useAob ? GWorldExportSymbol : "";
             if (UseAobSymbol && !isGWorldRoot)
                 _log.Info("CEFieldXML: AOB requested but root is not GWorld — falling back to direct address");
 
@@ -5039,7 +5048,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             }
             else
             {
-                var rootAddress = AddressHelper.FormatAddress(
+                var rootAddress = exportRoot.Length > 0 ? exportRoot : AddressHelper.FormatAddress(
                     rootBc.Address, _engineState?.CeModuleName, _engineState?.ModuleBase, AddrFormat);
                 xml = CeXmlExportService.GenerateHierarchicalXml(
                     rootAddress, rootBc.Label, breadcrumbsForXml, fieldsForXml, resolvedStructs,
@@ -5270,7 +5279,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
     /// Build the "Copy CE AA Script" output. When the live path is rooted at
     /// GWorld and forward-walkable, emit a RESTART-STABLE script that walks
     /// GWorld → … → this object at enable time — AOB-anchored when GWorld itself
-    /// came from an AOB scan (UseAobSymbol + a known GWorld AOB), otherwise a
+    /// came from an AOB scan (UseAobSymbol + a known GWorld AOB), export-anchored when
+    /// the game exports GWorld (UseAobSymbol + no AOB, [AOBM-EXPORT-SYM-REST]), otherwise a
     /// hardcoded GWorld base the user updates after a restart. Any other path
     /// keeps the legacy hardcoded absolute address (dies on ASLR, but is all we
     /// can do off a non-GWorld root). Returns the XML + a one-line status note.
@@ -5295,6 +5305,13 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // Respect the AOB checkbox (same condition as Copy CE Field's useAob):
             // unchecked → hardcoded GWorld base even when an AOB is available.
             var useAob = UseAobSymbol && !string.IsNullOrEmpty(_engineState?.GWorldAob);
+            if (!useAob && UseAobSymbol && GWorldExportSymbol.Length > 0)
+            {
+                return (CeXmlExportService.GenerateGWorldWalkedSymbolXml(
+                            symbolName, spine, useAob: false, aob: "", aobPos: 0, aobLen: 0,
+                            gworldSlotAddr: "", gworldExport: GWorldExportSymbol),
+                        "GWorld export walk (restart-stable)");
+            }
             if (useAob)
             {
                 return (CeXmlExportService.GenerateGWorldWalkedSymbolXml(

@@ -115,6 +115,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private int _gworldAobLen;
     /// <summary>[AOBM-EXPORT-GWORLD-AOB] Cheat Engine's name for the export GWorld was found through, or "".</summary>
     [ObservableProperty] private string _gworldExportSymbol = "";
+    /// <summary>[AOBM-EXPORT-SYM-REST] As <see cref="GworldExportSymbol"/>, for GObjects.</summary>
+    [ObservableProperty]
+    [NotifyPropertyChangedFor(nameof(GObjectsSymbolUsesUi))]
+    private string _gobjectsExportSymbol = "";
     [ObservableProperty] private string _moduleName = "";
 
     /// <summary>[PATH-CE-MODULE-VIEW] CE's name for the module (<see cref="EngineState.CeModuleName"/>), for the
@@ -530,11 +534,11 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>Can send GWorld AOB scan hit address to CE disassembler (code address).</summary>
     public bool CanAsmGWorldScan => IsAobMakerAvailable && IsNonZeroAddr(GWorldScanAddr);
     /// <summary>[AOBM-GNAMES-SYMBOL] GObjects has no AOB triple from the DLL; AOBMaker.UI makes one from the scan hit.</summary>
-    public bool CanRegisterGObjectsSymbol => IsAobMakerAvailable && _aobMakerUi != null
-        && IsNonZeroAddr(GObjectsAddress) && IsNonZeroAddr(GObjectsScanAddr);
+    public bool CanRegisterGObjectsSymbol => IsAobMakerAvailable && IsNonZeroAddr(GObjectsAddress)
+        && (!GObjectsSymbolUsesUi || (_aobMakerUi != null && IsNonZeroAddr(GObjectsScanAddr)));
     /// <summary>[AOBM-EXPORT-SYM-REST] Does GObjects' SYM go through AOBMaker.UI? Not when GObjects came from an export:
     /// the button's AOBMaker.UI mark binds to this.</summary>
-    public bool GObjectsSymbolUsesUi => true;
+    public bool GObjectsSymbolUsesUi => string.IsNullOrEmpty(GobjectsExportSymbol);
     /// <summary>[AOBM-GNAMES-SYMBOL] As <see cref="CanRegisterGObjectsSymbol"/>, for GNames.</summary>
     public bool CanRegisterGNamesSymbol => IsAobMakerAvailable && _aobMakerUi != null
         && IsNonZeroAddr(GNamesAddress) && IsNonZeroAddr(GNamesScanAddr);
@@ -665,6 +669,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         GworldAobPos = state.GWorldAobPos;
         GworldAobLen = state.GWorldAobLen;
         GworldExportSymbol = AobMakerActions.CeExportSymbol(state.GWorldExport);
+        GobjectsExportSymbol = AobMakerActions.CeExportSymbol(state.GObjectsExport);
         GEngineAddress = state.GEngine;
         GEngineMethod = state.GEngineMethod;
         GEnginePatternId = state.GEnginePatternId;
@@ -1252,7 +1257,9 @@ public partial class PointerPanelViewModel : ViewModelBase
             CeXmlExportService.GenerateRegisterSymbolXml(symbolName, ceSymbol));
         var registration = await _aobMaker!.CreateAAScriptDetailedAsync($"{label} → {symbolName}", script,
                                                                        autoActivate: true);
-        ReportSymbolRegistration(registration, symbolName, $"export: {ceSymbol}");
+        // [AOBM-EXPORT-SYM-REST] Its own success line: nothing is re-scanned on enable, the export is re-resolved.
+        ReportSymbolRegistration(registration, symbolName, $"export: {ceSymbol}",
+            AobMakerActions.SymbolRegisteredFromExportText(symbolName, ceSymbol));
     }
 
     // --- [AOBM-GNAMES-SYMBOL] GObjects / GNames symbols through AOBMaker.UI's GenerateAob ---
@@ -1264,7 +1271,9 @@ public partial class PointerPanelViewModel : ViewModelBase
 
     [RelayCommand]
     private Task RegisterGObjectsSymbolAsync()
-        => RegisterSymbolViaGenerateAobAsync("GObjects", "gobjects_addr", GObjectsScanAddr, GObjectsAddress);
+        => !GObjectsSymbolUsesUi
+            ? RegisterSymbolFromExportAsync("GObjects", "gobjects_addr", GobjectsExportSymbol)
+            : RegisterSymbolViaGenerateAobAsync("GObjects", "gobjects_addr", GObjectsScanAddr, GObjectsAddress);
 
     [RelayCommand]
     private Task RegisterGNamesSymbolAsync()
@@ -1383,7 +1392,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// exists": "Registered" needs <c>activated</c> and <c>symbolRegistered</c> as well, and a plugin that sends
     /// neither (older than AOBMaker v20260930) gets a success that says it is not known whether CE enabled it.
     /// </summary>
-    internal void ReportSymbolRegistration(SymbolScriptResult result, string symbolName, string detail)
+    internal void ReportSymbolRegistration(SymbolScriptResult result, string symbolName, string detail,
+                                           string? successText = null)
     {
         string reason = result.Message ?? AobMakerActions.SymbolNoReasonText();
         if (result.TimedOut)
@@ -1408,7 +1418,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         }
         if (result.Activated == true)
         {
-            ReportSymbolRegistration(true, symbolName, detail);
+            ReportSymbolRegistration(true, symbolName, detail, successText);
             return;
         }
         ClearError();
@@ -1425,12 +1435,12 @@ public partial class PointerPanelViewModel : ViewModelBase
         _log?.Warn(Constants.LogCatInit, $"CE symbol script '{symbolName}' ({detail}): {message}");
     }
 
-    internal void ReportSymbolRegistration(bool success, string symbolName, string detail)
+    internal void ReportSymbolRegistration(bool success, string symbolName, string detail, string? successText = null)
     {
         if (success)
         {
             ClearError();
-            SymbolStatusText = OrFallback(
+            SymbolStatusText = successText ?? OrFallback(
                 Res.Format("str.Pointers.Symbol.Registered", symbolName),
                 $"Registered CE symbol '{symbolName}'.");
             _log?.Info(Constants.LogCatInit,

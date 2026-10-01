@@ -501,7 +501,7 @@
     <sys:String x:Key="str.AobMaker.Dissect.RecordFailed">{0} is embedded, but its enable record did not reach CE (CE closed?): run this again</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Unavailable">Auto Structure Dissect needs the AOBMaker CE plugin: {0}</sys:String>
     <sys:String x:Key="str.AobMaker.Dissect.Failed">Adding Auto Structure Dissect failed: {0}</sys:String>
-    <sys:String x:Key="str.Pointers.RegisterGObjectsSymbolTip">Create a CE AA script that registers GObjects as the symbol 'gobjects_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GObjects.</sys:String>
+    <sys:String x:Key="str.Pointers.RegisterGObjectsSymbolTip">Create a CE AA script that registers GObjects as the symbol 'gobjects_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GObjects. On a game that exports GUObjectArray (modular builds such as Satisfactory) the symbol is defined from that export instead, and the AOBMaker app is not needed.</sys:String>
     <sys:String x:Key="str.Pointers.RegisterGNamesSymbolTip">Create a CE AA script that registers GNames as the symbol 'gnames_addr'. The AOB comes from AOBMaker.UI's GenerateAob, so the AOBMaker app must be open as well as Cheat Engine with its plugin; the symbol is pushed only if it lands where the DLL resolved GNames.</sys:String>
     <sys:String x:Key="str.AobMaker.Aa.Pushed">AA script added to CE's address list: {0} — tick it to register the symbol</sys:String>
     <sys:String x:Key="str.AobMaker.Aa.Copied">CE AA script copied: {0} — paste it into CE's address list</sys:String>
@@ -1640,7 +1640,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.Tip.LiveWalker.ExportCE">Copy full CE XML pointer chain to clipboard</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportCEField">Copy CE XML for the selected field(s) only (Ctrl/Shift-click to multi-select)</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.CancelExport">Abort the in-progress export (Copy CE XML / Copy CE Field / Export CSX) — stops resolving the object graph; the clipboard/file is left untouched</sys:String>
-    <sys:String x:Key="str.Tip.LiveWalker.AobToggle">Use AOB-scanned GWorld symbol instead of hardcoded address (survives game restarts)</sys:String>
+    <sys:String x:Key="str.Tip.LiveWalker.AobToggle">Use AOB-scanned GWorld symbol instead of hardcoded address (survives game restarts). On a game that exports GWorld (modular builds such as Satisfactory) the export is used instead: Cheat Engine resolves it by name, so it survives restarts and patches.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.ExportOptions">Copy CE XML / Copy CE Field options: memory-record Description format (+Offset / +Type) and the AOB / Collapse chain / Guess? toggles.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.DescShowOffset">Append each node's field offset (hex) to its CE Description — e.g. "AbilitySystemComponent (7E0)". Off = name only.</sys:String>
     <sys:String x:Key="str.Tip.LiveWalker.DescShowType">Append each node's class / struct / element type to its CE Description — e.g. "AbilitySystemComponent (LSAbilitySystemComponent)", "[0] (ShieldAttributeSet)". The folded (Collapse chain) spine never adds a type. Off = name only.</sys:String>

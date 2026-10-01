@@ -5520,6 +5520,10 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     out.gnamesScanAddr           = s_gnamesReport.scanAddr;
     out.gworldScanAddr           = s_gworldReport.scanAddr;
     out.sparseDelegatesScanAddr  = s_sparseReport.scanAddr;
+    // [AOBM-EXPORT-SYM-REST] A symbol-export GObjects winner: its export is the CE symbol GenerateAob cannot make.
+    out.gobjectsExport = (s_gobjectsReport.winningSig &&
+                          s_gobjectsReport.winningSig->resolve == AobResolve::SymbolExport)
+                         ? s_gobjectsReport.winningSig->pattern : nullptr;
 
     // (MA1) Aggregate the cancel verdict in ONE place, in the same block that already reads
     // all four reports, rather than at the four call sites — C++ has no `required`, and a

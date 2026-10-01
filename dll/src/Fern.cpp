@@ -1306,6 +1306,7 @@ static void FillPointerSnapshot(json& data) {
     extern int         g_cachedGWorldAobPos;
     extern int         g_cachedGWorldAobLen;
     extern const char* g_cachedGWorldExport;
+    extern const char* g_cachedGObjectsExport;
     extern uintptr_t   g_cachedGEngine;
     extern const char* g_cachedGEngineMethod;
     extern const char* g_cachedGEnginePatternId;
@@ -1373,6 +1374,7 @@ static void FillPointerSnapshot(json& data) {
     // [AOBM-EXPORT-GWORLD-AOB] A symbol-export winner's MSVC name, "" otherwise: the restart-stable anchor when
     // there is no AOB triple.
     data["gworld_export"]  = g_cachedGWorldExport ? g_cachedGWorldExport : "";
+    data["gobjects_export"] = g_cachedGObjectsExport ? g_cachedGObjectsExport : "";   // [AOBM-EXPORT-SYM-REST]
 
     // &GEngine (the slot, not the object). Empty aob == no AOB hit, in which case the UI
     // must treat a GameEngine-rooted export the way it treats a recovered GWorld: address
