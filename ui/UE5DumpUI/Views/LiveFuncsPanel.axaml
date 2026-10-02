@@ -78,6 +78,18 @@
                 IsChecked="{Binding EarliestFirst}"
                 ToolTip.Tip="{StaticResource str.Tip.LF.EarliestFirst}"
                 Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{StaticResource str.LF.FetchLimit}"
+                 Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
+      <NumericUpDown Value="{Binding FetchLimitValue}"
+                     Minimum="1" Maximum="50000" ClipValueToMinMax="True" Increment="100"
+                     FormatString="0" Width="160" FontSize="12" VerticalAlignment="Center"
+                     ToolTip.Tip="{StaticResource str.Tip.LF.FetchLimit}"/>
+      <TextBlock Text="{StaticResource str.LF.MinCalls}"
+                 Foreground="#888" FontSize="12" VerticalAlignment="Center"/>
+      <NumericUpDown Value="{Binding MinCallsValue}"
+                     Minimum="1" Maximum="1000000" ClipValueToMinMax="True" Increment="1"
+                     FormatString="0" Width="160" FontSize="12" VerticalAlignment="Center"
+                     ToolTip.Tip="{StaticResource str.Tip.LF.MinCalls}"/>
       <Button Content="{StaticResource str.LF.ClearBaseline}"
               Command="{Binding ClearBaselineCommand}"
               IsVisible="{Binding DiffMode}"

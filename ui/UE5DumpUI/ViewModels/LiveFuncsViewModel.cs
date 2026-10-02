@@ -27,8 +27,44 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
 
-    /// <summary>How many top rows to fetch from the DLL (ranked by fire count).</summary>
-    private const int FetchLimit = 300;
+    /// <summary>Highest the fetch box will ask for. Name resolution is the cost, so this is a ceiling, not a target.</summary>
+    private const int FetchLimitMax = 50000;
+
+    /// <summary>How many top rows to fetch from the DLL (ranked by fire count). The cut is by count, not by a fixed minimum, so a busy recording's omitted rows are the ones that fired least.</summary>
+    [ObservableProperty] private int _fetchLimit = 300;
+
+    /// <inheritdoc cref="FetchLimit"/>
+    public decimal? FetchLimitValue
+    {
+        get => FetchLimit;
+        set
+        {
+            FetchLimit = Math.Clamp(NumericInput.KeepCurrentIfEmpty(value, FetchLimit), 1, FetchLimitMax);
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnFetchLimitChanged(int value) => OnPropertyChanged(nameof(FetchLimitValue));
+
+    /// <summary>Hide a fetched row with fewer calls than this. 1 keeps every row the fetch returned, including a single call.</summary>
+    [ObservableProperty] private int _minCalls = 1;
+
+    /// <inheritdoc cref="MinCalls"/>
+    public decimal? MinCallsValue
+    {
+        get => MinCalls;
+        set
+        {
+            MinCalls = Math.Clamp(NumericInput.KeepCurrentIfEmpty(value, MinCalls), 1, int.MaxValue);
+            OnPropertyChanged();
+        }
+    }
+
+    partial void OnMinCallsChanged(int value)
+    {
+        OnPropertyChanged(nameof(MinCallsValue));
+        ApplyFilter();
+    }
 
     /// <summary>Full unfiltered result set — the filter rebuilds <see cref="Results"/> from this.</summary>
     private List<PeProfileEntry> _allEntries = new();
@@ -275,7 +311,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     private async Task FetchAndPopulateAsync()
     {
-        var result = await _dump.PeProfileGetAsync(FetchLimit);
+        var result = await _dump.PeProfileGetAsync(Math.Clamp(FetchLimit, 1, FetchLimitMax));
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
@@ -396,6 +432,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (HideEvents && e.IsEventLike) continue;
             // Periodic-only: keep just the regular timer-like cadence functions.
             if (PeriodicOnly && !e.IsPeriodic) continue;
+            if (e.Count < MinCalls) continue;
             if (terms.Length > 0 &&
                 !ObjectTreeFilter.MatchesAllTerms(terms, e.FuncName, e.ClassName))
             {

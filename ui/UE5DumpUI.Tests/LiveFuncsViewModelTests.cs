@@ -21,6 +21,7 @@ public class LiveFuncsViewModelTests
         public int StartCalls { get; private set; }
         public int StopCalls { get; private set; }
         public int GetCalls { get; private set; }
+        public int LastLimit { get; private set; }
         public PeProfileResult NextGet { get; set; } = new();
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
@@ -36,6 +37,7 @@ public class LiveFuncsViewModelTests
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
         {
             GetCalls++;
+            LastLimit = limit;
             return Task.FromResult(NextGet);
         }
     }
@@ -718,4 +720,41 @@ public class LiveFuncsViewModelTests
 
         Assert.DoesNotContain(vm.Results, r => r.FuncName == "Tick");
     }
+
+    [Fact]
+    public async Task FetchLimit_IsWhatTheGetAsksFor()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "A", FuncName = "Once", Count = 1 });
+
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(300, dump.LastLimit);
+
+        vm.FetchLimit = 8000;
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal(8000, dump.LastLimit);
+        Assert.Single(vm.Results);
+    }
+
+    [Fact]
+    public async Task MinCalls_OneKeepsASingleFire_FourHidesIt()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "A", FuncName = "Once", Count = 1 },
+            new PeProfileEntry { ClassName = "A", FuncName = "Thrice", Count = 3 },
+            new PeProfileEntry { ClassName = "A", FuncName = "Often", Count = 9 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(3, vm.Results.Count);
+
+        vm.MinCalls = 4;
+        Assert.Single(vm.Results);
+        Assert.Equal("Often", vm.Results[0].FuncName);
+
+        vm.MinCalls = 1;
+        Assert.Equal(3, vm.Results.Count);
+    }
+
 }

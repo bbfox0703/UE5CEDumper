@@ -1063,6 +1063,8 @@
     <sys:String x:Key="str.LF.HideEvents">Hide events/delegates</sys:String>
     <sys:String x:Key="str.LF.PeriodicOnly">Periodic only</sys:String>
     <sys:String x:Key="str.LF.EarliestFirst">Earliest first</sys:String>
+    <sys:String x:Key="str.LF.FetchLimit">Fetch</sys:String>
+    <sys:String x:Key="str.LF.MinCalls">Min calls</sys:String>
     <sys:String x:Key="str.LF.Col.Order">Order</sys:String>
     <sys:String x:Key="str.LF.Col.Calls">Calls</sys:String>
     <sys:String x:Key="str.LF.Col.DeltaVsBase">Δ vs base</sys:String>
@@ -1085,6 +1087,8 @@
     <sys:String x:Key="str.Tip.LF.HideEvents">Hide event handlers and delegate signatures (tagged "Event"/"Deleg" in the Type column — On*/callbacks). These are reactions the engine fires AT the game when something happens, not functions you can call to MAKE it happen. Hiding them leaves imperative callables ("Call"). Note: if this empties the list, the action's real entry point wasn't captured (it opened via a native C++ call the ProcessEvent hook can't see, or the panel hadn't appeared yet — record through until it's fully on screen).</sys:String>
     <sys:String x:Key="str.Tip.LF.PeriodicOnly">Show ONLY functions firing at a regular timer-like cadence (tagged "Timer" in the Kind column) — a steady period, low variation, not the per-frame Tick band. The behaviour-based way to find the callback that drives a cooldown / respawn / damage-over-tick: record while standing IDLE for ~15-20 s (the inverse of the action-diff flow), then enable this to leave just the periodic callbacks. The "Period" column shows the measured interval. Caveat: native C++/lambda timers (SetTimer(this, &amp;UClass::Method)) bypass ProcessEvent entirely and never appear here — only UFUNCTION-bound (BP timer event / SetTimerByFunctionName) timers are visible.</sys:String>
     <sys:String x:Key="str.Tip.LF.EarliestFirst">Sort by call order — the function that fired FIRST during the recording goes to the top (see the "Order" column). An action's entry point runs BEFORE the reactions it triggers (widget creation, On* notifications), so combined with "New/changed only" this floats the true opener to the top instead of ranking by raw call count. Causal, name-independent.</sys:String>
+    <sys:String x:Key="str.Tip.LF.FetchLimit">How many functions to pull, highest call counts first. Anything past this cut is not in the table, and on a busy recording those are the functions that fired only a few times — there is no separate "under 4 calls" rule. Raise this and Refresh to keep a single call. Resolving every name is the slow part.</sys:String>
+    <sys:String x:Key="str.Tip.LF.MinCalls">Hide a fetched row with fewer calls than this. 1 shows every function the fetch returned, including one call. It cannot bring back a function the fetch limit already dropped.</sys:String>
 
     <!-- Console (UFUNCTION(exec) discovery + invoke) -->
     <sys:String x:Key="str.Con.Load">Load</sys:String>
