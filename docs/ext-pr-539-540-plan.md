@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: PLAN — no PR feature is built yet** (one tooltip fix landed early, see "Landed ahead of the plan").
+**Status: PLAN — no PR feature is built yet** (three small changes landed early, D7 among them — see "Landed ahead of the plan").
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -9,7 +9,18 @@ editing it here AND its line in [todo.md](todo.md) in the same commit.
 
 | Commit | What | Still owed |
 |---|---|---|
-| `42217904` (2026-10-02, `dev`) | `en.axaml` `str.Tip.Export.DumpAll`: the sentence "~30-60s per game; output is 50-500 MB depending on game size." became "Time and file size vary with the game and the export settings." Nothing else in the tooltip changed. | ⚠ **Not compiled and no C# test run** — the container that made it has no .NET SDK; only the XML parse and the Python gates were checked. On Windows: `dotnet test`, then `build.ps1 -Mode Publish`. ⚠ **No dev-log entry yet** (maintainer: fine for now) — write it with the build that first carries this commit. |
+| `42217904` (2026-10-02, `dev`) | `en.axaml` `str.Tip.Export.DumpAll`: the sentence "~30-60s per game; output is 50-500 MB depending on game size." became "Time and file size vary with the game and the export settings." Nothing else in the tooltip changed. | Not compiled when committed; compiled later with `14ecb189` (below). ⚠ Windows `dotnet test` + `build.ps1 -Mode Publish` still owed. ⚠ **No dev-log entry yet** (maintainer: fine for now) — write it with the build that first carries this commit. |
+| `cc254fd1` (2026-10-02, `dev`) | `DumpAllService` header comment: "~30-60 seconds for a 3-5k-class game" became "the run time grows with the game's class count". Comment only. | Nothing beyond the build below. |
+| `14ecb189` (2026-10-02, `dev`) | **D7 done.** The class walk reports "Walking classes" every `DumpAllService.ProgressReportInterval` (500 ms) through `ProgressThrottle`, not every 50 classes; the first class is reported at once; pass 1 still reports per 5000-object page; the final "Done" report is unchanged. `GenerateAsync` gained an optional `TimeProvider` for tests. Carries the `Co-authored-by: fireundubh` trailer. | Compiled and tested **on Linux** (see below), not on Windows. ⚠ Windows `dotnet test` + `build.ps1 -Mode Publish` owed; dev-log entry with that build. `SdkExportService` and `UsmapExportService` still report every 50 walked classes: not part of D7, and they write no non-class lines between counts, so they do not misfire — left as they are. |
+
+**How these were tested (2026-10-02).** .NET SDK 10.0.112 from Ubuntu's archive (`apt-get install dotnet-sdk-10.0`;
+the `dot.net` installer host is blocked by the container's proxy). The projects are `net10.0-windows` / `win-x64`,
+so they were built and run with `-p:EnableWindowsTargeting=true -p:RuntimeIdentifier=linux-x64` and
+`dotnet test --project ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj`. Baseline on the unchanged tree: 6021 total,
+5892 passed, **112 failed**, 17 skipped. The 112 are Windows-only (proxy deploy and orphan scan, DLL path store,
+CE inject paths, volume roots, and similar); none is in Dump All. After `14ecb189`: 6025 total, 5896 passed, the
+**same 112** failed (compared by name), 17 skipped — the 4 new D7 tests pass. A Linux run is not a Windows run:
+AOT trimming and the Windows-only tests are still unchecked.
 
 ⚠ **That commit's message says the old figures were "never measured against the games this runs on". That is
 unverified** — nobody checked whether they were measured. The reason for the change is the maintainer's decision
@@ -121,7 +132,7 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | D4 | **Object index** | **Take, as an opt-in that is OFF by default, with a size estimate and a confirmation before it runs** — see "D4 — the object index" below. *(Reversed the same day: the first decision was "do not take", see the history note there.)* |
 | D5 | **`diff_dumps.py`: struct added / removed** | **Add.** The PR reports only changed structs; classes report added, removed and changed. |
 | D6 | **`DumpJsonlContext` doc comment** | **Move it back above the attributes.** The PR placed `/// <summary>` after the `[JsonSerializable]` attributes. Probably no compile error, but it is in the wrong place. **Only the PR has this:** `dev` is correct (checked 2026-10-02), so the rule is just "do not copy the PR's placement". |
-| D7 | **Progress reporting** | **On a timer, not on the class count.** Report every 0.5–1 s (a constant defined in the code), counting classes **and** structs. The PR keys it on `classes % 50 == 0` while counting only classes, so once the class count sits on a multiple of 50 (including 0) **every struct line** posts a report — potentially thousands of UI-thread posts — and the comment "Matches old behaviour exactly" is no longer true. |
+| D7 | **Progress reporting** | ✅ **Done ahead of D1–D3 in `14ecb189`** (500 ms, see "Landed ahead of the plan"); when structs land, they report through the same throttle. **On a timer, not on the class count.** Report every 0.5–1 s (a constant defined in the code), counting classes **and** structs. The PR keys it on `classes % 50 == 0` while counting only classes, so once the class count sits on a multiple of 50 (including 0) **every struct line** posts a report — potentially thousands of UI-thread posts — and the comment "Matches old behaviour exactly" is no longer true. |
 | D8 | **Settings persisted** | Any new option (the diff settings below included) survives a UI restart through `UiOptionsSettings`, same rules as L5. |
 
 ### D4 — the object index (opt-in)
