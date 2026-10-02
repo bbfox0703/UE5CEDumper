@@ -32,6 +32,11 @@
               Command="{Binding ClearCommand}"
               Padding="6,2" FontSize="11" VerticalAlignment="Center"
               Cursor="Hand"/>
+      <Button Content="{StaticResource str.LF.SaveJsonl}"
+              Command="{Binding SaveJsonlCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.SaveJsonl}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center"
+              Cursor="Hand"/>
       <AutoCompleteBox PlaceholderText="{StaticResource str.LF.FilterHint}"
                Text="{Binding FilterText, Mode=TwoWay}"
                ItemsSource="{Binding FilterHistory}"
