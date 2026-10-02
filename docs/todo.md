@@ -249,6 +249,27 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🧭 Maintainer request 2026-10-02 — take parts of external PRs 539 / 540, re-implemented here `[EXTPR-539-540-2026-10-02]`
+
+**The plan, the review's findings and every decision: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md).** Nothing
+is built yet. ⚠ First review only — the maintainer will re-read both PRs before work starts. Each feature commit
+ends with `Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.com>`; the reply on the PRs is
+written after the work, not before.
+
+- ⬜ **PR 540 — Live Funcs** (UI). Effort **M**, risk **low**. In order: fetch-limit slider (2^x, default 2^9,
+  max 2^13) → Save `.jsonl` → Min calls slider (default 1, max 32, affects the next capture only). All three
+  disabled while recording; both values persisted in `ui-options.json`.
+- ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
+  dump grows). Take structs, enums and function params; NOT the object index. `diff_dumps.py` reports struct
+  added / removed; timer-based progress; fix the Explorer short-name collision and the enum labels; move the
+  `DumpJsonlContext` doc comment back; tooltip from measured time and size.
+- ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
+  weighs a C# port (M) against starting Python or copying a command line (S, repo users only). Maintainer to
+  decide.
+
+*Parent:* PRs [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) and
+[#540](https://github.com/bbfox0703/UE5CEDumper/pull/540) by fireundubh, both based on `main` @ `c74daa4b`.
+
 ## 🧭 Maintainer request 2026-09-29 — what else UE5CEDumper could hand to AOBMaker `[AOBMAKER-EVAL-2026-09-29]`
 
 **Asked:** where UE5CEDumper can still use AOBMaker. That covers places that only copy to the clipboard, places with

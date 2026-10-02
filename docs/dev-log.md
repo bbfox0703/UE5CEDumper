@@ -27,6 +27,34 @@ builds ≤696 in
 
 -----
 
+## 2026-10-02 (no build change) — external PRs 539 / 540 reviewed; what we take is planned, not built `[EXTPR-539-540-2026-10-02]`
+
+Two pull requests from fireundubh were read for the first time: PR 540 (Live Funcs: fetch limit, min calls,
+save `.jsonl`) and PR 539 (Dump All: structs, enums, function params, an object index). Neither is merged. We
+re-implement the parts we keep, with the contributor as co-author on each commit.
+
+- **Kept from 540**, rebuilt as sliders over powers of two: the fetch limit (default 512, max 8192, replacing the
+  fixed 300), Save `.jsonl`, and Min calls (default 1, max 32, applies to the next capture only). All three are
+  disabled while recording and remembered across restarts.
+- **Kept from 539:** struct lines, enum lines and function parameters in Dump All. **Not kept:** the object index.
+  Its addresses mean nothing once the game closes, and it adds a line for every live object.
+- **The review found** that PR 540 fails the `check_vm_status_literals` gate, that 50,000 as a fetch ceiling means
+  "fetch everything" on the interactive pipe lane, and that PR 539's progress reports fire once per struct line
+  and its Dump Explorer index can send a class jump to a struct of the same name.
+
+The plan and every finding are in [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md); the open rows are in
+[todo.md](todo.md).
+
+## 2026-10-02 (no build change) — README: the built-in pointer scan leads the highlights
+
+`README.md` and `README_zh-TW.md` now open their highlights with what most UE dumpers lack: GObjects, GNames
+and GWorld are found automatically on most UE games. The scanner ships its own AOB signatures and symbol-export
+lookups for GObjects, GNames, GWorld, GEngine and SparseDelegates, checked against UE 4.11–5.8 binaries. When no
+pattern matches it falls back: a data-section scan for GObjects, string-reference and pointer scans for GNames,
+and for GWorld a search for a UWorld instance, then `GEngine → GameViewport → World`.
+
+-----
+
 ## 2026-10-01 (no build change) — corrections to the entries for builds 3599–3614
 
 The entries below stay as written (this log is append-only). Reading the v3598…3615 code against them found
