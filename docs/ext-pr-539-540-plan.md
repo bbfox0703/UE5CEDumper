@@ -1,8 +1,19 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: PLAN ONLY — nothing here is built.** First-pass review on 2026-10-02 plus the maintainer's decisions
-on the same day. ⚠ **The review is a first reading, not a verdict**: the maintainer will re-read both PRs, and a
-row below can still change. Close a row by editing it here AND its line in [todo.md](todo.md) in the same commit.
+**Status: PLAN — no PR feature is built yet** (one tooltip fix landed early, see "Landed ahead of the plan").
+First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
+reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
+editing it here AND its line in [todo.md](todo.md) in the same commit.
+
+### Landed ahead of the plan — not yet built, tested or logged
+
+| Commit | What | Still owed |
+|---|---|---|
+| `42217904` (2026-10-02, `dev`) | `en.axaml` `str.Tip.Export.DumpAll`: the sentence "~30-60s per game; output is 50-500 MB depending on game size." became "Time and file size vary with the game and the export settings." Nothing else in the tooltip changed. | ⚠ **Not compiled and no C# test run** — the container that made it has no .NET SDK; only the XML parse and the Python gates were checked. On Windows: `dotnet test`, then `build.ps1 -Mode Publish`. ⚠ **No dev-log entry yet** (maintainer: fine for now) — write it with the build that first carries this commit. |
+
+⚠ **That commit's message says the old figures were "never measured against the games this runs on". That is
+unverified** — nobody checked whether they were measured. The reason for the change is the maintainer's decision
+that the tooltip states no numbers, not that the numbers were wrong. Read the commit message with this note.
 
 | PR | Branch (fork `fireundubh/UE5CEDumper`) | Head reviewed | Base |
 |---|---|---|---|
