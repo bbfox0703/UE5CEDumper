@@ -16,8 +16,8 @@ namespace UE5DumpUI.Services;
 /// All work is orchestrated client-side via the existing pipe
 /// endpoints (<c>get_object_list</c> + <c>walk_class</c> +
 /// <c>walk_functions</c>); no new DLL command is required. The
-/// trade-off is per-class round-trips — ~30-60 seconds for a
-/// 3-5k-class game — vs. zero DLL maintenance burden.
+/// trade-off is per-class round-trips, so the run time grows with the
+/// game's class count, vs. zero DLL maintenance burden.
 ///
 /// **BPGC inclusion**: unlike <c>SearchProperties</c> (build 671
 /// `IsClassLikeMeta` fix) the dumper accepts every class-flavoured
