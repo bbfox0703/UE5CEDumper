@@ -308,6 +308,8 @@ public partial class DumpExplorerViewModel : ViewModelBase
     {
         SelectEntry(row);
         if (row is null || string.IsNullOrEmpty(row.OwningClassName)) return;
+        // A struct or enum is not a class the instance finder can list.
+        if (!DumpAllService.IsClassLikeMetaName(row.OwnerMeta)) return;
         NavigateToInstanceFinder?.Invoke(row.OwningClassName);
     }
 
@@ -504,8 +506,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
             foreach (var o in page.Objects)
             {
                 if (string.IsNullOrEmpty(o.Name)) continue;
-                if (!DumpAllService.IsClassLikeMetaName(o.ClassName)) continue;
-                dict[o.Name] = o.Address;   // short class name -> current live address
+                // Last write wins when a class and a struct share a short name.
+                // The list has no path unless include_path was requested, and this
+                // index does not request it.
+                if (!DumpAllService.IsClassLikeMetaName(o.ClassName)
+                    && !DumpAllService.IsStructMetaName(o.ClassName)
+                    && !DumpAllService.IsEnumMetaName(o.ClassName)) continue;
+                dict[o.Name] = o.Address;
             }
             int advanced = page.Scanned > 0 ? page.Scanned : page.Objects.Count;
             offset += advanced;

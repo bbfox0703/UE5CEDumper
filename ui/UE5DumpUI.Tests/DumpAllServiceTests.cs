@@ -26,9 +26,14 @@ public class DumpAllServiceTests
         public List<UObjectNode> Objects { get; } = new();
         public Dictionary<string, ClassInfoModel> ClassWalks { get; } = new();
         public Dictionary<string, List<FunctionInfoModel>> FunctionWalks { get; } = new();
+        public int FunctionWalkCalls { get; private set; }
+        public List<bool> IncludePathRequests { get; } = new();
+        public EnumListResult Enums { get; set; } = new();
+        public bool ThrowOnEnums { get; set; }
 
         public override Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false)
         {
+            IncludePathRequests.Add(includePath);
             var slice = Objects.Skip(offset).Take(limit).ToList();
             return Task.FromResult(new ObjectListResult
             {
@@ -47,9 +52,19 @@ public class DumpAllServiceTests
 
         public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
         {
+            FunctionWalkCalls++;
             return Task.FromResult(FunctionWalks.TryGetValue(addr, out var fns)
                 ? fns
                 : new List<FunctionInfoModel>());
+        }
+
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(Enums.Enums);
+
+        public override Task<EnumListResult> ListEnumsDetailedAsync(CancellationToken ct = default)
+        {
+            if (ThrowOnEnums) throw new InvalidOperationException("list_enums failed");
+            return Task.FromResult(Enums);
         }
     }
 
@@ -173,7 +188,7 @@ public class DumpAllServiceTests
         dump.Objects.Add(Obj("0x2", "BP_Player_C", "BlueprintGeneratedClass", "/Game/MyGame/BP_Player_C"));
         dump.Objects.Add(Obj("0x3", "MyAnimBP_C", "AnimBlueprintGeneratedClass", "/Game/Anim/MyAnimBP_C"));
         dump.Objects.Add(Obj("0x4", "MyWidget_C", "WidgetBlueprintGeneratedClass", "/Game/UI/MyWidget_C"));
-        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct"));            // dropped (struct, not class)
+        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct"));            // struct line, not a class
         dump.Objects.Add(Obj("0x6", "Player_Default", "BP_Player_C"));      // dropped (live instance)
         dump.Objects.Add(Obj("0x7", "MyDynamic_C", "DynamicClass"));        // accepted
 
@@ -181,18 +196,75 @@ public class DumpAllServiceTests
         dump.ClassWalks["0x2"] = new ClassInfoModel { Name = "BP_Player_C" };
         dump.ClassWalks["0x3"] = new ClassInfoModel { Name = "MyAnimBP_C" };
         dump.ClassWalks["0x4"] = new ClassInfoModel { Name = "MyWidget_C" };
+        dump.ClassWalks["0x5"] = new ClassInfoModel
+        {
+            Name = "FVector",
+            Fields = [new FieldInfoModel { Name = "X", TypeName = "DoubleProperty", Offset = 0, Size = 8 }],
+        };
         dump.ClassWalks["0x7"] = new ClassInfoModel { Name = "MyDynamic_C" };
 
         var lines = Dump(dump);
         var classLines = lines.Where(l => l.StartsWith("{\"kind\":\"class\"")).ToList();
+        var structLines = lines.Where(l => l.StartsWith("{\"kind\":\"struct\"")).ToList();
 
-        Assert.Equal(5, classLines.Count);  // 4 BPGC variants + 1 Class + 1 DynamicClass = 5 (FVector + instance dropped)
+        Assert.Equal(5, classLines.Count);  // Class + 3 BPGC variants + DynamicClass (instance dropped)
         Assert.Contains(classLines, l => l.Contains("\"name\":\"UCharacter\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"BP_Player_C\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"MyAnimBP_C\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"MyWidget_C\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"MyDynamic_C\""));
         Assert.DoesNotContain(classLines, l => l.Contains("\"name\":\"FVector\""));
+        Assert.Single(structLines);
+        Assert.Contains("\"name\":\"FVector\"", structLines[0]);
+        Assert.Contains("\"name\":\"X\"", structLines[0]);
+        Assert.DoesNotContain("instance_count", structLines[0]);
+        Assert.DoesNotContain("\"funcs\"", structLines[0]);
+    }
+
+    [Fact]
+    public void Generate_Struct_DoesNotWalkFunctions()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "FVector", "ScriptStruct"));
+        dump.Objects.Add(Obj("0x2", "MyRow", "UserDefinedStruct", "/Game/MyRow.MyRow"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "FVector" };
+        dump.ClassWalks["0x2"] = new ClassInfoModel { Name = "MyRow", FullPath = "/Game/MyRow.MyRow" };
+
+        var lines = Dump(dump);
+        var structLines = lines.Where(l => l.StartsWith("{\"kind\":\"struct\"")).ToList();
+
+        Assert.Equal(2, structLines.Count);
+        Assert.Equal(0, dump.FunctionWalkCalls);
+        Assert.Contains(structLines, l => l.Contains("\"meta\":\"UserDefinedStruct\""));
+    }
+
+    [Fact]
+    public void Generate_SkipsScriptStructClassDefaultObject()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "Default__ScriptStruct", "ScriptStruct"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "Default__ScriptStruct" };
+
+        var lines = Dump(dump);
+        Assert.DoesNotContain(lines, l => l.Contains("Default__ScriptStruct") && l.Contains("\"kind\":\"struct\""));
+        Assert.DoesNotContain(lines, l => l.StartsWith("{\"kind\":\"struct\""));
+    }
+
+    [Fact]
+    public void Generate_GameOnly_DropsEngineStructKeepsGameStruct()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "Vector", "ScriptStruct"));
+        dump.Objects.Add(Obj("0x2", "MyRow", "UserDefinedStruct"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "Vector", FullPath = "//Script/CoreUObject/Vector" };
+        dump.ClassWalks["0x2"] = new ClassInfoModel { Name = "MyRow", FullPath = "//Game/Rows/MyRow/MyRow" };
+
+        var lines = Dump(dump, new DumpOptions(GameOnly: true, IncludeFunctions: false, IncludeInstanceCounts: false));
+        var structLines = lines.Where(l => l.StartsWith("{\"kind\":\"struct\"")).ToList();
+
+        Assert.Single(structLines);
+        Assert.Contains("MyRow", structLines[0]);
+        Assert.Contains("\"classes_skipped_engine\":0", lines[^1]);
     }
 
     // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass (Default__Class's class is Class),
@@ -298,6 +370,106 @@ public class DumpAllServiceTests
 
         Assert.Empty(classLines);
         Assert.Contains("\"classes_skipped_engine\":1", lines[^1]);
+    }
+
+    [Fact]
+    public void Generate_Enums_WritesEntries_AndDropsEngineWhenGameOnly()
+    {
+        var dump = new FakeDumpForDump
+        {
+            Enums = new EnumListResult
+            {
+                Enums =
+                [
+                    new EnumDefinition
+                    {
+                        Name = "ELoot", Address = "0xA", FullPath = "//Game/ELoot",
+                        Entries = [new EnumEntryValue { Name = "Chest", Value = 1 }],
+                    },
+                    new EnumDefinition
+                    {
+                        Name = "ENet", Address = "0xB", FullPath = "//Script/Engine/ENet",
+                        Entries = [new EnumEntryValue { Name = "Ok", Value = 0 }],
+                    },
+                ],
+            },
+        };
+
+        var lines = Dump(dump, new DumpOptions(GameOnly: true, IncludeFunctions: false, IncludeInstanceCounts: false));
+        var enumLines = lines.Where(l => l.StartsWith("{\"kind\":\"enum\"")).ToList();
+
+        Assert.Single(enumLines);
+        Assert.Contains("\"n\":\"Chest\"", enumLines[0]);
+        Assert.Contains("\"v\":1", enumLines[0]);
+        Assert.Contains("\"enums_emitted\":1", lines[^1]);
+    }
+
+    [Fact]
+    public void Generate_EnumNamesFailed_SetsSummaryFlag()
+    {
+        var dump = new FakeDumpForDump
+        {
+            Enums = new EnumListResult
+            {
+                EnumNamesFailed = true,
+                Enums = [new EnumDefinition { Name = "ELoot", Address = "0xA", FullPath = "//Game/ELoot" }],
+            },
+        };
+
+        var lines = Dump(dump, new DumpOptions(IncludeFunctions: false, IncludeInstanceCounts: false));
+
+        Assert.Contains("\"enum_names_failed\":true", lines[^1]);
+        Assert.Contains("\"entries\":[]", lines.First(l => l.StartsWith("{\"kind\":\"enum\"")));
+    }
+
+    [Fact]
+    public void Generate_ListEnumsThrows_EmitsErrorAndKeepsTheClass()
+    {
+        var dump = new FakeDumpForDump { ThrowOnEnums = true };
+        dump.Objects.Add(Obj("0x1", "Actor", "Class"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "Actor" };
+
+        var lines = Dump(dump, new DumpOptions(IncludeFunctions: false, IncludeInstanceCounts: false));
+
+        Assert.Contains(lines, l => l.StartsWith("{\"kind\":\"class\""));
+        Assert.Contains(lines, l => l.Contains("\"kind\":\"error\"") && l.Contains("list_enums"));
+        Assert.Contains("\"enums_emitted\":0", lines[^1]);
+        Assert.Contains("\"errors\":1", lines[^1]);
+    }
+
+    [Fact]
+    public void Generate_IncludeInstances_WritesLiveRowsNotReflection()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "Actor", "Class", "/Script/Engine.Actor"));
+        dump.Objects.Add(Obj("0x2", "Default__GE_Fire", "GameplayEffect", "/Game/GE_Fire.Default__GE_Fire"));
+        dump.Objects.Add(Obj("0x3", "Vector", "ScriptStruct", "/Script/CoreUObject.Vector"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "Actor" };
+        dump.ClassWalks["0x3"] = new ClassInfoModel { Name = "Vector" };
+
+        var lines = Dump(dump, new DumpOptions(
+            IncludeInstances: true, IncludeInstanceCounts: false, IncludeFunctions: false));
+        var instances = lines.Where(l => l.StartsWith("{\"kind\":\"instance\"")).ToList();
+
+        Assert.Contains(dump.IncludePathRequests, requested => requested);
+        Assert.Single(instances);
+        Assert.Contains("Default__GE_Fire", instances[0]);
+        Assert.Contains("\"class\":\"GameplayEffect\"", instances[0]);
+        Assert.Contains("\"path\":\"/Game/GE_Fire.Default__GE_Fire\"", instances[0]);
+        Assert.DoesNotContain(instances, l => l.Contains("ScriptStruct"));
+        Assert.Contains("\"include_instances\":true", lines[0]);
+    }
+
+    [Fact]
+    public void Generate_InstancesOff_DoesNotRequestPath()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "Actor", "Class"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "Actor" };
+
+        Dump(dump, new DumpOptions(IncludeInstances: false, IncludeInstanceCounts: true, IncludeFunctions: false));
+
+        Assert.DoesNotContain(dump.IncludePathRequests, requested => requested);
     }
 
     // ==================================================================
@@ -422,6 +594,50 @@ public class DumpAllServiceTests
         Assert.Contains("TakeDamage", classLine);
         Assert.Contains("\"flags\":\"0x4020600\"", classLine);
         Assert.Contains("\"num_parms\":2", classLine);
+        Assert.Contains("\"params\":[]", classLine);
+    }
+
+    [Fact]
+    public void Generate_IncludeFunctions_WritesParmList_NotStructFields()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "BP_Player_C", "BlueprintGeneratedClass", "/Game/BP_Player_C"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "BP_Player_C" };
+        dump.FunctionWalks["0x1"] = new List<FunctionInfoModel>
+        {
+            new()
+            {
+                Name = "TakeDamage", Address = "0xF00", ReturnType = "void",
+                NumParms = 2, ParmsSize = 140, FunctionFlags = 0x4020600,
+                Params =
+                [
+                    new FunctionParamModel
+                    {
+                        Name = "Hit", TypeName = "StructProperty", Size = 136, Offset = 0,
+                        StructName = "HitResult",
+                        StructFields = [new DynamicStructField("bBlockingHit", "BoolProperty", 0, 1)],
+                    },
+                    new FunctionParamModel
+                    {
+                        Name = "OutHealth", TypeName = "FloatProperty", Size = 4, Offset = 136, IsOut = true,
+                    },
+                ],
+            },
+        };
+
+        var lines = Dump(dump, new DumpOptions(IncludeFunctions: true));
+        var classLine = lines.First(l => l.Contains("\"kind\":\"class\""));
+
+        Assert.Contains("\"name\":\"Hit\"", classLine);
+        Assert.Contains("\"type\":\"StructProperty\"", classLine);
+        Assert.Contains("\"struct_type\":\"HitResult\"", classLine);
+        Assert.Contains("\"offset\":0", classLine);
+        Assert.Contains("\"size\":136", classLine);
+        Assert.Contains("\"name\":\"OutHealth\"", classLine);
+        Assert.Contains("\"out\":true", classLine);
+        Assert.DoesNotContain("struct_fields", classLine);
+        Assert.DoesNotContain("bBlockingHit", classLine);
+        Assert.DoesNotContain("\"ret\":", classLine);
     }
 
     [Fact]

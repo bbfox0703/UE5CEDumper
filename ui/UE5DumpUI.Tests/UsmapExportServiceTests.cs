@@ -561,6 +561,16 @@ public class UsmapExportServiceTests
         }
     }
 
+    [Fact]
+    public void ExportDumpAll_DefaultCommandOmitsTheInstanceIndex()
+    {
+        var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"))
+            .Replace("\r\n", "\n");
+        Assert.Contains("ExportDumpAllCoreAsync(includeInstances: false)", src);
+        Assert.Contains("ExportDumpAllWithInstancesAsync() => ExportDumpAllCoreAsync(includeInstances: true)", src);
+        Assert.Contains("IncludeInstances: includeInstances", src);
+    }
+
     /// <summary>
     /// The four Export actions keep to the helper's rule: no <c>Progress&lt;T&gt;</c> double post, and once the
     /// service holds the progress sink, no bare <c>StatusText =</c> (the catch blocks too, where a queued report can
@@ -570,7 +580,7 @@ public class UsmapExportServiceTests
     [InlineData("ExportSymbolsAsync", "SymbolExportService.CollectSymbolsAsync(")]
     [InlineData("ExportFullSdkAsync", "SdkExportService.GenerateFullSdkAsync(")]
     [InlineData("ExportUsmapAsync", "UsmapExportService.GenerateUsmapAsync(")]
-    [InlineData("ExportDumpAllAsync", "DumpAllService.GenerateAsync(")]   // [R7-D-02]
+    [InlineData("ExportDumpAllCoreAsync", "DumpAllService.GenerateAsync(")]   // [R7-D-02]
     public void ExportStatus_EachExportAction_SetsEveryStatusAfterItsServiceThroughTheHelper(string method, string serviceCall)
     {
         var src = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"))

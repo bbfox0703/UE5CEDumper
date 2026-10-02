@@ -83,6 +83,110 @@ public class DumpExplorerTests
     }
 
     [Fact]
+    public async Task Reader_FunctionHaystackIncludesParmNameAndType()
+    {
+        var json =
+            "{\"kind\":\"meta\",\"ue_version\":505,\"module\":\"Game.exe\"}\n" +
+            "{\"kind\":\"class\",\"name\":\"BP_Player_C\",\"addr\":\"0x1000\",\"path\":\"" + PlayerPath +
+            "\",\"meta\":\"BlueprintGeneratedClass\",\"props\":[]," +
+            "\"funcs\":[{\"name\":\"TakeDamage\",\"addr\":\"0x2000\",\"return_type\":\"void\",\"num_parms\":1," +
+            "\"params\":[{\"name\":\"DamageAmount\",\"type\":\"FloatProperty\",\"offset\":0,\"size\":4}]}]}\n";
+        var path = await WriteTempAsync(json);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+            var func = model.Entries.Single(e => e.Kind == DumpEntryKind.Function);
+            Assert.Equal("void (1)", func.TypeInfo);
+            Assert.Contains("damageamount", func.Haystack);
+            Assert.Contains("floatproperty", func.Haystack);
+            Assert.Equal(DumpEntryKind.Function, func.Kind);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_StructMemberAndEnumeratorAreSearchable_InstanceLineIsSkipped()
+    {
+        var json =
+            "{\"kind\":\"meta\",\"ue_version\":505,\"module\":\"Game.exe\"}\n" +
+            "{\"kind\":\"class\",\"name\":\"BP_Player_C\",\"addr\":\"0x1000\",\"path\":\"" + PlayerPath +
+            "\",\"meta\":\"BlueprintGeneratedClass\",\"props\":[]}\n" +
+            "{\"kind\":\"struct\",\"name\":\"FVector\",\"addr\":\"0x10\",\"path\":\"/Script/CoreUObject.Vector\"," +
+            "\"meta\":\"ScriptStruct\",\"props\":[{\"name\":\"X\",\"type\":\"DoubleProperty\",\"offset\":0,\"size\":8}]}\n" +
+            "{\"kind\":\"enum\",\"name\":\"ELoot\",\"addr\":\"0x20\",\"path\":\"/Game/ELoot\",\"meta\":\"Enum\"," +
+            "\"entries\":[{\"n\":\"Chest\",\"v\":1}]}\n" +
+            "{\"kind\":\"instance\",\"name\":\"Pawn_0\",\"class\":\"BP_Player_C\",\"addr\":\"0x30\",\"outer\":\"0x0\",\"path\":\"/Game/Pawn_0\"}\n";
+        var path = await WriteTempAsync(json);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+            Assert.Equal(1, model.ClassCount);
+            Assert.DoesNotContain(model.Entries, e => e.Name == "Pawn_0");
+
+            var vector = model.Entries.Single(e => e.Name == "FVector");
+            Assert.Equal(DumpEntryKind.Struct, vector.Kind);
+            Assert.Equal("ScriptStruct", vector.OwnerMeta);
+
+            var member = model.Entries.Single(e => e.Name == "X");
+            Assert.Equal(DumpEntryKind.Property, member.Kind);
+            Assert.Equal("FVector", member.OwnerClass);
+            Assert.Equal("ScriptStruct", member.OwnerMeta);
+
+            var chest = model.Entries.Single(e => e.Name == "Chest");
+            Assert.Equal(DumpEntryKind.Enumerator, chest.Kind);
+            Assert.Contains("eloot", chest.Haystack);
+
+            var vm = CreateVm(new FakeDumpService(), new MockPlatformService(Path.GetTempPath()));
+            await vm.LoadFromPathAsync(path);
+            vm.SelectedCategoryIndex = 1;
+            Assert.DoesNotContain(vm.Unmatched, e => e.Name == "FVector");
+            vm.SelectedCategoryIndex = 2;
+            Assert.Contains(vm.Unmatched, e => e.Name == "X");
+            vm.SelectedCategoryIndex = 0;
+            Assert.Contains(vm.Unmatched, e => e.Name == "Chest");
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Vm_StructAndEnumMatchLive_FindInstancesDoesNotNavigate()
+    {
+        var json =
+            "{\"kind\":\"meta\",\"ue_version\":505,\"module\":\"Game.exe\"}\n" +
+            "{\"kind\":\"struct\",\"name\":\"FVector\",\"addr\":\"0x10\",\"path\":\"/Script/CoreUObject.Vector\"," +
+            "\"meta\":\"ScriptStruct\",\"props\":[]}\n" +
+            "{\"kind\":\"enum\",\"name\":\"ELoot\",\"addr\":\"0x20\",\"path\":\"/Game/ELoot\",\"meta\":\"Enum\",\"entries\":[]}\n" +
+            "{\"kind\":\"class\",\"name\":\"BP_Player_C\",\"addr\":\"0x1000\",\"path\":\"" + PlayerPath +
+            "\",\"meta\":\"BlueprintGeneratedClass\",\"props\":[{\"name\":\"Health\",\"type\":\"FloatProperty\",\"offset\":8,\"size\":4}]}\n";
+        var path = await WriteTempAsync(json);
+        try
+        {
+            var dump = new FakeDumpService();
+            dump.Objects.Add(new UObjectNode { Address = "0xS", Name = "FVector", ClassName = "ScriptStruct" });
+            dump.Objects.Add(new UObjectNode { Address = "0xE", Name = "ELoot", ClassName = "Enum" });
+            dump.Objects.Add(new UObjectNode { Address = "0xC", Name = "BP_Player_C", ClassName = "BlueprintGeneratedClass" });
+            var vm = CreateVm(dump, new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            string? found = null;
+            vm.NavigateToInstanceFinder += c => found = c;
+            await vm.LoadFromPathAsync(path);
+
+            var vector = vm.Matched.Single(e => e.Name == "FVector");
+            Assert.Equal("0xS", vector.LiveAddr);
+            var loot = vm.Matched.Single(e => e.Kind == DumpEntryKind.Enum);
+            Assert.Equal("0xE", loot.LiveAddr);
+
+            vm.FindInstancesCommand.Execute(vector);
+            Assert.Null(found);
+
+            var health = vm.Matched.Single(e => e.Name == "Health");
+            vm.FindInstancesCommand.Execute(health);
+            Assert.Equal("BP_Player_C", found);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
     public async Task Reader_ParsesRealWorldDumpFixture()
     {
         // A sanitized 23-class slice of a real UE4.27 "Dump All"

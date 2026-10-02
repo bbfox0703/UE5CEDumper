@@ -84,4 +84,17 @@ public class DumpCompletionFormatterTests
 
         Assert.Equal("Dumped 42 classes (1.0 MB, 4 errors) to g.jsonl", s);
     }
+
+    [Fact]
+    public void Format_NonZeroStructEnumAndFailedNames_AreNamed()
+    {
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 42, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 9000,
+                StructsEmitted: 3, EnumsEmitted: 2, EnumNamesFailed: true, InstancesEmitted: 10),
+            byteLength: 1_048_576L, fileName: "g.jsonl"));
+
+        Assert.Equal(
+            "Dumped 42 classes, 3 structs, 2 enums, enum names unavailable, 10 instances (1.0 MB) to g.jsonl",
+            s);
+    }
 }
