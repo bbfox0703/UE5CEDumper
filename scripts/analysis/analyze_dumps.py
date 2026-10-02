@@ -82,6 +82,9 @@ def load_dump(path: Path) -> Dump:
                 print(f"  [warn] {path.name}:{lineno} bad JSON: {e}", file=sys.stderr)
                 continue
             kind = rec.get("kind")
+            # struct, enum, and instance lines are schema or a live index.
+            # Folding them into class stats would retune keyword tables
+            # against Vector and HitResult.
             if kind == "meta":
                 d.meta = rec
             elif kind == "class":

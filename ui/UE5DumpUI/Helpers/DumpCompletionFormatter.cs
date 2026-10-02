@@ -1,3 +1,4 @@
+using System.Text;
 using UE5DumpUI.Services;
 
 namespace UE5DumpUI.Helpers;
@@ -52,8 +53,25 @@ internal static class DumpCompletionFormatter
         }
 
         string size = FormatSize(byteLength);
+        string extra = ExtraCounts(result);
         return result.Errors > 0
-            ? $"Dumped {result.ClassesEmitted:N0} classes ({size}, {result.Errors} errors) to {fileName}"
-            : $"Dumped {result.ClassesEmitted:N0} classes ({size}) to {fileName}";
+            ? $"Dumped {result.ClassesEmitted:N0} classes{extra} ({size}, {result.Errors} errors) to {fileName}"
+            : $"Dumped {result.ClassesEmitted:N0} classes{extra} ({size}) to {fileName}";
+    }
+
+    /// <summary>Counts that stay off the sentence when they are zero, so a
+    /// class-only dump reads the way it did before structs and enums existed.</summary>
+    private static string ExtraCounts(DumpResult result)
+    {
+        var sb = new StringBuilder();
+        if (result.StructsEmitted > 0)
+            sb.Append(", ").Append(result.StructsEmitted.ToString("N0")).Append(" structs");
+        if (result.EnumsEmitted > 0)
+            sb.Append(", ").Append(result.EnumsEmitted.ToString("N0")).Append(" enums");
+        if (result.EnumNamesFailed)
+            sb.Append(", enum names unavailable");
+        if (result.InstancesEmitted > 0)
+            sb.Append(", ").Append(result.InstancesEmitted.ToString("N0")).Append(" instances");
+        return sb.ToString();
     }
 }

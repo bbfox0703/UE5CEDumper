@@ -3719,7 +3719,12 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// hand-curated guesses.
     /// </summary>
     [RelayCommand]
-    private async Task ExportDumpAllAsync()
+    private Task ExportDumpAllAsync() => ExportDumpAllCoreAsync(includeInstances: false);
+
+    [RelayCommand]
+    private Task ExportDumpAllWithInstancesAsync() => ExportDumpAllCoreAsync(includeInstances: true);
+
+    private async Task ExportDumpAllCoreAsync(bool includeInstances)
     {
         if (_engineState == null) return;
 
@@ -3753,7 +3758,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 IncludeFunctions: true,
                 IncludeInstanceCounts: true,
                 DumperBuildNumber: GetBuildNumber(),
-                DumperCommit: null);                        // Not yet plumbed through
+                DumperCommit: null,                        // Not yet plumbed through
+                IncludeInstances: includeInstances);
 
             // Cancellation linked to the connection so a mid-dump disconnect aborts
             // the (now dead) per-class round-trips instead of hanging (X6).
@@ -3777,7 +3783,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             progress.Complete(Helpers.DumpCompletionFormatter.Format(
                 result, byteLength, Path.GetFileName(filePath)));
             _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
-                      $"{result.ClassesEmitted} classes, {result.Errors} errors)");
+                      $"{result.ClassesEmitted} classes, {result.StructsEmitted} structs, " +
+                      $"{result.EnumsEmitted} enums, {result.InstancesEmitted} instances, " +
+                      $"{result.Errors} errors)");
 
             // Offer a one-click load in the Dump Explorer tab (no auto-load — the
             // user may re-export or be mid-operation there).

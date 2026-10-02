@@ -6,10 +6,11 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// Reads a "Dump All" JSON-Lines file (see <see cref="DumpAllService"/>) back
-/// into a flattened, searchable corpus for the Dump Explorer panel. Every
-/// class line is expanded into one class row + one row per property + one row
-/// per function, all carrying the owning class's object path and dump-time
-/// address so a single per-class live match classifies the whole family.
+/// into a flattened, searchable corpus for the Dump Explorer panel. A class or
+/// struct line becomes one type row plus one row per property and, for a class,
+/// one row per function. An enum line becomes one enum row plus one row per
+/// enumerator. Members carry the owning type's object path and dump-time
+/// address so a single per-type live match classifies the whole family.
 ///
 /// Purely client-side and offline: parsing a dump requires no live game. The
 /// live-match / jump features (which DO need a connected game) live in the
@@ -20,7 +21,8 @@ public static class DumpJsonlReader
     /// <summary>
     /// Parse the JSON-Lines file at <paramref name="filePath"/>. Malformed
     /// lines are skipped (a dump can be truncated mid-write if the game exited);
-    /// the meta header and every well-formed class line are returned.
+    /// the meta header and every well-formed class, struct, and enum line are
+    /// returned. Instance lines are not rows.
     /// </summary>
     public static async Task<DumpFileModel> ReadAsync(
         string filePath,
@@ -42,6 +44,11 @@ public static class DumpJsonlReader
             lineNo++;
             if (line.Length == 0) continue;
 
+            // Writer emits kind first, with no space. Instance lines are not
+            // rows: a full object index is hundreds of thousands of them.
+            if (line.StartsWith("{\"kind\":\"instance\"", StringComparison.Ordinal))
+                continue;
+
             DumpClassLine? probe;
             try
             {
@@ -56,7 +63,13 @@ public static class DumpJsonlReader
             switch (probe.Kind)
             {
                 case "class":
-                    AppendClass(entries, probe, ref classCount, ref propCount, ref funcCount);
+                    AppendType(entries, probe, DumpEntryKind.Class, ref classCount, ref propCount, ref funcCount);
+                    break;
+                case "struct":
+                    AppendType(entries, probe, DumpEntryKind.Struct, ref classCount, ref propCount, ref funcCount);
+                    break;
+                case "enum":
+                    AppendEnum(entries, line);
                     break;
                 case "meta":
                     try
@@ -82,27 +95,74 @@ public static class DumpJsonlReader
         };
     }
 
-    private static void AppendClass(
-        List<DumpEntry> entries, DumpClassLine c,
+    private static void AppendEnum(List<DumpEntry> entries, string line)
+    {
+        DumpEnumLine? en;
+        try
+        {
+            en = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpEnumLine);
+        }
+        catch (JsonException)
+        {
+            return;
+        }
+        if (en is null || string.IsNullOrEmpty(en.Name)) return;
+
+        var path = en.Path ?? "";
+        var meta = string.IsNullOrEmpty(en.Meta) ? "Enum" : en.Meta;
+        entries.Add(new DumpEntry
+        {
+            Kind = DumpEntryKind.Enum,
+            Name = en.Name,
+            OwnerClass = "",
+            OwnerMeta = meta,
+            TypeInfo = "",
+            Offset = -1,
+            Path = path,
+            ClassAddr = en.Addr ?? "",
+            Haystack = BuildHaystack(en.Name, meta, "", path),
+        });
+        if (en.Entries is not { Count: > 0 }) return;
+        foreach (var entry in en.Entries)
+        {
+            entries.Add(new DumpEntry
+            {
+                Kind = DumpEntryKind.Enumerator,
+                Name = entry.N,
+                OwnerClass = en.Name,
+                OwnerMeta = meta,
+                TypeInfo = entry.V.ToString(),
+                Offset = -1,
+                Path = path,
+                ClassAddr = en.Addr ?? "",
+                Haystack = BuildHaystack(entry.N, en.Name, entry.V.ToString(), path),
+            });
+        }
+    }
+
+    private static void AppendType(
+        List<DumpEntry> entries, DumpClassLine c, DumpEntryKind rowKind,
         ref int classCount, ref int propCount, ref int funcCount)
     {
         var path = c.Path ?? "";
         var classAddr = c.Addr ?? "";
+        var meta = c.Meta ?? "";
 
-        // Class row.
         var superInfo = string.IsNullOrEmpty(c.Super) ? "" : $": {c.Super}";
         entries.Add(new DumpEntry
         {
-            Kind = DumpEntryKind.Class,
+            Kind = rowKind,
             Name = c.Name,
             OwnerClass = "",
+            OwnerMeta = meta,
             TypeInfo = superInfo,
             Offset = -1,
             Path = path,
             ClassAddr = classAddr,
-            Haystack = BuildHaystack(c.Name, c.Meta, superInfo, path),
+            Haystack = BuildHaystack(c.Name, meta, superInfo, path),
         });
-        classCount++;
+        if (rowKind == DumpEntryKind.Class)
+            classCount++;
 
         // Property rows.
         if (c.Props is { Count: > 0 })
@@ -115,6 +175,7 @@ public static class DumpJsonlReader
                     Kind = DumpEntryKind.Property,
                     Name = p.Name,
                     OwnerClass = c.Name,
+                    OwnerMeta = meta,
                     TypeInfo = typeInfo,
                     Offset = p.Offset,
                     Path = path,
@@ -138,12 +199,13 @@ public static class DumpJsonlReader
                     Kind = DumpEntryKind.Function,
                     Name = f.Name,
                     OwnerClass = c.Name,
+                    OwnerMeta = meta,
                     TypeInfo = sig,
                     Offset = -1,
                     Path = path,
                     ClassAddr = classAddr,
                     FuncAddr = f.Addr ?? "",
-                    Haystack = BuildHaystack(f.Name, c.Name, sig, path),
+                    Haystack = BuildHaystack(f.Name, c.Name, sig, path, ParamHaystack(f)),
                 });
                 funcCount++;
             }
@@ -170,11 +232,31 @@ public static class DumpJsonlReader
         return sb.ToString();
     }
 
-    /// <summary>Space-joined, lower-cased once at parse time so live filtering is a cheap Contains.</summary>
-    private static string BuildHaystack(string a, string b, string c, string d)
+    /// <summary>Parm names and types for the function haystack. Empty when the dump
+    /// predates the <c>params</c> array, so those rows search as they did before.</summary>
+    private static string ParamHaystack(DumpFuncLine f)
     {
-        var sb = new StringBuilder(a.Length + b.Length + c.Length + d.Length + 3);
+        if (f.Params is not { Count: > 0 }) return "";
+        var sb = new StringBuilder();
+        foreach (var p in f.Params)
+        {
+            if (sb.Length > 0) sb.Append(' ');
+            sb.Append(p.Name).Append(' ').Append(p.Type);
+            if (!string.IsNullOrEmpty(p.StructType))
+                sb.Append(' ').Append(p.StructType);
+            if (!string.IsNullOrEmpty(p.ObjClass))
+                sb.Append(' ').Append(p.ObjClass);
+        }
+        return sb.ToString();
+    }
+
+    /// <summary>Space-joined, lower-cased once at parse time so live filtering is a cheap Contains.</summary>
+    private static string BuildHaystack(string a, string b, string c, string d, string e = "")
+    {
+        var sb = new StringBuilder(a.Length + b.Length + c.Length + d.Length + e.Length + 4);
         sb.Append(a).Append(' ').Append(b).Append(' ').Append(c).Append(' ').Append(d);
+        if (e.Length > 0)
+            sb.Append(' ').Append(e);
         return sb.ToString().ToLowerInvariant();
     }
 }

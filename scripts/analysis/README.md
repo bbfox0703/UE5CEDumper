@@ -75,9 +75,12 @@ Each line is a self-contained JSON object with a `kind` discriminator:
 | `kind` | Notes |
 |---|---|
 | `meta` | Always first. UE version, module name, object count, dumper build, options snapshot. |
-| `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. |
-| `error` | One per class walk failure. Iteration continues. |
-| `summary` | Always last. Counters: classes_emitted / skipped / errors / scanned. |
+| `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. Each function carries `params` (`name`, `type`, `offset`, `size`). |
+| `struct` | One per `ScriptStruct` or `UserDefinedStruct`. Same property object as a class. Not a class: do not fold these into class stats. |
+| `enum` | One per enum, with `entries[{n,v}]`. |
+| `instance` | Only when the object-index export was used. Live instance identity, no property values. |
+| `error` | One per class walk failure, or a failed `list_enums`. Iteration continues. |
+| `summary` | Always last. Counters include `structs_emitted`, `enums_emitted`, `enum_names_failed`, `instances_emitted`. |
 
 Per-class record (excerpt):
 ```json
@@ -102,12 +105,17 @@ Per-class record (excerpt):
 
 ## Privacy
 
-The dump contains class names, property names + offsets, and function
-signatures — UE reflection metadata. It does **not** contain:
+The default Dump All menu item contains class names, property names +
+offsets, struct fields, enumerator lists, and function signatures —
+UE reflection metadata. It does **not** contain:
 - Player save data
 - Runtime UObject instance contents
 - Memory snapshots
 - Game asset content
+
+**Dump All + object index** is a separate menu item. It adds one line
+per live instance: name, class, path, and a session address. It still
+has no property values. Do not share that file as a class dump.
 
 Safe to share publicly for analysis purposes.
 
@@ -190,11 +198,16 @@ seconds instead of binary-searching offsets by hand.
   field went from `Health` to `CurrentHealth` at the same offset, scan
   the report for a same-offset removed/added pair.
 - Same applies to renamed classes.
-- Function bodies aren't in the dump — only metadata
-  (`return_type` / `num_parms` / `parms_size` / `flags`). A patch that
-  changes function logic without changing the signature is **invisible**
-  to this diff (covered by Live ProcessEvent Call Profiler instead — see
-  `docs/todo.md`).
+- Function bodies aren't in the dump. The signature is
+  `return_type` / `num_parms` / `parms_size` / `flags`, plus `params`
+  (`name`, `type`, `offset`, `size`, and `struct_type` / `obj_class`
+  when set). `diff_dumps.py` compares that array only when **both**
+  files have the key, so a dump from before `params` existed does not
+  report every function as changed. Enums are compared only when
+  **both** files have an enum line or `enums_emitted` on the summary,
+  for the same reason. A patch that changes function logic without
+  changing the signature is **invisible** to this diff (covered by
+  Live ProcessEvent Call Profiler instead — see `docs/todo.md`).
 
 ## Future expansions
 

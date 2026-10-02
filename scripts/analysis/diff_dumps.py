@@ -24,8 +24,10 @@ WHAT IT DOES
              type changed (e.g. FloatProperty -> DoubleProperty)
          - per-function change set:
              added / removed / signature changed (return_type,
-             num_parms, or parms_size differs — body content isn't in
-             the dump)
+             num_parms, parms_size, or flags differs). When BOTH dumps
+             carry a params array, a change to ordered (name, type,
+             offset) is also a signature change. A dump from before
+             params existed has no key, and that absence is not a change.
     4. Emits a Markdown report:
          - Summary counters
          - Added / Removed classes
@@ -39,10 +41,10 @@ NOT IN SCOPE
     - Rename detection (renamed class shows as Removed + Added; same
       for renamed field). Documented limitation. Use a manual grep
       pass on the report if you suspect a rename.
-    - Function body comparison. Dumps only capture function metadata
-      (return_type, num_parms, parms_size, flags) — the bytecode +
-      machine code aren't dumped. parms_size delta catches param-shape
-      changes; body-internal logic changes are invisible.
+    - Function body comparison. Dumps carry the signature
+      (return_type, num_parms, parms_size, flags, and when present the
+      params array) — the bytecode + machine code aren't dumped.
+      Body-internal logic changes are invisible.
     - Cross-game diffing (different `module`). The two dumps must come
       from the same game across patches.
 
@@ -82,6 +84,8 @@ class Dump:
     path: Path
     meta: dict = field(default_factory=dict)
     classes: list[dict] = field(default_factory=list)
+    structs: list[dict] = field(default_factory=list)
+    enums: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
 
@@ -118,6 +122,10 @@ def load_dump(path: Path) -> Dump:
                 d.meta = rec
             elif kind == "class":
                 d.classes.append(rec)
+            elif kind == "struct":
+                d.structs.append(rec)
+            elif kind == "enum":
+                d.enums.append(rec)
             elif kind == "error":
                 d.errors.append(rec)
             elif kind == "summary":
@@ -219,21 +227,37 @@ class DumpDiff:
     removed_classes: list[dict] = field(default_factory=list)
     changed: list[ClassDiff] = field(default_factory=list)
     unchanged_count: int = 0
+    struct_changed: list[ClassDiff] = field(default_factory=list)
+    enum_changed: list[tuple] = field(default_factory=list)
 
 
 # =====================================================================
 # Core diff
 # =====================================================================
 
+def _enum_entries(en: dict) -> list[tuple]:
+    return [(e.get("n"), e.get("v")) for e in (en.get("entries") or []) if isinstance(e, dict)]
+
+
+def _enums_comparable(old: Dump, new: Dump) -> bool:
+    def present(d: Dump) -> bool:
+        return bool(d.enums) or "enums_emitted" in d.summary
+    return present(old) and present(new)
+
+
 def _index_classes(dump: Dump, include_engine: bool) -> dict[str, dict]:
-    """path -> class record. Drops engine classes unless requested.
+    return _index_classes_from(dump.classes, dump, include_engine)
+
+
+def _index_classes_from(rows: list[dict], dump: Dump, include_engine: bool) -> dict[str, dict]:
+    """path -> record. Drops engine paths unless requested.
 
     Duplicate paths in a single dump are highly unusual (would indicate
-    a dumper bug — same UClass walked twice). We keep the FIRST and
+    a dumper bug — same object walked twice). We keep the FIRST and
     log a warning so the diff stays deterministic; analyst can grep
     the source dump if the warning fires."""
     out: dict[str, dict] = {}
-    for cls in dump.classes:
+    for cls in rows:
         if not include_engine and is_engine_class(cls):
             continue
         key = normalize_path(cls.get("path", ""))
@@ -287,15 +311,37 @@ def _diff_props(old_cls: dict, new_cls: dict) -> list[PropChange]:
     return changes
 
 
+def _param_tuples(fn: dict):
+    """Ordered (name, type, offset), or None when this dump has no params
+    key. None is not the same as an empty list: a pre-params dump must
+    not compare as 'every function grew a signature'."""
+    if "params" not in fn:
+        return None
+    out = []
+    for p in fn.get("params") or []:
+        if not isinstance(p, dict):
+            continue
+        out.append((p.get("name"), p.get("type"), p.get("offset")))
+    return out
+
+
 def _funcs_signature_differ(a: dict, b: dict) -> bool:
     """Functions' bodies aren't dumped, so 'signature' here means the
     metadata that's actually captured. parms_size + num_parms catch
     almost every param-shape change; return_type catches return-type
-    refactors; flags catches Static/Native/BlueprintCallable toggles."""
-    return (a.get("return_type") != b.get("return_type")
+    refactors; flags catches Static/Native/BlueprintCallable toggles.
+    The params array is compared only when both sides have the key, so
+    a dump written before that key existed does not flag every function."""
+    if (a.get("return_type") != b.get("return_type")
             or a.get("num_parms") != b.get("num_parms")
             or a.get("parms_size") != b.get("parms_size")
-            or a.get("flags") != b.get("flags"))
+            or a.get("flags") != b.get("flags")):
+        return True
+    old_params = _param_tuples(a)
+    new_params = _param_tuples(b)
+    if old_params is None or new_params is None:
+        return False
+    return old_params != new_params
 
 
 def _diff_funcs(old_cls: dict, new_cls: dict) -> list[FuncChange]:
@@ -347,6 +393,40 @@ def diff_dumps(old_dump: Dump, new_dump: Dump,
             ))
         else:
             out.unchanged_count += 1
+
+    # Structs are their own list. A moved field must not count as a class.
+    old_structs = _index_classes_from(old_dump.structs, old_dump, include_engine)
+    new_structs = _index_classes_from(new_dump.structs, new_dump, include_engine)
+    for path, old_st in old_structs.items():
+        new_st = new_structs.get(path)
+        if new_st is None:
+            continue
+        prop_changes = _diff_props(old_st, new_st)
+        size_delta = new_st.get("props_size", 0) - old_st.get("props_size", 0)
+        if prop_changes or size_delta != 0:
+            out.struct_changed.append(ClassDiff(
+                name=new_st.get("name", old_st.get("name", "")),
+                path=path, old=old_st, new=new_st,
+                prop_changes=prop_changes,
+            ))
+
+    # An old dump has neither enum lines nor enums_emitted. That is not
+    # "every enum was added".
+    if _enums_comparable(old_dump, new_dump):
+        old_enums = _index_classes_from(old_dump.enums, old_dump, include_engine)
+        new_enums = _index_classes_from(new_dump.enums, new_dump, include_engine)
+        for path, old_en in old_enums.items():
+            new_en = new_enums.get(path)
+            if new_en is None:
+                out.enum_changed.append((old_en.get("name", path), "removed", None, None))
+                continue
+            if _enum_entries(old_en) != _enum_entries(new_en):
+                out.enum_changed.append((
+                    new_en.get("name", old_en.get("name", path)),
+                    "value_changed", old_en, new_en))
+        for path, new_en in new_enums.items():
+            if path not in old_enums:
+                out.enum_changed.append((new_en.get("name", path), "added", None, new_en))
 
     # Stable output ordering: alphabetic by path within each bucket.
     out.added_classes.sort(key=lambda c: normalize_path(c.get("path", "")))
@@ -449,6 +529,8 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     lines.append(f"- Functions added: **{counts['func_added']}**, "
                  f"removed: **{counts['func_removed']}**")
     lines.append(f"- Classes with props_size delta: **{counts['classes_with_size_delta']}**")
+    lines.append(f"- Structs with field changes: **{len(diff.struct_changed)}**")
+    lines.append(f"- Enums changed: **{len(diff.enum_changed)}**")
     lines.append("")
 
     if not minimal:
@@ -701,8 +783,82 @@ def run_self_test() -> int:
             "Heal added", errors)
     _assert(len(f_removed) == 0, "no removed funcs", errors)
 
+    # params key on only one side is not a signature change when the
+    # four metadata fields match. Both sides with a renamed parm is.
+    def _fn_class(params):
+        fn = {"name": "Apply", "addr": "0x1", "return_type": "void",
+              "num_parms": 1, "parms_size": 4, "flags": "0x10"}
+        if params is not None:
+            fn["params"] = params
+        return {"kind": "class", "name": "ASig", "addr": "0x1",
+                "path": "/Game/ASig", "meta": "Class",
+                "super": "", "super_addr": "0x0", "is_bpgc": False,
+                "props_size": 8, "instance_count": 0, "props": [],
+                "funcs": [fn]}
+
+    amount = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4}]
+    damage = [{"name": "Damage", "type": "FloatProperty", "offset": 0, "size": 4}]
+    one_sided = diff_dumps(
+        _make_dump("FakeGame", [_fn_class(None)]),
+        _make_dump("FakeGame", [_fn_class(amount)]))
+    _assert(not one_sided.changed,
+            "params appearing on one side is not a signature change", errors)
+    renamed = diff_dumps(
+        _make_dump("FakeGame", [_fn_class(amount)]),
+        _make_dump("FakeGame", [_fn_class(damage)]))
+    _assert(len(renamed.changed) == 1
+            and any(f.kind == "signature_changed" and f.name == "Apply"
+                    for f in renamed.changed[0].func_changes),
+            "renamed parm is a signature change", errors)
+    emptied = diff_dumps(
+        _make_dump("FakeGame", [_fn_class(amount)]),
+        _make_dump("FakeGame", [_fn_class([])]))
+    _assert(len(emptied.changed) == 1
+            and any(f.kind == "signature_changed" for f in emptied.changed[0].func_changes),
+            "empty params against a non-empty list is a signature change", errors)
+
     # has_breaking_change predicate: AHero qualifies (moved props)
     _assert(cd.has_breaking_change, "AHero has breaking change", errors)
+
+    def _type_row(kind: str, name: str, props: list[dict]) -> dict:
+        return {"kind": kind, "name": name, "addr": "0x1",
+                "path": f"/Game/{name}", "meta": "ScriptStruct" if kind == "struct" else "Enum",
+                "props_size": 8, "props": props, "funcs": [],
+                "entries": props}
+
+    old_st = _make_dump("FakeGame", [])
+    new_st = _make_dump("FakeGame", [])
+    old_st.structs = [_type_row("struct", "FVector",
+                                [{"name": "X", "type": "DoubleProperty", "offset": 0, "size": 8}])]
+    new_st.structs = [_type_row("struct", "FVector",
+                                [{"name": "X", "type": "DoubleProperty", "offset": 8, "size": 8}])]
+    struct_diff = diff_dumps(old_st, new_st)
+    _assert(not struct_diff.changed, "a struct field move is not a class change", errors)
+    _assert(len(struct_diff.struct_changed) == 1
+            and any(p.kind == "moved" and p.name == "X"
+                    for p in struct_diff.struct_changed[0].prop_changes),
+            "struct field move is reported on the struct", errors)
+
+    old_missing = _make_dump("FakeGame", [])
+    new_enums = _make_dump("FakeGame", [])
+    new_enums.enums = [{"kind": "enum", "name": "ELoot", "path": "/Game/ELoot",
+                        "entries": [{"n": "Chest", "v": 1}]}]
+    new_enums.summary = {"enums_emitted": 1}
+    skipped = diff_dumps(old_missing, new_enums)
+    _assert(not skipped.enum_changed,
+            "old file with no enum section does not report every enum added", errors)
+
+    old_en = _make_dump("FakeGame", [])
+    new_en = _make_dump("FakeGame", [])
+    old_en.enums = [{"kind": "enum", "name": "ELoot", "path": "/Game/ELoot",
+                     "entries": [{"n": "Chest", "v": 1}]}]
+    new_en.enums = [{"kind": "enum", "name": "ELoot", "path": "/Game/ELoot",
+                     "entries": [{"n": "Chest", "v": 2}]}]
+    old_en.summary = {"enums_emitted": 1}
+    new_en.summary = {"enums_emitted": 1}
+    enum_diff = diff_dumps(old_en, new_en)
+    _assert(len(enum_diff.enum_changed) == 1 and enum_diff.enum_changed[0][1] == "value_changed",
+            "enum value change is reported", errors)
 
     # --- Engine-class filter ---
     old_eng = _make_dump("FakeGame", [

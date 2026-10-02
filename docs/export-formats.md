@@ -27,7 +27,7 @@ All three page the *live* GObjects pool at the moment you click Export and take 
 |--------|-------------|
 | USMAP | `UsmapExportService.cs` (Class-like + `ScriptStruct`); enums via `list_enums`, which walks the same pool (`Fern.cpp`, `CMD_LIST_ENUMS`) |
 | SDK Header | `SdkExportService.cs` (same Class-like + `ScriptStruct` filter) |
-| Dump All (`.jsonl`) | `DumpAllService.cs` — pass 1 instance counts, pass 2 classes |
+| Dump All (`.jsonl`) | `DumpAllService.cs` — classes, structs, enums, function params; optional live-instance index (names and addresses, no values). Still loaded-only. |
 
 **There is no pre-load / force-load step, and we have no equivalent to RE-UE4SS's opt-in
 "load all assets before dumping"** — `LoadPackage` / `StaticLoadObject` / `ForceLoad` /

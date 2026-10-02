@@ -60,6 +60,9 @@ public class WalkClassBatchEquivalenceTests
             => Task.FromResult(FunctionWalks.TryGetValue(addr, out var fns)
                 ? fns : new List<FunctionInfoModel>());
 
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());
+
         // Batched lookup answers from the same dictionary so each
         // returned ClassInfoModel is the SAME REFERENCE the single-call
         // path returns — element-for-element equality is trivially true.
@@ -102,6 +105,9 @@ public class WalkClassBatchEquivalenceTests
         public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
             => Task.FromResult(FunctionWalks.TryGetValue(addr, out var fns)
                 ? fns : new List<FunctionInfoModel>());
+
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());
 
         public override Task<List<ClassInfoModel>> WalkClassesBatchAsync(string[] addrs, CancellationToken ct = default)
         {
@@ -428,6 +434,9 @@ public class WalkClassBatchEquivalenceTests
         public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
             => Task.FromResult(FunctionWalks.TryGetValue(addr, out var fns)
                 ? fns : new List<FunctionInfoModel>());
+
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());
 
         // Returns ONE FEWER result than the input → mismatched count
         // should trigger consumer's fallback to single calls.
