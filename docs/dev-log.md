@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-02 (build 3616) — Dump All: progress twice a second; no time or size in its tooltip `[EXTPR-539-540-2026-10-02]`
+
+- While Dump All walks the classes, the status line now updates every half second. It used to update once every
+  50 classes, which could leave it still for a long time on slow walks. The first class shows at once, and the
+  "Counting instances" step still updates once per page of objects.
+- The Dump All tooltip no longer promises "~30-60s per game" or "50-500 MB". It says that time and file size
+  vary with the game and the export settings.
+- The first change is item D7 of the plan for external PR 539
+  ([ext-pr-539-540-plan.md](ext-pr-539-540-plan.md)), done before the rest of it. Its commit (`14ecb189`)
+  credits fireundubh as co-author. The commits are `42217904` (tooltip), `cc254fd1` (a matching code comment)
+  and `14ecb189` (progress).
+- Build 3616, published AOT by the maintainer with `build.cmd publish` on 2026-10-02 and reported OK. That run
+  includes the C# tests. The exe size, SHA and test count were not recorded in this entry. Before the publish, the
+  C# suite also ran on Linux (.NET SDK 10.0.112, RID linux-x64): 5896 passed, the same 112 Windows-only failures
+  as the unchanged tree, 17 skipped.
+
 ## 2026-10-02 (no build change) — the object index from PR 539 will be built after all, as an opt-in `[EXTPR-539-540-2026-10-02]`
 
 The entry below says the object index is not kept. That changed the same day. Dumper-7 writes the same kind of
