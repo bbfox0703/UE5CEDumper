@@ -261,8 +261,8 @@ written after the work, not before.
   disabled while recording; both values persisted in `ui-options.json`.
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
-  shows a size / time estimate and asks before exporting (reversed 2026-10-02 — Dumper-7 and RE-UE4SS both
-  ship one). `diff_dumps.py` reports struct
+  shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed
+  2026-10-02 — Dumper-7 and RE-UE4SS both ship one). `diff_dumps.py` reports struct
   added / removed; timer-based progress; fix the Explorer short-name collision and the enum labels; move the
   `DumpJsonlContext` doc comment back; tooltip from measured time and size.
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section

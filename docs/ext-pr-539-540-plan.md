@@ -151,8 +151,8 @@ What this tells us:
   RE-UE4SS makes it an explicit action. Our D4.2 (estimate, then confirm) goes further than either.
 - Dumper-7's `[index]` is worth copying: with the index, two lines in two files can be matched by GObjects slot,
   not only by name.
-- Both write plain text, not JSON. If our index is a separate file (below), JSON Lines keeps it machine-readable
-  and still greppable.
+- Both write plain text, not JSON. Our index is a separate file (D4.3); JSON Lines keeps it machine-readable and
+  still greppable.
 
 **Maintainer decision, 2026-10-02:**
 
@@ -160,6 +160,7 @@ What this tells us:
 |---|---|
 | D4.1 | **Opt-in, OFF by default.** A checkbox for the object index; the plain Dump All never writes it. |
 | D4.2 | **Estimate before export.** When the box is ticked, the export first shows an estimate — object count, file size, roughly how long — and asks the user to confirm. No confirmation, no index. |
+| D4.3 | **A separate file**, `<name>.objects.jsonl`, written next to the Dump All file — **one extra file per export**, every object one line in it, never a file per object. Ticked: two files (`<name>.jsonl` + `<name>.objects.jsonl`); unticked: one. The Dump All `.jsonl` never carries `kind:"instance"` lines. |
 
 **Design notes (first review — confirm while building):**
 
@@ -169,14 +170,16 @@ What this tells us:
   bytes per scanned object × object count. The same page's round-trip time × the number of pages gives the time.
   Show it as an approximation ("≈ 180 MB, ≈ 2 min"), because the pool's later pages are not the first page.
   Record in the log how far the estimate was off on the real export, so the sample size can be tuned.
-- **Where the lines go — recommendation, not decided.** A **separate file** next to the dump
-  (`<name>.objects.jsonl`) rather than `kind:"instance"` lines inside the Dump All file. "Separate" means **one
-  extra file per export**, holding every object as one line — never a file per object. An export with the box
-  ticked writes two files (`<name>.jsonl` + `<name>.objects.jsonl`); unticked, one. That is how Dumper-7 does it
-  too (`GObjects-Dump.txt` beside its SDK folder). Then the Dump All file
-  stays the shareable class dump (the PR's own tooltip warned not to share the instance version), and
-  `diff_dumps.py`, `analyze_dumps.py` and Dump Explorer never have to skip a million lines. The PR's in-file form
-  is the alternative.
+- **Why a separate file (D4.3).** The Dump All file stays the shareable class dump (the PR's own tooltip warned
+  not to share the instance version), and `diff_dumps.py`, `analyze_dumps.py` and Dump Explorer never have to
+  skip a million lines — so the PR's "skip `kind:"instance"`" change to `DumpJsonlReader` is not needed. Dumper-7
+  does the same (`GObjects-Dump.txt` beside its SDK folder). The PR's in-file form was the alternative and was
+  not chosen.
+- **The file.** A first line with the same identity as the Dump All meta line (game, module, UE version, dumper
+  build, object count) so the two files can be paired, then one line per object. Carry the GObjects **index**
+  (Dumper-7's lesson) next to the address, class, outer and full path. The PR wrote instance lines during
+  Dump All's pass 1; with a separate file the index needs its own writer, and it can reuse that pass's page walk
+  only if both files are open at once.
 - **Persistence.** Follows D8: the checkbox state is remembered like every other option. Because the confirmation
   appears on every export, a remembered ON can never run the big export silently.
 - The export stays cancellable through the existing Dump All cancellation; a cancelled index leaves the class dump
