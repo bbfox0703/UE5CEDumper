@@ -141,9 +141,21 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
   Starting a process from the UI would also need a `Core` interface (platform-abstraction rule).
 - **A C# port inside the UI** is the option that reaches release users. Estimate **M (one session), low risk**:
   `diff_dumps.py` is about 890 lines including its self-test and report renderer; the diff core is a few hundred.
-  The output can stay a Markdown report written to a file, shown read-only — no new grid view. The Python script
-  stays as the reference, and the C# port is tested against the same fixtures as its `--self-test`.
-- Settings to persist either way (D8): include-engine and minimal-report flags, and the last folder used.
+  No new grid view. The Python script stays as the reference, and the C# port is tested against the same
+  fixtures as its `--self-test`.
+- **Output format — maintainer, 2026-10-02: HTML or CSV, not Markdown.** Most users never open a `.md` file.
+  The two suit different readers, and both can be rendered from the same diff result:
+  - **HTML** — the readable report: summary counts, then added / removed / changed classes and structs, each
+    change under its owner. Opens in any browser; `dist\` already ships two HTML guides. Every name must be
+    HTML-escaped.
+  - **CSV** — one row per change (kind, owner, path, member, change, old / new offset, old / new type), for
+    sorting and filtering in a spreadsheet. Write UTF-8 **with** a BOM so Excel reads non-ASCII names, quote
+    every field, and prefix a cell that starts with `=`, `+`, `-` or `@` so a spreadsheet does not run it as a
+    formula.
+  - First-review suggestion: HTML as the report, CSV as an extra save. Which one, or both, is the maintainer's
+    call. Python's `--output` stays Markdown for repo users.
+- Settings to persist either way (D8): include-engine and minimal-report flags, the output format, and the last
+  folder used.
 - **First-review recommendation:** the C# port, after D1–D7 land. Not decided — the maintainer will choose.
 
 -----

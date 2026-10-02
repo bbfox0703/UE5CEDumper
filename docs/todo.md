@@ -264,8 +264,8 @@ written after the work, not before.
   added / removed; timer-based progress; fix the Explorer short-name collision and the enum labels; move the
   `DumpJsonlContext` doc comment back; tooltip from measured time and size.
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
-  weighs a C# port (M) against starting Python or copying a command line (S, repo users only). Maintainer to
-  decide.
+  weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
+  HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.
 
 *Parent:* PRs [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) and
 [#540](https://github.com/bbfox0703/UE5CEDumper/pull/540) by fireundubh, both based on `main` @ `c74daa4b`.
