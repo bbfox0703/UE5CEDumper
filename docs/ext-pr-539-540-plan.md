@@ -109,7 +109,7 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | D3 | **Function `params`** | **Take.** Dump Explorer can search by parameter name. |
 | D4 | **Object index** | **Take, as an opt-in that is OFF by default, with a size estimate and a confirmation before it runs** — see "D4 — the object index" below. *(Reversed the same day: the first decision was "do not take", see the history note there.)* |
 | D5 | **`diff_dumps.py`: struct added / removed** | **Add.** The PR reports only changed structs; classes report added, removed and changed. |
-| D6 | **`DumpJsonlContext` doc comment** | **Move it back above the attributes.** The PR placed `/// <summary>` after the `[JsonSerializable]` attributes. Probably no compile error, but it is in the wrong place. |
+| D6 | **`DumpJsonlContext` doc comment** | **Move it back above the attributes.** The PR placed `/// <summary>` after the `[JsonSerializable]` attributes. Probably no compile error, but it is in the wrong place. **Only the PR has this:** `dev` is correct (checked 2026-10-02), so the rule is just "do not copy the PR's placement". |
 | D7 | **Progress reporting** | **On a timer, not on the class count.** Report every 0.5–1 s (a constant defined in the code), counting classes **and** structs. The PR keys it on `classes % 50 == 0` while counting only classes, so once the class count sits on a multiple of 50 (including 0) **every struct line** posts a report — potentially thousands of UI-thread posts — and the comment "Matches old behaviour exactly" is no longer true. |
 | D8 | **Settings persisted** | Any new option (the diff settings below included) survives a UI restart through `UiOptionsSettings`, same rules as L5. |
 
@@ -193,11 +193,13 @@ What this tells us:
   address, so a class jump that used to be right can land on the struct. Key it by kind (or keep three indexes).
 - **Enum and enumerator rows share the label "Enum"** in the Explorer's kind column. Give the enumerator its own
   label.
-- **The Dump All tooltip is stale.** It still reads "class + property + function … ~30-60s … 50-500 MB". Update it
-  with what the dump now contains and with **measured** time and size on a real game — structs alone are often
-  more than ten thousand extra walks on UE5.
+- **The Dump All tooltip.** ✅ **Its numbers were fixed 2026-10-02, ahead of the rest:** the maintainer decided
+  the tooltip states no time or size at all ("~30-60s … 50-500 MB" became "Time and file size vary with the game
+  and the export settings"). Still owed when D1–D3 land: its list of contents ("class + property + function")
+  must name structs, enums and parameters. Do not put numbers back.
 - **The default Dump All grows** (every struct walked, `list_enums`, params on every function). Decided: these
-  stay in the default dump (D1–D3); the measurement above is what the tooltip and the dev-log entry report.
+  stay in the default dump (D1–D3). Measure the time and size on a real game for the dev-log entry — structs
+  alone are often more than ten thousand extra walks on UE5 — but not for the tooltip.
 - Fine as written: older dumps still load; `analyze_dumps.py` reads only class lines; enum paths come from
   `list_enums`' `full_path`, so a game-only dump does drop engine enums.
 
@@ -238,6 +240,6 @@ What this tells us:
   check the AOT-trimmed size — both PRs change the UI, and every AOT bug in this repo's history was found only after
   trimming.
 - A live check on a fixture: a Live Funcs recording with the slider at 8192, and a Dump All on a UE5 game with the
-  time and size measured for the tooltip. With the object index ticked: the estimate shown before the export
+  time and size measured for the dev-log entry. With the object index ticked: the estimate shown before the export
   against the real file size and time.
 - Then write the reply on both PRs, and record the shipped build in [dev-log.md](dev-log.md).

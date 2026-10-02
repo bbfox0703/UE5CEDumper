@@ -264,7 +264,7 @@ written after the work, not before.
   shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed
   2026-10-02 — Dumper-7 and RE-UE4SS both ship one). `diff_dumps.py` reports struct
   added / removed; timer-based progress; fix the Explorer short-name collision and the enum labels; move the
-  `DumpJsonlContext` doc comment back; tooltip from measured time and size.
+  `DumpJsonlContext` doc comment back; the tooltip names the new contents (it states no time or size — fixed 2026-10-02).
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
   weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
   HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.

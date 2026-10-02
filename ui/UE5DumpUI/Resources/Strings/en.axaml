@@ -921,7 +921,7 @@
     <sys:String x:Key="str.Export.SdkHeader">SDK Header (.h)</sys:String>
     <sys:String x:Key="str.Export.Usmap">USMAP (.usmap)</sys:String>
     <sys:String x:Key="str.Export.DumpAll">Dump All Metadata (.jsonl)</sys:String>
-    <sys:String x:Key="str.Tip.Export.DumpAll">Stream every currently-loaded class + property + function (including BPGCs) to a JSON Lines file. ⓘ Blueprint types exist only after their asset loads — load a level first, or a title-screen dump will miss most of them. Used by scripts/analysis/analyze_dumps.py to derive keyword tables / class bonuses / threshold calibration from real-game data. ~30-60s per game; output is 50-500 MB depending on game size.</sys:String>
+    <sys:String x:Key="str.Tip.Export.DumpAll">Stream every currently-loaded class + property + function (including BPGCs) to a JSON Lines file. ⓘ Blueprint types exist only after their asset loads — load a level first, or a title-screen dump will miss most of them. Used by scripts/analysis/analyze_dumps.py to derive keyword tables / class bonuses / threshold calibration from real-game data. Time and file size vary with the game and the export settings.</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportHeader">Export .h</sys:String>
 
     <!-- Tools (always-available menu; doesn't depend on a DLL connection) -->
