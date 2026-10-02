@@ -260,7 +260,9 @@ written after the work, not before.
   max 2^13) → Save `.jsonl` → Min calls slider (default 1, max 32, affects the next capture only). All three
   disabled while recording; both values persisted in `ui-options.json`.
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
-  dump grows). Take structs, enums and function params; NOT the object index. `diff_dumps.py` reports struct
+  dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
+  shows a size / time estimate and asks before exporting (reversed 2026-10-02 — Dumper-7 and RE-UE4SS both
+  ship one). `diff_dumps.py` reports struct
   added / removed; timer-based progress; fix the Explorer short-name collision and the enum labels; move the
   `DumpJsonlContext` doc comment back; tooltip from measured time and size.
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section

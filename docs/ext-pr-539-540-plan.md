@@ -107,11 +107,55 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | D1 | **struct lines** | **Take.** `diff_dumps.py` can then report a struct field that moved after a game patch, and SDK / USMAP already export structs while the `.jsonl` did not. |
 | D2 | **enum lines** | **Take.** |
 | D3 | **Function `params`** | **Take.** Dump Explorer can search by parameter name. |
-| D4 | **Object index** | **Do NOT take.** Its addresses are valid only for that run of the game, so offline the index says little that is useful. It is one line per live object, often hundreds of thousands to over a million, each needing its full path (`get_object_list` with `include_path`) — the file and the dump time grow far more than anything else in the PR. Instance Finder and Object Tree already answer the same question live. |
+| D4 | **Object index** | **Take, as an opt-in that is OFF by default, with a size estimate and a confirmation before it runs** — see "D4 — the object index" below. *(Reversed the same day: the first decision was "do not take", see the history note there.)* |
 | D5 | **`diff_dumps.py`: struct added / removed** | **Add.** The PR reports only changed structs; classes report added, removed and changed. |
 | D6 | **`DumpJsonlContext` doc comment** | **Move it back above the attributes.** The PR placed `/// <summary>` after the `[JsonSerializable]` attributes. Probably no compile error, but it is in the wrong place. |
 | D7 | **Progress reporting** | **On a timer, not on the class count.** Report every 0.5–1 s (a constant defined in the code), counting classes **and** structs. The PR keys it on `classes % 50 == 0` while counting only classes, so once the class count sits on a multiple of 50 (including 0) **every struct line** posts a report — potentially thousands of UI-thread posts — and the comment "Matches old behaviour exactly" is no longer true. |
 | D8 | **Settings persisted** | Any new option (the diff settings below included) survives a UI restart through `UiOptionsSettings`, same rules as L5. |
+
+### D4 — the object index (opt-in)
+
+**Decision history.** First decided "do not take": the addresses are valid only for that run of the game, it is
+one line per live object (often hundreds of thousands to over a million, each needing its full path through
+`get_object_list` with `include_path`), and Instance Finder / Object Tree already answer the question live.
+**Reversed on 2026-10-02** after checking what the two reference dumpers do (their current `main`, read from
+source):
+
+- **Dumper-7** writes `GObjects-Dump.txt` on every SDK generation, unasked: one line per object in GObjects,
+  instances included — `[index] {address} full name` (`ObjectArray::DumpObjects`). Games using FProperty also get
+  `GObjects-Dump-WithProperties.txt`, with properties under each struct and class.
+- **RE-UE4SS** writes `UE4SS_ObjectDump.txt` from `dump_all_objects_and_properties`, which visits every object in
+  GUObjectArray (`ForEachUObject`): address, class, path, name index, class and outer addresses, plus properties
+  under type objects. It is triggered by a keybind (default Ctrl+J), the GUI console button, or Lua
+  `DumpAllObjects()`, and can force-load every asset first.
+- Neither writes property values. Both ship the index although their addresses die with the session too, so it is
+  a feature users of those tools expect. Our UI has **no** export of the whole object list today: Object Tree and
+  Instance Finder answer live, but nothing can be grepped later for "what was loaded at that moment".
+
+**Maintainer decision, 2026-10-02:**
+
+| # | Rule |
+|---|---|
+| D4.1 | **Opt-in, OFF by default.** A checkbox for the object index; the plain Dump All never writes it. |
+| D4.2 | **Estimate before export.** When the box is ticked, the export first shows an estimate — object count, file size, roughly how long — and asks the user to confirm. No confirmation, no index. |
+
+**Design notes (first review — confirm while building):**
+
+- **Estimating.** The object count is known before the export (`EngineState.ObjectCount`, or the first
+  `get_object_list` page's `Total`). Fetch ONE page with `include_path`, apply the same row filter as the export
+  (`ReflectionMetaClassifier.IsLiveInstanceRow`), serialize those rows exactly as the export will, and extrapolate
+  bytes per scanned object × object count. The same page's round-trip time × the number of pages gives the time.
+  Show it as an approximation ("≈ 180 MB, ≈ 2 min"), because the pool's later pages are not the first page.
+  Record in the log how far the estimate was off on the real export, so the sample size can be tuned.
+- **Where the lines go — recommendation, not decided.** A **separate file** next to the dump
+  (`<name>.objects.jsonl`) rather than `kind:"instance"` lines inside the Dump All file. Then the Dump All file
+  stays the shareable class dump (the PR's own tooltip warned not to share the instance version), and
+  `diff_dumps.py`, `analyze_dumps.py` and Dump Explorer never have to skip a million lines. The PR's in-file form
+  is the alternative.
+- **Persistence.** Follows D8: the checkbox state is remembered like every other option. Because the confirmation
+  appears on every export, a remembered ON can never run the big export silently.
+- The export stays cancellable through the existing Dump All cancellation; a cancelled index leaves the class dump
+  intact.
 
 ### Other problems found (first review — fix while taking D1–D3)
 
@@ -166,5 +210,6 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
   check the AOT-trimmed size — both PRs change the UI, and every AOT bug in this repo's history was found only after
   trimming.
 - A live check on a fixture: a Live Funcs recording with the slider at 8192, and a Dump All on a UE5 game with the
-  time and size measured for the tooltip.
+  time and size measured for the tooltip. With the object index ticked: the estimate shown before the export
+  against the real file size and time.
 - Then write the reply on both PRs, and record the shipped build in [dev-log.md](dev-log.md).

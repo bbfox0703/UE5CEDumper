@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-10-02 (no build change) — the object index from PR 539 will be built after all, as an opt-in `[EXTPR-539-540-2026-10-02]`
+
+The entry below says the object index is not kept. That changed the same day. Dumper-7 writes the same kind of
+list (`GObjects-Dump.txt`) on every SDK generation, and RE-UE4SS writes one (`UE4SS_ObjectDump.txt`) on a
+keybind. Users of either tool will expect it, and our UI has no way to save the whole object list today. It will
+be a checkbox, off by default. When ticked, the export first estimates the object count, file size and time, and
+asks before writing anything. Plan: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md), section D4.
+
 ## 2026-10-02 (no build change) — external PRs 539 / 540 reviewed; what we take is planned, not built `[EXTPR-539-540-2026-10-02]`
 
 Two pull requests from fireundubh were read for the first time: PR 540 (Live Funcs: fetch limit, min calls,
