@@ -121,16 +121,38 @@ one line per live object (often hundreds of thousands to over a million, each ne
 **Reversed on 2026-10-02** after checking what the two reference dumpers do (their current `main`, read from
 source):
 
-- **Dumper-7** writes `GObjects-Dump.txt` on every SDK generation, unasked: one line per object in GObjects,
-  instances included — `[index] {address} full name` (`ObjectArray::DumpObjects`). Games using FProperty also get
-  `GObjects-Dump-WithProperties.txt`, with properties under each struct and class.
-- **RE-UE4SS** writes `UE4SS_ObjectDump.txt` from `dump_all_objects_and_properties`, which visits every object in
-  GUObjectArray (`ForEachUObject`): address, class, path, name index, class and outer addresses, plus properties
-  under type objects. It is triggered by a keybind (default Ctrl+J), the GUI console button, or Lua
-  `DumpAllObjects()`, and can force-load every asset first.
-- Neither writes property values. Both ship the index although their addresses die with the session too, so it is
-  a feature users of those tools expect. Our UI has **no** export of the whole object list today: Object Tree and
-  Instance Finder answer live, but nothing can be grepped later for "what was loaded at that moment".
+#### How the two reference dumpers do it
+
+Read from source on 2026-10-02: Dumper-7 `Encryqed/Dumper-7` @ `dd8fe34d` (2026-09-12), RE-UE4SS
+`UE4SS-RE/RE-UE4SS` @ `e3ba1016` (2026-09-29). Neither repository is vendored here, so re-read them before
+quoting either one as current.
+
+| | **Dumper-7** | **RE-UE4SS** |
+|---|---|---|
+| File | `GObjects-Dump.txt`; also `GObjects-Dump-WithProperties.txt` on games that use FProperty (4.25+) | `UE4SS_ObjectDump.txt` |
+| Code | `ObjectArray::DumpObjects` / `DumpObjectsWithProperties`, called from `Generator::Generate` | `UE4SSProgram::dump_all_objects_and_properties` |
+| When | **Automatically**, once per injection, the first time the SDK is generated (`bDumpedGObjects`). There is no separate switch: generating the SDK writes it. | **On request**: keybind (default `Ctrl`+`J`, set in `Mods/Keybinds/Scripts/main.lua`), the "Dump Objects & Properties" button in the GUI console, or Lua `DumpAllObjects()` |
+| Which objects | Every non-null slot of GObjects, in index order: types, CDOs and instances alike | Every object in GUObjectArray (`UObjectGlobals::ForEachUObject`): types, CDOs and instances alike |
+| One object line | `[index] {address} full name` — format string `"[{:08X}] {{{}}} {}\n"`: index in 8 hex digits, the address, then the full name (`Class Outer.Name`) | `[address] Class path [n: name index] [c: class address] [or: outer address]` (the example in its `docs/feature-overview/dumpers.md`) |
+| Properties | Only in the `-WithProperties` file: under each struct or class, one line per property — offset, address, property class, name | Under each struct, class and function: one line per property with its offset and the related type pointers (struct, enum, inner, key / value, …); an enum lists its values |
+| Property values | No | No |
+| Header | `Object dump by Dumper-7`, the game version and name, `Count: N` | None |
+| Where | `<SDKGenerationPath>\<GameVersion>-<GameName>\` (default `C:\Dumper-7`); an existing folder is renamed to `_OLD`, or to a timestamped backup when `bCreateUniqueBackups` is set | The UE4SS working folder |
+| Options | None for this file | `[ObjectDumper] LoadAllAssetsBeforeDumpingObjects` (default 0) force-loads every asset first; the ini warns it can take gigabytes of memory and can crash the game |
+| Size handling | None: streams straight to the file | Builds the whole dump in one wide-character string (it reserves 200,000,000 characters) and writes it at the end. Its own comment notes that using `wchar_t` doubles the file size. |
+| Estimate or confirmation | No | No |
+
+What this tells us:
+
+- Both ship the object list although its addresses die with the session too. Users of those tools expect it.
+  Our UI has **no** export of the whole object list today: Object Tree and Instance Finder answer live, but
+  nothing can be grepped later for "what was loaded at that moment".
+- Neither warns about size. Dumper-7 sidesteps it by making the file part of a step that is slow anyway;
+  RE-UE4SS makes it an explicit action. Our D4.2 (estimate, then confirm) goes further than either.
+- Dumper-7's `[index]` is worth copying: with the index, two lines in two files can be matched by GObjects slot,
+  not only by name.
+- Both write plain text, not JSON. If our index is a separate file (below), JSON Lines keeps it machine-readable
+  and still greppable.
 
 **Maintainer decision, 2026-10-02:**
 
@@ -148,7 +170,10 @@ source):
   Show it as an approximation ("≈ 180 MB, ≈ 2 min"), because the pool's later pages are not the first page.
   Record in the log how far the estimate was off on the real export, so the sample size can be tuned.
 - **Where the lines go — recommendation, not decided.** A **separate file** next to the dump
-  (`<name>.objects.jsonl`) rather than `kind:"instance"` lines inside the Dump All file. Then the Dump All file
+  (`<name>.objects.jsonl`) rather than `kind:"instance"` lines inside the Dump All file. "Separate" means **one
+  extra file per export**, holding every object as one line — never a file per object. An export with the box
+  ticked writes two files (`<name>.jsonl` + `<name>.objects.jsonl`); unticked, one. That is how Dumper-7 does it
+  too (`GObjects-Dump.txt` beside its SDK folder). Then the Dump All file
   stays the shareable class dump (the PR's own tooltip warned not to share the instance version), and
   `diff_dumps.py`, `analyze_dumps.py` and Dump Explorer never have to skip a million lines. The PR's in-file form
   is the alternative.
