@@ -29,6 +29,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 
 快速了解你實際能用它做什麼 — 完整的 Table 製作功能列表請見 **[docs/Features_zh-TW.md](docs/Features_zh-TW.md)**：
 
+- **全域指標免設定、自動偵測** — 一般的 UE Dumper 都要你先自行找到 GObjects / GNames / GWorld 三大指標。UE5CEDumper 內建 150 組以上的 AOB 特徵碼資料庫（另加 symbol export 查找），涵蓋 **GObjects、GNames、GWorld、GEngine 與 SparseDelegates**，並以 UE 4.11 – 5.8 的多個執行檔語料逐一驗證，因此**大多數 UE 遊戲的三大指標都能自動偵測**。所有特徵碼都落空時也不會直接放棄，而是自動 fallback：GObjects 改做資料區段掃描、GNames 改用字串參照與指標掃描，**GWorld 則先在 GObjects 中搜尋 UWorld 實例反查靜態指標，再退回 `GEngine → GameViewport → World`**。
 - **即時記憶體檢查** — 瀏覽物件、找出某類別的每個實例、以即時數值深入 struct / class 佈局。
 - **Value Search（數值搜尋）** — Cheat-Engine 風格的 First Scan / Next Scan，掃描每個 UE 屬性（數字、字串、向量、array / map / set），不需知道 offset 就能找到目標。**Group 模式**能找出同時持有多個數值的物件（例如 `Str + Def + Dex + Int`），另有可選的 **Deep** 模式深入巢狀容器。
 - **Teleport（傳送）** — 3 個 marker 存檔 / 召回（BugItGo 風格）、俯視 / 2.5D 遊戲的**傳送到游標**、可自設全域熱鍵，以及唯讀的**相機 POV** 讀值。¹

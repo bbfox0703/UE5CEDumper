@@ -3525,17 +3525,21 @@ other machine does not keep following the old one.
 1. Merge `dev` into `main` through a PR, as a merge commit, once its CI is green.
 2. Tag `v<build>` on `main`'s merge commit. `release.yml` builds the AOT binary and creates a **draft**
    release whose body is a generated commit list.
-3. Replace that body with prepared notes in the format of the previous two releases
-   (`gh release view v<N> --json body`): an intro line, `## About this release`, an optional `## New`,
-   `## Fixed`, a compare link, the fall-back-to-the-previous-release line, the `## Setup` block and
-   the unsigned-exe notes.
+3. Replace that body with prepared notes in the format of v3397 (`gh release view v3397 --json body`;
+   v3546 is the same format with more items): an intro line, `## About this release`, an optional
+   `## New`, `## Fixed`, a compare link, the fall-back-to-the-previous-release line, the `## Setup`
+   block and the unsigned-exe notes.
 4. Leave it a draft. The maintainer checks the build and publishes.
 
 *Why.* The notes are for users, not a changelog, and the maintainer publishes only after trying the
 build.
 
 *How.* Take the items from the dev-log entries and the product commits since the last tag
-(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`). The notes are all English. Aim for 20–30
+(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`). The notes are all English. **One item is
+one line** (2026-10-02): what changed, with no sub-bullets, no how-it-works and no measurements; a
+reader who wants the detail has the compare link. A thing the user must do or must not do goes in a
+one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
+ran to 8,300 characters; the maintainer had it cut to 3,700. Aim for 20–30
 user-facing items and leave small fixes out, but do not pad: a release with twelve has twelve. Two
 kinds of work get one line each, never an item per change: Wiki work ("Updated the Wiki.") and bulk
 hint or tooltip corrections. Copy the `## Setup` block from the last PUBLISHED release, which the
