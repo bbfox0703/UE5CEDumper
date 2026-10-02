@@ -21,6 +21,7 @@ public class LiveFuncsViewModelTests
         public int StartCalls { get; private set; }
         public int StopCalls { get; private set; }
         public int GetCalls { get; private set; }
+        public int LastLimit { get; private set; }
         public PeProfileResult NextGet { get; set; } = new();
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
@@ -36,6 +37,7 @@ public class LiveFuncsViewModelTests
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
         {
             GetCalls++;
+            LastLimit = limit;
             return Task.FromResult(NextGet);
         }
     }
@@ -717,5 +719,134 @@ public class LiveFuncsViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.DoesNotContain(vm.Results, r => r.FuncName == "Tick");
+    }
+
+    [Fact]
+    public async Task SaveJsonl_WritesTheRowsOnScreen_AndSkipsAFilteredOne()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry
+            {
+                ClassName = "AShop\"Vendor", FuncName = "OpenShop", Count = 3,
+                FuncAddr = "0x10", FirstSeq = 2, NumParms = 1, ParmsSize = 8,
+            },
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FuncAddr = "0x20" });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.FilterText = "shop";
+
+        string? saved = null;
+        string? name = null;
+        vm.RequestSaveJsonl += (defaultName, jsonl) =>
+        {
+            name = defaultName;
+            saved = jsonl;
+            return Task.FromResult<string?>(@"C:\out\live-funcs.jsonl");
+        };
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.NotNull(saved);
+        Assert.StartsWith("live-funcs-", name);
+        var lines = saved!.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(2, lines.Length);
+        using var meta = System.Text.Json.JsonDocument.Parse(lines[0]);
+        Assert.Equal("live_funcs", meta.RootElement.GetProperty("kind").GetString());
+        Assert.Equal(1, meta.RootElement.GetProperty("rows").GetInt32());
+        Assert.Equal(2, meta.RootElement.GetProperty("fetched").GetInt32());
+        Assert.Equal("shop", meta.RootElement.GetProperty("filter").GetString());
+        using var row = System.Text.Json.JsonDocument.Parse(lines[1]);
+        Assert.Equal("func", row.RootElement.GetProperty("kind").GetString());
+        Assert.Equal("AShop\"Vendor", row.RootElement.GetProperty("class").GetString());
+        Assert.Equal("OpenShop", row.RootElement.GetProperty("func").GetString());
+        Assert.Equal(3, row.RootElement.GetProperty("calls").GetInt64());
+        Assert.Equal("0x10", row.RootElement.GetProperty("addr").GetString());
+        Assert.DoesNotContain("Tick", saved);
+        Assert.Contains("live-funcs.jsonl", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_EmptyTable_DoesNotAskToSave()
+    {
+        var (vm, _) = MakeVm();
+        var asked = false;
+        vm.RequestSaveJsonl += (_, _) =>
+        {
+            asked = true;
+            return Task.FromResult<string?>("x.jsonl");
+        };
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.False(asked);
+        Assert.Contains("empty", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task FetchLimit_IsWhatTheGetAsksFor()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "A", FuncName = "Once", Count = 1 });
+
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(300, dump.LastLimit);
+
+        vm.FetchLimit = 8000;
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal(8000, dump.LastLimit);
+        Assert.Single(vm.Results);
+    }
+
+    [Fact]
+    public async Task MinCalls_OneKeepsASingleFire_FourHidesIt()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "A", FuncName = "Once", Count = 1 },
+            new PeProfileEntry { ClassName = "A", FuncName = "Thrice", Count = 3 },
+            new PeProfileEntry { ClassName = "A", FuncName = "Often", Count = 9 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(3, vm.Results.Count);
+
+        vm.MinCalls = 4;
+        Assert.Single(vm.Results);
+        Assert.Equal("Often", vm.Results[0].FuncName);
+
+        vm.MinCalls = 1;
+        Assert.Equal(3, vm.Results.Count);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_OrdersByFirstSeq_NotByTheGrid()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 50 },
+            new PeProfileEntry { ClassName = "AShop", FuncName = "Open", Count = 1, FirstSeq = 2 },
+            new PeProfileEntry { ClassName = "AMisc", FuncName = "NoSeq", Count = 4, FirstSeq = 0 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal("Tick", vm.Results[0].FuncName);
+
+        string? saved = null;
+        vm.RequestSaveJsonl += (_, jsonl) =>
+        {
+            saved = jsonl;
+            return Task.FromResult<string?>("out.jsonl");
+        };
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        var lines = saved!.Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        using var a = System.Text.Json.JsonDocument.Parse(lines[1]);
+        using var b = System.Text.Json.JsonDocument.Parse(lines[2]);
+        using var c = System.Text.Json.JsonDocument.Parse(lines[3]);
+        Assert.Equal("Open", a.RootElement.GetProperty("func").GetString());
+        Assert.Equal(2, a.RootElement.GetProperty("order").GetInt64());
+        Assert.Equal("Tick", b.RootElement.GetProperty("func").GetString());
+        Assert.Equal("NoSeq", c.RootElement.GetProperty("func").GetString());
+        Assert.Equal(0, c.RootElement.GetProperty("order").GetInt64());
     }
 }

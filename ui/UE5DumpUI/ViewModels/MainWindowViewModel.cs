@@ -1381,6 +1381,17 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
         };
 
+        // Same split as the clipboard: the panel VM builds the text, this host owns the dialog.
+        LiveFuncs.RequestSaveJsonl += async (defaultName, jsonl) =>
+        {
+            var path = await _platform.ShowSaveFileDialogAsync(
+                defaultName, "JSON Lines (*.jsonl)", ".jsonl");
+            if (string.IsNullOrEmpty(path)) return null;
+            await File.WriteAllTextAsync(path, jsonl);
+            _log.Info($"Live Funcs table saved to {path} ({jsonl.Length} bytes)");
+            return path;
+        };
+
         // Wire InterestingFunctions -> "Locate in GWorld": resolve a live (non-CDO)
         // instance of the function's class (same find_instance path as
         // NavigateToFunction above), then run the GWorld path search in parent mode
