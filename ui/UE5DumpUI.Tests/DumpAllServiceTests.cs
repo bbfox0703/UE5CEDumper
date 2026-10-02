@@ -537,4 +537,100 @@ public class DumpAllServiceTests
     {
         Assert.Equal(expected, DumpAllService.IsEnginePath(path));
     }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] D7: the class walk reports progress by time
+    // ==================================================================
+
+    /// <summary>A clock that moves only when the test moves it.</summary>
+    private sealed class ManualClock : TimeProvider
+    {
+        private long _ticks;
+        public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+        public override long GetTimestamp() => _ticks;
+        public void Advance(TimeSpan by) => _ticks += by.Ticks;
+    }
+
+    /// <summary>Records reports on the calling thread; <c>Progress&lt;T&gt;</c> would post them.</summary>
+    private sealed class RecordingProgress : IProgress<DumpProgress>
+    {
+        public List<DumpProgress> Reports { get; } = new();
+        public void Report(DumpProgress value) => Reports.Add(value);
+    }
+
+    /// <summary>Each class's function walk takes <see cref="PerClass"/> of clock time.</summary>
+    private sealed class TimedFakeDump : FakeDumpForDump
+    {
+        public required ManualClock Clock { get; init; }
+        public TimeSpan PerClass { get; init; }
+
+        public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
+        {
+            Clock.Advance(PerClass);
+            return base.WalkFunctionsAsync(addr, ct);
+        }
+    }
+
+    private static List<DumpProgress> WalkReports(FakeDumpForDump dump, TimeProvider clock, int classCount)
+    {
+        for (int i = 1; i <= classCount; i++)
+        {
+            string addr = $"0x{i:X}";
+            dump.Objects.Add(Obj(addr, $"C{i}", "Class"));
+            dump.ClassWalks[addr] = new ClassInfoModel { Name = $"C{i}" };
+        }
+        var sink = new RecordingProgress();
+        DumpAllService.GenerateAsync(
+            dump, DefaultEngineState(), new MemoryStream(),
+            new DumpOptions(IncludeInstanceCounts: false), sink,
+            TestContext.Current.CancellationToken, clock).GetAwaiter().GetResult();
+        return sink.Reports.Where(r => r.Phase == "Walking classes").ToList();
+    }
+
+    [Fact]
+    public void Generate_WalkProgress_IsNotDrivenByTheClassCount()
+    {
+        // 120 classes inside one interval: the old every-50 rule reported at 50 and 100.
+        var clock = new ManualClock();
+        var reports = WalkReports(new FakeDumpForDump(), clock, 120);
+
+        var only = Assert.Single(reports);
+        Assert.Equal(1, only.Done);   // the first class is reported at once
+    }
+
+    [Fact]
+    public void Generate_WalkProgress_ReportsAgainEachTimeTheIntervalPasses()
+    {
+        var clock = new ManualClock();
+        var dump = new TimedFakeDump { Clock = clock, PerClass = DumpAllService.ProgressReportInterval };
+        var reports = WalkReports(dump, clock, 7);
+
+        Assert.Equal(new[] { 1, 2, 3, 4, 5, 6, 7 }, reports.Select(r => r.Done).ToArray());
+    }
+
+    [Fact]
+    public void Generate_WalkProgress_SlowerThanTheIntervalStillLeavesGaps()
+    {
+        // Half an interval per class: every second class is due.
+        var clock = new ManualClock();
+        var dump = new TimedFakeDump { Clock = clock, PerClass = DumpAllService.ProgressReportInterval / 2 };
+        var reports = WalkReports(dump, clock, 7);
+
+        Assert.Equal(new[] { 1, 3, 5, 7 }, reports.Select(r => r.Done).ToArray());
+    }
+
+    [Fact]
+    public void ProgressThrottle_FirstCallIsDue_ThenWaitsForTheInterval()
+    {
+        var clock = new ManualClock();
+        var throttle = new DumpAllService.ProgressThrottle(clock, TimeSpan.FromMilliseconds(500));
+
+        Assert.True(throttle.Due());
+        Assert.False(throttle.Due());
+        clock.Advance(TimeSpan.FromMilliseconds(499));
+        Assert.False(throttle.Due());
+        clock.Advance(TimeSpan.FromMilliseconds(1));
+        Assert.True(throttle.Due());
+        Assert.False(throttle.Due());
+    }
 }

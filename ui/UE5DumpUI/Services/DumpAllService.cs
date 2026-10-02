@@ -49,6 +49,14 @@ public static class DumpAllService
     internal const int WalkClassBatchChunkSize = 200;
 
     /// <summary>
+    /// How often the class walk reports progress. By time, not every N classes: a count
+    /// step goes quiet for as long as N slow walks take, and fires on every non-class
+    /// line written while the count sits on a multiple of N, which struct and enum lines
+    /// will do. Two updates a second is enough for a status line.
+    /// </summary>
+    internal static readonly TimeSpan ProgressReportInterval = TimeSpan.FromMilliseconds(500);
+
+    /// <summary>
     /// Engine-package path prefixes — kept in sync with the DLL's
     /// <c>Aura::IsEnginePackage</c> (dll/src/Aura.h) so the client-side GameOnly skip
     /// matches what the DLL treats as an engine package. Prefixes have NO trailing
@@ -89,6 +97,7 @@ public static class DumpAllService
     /// summary line reports, so the caller can compose an honest completion
     /// message from what the dump actually produced (classes emitted / errors)
     /// rather than from the output file's byte length (audit X4).
+    /// <paramref name="clock"/> paces the progress reports; tests pass a manual one.
     /// </summary>
     public static async Task<DumpResult> GenerateAsync(
         IDumpService dump,
@@ -96,9 +105,11 @@ public static class DumpAllService
         Stream output,
         DumpOptions? options = null,
         IProgress<DumpProgress>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        TimeProvider? clock = null)
     {
         options ??= new DumpOptions();
+        var walkProgress = new ProgressThrottle(clock ?? TimeProvider.System, ProgressReportInterval);
 
         await using var writer = new StreamWriter(output, new UTF8Encoding(false), bufferSize: 64 * 1024, leaveOpen: true)
         {
@@ -195,7 +206,7 @@ public static class DumpAllService
                     {
                         var (emitted, errs, skipped) = await FlushClassChunkAsync(
                             dump, writer, chunkBuffer, instanceCounts, options,
-                            classesEmitted, progress, ct);
+                            classesEmitted, progress, walkProgress, ct);
                         classesEmitted += emitted;
                         errors         += errs;
                         classesSkipped += skipped;
@@ -212,7 +223,7 @@ public static class DumpAllService
             {
                 var (emitted, errs, skipped) = await FlushClassChunkAsync(
                     dump, writer, chunkBuffer, instanceCounts, options,
-                    classesEmitted, progress, ct);
+                    classesEmitted, progress, walkProgress, ct);
                 classesEmitted += emitted;
                 errors         += errs;
                 classesSkipped += skipped;
@@ -257,6 +268,7 @@ public static class DumpAllService
         DumpOptions options,
         int cumulativeEmittedBefore,
         IProgress<DumpProgress>? progress,
+        ProgressThrottle walkProgress,
         CancellationToken ct)
     {
         if (chunk.Count == 0) return (0, 0, 0);
@@ -321,12 +333,10 @@ public static class DumpAllService
                 await WriteClassLineAsync(writer, obj, classInfo, functions, instCount, ct);
                 emittedThisChunk++;
 
-                // Preserves the pre-batch path's per-50-class progress
-                // granularity, measured against the cumulative emit
-                // count (not the chunk-local count). Matches old
-                // behaviour exactly so progress messages line up.
+                // Paced by ProgressReportInterval; Done is the cumulative
+                // emit count across chunks, not the chunk-local one.
                 int cumulative = cumulativeEmittedBefore + emittedThisChunk;
-                if ((cumulative % 50) == 0)
+                if (progress != null && walkProgress.Due())
                 {
                     progress?.Report(new DumpProgress(
                         Phase: "Walking classes",
@@ -545,6 +555,34 @@ public static class DumpAllService
     internal static bool IsExportedTypeRow(string meta, string name) =>
         (IsClassLikeMetaName(meta) || IsStructMetaName(meta))
         && !name.StartsWith("Default__", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Says when the next progress report is due. The first call is always due, so the
+    /// status line leaves the previous phase as soon as the first class is written.
+    /// </summary>
+    internal sealed class ProgressThrottle
+    {
+        private readonly TimeProvider _clock;
+        private readonly TimeSpan _interval;
+        private long _lastReport;
+        private bool _reported;
+
+        public ProgressThrottle(TimeProvider clock, TimeSpan interval)
+        {
+            _clock = clock;
+            _interval = interval;
+        }
+
+        public bool Due()
+        {
+            long now = _clock.GetTimestamp();
+            if (_reported && _clock.GetElapsedTime(_lastReport, now) < _interval)
+                return false;
+            _lastReport = now;
+            _reported = true;
+            return true;
+        }
+    }
 }
 
 /// <summary>What a dump run actually produced — the same counters the trailing
