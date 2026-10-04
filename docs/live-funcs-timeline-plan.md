@@ -109,27 +109,33 @@ UFunction-level stack.
 
 | # | Item | Decision |
 |---|---|---|
-| T1 | **Buffer size** (maintainer, 2026-10-04) | A **slider: 32 / 64 / 128 MB, default 32**. Planned, not final: if measuring shows 128 MB is too heavy ("Measure before building"), the slider becomes **16 / 32 / 64 MB**, default still 32. Persisted across UI sessions, and disabled while a trace records, like the Live Funcs sliders. |
-| T2 | **Where it lives** (proposal 2026-10-04, ⚠ awaiting the maintainer) | **Its own top-level tab** (working name "Call Trace"), not tabs nested inside Live Funcs. See below. |
-| T3 | **How functions are chosen for snapshots** (proposal 2026-10-04, ⚠ awaiting the maintainer) | A **watch list in the Call Trace tab**. Live Funcs gets only a context-menu item "Add to Call Trace watch list"; the watch list can also take a function by name. No checkbox column in the Live Funcs table. |
+| T1 | **Buffer size** (maintainer, 2026-10-04) | A **slider: 32 / 64 / 128 MB, default 32**. Planned, not final: if measuring shows 128 MB is too heavy ("Measure before building"), the slider becomes **16 / 32 / 64 MB**, default still 32. Persisted across UI sessions, and disabled while recording, like the Live Funcs sliders. |
+| T2 | **Recording** (maintainer's direction 2026-10-04; details ⚠ to confirm) | **The trace rides on the Live Funcs recording; it has no Start / Stop of its own.** Live Funcs' toolbar gains a "Trace" checkbox and the buffer slider; ticked, the one Start records the count table and the trace over the same window. With Live Funcs not recording, the trace cannot record either. Replaces the first proposal of a separate tab with its own Start. |
+| T3 | **Viewing and choosing functions** (proposal 2026-10-04, ⚠ awaiting the maintainer) | The trace is **viewed** in its own top-level tab (working name "Call Trace"). Functions for snapshots (sections 2 and 3) are **ticked in the Live Funcs table** from an earlier recording, and the next Start captures them. |
 
-### Why its own tab (T2, T3)
+### Why the trace rides on Live Funcs (T2, T3)
 
-Choosing functions (sections 2 and 3) and viewing the result (section 1's tree, views A–C) are one workflow,
-and it is not the Live Funcs workflow: Live Funcs ranks functions by count, the trace keeps every call in order.
+The usual way to use it is one workflow: record in Live Funcs, find the candidates, then look at the calls
+in order. A trace started on its own would have nothing to point at.
 
-- **The UI already splits related tools into sibling tabs** — Snapshot, SPC Query and Class Pivot each have
-  one. No panel has a tab control inside it today, so tabs inside Live Funcs would be a new pattern and would
-  hide the trace one level down.
-- **Its own lifecycle:** its own Start / Stop, buffer slider, watch list and export. Inside Live Funcs, two
-  Start buttons would need rules about which one the recording lock applies to.
-- **Live Funcs stays as it is:** the PR 540 work (fetch limit, Min calls, Save .jsonl) is not mixed with this.
-- **Proposed layout of the tab:** controls on top (buffer slider, Start / Stop, watch list, export); the call
-  tree with durations as the main area; a detail pane for the selected call, with **its own tabs for views A,
-  B and C** (call stack / stack copy / parameters). The tabs belong in the detail pane, where they switch
-  between views of one call, not at the panel level.
-- **Start it as an experimental tab**, shown only when the experimental tabs are enabled like Snapshot, until
-  the hot-path cost is measured on real games.
-
-Open: whether the count table and the trace may record at the same time. They share the hook, and recording
-both costs both; to be settled with the measurements.
+- **It is a design choice, not a technical limit.** Both the count table and the trace hang off Stark's
+  `ProcessEvent` hook, and neither needs the other to record. Tying them is chosen for the workflow.
+- **One recording, one lock.** One Start / Stop means one "recording" state: the fetch limit, Min calls, Save
+  .jsonl, the Trace checkbox, the buffer slider and the ticks are all disabled together while it runs. Two
+  Start buttons would each need their own rules.
+- **Same window, so the two views can point at each other.** A row in the count table can jump to its calls in
+  the trace, and a call in the trace back to its row, because both cover exactly the same calls.
+- **This settles the earlier open question:** the count table and the trace do record at the same time,
+  whenever Trace is ticked. Measure the cost of both together ("Measure before building").
+- **Two rounds for snapshots:** the first recording finds the functions; tick them; the next Start captures
+  their parameters and stacks. Ticks persist, so the second round needs no setup.
+- **Viewing in its own tab, not inside Live Funcs:** the call tree and the per-call views need the room, and
+  the UI already gives related tools sibling tabs (Snapshot, SPC Query, Class Pivot). No panel has a tab
+  control inside it today. After Stop with Trace ticked, Live Funcs offers "Open in Call Trace".
+- **Layout of the Call Trace tab:** the call tree with durations as the main area, export on top, and a
+  detail pane for the selected call with **its own tabs for views A, B and C** (call stack / stack copy /
+  parameters). The tabs belong in the detail pane, where they switch between views of one call.
+- **Experimental at first:** the Trace checkbox and the Call Trace tab show only when the experimental tabs
+  are enabled, until the hot-path cost is measured on real games.
+- **Not mixed with PR 540:** the Live Funcs controls from PR 540 are built first and unchanged; the Trace
+  checkbox, buffer slider and tick column are added later as this feature, without the co-author trailer.

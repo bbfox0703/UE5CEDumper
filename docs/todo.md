@@ -256,8 +256,9 @@ Open work only. **Read this when deciding what to do next.**
   native-stack snapshots for ticked functions only. Effort **L** across the three steps, risk **med** (it adds
   work to the ProcessEvent hot path; measure first). Our own feature: its commits carry **no**
   `Co-authored-by: fireundubh` trailer. Buffer: slider 32 / 64 / 128 MB, default 32 (16 / 32 / 64 if 128
-  measures too heavy). Proposed, awaiting the maintainer: its own experimental "Call Trace" tab with a watch
-  list, not tabs inside Live Funcs.
+  measures too heavy). The trace rides on the Live Funcs recording (a "Trace" checkbox, no Start of
+  its own); viewed in its own experimental "Call Trace" tab; snapshot functions ticked in the Live Funcs table
+  (proposal, awaiting the maintainer).
 
 -----
 
