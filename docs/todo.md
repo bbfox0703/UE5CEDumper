@@ -255,7 +255,9 @@ Open work only. **Read this when deciding what to do next.**
   fill-then-stop buffer (32 / 64 MB) of per-call records with nesting depth and duration, then parameter and
   native-stack snapshots for ticked functions only. Effort **L** across the three steps, risk **med** (it adds
   work to the ProcessEvent hot path; measure first). Our own feature: its commits carry **no**
-  `Co-authored-by: fireundubh` trailer. Waits on the maintainer's answers to the plan's open questions.
+  `Co-authored-by: fireundubh` trailer. Buffer: slider 32 / 64 / 128 MB, default 32 (16 / 32 / 64 if 128
+  measures too heavy). Proposed, awaiting the maintainer: its own experimental "Call Trace" tab with a watch
+  list, not tabs inside Live Funcs.
 
 -----
 

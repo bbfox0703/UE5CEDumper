@@ -32,7 +32,7 @@ recording of the log stops (the count table can keep going). After Stop the UI s
 - Appending is one atomic `fetch_add` on the write index: no lock, and a full buffer is just "index ≥ capacity".
 - Allocate at Start and free on Reset / client disconnect, as Linie's table already is: 64 MB sitting in the
   game process when nobody is recording is not acceptable.
-- The buffer size can be one more Live Funcs setting, persisted with the others.
+- The buffer size is a slider, persisted with the trace's other settings — see "Decisions" below.
 
 ## 1. Call timeline — feasible, recommended first
 
@@ -100,9 +100,36 @@ UFunction-level stack.
 - How many `ProcessEvent` calls per second a busy game makes, to size the buffer and the default.
 - What the extra clock read and record write cost per call, with and without recording (frame time on a fixture).
 - What one stack capture costs, to decide how many ticked functions are reasonable.
+- What a **128 MB** buffer costs after Stop, which decides whether 128 stays on the slider: moving it out of
+  the game over the pipe, resolving its names, and loading about 3.3 million rows into the UI. The hot-path
+  cost per call does not depend on the buffer size; what grows is the memory held in the game process and
+  everything that happens after Stop.
 
-## Open questions for the maintainer
+## Decisions
 
-- Buffer size: a fixed 32 / 64 MB choice, or a slider?
-- How functions are ticked for sections 2 and 3: a checkbox column in the Live Funcs table, or a separate list?
-- Where the timeline view lives: a tab inside Live Funcs, or its own panel?
+| # | Item | Decision |
+|---|---|---|
+| T1 | **Buffer size** (maintainer, 2026-10-04) | A **slider: 32 / 64 / 128 MB, default 32**. Planned, not final: if measuring shows 128 MB is too heavy ("Measure before building"), the slider becomes **16 / 32 / 64 MB**, default still 32. Persisted across UI sessions, and disabled while a trace records, like the Live Funcs sliders. |
+| T2 | **Where it lives** (proposal 2026-10-04, ⚠ awaiting the maintainer) | **Its own top-level tab** (working name "Call Trace"), not tabs nested inside Live Funcs. See below. |
+| T3 | **How functions are chosen for snapshots** (proposal 2026-10-04, ⚠ awaiting the maintainer) | A **watch list in the Call Trace tab**. Live Funcs gets only a context-menu item "Add to Call Trace watch list"; the watch list can also take a function by name. No checkbox column in the Live Funcs table. |
+
+### Why its own tab (T2, T3)
+
+Choosing functions (sections 2 and 3) and viewing the result (section 1's tree, views A–C) are one workflow,
+and it is not the Live Funcs workflow: Live Funcs ranks functions by count, the trace keeps every call in order.
+
+- **The UI already splits related tools into sibling tabs** — Snapshot, SPC Query and Class Pivot each have
+  one. No panel has a tab control inside it today, so tabs inside Live Funcs would be a new pattern and would
+  hide the trace one level down.
+- **Its own lifecycle:** its own Start / Stop, buffer slider, watch list and export. Inside Live Funcs, two
+  Start buttons would need rules about which one the recording lock applies to.
+- **Live Funcs stays as it is:** the PR 540 work (fetch limit, Min calls, Save .jsonl) is not mixed with this.
+- **Proposed layout of the tab:** controls on top (buffer slider, Start / Stop, watch list, export); the call
+  tree with durations as the main area; a detail pane for the selected call, with **its own tabs for views A,
+  B and C** (call stack / stack copy / parameters). The tabs belong in the detail pane, where they switch
+  between views of one call, not at the panel level.
+- **Start it as an experimental tab**, shown only when the experimental tabs are enabled like Snapshot, until
+  the hot-path cost is measured on real games.
+
+Open: whether the count table and the trace may record at the same time. They share the hook, and recording
+both costs both; to be settled with the measurements.
