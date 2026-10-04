@@ -97,10 +97,11 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 
 | # | Item | Decision |
 |---|---|---|
-| L1 | **Fetch limit** | A **slider over powers of two**: value = 2^x, step one power (2^n). **Default 2^9 = 512, max 2^13 = 8192.** The minimum was not stated; proposal 2^6 = 64. Replaces the fixed 300. |
+| L1 | **Fetch limit** | A **slider over powers of two**: value = 2^x, step one power (2^n). **Default 2^9 = 512, max 2^15 = 32768** (raised from 2^13 = 8192 on 2026-10-04, see below). The minimum was not stated; proposal 2^6 = 64, which gives ten slider positions. Replaces the fixed 300. |
 | L2 | **Save .jsonl** | Keep. Disabled while recording, so the header's `recording` field is always false and can be dropped. |
 | L3 | **Min calls** | A **slider: default 1, max 32, step 2^n** (1, 2, 4, 8, 16, 32). **It affects only the NEXT capture, never data already on screen**: the value is read at Start and used for that capture; moving the slider afterwards changes nothing until the next Start. The tooltip must say so. Chosen over "filter the current table at once" because it needs no answer to "is a raised minimum reversible?". |
 | L4 | **Recording lock** | All three controls (both sliders and the Save button) are **disabled (greyed out) while a recording runs**, and usable before and after it. Refresh during a recording then always uses the cap fixed at Start. |
+| L1a | **Why the max is 32768 (2026-10-04)** | On PR 540 the contributor replied that they use the tool with an AI assistant to write UE4SS mods, and wanted more rows to give it a fuller picture of what fired; they agreed 50,000 is too much. The maintainer raised the max to 2^15 = 32768. The default stays 512: the fixed 300 was meant for tracing what one in-game action calls, and a small table still serves that best. The DLL needs no change: `pe_profile_get` takes any `limit` and only resolves names for the rows it sends. |
 | L5 | **Persisted** | Fetch limit and Min calls survive a UI restart: a new `LiveFuncs` sub-object in `UiOptionsSettings` (`ui-options.json`), defaults equal to the VM initializers (that file's own rule), every field written (`check_json_default_ignore`). A loaded value snaps to the nearest power of two and clamps to the range. |
 
 ### Implementation notes (from the review — confirm while building)
@@ -110,9 +111,11 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
   come back as a false NEW. Apply it in `ApplyFilter` with the value captured at Start.
 - Fix problem 1 (status strings to `en.axaml`), problem 3 (the row must keep Clear Baseline and the baseline
   warning visible — a second row or a `WrapPanel`), and problem 4 (the stale "shorter window" sentence).
-- **Measure** `pe_profile_get` at 8192 on a busy game (the DLL logs `emitted (limit N)` in `PIPE:profile`). If the
-  interactive lane stalls noticeably, decide then whether the command moves to the bulk lane; do not move it on
-  a guess.
+- **Measure** `pe_profile_get` at 32768 on a busy game (the DLL logs `emitted (limit N)` in `PIPE:profile`). This
+  matters more at 32768 than it did at 8192: the reply is one JSON line on the interactive lane, and every row
+  costs a name lookup in the DLL. Record the reply size and the time. If the interactive lane stalls noticeably,
+  decide then whether the command moves to the bulk lane; do not move it on a guess. A game that fired fewer
+  distinct functions than the limit sends only what it has, so measure on one that fires many.
 
 -----
 
@@ -265,7 +268,7 @@ What this tells us:
 - Windows: `dotnet test ui/UE5DumpUI.Tests/UE5DumpUI.Tests.csproj -c Release`, then `build.ps1 -Mode Publish` and
   check the AOT-trimmed size — both PRs change the UI, and every AOT bug in this repo's history was found only after
   trimming.
-- A live check on a fixture: a Live Funcs recording with the slider at 8192, and a Dump All on a UE5 game with the
+- A live check on a fixture: a Live Funcs recording with the slider at 32768, and a Dump All on a UE5 game with the
   time and size measured for the dev-log entry. With the object index ticked: the estimate shown before the export
   against the real file size and time.
 - Then write the reply on both PRs, and record the shipped build in [dev-log.md](dev-log.md).

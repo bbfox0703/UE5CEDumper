@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-10-04 (no build change) — Live Funcs fetch limit: the planned max is now 32768 `[EXTPR-539-540-2026-10-02]`
+
+The plan for PR 540 had the fetch-limit slider top out at 8192. It now tops out at 32768 (2^15). On the PR, the
+contributor replied that they feed Live Funcs output to an AI assistant to write UE4SS mods and wanted a fuller
+picture of what fired; they agreed 50,000 is too much. The default stays 512, because the table is mainly for
+tracing what one in-game action calls. The DLL needs no change. The plan now asks for the reply size and time to
+be measured at 32768 before deciding whether the command stays on the interactive pipe lane. Nothing is built yet:
+[ext-pr-539-540-plan.md](ext-pr-539-540-plan.md), row L1.
+
 ## 2026-10-02 (build 3616) — Dump All: progress twice a second; no time or size in its tooltip `[EXTPR-539-540-2026-10-02]`
 
 - While Dump All walks the classes, the status line now updates every half second. It used to update once every

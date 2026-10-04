@@ -257,7 +257,7 @@ ends with `Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.c
 written after the work, not before.
 
 - ⬜ **PR 540 — Live Funcs** (UI). Effort **M**, risk **low**. In order: fetch-limit slider (2^x, default 2^9,
-  max 2^13) → Save `.jsonl` → Min calls slider (default 1, max 32, affects the next capture only). All three
+  max 2^15 = 32768, raised from 2^13 on 2026-10-04) → Save `.jsonl` → Min calls slider (default 1, max 32, affects the next capture only). All three
   disabled while recording; both values persisted in `ui-options.json`.
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
