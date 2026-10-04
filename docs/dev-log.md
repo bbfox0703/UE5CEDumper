@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-10-04 (no build change) — feasibility of a Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+Written down, not built: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). Live Funcs could keep one
+record per `ProcessEvent` call in a buffer of fixed size that stops when full, with the nesting depth that turns it
+into a call tree; then, for functions the user ticks, a copy of the parameters and of the native stack. The stack
+would get a few views of its own (frames named by the UFunction they fall in, an annotated stack copy, the decoded
+parameters) and hand disassembly to Cheat Engine. Nothing is measured yet. This is our own feature, not part of
+PRs 539 / 540, so its commits carry no co-author trailer.
+
 ## 2026-10-04 (no build change) — Live Funcs fetch limit: the planned max is now 32768 `[EXTPR-539-540-2026-10-02]`
 
 The plan for PR 540 had the fetch-limit slider top out at 8192. It now tops out at 32768 (2^15). On the PR, the

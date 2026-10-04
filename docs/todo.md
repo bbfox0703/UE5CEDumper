@@ -249,6 +249,16 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- ⬜ **Feasibility written, nothing decided:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). A
+  fill-then-stop buffer (32 / 64 MB) of per-call records with nesting depth and duration, then parameter and
+  native-stack snapshots for ticked functions only. Effort **L** across the three steps, risk **med** (it adds
+  work to the ProcessEvent hot path; measure first). Our own feature: its commits carry **no**
+  `Co-authored-by: fireundubh` trailer. Waits on the maintainer's answers to the plan's open questions.
+
+-----
+
 ## 🧭 Maintainer request 2026-10-02 — take parts of external PRs 539 / 540, re-implemented here `[EXTPR-539-540-2026-10-02]`
 
 **The plan, the review's findings and every decision: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md).** Nothing
