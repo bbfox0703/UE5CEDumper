@@ -45,6 +45,15 @@ public sealed class UiOptionsSettings
     public ProxyDeployUiOptions ProxyDeploy { get; set; } = new();
     public SystemUiOptions System { get; set; } = new();
     public LiveFuncsUiOptions LiveFuncs { get; set; } = new();
+    public DumpExplorerUiOptions DumpExplorer { get; set; } = new();
+}
+
+/// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options (D8). Both OFF by default: a default report is the
+/// script's default, the game's own types in full.</summary>
+public sealed class DumpExplorerUiOptions
+{
+    public bool DiffIncludeEngine { get; set; }
+    public bool DiffBreakingOnly { get; set; }
 }
 
 /// <summary>System-tab maintenance preferences.</summary>

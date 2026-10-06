@@ -302,6 +302,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     private bool CanRecheck() => HasFile && IsGameConnected && !IsBusy;
 
+    // [DUMPDIFF-UI] Placeholder until Compare lands.
+    [ObservableProperty] private bool _diffIncludeEngine;
+    [ObservableProperty] private bool _diffBreakingOnly;
+
+    [RelayCommand]
+    private Task CompareAsync() => Task.CompletedTask;
+
     [RelayCommand]
     private void Cancel() => CancelInFlight();
 
