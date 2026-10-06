@@ -353,7 +353,7 @@ Edit `tools/ue-sample/DumperTest/Source/DumperTest/DumperTestActor.{h,cpp}`. App
 **17. DumperTest Shipping, dist DLL, AOT UI (G1a). Rows: D-02, D-08, D-06, S8, D-01 (green).** About 90 min.
 Setup: launch, inject, start the UI, front it, Connect, and confirm the object count from the status bar. Read `<PE>` from view-0.log.
 1. D-02: toolbar Export → Dump All → `d02_C1.jsonl`. Wait for `DumpAll exported to … (C classes, E errors)` and read the tooltip. Restart the UI and export `C2`, then `C3` in the same session. Disconnect, then Dump Explorer → Last export, 3 times.
-   - **GREEN:** `Dumped C classes (X MB) to d02_C#.jsonl` with C equal to the logged count (from the build after 3619: `Dumped C classes and S structs (X MB) …` whenever structs were written). Dump Explorer ends on `Loaded. Connect a game and click "Re-check live"…`.
+   - **GREEN:** `Dumped C classes (X MB) to d02_C#.jsonl` with C equal to the logged count (from the build after 3619: `Dumped C classes and S structs (X MB) …` whenever structs were written; from build 3621: `Dumped C classes, S structs and E enums (X MB) …` whenever enums were too, with a ` — ⚠ …` note only when the enum list was unreadable, cut short or without member names). Dump Explorer ends on `Loaded. Connect a game and click "Re-check live"…`.
    - **RED (session 21):** `Done — C classes`, expected 3 out of 3. Dump Explorer's `Parsing dump… N rows` is a race, so record it as k out of 3.
 2. D-08: reconnect. Property Search: TickCount → Force field → 7.
    - Disconnect; `pipe_client.py get_forced_fields` shows it held. Connect and take a screenshot of the strip.

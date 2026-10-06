@@ -82,8 +82,9 @@ Each line is a self-contained JSON object with a `kind` discriminator:
 | `meta` | Always first. UE version, module name, object count, dumper build, options snapshot. |
 | `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. |
 | `struct` | One per `ScriptStruct` / `UserDefinedStruct`. A class record's `name` / `addr` / `path` / `meta` / `super` / `super_addr` / `props_size` / `props[]`, without `funcs[]`, `instance_count` or `is_bpgc`. The two scripts here read class records only. |
-| `error` | One per class or struct walk failure. Iteration continues. |
-| `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / errors / objects_scanned. |
+| `enum` | One per UEnum, from one `list_enums` call after the type lines: `name` / `addr` / `path` / `entries[]` (`{name, value}`, in the DLL's order). The two scripts here do not read them yet. |
+| `error` | One per class or struct walk failure, and one for an enum list that could not be read (`name` `list_enums`, empty `addr`). Iteration continues. |
+| `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / enums_emitted / enums_skipped_engine / errors / objects_scanned. What the enum list could not say: `enums_listed` (false: the list failed, see its error line), `enum_names_failed` (UEnum::Names was not located, so every enum's `entries` is empty), `enums_truncated` (the list was cut short). Without them an enum with no entries cannot be told from one whose entries could not be read. |
 
 Per-class record (excerpt):
 ```json

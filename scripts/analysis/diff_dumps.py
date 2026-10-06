@@ -14,7 +14,7 @@ USAGE
 WHAT IT DOES
     1. Loads two JSONL dumps. Each dump = meta line + class lines +
        summary line (see DumpAllService.cs schema, same as analyze_dumps).
-       Struct lines are not compared yet.
+       Struct and enum lines are not compared yet.
     2. Matches classes by `path` (UClass*'s `addr` is session-local so
        useless across runs). Game classes only by default: Blueprint
        classes and the game's own C++ modules. `--include-engine` adds the
