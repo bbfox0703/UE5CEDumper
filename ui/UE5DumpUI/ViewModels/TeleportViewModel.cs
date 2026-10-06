@@ -4286,7 +4286,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         try
         {
             var name = string.IsNullOrEmpty(_activeCoordKey) ? "teleport-coords" : _activeCoordKey;
-            var path = await _platform.ShowSaveFileDialogAsync($"{name}.csv", "CSV file", "csv");
+            var path = await _platform.ShowSaveFileDialogAsync($"{name}.csv", Res.Get("str.TP.LibCsvFileType"), ".csv");
             if (string.IsNullOrEmpty(path)) return;
             CoordCsvCodec.WriteFile(path!, _coordAll);
             CoordStatus = $"Exported {_coordAll.Count} entr{(_coordAll.Count == 1 ? "y" : "ies")} to {path}.";
@@ -4301,7 +4301,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         try
         {
             var path = await _platform.ShowSaveFileDialogAsync(
-                "teleport-coords-template.csv", "CSV file", "csv");
+                "teleport-coords-template.csv", Res.Get("str.TP.LibCsvFileType"), ".csv");
             if (string.IsNullOrEmpty(path)) return;
             File.WriteAllText(path!, CoordCsvCodec.SampleTemplate(),
                 new UTF8Encoding(encoderShouldEmitUTF8Identifier: true));
@@ -4321,7 +4321,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var path = await _platform.ShowOpenFileDialogAsync("CSV file", "csv");
+            var path = await _platform.ShowOpenFileDialogAsync(Res.Get("str.TP.LibCsvFileType"), ".csv");
             if (string.IsNullOrEmpty(path)) return;
 
             var parsed = CoordCsvCodec.ParseFile(path!);
@@ -4586,7 +4586,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     {
         try
         {
-            var path = await _platform.ShowOpenFileDialogAsync("Lua script", "lua");
+            var path = await _platform.ShowOpenFileDialogAsync(Res.Get("str.TP.LibLuaFileType"), ".lua");
             if (string.IsNullOrEmpty(path)) return;
             BuildImportPreview(CoordLuaParser.Parse(File.ReadAllText(path!)),
                                System.IO.Path.GetFileName(path!));
@@ -4663,7 +4663,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         try
         {
             var name = string.IsNullOrEmpty(_activeCoordKey) ? "teleport-coords" : _activeCoordKey;
-            var path = await _platform.ShowSaveFileDialogAsync($"{name}.lua", "Lua script", "lua");
+            var path = await _platform.ShowSaveFileDialogAsync($"{name}.lua", Res.Get("str.TP.LibLuaFileType"), ".lua");
             if (string.IsNullOrEmpty(path)) return;
             var script = CoordLibraryScriptGenerator.Generate(
                 _coordAll, CoordLibraryScriptGenerator.Flavour.Dll, CoordZTolerance, out var folded);

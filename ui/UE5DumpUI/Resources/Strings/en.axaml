@@ -1461,6 +1461,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
     <sys:String x:Key="str.TP.LibExportCsv">Export CSV</sys:String>
     <sys:String x:Key="str.TP.LibExportTemplate">Sample CSV</sys:String>
     <sys:String x:Key="str.TP.LibImportCsv">Import CSV…</sys:String>
+    <sys:String x:Key="str.TP.LibCsvFileType">CSV (*.csv)</sys:String>
     <sys:String x:Key="str.TP.LibImportReplace">Replace (not merge)</sys:String>
     <sys:String x:Key="str.TP.LibImportApply">Apply import</sys:String>
     <sys:String x:Key="str.TP.LibImportCancel">Cancel import</sys:String>
@@ -1476,6 +1477,7 @@ A .preclear.bak copy is written first, so this can be recovered by hand from the
 
     <sys:String x:Key="str.TP.LibImportLua">Parse pasted script</sys:String>
     <sys:String x:Key="str.TP.LibImportLuaFile">Import .lua…</sys:String>
+    <sys:String x:Key="str.TP.LibLuaFileType">Lua script (*.lua)</sys:String>
     <sys:String x:Key="str.TP.LibPastePlaceholder">Paste a previously generated coordinate script here (the whole thing — only the @UE5CD:COORDS block is read)</sys:String>
     <sys:String x:Key="str.Tip.TP.LibImportLua">Read the coordinates back out of a script you exported earlier and hand-edited. Only the fenced @UE5CD:COORDS block is parsed; the rest of the script is ignored and never executed.</sys:String>
     <sys:String x:Key="str.Tip.TP.LibImportLuaFile">Same, but read the script from a .lua file.</sys:String>

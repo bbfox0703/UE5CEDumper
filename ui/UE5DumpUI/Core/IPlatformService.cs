@@ -69,8 +69,8 @@ public interface IPlatformService
     /// <summary>
     /// Show a platform save-file dialog.
     /// Returns the chosen file path, or null if user cancelled.
-    /// <paramref name="filterExtension"/> is the one file type's extension, with or without its
-    /// leading dot (".csv" or "csv").
+    /// <paramref name="filterExtension"/> is the file type's extension, with or without its leading
+    /// dot (".csv" or "csv").
     /// </summary>
     Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension);
 
