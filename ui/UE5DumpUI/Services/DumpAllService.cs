@@ -6,7 +6,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Streams a full classes + properties + functions dump as JSON Lines
+/// Streams a full dump of classes (properties + functions) and structs (properties) as JSON Lines
 /// (one JSON object per line). Used as input for offline analysis —
 /// Python scripts under <c>scripts/analysis/</c> aggregate across
 /// multiple game dumps to inform keyword tables, class-location
@@ -92,7 +92,7 @@ public static class DumpAllService
     ///     ScriptStruct / UserDefinedStruct: a class line's identity, super and props,
     ///     without functions, instance count or the Blueprint-class flag.</item>
     ///   <item><c>{"kind":"error", "addr":..., "msg":...}</c> — when a
-    ///     specific class walk fails; iteration continues.</item>
+    ///     specific class or struct walk fails; iteration continues.</item>
     ///   <item><c>{"kind":"summary", ...}</c> — last line; counters.</item>
     /// </list>
     /// Returns a <see cref="DumpResult"/> carrying the same counters the
@@ -185,7 +185,7 @@ public static class DumpAllService
                     scannedObjects++;
                     // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass
                     // (Default__Class is a Class), so a meta test alone admits it; IsExportedTypeRow
-                    // drops it, for structs as for classes, as the SDK and USMAP exports do.
+                    // drops it, for structs as for classes.
                     if (!IsExportedTypeRow(obj.ClassName, obj.Name))
                     {
                         continue;
@@ -251,7 +251,7 @@ public static class DumpAllService
             Done: types,
             Total: types));
 
-        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted);
+        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted, structsSkipped);
     }
 
     /// <summary>What one chunk of the type walk wrote and skipped, by kind.</summary>
@@ -332,6 +332,16 @@ public static class DumpAllService
                 {
                     if (isStruct) structsSkippedThisChunk++;
                     else classesSkippedThisChunk++;
+                    continue;
+                }
+
+                if (isStruct && string.IsNullOrEmpty(classInfo.Name))
+                {
+                    // Ubel::WalkClassEx answers an address it refuses with an EMPTY ClassInfo, not an
+                    // error. Written, it would be a struct named "" that a struct diff matches with any
+                    // other refused one; the SDK export makes it an error line too [SDK-TYPE-NAMES].
+                    errorsThisChunk++;
+                    await WriteErrorLineAsync(writer, obj.Address, obj.Name, "struct walk refused (empty result)", ct);
                     continue;
                 }
 
@@ -601,11 +611,12 @@ public static class DumpAllService
     internal static bool IsStructMetaName(string meta) => meta is "ScriptStruct" or "UserDefinedStruct";
 
     /// <summary>
-    /// The GObjects rows the whole-pool exporters (SDK header, USMAP) turn into type definitions.
-    /// ONE predicate for both, because two copies drifted: the SDK exporter learned
-    /// UserDefinedStruct and to skip class-default objects while the USMAP collector kept the old
-    /// rule [USMAP-UDS-MISSING]. A CDO's row reads its METAclass (Default__ScriptStruct is a
-    /// ScriptStruct), so it passes a meta test; UE reserves the prefix for CDOs.
+    /// The GObjects rows the whole-pool exports turn into type definitions. One predicate for all of
+    /// them, because copies drifted: one exporter learned UserDefinedStruct and to skip class-default
+    /// objects while another kept the old rule [USMAP-UDS-MISSING]. Changing it changes every
+    /// whole-pool export, Dump All's struct lines and counters included. A CDO's row reads its
+    /// METAclass (Default__ScriptStruct is a ScriptStruct), so it passes a meta test; UE reserves the
+    /// prefix for CDOs.
     /// </summary>
     internal static bool IsExportedTypeRow(string meta, string name) =>
         (IsClassLikeMetaName(meta) || IsStructMetaName(meta))
@@ -645,7 +656,8 @@ public static class DumpAllService
 /// <see cref="DumpAllService.GenerateAsync"/> so callers can report success
 /// (and its scale) from what happened, not from the file's byte length.</summary>
 public sealed record DumpResult(
-    int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned, int StructsEmitted = 0);
+    int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned,
+    int StructsEmitted = 0, int StructsSkippedEngine = 0);
 
 /// <summary>Options controlling what the dumper emits.</summary>
 public sealed record DumpOptions(
