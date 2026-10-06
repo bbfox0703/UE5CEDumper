@@ -68,29 +68,33 @@
     <sys:String x:Key="str.Dump.LoadLast">⤓ Last export</sys:String>
     <sys:String x:Key="str.Dump.Recheck">🔄 Re-check live</sys:String>
     <sys:String x:Key="str.Dump.Cancel">Cancel</sys:String>
-    <sys:String x:Key="str.Dump.SearchHint">Keyword — searches class / property / function names at once (space = AND)</sys:String>
-    <sys:String x:Key="str.Dump.MetaNote">ⓘ Rows are class definitions (metadata), not live instances — a class isn't part of the GWorld/GameEngine object graph, so there's no Locate here. 🡒 Jump opens the class; 🔍 Instances finds a live instance you can then Locate via Related.</sys:String>
+    <sys:String x:Key="str.Dump.SearchHint">Keyword — searches class / struct / enum / property / function / parameter names at once (space = AND)</sys:String>
+    <sys:String x:Key="str.Dump.MetaNote">ⓘ Rows are type definitions (classes, structs, enums: metadata), not live instances — a type isn't part of the GWorld/GameEngine object graph, so there's no Locate here. 🡒 Jump opens the class; 🔍 Instances finds a live instance you can then Locate via Related.</sys:String>
     <sys:String x:Key="str.Dump.Cat.All">All</sys:String>
     <sys:String x:Key="str.Dump.Cat.Class">Classes</sys:String>
     <sys:String x:Key="str.Dump.Cat.Property">Properties</sys:String>
     <sys:String x:Key="str.Dump.Cat.Function">Functions</sys:String>
+    <sys:String x:Key="str.Dump.Cat.Struct">Structs</sys:String>
+    <sys:String x:Key="str.Dump.Cat.Enum">Enums</sys:String>
+    <sys:String x:Key="str.Dump.Cat.Enumerator">Enumerators</sys:String>
+    <sys:String x:Key="str.Dump.FindInstances.NotAClass">🔍 Instances is for classes: a struct or an enum has no instances of its own.</sys:String>
     <sys:String x:Key="str.Dump.ColKind">Kind</sys:String>
     <sys:String x:Key="str.Dump.ColName">Name</sys:String>
-    <sys:String x:Key="str.Dump.ColOwner">Owner class</sys:String>
+    <sys:String x:Key="str.Dump.ColOwner">Owner</sys:String>
     <sys:String x:Key="str.Dump.ColType">Type / signature</sys:String>
     <sys:String x:Key="str.Dump.ColOffset">Offset</sys:String>
-    <sys:String x:Key="str.Dump.ColPath">Class path</sys:String>
+    <sys:String x:Key="str.Dump.ColPath">Path</sys:String>
     <sys:String x:Key="str.Dump.Jump">🡒 Jump</sys:String>
     <sys:String x:Key="str.Dump.FindInstances">🔍 Instances</sys:String>
     <sys:String x:Key="str.Dump.CopyPath">copy path</sys:String>
     <!-- Dump Explorer tooltips -->
-    <sys:String x:Key="str.Tip.Dump.Load">Open a “Dump All” .jsonl file (Export ▸ Dump All) and browse every class, property and function in one searchable list — no game connection required.</sys:String>
+    <sys:String x:Key="str.Tip.Dump.Load">Open a “Dump All” .jsonl file (Export ▸ Dump All) and browse every class, struct, enum, property and function in one searchable list — no game connection required.</sys:String>
     <sys:String x:Key="str.Tip.Dump.LoadLast">Load the most recent Export ▸ Dump All from this session (no file dialog). Disabled until you export one.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.Recheck">Scan the connected game's live classes and re-split results into “in current game” (matched by class name, restart-safe) vs. not. Requires a connected, scanned game.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.Category">Limit results to a single kind (classes / properties / functions), or show all.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.Jump">Open the owning class's live object in the Live Walker.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.FindInstances">Find live instances of the owning class in the Instance Finder — the bridge to Related ▸ Locate in GWorld/GameEngine (which work on instances, not class definitions).</sys:String>
-    <sys:String x:Key="str.Tip.Dump.CopyPath">Copy the class object path to the clipboard.</sys:String>
+    <sys:String x:Key="str.Tip.Dump.Recheck">Scan the connected game's live classes, structs and enums and re-split results into “in current game” (matched by kind and name, restart-safe) vs. not. Requires a connected, scanned game.</sys:String>
+    <sys:String x:Key="str.Tip.Dump.Category">Limit results to a single kind (classes / properties / functions / structs / enums / enumerators), or show all.</sys:String>
+    <sys:String x:Key="str.Tip.Dump.Jump">Open the owning class's, struct's or enum's live object in the Live Walker.</sys:String>
+    <sys:String x:Key="str.Tip.Dump.FindInstances">Classes only. Find live instances of the owning class in the Instance Finder — the bridge to Related ▸ Locate in GWorld/GameEngine (which work on instances, not class definitions).</sys:String>
+    <sys:String x:Key="str.Tip.Dump.CopyPath">Copy the owning type's object path to the clipboard.</sys:String>
 
     <!-- Related Objects panel -->
     <sys:String x:Key="str.Related.AddressHint">UObject / actor address (hex) — or hand off from another tab</sys:String>

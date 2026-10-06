@@ -734,6 +734,9 @@ public static class DumpAllService
     /// (its own UScriptStruct subclass, so its row reads "UserDefinedStruct").</summary>
     internal static bool IsStructMetaName(string meta) => meta is "ScriptStruct" or "UserDefinedStruct";
 
+    /// <summary>A native UEnum or a Blueprint UserDefinedEnum, as Aura::IsListedEnumClass and list_enums have it.</summary>
+    internal static bool IsEnumMetaName(string meta) => meta is "Enum" or "UserDefinedEnum";
+
     /// <summary>
     /// The GObjects rows the whole-pool exports turn into type definitions. One predicate for all of
     /// them, because copies drifted: one exporter learned UserDefinedStruct and to skip class-default

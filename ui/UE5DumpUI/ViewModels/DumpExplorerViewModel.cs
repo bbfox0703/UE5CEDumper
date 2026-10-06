@@ -11,8 +11,8 @@ namespace UE5DumpUI.ViewModels;
 /// <summary>
 /// ViewModel for the "Dump Explorer" panel — an offline browser over a "Dump
 /// All" JSON-Lines file (see <see cref="DumpAllService"/>). One keyword box
-/// searches classes, properties AND functions at once (no need to pick a
-/// category or switch tabs first), and results split into two groups:
+/// searches every row at once (no need to pick a category or switch tabs
+/// first), and results split into two groups:
 ///
 ///   • In current game    — the owning class resolves to a live object in the
 ///     connected game (matched by object PATH, so it survives game restarts);
@@ -50,10 +50,11 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     [ObservableProperty] private string _filePath = "";
     [ObservableProperty] private string _searchText = "";
-    /// <summary>0 = All, 1 = Class, 2 = Property, 3 = Function.</summary>
+    /// <summary>0 = All, 1 = Class, 2 = Property, 3 = Function, 4 = Struct, 5 = Enum, 6 = Enumerator: the
+    /// panel's ComboBox order. The kinds added later are appended, so the older indices keep their meaning.</summary>
     [ObservableProperty] private int _selectedCategoryIndex;
     [ObservableProperty] private string _statusText =
-        "Load a “Dump All” (.jsonl) file to browse its classes, properties and functions.";
+        "Load a “Dump All” (.jsonl) file to browse its classes, structs, enums, properties and functions.";
     [ObservableProperty] private string _headerText = "";
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _hasFile;
@@ -216,7 +217,8 @@ public partial class DumpExplorerViewModel : ViewModelBase
             }
 
             _log.Info($"DumpExplorer loaded {System.IO.Path.GetFileName(path)}: " +
-                      $"{model.ClassCount} classes / {model.PropertyCount} props / {model.FunctionCount} funcs");
+                      $"{model.ClassCount} classes / {model.StructCount} structs / {model.EnumCount} enums / " +
+                      $"{model.PropertyCount} props / {model.FunctionCount} funcs");
 
             // Auto-classify against the live game if one is connected; otherwise
             // everything lands in "Not in current game" until the user Re-checks.
@@ -308,6 +310,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
     {
         SelectEntry(row);
         if (row is null || string.IsNullOrEmpty(row.OwningClassName)) return;
+        // [EXTPR-539-540-2026-10-02] The Instance Finder lists objects of a class; a struct or an enum has none
+        // of its own, and saying nothing on the click read as a broken button.
+        if (row.OwnerKind != DumpEntryKind.Class)
+        {
+            StatusText = Res.Get("str.Dump.FindInstances.NotAClass");
+            return;
+        }
         NavigateToInstanceFinder?.Invoke(row.OwningClassName);
     }
 
@@ -341,14 +350,16 @@ public partial class DumpExplorerViewModel : ViewModelBase
     }
 
     // ------------------------------------------------------------------
-    // Live match: one GObjects pass -> class short name -> current address.
-    // Keyed by the class's short FName (not full path) because the live object
+    // Live match: one GObjects pass -> (kind, short name) -> current address.
+    // Keyed by the type's short FName (not full path) because the live object
     // list (get_object_list) only exposes the short name — full paths aren't on
-    // the wire, and a per-class find_object is an O(n) scan (O(n^2) overall).
+    // the wire, and a per-type find_object is an O(n) scan (O(n^2) overall).
     // Names are stable across restarts (unlike addresses), which is what makes
-    // this restart-safe; the trade-off is same-named classes in different
-    // packages collide (last one indexed wins) — rare, and the row still opens a
-    // real live class the user can verify in the Live Walker.
+    // this restart-safe; the trade-off is same-named types of one kind in
+    // different packages collide (last one indexed wins) — rare, and the row
+    // still opens a real live object the user can verify in the Live Walker.
+    // The kind is part of the key because a class and a struct DO commonly share
+    // a short name, and one dictionary would hand a class row the struct.
     // ------------------------------------------------------------------
 
     /// <summary>
@@ -465,7 +476,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
 
         StatusText = "Scanning the live game's classes…";
-        var index = await BuildLiveClassIndexAsync(ct);
+        var index = await BuildLiveTypeIndexAsync(ct);
         ct.ThrowIfCancellationRequested();
 
         int matched = 0;
@@ -474,7 +485,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         int liveClasses = 0;
         foreach (var e in _all)
         {
-            bool ok = index.TryGetValue(e.OwningClassName, out var live)
+            bool ok = index.TryGetValue((e.OwnerKind, e.OwningClassName), out var live)
                       && !string.IsNullOrEmpty(live);
             e.IsMatched = ok;
             e.LiveAddr = ok ? live! : "";
@@ -489,12 +500,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
                      $"({matched:N0} of {_all.Count:N0} rows matched).";
     }
 
-    /// <summary>Paginate GObjects once and index class-like objects by their short
-    /// name -> CURRENT live address. Name (not path) because that's all
-    /// get_object_list carries; same-name collisions resolve last-wins.</summary>
-    private async Task<Dictionary<string, string>> BuildLiveClassIndexAsync(CancellationToken ct)
+    /// <summary>Paginate GObjects once and index class, struct and enum objects by
+    /// (kind, short name) -> CURRENT live address. Name (not path) because that's all
+    /// get_object_list carries; same-kind, same-name collisions resolve last-wins.</summary>
+    private async Task<Dictionary<(DumpEntryKind Kind, string Name), string>> BuildLiveTypeIndexAsync(
+        CancellationToken ct)
     {
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        var dict = new Dictionary<(DumpEntryKind Kind, string Name), string>();
         int offset = 0;
         const int pageSize = Constants.GObjectsWalkPageSize;
         while (true)
@@ -504,8 +516,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
             foreach (var o in page.Objects)
             {
                 if (string.IsNullOrEmpty(o.Name)) continue;
-                if (!DumpAllService.IsClassLikeMetaName(o.ClassName)) continue;
-                dict[o.Name] = o.Address;   // short class name -> current live address
+                var kind = LiveTypeKind(o.ClassName);
+                if (kind is null) continue;
+                dict[(kind.Value, o.Name)] = o.Address;   // (kind, short name) -> current live address
             }
             int advanced = page.Scanned > 0 ? page.Scanned : page.Objects.Count;
             offset += advanced;
@@ -513,6 +526,14 @@ public partial class DumpExplorerViewModel : ViewModelBase
         }
         return dict;
     }
+
+    /// <summary>Which row kind a live object's meta class makes it; null for anything else (an instance, a
+    /// function, a property object).</summary>
+    internal static DumpEntryKind? LiveTypeKind(string meta) =>
+        DumpAllService.IsClassLikeMetaName(meta) ? DumpEntryKind.Class
+        : DumpAllService.IsStructMetaName(meta) ? DumpEntryKind.Struct
+        : DumpAllService.IsEnumMetaName(meta) ? DumpEntryKind.Enum
+        : null;
 
     // ------------------------------------------------------------------
     // Filtering.
@@ -545,6 +566,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
             1 => DumpEntryKind.Class,
             2 => DumpEntryKind.Property,
             3 => DumpEntryKind.Function,
+            4 => DumpEntryKind.Struct,
+            5 => DumpEntryKind.Enum,
+            6 => DumpEntryKind.Enumerator,
             _ => null,
         };
 
@@ -592,7 +616,11 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private static string BuildHeader(DumpFileModel model)
     {
         var m = model.Meta;
-        var counts = $"{model.ClassCount:N0} classes · {model.PropertyCount:N0} props · {model.FunctionCount:N0} funcs";
+        // Structs and enums only when the file has them: a dump from before build 3620 has neither.
+        var counts = $"{model.ClassCount:N0} classes";
+        if (model.StructCount > 0) counts += $" · {model.StructCount:N0} structs";
+        if (model.EnumCount > 0) counts += $" · {model.EnumCount:N0} enums";
+        counts += $" · {model.PropertyCount:N0} props · {model.FunctionCount:N0} funcs";
         if (m is null) return counts;
         var ue = m.UeVersion > 0 ? $"UE {m.UeVersion / 100}.{m.UeVersion % 100}" : "UE ?";
         var mod = string.IsNullOrEmpty(m.Module) ? "" : $" · {m.Module}";
