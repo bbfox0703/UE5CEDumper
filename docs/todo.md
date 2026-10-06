@@ -305,9 +305,16 @@ the list from `scripts/analysis/engine_paths.py`.
   DLL `FindFunctionsByClassParam` (Find Func), which reported a Blueprint function as taking a class it only casts
   to (`4a94ab40` fixture, `a47dfc70` red, `987a0dab`). The DLL's other readers of `FunctionInfo::params` needed
   nothing: the gameplay modules look parameters up by name on native engine functions and bound every access by a
-  `ParmsSize`-sized buffer, which no local fits, and Mimic finds the return by CPF_ReturnParm, which no local
-  carries. `docs/tips.md`'s vendor tip reads correctly as written. ⬜ **Live check owed:**
-  `verification-register.md` `[FUNCPARM-CONSUMERS]`.
+  `ParmsSize`-sized buffer, which no local fits. `docs/tips.md`'s vendor tip reads correctly as written.
+  ✅ **Review 2026-10-06 (3 reviewers, 3 verifiers), fixed, build 3625:** the zero-fill had followed
+  `Parameters`, so from a DLL older than 3622 it depended on a misreadable `NumParms` again; it covers the whole
+  walked chain again, the slab refusal and the form keep to the parameters (`13e0465a` red, `fed9b309`).
+  Mimic's "clear the return slot" iterated `fi.params`, which `ResolveFunctionInfo` never fills, so it had never
+  run since `9f197043`; `Ubel::ReadReturnSlot` reads the chain's CPF_ReturnParm entry and Mimic clears that
+  (`a5026d80` red, `620a6c5a`). Seven test fixtures with parameters but no `NumParms` had silently moved to the
+  no-parameter script; each carries its count and the form tests pin the form path (`13e0465a`). The SDK
+  signature builder has no production caller, so its change shows in no export (the 3624 dev-log line
+  overstated it). ⬜ **Live check owed:** `verification-register.md` `[FUNCPARM-CONSUMERS]`.
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
   weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
   HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.

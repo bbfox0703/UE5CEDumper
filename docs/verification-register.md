@@ -1063,7 +1063,8 @@ Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second proce
 
 ### ⬜ FIXED 2026-10-06, NEEDS A LIVE CHECK — `[FUNCPARM-CONSUMERS]`: no consumer takes a Blueprint function's locals for its arguments
 
-Fixed in build 3624; the row and its commits are in `todo.md`. `FunctionParametersTests` pins every C# consumer
+Fixed in build 3624, and its review's fixes (the zero-fill, Mimic's return-slot clear) in build 3625; the row
+and its commits are in `todo.md`. `FunctionParametersTests` pins every C# consumer
 (the view models by a source pin: the dialog cannot open in a unit test) and dll_core_test's UFUNCWALK block the DLL
 matcher; what is owed is a real Blueprint function, whose locals only a running game supplies. DumperTest 5.4
 Shipping has one: build 3622's `tools/verify/d3_parm_flags.py` run (`out/d3/dumpertest_shipping_3622.json`) found
@@ -1074,18 +1075,24 @@ from offset 4 on, among them `CallFunc_GetOwningActor_ReturnValue` (Actor, +16) 
 
 1. **DLL side, class xref (pipe, no UI):** `find_functions_by_class` on `Character`'s class with `game_only` true:
    `ExecuteUbergraph_ABP_Manny` is absent. Control: a DLL before build 3624 lists it, `kind: "param"`, through
-   its cast node's output. The same call on a class one of DumperTest's functions really takes still lists that
-   function.
-2. **UI side, Invoke:** open the AA(Baked) dialog for `ExecuteUbergraph_ABP_Manny`. It shows ONE input row,
-   `EntryPoint`, and no local; the CE Invoke script for it has `PARAM_COUNT = 1`. ⚠ The function is declared on
-   `ABP_Manny_C` while the live anim instance is an `ABP_Quinn_C`, and the Live Walker lists a class's own functions
-   only (2026-08 Y1 TRAP 2), so reach it from a path that names the class. ⛔ **Do not FIRE it**: ExecuteUbergraph
-   enters the graph's bytecode at whatever `EntryPoint` says.
+   its cast node's output. The positive control, the same call on `Actor`'s class: it still lists
+   `D4_OnActorHitProbe` (DumperTestActor) and `OnPeerBeginOverlap` (DumperTestSparseListener), which take `AActor*`
+   parameters, `kind: "param"`. A total miss there means the CPF_Parm read failed, not that the fix held.
+2. **UI side, Invoke** — two routes, since the two scripts come from different generators. ⚠ The function is
+   declared on `ABP_Manny_C` while the live anim instance is an `ABP_Quinn_C`, and the Live Walker lists a class's
+   own functions only (2026-08 Y1 TRAP 2), so reach it from a path that names the class. ⛔ **Do not FIRE it, and
+   do not tick the CE record**: ExecuteUbergraph enters the graph's bytecode at whatever `EntryPoint` says.
+   - **(a) AA(Baked):** from Interesting Functions or Console, the dialog for `ExecuteUbergraph_ABP_Manny` shows ONE
+     input row, `EntryPoint`, and no local.
+   - **(b) CE Invoke script:** walk the CDO `Default__ABP_Manny_C` in the Live Walker, so the walked class is
+     `ABP_Manny_C`; with CE and the AOBMaker bridge connected, press that function row's CE Invoke-script button. The
+     script reads `local PARAM_COUNT = 1` and names no local.
 3. **UI side, FIRE with locals:** on a host with a callable Blueprint function whose chain holds locals (Avowed had
    1,126 such functions in build 3622's run), FIRE it from the Live Walker: the form lists only the arguments, and
    the post-call readout lists only the parameters, with no `(return*)` line for a `CallFunc_*_ReturnValue` local.
 
-Needs: DumperTest + the new DLL (steps 1-2), the UI (steps 2-3), a title with callable Blueprint functions (step 3).
+Needs: DumperTest + the new DLL (steps 1-2), the UI (steps 2-3), CE + the AOBMaker bridge (step 2b), a title with
+callable Blueprint functions (step 3).
 
 ### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
 
