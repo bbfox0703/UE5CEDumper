@@ -50,6 +50,7 @@ public class UiOptionsStoreTests : IDisposable
         Assert.Equal(1.0, o.Teleport.WorldTimeDilation);   // must match VM _worldTimeDilation default
         Assert.Equal(1.0, o.Teleport.PawnTimeDilation);    // must match VM _pawnTimeDilation default
         Assert.Equal(ProxyType.Version, o.ProxyDeploy.SelectedProxyType);
+        Assert.Equal(9, o.LiveFuncs.FetchLimitExponent);   // must match VM _fetchLimitExponent default (2^9 = 512)
 
         Assert.False(File.Exists(store.FilePath)); // load must not create the file
     }
@@ -90,6 +91,7 @@ public class UiOptionsStoreTests : IDisposable
         o.Spc.RoundingMode = FloatRoundMode.Trunc;
         o.Pivot.SelectedSource = "DataTable";
         o.ProxyDeploy.SelectedProxyType = ProxyType.Dxgi;
+        o.LiveFuncs.FetchLimitExponent = 13;
 
         store.Save(o);
         Assert.True(File.Exists(store.FilePath));
@@ -115,6 +117,7 @@ public class UiOptionsStoreTests : IDisposable
         Assert.Equal(FloatRoundMode.Trunc, r.Spc.RoundingMode);
         Assert.Equal("DataTable", r.Pivot.SelectedSource);
         Assert.Equal(ProxyType.Dxgi, r.ProxyDeploy.SelectedProxyType);
+        Assert.Equal(13, r.LiveFuncs.FetchLimitExponent);
     }
 
     [Fact]
