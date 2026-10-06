@@ -1660,6 +1660,44 @@ public class DumpServiceTests
         Assert.Equal(4, param.StructFields[1].Offset);
     }
 
+    // [EXTPR-539-540-2026-10-02] D3: `parm` says which chain entries are parameters (a Blueprint function's
+    // locals follow them in the same chain). A DLL that predates the key sends none, and that must stay apart
+    // from "not a parameter".
+    [Fact]
+    public async Task WalkFunctionsAsync_ReadsTheParmFlag_AndKeepsItsAbsenceApart()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "DoIt",
+                    ["addr"] = "0x100",
+                    ["num_parms"] = (byte)1,
+                    ["parms_size"] = (ushort)4,
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject { ["name"] = "Count", ["type"] = "IntProperty", ["size"] = 4, ["offset"] = 0, ["parm"] = true },
+                        new JsonObject { ["name"] = "Temp_int_Variable", ["type"] = "IntProperty", ["size"] = 4, ["offset"] = 4, ["parm"] = false },
+                        new JsonObject { ["name"] = "FromAnOlderDll", ["type"] = "IntProperty", ["size"] = 4, ["offset"] = 8 },
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
+
+        var ps = Assert.Single(funcs).Params;
+        Assert.Equal(3, ps.Count);
+        Assert.True(ps[0].IsParm);
+        Assert.False(ps[1].IsParm);
+        Assert.Null(ps[2].IsParm);
+    }
+
     // [A3-FIRE-STRUCT-BOOLMASK] A packed bool sub-field carries its single-bit mask on the wire,
     // so FIRE and Copy AA Script can read-modify-write its bit instead of the whole byte.
     [Fact]
