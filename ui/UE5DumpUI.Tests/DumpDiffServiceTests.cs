@@ -139,6 +139,11 @@ public class DumpDiffServiceTests
         Assert.DoesNotContain("NewField", html);
         Assert.Contains("Health", html);
 
+        // A class that only gained a field is changed, and breaks nothing.
+        var addOnly = await DiffCaseAsync("add_only");
+        Assert.Contains("Changed Classes (1)", DumpDiffHtmlRenderer.Render(addOnly, minimal: false));
+        Assert.Contains("Breaking Changes (0 class(es))", DumpDiffHtmlRenderer.Render(addOnly, minimal: true));
+
         var structs = DumpDiffHtmlRenderer.Render(await DiffCaseAsync("structs"), minimal: true);
         Assert.Contains("FSlot", structs);       // only grew: still breaking, it is an array stride
         Assert.Contains("FHit", structs);
