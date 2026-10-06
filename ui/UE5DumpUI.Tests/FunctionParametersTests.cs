@@ -1,4 +1,5 @@
 using UE5DumpUI.Models;
+using UE5DumpUI.Services;
 using Xunit;
 
 namespace UE5DumpUI.Tests;
@@ -90,5 +91,31 @@ public class FunctionParametersTests
         Assert.False(BlueprintFunction(flagged: true).ParametersFromNumParms);
         Assert.True(BlueprintFunction(flagged: false).ParametersFromNumParms);
         Assert.False(new FunctionInfoModel { Name = "Tick" }.ParametersFromNumParms);
+    }
+
+    // --- the CE Invoke script's form: one box per argument ---
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_invoke_script_offers_the_argument_and_no_local(bool flagged)
+    {
+        var script = InvokeScriptGenerator.Generate("BP_Door_C", "OnUse", BlueprintFunction(flagged));
+
+        Assert.Contains("local PARAM_COUNT = 1", script, StringComparison.Ordinal);
+        Assert.Contains("'User", script, StringComparison.Ordinal);
+        foreach (var local in LocalNames)
+            Assert.DoesNotContain(local, script, StringComparison.Ordinal);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_function_with_only_locals_is_invoked_without_a_form(bool flagged)
+    {
+        var script = InvokeScriptGenerator.Generate("BP_Door_C", "Recalc", LocalsOnlyFunction(flagged));
+
+        Assert.DoesNotContain("createForm", script, StringComparison.Ordinal);
+        Assert.DoesNotContain(LocalNames[2], script, StringComparison.Ordinal);
     }
 }
