@@ -246,7 +246,14 @@ public sealed class DumpService : IDumpService
         return res["count"]?.GetValue<int>() ?? 0;
     }
 
-    public async Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false)
+    public Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false)
+        => GetObjectPageAsync(offset, limit, includePath, includeIndex: false, ct);
+
+    public Task<ObjectListResult> GetObjectIndexPageAsync(int offset, int limit, CancellationToken ct = default)
+        => GetObjectPageAsync(offset, limit, includePath: true, includeIndex: true, ct);
+
+    private async Task<ObjectListResult> GetObjectPageAsync(int offset, int limit, bool includePath, bool includeIndex,
+                                                            CancellationToken ct)
     {
         var req = new JsonObject
         {
@@ -254,10 +261,11 @@ public sealed class DumpService : IDumpService
             ["offset"] = offset,
             ["limit"] = limit
         };
-        // Only ask for per-object full paths when the caller needs them
-        // (DumpAllService GameOnly). Omitting the flag keeps the DLL on its
-        // lean addr/name/class/outer path for the hot Object Tree paginate.
+        // Only ask for per-object full paths when the caller needs them.
+        // Omitting the flag keeps the DLL on its lean addr/name/class/outer
+        // path for the hot Object Tree paginate.
         if (includePath) req["include_path"] = true;
+        if (includeIndex) req["include_index"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
@@ -284,6 +292,7 @@ public sealed class DumpService : IDumpService
                     ClassName = string.Intern(obj["class"]?.GetValue<string>() ?? ""),
                     OuterAddr = obj["outer"]?.GetValue<string>() ?? "",
                     FullPath = obj["full_path"]?.GetValue<string>() ?? "",
+                    Index = obj["index"]?.GetValue<int>(),
                 });
             }
         }

@@ -37,6 +37,15 @@ internal static class DumpCompletionFormatter
         return $"{bytes} B";
     }
 
+    /// <summary>[EXTPR-539-540-2026-10-02] D4.2: an estimate's time, as the confirmation shows it — rounded,
+    /// because it is scaled from one page.</summary>
+    internal static string FormatDuration(TimeSpan t)
+    {
+        if (t < TimeSpan.FromSeconds(1)) return "under a second";
+        if (t < TimeSpan.FromMinutes(2)) return $"{Math.Round(t.TotalSeconds):F0} s";
+        return $"{Math.Round(t.TotalMinutes):F0} min";
+    }
+
     /// <summary>
     /// Compose the completion status line from the dump's actual counters.
     /// <paramref name="byteLength"/> is used only to state the file's size, never

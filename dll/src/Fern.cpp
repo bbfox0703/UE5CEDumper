@@ -1930,10 +1930,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int total  = Aura::GetCount();
             // Opt-in per-object full path (Ubel::GetFullName). Gated behind
             // include_path so the hot Object Tree paginate stays lean — a path
-            // string per object costs ~19 MB over 486K objects, and only
-            // DumpAllService's GameOnly pass needs it (to skip engine-package
-            // classes BEFORE walking them, restoring the pre-walk skip).
+            // string per object costs ~19 MB over 486K objects, and few callers
+            // need one (Dump All's pre-walk engine skip, the object index).
             bool includePath = request.value("include_path", false);
+            // [EXTPR-539-540-2026-10-02] D4 (R3): opt-in GObjects slot per object, for the object index. The
+            // rows skip null and unnamed slots, so a reader cannot work the slot out from a row's position.
+            bool includeIndex = request.value("include_index", false);
 
             json objects = json::array();
             int end = (std::min)(offset + limit, total);
@@ -1957,6 +1959,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
                 if (includePath) {
                     item["full_path"] = Ubel::GetFullName(obj);
+                }
+                if (includeIndex) {
+                    item["index"] = i;
                 }
 
                 objects.push_back(item);

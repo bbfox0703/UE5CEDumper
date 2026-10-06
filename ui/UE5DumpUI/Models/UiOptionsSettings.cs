@@ -75,6 +75,9 @@ public sealed class MainUiOptions
     public int DeepScanElemCapExponent { get; set; } = 8;
     public int CeStringLengthExponent { get; set; } = 8;   // 2^8 = 256 (CE String leaf <Length>)
     public int FabricateArrayCountExponent { get; set; } = 2;   // 2^2 = 4 rows (default); 0 = off, 2^N = Copy CE Field array fabricate count
+    /// <summary>[EXTPR-539-540-2026-10-02] D4.1: Dump All also writes the object index. OFF by default; a
+    /// remembered ON still shows the estimate and asks on every export.</summary>
+    public bool DumpAllObjectIndex { get; set; }
 }
 
 public sealed class LiveWalkerUiOptions
