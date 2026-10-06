@@ -84,4 +84,17 @@ public class DumpCompletionFormatterTests
 
         Assert.Equal("Dumped 42 classes (1.0 MB, 4 errors) to g.jsonl", s);
     }
+
+    [Fact]
+    public void Format_NamesTheStructsBesideTheClasses()
+    {
+        // [EXTPR-539-540-2026-10-02] D1: Dump All writes struct lines too, and the message says how many.
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 1200, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 90000,
+                           StructsEmitted: 340),
+            2_500_000L, "game.jsonl"));
+
+        Assert.Contains("1,200 classes", s);
+        Assert.Contains("340 structs", s);
+    }
 }

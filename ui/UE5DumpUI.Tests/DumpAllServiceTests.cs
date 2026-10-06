@@ -1,4 +1,5 @@
 using System.Text;
+using System.Text.Json;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -26,6 +27,7 @@ public class DumpAllServiceTests
         public List<UObjectNode> Objects { get; } = new();
         public Dictionary<string, ClassInfoModel> ClassWalks { get; } = new();
         public Dictionary<string, List<FunctionInfoModel>> FunctionWalks { get; } = new();
+        public List<string> FunctionWalkAddrs { get; } = new();
 
         public override Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false)
         {
@@ -47,6 +49,7 @@ public class DumpAllServiceTests
 
         public override Task<List<FunctionInfoModel>> WalkFunctionsAsync(string addr, CancellationToken ct = default)
         {
+            FunctionWalkAddrs.Add(addr);
             return Task.FromResult(FunctionWalks.TryGetValue(addr, out var fns)
                 ? fns
                 : new List<FunctionInfoModel>());
@@ -173,7 +176,7 @@ public class DumpAllServiceTests
         dump.Objects.Add(Obj("0x2", "BP_Player_C", "BlueprintGeneratedClass", "/Game/MyGame/BP_Player_C"));
         dump.Objects.Add(Obj("0x3", "MyAnimBP_C", "AnimBlueprintGeneratedClass", "/Game/Anim/MyAnimBP_C"));
         dump.Objects.Add(Obj("0x4", "MyWidget_C", "WidgetBlueprintGeneratedClass", "/Game/UI/MyWidget_C"));
-        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct"));            // dropped (struct, not class)
+        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct"));            // a struct line, not a class line (D1)
         dump.Objects.Add(Obj("0x6", "Player_Default", "BP_Player_C"));      // dropped (live instance)
         dump.Objects.Add(Obj("0x7", "MyDynamic_C", "DynamicClass"));        // accepted
 
@@ -193,6 +196,7 @@ public class DumpAllServiceTests
         Assert.Contains(classLines, l => l.Contains("\"name\":\"MyWidget_C\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"MyDynamic_C\""));
         Assert.DoesNotContain(classLines, l => l.Contains("\"name\":\"FVector\""));
+        Assert.Contains(lines, l => l.StartsWith("{\"kind\":\"struct\"") && l.Contains("\"name\":\"FVector\""));
     }
 
     // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass (Default__Class's class is Class),
@@ -584,7 +588,7 @@ public class DumpAllServiceTests
             dump, DefaultEngineState(), new MemoryStream(),
             new DumpOptions(IncludeInstanceCounts: false), sink,
             TestContext.Current.CancellationToken, clock).GetAwaiter().GetResult();
-        return sink.Reports.Where(r => r.Phase == "Walking classes").ToList();
+        return sink.Reports.Where(r => r.Phase == "Walking classes and structs").ToList();
     }
 
     [Fact]
@@ -656,5 +660,118 @@ public class DumpAllServiceTests
         clock.Advance(TimeSpan.FromMilliseconds(1));
         Assert.True(throttle.Due());
         Assert.False(throttle.Due());
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] D1: Dump All writes struct lines too. A ScriptStruct or
+    // UserDefinedStruct row is walked like a class (one walk_class_batch slot) and written as
+    // {"kind":"struct"}: a class line's identity, super and props, without what a struct does
+    // not have (functions, instances, a Blueprint-class flag). walk_functions is not called
+    // for it. classes_emitted keeps its meaning; structs get counters of their own.
+    // ==================================================================
+
+    private static FakeDumpForDump StructFixture()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "UCharacter", "Class", "/Game/X/UCharacter"));
+        dump.Objects.Add(Obj("0x2", "FHitInfo", "ScriptStruct", "/Script/MyGame.HitInfo"));
+        dump.Objects.Add(Obj("0x3", "S_Loot", "UserDefinedStruct", "/Game/Data/S_Loot"));
+        dump.Objects.Add(Obj("0x4", "Default__FHitInfo", "ScriptStruct"));   // a CDO-shaped row: never a type
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "UCharacter", FullPath = "/Game/X/UCharacter" };
+        dump.ClassWalks["0x2"] = new ClassInfoModel
+        {
+            Name = "FHitInfo", FullPath = "/Script/MyGame.HitInfo", SuperName = "FBaseInfo", SuperAddress = "0x9",
+            PropertiesSize = 24,
+            Fields = new List<FieldInfoModel>
+            {
+                new() { Name = "Damage", TypeName = "FloatProperty", Offset = 0x10, Size = 4 },
+                new() { Name = "Target", TypeName = "ObjectProperty", Offset = 0x18, Size = 8, ObjClassName = "Actor" },
+            },
+        };
+        dump.ClassWalks["0x3"] = new ClassInfoModel { Name = "S_Loot", FullPath = "/Game/Data/S_Loot", PropertiesSize = 8 };
+        return dump;
+    }
+
+    [Fact]
+    public void Generate_StructRows_AreWrittenAsStructLines()
+    {
+        var lines = Dump(StructFixture());
+
+        var structs = lines.Where(l => l.StartsWith("{\"kind\":\"struct\"")).ToList();
+        Assert.Equal(2, structs.Count);
+        using var hit = JsonDocument.Parse(structs.Single(l => l.Contains("\"name\":\"FHitInfo\"")));
+        var r = hit.RootElement;
+        Assert.Equal("0x2", r.GetProperty("addr").GetString());
+        Assert.Equal("/Script/MyGame.HitInfo", r.GetProperty("path").GetString());
+        Assert.Equal("ScriptStruct", r.GetProperty("meta").GetString());
+        Assert.Equal("FBaseInfo", r.GetProperty("super").GetString());
+        Assert.Equal("0x9", r.GetProperty("super_addr").GetString());
+        Assert.Equal(24, r.GetProperty("props_size").GetInt32());
+        var props = r.GetProperty("props");
+        Assert.Equal(2, props.GetArrayLength());
+        Assert.Equal("Target", props[1].GetProperty("name").GetString());
+        Assert.Equal("Actor", props[1].GetProperty("obj_class").GetString());
+        // What a struct does not have.
+        Assert.False(r.TryGetProperty("funcs", out _));
+        Assert.False(r.TryGetProperty("instance_count", out _));
+        Assert.False(r.TryGetProperty("is_bpgc", out _));
+
+        Assert.Contains(structs, l => l.Contains("\"name\":\"S_Loot\"") && l.Contains("\"meta\":\"UserDefinedStruct\""));
+        Assert.DoesNotContain(lines, l => l.Contains("Default__FHitInfo"));
+        // The class is still a class line.
+        Assert.Single(lines, l => l.StartsWith("{\"kind\":\"class\""));
+    }
+
+    [Fact]
+    public void Generate_StructRows_AreNotAskedForFunctions()
+    {
+        var dump = StructFixture();
+
+        Dump(dump);
+
+        Assert.Equal(new[] { "0x1" }, dump.FunctionWalkAddrs.ToArray());
+    }
+
+    [Fact]
+    public void Generate_Summary_CountsStructsApartFromClasses()
+    {
+        var lines = Dump(StructFixture());
+
+        using var summary = JsonDocument.Parse(lines[^1]);
+        var s = summary.RootElement;
+        Assert.Equal(1, s.GetProperty("classes_emitted").GetInt32());
+        Assert.Equal(2, s.GetProperty("structs_emitted").GetInt32());
+        Assert.Equal(0, s.GetProperty("structs_skipped_engine").GetInt32());
+    }
+
+    [Fact]
+    public void Generate_GameOnly_SkipsEngineStructs_AndCountsThem()
+    {
+        var dump = StructFixture();
+        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct", "//Script/CoreUObject/Vector"));
+        dump.ClassWalks["0x5"] = new ClassInfoModel { Name = "FVector", FullPath = "//Script/CoreUObject/Vector" };
+
+        var lines = Dump(dump, new DumpOptions(GameOnly: true));
+
+        Assert.DoesNotContain(lines, l => l.Contains("\"name\":\"FVector\""));
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.Equal(2, summary.RootElement.GetProperty("structs_emitted").GetInt32());   // the game's two stay
+        Assert.Equal(1, summary.RootElement.GetProperty("structs_skipped_engine").GetInt32());
+    }
+
+    [Fact]
+    public void Generate_ResultAndProgress_CountStructsToo()
+    {
+        var dump = StructFixture();
+        var sink = new RecordingProgress();
+        var result = DumpAllService.GenerateAsync(
+            dump, DefaultEngineState(), new MemoryStream(), new DumpOptions(IncludeInstanceCounts: false), sink,
+            TestContext.Current.CancellationToken, new ManualClock()).GetAwaiter().GetResult();
+
+        Assert.Equal(1, result.ClassesEmitted);
+        Assert.Equal(2, result.StructsEmitted);
+        var done = sink.Reports[^1];
+        Assert.Equal(3, done.Done);
+        Assert.Contains("2 structs", done.Phase);
     }
 }
