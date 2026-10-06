@@ -60,6 +60,25 @@ public class DumpDiffParityTests
         Assert.Equal(Text(expected["diff"]!), Text(Canonical(diff)));
     }
 
+    /// <summary>The same comparison on a pair of real dumps, which no gate can carry (dumps stay out of the repository):
+    /// <c>tools/verify/dumpdiff_real_parity.py</c> writes the script's result for the pair and names its folder in
+    /// <c>DUMPDIFF_REAL_DIR</c>. Skipped when that is unset.</summary>
+    [Fact]
+    public async Task A_real_pair_named_by_the_environment_matches_too()
+    {
+        var dir = Environment.GetEnvironmentVariable("DUMPDIFF_REAL_DIR");
+        Assert.SkipWhen(string.IsNullOrEmpty(dir), "DUMPDIFF_REAL_DIR is not set (tools/verify/dumpdiff_real_parity.py sets it)");
+        var ct = TestContext.Current.CancellationToken;
+        var pair = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(dir!, "pair.json"), ct))!;
+        var expected = JsonNode.Parse(await File.ReadAllTextAsync(Path.Combine(dir!, "expected.json"), ct))!;
+
+        var oldDump = await DumpDiffService.LoadAsync(pair["old"]!.GetValue<string>(), ct: ct);
+        var newDump = await DumpDiffService.LoadAsync(pair["new"]!.GetValue<string>(), ct: ct);
+        var diff = DumpDiffService.Diff(oldDump, newDump, expected["include_engine"]!.GetValue<bool>());
+
+        Assert.Equal(Text(expected["diff"]!), Text(Canonical(diff)));
+    }
+
     private static readonly JsonSerializerOptions Pretty = new()
     {
         WriteIndented = true,
