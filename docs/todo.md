@@ -266,7 +266,8 @@ Open work only. **Read this when deciding what to do next.**
 
 **The plan, the review's findings and every decision: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md).** No PR
 feature is built yet; three small changes landed early (build 3616). ⚠ **Re-checked 2026-10-06** (the plan's
-"Re-check 2026-10-06"): four questions for the maintainer, R1–R4, come before the work. Each feature commit
+"Re-check 2026-10-06"); its four questions R1–R4 were decided the same day. **Order now:** measure
+`pe_profile_get` at 32768 on a busy game → fix `diff_dumps.py`'s engine test (R4) → the features. Each feature commit
 ends with `Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.com>`; the reply on the PRs is
 written after the work, not before.
 

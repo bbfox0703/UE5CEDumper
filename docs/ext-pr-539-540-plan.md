@@ -37,14 +37,21 @@ this file against the PR heads (`439387fa`, `facbdc96`, unchanged since 2026-10-
 two reference dumpers on GitHub. Of 100 claims, 77 held, 21 held only in part or needed a qualifier, 2 could not
 be checked (the Linux test run, and the typical number of distinct functions), and none was wrong outright. The text further down is left as written; read it with this section.
 
-**Maintainer decisions the re-check raises** (details in the lists below):
+**Maintainer decisions the re-check raised** (details in the lists below; decided 2026-10-06):
 
-| # | Question |
-|---|---|
-| R1 | Min calls in diff mode: exempt NEW rows, or only warn in the tooltip? |
-| R2 | D4's separate file: every object (as Dumper-7 and RE-UE4SS), or keep the `IsLiveInstanceRow` filter and say so? |
-| R3 | D4's GObjects index: accept the DLL change it needs (a new build of the DLL, not only the UI)? |
-| R4 | `diff_dumps.py`'s engine test (`/Script/` anywhere in the path) also drops the game's own native classes. Change it before D1/D5 and the C# port build on it? |
+| # | Question | Decision (2026-10-06) |
+|---|---|---|
+| R1 | Min calls in diff mode: exempt NEW rows, or only warn in the tooltip? | **Neither.** The filter is `Count < MinCalls` (strictly less), so the default 1 filters nothing. NEW rows are filtered like any other row; the filter is not needed in normal use. |
+| R2 | D4's separate file: every object (as Dumper-7 and RE-UE4SS), or keep the `IsLiveInstanceRow` filter and say so? | **Every object**, packages and type objects included, in the separate `<name>.objects.jsonl` of D4.3 (unchanged: the Dump All file never carries it). No `IsLiveInstanceRow` filter for this file. |
+| R3 | D4's GObjects index: accept the DLL change it needs (a new build of the DLL, not only the UI)? | **Change the DLL**, design left to us: see "R3 design" below. |
+| R4 | `diff_dumps.py`'s engine test (`/Script/` anywhere in the path) also drops the game's own native classes. Change it before D1/D5 and the C# port build on it? | **Change `diff_dumps.py` first.** It is the next target after the `pe_profile_get` measurement. |
+
+**R3 design (ours, 2026-10-06).** `get_object_list` takes one more optional request field, `include_index`
+(default false), the way `include_path` already works: with it set, each item also carries `index`, the GObjects
+slot the handler read it from. Without it the reply is byte-for-byte what it is today, so Object Tree's paging and
+every older UI are untouched. A newer UI talking to an older DLL gets no `index` field and writes the object line
+without one; it does not guess the slot from the page position, because the handler skips null and unnamed slots.
+`UObjectNode` gains a nullable index. `snapshot_chunk` already sends `index`; use the same key name.
 
 **The early commits, verified on Windows:**
 
