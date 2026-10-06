@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — the file dialogs' file type always has its dot `[PICKER-EXT-DOT-2026-10-06]`
+
+- Teleport's coordinate library passed `csv` / `lua` to the file dialogs, which build their filter as `*` plus
+  the extension, so they offered `*csv` / `*lua`. A name typed without an extension in Export CSV, Sample CSV or
+  Save .lua was saved with no extension, and Import CSV… / Import .lua… also listed files whose name merely ends
+  in "csv" / "lua".
+- Measured on Windows 11 with a probe that makes Avalonia 12.1.3's `IFileDialog` calls in its order: with `*csv`
+  a typed "test" is saved as `test`, with `*.csv` as `test.csv`; the open dialog lists 2 of a.csv, b.txt, dcsv,
+  e.lua with `*csv` and 1 with `*.csv`.
+- `WindowsPlatformService.FilePickerPattern` adds a missing dot, for every caller (`ba16c035`, test `92bb2ad0`).
+  The Teleport dialogs name their type "CSV (*.csv)" / "Lua script (*.lua)" from en.axaml (`6c419495`).
+- Not in a build yet: it needs an AOT publish (`build.ps1 -Mode Publish`). C# 6045 passed, 0 failed, 15 skipped;
+  headless 15/15; 30 gates. Not yet checked in the app.
+
+-----
+
 ## 2026-10-06 (build 3618) — Live Funcs: Save .jsonl `[EXTPR-539-540-2026-10-02]`
 
 - Live Funcs has a **Save .jsonl** button. It saves the rows on screen to a JSON Lines file: a summary line, then
