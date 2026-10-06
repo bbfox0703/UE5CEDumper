@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — all of PR 540 is in source, 2026-10-06: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5** (see "L1 and L5 built", "L2 built" and "L3 built" under PR 540); live checks with a game are owed. PR 539 is not built. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539 is not built; the reply on the PRs is written after it. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -256,6 +256,23 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | L1a | **Why the max is 32768 (2026-10-04)** | On PR 540 the contributor replied that they use the tool with an AI assistant to write UE4SS mods, and wanted more rows to give it a fuller picture of what fired; they agreed 50,000 is too much. The maintainer raised the max to 2^15 = 32768. The default stays 512: the fixed 300 was meant for tracing what one in-game action calls, and a small table still serves that best. The DLL needs no change: `pe_profile_get` takes any `limit` and only resolves names for the rows it sends. A per-call timeline and stack snapshots came up in the same discussion; they are a separate feature of ours with no co-author trailer, in [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). |
 | L5 | **Persisted** | Fetch limit and Min calls survive a UI restart: a new `LiveFuncs` sub-object in `UiOptionsSettings` (`ui-options.json`), defaults equal to the VM initializers (that file's own rule), every field written (`check_json_default_ignore`). A loaded value snaps to the nearest power of two and clamps to the range. |
 
+### Live check, 2026-10-06 — PASS (build 3619, Avowed UE 5.3 through its `dxgi.dll` proxy)
+
+Driven through the AOT UI with computer-use; the saved files (under `out/livefuncs-live/`, not committed) were read
+back with a script.
+
+| # | Check | Result |
+|---|---|---|
+| A | Fetch limit 64, record while walking and opening the inventory / map / journal, Stop | Status: "906 distinct functions, 1,086,524 total calls (showing top 64 of 906 by count; a higher Fetch limit shows more)". Save .jsonl: 64 rows, `fetch_limit` 64, `distinct` 906, rows in first-call order, no BOM. |
+| B | Raise to 32768, Refresh (same capture) | "showing top 722 of 906 by count", with **no** raise advice: 722 is below the limit, the other 184 were dropped by the DLL as unresolvable. Saved: 722 rows, `fetch_limit` 32768. |
+| C | Min calls 8 set before Start; record; Stop | 480 distinct, 475 fetched, 220 rows shown and saved, lowest `calls` exactly 8 (`Count < MinCalls`). Moving the slider to 8 before this Start left the previous table at 722 rows; moving it back to 1 afterwards left this one at 220 rows, byte-identical when saved again with `min_calls` 8. |
+| D | Start, Refresh during the recording (71 functions, "still recording"), switch tab (auto-stop), come back, Save | Save enabled; 71 rows, `recording_at_fetch` true. |
+| E | During a recording | Save .jsonl and both sliders greyed out; Start greyed, Stop live. |
+| — | The save dialog | Default name `live-funcs-<date>-<time>.jsonl`, type "JSON Lines (*.jsonl)"; a name typed without an extension was saved as `.jsonl` (the picker fix from `[PICKER-EXT-DOT-2026-10-06]`). |
+
+Not covered live: diff mode with Min calls hiding a NEW row (unit-tested), and a partial baseline in a saved
+file (unit-tested). Both sliders were set back to 512 / 1 afterwards.
+
 ### L3 built (2026-10-06)
 
 | Commit | What | Co-author |
@@ -267,8 +284,8 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 Mutation-checked: filtering by the Start value again, dropping the Min-calls condition from the advice, and
 always making the diff claim each fail exactly one of the new tests. C# 6077/6077. **Published as build 3619**
 (AOT `UE5DumpUI.exe` 59,228,160 B, sha256 `23dc3b7d3db5`); in the AOT UI without a game the slider sits beside Fetch
-limit, reaches 32, is written to `ui-options.json` (`minCallsExponent` 5) and was set back to 1. **Still owed:** a
-live check with a game.
+limit, reaches 32, is written to `ui-options.json` (`minCallsExponent` 5) and was set back to 1. ✅ **Live check
+PASS** (see "Live check, 2026-10-06").
 
 ### L2 built (2026-10-06)
 
@@ -283,8 +300,8 @@ Built for the PR's function in this repo's way, not from its code (see "How the 
 The summary's `recording` field of the PR is not written: Save is disabled while recording, so the UI flag at
 save time is always false; `recording_at_fetch` is the fetch's own state instead. C# 6054/6054.
 **Published as build 3618** (AOT `UE5DumpUI.exe` 59,215,360 B, sha256 `a0b29b4c3c0c`); in the AOT UI without a
-game the button sits beside Clear and an empty table answers "Nothing to save: the table is empty." **Still
-owed:** a live check with a game (Save after a recording; after a peek and a tab switch).
+game the button sits beside Clear and an empty table answers "Nothing to save: the table is empty." ✅ **Live
+check PASS** on build 3619 (see "Live check, 2026-10-06").
 
 ### L1 and L5 built (2026-10-06)
 
@@ -301,8 +318,7 @@ C# 6042/6042. **Published as build 3617** (AOT `UE5DumpUI.exe` 59,189,760 B, sha
 **Checked on 3617 without a game (2026-10-06):** the slider row renders under Start / Stop with 512; dragged to
 the end it reads 32768, `ui-options.json` holds `liveFuncs.fetchLimitExponent = 15`, and after closing and
 starting the UI again the slider still reads 32768; set back to 512 (exponent 9 on disk). The baseline status
-sits on its own line. **Still owed:** a live check with a game (a recording fetched at 32768 through the panel, and
-the advice shown, and not shown, after a cut page). The Wiki's Live Funcs pages (en, zh-TW, ja-JP) still describe a fixed 300 and
+sits on its own line. ✅ **Live check PASS** on build 3619 (see "Live check, 2026-10-06"). The Wiki's Live Funcs pages (en, zh-TW, ja-JP) still describe a fixed 300 and
 "only a shorter window"; the Wiki is a separate repository and is not changed from here.
 
 ### Implementation notes (from the review — confirm while building)

@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — Live Funcs' Fetch limit, Save .jsonl and Min calls checked live on Avowed `[EXTPR-539-540-2026-10-02]`
+
+- Build 3619 on Avowed, through the UI: a cut page says so and suggests a higher Fetch limit; at 32768 the same
+  recording showed 722 of 906 functions with no such suggestion (the rest cannot be read). Min calls 8 showed and
+  saved 220 of 475 rows, all with 8 calls or more, and moving the slider changed neither table. A peek left on
+  screen after leaving the tab was saved with `recording_at_fetch` true. The controls are disabled while recording,
+  and a file name typed without an extension is saved as `.jsonl`.
+- PR 540's three features are done.
+
 ## 2026-10-06 (build 3619) — Live Funcs: a Min calls slider; file dialogs keep their extension `[EXTPR-539-540-2026-10-02]`
 
 - Live Funcs has a **Min calls** slider (1 to 32, default 1, which hides nothing) beside Fetch limit. It hides

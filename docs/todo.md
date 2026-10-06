@@ -280,7 +280,8 @@ the list from `scripts/analysis/engine_paths.py`.
   persistence are in source (2026-10-06, `51cb4f69`, `baa6dcef`; the plan's "L1 and L5 built")**; AOT publish and
   live check owed. ✅ **Save `.jsonl` (L2) is in source too (2026-10-06, `a20af931`, `feee40cf`)**; AOT publish and
   live check owed. ✅ **Min calls (L3) is in source too (2026-10-06, `f45dca96`, `3d278c75`)**: PR 540's three
-  features are all built; live checks with a game owed. PR 539 next.
+  features are all built. ✅ **Live check PASS 2026-10-06, build 3619, Avowed** (the plan's "Live check,
+  2026-10-06"). PR 540 is done; PR 539 next.
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
   shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed
