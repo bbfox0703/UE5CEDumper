@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3617) — Live Funcs: a Fetch limit slider `[EXTPR-539-540-2026-10-02]`
+
+- Live Funcs has a **Fetch limit** slider (64 to 32768, default 512) in place of the fixed 300. The table ranks
+  functions by call count and the limit cuts the lowest counts first, which is where the function you are
+  looking for usually is. Measured on Avowed: an active 75-second recording had 543 functions, and 300 came back.
+- The slider is disabled while recording; a recording uses the value it started with. To see more after Stop,
+  raise it and press Refresh. The value is remembered across restarts.
+- When the limit cut the table, the status line now says a higher Fetch limit shows more; it no longer says that
+  when the rows were missing for another reason, or when the slider is already at its maximum.
+- The baseline's status has a line of its own and wraps, instead of running off the right edge.
+- From fireundubh's PR 540, re-implemented.
+- Build 3617: AOT `dist\UE5DumpUI.exe` 59,189,760 B, sha256 `cf10dbc1656e`; `dist\UE5Dumper.dll` `89d3f799c088`.
+  C# 6042/6042, headless 15/15, dll_core 593 checks, 32 gates. Not yet checked live.
+
 ## 2026-10-06 (no build change) — `analyze_dumps.py` counts the game's own C++ classes too `[EXTPR-539-540-2026-10-02]`
 
 - `scripts/analysis/analyze_dumps.py`, which suggests keywords for the Interesting Properties / Funcs tables from
