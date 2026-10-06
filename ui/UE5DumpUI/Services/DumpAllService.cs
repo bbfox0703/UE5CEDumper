@@ -14,8 +14,8 @@ namespace UE5DumpUI.Services;
 /// with empirically-grounded patterns.
 ///
 /// All work is orchestrated client-side via the existing pipe
-/// endpoints (<c>get_object_list</c> + <c>walk_class</c> +
-/// <c>walk_functions</c>); no new DLL command is required. The
+/// endpoints (<c>get_object_list</c> + <c>walk_class_batch</c>, falling back to
+/// <c>walk_class</c>, + <c>walk_functions</c>); no new DLL command is required. The
 /// trade-off is per-class round-trips, so the run time grows with the
 /// game's class count, vs. zero DLL maintenance burden.
 ///
@@ -50,9 +50,8 @@ public static class DumpAllService
 
     /// <summary>
     /// How often the class walk reports progress. By time, not every N classes: a count
-    /// step goes quiet for as long as N slow walks take, and fires on every non-class
-    /// line written while the count sits on a multiple of N, which struct and enum lines
-    /// will do. Two updates a second is enough for a status line.
+    /// step goes quiet for as long as N slow walks take. Two updates a second is enough
+    /// for a status line.
     /// </summary>
     internal static readonly TimeSpan ProgressReportInterval = TimeSpan.FromMilliseconds(500);
 
@@ -257,8 +256,8 @@ public static class DumpAllService
     /// <c>classesSkipped</c> counters the summary line reports. The GameOnly
     /// engine-package skip is applied HERE (post-walk) because the walked
     /// <c>classInfo.FullPath</c> is the only reliable package path — the
-    /// object-list <c>obj.FullPath</c> is always empty (get_object_list carries
-    /// no path).
+    /// object-list <c>obj.FullPath</c> is empty unless the page was fetched with
+    /// include_path, and can differ from the walked path.
     /// </summary>
     private static async Task<(int emitted, int errors, int skipped)> FlushClassChunkAsync(
         IDumpService dump,
@@ -310,7 +309,7 @@ public static class DumpAllService
                     : await dump.WalkClassAsync(obj.Address, ct);
 
                 // GameOnly engine-package skip — applied on the walked path (the
-                // reliable one) rather than obj.FullPath (always empty). Skips
+                // reliable one) rather than obj.FullPath (empty without include_path). Skips
                 // BEFORE WalkFunctions so an engine class costs no extra round-trip.
                 if (options.GameOnly && IsEnginePath(classInfo.FullPath))
                 {
