@@ -7,7 +7,8 @@ namespace UE5DumpUI.Models;
 // Services.DumpAllService). One JSON object per line, keyed by "kind":
 //   meta    — first line (engine/module/version header)
 //   class   — one per class-like object: name/addr/path/super/props/funcs
-//   error   — a class walk that failed (ignored by the browser)
+//   struct, enum — other type lines (not read by the browser yet)
+//   error   — a walk or the enum list that failed (ignored by the browser)
 //   summary — last line (counters, ignored)
 //
 // System.Text.Json ignores unknown properties, so every line can be probed by

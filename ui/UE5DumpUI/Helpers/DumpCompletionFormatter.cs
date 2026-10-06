@@ -5,7 +5,7 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// Pure composition of the "Dump All" completion status line (audit X4).
 ///
-/// Two defects it exists to prevent:
+/// Defects it exists to prevent:
 /// <list type="bullet">
 ///   <item>The old line was derived from the output file's byte length, so a
 ///     zero-class or all-errored dump still read as a successful export. The
@@ -16,6 +16,9 @@ namespace UE5DumpUI.Helpers;
 ///     1 MB printed "0.0 MB". <see cref="FormatSize"/> divides in
 ///     <see cref="double"/> and steps down to KB / bytes so a small dump is not
 ///     rounded to "0.0 MB".</item>
+///   <item>A dump whose enums are missing, partial or nameless ending on a bare
+///     success line: only the file's summary line recorded it, and no reader
+///     shows that line.</item>
 /// </list>
 /// </summary>
 internal static class DumpCompletionFormatter
@@ -58,8 +61,17 @@ internal static class DumpCompletionFormatter
         string types = parts.Count == 1
             ? parts[0]
             : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1];
+        // [EXTPR-539-540-2026-10-02] As for USMAP [P1-ENUMNAMES]. The worst condition only, to keep the status
+        // one line; the summary line records each.
+        string enumNote = !result.EnumsListed
+            ? " — ⚠ the enum list could not be read (see the file's list_enums error line)"
+            : result.EnumNamesFailed
+                ? " — ⚠ enum member names are unavailable on this build, so every enum's entries are empty"
+                : result.EnumsTruncated
+                    ? " — ⚠ the enum list was cut short; re-export for a complete file"
+                    : "";
         return result.Errors > 0
-            ? $"Dumped {types} ({size}, {result.Errors} errors) to {fileName}"
-            : $"Dumped {types} ({size}) to {fileName}";
+            ? $"Dumped {types} ({size}, {result.Errors} errors) to {fileName}{enumNote}"
+            : $"Dumped {types} ({size}) to {fileName}{enumNote}";
     }
 }

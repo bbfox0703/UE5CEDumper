@@ -17,10 +17,9 @@ namespace UE5DumpUI.Tests;
 public class DumpAllServiceTests
 {
     // ------------------------------------------------------------------
-    // Stub IDumpService that returns canned object lists + class walks.
-    // Subclasses StubDumpService so we only have to override what the
-    // dumper actually touches: GetObjectListAsync, WalkClassAsync,
-    // WalkFunctionsAsync.
+    // Stub IDumpService that returns canned object lists, class walks and
+    // enums. Subclasses StubDumpService so only the calls the dumper makes
+    // need overriding.
     // ------------------------------------------------------------------
 
     private class FakeDumpForDump : StubDumpService, IDumpService

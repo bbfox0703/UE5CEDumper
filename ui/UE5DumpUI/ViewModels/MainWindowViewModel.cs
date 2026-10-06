@@ -3755,7 +3755,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // twice, and the service's last one ("Done — N classes") replaced the final status below on every run.
             var dumpProgress = progress.For<DumpProgress>(p => p.Total > 0
                 ? $"{p.Phase} ({p.Done}/{p.Total})"
-                : $"{p.Phase} ({p.Done})");
+                : p.Done > 0 ? $"{p.Phase} ({p.Done})" : p.Phase);   // a phase with nothing counted yet
 
             var options = new DumpOptions(
                 GameOnly: false,                           // Capture engine too; analysis can filter
@@ -3786,7 +3786,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             progress.Complete(Helpers.DumpCompletionFormatter.Format(
                 result, byteLength, Path.GetFileName(filePath)));
             _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
-                      $"{result.ClassesEmitted} classes, {result.Errors} errors)");
+                      $"{result.ClassesEmitted} classes, {result.StructsEmitted} structs, {result.EnumsEmitted} enums, " +
+                      $"{result.Errors} errors; enums listed={result.EnumsListed}, names failed={result.EnumNamesFailed}, " +
+                      $"truncated={result.EnumsTruncated})");
 
             // Offer a one-click load in the Dump Explorer tab (no auto-load — the
             // user may re-export or be mid-operation there).

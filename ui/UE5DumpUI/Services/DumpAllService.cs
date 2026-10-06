@@ -14,11 +14,10 @@ namespace UE5DumpUI.Services;
 /// bonuses, and threshold calibration. Replaces hand-curated guesses
 /// with empirically-grounded patterns.
 ///
-/// All work is orchestrated client-side via the existing pipe
-/// endpoints (<c>get_object_list</c> + <c>walk_class_batch</c>, falling back to
-/// <c>walk_class</c>, + <c>walk_functions</c>); no new DLL command is required. The
-/// trade-off is per-class round-trips, so the run time grows with the
-/// game's class count, vs. zero DLL maintenance burden.
+/// All work is orchestrated client-side over existing pipe commands; no
+/// DLL command of its own is required. The trade-off is per-class
+/// round-trips, so the run time grows with the game's class count, vs.
+/// zero DLL maintenance burden.
 ///
 /// **BPGC inclusion**: unlike <c>SearchProperties</c> (build 671
 /// `IsClassLikeMeta` fix) the dumper accepts every class-flavoured
@@ -94,12 +93,13 @@ public static class DumpAllService
     ///     without functions, instance count or the Blueprint-class flag.</item>
     ///   <item><c>{"kind":"enum", "name":..., "entries":[{"name":...,"value":...}]}</c> —
     ///     one per UEnum from a single list_enums call, after the type lines.</item>
-    ///   <item><c>{"kind":"error", "addr":..., "msg":...}</c> — when a
-    ///     specific class or struct walk fails; iteration continues.</item>
-    ///   <item><c>{"kind":"summary", ...}</c> — last line; counters.</item>
+    ///   <item><c>{"kind":"error", "addr":..., "name":..., "msg":...}</c> — when a
+    ///     walk or the enum list fails (the list's line has an empty addr); iteration continues.</item>
+    ///   <item><c>{"kind":"summary", ...}</c> — last line; counters, and what the enum list
+    ///     could not say (enums_listed, enum_names_failed, enums_truncated).</item>
     /// </list>
-    /// Returns a <see cref="DumpResult"/> carrying the same counters the
-    /// summary line reports, so the caller can compose an honest completion
+    /// Returns a <see cref="DumpResult"/> carrying what the summary line
+    /// reports, so the caller can compose an honest completion
     /// message from what the dump actually produced (classes emitted / errors)
     /// rather than from the output file's byte length (audit X4).
     /// <paramref name="clock"/> paces the progress reports; tests pass a manual one.
@@ -251,7 +251,8 @@ public static class DumpAllService
         int enumsSkipped = 0;
         var enumState = new EnumListState(Listed: false, NamesFailed: false, Truncated: false);
         ct.ThrowIfCancellationRequested();
-        progress?.Report(new DumpProgress(Phase: "Listing enums", Done: classesEmitted + structsEmitted, Total: -1));
+        // Done 0: nothing is counted yet, and the UI shows a report without a total as "Phase (Done)".
+        progress?.Report(new DumpProgress(Phase: "Listing enums", Done: 0, Total: -1));
         EnumListResult? enumList = null;
         try
         {
@@ -294,7 +295,7 @@ public static class DumpAllService
             Total: written));
 
         return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted, structsSkipped,
-                              enumsEmitted, enumsSkipped);
+                              enumsEmitted, enumsSkipped, enumState.Listed, enumState.NamesFailed, enumState.Truncated);
     }
 
     /// <summary>What the enum list said about itself, for the summary line.</summary>
@@ -730,7 +731,8 @@ public static class DumpAllService
 /// (and its scale) from what happened, not from the file's byte length.</summary>
 public sealed record DumpResult(
     int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned,
-    int StructsEmitted = 0, int StructsSkippedEngine = 0, int EnumsEmitted = 0, int EnumsSkippedEngine = 0);
+    int StructsEmitted = 0, int StructsSkippedEngine = 0, int EnumsEmitted = 0, int EnumsSkippedEngine = 0,
+    bool EnumsListed = true, bool EnumNamesFailed = false, bool EnumsTruncated = false);
 
 /// <summary>Options controlling what the dumper emits.</summary>
 public sealed record DumpOptions(
