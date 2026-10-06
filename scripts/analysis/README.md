@@ -47,7 +47,7 @@ A fourth script needs no dump corpus at all — it reads installed games directl
 
 1. Launch a UE4/5 game, attach UE5DumpUI as usual.
 2. **Export → Dump All Metadata (.jsonl)** — saves
-   `<game>-dump-<timestamp>.jsonl` (50–500 MB depending on game size).
+   `<game>-dump-<timestamp>.jsonl`. Its size grows with the game.
 3. Repeat for 3–6 games spanning UE versions and genres for cross-game
    signal.
 4. Run the analyzer:
