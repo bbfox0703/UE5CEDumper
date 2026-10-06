@@ -265,8 +265,10 @@ Open work only. **Read this when deciding what to do next.**
 ## 🧭 Maintainer request 2026-10-02 — take parts of external PRs 539 / 540, re-implemented here `[EXTPR-539-540-2026-10-02]`
 
 **The plan, the review's findings and every decision: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md).** ✅ **Both
-PRs are built, reviewed and checked live (2026-10-06, builds 3619–3626).** Left for the maintainer: the open
-question below, and the reply on the PRs (draft `out/pr-539-540-reply-draft.md`, not posted). ⚠ **Re-checked 2026-10-06** (the plan's
+PRs are built, reviewed and checked live (2026-10-06, builds 3619–3626).** The open
+question below is decided (`[DUMPDIFF-UI]`, build 3628). The reply was posted on both PRs on 2026-10-06; the work
+reached `main` in #542, and the PRs' own commits were merged into the history with `git merge -s ours` (no file
+changed) so that GitHub lists their author as a contributor. ⚠ **Re-checked 2026-10-06** (the plan's
 "Re-check 2026-10-06"); its four questions R1–R4 were decided the same day. **Order now:** ✅ `pe_profile_get`
 at 32768 measured 2026-10-06 (Avowed: 648 distinct, 543 rows, 144 KB, about 15 ms; it stays on the interactive
 lane) → ✅ `diff_dumps.py`'s engine test (R4, `6ade4435`, 2026-10-06) → the features. A commit that carries
