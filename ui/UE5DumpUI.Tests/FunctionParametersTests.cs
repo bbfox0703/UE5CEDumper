@@ -165,4 +165,25 @@ public class FunctionParametersTests
         Assert.Equal("    void Recalc(); // 0x7FF600002000",
             SdkExportService.GenerateFunctionSignature(LocalsOnlyFunction(flagged)));
     }
+
+    // --- the view models' invoke paths: what InvokeParamDialog is given ---
+    //
+    // The dialog cannot open in a unit test (each path returns before it without a desktop lifetime), so this
+    // pins the source: a view model reads the function's arguments through Parameters / InputParams, never the
+    // raw chain, which on a Blueprint function would put the locals in the form and in the post-call readout.
+
+    [Fact]
+    public void No_view_model_reads_the_raw_property_chain()
+    {
+        var dir = Path.GetDirectoryName(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/MainWindowViewModel.cs"))!;
+        var files = Directory.GetFiles(dir, "*.cs");
+        Assert.Contains(files, f => File.ReadAllText(f).Contains("new Views.InvokeParamDialog(", StringComparison.Ordinal));
+
+        var hits = files
+            .SelectMany(f => File.ReadAllLines(f).Select((line, i) => (f, line, i)))
+            .Where(x => System.Text.RegularExpressions.Regex.IsMatch(x.line, @"\.Params\b"))
+            .Select(x => $"{Path.GetFileName(x.f)}:{x.i + 1}: {x.line.Trim()}")
+            .ToList();
+        Assert.Empty(hits);
+    }
 }
