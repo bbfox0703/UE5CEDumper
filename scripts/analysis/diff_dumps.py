@@ -17,7 +17,7 @@ WHAT IT DOES
     2. Matches classes by `path` (UClass*'s `addr` is session-local so
        useless across runs). Game classes only by default: Blueprint
        classes and the game's own C++ modules. `--include-engine` adds the
-       engine's modules (ENGINE_PATH_PREFIXES, the DLL's list).
+       engine's modules (engine_paths.py, the DLL's list).
     3. For each pair of matching classes, computes:
          - props_size delta
          - per-property change set:
@@ -72,6 +72,8 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
+
+from engine_paths import is_engine_path
 
 
 # =====================================================================
@@ -137,41 +139,6 @@ def normalize_path(p: str) -> str:
     if not p:
         return ""
     return p.lstrip("/")
-
-
-# The engine's own modules. A copy of the DLL's Aura::IsEnginePackage list (dll/src/Aura.h),
-# which DumpAllService.EnginePathPrefixes also copies; tools/check_engine_prefixes.py keeps the
-# three equal. Not every "/Script/" path is engine: the game's own C++ classes live under
-# /Script/<GameModule> too, and are what a patch diff most needs to show.
-ENGINE_PATH_PREFIXES = (
-    "/Script/Engine", "/Script/CoreUObject", "/Script/CoreOnline",
-    "/Script/UMG", "/Script/Slate", "/Script/SlateCore", "/Script/InputCore",
-    "/Script/EnhancedInput", "/Script/PhysicsCore", "/Script/NavigationSystem",
-    "/Script/AIModule", "/Script/Niagara", "/Script/Paper2D",
-    "/Script/CinematicCamera", "/Script/GameplayCameras", "/Script/MovieScene",
-    "/Script/LevelSequence", "/Script/Landscape", "/Script/Foliage",
-    "/Script/AnimGraphRuntime", "/Script/AudioMixer", "/Script/ChaosCloth",
-    "/Script/ChaosSolverEngine", "/Script/ClothingSystemRuntimeNv",
-    "/Script/GeometryCollectionEngine", "/Script/FieldSystemEngine",
-    "/Script/ProceduralMeshComponent", "/Script/GameplayTags",
-    "/Script/GameplayTasks", "/Script/GameplayAbilities", "/Script/PacketHandler",
-    "/Script/PropertyAccess", "/Script/DeveloperSettings", "/Script/AssetRegistry",
-    "/Script/MediaAssets", "/Script/HeadMountedDisplay",
-)
-
-
-def is_engine_path(path: str) -> bool:
-    """The DLL's rule: collapse the leading slash run to one '/' (a dump writes
-    '//Script/Engine/Actor'), then a prefix counts only when it is followed by
-    the end, '/' or '.', so '/Script/EngineOverride' is not '/Script/Engine'."""
-    rest = (path or "").lstrip("/")
-    if not rest:
-        return False
-    p = "/" + rest
-    for prefix in ENGINE_PATH_PREFIXES:
-        if p.startswith(prefix) and (len(p) == len(prefix) or p[len(prefix)] in "/."):
-            return True
-    return False
 
 
 def is_engine_class(cls: dict) -> bool:
