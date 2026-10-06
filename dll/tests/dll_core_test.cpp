@@ -1637,12 +1637,12 @@ int main() {
     {
         blk("UFUNCWALK - WalkFunctions reads a UProperty param's subclass field at the version's delta");
 
-        static uint8_t wfEntry[13][0x40] = {};
-        const char* wfNames[13] = { "", "Function", "ObjectProperty", "Target", "Actor",
+        static uint8_t wfEntry[14][0x40] = {};
+        const char* wfNames[14] = { "", "Function", "ObjectProperty", "Target", "Actor",
                                     "StructProperty", "Hit", "HitResult", "DoIt",
-                                    "Class", "ScriptStruct", "Decoy", "Thing" };
-        static uintptr_t wfChunk[14] = {};
-        for (int i = 1; i <= 12; ++i) {
+                                    "Class", "ScriptStruct", "Decoy", "Thing", "K2Node_DynamicCast_AsActor" };
+        static uintptr_t wfChunk[15] = {};
+        for (int i = 1; i <= 13; ++i) {
             memcpy(wfEntry[i] + 0x10, wfNames[i], strlen(wfNames[i]) + 1);
             wfChunk[i] = reinterpret_cast<uintptr_t>(wfEntry[i]);
         }
@@ -1743,6 +1743,22 @@ int main() {
         g_cachedUEVersion = 418; DynOff::UPROPERTY_OFFSET = 0x44;
         check("UFUNCWALK control: ...and the 4.18 one, as before",
               Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
+
+        // [FUNCPARM-CONSUMERS] A Blueprint function's chain holds its locals after the parameters, and a local typed
+        // with the class (K2Node_DynamicCast_AsActor, the cast node's output) is not the function taking it. The
+        // 4.18 function again, with such a local after its two params. Its flags word carries non-Parm bits, so
+        // "any bit set" cannot pass for CPF_Parm.
+        static uint8_t wfLocal[0x100] = {};
+        put(wfLocal, Grimoire::OFF_UOBJECT_CLASS, named(2));                  // ObjectProperty
+        put32(wfLocal, Grimoire::OFF_UOBJECT_NAME, 13);
+        put32(wfLocal, DynOff::UPROPERTY_ELEMSIZE, 8);
+        put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000200ull);
+        put32(wfLocal, DynOff::UPROPERTY_OFFSET, 0x90);                       // past the parameter block
+        put(wfLocal, 0x70, named(4));                                         // PropertyClass Actor, 4.18's slot
+        put(wfStrP[1], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfLocal));
+        check("UFUNCWALK ⭐: FindFunctionsByClassParam does not count a Blueprint local typed with the class",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
+        put(wfStrP[1], DynOff::UFIELD_NEXT, 0);
 
         // [STRUCTPROBE-ANY-NAME] (review of build 3596): this UProperty param path took ANY named object as the
         // param's struct / class -- and walked it as a struct. A named non-struct, non-class object in the slot:
