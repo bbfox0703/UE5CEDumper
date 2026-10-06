@@ -60,47 +60,54 @@
                  VerticalAlignment="Center" MinWidth="44"/>
     </StackPanel>
 
-    <!-- Baseline diff row: isolate the action's function from per-frame Tick noise -->
-    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
-                VerticalAlignment="Center">
-      <Button Content="{StaticResource str.LF.SetBaseline}"
-              Command="{Binding SetBaselineCommand}"
-              ToolTip.Tip="{StaticResource str.Tip.LF.SetBaseline}"
-              Foreground="#7FB6E8" Background="Transparent"
-              BorderThickness="1" BorderBrush="#7FB6E8"
-              Padding="6,2" FontSize="11" Cursor="Hand"/>
-      <CheckBox Content="{StaticResource str.LF.Diff}"
-                IsChecked="{Binding DiffMode}"
-                ToolTip.Tip="{StaticResource str.Tip.LF.Diff}"
-                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
-      <CheckBox Content="{StaticResource str.LF.NewOnly}"
-                IsChecked="{Binding NewChangedOnly}"
+    <!-- Baseline diff row: isolate the action's function from per-frame Tick noise.
+         A DockPanel, like the status row below, so BaselineStatus gets the width the controls leave and WRAPS:
+         in a horizontal StackPanel the PARTIAL warning (the one cap warning that stays on screen) ran off the
+         right edge. -->
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="True">
+      <StackPanel DockPanel.Dock="Left" Orientation="Horizontal" Spacing="8" Margin="0,0,8,0"
+                  VerticalAlignment="Center">
+        <Button Content="{StaticResource str.LF.SetBaseline}"
+                Command="{Binding SetBaselineCommand}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.SetBaseline}"
+                Foreground="#7FB6E8" Background="Transparent"
+                BorderThickness="1" BorderBrush="#7FB6E8"
+                Padding="6,2" FontSize="11" Cursor="Hand"/>
+        <CheckBox Content="{StaticResource str.LF.Diff}"
+                  IsChecked="{Binding DiffMode}"
+                  ToolTip.Tip="{StaticResource str.Tip.LF.Diff}"
+                  Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+        <CheckBox Content="{StaticResource str.LF.NewOnly}"
+                  IsChecked="{Binding NewChangedOnly}"
+                  IsVisible="{Binding DiffMode}"
+                  ToolTip.Tip="{StaticResource str.Tip.LF.NewOnly}"
+                  Foreground="#5FBF7F" FontSize="12" VerticalAlignment="Center"/>
+        <CheckBox Content="{StaticResource str.LF.HideWidgets}"
+                  IsChecked="{Binding HideWidgets}"
+                  ToolTip.Tip="{StaticResource str.Tip.LF.HideWidgets}"
+                  Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+        <CheckBox Content="{StaticResource str.LF.HideEvents}"
+                  IsChecked="{Binding HideEvents}"
+                  ToolTip.Tip="{StaticResource str.Tip.LF.HideEvents}"
+                  Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+        <CheckBox Content="{StaticResource str.LF.PeriodicOnly}"
+                  IsChecked="{Binding PeriodicOnly}"
+                  ToolTip.Tip="{StaticResource str.Tip.LF.PeriodicOnly}"
+                  Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+        <CheckBox Content="{StaticResource str.LF.EarliestFirst}"
+                  IsChecked="{Binding EarliestFirst}"
+                  ToolTip.Tip="{StaticResource str.Tip.LF.EarliestFirst}"
+                  Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"/>
+        <Button Content="{StaticResource str.LF.ClearBaseline}"
+                Command="{Binding ClearBaselineCommand}"
                 IsVisible="{Binding DiffMode}"
-                ToolTip.Tip="{StaticResource str.Tip.LF.NewOnly}"
-                Foreground="#5FBF7F" FontSize="12" VerticalAlignment="Center"/>
-      <CheckBox Content="{StaticResource str.LF.HideWidgets}"
-                IsChecked="{Binding HideWidgets}"
-                ToolTip.Tip="{StaticResource str.Tip.LF.HideWidgets}"
-                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
-      <CheckBox Content="{StaticResource str.LF.HideEvents}"
-                IsChecked="{Binding HideEvents}"
-                ToolTip.Tip="{StaticResource str.Tip.LF.HideEvents}"
-                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
-      <CheckBox Content="{StaticResource str.LF.PeriodicOnly}"
-                IsChecked="{Binding PeriodicOnly}"
-                ToolTip.Tip="{StaticResource str.Tip.LF.PeriodicOnly}"
-                Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
-      <CheckBox Content="{StaticResource str.LF.EarliestFirst}"
-                IsChecked="{Binding EarliestFirst}"
-                ToolTip.Tip="{StaticResource str.Tip.LF.EarliestFirst}"
-                Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"/>
-      <Button Content="{StaticResource str.LF.ClearBaseline}"
-              Command="{Binding ClearBaselineCommand}"
-              IsVisible="{Binding DiffMode}"
-              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+                Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      </StackPanel>
       <TextBlock Text="{Binding BaselineStatus}"
-                 Foreground="#8FA0B8" FontSize="12" VerticalAlignment="Center"/>
-    </StackPanel>
+                 Foreground="#8FA0B8" FontSize="12" VerticalAlignment="Center"
+                 TextWrapping="Wrap"
+                 ToolTip.Tip="{Binding BaselineStatus}"/>
+    </DockPanel>
 
     <!-- Status + progress. DockPanel (not a horizontal StackPanel) so the status
          TextBlock gets a bounded width and WRAPS long messages instead of being
