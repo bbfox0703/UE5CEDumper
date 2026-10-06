@@ -37,7 +37,12 @@ struct FuncStat {
     double    meanPeriodMs = 0.0;  // mean inter-arrival gap (ms); 0 with <2 fires
     double    cv           = 0.0;  // stddev/mean of the gaps; 0 with <2 gaps
     uint64_t  gapSamples   = 0;    // number of inter-arrival gaps measured (count-1)
+    uint64_t  firstMs      = 0;    // wall-clock of the first and the latest fire, on the clock RecordCall gets
+    uint64_t  lastMs       = 0;
 };
+
+// [LIVEFUNCS-HIDE-PERFRAME] Placeholder until the classifier lands.
+inline bool IsPerFrame(const FuncStat&, uint64_t /*windowMs*/) { return false; }
 
 // Hot-path gate. Defined in Linie.cpp; declared extern so the check inlines at
 // Stark's call site (one relaxed atomic load + predicted-not-taken branch when off).

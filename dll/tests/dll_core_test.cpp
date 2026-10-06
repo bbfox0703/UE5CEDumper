@@ -71,6 +71,7 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Aura.cpp"       // NOLINT
 #undef LOG_CAT
 #include "../src/Genau.cpp"      // NOLINT
+#include "../src/Linie.h"        // header only: IsPerFrame is a pure function of one FuncStat
 
 // ── harness ──────────────────────────────────────────────────────────
 
@@ -6570,6 +6571,34 @@ int main() {
         DynOff::bUseFProperty = svFProp;
         Ubel::s_subclassCalibrated.store(svCalibrated);
         Ubel::s_subclassSlotConfirmed.store(svConfirmed);
+    }
+
+    {
+        blk("LIVEFUNCS-HIDE-PERFRAME: Linie::IsPerFrame -- the frame band, sustained over the recording");
+        // A 10 s recording from t=1000 ms. FuncStat{func, count, firstSeq, meanPeriodMs, cv, gapSamples, firstMs, lastMs}
+        const uint64_t W = 10000;
+        auto fs = [](uint64_t count, double meanMs, uint64_t gaps, uint64_t firstMs, uint64_t lastMs) {
+            return Linie::FuncStat{ 0x1000, count, 1, meanMs, 0.05, gaps, firstMs, lastMs };
+        };
+        check("every frame at 60 fps for the whole recording is per-frame",
+              Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), W));
+        check("twice per frame is per-frame", Linie::IsPerFrame(fs(1200, 8.3, 1199, 1000, 10995), W));
+        check("a frame rate that wanders (mean 20 ms) is per-frame", Linie::IsPerFrame(fs(500, 20.0, 499, 1000, 10980), W));
+        check("on the band's edge (40 ms) and over half the recording, it is per-frame",
+              Linie::IsPerFrame(fs(126, 40.0, 125, 1000, 6000), W));
+        check("every frame from 40% on (60% of the recording) is per-frame",
+              Linie::IsPerFrame(fs(360, 16.7, 359, 5000, 10990), W));
+        check("an action's burst (10 fires in 50 ms) is NOT per-frame: its gaps are short, its span is not",
+              !Linie::IsPerFrame(fs(10, 5.5, 9, 6000, 6050), W));
+        check("every frame for only the last 30% is NOT per-frame (an effect the action started)",
+              !Linie::IsPerFrame(fs(180, 16.7, 179, 8000, 10990), W));
+        check("just past the band (40.1 ms) is NOT per-frame", !Linie::IsPerFrame(fs(250, 40.1, 249, 1000, 10990), W));
+        check("a 0.5 s timer is NOT per-frame", !Linie::IsPerFrame(fs(20, 500.0, 19, 1000, 10500), W));
+        check("two gaps prove nothing: NOT per-frame", !Linie::IsPerFrame(fs(3, 16.7, 2, 1000, 1033), W));
+        check("one fire: NOT per-frame", !Linie::IsPerFrame(fs(1, 0.0, 0, 5000, 5000), W));
+        check("an empty recording window: nothing is per-frame", !Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), 0));
+        check("a span just under half the recording is NOT per-frame",
+              !Linie::IsPerFrame(fs(299, 16.7, 298, 1000, 5999), W));
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
