@@ -1349,4 +1349,114 @@ public class LiveFuncsViewModelTests
         }
         finally { File.Delete(platform.Answer!); }
     }
+
+    // Review of f45dca96: the minimum belongs to the rows it filtered, not to the latest Start.
+
+    [Fact]
+    public async Task MinCalls_ANewStart_DoesNotRefilterTheRowsStillOnScreen()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Once", 1), ("Often", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.Results.Count);
+
+        vm.MinCallsExponent = 3;                    // 8, for the next capture
+        await vm.StartCommand.ExecuteAsync(null);   // the old rows stay until this capture is fetched
+        vm.FilterText = "o";                        // any re-filter
+
+        Assert.Equal(2, vm.Results.Count);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_AfterARecordingThatEndedWithoutAFetch_RecordsTheShownRowsMinimum()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = CallsResult(("Once", 1), ("Often", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.MinCallsExponent = 3;
+        await vm.StartCommand.ExecuteAsync(null);
+        vm.ResetOnDisconnect();                     // the recording ends, nothing fetched
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.Equal(1, lines[0].RootElement.GetProperty("min_calls").GetInt32());
+            Assert.Equal(3, lines.Count);   // both rows, as shown
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task CapHit_ButEveryCutRowIsBelowMinCalls_RaiseDoesNotHelp()
+    {
+        // The DLL cuts the lowest counts, so every row a higher limit brings back has at most the page's
+        // lowest count; with that below Min calls, all of them would be hidden.
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;   // 64
+        vm.MinCallsExponent = 3;     // 8
+        var rows = Rows(64).Select((e, i) => new PeProfileEntry
+        {
+            ClassName = e.ClassName, FuncName = e.FuncName, FuncAddr = e.FuncAddr, FirstSeq = i + 1,
+            Count = i < 10 ? 100 : 2,
+        }).ToArray();
+        dump.NextGet = TruncatedResultOf(500, rows);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task CapHit_WithTheLowestCountAtMinCalls_RaiseStillHelps()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        vm.MinCallsExponent = 3;     // 8
+        var rows = Rows(64).Select((e, i) => new PeProfileEntry
+        {
+            ClassName = e.ClassName, FuncName = e.FuncName, FuncAddr = e.FuncAddr, FirstSeq = i + 1, Count = 8,
+        }).ToArray();
+        dump.NextGet = TruncatedResultOf(500, rows);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task DiffStatus_DoesNotClaimTheTargetIsOnScreen_WhenMinCallsHidANewRow()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Tick", 900));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        vm.MinCallsExponent = 2;   // 4
+        dump.NextGet = CallsResult(("Tick", 950), ("OpenShop", 2));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("almost certainly", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DiffStatus_KeepsItsClaim_WhenNoNewRowIsHidden()
+    {
+        // Negative control for the test above.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Tick", 900));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        vm.MinCallsExponent = 2;
+        dump.NextGet = CallsResult(("Tick", 950), ("OpenShop", 6));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Contains("almost certainly", vm.StatusText);
+    }
 }
