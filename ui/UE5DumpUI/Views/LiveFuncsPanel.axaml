@@ -44,6 +44,22 @@
                VerticalAlignment="Center"/>
     </StackPanel>
 
+    <!-- [EXTPR-539-540-2026-10-02] Capture settings. Disabled while a recording runs: the recording keeps the
+         values it started with. The slider's bounds are LiveFuncsViewModel.FetchLimitMin/MaxExponent. -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+      <TextBlock Text="{StaticResource str.LF.FetchLimit}"
+                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <Slider Value="{Binding FetchLimitExponent}"
+              Minimum="6" Maximum="15"
+              TickFrequency="1" IsSnapToTickEnabled="True"
+              Width="160" VerticalAlignment="Center"
+              IsEnabled="{Binding !IsRecording}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.FetchLimit}"/>
+      <TextBlock Text="{Binding FetchLimit}"
+                 Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                 VerticalAlignment="Center" MinWidth="44"/>
+    </StackPanel>
+
     <!-- Baseline diff row: isolate the action's function from per-frame Tick noise -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
                 VerticalAlignment="Center">

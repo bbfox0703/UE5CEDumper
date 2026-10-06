@@ -27,8 +27,21 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
 
-    /// <summary>How many top rows to fetch from the DLL (ranked by fire count).</summary>
-    private const int FetchLimit = 300;
+    /// <summary>[EXTPR-539-540-2026-10-02] How many rows a fetch asks the DLL for, as a power of two (the
+    /// slider's position). The DLL ranks the recording by call count and sends the top rows, so a small limit
+    /// cuts exactly the low-count functions this panel is for; the user raises it when the status says rows
+    /// were cut. The panel's slider has the same bounds; a value from ui-options.json is clamped here.</summary>
+    internal const int FetchLimitMinExponent = 6;
+    internal const int FetchLimitMaxExponent = 15;
+    [ObservableProperty] private int _fetchLimitExponent = 9;
+
+    /// <summary>The fetch limit itself, 2^<see cref="FetchLimitExponent"/>.</summary>
+    public int FetchLimit => 1 << FetchLimitExponent;
+
+    /// <summary>The limit a running recording fetches with, fixed at Start: a peek and Stop's own fetch then
+    /// rank the same table the same way whatever happens to the slider meanwhile (it is disabled while
+    /// recording, but a value can still reach the property).</summary>
+    private int _recordingFetchLimit;
 
     /// <summary>Full unfiltered result set — the filter rebuilds <see cref="Results"/> from this.</summary>
     private List<PeProfileEntry> _allEntries = new();
@@ -162,6 +175,17 @@ public partial class LiveFuncsViewModel : ViewModelBase
     partial void OnHideEventsChanged(bool value) => ApplyFilter();
     partial void OnPeriodicOnlyChanged(bool value) => ApplyFilter();
 
+    partial void OnFetchLimitExponentChanged(int value)
+    {
+        int clamped = Math.Clamp(value, FetchLimitMinExponent, FetchLimitMaxExponent);
+        if (clamped != value)
+        {
+            FetchLimitExponent = clamped;   // re-enters with the clamped value, which raises FetchLimit
+            return;
+        }
+        OnPropertyChanged(nameof(FetchLimit));
+    }
+
     private static string Key(PeProfileEntry e) => $"{e.ClassName}::{e.FuncName}";
 
     /// <summary>Capture the current results as the baseline (idle reference) and turn
@@ -213,6 +237,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             ClearError();
             IsBusy = true;
             var start = await _dump.PeProfileStartAsync();
+            _recordingFetchLimit = FetchLimit;
             IsRecording = true;
             StatusText = start.HookActive
                 ? "Recording… ALT-TAB to the game, perform the action (open shop / dash), then click Stop."
@@ -275,14 +300,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     private async Task FetchAndPopulateAsync()
     {
-        var result = await _dump.PeProfileGetAsync(FetchLimit);
+        var result = await _dump.PeProfileGetAsync(IsRecording ? _recordingFetchLimit : FetchLimit);
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
         ApplyDiffAndFilter();
 
         // House convention for surfacing a cap (SnapshotViewModel / SpcQueryViewModel).
-        // Spelled out rather than "(capped at 300)" because WHICH rows were cut is the
+        // Spelled out rather than "(capped at N)" because WHICH rows were cut is the
         // point here: the DLL keeps the highest counts, and the function this panel is
         // for has a low one.
         string trunc = LastTruncated
@@ -301,7 +326,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             int increased = _allEntries.Count(e => !e.IsNew && e.Delta > 0);
             // newCount/increased are counted over the PAGE, so they cannot be reported
             // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
-            // population those 3 were selected from, when only 300 were ever examined.
+            // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
               + (_baselineTruncated || LastTruncated
