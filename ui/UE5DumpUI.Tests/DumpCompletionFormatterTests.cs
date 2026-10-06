@@ -97,4 +97,18 @@ public class DumpCompletionFormatterTests
         Assert.Contains("1,200 classes", s);
         Assert.Contains("340 structs", s);
     }
+
+    [Fact]
+    public void Format_NamesTheEnumsToo()
+    {
+        // [EXTPR-539-540-2026-10-02] D2.
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 1200, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 90000,
+                           StructsEmitted: 340, EnumsEmitted: 56),
+            2_500_000L, "game.jsonl"));
+
+        Assert.Contains("1,200 classes", s);
+        Assert.Contains("340 structs", s);
+        Assert.Contains("56 enums", s);
+    }
 }

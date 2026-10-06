@@ -39,6 +39,8 @@ public class WalkClassBatchEquivalenceTests
     /// the same dictionary lookup — the realistic happy-path simulation.</summary>
     private sealed class HappyPathDump : StubDumpService
     {
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());   // Dump All lists enums once per run (D2)
         public List<UObjectNode> Objects { get; } = new();
         public Dictionary<string, ClassInfoModel> ClassWalks { get; } = new();
         public Dictionary<string, List<FunctionInfoModel>> FunctionWalks { get; } = new();
@@ -80,6 +82,8 @@ public class WalkClassBatchEquivalenceTests
     /// the fallback produces identical output to the batched path.</summary>
     private sealed class ForcedFallbackDump : StubDumpService
     {
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());   // Dump All lists enums once per run (D2)
         public List<UObjectNode> Objects { get; } = new();
         public Dictionary<string, ClassInfoModel> ClassWalks { get; } = new();
         public Dictionary<string, List<FunctionInfoModel>> FunctionWalks { get; } = new();
@@ -408,6 +412,8 @@ public class WalkClassBatchEquivalenceTests
 
     private sealed class TruncatedBatchDump : StubDumpService
     {
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => Task.FromResult(new List<EnumDefinition>());   // Dump All lists enums once per run (D2)
         public List<UObjectNode> Objects { get; } = new();
         public Dictionary<string, ClassInfoModel> ClassWalks { get; } = new();
         public Dictionary<string, List<FunctionInfoModel>> FunctionWalks { get; } = new();

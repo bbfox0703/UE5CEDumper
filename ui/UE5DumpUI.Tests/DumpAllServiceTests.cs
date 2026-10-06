@@ -1,5 +1,6 @@
 using System.Text;
 using System.Text.Json;
+using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.Services;
 using Xunit;
@@ -22,8 +23,23 @@ public class DumpAllServiceTests
     // WalkFunctionsAsync.
     // ------------------------------------------------------------------
 
-    private class FakeDumpForDump : StubDumpService
+    private class FakeDumpForDump : StubDumpService, IDumpService
     {
+        // [EXTPR-539-540-2026-10-02] D2: Dump All lists the enums once per run. An empty list unless a test
+        // fills it; the flags and the throw are the detailed list's own answers.
+        public List<EnumDefinition> Enums { get; } = new();
+        public bool EnumNamesFailed { get; set; }
+        public bool EnumsTruncated { get; set; }
+        public Exception? EnumsThrow { get; set; }
+
+        public override Task<List<EnumDefinition>> ListEnumsAsync(CancellationToken ct = default)
+            => EnumsThrow != null ? Task.FromException<List<EnumDefinition>>(EnumsThrow) : Task.FromResult(Enums);
+
+        Task<EnumListResult> IDumpService.ListEnumsDetailedAsync(CancellationToken ct)
+            => EnumsThrow != null
+                ? Task.FromException<EnumListResult>(EnumsThrow)
+                : Task.FromResult(new EnumListResult { Enums = Enums, EnumNamesFailed = EnumNamesFailed, Truncated = EnumsTruncated });
+
         public List<UObjectNode> Objects { get; } = new();
         public Dictionary<string, ClassInfoModel> ClassWalks { get; } = new();
         public Dictionary<string, List<FunctionInfoModel>> FunctionWalks { get; } = new();
@@ -808,5 +824,128 @@ public class DumpAllServiceTests
             new DumpOptions(GameOnly: true), ct: TestContext.Current.CancellationToken);
 
         Assert.Equal(1, result.StructsSkippedEngine);
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] D2: Dump All writes enum lines. One list_enums call after the
+    // type walk; each enum becomes {"kind":"enum"} with its entries as {name, value}. The
+    // summary says how many were written and skipped, whether the list was obtained at all,
+    // and what the list alone cannot say (member names not locatable, a cut-short list), so a
+    // reader comparing two dumps can tell an empty enum from one it could not read.
+    // ==================================================================
+
+    private static FakeDumpForDump EnumFixture()
+    {
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "UCharacter", "Class", "/Game/X/UCharacter"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "UCharacter", FullPath = "/Game/X/UCharacter" };
+        dump.Enums.Add(new EnumDefinition
+        {
+            Address = "0xE1", Name = "EKind", FullPath = "/Script/MyGame.EKind",
+            Entries = new() { new() { Name = "EKind::A", Value = 0 }, new() { Name = "EKind::B", Value = 1 } },
+        });
+        dump.Enums.Add(new EnumDefinition
+        {
+            Address = "0xE2", Name = "E_Team", FullPath = "/Game/Data/E_Team",
+            Entries = new() { new() { Name = "NewEnumerator0", Value = 0 }, new() { Name = "NewEnumerator1", Value = 5 } },
+        });
+        return dump;
+    }
+
+    [Fact]
+    public void Generate_Enums_AreWrittenAsEnumLines_AfterTheTypes()
+    {
+        var lines = Dump(EnumFixture());
+
+        var enums = lines.Where(l => l.StartsWith("{\"kind\":\"enum\"")).ToList();
+        Assert.Equal(2, enums.Count);
+        int lastType = lines.FindLastIndex(l => l.StartsWith("{\"kind\":\"class\"") || l.StartsWith("{\"kind\":\"struct\""));
+        Assert.True(lines.IndexOf(enums[0]) > lastType);
+        Assert.StartsWith("{\"kind\":\"summary\"", lines[^1]);
+
+        using var team = JsonDocument.Parse(enums.Single(l => l.Contains("\"name\":\"E_Team\"")));
+        var r = team.RootElement;
+        Assert.Equal("0xE2", r.GetProperty("addr").GetString());
+        Assert.Equal("/Game/Data/E_Team", r.GetProperty("path").GetString());
+        var entries = r.GetProperty("entries");
+        Assert.Equal(2, entries.GetArrayLength());
+        Assert.Equal("NewEnumerator1", entries[1].GetProperty("name").GetString());
+        Assert.Equal(5, entries[1].GetProperty("value").GetInt64());
+    }
+
+    [Fact]
+    public void Generate_Summary_CountsEnums_AndSaysTheListWasObtained()
+    {
+        var lines = Dump(EnumFixture());
+
+        using var summary = JsonDocument.Parse(lines[^1]);
+        var s = summary.RootElement;
+        Assert.Equal(2, s.GetProperty("enums_emitted").GetInt32());
+        Assert.Equal(0, s.GetProperty("enums_skipped_engine").GetInt32());
+        Assert.True(s.GetProperty("enums_listed").GetBoolean());
+        Assert.False(s.GetProperty("enum_names_failed").GetBoolean());
+        Assert.False(s.GetProperty("enums_truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void Generate_GameOnly_SkipsEngineEnums_AndCountsThem()
+    {
+        var dump = EnumFixture();
+        dump.Enums.Add(new EnumDefinition { Address = "0xE3", Name = "EAxis", FullPath = "//Script/CoreUObject/EAxis" });
+
+        var lines = Dump(dump, new DumpOptions(GameOnly: true));
+
+        Assert.DoesNotContain(lines, l => l.Contains("\"name\":\"EAxis\""));
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.Equal(2, summary.RootElement.GetProperty("enums_emitted").GetInt32());
+        Assert.Equal(1, summary.RootElement.GetProperty("enums_skipped_engine").GetInt32());
+    }
+
+    [Fact]
+    public void Generate_EnumNamesNotLocatable_IsRecorded_AndTheEnumsAreStillWritten()
+    {
+        var dump = EnumFixture();
+        dump.EnumNamesFailed = true;
+        dump.EnumsTruncated = true;
+
+        var lines = Dump(dump);
+
+        Assert.Equal(2, lines.Count(l => l.StartsWith("{\"kind\":\"enum\"")));
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.True(summary.RootElement.GetProperty("enum_names_failed").GetBoolean());
+        Assert.True(summary.RootElement.GetProperty("enums_truncated").GetBoolean());
+    }
+
+    [Fact]
+    public void Generate_AFailedEnumList_IsAnErrorLine_AndTheDumpCompletes()
+    {
+        var dump = EnumFixture();
+        dump.EnumsThrow = new InvalidOperationException("pipe dropped");
+
+        var lines = Dump(dump);
+
+        Assert.Single(lines, l => l.StartsWith("{\"kind\":\"class\""));
+        Assert.DoesNotContain(lines, l => l.StartsWith("{\"kind\":\"enum\""));
+        using var error = JsonDocument.Parse(lines.Single(l => l.StartsWith("{\"kind\":\"error\"")));
+        Assert.Equal("list_enums", error.RootElement.GetProperty("name").GetString());
+        Assert.Contains("pipe dropped", error.RootElement.GetProperty("msg").GetString());
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.False(summary.RootElement.GetProperty("enums_listed").GetBoolean());
+        Assert.Equal(0, summary.RootElement.GetProperty("enums_emitted").GetInt32());
+        Assert.Equal(1, summary.RootElement.GetProperty("errors").GetInt32());
+    }
+
+    [Fact]
+    public async Task Generate_ResultAndProgress_CountEnumsToo()
+    {
+        var sink = new RecordingProgress();
+        var result = await DumpAllService.GenerateAsync(
+            EnumFixture(), DefaultEngineState(), new MemoryStream(), new DumpOptions(IncludeInstanceCounts: false),
+            sink, TestContext.Current.CancellationToken, new ManualClock());
+
+        Assert.Equal(2, result.EnumsEmitted);
+        var done = sink.Reports[^1];
+        Assert.Equal(3, done.Done);   // 1 class + 0 structs + 2 enums
+        Assert.Contains("2 enums", done.Phase);
     }
 }
