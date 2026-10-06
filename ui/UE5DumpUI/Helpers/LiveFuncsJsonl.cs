@@ -22,7 +22,7 @@ internal static class LiveFuncsJsonl
     /// DLL was still recording (a peek left on screen after the recording ended without a final fetch).</summary>
     internal sealed record Summary(
         int Rows, int Fetched, int Distinct, long TotalCalls, int FetchLimit, bool RecordingAtFetch,
-        string Filter, bool HideWidgets, bool HideEvents, bool PeriodicOnly,
+        string Filter, bool HideWidgets, bool HideEvents, bool PeriodicOnly, int MinCalls,
         bool Diff, bool NewChangedOnly, int BaselineFuncs, bool BaselinePartial, int BaselineDistinct,
         DateTime SavedAtUtc);
 
@@ -46,6 +46,7 @@ internal static class LiveFuncsJsonl
         Bool(sb, "hide_widgets", s.HideWidgets);
         Bool(sb, "hide_events", s.HideEvents);
         Bool(sb, "periodic_only", s.PeriodicOnly);
+        Int(sb, "min_calls", s.MinCalls);
         Bool(sb, "diff", s.Diff);
         if (s.Diff)
         {

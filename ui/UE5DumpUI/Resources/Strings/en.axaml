@@ -1065,6 +1065,7 @@
     <sys:String x:Key="str.LF.EarliestFirst">Earliest first</sys:String>
     <sys:String x:Key="str.LF.FetchLimit">Fetch limit</sys:String>
     <sys:String x:Key="str.LF.SaveJsonl">Save .jsonl</sys:String>
+    <sys:String x:Key="str.LF.MinCalls">Min calls</sys:String>
     <sys:String x:Key="str.LF.Save.FileType">JSON Lines (*.jsonl)</sys:String>
     <sys:String x:Key="str.LF.Save.Empty">Nothing to save: the table is empty.</sys:String>
     <sys:String x:Key="str.LF.Save.Done">Saved {0} row(s) to {1}</sys:String>
@@ -1086,7 +1087,8 @@
     <sys:String x:Key="str.Tip.LF.Start">Start recording which UFunctions the game dispatches through ProcessEvent. Forces the game-thread PE hook to install. After clicking, ALT-TAB to the game and perform ONE action (open the shop, dash, attack), then click Stop — behaviour-based discovery finds the exact function even when its name is unguessable.</sys:String>
     <sys:String x:Key="str.Tip.LF.Stop">Stop recording and show the UFunctions that fired, ranked by call count. The action-specific function is usually near the top with a low count (a handful of calls), while per-frame Tick/Update functions have huge counts.</sys:String>
     <sys:String x:Key="str.Tip.LF.FetchLimit">How many functions Stop and Refresh fetch, highest call counts first (64 to 32768, default 512). The lowest counts are cut first, and the function you are looking for often has a low count, so raise this when the status line says rows were cut. A recording keeps the value it started with: change it before Start, or after Stop and then Refresh.</sys:String>
-    <sys:String x:Key="str.Tip.LF.SaveJsonl">Save the rows on screen to a JSON Lines file: a summary line, then one line per function, in the order the game first called it. The filter and the check boxes decide which rows are saved, and the summary line records them. Not available while recording.</sys:String>
+    <sys:String x:Key="str.Tip.LF.MinCalls">Hide functions called fewer times than this (1 to 32, default 1, which hides nothing). It applies to the next recording: the value is read when you press Start, and moving it later does not change the table on screen. Rows marked NEW are hidden too. It only hides rows: Set Baseline still uses every fetched row.</sys:String>
+    <sys:String x:Key="str.Tip.LF.SaveJsonl">Save the rows on screen to a JSON Lines file: a summary line, then one line per function, in the order the game first called it. The filter, the check boxes and Min calls decide which rows are saved, and the summary line records them. Not available while recording.</sys:String>
     <sys:String x:Key="str.Tip.LF.Refresh">Re-fetch the current fire-count table without stopping — a live peek while recording, or a re-pull after Stop.</sys:String>
     <sys:String x:Key="str.Tip.LF.Filter">Substring match against function name OR class name (space = AND, case-insensitive). e.g. "shop" or "open".</sys:String>
     <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live instance of its class (falls back to Class Struct if the class has no live instance). From there you can invoke it.</sys:String>

@@ -42,6 +42,19 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>The fetch limit itself, 2^<see cref="FetchLimitExponent"/>.</summary>
     public int FetchLimit => 1 << FetchLimitExponent;
 
+    /// <summary>[EXTPR-539-540-2026-10-02] L3: hide rows with fewer calls than 2^<see cref="MinCallsExponent"/>.
+    /// Read at Start and kept for that capture, so the rows on screen never change under a moved slider (the
+    /// maintainer's choice over filtering at once). Only the view is filtered: SetBaseline reads every fetched row,
+    /// or an idle function with few calls would be missing from the baseline and come back as a false NEW.</summary>
+    internal const int MinCallsMaxExponent = 5;
+    [ObservableProperty] private int _minCallsExponent;
+
+    /// <summary>The minimum itself, 2^<see cref="MinCallsExponent"/>.</summary>
+    public int MinCalls => 1 << MinCallsExponent;
+
+    /// <summary>The minimum the capture on screen was started with; 1 (hides nothing) before the first Start.</summary>
+    private int _captureMinCalls = 1;
+
     /// <summary>The limit a running recording fetches with, fixed at Start: a peek and Stop's own fetch then
     /// rank the same table the same way whatever happens to the slider meanwhile (it is disabled while
     /// recording, but a value can still reach the property).</summary>
@@ -212,6 +225,17 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(FetchLimit));
     }
 
+    partial void OnMinCallsExponentChanged(int value)
+    {
+        int clamped = Math.Clamp(value, 0, MinCallsMaxExponent);
+        if (clamped != value)
+        {
+            MinCallsExponent = clamped;   // re-enters with the clamped value, which raises MinCalls
+            return;
+        }
+        OnPropertyChanged(nameof(MinCalls));
+    }
+
     private static string Key(PeProfileEntry e) => $"{e.ClassName}::{e.FuncName}";
 
     /// <summary>Capture the current results as the baseline (idle reference) and turn
@@ -272,6 +296,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             IsBusy = true;
             var start = await _dump.PeProfileStartAsync();
             _recordingFetchLimit = FetchLimit;
+            _captureMinCalls = MinCalls;
             IsRecording = true;
             StatusText = start.HookActive
                 ? "Recording… ALT-TAB to the game, perform the action (open shop / dash), then click Stop."
@@ -312,8 +337,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         finally { IsBusy = false; IsRecording = false; }
     }
 
-    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter and the check boxes leave) to
-    /// a JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
+    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter, the check boxes and Min calls
+    /// leave) to a JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
     /// recording, when the table is still changing; the button is disabled then too. A peek's rows can outlive the
     /// recording (it can end without a final fetch), so the summary says when the rows came from one.</summary>
     [RelayCommand]
@@ -335,7 +360,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         bool diff = DiffMode && _baseline.Count > 0;
         var summary = new Helpers.LiveFuncsJsonl.Summary(
             rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit, _lastRecordingAtFetch,
-            FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly,
+            FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly, _captureMinCalls,
             diff, NewChangedOnly, diff ? _baseline.Count : 0, diff && _baselineTruncated, diff ? _baselineDistinct : 0,
             DateTime.UtcNow);
         try
@@ -507,6 +532,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (HideEvents && e.IsEventLike) continue;
             // Periodic-only: keep just the regular timer-like cadence functions.
             if (PeriodicOnly && !e.IsPeriodic) continue;
+            // Min calls, as of this capture's Start. No exemption for NEW rows (R1): the default 1 hides nothing.
+            if (e.Count < _captureMinCalls) continue;
             if (terms.Length > 0 &&
                 !ObjectTreeFilter.MatchesAllTerms(terms, e.FuncName, e.ClassName))
             {
