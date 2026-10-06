@@ -47,6 +47,10 @@ internal static class LiveFuncsJsonl
         Bool(sb, "hide_events", s.HideEvents);
         Bool(sb, "periodic_only", s.PeriodicOnly);
         Int(sb, "min_calls", s.MinCalls);
+        // [LIVEFUNCS-HIDE-PERFRAME] Whether the rows were asked for without the per-frame functions, and how many the
+        // DLL left out; no count when it was not asked, or the DLL predates the option and left nothing out.
+        Bool(sb, "hide_per_frame", s.HidePerFrame);
+        if (s.PerFrameHidden is { } hidden) Int(sb, "per_frame_hidden", hidden);
         Bool(sb, "diff", s.Diff);
         if (s.Diff)
         {

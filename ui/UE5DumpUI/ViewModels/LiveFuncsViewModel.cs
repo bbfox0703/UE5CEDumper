@@ -80,8 +80,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>Rows the DLL actually sent for the last fetch, and the distinct count it
     /// recorded BEFORE the cap. The DLL sorts the whole table by count desc and emits only
     /// the first <see cref="FetchLimit"/> rows, while <c>distinct_funcs</c> stays pre-cap
-    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> is a conservative, correct test for
-    /// "not everything is on screen" — it is also true when stale UFunction pointers were
+    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> — less the per-frame functions left out on request — is a
+    /// conservative, correct test for "not everything is on screen" — it is also true when stale UFunction pointers were
     /// dropped or a cooperative abort cut the emit loop short, and all three mean the same
     /// thing to the user.</summary>
     private int _lastShown;
@@ -110,8 +110,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private bool _baselineCapHit;
     private int  _baselineLimit;
 
-    /// <summary>True when the last fetch did not show every recorded function.</summary>
-    private bool LastTruncated => _lastShown < _lastDistinct;
+    /// <summary>True when the last fetch did not show every recorded function it was asked for: the per-frame ones
+    /// the DLL left out on request are not missing.</summary>
+    private bool LastTruncated => _lastShown < _lastDistinct - _lastPerFrameHidden;
 
     /// <summary>The last page was cut by the fetch limit itself (see <see cref="_lastLimit"/>).</summary>
     private bool LastCapHit => LastTruncated && _lastShown >= _lastLimit;
@@ -168,11 +169,33 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// it triggers, so combined with New/changed-only this floats the true opener to the top.</summary>
     [ObservableProperty] private bool   _earliestFirst;
 
-    // [LIVEFUNCS-HIDE-PERFRAME] Placeholder until the option lands.
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] Ask the DLL to leave out the functions that fire every frame through the
+    /// recording, BEFORE the fetch limit, so its rows go to the low-count functions this panel is for (a filter here
+    /// could not bring back what the limit cut). Opt-in; fixed at Start like the fetch limit.</summary>
     [ObservableProperty] private bool   _hidePerFrame;
-    internal int LastPerFrameHidden => 0;
-    internal bool PerFrameUnsupported => false;
-    internal bool BaselinePerFrameMismatch => false;
+
+    /// <summary>The option a running recording fetches with, fixed at Start (see <see cref="_recordingFetchLimit"/>).</summary>
+    private bool _recordingHidePerFrame;
+
+    /// <summary>Whether the rows on screen were asked for without the per-frame functions, whether the DLL did it
+    /// (one older than the option answers no count and leaves nothing out), and how many it left out. Those are no
+    /// rows the limit cut, so the cut is counted without them.</summary>
+    private bool _lastPerFrameAsked;
+    private bool _lastPerFrameEffective;
+    private int  _lastPerFrameHidden;
+    /// <summary>Whether the baseline's page had the per-frame functions left out: against a page fetched the other
+    /// way, every one of them reads NEW, or is missing.</summary>
+    private bool _baselinePerFrameEffective;
+
+    internal int LastPerFrameHidden => _lastPerFrameHidden;
+    internal bool PerFrameUnsupported => _lastPerFrameAsked && !_lastPerFrameEffective;
+    internal bool BaselinePerFrameMismatch => _baseline.Count > 0 && _baselinePerFrameEffective != _lastPerFrameEffective;
+
+    /// <summary>What the status line adds about the option: the count left out, or that this DLL cannot.</summary>
+    private string PerFrameNote() =>
+        PerFrameUnsupported ? Res.Get("str.LF.PerFrame.Unsupported")
+        : _lastPerFrameEffective ? Res.Format("str.LF.PerFrame.Hidden", _lastPerFrameHidden)
+        : "";
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
@@ -276,6 +299,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baselineDistinct  = _lastDistinct;
         _baselineCapHit    = LastCapHit;
         _baselineLimit     = _lastLimit;
+        _baselinePerFrameEffective = _lastPerFrameEffective;
         // OnDiffModeChanged re-applies the diff only when DiffMode CHANGES; with diff already on, a new baseline
         // would leave every row's Delta / IsNew against the old one.
         if (DiffMode) ApplyDiffAndFilter();
@@ -298,6 +322,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baselineDistinct  = 0;
         _baselineCapHit    = false;
         _baselineLimit     = 0;
+        _baselinePerFrameEffective = false;
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }
@@ -315,6 +340,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             IsBusy = true;
             var start = await _dump.PeProfileStartAsync();
             _recordingFetchLimit = FetchLimit;
+            _recordingHidePerFrame = HidePerFrame;
             _captureMinCalls = MinCalls;
             IsRecording = true;
             StatusText = start.HookActive
@@ -381,7 +407,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit, _lastRecordingAtFetch,
             FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly, _shownMinCalls,
             diff, NewChangedOnly, diff ? _baseline.Count : 0, diff && _baselineTruncated, diff ? _baselineDistinct : 0,
-            DateTime.UtcNow);
+            DateTime.UtcNow, _lastPerFrameAsked, _lastPerFrameEffective ? _lastPerFrameHidden : null);
         try
         {
             ClearError();
@@ -424,8 +450,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task FetchAndPopulateAsync()
     {
         int limit = IsRecording ? _recordingFetchLimit : FetchLimit;
-        var result = await _dump.PeProfileGetAsync(limit);
+        bool skipPerFrame = IsRecording ? _recordingHidePerFrame : HidePerFrame;
+        var result = await _dump.PeProfileGetAsync(limit, skipPerFrame);
         _lastLimit    = limit;
+        _lastPerFrameAsked     = skipPerFrame;
+        _lastPerFrameEffective = skipPerFrame && result.PerFrameHidden.HasValue;
+        _lastPerFrameHidden    = _lastPerFrameEffective ? result.PerFrameHidden!.Value : 0;
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
@@ -440,7 +470,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // point here: the DLL keeps the highest counts, and the function this panel is
         // for has a low one.
         string trunc = LastTruncated
-            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count"
+            ? $" (showing top {_lastShown:N0} of {_lastDistinct - _lastPerFrameHidden:N0} by count"
               + (LastPageRaiseHelps ? Res.Get("str.LF.Cap.MoreRows") : "") + ")"
             : "";
 
@@ -461,7 +491,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
             // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
             // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
-              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
+              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}). "
+              + (BaselinePerFrameMismatch ? Res.Get("str.LF.PerFrame.BaselineMismatch") + " " : "")
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
                     + "idle\" — a rare idle function below the cut also shows as NEW. "
@@ -473,6 +504,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         else
         {
             StatusText = $"{result.DistinctFuncs:N0} distinct functions, {result.TotalCalls:N0} total calls"
+              + PerFrameNote()
               + trunc
               + (result.Recording ? " (still recording)" : "")
               + ". Tip: Set Baseline on an idle window, then re-record to isolate the action.";

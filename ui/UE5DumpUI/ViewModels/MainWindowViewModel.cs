@@ -2519,6 +2519,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private static readonly HashSet<string> LiveFuncsPersist = new()
     {
         nameof(LiveFuncsViewModel.FetchLimitExponent), nameof(LiveFuncsViewModel.MinCallsExponent),
+        nameof(LiveFuncsViewModel.HidePerFrame),
     };
     private static readonly HashSet<string> DumpExplorerPersist = new()
     {
@@ -2618,6 +2619,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Console.GameOnly = o.Console.GameOnly;
         LiveFuncs.FetchLimitExponent = o.LiveFuncs.FetchLimitExponent;   // the VM clamps a hand-edited value
         LiveFuncs.MinCallsExponent = o.LiveFuncs.MinCallsExponent;
+        LiveFuncs.HidePerFrame = o.LiveFuncs.HidePerFrame;
         DumpExplorer.DiffIncludeEngine = o.DumpExplorer.DiffIncludeEngine;
         DumpExplorer.DiffBreakingOnly = o.DumpExplorer.DiffBreakingOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
@@ -2778,6 +2780,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.Console.GameOnly = Console.GameOnly;
         o.LiveFuncs.FetchLimitExponent = LiveFuncs.FetchLimitExponent;
         o.LiveFuncs.MinCallsExponent = LiveFuncs.MinCallsExponent;
+        o.LiveFuncs.HidePerFrame = LiveFuncs.HidePerFrame;
         o.DumpExplorer.DiffIncludeEngine = DumpExplorer.DiffIncludeEngine;
         o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;

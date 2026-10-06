@@ -75,6 +75,13 @@
       <TextBlock Text="{Binding MinCalls}"
                  Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
                  VerticalAlignment="Center" MinWidth="20"/>
+      <!-- [LIVEFUNCS-HIDE-PERFRAME] Done by the DLL before the fetch limit, so it frees rows rather than hiding them. -->
+      <CheckBox Content="{StaticResource str.LF.HidePerFrame}"
+                IsChecked="{Binding HidePerFrame}"
+                IsEnabled="{Binding !IsRecording}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.HidePerFrame}"
+                Margin="12,0,0,0"
+                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
     </StackPanel>
 
     <!-- Baseline diff row: isolate the action's function from per-frame Tick noise. -->

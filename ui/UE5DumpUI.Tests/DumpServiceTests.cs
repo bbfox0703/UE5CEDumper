@@ -1657,7 +1657,7 @@ public class DumpServiceTests
         _pipe.SetHandler(req =>
         {
             sent = req;
-            var reply = new JsonObject { ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 9, ["total_calls"] = 99,
+            var reply = new JsonObject { ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 9, ["total_calls"] = 99L,
                                          ["functions"] = new JsonArray() };
             if (req["skip_per_frame"]?.GetValue<bool>() == true) reply["per_frame_hidden"] = 7;
             return reply;

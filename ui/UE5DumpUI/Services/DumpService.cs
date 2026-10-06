@@ -2855,10 +2855,16 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>Fetch the ranked fire-count table (top <paramref name="limit"/> by count).</summary>
-    public async Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
+    public Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
+        => PeProfileGetAsync(limit, skipPerFrame: false, ct);
+
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] skip_per_frame goes on the wire only when asked, so the plain call sends what
+    /// it always sent.</summary>
+    public async Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
     {
-        var res = await _pipe.SendAsync(
-            new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit }, ct);
+        var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit };
+        if (skipPerFrame) req["skip_per_frame"] = true;
+        var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
         var entries = new List<PeProfileEntry>();
@@ -2890,6 +2896,7 @@ public sealed class DumpService : IDumpService
             Recording     = res["recording"]?.GetValue<bool>() ?? false,
             DistinctFuncs = res["distinct_funcs"]?.GetValue<int>() ?? 0,
             TotalCalls    = res["total_calls"]?.GetValue<long>() ?? 0L,
+            PerFrameHidden = res["per_frame_hidden"]?.GetValue<int>(),
             Entries       = entries,
         };
     }
