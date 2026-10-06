@@ -1193,4 +1193,28 @@ public class LiveFuncsViewModelTests
         }
         finally { File.Delete(platform.Answer!); }
     }
+
+    [Fact]
+    public async Task SetBaseline_AgainWhileDiffIsOn_RecomputesTheRowsAgainstTheNewBaseline()
+    {
+        // DiffMode = true re-applied the diff only when it CHANGED, so a second Set Baseline kept every row's
+        // Delta / IsNew against the old baseline while the status (and a saved file) named the new one.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 950 },
+            new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 2 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.NewChangedOnly = false;
+        Assert.Contains(vm.Results, r => r.IsNew);   // against the idle baseline
+
+        vm.SetBaselineCommand.Execute(null);          // this table is now the baseline
+
+        Assert.Equal(2, vm.Results.Count);
+        Assert.All(vm.Results, r => { Assert.False(r.IsNew); Assert.Equal(0, r.Delta); });
+    }
 }
