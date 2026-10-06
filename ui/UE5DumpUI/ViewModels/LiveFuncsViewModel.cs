@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -26,6 +28,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
 {
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
+    /// <summary>The save dialog Save .jsonl asks for a path; null in hosts without one, where Save does nothing.</summary>
+    private readonly IPlatformService? _platform;
 
     /// <summary>[EXTPR-539-540-2026-10-02] How many rows a fetch asks the DLL for, as a power of two (the
     /// slider's position). The DLL ranks the recording by call count and sends the top rows, so a small limit
@@ -61,6 +65,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// thing to the user.</summary>
     private int _lastShown;
     private int _lastDistinct;
+    private long _lastTotalCalls;
 
     /// <summary>Was the page the baseline was captured from truncated, and how big was the
     /// table it came from? This matters more than it looks: the DLL's cap keeps the HIGHEST
@@ -149,7 +154,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public event Action<string, string>? NavigateToFunction;
 
     /// <summary>Raised by the per-row "Name" action; MainWindow routes it through
-    /// the platform clipboard so this VM stays free of IPlatformService.</summary>
+    /// the platform clipboard.</summary>
     /// <summary>
     /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
     /// arrived, so the raiser can decide what to claim.
@@ -179,6 +184,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         _dump = dump;
         _log = log;
+        _platform = platform;
         AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
@@ -303,6 +309,48 @@ public partial class LiveFuncsViewModel : ViewModelBase
         finally { IsBusy = false; IsRecording = false; }
     }
 
+    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter and the diff view leave) to a
+    /// JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
+    /// recording: the table is still changing under a peek, and the button is disabled then too.</summary>
+    [RelayCommand]
+    private async Task SaveJsonlAsync()
+    {
+        if (IsRecording) return;
+        if (_platform == null)
+        {
+            _log.Warn("LivePEProfiler: Save .jsonl has no save dialog in this host");
+            return;
+        }
+        if (Results.Count == 0)
+        {
+            StatusText = Res.Get("str.LF.Save.Empty");
+            return;
+        }
+        // Taken before the dialog: the rows saved are the rows on screen when Save was pressed.
+        var rows = Results.ToList();
+        bool diff = DiffMode && _baseline.Count > 0;
+        var summary = new Helpers.LiveFuncsJsonl.Summary(
+            rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit,
+            FilterText ?? "", diff, diff ? _baseline.Count : 0, DateTime.UtcNow);
+        try
+        {
+            ClearError();
+            string defaultName = "live-funcs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".jsonl";
+            string? path = await _platform.ShowSaveFileDialogAsync(defaultName, Res.Get("str.LF.Save.FileType"), "jsonl");
+            if (string.IsNullOrEmpty(path)) return;
+            await File.WriteAllTextAsync(path, Helpers.LiveFuncsJsonl.Format(summary, rows),
+                                         new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            StatusText = Res.Format("str.LF.Save.Done", rows.Count, path);
+            _log.Info($"LivePEProfiler: saved {rows.Count} row(s) to {path}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            StatusText = Res.Format("str.LF.Save.Failed", ex.Message);
+            _log.Error("LivePEProfiler save failed", ex);
+        }
+    }
+
     /// <summary>Re-fetch the current table without stopping — a live peek while
     /// recording, or a re-pull after Stop.</summary>
     [RelayCommand]
@@ -331,6 +379,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
+        _lastTotalCalls = result.TotalCalls;
         ApplyDiffAndFilter();
 
         // House convention for surfacing a cap (SnapshotViewModel / SpcQueryViewModel).
