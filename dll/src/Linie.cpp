@@ -11,8 +11,11 @@
 
 #include "Linie.h"
 
+#include <Windows.h>
+#include <algorithm>
 #include <cmath>
 #include <mutex>
+#include <thread>
 #include <unordered_map>
 
 namespace Linie {
@@ -104,10 +107,15 @@ bool IsActive() {
 }
 
 void Reset() {
-    std::lock_guard<std::mutex> lk(g_mu);
-    g_recording.store(false, std::memory_order_relaxed);
-    g_stats.clear();
-    g_seq = 0;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        g_recording.store(false, std::memory_order_relaxed);
+        g_stats.clear();
+        g_seq = 0;
+    }
+    // A client that left takes its trace with it: up to 512 MB of the game's memory, outside g_mu because the
+    // trace has its own lock.
+    FreeTrace();
 }
 
 void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
@@ -130,24 +138,318 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
-std::vector<uintptr_t> PerFrameFuncs() { return {}; }
+std::vector<uintptr_t> PerFrameFuncs() {
+    std::vector<FuncStat> snap;
+    uint64_t windowMs = 0;
+    Snapshot(snap, windowMs);
+    std::vector<uintptr_t> out;
+    for (const auto& s : snap)
+        if (IsPerFrame(s, windowMs)) out.push_back(s.func);
+    return out;
+}
 
-// ---- [LIVEFUNCS-TIMELINE-2026-10-04] the call trace (red: not built yet) ----
+// ---- [LIVEFUNCS-TIMELINE-2026-10-04] the call trace ----
+//
+// Lifetime (TR2). The hook never holds a pointer into the ring across the game's own ProcessEvent: every write sits
+// inside a short section bracketed by g_inflight, and checks g_tracing INSIDE it. StopTrace clears g_tracing, then
+// waits for g_inflight to reach 0. Both sides use seq_cst on the counter and the flag, so either the hook sees the
+// flag cleared and touches nothing, or Stop sees the hook inside and waits for it -- after Stop returns no write
+// lands in the ring, which is what lets Copy read it and Free release it. g_traceMu orders the pipe threads'
+// Start / Stop / Free / Copy among themselves; the hook never takes it.
 
 std::atomic<bool> g_tracing{false};
 
-void AddrSet::Build(const std::vector<uintptr_t>&) {}
-bool AddrSet::Contains(uintptr_t) const { return false; }
+namespace {
 
-TraceStartStatus StartTrace(const TraceConfig&) { return TraceStartStatus::TooSmall; }
-void StopTrace() {}
-void FreeTrace() {}
-void TraceEnter(uintptr_t, uintptr_t, uintptr_t, uint32_t, TraceToken&) {}
-void TraceReturn(const TraceToken&, uint32_t) {}
-TraceInfo GetTraceInfo() { return {}; }
-bool CopyTrace(uint64_t, size_t, std::vector<TraceRecord>&) { return false; }
-bool TraceDistinct(std::vector<uintptr_t>&, std::vector<uintptr_t>&) { return false; }
-std::string Base64Encode(const uint8_t*, size_t) { return {}; }
-void SetTraceClockForTest(uint64_t (*)()) {}
+struct TraceState {
+    TraceRecord* buf      = nullptr;
+    uint64_t     bytes    = 0;
+    uint64_t     cap      = 0;
+    uint64_t     gen      = 0;
+    bool         quiesced = true;
+    std::atomic<uint64_t> next{0};
+    AddrSet ticked;
+    AddrSet exclude;
+    bool distinctReady = false;
+    std::vector<uintptr_t> distinctFuncs;
+    std::vector<uintptr_t> distinctObjs;
+};
+
+TraceState            g_trace;
+std::atomic<uint32_t> g_inflight{0};
+std::mutex            g_traceMu;
+uint64_t              g_traceGen = 0;
+
+// The ticked scope of THIS thread: the stack address of the call that opened it, and the recording it belongs to.
+thread_local uintptr_t t_scopeSp  = 0;
+thread_local uint64_t  t_scopeGen = 0;
+
+uint64_t QpcNow() {
+    LARGE_INTEGER t;
+    QueryPerformanceCounter(&t);
+    return static_cast<uint64_t>(t.QuadPart);
+}
+uint64_t (*g_clock)() = QpcNow;
+
+uint64_t QpcFreq() {
+    static const uint64_t f = [] { LARGE_INTEGER q{}; QueryPerformanceFrequency(&q); return static_cast<uint64_t>(q.QuadPart); }();
+    return f;
+}
+
+// How long StopTrace waits for a hook to leave its write. A write is a few stores; a hook still inside after this
+// was suspended mid-write, and the ring is then neither read nor freed (a leak beats a use-after-free in the game).
+constexpr uint64_t kQuiesceTimeoutMs = 2000;
+
+void StopTraceLocked() {
+    g_tracing.store(false, std::memory_order_seq_cst);
+    const uint64_t deadline = GetTickCount64() + kQuiesceTimeoutMs;
+    while (g_inflight.load(std::memory_order_seq_cst) != 0) {
+        if (GetTickCount64() > deadline) { g_trace.quiesced = false; return; }
+        std::this_thread::yield();
+    }
+}
+
+void FreeTraceLocked() {
+    StopTraceLocked();
+    if (g_trace.buf && g_trace.quiesced) VirtualFree(g_trace.buf, 0, MEM_RELEASE);
+    g_trace.buf = nullptr;
+    g_trace.bytes = g_trace.cap = 0;
+    g_trace.quiesced = true;
+    g_trace.next.store(0, std::memory_order_relaxed);
+    g_trace.ticked.Build({});
+    g_trace.exclude.Build({});
+    g_trace.distinctReady = false;
+    std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
+    std::vector<uintptr_t>().swap(g_trace.distinctObjs);
+}
+
+uint64_t FirstValidLocked() {
+    const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
+    return w > g_trace.cap ? w - g_trace.cap : 0;
+}
+
+uint64_t HashAddr(uintptr_t a) {
+    uint64_t h = static_cast<uint64_t>(a) * 0x9E3779B97F4A7C15ull;
+    return h ^ (h >> 29);
+}
+
+}  // namespace
+
+void AddrSet::Build(const std::vector<uintptr_t>& addrs) {
+    size_t want = 8;
+    while (want < addrs.size() * 2) want <<= 1;
+    slots_.assign(addrs.empty() ? 0 : want, 0);
+    mask_  = addrs.empty() ? 0 : want - 1;
+    count_ = 0;
+    for (uintptr_t a : addrs) {
+        if (a == 0) continue;
+        uint64_t i = HashAddr(a) & mask_;
+        while (slots_[i] != 0 && slots_[i] != a) i = (i + 1) & mask_;
+        if (slots_[i] == 0) { slots_[i] = a; ++count_; }
+    }
+}
+
+bool AddrSet::Contains(uintptr_t addr) const {
+    if (count_ == 0 || addr == 0) return false;
+    uint64_t i = HashAddr(addr) & mask_;
+    for (;;) {
+        const uintptr_t s = slots_[i];
+        if (s == addr) return true;
+        if (s == 0) return false;
+        i = (i + 1) & mask_;
+    }
+}
+
+TraceStartStatus StartTrace(const TraceConfig& cfg) {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    FreeTraceLocked();
+    const uint64_t cap = cfg.bytes / sizeof(TraceRecord);
+    if (cap < 2) return TraceStartStatus::TooSmall;
+    const SIZE_T size = static_cast<SIZE_T>(cap * sizeof(TraceRecord));
+    void* p = VirtualAlloc(nullptr, size, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+    if (!p) return TraceStartStatus::NoMemory;
+    // Touch every page here, on the pipe thread: committed pages are demand-zero, and the first lap of the ring
+    // would otherwise take one page fault per 4 KB on the game thread.
+    SYSTEM_INFO si{};
+    GetSystemInfo(&si);
+    const size_t page = si.dwPageSize ? si.dwPageSize : 4096;
+    for (size_t off = 0; off < size; off += page) static_cast<volatile uint8_t*>(p)[off] = 0;
+
+    g_trace.buf   = static_cast<TraceRecord*>(p);
+    g_trace.bytes = size;
+    g_trace.cap   = cap;
+    g_trace.gen   = ++g_traceGen;
+    g_trace.next.store(0, std::memory_order_relaxed);
+    g_trace.ticked.Build(cfg.ticked);
+    g_trace.exclude.Build(cfg.exclude);
+    g_trace.distinctReady = false;
+    // Publishes everything above to a hook that reads the flag inside its section (seq_cst is also a release).
+    g_tracing.store(true, std::memory_order_seq_cst);
+    return TraceStartStatus::Ok;
+}
+
+void StopTrace() {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    StopTraceLocked();
+}
+
+void FreeTrace() {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    FreeTraceLocked();
+}
+
+void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok) {
+    tok = TraceToken{};
+    g_inflight.fetch_add(1, std::memory_order_seq_cst);
+    if (!g_tracing.load(std::memory_order_seq_cst)) {
+        g_inflight.fetch_sub(1, std::memory_order_release);
+        return;
+    }
+    const uint64_t gen = g_trace.gen;
+    bool open = false;
+    if (!g_trace.ticked.Empty()) {
+        if (t_scopeGen != gen) {
+            t_scopeSp = 0;          // a scope left open by an earlier recording is not this one's
+            t_scopeGen = gen;
+        } else if (t_scopeSp != 0 && sp >= t_scopeSp) {
+            t_scopeSp = 0;          // called from at or above the root's frame: the root is gone (unwound)
+        }
+        if (t_scopeSp == 0) {
+            if (!g_trace.ticked.Contains(ufunc)) {
+                g_inflight.fetch_sub(1, std::memory_order_release);
+                return;
+            }
+            t_scopeSp = sp;
+            open = true;
+        }
+    }
+    if (!open && g_trace.exclude.Contains(ufunc)) {
+        g_inflight.fetch_sub(1, std::memory_order_release);
+        return;
+    }
+    const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
+    TraceRecord& r = g_trace.buf[seq % g_trace.cap];
+    r.seqKind = seq;
+    r.ticks   = g_clock();
+    r.a       = ufunc;
+    r.b       = obj;
+    r.tid     = tid;
+    r.flags   = open ? kTraceScopeRoot : 0;
+    g_inflight.fetch_sub(1, std::memory_order_release);
+    tok.entrySeq = seq;
+    tok.gen      = gen;
+    tok.traced   = true;
+    tok.opened   = open;
+}
+
+void TraceReturn(const TraceToken& tok, uint32_t tid) {
+    // Close this thread's scope first: it is thread state, not ring state, and must close even when nothing more
+    // is written (the trace stopped while the root ran).
+    if (tok.opened && t_scopeGen == tok.gen) t_scopeSp = 0;
+    if (!tok.traced) return;
+    g_inflight.fetch_add(1, std::memory_order_seq_cst);
+    if (!g_tracing.load(std::memory_order_seq_cst) || g_trace.gen != tok.gen) {
+        g_inflight.fetch_sub(1, std::memory_order_release);
+        return;
+    }
+    const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
+    TraceRecord& r = g_trace.buf[seq % g_trace.cap];
+    r.seqKind = seq | kTraceReturnBit;
+    r.ticks   = g_clock();
+    r.a       = tok.entrySeq;
+    r.b       = 0;
+    r.tid     = tid;
+    r.flags   = 0;
+    g_inflight.fetch_sub(1, std::memory_order_release);
+}
+
+TraceInfo GetTraceInfo() {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    TraceInfo i;
+    i.allocated  = g_trace.buf != nullptr;
+    i.tracing    = g_tracing.load(std::memory_order_seq_cst);
+    i.quiesced   = g_trace.quiesced;
+    i.bytes      = g_trace.bytes;
+    i.capacity   = g_trace.cap;
+    i.written    = g_trace.next.load(std::memory_order_relaxed);
+    i.firstValid = FirstValidLocked();
+    i.gen        = g_trace.gen;
+    i.qpcFreq    = QpcFreq();
+    i.ticked     = g_trace.ticked.Size();
+    i.excluded   = g_trace.exclude.Size();
+    return i;
+}
+
+bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out) {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
+    const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
+    const uint64_t begin = from > FirstValidLocked() ? from : FirstValidLocked();
+    if (begin >= w) return true;
+    // [from, from + maxRecords), then clipped: a page asked from before the window does not reach further into it.
+    const uint64_t want = (static_cast<uint64_t>(maxRecords) > UINT64_MAX - from) ? UINT64_MAX : from + maxRecords;
+    const uint64_t end  = want < w ? want : w;
+    if (end <= begin) return true;
+    out.reserve(out.size() + static_cast<size_t>(end - begin));
+    for (uint64_t seq = begin; seq < end; ++seq) {
+        const TraceRecord& r = g_trace.buf[seq % g_trace.cap];
+        // A slot whose number is not `seq` was written out of turn when the ring lapped inside one write; it is
+        // left out rather than shown under the wrong number.
+        if ((r.seqKind & kTraceSeqMask) == seq) out.push_back(r);
+    }
+    return true;
+}
+
+bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs) {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
+    if (!g_trace.distinctReady) {
+        std::vector<uintptr_t> f, o;
+        const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
+        for (uint64_t seq = FirstValidLocked(); seq < w; ++seq) {
+            const TraceRecord& r = g_trace.buf[seq % g_trace.cap];
+            if (r.seqKind != seq) continue;   // a return record, or a slot written out of turn
+            f.push_back(static_cast<uintptr_t>(r.a));
+            if (r.b) o.push_back(static_cast<uintptr_t>(r.b));
+        }
+        std::sort(f.begin(), f.end());
+        f.erase(std::unique(f.begin(), f.end()), f.end());
+        std::sort(o.begin(), o.end());
+        o.erase(std::unique(o.begin(), o.end()), o.end());
+        g_trace.distinctFuncs.swap(f);
+        g_trace.distinctObjs.swap(o);
+        g_trace.distinctReady = true;
+    }
+    funcs = g_trace.distinctFuncs;
+    objs  = g_trace.distinctObjs;
+    return true;
+}
+
+std::string Base64Encode(const uint8_t* data, size_t len) {
+    static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.resize(((len + 2) / 3) * 4);
+    char* o = out.data();
+    size_t i = 0;
+    for (; i + 3 <= len; i += 3) {
+        const uint32_t v = (uint32_t(data[i]) << 16) | (uint32_t(data[i + 1]) << 8) | data[i + 2];
+        *o++ = kAlphabet[(v >> 18) & 63];
+        *o++ = kAlphabet[(v >> 12) & 63];
+        *o++ = kAlphabet[(v >> 6) & 63];
+        *o++ = kAlphabet[v & 63];
+    }
+    if (const size_t rest = len - i) {
+        const uint32_t v = (uint32_t(data[i]) << 16) | (rest == 2 ? uint32_t(data[i + 1]) << 8 : 0);
+        *o++ = kAlphabet[(v >> 18) & 63];
+        *o++ = kAlphabet[(v >> 12) & 63];
+        *o++ = rest == 2 ? kAlphabet[(v >> 6) & 63] : '=';
+        *o++ = '=';
+    }
+    return out;
+}
+
+void SetTraceClockForTest(uint64_t (*clock)()) {
+    g_clock = clock ? clock : QpcNow;
+}
 
 } // namespace Linie
