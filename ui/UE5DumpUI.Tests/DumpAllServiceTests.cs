@@ -609,7 +609,7 @@ public class DumpAllServiceTests
     }
 
     [Fact]
-    public void Generate_WalkProgress_SlowerThanTheIntervalStillLeavesGaps()
+    public void Generate_WalkProgress_FasterThanTheInterval_ReportsEverySecondClass()
     {
         // Half an interval per class: every second class is due.
         var clock = new ManualClock();
@@ -617,6 +617,30 @@ public class DumpAllServiceTests
         var reports = WalkReports(dump, clock, 7);
 
         Assert.Equal(new[] { 1, 3, 5, 7 }, reports.Select(r => r.Done).ToArray());
+    }
+
+    // The walk flushes in chunks of WalkClassBatchChunkSize. The tests above stay inside one chunk, so
+    // these two use enough classes for three: one throttle must pace the whole walk, and Done must keep
+    // counting across chunks instead of starting again at 1.
+    private const int ThreeChunks = DumpAllService.WalkClassBatchChunkSize * 2 + 50;
+
+    [Fact]
+    public void Generate_WalkProgress_OneIntervalAcrossChunks_ReportsOnce()
+    {
+        var reports = WalkReports(new FakeDumpForDump(), new ManualClock(), ThreeChunks);
+
+        var only = Assert.Single(reports);
+        Assert.Equal(1, only.Done);
+    }
+
+    [Fact]
+    public void Generate_WalkProgress_DoneCountsOnAcrossChunks()
+    {
+        var clock = new ManualClock();
+        var dump = new TimedFakeDump { Clock = clock, PerClass = DumpAllService.ProgressReportInterval };
+        var reports = WalkReports(dump, clock, ThreeChunks);
+
+        Assert.Equal(Enumerable.Range(1, ThreeChunks).ToArray(), reports.Select(r => r.Done).ToArray());
     }
 
     [Fact]
