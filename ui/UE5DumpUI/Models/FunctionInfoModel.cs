@@ -1,8 +1,8 @@
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// Represents a UFunction with its parameters.
-/// Used by SDK generation and UFunction invoke script generation.
+/// Represents a UFunction as walk_functions returns it. <see cref="Params"/> is the function's whole property
+/// chain: its parameters, and on a Blueprint function its locals after them (<see cref="FunctionParamModel.IsParm"/>).
 /// </summary>
 public sealed class FunctionInfoModel
 {
@@ -54,6 +54,10 @@ public sealed class FunctionParamModel
     public int Offset { get; init; } = -1;
     public bool IsOut { get; init; }
     public bool IsReturn { get; init; }
+    /// <summary>[EXTPR-539-540-2026-10-02] CPF_Parm: a parameter, the return included. A Blueprint function's
+    /// chain also holds its locals after the parameters, and those are false. Null when the DLL predates the
+    /// flag and did not say.</summary>
+    public bool? IsParm { get; init; }
     /// <summary>UScriptStruct name for StructProperty params (e.g. "Vector", "Rotator"). Empty for non-struct types.</summary>
     public string StructName { get; init; } = "";
     /// <summary>DLL-discovered sub-fields for StructProperty params (Phase B fallback). Empty for non-struct or when struct layout is unknown.</summary>

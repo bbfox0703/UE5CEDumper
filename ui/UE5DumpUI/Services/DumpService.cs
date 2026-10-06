@@ -1722,6 +1722,7 @@ public sealed class DumpService : IDumpService
                             Offset = po["offset"]?.GetValue<int>() ?? -1,
                             IsOut = po["out"]?.GetValue<bool>() ?? false,
                             IsReturn = po["ret"]?.GetValue<bool>() ?? false,
+                            IsParm = po["parm"]?.GetValue<bool>(),
                             StructName = po["struct_type"]?.GetValue<string>() ?? "",
                             StructFields = structFields,
                             // Stage 1 (Invoke param picker): expected UClass name
