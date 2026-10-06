@@ -148,7 +148,7 @@ public class FunctionParametersTests
 
         var script = InvokeScriptGenerator.Generate("BP_Door_C", "OnUse", withBigLocal);
 
-        Assert.DoesNotContain("nothing was sent", script, StringComparison.Ordinal);
+        Assert.DoesNotContain("bytes of parameters, but the mailbox holds", script, StringComparison.Ordinal);
         Assert.Contains("btnFire", script, StringComparison.Ordinal);
         Assert.Contains("for i = 0, 15 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
     }

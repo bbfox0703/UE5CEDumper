@@ -262,7 +262,7 @@ public static class InvokeScriptGenerator
 
     /// <summary>
     /// [A3-CEFORM-4X-STALESLAB] How many bytes of the mailbox's params slab the script zero-fills
-    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over every param INCLUDING the
+    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over every parameter INCLUDING the
     /// return value, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
     ///
     /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
@@ -280,15 +280,19 @@ public static class InvokeScriptGenerator
 
     /// <summary>
     /// The params bytes the call really needs: <c>max(ParmsSize, max(Offset + Size))</c> over every
-    /// param, the return slot included, UNclamped. More than
+    /// parameter, the return slot included, UNclamped. More than
     /// <see cref="CeMailboxLayout.ParamsDataBytes"/> cannot go through the mailbox at all -- see
     /// <see cref="AppendSlabRefusal"/>. (Review of 9abc03c8: the clamp alone covered only the
     /// zero-fill, and a param past the slab was still written and the call fired.)
+    ///
+    /// <para>A Blueprint function's locals do not count ([FUNCPARM-CONSUMERS]): ProcessEvent copies
+    /// only ParmsSize bytes of the caller's buffer and builds the locals in its own frame, so a local
+    /// past the slab must not refuse a call whose parameters fit.</para>
     /// </summary>
     internal static long RequiredSpan(FunctionInfoModel func)
     {
         long span = func.ParmsSize;
-        foreach (var p in func.Params)
+        foreach (var p in func.Parameters)
             if (p.Offset >= 0 && p.Size > 0)
                 span = Math.Max(span, (long)p.Offset + p.Size);
         return span;
