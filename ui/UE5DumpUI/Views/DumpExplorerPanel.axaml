@@ -100,7 +100,7 @@
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColKind}"
                                 Binding="{Binding KindLabel}" SortMemberPath="KindLabel"
-                                Width="84" CanUserSort="True"/>
+                                Width="100" CanUserSort="True"/>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColName}"
                                 Binding="{Binding Name}" SortMemberPath="Name"
                                 Width="260" MinWidth="140" CanUserSort="True"/>
@@ -170,7 +170,7 @@
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColKind}"
                                 Binding="{Binding KindLabel}" SortMemberPath="KindLabel"
-                                Width="84" CanUserSort="True"/>
+                                Width="100" CanUserSort="True"/>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColName}"
                                 Binding="{Binding Name}" SortMemberPath="Name"
                                 Width="260" MinWidth="140" CanUserSort="True"/>
