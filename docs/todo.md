@@ -324,6 +324,14 @@ the list from `scripts/analysis/engine_paths.py`.
   checked live the same day, builds 3627–3628: Dump Explorer ▸ **Compare…**, held to the script by 30 shared cases
   and on real dumps; the plan's "[DUMPDIFF-UI] built" has the commits and the checks. Persisted: include-engine and
   breaking-only. The last folder is not: the file pickers take no start folder.
+- ⬜ `[LIVEFUNCS-HIDE-PERFRAME]` **Live Funcs: hide the per-frame functions, in the DLL** (M, low risk). The
+  maintainer's request (2026-10-06), after asking whether Min calls could reach 8192 to drop the 60 fps band: Min
+  calls hides LOW counts (`Count < MinCalls`), the opposite end, and a count threshold depends on the frame rate and
+  the recording's length (60 fps x 60 s = 3,600; 144 fps = 8,640). Per-frame is a cadence instead: a mean gap of 40 ms
+  or less (the band the panel's Periodic only already excludes) held over at least half the recording, so an
+  action's short burst stays. `pe_profile_get` skips them BEFORE the fetch limit, so their rows go to the low-count
+  functions this panel is for; a UI-side filter could not bring back what the limit cut. Opt-in, OFF by default,
+  remembered, fixed at Start like the fetch limit.
 
 *Parent:* PRs [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) and
 [#540](https://github.com/bbfox0703/UE5CEDumper/pull/540) by fireundubh, both based on `main` @ `c74daa4b`.
