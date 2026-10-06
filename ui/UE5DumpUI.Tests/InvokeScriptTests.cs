@@ -145,6 +145,7 @@ public class InvokeScriptTests
         {
             Name = "setTarget",
             ParmsSize = 8,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() {
@@ -193,6 +194,7 @@ public class InvokeScriptTests
         {
             Name = "setSpeed",
             ParmsSize = 4,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "Speed", TypeName = "FloatProperty", Size = 4, Offset = 0 },
@@ -349,6 +351,7 @@ public class InvokeScriptTests
         {
             Name = "doThing",
             ParmsSize = 13,
+            NumParms = 4,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "X", TypeName = "IntProperty", Size = 4, Offset = 0 },
@@ -467,6 +470,7 @@ public class InvokeScriptTests
         {
             Name = "TryBuy",
             ParmsSize = 12,
+            NumParms = 2,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "ItemId", TypeName = "IntProperty", Size = 4, Offset = 0 },
@@ -616,6 +620,7 @@ public class InvokeScriptTests
         {
             Name = "SetName",
             ParmsSize = 16,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "NewName", TypeName = "StrProperty", Size = 16, Offset = 0 },
@@ -637,6 +642,7 @@ public class InvokeScriptTests
         {
             Name = "SetTag",
             ParmsSize = 16,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "Tag", TypeName = "Utf8StrProperty", Size = 16, Offset = 0 },
@@ -675,6 +681,7 @@ public class InvokeScriptTests
         {
             Name = "GetText",
             ParmsSize = 16,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "OutText", TypeName = "StrProperty", Size = 16, Offset = 0, IsOut = true },
@@ -696,6 +703,7 @@ public class InvokeScriptTests
         {
             Name = "Rename",
             ParmsSize = 32,
+            NumParms = 2,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "NewName", TypeName = "StrProperty", Size = 16, Offset = 0 },
@@ -751,6 +759,7 @@ public class InvokeScriptTests
     {
         var func = new FunctionInfoModel
         {
+            NumParms = 3,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "A", IsReturn = false },
