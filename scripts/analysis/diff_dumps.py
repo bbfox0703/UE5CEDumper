@@ -727,6 +727,27 @@ def run_self_test() -> int:
             and d_with_eng.changed[0].props_size_delta == 8,
             "engine class diffed when --include-engine", errors)
 
+    # --- A game's own C++ module is not engine ---
+    # The game's native classes live under /Script/<GameModule> too. A default diff must report
+    # them; only the engine's modules are skipped. A module whose name merely starts like an
+    # engine module's is the game's as well.
+    def _sized(name: str, path: str, size: int) -> dict:
+        return {"kind": "class", "name": name, "addr": "0x1", "path": path, "meta": "Class",
+                "super": "", "super_addr": "0x0", "is_bpgc": False, "props_size": size,
+                "instance_count": 0, "props": [], "funcs": []}
+
+    for label, path, engine in (
+        ("game native module", "//Script/FakeGame/AHeroBase", False),
+        ("module named like an engine one", "//Script/EngineOverride/Foo", False),
+        ("engine module, single slash", "/Script/Engine/Actor", True),
+        ("engine module, dotted", "//Script/UMG.UserWidget", True),
+    ):
+        d_mod = diff_dumps(_make_dump("FakeGame", [_sized("C", path, 16)]),
+                           _make_dump("FakeGame", [_sized("C", path, 24)]),
+                           include_engine=False)
+        _assert(len(d_mod.changed) == (0 if engine else 1),
+                f"{label}: {'skipped' if engine else 'diffed'} by default", errors)
+
     # --- Path normalization (//Script vs /Script) ---
     old_path = _make_dump("FakeGame", [
         {"kind": "class", "name": "X", "addr": "0x1",
