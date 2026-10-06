@@ -1756,6 +1756,12 @@ int main() {
         put32(wfLocal, DynOff::UPROPERTY_OFFSET, 0x90);                       // past the parameter block
         put(wfLocal, 0x70, named(4));                                         // PropertyClass Actor, 4.18's slot
         put(wfStrP[1], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfLocal));
+        // Anti-vacuity (review of 987a0dab): the same entry flagged CPF_Parm IS counted, so the star check below
+        // fails for the flag and not because the local is unreachable.
+        put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000280ull);
+        check("UFUNCWALK control: the same entry, flagged CPF_Parm, is counted",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 2);
+        put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000200ull);
         check("UFUNCWALK ⭐: FindFunctionsByClassParam does not count a Blueprint local typed with the class",
               Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
         put(wfStrP[1], DynOff::UFIELD_NEXT, 0);
@@ -1897,6 +1903,22 @@ int main() {
             check(("UFUNCPARM ⭐: " + who + " -- the parameter and the return are parameters").c_str(),
                   ps[0].isParm && ps[1].isParm);
             check(("UFUNCPARM ⭐: " + who + " -- the local after them is not").c_str(), !ps[2].isParm);
+
+            // [FUNCPARM-CONSUMERS] review: Mimic clears the return slot before an invoke, and the slot comes from
+            // the chain's CPF_ReturnParm entry (ResolveFunctionInfo reads only the tail, which has no size).
+            int32_t retOff = -1, retSize = 0;
+            const bool hasRet = Ubel::ReadReturnSlot(reinterpret_cast<uintptr_t>(upFn[m]), retOff, retSize);
+            check(("UFUNCPARM ⭐: " + who + " -- the return slot is the CPF_ReturnParm entry's").c_str(),
+                  hasRet && retOff == 4 && retSize == 1,
+                  (std::to_string(retOff) + "/" + std::to_string(retSize)).c_str());
+            // No return: drop the ReturnValue entry from the chain (Count links straight to the local).
+            const uintptr_t savedNext = *reinterpret_cast<uintptr_t*>(upProp[m][0] +
+                (fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT));
+            putP(upProp[m][0], fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT,
+                 reinterpret_cast<uintptr_t>(upProp[m][2]));
+            check(("UFUNCPARM ⭐: " + who + " -- a function without a return has no return slot").c_str(),
+                  !Ubel::ReadReturnSlot(reinterpret_cast<uintptr_t>(upFn[m]), retOff, retSize));
+            putP(upProp[m][0], fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT, savedNext);
         }
 
         DynOff::bCasePreservingName = savedCpnP;
