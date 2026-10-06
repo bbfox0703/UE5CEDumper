@@ -91,11 +91,15 @@ def main() -> int:
     checks.append((f"every row it dropped has a frame-band cadence ({len(dropped)} dropped)", not slow_dropped,
                    ", ".join(slow_dropped[:5])))
 
+    # The limit's rows go to the rest: the skip fetch fills to the limit from what was not left out. (A game whose
+    # whole table ticks every frame, an idle DumperTest at 60 fps, leaves nothing, and that is the right answer.)
     added = [f for f in sf if key(f) not in {key(x) for x in pf}]
     plain_capped = len(pf) >= args.limit and plain.get("distinct_funcs", 0) > len(pf)
-    checks.append((f"the skip fetch shows rows the plain fetch's limit cut ({len(added)} new)",
-                   (len(added) > 0) if plain_capped else True,
-                   "plain fetch was not capped" if not plain_capped else ""))
+    rest = plain.get("distinct_funcs", 0) - (hidden or 0)
+    checks.append((f"the skip fetch fills the limit from the rest: {len(sf)} = min({args.limit}, {rest})",
+                   len(sf) == min(args.limit, rest), "fewer: stale UFunction pointers dropped?" if len(sf) < min(args.limit, rest) else ""))
+    if plain_capped and rest > 0:
+        checks.append((f"the skip fetch shows rows the plain fetch's limit cut ({len(added)} new)", len(added) > 0, ""))
     if plain_capped and pf and sf:
         checks.append(("the plain fetch's lowest count is above the skip fetch's lowest",
                        min(f["count"] for f in pf) >= min(f["count"] for f in sf),
