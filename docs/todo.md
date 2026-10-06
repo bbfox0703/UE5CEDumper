@@ -268,9 +268,11 @@ Open work only. **Read this when deciding what to do next.**
 feature is built yet; three small changes landed early (build 3616). ⚠ **Re-checked 2026-10-06** (the plan's
 "Re-check 2026-10-06"); its four questions R1–R4 were decided the same day. **Order now:** ✅ `pe_profile_get`
 at 32768 measured 2026-10-06 (Avowed: 648 distinct, 543 rows, 144 KB, about 15 ms; it stays on the interactive
-lane) → fix `diff_dumps.py`'s engine test (R4) → the features. Each feature commit
-ends with `Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.com>`; the reply on the PRs is
-written after the work, not before.
+lane) → ✅ `diff_dumps.py`'s engine test (R4, `6ade4435`, 2026-10-06) → the features. A commit that carries
+code or logic from the two PRs ends with `Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.com>`;
+our own measurements, UI adjustments, tests, gates and docs do not (maintainer, 2026-10-06). The reply on the PRs
+is written after the work, not before. Open, the maintainer's call: `analyze_dumps.py` has the same "`/Script/`
+anywhere is engine" test that R4 fixed in `diff_dumps.py`.
 
 - ⬜ **PR 540 — Live Funcs** (UI). Effort **M**, risk **low**. In order: fetch-limit slider (2^x, default 2^9,
   max 2^15 = 32768, raised from 2^13 on 2026-10-04) → Save `.jsonl` → Min calls slider (default 1, max 32, affects the next capture only). All three

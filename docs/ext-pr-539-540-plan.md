@@ -44,7 +44,20 @@ be checked (the Linux test run, and the typical number of distinct functions), a
 | R1 | Min calls in diff mode: exempt NEW rows, or only warn in the tooltip? | **Neither.** The filter is `Count < MinCalls` (strictly less), so the default 1 filters nothing. NEW rows are filtered like any other row; the filter is not needed in normal use. |
 | R2 | D4's separate file: every object (as Dumper-7 and RE-UE4SS), or keep the `IsLiveInstanceRow` filter and say so? | **Every object**, packages and type objects included, in the separate `<name>.objects.jsonl` of D4.3 (unchanged: the Dump All file never carries it). No `IsLiveInstanceRow` filter for this file. |
 | R3 | D4's GObjects index: accept the DLL change it needs (a new build of the DLL, not only the UI)? | **Change the DLL**, design left to us: see "R3 design" below. |
-| R4 | `diff_dumps.py`'s engine test (`/Script/` anywhere in the path) also drops the game's own native classes. Change it before D1/D5 and the C# port build on it? | **Change `diff_dumps.py` first.** It is the next target after the `pe_profile_get` measurement. |
+| R4 | `diff_dumps.py`'s engine test (`/Script/` anywhere in the path) also drops the game's own native classes. Change it before D1/D5 and the C# port build on it? | **Change `diff_dumps.py` first.** ✅ **Done 2026-10-06:** red `80e7bfbf`, fix `6ade4435`, gates `15d566e8` (see "R4 done" below). |
+
+**R4 done (2026-10-06).** `diff_dumps.py` now skips only the engine's own modules: it carries a copy of the DLL's
+`Aura::IsEnginePackage` list (`ENGINE_PATH_PREFIXES`) and its rule (collapse the leading slashes, then a prefix
+must be followed by the end, `/` or `.`). A default diff therefore reports the game's own C++ classes
+(`/Script/<GameModule>/…`), and with D1 its native structs and enums; `--include-engine` adds the engine's. A
+module that is neither in the list nor the game's (an engine plugin such as `/Script/CommonUI`) is treated as the
+game's, as the DLL's GameOnly filter already does. Two new gates: `check_engine_prefixes` keeps the three copies
+of the list equal (Aura.h, `DumpAllService.cs`, `diff_dumps.py`), and `check_analysis_selftests` runs the
+`--self-test` of every script under `scripts/analysis/`, which nothing ran before. Negative controls: putting
+back the old predicate fails only `check_analysis_selftests`; dropping one module from the list fails only
+`check_engine_prefixes`. **Not changed:** `analyze_dumps.py` has the same "`/Script/` anywhere" predicate, and its
+header says it "mirrors the DLL's IsEnginePackage list", which is not true. It feeds the keyword statistics, not
+the patch diff; whether to change it is the maintainer's call.
 
 **R3 design (ours, 2026-10-06).** `get_object_list` takes one more optional request field, `include_index`
 (default false), the way `include_path` already works: with it set, each item also carries `index`, the GObjects
@@ -159,13 +172,16 @@ without one; it does not guess the slot from the page position, because the hand
 | [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) Dump All: structs, enums, function params, object index | `pr/dump-all-schema` | `439387fa` | `main` @ `c74daa4b` |
 
 **How both are taken in:** we re-implement the parts we keep on `dev` ourselves (not a merge of either PR).
-**Every commit that carries one of these features ends with**
+**Every commit that carries code from PR 539 or 540, or logic taken from them, ends with**
 
 ```
 Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.com>
 ```
 
-(the address is GitHub's noreply form of the contributor's account id, read from the PR data). The reply on the
+(the address is GitHub's noreply form of the contributor's account id, read from the PR data). **Which commits
+(maintainer, 2026-10-06):** the code and the logic that come from the two PRs get it — for example the
+`diff_dumps.py` fix (R4, `6ade4435`). Our own work around them does not: measurements, UI adjustments, tests,
+gates and these docs. A red test commit therefore has no trailer and its green fix does. The reply on the
 two PRs — what was taken, what was not and why, links to our commits — is written **after** the work is done, not
 before.
 

@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — `diff_dumps.py` reports the game's own C++ classes; two new gates `[EXTPR-539-540-2026-10-02]`
+
+- `scripts/analysis/diff_dumps.py` treated every `/Script/` path as engine, so a default patch diff left out the
+  game's own native classes. It now skips only the engine's modules, from the same list the DLL and Dump All use;
+  `--include-engine` adds them (`6ade4435`, with fireundubh as co-author; the test is `80e7bfbf`).
+- New gates (32 now): `check_engine_prefixes` keeps the three copies of that list equal, and
+  `check_analysis_selftests` runs the self-tests of the scripts in `scripts/analysis/`, which nothing ran before.
+- `analyze_dumps.py` has the same old test; left for the maintainer to decide.
+
 ## 2026-10-06 (no build change) — Live Funcs: fetching 32768 rows measured on a game; R1–R4 decided `[EXTPR-539-540-2026-10-02]`
 
 - On Avowed, build 3616: 75 s of walking and opening menus recorded 648 distinct functions; a fetch at the
