@@ -169,10 +169,11 @@ seconds instead of binary-searching offsets by hand.
 
 ### Other flags
 
-- `--include-engine` — by default `/Script/<Module>/` engine classes
-  are skipped (they rarely shift across game patches; suppressing them
-  cuts ~60% of the noise on big games). Add this flag for an exhaustive
-  comparison.
+- `--include-engine` — by default the engine's own modules
+  (`/Script/Engine`, `/Script/UMG` and the rest of the DLL's list of engine
+  packages) are skipped: they rarely shift across game patches. Blueprint
+  classes and the game's own C++ modules (`/Script/<GameModule>/`) are
+  always compared. Add this flag to compare the engine's modules too.
 - `--self-test` — runs the built-in synthetic-fixture test suite. Use
   this after editing the script to confirm the diff logic still
   matches its specification:
