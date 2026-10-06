@@ -884,4 +884,213 @@ public class LiveFuncsViewModelTests
 
         Assert.False(vm.RaiseFetchLimitHelps);
     }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] L2: Save .jsonl writes the rows on screen, in the order the
+    // game first called them, under one summary line. Disabled while recording (L4).
+    // ==================================================================
+
+    /// <summary>A platform whose save dialog answers with a temp path (or with nothing, to cancel).</summary>
+    private sealed class SavePlatform : IPlatformService
+    {
+        public string? Answer { get; set; } = Path.Combine(Path.GetTempPath(), $"lf-save-{Guid.NewGuid():N}.jsonl");
+        public int Asked { get; private set; }
+        public string? DefaultName { get; private set; }
+        public string? Extension { get; private set; }
+
+        public Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension)
+        {
+            Asked++;
+            DefaultName = defaultFileName;
+            Extension = filterExtension;
+            return Task.FromResult(Answer);
+        }
+        public bool TryAcquireSingleInstance() => true;
+        public void ReleaseSingleInstance() { }
+        public string GetAppDataPath() => Path.GetTempPath();
+        public string GetLogDirectoryPath() => Path.GetTempPath();
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
+        public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
+        public string GetMachineName() => "TEST";
+        public void CloseImeForWindow(IntPtr windowHandle) { }
+    }
+
+    private static (LiveFuncsViewModel vm, FakeDumpService dump, SavePlatform platform) MakeSavingVm()
+    {
+        var dump = new FakeDumpService();
+        var platform = new SavePlatform();
+        return (new LiveFuncsViewModel(dump, new NoopLogger(), platform), dump, platform);
+    }
+
+    private static List<System.Text.Json.JsonDocument> ReadLines(string path)
+        => File.ReadAllLines(path).Where(l => l.Length > 0).Select(l => System.Text.Json.JsonDocument.Parse(l)).ToList();
+
+    [Fact]
+    public async Task SaveJsonl_WritesTheRowsOnScreen_InFirstCallOrder_UnderASummaryLine()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 5, TotalCalls = 1234,
+            Entries = new()
+            {
+                new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 5, FuncAddr = "0x10" },
+                new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 3, FirstSeq = 2, FuncAddr = "0x20",
+                                     NumParms = 2, ParmsSize = 16 },
+                new PeProfileEntry { ClassName = "AHUD", FuncName = "Draw", Count = 40, FirstSeq = 0, FuncAddr = "0x30" },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, platform.Asked);
+        Assert.Equal("jsonl", platform.Extension);
+        Assert.StartsWith("live-funcs-", platform.DefaultName);
+        Assert.EndsWith(".jsonl", platform.DefaultName);
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.Equal(4, lines.Count);
+            var head = lines[0].RootElement;
+            Assert.Equal("live_funcs", head.GetProperty("kind").GetString());
+            Assert.Equal(3, head.GetProperty("rows").GetInt32());
+            Assert.Equal(3, head.GetProperty("fetched").GetInt32());
+            Assert.Equal(5, head.GetProperty("distinct").GetInt32());
+            Assert.Equal(1234, head.GetProperty("total_calls").GetInt64());
+            Assert.Equal(512, head.GetProperty("fetch_limit").GetInt32());
+            Assert.False(head.GetProperty("diff").GetBoolean());
+            Assert.Equal("", head.GetProperty("filter").GetString());
+            Assert.True(head.TryGetProperty("saved_at", out _));
+
+            // First call first; an unknown order (0) goes last.
+            Assert.Equal(new[] { "OpenShop", "Tick", "Draw" },
+                         lines.Skip(1).Select(l => l.RootElement.GetProperty("func").GetString()).ToArray());
+            var shop = lines[1].RootElement;
+            Assert.Equal("func", shop.GetProperty("kind").GetString());
+            Assert.Equal("AShop", shop.GetProperty("class").GetString());
+            Assert.Equal(2, shop.GetProperty("order").GetInt64());
+            Assert.Equal(3, shop.GetProperty("calls").GetInt64());
+            Assert.Equal("0x20", shop.GetProperty("addr").GetString());
+            Assert.Equal(2, shop.GetProperty("params").GetInt32());
+            Assert.Equal(16, shop.GetProperty("params_size").GetInt32());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_LeavesOutRowsTheFilterHides_AndRecordsTheFilter()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 3, FirstSeq = 2 },
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.FilterText = "shop";
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.Equal(2, lines.Count);
+            Assert.Equal(1, lines[0].RootElement.GetProperty("rows").GetInt32());
+            Assert.Equal(2, lines[0].RootElement.GetProperty("fetched").GetInt32());
+            Assert.Equal("shop", lines[0].RootElement.GetProperty("filter").GetString());
+            Assert.Equal("OpenShop", lines[1].RootElement.GetProperty("func").GetString());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_NamesThatNeedEscaping_ReadBackUnchanged()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        const string cls = "AShop\"Vendor\\Ü 商店";
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = cls, FuncName = "Open\tShop", Count = 1, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var row = ReadLines(platform.Answer!)[1].RootElement;
+            Assert.Equal(cls, row.GetProperty("class").GetString());
+            Assert.Equal("Open\tShop", row.GetProperty("func").GetString());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_InDiffMode_CarriesTheDeltaAndTheNewFlag()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 950, FirstSeq = 1 },
+            new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 2, FirstSeq = 3 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.NewChangedOnly = false;
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.True(lines[0].RootElement.GetProperty("diff").GetBoolean());
+            Assert.Equal(1, lines[0].RootElement.GetProperty("baseline_funcs").GetInt32());
+            var tick = lines.Skip(1).Single(l => l.RootElement.GetProperty("func").GetString() == "Tick").RootElement;
+            var shop = lines.Skip(1).Single(l => l.RootElement.GetProperty("func").GetString() == "OpenShop").RootElement;
+            Assert.Equal(50, tick.GetProperty("delta").GetInt64());
+            Assert.False(tick.GetProperty("new").GetBoolean());
+            Assert.True(shop.GetProperty("new").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_WhileRecording_DoesNotAsk()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.RefreshCommand.ExecuteAsync(null);   // rows on screen, still recording
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, platform.Asked);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_EmptyTable_DoesNotAsk()
+    {
+        var (vm, _, platform) = MakeSavingVm();
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, platform.Asked);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_Cancelled_WritesNothing()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        string path = platform.Answer!;
+        platform.Answer = null;   // the user closed the dialog
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, platform.Asked);
+        Assert.False(File.Exists(path));
+    }
 }
