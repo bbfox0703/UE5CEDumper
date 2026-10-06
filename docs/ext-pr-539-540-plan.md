@@ -262,8 +262,12 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | `4baf6fe7` | The slider, the VM clamp, the persisted default and the tooltip pinned to each other | no |
 
 A two-reviewer pass before the publish found the advice and layout defects fixed in `a1eab927` and `bb2db0b3`.
-C# 6042/6042. **Still owed:** the AOT publish and its build number, and a live check on a fixture (the slider at
-32768, the advice after a cut page). The Wiki's Live Funcs pages (en, zh-TW, ja-JP) still describe a fixed 300 and
+C# 6042/6042. **Published as build 3617** (AOT `UE5DumpUI.exe` 59,189,760 B, sha256 `cf10dbc1656e`).
+**Checked on 3617 without a game (2026-10-06):** the slider row renders under Start / Stop with 512; dragged to
+the end it reads 32768, `ui-options.json` holds `liveFuncs.fetchLimitExponent = 15`, and after closing and
+starting the UI again the slider still reads 32768; set back to 512 (exponent 9 on disk). The baseline status
+sits on its own line. **Still owed:** a live check with a game (a recording fetched at 32768 through the panel, and
+the advice shown, and not shown, after a cut page). The Wiki's Live Funcs pages (en, zh-TW, ja-JP) still describe a fixed 300 and
 "only a shorter window"; the Wiki is a separate repository and is not changed from here.
 
 ### Implementation notes (from the review — confirm while building)
