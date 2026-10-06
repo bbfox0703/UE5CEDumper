@@ -1663,6 +1663,22 @@ def fixture_cases() -> list[tuple[str, Dump, Dump, bool]]:
                        summary=_summary())
     f_pre = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", None)])], summary={"kind": "summary"})
 
+    # One field of one parameter at a time, so dropping any one field from the comparison changes the result.
+    def _one_change(index: int, **change) -> list[dict]:
+        return [dict(x, **change) if i == index else dict(x) for i, x in enumerate(p_a)]
+
+    single = [("NameOnly", _one_change(0, name="Damage")), ("TypeOnly", _one_change(0, type="DoubleProperty")),
+              ("StructOnly", _one_change(2, struct_type="Rotator")), ("ObjClassOnly", _one_change(1, obj_class="Pawn")),
+              ("OutOnly", _one_change(0, out=True)), ("RetOnly", _one_change(1, ret=True)),
+              ("OffsetOnly", _one_change(0, offset=4)), ("SizeOnly", _one_change(0, size=8)),
+              ("CountOnly", p_a + [{"name": "Extra", "type": "IntProperty", "offset": 28, "size": 4}])]
+    p1_old = _make_dump("FakeGame", [_cls_with([_func(n, p_a) for n, _ in single])], summary=_summary())
+    p1_new = _make_dump("FakeGame", [_cls_with([_func(n, ps) for n, ps in single])], summary=_summary())
+
+    # Equal sort keys (records with no path all sort as "") in a list long enough that an unstable sort reorders it.
+    many_old = _make_dump("FakeGame", [{**_fx_class(f"NoPathOld{i:02}", "", 4), "path": ""} for i in range(40, 0, -1)])
+    many_new = _make_dump("FakeGame", [{**_fx_class(f"NoPathNew{i:02}", "", 4), "path": ""} for i in range(40, 0, -1)])
+
     full = _make_dump("FakeGame", [_cls_with([]), {**_cls_with([]), "name": "AOther", "path": "/Game/AOther"}],
                       structs=[_struct("FHit", "/Script/FakeGame.FHit", 8, [])],
                       enums=[_enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0)])],
@@ -1727,6 +1743,8 @@ def fixture_cases() -> list[tuple[str, Dump, Dump, bool]]:
         ("enums_new_dump_predates", n_old, pre, False),
         ("params", f_old, f_new, False),
         ("params_old_dump_predates", f_pre, f_new, False),
+        ("params_one_field", p1_old, p1_new, False),
+        ("equal_sort_keys", many_old, many_new, False),
         ("new_dump_cut_off", full, cut, False),
         ("old_dump_cut_off", cut, full, False),
         ("old_build_cut_off", full, cut_old_build, False),

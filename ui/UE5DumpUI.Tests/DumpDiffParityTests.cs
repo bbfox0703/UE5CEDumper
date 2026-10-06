@@ -40,8 +40,8 @@ public class DumpDiffParityTests
     [Fact]
     public void The_fixture_set_is_there()
     {
-        // A vacuous Theory (no case found) passes silently; the script writes 24 cases today.
-        Assert.True(Cases().Count >= 24, $"only {Cases().Count} fixture case(s) found");
+        // A vacuous Theory (no case found) passes silently; the script writes 26 cases today.
+        Assert.True(Cases().Count >= 26, $"only {Cases().Count} fixture case(s) found");
     }
 
     [Theory]
