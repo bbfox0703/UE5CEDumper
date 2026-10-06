@@ -562,6 +562,7 @@ public class LiveFuncsViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.Contains("showing top 2 of 900", vm.StatusText);
+        Assert.Contains("Fetch limit", vm.StatusText);   // [EXTPR-539-540-2026-10-02] the remedy, now that the cap is the user's
     }
 
     [Fact]
@@ -591,6 +592,7 @@ public class LiveFuncsViewModelTests
 
         Assert.Contains("PARTIAL", vm.BaselineStatus);
         Assert.Contains("900", vm.BaselineStatus);
+        Assert.Contains("Fetch limit", vm.BaselineStatus);
         Assert.True(vm.DiffMode);   // still usable — refusing would disable Diff on busy games
     }
 
@@ -628,6 +630,7 @@ public class LiveFuncsViewModelTests
 
         Assert.DoesNotContain("almost certainly", vm.StatusText);
         Assert.Contains("not in the idle top N", vm.StatusText);
+        Assert.Contains("Fetch limit", vm.StatusText);
     }
 
     [Fact]
