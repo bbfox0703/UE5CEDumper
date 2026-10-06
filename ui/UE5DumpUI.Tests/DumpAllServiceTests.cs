@@ -185,6 +185,7 @@ public class DumpAllServiceTests
         dump.ClassWalks["0x3"] = new ClassInfoModel { Name = "MyAnimBP_C" };
         dump.ClassWalks["0x4"] = new ClassInfoModel { Name = "MyWidget_C" };
         dump.ClassWalks["0x7"] = new ClassInfoModel { Name = "MyDynamic_C" };
+        dump.ClassWalks["0x5"] = new ClassInfoModel { Name = "FVector" };
 
         var lines = Dump(dump);
         var classLines = lines.Where(l => l.StartsWith("{\"kind\":\"class\"")).ToList();
