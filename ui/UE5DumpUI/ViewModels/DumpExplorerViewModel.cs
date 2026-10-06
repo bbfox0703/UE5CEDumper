@@ -14,10 +14,11 @@ namespace UE5DumpUI.ViewModels;
 /// searches every row at once (no need to pick a category or switch tabs
 /// first), and results split into two groups:
 ///
-///   • In current game    — the owning class resolves to a live object in the
-///     connected game (matched by object PATH, so it survives game restarts);
-///     each row can jump straight to that live class in the Live Walker.
-///   • Not in current game — the class isn't live right now (dump from another
+///   • In current game    — the owning type (a class, struct or enum) resolves to a
+///     live object in the connected game, matched by kind and short name, so it
+///     survives game restarts (see the live-match section); each row can jump
+///     straight to that live type object in the Live Walker.
+///   • Not in current game — the type isn't live right now (dump from another
 ///     session/game, or not yet spawned); shown read-only as a metadata reference.
 ///
 /// Parsing is fully offline; the live-match / jump features require a connected
@@ -95,7 +96,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private readonly KeywordSearchMemory _searchMemory;
     public ObservableCollection<string> SearchHistory => _searchMemory.History;
 
-    /// <summary>Jump the selected row's owning class into the Live Walker.
+    /// <summary>Jump the selected row's owning type into the Live Walker.
     /// Payload = the CURRENT live address (only raised for matched rows).</summary>
     public event Action<string>? NavigateToLiveWalker;
 
@@ -204,6 +205,15 @@ public partial class DumpExplorerViewModel : ViewModelBase
             var model = await Task.Run(() => DumpJsonlReader.ReadAsync(path, parseProgress, ct), ct);
             progress.Complete($"Parsed {model.Entries.Count:N0} rows");
             ct.ThrowIfCancellationRequested();
+
+            if (model.IsObjectIndex)
+            {
+                // [EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl sits beside the class dump under the same
+                // extension; name the file the user wanted rather than asking whether this is a Dump All file.
+                StatusText = Res.Format("str.Dump.ObjectIndexFile",
+                    string.IsNullOrEmpty(model.ClassDumpFile) ? "?" : model.ClassDumpFile);
+                return;
+            }
 
             _all.AddRange(model.Entries);
             _loadedMeta = model.Meta;
@@ -621,6 +631,10 @@ public partial class DumpExplorerViewModel : ViewModelBase
         if (model.StructCount > 0) counts += $" · {model.StructCount:N0} structs";
         if (model.EnumCount > 0) counts += $" · {model.EnumCount:N0} enums";
         counts += $" · {model.PropertyCount:N0} props · {model.FunctionCount:N0} funcs";
+        // What the enum list could not say, as the completion message said it when the file was written.
+        if (model.EnumsListed == false) counts += Res.Get("str.Dump.Header.EnumsUnread");
+        else if (model.EnumNamesFailed) counts += Res.Get("str.Dump.Header.EnumNamesFailed");
+        else if (model.EnumsTruncated) counts += Res.Get("str.Dump.Header.EnumsTruncated");
         if (m is null) return counts;
         var ue = m.UeVersion > 0 ? $"UE {m.UeVersion / 100}.{m.UeVersion % 100}" : "UE ?";
         var mod = string.IsNullOrEmpty(m.Module) ? "" : $" · {m.Module}";

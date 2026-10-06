@@ -69,7 +69,7 @@
     <sys:String x:Key="str.Dump.Recheck">🔄 Re-check live</sys:String>
     <sys:String x:Key="str.Dump.Cancel">Cancel</sys:String>
     <sys:String x:Key="str.Dump.SearchHint">Keyword — searches class / struct / enum / property / function / parameter names at once (space = AND)</sys:String>
-    <sys:String x:Key="str.Dump.MetaNote">ⓘ Rows are type definitions (classes, structs, enums: metadata), not live instances — a type isn't part of the GWorld/GameEngine object graph, so there's no Locate here. 🡒 Jump opens the class; 🔍 Instances finds a live instance you can then Locate via Related.</sys:String>
+    <sys:String x:Key="str.Dump.MetaNote">ⓘ Rows are type definitions (classes, structs, enums: metadata), not live instances — a type isn't part of the GWorld/GameEngine object graph, so there's no Locate here. 🡒 Jump opens the owning class, struct or enum; 🔍 Instances (classes only) finds a live instance you can then Locate via Related.</sys:String>
     <sys:String x:Key="str.Dump.Cat.All">All</sys:String>
     <sys:String x:Key="str.Dump.Cat.Class">Classes</sys:String>
     <sys:String x:Key="str.Dump.Cat.Property">Properties</sys:String>
@@ -77,6 +77,10 @@
     <sys:String x:Key="str.Dump.Cat.Struct">Structs</sys:String>
     <sys:String x:Key="str.Dump.Cat.Enum">Enums</sys:String>
     <sys:String x:Key="str.Dump.Cat.Enumerator">Enumerators</sys:String>
+    <sys:String x:Key="str.Dump.ObjectIndexFile">This is Dump All's object index, not a class dump: open {0} beside it to browse the types.</sys:String>
+    <sys:String x:Key="str.Dump.Header.EnumsUnread"> · ⚠ the enum list could not be read</sys:String>
+    <sys:String x:Key="str.Dump.Header.EnumNamesFailed"> · ⚠ enum member names were unreadable</sys:String>
+    <sys:String x:Key="str.Dump.Header.EnumsTruncated"> · ⚠ the enum list was cut short</sys:String>
     <sys:String x:Key="str.Dump.FindInstances.NotAClass">🔍 Instances is for classes: a struct or an enum has no instances of its own.</sys:String>
     <sys:String x:Key="str.Dump.ColKind">Kind</sys:String>
     <sys:String x:Key="str.Dump.ColName">Name</sys:String>

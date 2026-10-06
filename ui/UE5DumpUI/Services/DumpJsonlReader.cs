@@ -30,7 +30,11 @@ public static class DumpJsonlReader
         CancellationToken ct = default)
     {
         DumpMetaLine? meta = null;
+        DumpSummaryLine? summary = null;
         var entries = new List<DumpEntry>();
+        // Enum lines come before the summary, whose enum_names_failed decides how an empty enum reads; their rows
+        // are written once the file is read.
+        var enumLines = new List<DumpEnumLine>();
         int classCount = 0, structCount = 0, enumCount = 0, propCount = 0, funcCount = 0;
 
         await using var fs = new FileStream(
@@ -67,9 +71,16 @@ public static class DumpJsonlReader
                     try
                     {
                         var e = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpEnumLine);
-                        if (e is not null) AppendEnum(entries, e, ref enumCount);
+                        if (e is not null) enumLines.Add(e);
                     }
                     catch (JsonException) { /* skip a corrupt enum line */ }
+                    break;
+                case "summary":
+                    try
+                    {
+                        summary = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpSummaryLine);
+                    }
+                    catch (JsonException) { /* leave summary null */ }
                     break;
                 case "meta":
                     try
@@ -77,18 +88,29 @@ public static class DumpJsonlReader
                         meta = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpMetaLine);
                     }
                     catch (JsonException) { /* leave meta null */ }
+                    // [EXTPR-539-540-2026-10-02] Dump All's object index shares the extension and can hold over a
+                    // million object lines, none of them browsable here: stop at its meta line.
+                    if (meta?.File == "objects")
+                        return new DumpFileModel { Meta = meta, IsObjectIndex = true, ClassDumpFile = meta.ClassDump };
                     break;
-                // "error" / "summary" lines carry no browsable metadata.
+                // "error" lines carry no browsable metadata.
             }
 
             if ((lineNo & 0x3FF) == 0)
                 progress?.Report(entries.Count);
         }
 
+        bool namesFailed = summary?.EnumNamesFailed == true;
+        foreach (var e in enumLines)
+            AppendEnum(entries, e, namesFailed, ref enumCount);
+
         return new DumpFileModel
         {
             Meta = meta,
             Entries = entries,
+            EnumsListed = summary?.EnumsListed,
+            EnumNamesFailed = namesFailed,
+            EnumsTruncated = summary?.EnumsTruncated == true,
             ClassCount = classCount,
             StructCount = structCount,
             EnumCount = enumCount,
@@ -169,12 +191,14 @@ public static class DumpJsonlReader
 
     /// <summary>[EXTPR-539-540-2026-10-02] An enum line: its row, then one row per enumerator. The enum's
     /// dump-time address stands in for the class address every member row carries.</summary>
-    private static void AppendEnum(List<DumpEntry> entries, DumpEnumLine e, ref int enumCount)
+    private static void AppendEnum(List<DumpEntry> entries, DumpEnumLine e, bool namesFailed, ref int enumCount)
     {
         var path = e.Path ?? "";
         var addr = e.Addr ?? "";
         int n = e.Entries?.Count ?? 0;
-        var typeInfo = n.ToString(CultureInfo.InvariantCulture) + " entries";
+        // With no member names (the summary's enum_names_failed) every enum has none: "0 entries" would read as
+        // an empty enum.
+        var typeInfo = namesFailed && n == 0 ? "entries unreadable" : n.ToString(CultureInfo.InvariantCulture) + " entries";
         entries.Add(new DumpEntry
         {
             Kind = DumpEntryKind.Enum,
@@ -214,7 +238,11 @@ public static class DumpJsonlReader
     internal static string ComposeSignature(DumpFuncLine f)
     {
         var sb = new StringBuilder();
-        if (!string.IsNullOrEmpty(f.ReturnType)) sb.Append(f.ReturnType).Append(' ');
+        // The return in front: from its params entry when there is one, which says which struct or class comes
+        // back (return_type is only the property type).
+        var ret = f.Params?.FirstOrDefault(p => p.Ret);
+        if (ret is not null) AppendParamType(sb, ret).Append(' ');
+        else if (!string.IsNullOrEmpty(f.ReturnType)) sb.Append(f.ReturnType).Append(' ');
         sb.Append('(');
         if (f.Params is null)
             return sb.Append(f.NumParms.ToString(CultureInfo.InvariantCulture)).Append(')').ToString();
@@ -225,12 +253,17 @@ public static class DumpJsonlReader
             if (!first) sb.Append(", ");
             first = false;
             if (p.Out) sb.Append("out ");
-            sb.Append(p.Type);
-            if (!string.IsNullOrEmpty(p.StructType)) sb.Append('<').Append(p.StructType).Append('>');
-            if (!string.IsNullOrEmpty(p.ObjClass)) sb.Append(':').Append(p.ObjClass);
-            sb.Append(' ').Append(p.Name);
+            AppendParamType(sb, p).Append(' ').Append(p.Name);
         }
         return sb.Append(')').ToString();
+    }
+
+    private static StringBuilder AppendParamType(StringBuilder sb, DumpFuncParamLine p)
+    {
+        sb.Append(p.Type);
+        if (!string.IsNullOrEmpty(p.StructType)) sb.Append('<').Append(p.StructType).Append('>');
+        if (!string.IsNullOrEmpty(p.ObjClass)) sb.Append(':').Append(p.ObjClass);
+        return sb;
     }
 
     /// <summary>Human-readable type string: base type plus struct/inner/enum/obj-class detail.</summary>

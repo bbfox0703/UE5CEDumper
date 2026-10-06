@@ -102,12 +102,28 @@ public sealed class DumpMetaLine
     [JsonPropertyName("pe_hash")]      public string PeHash      { get; set; } = "";
     [JsonPropertyName("dumped_at")]    public string DumpedAt    { get; set; } = "";
     [JsonPropertyName("dumper_build")] public int    DumperBuild { get; set; }
+    /// <summary>[EXTPR-539-540-2026-10-02] "objects" on Dump All's object index, which shares the class dump's
+    /// extension; empty on a class dump.</summary>
+    [JsonPropertyName("file")]         public string File        { get; set; } = "";
+    /// <summary>The object index's class dump, by file name.</summary>
+    [JsonPropertyName("class_dump")]   public string ClassDump   { get; set; } = "";
+}
+
+/// <summary>[EXTPR-539-540-2026-10-02] What the summary line says about the enum list: whether it was read,
+/// whether member names could be, and whether it was cut short. Null / false when the file has no such keys
+/// (a dump from before build 3621, or one cut off before its summary).</summary>
+public sealed class DumpSummaryLine
+{
+    [JsonPropertyName("enums_listed")]      public bool? EnumsListed     { get; set; }
+    [JsonPropertyName("enum_names_failed")] public bool  EnumNamesFailed { get; set; }
+    [JsonPropertyName("enums_truncated")]   public bool  EnumsTruncated  { get; set; }
 }
 
 /// <summary>Source-generated JSON context (AOT/trimming — reflection JSON is disabled).</summary>
 [JsonSerializable(typeof(DumpClassLine))]
 [JsonSerializable(typeof(DumpMetaLine))]
 [JsonSerializable(typeof(DumpEnumLine))]
+[JsonSerializable(typeof(DumpSummaryLine))]
 internal partial class DumpJsonlContext : JsonSerializerContext
 {
 }
@@ -141,7 +157,7 @@ public sealed class DumpEntry
 {
     public DumpEntryKind Kind { get; init; }
 
-    /// <summary>Class / property / function name.</summary>
+    /// <summary>The row's own name: a type's, a member's or an enumerator's.</summary>
     public string Name { get; init; } = "";
 
     /// <summary>Owning type name (empty for a class, struct or enum row).</summary>
@@ -164,7 +180,7 @@ public sealed class DumpEntry
     /// enumerator's value.</summary>
     public string TypeInfo { get; init; } = "";
 
-    /// <summary>Property offset within its class; -1 for class/function rows.</summary>
+    /// <summary>A property row's offset within its owning type; -1 on every row that is not a property.</summary>
     public int Offset { get; init; } = -1;
 
     /// <summary>Object path of the owning type (display + Copy path only — NOT
@@ -182,11 +198,11 @@ public sealed class DumpEntry
 
     // --- Live-match state (mutable) ---
 
-    /// <summary>True when the owning class resolves to a live object in the
+    /// <summary>True when the owning type resolves to a live object in the
     /// currently-connected game.</summary>
     public bool IsMatched { get; set; }
 
-    /// <summary>The owning class's CURRENT live address (jump target); empty when unmatched.</summary>
+    /// <summary>The owning type's CURRENT live address (jump target); empty when unmatched.</summary>
     public string LiveAddr { get; set; } = "";
 
     // --- Display helpers ---
@@ -215,4 +231,14 @@ public sealed class DumpFileModel
     public int EnumCount { get; init; }
     public int PropertyCount { get; init; }
     public int FunctionCount { get; init; }
+
+    /// <summary>[EXTPR-539-540-2026-10-02] The summary line's enum flags (<see cref="DumpSummaryLine"/>).</summary>
+    public bool? EnumsListed { get; init; }
+    public bool EnumNamesFailed { get; init; }
+    public bool EnumsTruncated { get; init; }
+
+    /// <summary>The file is Dump All's object index, not a class dump: nothing in it was read past its meta
+    /// line. <see cref="ClassDumpFile"/> names the class dump to open instead.</summary>
+    public bool IsObjectIndex { get; init; }
+    public string ClassDumpFile { get; init; } = "";
 }
