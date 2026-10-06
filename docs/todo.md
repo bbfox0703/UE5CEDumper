@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **10 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **11 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -291,14 +291,23 @@ the list from `scripts/analysis/engine_paths.py`.
   added / removed; timer-based progress (✅ done early, `14ecb189`); fix the Explorer short-name collision and the enum labels; move the
   `DumpJsonlContext` doc comment back; the tooltip names the new contents (it states no time or size — fixed 2026-10-02);
   the Explorer searches parameter names (the reason D3 was taken; the file carries them since build 3622).
-- ⬜ `[FUNCPARM-CONSUMERS]` (LOW; found by D3, split off by the maintainer 2026-10-06). `walk_functions` lists a
-  UFunction's whole property chain, and every consumer but Dump All still treats a Blueprint function's locals as
-  parameters: the Invoke form and its script (`InvokeScriptGenerator.Generate`, the Live Walker and main-window
-  invoke paths) offer them as inputs (the 2026-08 Y1 TRAP 1); `InvokeScriptGenerator.RequiredSpan` counts them,
-  so a local can inflate the span and trigger the slab refusal; `SdkExportService.GenerateFunctionSignature`
-  lists them; `docs/tips.md`'s vendor tip relies on the dialog. Fix: filter on `FunctionParamModel.IsParm`
-  (null with a DLL older than 3622: the leading `NumParms` entries); check the DLL-side users of
-  `FunctionInfo::params` too. Effort S–M, risk low. Live check: an Invoke on a Blueprint function with locals.
+- 🟡 `[FUNCPARM-CONSUMERS]` (LOW; found by D3, split off by the maintainer 2026-10-06). `walk_functions` lists a
+  UFunction's whole property chain, and every consumer but Dump All treated a Blueprint function's locals as
+  parameters. ✅ **Fixed in source 2026-10-06, build 3624**, red before green per consumer.
+  `FunctionInfoModel.Parameters` holds the one rule: the `parm`-flagged entries, or, from a DLL older than 3622,
+  the leading `NumParms`. `InputParams` is it without the return, and Dump All reads it too (`a374ccc8` red,
+  `079cf5d6`; ten fixtures that carried no `NumParms`, a shape no DLL sends, were made real first, `3506b595`).
+  Then each consumer: the CE Invoke script's form (`5eabb1a5` red, `90a6afb2`);
+  `InvokeScriptGenerator.RequiredSpan`, so a local no longer widens the zero-fill or trips the slab refusal
+  (`71e35ec6` red, `2bc914dc`); the SDK signature (`cb5e637d` red, `fdc79e38`); the five view-model invoke paths,
+  which fed the dialog's form and its post-call readout, where a `CallFunc_*_ReturnValue` local was tagged
+  `(return*)` (`9645ff26` red, a source pin since the dialog cannot open in a unit test; `14413e87`); and in the
+  DLL `FindFunctionsByClassParam` (Find Func), which reported a Blueprint function as taking a class it only casts
+  to (`4a94ab40` fixture, `a47dfc70` red, `987a0dab`). The DLL's other readers of `FunctionInfo::params` needed
+  nothing: the gameplay modules look parameters up by name on native engine functions and bound every access by a
+  `ParmsSize`-sized buffer, which no local fits, and Mimic finds the return by CPF_ReturnParm, which no local
+  carries. `docs/tips.md`'s vendor tip reads correctly as written. ⬜ **Live check owed:**
+  `verification-register.md` `[FUNCPARM-CONSUMERS]`.
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
   weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
   HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.

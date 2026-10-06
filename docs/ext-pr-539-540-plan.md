@@ -483,7 +483,7 @@ No parameter followed a local on any host, so the older-DLL fallback's assumptio
 
 **Owed:** Dump Explorer's parameter search, the reason D3 was taken (PR 539's `DumpFuncParamLine` /
 `ParamHaystack` are the reference), with the Explorer item; `diff_dumps.py` comparing `params` (D5); the other
-consumers (`[FUNCPARM-CONSUMERS]`); the live Dump All time and size measurement, now that D1–D3 are in.
+consumers (`[FUNCPARM-CONSUMERS]`, fixed in build 3624, its live check owed); the live Dump All time and size measurement, now that D1–D3 are in.
 
 ### D2 built (2026-10-06)
 

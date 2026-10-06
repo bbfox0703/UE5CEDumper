@@ -27,6 +27,21 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3624) — Invoke, the SDK header and Find Func stop taking a Blueprint function's locals for parameters `[FUNCPARM-CONSUMERS]`
+
+- A Blueprint function keeps its local variables in the same list as its parameters in the game's data, and since
+  build 3622 only Dump All told them apart. Now the rest do too: the **Invoke** dialog (Live Walker, Interesting
+  Functions, Console) and the CE Invoke script offer only the function's arguments as inputs, and the dialog's
+  post-call readout lists only its parameters. The **SDK header** signature lists only the arguments.
+  **Find Func** (functions taking a class as a parameter) no longer lists a Blueprint function that only casts to
+  the class.
+- A Blueprint function whose parameters fit the mailbox is no longer refused because one of its locals lies past it.
+- With a DLL older than build 3622, the parameters are taken from the function's parameter count, as Dump All does.
+- Build 3624: AOT `dist\UE5DumpUI.exe` 59,264,512 B, sha256 `70fc4054301e`; `dist\UE5Dumper.dll` `5527995e0ba9`
+  (Find Func's matcher). C# 6126/6126, headless 15/15, dll_core 603 checks, 30 gates run (2 skipped in this
+  worktree: no vendored RE-UE4SS templates, no CE Lua host). Build 3623 was this worktree's configure build and
+  was never handed over. Not yet checked on a game: `verification-register.md` `[FUNCPARM-CONSUMERS]`.
+
 ## 2026-10-06 (build 3622) — Dump All writes function parameters `[EXTPR-539-540-2026-10-02]`
 
 - **Dump All** now writes each function's parameters on the class lines: name, type, offset, size, and
