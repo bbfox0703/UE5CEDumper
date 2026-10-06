@@ -545,18 +545,15 @@ public static class DumpAllService
     /// <summary>
     /// [EXTPR-539-540-2026-10-02] D3: a function's parameters, the return included, in the DLL's order.
     /// walk_functions lists the function's whole property chain, and a Blueprint function's locals follow its
-    /// parameters there; the DLL's CPF_Parm flag tells them apart. A DLL that predates the flag gets the
-    /// leading num_parms entries of the list it returned. UE counts NumParms over the chain itself, and the
-    /// DLL drops an entry whose name it cannot read, so then the window can reach one local. No struct_fields:
-    /// the struct's own line carries them. Returns true when that fallback decided something.
+    /// parameters there; <see cref="FunctionInfoModel.Parameters"/> leaves them out, with the DLL's CPF_Parm
+    /// flag or, from a DLL that predates it, num_parms. No struct_fields: the struct's own line carries them.
+    /// Returns true when that fallback decided something.
     /// </summary>
     private static bool AppendParams(StringBuilder sb, FunctionInfoModel fn)
     {
-        bool flagged = fn.Params.Any(p => p.IsParm.HasValue);
-        var parms = flagged ? fn.Params.Where(p => p.IsParm == true) : fn.Params.Take(fn.NumParms);
         sb.Append(",\"params\":[");
         bool first = true;
-        foreach (var p in parms)
+        foreach (var p in fn.Parameters)
         {
             if (!first) sb.Append(',');
             first = false;
@@ -574,7 +571,7 @@ public static class DumpAllService
             sb.Append('}');
         }
         sb.Append(']');
-        return !flagged && fn.Params.Count > 0;
+        return fn.ParametersFromNumParms;
     }
 
     /// <summary>[EXTPR-539-540-2026-10-02] D1: a struct's line. The class line's identity, super and props, so a

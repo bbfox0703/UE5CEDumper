@@ -3,6 +3,7 @@ namespace UE5DumpUI.Models;
 /// <summary>
 /// Represents a UFunction as walk_functions returns it. <see cref="Params"/> is the function's whole property
 /// chain: its parameters, and on a Blueprint function its locals after them (<see cref="FunctionParamModel.IsParm"/>).
+/// Anything that means the function's arguments reads <see cref="Parameters"/> or <see cref="InputParams"/>.
 /// </summary>
 public sealed class FunctionInfoModel
 {
@@ -21,10 +22,22 @@ public sealed class FunctionInfoModel
     public List<FunctionParamModel> Params { get; init; } = new();
     public string ReturnType { get; init; } = "";
 
-    /// <summary>Every entry but the return. On a Blueprint function that includes its locals; a caller that
-    /// needs the arguments alone filters on <see cref="FunctionParamModel.IsParm"/>.</summary>
+    /// <summary>[FUNCPARM-CONSUMERS] The function's parameters, the return included, in the DLL's order: the
+    /// entries flagged CPF_Parm. A Blueprint function's locals are not parameters: ProcessEvent copies only the
+    /// first ParmsSize bytes of the caller's buffer and builds the locals in its own frame. From a DLL that
+    /// predates the flag, UE's own definition: the leading <see cref="NumParms"/> entries. UE counts NumParms
+    /// over the chain itself and the DLL drops an entry whose name it cannot read, so then the window can
+    /// reach into the locals.</summary>
+    public IEnumerable<FunctionParamModel> Parameters
+        => ParametersFromNumParms ? Params.Take(NumParms) : Params.Where(p => p.IsParm == true);
+
+    /// <summary>True when the DLL sent no <c>parm</c> flag for a non-empty chain, so <see cref="Parameters"/>
+    /// fell back on <see cref="NumParms"/>.</summary>
+    public bool ParametersFromNumParms => Params.Count > 0 && !Params.Any(p => p.IsParm.HasValue);
+
+    /// <summary>The arguments: <see cref="Parameters"/> without the return.</summary>
     public IEnumerable<FunctionParamModel> InputParams
-        => Params.Where(p => !p.IsReturn);
+        => Parameters.Where(p => !p.IsReturn);
 
     /// <summary>Decode FunctionFlags to human-readable tags.</summary>
     public static string DecodeFunctionFlags(uint flags)
