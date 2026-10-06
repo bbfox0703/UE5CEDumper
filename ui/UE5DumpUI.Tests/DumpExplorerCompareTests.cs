@@ -173,6 +173,92 @@ public class DumpExplorerCompareTests : IDisposable
     }
 
     [Fact]
+    public async Task A_file_that_is_no_Dump_All_class_dump_is_refused_before_anything_is_written()
+    {
+        // A Live Funcs export is a .jsonl too, listed by the same filter; read as a dump it has no meta line, no
+        // classes and no summary, and the report would call every class of the loaded dump "cut off".
+        var (_, newer) = WritePair();
+        var liveFuncs = Path.Combine(_dir, "live-funcs-20261006.jsonl");
+        File.WriteAllText(liveFuncs, "{\"kind\":\"live_funcs\",\"rows\":1}\n{\"kind\":\"func\",\"class\":\"A\",\"func\":\"F\"}\n");
+        var platform = new ComparePlatform { OpenAnswer = liveFuncs, SaveAnswer = Path.Combine(_dir, "r.html") };
+        var vm = Vm(platform);
+        await vm.LoadFromPathAsync(newer);
+
+        await vm.CompareCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, platform.SaveCalls);
+        Assert.False(File.Exists(Path.Combine(_dir, "r.html")));
+        Assert.False(vm.IsBusy);
+    }
+
+    [Fact]
+    public async Task A_failed_Compare_leaves_no_error_behind_the_next_load()
+    {
+        var (older, newer) = WritePair();
+        var platform = new ComparePlatform { OpenAnswer = older, SaveAnswer = Path.Combine(_dir, "no-such-folder", "r.html") };
+        var vm = Vm(platform);
+        await vm.LoadFromPathAsync(newer);
+        await vm.CompareCommand.ExecuteAsync(null);
+        Assert.False(string.IsNullOrEmpty(vm.ErrorMessage));   // the write failed
+
+        await vm.LoadFromPathAsync(older);
+
+        Assert.True(string.IsNullOrEmpty(vm.ErrorMessage));
+    }
+
+    [Fact]
+    public async Task Two_games_get_a_banner_in_the_report_and_an_old_DLLs_question_marks_do_not()
+    {
+        var mine = Path.Combine(_dir, "a.jsonl");
+        var other = Path.Combine(_dir, "b.jsonl");
+        var lossy = Path.Combine(_dir, "c.jsonl");
+        string Meta(string module, string at) =>
+            "{\"kind\":\"meta\",\"module\":\"" + module + "\",\"dumped_at\":\"" + at + "\"}\n";
+        File.WriteAllText(mine, Meta("遊戲-Win64-Shipping.exe", "2026-02-01T00:00:00Z") + Cls("AHero", 64) + Summary);
+        File.WriteAllText(other, Meta("Other-Win64-Shipping.exe", "2026-01-01T00:00:00Z") + Cls("AHero", 64) + Summary);
+        File.WriteAllText(lossy, Meta("??-WIN64-Shipping.exe", "2026-01-01T00:00:00Z") + Cls("AHero", 64) + Summary);
+        var report = Path.Combine(_dir, "report.html");
+
+        var platform = new ComparePlatform { OpenAnswer = other, SaveAnswer = report };
+        var vm = Vm(platform);
+        await vm.LoadFromPathAsync(mine);
+        await vm.CompareCommand.ExecuteAsync(null);
+        Assert.Contains("different games", await File.ReadAllTextAsync(report, TestContext.Current.CancellationToken));
+
+        // The same exe through a DLL that wrote '?' for each non-ASCII character, in another case: the same game.
+        platform.OpenAnswer = lossy;
+        await vm.CompareCommand.ExecuteAsync(null);
+        Assert.DoesNotContain("different games", await File.ReadAllTextAsync(report, TestContext.Current.CancellationToken));
+    }
+
+    [Fact]
+    public async Task The_status_counts_what_the_report_shows()
+    {
+        // A kind that was not compared is "not compared", not 0; the minimal report counts breaking changes only.
+        var (older, newer) = WritePair();
+        var o = await DumpDiffService.LoadAsync(older, ct: TestContext.Current.CancellationToken);
+        var n = await DumpDiffService.LoadAsync(newer, ct: TestContext.Current.CancellationToken);
+        var diff = DumpDiffService.Diff(o, n, includeEngine: false);
+        Assert.Equal(("1", "0", "0"), DumpExplorerViewModel.StatusCounts(diff, minimal: false, notCompared: "n/c"));
+
+        var preStructs = Path.Combine(_dir, "pre.jsonl");
+        File.WriteAllText(preStructs, Meta("2025-12-01T00:00:00Z") + Cls("AHero", 64) + "{\"kind\":\"summary\",\"classes_emitted\":1}\n");
+        var p = await DumpDiffService.LoadAsync(preStructs, ct: TestContext.Current.CancellationToken);
+        Assert.Equal(("1", "n/c", "n/c"), DumpExplorerViewModel.StatusCounts(DumpDiffService.Diff(p, n, false), false, "n/c"));
+
+        // ANew is added (not breaking) and AHero only grew a field at a new offset: Health moved, which breaks.
+        Assert.Equal(("1", "0", "0"), DumpExplorerViewModel.StatusCounts(diff, minimal: true, notCompared: "n/c"));
+        var grewOnly = Path.Combine(_dir, "grew.jsonl");
+        File.WriteAllText(grewOnly, Meta("2026-03-01T00:00:00Z") +
+            "{\"kind\":\"class\",\"name\":\"AHero\",\"path\":\"/Game/AHero\",\"props_size\":72,\"props\":[" +
+            "{\"name\":\"Health\",\"type\":\"FloatProperty\",\"offset\":72,\"size\":4},{\"name\":\"Extra\",\"type\":\"IntProperty\",\"offset\":76,\"size\":4}],\"funcs\":[]}\n" + Summary);
+        var g = await DumpDiffService.LoadAsync(grewOnly, ct: TestContext.Current.CancellationToken);
+        var grew = DumpDiffService.Diff(n, g, false);   // AHero gained Extra only (Health unmoved): changed, not breaking
+        Assert.Equal(("1", "0", "0"), DumpExplorerViewModel.StatusCounts(grew, false, "n/c"));
+        Assert.Equal(("0", "0", "0"), DumpExplorerViewModel.StatusCounts(grew, true, "n/c"));
+    }
+
+    [Fact]
     public async Task Cancelling_either_dialog_writes_and_opens_nothing()
     {
         var (older, newer) = WritePair();

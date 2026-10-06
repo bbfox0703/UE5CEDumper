@@ -36,7 +36,7 @@ public static class DumpDiffHtmlRenderer
         footer { margin-top: 2.5em; border-top: 1px solid var(--line); padding-top: 0.6em; }
         """;
 
-    public static string Render(DumpDiffResult diff, bool minimal)
+    public static string Render(DumpDiffResult diff, bool minimal, bool differentGames = false)
     {
         var o = diff.OldDump;
         var n = diff.NewDump;

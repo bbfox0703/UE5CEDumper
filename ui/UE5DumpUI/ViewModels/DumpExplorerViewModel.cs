@@ -390,6 +390,10 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     private bool CanCompare() => HasFile && !IsBusy;
 
+    // [DUMPDIFF-UI] Placeholder until the review's status counts land.
+    internal static (string Classes, string Structs, string Enums) StatusCounts(DumpDiffResult d, bool minimal,
+        string notCompared) => ("", "", "");
+
     /// <summary>The dump taken earlier is the old one. When the times are equal or unreadable the loaded dump is the
     /// new one: the user loads the latest dump and picks an older one to compare it with.</summary>
     internal static (DumpDiffInput Old, DumpDiffInput New) OrderByDumpTime(DumpDiffInput loaded, DumpDiffInput picked)

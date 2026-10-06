@@ -196,13 +196,81 @@ public class DumpDiffServiceTests
     public async Task The_report_says_which_file_is_old_and_whether_engine_types_were_compared()
     {
         var gameOnly = DumpDiffHtmlRenderer.Render(await DiffCaseAsync("modules_game_only"), minimal: false);
-        Assert.Contains("old.jsonl", gameOnly);
-        Assert.Contains("new.jsonl", gameOnly);
-        Assert.True(gameOnly.IndexOf("old.jsonl", StringComparison.Ordinal) < gameOnly.IndexOf("new.jsonl", StringComparison.Ordinal));
+        // The labels themselves: the <title> names both files too, old first, so an order check there proves nothing.
+        Assert.Contains("<b>Old</b>: <code>old.jsonl</code>", gameOnly);
+        Assert.Contains("<b>New</b>: <code>new.jsonl</code>", gameOnly);
         Assert.Contains("Engine types: left out", gameOnly);
 
         var withEngine = DumpDiffHtmlRenderer.Render(await DiffCaseAsync("modules_include_engine", includeEngine: true), minimal: false);
         Assert.Contains("Engine types: included", withEngine);
+    }
+
+    private static async Task<DumpDiffResult> DiffTextsAsync(string oldText, string newText)
+    {
+        var ct = TestContext.Current.CancellationToken;
+        var o = await WriteTempAsync(oldText);
+        var n = await WriteTempAsync(newText);
+        try
+        {
+            return DumpDiffService.Diff(await DumpDiffService.LoadAsync(o, ct: ct),
+                                        await DumpDiffService.LoadAsync(n, ct: ct), includeEngine: false);
+        }
+        finally { File.Delete(o); File.Delete(n); }
+    }
+
+    private const string StructSummary = "{\"kind\":\"summary\",\"structs_emitted\":1,\"enums_emitted\":0,\"enums_listed\":true}\n";
+
+    [Fact]
+    public async Task Numbers_read_the_same_in_every_culture()
+    {
+        // A culture whose minus sign is U+2212 (ICU's sv-SE): a struct that shrank must still read "(-4)".
+        var diff = await DiffTextsAsync(
+            "{\"kind\":\"meta\",\"module\":\"G.exe\"}\n{\"kind\":\"struct\",\"name\":\"FS\",\"path\":\"/Game/FS\",\"props_size\":12}\n" + StructSummary,
+            "{\"kind\":\"meta\",\"module\":\"G.exe\"}\n{\"kind\":\"struct\",\"name\":\"FS\",\"path\":\"/Game/FS\",\"props_size\":8}\n" + StructSummary);
+        var saved = System.Globalization.CultureInfo.CurrentCulture;
+        try
+        {
+            System.Globalization.CultureInfo.CurrentCulture = new System.Globalization.CultureInfo("sv-SE");
+            var html = DumpDiffHtmlRenderer.Render(diff, minimal: false);
+            Assert.Contains("(-4)", html);
+            Assert.DoesNotContain("\u2212", html);
+        }
+        finally { System.Globalization.CultureInfo.CurrentCulture = saved; }
+    }
+
+    [Fact]
+    public async Task Two_games_are_called_out_in_the_report_itself()
+    {
+        // The status line says it too, but the browser covers it; the report is what is read and kept.
+        var diff = await DiffCaseAsync("classes_basic");
+        var other = DumpDiffHtmlRenderer.Render(diff, minimal: false, differentGames: true);
+        Assert.Contains("different games", other);
+        Assert.DoesNotContain("different games", DumpDiffHtmlRenderer.Render(diff, minimal: false));
+    }
+
+    [Fact]
+    public async Task Every_value_a_dump_supplies_is_escaped_wherever_it_is_written()
+    {
+        // One hostile text per place a dump value reaches the page: the header, the added / removed listings, a
+        // function's name, return type, flags and parameters, an enum and its enumerators.
+        const string Meta = "{\"kind\":\"meta\",\"module\":\"<m>&.exe\",\"dumped_at\":\"<d>\"}\n";
+        const string Summary = "{\"kind\":\"summary\",\"structs_emitted\":1,\"enums_emitted\":1,\"enums_listed\":true}\n";
+        string Cls(string flags, string pclass) =>
+            "{\"kind\":\"class\",\"name\":\"C\",\"path\":\"/Game/C\",\"props_size\":8,\"funcs\":[{\"name\":\"<fn>\"," +
+            "\"return_type\":\"<rt>\",\"num_parms\":1,\"parms_size\":8,\"flags\":\"" + flags + "\",\"params\":[{\"name\":\"<pn>\"," +
+            "\"type\":\"ObjectProperty\",\"obj_class\":\"" + pclass + "\",\"offset\":0,\"size\":8}]}]}\n";
+        string Enum(int v) =>
+            "{\"kind\":\"enum\",\"name\":\"<en>\",\"path\":\"/Game/<en>\",\"entries\":[{\"name\":\"<ev>\",\"value\":" + v + "}]}\n";
+        var diff = await DiffTextsAsync(
+            Meta + Cls("<f1>", "<p1>") + "{\"kind\":\"struct\",\"name\":\"<rem>\",\"path\":\"/Game/<rem>\",\"props_size\":4}\n" + Enum(0) + Summary,
+            Meta + Cls("<f2>", "<p2>") + "{\"kind\":\"class\",\"name\":\"<add>\",\"path\":\"/Game/<add>\",\"props_size\":4}\n" + Enum(1) + Summary);
+
+        var html = DumpDiffHtmlRenderer.Render(diff, minimal: false);
+        foreach (var raw in new[] { "<m>", "<d>", "<add>", "<rem>", "<fn>", "<rt>", "<f1>", "<f2>", "<pn>", "<p1>", "<p2>", "<en>", "<ev>" })
+        {
+            Assert.DoesNotContain(raw, html);
+            Assert.Contains("&lt;" + raw[1..^1] + "&gt;", html);
+        }
     }
 
     [Fact]
