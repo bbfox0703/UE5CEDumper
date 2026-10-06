@@ -1771,6 +1771,114 @@ int main() {
         DynOff::bUseFProperty       = savedFPropW;
     }
 
+    // -- UFUNCPARM-2026-10-06 -- WalkFunctions says which chain entries are PARAMETERS ----------------
+    //
+    // ⛔ POOL-FAKING, like UFUNCWALK: WalkFunctions keeps a child only if its class is NAMED "Function", and
+    // types each entry by its class's NAME. Own pool, first.
+    //
+    // [EXTPR-539-540-2026-10-02] D3. A UFunction's property chain holds its parameters (CPF_Parm, the return
+    // included) and, on a Blueprint function, its locals after them (CallFunc_*_ReturnValue, K2Node_*,
+    // Temp_*): the 2026-08 Y1 trap, where the Invoke form offered two frame locals past parmsSize as
+    // arguments. WalkFunctions still lists every entry; it now also says which ones are parameters, from the
+    // PropertyFlags word it already reads for out / ret. Both property models: FField and UProperty.
+    {
+        blk("UFUNCPARM - WalkFunctions flags the CPF_Parm entries, so a Blueprint local is not a parameter");
+
+        static uint8_t upEntry[9][0x40] = {};
+        const char* upNames[9] = { "", "Function", "IntProperty", "BoolProperty", "Count",
+                                   "ReturnValue", "Temp_int_Variable", "DoIt", "Class" };
+        static uintptr_t upChunk[10] = {};
+        for (int i = 1; i <= 8; ++i) {
+            memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
+            upChunk[i] = reinterpret_cast<uintptr_t>(upEntry[i]);
+        }
+        static uintptr_t upChunks[2] = { reinterpret_cast<uintptr_t>(upChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(upChunks), 0x10);
+        check("UFUNCPARM setup: the pool resolves Function", Serie::GetString(1) == "Function",
+              Serie::GetString(1).c_str());
+
+        const bool savedFPropP = DynOff::bUseFProperty;
+        const bool savedCpnP   = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;
+
+        constexpr uint64_t kParm = 0x0080, kOut = 0x0100, kRet = 0x0400;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
+
+        // UProperty mode types an entry by its UClass's name; FField mode by its FFieldClass's.
+        static uint8_t upNamed[9][0x100] = {};
+        auto named = [&](int idx) {
+            *reinterpret_cast<int32_t*>(upNamed[idx] + Grimoire::OFF_UOBJECT_NAME) = idx;
+            return reinterpret_cast<uintptr_t>(upNamed[idx]);
+        };
+        static uint8_t upFC[9][0x20] = {};
+        auto fclass = [&](int idx) {
+            *reinterpret_cast<int32_t*>(upFC[idx] + DynOff::FFIELDCLASS_NAME) = idx;
+            return reinterpret_cast<uintptr_t>(upFC[idx]);
+        };
+
+        // The chain in UE's order: Count (an int32 parameter), ReturnValue (the return, which UE marks
+        // CPF_Parm | CPF_OutParm | CPF_ReturnParm), then Temp_int_Variable, a local past the parameter block.
+        struct Entry { int name, type; int32_t size, offset; uint64_t flags; };
+        const Entry chain[3] = { { 4, 2, 4, 0, kParm },
+                                 { 5, 3, 1, 4, kParm | kOut | kRet },
+                                 { 6, 2, 4, 8, 0 } };
+
+        // ONE set of blobs per property model.
+        static uint8_t upCls[2][0x100] = {}, upFn[2][0x100] = {}, upProp[2][3][0x100] = {};
+        auto walk = [&](int m, bool fprop) {
+            DynOff::bUseFProperty = fprop;
+            putP(upCls[m], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(upFn[m]));
+            putP(upFn[m], Grimoire::OFF_UOBJECT_CLASS, named(1));                 // "Function"
+            put32(upFn[m], Grimoire::OFF_UOBJECT_NAME, 7);                        // "DoIt"
+            putP(upFn[m], fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN,
+                 reinterpret_cast<uintptr_t>(upProp[m][0]));
+            for (int i = 0; i < 3; ++i) {
+                uint8_t* pr = upProp[m][i];
+                const Entry& e = chain[i];
+                const uintptr_t next = i < 2 ? reinterpret_cast<uintptr_t>(upProp[m][i + 1]) : 0;
+                if (fprop) {
+                    putP(pr, DynOff::FFIELD_CLASS, fclass(e.type));
+                    put32(pr, DynOff::FFIELD_NAME, e.name);
+                    put32(pr, DynOff::FPROPERTY_ELEMSIZE, e.size);
+                    put32(pr, DynOff::FPROPERTY_OFFSET, e.offset);
+                    put64(pr, DynOff::FPROPERTY_FLAGS, e.flags);
+                    putP(pr, DynOff::FFIELD_NEXT, next);
+                } else {
+                    putP(pr, Grimoire::OFF_UOBJECT_CLASS, named(e.type));
+                    put32(pr, Grimoire::OFF_UOBJECT_NAME, e.name);
+                    put32(pr, DynOff::UPROPERTY_ELEMSIZE, e.size);
+                    put32(pr, DynOff::UPROPERTY_OFFSET, e.offset);
+                    put64(pr, DynOff::UPROPERTY_FLAGS, e.flags);
+                    putP(pr, DynOff::UFIELD_NEXT, next);
+                }
+            }
+            return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(upCls[m]));
+        };
+
+        for (int m = 0; m < 2; ++m) {
+            const bool fprop = m == 0;
+            const std::string who = fprop ? "FField" : "UProperty";
+            const auto fs = walk(m, fprop);
+            // Anti-vacuity: "not a parameter" would hold for an entry that was never read.
+            const bool shaped = fs.size() == 1 && fs[0].params.size() == 3
+                && fs[0].params[2].name == "Temp_int_Variable";
+            check(("UFUNCPARM control: " + who + " -- one function, every chain entry listed, the local too").c_str(),
+                  shaped, std::to_string(fs.empty() ? 0 : fs[0].params.size()).c_str());
+            if (!shaped) continue;
+            const auto& ps = fs[0].params;
+            check(("UFUNCPARM control: " + who + " -- out / ret read from the same flags as before").c_str(),
+                  ps[1].isReturn && ps[1].isOut && !ps[0].isReturn && !ps[2].isReturn);
+            check(("UFUNCPARM ⭐: " + who + " -- the parameter and the return are parameters").c_str(),
+                  ps[0].isParm && ps[1].isParm);
+            check(("UFUNCPARM ⭐: " + who + " -- the local after them is not").c_str(), !ps[2].isParm);
+        }
+
+        DynOff::bCasePreservingName = savedCpnP;
+        DynOff::bUseFProperty       = savedFPropP;
+    }
+
     // -- OPTLAYOUT-2026-09-11 -- TOptional set/unset follows the LAYOUT, not the inner type's name --
     //
     // ⛔ POOL-FAKING, like IFACEREAD / UNREADVAL / BOOLNATIVE / UFUNCWALK: the walker and Find Refs
