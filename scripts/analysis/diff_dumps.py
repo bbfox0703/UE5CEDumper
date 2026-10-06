@@ -10,6 +10,7 @@ USAGE
     python diff_dumps.py <old.jsonl> <new.jsonl> --minimal
     python diff_dumps.py <old.jsonl> <new.jsonl> --include-engine
     python diff_dumps.py --self-test
+    python diff_dumps.py --write-fixtures
 
 WHAT IT DOES
     1. Loads two JSONL dumps. Each dump = meta line + class, struct and
@@ -1190,6 +1191,7 @@ def run_self_test() -> int:
 
     run_self_test_types(errors)
     run_self_test_review(errors)
+    run_self_test_fixtures(errors)
 
     if errors:
         print(f"SELF-TEST FAILED ({len(errors)} error(s)):", file=sys.stderr)
@@ -1448,6 +1450,350 @@ def run_self_test_review(errors: list[str]) -> None:
 
 
 # =====================================================================
+# [DUMPDIFF-UI] The UI's C# port of this diff is held to this script. Each case below is written as a pair of
+# .jsonl files plus the diff as plain data (canonical); the self-test fails when the committed files no longer
+# match what this script computes, and the C# parity test fails when the port disagrees with them. After a change
+# here: --write-fixtures, then make the C# tests pass again.
+# =====================================================================
+
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "diff_dumps"
+
+
+def _canon_prop(p: dict | None) -> dict | None:
+    if p is None:
+        return None
+    return {"offset": p.get("offset"), "size": p.get("size"), "type": _fmt_prop_typestr(p)}
+
+
+def _canon_func(f: dict | None) -> dict | None:
+    if f is None:
+        return None
+    return {"return_type": f.get("return_type"), "num_parms": f.get("num_parms"),
+            "parms_size": f.get("parms_size"), "flags": f.get("flags"),
+            "params": _fmt_params(f) if "params" in f else None}
+
+
+def _canon_type(cd: ClassDiff) -> dict:
+    return {
+        "path": cd.path, "name": cd.name,
+        "old_size": cd.old.get("props_size", 0), "new_size": cd.new.get("props_size", 0),
+        "breaking": cd.has_breaking_change,
+        "props": [{"name": pc.name, "kind": pc.kind, "old": _canon_prop(pc.old), "new": _canon_prop(pc.new)}
+                  for pc in cd.prop_changes],
+        "funcs": [{"name": fc.name, "kind": fc.kind, "old": _canon_func(fc.old), "new": _canon_func(fc.new),
+                   "params_changed": _params_differ(fc.old or {}, fc.new or {})}
+                  for fc in cd.func_changes],
+    }
+
+
+def _canon_listing(records: list[dict], failed: set | None) -> list[dict]:
+    out = []
+    for rec in records:
+        row = {"path": normalize_path(rec.get("path", "")), "name": rec.get("name", "")}
+        if failed is not None:
+            row["walk_failed"] = rec.get("name") in failed
+        out.append(row)
+    return out
+
+
+def _failed_names(d: Dump) -> set:
+    return {e.get("name") for e in d.errors if e.get("name")}
+
+
+def canonical(diff: DumpDiff) -> dict:
+    """The diff as plain data, in the report's order: what the UI's port must reproduce. Not a report format."""
+    old_failed, new_failed = _failed_names(diff.old_dump), _failed_names(diff.new_dump)
+    out = {
+        "classes": {
+            "added": _canon_listing(diff.added_classes, old_failed),
+            "removed": _canon_listing(diff.removed_classes, new_failed),
+            "changed": [_canon_type(cd) for cd in diff.changed],
+            "unchanged": diff.unchanged_count,
+            "counts": _count_changes(diff.changed),
+        },
+        "structs": {"skipped": diff.structs_skipped},
+        "enums": {"skipped": diff.enums_skipped},
+        "notes": {"dump": diff.dump_notes, "enum": diff.enum_notes, "param": diff.param_notes},
+    }
+    if not diff.structs_skipped:
+        out["structs"].update({
+            "added": _canon_listing(diff.added_structs, old_failed),
+            "removed": _canon_listing(diff.removed_structs, new_failed),
+            "changed": [_canon_type(cd) for cd in diff.changed_structs],
+            "unchanged": diff.unchanged_structs,
+            "counts": _count_changes(diff.changed_structs),
+        })
+    if not diff.enums_skipped:
+        out["enums"].update({
+            "added": _canon_listing(diff.added_enums, None),
+            "removed": _canon_listing(diff.removed_enums, None),
+            "changed": [{"path": ed.path, "name": ed.name, "breaking": ed.has_breaking_change,
+                         "changes": [{"name": c.name, "kind": c.kind, "old": c.old_value, "new": c.new_value}
+                                     for c in ed.changes]}
+                        for ed in diff.changed_enums],
+            "unchanged": diff.unchanged_enums,
+            "uncompared": diff.uncompared_enums,
+        })
+    return out
+
+
+def _dump_lines(d: Dump) -> list[dict]:
+    """A synthetic dump as the lines of a file: meta first and the summary last, as Dump All writes them. A dump
+    cut off mid-write has no summary line."""
+    lines = [{"kind": "meta", **d.meta}] + d.classes + d.structs + d.enums + d.errors
+    if d.has_summary:
+        lines.append({"kind": "summary", **{k: v for k, v in d.summary.items() if k != "kind"}})
+    return lines
+
+
+def _fx_class(name: str, path: str, size: int, props: list[dict] | None = None,
+              funcs: list[dict] | None = None) -> dict:
+    return {"kind": "class", "name": name, "addr": "0x1", "path": path, "meta": "Class", "super": "",
+            "super_addr": "0x0", "is_bpgc": False, "props_size": size, "instance_count": 0,
+            "props": props or [], "funcs": funcs or []}
+
+
+def fixture_cases() -> list[tuple[str, Dump, Dump, bool]]:
+    """(name, old, new, include_engine). Every behaviour the self-tests pin, plus the edges a port gets wrong:
+    duplicate keys, a missing path, the stable order of equal sort keys, names that need escaping."""
+    hero_old = _make_dump("FakeGame", [
+        {"kind": "class", "name": "AHero", "addr": "0x1", "path": "/Game/Heroes/AHero",
+         "meta": "BlueprintGeneratedClass", "super": "ACharacter", "super_addr": "0x99", "is_bpgc": True,
+         "props_size": 64, "instance_count": 1,
+         "props": [{"name": "Health", "type": "FloatProperty", "offset": 0x40, "size": 4},
+                   {"name": "IsDead", "type": "BoolProperty", "offset": 0x44, "size": 1},
+                   {"name": "Mana", "type": "FloatProperty", "offset": 0x48, "size": 4}],
+         "funcs": [{"name": "TakeDamage", "addr": "0xA", "return_type": "", "num_parms": 3, "parms_size": 12,
+                    "flags": "0x10"},
+                   {"name": "Die", "addr": "0xB", "return_type": "", "num_parms": 0, "parms_size": 0,
+                    "flags": "0x10"}]},
+        _fx_class("AOldThing", "/Game/Removed/AOldThing", 16),
+    ], summary={"kind": "summary", "classes_emitted": 2})
+    hero_new = _make_dump("FakeGame", [
+        {"kind": "class", "name": "AHero", "addr": "0xAA", "path": "/Game/Heroes/AHero",
+         "meta": "BlueprintGeneratedClass", "super": "ACharacter", "super_addr": "0xBB", "is_bpgc": True,
+         "props_size": 72, "instance_count": 1,
+         "props": [{"name": "Health", "type": "FloatProperty", "offset": 0x48, "size": 4},
+                   {"name": "Mana", "type": "FloatProperty", "offset": 0x4C, "size": 4},
+                   {"name": "NewField", "type": "Int32Property", "offset": 0x50, "size": 4}],
+         "funcs": [{"name": "TakeDamage", "addr": "0xCC", "return_type": "", "num_parms": 4, "parms_size": 16,
+                    "flags": "0x10"},
+                   {"name": "Die", "addr": "0xDD", "return_type": "", "num_parms": 0, "parms_size": 0,
+                    "flags": "0x10"},
+                   {"name": "Heal", "addr": "0xEE", "return_type": "", "num_parms": 1, "parms_size": 4,
+                    "flags": "0x10"}]},
+        _fx_class("ABrandNew", "/Game/NewStuff/ABrandNew", 8),
+    ], summary={"kind": "summary", "classes_emitted": 2})
+
+    modules = [("C1", "//Script/FakeGame/AHeroBase"), ("C2", "//Script/EngineOverride/Foo"),
+               ("C3", "/Script/Engine/Actor"), ("C4", "//Script/UMG.UserWidget"),
+               ("C5", "//Script/CoreUObject/Object")]
+    mod_old = _make_dump("FakeGame", [_fx_class(n, pth, 16) for n, pth in modules])
+    mod_new = _make_dump("FakeGame", [_fx_class(n, pth, 24) for n, pth in modules])
+
+    norm_old = _make_dump("FakeGame", [_fx_class("X", "//Script/CoreUObject/X", 16)])
+    norm_new = _make_dump("FakeGame", [_fx_class("X", "/Script/CoreUObject/X", 16)])
+
+    retype_old = _make_dump("FakeGame", [_fx_class("AHP", "/Game/X/AHP", 16, [
+        {"name": "Val", "type": "FloatProperty", "offset": 0x10, "size": 4},
+        {"name": "Arr", "type": "ArrayProperty", "offset": 0x18, "size": 16, "inner_type": "IntProperty"},
+        {"name": "Ref", "type": "ObjectProperty", "offset": 0x28, "size": 8, "obj_class": "Actor"},
+        {"name": "Kind", "type": "ByteProperty", "offset": 0x30, "size": 1, "enum": "EKind"},
+        {"name": "Hit", "type": "StructProperty", "offset": 0x38, "size": 8, "struct_type": "FHit"}])])
+    retype_new = _make_dump("FakeGame", [_fx_class("AHP", "/Game/X/AHP", 20, [
+        {"name": "Val", "type": "DoubleProperty", "offset": 0x10, "size": 8},
+        {"name": "Arr", "type": "ArrayProperty", "offset": 0x18, "size": 16, "inner_type": "FloatProperty"},
+        {"name": "Ref", "type": "ObjectProperty", "offset": 0x28, "size": 8, "obj_class": "Pawn"},
+        {"name": "Kind", "type": "ByteProperty", "offset": 0x30, "size": 1, "enum": "EOtherKind"},
+        {"name": "Hit", "type": "StructProperty", "offset": 0x40, "size": 8, "struct_type": "FHit"}])])
+
+    add_only_old = _make_dump("FakeGame", [_fx_class("C", "/Game/C/C", 8, [
+        {"name": "A", "type": "Int32Property", "offset": 0, "size": 4}])])
+    add_only_new = _make_dump("FakeGame", [_fx_class("C", "/Game/C/C", 16, [
+        {"name": "A", "type": "Int32Property", "offset": 0, "size": 4},
+        {"name": "B", "type": "Int32Property", "offset": 4, "size": 4}])])
+
+    s_old = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 8, [{"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+                                                     {"name": "B", "type": "IntProperty", "offset": 4, "size": 4}]),
+        _struct("FGone", "/Game/Data/FGone.FGone", 4, []),
+        _struct("FSlot", "/Script/FakeGame.FSlot", 0x18, []),
+        _struct("Vector", "/Script/CoreUObject.Vector", 12, []),
+    ], summary=_summary(structs_emitted=4))
+    s_new = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 12, [{"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+                                                      {"name": "B", "type": "IntProperty", "offset": 8, "size": 4}]),
+        _struct("FNew", "/Game/Data/FNew.FNew", 4, []),
+        _struct("FSlot", "/Script/FakeGame.FSlot", 0x20, []),
+        _struct("Vector", "/Script/CoreUObject.Vector", 24, []),
+    ], summary=_summary(structs_emitted=4))
+    pre = _make_dump("FakeGame", [], summary={"kind": "summary", "classes_emitted": 0})
+
+    n_old = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 1)]),
+        _enum("EOld", "/Game/Data/EOld.EOld", [("NewEnumerator0", 0)]),
+        _enum("ENetRole", "/Script/Engine.ENetRole", [("ROLE_None", 0)]),
+    ], summary=_summary(enums_emitted=3))
+    n_new = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 2), ("EKind::C", 3)]),
+        _enum("ENew", "/Game/Data/ENew.ENew", [("NewEnumerator0", 0)]),
+        _enum("ENetRole", "/Script/Engine.ENetRole", [("ROLE_None", 1)]),
+    ], summary=_summary(enums_emitted=3))
+    n_failed = _make_dump("FakeGame", [], summary=_summary(enums_listed=False))
+    n_noname = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/FakeGame.EKind", []),
+                                                 _enum("ENew", "/Game/Data/ENew.ENew", [])],
+                          summary=_summary(enums_emitted=2, enum_names_failed=True))
+    n_cut = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/FakeGame.EKind",
+                                                    [("EKind::A", 0), ("EKind::B", 1)])],
+                       summary=_summary(enums_emitted=1, enums_truncated=True))
+
+    p_a = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Actor"},
+           {"name": "ReturnValue", "type": "StructProperty", "offset": 16, "size": 12, "struct_type": "Vector",
+            "out": True, "ret": True}]
+    p_b = [{"name": "Amount", "type": "FloatProperty", "offset": 4, "size": 4, "out": True},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Pawn"},
+           {"name": "ReturnValue", "type": "StructProperty", "offset": 16, "size": 12, "struct_type": "Rotator",
+            "out": True, "ret": True}]
+    f_old = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_a), _func("Same", p_a),
+                                               _func("Flags", None)])],
+                       summary=_summary(params_from_num_parms=3))
+    f_new = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_b), _func("Same", p_a),
+                                               {**_func("Flags", None), "flags": "0x400", "return_type": "Int"}])],
+                       summary=_summary())
+    f_pre = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", None)])], summary={"kind": "summary"})
+
+    full = _make_dump("FakeGame", [_cls_with([]), {**_cls_with([]), "name": "AOther", "path": "/Game/AOther"}],
+                      structs=[_struct("FHit", "/Script/FakeGame.FHit", 8, [])],
+                      enums=[_enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0)])],
+                      summary=_summary(structs_emitted=1, enums_emitted=1))
+    cut = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    cut.meta["dumper_build"] = 3622
+    cut_old_build = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    failed = _make_dump("FakeGame", [_cls_with([])], structs=[], summary=_summary(structs_emitted=0))
+    failed.errors = [{"kind": "error", "addr": "0x9", "name": "AOther", "msg": "pipe dropped"}]
+    n_cut_old = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)])],
+                           summary=_summary(enums_emitted=1, enums_truncated=True))
+    n_more = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)]),
+                                               _enum("ENew", "/Script/G.ENew", [("ENew::A", 0)])],
+                        summary=_summary(enums_emitted=2))
+
+    # Edges a port reproduces only by copying Python's rules: a duplicate path keeps the FIRST record; a record
+    # with no path is keyed by name; a duplicate member name keeps its FIRST position and its LAST value; a nameless
+    # member is ignored; equal sort keys keep their file order; names that HTML must escape; non-ASCII paths sort
+    # by code point.
+    edge_old = _make_dump("FakeGame", [
+        _fx_class("ADup", "/Game/Dup", 8, [{"name": "V", "type": "IntProperty", "offset": 0, "size": 4}]),
+        _fx_class("ADup", "/Game/Dup", 99),
+        {**_fx_class("NoPathB", "", 4), "path": ""},
+        {**_fx_class("NoPathA", "", 4), "path": ""},
+        _fx_class("AProps", "/Game/Props", 16, [
+            {"name": "X", "type": "IntProperty", "offset": 0, "size": 4},
+            {"name": "", "type": "IntProperty", "offset": 4, "size": 4},
+            {"name": "Y", "type": "IntProperty", "offset": 8, "size": 4},
+            {"name": "X", "type": "IntProperty", "offset": 12, "size": 4}]),
+        _fx_class("A<b>&\"c\"", "/Game/Esc/A<b>&\"c\"", 8, [
+            {"name": "<script>", "type": "IntProperty", "offset": 0, "size": 4}]),
+        _fx_class("\u00c9t\u00e9", "/Game/\u00c9t\u00e9", 4),
+        _fx_class("Emoji", "/Game/\U0001F600", 4),
+        _fx_class("Pua", "/Game/\uE000", 4),
+    ], enums=[_enum("EDup", "/Game/EDup", [("A", 0), ("B", 1), ("A", 5)])], summary=_summary(enums_emitted=1))
+    edge_new = _make_dump("FakeGame", [
+        _fx_class("ADup", "/Game/Dup", 8, [{"name": "V", "type": "IntProperty", "offset": 4, "size": 4}]),
+        _fx_class("AProps", "/Game/Props", 16, [
+            {"name": "Y", "type": "IntProperty", "offset": 8, "size": 4},
+            {"name": "X", "type": "IntProperty", "offset": 12, "size": 4}]),
+        _fx_class("A<b>&\"c\"", "/Game/Esc/A<b>&\"c\"", 8, [
+            {"name": "<script>", "type": "Int64Property", "offset": 0, "size": 8}]),
+    ], enums=[_enum("EDup", "/Game/EDup", [("B", 1), ("A", 6)])], summary=_summary(enums_emitted=1))
+
+    return [
+        ("classes_basic", hero_old, hero_new, False),
+        ("classes_self", hero_old, hero_old, False),
+        ("modules_game_only", mod_old, mod_new, False),
+        ("modules_include_engine", mod_old, mod_new, True),
+        ("path_normalization", norm_old, norm_new, True),
+        ("prop_retyped", retype_old, retype_new, False),
+        ("add_only", add_only_old, add_only_new, False),
+        ("structs", s_old, s_new, False),
+        ("structs_include_engine", s_old, s_new, True),
+        ("structs_old_dump_predates", pre, s_new, False),
+        ("enums", n_old, n_new, False),
+        ("enums_include_engine", n_old, n_new, True),
+        ("enums_list_failed", n_old, n_failed, False),
+        ("enums_no_names", n_old, n_noname, False),
+        ("enums_new_list_cut", n_old, n_cut, False),
+        ("enums_old_list_cut", n_cut_old, n_more, False),
+        ("enums_new_dump_predates", n_old, pre, False),
+        ("params", f_old, f_new, False),
+        ("params_old_dump_predates", f_pre, f_new, False),
+        ("new_dump_cut_off", full, cut, False),
+        ("old_dump_cut_off", cut, full, False),
+        ("old_build_cut_off", full, cut_old_build, False),
+        ("walk_failed", full, failed, False),
+        ("edges", edge_old, edge_new, False),
+    ]
+
+
+def _write_jsonl(path: Path, lines: list[dict]) -> None:
+    path.write_text("".join(json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in lines),
+                    encoding="utf-8", newline="\n")
+
+
+def _case_files(name: str) -> tuple[Path, Path, Path]:
+    d = FIXTURE_DIR / name
+    return d / "old.jsonl", d / "new.jsonl", d / "expected.json"
+
+
+def _expected_text(diff: DumpDiff, include_engine: bool) -> str:
+    return json.dumps({"include_engine": include_engine, "diff": canonical(diff)},
+                      ensure_ascii=False, indent=1) + "\n"
+
+
+def write_fixtures() -> int:
+    cases = fixture_cases()
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in sorted(p for p in FIXTURE_DIR.iterdir() if p.is_dir() and p.name not in {c[0] for c in cases}):
+        print(f"  [warn] {stale.name}/ is not a case any more; delete it by hand", file=sys.stderr)
+    for name, old, new, include_engine in cases:
+        old_p, new_p, exp_p = _case_files(name)
+        old_p.parent.mkdir(exist_ok=True)
+        _write_jsonl(old_p, _dump_lines(old))
+        _write_jsonl(new_p, _dump_lines(new))
+        # Diffed from the written FILES, as the port will read them, not from the in-memory dumps.
+        diff = diff_dumps(load_dump(old_p), load_dump(new_p), include_engine=include_engine)
+        exp_p.write_text(_expected_text(diff, include_engine), encoding="utf-8", newline="\n")
+    print(f"wrote {len(cases)} case(s) to {FIXTURE_DIR}")
+    return 0
+
+
+def run_self_test_fixtures(errors: list[str]) -> None:
+    """The committed fixtures are what this script computes today, and every case is committed."""
+    cases = fixture_cases()
+    if not FIXTURE_DIR.is_dir():
+        errors.append(f"fixtures: {FIXTURE_DIR} is missing (run --write-fixtures)")
+        return
+    committed = {p.name for p in FIXTURE_DIR.iterdir() if p.is_dir()}
+    names = {c[0] for c in cases}
+    for extra in sorted(committed - names):
+        errors.append(f"fixtures: {extra}/ is committed but is not a case")
+    for name, old, new, include_engine in cases:
+        old_p, new_p, exp_p = _case_files(name)
+        if not (old_p.is_file() and new_p.is_file() and exp_p.is_file()):
+            errors.append(f"fixtures: {name}/ is missing a file (run --write-fixtures)")
+            continue
+        if old_p.read_text(encoding="utf-8") != "".join(
+                json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in _dump_lines(old)) \
+                or new_p.read_text(encoding="utf-8") != "".join(
+                json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in _dump_lines(new)):
+            errors.append(f"fixtures: {name}/ input files differ from the case (run --write-fixtures)")
+        diff = diff_dumps(load_dump(old_p), load_dump(new_p), include_engine=include_engine)
+        if exp_p.read_text(encoding="utf-8") != _expected_text(diff, include_engine):
+            errors.append(f"fixtures: {name}/expected.json is not what this script computes now (run "
+                          f"--write-fixtures, then bring the UI's C# port back in line)")
+
+
+# =====================================================================
 # CLI
 # =====================================================================
 
@@ -1473,10 +1819,14 @@ def main(argv: list[str] | None = None) -> int:
                          "C++ classes are always included.")
     ap.add_argument("--self-test", action="store_true",
                     help="Run built-in synthetic-fixture tests and exit.")
+    ap.add_argument("--write-fixtures", action="store_true",
+                    help="Rewrite fixtures/diff_dumps/, the cases the UI's C# port is tested against, and exit.")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return run_self_test()
+    if args.write_fixtures:
+        return write_fixtures()
 
     if not args.old or not args.new:
         ap.error("old and new dump paths are required (or pass --self-test).")

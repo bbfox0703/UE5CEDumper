@@ -1,0 +1,71 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Game/Heroes/AHero",
+     "name": "AHero",
+     "old_size": 8,
+     "new_size": 8,
+     "breaking": false,
+     "props": [],
+     "funcs": [
+      {
+       "name": "Same",
+       "kind": "added",
+       "old": null,
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": false
+      },
+      {
+       "name": "Flags",
+       "kind": "added",
+       "old": null,
+       "new": {
+        "return_type": "Int",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x400",
+        "params": null
+       },
+       "params_changed": false
+      }
+     ]
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 2,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "the old dump has no struct lines (Dump All writes them from build 3620)"
+  },
+  "enums": {
+   "skipped": "the old dump has no enum lines (Dump All writes them from build 3621)"
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

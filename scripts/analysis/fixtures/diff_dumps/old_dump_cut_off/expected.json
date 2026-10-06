@@ -1,0 +1,36 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 1,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "the old dump ends before its struct lines (it has no summary line: it was cut off mid-write)"
+  },
+  "enums": {
+   "skipped": "the old dump ends before its enum lines (it has no summary line: it was cut off mid-write)"
+  },
+  "notes": {
+   "dump": [
+    "the old dump has no summary line: it was cut off mid-write, so a type it lacks is not reported as added"
+   ],
+   "enum": [],
+   "param": []
+  }
+ }
+}

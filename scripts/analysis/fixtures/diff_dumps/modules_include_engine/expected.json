@@ -1,0 +1,80 @@
+{
+ "include_engine": true,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Script/CoreUObject/Object",
+     "name": "C5",
+     "old_size": 16,
+     "new_size": 24,
+     "breaking": false,
+     "props": [],
+     "funcs": []
+    },
+    {
+     "path": "Script/Engine/Actor",
+     "name": "C3",
+     "old_size": 16,
+     "new_size": 24,
+     "breaking": false,
+     "props": [],
+     "funcs": []
+    },
+    {
+     "path": "Script/EngineOverride/Foo",
+     "name": "C2",
+     "old_size": 16,
+     "new_size": 24,
+     "breaking": false,
+     "props": [],
+     "funcs": []
+    },
+    {
+     "path": "Script/FakeGame/AHeroBase",
+     "name": "C1",
+     "old_size": 16,
+     "new_size": 24,
+     "breaking": false,
+     "props": [],
+     "funcs": []
+    },
+    {
+     "path": "Script/UMG.UserWidget",
+     "name": "C4",
+     "old_size": 16,
+     "new_size": 24,
+     "breaking": false,
+     "props": [],
+     "funcs": []
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 5
+   }
+  },
+  "structs": {
+   "skipped": "the old dump has no struct lines (Dump All writes them from build 3620)"
+  },
+  "enums": {
+   "skipped": "the old dump has no enum lines (Dump All writes them from build 3621)"
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

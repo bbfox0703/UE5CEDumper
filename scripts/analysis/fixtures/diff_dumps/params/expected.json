@@ -1,0 +1,106 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Game/Heroes/AHero",
+     "name": "AHero",
+     "old_size": 8,
+     "new_size": 8,
+     "breaking": true,
+     "props": [],
+     "funcs": [
+      {
+       "name": "TakeDamage",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(out FloatProperty Amount@0x4/4, ObjectProperty:Pawn Source@0x8/8) -> StructProperty<Rotator> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "Flags",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": null
+       },
+       "new": {
+        "return_type": "Int",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x400",
+        "params": null
+       },
+       "params_changed": false
+      }
+     ]
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 2,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 1,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": [
+    "3 function(s) in the old dump had their parameters taken from num_parms (a DLL older than build 3622), so a parameter change there may be that approximation"
+   ]
+  }
+ }
+}

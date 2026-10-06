@@ -1,0 +1,144 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [
+    {
+     "path": "",
+     "name": "NoPathB",
+     "walk_failed": false
+    },
+    {
+     "path": "",
+     "name": "NoPathA",
+     "walk_failed": false
+    },
+    {
+     "path": "Game/Été",
+     "name": "Été",
+     "walk_failed": false
+    },
+    {
+     "path": "Game/",
+     "name": "Pua",
+     "walk_failed": false
+    },
+    {
+     "path": "Game/😀",
+     "name": "Emoji",
+     "walk_failed": false
+    }
+   ],
+   "changed": [
+    {
+     "path": "Game/Dup",
+     "name": "ADup",
+     "old_size": 8,
+     "new_size": 8,
+     "breaking": true,
+     "props": [
+      {
+       "name": "V",
+       "kind": "moved",
+       "old": {
+        "offset": 0,
+        "size": 4,
+        "type": "IntProperty"
+       },
+       "new": {
+        "offset": 4,
+        "size": 4,
+        "type": "IntProperty"
+       }
+      }
+     ],
+     "funcs": []
+    },
+    {
+     "path": "Game/Esc/A<b>&\"c\"",
+     "name": "A<b>&\"c\"",
+     "old_size": 8,
+     "new_size": 8,
+     "breaking": true,
+     "props": [
+      {
+       "name": "<script>",
+       "kind": "type_changed",
+       "old": {
+        "offset": 0,
+        "size": 4,
+        "type": "IntProperty"
+       },
+       "new": {
+        "offset": 0,
+        "size": 8,
+        "type": "Int64Property"
+       }
+      }
+     ],
+     "funcs": []
+    }
+   ],
+   "unchanged": 1,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 1,
+    "prop_type_changed": 1,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 2,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Game/EDup",
+     "name": "EDup",
+     "breaking": true,
+     "changes": [
+      {
+       "name": "A",
+       "kind": "value_changed",
+       "old": 5,
+       "new": 6
+      }
+     ]
+    }
+   ],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

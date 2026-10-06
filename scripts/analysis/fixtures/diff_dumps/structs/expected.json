@@ -1,0 +1,101 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [
+    {
+     "path": "Game/Data/FNew.FNew",
+     "name": "FNew",
+     "walk_failed": false
+    }
+   ],
+   "removed": [
+    {
+     "path": "Game/Data/FGone.FGone",
+     "name": "FGone",
+     "walk_failed": false
+    }
+   ],
+   "changed": [
+    {
+     "path": "Script/FakeGame.FHit",
+     "name": "FHit",
+     "old_size": 8,
+     "new_size": 12,
+     "breaking": true,
+     "props": [
+      {
+       "name": "B",
+       "kind": "moved",
+       "old": {
+        "offset": 4,
+        "size": 4,
+        "type": "IntProperty"
+       },
+       "new": {
+        "offset": 8,
+        "size": 4,
+        "type": "IntProperty"
+       }
+      }
+     ],
+     "funcs": []
+    },
+    {
+     "path": "Script/FakeGame.FSlot",
+     "name": "FSlot",
+     "old_size": 24,
+     "new_size": 32,
+     "breaking": true,
+     "props": [],
+     "funcs": []
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 1,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 1,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 2
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

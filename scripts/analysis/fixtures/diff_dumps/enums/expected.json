@@ -1,0 +1,85 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [
+    {
+     "path": "Game/Data/ENew.ENew",
+     "name": "ENew"
+    }
+   ],
+   "removed": [
+    {
+     "path": "Game/Data/EOld.EOld",
+     "name": "EOld"
+    }
+   ],
+   "changed": [
+    {
+     "path": "Script/FakeGame.EKind",
+     "name": "EKind",
+     "breaking": true,
+     "changes": [
+      {
+       "name": "EKind::B",
+       "kind": "value_changed",
+       "old": 1,
+       "new": 2
+      },
+      {
+       "name": "EKind::C",
+       "kind": "added",
+       "old": null,
+       "new": 3
+      }
+     ]
+    }
+   ],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

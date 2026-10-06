@@ -1,0 +1,7 @@
+{"kind":"meta","module":"FakeGame.exe","ue_version":505,"dumper_build":999,"dumped_at":"2026-01-01T00:00:00Z"}
+{"kind":"class","name":"C1","addr":"0x1","path":"//Script/FakeGame/AHeroBase","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"class","name":"C2","addr":"0x1","path":"//Script/EngineOverride/Foo","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"class","name":"C3","addr":"0x1","path":"/Script/Engine/Actor","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"class","name":"C4","addr":"0x1","path":"//Script/UMG.UserWidget","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"class","name":"C5","addr":"0x1","path":"//Script/CoreUObject/Object","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"summary"}
