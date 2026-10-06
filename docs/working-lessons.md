@@ -1350,6 +1350,20 @@ nothing and looks exactly like a click on a control that did nothing.
   feature OFF" ran with it **ON**. ⭐ For any toggle, read its state back from the screen — the
   countdown, the highlight, the label — rather than tracking it in your head across a long run.
 
+### 2.5e A menu a computer-use batch left open has CLOSED by the next batch — open and click in one
+
+Twice on 2026-10-06. On build 3625 a tick of the Export menu's object-index item, sent in the call after the one
+that opened the flyout, changed nothing, and it was filed as "Avalonia does not toggle a CheckBox MenuItem" (red
+`dd7af1ad`); the item toggles fine (`5eff8e84`). On build 3627 the same happened to Dump Explorer's Compare options:
+a batch ended with the ▾ menu open, the next batch's click "on the item" landed on the panel underneath, and
+`ui-options.json` still read `true` after an untick.
+
+- **Rule**: a flyout, menu or dropdown is opened and clicked in the SAME `computer_batch`, with a short wait
+  between; never assume a menu is still open across calls.
+- Read the result back where it is stored, not from the closed menu: an Avalonia flyout item loses its DataContext
+  when the flyout closes and reads unchecked until it opens again (pinned in `MenuItemToggleTests`). Re-open it in
+  the same batch and zoom, or read the persisted file (`%LOCALAPPDATA%\UE5CEDumper\ui-options.json`).
+
 
 ### 2.6 Verify the DLL through the PIPE, not the UI — and check `build_number` first
 
