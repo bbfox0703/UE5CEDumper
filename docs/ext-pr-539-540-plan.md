@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: PLAN — no PR feature is built yet** (three small changes landed early and shipped in build 3616, D7 among them — see "Landed ahead of the plan").
+**Status: PLAN — no PR feature is built yet** (three small changes landed early and shipped in build 3616, D7 among them — see "Landed ahead of the plan"). **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4).
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -26,9 +26,125 @@ CE inject paths, volume roots, and similar); none is in Dump All. After `14ecb18
 **same 112** failed (compared by name), 17 skipped — the 4 new D7 tests pass. A Linux run is not a Windows run:
 AOT trimming and the Windows-only tests were covered only by the maintainer's build 3616 publish.
 
-⚠ **That commit's message says the old figures were "never measured against the games this runs on". That is
+⚠ **`42217904`'s message says the old figures were "never measured against the games this runs on". That is
 unverified** — nobody checked whether they were measured. The reason for the change is the maintainer's decision
 that the tooltip states no numbers, not that the numbers were wrong. Read the commit message with this note.
+
+### Re-check 2026-10-06
+
+The maintainer asked for this review to be re-checked before work starts. Four reviewers read every claim in
+this file against the PR heads (`439387fa`, `facbdc96`, unchanged since 2026-10-02), `dev` @ `bb651f08`, and the
+two reference dumpers on GitHub. Of 100 claims, 77 held, 21 held only in part or needed a qualifier, 2 could not
+be checked (the Linux test run, and the typical number of distinct functions), and none was wrong outright. The text further down is left as written; read it with this section.
+
+**Maintainer decisions the re-check raises** (details in the lists below):
+
+| # | Question |
+|---|---|
+| R1 | Min calls in diff mode: exempt NEW rows, or only warn in the tooltip? |
+| R2 | D4's separate file: every object (as Dumper-7 and RE-UE4SS), or keep the `IsLiveInstanceRow` filter and say so? |
+| R3 | D4's GObjects index: accept the DLL change it needs (a new build of the DLL, not only the UI)? |
+| R4 | `diff_dumps.py`'s engine test (`/Script/` anywhere in the path) also drops the game's own native classes. Change it before D1/D5 and the C# port build on it? |
+
+**The early commits, verified on Windows:**
+
+- `dotnet test` at `bb651f08`: 6025/6025 passed, headless 15/15 — the Windows count build 3616 did not record.
+- Build 3616 as published on this machine: `dist\UE5DumpUI.exe` 59,165,184 B, SHA-256 `83e8b518119c`, FileVersion
+  1.0.0.3616, 2026-10-02 16:36; `dist\UE5Dumper.dll` 3,040,768 B.
+- D7's four tests all stayed inside one 200-class chunk. `8358bdd9` adds two that walk three chunks. Mutation
+  check: a throttle made per chunk fails four tests, one of them new; a chunk-local `Done` fails only the new
+  `Generate_WalkProgress_DoneCountsOnAcrossChunks`, so before `8358bdd9` it passed every test. The misnamed
+  `…SlowerThanTheIntervalStillLeavesGaps` (its classes were faster than the interval) is now
+  `…FasterThanTheInterval_ReportsEverySecondClass`.
+- `6897e913` fixes `DumpAllService` comments that no longer matched the code: a plan-phase "will", "obj.FullPath is
+  always empty" (it is not with `include_path`), and the header's `walk_class` (the walk uses `walk_class_batch`).
+- `76556244`: `scripts/analysis/README.md` no longer says the file is 50–500 MB. `docs/review7-live-recipes.json`
+  still tells a rig operator a run takes "about 30-60 s"; left as an internal note.
+- The 3616 dev-log entry says the status line "updates every half second". It updates **at most** twice a second,
+  and only after a class is written, so one slow class walk still leaves it quiet.
+- The tooltip's "vary with … the export settings" anticipates D4's checkbox: Dump All has no user setting today.
+
+**PR 540 — corrections:**
+
+- The PARTIAL baseline line gives no advice. "Only a shorter recording window brings it back" is in the diff-mode
+  status line, which also repeats the capped warning until Copy or Save overwrites it. So the baseline line is not
+  the only warning, but it is the only one that **stays** on screen. It was clipped before the PR as well (no
+  wrapping, about 175 characters): a second row or a `WrapPanel` also needs a bounded width and `TextWrapping` on
+  that `TextBlock`. The timeline plan adds a Trace checkbox and a buffer slider to the same toolbar.
+- "Hundreds to a few thousand distinct functions" is not measured anywhere (the only recorded figures are 67 and 6).
+  The 32768 measurement in the implementation notes is what settles it.
+- L1a: names are also resolved for rows the handler then drops as stale, and every fetch copies and sorts the whole
+  table whatever the limit. Per row it is several FName reads plus an outer-chain walk (`GetFullName`, which this
+  handler never uses) and a super-chain walk (`is_widget`). If 32768 stalls the lane, try those two first (skip the
+  unused full name, cache `is_widget` per class) before moving the command to the bulk lane.
+- L2: dropping the `recording` field loses nothing. The PR's field was the UI flag at save time, never whether the
+  rows came from a mid-recording peek; if that matters, save the fetch's own `recording` value.
+- L3: the PR's Min calls is a view filter and is reversible (its own test lowers it again). The "next capture only"
+  decision stands on its own grounds.
+- Problem 6: the number boxes use `Clamp(KeepCurrentIfEmpty)` where `NumericInput`'s own doc says to use `Coerce`.
+  Moot once L1 and L3 are sliders.
+
+**PR 540 — missed by the first review:**
+
+- ⚠ **Fixing problem 4 turns a test red.** `LiveFuncsCapAdviceTests` reads the view-model source and requires
+  "shorter recording window". The `[LIVEFUNCS-CAP-ADVICE]` row and the Wiki quote the same warning: change all three
+  together.
+- ⚠ **Min calls can hide the panel's own target in diff mode** (R1). The action's function is a NEW row with a low
+  count, and the PR's filter has no NEW exemption, so any value of 4 or more can hide it.
+- L5: the repo's power-of-two sliders persist the **exponent** (`ArrayLimitExponent`, `DropDownLimitExponent`, …).
+  Persisting the exponent for both new sliders removes the "snap to the nearest power of two" step.
+- Comments in `LiveFuncsViewModel` and the PR's own test hard-code 300; they go stale with a configurable cap.
+
+**PR 539 — corrections:**
+
+- A struct line is a subset of the class shape: no `is_bpgc`, `instance_count` or `funcs`, and `walk_functions` is
+  never called for a struct.
+- The PR's `diff_dumps.py` compares structs and enums, but its report prints only two **counts**: it never names
+  which struct, field or enum changed, and `--minimal` ignores both. D1's "report a struct field that moved" needs a
+  detail section, sorted like the class buckets. Plan it with D5.
+- "More than ten thousand extra struct walks on UE5" is not measured. Each struct costs one slot of a batched walk
+  and no `walk_functions`; `list_enums` is on the bulk lane.
+- Open question: `diff_dumps.py` is 889 lines on `dev` but 1045 on the PR head, and a port would follow the
+  post-D1–D5 script. Its self-test builds synthetic dumps in code (`_make_dump`), so a C# port rewrites them rather
+  than sharing fixture files.
+
+**PR 539 — missed by the first review:**
+
+- ⚠ **D4's GObjects index needs a DLL change** (R3). `get_object_list` items carry only `addr`, `name`, `class`,
+  `outer` and `full_path`, and the handler skips null and unnamed slots, so the client cannot work the index out from
+  a row's page position. It needs an `index` field (as `snapshot_chunk` already sends), ideally only with
+  `include_path`, plus a `UObjectNode` field. The index matches lines within **one** session only: slots depend on
+  load order and are reused after garbage collection.
+- **D4's filter is not the reference dumpers' list** (R2). `IsLiveInstanceRow` drops UClass, UFunction,
+  UScriptStruct, UEnum, UPackage and the UE4 property classes; Dumper-7 and RE-UE4SS write every object, packages
+  included.
+- **`diff_dumps.py` treats any path containing `/Script/` as engine** (R4), so by default it also drops the game's
+  own native classes (`/Script/<GameModule>/…`), and with D1 its native structs and enums. `DumpAllService` uses a
+  36-prefix list instead.
+- The PR's enum diff ignores `enum_names_failed` and a failed `list_enums`: against such a dump every enum shows as
+  changed, or as added.
+- **Re-implementation map.** A 3-way merge of the PR onto `dev` conflicts in one hunk, the progress block in
+  `FlushClassChunkAsync`. Carry by hand the 4-int return tuple and both call sites, and report `Done` as classes
+  **plus** structs (the callers on `dev` pass only `classesEmitted`). D2 adds a `list_enums` call to every run, so
+  test fakes need a `ListEnumsDetailedAsync` override; the PR added one to `StubDumpService` and three
+  `WalkClassBatchEquivalenceTests` fakes.
+- Dump Explorer gaps the PR leaves: the category picker reaches struct, enum and enumerator rows only under "All";
+  the class count leaves structs out while the property and function counts include their members; Find Instances
+  on a struct or enum row does nothing and says nothing.
+- Stale text in the PR's `DumpAllService`: the schema doc still lists meta / class / error / summary only, the enum
+  phase reports no progress, and the final report counts only classes.
+- A precedent for D4.2: Snapshot's "Estimate size" pre-flight (`SnapshotSizeEstimate`) and `SnapshotDiskGuard`.
+
+**Reference dumpers — corrections** (re-read on GitHub at the cited commits):
+
+- Dumper-7's `-WithProperties` file lists properties under every UStruct, functions included (a function's
+  properties are its parameters). A property line puts the offset where an object line puts the index.
+- RE-UE4SS `[ObjectDumper]` has a second option, `UseModuleOffsets` (default 0). Its crash warning is conditional
+  (loading past the main menu after a dump), force-loaded assets are freed afterwards, and the option is ignored
+  below UE 4.17.
+- RE-UE4SS's comment that `wchar_t` doubles the file size is stale: the writer converts to UTF-8 before writing.
+  The doubling is in memory (the 200,000,000-character reserve is about 400 MB).
+- "Users of those tools expect it" is an opinion, not something the source shows.
 
 | PR | Branch (fork `fireundubh/UE5CEDumper`) | Head reviewed | Base |
 |---|---|---|---|

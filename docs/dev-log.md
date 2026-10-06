@@ -27,6 +27,20 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — the PR 539 / 540 plan re-checked; build 3616's early changes verified on Windows `[EXTPR-539-540-2026-10-02]`
+
+- Every claim in `docs/ext-pr-539-540-plan.md` was re-checked against the two PRs, `dev` and the two reference
+  dumpers: 77 of 100 held, 21 needed a qualifier, 2 could not be checked, none was wrong outright. The plan's new
+  "Re-check 2026-10-06" section has the corrections, what the first review missed, and four questions for the
+  maintainer (R1–R4) before the work starts.
+- Build 3616's early changes, on Windows: C# 6025/6025, headless 15/15 at `bb651f08`. `dist\UE5DumpUI.exe`
+  59,165,184 B, sha256 `83e8b518119c`.
+- Correction to the 3616 entry below: the status line updates **at most** twice a second, after each class is
+  written; one slow class walk still leaves it quiet.
+- D7's tests now cross the 200-class chunk boundary (`8358bdd9`). A chunk-local `Done` passed every earlier test.
+- Comments in `DumpAllService` that no longer matched the code (`6897e913`), and the "50–500 MB" figure left in
+  `scripts/analysis/README.md` (`76556244`). Neither changes the program.
+
 ## 2026-10-04 (no build change) — feasibility of a Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 Written down, not built: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). Live Funcs could keep one
