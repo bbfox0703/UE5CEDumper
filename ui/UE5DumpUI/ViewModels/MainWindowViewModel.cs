@@ -3795,6 +3795,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             tempPath = filePath + ".partial";
             DumpResult result;
+            // The class dump's own time, for the log: the time and size Dump All costs on a game are measured
+            // from it, and the object index after it is timed on its own.
+            var dumpClock = System.Diagnostics.Stopwatch.StartNew();
             await using (var fs = new FileStream(
                 tempPath, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true))
             {
@@ -3803,6 +3806,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             File.Move(tempPath, filePath, overwrite: true);
             tempPath = null;   // published — don't delete on a later throw
+            var dumpElapsed = dumpClock.Elapsed;
 
             var byteLength = new FileInfo(filePath).Length;
             string indexNote = indexEstimate is null
@@ -3812,7 +3816,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             // from the file's byte length, and format the size in floating point (X4).
             progress.Complete(Helpers.DumpCompletionFormatter.Format(
                 result, byteLength, Path.GetFileName(filePath)) + indexNote);
-            _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
+            _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes in {dumpElapsed.TotalSeconds:F1} s, " +
                       $"{result.ClassesEmitted} classes, {result.StructsEmitted} structs, {result.EnumsEmitted} enums, " +
                       $"{result.Errors} errors; enums listed={result.EnumsListed}, names failed={result.EnumNamesFailed}, " +
                       $"truncated={result.EnumsTruncated}; params from num_parms={result.ParamsFromNumParms})");
