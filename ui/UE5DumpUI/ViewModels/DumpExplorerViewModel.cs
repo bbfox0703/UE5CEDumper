@@ -211,6 +211,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
                 // [EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl sits beside the class dump under the same
                 // extension; name the file the user wanted rather than asking whether this is a Dump All file.
                 var classDump = model.ClassDumpFile.Length > 0 ? model.ClassDumpFile : Res.Get("str.Dump.ObjectIndexFile.Unknown");
+                // Nothing of the previous file may stay above the emptied grids.
+                HeaderText = "";
+                ApplyFilter();
                 StatusText = Res.Format("str.Dump.ObjectIndexFile", classDump);
                 return;
             }
