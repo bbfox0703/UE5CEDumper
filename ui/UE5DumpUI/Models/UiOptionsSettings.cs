@@ -226,6 +226,8 @@ public sealed class LiveFuncsUiOptions
 {
     public int FetchLimitExponent { get; set; } = 9;
     public int MinCallsExponent { get; set; }
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] Leave out the per-frame functions in the DLL. OFF by default.</summary>
+    public bool HidePerFrame { get; set; }
 }
 
 public sealed class GameClassFilterUiOptions

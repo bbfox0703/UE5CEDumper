@@ -167,6 +167,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// count/diff. The causal ordering: an action's entry point fires before the reactions
     /// it triggers, so combined with New/changed-only this floats the true opener to the top.</summary>
     [ObservableProperty] private bool   _earliestFirst;
+
+    // [LIVEFUNCS-HIDE-PERFRAME] Placeholder until the option lands.
+    [ObservableProperty] private bool   _hidePerFrame;
+    internal int LastPerFrameHidden => 0;
+    internal bool PerFrameUnsupported => false;
+    internal bool BaselinePerFrameMismatch => false;
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter

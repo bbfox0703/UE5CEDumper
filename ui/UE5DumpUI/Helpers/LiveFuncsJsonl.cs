@@ -24,7 +24,7 @@ internal static class LiveFuncsJsonl
         int Rows, int Fetched, int Distinct, long TotalCalls, int FetchLimit, bool RecordingAtFetch,
         string Filter, bool HideWidgets, bool HideEvents, bool PeriodicOnly, int MinCalls,
         bool Diff, bool NewChangedOnly, int BaselineFuncs, bool BaselinePartial, int BaselineDistinct,
-        DateTime SavedAtUtc);
+        DateTime SavedAtUtc, bool HidePerFrame = false, int? PerFrameHidden = null);
 
     /// <summary>First call first; a row whose order is unknown (0) goes last. Ties by name keep the file stable.</summary>
     internal static IEnumerable<PeProfileEntry> InFirstCallOrder(IEnumerable<PeProfileEntry> rows)

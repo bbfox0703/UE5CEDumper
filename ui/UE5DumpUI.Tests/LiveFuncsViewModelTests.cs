@@ -14,8 +14,16 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class LiveFuncsViewModelTests
 {
-    private sealed class FakeDumpService : StubDumpService
+    private sealed class FakeDumpService : StubDumpService, IDumpService
     {
+        public bool? LastSkipPerFrame { get; private set; }
+
+        Task<PeProfileResult> IDumpService.PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct)
+        {
+            LastSkipPerFrame = skipPerFrame;
+            return PeProfileGetAsync(limit, ct);
+        }
+
         public bool StartHookActive { get; set; } = true;
         public string StartDetail { get; set; } = "";
         public int StartCalls { get; private set; }
@@ -920,6 +928,162 @@ public class LiveFuncsViewModelTests
         var dump = new FakeDumpService();
         var platform = new SavePlatform();
         return (new LiveFuncsViewModel(dump, new NoopLogger(), platform), dump, platform);
+    }
+
+    // ==================================================================
+    // [LIVEFUNCS-HIDE-PERFRAME] Hide per-frame: asked of the DLL, fixed at Start, and the cut counted without it.
+    // ==================================================================
+
+    private static PeProfileResult PerFramePage(int shown, int distinct, int? perFrameHidden) => new()
+    {
+        DistinctFuncs = distinct, TotalCalls = 100_000, PerFrameHidden = perFrameHidden,
+        Entries = Enumerable.Range(0, shown).Select(i => new PeProfileEntry
+            { ClassName = "A", FuncName = "F" + i, Count = 100 - i % 50, FirstSeq = i + 1, FuncAddr = "0x" + i }).ToList(),
+    };
+
+    [Fact]
+    public async Task HidePerFrame_IsOff_ByDefault_AndAskedOfTheDllWhenOn()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, null) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger());
+        Assert.False(vm.HidePerFrame);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(dump.LastSkipPerFrame);
+
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 3, 5);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(dump.LastSkipPerFrame);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_IsFixedAtStart_LikeTheFetchLimit()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, 0) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        vm.HidePerFrame = false;                       // moved while recording
+        await vm.RefreshCommand.ExecuteAsync(null);    // a peek ranks the recording as it began
+        Assert.True(dump.LastSkipPerFrame);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(dump.LastSkipPerFrame);
+
+        await vm.RefreshCommand.ExecuteAsync(null);    // after Stop, a re-pull takes the current value
+        Assert.False(dump.LastSkipPerFrame);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_TheRowsLeftOutAreNotRowsTheLimitCut()
+    {
+        // 1000 distinct, 488 of them per-frame and left out, 512 shown at a 512 limit: nothing else is missing, so
+        // no higher limit is offered. Without the count from the DLL the same page reads as cut.
+        var dump = new FakeDumpService { NextGet = PerFramePage(512, 1000, 488) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(488, vm.LastPerFrameHidden);
+        Assert.False(vm.RaiseFetchLimitHelps);
+
+        dump.NextGet = PerFramePage(512, 1000, 400);   // 88 more were cut by the limit
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_AnOlderDllThatLeftNothingOut_IsSaidSo()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, null) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(vm.PerFrameUnsupported);
+        Assert.Equal(0, vm.LastPerFrameHidden);
+
+        dump.NextGet = PerFramePage(3, 10, 7);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.False(vm.PerFrameUnsupported);
+        Assert.Equal(7, vm.LastPerFrameHidden);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_ABaselineFetchedTheOtherWay_IsFlagged()
+    {
+        // Per-frame rows missing from one side only would all come back NEW (or vanish) in the diff.
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, null) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger());
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        Assert.False(vm.BaselinePerFrameMismatch);
+
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 10, 7);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(vm.BaselinePerFrameMismatch);
+
+        vm.SetBaselineCommand.Execute(null);           // a baseline fetched the same way
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(vm.BaselinePerFrameMismatch);
+
+        // A DLL that ignored the option left nothing out: that page matches a baseline that hid nothing.
+        vm.HidePerFrame = false;
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 3, null);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(vm.BaselinePerFrameMismatch);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_RecordsHidePerFrame_AndHowManyWereLeftOut()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(2, 9, 7);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("hide_per_frame").GetBoolean());
+            Assert.Equal(7, head.GetProperty("per_frame_hidden").GetInt32());
+        }
+        finally { File.Delete(platform.Answer!); }
+
+        // Off: the key says so, and no count is claimed.
+        var (vm2, dump2, platform2) = MakeSavingVm();
+        dump2.NextGet = PerFramePage(2, 2, null);
+        await vm2.StartCommand.ExecuteAsync(null);
+        await vm2.StopCommand.ExecuteAsync(null);
+        await vm2.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var head = ReadLines(platform2.Answer!)[0].RootElement;
+            Assert.False(head.GetProperty("hide_per_frame").GetBoolean());
+            Assert.False(head.TryGetProperty("per_frame_hidden", out _));
+        }
+        finally { File.Delete(platform2.Answer!); }
+    }
+
+    [Fact]
+    public void HidePerFrame_PersistsThroughTheMainWindow()
+    {
+        // MainWindowViewModel cannot be built in a unit test; pin its persistence sites by source.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "build.ps1"))) root = root.Parent;
+        Assert.NotNull(root);
+        var src = File.ReadAllText(Path.Combine(root!.FullName, "ui", "UE5DumpUI", "ViewModels", "MainWindowViewModel.cs"));
+        Assert.Contains("nameof(LiveFuncsViewModel.HidePerFrame)", src);
+        Assert.Contains("LiveFuncs.HidePerFrame = o.LiveFuncs.HidePerFrame", src);
+        Assert.Contains("o.LiveFuncs.HidePerFrame = LiveFuncs.HidePerFrame", src);
     }
 
     private static List<System.Text.Json.JsonDocument> ReadLines(string path)

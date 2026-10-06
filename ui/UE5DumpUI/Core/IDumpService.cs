@@ -411,6 +411,12 @@ public interface IDumpService
     // Fetch the ranked fire-count table (top <paramref name="limit"/> by count).
     Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default);
 
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] The same table with the per-frame functions left out by the DLL before
+    /// <paramref name="limit"/> when <paramref name="skipPerFrame"/>. The default serves fakes: the plain table,
+    /// which is what a DLL that predates the option answers too.</summary>
+    Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
+        => PeProfileGetAsync(limit, ct);
+
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has
     /// occupied the DLL's dispatcher, plus Win32 process facts and game-thread

@@ -1648,6 +1648,32 @@ public class DumpServiceTests
         Assert.False(sent!.ContainsKey("include_index"));
     }
 
+    // [LIVEFUNCS-HIDE-PERFRAME] skip_per_frame goes on the wire only when asked, and per_frame_hidden is read back;
+    // absent, it stays null (a DLL that predates the option left nothing out).
+    [Fact]
+    public async Task PeProfileGetAsync_AsksToSkipPerFrame_OnlyWhenToldTo_AndReadsTheCount()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            var reply = new JsonObject { ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 9, ["total_calls"] = 99,
+                                         ["functions"] = new JsonArray() };
+            if (req["skip_per_frame"]?.GetValue<bool>() == true) reply["per_frame_hidden"] = 7;
+            return reply;
+        });
+        IDumpService svc = CreateService();
+
+        var asked = await svc.PeProfileGetAsync(64, skipPerFrame: true, TestContext.Current.CancellationToken);
+        Assert.True(sent!["skip_per_frame"]!.GetValue<bool>());
+        Assert.Equal(64, sent["limit"]!.GetValue<int>());
+        Assert.Equal(7, asked.PerFrameHidden);
+
+        var plain = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.False(sent!.ContainsKey("skip_per_frame"));
+        Assert.Null(plain.PerFrameHidden);
+    }
+
     // --- WalkFunctionsAsync: struct_fields parsing ---
 
     [Fact]
