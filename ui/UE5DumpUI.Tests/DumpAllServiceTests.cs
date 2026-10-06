@@ -760,13 +760,13 @@ public class DumpAllServiceTests
     }
 
     [Fact]
-    public void Generate_ResultAndProgress_CountStructsToo()
+    public async Task Generate_ResultAndProgress_CountStructsToo()
     {
         var dump = StructFixture();
         var sink = new RecordingProgress();
-        var result = DumpAllService.GenerateAsync(
+        var result = await DumpAllService.GenerateAsync(
             dump, DefaultEngineState(), new MemoryStream(), new DumpOptions(IncludeInstanceCounts: false), sink,
-            TestContext.Current.CancellationToken, new ManualClock()).GetAwaiter().GetResult();
+            TestContext.Current.CancellationToken, new ManualClock());
 
         Assert.Equal(1, result.ClassesEmitted);
         Assert.Equal(2, result.StructsEmitted);
