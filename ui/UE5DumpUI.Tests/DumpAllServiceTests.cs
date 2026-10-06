@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using UE5DumpUI.Core;
@@ -1134,5 +1135,44 @@ public class DumpAllServiceTests
 
         Assert.Equal(new[] { "Who" }, ParamNames(FuncsOf(lines)[0]));
         Assert.DoesNotContain(lines, l => l.StartsWith("{\"kind\":\"error\""));
+    }
+
+    // Review of 6847b080. StringBuilder.Append(int) formats with the CURRENT culture, and some cultures' minus is
+    // U+2212 (sv-SE and nb-NO under ICU), which is not JSON. A parameter whose offset the DLL could not read is -1.
+    [Fact]
+    public void Generate_EveryLineIsJson_UnderACultureWhoseMinusIsNotAscii()
+    {
+        var culture = (CultureInfo)CultureInfo.GetCultureInfo("sv-SE").Clone();
+        culture.NumberFormat.NegativeSign = "\u2212";
+        var dump = ParamsFixture(flagged: true);
+        var tryOpen = dump.FunctionWalks["0x1"][0];
+        dump.FunctionWalks["0x1"][0] = new FunctionInfoModel
+        {
+            Name = tryOpen.Name, Address = tryOpen.Address, NumParms = 1,
+            Params = new() { new() { Name = "Who", TypeName = "ObjectProperty", Offset = -1, Size = 8, IsParm = true } },
+        };
+
+        var prev = CultureInfo.CurrentCulture;
+        CultureInfo.CurrentCulture = culture;
+        List<string> lines;
+        try { lines = Dump(dump); }
+        finally { CultureInfo.CurrentCulture = prev; }
+
+        foreach (var line in lines)
+        {
+            using var doc = JsonDocument.Parse(line);
+        }
+        var who = FuncsOf(lines)[0].GetProperty("params")[0];
+        Assert.Equal(-1, who.GetProperty("offset").GetInt32());
+    }
+
+    [Fact]
+    public async Task Generate_Result_CarriesTheNumParmsFallbackCount()
+    {
+        // DumpResult carries what the summary line reports, so the caller can say it.
+        var result = await DumpAllService.GenerateAsync(ParamsFixture(flagged: false), DefaultEngineState(),
+            new MemoryStream(), ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(2, result.ParamsFromNumParms);
     }
 }
