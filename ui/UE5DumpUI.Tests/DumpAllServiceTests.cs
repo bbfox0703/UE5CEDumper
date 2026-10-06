@@ -948,4 +948,46 @@ public class DumpAllServiceTests
         Assert.Equal(3, done.Done);   // 1 class + 0 structs + 2 enums
         Assert.Contains("2 enums", done.Phase);
     }
+
+    // Review of 0c43deae: the enum list's warnings must reach the caller, as USMAP's do [P1-ENUMNAMES].
+
+    [Fact]
+    public async Task Generate_Result_CarriesTheEnumListsOwnWarnings()
+    {
+        var dump = EnumFixture();
+        dump.EnumNamesFailed = true;
+        dump.EnumsTruncated = true;
+
+        var result = await DumpAllService.GenerateAsync(dump, DefaultEngineState(), new MemoryStream(),
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.True(result.EnumsListed);
+        Assert.True(result.EnumNamesFailed);
+        Assert.True(result.EnumsTruncated);
+    }
+
+    [Fact]
+    public async Task Generate_AFailedEnumList_SaysSoInTheResult()
+    {
+        var dump = EnumFixture();
+        dump.EnumsThrow = new InvalidOperationException("pipe dropped");
+
+        var result = await DumpAllService.GenerateAsync(dump, DefaultEngineState(), new MemoryStream(),
+            ct: TestContext.Current.CancellationToken);
+
+        Assert.False(result.EnumsListed);
+    }
+
+    [Fact]
+    public async Task Generate_ListingEnumsReport_DoesNotCarryTheTypeCount()
+    {
+        // The UI shows a report without a total as "Phase (Done)"; the types written so far next to
+        // "Listing enums" read as an enum count.
+        var sink = new RecordingProgress();
+        await DumpAllService.GenerateAsync(EnumFixture(), DefaultEngineState(), new MemoryStream(),
+            new DumpOptions(IncludeInstanceCounts: false), sink, TestContext.Current.CancellationToken, new ManualClock());
+
+        var listing = Assert.Single(sink.Reports, r => r.Phase == "Listing enums");
+        Assert.Equal(0, listing.Done);
+    }
 }
