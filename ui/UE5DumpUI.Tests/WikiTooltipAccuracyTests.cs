@@ -72,6 +72,27 @@ public class WikiTooltipAccuracyTests
     }
 
     [Fact]
+    public void Live_Funcs_min_calls_slider_and_tip_match_the_VM_bounds_and_default()
+    {
+        // [EXTPR-539-540-2026-10-02] Same four copies as the fetch limit: slider, clamp, persisted default, tooltip.
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/LiveFuncsPanel.axaml"));
+        var slider = Regex.Match(panel,
+            @"<Slider Value=""\{Binding MinCallsExponent\}""\s+Minimum=""(\d+)"" Maximum=""(\d+)""");
+        Assert.True(slider.Success, "the MinCallsExponent slider was not found");
+        Assert.Equal(0, int.Parse(slider.Groups[1].Value));
+        Assert.Equal(UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMaxExponent, int.Parse(slider.Groups[2].Value));
+
+        int settingsDefault = new UE5DumpUI.Models.UiOptionsSettings().LiveFuncs.MinCallsExponent;
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/LiveFuncsViewModel.cs"));
+        // The initializer is the field's default (no "= n"), so the default is pinned as 0 on both sides.
+        Assert.Matches(@"\[ObservableProperty\] private int _minCallsExponent;", vm);
+        Assert.Equal(0, settingsDefault);
+
+        string expected = $"1 to {1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMaxExponent}, default {1 << settingsDefault}";
+        Assert.Contains(expected, EnString("str.Tip.LF.MinCalls"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Props_tip_does_not_say_native_functions_show_nothing()
     {
         // FunctionPropsDialog disassembles native functions (method "disasm", a Conf column);
