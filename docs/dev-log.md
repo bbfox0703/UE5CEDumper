@@ -27,6 +27,17 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3620) — Dump All writes structs `[EXTPR-539-540-2026-10-02]`
+
+- **Dump All** now writes a line for every struct (native and Blueprint user-defined) with its properties, beside
+  the class lines, and its summary and completion message count the structs. A struct the DLL could not read is
+  an error line instead of an empty struct.
+- The Dump Explorer and the analysis scripts read class lines only, for now.
+- From fireundubh's PR 539, built our way.
+- Build 3620: AOT `dist\UE5DumpUI.exe` 59,237,376 B, sha256 `1488b5154285`; `dist\UE5Dumper.dll` `86bfcda310ce`.
+  C# 6085/6085, headless 15/15, dll_core 593 checks, 32 gates. Not yet checked on a game: the plan measures Dump
+  All's time and size on a game once structs, enums and parameters are all in.
+
 ## 2026-10-06 (no build change) — Live Funcs' Fetch limit, Save .jsonl and Min calls checked live on Avowed `[EXTPR-539-540-2026-10-02]`
 
 - Build 3619 on Avowed, through the UI: a cut page says so and suggests a higher Fetch limit; at 32768 the same

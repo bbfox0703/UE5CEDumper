@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539 is not built; the reply on the PRs is written after it. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines) is in source and published (build 3620); the rest is not built. The reply on the PRs is written after PR 539. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -447,6 +447,18 @@ What this tells us:
   appears on every export, a remembered ON can never run the big export silently.
 - The export stays cancellable through the existing Dump All cancellation; a cancelled index leaves the class dump
   intact.
+
+### D1 built (2026-10-06)
+
+| Commit | What | Co-author |
+|---|---|---|
+| `0ecb9349` red (+ test fixes `e7127326`, `bc2f66b2`), `e68aa754` | The type walk admits `IsExportedTypeRow` rows; a ScriptStruct / UserDefinedStruct is walked in the same batch and written as `kind:"struct"` (a class line's identity, super, `props_size`, `props`; no `funcs`, `instance_count`, `is_bpgc`; no `walk_functions`); summary `structs_emitted` / `structs_skipped_engine`; progress "Walking classes and structs", Done counting both; `DumpResult.StructsEmitted`; the completion message names structs; the tooltip names structs | `e68aa754` |
+| `6ee5e93c` red, `3d8643f1` | Review fixes: a struct walk the DLL refused (empty result) is an error line, not a struct named ""; `DumpResult.StructsSkippedEngine`; comments that listed two callers or only classes | `3d8643f1` |
+| `24407c2f` | The `.jsonl` schema in `scripts/analysis/README.md`, the export coverage table, the closed R7-D-02 recipe's expected message, stale test comments | no |
+
+Published as build 3620 (AOT `UE5DumpUI.exe` 59,237,376 B, sha256 `1488b5154285`). C# 6085/6085. Class lines keep
+writing an empty walk as before (a pre-existing behaviour the review noted, not changed here). **Owed:** the live
+measurement of Dump All's time and size on a game, after D2 and D3.
 
 ### Other problems found (first review — fix while taking D1–D3)
 
