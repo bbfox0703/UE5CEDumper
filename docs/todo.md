@@ -281,14 +281,24 @@ the list from `scripts/analysis/engine_paths.py`.
   live check owed. ✅ **Save `.jsonl` (L2) is in source too (2026-10-06, `a20af931`, `feee40cf`)**; AOT publish and
   live check owed. ✅ **Min calls (L3) is in source too (2026-10-06, `f45dca96`, `3d278c75`)**: PR 540's three
   features are all built. ✅ **Live check PASS 2026-10-06, build 3619, Avowed** (the plan's "Live check,
-  2026-10-06"). PR 540 is done. PR 539: ✅ D1 (struct lines) in source, build 3620; ✅ D2 (enum lines) in source, build 3621; next D3
-  (function parameters).
+  2026-10-06"). PR 540 is done. PR 539: ✅ D1 (struct lines) in source, build 3620; ✅ D2 (enum lines) in source, build 3621; ✅ D3
+  (function parameters, and the DLL's new `parm` flag) in source, build 3622, live PASS on Avowed and
+  UE423_Flying. Left: the Explorer reading, D5, D4, D8, the live Dump All measurement.
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
   shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed
   2026-10-02 — Dumper-7 and RE-UE4SS both ship one). `diff_dumps.py` reports struct
   added / removed; timer-based progress (✅ done early, `14ecb189`); fix the Explorer short-name collision and the enum labels; move the
-  `DumpJsonlContext` doc comment back; the tooltip names the new contents (it states no time or size — fixed 2026-10-02).
+  `DumpJsonlContext` doc comment back; the tooltip names the new contents (it states no time or size — fixed 2026-10-02);
+  the Explorer searches parameter names (the reason D3 was taken; the file carries them since build 3622).
+- ⬜ `[FUNCPARM-CONSUMERS]` (LOW; found by D3, split off by the maintainer 2026-10-06). `walk_functions` lists a
+  UFunction's whole property chain, and every consumer but Dump All still treats a Blueprint function's locals as
+  parameters: the Invoke form and its script (`InvokeScriptGenerator.Generate`, the Live Walker and main-window
+  invoke paths) offer them as inputs (the 2026-08 Y1 TRAP 1); `InvokeScriptGenerator.RequiredSpan` counts them,
+  so a local can inflate the span and trigger the slab refusal; `SdkExportService.GenerateFunctionSignature`
+  lists them; `docs/tips.md`'s vendor tip relies on the dialog. Fix: filter on `FunctionParamModel.IsParm`
+  (null with a DLL older than 3622: the leading `NumParms` entries); check the DLL-side users of
+  `FunctionInfo::params` too. Effort S–M, risk low. Live check: an Invoke on a Blueprint function with locals.
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
   weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
   HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.

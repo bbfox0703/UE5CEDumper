@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620) and D2 (enum lines, build 3621) are in source and published; the rest is not built. The reply on the PRs is written after PR 539. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620), D2 (enum lines, build 3621) and D3 (function parameters, build 3622, with a new DLL flag that tells a parameter from a Blueprint local; checked live) are in source and published; the rest is not built. The reply on the PRs is written after PR 539. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -448,6 +448,42 @@ What this tells us:
   appears on every export, a remembered ON can never run the big export silently.
 - The export stays cancellable through the existing Dump All cancellation; a cancelled index leaves the class dump
   intact.
+
+### D3 built (2026-10-06)
+
+The PR writes every entry walk_functions returns as a parameter. That list is the UFunction's whole property
+chain, and on a Blueprint function the chain holds the locals after the parameters (the 2026-08 Y1 trap). The
+maintainer chose a DLL flag (2026-10-06): walk_functions marks each entry with `parm` (CPF_Parm), Dump All
+writes only the parameters, and the other consumers are left as they are and tracked in todo.md
+`[FUNCPARM-CONSUMERS]`.
+
+| Commit | What | Co-author |
+|---|---|---|
+| `211d8d78` red, `0fa23e3f` | DLL: `FunctionParam::isParm` from CPF_Parm in both property models; `walk_functions` always sends `parm` | no (our design) |
+| `e7fa096c` | Review: UFUNCPARM's entries carry real non-Parm bits (`isParm = propFlags != 0` passed the old fixture) | no |
+| `b075059a` red, `111b3d43` | The parser reads `parm` into a nullable `FunctionParamModel.IsParm` (null: an older DLL) | no |
+| `e3ad5508` red, `6847b080` | Each function on a class line carries `params` (the walker's keys; `out` / `ret` only when set; no `struct_fields`); only flagged entries; an older DLL gets the leading `num_parms` entries and the summary's `params_from_num_parms` counts those functions; the tooltip names parameters. A later test pins that the flag wins over a misread `num_parms` | `6847b080` |
+| `c3d4f348` red, `0c1d5d4b` | Review fixes: every number the writers emit is culture-invariant (a `-1` offset was invalid JSON under a U+2212 minus); `DumpResult.ParamsFromNumParms`; comments that called the chain "parameters" | `0c1d5d4b` |
+| `fdeb7dfb` | `tools/verify/d3_parm_flags.py`, the live rig: the flag against `num_parms` / `parms_size` | no |
+| `62bba6fa` | `parm` in `pipe-protocol.md`, `params` in the `.jsonl` schema, the diff's docstring, the Dumper-7 aside above | no |
+
+Published as build 3622 (AOT `UE5DumpUI.exe` 59,266,048 B, sha256 `349cba66cb93`; `UE5Dumper.dll`
+`c67e6ad2a6d4`). C# 6109/6109, dll_core 602/602. Review: 3 reviewers and 3 adversarial verifiers, 17 findings
+(16 held, 1 refuted), all LOW / INFO / docs.
+
+**Live, build 3622** (`d3_parm_flags.py`, one game at a time, results in `out/d3/`):
+
+| Host | Property model | Functions with parameters, `parm` count = `num_parms` | Functions with locals / locals | Verdict |
+|---|---|---|---|---|
+| Avowed (UE 5.3, `dxgi.dll` proxy refreshed to 3622) | FField | 5,561 of 5,561 | 1,126 / 15,820, all `false`, none inside the parameter block | PASS |
+| UE423_Flying Shipping (injected) | UProperty (`use_fproperty` false) | 4,822 of 4,822 | 4 / 102 | PASS (`--min-locals 1`) |
+| DumperTest 5.4 Shipping (injected) | FField | 8,001 of 8,001 | 1 / 16 (`ExecuteUbergraph_ABP_Manny`) | below the rig's 10-function floor |
+
+No parameter followed a local on any host, so the older-DLL fallback's assumption held too.
+
+**Owed:** Dump Explorer's parameter search, the reason D3 was taken (PR 539's `DumpFuncParamLine` /
+`ParamHaystack` are the reference), with the Explorer item; `diff_dumps.py` comparing `params` (D5); the other
+consumers (`[FUNCPARM-CONSUMERS]`); the live Dump All time and size measurement, now that D1–D3 are in.
 
 ### D2 built (2026-10-06)
 

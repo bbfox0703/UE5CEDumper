@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3622) — Dump All writes function parameters `[EXTPR-539-540-2026-10-02]`
+
+- **Dump All** now writes each function's parameters on the class lines: name, type, offset, size, and
+  whether it is an out parameter or the return value.
+- A Blueprint function keeps its local variables in the same list as its parameters in the game's data. The DLL
+  now tells the two apart, and only real parameters are written: on Avowed that left out 15,820 locals in
+  1,126 Blueprint functions. The Invoke form and the SDK header still show such locals as parameters; that is
+  a separate open item.
+- With a DLL older than this build (for example an old proxy left in a game folder), the parameters are taken
+  from the function's parameter count instead, and the file's summary line counts those functions.
+- Dump Explorer and the analysis scripts do not read the parameters yet.
+- From fireundubh's PR 539, built our way.
+- Build 3622: AOT `dist\UE5DumpUI.exe` 59,266,048 B, sha256 `349cba66cb93`; `dist\UE5Dumper.dll` `c67e6ad2a6d4`
+  (`walk_functions` sends `parm`). C# 6109/6109, headless 15/15, dll_core 602 checks, 32 gates. Live,
+  `tools/verify/d3_parm_flags.py`: PASS on Avowed (UE 5.3) and UE423_Flying Shipping (UE 4.23, the UProperty
+  path); DumperTest 5.4 Shipping agreed on all 8,001 functions with parameters but has only one function with
+  locals. Dump All itself is not yet measured on a game.
+
 ## 2026-10-06 (build 3621) — Dump All writes enums `[EXTPR-539-540-2026-10-02]`
 
 - **Dump All** now writes a line for every enum with its members and values, after the classes and structs, and
