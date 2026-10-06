@@ -54,6 +54,11 @@ A fourth script needs no dump corpus at all — it reads installed games directl
    ```bash
    python scripts/analysis/analyze_dumps.py dump1.jsonl dump2.jsonl dump3.jsonl
    ```
+   It counts game classes only: Blueprint classes and the game's own C++
+   modules (`/Script/<GameModule>/`). `--include-engine` adds the engine's
+   own modules. Both scripts take the list of engine modules from
+   `engine_paths.py`, a copy of the DLL's that a gate keeps equal to it.
+   `--self-test` runs its synthetic-dump tests.
    Produces `analysis-report.md` with four sections:
    - **Dump summary** — UE version / object count / BPGC count per game.
    - **Top N property names** — exact field names, ranked by total hits.

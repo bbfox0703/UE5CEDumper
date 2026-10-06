@@ -30,9 +30,10 @@ DESIGN NOTES
     - Each game has different mechanics; statistical signal needs
       ≥3 dumps to be meaningful. Single-dump runs are useful for
       sanity-checking a specific game but don't drive table changes.
-    - `is_engine_class` filter mirrors the DLL's IsEnginePackage list.
-      Analysis usually restricts to game classes since engine fields
-      already have stable English names.
+    - `is_engine_class` uses the DLL's IsEnginePackage list, from
+      engine_paths.py. Game classes are Blueprint classes AND the game's
+      own C++ modules (/Script/<GameModule>/); analysis usually restricts
+      to them, since engine fields already have stable English names.
     - Tokenization matches the C# KeywordTokenizer rules so the
       derived keywords plug directly into the scoring table.
 """
@@ -46,6 +47,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator
+
+from engine_paths import is_engine_path
 
 
 # =====================================================================
@@ -132,19 +135,12 @@ def tokenize(identifier: str) -> list[str]:
 # Filtering — engine vs game classes
 # =====================================================================
 
-# Engine classes live under `/Script/<Module>/...`. The DLL emits paths
-# with either `.` or `/` as the package/class separator depending on
-# code path (Ubel::GetFullName uses `/`; PropertyMatch::classPath uses
-# `.`). Substring match against `/Script/` is format-agnostic and
-# precise enough — game classes live under `/Game/...` so there's no
-# collision risk.
+# Not every `/Script/<Module>/` class is the engine's: the game's own C++
+# classes live there too, and they are where many games keep their stats.
+# engine_paths.is_engine_path accepts both separators the DLL writes (`/`
+# from Ubel::GetFullName, `.` from PropertyMatch::classPath).
 def is_engine_class(cls: dict) -> bool:
-    path = cls.get("path", "")
-    return "/Script/" in path
-
-def is_game_class(cls: dict) -> bool:
-    path = cls.get("path", "")
-    return "/Game/" in path or "/Engine/" not in path and "/Script/" not in path
+    return is_engine_path(cls.get("path", ""))
 
 
 # =====================================================================
@@ -727,7 +723,8 @@ def main(argv: list[str] | None = None) -> int:
                         "game spikes (e.g. one game with 500x m_pIconTexture) are "
                         "filtered out. Set to 1 to see everything.")
     p.add_argument("--include-engine", action="store_true",
-                   help="Include engine /Script/* classes in aggregates")
+                   help="Include the engine's own modules in aggregates "
+                        "(the game's own C++ classes are always included)")
     p.add_argument("--output", type=Path, default=Path("analysis-report.md"),
                    help="Markdown report path (default: analysis-report.md)")
     args = p.parse_args(argv)
