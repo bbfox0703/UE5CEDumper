@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **11 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **10 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -264,8 +264,9 @@ Open work only. **Read this when deciding what to do next.**
 
 ## 🧭 Maintainer request 2026-10-02 — take parts of external PRs 539 / 540, re-implemented here `[EXTPR-539-540-2026-10-02]`
 
-**The plan, the review's findings and every decision: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md).** No PR
-feature is built yet; three small changes landed early (build 3616). ⚠ **Re-checked 2026-10-06** (the plan's
+**The plan, the review's findings and every decision: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md).** ✅ **Both
+PRs are built, reviewed and checked live (2026-10-06, builds 3619–3626).** Left for the maintainer: the open
+question below, and the reply on the PRs (draft `out/pr-539-540-reply-draft.md`, not posted). ⚠ **Re-checked 2026-10-06** (the plan's
 "Re-check 2026-10-06"); its four questions R1–R4 were decided the same day. **Order now:** ✅ `pe_profile_get`
 at 32768 measured 2026-10-06 (Avowed: 648 distinct, 543 rows, 144 KB, about 15 ms; it stays on the interactive
 lane) → ✅ `diff_dumps.py`'s engine test (R4, `6ade4435`, 2026-10-06) → the features. A commit that carries
@@ -283,8 +284,9 @@ the list from `scripts/analysis/engine_paths.py`.
   features are all built. ✅ **Live check PASS 2026-10-06, build 3619, Avowed** (the plan's "Live check,
   2026-10-06"). PR 540 is done. PR 539: ✅ D1 (struct lines) in source, build 3620; ✅ D2 (enum lines) in source, build 3621; ✅ D3
   (function parameters, and the DLL's new `parm` flag) in source, build 3622, live PASS on Avowed and
-  UE423_Flying. Left: the Explorer reading, D5, D4, D8, the live Dump All measurement.
-- ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
+  UE423_Flying. ✅ The Explorer reading (E1), D5 (the diff), D4 (the object index) and D8, builds 3625–3626, live
+  PASS on DumperTest and Avowed with the Dump All measurement (the plan's "PR 539 finished"). PR 539 is done.
+- ✅ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Done 2026-10-06, see above; the text below is the plan. Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
   shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed
   2026-10-02 — Dumper-7 and RE-UE4SS both ship one). `diff_dumps.py` reports struct
@@ -314,7 +316,8 @@ the list from `scripts/analysis/engine_paths.py`.
   (`a5026d80` red, `620a6c5a`). Seven test fixtures with parameters but no `NumParms` had silently moved to the
   no-parameter script; each carries its count and the form tests pin the form path (`13e0465a`). The SDK
   signature builder has no production caller, so its change shows in no export (the 3624 dev-log line
-  overstated it). ⬜ **Live check owed:** `verification-register.md` `[FUNCPARM-CONSUMERS]`.
+  overstated it). 🟡 **Live, build 3625:** steps 1, 2a and 3 PASS; step 2b (the CE Invoke script) owed — the
+  AOBMaker bridge did not come up (`verification-register.md` `[FUNCPARM-CONSUMERS]`).
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
   weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
   HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.

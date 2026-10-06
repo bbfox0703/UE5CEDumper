@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620), D2 (enum lines, build 3621) and D3 (function parameters, build 3622, with a new DLL flag that tells a parameter from a Blueprint local; checked live) are in source and published; the rest is not built. The reply on the PRs is written after PR 539. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: BUILT — both PRs, 2026-10-06.** PR 540: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5, shipped in build 3619 and checked live on Avowed (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620), D2 (enum lines, 3621), D3 (function parameters, 3622, with a DLL flag that tells a parameter from a Blueprint local), the Dump Explorer reading them (E1), D5 (the diff), D4 (the object index) and D8, builds 3625–3626, each reviewed and checked live (see "PR 539 finished" under PR 539). Left for the maintainer: the open question of a diff inside the UI, and the reply on the PRs — a draft is in `out/pr-539-540-reply-draft.md`, not posted. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -448,6 +448,42 @@ What this tells us:
   appears on every export, a remembered ON can never run the big export silently.
 - The export stays cancellable through the existing Dump All cancellation; a cancelled index leaves the class dump
   intact.
+
+### PR 539 finished (2026-10-06): E1, D5, D4, D8, the reviews and the live check
+
+**Built** (red before green each; the trailer on the commits that carry the PR's functionality):
+
+| Item | Red | Feature / fix | What |
+|---|---|---|---|
+| E1 — Dump Explorer reads the new lines | `06f3b9ab` | `ea9c94fa` | struct, enum and enumerator rows (enumerator labelled "Enumerator"); a function row shows its arguments and is found by a parameter name; the live match keyed by kind and short name (a class and a struct share names; PR 539 kept one dictionary); the category picker reaches every kind, appended so old indices hold; Find Instances says why it does nothing on a struct or enum; the header counts structs and enums |
+| D5 — `diff_dumps.py` | `5d0e4b0f` | `513fdd16` | structs diffed as classes, with detail; enums by path with their enumerators; parameters when both files carry them; no comparison of what a file cannot say (an older dump, an unread or cut-short enum list, enums without names) |
+| D4 — the object index | `344cc1cb` | `41cf418d` | opt-in "Dump All also writes the object index" (Export menu, OFF by default, persisted); one page's estimate and a confirmation before the class dump; `<name>.objects.jsonl` written after the class dump is published, every object with its GObjects index; the DLL's `get_object_list` gained `include_index` (R3) |
+| D8 — persistence | (in D4's red) | `41cf418d` | the only new option, the object-index tick, is in `UiOptionsSettings.Main` |
+
+**Reviewed** (3 reviewers + 3 adversarial verifiers; 24 findings, 1 MED, 1 refuted), each fixed red before green:
+D5 `bbfccdbe` → `fded39a0` (the report's warning sign crashed a redirected cp950 stdout — MED; a file cut off
+before its summary; walks that failed; the return entry; a struct that only grew is breaking; the `--minimal`
+banner), D4 `6a3c02bf` → `4e0a2f4e` (objects vs slots in the estimate; `analyze_dumps.py` skips the index; a
+stale sibling index is called out; the duration wording), E1 `bf91f6af` → `0c108ef5` + `49b092fc` (the
+summary's enum flags; a return's struct or class; the object index file recognised; comments), docs `d818fe5c`.
+Also: Dump All's log line times the class dump (`86945805`).
+
+**Live, build 3625, 2026-10-06** (one game at a time):
+
+| Check | Host | Result |
+|---|---|---|
+| Dump All, class dump | DumperTest 5.4 Shipping | 15.6 MB in 5.6 s (4.4 s the second time): 3,868 classes, 3,820 structs, 1,568 enums, 0 errors, `params_from_num_parms` 0. The build-3550 class-only dump of the same game was 10.3 MB |
+| Dump All, class dump | Avowed (UE 5.3, main menu, 92,036 objects) | 39.9 MB in 13.4 s: 7,404 classes, 5,562 structs, 2,142 enums, 0 errors |
+| Object index | DumperTest | estimate "about 24,518 objects, roughly 4.3 MB, less than a second"; wrote 24,511 objects (24,518 slots), 4.9 MB in 0.4 s |
+| Object index | Avowed | estimate "about 92,036 objects, roughly 15.7 MB, about 3 s"; wrote 86,036 objects (92,036 slots), 19.5 MB in 1.7 s — the first page had no hole and shorter paths than the rest, so the objects were 7% over and the bytes 15% under |
+| `include_index` read back (`d4_object_index.py`) | DumperTest (5 pages), Avowed (6 pages) | PASS: every row indexed only when asked, indexes rise inside each window, 400 slots read back to the same address each, pages with skipped slots met (1 and 3) |
+| Dump Explorer on the new dump | DumperTest | header "3,868 classes · 3,820 structs · 1,568 enums"; live match 112,115 of 112,115 rows, the structs and enums too; "OtherActor" finds 18 functions by a parameter name; Enumerators 9,299 rows ("= 0" values); Structs 3,820; Find Instances on a struct row says why; the object index opened says to open its class dump |
+| `diff_dumps.py` on real files | DumperTest | two 3625 dumps: 2,011 structs and 561 enums compared, 0 changes; the 3550 dump against a 3625 one: structs and enums "not compared" with the reason; the object index refused by `diff_dumps.py` and skipped by `analyze_dumps.py` |
+
+Found by the live check and fixed: the Kind column cut "Enumerator", and the previous file's header and counts
+stayed over an object index (`c8310c69` → `ca63acd9`), published as build 3626 (AOT `UE5DumpUI.exe` 59,476,480 B,
+sha256 `a78a0ba980fb`). A false alarm is recorded in `5eff8e84`: a menu tick sent in a separate computer-use call
+after the one that opened the flyout landed once the flyout had closed; the option works.
 
 ### D3 built (2026-10-06)
 

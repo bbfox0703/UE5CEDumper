@@ -250,7 +250,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
@@ -1061,7 +1061,26 @@ plugin, CE attached to the game:
 Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4), Avowed
 (step 5's adjusted-signature case).
 
-### ⬜ FIXED 2026-10-06, NEEDS A LIVE CHECK — `[FUNCPARM-CONSUMERS]`: no consumer takes a Blueprint function's locals for its arguments
+### 🟡 FIXED 2026-10-06, LIVE 3 OF 4 STEPS PASS (build 3625) — `[FUNCPARM-CONSUMERS]`: no consumer takes a Blueprint function's locals for its arguments
+
+**Live, build 3625, 2026-10-06** (one game at a time; DumperTest 5.4 Shipping injected, Avowed through its
+refreshed `dxgi.dll`):
+- **Step 1 PASS** (`tools/verify/funcparm_xref_live.py`, `out/funcparm/dumpertest_shipping_3625.json`):
+  `find_functions_by_class` on Character's class lists no `ExecuteUbergraph_ABP_Manny`; on Actor's class it
+  lists `D4_OnActorHitProbe` (DumperTestActor) and `OnPeerBeginOverlap` (DumperTestSparseListener), `kind`
+  `param` — the positive control. Both replies complete.
+- **Step 2a PASS:** Live Walker on `Default__ABP_Manny_C`, Functions, `ExecuteUbergraph_ABP_Manny` AA(Baked):
+  ONE input row, `EntryPoint [int32, 4B, off=0]`, no local. Not fired.
+- **Step 2b OWED:** the CE Invoke-script button (INV) stayed disabled. CE (SSE4-AVX2, the AOBMaker plugin
+  enabled in its list, attached to DumperTest) and the AOBMaker UI were running, but the dumper's "AOBMaker DLL"
+  indicator stayed grey after a refresh. The script's content is pinned by
+  `FunctionParametersTests.The_invoke_script_offers_the_argument_and_no_local`.
+- **Step 3 PASS** on Avowed: Live Walker on `Default__EQSContext_QuerierFeet_C`, `ProvideSingleLocation` (3
+  parameters, 40 B; the chain also holds `K2Node_DynamicCast_AsCharacter`, `K2Node_DynamicCast_bSuccess`,
+  `CallFunc_K2_GetActorLocation_ReturnValue`). The PIPE form offers `QuerierObject` and `QuerierActor` and
+  shows `ResultingLocation` (out); FIRE with both null: "ProcessEvent OK (result=0)", and the post-call buffer
+  lists `QuerierObject`, `QuerierActor`, `ResultingLocation (out) = X=0, Y=0, Z=0` — no local, no
+  `(return*)` line.
 
 Fixed in build 3624, and its review's fixes (the zero-fill, Mimic's return-slot clear) in build 3625; the row
 and its commits are in `todo.md`. `FunctionParametersTests` pins every C# consumer

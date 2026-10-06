@@ -27,6 +27,29 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3626) — Dump Explorer reads structs, enums and parameters; the diff compares them; an optional object index `[EXTPR-539-540-2026-10-02]`
+
+- **Dump Explorer** shows structs, enums and each enum's values beside the classes, and a function's arguments
+  and return type; a parameter name now finds its functions. The category picker reaches every kind, and a
+  struct or enum matches the live game by kind, so it no longer borrows a class's address of the same name.
+- **`diff_dumps.py`** compares structs, enums and function parameters between two dumps and names each change.
+  It skips what a file cannot tell it (a dump from before these lines, an enum list that could not be read) and
+  says so, instead of reporting everything as added.
+- **Object index (optional):** tick Export ▸ "Dump All also writes the object index" and Dump All also writes
+  `<name>.objects.jsonl`, every loaded object with its GObjects index. It shows the estimated size and time and
+  asks first; "Class dump only" skips it.
+- **Invoke, the SDK header and Find Func** (build 3624) no longer take a Blueprint function's local variables
+  for parameters; review fixes here keep the CE Invoke script clearing the whole parameter buffer and make the
+  DLL clear an invoke's return slot, which it had never done.
+- From fireundubh's PR 539, built our way.
+- Measured on build 3625: DumperTest 5.4 Shipping, a 15.6 MB dump in 5.6 s (3,868 classes, 3,820 structs, 1,568
+  enums); Avowed's main menu, 39.9 MB in 13.4 s (7,404 classes, 5,562 structs, 2,142 enums), and its object index
+  19.5 MB in 1.7 s.
+- Build 3626: AOT `dist\UE5DumpUI.exe` 59,476,480 B, sha256 `a78a0ba980fb`; `dist\UE5Dumper.dll` `1e2f3c3fbcb9`
+  (`get_object_list`'s `include_index`, Mimic's return-slot clear). C# 6153/6153, headless 17/17, dll_core 608
+  checks, 32 gates. Build 3625 was the live-check build; 3626 adds two fixes it found (the Explorer's Kind column,
+  a stale header over an object index).
+
 ## 2026-10-06 (build 3624) — Invoke, the SDK header and Find Func stop taking a Blueprint function's locals for parameters `[FUNCPARM-CONSUMERS]`
 
 - A Blueprint function keeps its local variables in the same list as its parameters in the game's data, and since
