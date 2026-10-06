@@ -10,7 +10,8 @@ USAGE
 
 WHAT IT DOES
     1. Loads N dumps (one per game). Each dump = meta line + class lines
-       + summary line, as documented in DumpAllService.cs.
+       + summary line, as documented in DumpAllService.cs. Struct lines
+       and error lines are not used here.
     2. Aggregates across games:
          - Property-name frequency (filter to game-only)
          - Class-name token frequency

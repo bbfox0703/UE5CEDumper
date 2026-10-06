@@ -512,7 +512,7 @@ public class UsmapExportServiceTests
     }
 
     /// <summary>[R7-D-02] A service that reports a record (Dump All's <c>DumpProgress</c>) goes through the same line:
-    /// queued once, and dropped once the final status is set. Dump All's last report is "Done — N classes", made just
+    /// queued once, and dropped once the final status is set. Dump All's last report is "Done — N classes, M structs", made just
     /// before the service returns, and it used to replace the final status that carries the error count.</summary>
     [Fact]
     public void ExportStatus_AMappedRecordReport_IsQueuedOnceAndDroppedAfterCompletion()

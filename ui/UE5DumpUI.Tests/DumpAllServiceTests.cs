@@ -165,7 +165,7 @@ public class DumpAllServiceTests
     }
 
     // ==================================================================
-    // Filter: accept Class + BPGC variants; drop everything else
+    // Filter: Class + BPGC variants become class lines, structs struct lines; drop everything else
     // ==================================================================
 
     [Fact]
@@ -190,7 +190,7 @@ public class DumpAllServiceTests
         var lines = Dump(dump);
         var classLines = lines.Where(l => l.StartsWith("{\"kind\":\"class\"")).ToList();
 
-        Assert.Equal(5, classLines.Count);  // 4 BPGC variants + 1 Class + 1 DynamicClass = 5 (FVector + instance dropped)
+        Assert.Equal(5, classLines.Count);  // 3 BPGC variants + 1 Class + 1 DynamicClass (FVector is a struct line, the instance dropped)
         Assert.Contains(classLines, l => l.Contains("\"name\":\"UCharacter\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"BP_Player_C\""));
         Assert.Contains(classLines, l => l.Contains("\"name\":\"MyAnimBP_C\""));

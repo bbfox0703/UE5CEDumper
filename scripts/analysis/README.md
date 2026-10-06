@@ -81,8 +81,9 @@ Each line is a self-contained JSON object with a `kind` discriminator:
 |---|---|
 | `meta` | Always first. UE version, module name, object count, dumper build, options snapshot. |
 | `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. |
-| `error` | One per class walk failure. Iteration continues. |
-| `summary` | Always last. Counters: classes_emitted / skipped / errors / scanned. |
+| `struct` | One per `ScriptStruct` / `UserDefinedStruct`. A class record's `name` / `addr` / `path` / `meta` / `super` / `super_addr` / `props_size` / `props[]`, without `funcs[]`, `instance_count` or `is_bpgc`. The two scripts here read class records only. |
+| `error` | One per class or struct walk failure. Iteration continues. |
+| `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / errors / objects_scanned. |
 
 Per-class record (excerpt):
 ```json
