@@ -829,8 +829,18 @@ public class DumpExplorerTests
             Assert.Empty(model.Entries);
 
             var vm = CreateVm(new FakeDumpService(), new MockPlatformService(Path.GetTempPath()));
+            var classDump = await WriteTempAsync(SampleJsonl);
+            try { await vm.LoadFromPathAsync(classDump); }
+            finally { File.Delete(classDump); }
+            Assert.Contains("2 classes", vm.HeaderText);
+
             await vm.LoadFromPathAsync(path);
+
             Assert.False(vm.HasFile);
+            // Live check, build 3625: the previous file's header and group counts stayed above the empty grids.
+            Assert.DoesNotContain("classes", vm.HeaderText);
+            Assert.DoesNotContain("6", vm.UnmatchedHeader);
+            Assert.Empty(vm.Unmatched);
         }
         finally { File.Delete(path); }
     }
