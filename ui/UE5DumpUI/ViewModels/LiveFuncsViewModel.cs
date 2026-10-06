@@ -46,14 +46,22 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// Read at Start and kept for that capture, so the rows on screen never change under a moved slider (the
     /// maintainer's choice over filtering at once). Only the view is filtered: SetBaseline reads every fetched row,
     /// or an idle function with few calls would be missing from the baseline and come back as a false NEW.</summary>
+    internal const int MinCallsMinExponent = 0;
     internal const int MinCallsMaxExponent = 5;
     [ObservableProperty] private int _minCallsExponent;
 
     /// <summary>The minimum itself, 2^<see cref="MinCallsExponent"/>.</summary>
     public int MinCalls => 1 << MinCallsExponent;
 
-    /// <summary>The minimum the capture on screen was started with; 1 (hides nothing) before the first Start.</summary>
+    /// <summary>The minimum the running or last capture was started with, and the one the rows on screen were
+    /// fetched under. They differ between a Start and its first fetch, and stay apart when a recording ends without
+    /// one (leaving the tab, a disconnect, a failed Stop): the rows on screen keep their own minimum.</summary>
     private int _captureMinCalls = 1;
+    private int _shownMinCalls = 1;
+
+    /// <summary>The lowest call count on the last page. Every row a higher fetch limit would add has at most this
+    /// many calls, so when it is below Min calls the added rows would all be hidden.</summary>
+    private long _lastPageMinCount;
 
     /// <summary>The limit a running recording fetches with, fixed at Start: a peek and Stop's own fetch then
     /// rank the same table the same way whatever happens to the slider meanwhile (it is disabled while
@@ -114,8 +122,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// or for the baseline in diff mode (which then has to be recorded again). Picks the remedy the status
     /// lines offer.</summary>
     internal bool RaiseFetchLimitHelps =>
-        (LastCapHit && BelowMaximum(_lastLimit))
+        LastPageRaiseHelps
         || (_baseline.Count > 0 && _baselineCapHit && BelowMaximum(_baselineLimit));
+
+    /// <summary>The last page's part of <see cref="RaiseFetchLimitHelps"/>. The baseline's part ignores Min calls,
+    /// because SetBaseline reads every fetched row.</summary>
+    private bool LastPageRaiseHelps =>
+        LastCapHit && BelowMaximum(_lastLimit) && _lastPageMinCount >= _shownMinCalls;
 
     [ObservableProperty] private bool   _isRecording;
     [ObservableProperty] private string _filterText = "";
@@ -227,7 +240,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     partial void OnMinCallsExponentChanged(int value)
     {
-        int clamped = Math.Clamp(value, 0, MinCallsMaxExponent);
+        int clamped = Math.Clamp(value, MinCallsMinExponent, MinCallsMaxExponent);
         if (clamped != value)
         {
             MinCallsExponent = clamped;   // re-enters with the clamped value, which raises MinCalls
@@ -360,7 +373,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         bool diff = DiffMode && _baseline.Count > 0;
         var summary = new Helpers.LiveFuncsJsonl.Summary(
             rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit, _lastRecordingAtFetch,
-            FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly, _captureMinCalls,
+            FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly, _shownMinCalls,
             diff, NewChangedOnly, diff ? _baseline.Count : 0, diff && _baselineTruncated, diff ? _baselineDistinct : 0,
             DateTime.UtcNow);
         try
@@ -412,6 +425,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastDistinct = result.DistinctFuncs;
         _lastTotalCalls = result.TotalCalls;
         _lastRecordingAtFetch = result.Recording;
+        _lastPageMinCount = result.Entries.Count > 0 ? result.Entries.Min(e => e.Count) : 0;
+        _shownMinCalls = _captureMinCalls;   // before the filter runs over the new rows
         ApplyDiffAndFilter();
 
         // House convention for surfacing a cap (SnapshotViewModel / SpcQueryViewModel).
@@ -420,7 +435,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // for has a low one.
         string trunc = LastTruncated
             ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count"
-              + (LastCapHit && BelowMaximum(_lastLimit) ? Res.Get("str.LF.Cap.MoreRows") : "") + ")"
+              + (LastPageRaiseHelps ? Res.Get("str.LF.Cap.MoreRows") : "") + ")"
             : "";
 
         bool diff = DiffMode && _baseline.Count > 0;
@@ -433,6 +448,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             int newCount = _allEntries.Count(e => e.IsNew);
             int increased = _allEntries.Count(e => !e.IsNew && e.Delta > 0);
+            // A NEW row Min calls hid is counted above but not on screen, so the claim that the action's function
+            // is among the NEW rows shown would point at a table that does not hold it.
+            bool newRowHidden = _allEntries.Any(e => e.IsNew && e.Count < _shownMinCalls);
             // newCount/increased are counted over the PAGE, so they cannot be reported
             // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
             // population those 3 were selected from, when only the fetched page was examined.
@@ -444,7 +462,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     + (RaiseFetchLimitHelps ? Res.Get("str.LF.Cap.DiffRaise") + " "
                        : LastCapHit || _baselineCapHit ? Res.Get("str.LF.Cap.DiffShorter") + " " : "")
                     + "The filter narrows only the rows already fetched."
-                  : "The action's function is almost certainly among the NEW rows at the top.");
+                  : newRowHidden ? "" : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
         {
@@ -532,8 +550,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (HideEvents && e.IsEventLike) continue;
             // Periodic-only: keep just the regular timer-like cadence functions.
             if (PeriodicOnly && !e.IsPeriodic) continue;
-            // Min calls, as of this capture's Start. No exemption for NEW rows (R1): the default 1 hides nothing.
-            if (e.Count < _captureMinCalls) continue;
+            // Min calls the rows were fetched under. No exemption for NEW rows (R1): the default 1 hides nothing.
+            if (e.Count < _shownMinCalls) continue;
             if (terms.Length > 0 &&
                 !ObjectTreeFilter.MatchesAllTerms(terms, e.FuncName, e.ClassName))
             {
