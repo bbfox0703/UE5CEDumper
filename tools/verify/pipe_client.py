@@ -64,6 +64,7 @@ class PipeClient:
         self._id = 0
         self.events: list[dict] = []
         self._buf = bytearray()   # leftover bytes between block reads
+        self.last_reply_bytes = 0
 
     # -- lifecycle ------------------------------------------------------------
     def connect(self, retries: int = 10, delay: float = 1.0) -> "PipeClient":
@@ -130,6 +131,7 @@ class PipeClient:
                 except json.JSONDecodeError:
                     continue
                 if obj.get("id") == rid:
+                    self.last_reply_bytes = len(line)   # the reply's size on the wire, without its newline
                     return obj
                 self.events.append(obj)
         raise PipeError(f"timed out after {self.timeout}s waiting for id={rid} ({cmd})")
