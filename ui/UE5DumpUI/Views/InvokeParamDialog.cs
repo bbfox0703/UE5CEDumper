@@ -49,6 +49,9 @@ public enum InvokeDialogMode
 public sealed class InvokeParamDialog : Window
 {
     private readonly List<TextBox> _edits = new();
+    // The function's arguments, and its parameters with the return (FunctionInfoModel.InputParams /
+    // Parameters). A Blueprint function's walk_functions chain also holds its locals, which are neither
+    // arguments nor in the post-call buffer ([FUNCPARM-CONSUMERS]).
     private readonly IReadOnlyList<FunctionParamModel> _inputParams;
     private readonly IReadOnlyList<FunctionParamModel> _allParams;
     private readonly int _parmsSize;

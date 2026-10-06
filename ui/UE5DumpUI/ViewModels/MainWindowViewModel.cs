@@ -1809,8 +1809,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 // Functions like KismetSystemLibrary::GetGameName have no inputs
                 // but DO return a value -- they need the dialog so the Verify
                 // Return Value toggle is reachable. Mirrors LiveWalker's path.
-                var inputParams = funcMatch.Params.Where(p => !p.IsReturn).ToList();
-                var hasReturn = funcMatch.Params.Any(p => p.IsReturn);
+                var inputParams = funcMatch.InputParams.ToList();
+                var hasReturn = funcMatch.Parameters.Any(p => p.IsReturn);
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
@@ -1861,7 +1861,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
 
                 var dialog = new Views.InvokeParamDialog(
-                    className, funcName, inputParams, funcMatch.Params, funcMatch.ParmsSize,
+                    className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
                     mode: Views.InvokeDialogMode.CopyBakedScript);
@@ -1977,9 +1977,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     || desktop.MainWindow is not { } owner)
                     return;
 
-                var inputParams = funcMatch.Params.Where(p => !p.IsReturn).ToList();
+                var inputParams = funcMatch.InputParams.ToList();
                 var dialog = new Views.InvokeParamDialog(
-                    className, funcName, inputParams, funcMatch.Params, funcMatch.ParmsSize,
+                    className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
                     mode: Views.InvokeDialogMode.PipeInvoke);
@@ -2028,8 +2028,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     }
                 }
 
-                var inputParams = funcMatch.Params.Where(p => !p.IsReturn).ToList();
-                var hasReturn = funcMatch.Params.Any(p => p.IsReturn);
+                var inputParams = funcMatch.InputParams.ToList();
+                var hasReturn = funcMatch.Parameters.Any(p => p.IsReturn);
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
@@ -2073,7 +2073,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
 
                 var dialog = new Views.InvokeParamDialog(
-                    className, funcName, inputParams, funcMatch.Params, funcMatch.ParmsSize,
+                    className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
                     mode: Views.InvokeDialogMode.CopyBakedScript);
