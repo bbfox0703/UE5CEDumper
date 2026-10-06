@@ -750,4 +750,88 @@ public class DumpExplorerTests
         }
         finally { File.Delete(path); }
     }
+
+    // ---- review of ea9c94fa ----
+
+    [Fact]
+    public async Task Reader_TheSummarysEnumFlags_ReachTheModel_AndNamelessEnumsSaySo()
+    {
+        // With UEnum::Names never located, every enum line has empty entries; "0 entries" would read as empty enums.
+        var jsonl = TypesJsonl
+            .Replace("{\"name\":\"EKind::A\",\"value\":0},{\"name\":\"EKind::B\",\"value\":5}", "")
+            .Replace("\"enums_emitted\":1}", "\"enums_emitted\":1,\"enums_listed\":true,\"enum_names_failed\":true,\"enums_truncated\":true}");
+        var path = await WriteTempAsync(jsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.True(model.EnumNamesFailed);
+            Assert.True(model.EnumsTruncated);
+            Assert.True(model.EnumsListed);
+            Assert.Equal("entries unreadable", model.Entries.Single(e => e.Kind == DumpEntryKind.Enum).TypeInfo);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_AFileWithoutTheFlags_ClaimsNothingAboutIts_Enums()
+    {
+        var path = await WriteTempAsync(SampleJsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.Null(model.EnumsListed);
+            Assert.False(model.EnumNamesFailed);
+            Assert.False(model.EnumsTruncated);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_AFunctionReturningAStructOrAnObject_SaysWhichOne()
+    {
+        var jsonl = TypesJsonl.Replace(
+            "{\"name\":\"Tick\",\"addr\":\"0x28\",\"return_type\":\"\",\"num_parms\":0,\"params\":[]}",
+            "{\"name\":\"Trace\",\"addr\":\"0x28\",\"return_type\":\"StructProperty\",\"num_parms\":1,\"params\":[" +
+                "{\"name\":\"ReturnValue\",\"type\":\"StructProperty\",\"offset\":0,\"size\":136,\"out\":true,\"ret\":true,\"struct_type\":\"HitResult\"}]}," +
+            "{\"name\":\"Owner\",\"addr\":\"0x30\",\"return_type\":\"ObjectProperty\",\"num_parms\":1,\"params\":[" +
+                "{\"name\":\"ReturnValue\",\"type\":\"ObjectProperty\",\"offset\":0,\"size\":8,\"out\":true,\"ret\":true,\"obj_class\":\"Actor\"}]}");
+        var path = await WriteTempAsync(jsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            var trace = model.Entries.Single(e => e.Name == "Trace");
+            Assert.Equal("StructProperty<HitResult> ()", trace.TypeInfo);
+            Assert.Contains("hitresult", trace.Haystack);
+            Assert.Equal("ObjectProperty:Actor ()", model.Entries.Single(e => e.Name == "Owner").TypeInfo);
+            // The bool return without detail reads as before.
+            Assert.StartsWith("BoolProperty (", model.Entries.Single(e => e.Name == "TryOpen").TypeInfo);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_DumpAllsObjectIndex_IsRecognised_NotReadAsAClassDump()
+    {
+        // D4 writes <name>.objects.jsonl beside the class dump, and the open dialog's *.jsonl lists both.
+        var path = await WriteTempAsync(
+            "{\"kind\":\"meta\",\"file\":\"objects\",\"module\":\"Game.exe\",\"class_dump\":\"game-dump.jsonl\"}\n" +
+            "{\"kind\":\"object\",\"index\":0,\"addr\":\"0x1\",\"name\":\"A\",\"class\":\"Class\",\"outer\":\"\",\"path\":\"/Script/Game.A\"}\n" +
+            "{\"kind\":\"summary\",\"objects_written\":1,\"objects_total\":1,\"index_missing\":false}\n");
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.True(model.IsObjectIndex);
+            Assert.Equal("game-dump.jsonl", model.ClassDumpFile);
+            Assert.Empty(model.Entries);
+
+            var vm = CreateVm(new FakeDumpService(), new MockPlatformService(Path.GetTempPath()));
+            await vm.LoadFromPathAsync(path);
+            Assert.False(vm.HasFile);
+        }
+        finally { File.Delete(path); }
+    }
 }
