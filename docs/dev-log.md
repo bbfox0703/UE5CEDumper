@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — `analyze_dumps.py` counts the game's own C++ classes too `[EXTPR-539-540-2026-10-02]`
+
+- `scripts/analysis/analyze_dumps.py`, which suggests keywords for the Interesting Properties / Funcs tables from
+  several games' dumps, had the same "`/Script/` is engine" test as `diff_dumps.py`. Its game-only statistics now
+  include the game's native classes, where many games keep stats like Health and Mana (`74dc127e`). Reports made
+  before this are not comparable with new ones.
+- Both scripts take the engine-module list from the new `scripts/analysis/engine_paths.py`; the gate compares
+  that file with the DLL's and Dump All's lists. `analyze_dumps.py` has a `--self-test` now, run by the gates.
+
 ## 2026-10-06 (no build change) — `diff_dumps.py` reports the game's own C++ classes; two new gates `[EXTPR-539-540-2026-10-02]`
 
 - `scripts/analysis/diff_dumps.py` treated every `/Script/` path as engine, so a default patch diff left out the

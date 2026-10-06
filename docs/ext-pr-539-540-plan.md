@@ -46,18 +46,26 @@ be checked (the Linux test run, and the typical number of distinct functions), a
 | R3 | D4's GObjects index: accept the DLL change it needs (a new build of the DLL, not only the UI)? | **Change the DLL**, design left to us: see "R3 design" below. |
 | R4 | `diff_dumps.py`'s engine test (`/Script/` anywhere in the path) also drops the game's own native classes. Change it before D1/D5 and the C# port build on it? | **Change `diff_dumps.py` first.** ✅ **Done 2026-10-06:** red `80e7bfbf`, fix `6ade4435`, gates `15d566e8` (see "R4 done" below). |
 
-**R4 done (2026-10-06).** `diff_dumps.py` now skips only the engine's own modules: it carries a copy of the DLL's
+**R4 done (2026-10-06).** `diff_dumps.py` now skips only the engine's own modules, with a copy of the DLL's
 `Aura::IsEnginePackage` list (`ENGINE_PATH_PREFIXES`) and its rule (collapse the leading slashes, then a prefix
-must be followed by the end, `/` or `.`). A default diff therefore reports the game's own C++ classes
+must be followed by the end, `/` or `.`). The copy lives in `scripts/analysis/engine_paths.py`, which
+`analyze_dumps.py` uses too (see below). A default diff therefore reports the game's own C++ classes
 (`/Script/<GameModule>/…`), and with D1 its native structs and enums; `--include-engine` adds the engine's. A
 module that is neither in the list nor the game's (an engine plugin such as `/Script/CommonUI`) is treated as the
 game's, as the DLL's GameOnly filter already does. Two new gates: `check_engine_prefixes` keeps the three copies
-of the list equal (Aura.h, `DumpAllService.cs`, `diff_dumps.py`), and `check_analysis_selftests` runs the
+of the list equal (Aura.h, `DumpAllService.cs`, `engine_paths.py`), and `check_analysis_selftests` runs the
 `--self-test` of every script under `scripts/analysis/`, which nothing ran before. Negative controls: putting
 back the old predicate fails only `check_analysis_selftests`; dropping one module from the list fails only
-`check_engine_prefixes`. **Not changed:** `analyze_dumps.py` has the same "`/Script/` anywhere" predicate, and its
-header says it "mirrors the DLL's IsEnginePackage list", which is not true. It feeds the keyword statistics, not
-the patch diff; whether to change it is the maintainer's call.
+`check_engine_prefixes`.
+
+**`analyze_dumps.py`, same fix (maintainer, 2026-10-06; items 1, 2 and 4 of the proposal).** It had the same
+"`/Script/` anywhere" test, so its game-only statistics for the Interesting Properties / Funcs tables never saw
+the game's native classes, and its header claimed a match with the DLL's list that it never had. Commits: red
+`9fc98105` (a new `--self-test`), the shared `engine_paths.py` `315f9732`, `diff_dumps.py` switched to it
+`9b83ffee` (co-author trailer: it changes R4's code), the fix `74dc127e` (no trailer: not from the PRs). The
+unused `is_game_class()` is gone. Reports made before the fix count fewer game classes and are not comparable.
+Not taken: item 3, a report section listing the `/Script/` modules outside the list (engine plugins such as
+CommonUI now count as the game's, which can push their property names into the cross-game candidates).
 
 **R3 design (ours, 2026-10-06).** `get_object_list` takes one more optional request field, `include_index`
 (default false), the way `include_path` already works: with it set, each item also carries `index`, the GObjects
