@@ -189,7 +189,12 @@ Co-authored-by: fireundubh <1261664+fireundubh@users.noreply.github.com>
 (the address is GitHub's noreply form of the contributor's account id, read from the PR data). **Which commits
 (maintainer, 2026-10-06):** the code and the logic that come from the two PRs get it — for example the
 `diff_dumps.py` fix (R4, `6ade4435`). Our own work around them does not: measurements, UI adjustments, tests,
-gates and these docs. A red test commit therefore has no trailer and its green fix does. The reply on the
+gates and these docs. A red test commit therefore has no trailer and its green fix does.
+**How the code is written (maintainer, 2026-10-06):** the PRs' code need not be reused. Their commits do not say
+whether a model or a person wrote them, so each feature is built for the same FUNCTION in this repo's way (its
+helpers, string rules, AOT patterns, tests), and the PR's code is followed only where it is close to what we would
+write anyway. The trailer goes on the commit that carries the code for the PR's feature, whether or not any of
+the PR's lines survive in it. The reply on the
 two PRs — what was taken, what was not and why, links to our commits — is written **after** the work is done, not
 before.
 
