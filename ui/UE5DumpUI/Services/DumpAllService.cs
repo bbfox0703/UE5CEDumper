@@ -301,7 +301,8 @@ public static class DumpAllService
             Total: written));
 
         return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted, structsSkipped,
-                              enumsEmitted, enumsSkipped, enumState.Listed, enumState.NamesFailed, enumState.Truncated);
+                              enumsEmitted, enumsSkipped, enumState.Listed, enumState.NamesFailed, enumState.Truncated,
+                              paramsFromNumParms);
     }
 
     /// <summary>What the enum list said about itself, for the summary line.</summary>
@@ -454,13 +455,15 @@ public static class DumpAllService
     // ------------------------------------------------------------------
     // Internal: writers
     // ------------------------------------------------------------------
+    // Numbers go through CultureInfo.InvariantCulture: StringBuilder.Append(int) formats with the current
+    // culture, and some cultures' minus is U+2212, which is not JSON. An unreadable parameter offset is -1.
 
     private static async Task WriteMetaLineAsync(
         TextWriter w, EngineState es, DumpOptions opts, CancellationToken ct)
     {
         var sb = new StringBuilder(512);
         sb.Append("{\"kind\":\"meta\"");
-        sb.Append(",\"ue_version\":").Append(es.UEVersion);
+        sb.Append(CultureInfo.InvariantCulture, $",\"ue_version\":{es.UEVersion}");
         sb.Append(",\"ue_version_detected\":").Append(es.VersionDetected ? "true" : "false");
         sb.Append(",\"is_user_override\":").Append(es.IsUserOverride ? "true" : "false");
         AppendJsonString(sb, ",\"module\":", es.ModuleName ?? "");
@@ -468,12 +471,12 @@ public static class DumpAllService
         AppendJsonString(sb, ",\"gobjects\":", es.GObjectsAddr ?? "");
         AppendJsonString(sb, ",\"gnames\":",   es.GNamesAddr ?? "");
         AppendJsonString(sb, ",\"gworld\":",   es.GWorldAddr ?? "");
-        sb.Append(",\"object_count\":").Append(es.ObjectCount);
+        sb.Append(CultureInfo.InvariantCulture, $",\"object_count\":{es.ObjectCount}");
         // FUObjectItem layout — lets offline analysis flag UE5.7+ (un)packed dumps.
         // "packed57" addresses are UNVERIFIED reconstructions (no shipping game uses
         // it yet), so a dump captured under it must be treated as best-effort.
         AppendJsonString(sb, ",\"item_layout\":", es.ItemLayoutMode);
-        sb.Append(",\"item_obj_offset\":").Append(es.ItemObjOffset);
+        sb.Append(CultureInfo.InvariantCulture, $",\"item_obj_offset\":{es.ItemObjOffset}");
         sb.Append(",\"packed_unverified\":").Append(es.ItemPacked ? "true" : "false");
         // [W4-STRIDE-TENTATIVE] The stride verdict beside it: a dump taken on a guessed stride may hold an
         // alias of the real pool (every k-th object), and offline analysis must be able to tell.
@@ -481,7 +484,7 @@ public static class DumpAllService
         sb.Append(",\"stride_untrusted\":").Append(es.ItemStrideUntrusted ? "true" : "false");
         AppendJsonString(sb, ",\"pe_hash\":", es.PeHash ?? "");
         AppendJsonString(sb, ",\"publisher_thumbprint\":", es.PublisherThumbprint ?? "");
-        sb.Append(",\"dumper_build\":").Append(opts.DumperBuildNumber);
+        sb.Append(CultureInfo.InvariantCulture, $",\"dumper_build\":{opts.DumperBuildNumber}");
         AppendJsonString(sb, ",\"dumper_commit\":", opts.DumperCommit ?? "");
         AppendJsonString(sb, ",\"dumped_at\":", DateTime.UtcNow.ToString("o"));
         sb.Append(",\"options\":{");
@@ -511,8 +514,8 @@ public static class DumpAllService
         AppendJsonString(sb, ",\"super\":", classInfo.SuperName);
         AppendJsonString(sb, ",\"super_addr\":", classInfo.SuperAddress);
         sb.Append(",\"is_bpgc\":").Append(obj.ClassName != "Class" ? "true" : "false");
-        sb.Append(",\"props_size\":").Append(classInfo.PropertiesSize);
-        sb.Append(",\"instance_count\":").Append(instanceCount);
+        sb.Append(CultureInfo.InvariantCulture, $",\"props_size\":{classInfo.PropertiesSize}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"instance_count\":{instanceCount}");
         AppendProps(sb, classInfo);
 
         if (functions != null)
@@ -526,8 +529,8 @@ public static class DumpAllService
                 AppendJsonString(sb, "\"name\":", fn.Name);
                 AppendJsonString(sb, ",\"addr\":", fn.Address);
                 AppendJsonString(sb, ",\"return_type\":", fn.ReturnType);
-                sb.Append(",\"num_parms\":").Append(fn.NumParms);
-                sb.Append(",\"parms_size\":").Append(fn.ParmsSize);
+                sb.Append(CultureInfo.InvariantCulture, $",\"num_parms\":{fn.NumParms}");
+                sb.Append(CultureInfo.InvariantCulture, $",\"parms_size\":{fn.ParmsSize}");
                 sb.Append(",\"flags\":\"0x").Append(fn.FunctionFlags.ToString("X")).Append('"');
                 if (AppendParams(sb, fn)) fromNumParms++;
                 sb.Append('}');
@@ -542,9 +545,10 @@ public static class DumpAllService
     /// <summary>
     /// [EXTPR-539-540-2026-10-02] D3: a function's parameters, the return included, in the DLL's order.
     /// walk_functions lists the function's whole property chain, and a Blueprint function's locals follow its
-    /// parameters there; the DLL's CPF_Parm flag tells them apart. A DLL that predates the flag gets UE's own
-    /// definition of the parameter block, the leading num_parms entries. No struct_fields: the struct's own
-    /// line carries them. Returns true when that fallback decided something.
+    /// parameters there; the DLL's CPF_Parm flag tells them apart. A DLL that predates the flag gets the
+    /// leading num_parms entries of the list it returned. UE counts NumParms over the chain itself, and the
+    /// DLL drops an entry whose name it cannot read, so then the window can reach one local. No struct_fields:
+    /// the struct's own line carries them. Returns true when that fallback decided something.
     /// </summary>
     private static bool AppendParams(StringBuilder sb, FunctionInfoModel fn)
     {
@@ -559,8 +563,8 @@ public static class DumpAllService
             sb.Append('{');
             AppendJsonString(sb, "\"name\":", p.Name);
             AppendJsonString(sb, ",\"type\":", p.TypeName);
-            sb.Append(",\"offset\":").Append(p.Offset);
-            sb.Append(",\"size\":").Append(p.Size);
+            sb.Append(CultureInfo.InvariantCulture, $",\"offset\":{p.Offset}");
+            sb.Append(CultureInfo.InvariantCulture, $",\"size\":{p.Size}");
             if (p.IsOut) sb.Append(",\"out\":true");
             if (p.IsReturn) sb.Append(",\"ret\":true");
             if (!string.IsNullOrEmpty(p.StructName))
@@ -586,7 +590,7 @@ public static class DumpAllService
         AppendJsonString(sb, ",\"meta\":", obj.ClassName);  // "ScriptStruct" or "UserDefinedStruct"
         AppendJsonString(sb, ",\"super\":", structInfo.SuperName);
         AppendJsonString(sb, ",\"super_addr\":", structInfo.SuperAddress);
-        sb.Append(",\"props_size\":").Append(structInfo.PropertiesSize);
+        sb.Append(CultureInfo.InvariantCulture, $",\"props_size\":{structInfo.PropertiesSize}");
         AppendProps(sb, structInfo);
         sb.Append('}');
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
@@ -603,15 +607,15 @@ public static class DumpAllService
             sb.Append('{');
             AppendJsonString(sb, "\"name\":", f.Name);
             AppendJsonString(sb, ",\"type\":", f.TypeName);
-            sb.Append(",\"offset\":").Append(f.Offset);
-            sb.Append(",\"size\":").Append(f.Size);
+            sb.Append(CultureInfo.InvariantCulture, $",\"offset\":{f.Offset}");
+            sb.Append(CultureInfo.InvariantCulture, $",\"size\":{f.Size}");
             // Reflection flags + static-array dim (auto-detect features).
             // prop_flags as an "0x" hex string — CPF_* is uint64 with high
             // bits set. Both omitted at defaults (flags 0 / dim 1).
             if (f.PropertyFlags != 0)
                 sb.Append(",\"prop_flags\":\"0x").Append(f.PropertyFlags.ToString("X")).Append('"');
             if (f.ArrayDim != 1)
-                sb.Append(",\"array_dim\":").Append(f.ArrayDim);
+                sb.Append(CultureInfo.InvariantCulture, $",\"array_dim\":{f.ArrayDim}");
             if (!string.IsNullOrEmpty(f.StructType))
                 AppendJsonString(sb, ",\"struct_type\":", f.StructType);
             if (!string.IsNullOrEmpty(f.InnerType))
@@ -668,18 +672,18 @@ public static class DumpAllService
     {
         var sb = new StringBuilder(256);
         sb.Append("{\"kind\":\"summary\"");
-        sb.Append(",\"classes_emitted\":").Append(emitted);
-        sb.Append(",\"classes_skipped_engine\":").Append(skipped);
-        sb.Append(",\"structs_emitted\":").Append(structsEmitted);
-        sb.Append(",\"structs_skipped_engine\":").Append(structsSkipped);
-        sb.Append(",\"enums_emitted\":").Append(enumsEmitted);
-        sb.Append(",\"enums_skipped_engine\":").Append(enumsSkipped);
+        sb.Append(CultureInfo.InvariantCulture, $",\"classes_emitted\":{emitted}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"classes_skipped_engine\":{skipped}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"structs_emitted\":{structsEmitted}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"structs_skipped_engine\":{structsSkipped}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"enums_emitted\":{enumsEmitted}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"enums_skipped_engine\":{enumsSkipped}");
         sb.Append(",\"enums_listed\":").Append(enums.Listed ? "true" : "false");
         sb.Append(",\"enum_names_failed\":").Append(enums.NamesFailed ? "true" : "false");
         sb.Append(",\"enums_truncated\":").Append(enums.Truncated ? "true" : "false");
-        sb.Append(",\"params_from_num_parms\":").Append(paramsFromNumParms);
-        sb.Append(",\"errors\":").Append(errors);
-        sb.Append(",\"objects_scanned\":").Append(scanned);
+        sb.Append(CultureInfo.InvariantCulture, $",\"params_from_num_parms\":{paramsFromNumParms}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"errors\":{errors}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"objects_scanned\":{scanned}");
         sb.Append('}');
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
     }
@@ -781,7 +785,7 @@ public static class DumpAllService
 public sealed record DumpResult(
     int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned,
     int StructsEmitted = 0, int StructsSkippedEngine = 0, int EnumsEmitted = 0, int EnumsSkippedEngine = 0,
-    bool EnumsListed = true, bool EnumNamesFailed = false, bool EnumsTruncated = false);
+    bool EnumsListed = true, bool EnumNamesFailed = false, bool EnumsTruncated = false, int ParamsFromNumParms = 0);
 
 /// <summary>Options controlling what the dumper emits.</summary>
 public sealed record DumpOptions(

@@ -3788,7 +3788,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
                       $"{result.ClassesEmitted} classes, {result.StructsEmitted} structs, {result.EnumsEmitted} enums, " +
                       $"{result.Errors} errors; enums listed={result.EnumsListed}, names failed={result.EnumNamesFailed}, " +
-                      $"truncated={result.EnumsTruncated})");
+                      $"truncated={result.EnumsTruncated}; params from num_parms={result.ParamsFromNumParms})");
 
             // Offer a one-click load in the Dump Explorer tab (no auto-load — the
             // user may re-export or be mid-operation there).

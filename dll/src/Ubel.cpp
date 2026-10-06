@@ -2015,8 +2015,9 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                 // probe shared with ResolveFunctionInfo (the Live PE profiler path).
                 ReadFuncFlagsAndParams(child, fi);
 
-                // Walk the UFunction's own property chain (its parameters)
-                // UFunction inherits UStruct, so ChildProperties is at USTRUCT_CHILDPROPS
+                // Walk the UFunction's whole property chain: its parameters, then on a Blueprint function
+                // its locals; isParm (CPF_Parm) tells them apart. UFunction inherits UStruct, so
+                // ChildProperties is at USTRUCT_CHILDPROPS.
                 if (DynOff::bUseFProperty) {
                     uintptr_t paramChain = 0;
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDPROPS, paramChain) && paramChain) {

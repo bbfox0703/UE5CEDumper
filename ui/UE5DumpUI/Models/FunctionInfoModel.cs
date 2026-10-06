@@ -21,7 +21,8 @@ public sealed class FunctionInfoModel
     public List<FunctionParamModel> Params { get; init; } = new();
     public string ReturnType { get; init; } = "";
 
-    /// <summary>Input-only parameters (excludes return param).</summary>
+    /// <summary>Every entry but the return. On a Blueprint function that includes its locals; a caller that
+    /// needs the arguments alone filters on <see cref="FunctionParamModel.IsParm"/>.</summary>
     public IEnumerable<FunctionParamModel> InputParams
         => Params.Where(p => !p.IsReturn);
 
@@ -44,7 +45,8 @@ public sealed class FunctionInfoModel
 }
 
 /// <summary>
-/// Represents a single parameter of a UFunction.
+/// One entry of a UFunction's property chain: a parameter, or on a Blueprint function a local
+/// (<see cref="IsParm"/> false).
 /// </summary>
 public sealed class FunctionParamModel
 {
