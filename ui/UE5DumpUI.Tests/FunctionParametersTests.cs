@@ -118,4 +118,38 @@ public class FunctionParametersTests
         Assert.DoesNotContain("createForm", script, StringComparison.Ordinal);
         Assert.DoesNotContain(LocalNames[2], script, StringComparison.Ordinal);
     }
+
+    // --- the span a call needs: what the script zero-fills, and what decides the slab refusal ---
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_span_a_call_needs_ends_at_the_parameters(bool flagged)
+    {
+        Assert.Equal(16, InvokeScriptGenerator.RequiredSpan(BlueprintFunction(flagged)));
+        Assert.Equal(0, InvokeScriptGenerator.RequiredSpan(LocalsOnlyFunction(flagged)));
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void A_local_past_the_mailbox_slab_does_not_refuse_a_call_whose_parameters_fit(bool flagged)
+    {
+        var fn = BlueprintFunction(flagged);
+        var withBigLocal = new FunctionInfoModel
+        {
+            Name = fn.Name, NumParms = fn.NumParms, ParmsSize = fn.ParmsSize, ReturnType = fn.ReturnType,
+            Params = fn.Params.Append(new FunctionParamModel
+            {
+                Name = "K2Node_MakeStruct_HitResult", TypeName = "StructProperty", Offset = 40,
+                Size = CeMailboxLayout.ParamsDataBytes, IsParm = flagged ? false : null,
+            }).ToList(),
+        };
+
+        var script = InvokeScriptGenerator.Generate("BP_Door_C", "OnUse", withBigLocal);
+
+        Assert.DoesNotContain("nothing was sent", script, StringComparison.Ordinal);
+        Assert.Contains("btnFire", script, StringComparison.Ordinal);
+        Assert.Contains("for i = 0, 15 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
+    }
 }
