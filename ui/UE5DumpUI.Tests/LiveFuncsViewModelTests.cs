@@ -1217,4 +1217,136 @@ public class LiveFuncsViewModelTests
         Assert.Equal(2, vm.Results.Count);
         Assert.All(vm.Results, r => { Assert.False(r.IsNew); Assert.Equal(0, r.Delta); });
     }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] L3: Min calls, a slider over 1, 2, 4 .. 32 (exponent 0..5,
+    // default 1). It hides rows with FEWER calls (Count < MinCalls, so the default hides
+    // nothing; R1: NEW rows get no exemption). It is a VIEW filter on the capture it was set
+    // for: read at Start, kept for that capture, and moving it later changes nothing until the
+    // next Start. The baseline is built from every fetched row, never from the filtered view.
+    // ==================================================================
+
+    private static PeProfileResult CallsResult(params (string func, long count)[] rows)
+        => ResultOf(rows.Select((r, i) => new PeProfileEntry
+        {
+            ClassName = "C", FuncName = r.func, Count = r.count, FirstSeq = i + 1, FuncAddr = "0x" + (i + 1).ToString("X"),
+        }).ToArray());
+
+    [Fact]
+    public async Task MinCalls_Default_IsOne_AndHidesNothing()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Once", 1), ("Often", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.MinCallsExponent);
+        Assert.Equal(1, vm.MinCalls);
+        Assert.Equal(2, vm.Results.Count);
+    }
+
+    [Fact]
+    public async Task MinCalls_HidesRowsWithFewerCalls_KeepsTheEqualOne()
+    {
+        var (vm, dump) = MakeVm();
+        vm.MinCallsExponent = 2;   // 4
+        dump.NextGet = CallsResult(("Three", 3), ("Four", 4), ("Fifty", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "Four", "Fifty" }, vm.Results.Select(r => r.FuncName).OrderBy(n => n).Reverse().ToArray());
+    }
+
+    [Fact]
+    public async Task MinCalls_MovedAfterStart_ChangesNothingUntilTheNextStart()
+    {
+        var (vm, dump) = MakeVm();
+        vm.MinCallsExponent = 2;   // 4, read at Start
+        dump.NextGet = CallsResult(("Three", 3), ("Fifty", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        vm.MinCallsExponent = 0;                      // moved after the capture
+        Assert.Single(vm.Results);
+        await vm.RefreshCommand.ExecuteAsync(null);   // a re-pull of the same capture
+        Assert.Single(vm.Results);
+
+        await vm.StartCommand.ExecuteAsync(null);     // the next capture reads 1
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.Results.Count);
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(6, 5)]
+    [InlineData(40, 5)]
+    [InlineData(3, 3)]
+    public void MinCallsExponent_StaysInTheSliderRange(int set, int expected)
+    {
+        var (vm, _) = MakeVm();
+
+        vm.MinCallsExponent = set;
+
+        Assert.Equal(expected, vm.MinCallsExponent);
+        Assert.Equal(1 << expected, vm.MinCalls);
+    }
+
+    [Fact]
+    public async Task MinCalls_HidesANewRowToo()
+    {
+        // R1 (maintainer, 2026-10-06): no exemption for NEW rows.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Tick", 900));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        vm.MinCallsExponent = 2;   // 4, for the action capture
+        dump.NextGet = CallsResult(("Tick", 950), ("OpenShop", 2));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "OpenShop");
+    }
+
+    [Fact]
+    public async Task MinCalls_TheBaselineStillHoldsTheRowsItHid()
+    {
+        // A view filter: if it cut what SetBaseline reads, an idle function with few calls would be
+        // missing from the baseline and come back as a false NEW.
+        var (vm, dump) = MakeVm();
+        vm.MinCallsExponent = 2;   // 4
+        dump.NextGet = CallsResult(("Tick", 900), ("Rare", 2));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "Rare");
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = CallsResult(("Tick", 950), ("Rare", 6));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        var rare = Assert.Single(vm.Results, r => r.FuncName == "Rare");
+        Assert.False(rare.IsNew);
+        Assert.Equal(4, rare.Delta);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_RecordsTheMinCallsOfTheCapture()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        vm.MinCallsExponent = 3;   // 8
+        dump.NextGet = CallsResult(("Fifty", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.MinCallsExponent = 0;   // moved afterwards: the rows still came from 8
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            Assert.Equal(8, ReadLines(platform.Answer!)[0].RootElement.GetProperty("min_calls").GetInt32());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
 }
