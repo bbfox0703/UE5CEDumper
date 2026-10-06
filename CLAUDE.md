@@ -98,9 +98,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 
 # Run tests only
 # ⚠ -Target Test does NOT compile the whole DLL. It builds 5 test executables, and
-#   **10 of the 31** dll/src .cpp files reach a test target at all: dll_core_test #includes
-#   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme into one TU, and
-#   grausam_window_test / sein_retention_test take one each. The other 21 — **Fern.cpp and
+#   **11 of the 31** dll/src .cpp files reach a test target at all: dll_core_test #includes
+#   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme / Linie into one TU, and
+#   grausam_window_test / sein_retention_test take one each. The other 20 — **Fern.cpp and
 #   Stark.cpp among them** — are compiled by NO test target, so a syntax error there passes
 #   it clean. A green -Target Test after editing one of THOSE measures nothing about that
 #   file. Build the DLL target (build_dll.py --targets UE5Dumper, or -Target DLL) before

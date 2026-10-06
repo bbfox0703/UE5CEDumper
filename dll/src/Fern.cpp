@@ -4337,14 +4337,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             bool skipPerFrame = request.value("skip_per_frame", false);
 
             std::vector<Linie::FuncStat> snap;
-            Linie::Snapshot(snap);
-            const uint64_t windowMs = Linie::WindowMs();
+            uint64_t windowMs = 0;
+            Linie::Snapshot(snap, windowMs);
 
             uint64_t totalCalls = 0;
             int perFrameHidden = 0;
+            // Which ones, by address: a diff needs to know a function was left out of its baseline, or it reads NEW
+            // in an action recording where it fired less (the game paused for a menu) and was not left out.
+            json perFrameFuncs = json::array();
             for (const auto& s : snap) {
                 totalCalls += s.count;
-                if (skipPerFrame && Linie::IsPerFrame(s, windowMs)) ++perFrameHidden;
+                if (skipPerFrame && Linie::IsPerFrame(s, windowMs)) {
+                    ++perFrameHidden;
+                    perFrameFuncs.push_back(Renge::AddrToStr(s.func));
+                }
             }
 
             // Sort by fire count desc; resolve only the capped set (name resolution
@@ -4423,7 +4429,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["total_calls"]    = totalCalls;
             data["functions"]      = functions;
             // Only when asked: an absent key tells the UI this DLL predates the option, so nothing was left out.
-            if (skipPerFrame) data["per_frame_hidden"] = perFrameHidden;
+            if (skipPerFrame) {
+                data["per_frame_hidden"] = perFrameHidden;
+                data["per_frame_funcs"]  = perFrameFuncs;
+            }
             if (profileTruncated) data["truncated"] = true;
             return Renge::MakeResponse(id, data).dump();
         }

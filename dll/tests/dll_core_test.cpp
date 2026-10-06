@@ -71,7 +71,8 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Aura.cpp"       // NOLINT
 #undef LOG_CAT
 #include "../src/Genau.cpp"      // NOLINT
-#include "../src/Linie.h"        // header only: IsPerFrame is a pure function of one FuncStat
+#undef LOG_CAT
+#include "../src/Linie.cpp"      // NOLINT -- the profiler table: RecordCall's accumulation behind IsPerFrame
 
 // ── harness ──────────────────────────────────────────────────────────
 
@@ -6617,6 +6618,35 @@ int main() {
               !Linie::IsPerFrame(fsa(160, 37.7, 159, 2000, 8000, 0), W));
         check("a Tick through a 1 s loading hitch is still per-frame (the control)",
               Linie::IsPerFrame(fsa(540, 18.5, 539, 1000, 10990, 8990), W));
+
+        // The same through the table itself: RecordCall accumulates activeMs and Snapshot measures the window over
+        // what was recorded. A: a Tick every 16 ms for 10 s. B: an action at 120 fps for 1 s, done twice 6 s apart.
+        // C: gaps of exactly kActiveGapMaxMs (counted) and one more (not).
+        Linie::Reset();
+        Linie::StartRecording();
+        for (uint64_t t = 0; t <= 9984; t += 16) Linie::RecordCall(0xA, 1000 + t);
+        for (uint64_t t = 0; t <= 1000; t += 8) Linie::RecordCall(0xB, 2000 + t);   // in time order: RecordCall drops
+        for (uint64_t t = 0; t <= 1000; t += 8) Linie::RecordCall(0xB, 8000 + t);   // a fire older than the last
+        Linie::RecordCall(0xC, 5000); Linie::RecordCall(0xC, 5100); Linie::RecordCall(0xC, 5201);
+        Linie::StopRecording();
+        std::vector<Linie::FuncStat> lsnap;
+        uint64_t lwin = 0;
+        Linie::Snapshot(lsnap, lwin);
+        auto stat = [&](uintptr_t f) {
+            for (const auto& x : lsnap) if (x.func == f) return x;
+            return Linie::FuncStat{};
+        };
+        const auto a = stat(0xA), b = stat(0xB), c = stat(0xC);
+        check("Snapshot's window runs from the earliest fire to the latest", lwin == 9984, std::to_string(lwin).c_str());
+        check("a steady Tick kept firing for its whole span", a.activeMs == 9984, std::to_string(a.activeMs).c_str());
+        check("an action done twice kept firing for 2 s, not the 7 s between its first and last fire",
+              b.activeMs == 2000 && b.lastMs - b.firstMs == 7000, std::to_string(b.activeMs).c_str());
+        check("a gap of exactly kActiveGapMaxMs counts, one more does not", c.activeMs == 100, std::to_string(c.activeMs).c_str());
+        check("through the table: the Tick is per-frame", Linie::IsPerFrame(a, lwin));
+        check("through the table: the action done twice is NOT per-frame", !Linie::IsPerFrame(b, lwin));
+        Linie::Reset();
+        Linie::Snapshot(lsnap, lwin);
+        check("an empty table has no window", lsnap.empty() && lwin == 0, std::to_string(lwin).c_str());
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
