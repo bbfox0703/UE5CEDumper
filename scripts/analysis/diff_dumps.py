@@ -12,10 +12,9 @@ USAGE
     python diff_dumps.py --self-test
 
 WHAT IT DOES
-    1. Loads two JSONL dumps. Each dump = meta line + class lines +
-       summary line (see DumpAllService.cs schema, same as analyze_dumps).
-       Struct and enum lines, and each function's `params`, are not
-       compared yet.
+    1. Loads two JSONL dumps. Each dump = meta line + class, struct and
+       enum lines + summary line (see DumpAllService.cs schema, same as
+       analyze_dumps).
     2. Matches classes by `path` (UClass*'s `addr` is session-local so
        useless across runs). Game classes only by default: Blueprint
        classes and the game's own C++ modules. `--include-engine` adds the
@@ -27,14 +26,21 @@ WHAT IT DOES
              type changed (e.g. FloatProperty -> DoubleProperty)
          - per-function change set:
              added / removed / signature changed (return_type,
-             num_parms, or parms_size differs — body content isn't in
+             num_parms, parms_size or flags differs, or — when both
+             files carry them — the parameters; body content isn't in
              the dump)
-    4. Emits a Markdown report:
+    4. Structs the same way, without functions. Enums by path: added /
+       removed, and per enum the enumerators added / removed / whose
+       value changed. Neither is compared when a dump predates those
+       lines (else everything reads as added), nor enums when a dump's
+       enum list could not be read; the summary line's flags decide.
+    5. Emits a Markdown report:
          - Summary counters
-         - Added / Removed classes
-         - Per-changed-class breakdown of property + function changes
-       In `--minimal` mode emits ONLY MovedFields and
-       FunctionSignatureChanges — the subset cheat-table maintainers
+         - Added / Removed classes, structs and enums
+         - Per-changed-type breakdown of property + function changes,
+           and per changed enum its enumerators
+       In `--minimal` mode emits ONLY moved fields, signature changes
+       and changed enum values — the subset cheat-table maintainers
        care about because those are the changes that silently break a
        working table.
 
@@ -87,6 +93,8 @@ class Dump:
     path: Path
     meta: dict = field(default_factory=dict)
     classes: list[dict] = field(default_factory=list)
+    structs: list[dict] = field(default_factory=list)
+    enums: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
 
@@ -104,6 +112,33 @@ class Dump:
     @property
     def ue_version(self) -> int:
         return int(self.meta.get("ue_version", 0))
+
+    # [EXTPR-539-540-2026-10-02] What the file can say about structs and enums. Dump All writes struct lines
+    # from build 3620 and enum lines from 3621, and its summary names both from then on; a file without
+    # either has none to compare, which is not the same as having none.
+    @property
+    def carries_structs(self) -> bool:
+        return bool(self.structs) or "structs_emitted" in self.summary
+
+    @property
+    def carries_enums(self) -> bool:
+        return bool(self.enums) or "enums_emitted" in self.summary or "enums_listed" in self.summary
+
+    @property
+    def enums_listed(self) -> bool:
+        return bool(self.summary.get("enums_listed", True))
+
+    @property
+    def enum_names_failed(self) -> bool:
+        return bool(self.summary.get("enum_names_failed", False))
+
+    @property
+    def enums_truncated(self) -> bool:
+        return bool(self.summary.get("enums_truncated", False))
+
+    @property
+    def params_from_num_parms(self) -> int:
+        return int(self.summary.get("params_from_num_parms", 0))
 
 
 def load_dump(path: Path) -> Dump:
@@ -123,6 +158,10 @@ def load_dump(path: Path) -> Dump:
                 d.meta = rec
             elif kind == "class":
                 d.classes.append(rec)
+            elif kind == "struct":
+                d.structs.append(rec)
+            elif kind == "enum":
+                d.enums.append(rec)
             elif kind == "error":
                 d.errors.append(rec)
             elif kind == "summary":
@@ -215,6 +254,28 @@ class ClassDiff:
 
 
 @dataclass
+class EnumEntryChange:
+    name: str
+    # 'added' | 'removed' | 'value_changed'
+    kind: str
+    old_value: int | None = None
+    new_value: int | None = None
+
+
+@dataclass
+class EnumDiff:
+    name: str
+    path: str
+    changes: list[EnumEntryChange] = field(default_factory=list)
+
+    @property
+    def has_breaking_change(self) -> bool:
+        """A table that writes an enum's value breaks when the value moves; an enumerator added or removed
+        does not move the others."""
+        return any(c.kind == "value_changed" for c in self.changes)
+
+
+@dataclass
 class DumpDiff:
     old_dump: Dump
     new_dump: Dump
@@ -222,6 +283,19 @@ class DumpDiff:
     removed_classes: list[dict] = field(default_factory=list)
     changed: list[ClassDiff] = field(default_factory=list)
     unchanged_count: int = 0
+    # [EXTPR-539-540-2026-10-02] D5. A *_skipped reason is "" when that kind was compared.
+    added_structs: list[dict] = field(default_factory=list)
+    removed_structs: list[dict] = field(default_factory=list)
+    changed_structs: list[ClassDiff] = field(default_factory=list)
+    unchanged_structs: int = 0
+    structs_skipped: str = ""
+    added_enums: list[dict] = field(default_factory=list)
+    removed_enums: list[dict] = field(default_factory=list)
+    changed_enums: list[EnumDiff] = field(default_factory=list)
+    unchanged_enums: int = 0
+    enums_skipped: str = ""
+    enum_notes: list[str] = field(default_factory=list)
+    param_notes: list[str] = field(default_factory=list)
 
 
 # =====================================================================
@@ -229,14 +303,18 @@ class DumpDiff:
 # =====================================================================
 
 def _index_classes(dump: Dump, include_engine: bool) -> dict[str, dict]:
-    """path -> class record. Drops engine classes unless requested.
+    return _index_by_path(dump.classes, dump.label, include_engine, "class")
+
+
+def _index_by_path(records: list[dict], label: str, include_engine: bool, what: str) -> dict[str, dict]:
+    """path -> record (a class, struct or enum line). Drops engine types unless requested.
 
     Duplicate paths in a single dump are highly unusual (would indicate
     a dumper bug — same UClass walked twice). We keep the FIRST and
     log a warning so the diff stays deterministic; analyst can grep
     the source dump if the warning fires."""
     out: dict[str, dict] = {}
-    for cls in dump.classes:
+    for cls in records:
         if not include_engine and is_engine_class(cls):
             continue
         key = normalize_path(cls.get("path", ""))
@@ -245,7 +323,7 @@ def _index_classes(dump: Dump, include_engine: bool) -> dict[str, dict]:
             # inner classes collide) but better than dropping the row.
             key = "::name::" + cls.get("name", "")
         if key in out:
-            print(f"  [warn] duplicate class path in {dump.label}: {key} — "
+            print(f"  [warn] duplicate {what} path in {label}: {key} — "
                   f"keeping first", file=sys.stderr)
             continue
         out[key] = cls
@@ -294,11 +372,26 @@ def _funcs_signature_differ(a: dict, b: dict) -> bool:
     """Functions' bodies aren't dumped, so 'signature' here means the
     metadata that's actually captured. parms_size + num_parms catch
     almost every param-shape change; return_type catches return-type
-    refactors; flags catches Static/Native/BlueprintCallable toggles."""
+    refactors; flags catches Static/Native/BlueprintCallable toggles;
+    the parameters catch the rest (a renamed or retyped one) when both
+    files carry them."""
     return (a.get("return_type") != b.get("return_type")
             or a.get("num_parms") != b.get("num_parms")
             or a.get("parms_size") != b.get("parms_size")
-            or a.get("flags") != b.get("flags"))
+            or a.get("flags") != b.get("flags")
+            or _params_differ(a, b))
+
+
+def _params_key(f: dict) -> tuple:
+    return tuple((p.get("name"), p.get("type"), p.get("struct_type"), p.get("obj_class"),
+                  bool(p.get("out")), bool(p.get("ret")), p.get("offset"), p.get("size"))
+                 for p in f.get("params", []))
+
+
+def _params_differ(a: dict, b: dict) -> bool:
+    """[EXTPR-539-540-2026-10-02] D5. Only when both sides carry `params` (Dump All from build 3622): an
+    older file has none, and that is not a change."""
+    return "params" in a and "params" in b and _params_key(a) != _params_key(b)
 
 
 def _diff_funcs(old_cls: dict, new_cls: dict) -> list[FuncChange]:
@@ -320,27 +413,25 @@ def _diff_funcs(old_cls: dict, new_cls: dict) -> list[FuncChange]:
     return changes
 
 
-def diff_dumps(old_dump: Dump, new_dump: Dump,
-               include_engine: bool = False) -> DumpDiff:
-    old_idx = _index_classes(old_dump, include_engine)
-    new_idx = _index_classes(new_dump, include_engine)
-
-    out = DumpDiff(old_dump=old_dump, new_dump=new_dump)
-
-    for path, old_cls in old_idx.items():
-        if path not in new_idx:
-            out.removed_classes.append(old_cls)
-
+def _diff_types(old_records: list[dict], new_records: list[dict], old_label: str, new_label: str,
+                include_engine: bool, what: str):
+    """Classes and structs share a shape (a struct has no functions): (added, removed, changed, unchanged)."""
+    old_idx = _index_by_path(old_records, old_label, include_engine, what)
+    new_idx = _index_by_path(new_records, new_label, include_engine, what)
+    added: list[dict] = []
+    removed = [rec for path, rec in old_idx.items() if path not in new_idx]
+    changed: list[ClassDiff] = []
+    unchanged = 0
     for path, new_cls in new_idx.items():
         if path not in old_idx:
-            out.added_classes.append(new_cls)
+            added.append(new_cls)
             continue
         old_cls = old_idx[path]
         prop_changes = _diff_props(old_cls, new_cls)
         func_changes = _diff_funcs(old_cls, new_cls)
         size_delta = new_cls.get("props_size", 0) - old_cls.get("props_size", 0)
         if prop_changes or func_changes or size_delta != 0:
-            out.changed.append(ClassDiff(
+            changed.append(ClassDiff(
                 name=new_cls.get("name", old_cls.get("name", "")),
                 path=path,
                 old=old_cls,
@@ -349,12 +440,102 @@ def diff_dumps(old_dump: Dump, new_dump: Dump,
                 func_changes=func_changes,
             ))
         else:
-            out.unchanged_count += 1
+            unchanged += 1
 
     # Stable output ordering: alphabetic by path within each bucket.
-    out.added_classes.sort(key=lambda c: normalize_path(c.get("path", "")))
-    out.removed_classes.sort(key=lambda c: normalize_path(c.get("path", "")))
-    out.changed.sort(key=lambda cd: cd.path)
+    added.sort(key=lambda c: normalize_path(c.get("path", "")))
+    removed.sort(key=lambda c: normalize_path(c.get("path", "")))
+    changed.sort(key=lambda cd: cd.path)
+    return added, removed, changed, unchanged
+
+
+def _diff_enum_entries(old_e: dict, new_e: dict) -> list[EnumEntryChange]:
+    old_v = {x["name"]: x.get("value") for x in old_e.get("entries", []) if x.get("name")}
+    new_v = {x["name"]: x.get("value") for x in new_e.get("entries", []) if x.get("name")}
+    changes: list[EnumEntryChange] = []
+    for name, v in old_v.items():
+        if name not in new_v:
+            changes.append(EnumEntryChange(name=name, kind="removed", old_value=v))
+        elif new_v[name] != v:
+            changes.append(EnumEntryChange(name=name, kind="value_changed", old_value=v, new_value=new_v[name]))
+    for name, v in new_v.items():
+        if name not in old_v:
+            changes.append(EnumEntryChange(name=name, kind="added", new_value=v))
+    return changes
+
+
+def _skip_reason(old_dump: Dump, new_dump: Dump, what: str) -> str:
+    """Why structs or enums cannot be compared, or "" when they can."""
+    sides = (("old", old_dump), ("new", new_dump))
+    if what == "struct":
+        for label, d in sides:
+            if not d.carries_structs:
+                return f"the {label} dump has no struct lines (Dump All writes them from build 3620)"
+        return ""
+    for label, d in sides:
+        if not d.carries_enums:
+            return f"the {label} dump has no enum lines (Dump All writes them from build 3621)"
+    for label, d in sides:
+        if not d.enums_listed:
+            return f"the {label} dump's enum list could not be read (see its list_enums error line)"
+    return ""
+
+
+def _diff_enums(out: DumpDiff, old_dump: Dump, new_dump: Dump, include_engine: bool) -> None:
+    """[EXTPR-539-540-2026-10-02] D5. What a list could not say is not reported as a change: with no
+    member names an enum's entries are empty, and a cut-short list lacks enums it never reached."""
+    names_ok = True
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.enum_names_failed:
+            names_ok = False
+            out.enum_notes.append(f"enum member names were unavailable in the {label} dump, so enumerators "
+                                  f"are not compared")
+    if old_dump.enums_truncated:
+        out.enum_notes.append("the old dump's enum list was cut short, so an enum it lacks is not reported as added")
+    if new_dump.enums_truncated:
+        out.enum_notes.append("the new dump's enum list was cut short, so an enum it lacks is not reported as removed")
+
+    old_idx = _index_by_path(old_dump.enums, old_dump.label, include_engine, "enum")
+    new_idx = _index_by_path(new_dump.enums, new_dump.label, include_engine, "enum")
+    if not new_dump.enums_truncated:
+        out.removed_enums = [e for path, e in old_idx.items() if path not in new_idx]
+    for path, ne in new_idx.items():
+        if path not in old_idx:
+            if not old_dump.enums_truncated:
+                out.added_enums.append(ne)
+            continue
+        changes = _diff_enum_entries(old_idx[path], ne) if names_ok else []
+        if changes:
+            out.changed_enums.append(EnumDiff(name=ne.get("name", ""), path=path, changes=changes))
+        else:
+            out.unchanged_enums += 1
+    out.added_enums.sort(key=lambda e: normalize_path(e.get("path", "")))
+    out.removed_enums.sort(key=lambda e: normalize_path(e.get("path", "")))
+    out.changed_enums.sort(key=lambda ed: ed.path)
+
+
+def diff_dumps(old_dump: Dump, new_dump: Dump,
+               include_engine: bool = False) -> DumpDiff:
+    out = DumpDiff(old_dump=old_dump, new_dump=new_dump)
+    (out.added_classes, out.removed_classes, out.changed,
+     out.unchanged_count) = _diff_types(old_dump.classes, new_dump.classes, old_dump.label, new_dump.label,
+                                        include_engine, "class")
+
+    out.structs_skipped = _skip_reason(old_dump, new_dump, "struct")
+    if not out.structs_skipped:
+        (out.added_structs, out.removed_structs, out.changed_structs,
+         out.unchanged_structs) = _diff_types(old_dump.structs, new_dump.structs, old_dump.label,
+                                              new_dump.label, include_engine, "struct")
+
+    out.enums_skipped = _skip_reason(old_dump, new_dump, "enum")
+    if not out.enums_skipped:
+        _diff_enums(out, old_dump, new_dump, include_engine)
+
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.params_from_num_parms:
+            out.param_notes.append(
+                f"{d.params_from_num_parms} function(s) in the {label} dump had their parameters taken from "
+                f"num_parms (a DLL older than build 3622), so a parameter change there may be that approximation")
     return out
 
 
@@ -384,6 +565,23 @@ def _fmt_prop_typestr(p: dict) -> str:
     if extras:
         return f"{t} ({', '.join(extras)})"
     return t
+
+
+def _fmt_params(f: dict) -> str:
+    """A function's arguments, an out one marked and each with its offset; the return is left out (the
+    table's return column has it)."""
+    parts = []
+    for p in f.get("params", []):
+        if p.get("ret"):
+            continue
+        t = p.get("type", "?")
+        if p.get("struct_type"):
+            t += f"<{p['struct_type']}>"
+        if p.get("obj_class"):
+            t += f":{p['obj_class']}"
+        out = "out " if p.get("out") else ""
+        parts.append(f"{out}{t} {p.get('name', '?')}@{_fmt_offset(p.get('offset'))}")
+    return "(" + ", ".join(parts) + ")"
 
 
 def _count_changes(changed: list[ClassDiff]) -> dict[str, int]:
@@ -452,6 +650,29 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     lines.append(f"- Functions added: **{counts['func_added']}**, "
                  f"removed: **{counts['func_removed']}**")
     lines.append(f"- Classes with props_size delta: **{counts['classes_with_size_delta']}**")
+    if diff.structs_skipped:
+        lines.append(f"- Structs: not compared — {diff.structs_skipped}")
+    else:
+        scounts = _count_changes(diff.changed_structs)
+        lines.append(f"- Structs: **{len(diff.added_structs)}** added, "
+                     f"**{len(diff.removed_structs)}** removed, "
+                     f"**{len(diff.changed_structs)}** changed, "
+                     f"**{diff.unchanged_structs}** unchanged")
+        lines.append(f"- Struct fields moved (offset / size): **{scounts['prop_moved']}**, "
+                     f"type changed: **{scounts['prop_type_changed']}**, "
+                     f"across **{scounts['classes_with_moved_fields']}** struct(s)")
+    if diff.enums_skipped:
+        lines.append(f"- Enums: not compared — {diff.enums_skipped}")
+    else:
+        values = sum(1 for ed in diff.changed_enums for c in ed.changes if c.kind == "value_changed")
+        lines.append(f"- Enums: **{len(diff.added_enums)}** added, "
+                     f"**{len(diff.removed_enums)}** removed, "
+                     f"**{len(diff.changed_enums)}** changed, "
+                     f"**{diff.unchanged_enums}** unchanged")
+        lines.append(f"- Enumerator values changed: **{values}** across "
+                     f"**{sum(1 for ed in diff.changed_enums if ed.has_breaking_change)}** enum(s)")
+    for note in diff.enum_notes + diff.param_notes:
+        lines.append(f"- ⚠ {note}")
     lines.append("")
 
     if not minimal:
@@ -482,108 +703,187 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     if not emit:
         lines.append("_No matching class diffs to report._")
         lines.append("")
-        return "\n".join(lines)
-
     for cd in emit:
-        lines.append(f"### `{cd.name}`")
-        lines.append(f"_Path:_ `{cd.path}`")
-        if cd.props_size_delta != 0:
-            old_size = cd.old.get("props_size", 0)
-            new_size = cd.new.get("props_size", 0)
-            sign = "+" if cd.props_size_delta > 0 else ""
-            lines.append(f"_props_size:_ {old_size} → {new_size} "
-                         f"({sign}{cd.props_size_delta})")
+        _render_type_diff(lines, cd, minimal)
+
+    if not diff.structs_skipped:
+        _render_structs(lines, diff, minimal)
+    if not diff.enums_skipped:
+        _render_enums(lines, diff, minimal)
+    return "\n".join(lines)
+
+
+def _render_listing(lines: list[str], title: str, records: list[dict]) -> None:
+    if records:
+        lines.append(f"## {title} ({len(records)})")
+        lines.append("")
+        for rec in records:
+            lines.append(f"- `{rec.get('name','')}` — `{normalize_path(rec.get('path',''))}`")
         lines.append("")
 
-        moved = [p for p in cd.prop_changes if p.kind == "moved"]
-        type_changed = [p for p in cd.prop_changes if p.kind == "type_changed"]
-        added_props = [p for p in cd.prop_changes if p.kind == "added"]
-        removed_props = [p for p in cd.prop_changes if p.kind == "removed"]
-        sig_changed = [f for f in cd.func_changes if f.kind == "signature_changed"]
-        added_funcs = [f for f in cd.func_changes if f.kind == "added"]
-        removed_funcs = [f for f in cd.func_changes if f.kind == "removed"]
 
-        if moved:
-            lines.append(f"**Moved fields ({len(moved)})** — *these break "
-                         f"existing cheat tables*:")
-            lines.append("")
-            lines.append("| Field | Old offset → New | Old size → New |")
-            lines.append("|---|---|---|")
-            for pc in moved:
-                o = pc.old or {}
-                n = pc.new or {}
-                lines.append(f"| `{pc.name}` | "
-                             f"{_fmt_offset(o.get('offset'))} → {_fmt_offset(n.get('offset'))} | "
-                             f"{o.get('size','?')} → {n.get('size','?')} |")
-            lines.append("")
+def _render_structs(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
+    """[EXTPR-539-540-2026-10-02] D5: structs, laid out as the classes are."""
+    if not minimal:
+        _render_listing(lines, "Added Structs", diff.added_structs)
+        _render_listing(lines, "Removed Structs", diff.removed_structs)
+        emit = list(diff.changed_structs)
+        lines.append(f"## Changed Structs ({len(emit)})")
+    else:
+        emit = [cd for cd in diff.changed_structs if cd.has_breaking_change]
+        lines.append(f"## Breaking Struct Changes ({len(emit)} struct(s))")
+    lines.append("")
+    if not emit:
+        lines.append("_No matching struct diffs to report._")
+        lines.append("")
+    for cd in emit:
+        _render_type_diff(lines, cd, minimal)
 
-        if type_changed:
-            lines.append(f"**Property type changed ({len(type_changed)})**:")
-            lines.append("")
-            for pc in type_changed:
-                o = pc.old or {}
-                n = pc.new or {}
-                lines.append(f"- `{pc.name}` @ {_fmt_offset(o.get('offset'))}: "
-                             f"{_fmt_prop_typestr(o)} → {_fmt_prop_typestr(n)}")
-            lines.append("")
 
-        if sig_changed:
-            lines.append(f"**Function signatures changed ({len(sig_changed)})**:")
+def _render_enums(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
+    """[EXTPR-539-540-2026-10-02] D5: enums, each changed one with its enumerators."""
+    if not minimal:
+        _render_listing(lines, "Added Enums", diff.added_enums)
+        _render_listing(lines, "Removed Enums", diff.removed_enums)
+        emit = list(diff.changed_enums)
+        lines.append(f"## Changed Enums ({len(emit)})")
+    else:
+        emit = [ed for ed in diff.changed_enums if ed.has_breaking_change]
+        lines.append(f"## Changed Enum Values ({len(emit)} enum(s))")
+    lines.append("")
+    if not emit:
+        lines.append("_No matching enum diffs to report._")
+        lines.append("")
+    for ed in emit:
+        lines.append(f"### `{ed.name}`")
+        lines.append(f"_Path:_ `{ed.path}`")
+        lines.append("")
+        values = [c for c in ed.changes if c.kind == "value_changed"]
+        if values:
+            lines.append("| Enumerator | Old value → New |")
+            lines.append("|---|---|")
+            for c in values:
+                lines.append(f"| `{c.name}` | {c.old_value} → {c.new_value} |")
             lines.append("")
-            lines.append("| Func | return | num_parms | parms_size | flags |")
-            lines.append("|---|---|---|---|---|")
-            for fc in sig_changed:
-                o = fc.old or {}
-                n = fc.new or {}
-                def cell(k, fmt=lambda x: str(x) if x is not None else "?"):
-                    a = o.get(k); b = n.get(k)
-                    return f"{fmt(a)} → {fmt(b)}" if a != b else fmt(a)
-                lines.append(f"| `{fc.name}` | {cell('return_type')} | "
-                             f"{cell('num_parms')} | {cell('parms_size')} | "
-                             f"{cell('flags')} |")
-            lines.append("")
-
         if minimal:
-            # Skip added / removed in minimal mode.
             continue
+        for kind, title, attr in (("added", "Added enumerators", "new_value"),
+                                  ("removed", "Removed enumerators", "old_value")):
+            rows = [c for c in ed.changes if c.kind == kind]
+            if rows:
+                lines.append(f"**{title} ({len(rows)})**:")
+                lines.append("")
+                for c in rows:
+                    lines.append(f"- `{c.name}` = {getattr(c, attr)}")
+                lines.append("")
 
-        if added_props:
-            lines.append(f"**Added properties ({len(added_props)})**:")
-            lines.append("")
-            for pc in added_props:
-                n = pc.new or {}
-                lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(n)}) "
-                             f"@ {_fmt_offset(n.get('offset'))} "
-                             f"({n.get('size','?')}B)")
-            lines.append("")
-        if removed_props:
-            lines.append(f"**Removed properties ({len(removed_props)})**:")
-            lines.append("")
-            for pc in removed_props:
-                o = pc.old or {}
-                lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(o)}) "
-                             f"@ {_fmt_offset(o.get('offset'))}")
-            lines.append("")
-        if added_funcs:
-            lines.append(f"**Added functions ({len(added_funcs)})**:")
-            lines.append("")
-            for fc in added_funcs:
-                n = fc.new or {}
-                lines.append(f"- `{fc.name}` (return={n.get('return_type','') or 'void'}, "
-                             f"num_parms={n.get('num_parms','?')}, "
-                             f"parms_size={n.get('parms_size','?')})")
-            lines.append("")
-        if removed_funcs:
-            lines.append(f"**Removed functions ({len(removed_funcs)})**:")
-            lines.append("")
-            for fc in removed_funcs:
-                o = fc.old or {}
-                lines.append(f"- `{fc.name}` (return={o.get('return_type','') or 'void'}, "
-                             f"num_parms={o.get('num_parms','?')}, "
-                             f"parms_size={o.get('parms_size','?')})")
+
+def _render_type_diff(lines: list[str], cd: ClassDiff, minimal: bool) -> None:
+    """One changed class or struct: its moved and retyped fields, its signature changes, and (outside
+    --minimal) its added and removed members."""
+    lines.append(f"### `{cd.name}`")
+    lines.append(f"_Path:_ `{cd.path}`")
+    if cd.props_size_delta != 0:
+        old_size = cd.old.get("props_size", 0)
+        new_size = cd.new.get("props_size", 0)
+        sign = "+" if cd.props_size_delta > 0 else ""
+        lines.append(f"_props_size:_ {old_size} → {new_size} "
+                     f"({sign}{cd.props_size_delta})")
+    lines.append("")
+
+    moved = [p for p in cd.prop_changes if p.kind == "moved"]
+    type_changed = [p for p in cd.prop_changes if p.kind == "type_changed"]
+    added_props = [p for p in cd.prop_changes if p.kind == "added"]
+    removed_props = [p for p in cd.prop_changes if p.kind == "removed"]
+    sig_changed = [f for f in cd.func_changes if f.kind == "signature_changed"]
+    added_funcs = [f for f in cd.func_changes if f.kind == "added"]
+    removed_funcs = [f for f in cd.func_changes if f.kind == "removed"]
+
+    if moved:
+        lines.append(f"**Moved fields ({len(moved)})** — *these break "
+                     f"existing cheat tables*:")
+        lines.append("")
+        lines.append("| Field | Old offset → New | Old size → New |")
+        lines.append("|---|---|---|")
+        for pc in moved:
+            o = pc.old or {}
+            n = pc.new or {}
+            lines.append(f"| `{pc.name}` | "
+                         f"{_fmt_offset(o.get('offset'))} → {_fmt_offset(n.get('offset'))} | "
+                         f"{o.get('size','?')} → {n.get('size','?')} |")
+        lines.append("")
+
+    if type_changed:
+        lines.append(f"**Property type changed ({len(type_changed)})**:")
+        lines.append("")
+        for pc in type_changed:
+            o = pc.old or {}
+            n = pc.new or {}
+            lines.append(f"- `{pc.name}` @ {_fmt_offset(o.get('offset'))}: "
+                         f"{_fmt_prop_typestr(o)} → {_fmt_prop_typestr(n)}")
+        lines.append("")
+
+    if sig_changed:
+        lines.append(f"**Function signatures changed ({len(sig_changed)})**:")
+        lines.append("")
+        lines.append("| Func | return | num_parms | parms_size | flags |")
+        lines.append("|---|---|---|---|---|")
+        for fc in sig_changed:
+            o = fc.old or {}
+            n = fc.new or {}
+            def cell(k, fmt=lambda x: str(x) if x is not None else "?"):
+                a = o.get(k); b = n.get(k)
+                return f"{fmt(a)} → {fmt(b)}" if a != b else fmt(a)
+            lines.append(f"| `{fc.name}` | {cell('return_type')} | "
+                         f"{cell('num_parms')} | {cell('parms_size')} | "
+                         f"{cell('flags')} |")
+        lines.append("")
+        param_rows = [fc for fc in sig_changed if _params_differ(fc.old or {}, fc.new or {})]
+        for fc in param_rows:
+            lines.append(f"- `{fc.name}` parameters: `{_fmt_params(fc.old or {})}` → "
+                         f"`{_fmt_params(fc.new or {})}`")
+        if param_rows:
             lines.append("")
 
-    return "\n".join(lines)
+    if minimal:
+        # Skip added / removed in minimal mode.
+        return
+
+    if added_props:
+        lines.append(f"**Added properties ({len(added_props)})**:")
+        lines.append("")
+        for pc in added_props:
+            n = pc.new or {}
+            lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(n)}) "
+                         f"@ {_fmt_offset(n.get('offset'))} "
+                         f"({n.get('size','?')}B)")
+        lines.append("")
+    if removed_props:
+        lines.append(f"**Removed properties ({len(removed_props)})**:")
+        lines.append("")
+        for pc in removed_props:
+            o = pc.old or {}
+            lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(o)}) "
+                         f"@ {_fmt_offset(o.get('offset'))}")
+        lines.append("")
+    if added_funcs:
+        lines.append(f"**Added functions ({len(added_funcs)})**:")
+        lines.append("")
+        for fc in added_funcs:
+            n = fc.new or {}
+            lines.append(f"- `{fc.name}` (return={n.get('return_type','') or 'void'}, "
+                         f"num_parms={n.get('num_parms','?')}, "
+                         f"parms_size={n.get('parms_size','?')})")
+        lines.append("")
+    if removed_funcs:
+        lines.append(f"**Removed functions ({len(removed_funcs)})**:")
+        lines.append("")
+        for fc in removed_funcs:
+            o = fc.old or {}
+            lines.append(f"- `{fc.name}` (return={o.get('return_type','') or 'void'}, "
+                         f"num_parms={o.get('num_parms','?')}, "
+                         f"parms_size={o.get('parms_size','?')})")
+        lines.append("")
 
 
 # =====================================================================
