@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — PR 540's L1 (fetch limit), L5 (persisted) and L2 (Save .jsonl) are in source, 2026-10-06** (see "L1 and L5 built" and "L2 built" under PR 540); L3 and all of PR 539 are not built. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: IN PROGRESS — all of PR 540 is in source, 2026-10-06: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5** (see "L1 and L5 built", "L2 built" and "L3 built" under PR 540); live checks with a game are owed. PR 539 is not built. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -255,6 +255,18 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | L4 | **Recording lock** | All three controls (both sliders and the Save button) are **disabled (greyed out) while a recording runs**, and usable before and after it. Refresh during a recording then always uses the cap fixed at Start. |
 | L1a | **Why the max is 32768 (2026-10-04)** | On PR 540 the contributor replied that they use the tool with an AI assistant to write UE4SS mods, and wanted more rows to give it a fuller picture of what fired; they agreed 50,000 is too much. The maintainer raised the max to 2^15 = 32768. The default stays 512: the fixed 300 was meant for tracing what one in-game action calls, and a small table still serves that best. The DLL needs no change: `pe_profile_get` takes any `limit` and only resolves names for the rows it sends. A per-call timeline and stack snapshots came up in the same discussion; they are a separate feature of ours with no co-author trailer, in [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). |
 | L5 | **Persisted** | Fetch limit and Min calls survive a UI restart: a new `LiveFuncs` sub-object in `UiOptionsSettings` (`ui-options.json`), defaults equal to the VM initializers (that file's own rule), every field written (`check_json_default_ignore`). A loaded value snaps to the nearest power of two and clamps to the range. |
+
+### L3 built (2026-10-06)
+
+| Commit | What | Co-author |
+|---|---|---|
+| `92007713` red, `f45dca96` | Min calls slider 1..32 (exponent 0..5), default 1, beside Fetch limit; read at Start; `Count < MinCalls` with no NEW exemption (R1); a view filter, the baseline reads every fetched row; disabled while recording; `min_calls` in Save .jsonl's summary | `f45dca96` |
+| `63ce5638` red, `71be0e25` | Persisted as `LiveFuncs.MinCallsExponent`; slider, clamp, default and tooltip pinned to each other | no |
+| `b5538086` red, `3d278c75` | Review fixes: the rows are filtered by the minimum they were FETCHED under (a Start no longer re-filters the previous capture's rows, and Save records the shown rows' minimum); the higher-Fetch-limit advice needs the page's lowest count to reach Min calls; the diff line drops "almost certainly among the NEW rows" when Min calls hid a NEW row; the tooltip carries no NEW-row warning (R1: neither) | `3d278c75` |
+
+Mutation-checked: filtering by the Start value again, dropping the Min-calls condition from the advice, and
+always making the diff claim each fail exactly one of the new tests. C# 6077/6077. **Still owed:** the AOT
+publish and a live check with a game.
 
 ### L2 built (2026-10-06)
 

@@ -279,7 +279,8 @@ the list from `scripts/analysis/engine_paths.py`.
   disabled while recording; both values persisted in `ui-options.json`. ✅ **The fetch-limit slider and its
   persistence are in source (2026-10-06, `51cb4f69`, `baa6dcef`; the plan's "L1 and L5 built")**; AOT publish and
   live check owed. ✅ **Save `.jsonl` (L2) is in source too (2026-10-06, `a20af931`, `feee40cf`)**; AOT publish and
-  live check owed. Next: Min calls (L3).
+  live check owed. ✅ **Min calls (L3) is in source too (2026-10-06, `f45dca96`, `3d278c75`)**: PR 540's three
+  features are all built; live checks with a game owed. PR 539 next.
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
   shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed
