@@ -233,7 +233,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baselineDistinct  = _lastDistinct;
         _baselineCapHit    = LastCapHit;
         _baselineLimit     = _lastLimit;
-        DiffMode = true;   // triggers ApplyDiffAndFilter via OnDiffModeChanged
+        // OnDiffModeChanged re-applies the diff only when DiffMode CHANGES; with diff already on, a new baseline
+        // would leave every row's Delta / IsNew against the old one.
+        if (DiffMode) ApplyDiffAndFilter();
+        else DiffMode = true;   // OnDiffModeChanged applies it
         BaselineStatus = _baselineTruncated
             ? $"⚠ PARTIAL baseline: {_baseline.Count:N0} of {_baselineDistinct:N0} idle funcs "
               + "(the rest were not fetched). A row can show as NEW just for having "
