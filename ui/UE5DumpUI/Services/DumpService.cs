@@ -246,7 +246,14 @@ public sealed class DumpService : IDumpService
         return res["count"]?.GetValue<int>() ?? 0;
     }
 
-    public async Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false)
+    public Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false)
+        => GetObjectPageAsync(offset, limit, includePath, includeIndex: false, ct);
+
+    public Task<ObjectListResult> GetObjectIndexPageAsync(int offset, int limit, CancellationToken ct = default)
+        => GetObjectPageAsync(offset, limit, includePath: true, includeIndex: true, ct);
+
+    private async Task<ObjectListResult> GetObjectPageAsync(int offset, int limit, bool includePath, bool includeIndex,
+                                                            CancellationToken ct)
     {
         var req = new JsonObject
         {
@@ -254,10 +261,11 @@ public sealed class DumpService : IDumpService
             ["offset"] = offset,
             ["limit"] = limit
         };
-        // Only ask for per-object full paths when the caller needs them
-        // (DumpAllService GameOnly). Omitting the flag keeps the DLL on its
-        // lean addr/name/class/outer path for the hot Object Tree paginate.
+        // Only ask for per-object full paths when the caller needs them.
+        // Omitting the flag keeps the DLL on its lean addr/name/class/outer
+        // path for the hot Object Tree paginate.
         if (includePath) req["include_path"] = true;
+        if (includeIndex) req["include_index"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
@@ -284,6 +292,7 @@ public sealed class DumpService : IDumpService
                     ClassName = string.Intern(obj["class"]?.GetValue<string>() ?? ""),
                     OuterAddr = obj["outer"]?.GetValue<string>() ?? "",
                     FullPath = obj["full_path"]?.GetValue<string>() ?? "",
+                    Index = obj["index"]?.GetValue<int>(),
                 });
             }
         }
@@ -1722,6 +1731,7 @@ public sealed class DumpService : IDumpService
                             Offset = po["offset"]?.GetValue<int>() ?? -1,
                             IsOut = po["out"]?.GetValue<bool>() ?? false,
                             IsReturn = po["ret"]?.GetValue<bool>() ?? false,
+                            IsParm = po["parm"]?.GetValue<bool>(),
                             StructName = po["struct_type"]?.GetValue<string>() ?? "",
                             StructFields = structFields,
                             // Stage 1 (Invoke param picker): expected UClass name
@@ -2845,10 +2855,16 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>Fetch the ranked fire-count table (top <paramref name="limit"/> by count).</summary>
-    public async Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
+    public Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
+        => PeProfileGetAsync(limit, skipPerFrame: false, ct);
+
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] skip_per_frame goes on the wire only when asked, so the plain call sends what
+    /// it always sent.</summary>
+    public async Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
     {
-        var res = await _pipe.SendAsync(
-            new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit }, ct);
+        var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit };
+        if (skipPerFrame) req["skip_per_frame"] = true;
+        var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
 
         var entries = new List<PeProfileEntry>();
@@ -2880,6 +2896,10 @@ public sealed class DumpService : IDumpService
             Recording     = res["recording"]?.GetValue<bool>() ?? false,
             DistinctFuncs = res["distinct_funcs"]?.GetValue<int>() ?? 0,
             TotalCalls    = res["total_calls"]?.GetValue<long>() ?? 0L,
+            PerFrameHidden = res["per_frame_hidden"]?.GetValue<int>(),
+            PerFrameFuncs  = res["per_frame_funcs"] is JsonArray pf
+                ? pf.Select(a => a?.GetValue<string>() ?? "").Where(a => a.Length > 0).ToList()
+                : Array.Empty<string>(),
             Entries       = entries,
         };
     }

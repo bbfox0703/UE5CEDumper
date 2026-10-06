@@ -101,6 +101,9 @@ struct FunctionParam {
     int32_t     offset = -1;  // Offset_Internal within param buffer (-1 = unknown)
     bool        isOut = false;
     bool        isReturn = false;
+    // [EXTPR-539-540-2026-10-02] CPF_Parm: a parameter, the return included. A Blueprint function's chain
+    // also holds its locals after the parameters (CallFunc_*_ReturnValue, K2Node_*, Temp_*), which are not.
+    bool        isParm = false;
     std::string structType;     // UScriptStruct name for StructProperty params (empty otherwise)
     // Stage 1 (Invoke param picker): target UClass name for pointer-flavoured
     // params (ObjectProperty / ClassProperty / Soft* / Weak* / Lazy* /
@@ -356,6 +359,12 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // before a GC/level-load reused its slot) fails safe. Returns false when funcAddr
 // is not (or no longer) a UFunction.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
+
+// [FUNCPARM-CONSUMERS] review: the return value's slot in the parameter buffer, from the function's own chain —
+// the entry flagged CPF_ReturnParm (its Offset_Internal and ElementSize). ResolveFunctionInfo reads only the
+// tail, which records where the return starts but not how long it is. False when the function has no return
+// or the chain cannot be read.
+bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
 
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe

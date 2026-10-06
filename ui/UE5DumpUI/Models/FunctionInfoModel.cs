@@ -1,8 +1,9 @@
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// Represents a UFunction with its parameters.
-/// Used by SDK generation and UFunction invoke script generation.
+/// Represents a UFunction as walk_functions returns it. <see cref="Params"/> is the function's whole property
+/// chain: its parameters, and on a Blueprint function its locals after them (<see cref="FunctionParamModel.IsParm"/>).
+/// Anything that means the function's arguments reads <see cref="Parameters"/> or <see cref="InputParams"/>.
 /// </summary>
 public sealed class FunctionInfoModel
 {
@@ -21,9 +22,22 @@ public sealed class FunctionInfoModel
     public List<FunctionParamModel> Params { get; init; } = new();
     public string ReturnType { get; init; } = "";
 
-    /// <summary>Input-only parameters (excludes return param).</summary>
+    /// <summary>[FUNCPARM-CONSUMERS] The function's parameters, the return included, in the DLL's order: the
+    /// entries flagged CPF_Parm. A Blueprint function's locals are not parameters: ProcessEvent copies only the
+    /// first ParmsSize bytes of the caller's buffer and builds the locals in its own frame. From a DLL that
+    /// predates the flag, UE's own definition: the leading <see cref="NumParms"/> entries. UE counts NumParms
+    /// over the chain itself and the DLL drops an entry whose name it cannot read, so then the window can
+    /// reach into the locals.</summary>
+    public IEnumerable<FunctionParamModel> Parameters
+        => ParametersFromNumParms ? Params.Take(NumParms) : Params.Where(p => p.IsParm == true);
+
+    /// <summary>True when the DLL sent no <c>parm</c> flag for a non-empty chain, so <see cref="Parameters"/>
+    /// fell back on <see cref="NumParms"/>.</summary>
+    public bool ParametersFromNumParms => Params.Count > 0 && !Params.Any(p => p.IsParm.HasValue);
+
+    /// <summary>The arguments: <see cref="Parameters"/> without the return.</summary>
     public IEnumerable<FunctionParamModel> InputParams
-        => Params.Where(p => !p.IsReturn);
+        => Parameters.Where(p => !p.IsReturn);
 
     /// <summary>Decode FunctionFlags to human-readable tags.</summary>
     public static string DecodeFunctionFlags(uint flags)
@@ -44,7 +58,8 @@ public sealed class FunctionInfoModel
 }
 
 /// <summary>
-/// Represents a single parameter of a UFunction.
+/// One entry of a UFunction's property chain: a parameter, or on a Blueprint function a local
+/// (<see cref="IsParm"/> false).
 /// </summary>
 public sealed class FunctionParamModel
 {
@@ -54,6 +69,10 @@ public sealed class FunctionParamModel
     public int Offset { get; init; } = -1;
     public bool IsOut { get; init; }
     public bool IsReturn { get; init; }
+    /// <summary>[EXTPR-539-540-2026-10-02] CPF_Parm: a parameter, the return included. A Blueprint function's
+    /// chain also holds its locals after the parameters, and those are false. Null when the DLL predates the
+    /// flag and did not say.</summary>
+    public bool? IsParm { get; init; }
     /// <summary>UScriptStruct name for StructProperty params (e.g. "Vector", "Rotator"). Empty for non-struct types.</summary>
     public string StructName { get; init; } = "";
     /// <summary>DLL-discovered sub-fields for StructProperty params (Phase B fallback). Empty for non-struct or when struct layout is unknown.</summary>

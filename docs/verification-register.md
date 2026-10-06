@@ -1061,6 +1061,65 @@ plugin, CE attached to the game:
 Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4), Avowed
 (step 5's adjusted-signature case).
 
+### ✅ FIXED + LIVE-VERIFIED 2026-10-06 `[FUNCPARM-CONSUMERS]` — no consumer takes a Blueprint function's locals for its arguments
+
+**Live, builds 3625 and 3626, 2026-10-06** (one game at a time; DumperTest 5.4 Shipping injected, Avowed through
+its refreshed `dxgi.dll`). All four steps PASS:
+- **Step 1 PASS** (`tools/verify/funcparm_xref_live.py`, `out/funcparm/dumpertest_shipping_3625.json`):
+  `find_functions_by_class` on Character's class lists no `ExecuteUbergraph_ABP_Manny`; on Actor's class it
+  lists `D4_OnActorHitProbe` (DumperTestActor) and `OnPeerBeginOverlap` (DumperTestSparseListener), `kind`
+  `param` — the positive control. Both replies complete.
+- **Step 2a PASS:** Live Walker on `Default__ABP_Manny_C`, Functions, `ExecuteUbergraph_ABP_Manny` AA(Baked):
+  ONE input row, `EntryPoint [int32, 4B, off=0]`, no local. Not fired.
+- **Step 2b PASS, build 3626:** with CE (SSE4-AVX2) up and `CEPlugin.log` reading `PipeServer: listening`, ⟳
+  turned the "AOBMaker DLL" dot green and enabled INV. Live Walker on `Default__ABP_Manny_C`, Functions,
+  `ExecuteUbergraph_ABP_Manny` (`1 (4B)`), INV: "Invoke script created in CE", and CE gained the unticked record
+  `Invoke: ABP_Manny_C::ExecuteUbergraph_ABP_Manny`. Its script reads `PARMS_SIZE = 4`, `local PARAM_COUNT = 1`,
+  one form row `EntryPoint  [int32, 4 B]`, and names no `K2Node_*` or `CallFunc_*` local. FIRE would zero
+  `0..113` first: 114 B, the end of the walked chain (its last local, `CallFunc_BooleanAND_ReturnValue_1`, sits
+  at +113, 1 B, in `out/d3/dumpertest_shipping_3622.json`), so the review's zero-fill fix holds live too. Not
+  ticked, not fired; CE closed without saving.
+  - The first attempt (build 3625) left this step owed, and the bridge was never at fault: `CEPlugin.log` had the
+    pipe listening at 19:29:37, and the UI's last probe was at 19:28:26, before it. The DLL dot does not poll; it
+    re-probes on ⟳ and when an action uses the bridge. The handover said it flipped by itself; it now says this.
+- **Step 3 PASS** on Avowed: Live Walker on `Default__EQSContext_QuerierFeet_C`, `ProvideSingleLocation` (3
+  parameters, 40 B; the chain also holds `K2Node_DynamicCast_AsCharacter`, `K2Node_DynamicCast_bSuccess`,
+  `CallFunc_K2_GetActorLocation_ReturnValue`). The PIPE form offers `QuerierObject` and `QuerierActor` and
+  shows `ResultingLocation` (out); FIRE with both null: "ProcessEvent OK (result=0)", and the post-call buffer
+  lists `QuerierObject`, `QuerierActor`, `ResultingLocation (out) = X=0, Y=0, Z=0` — no local, no
+  `(return*)` line.
+
+Fixed in build 3624, and its review's fixes (the zero-fill, Mimic's return-slot clear) in build 3625; the row
+and its commits are in `todo.md`. `FunctionParametersTests` pins every C# consumer
+(the view models by a source pin: the dialog cannot open in a unit test) and dll_core_test's UFUNCWALK block the DLL
+matcher; what is owed is a real Blueprint function, whose locals only a running game supplies. DumperTest 5.4
+Shipping has one: build 3622's `tools/verify/d3_parm_flags.py` run (`out/d3/dumpertest_shipping_3622.json`) found
+`ABP_Manny_C::ExecuteUbergraph_ABP_Manny`, `num_parms` 1, `parms_size` 4, the parameter `EntryPoint` and 16 locals
+from offset 4 on, among them `CallFunc_GetOwningActor_ReturnValue` (Actor, +16) and
+`K2Node_DynamicCast_AsCharacter` (Character, +24). Launch `py tools/verify/launch_dumpertest.py shipping`, inject
+`py tools/verify/inject.py --name DumperTest`, with the NEW DLL and UI:
+
+1. **DLL side, class xref (pipe, no UI):** `find_functions_by_class` on `Character`'s class with `game_only` true:
+   `ExecuteUbergraph_ABP_Manny` is absent. Control: a DLL before build 3624 lists it, `kind: "param"`, through
+   its cast node's output. The positive control, the same call on `Actor`'s class: it still lists
+   `D4_OnActorHitProbe` (DumperTestActor) and `OnPeerBeginOverlap` (DumperTestSparseListener), which take `AActor*`
+   parameters, `kind: "param"`. A total miss there means the CPF_Parm read failed, not that the fix held.
+2. **UI side, Invoke** — two routes, since the two scripts come from different generators. ⚠ The function is
+   declared on `ABP_Manny_C` while the live anim instance is an `ABP_Quinn_C`, and the Live Walker lists a class's
+   own functions only (2026-08 Y1 TRAP 2), so reach it from a path that names the class. ⛔ **Do not FIRE it, and
+   do not tick the CE record**: ExecuteUbergraph enters the graph's bytecode at whatever `EntryPoint` says.
+   - **(a) AA(Baked):** from Interesting Functions or Console, the dialog for `ExecuteUbergraph_ABP_Manny` shows ONE
+     input row, `EntryPoint`, and no local.
+   - **(b) CE Invoke script:** walk the CDO `Default__ABP_Manny_C` in the Live Walker, so the walked class is
+     `ABP_Manny_C`; with CE and the AOBMaker bridge connected, press that function row's CE Invoke-script button. The
+     script reads `local PARAM_COUNT = 1` and names no local.
+3. **UI side, FIRE with locals:** on a host with a callable Blueprint function whose chain holds locals (Avowed had
+   1,126 such functions in build 3622's run), FIRE it from the Live Walker: the form lists only the arguments, and
+   the post-call readout lists only the parameters, with no `(return*)` line for a `CallFunc_*_ReturnValue` local.
+
+Needs: DumperTest + the new DLL (steps 1-2), the UI (steps 2-3), CE + the AOBMaker bridge (step 2b), a title with
+callable Blueprint functions (step 3).
+
 ### ⬜ FIXED 2026-09-26, NEEDS A LIVE CHECK — `[BOOL-NATIVE-SEARCH]`: search rows carry `bool_native`, and no Freeze whole-byte-writes an unresolved bool
 
 Fixed in `2093ea91` (red `85c9e8ed`); the row and its mechanism are in `todo.md`. Unit tests pin the UI half and

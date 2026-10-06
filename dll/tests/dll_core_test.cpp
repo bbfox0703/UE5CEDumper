@@ -71,6 +71,8 @@ uint32_t g_cachedUEVersion = 0;
 #include "../src/Aura.cpp"       // NOLINT
 #undef LOG_CAT
 #include "../src/Genau.cpp"      // NOLINT
+#undef LOG_CAT
+#include "../src/Linie.cpp"      // NOLINT -- the profiler table: RecordCall's accumulation behind IsPerFrame
 
 // ── harness ──────────────────────────────────────────────────────────
 
@@ -1637,12 +1639,12 @@ int main() {
     {
         blk("UFUNCWALK - WalkFunctions reads a UProperty param's subclass field at the version's delta");
 
-        static uint8_t wfEntry[13][0x40] = {};
-        const char* wfNames[13] = { "", "Function", "ObjectProperty", "Target", "Actor",
+        static uint8_t wfEntry[14][0x40] = {};
+        const char* wfNames[14] = { "", "Function", "ObjectProperty", "Target", "Actor",
                                     "StructProperty", "Hit", "HitResult", "DoIt",
-                                    "Class", "ScriptStruct", "Decoy", "Thing" };
-        static uintptr_t wfChunk[14] = {};
-        for (int i = 1; i <= 12; ++i) {
+                                    "Class", "ScriptStruct", "Decoy", "Thing", "K2Node_DynamicCast_AsActor" };
+        static uintptr_t wfChunk[15] = {};
+        for (int i = 1; i <= 13; ++i) {
             memcpy(wfEntry[i] + 0x10, wfNames[i], strlen(wfNames[i]) + 1);
             wfChunk[i] = reinterpret_cast<uintptr_t>(wfEntry[i]);
         }
@@ -1669,6 +1671,7 @@ int main() {
         };
         auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        constexpr uintptr_t kWfParm = 0x0080;   // CPF_Parm
         // Actor is a UClass and HitResult a UScriptStruct -- a param's slot is read only when it holds that kind
         // ([STRUCTPROBE-ANY-NAME]); Decoy is an instance of a class called Thing, neither.
         put(wfNamed[9], Grimoire::OFF_UOBJECT_CLASS, named(9));     // Class : Class
@@ -1689,10 +1692,12 @@ int main() {
             put32(wfFn[c], Grimoire::OFF_UOBJECT_NAME, 8);                       // "DoIt"
             put32(wfFn[c], DynOff::FunctionFlagsOffsetFor(ver, false), 0x00080401);
             put(wfFn[c], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(wfObjP[c]));
-            // param 1: ObjectProperty "Target" -> PropertyClass "Actor" at the REAL subclass start
+            // param 1: ObjectProperty "Target" -> PropertyClass "Actor" at the REAL subclass start. Both params carry
+            // CPF_Parm, as every parameter UE lays out does.
             put(wfObjP[c], Grimoire::OFF_UOBJECT_CLASS, named(2));
             put32(wfObjP[c], Grimoire::OFF_UOBJECT_NAME, 3);
             put32(wfObjP[c], DynOff::UPROPERTY_ELEMSIZE, 8);
+            put(wfObjP[c], DynOff::UPROPERTY_FLAGS, kWfParm);
             put32(wfObjP[c], offsetInternal, 0);
             put(wfObjP[c], subclassStart, objTarget ? objTarget : named(4));
             put(wfObjP[c], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfStrP[c]));
@@ -1700,6 +1705,7 @@ int main() {
             put(wfStrP[c], Grimoire::OFF_UOBJECT_CLASS, named(5));
             put32(wfStrP[c], Grimoire::OFF_UOBJECT_NAME, 6);
             put32(wfStrP[c], DynOff::UPROPERTY_ELEMSIZE, 0x88);
+            put(wfStrP[c], DynOff::UPROPERTY_FLAGS, kWfParm);
             put32(wfStrP[c], offsetInternal, 8);
             put(wfStrP[c], subclassStart, structTarget ? structTarget : named(7));
             return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(wfCls[c]));
@@ -1740,6 +1746,28 @@ int main() {
         check("UFUNCWALK control: ...and the 4.18 one, as before",
               Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
 
+        // [FUNCPARM-CONSUMERS] A Blueprint function's chain holds its locals after the parameters, and a local typed
+        // with the class (K2Node_DynamicCast_AsActor, the cast node's output) is not the function taking it. The
+        // 4.18 function again, with such a local after its two params. Its flags word carries non-Parm bits, so
+        // "any bit set" cannot pass for CPF_Parm.
+        static uint8_t wfLocal[0x100] = {};
+        put(wfLocal, Grimoire::OFF_UOBJECT_CLASS, named(2));                  // ObjectProperty
+        put32(wfLocal, Grimoire::OFF_UOBJECT_NAME, 13);
+        put32(wfLocal, DynOff::UPROPERTY_ELEMSIZE, 8);
+        put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000200ull);
+        put32(wfLocal, DynOff::UPROPERTY_OFFSET, 0x90);                       // past the parameter block
+        put(wfLocal, 0x70, named(4));                                         // PropertyClass Actor, 4.18's slot
+        put(wfStrP[1], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfLocal));
+        // Anti-vacuity (review of 987a0dab): the same entry flagged CPF_Parm IS counted, so the star check below
+        // fails for the flag and not because the local is unreachable.
+        put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000280ull);
+        check("UFUNCWALK control: the same entry, flagged CPF_Parm, is counted",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 2);
+        put(wfLocal, DynOff::UPROPERTY_FLAGS, 0x0008001040000200ull);
+        check("UFUNCWALK ⭐: FindFunctionsByClassParam does not count a Blueprint local typed with the class",
+              Aura::CountClassParams(reinterpret_cast<uintptr_t>(wfFn[1]), named(4), retMatch) == 1);
+        put(wfStrP[1], DynOff::UFIELD_NEXT, 0);
+
         // [STRUCTPROBE-ANY-NAME] (review of build 3596): this UProperty param path took ANY named object as the
         // param's struct / class -- and walked it as a struct. A named non-struct, non-class object in the slot:
         const auto pDecoy = paramsOf("a decoy in the slot", walkAt(2, 418, 0x44, 0x70, named(11), named(11)));
@@ -1769,6 +1797,134 @@ int main() {
         DynOff::UPROPERTY_OFFSET    = savedOffW;
         DynOff::bCasePreservingName = savedCpnW;
         DynOff::bUseFProperty       = savedFPropW;
+    }
+
+    // -- UFUNCPARM-2026-10-06 -- WalkFunctions says which chain entries are PARAMETERS ----------------
+    //
+    // ⛔ POOL-FAKING, like UFUNCWALK: WalkFunctions keeps a child only if its class is NAMED "Function", and
+    // types each entry by its class's NAME. Own pool, first.
+    //
+    // [EXTPR-539-540-2026-10-02] D3. A UFunction's property chain holds its parameters (CPF_Parm, the return
+    // included) and, on a Blueprint function, its locals after them (CallFunc_*_ReturnValue, K2Node_*,
+    // Temp_*): the 2026-08 Y1 trap, where the Invoke form offered two frame locals past parmsSize as
+    // arguments. WalkFunctions still lists every entry; it now also says which ones are parameters, from the
+    // PropertyFlags word it already reads for out / ret. Both property models: FField and UProperty.
+    {
+        blk("UFUNCPARM - WalkFunctions flags the CPF_Parm entries, so a Blueprint local is not a parameter");
+
+        static uint8_t upEntry[9][0x40] = {};
+        const char* upNames[9] = { "", "Function", "IntProperty", "BoolProperty", "Count",
+                                   "ReturnValue", "Temp_int_Variable", "DoIt", "Class" };
+        static uintptr_t upChunk[10] = {};
+        for (int i = 1; i <= 8; ++i) {
+            memcpy(upEntry[i] + 0x10, upNames[i], strlen(upNames[i]) + 1);
+            upChunk[i] = reinterpret_cast<uintptr_t>(upEntry[i]);
+        }
+        static uintptr_t upChunks[2] = { reinterpret_cast<uintptr_t>(upChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(upChunks), 0x10);
+        check("UFUNCPARM setup: the pool resolves Function", Serie::GetString(1) == "Function",
+              Serie::GetString(1).c_str());
+
+        const bool savedFPropP = DynOff::bUseFProperty;
+        const bool savedCpnP   = DynOff::bCasePreservingName;
+        DynOff::bCasePreservingName = false;
+
+        constexpr uint64_t kParm = 0x0080, kOut = 0x0100, kRet = 0x0400;
+        // What a numeric property carries anyway: ZeroConstructor | IsPlainOldData | NoDestructor |
+        // HasGetValueTypeHash. On every entry, so a local is never flags 0 and "any bit set" cannot pass for
+        // CPF_Parm (review of 0fa23e3f).
+        constexpr uint64_t kPod = 0x0008001040000200ull;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
+
+        // UProperty mode types an entry by its UClass's name; FField mode by its FFieldClass's.
+        static uint8_t upNamed[9][0x100] = {};
+        auto named = [&](int idx) {
+            *reinterpret_cast<int32_t*>(upNamed[idx] + Grimoire::OFF_UOBJECT_NAME) = idx;
+            return reinterpret_cast<uintptr_t>(upNamed[idx]);
+        };
+        static uint8_t upFC[9][0x20] = {};
+        auto fclass = [&](int idx) {
+            *reinterpret_cast<int32_t*>(upFC[idx] + DynOff::FFIELDCLASS_NAME) = idx;
+            return reinterpret_cast<uintptr_t>(upFC[idx]);
+        };
+
+        // The chain in UE's order: Count (an int32 parameter), ReturnValue (the return, which UE marks
+        // CPF_Parm | CPF_OutParm | CPF_ReturnParm), then Temp_int_Variable, a local past the parameter block.
+        struct Entry { int name, type; int32_t size, offset; uint64_t flags; };
+        const Entry chain[3] = { { 4, 2, 4, 0, kParm | kPod },
+                                 { 5, 3, 1, 4, kParm | kOut | kRet | kPod },
+                                 { 6, 2, 4, 8, kPod } };
+
+        // ONE set of blobs per property model.
+        static uint8_t upCls[2][0x100] = {}, upFn[2][0x100] = {}, upProp[2][3][0x100] = {};
+        auto walk = [&](int m, bool fprop) {
+            DynOff::bUseFProperty = fprop;
+            putP(upCls[m], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(upFn[m]));
+            putP(upFn[m], Grimoire::OFF_UOBJECT_CLASS, named(1));                 // "Function"
+            put32(upFn[m], Grimoire::OFF_UOBJECT_NAME, 7);                        // "DoIt"
+            putP(upFn[m], fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN,
+                 reinterpret_cast<uintptr_t>(upProp[m][0]));
+            for (int i = 0; i < 3; ++i) {
+                uint8_t* pr = upProp[m][i];
+                const Entry& e = chain[i];
+                const uintptr_t next = i < 2 ? reinterpret_cast<uintptr_t>(upProp[m][i + 1]) : 0;
+                if (fprop) {
+                    putP(pr, DynOff::FFIELD_CLASS, fclass(e.type));
+                    put32(pr, DynOff::FFIELD_NAME, e.name);
+                    put32(pr, DynOff::FPROPERTY_ELEMSIZE, e.size);
+                    put32(pr, DynOff::FPROPERTY_OFFSET, e.offset);
+                    put64(pr, DynOff::FPROPERTY_FLAGS, e.flags);
+                    putP(pr, DynOff::FFIELD_NEXT, next);
+                } else {
+                    putP(pr, Grimoire::OFF_UOBJECT_CLASS, named(e.type));
+                    put32(pr, Grimoire::OFF_UOBJECT_NAME, e.name);
+                    put32(pr, DynOff::UPROPERTY_ELEMSIZE, e.size);
+                    put32(pr, DynOff::UPROPERTY_OFFSET, e.offset);
+                    put64(pr, DynOff::UPROPERTY_FLAGS, e.flags);
+                    putP(pr, DynOff::UFIELD_NEXT, next);
+                }
+            }
+            return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(upCls[m]));
+        };
+
+        for (int m = 0; m < 2; ++m) {
+            const bool fprop = m == 0;
+            const std::string who = fprop ? "FField" : "UProperty";
+            const auto fs = walk(m, fprop);
+            // Anti-vacuity: "not a parameter" would hold for an entry that was never read.
+            const bool shaped = fs.size() == 1 && fs[0].params.size() == 3
+                && fs[0].params[2].name == "Temp_int_Variable";
+            check(("UFUNCPARM control: " + who + " -- one function, every chain entry listed, the local too").c_str(),
+                  shaped, std::to_string(fs.empty() ? 0 : fs[0].params.size()).c_str());
+            if (!shaped) continue;
+            const auto& ps = fs[0].params;
+            check(("UFUNCPARM control: " + who + " -- out / ret read from the same flags as before").c_str(),
+                  ps[1].isReturn && ps[1].isOut && !ps[0].isReturn && !ps[2].isReturn);
+            check(("UFUNCPARM ⭐: " + who + " -- the parameter and the return are parameters").c_str(),
+                  ps[0].isParm && ps[1].isParm);
+            check(("UFUNCPARM ⭐: " + who + " -- the local after them is not").c_str(), !ps[2].isParm);
+
+            // [FUNCPARM-CONSUMERS] review: Mimic clears the return slot before an invoke, and the slot comes from
+            // the chain's CPF_ReturnParm entry (ResolveFunctionInfo reads only the tail, which has no size).
+            int32_t retOff = -1, retSize = 0;
+            const bool hasRet = Ubel::ReadReturnSlot(reinterpret_cast<uintptr_t>(upFn[m]), retOff, retSize);
+            check(("UFUNCPARM ⭐: " + who + " -- the return slot is the CPF_ReturnParm entry's").c_str(),
+                  hasRet && retOff == 4 && retSize == 1,
+                  (std::to_string(retOff) + "/" + std::to_string(retSize)).c_str());
+            // No return: drop the ReturnValue entry from the chain (Count links straight to the local).
+            const uintptr_t savedNext = *reinterpret_cast<uintptr_t*>(upProp[m][0] +
+                (fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT));
+            putP(upProp[m][0], fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT,
+                 reinterpret_cast<uintptr_t>(upProp[m][2]));
+            check(("UFUNCPARM ⭐: " + who + " -- a function without a return has no return slot").c_str(),
+                  !Ubel::ReadReturnSlot(reinterpret_cast<uintptr_t>(upFn[m]), retOff, retSize));
+            putP(upProp[m][0], fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT, savedNext);
+        }
+
+        DynOff::bCasePreservingName = savedCpnP;
+        DynOff::bUseFProperty       = savedFPropP;
     }
 
     // -- OPTLAYOUT-2026-09-11 -- TOptional set/unset follows the LAYOUT, not the inner type's name --
@@ -6416,6 +6572,81 @@ int main() {
         DynOff::bUseFProperty = svFProp;
         Ubel::s_subclassCalibrated.store(svCalibrated);
         Ubel::s_subclassSlotConfirmed.store(svConfirmed);
+    }
+
+    {
+        blk("LIVEFUNCS-HIDE-PERFRAME: Linie::IsPerFrame -- the frame band, sustained over the recording");
+        // A 10 s recording from t=1000 ms. Unless a case says otherwise the function fired steadily, so the time it
+        // kept firing is its span.
+        const uint64_t W = 10000;
+        auto fsa = [](uint64_t count, double meanMs, uint64_t gaps, uint64_t firstMs, uint64_t lastMs, uint64_t activeMs) {
+            return Linie::FuncStat{ 0x1000, count, 1, meanMs, 0.05, gaps, firstMs, lastMs, activeMs };
+        };
+        auto fs = [&](uint64_t count, double meanMs, uint64_t gaps, uint64_t firstMs, uint64_t lastMs) {
+            return fsa(count, meanMs, gaps, firstMs, lastMs, lastMs - firstMs);
+        };
+        check("every frame at 60 fps for the whole recording is per-frame",
+              Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), W));
+        check("twice per frame is per-frame", Linie::IsPerFrame(fs(1200, 8.3, 1199, 1000, 10995), W));
+        check("a frame rate that wanders (mean 20 ms) is per-frame", Linie::IsPerFrame(fs(500, 20.0, 499, 1000, 10980), W));
+        check("on the band's edge (40 ms) and over half the recording, it is per-frame",
+              Linie::IsPerFrame(fs(126, 40.0, 125, 1000, 6000), W));
+        check("every frame from 40% on (60% of the recording) is per-frame",
+              Linie::IsPerFrame(fs(360, 16.7, 359, 5000, 10990), W));
+        check("an action's burst (10 fires in 50 ms) is NOT per-frame: its gaps are short, its span is not",
+              !Linie::IsPerFrame(fs(10, 5.5, 9, 6000, 6050), W));
+        check("every frame for only the last 30% is NOT per-frame (an effect the action started)",
+              !Linie::IsPerFrame(fs(180, 16.7, 179, 8000, 10990), W));
+        check("just past the band (40.1 ms) is NOT per-frame", !Linie::IsPerFrame(fs(250, 40.1, 249, 1000, 10990), W));
+        check("a 0.5 s timer is NOT per-frame", !Linie::IsPerFrame(fs(20, 500.0, 19, 1000, 10500), W));
+        check("two gaps prove nothing: NOT per-frame", !Linie::IsPerFrame(fs(3, 16.7, 2, 1000, 1033), W));
+        check("two gaps prove nothing even when they span a 60 ms recording (only the gap count decides here)",
+              !Linie::IsPerFrame(fs(3, 16.7, 2, 0, 33), 60));
+        check("...while a third gap in that recording makes it per-frame (the control)",
+              Linie::IsPerFrame(fs(4, 16.7, 3, 0, 50), 60));
+        check("one fire: NOT per-frame", !Linie::IsPerFrame(fs(1, 0.0, 0, 5000, 5000), W));
+        check("an empty recording window: nothing is per-frame", !Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), 0));
+        check("a span just under half the recording is NOT per-frame",
+              !Linie::IsPerFrame(fs(299, 16.7, 298, 1000, 5999), W));
+        // Review of the first version: the span from the first fire to the last is not how long a function kept
+        // firing. Each of these spans more than half the recording with a frame-band mean, and fired for far less.
+        check("the action done twice (1 s of frames at t=1 s and t=7 s) is NOT per-frame",
+              !Linie::IsPerFrame(fsa(240, 29.3, 239, 1000, 7992, 1990), W));
+        check("four 1 s repetitions spread over the recording are NOT per-frame",
+              !Linie::IsPerFrame(fsa(240, 35.5, 239, 1000, 9480, 3960), W));
+        check("one broadcast to 80 instances in one frame, twice 6 s apart, is NOT per-frame",
+              !Linie::IsPerFrame(fsa(160, 37.7, 159, 2000, 8000, 0), W));
+        check("a Tick through a 1 s loading hitch is still per-frame (the control)",
+              Linie::IsPerFrame(fsa(540, 18.5, 539, 1000, 10990, 8990), W));
+
+        // The same through the table itself: RecordCall accumulates activeMs and Snapshot measures the window over
+        // what was recorded. A: a Tick every 16 ms for 10 s. B: an action at 120 fps for 1 s, done twice 6 s apart.
+        // C: gaps of exactly kActiveGapMaxMs (counted) and one more (not).
+        Linie::Reset();
+        Linie::StartRecording();
+        for (uint64_t t = 0; t <= 9984; t += 16) Linie::RecordCall(0xA, 1000 + t);
+        for (uint64_t t = 0; t <= 1000; t += 8) Linie::RecordCall(0xB, 2000 + t);   // in time order: RecordCall drops
+        for (uint64_t t = 0; t <= 1000; t += 8) Linie::RecordCall(0xB, 8000 + t);   // a fire older than the last
+        Linie::RecordCall(0xC, 5000); Linie::RecordCall(0xC, 5100); Linie::RecordCall(0xC, 5201);
+        Linie::StopRecording();
+        std::vector<Linie::FuncStat> lsnap;
+        uint64_t lwin = 0;
+        Linie::Snapshot(lsnap, lwin);
+        auto stat = [&](uintptr_t f) {
+            for (const auto& x : lsnap) if (x.func == f) return x;
+            return Linie::FuncStat{};
+        };
+        const auto a = stat(0xA), b = stat(0xB), c = stat(0xC);
+        check("Snapshot's window runs from the earliest fire to the latest", lwin == 9984, std::to_string(lwin).c_str());
+        check("a steady Tick kept firing for its whole span", a.activeMs == 9984, std::to_string(a.activeMs).c_str());
+        check("an action done twice kept firing for 2 s, not the 7 s between its first and last fire",
+              b.activeMs == 2000 && b.lastMs - b.firstMs == 7000, std::to_string(b.activeMs).c_str());
+        check("a gap of exactly kActiveGapMaxMs counts, one more does not", c.activeMs == 100, std::to_string(c.activeMs).c_str());
+        check("through the table: the Tick is per-frame", Linie::IsPerFrame(a, lwin));
+        check("through the table: the action done twice is NOT per-frame", !Linie::IsPerFrame(b, lwin));
+        Linie::Reset();
+        Linie::Snapshot(lsnap, lwin);
+        check("an empty table has no window", lsnap.empty() && lwin == 0, std::to_string(lwin).c_str());
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

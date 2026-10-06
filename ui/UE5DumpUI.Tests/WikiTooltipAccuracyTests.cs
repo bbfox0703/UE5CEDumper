@@ -48,6 +48,54 @@ public class WikiTooltipAccuracyTests
     }
 
     [Fact]
+    public void Live_Funcs_fetch_limit_slider_and_tip_match_the_VM_bounds_and_default()
+    {
+        // [EXTPR-539-540-2026-10-02] The slider, the view model's clamp, the persisted default and
+        // the tooltip each carry the same numbers; a change to one must fail here, not show up as
+        // a thumb that jumps back or a tooltip that promises a limit the panel no longer has.
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/LiveFuncsPanel.axaml"));
+        var slider = Regex.Match(panel,
+            @"<Slider Value=""\{Binding FetchLimitExponent\}""\s+Minimum=""(\d+)"" Maximum=""(\d+)""");
+        Assert.True(slider.Success, "the FetchLimitExponent slider was not found");
+        Assert.Equal(UE5DumpUI.ViewModels.LiveFuncsViewModel.FetchLimitMinExponent, int.Parse(slider.Groups[1].Value));
+        Assert.Equal(UE5DumpUI.ViewModels.LiveFuncsViewModel.FetchLimitMaxExponent, int.Parse(slider.Groups[2].Value));
+
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/LiveFuncsViewModel.cs"));
+        var dflt = Regex.Match(vm, @"_fetchLimitExponent = (\d+);");
+        Assert.True(dflt.Success, "the FetchLimitExponent initializer was not found");
+        int settingsDefault = new UE5DumpUI.Models.UiOptionsSettings().LiveFuncs.FetchLimitExponent;
+        Assert.Equal(settingsDefault.ToString(), dflt.Groups[1].Value);
+
+        string expected = $"{1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.FetchLimitMinExponent} to "
+                        + $"{1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.FetchLimitMaxExponent}, default {1 << settingsDefault}";
+        Assert.Contains(expected, EnString("str.Tip.LF.FetchLimit"), StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Live_Funcs_min_calls_slider_and_tip_match_the_VM_bounds_and_default()
+    {
+        // [EXTPR-539-540-2026-10-02] Same four copies as the fetch limit: slider, clamp bounds, persisted default, tooltip.
+        var panel = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/LiveFuncsPanel.axaml"));
+        var slider = Regex.Match(panel,
+            @"<Slider Value=""\{Binding MinCallsExponent\}""\s+Minimum=""(\d+)"" Maximum=""(\d+)""");
+        Assert.True(slider.Success, "the MinCallsExponent slider was not found");
+        Assert.Equal(UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMinExponent, int.Parse(slider.Groups[1].Value));
+        Assert.Equal(UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMaxExponent, int.Parse(slider.Groups[2].Value));
+
+        int settingsDefault = new UE5DumpUI.Models.UiOptionsSettings().LiveFuncs.MinCallsExponent;
+        var vm = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/ViewModels/LiveFuncsViewModel.cs"));
+        // The initializer is the field's default (no "= n"), so the default is pinned as 0 on both sides.
+        Assert.Matches(@"\[ObservableProperty\] private int _minCallsExponent;", vm);
+        Assert.Equal(0, settingsDefault);
+
+        string expected = $"{1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMinExponent} to "
+                        + $"{1 << UE5DumpUI.ViewModels.LiveFuncsViewModel.MinCallsMaxExponent}, default {1 << settingsDefault}";
+        // R1 (maintainer, 2026-10-06): neither an exemption for NEW rows nor a tooltip warning about them.
+        Assert.DoesNotContain("NEW", EnString("str.Tip.LF.MinCalls"), StringComparison.Ordinal);
+        Assert.Contains(expected, EnString("str.Tip.LF.MinCalls"), StringComparison.Ordinal);
+    }
+
+    [Fact]
     public void Props_tip_does_not_say_native_functions_show_nothing()
     {
         // FunctionPropsDialog disassembles native functions (method "disasm", a Conf column);

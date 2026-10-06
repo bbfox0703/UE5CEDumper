@@ -1,0 +1,3 @@
+{"kind":"meta","module":"FakeGame.exe","ue_version":505,"dumper_build":999,"dumped_at":"2026-01-01T00:00:00Z"}
+{"kind":"class","name":"C","addr":"0x1","path":"/Game/C/C","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[{"name":"A","type":"Int32Property","offset":0,"size":4},{"name":"B","type":"Int32Property","offset":4,"size":4}],"funcs":[]}
+{"kind":"summary"}

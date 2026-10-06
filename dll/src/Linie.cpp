@@ -25,7 +25,9 @@ std::atomic<bool> g_recording{false};
 struct Stat {
     uint64_t count    = 0;
     uint64_t firstSeq = 0;
+    uint64_t firstMs  = 0;   // wall-clock of the first fire: with lastMs, the window the table covers
     uint64_t lastMs   = 0;   // wall-clock of the previous fire (inter-arrival base)
+    uint64_t activeMs = 0;   // the sum of its gaps of kActiveGapMaxMs or less (IsPerFrame)
     uint64_t gaps     = 0;   // number of gaps measured (== count-1)
     double   mean     = 0.0; // Welford running mean of the gaps (ms)
     double   m2       = 0.0; // Welford running M2 (sum of squared deltas)
@@ -42,6 +44,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     auto& s = g_stats[ufunc];       // default-constructs on first sight
     if (s.count == 0) {
         s.firstSeq = seq;
+        s.firstMs = nowMs;
         s.lastMs = nowMs;
     } else if (nowMs >= s.lastMs) {
         //
@@ -70,7 +73,9 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
         // unsigned nowMs - s.lastMs would underflow to a ~1.8e19 gap that poisons the
         // Welford mean/cv for the rest of the window. Skip the reordered sample and don't
         // let it lower the base. (L5)
-        double gap = static_cast<double>(nowMs - s.lastMs);
+        const uint64_t gapMs = nowMs - s.lastMs;
+        if (gapMs <= kActiveGapMaxMs) s.activeMs += gapMs;   // still firing at frame cadence
+        double gap = static_cast<double>(gapMs);
         s.gaps += 1;
         double delta = gap - s.mean;
         s.mean += delta / static_cast<double>(s.gaps);
@@ -105,10 +110,11 @@ void Reset() {
     g_seq = 0;
 }
 
-void Snapshot(std::vector<FuncStat>& out) {
+void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     std::lock_guard<std::mutex> lk(g_mu);
     out.clear();
     out.reserve(g_stats.size());
+    uint64_t earliest = UINT64_MAX, latest = 0;
     for (const auto& kv : g_stats) {
         const Stat& s = kv.second;
         double meanMs = (s.gaps > 0) ? s.mean : 0.0;
@@ -117,8 +123,11 @@ void Snapshot(std::vector<FuncStat>& out) {
             double variance = s.m2 / static_cast<double>(s.gaps);  // population variance
             cv = std::sqrt(variance) / meanMs;
         }
-        out.push_back(FuncStat{ kv.first, s.count, s.firstSeq, meanMs, cv, s.gaps });
+        out.push_back(FuncStat{ kv.first, s.count, s.firstSeq, meanMs, cv, s.gaps, s.firstMs, s.lastMs, s.activeMs });
+        if (s.firstMs < earliest) earliest = s.firstMs;
+        if (s.lastMs > latest) latest = s.lastMs;
     }
+    activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
 } // namespace Linie

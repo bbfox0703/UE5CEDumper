@@ -794,6 +794,7 @@ public class CeMailboxBailoutTests
                 {
                     Name = "Buy",
                     ParmsSize = 4,
+                    NumParms = 1,
                     Params = new List<FunctionParamModel>
                     {
                         new() { Name = "ItemId", TypeName = "IntProperty", Size = 4, Offset = 0 },
@@ -1018,20 +1019,6 @@ public class CeMailboxBailoutTests
         Assert.True(b >= 0, "wait loop is not terminated");
         return enable[a..(b + 5)];
     }
-    /// <summary>A function WITH an input param, so the generator emits the picker-form
-    /// path — where <c>waitDone</c> is called from inside <c>btnFire.OnClick</c> rather
-    /// than from the chunk. That second frame is the whole reason this generator raises
-    /// instead of returning.</summary>
-    private static UE5DumpUI.Models.FunctionInfoModel IntParamFunc() => new()
-    {
-        Name = "AddMoney",
-        ParmsSize = 4,
-        Params = new List<UE5DumpUI.Models.FunctionParamModel>
-        {
-            new() { Name = "Amount", TypeName = "IntProperty", Size = 4, Offset = 0 },
-        },
-    };
-
     [Theory]
     [MemberData(nameof(HelperShapedScripts))]
     public void HelperShapedWaits_UseTheSharedLoop(string name, string script)

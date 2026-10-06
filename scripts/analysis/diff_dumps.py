@@ -10,13 +10,16 @@ USAGE
     python diff_dumps.py <old.jsonl> <new.jsonl> --minimal
     python diff_dumps.py <old.jsonl> <new.jsonl> --include-engine
     python diff_dumps.py --self-test
+    python diff_dumps.py --write-fixtures
 
 WHAT IT DOES
-    1. Loads two JSONL dumps. Each dump = meta line + class lines +
-       summary line (see DumpAllService.cs schema, same as analyze_dumps).
+    1. Loads two JSONL dumps. Each dump = meta line + class, struct and
+       enum lines + summary line (see DumpAllService.cs schema, same as
+       analyze_dumps).
     2. Matches classes by `path` (UClass*'s `addr` is session-local so
-       useless across runs). Game classes only by default —
-       `--include-engine` opens up `/Script/` classes too.
+       useless across runs). Game classes only by default: Blueprint
+       classes and the game's own C++ modules. `--include-engine` adds the
+       engine's modules (engine_paths.py, the DLL's list).
     3. For each pair of matching classes, computes:
          - props_size delta
          - per-property change set:
@@ -24,14 +27,21 @@ WHAT IT DOES
              type changed (e.g. FloatProperty -> DoubleProperty)
          - per-function change set:
              added / removed / signature changed (return_type,
-             num_parms, or parms_size differs — body content isn't in
+             num_parms, parms_size or flags differs, or — when both
+             files carry them — the parameters; body content isn't in
              the dump)
-    4. Emits a Markdown report:
+    4. Structs the same way, without functions. Enums by path: added /
+       removed, and per enum the enumerators added / removed / whose
+       value changed. Neither is compared when a dump predates those
+       lines (else everything reads as added), nor enums when a dump's
+       enum list could not be read; the summary line's flags decide.
+    5. Emits a Markdown report:
          - Summary counters
-         - Added / Removed classes
-         - Per-changed-class breakdown of property + function changes
-       In `--minimal` mode emits ONLY MovedFields and
-       FunctionSignatureChanges — the subset cheat-table maintainers
+         - Added / Removed classes, structs and enums
+         - Per-changed-type breakdown of property + function changes,
+           and per changed enum its enumerators
+       In `--minimal` mode emits ONLY moved fields, signature changes
+       and changed enum values — the subset cheat-table maintainers
        care about because those are the changes that silently break a
        working table.
 
@@ -39,8 +49,8 @@ NOT IN SCOPE
     - Rename detection (renamed class shows as Removed + Added; same
       for renamed field). Documented limitation. Use a manual grep
       pass on the report if you suspect a rename.
-    - Function body comparison. Dumps only capture function metadata
-      (return_type, num_parms, parms_size, flags) — the bytecode +
+    - Function body comparison. Dumps capture only function metadata
+      (return_type, num_parms, parms_size, flags) and the parameters — the bytecode +
       machine code aren't dumped. parms_size delta catches param-shape
       changes; body-internal logic changes are invisible.
     - Cross-game diffing (different `module`). The two dumps must come
@@ -72,6 +82,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterator
 
+from engine_paths import is_engine_path
+
 
 # =====================================================================
 # I/O — read a JSONL dump (same loader shape as analyze_dumps.py)
@@ -82,8 +94,18 @@ class Dump:
     path: Path
     meta: dict = field(default_factory=dict)
     classes: list[dict] = field(default_factory=list)
+    structs: list[dict] = field(default_factory=list)
+    enums: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    # Every Dump All file ends with its summary line, so a file without one was cut off mid-write (the game
+    # exited): what it lacks may simply be what it never reached.
+    has_summary: bool = False
+    # [DUMPDIFF-UI] Lines skipped as unreadable: not JSON, or a value of a type Dump All does not write.
+    bad_lines: int = 0
+    # Fixture files only: raw lines written before the summary line, and a UTF-8 byte-order mark.
+    raw_lines: list[str] = field(default_factory=list)
+    bom: bool = False
 
     @property
     def label(self) -> str:
@@ -100,28 +122,133 @@ class Dump:
     def ue_version(self) -> int:
         return int(self.meta.get("ue_version", 0))
 
+    # [EXTPR-539-540-2026-10-02] What the file can say about structs and enums. Dump All writes struct lines
+    # from build 3620 and enum lines from 3621, and its summary names both from then on; a file without
+    # either has none to compare, which is not the same as having none.
+    @property
+    def carries_structs(self) -> bool:
+        return bool(self.structs) or "structs_emitted" in self.summary
+
+    @property
+    def carries_enums(self) -> bool:
+        return bool(self.enums) or "enums_emitted" in self.summary or "enums_listed" in self.summary
+
+    @property
+    def enums_listed(self) -> bool:
+        return bool(self.summary.get("enums_listed", True))
+
+    @property
+    def enum_names_failed(self) -> bool:
+        return bool(self.summary.get("enum_names_failed", False))
+
+    @property
+    def enums_truncated(self) -> bool:
+        return bool(self.summary.get("enums_truncated", False))
+
+    @property
+    def params_from_num_parms(self) -> int:
+        return int(self.summary.get("params_from_num_parms", 0))
+
+
+class ObjectIndexFile(Exception):
+    """[EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl lists objects, not types: diffing it as a class
+    dump would report every class removed. Raised by load_dump with the class dump's name to use instead."""
+
+
+# [DUMPDIFF-UI] The keys the diff reads, with the JSON type Dump All writes for each. The UI's C# port reads lines
+# into typed fields (DumpDiffModels.cs) and cannot read a line where one of these holds another type, so this script
+# skips such a line too and both say so: before this, the script compared 0.0 with 0, took 1 for true, and crashed on
+# a string props_size. null is allowed anywhere and means the key is absent (_drop_nulls), as the port's `??` reads it.
+_PARAM_KEYS = {"name": "str", "type": "str", "struct_type": "str", "obj_class": "str", "out": "bool", "ret": "bool",
+               "offset": "int", "size": "int"}
+_PROP_KEYS = {"name": "str", "type": "str", "inner_type": "str", "struct_type": "str", "obj_class": "str",
+              "enum": "str", "offset": "int", "size": "int"}
+_FUNC_KEYS = {"name": "str", "return_type": "str", "num_parms": "int", "parms_size": "int", "flags": "any",
+              "params": _PARAM_KEYS}
+_ENTRY_KEYS = {"name": "str", "value": "int"}
+_LINE_KEYS = {"kind": "str", "name": "str", "path": "str", "props_size": "int", "props": _PROP_KEYS,
+              "funcs": _FUNC_KEYS, "entries": _ENTRY_KEYS, "module": "str", "ue_version": "int",
+              "dumper_build": "int", "dumped_at": "str", "file": "str", "class_dump": "str",
+              "structs_emitted": "int", "enums_emitted": "int", "enums_listed": "bool", "enum_names_failed": "bool",
+              "enums_truncated": "bool", "params_from_num_parms": "int"}
+
+
+def _value_fits(v, t) -> bool:
+    if v is None or t == "any":
+        return True
+    if t == "str":
+        return isinstance(v, str)
+    if t == "int":   # a 64-bit integer: not a bool (Python's bool is an int), not a float
+        return type(v) is int and -(1 << 63) <= v < (1 << 63)
+    if t == "bool":
+        return type(v) is bool
+    # a list of objects; a null element is no object
+    return isinstance(v, list) and all(isinstance(x, dict) and _object_fits(x, t) for x in v)
+
+
+def _object_fits(o: dict, keys: dict) -> bool:
+    return all(_value_fits(o[k], t) for k, t in keys.items() if k in o)
+
+
+def _drop_nulls(v):
+    if isinstance(v, dict):
+        return {k: _drop_nulls(x) for k, x in v.items() if x is not None}
+    if isinstance(v, list):
+        return [_drop_nulls(x) for x in v]
+    return v
+
+
+def _flags_text(v) -> str:
+    """Flags are compared as text, as the port reads them: a string as itself, any other value as its JSON form
+    (so the string "1024" and the number 1024 are the same flags, and 1024.0 is not)."""
+    return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"{name} is not JSON")   # NaN / Infinity, which the port's reader rejects
+
 
 def load_dump(path: Path) -> Dump:
     d = Dump(path=path)
-    with path.open(encoding="utf-8") as f:
+    # utf-8-sig: a file re-saved by an editor may start with a byte-order mark, which is not part of its meta line.
+    with path.open(encoding="utf-8-sig") as f:
         for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
             try:
-                rec = json.loads(line)
-            except json.JSONDecodeError as e:
+                rec = json.loads(line, parse_constant=_reject_constant)
+            except ValueError as e:
                 print(f"  [warn] {path.name}:{lineno} bad JSON: {e}", file=sys.stderr)
+                d.bad_lines += 1
                 continue
+            if not isinstance(rec, dict) or not _object_fits(rec, _LINE_KEYS):
+                print(f"  [warn] {path.name}:{lineno} skipped: not an object, or a value of a type Dump All does "
+                      f"not write", file=sys.stderr)
+                d.bad_lines += 1
+                continue
+            rec = _drop_nulls(rec)
+            for fn in rec.get("funcs", []):
+                if "flags" in fn:
+                    fn["flags"] = _flags_text(fn["flags"])
             kind = rec.get("kind")
             if kind == "meta":
+                if rec.get("file") == "objects":
+                    raise ObjectIndexFile(
+                        f"{path.name} is Dump All's object index, not a class dump; pass "
+                        f"{rec.get('class_dump') or 'the class dump beside it'} instead")
                 d.meta = rec
             elif kind == "class":
                 d.classes.append(rec)
+            elif kind == "struct":
+                d.structs.append(rec)
+            elif kind == "enum":
+                d.enums.append(rec)
             elif kind == "error":
                 d.errors.append(rec)
             elif kind == "summary":
                 d.summary = rec
+                d.has_summary = True
     return d
 
 
@@ -139,9 +266,7 @@ def normalize_path(p: str) -> str:
 
 
 def is_engine_class(cls: dict) -> bool:
-    """Same predicate as analyze_dumps.is_engine_class — engine classes
-    live under `/Script/<Module>/`."""
-    return "/Script/" in cls.get("path", "")
+    return is_engine_path(cls.get("path", ""))
 
 
 # =====================================================================
@@ -186,6 +311,8 @@ class ClassDiff:
     new: dict
     prop_changes: list[PropChange] = field(default_factory=list)
     func_changes: list[FuncChange] = field(default_factory=list)
+    # A struct's size is the stride of every array and map holding it, so its growth alone breaks a table.
+    is_struct: bool = False
 
     @property
     def props_size_delta(self) -> int:
@@ -201,7 +328,10 @@ class ClassDiff:
         prop moves (offset/size) or function signature changes. Added /
         removed fields aren't 'breaking' a working table (the table
         just references an offset that's still there or no longer
-        there)."""
+        there). A struct whose size changed is breaking too: the size
+        is the element stride of every container of it."""
+        if self.is_struct and self.props_size_delta != 0:
+            return True
         for pc in self.prop_changes:
             if pc.kind == "moved" or pc.kind == "type_changed":
                 return True
@@ -212,6 +342,28 @@ class ClassDiff:
 
 
 @dataclass
+class EnumEntryChange:
+    name: str
+    # 'added' | 'removed' | 'value_changed'
+    kind: str
+    old_value: int | None = None
+    new_value: int | None = None
+
+
+@dataclass
+class EnumDiff:
+    name: str
+    path: str
+    changes: list[EnumEntryChange] = field(default_factory=list)
+
+    @property
+    def has_breaking_change(self) -> bool:
+        """A table that writes an enum's value breaks when the value moves; an enumerator added or removed
+        does not move the others."""
+        return any(c.kind == "value_changed" for c in self.changes)
+
+
+@dataclass
 class DumpDiff:
     old_dump: Dump
     new_dump: Dump
@@ -219,6 +371,23 @@ class DumpDiff:
     removed_classes: list[dict] = field(default_factory=list)
     changed: list[ClassDiff] = field(default_factory=list)
     unchanged_count: int = 0
+    # [EXTPR-539-540-2026-10-02] D5. A *_skipped reason is "" when that kind was compared.
+    added_structs: list[dict] = field(default_factory=list)
+    removed_structs: list[dict] = field(default_factory=list)
+    changed_structs: list[ClassDiff] = field(default_factory=list)
+    unchanged_structs: int = 0
+    structs_skipped: str = ""
+    added_enums: list[dict] = field(default_factory=list)
+    removed_enums: list[dict] = field(default_factory=list)
+    changed_enums: list[EnumDiff] = field(default_factory=list)
+    unchanged_enums: int = 0
+    # Enums on both sides whose enumerators could not be compared (no member names on one side).
+    uncompared_enums: int = 0
+    enums_skipped: str = ""
+    # What a whole dump cannot say: cut off before its summary, or carrying error lines.
+    dump_notes: list[str] = field(default_factory=list)
+    enum_notes: list[str] = field(default_factory=list)
+    param_notes: list[str] = field(default_factory=list)
 
 
 # =====================================================================
@@ -226,14 +395,18 @@ class DumpDiff:
 # =====================================================================
 
 def _index_classes(dump: Dump, include_engine: bool) -> dict[str, dict]:
-    """path -> class record. Drops engine classes unless requested.
+    return _index_by_path(dump.classes, dump.label, include_engine, "class")
+
+
+def _index_by_path(records: list[dict], label: str, include_engine: bool, what: str) -> dict[str, dict]:
+    """path -> record (a class, struct or enum line). Drops engine types unless requested.
 
     Duplicate paths in a single dump are highly unusual (would indicate
     a dumper bug — same UClass walked twice). We keep the FIRST and
     log a warning so the diff stays deterministic; analyst can grep
     the source dump if the warning fires."""
     out: dict[str, dict] = {}
-    for cls in dump.classes:
+    for cls in records:
         if not include_engine and is_engine_class(cls):
             continue
         key = normalize_path(cls.get("path", ""))
@@ -242,7 +415,7 @@ def _index_classes(dump: Dump, include_engine: bool) -> dict[str, dict]:
             # inner classes collide) but better than dropping the row.
             key = "::name::" + cls.get("name", "")
         if key in out:
-            print(f"  [warn] duplicate class path in {dump.label}: {key} — "
+            print(f"  [warn] duplicate {what} path in {label}: {key} — "
                   f"keeping first", file=sys.stderr)
             continue
         out[key] = cls
@@ -291,11 +464,26 @@ def _funcs_signature_differ(a: dict, b: dict) -> bool:
     """Functions' bodies aren't dumped, so 'signature' here means the
     metadata that's actually captured. parms_size + num_parms catch
     almost every param-shape change; return_type catches return-type
-    refactors; flags catches Static/Native/BlueprintCallable toggles."""
+    refactors; flags catches Static/Native/BlueprintCallable toggles;
+    the parameters catch the rest (a renamed or retyped one) when both
+    files carry them."""
     return (a.get("return_type") != b.get("return_type")
             or a.get("num_parms") != b.get("num_parms")
             or a.get("parms_size") != b.get("parms_size")
-            or a.get("flags") != b.get("flags"))
+            or a.get("flags") != b.get("flags")
+            or _params_differ(a, b))
+
+
+def _params_key(f: dict) -> tuple:
+    return tuple((p.get("name"), p.get("type"), p.get("struct_type"), p.get("obj_class"),
+                  bool(p.get("out")), bool(p.get("ret")), p.get("offset"), p.get("size"))
+                 for p in f.get("params", []))
+
+
+def _params_differ(a: dict, b: dict) -> bool:
+    """[EXTPR-539-540-2026-10-02] D5. Only when both sides carry `params` (Dump All from build 3622): an
+    older file has none, and that is not a change."""
+    return "params" in a and "params" in b and _params_key(a) != _params_key(b)
 
 
 def _diff_funcs(old_cls: dict, new_cls: dict) -> list[FuncChange]:
@@ -317,41 +505,159 @@ def _diff_funcs(old_cls: dict, new_cls: dict) -> list[FuncChange]:
     return changes
 
 
-def diff_dumps(old_dump: Dump, new_dump: Dump,
-               include_engine: bool = False) -> DumpDiff:
-    old_idx = _index_classes(old_dump, include_engine)
-    new_idx = _index_classes(new_dump, include_engine)
-
-    out = DumpDiff(old_dump=old_dump, new_dump=new_dump)
-
-    for path, old_cls in old_idx.items():
-        if path not in new_idx:
-            out.removed_classes.append(old_cls)
-
+def _diff_types(old_records: list[dict], new_records: list[dict], old_label: str, new_label: str,
+                include_engine: bool, what: str):
+    """Classes and structs share a shape (a struct has no functions): (added, removed, changed, unchanged)."""
+    old_idx = _index_by_path(old_records, old_label, include_engine, what)
+    new_idx = _index_by_path(new_records, new_label, include_engine, what)
+    added: list[dict] = []
+    removed = [rec for path, rec in old_idx.items() if path not in new_idx]
+    changed: list[ClassDiff] = []
+    unchanged = 0
     for path, new_cls in new_idx.items():
         if path not in old_idx:
-            out.added_classes.append(new_cls)
+            added.append(new_cls)
             continue
         old_cls = old_idx[path]
         prop_changes = _diff_props(old_cls, new_cls)
         func_changes = _diff_funcs(old_cls, new_cls)
         size_delta = new_cls.get("props_size", 0) - old_cls.get("props_size", 0)
         if prop_changes or func_changes or size_delta != 0:
-            out.changed.append(ClassDiff(
+            changed.append(ClassDiff(
                 name=new_cls.get("name", old_cls.get("name", "")),
                 path=path,
                 old=old_cls,
                 new=new_cls,
                 prop_changes=prop_changes,
                 func_changes=func_changes,
+                is_struct=(what == "struct"),
             ))
         else:
-            out.unchanged_count += 1
+            unchanged += 1
 
     # Stable output ordering: alphabetic by path within each bucket.
-    out.added_classes.sort(key=lambda c: normalize_path(c.get("path", "")))
-    out.removed_classes.sort(key=lambda c: normalize_path(c.get("path", "")))
-    out.changed.sort(key=lambda cd: cd.path)
+    added.sort(key=lambda c: normalize_path(c.get("path", "")))
+    removed.sort(key=lambda c: normalize_path(c.get("path", "")))
+    changed.sort(key=lambda cd: cd.path)
+    return added, removed, changed, unchanged
+
+
+def _diff_enum_entries(old_e: dict, new_e: dict) -> list[EnumEntryChange]:
+    old_v = {x["name"]: x.get("value") for x in old_e.get("entries", []) if x.get("name")}
+    new_v = {x["name"]: x.get("value") for x in new_e.get("entries", []) if x.get("name")}
+    changes: list[EnumEntryChange] = []
+    for name, v in old_v.items():
+        if name not in new_v:
+            changes.append(EnumEntryChange(name=name, kind="removed", old_value=v))
+        elif new_v[name] != v:
+            changes.append(EnumEntryChange(name=name, kind="value_changed", old_value=v, new_value=new_v[name]))
+    for name, v in new_v.items():
+        if name not in old_v:
+            changes.append(EnumEntryChange(name=name, kind="added", new_value=v))
+    return changes
+
+
+def _skip_reason(old_dump: Dump, new_dump: Dump, what: str) -> str:
+    """Why structs or enums cannot be compared, or "" when they can."""
+    sides = (("old", old_dump), ("new", new_dump))
+    if what == "struct":
+        for label, d in sides:
+            if not d.carries_structs:
+                return _missing_lines(label, d, "struct", 3620)
+        return ""
+    for label, d in sides:
+        if not d.carries_enums:
+            return _missing_lines(label, d, "enum", 3621)
+    for label, d in sides:
+        if not d.enums_listed:
+            return f"the {label} dump's enum list could not be read (see its list_enums error line)"
+    return ""
+
+
+def _missing_lines(label: str, d: Dump, what: str, since: int) -> str:
+    """A dump of a build that writes these lines, cut off before them, is not a dump of an older build."""
+    if not d.has_summary and d.dumper_build >= since:
+        return (f"the {label} dump ends before its {what} lines (it has no summary line: it was cut off "
+                f"mid-write)")
+    return f"the {label} dump has no {what} lines (Dump All writes them from build {since})"
+
+
+def _diff_enums(out: DumpDiff, old_dump: Dump, new_dump: Dump, include_engine: bool) -> None:
+    """[EXTPR-539-540-2026-10-02] D5. What a list could not say is not reported as a change: with no
+    member names an enum's entries are empty, and a cut-short list lacks enums it never reached."""
+    names_ok = True
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.enum_names_failed:
+            names_ok = False
+            out.enum_notes.append(f"enum member names were unavailable in the {label} dump, so enumerators "
+                                  f"are not compared")
+    if old_dump.enums_truncated:
+        out.enum_notes.append("the old dump's enum list was cut short, so an enum it lacks is not reported as added")
+    if new_dump.enums_truncated:
+        out.enum_notes.append("the new dump's enum list was cut short, so an enum it lacks is not reported as removed")
+
+    old_idx = _index_by_path(old_dump.enums, old_dump.label, include_engine, "enum")
+    new_idx = _index_by_path(new_dump.enums, new_dump.label, include_engine, "enum")
+    if not new_dump.enums_truncated:
+        out.removed_enums = [e for path, e in old_idx.items() if path not in new_idx]
+    for path, ne in new_idx.items():
+        if path not in old_idx:
+            if not old_dump.enums_truncated:
+                out.added_enums.append(ne)
+            continue
+        if not names_ok:
+            out.uncompared_enums += 1
+            continue
+        changes = _diff_enum_entries(old_idx[path], ne)
+        if changes:
+            out.changed_enums.append(EnumDiff(name=ne.get("name", ""), path=path, changes=changes))
+        else:
+            out.unchanged_enums += 1
+    out.added_enums.sort(key=lambda e: normalize_path(e.get("path", "")))
+    out.removed_enums.sort(key=lambda e: normalize_path(e.get("path", "")))
+    out.changed_enums.sort(key=lambda ed: ed.path)
+
+
+def diff_dumps(old_dump: Dump, new_dump: Dump,
+               include_engine: bool = False) -> DumpDiff:
+    out = DumpDiff(old_dump=old_dump, new_dump=new_dump)
+    (out.added_classes, out.removed_classes, out.changed,
+     out.unchanged_count) = _diff_types(old_dump.classes, new_dump.classes, old_dump.label, new_dump.label,
+                                        include_engine, "class")
+
+    out.structs_skipped = _skip_reason(old_dump, new_dump, "struct")
+    if not out.structs_skipped:
+        (out.added_structs, out.removed_structs, out.changed_structs,
+         out.unchanged_structs) = _diff_types(old_dump.structs, new_dump.structs, old_dump.label,
+                                              new_dump.label, include_engine, "struct")
+
+    out.enums_skipped = _skip_reason(old_dump, new_dump, "enum")
+    if not out.enums_skipped:
+        _diff_enums(out, old_dump, new_dump, include_engine)
+
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.params_from_num_parms:
+            out.param_notes.append(
+                f"{d.params_from_num_parms} function(s) in the {label} dump had their parameters taken from "
+                f"num_parms (a DLL older than build 3622), so a parameter change there may be that approximation")
+
+    # A cut-off dump lacks what it never reached: that is not a removal (new side) or an addition (old side).
+    if not new_dump.has_summary:
+        out.removed_classes, out.removed_structs, out.removed_enums = [], [], []
+        out.dump_notes.append("the new dump has no summary line: it was cut off mid-write, so a type it lacks "
+                              "is not reported as removed")
+    if not old_dump.has_summary:
+        out.added_classes, out.added_structs, out.added_enums = [], [], []
+        out.dump_notes.append("the old dump has no summary line: it was cut off mid-write, so a type it lacks "
+                              "is not reported as added")
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.errors:
+            out.dump_notes.append(f"the {label} dump has {len(d.errors)} error line(s), walks that failed; a type "
+                                  f"listed as missing because of one is tagged")
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.bad_lines:
+            out.dump_notes.append(f"the {label} dump has {d.bad_lines} line(s) that could not be read (not JSON, or a "
+                                  f"value of a type Dump All does not write); they were skipped")
     return out
 
 
@@ -381,6 +687,24 @@ def _fmt_prop_typestr(p: dict) -> str:
     if extras:
         return f"{t} ({', '.join(extras)})"
     return t
+
+
+def _fmt_params(f: dict) -> str:
+    """A function's parameters as compared: each argument with its offset and size, an out one marked, then
+    the return entry. The table's return column has only the return's property type, not its class or
+    struct, so the entry is shown here."""
+    def one(p: dict) -> str:
+        t = p.get("type", "?")
+        if p.get("struct_type"):
+            t += f"<{p['struct_type']}>"
+        if p.get("obj_class"):
+            t += f":{p['obj_class']}"
+        return f"{t} {p.get('name', '?')}@{_fmt_offset(p.get('offset'))}/{p.get('size', '?')}"
+
+    params = f.get("params", [])
+    args = ", ".join(("out " if p.get("out") else "") + one(p) for p in params if not p.get("ret"))
+    ret = [one(p) for p in params if p.get("ret")]
+    return f"({args})" + (f" -> {ret[0]}" if ret else "")
 
 
 def _count_changes(changed: list[ClassDiff]) -> dict[str, int]:
@@ -427,9 +751,10 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     lines.append("")
     if minimal:
         lines.append("> **Minimal mode** — showing only the changes that "
-                     "break existing cheat tables (moved fields + "
-                     "signature changes). Added / removed entries are "
-                     "hidden; full report omits the `--minimal` flag.")
+                     "break existing cheat tables (moved or retyped fields, "
+                     "signature changes, changed enum values, struct size changes). "
+                     "Added / removed entries are hidden; full report omits the "
+                     "`--minimal` flag.")
         lines.append("")
 
     # Summary
@@ -449,23 +774,38 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     lines.append(f"- Functions added: **{counts['func_added']}**, "
                  f"removed: **{counts['func_removed']}**")
     lines.append(f"- Classes with props_size delta: **{counts['classes_with_size_delta']}**")
+    if diff.structs_skipped:
+        lines.append(f"- Structs: not compared — {diff.structs_skipped}")
+    else:
+        scounts = _count_changes(diff.changed_structs)
+        lines.append(f"- Structs: **{len(diff.added_structs)}** added, "
+                     f"**{len(diff.removed_structs)}** removed, "
+                     f"**{len(diff.changed_structs)}** changed, "
+                     f"**{diff.unchanged_structs}** unchanged")
+        lines.append(f"- Struct fields moved (offset / size): **{scounts['prop_moved']}**, "
+                     f"type changed: **{scounts['prop_type_changed']}**, "
+                     f"across **{scounts['classes_with_moved_fields']}** struct(s)")
+    if diff.enums_skipped:
+        lines.append(f"- Enums: not compared — {diff.enums_skipped}")
+    else:
+        values = sum(1 for ed in diff.changed_enums for c in ed.changes if c.kind == "value_changed")
+        uncompared = (f", **{diff.uncompared_enums}** present on both sides (entries not compared)"
+                      if diff.uncompared_enums else "")
+        lines.append(f"- Enums: **{len(diff.added_enums)}** added, "
+                     f"**{len(diff.removed_enums)}** removed, "
+                     f"**{len(diff.changed_enums)}** changed, "
+                     f"**{diff.unchanged_enums}** unchanged{uncompared}")
+        lines.append(f"- Enumerator values changed: **{values}** across "
+                     f"**{sum(1 for ed in diff.changed_enums if ed.has_breaking_change)}** enum(s)")
+    for note in diff.dump_notes + diff.enum_notes + diff.param_notes:
+        lines.append(f"- ⚠ {note}")
     lines.append("")
 
     if not minimal:
         # Added classes
-        if diff.added_classes:
-            lines.append(f"## Added Classes ({len(diff.added_classes)})")
-            lines.append("")
-            for cls in diff.added_classes:
-                lines.append(f"- `{cls.get('name','')}` — `{normalize_path(cls.get('path',''))}`")
-            lines.append("")
+        _render_listing(lines, "Added Classes", diff.added_classes, _failed_tag(diff.old_dump, "old"))
         # Removed classes
-        if diff.removed_classes:
-            lines.append(f"## Removed Classes ({len(diff.removed_classes)})")
-            lines.append("")
-            for cls in diff.removed_classes:
-                lines.append(f"- `{cls.get('name','')}` — `{normalize_path(cls.get('path',''))}`")
-            lines.append("")
+        _render_listing(lines, "Removed Classes", diff.removed_classes, _failed_tag(diff.new_dump, "new"))
 
     # Per-class changes
     if minimal:
@@ -479,108 +819,195 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     if not emit:
         lines.append("_No matching class diffs to report._")
         lines.append("")
-        return "\n".join(lines)
-
     for cd in emit:
-        lines.append(f"### `{cd.name}`")
-        lines.append(f"_Path:_ `{cd.path}`")
-        if cd.props_size_delta != 0:
-            old_size = cd.old.get("props_size", 0)
-            new_size = cd.new.get("props_size", 0)
-            sign = "+" if cd.props_size_delta > 0 else ""
-            lines.append(f"_props_size:_ {old_size} → {new_size} "
-                         f"({sign}{cd.props_size_delta})")
+        _render_type_diff(lines, cd, minimal)
+
+    if not diff.structs_skipped:
+        _render_structs(lines, diff, minimal)
+    if not diff.enums_skipped:
+        _render_enums(lines, diff, minimal)
+    return "\n".join(lines)
+
+
+def _failed_tag(d: Dump, label: str):
+    """A type missing from a dump that has an error line of its name was not read there, which is not the same
+    as gone. Error lines carry the object's name, not its path, so the match is by name."""
+    failed = {e.get("name") for e in d.errors if e.get("name")}
+    return lambda rec: f" (its walk failed in the {label} dump)" if rec.get("name") in failed else ""
+
+
+def _render_listing(lines: list[str], title: str, records: list[dict], tag=None) -> None:
+    if records:
+        lines.append(f"## {title} ({len(records)})")
+        lines.append("")
+        for rec in records:
+            suffix = tag(rec) if tag else ""
+            lines.append(f"- `{rec.get('name','')}` — `{normalize_path(rec.get('path',''))}`{suffix}")
         lines.append("")
 
-        moved = [p for p in cd.prop_changes if p.kind == "moved"]
-        type_changed = [p for p in cd.prop_changes if p.kind == "type_changed"]
-        added_props = [p for p in cd.prop_changes if p.kind == "added"]
-        removed_props = [p for p in cd.prop_changes if p.kind == "removed"]
-        sig_changed = [f for f in cd.func_changes if f.kind == "signature_changed"]
-        added_funcs = [f for f in cd.func_changes if f.kind == "added"]
-        removed_funcs = [f for f in cd.func_changes if f.kind == "removed"]
 
-        if moved:
-            lines.append(f"**Moved fields ({len(moved)})** — *these break "
-                         f"existing cheat tables*:")
-            lines.append("")
-            lines.append("| Field | Old offset → New | Old size → New |")
-            lines.append("|---|---|---|")
-            for pc in moved:
-                o = pc.old or {}
-                n = pc.new or {}
-                lines.append(f"| `{pc.name}` | "
-                             f"{_fmt_offset(o.get('offset'))} → {_fmt_offset(n.get('offset'))} | "
-                             f"{o.get('size','?')} → {n.get('size','?')} |")
-            lines.append("")
+def _render_structs(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
+    """[EXTPR-539-540-2026-10-02] D5: structs, laid out as the classes are."""
+    if not minimal:
+        _render_listing(lines, "Added Structs", diff.added_structs, _failed_tag(diff.old_dump, "old"))
+        _render_listing(lines, "Removed Structs", diff.removed_structs, _failed_tag(diff.new_dump, "new"))
+        emit = list(diff.changed_structs)
+        lines.append(f"## Changed Structs ({len(emit)})")
+    else:
+        emit = [cd for cd in diff.changed_structs if cd.has_breaking_change]
+        lines.append(f"## Breaking Struct Changes ({len(emit)} struct(s))")
+    lines.append("")
+    if not emit:
+        lines.append("_No matching struct diffs to report._")
+        lines.append("")
+    for cd in emit:
+        _render_type_diff(lines, cd, minimal)
 
-        if type_changed:
-            lines.append(f"**Property type changed ({len(type_changed)})**:")
-            lines.append("")
-            for pc in type_changed:
-                o = pc.old or {}
-                n = pc.new or {}
-                lines.append(f"- `{pc.name}` @ {_fmt_offset(o.get('offset'))}: "
-                             f"{_fmt_prop_typestr(o)} → {_fmt_prop_typestr(n)}")
-            lines.append("")
 
-        if sig_changed:
-            lines.append(f"**Function signatures changed ({len(sig_changed)})**:")
+def _render_enums(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
+    """[EXTPR-539-540-2026-10-02] D5: enums, each changed one with its enumerators."""
+    if not minimal:
+        _render_listing(lines, "Added Enums", diff.added_enums)
+        _render_listing(lines, "Removed Enums", diff.removed_enums)
+        emit = list(diff.changed_enums)
+        lines.append(f"## Changed Enums ({len(emit)})")
+    else:
+        emit = [ed for ed in diff.changed_enums if ed.has_breaking_change]
+        lines.append(f"## Changed Enum Values ({len(emit)} enum(s))")
+    lines.append("")
+    if not emit:
+        lines.append("_No matching enum diffs to report._")
+        lines.append("")
+    for ed in emit:
+        lines.append(f"### `{ed.name}`")
+        lines.append(f"_Path:_ `{ed.path}`")
+        lines.append("")
+        values = [c for c in ed.changes if c.kind == "value_changed"]
+        if values:
+            lines.append("| Enumerator | Old value → New |")
+            lines.append("|---|---|")
+            for c in values:
+                lines.append(f"| `{c.name}` | {c.old_value} → {c.new_value} |")
             lines.append("")
-            lines.append("| Func | return | num_parms | parms_size | flags |")
-            lines.append("|---|---|---|---|---|")
-            for fc in sig_changed:
-                o = fc.old or {}
-                n = fc.new or {}
-                def cell(k, fmt=lambda x: str(x) if x is not None else "?"):
-                    a = o.get(k); b = n.get(k)
-                    return f"{fmt(a)} → {fmt(b)}" if a != b else fmt(a)
-                lines.append(f"| `{fc.name}` | {cell('return_type')} | "
-                             f"{cell('num_parms')} | {cell('parms_size')} | "
-                             f"{cell('flags')} |")
-            lines.append("")
-
         if minimal:
-            # Skip added / removed in minimal mode.
             continue
+        for kind, title, attr in (("added", "Added enumerators", "new_value"),
+                                  ("removed", "Removed enumerators", "old_value")):
+            rows = [c for c in ed.changes if c.kind == kind]
+            if rows:
+                lines.append(f"**{title} ({len(rows)})**:")
+                lines.append("")
+                for c in rows:
+                    lines.append(f"- `{c.name}` = {getattr(c, attr)}")
+                lines.append("")
 
-        if added_props:
-            lines.append(f"**Added properties ({len(added_props)})**:")
-            lines.append("")
-            for pc in added_props:
-                n = pc.new or {}
-                lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(n)}) "
-                             f"@ {_fmt_offset(n.get('offset'))} "
-                             f"({n.get('size','?')}B)")
-            lines.append("")
-        if removed_props:
-            lines.append(f"**Removed properties ({len(removed_props)})**:")
-            lines.append("")
-            for pc in removed_props:
-                o = pc.old or {}
-                lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(o)}) "
-                             f"@ {_fmt_offset(o.get('offset'))}")
-            lines.append("")
-        if added_funcs:
-            lines.append(f"**Added functions ({len(added_funcs)})**:")
-            lines.append("")
-            for fc in added_funcs:
-                n = fc.new or {}
-                lines.append(f"- `{fc.name}` (return={n.get('return_type','') or 'void'}, "
-                             f"num_parms={n.get('num_parms','?')}, "
-                             f"parms_size={n.get('parms_size','?')})")
-            lines.append("")
-        if removed_funcs:
-            lines.append(f"**Removed functions ({len(removed_funcs)})**:")
-            lines.append("")
-            for fc in removed_funcs:
-                o = fc.old or {}
-                lines.append(f"- `{fc.name}` (return={o.get('return_type','') or 'void'}, "
-                             f"num_parms={o.get('num_parms','?')}, "
-                             f"parms_size={o.get('parms_size','?')})")
+
+def _render_type_diff(lines: list[str], cd: ClassDiff, minimal: bool) -> None:
+    """One changed class or struct: its moved and retyped fields, its signature changes, and (outside
+    --minimal) its added and removed members."""
+    lines.append(f"### `{cd.name}`")
+    lines.append(f"_Path:_ `{cd.path}`")
+    if cd.props_size_delta != 0:
+        old_size = cd.old.get("props_size", 0)
+        new_size = cd.new.get("props_size", 0)
+        sign = "+" if cd.props_size_delta > 0 else ""
+        lines.append(f"_props_size:_ {old_size} → {new_size} "
+                     f"({sign}{cd.props_size_delta})")
+    lines.append("")
+
+    moved = [p for p in cd.prop_changes if p.kind == "moved"]
+    type_changed = [p for p in cd.prop_changes if p.kind == "type_changed"]
+    added_props = [p for p in cd.prop_changes if p.kind == "added"]
+    removed_props = [p for p in cd.prop_changes if p.kind == "removed"]
+    sig_changed = [f for f in cd.func_changes if f.kind == "signature_changed"]
+    added_funcs = [f for f in cd.func_changes if f.kind == "added"]
+    removed_funcs = [f for f in cd.func_changes if f.kind == "removed"]
+
+    if moved:
+        lines.append(f"**Moved fields ({len(moved)})** — *these break "
+                     f"existing cheat tables*:")
+        lines.append("")
+        lines.append("| Field | Old offset → New | Old size → New |")
+        lines.append("|---|---|---|")
+        for pc in moved:
+            o = pc.old or {}
+            n = pc.new or {}
+            lines.append(f"| `{pc.name}` | "
+                         f"{_fmt_offset(o.get('offset'))} → {_fmt_offset(n.get('offset'))} | "
+                         f"{o.get('size','?')} → {n.get('size','?')} |")
+        lines.append("")
+
+    if type_changed:
+        lines.append(f"**Property type changed ({len(type_changed)})**:")
+        lines.append("")
+        for pc in type_changed:
+            o = pc.old or {}
+            n = pc.new or {}
+            lines.append(f"- `{pc.name}` @ {_fmt_offset(o.get('offset'))}: "
+                         f"{_fmt_prop_typestr(o)} → {_fmt_prop_typestr(n)}")
+        lines.append("")
+
+    if sig_changed:
+        lines.append(f"**Function signatures changed ({len(sig_changed)})**:")
+        lines.append("")
+        lines.append("| Func | return | num_parms | parms_size | flags |")
+        lines.append("|---|---|---|---|---|")
+        for fc in sig_changed:
+            o = fc.old or {}
+            n = fc.new or {}
+            def cell(k, fmt=lambda x: str(x) if x is not None else "?"):
+                a = o.get(k); b = n.get(k)
+                return f"{fmt(a)} → {fmt(b)}" if a != b else fmt(a)
+            lines.append(f"| `{fc.name}` | {cell('return_type')} | "
+                         f"{cell('num_parms')} | {cell('parms_size')} | "
+                         f"{cell('flags')} |")
+        lines.append("")
+        param_rows = [fc for fc in sig_changed if _params_differ(fc.old or {}, fc.new or {})]
+        for fc in param_rows:
+            lines.append(f"- `{fc.name}` parameters: `{_fmt_params(fc.old or {})}` → "
+                         f"`{_fmt_params(fc.new or {})}`")
+        if param_rows:
             lines.append("")
 
-    return "\n".join(lines)
+    if minimal:
+        # Skip added / removed in minimal mode.
+        return
+
+    if added_props:
+        lines.append(f"**Added properties ({len(added_props)})**:")
+        lines.append("")
+        for pc in added_props:
+            n = pc.new or {}
+            lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(n)}) "
+                         f"@ {_fmt_offset(n.get('offset'))} "
+                         f"({n.get('size','?')}B)")
+        lines.append("")
+    if removed_props:
+        lines.append(f"**Removed properties ({len(removed_props)})**:")
+        lines.append("")
+        for pc in removed_props:
+            o = pc.old or {}
+            lines.append(f"- `{pc.name}` ({_fmt_prop_typestr(o)}) "
+                         f"@ {_fmt_offset(o.get('offset'))}")
+        lines.append("")
+    if added_funcs:
+        lines.append(f"**Added functions ({len(added_funcs)})**:")
+        lines.append("")
+        for fc in added_funcs:
+            n = fc.new or {}
+            lines.append(f"- `{fc.name}` (return={n.get('return_type','') or 'void'}, "
+                         f"num_parms={n.get('num_parms','?')}, "
+                         f"parms_size={n.get('parms_size','?')})")
+        lines.append("")
+    if removed_funcs:
+        lines.append(f"**Removed functions ({len(removed_funcs)})**:")
+        lines.append("")
+        for fc in removed_funcs:
+            o = fc.old or {}
+            lines.append(f"- `{fc.name}` (return={o.get('return_type','') or 'void'}, "
+                         f"num_parms={o.get('num_parms','?')}, "
+                         f"parms_size={o.get('parms_size','?')})")
+        lines.append("")
 
 
 # =====================================================================
@@ -588,12 +1015,18 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
 # without external dumps. Run via --self-test.
 # =====================================================================
 
-def _make_dump(module: str, classes: list[dict]) -> Dump:
-    """Construct a fake Dump in-memory for self-test purposes."""
+def _make_dump(module: str, classes: list[dict], structs: list[dict] | None = None,
+               enums: list[dict] | None = None, summary: dict | None = None, complete: bool = True) -> Dump:
+    """Construct a fake Dump in-memory for self-test purposes. complete=False: as if cut off before its
+    summary line."""
     d = Dump(path=Path(f"<{module}>"))
+    d.has_summary = complete
     d.meta = {"module": f"{module}.exe", "ue_version": 505,
               "dumper_build": 999, "dumped_at": "2026-01-01T00:00:00Z"}
     d.classes = classes
+    d.structs = structs or []
+    d.enums = enums or []
+    d.summary = summary or {}
     return d
 
 
@@ -727,6 +1160,27 @@ def run_self_test() -> int:
             and d_with_eng.changed[0].props_size_delta == 8,
             "engine class diffed when --include-engine", errors)
 
+    # --- A game's own C++ module is not engine ---
+    # The game's native classes live under /Script/<GameModule> too. A default diff must report
+    # them; only the engine's modules are skipped. A module whose name merely starts like an
+    # engine module's is the game's as well.
+    def _sized(name: str, path: str, size: int) -> dict:
+        return {"kind": "class", "name": name, "addr": "0x1", "path": path, "meta": "Class",
+                "super": "", "super_addr": "0x0", "is_bpgc": False, "props_size": size,
+                "instance_count": 0, "props": [], "funcs": []}
+
+    for label, path, engine in (
+        ("game native module", "//Script/FakeGame/AHeroBase", False),
+        ("module named like an engine one", "//Script/EngineOverride/Foo", False),
+        ("engine module, single slash", "/Script/Engine/Actor", True),
+        ("engine module, dotted", "//Script/UMG.UserWidget", True),
+    ):
+        d_mod = diff_dumps(_make_dump("FakeGame", [_sized("C", path, 16)]),
+                           _make_dump("FakeGame", [_sized("C", path, 24)]),
+                           include_engine=False)
+        _assert(len(d_mod.changed) == (0 if engine else 1),
+                f"{label}: {'skipped' if engine else 'diffed'} by default", errors)
+
     # --- Path normalization (//Script vs /Script) ---
     old_path = _make_dump("FakeGame", [
         {"kind": "class", "name": "X", "addr": "0x1",
@@ -808,6 +1262,10 @@ def run_self_test() -> int:
     _assert("Added Classes" not in md_min,
             "Minimal mode hides Added Classes", errors)
 
+    run_self_test_types(errors)
+    run_self_test_review(errors)
+    run_self_test_fixtures(errors)
+
     if errors:
         print(f"SELF-TEST FAILED ({len(errors)} error(s)):", file=sys.stderr)
         for e in errors:
@@ -817,11 +1275,670 @@ def run_self_test() -> int:
     return 0
 
 
+# ---------------------------------------------------------------------
+# [EXTPR-539-540-2026-10-02] D5: structs, enums and function params.
+# Kept apart from run_self_test so the class fixtures above stay as they were.
+# ---------------------------------------------------------------------
+
+def _struct(name: str, path: str, size: int, props: list[dict]) -> dict:
+    return {"kind": "struct", "name": name, "addr": "0x5", "path": path, "meta": "ScriptStruct",
+            "super": "", "super_addr": "", "props_size": size, "props": props}
+
+
+def _enum(name: str, path: str, entries: list[tuple[str, int]]) -> dict:
+    return {"kind": "enum", "name": name, "addr": "0x6", "path": path,
+            "entries": [{"name": n, "value": v} for n, v in entries]}
+
+
+def _summary(**flags) -> dict:
+    """A summary line from build 3622 on: it names structs, enums and the enum list's flags."""
+    s = {"kind": "summary", "classes_emitted": 0, "structs_emitted": 0, "enums_emitted": 0,
+         "enums_listed": True, "enum_names_failed": False, "enums_truncated": False,
+         "params_from_num_parms": 0}
+    s.update(flags)
+    return s
+
+
+def _func(name: str, params: list[dict] | None, num_parms: int = 2, parms_size: int = 8) -> dict:
+    f = {"name": name, "addr": "0x7", "return_type": "", "num_parms": num_parms,
+         "parms_size": parms_size, "flags": "0x10"}
+    if params is not None:
+        f["params"] = params
+    return f
+
+
+def _cls_with(funcs: list[dict]) -> dict:
+    return {"kind": "class", "name": "AHero", "addr": "0x1", "path": "/Game/Heroes/AHero",
+            "meta": "BlueprintGeneratedClass", "super": "", "super_addr": "", "is_bpgc": True,
+            "props_size": 8, "instance_count": 0, "props": [], "funcs": funcs}
+
+
+def run_self_test_types(errors: list[str]) -> None:
+    # --- Structs: added, removed, and a field that moved ---
+    s_old = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 8, [
+            {"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+            {"name": "B", "type": "IntProperty", "offset": 4, "size": 4}]),
+        _struct("FGone", "/Game/Data/FGone.FGone", 4, []),
+    ], summary=_summary(structs_emitted=2))
+    s_new = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 12, [
+            {"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+            {"name": "B", "type": "IntProperty", "offset": 8, "size": 4}]),
+        _struct("FNew", "/Game/Data/FNew.FNew", 4, []),
+    ], summary=_summary(structs_emitted=2))
+    ds = diff_dumps(s_old, s_new)
+    _assert(ds.structs_skipped == "", "structs compared when both dumps carry them", errors)
+    _assert([s["name"] for s in ds.added_structs] == ["FNew"], "added struct FNew", errors)
+    _assert([s["name"] for s in ds.removed_structs] == ["FGone"], "removed struct FGone", errors)
+    _assert(len(ds.changed_structs) == 1 and ds.changed_structs[0].name == "FHit", "changed struct FHit", errors)
+    if ds.changed_structs:
+        moved = [p.name for p in ds.changed_structs[0].prop_changes if p.kind == "moved"]
+        _assert(moved == ["B"], f"FHit.B moved (got {moved})", errors)
+        _assert(ds.changed_structs[0].has_breaking_change, "a moved struct field is breaking", errors)
+    md = render_report(ds)
+    _assert("Changed Structs" in md and "Added Structs" in md and "Removed Structs" in md,
+            "report has the struct sections", errors)
+    _assert("`FHit`" in md, "report names the changed struct", errors)
+    md_min = render_report(ds, minimal=True)
+    _assert("`FHit`" in md_min and "Added Structs" not in md_min,
+            "minimal report keeps the moved struct, hides the added one", errors)
+
+    # --- Structs: an older dump has none, so nothing is "added" ---
+    s_pre = _make_dump("FakeGame", [], summary={"kind": "summary", "classes_emitted": 0})
+    dp = diff_dumps(s_pre, s_new)
+    _assert(dp.structs_skipped != "" and not dp.added_structs,
+            "a dump from before struct lines skips the struct comparison", errors)
+    _assert("not compared" in render_report(dp), "the report says structs were not compared", errors)
+
+    # --- Structs: an engine struct is skipped by default ---
+    e_old = _make_dump("FakeGame", [], structs=[_struct("Vector", "/Script/CoreUObject.Vector", 12, [])],
+                       summary=_summary(structs_emitted=1))
+    e_new = _make_dump("FakeGame", [], structs=[_struct("Vector", "/Script/CoreUObject.Vector", 24, [])],
+                       summary=_summary(structs_emitted=1))
+    _assert(not diff_dumps(e_old, e_new).changed_structs, "engine struct skipped by default", errors)
+    _assert(len(diff_dumps(e_old, e_new, include_engine=True).changed_structs) == 1,
+            "engine struct diffed with --include-engine", errors)
+
+    # --- Enums: a value changed, an enumerator added, an enum added and one removed ---
+    n_old = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 1)]),
+        _enum("EOld", "/Game/Data/EOld.EOld", [("NewEnumerator0", 0)]),
+    ], summary=_summary(enums_emitted=2))
+    n_new = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 2), ("EKind::C", 3)]),
+        _enum("ENew", "/Game/Data/ENew.ENew", [("NewEnumerator0", 0)]),
+    ], summary=_summary(enums_emitted=2))
+    dn = diff_dumps(n_old, n_new)
+    _assert(dn.enums_skipped == "", "enums compared when both lists were read", errors)
+    _assert([e["name"] for e in dn.added_enums] == ["ENew"], "added enum ENew", errors)
+    _assert([e["name"] for e in dn.removed_enums] == ["EOld"], "removed enum EOld", errors)
+    _assert(len(dn.changed_enums) == 1 and dn.changed_enums[0].name == "EKind", "changed enum EKind", errors)
+    if dn.changed_enums:
+        kinds = sorted((c.name, c.kind) for c in dn.changed_enums[0].changes)
+        _assert(kinds == [("EKind::B", "value_changed"), ("EKind::C", "added")],
+                f"EKind's changes (got {kinds})", errors)
+    md = render_report(dn)
+    _assert("Changed Enums" in md and "EKind::B" in md, "report names the changed enumerator", errors)
+    _assert("EKind::B" in render_report(dn, minimal=True), "a changed enum value is breaking", errors)
+    _assert(not diff_dumps(n_old, n_old).changed_enums, "enum self-diff is empty", errors)
+
+    # --- Enums: a list that could not be read is not compared ---
+    n_failed = _make_dump("FakeGame", [], enums=[], summary=_summary(enums_listed=False))
+    df = diff_dumps(n_old, n_failed)
+    _assert(df.enums_skipped != "" and not df.removed_enums,
+            "a failed enum list skips the comparison, so no enum reads as removed", errors)
+
+    # --- Enums: member names unavailable -> entries not compared, presence still is ---
+    n_noname = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", []),
+        _enum("ENew", "/Game/Data/ENew.ENew", []),
+    ], summary=_summary(enums_emitted=2, enum_names_failed=True))
+    dnn = diff_dumps(n_old, n_noname)
+    _assert(not dnn.changed_enums, "with no member names, an enum's entries are not compared", errors)
+    _assert([e["name"] for e in dnn.added_enums] == ["ENew"], "an enum's presence is still compared", errors)
+    _assert(any("names" in note for note in dnn.enum_notes), "the report says member names were unavailable", errors)
+
+    # --- Enums: a cut-short list cannot say an enum was removed ---
+    n_cut = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 1)]),
+    ], summary=_summary(enums_emitted=1, enums_truncated=True))
+    dc = diff_dumps(n_old, n_cut)
+    _assert(not dc.removed_enums, "a truncated new list reports no removed enum", errors)
+    _assert(any("cut short" in note for note in dc.enum_notes), "the report says the list was cut short", errors)
+
+    # --- Enums: an older dump has none, so nothing is "added" ---
+    dpe = diff_dumps(_make_dump("FakeGame", [], summary={"kind": "summary"}), n_new)
+    _assert(dpe.enums_skipped != "" and not dpe.added_enums,
+            "a dump from before enum lines skips the enum comparison", errors)
+
+    # --- Function params: a parameter change is a signature change; one missing side compares metadata ---
+    p_a = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Actor"}]
+    p_b = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Pawn"}]
+    f_old = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_a)])], summary=_summary())
+    f_new = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_b)])], summary=_summary())
+    dfp = diff_dumps(f_old, f_new)
+    sig = [f for cd in dfp.changed for f in cd.func_changes if f.kind == "signature_changed"]
+    _assert(len(sig) == 1 and sig[0].name == "TakeDamage",
+            "a parameter whose class changed is a signature change", errors)
+    _assert("Source" in render_report(dfp), "the report shows the parameters that changed", errors)
+    f_pre = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", None)])], summary={"kind": "summary"})
+    _assert(not diff_dumps(f_pre, f_new).changed,
+            "an older dump without params compares the function's metadata only", errors)
+
+
+def run_self_test_review(errors: list[str]) -> None:
+    """[EXTPR-539-540-2026-10-02] Review of 513fdd16: what the first D5 self-test left unpinned."""
+    # --- a dump with no summary line was cut off mid-write: what it lacks is not "removed" ---
+    full = _make_dump("FakeGame", [_cls_with([]), {**_cls_with([]), "name": "AOther", "path": "/Game/AOther"}],
+                      structs=[_struct("FHit", "/Script/FakeGame.FHit", 8, [])],
+                      enums=[_enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0)])],
+                      summary=_summary(structs_emitted=1, enums_emitted=1))
+    cut = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    cut.meta["dumper_build"] = 3622
+    dcut = diff_dumps(full, cut)
+    _assert(not dcut.removed_classes, "a cut-off new dump reports no removed class", errors)
+    md = render_report(dcut)
+    _assert("no summary line" in md, "the report says the new dump was cut off", errors)
+    _assert("ends before its struct lines" in md, "a cut-off dump of a build with structs says so", errors)
+    dcut_old = diff_dumps(cut, full)
+    _assert(not dcut_old.added_classes, "a cut-off old dump reports no added class", errors)
+
+    # --- a type whose walk failed is tagged, not just "removed" ---
+    failed = _make_dump("FakeGame", [_cls_with([])], structs=[], summary=_summary(structs_emitted=0))
+    failed.errors = [{"kind": "error", "addr": "0x9", "name": "AOther", "msg": "pipe dropped"}]
+    md = render_report(diff_dumps(full, failed))
+    _assert("walk failed in the new dump" in md, "a removed class with an error line is tagged", errors)
+    _assert("error line(s)" in md, "the report counts each dump's error lines", errors)
+
+    # --- the report's own wording, not the notes list ---
+    md = render_report(diff_dumps(_make_dump("FakeGame", [], summary={"kind": "summary"}),
+                                  _make_dump("FakeGame", [], structs=[_struct("FHit", "/Script/G.FHit", 8, [])],
+                                             summary=_summary(structs_emitted=1))))
+    _assert("Structs: not compared" in md, "the report says structs were not compared", errors)
+    _assert("Enums: not compared" in md, "the report says enums were not compared", errors)
+    n_old = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)])],
+                       summary=_summary(enums_emitted=1))
+    n_noname = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [])],
+                          summary=_summary(enums_emitted=1, enum_names_failed=True))
+    md = render_report(diff_dumps(n_old, n_noname))
+    _assert("member names were unavailable" in md, "the rendered report carries the names note", errors)
+    _assert("entries not compared" in md and "1** unchanged" not in md,
+            "enums matched without names are not counted as unchanged", errors)
+
+    # --- an old cut-short list cannot say an enum was added ---
+    n_cut_old = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)])],
+                           summary=_summary(enums_emitted=1, enums_truncated=True))
+    n_more = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)]),
+                                               _enum("ENew", "/Script/G.ENew", [("ENew::A", 0)])],
+                        summary=_summary(enums_emitted=2))
+    _assert(not diff_dumps(n_cut_old, n_more).added_enums, "a truncated old list reports no added enum", errors)
+
+    # --- params: offset-only, out-only and return-only changes are signature changes, and the report shows them ---
+    base = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+            {"name": "ReturnValue", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Actor",
+             "out": True, "ret": True}]
+    for label, change in (("offset", {0: {"offset": 4}}),
+                          ("out", {0: {"out": True}}),
+                          ("return class", {1: {"obj_class": "Pawn"}})):
+        changed = [dict(p, **change.get(i, {})) for i, p in enumerate(base)]
+        d = diff_dumps(_make_dump("FakeGame", [_cls_with([_func("Spawn", base)])], summary=_summary()),
+                       _make_dump("FakeGame", [_cls_with([_func("Spawn", changed)])], summary=_summary()))
+        sig = [f for cd in d.changed for f in cd.func_changes if f.kind == "signature_changed"]
+        _assert(len(sig) == 1, f"a {label}-only parameter change is a signature change", errors)
+    d = diff_dumps(_make_dump("FakeGame", [_cls_with([_func("Spawn", base)])], summary=_summary()),
+                   _make_dump("FakeGame", [_cls_with([_func("Spawn", [base[0], dict(base[1], obj_class="Pawn")])])],
+                              summary=_summary()))
+    _assert("Pawn" in render_report(d), "the report shows a changed return entry", errors)
+
+    # --- a dump whose params came from num_parms says so in the report ---
+    md = render_report(diff_dumps(_make_dump("FakeGame", [], summary=_summary(params_from_num_parms=3)),
+                                  _make_dump("FakeGame", [], summary=_summary())))
+    _assert("from num_parms" in md, "the report notes params taken from num_parms", errors)
+
+    # --- a struct that only grew is breaking: its size is the stride of every array of it ---
+    g_old = _make_dump("FakeGame", [], structs=[_struct("FSlot", "/Script/G.FSlot", 0x18, [])],
+                       summary=_summary(structs_emitted=1))
+    g_new = _make_dump("FakeGame", [], structs=[_struct("FSlot", "/Script/G.FSlot", 0x20, [])],
+                       summary=_summary(structs_emitted=1))
+    _assert("`FSlot`" in render_report(diff_dumps(g_old, g_new), minimal=True),
+            "a struct whose size changed is in the minimal report", errors)
+    _assert("changed enum values" in render_report(diff_dumps(g_old, g_new), minimal=True),
+            "the minimal banner names what it keeps", errors)
+
+    # --- the object index is not a class dump ---
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        idx = Path(tmp) / "game.objects.jsonl"
+        idx.write_text('{"kind":"meta","file":"objects","class_dump":"game.jsonl"}\n'
+                       '{"kind":"object","index":0,"addr":"0x1","name":"A","class":"Class","outer":"","path":"/A"}\n',
+                       encoding="utf-8")
+        try:
+            load_dump(idx)
+            _assert(False, "loading an object index is refused", errors)
+        except ObjectIndexFile as e:
+            _assert("game.jsonl" in str(e), "the refusal names the class dump to use instead", errors)
+
+
+# =====================================================================
+# [DUMPDIFF-UI] The UI's C# port of this diff is held to this script. Each case below is written as a pair of
+# .jsonl files plus the diff as plain data (canonical); the self-test fails when the committed files no longer
+# match what this script computes, and the C# parity test fails when the port disagrees with them. After a change
+# here: --write-fixtures, then make the C# tests pass again.
+# =====================================================================
+
+FIXTURE_DIR = Path(__file__).resolve().parent / "fixtures" / "diff_dumps"
+
+
+def _canon_prop(p: dict | None) -> dict | None:
+    if p is None:
+        return None
+    return {"offset": p.get("offset"), "size": p.get("size"), "type": _fmt_prop_typestr(p)}
+
+
+def _canon_func(f: dict | None) -> dict | None:
+    if f is None:
+        return None
+    return {"return_type": f.get("return_type"), "num_parms": f.get("num_parms"),
+            "parms_size": f.get("parms_size"), "flags": f.get("flags"),
+            "params": _fmt_params(f) if "params" in f else None}
+
+
+def _canon_type(cd: ClassDiff) -> dict:
+    return {
+        "path": cd.path, "name": cd.name,
+        "old_size": cd.old.get("props_size", 0), "new_size": cd.new.get("props_size", 0),
+        "breaking": cd.has_breaking_change,
+        "props": [{"name": pc.name, "kind": pc.kind, "old": _canon_prop(pc.old), "new": _canon_prop(pc.new)}
+                  for pc in cd.prop_changes],
+        "funcs": [{"name": fc.name, "kind": fc.kind, "old": _canon_func(fc.old), "new": _canon_func(fc.new),
+                   "params_changed": _params_differ(fc.old or {}, fc.new or {})}
+                  for fc in cd.func_changes],
+    }
+
+
+def _canon_listing(records: list[dict], failed: set | None) -> list[dict]:
+    out = []
+    for rec in records:
+        row = {"path": normalize_path(rec.get("path", "")), "name": rec.get("name", "")}
+        if failed is not None:
+            row["walk_failed"] = rec.get("name") in failed
+        out.append(row)
+    return out
+
+
+def _failed_names(d: Dump) -> set:
+    return {e.get("name") for e in d.errors if e.get("name")}
+
+
+def canonical(diff: DumpDiff) -> dict:
+    """The diff as plain data, in the report's order: what the UI's port must reproduce. Not a report format."""
+    old_failed, new_failed = _failed_names(diff.old_dump), _failed_names(diff.new_dump)
+    out = {
+        "classes": {
+            "added": _canon_listing(diff.added_classes, old_failed),
+            "removed": _canon_listing(diff.removed_classes, new_failed),
+            "changed": [_canon_type(cd) for cd in diff.changed],
+            "unchanged": diff.unchanged_count,
+            "counts": _count_changes(diff.changed),
+        },
+        "structs": {"skipped": diff.structs_skipped},
+        "enums": {"skipped": diff.enums_skipped},
+        "notes": {"dump": diff.dump_notes, "enum": diff.enum_notes, "param": diff.param_notes},
+    }
+    if not diff.structs_skipped:
+        out["structs"].update({
+            "added": _canon_listing(diff.added_structs, old_failed),
+            "removed": _canon_listing(diff.removed_structs, new_failed),
+            "changed": [_canon_type(cd) for cd in diff.changed_structs],
+            "unchanged": diff.unchanged_structs,
+            "counts": _count_changes(diff.changed_structs),
+        })
+    if not diff.enums_skipped:
+        out["enums"].update({
+            "added": _canon_listing(diff.added_enums, None),
+            "removed": _canon_listing(diff.removed_enums, None),
+            "changed": [{"path": ed.path, "name": ed.name, "breaking": ed.has_breaking_change,
+                         "changes": [{"name": c.name, "kind": c.kind, "old": c.old_value, "new": c.new_value}
+                                     for c in ed.changes]}
+                        for ed in diff.changed_enums],
+            "unchanged": diff.unchanged_enums,
+            "uncompared": diff.uncompared_enums,
+        })
+    return out
+
+
+def _dump_lines(d: Dump) -> list[dict]:
+    """A synthetic dump as the lines of a file: meta first and the summary last, as Dump All writes them. A dump
+    cut off mid-write has no summary line."""
+    lines = [{"kind": "meta", **d.meta}] + d.classes + d.structs + d.enums + d.errors
+    if d.has_summary:
+        lines.append({"kind": "summary", **{k: v for k, v in d.summary.items() if k != "kind"}})
+    return lines
+
+
+def _fx_class(name: str, path: str, size: int, props: list[dict] | None = None,
+              funcs: list[dict] | None = None) -> dict:
+    return {"kind": "class", "name": name, "addr": "0x1", "path": path, "meta": "Class", "super": "",
+            "super_addr": "0x0", "is_bpgc": False, "props_size": size, "instance_count": 0,
+            "props": props or [], "funcs": funcs or []}
+
+
+def fixture_cases() -> list[tuple[str, Dump, Dump, bool]]:
+    """(name, old, new, include_engine). Every behaviour the self-tests pin, plus the edges a port gets wrong:
+    duplicate keys, a missing path, the stable order of equal sort keys, names that need escaping."""
+    hero_old = _make_dump("FakeGame", [
+        {"kind": "class", "name": "AHero", "addr": "0x1", "path": "/Game/Heroes/AHero",
+         "meta": "BlueprintGeneratedClass", "super": "ACharacter", "super_addr": "0x99", "is_bpgc": True,
+         "props_size": 64, "instance_count": 1,
+         "props": [{"name": "Health", "type": "FloatProperty", "offset": 0x40, "size": 4},
+                   {"name": "IsDead", "type": "BoolProperty", "offset": 0x44, "size": 1},
+                   {"name": "Mana", "type": "FloatProperty", "offset": 0x48, "size": 4}],
+         "funcs": [{"name": "TakeDamage", "addr": "0xA", "return_type": "", "num_parms": 3, "parms_size": 12,
+                    "flags": "0x10"},
+                   {"name": "Die", "addr": "0xB", "return_type": "", "num_parms": 0, "parms_size": 0,
+                    "flags": "0x10"}]},
+        _fx_class("AOldThing", "/Game/Removed/AOldThing", 16),
+    ], summary={"kind": "summary", "classes_emitted": 2})
+    hero_new = _make_dump("FakeGame", [
+        {"kind": "class", "name": "AHero", "addr": "0xAA", "path": "/Game/Heroes/AHero",
+         "meta": "BlueprintGeneratedClass", "super": "ACharacter", "super_addr": "0xBB", "is_bpgc": True,
+         "props_size": 72, "instance_count": 1,
+         "props": [{"name": "Health", "type": "FloatProperty", "offset": 0x48, "size": 4},
+                   {"name": "Mana", "type": "FloatProperty", "offset": 0x4C, "size": 4},
+                   {"name": "NewField", "type": "Int32Property", "offset": 0x50, "size": 4}],
+         "funcs": [{"name": "TakeDamage", "addr": "0xCC", "return_type": "", "num_parms": 4, "parms_size": 16,
+                    "flags": "0x10"},
+                   {"name": "Die", "addr": "0xDD", "return_type": "", "num_parms": 0, "parms_size": 0,
+                    "flags": "0x10"},
+                   {"name": "Heal", "addr": "0xEE", "return_type": "", "num_parms": 1, "parms_size": 4,
+                    "flags": "0x10"}]},
+        _fx_class("ABrandNew", "/Game/NewStuff/ABrandNew", 8),
+    ], summary={"kind": "summary", "classes_emitted": 2})
+
+    modules = [("C1", "//Script/FakeGame/AHeroBase"), ("C2", "//Script/EngineOverride/Foo"),
+               ("C3", "/Script/Engine/Actor"), ("C4", "//Script/UMG.UserWidget"),
+               ("C5", "//Script/CoreUObject/Object")]
+    mod_old = _make_dump("FakeGame", [_fx_class(n, pth, 16) for n, pth in modules])
+    mod_new = _make_dump("FakeGame", [_fx_class(n, pth, 24) for n, pth in modules])
+
+    norm_old = _make_dump("FakeGame", [_fx_class("X", "//Script/CoreUObject/X", 16)])
+    norm_new = _make_dump("FakeGame", [_fx_class("X", "/Script/CoreUObject/X", 16)])
+
+    retype_old = _make_dump("FakeGame", [_fx_class("AHP", "/Game/X/AHP", 16, [
+        {"name": "Val", "type": "FloatProperty", "offset": 0x10, "size": 4},
+        {"name": "Arr", "type": "ArrayProperty", "offset": 0x18, "size": 16, "inner_type": "IntProperty"},
+        {"name": "Ref", "type": "ObjectProperty", "offset": 0x28, "size": 8, "obj_class": "Actor"},
+        {"name": "Kind", "type": "ByteProperty", "offset": 0x30, "size": 1, "enum": "EKind"},
+        {"name": "Hit", "type": "StructProperty", "offset": 0x38, "size": 8, "struct_type": "FHit"}])])
+    retype_new = _make_dump("FakeGame", [_fx_class("AHP", "/Game/X/AHP", 20, [
+        {"name": "Val", "type": "DoubleProperty", "offset": 0x10, "size": 8},
+        {"name": "Arr", "type": "ArrayProperty", "offset": 0x18, "size": 16, "inner_type": "FloatProperty"},
+        {"name": "Ref", "type": "ObjectProperty", "offset": 0x28, "size": 8, "obj_class": "Pawn"},
+        {"name": "Kind", "type": "ByteProperty", "offset": 0x30, "size": 1, "enum": "EOtherKind"},
+        {"name": "Hit", "type": "StructProperty", "offset": 0x40, "size": 8, "struct_type": "FHit"}])])
+
+    add_only_old = _make_dump("FakeGame", [_fx_class("C", "/Game/C/C", 8, [
+        {"name": "A", "type": "Int32Property", "offset": 0, "size": 4}])])
+    add_only_new = _make_dump("FakeGame", [_fx_class("C", "/Game/C/C", 16, [
+        {"name": "A", "type": "Int32Property", "offset": 0, "size": 4},
+        {"name": "B", "type": "Int32Property", "offset": 4, "size": 4}])])
+
+    s_old = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 8, [{"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+                                                     {"name": "B", "type": "IntProperty", "offset": 4, "size": 4}]),
+        _struct("FGone", "/Game/Data/FGone.FGone", 4, []),
+        _struct("FSlot", "/Script/FakeGame.FSlot", 0x18, []),
+        _struct("Vector", "/Script/CoreUObject.Vector", 12, []),
+    ], summary=_summary(structs_emitted=4))
+    s_new = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 12, [{"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+                                                      {"name": "B", "type": "IntProperty", "offset": 8, "size": 4}]),
+        _struct("FNew", "/Game/Data/FNew.FNew", 4, []),
+        _struct("FSlot", "/Script/FakeGame.FSlot", 0x20, []),
+        _struct("Vector", "/Script/CoreUObject.Vector", 24, []),
+    ], summary=_summary(structs_emitted=4))
+    pre = _make_dump("FakeGame", [], summary={"kind": "summary", "classes_emitted": 0})
+
+    n_old = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 1)]),
+        _enum("EOld", "/Game/Data/EOld.EOld", [("NewEnumerator0", 0)]),
+        _enum("ENetRole", "/Script/Engine.ENetRole", [("ROLE_None", 0)]),
+    ], summary=_summary(enums_emitted=3))
+    n_new = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 2), ("EKind::C", 3)]),
+        _enum("ENew", "/Game/Data/ENew.ENew", [("NewEnumerator0", 0)]),
+        _enum("ENetRole", "/Script/Engine.ENetRole", [("ROLE_None", 1)]),
+    ], summary=_summary(enums_emitted=3))
+    n_failed = _make_dump("FakeGame", [], summary=_summary(enums_listed=False))
+    n_noname = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/FakeGame.EKind", []),
+                                                 _enum("ENew", "/Game/Data/ENew.ENew", [])],
+                          summary=_summary(enums_emitted=2, enum_names_failed=True))
+    n_cut = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/FakeGame.EKind",
+                                                    [("EKind::A", 0), ("EKind::B", 1)])],
+                       summary=_summary(enums_emitted=1, enums_truncated=True))
+
+    p_a = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Actor"},
+           {"name": "ReturnValue", "type": "StructProperty", "offset": 16, "size": 12, "struct_type": "Vector",
+            "out": True, "ret": True}]
+    p_b = [{"name": "Amount", "type": "FloatProperty", "offset": 4, "size": 4, "out": True},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Pawn"},
+           {"name": "ReturnValue", "type": "StructProperty", "offset": 16, "size": 12, "struct_type": "Rotator",
+            "out": True, "ret": True}]
+    f_old = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_a), _func("Same", p_a),
+                                               _func("Flags", None)])],
+                       summary=_summary(params_from_num_parms=3))
+    f_new = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_b), _func("Same", p_a),
+                                               {**_func("Flags", None), "flags": "0x400", "return_type": "Int"}])],
+                       summary=_summary())
+    f_pre = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", None)])], summary={"kind": "summary"})
+
+    # One field of one parameter at a time, so dropping any one field from the comparison changes the result.
+    def _one_change(index: int, **change) -> list[dict]:
+        return [dict(x, **change) if i == index else dict(x) for i, x in enumerate(p_a)]
+
+    single = [("NameOnly", _one_change(0, name="Damage")), ("TypeOnly", _one_change(0, type="DoubleProperty")),
+              ("StructOnly", _one_change(2, struct_type="Rotator")), ("ObjClassOnly", _one_change(1, obj_class="Pawn")),
+              ("OutOnly", _one_change(0, out=True)), ("RetOnly", _one_change(1, ret=True)),
+              ("OffsetOnly", _one_change(0, offset=4)), ("SizeOnly", _one_change(0, size=8)),
+              ("CountOnly", p_a + [{"name": "Extra", "type": "IntProperty", "offset": 28, "size": 4}])]
+    p1_old = _make_dump("FakeGame", [_cls_with([_func(n, p_a) for n, _ in single])], summary=_summary())
+    p1_new = _make_dump("FakeGame", [_cls_with([_func(n, ps) for n, ps in single])], summary=_summary())
+
+    # Equal sort keys (records with no path all sort as "") in a list long enough that an unstable sort reorders it.
+    many_old = _make_dump("FakeGame", [{**_fx_class(f"NoPathOld{i:02}", "", 4), "path": ""} for i in range(40, 0, -1)])
+    many_new = _make_dump("FakeGame", [{**_fx_class(f"NoPathNew{i:02}", "", 4), "path": ""} for i in range(40, 0, -1)])
+
+    full = _make_dump("FakeGame", [_cls_with([]), {**_cls_with([]), "name": "AOther", "path": "/Game/AOther"}],
+                      structs=[_struct("FHit", "/Script/FakeGame.FHit", 8, [])],
+                      enums=[_enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0)])],
+                      summary=_summary(structs_emitted=1, enums_emitted=1))
+    cut = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    cut.meta["dumper_build"] = 3622
+    cut_old_build = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    failed = _make_dump("FakeGame", [_cls_with([])], structs=[], summary=_summary(structs_emitted=0))
+    failed.errors = [{"kind": "error", "addr": "0x9", "name": "AOther", "msg": "pipe dropped"}]
+    n_cut_old = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)])],
+                           summary=_summary(enums_emitted=1, enums_truncated=True))
+    n_more = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)]),
+                                               _enum("ENew", "/Script/G.ENew", [("ENew::A", 0)])],
+                        summary=_summary(enums_emitted=2))
+
+    # Edges a port reproduces only by copying Python's rules: a duplicate path keeps the FIRST record; a record
+    # with no path is keyed by name; a duplicate member name keeps its FIRST position and its LAST value; a nameless
+    # member is ignored; equal sort keys keep their file order; names that HTML must escape; non-ASCII paths sort
+    # by code point.
+    edge_old = _make_dump("FakeGame", [
+        _fx_class("ADup", "/Game/Dup", 8, [{"name": "V", "type": "IntProperty", "offset": 0, "size": 4}]),
+        _fx_class("ADup", "/Game/Dup", 99),
+        {**_fx_class("NoPathB", "", 4), "path": ""},
+        {**_fx_class("NoPathA", "", 4), "path": ""},
+        _fx_class("AProps", "/Game/Props", 16, [
+            {"name": "X", "type": "IntProperty", "offset": 0, "size": 4},
+            {"name": "", "type": "IntProperty", "offset": 4, "size": 4},
+            {"name": "Y", "type": "IntProperty", "offset": 8, "size": 4},
+            {"name": "X", "type": "IntProperty", "offset": 12, "size": 4}]),
+        _fx_class("A<b>&\"c\"", "/Game/Esc/A<b>&\"c\"", 8, [
+            {"name": "<script>", "type": "IntProperty", "offset": 0, "size": 4}]),
+        _fx_class("\u00c9t\u00e9", "/Game/\u00c9t\u00e9", 4),
+        _fx_class("Emoji", "/Game/\U0001F600", 4),
+        _fx_class("Pua", "/Game/\uE000", 4),
+    ], enums=[_enum("EDup", "/Game/EDup", [("A", 0), ("B", 1), ("A", 5)])], summary=_summary(enums_emitted=1))
+    edge_new = _make_dump("FakeGame", [
+        _fx_class("ADup", "/Game/Dup", 8, [{"name": "V", "type": "IntProperty", "offset": 4, "size": 4}]),
+        _fx_class("AProps", "/Game/Props", 16, [
+            {"name": "Y", "type": "IntProperty", "offset": 8, "size": 4},
+            {"name": "X", "type": "IntProperty", "offset": 12, "size": 4}]),
+        _fx_class("A<b>&\"c\"", "/Game/Esc/A<b>&\"c\"", 8, [
+            {"name": "<script>", "type": "Int64Property", "offset": 0, "size": 8}]),
+    ], enums=[_enum("EDup", "/Game/EDup", [("B", 1), ("A", 6)])], summary=_summary(enums_emitted=1))
+
+    # A BOM before the meta line (an editor re-saved the file): the meta line still counts.
+    bom_cut = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    bom_cut.meta["dumper_build"] = 3622
+    bom_cut.bom = True
+
+    # null values in the summary mean absent keys: this dump says nothing about structs or enums.
+    nulls = _make_dump("FakeGame", [_cls_with([])], summary={"kind": "summary", "structs_emitted": None,
+                                                             "enums_emitted": None, "enums_listed": None})
+
+    # Flags compare as text: "1024" and 1024 are the same, 1024 and 1024.0 are not; params null is params absent.
+    flags_old = _make_dump("FakeGame", [_cls_with([
+        {**_func("Same", None), "flags": "1024"}, {**_func("Float", None), "flags": 1024},
+        {**_func("Hex", None), "flags": "0x10"}, {**_func("NullParams", None), "params": None}])],
+        summary=_summary())
+    flags_new = _make_dump("FakeGame", [_cls_with([
+        {**_func("Same", None), "flags": 1024}, {**_func("Float", None), "flags": 1024.0},
+        {**_func("Hex", None), "flags": "0x20"}, {**_func("NullParams", None), "params": []}])],
+        summary=_summary())
+
+    # Lines neither side can read are skipped and counted: not JSON, not an object, NaN, a float or a string where
+    # Dump All writes an integer, a null inside a list, an int where it writes a bool (here, the summary line).
+    bad_old = _make_dump("FakeGame", [_fx_class("AKeep", "/Game/AKeep", 8)], summary=_summary())
+    bad_old.raw_lines = [
+        '{"kind":"class","name":"AFloat","path":"/Game/AFloat","props_size":8,'
+        '"props":[{"name":"V","type":"IntProperty","offset":0.0,"size":4}]}',
+        "null",
+        "[1]",
+        '{"kind":"class","name":"ABroken"',
+        '{"kind":"class","name":"ANaN","path":"/Game/ANaN","props_size":NaN}',
+        '{"kind":"class","name":"ANullProp","path":"/Game/ANullProp","props_size":8,"props":[null]}',
+        '{"kind":"class","name":"AStr","path":"/Game/AStr","props_size":"8"}',
+    ]
+    bad_new = _make_dump("FakeGame", [_fx_class("AKeep", "/Game/AKeep", 8),
+                                      _fx_class("AFloat", "/Game/AFloat", 8, [
+                                          {"name": "V", "type": "IntProperty", "offset": 0, "size": 4}])],
+                         summary=_summary(enums_listed=1))
+
+    return [
+        ("classes_basic", hero_old, hero_new, False),
+        ("classes_self", hero_old, hero_old, False),
+        ("modules_game_only", mod_old, mod_new, False),
+        ("modules_include_engine", mod_old, mod_new, True),
+        ("path_normalization", norm_old, norm_new, True),
+        ("prop_retyped", retype_old, retype_new, False),
+        ("add_only", add_only_old, add_only_new, False),
+        ("structs", s_old, s_new, False),
+        ("structs_include_engine", s_old, s_new, True),
+        ("structs_old_dump_predates", pre, s_new, False),
+        ("enums", n_old, n_new, False),
+        ("enums_include_engine", n_old, n_new, True),
+        ("enums_list_failed", n_old, n_failed, False),
+        ("enums_no_names", n_old, n_noname, False),
+        ("enums_new_list_cut", n_old, n_cut, False),
+        ("enums_old_list_cut", n_cut_old, n_more, False),
+        ("enums_new_dump_predates", n_old, pre, False),
+        ("params", f_old, f_new, False),
+        ("params_old_dump_predates", f_pre, f_new, False),
+        ("params_one_field", p1_old, p1_new, False),
+        ("equal_sort_keys", many_old, many_new, False),
+        ("new_dump_cut_off", full, cut, False),
+        ("old_dump_cut_off", cut, full, False),
+        ("old_build_cut_off", full, cut_old_build, False),
+        ("walk_failed", full, failed, False),
+        ("edges", edge_old, edge_new, False),
+        ("bom_new_cut_off", full, bom_cut, False),
+        ("summary_nulls", full, nulls, False),
+        ("flags_types", flags_old, flags_new, False),
+        ("unreadable_lines", bad_old, bad_new, False),
+    ]
+
+
+def _file_text(d: Dump) -> str:
+    """A fixture dump as file text: its records, its raw lines before the summary line, and its BOM."""
+    lines = [json.dumps(x, ensure_ascii=False, separators=(",", ":")) for x in _dump_lines(d)]
+    at = len(lines) - 1 if d.has_summary else len(lines)
+    lines[at:at] = d.raw_lines
+    text = "".join(x + "\n" for x in lines)
+    return "\ufeff" + text if d.bom else text
+
+
+def _write_jsonl(path: Path, d: Dump) -> None:
+    path.write_text(_file_text(d), encoding="utf-8", newline="\n")
+
+
+def _case_files(name: str) -> tuple[Path, Path, Path]:
+    d = FIXTURE_DIR / name
+    return d / "old.jsonl", d / "new.jsonl", d / "expected.json"
+
+
+def _expected_text(diff: DumpDiff, include_engine: bool) -> str:
+    return json.dumps({"include_engine": include_engine, "diff": canonical(diff)},
+                      ensure_ascii=False, indent=1) + "\n"
+
+
+def write_fixtures() -> int:
+    cases = fixture_cases()
+    FIXTURE_DIR.mkdir(parents=True, exist_ok=True)
+    for stale in sorted(p for p in FIXTURE_DIR.iterdir() if p.is_dir() and p.name not in {c[0] for c in cases}):
+        print(f"  [warn] {stale.name}/ is not a case any more; delete it by hand", file=sys.stderr)
+    for name, old, new, include_engine in cases:
+        old_p, new_p, exp_p = _case_files(name)
+        old_p.parent.mkdir(exist_ok=True)
+        _write_jsonl(old_p, old)
+        _write_jsonl(new_p, new)
+        # Diffed from the written FILES, as the port will read them, not from the in-memory dumps.
+        diff = diff_dumps(load_dump(old_p), load_dump(new_p), include_engine=include_engine)
+        exp_p.write_text(_expected_text(diff, include_engine), encoding="utf-8", newline="\n")
+    print(f"wrote {len(cases)} case(s) to {FIXTURE_DIR}")
+    return 0
+
+
+def run_self_test_fixtures(errors: list[str]) -> None:
+    """The committed fixtures are what this script computes today, and every case is committed."""
+    cases = fixture_cases()
+    if not FIXTURE_DIR.is_dir():
+        errors.append(f"fixtures: {FIXTURE_DIR} is missing (run --write-fixtures)")
+        return
+    committed = {p.name for p in FIXTURE_DIR.iterdir() if p.is_dir()}
+    names = {c[0] for c in cases}
+    for extra in sorted(committed - names):
+        errors.append(f"fixtures: {extra}/ is committed but is not a case")
+    for name, old, new, include_engine in cases:
+        old_p, new_p, exp_p = _case_files(name)
+        if not (old_p.is_file() and new_p.is_file() and exp_p.is_file()):
+            errors.append(f"fixtures: {name}/ is missing a file (run --write-fixtures)")
+            continue
+        if old_p.read_text(encoding="utf-8") != _file_text(old) or new_p.read_text(encoding="utf-8") != _file_text(new):
+            errors.append(f"fixtures: {name}/ input files differ from the case (run --write-fixtures)")
+        diff = diff_dumps(load_dump(old_p), load_dump(new_p), include_engine=include_engine)
+        if exp_p.read_text(encoding="utf-8") != _expected_text(diff, include_engine):
+            errors.append(f"fixtures: {name}/expected.json is not what this script computes now (run "
+                          f"--write-fixtures, then bring the UI's C# port back in line)")
+
+
 # =====================================================================
 # CLI
 # =====================================================================
 
 def main(argv: list[str] | None = None) -> int:
+    # The report carries non-ASCII (the warning sign, arrows); a redirected stdout on a cp950 console cannot
+    # encode U+26A0 and the write would raise.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(
         description="Diff two `Dump All Metadata` JSONL files from the same game.")
     ap.add_argument("old", nargs="?", help="Older dump (.jsonl)")
@@ -829,18 +1946,24 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-o", "--output", default=None,
                     help="Output Markdown path (default: stdout)")
     ap.add_argument("--minimal", action="store_true",
-                    help="Emit only breaking changes (moved fields + "
-                         "signature changes); skip added/removed lists.")
+                    help="Emit only breaking changes (moved or retyped fields, "
+                         "signature changes, changed enum values, struct size "
+                         "changes); skip added/removed lists.")
     ap.add_argument("--include-engine", action="store_true",
-                    help="Include /Script/ engine classes in the diff "
+                    help="Include the engine's own modules in the diff "
                          "(default: skip — they rarely change between "
-                         "game patches and dominate noise).")
+                         "game patches and dominate noise). The game's own "
+                         "C++ classes are always included.")
     ap.add_argument("--self-test", action="store_true",
                     help="Run built-in synthetic-fixture tests and exit.")
+    ap.add_argument("--write-fixtures", action="store_true",
+                    help="Rewrite fixtures/diff_dumps/, the cases the UI's C# port is tested against, and exit.")
     args = ap.parse_args(argv)
 
     if args.self_test:
         return run_self_test()
+    if args.write_fixtures:
+        return write_fixtures()
 
     if not args.old or not args.new:
         ap.error("old and new dump paths are required (or pass --self-test).")
@@ -854,12 +1977,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: new dump not found: {new_path}", file=sys.stderr)
         return 2
 
-    print(f"loading old: {old_path.name}", file=sys.stderr)
-    old_dump = load_dump(old_path)
-    print(f"  {len(old_dump.classes)} classes, {len(old_dump.errors)} errors",
-          file=sys.stderr)
-    print(f"loading new: {new_path.name}", file=sys.stderr)
-    new_dump = load_dump(new_path)
+    try:
+        print(f"loading old: {old_path.name}", file=sys.stderr)
+        old_dump = load_dump(old_path)
+        print(f"  {len(old_dump.classes)} classes, {len(old_dump.errors)} errors",
+              file=sys.stderr)
+        print(f"loading new: {new_path.name}", file=sys.stderr)
+        new_dump = load_dump(new_path)
+    except ObjectIndexFile as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     print(f"  {len(new_dump.classes)} classes, {len(new_dump.errors)} errors",
           file=sys.stderr)
 

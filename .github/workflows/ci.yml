@@ -160,6 +160,14 @@ jobs:
           # two months), so nothing else here notices.
           & $py tools/check_text_integrity.py
           if ($LASTEXITCODE -ne 0) { throw "check_text_integrity FAILED ($LASTEXITCODE) - a tracked text file holds a control byte: a backslash escape collapsed by a shell heredoc. The output names the file, line and byte." }
+          # Which /Script/ modules are the engine's is listed three times (Aura.h, DumpAllService.cs,
+          # scripts/analysis/engine_paths.py) and the three cannot share code; a module added to one makes
+          # the DLL, Dump All and the analysis scripts disagree about the same class, with nothing failing.
+          & $py tools/check_engine_prefixes.py
+          if ($LASTEXITCODE -ne 0) { throw "check_engine_prefixes FAILED ($LASTEXITCODE) - the engine-package lists in Aura.h, DumpAllService.cs and scripts/analysis/engine_paths.py differ. Aura.h is the source." }
+          # The scripts under scripts/analysis/ are run by hand, so nothing else runs their own self-tests.
+          & $py tools/check_analysis_selftests.py
+          if ($LASTEXITCODE -ne 0) { throw "check_analysis_selftests FAILED ($LASTEXITCODE) - a script under scripts/analysis/ fails its own --self-test. The output names each failed assertion." }
           # Markdown link integrity. A broken relative link is invisible to whoever wrote it
           # (no compiler, and the author sees the target in the folder they had in mind), and
           # they arrive in BULK on a file move - docs/x.md -> docs/archive/x.md leaves every

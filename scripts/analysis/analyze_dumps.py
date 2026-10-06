@@ -6,10 +6,12 @@ JSONL dumps produced by UE5DumpUI's "Export -> Dump All Metadata" feature.
 USAGE
     python analyze_dumps.py <dump1.jsonl> [dump2.jsonl ...]
     python analyze_dumps.py *.jsonl --top 100 --keyword Health,Damage
+    python analyze_dumps.py --self-test
 
 WHAT IT DOES
     1. Loads N dumps (one per game). Each dump = meta line + class lines
-       + summary line, as documented in DumpAllService.cs.
+       + summary line, as documented in DumpAllService.cs. Struct, enum
+       and error lines are not used here.
     2. Aggregates across games:
          - Property-name frequency (filter to game-only)
          - Class-name token frequency
@@ -29,9 +31,10 @@ DESIGN NOTES
     - Each game has different mechanics; statistical signal needs
       ≥3 dumps to be meaningful. Single-dump runs are useful for
       sanity-checking a specific game but don't drive table changes.
-    - `is_engine_class` filter mirrors the DLL's IsEnginePackage list.
-      Analysis usually restricts to game classes since engine fields
-      already have stable English names.
+    - `is_engine_class` uses the DLL's IsEnginePackage list, from
+      engine_paths.py. Game classes are Blueprint classes AND the game's
+      own C++ modules (/Script/<GameModule>/); analysis usually restricts
+      to them, since engine fields already have stable English names.
     - Tokenization matches the C# KeywordTokenizer rules so the
       derived keywords plug directly into the scoring table.
 """
@@ -45,6 +48,8 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Iterable, Iterator
+
+from engine_paths import is_engine_path
 
 
 # =====================================================================
@@ -67,6 +72,20 @@ class Dump:
         if not m:
             return self.path.stem
         return m.replace("-Win64-Shipping.exe", "").replace(".exe", "")
+
+
+def load_dumps(paths: list[Path]) -> list[Dump]:
+    """[EXTPR-539-540-2026-10-02] Load each class dump, skipping Dump All's object index: it sits beside the
+    class dump as <name>.objects.jsonl, which a `dumps/*.jsonl` glob also matches, and read as a game it
+    would add one with no classes to every cross-game count."""
+    out: list[Dump] = []
+    for path in paths:
+        d = load_dump(path)
+        if d.meta.get("file") == "objects":
+            print(f"[skip] {path.name}: Dump All's object index, not a class dump", file=sys.stderr)
+            continue
+        out.append(d)
+    return out
 
 
 def load_dump(path: Path) -> Dump:
@@ -131,19 +150,12 @@ def tokenize(identifier: str) -> list[str]:
 # Filtering — engine vs game classes
 # =====================================================================
 
-# Engine classes live under `/Script/<Module>/...`. The DLL emits paths
-# with either `.` or `/` as the package/class separator depending on
-# code path (Ubel::GetFullName uses `/`; PropertyMatch::classPath uses
-# `.`). Substring match against `/Script/` is format-agnostic and
-# precise enough — game classes live under `/Game/...` so there's no
-# collision risk.
+# Not every `/Script/<Module>/` class is the engine's: the game's own C++
+# classes live there too, and they are where many games keep their stats.
+# engine_paths.is_engine_path accepts both separators the DLL writes (`/`
+# from Ubel::GetFullName, `.` from PropertyMatch::classPath).
 def is_engine_class(cls: dict) -> bool:
-    path = cls.get("path", "")
-    return "/Script/" in path
-
-def is_game_class(cls: dict) -> bool:
-    path = cls.get("path", "")
-    return "/Game/" in path or "/Engine/" not in path and "/Script/" not in path
+    return is_engine_path(cls.get("path", ""))
 
 
 # =====================================================================
@@ -667,11 +679,68 @@ def report_meta(aggs: list[GameAggregates], dumps: list[Dump]) -> str:
 # Entry
 # =====================================================================
 
+# =====================================================================
+# Self-test -- synthetic dumps, so the engine/game split is checkable without a real
+# export. Run via --self-test; tools/check_analysis_selftests.py runs it in every gate pass.
+# =====================================================================
+
+def run_self_test() -> int:
+    errors: list[str] = []
+    # (path, own property, is engine). The game's own C++ module is the game's; so is a module
+    # whose name merely starts like an engine one. Engine modules are written either way the
+    # dumper writes them: one or two leading slashes, '/' or '.' after the module.
+    rows = (
+        ("//Script/FakeGame/AHeroBase", "Health", False),
+        ("//Script/EngineOverride/Foo", "Stamina", False),
+        ("/Game/Heroes/BP_Hero.BP_Hero_C", "Mana", False),
+        ("/Script/Engine/Actor", "bHidden", True),
+        ("//Script/UMG.UserWidget", "Visibility", True),
+    )
+    d = Dump(path=Path("<FakeGame>"))
+    d.meta = {"module": "FakeGame.exe"}
+    for i, (path, prop, _) in enumerate(rows, 1):
+        d.classes.append({"kind": "class", "name": f"C{i}", "addr": f"0x{i:X}", "path": path,
+                          "meta": "Class", "super": "", "super_addr": "0x0", "is_bpgc": False,
+                          "props_size": 8, "instance_count": 0,
+                          "props": [{"name": prop, "type": "FloatProperty", "offset": 0, "size": 4}],
+                          "funcs": []})
+    agg = aggregate(d, game_only=True)
+    n_engine = sum(1 for r in rows if r[2])
+    if agg.engine_class_count != n_engine:
+        errors.append(f"engine classes: {agg.engine_class_count}, expected {n_engine}")
+    if agg.game_class_count != len(rows) - n_engine:
+        errors.append(f"game classes: {agg.game_class_count}, expected {len(rows) - n_engine}")
+    for path, prop, engine in rows:
+        counted = prop in agg.own_prop_name_freq
+        if counted == engine:
+            errors.append(f"{path}: {prop} {'counted' if counted else 'not counted'} with game_only")
+    # [EXTPR-539-540-2026-10-02] D4's object index sits beside the class dump as <name>.objects.jsonl, so the
+    # README's `your-dumps/*.jsonl` picks it up too: it must be skipped, not read as one more game.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        cls_file = Path(tmp) / "game.jsonl"
+        idx_file = Path(tmp) / "game.objects.jsonl"
+        cls_file.write_text('{"kind":"meta","module":"Game.exe"}\n{"kind":"summary"}\n', encoding="utf-8")
+        idx_file.write_text('{"kind":"meta","file":"objects","class_dump":"game.jsonl"}\n', encoding="utf-8")
+        loaded = load_dumps([cls_file, idx_file])
+        if [d.path.name for d in loaded] != ["game.jsonl"]:
+            errors.append(f"object index not skipped: loaded {[d.path.name for d in loaded]}")
+    if errors:
+        print(f"SELF-TEST FAILED ({len(errors)} error(s)):")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+    print("self-test: all assertions passed.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("dumps", nargs="+", type=Path,
+    p.add_argument("dumps", nargs="*", type=Path,
                    help="JSONL dump files (one per game)")
+    p.add_argument("--self-test", action="store_true",
+                   help="Run the built-in synthetic-dump tests and exit")
     p.add_argument("--top", type=int, default=100,
                    help="Top N rows in frequency tables (default 100)")
     p.add_argument("--min-games", type=int, default=3,
@@ -680,18 +749,25 @@ def main(argv: list[str] | None = None) -> int:
                         "game spikes (e.g. one game with 500x m_pIconTexture) are "
                         "filtered out. Set to 1 to see everything.")
     p.add_argument("--include-engine", action="store_true",
-                   help="Include engine /Script/* classes in aggregates")
+                   help="Include the engine's own modules in aggregates "
+                        "(the game's own C++ classes are always included)")
     p.add_argument("--output", type=Path, default=Path("analysis-report.md"),
                    help="Markdown report path (default: analysis-report.md)")
     args = p.parse_args(argv)
+    if args.self_test:
+        return run_self_test()
+    if not args.dumps:
+        p.error("at least one dump file is required")
 
-    dumps: list[Dump] = []
     for path in args.dumps:
         if not path.exists():
             print(f"[error] missing dump: {path}", file=sys.stderr)
             return 2
         print(f"[load] {path} ...", file=sys.stderr)
-        dumps.append(load_dump(path))
+    dumps = load_dumps(list(args.dumps))
+    if not dumps:
+        print("[error] no class dump among the files (only object indexes)", file=sys.stderr)
+        return 2
 
     aggs = [aggregate(d, game_only=not args.include_engine) for d in dumps]
 

@@ -184,6 +184,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     [ObservableProperty] private int _selectedTabIndex;
     [ObservableProperty] private int _selectedAddressFormatIndex;
     [ObservableProperty] private bool _collapsePointerNodes;
+    /// <summary>[EXTPR-539-540-2026-10-02] D4.1: Export ▸ Dump All also writes the object index, after its
+    /// estimate and a confirmation (D4.2).</summary>
+    [ObservableProperty] private bool _dumpAllObjectIndex;
     [ObservableProperty] private int _arrayLimitExponent = 7; // 2^7 = 128
     [ObservableProperty] private int _dropDownLimitExponent = 9; // 2^9 = 512
     [ObservableProperty] private int _csxDrilldownDepth; // 0 = flat (dummy), 1+ = real child structures
@@ -1809,8 +1812,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 // Functions like KismetSystemLibrary::GetGameName have no inputs
                 // but DO return a value -- they need the dialog so the Verify
                 // Return Value toggle is reachable. Mirrors LiveWalker's path.
-                var inputParams = funcMatch.Params.Where(p => !p.IsReturn).ToList();
-                var hasReturn = funcMatch.Params.Any(p => p.IsReturn);
+                var inputParams = funcMatch.InputParams.ToList();
+                var hasReturn = funcMatch.Parameters.Any(p => p.IsReturn);
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
@@ -1861,7 +1864,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
 
                 var dialog = new Views.InvokeParamDialog(
-                    className, funcName, inputParams, funcMatch.Params, funcMatch.ParmsSize,
+                    className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
                     mode: Views.InvokeDialogMode.CopyBakedScript);
@@ -1977,9 +1980,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     || desktop.MainWindow is not { } owner)
                     return;
 
-                var inputParams = funcMatch.Params.Where(p => !p.IsReturn).ToList();
+                var inputParams = funcMatch.InputParams.ToList();
                 var dialog = new Views.InvokeParamDialog(
-                    className, funcName, inputParams, funcMatch.Params, funcMatch.ParmsSize,
+                    className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
                     mode: Views.InvokeDialogMode.PipeInvoke);
@@ -2028,8 +2031,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     }
                 }
 
-                var inputParams = funcMatch.Params.Where(p => !p.IsReturn).ToList();
-                var hasReturn = funcMatch.Params.Any(p => p.IsReturn);
+                var inputParams = funcMatch.InputParams.ToList();
+                var hasReturn = funcMatch.Parameters.Any(p => p.IsReturn);
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
@@ -2073,7 +2076,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     return;
 
                 var dialog = new Views.InvokeParamDialog(
-                    className, funcName, inputParams, funcMatch.Params, funcMatch.ParmsSize,
+                    className, funcName, inputParams, funcMatch.Parameters.ToList(), funcMatch.ParmsSize,
                     instanceAddr, _dump, _engineState?.UEVersion ?? 0,
                     aobMaker: _aobMaker, platform: _platform,
                     mode: Views.InvokeDialogMode.CopyBakedScript);
@@ -2412,6 +2415,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Track(InterestingFunctions, InterestingFuncsPersist);
         Track(InterestingProperties, InterestingPropsPersist);
         Track(Console, ConsolePersist);
+        Track(LiveFuncs, LiveFuncsPersist);
+        Track(DumpExplorer, DumpExplorerPersist);
         Track(GameClassFilter, GameClassFilterPersist);
         if (Snapshot != null) Track(Snapshot, SnapshotPersist);
         if (Spc != null) Track(Spc, SpcPersist);
@@ -2429,6 +2434,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(ArrayLimitExponent), nameof(DropDownLimitExponent),
         nameof(CsxDrilldownDepth), nameof(PreviewLimit), nameof(DeepScanElemCapExponent),
         nameof(CeStringLengthExponent), nameof(FabricateArrayCountExponent),
+        nameof(DumpAllObjectIndex),
     };
     private static readonly HashSet<string> LiveWalkerPersist = new()
     {
@@ -2510,6 +2516,15 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(InterestingPropertiesViewModel.ShowAll),
     };
     private static readonly HashSet<string> ConsolePersist = new() { nameof(ConsoleViewModel.GameOnly) };
+    private static readonly HashSet<string> LiveFuncsPersist = new()
+    {
+        nameof(LiveFuncsViewModel.FetchLimitExponent), nameof(LiveFuncsViewModel.MinCallsExponent),
+        nameof(LiveFuncsViewModel.HidePerFrame),
+    };
+    private static readonly HashSet<string> DumpExplorerPersist = new()
+    {
+        nameof(DumpExplorerViewModel.DiffIncludeEngine), nameof(DumpExplorerViewModel.DiffBreakingOnly),
+    };
     private static readonly HashSet<string> GameClassFilterPersist = new()
     {
         nameof(GameClassFilterViewModel.GameClassesOnly),
@@ -2535,6 +2550,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // Main display controls first — their OnChanged fans out to child VMs.
         SelectedAddressFormatIndex = o.Main.SelectedAddressFormatIndex;
         CollapsePointerNodes = o.Main.CollapsePointerNodes;
+        DumpAllObjectIndex = o.Main.DumpAllObjectIndex;
         ArrayLimitExponent = o.Main.ArrayLimitExponent;
         DropDownLimitExponent = o.Main.DropDownLimitExponent;
         CsxDrilldownDepth = o.Main.CsxDrilldownDepth;
@@ -2601,6 +2617,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         InterestingProperties.ShowAll = o.InterestingProps.ShowAll;
 
         Console.GameOnly = o.Console.GameOnly;
+        LiveFuncs.FetchLimitExponent = o.LiveFuncs.FetchLimitExponent;   // the VM clamps a hand-edited value
+        LiveFuncs.MinCallsExponent = o.LiveFuncs.MinCallsExponent;
+        LiveFuncs.HidePerFrame = o.LiveFuncs.HidePerFrame;
+        DumpExplorer.DiffIncludeEngine = o.DumpExplorer.DiffIncludeEngine;
+        DumpExplorer.DiffBreakingOnly = o.DumpExplorer.DiffBreakingOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
         // Clamped on LOAD too: ui-options.json is plain text a user can edit, and a
         // hand-written 0 would make the Classes tab return nothing with no visible cause.
@@ -2686,6 +2707,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
         o.Main.SelectedAddressFormatIndex = SelectedAddressFormatIndex;
         o.Main.CollapsePointerNodes = CollapsePointerNodes;
+        o.Main.DumpAllObjectIndex = DumpAllObjectIndex;
         o.Main.ArrayLimitExponent = ArrayLimitExponent;
         o.Main.DropDownLimitExponent = DropDownLimitExponent;
         o.Main.CsxDrilldownDepth = CsxDrilldownDepth;
@@ -2756,6 +2778,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.InterestingProps.ShowAll = InterestingProperties.ShowAll;
 
         o.Console.GameOnly = Console.GameOnly;
+        o.LiveFuncs.FetchLimitExponent = LiveFuncs.FetchLimitExponent;
+        o.LiveFuncs.MinCallsExponent = LiveFuncs.MinCallsExponent;
+        o.LiveFuncs.HidePerFrame = LiveFuncs.HidePerFrame;
+        o.DumpExplorer.DiffIncludeEngine = DumpExplorer.DiffIncludeEngine;
+        o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
         o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
 
@@ -3741,12 +3768,35 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 $"{safeModule}-dump-{stamp}", "Dump JSON Lines (*.jsonl)", ".jsonl");
             if (string.IsNullOrEmpty(filePath)) return;
 
+            // Cancellation linked to the connection so a mid-dump disconnect aborts
+            // the (now dead) per-class round-trips instead of hanging (X6).
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
+            var ct = cts.Token;
+
+            // [EXTPR-539-540-2026-10-02] D4.2: the object index only after the user saw what it costs and agreed;
+            // a remembered tick never writes a file of hundreds of megabytes silently. Declining keeps the class dump.
+            ObjectIndexEstimate? indexEstimate = null;
+            if (DumpAllObjectIndex)
+            {
+                StatusText = Res.Get("str.DumpAll.Index.Estimating");
+                var est = await ObjectIndexService.EstimateAsync(_dump, ct);
+                bool agreed = await Views.ConfirmDialog.ShowAsync(
+                    Res.Get("str.DumpAll.Index.ConfirmTitle"),
+                    Res.Format("str.DumpAll.Index.ConfirmBody", est.Objects,
+                               Helpers.DumpCompletionFormatter.FormatSize(est.Bytes),
+                               Helpers.DumpCompletionFormatter.FormatDuration(est.Duration),
+                               Path.GetFileName(ObjectIndexService.FileNameFor(filePath))),
+                    confirmText: Res.Get("str.DumpAll.Index.ConfirmYes"),
+                    cancelText: Res.Get("str.DumpAll.Index.ConfirmNo"));
+                if (agreed) indexEstimate = est;
+            }
+
             StatusText = "Dumping classes...";
             // [R7-D-02] Through StatusProgress, like the other exports: Progress<T> + Dispatcher.Post queued every report
             // twice, and the service's last one ("Done — N classes") replaced the final status below on every run.
             var dumpProgress = progress.For<DumpProgress>(p => p.Total > 0
                 ? $"{p.Phase} ({p.Done}/{p.Total})"
-                : $"{p.Phase} ({p.Done})");
+                : p.Done > 0 ? $"{p.Phase} ({p.Done})" : p.Phase);   // a phase with nothing counted yet
 
             var options = new DumpOptions(
                 GameOnly: false,                           // Capture engine too; analysis can filter
@@ -3755,13 +3805,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 DumperBuildNumber: GetBuildNumber(),
                 DumperCommit: null);                        // Not yet plumbed through
 
-            // Cancellation linked to the connection so a mid-dump disconnect aborts
-            // the (now dead) per-class round-trips instead of hanging (X6).
-            using var cts = CancellationTokenSource.CreateLinkedTokenSource(_connectionCts.Token);
-            var ct = cts.Token;
-
             tempPath = filePath + ".partial";
             DumpResult result;
+            // The class dump's own time, for the log: the time and size Dump All costs on a game are measured
+            // from it, and the object index after it is timed on its own.
+            var dumpClock = System.Diagnostics.Stopwatch.StartNew();
             await using (var fs = new FileStream(
                 tempPath, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true))
             {
@@ -3770,14 +3818,25 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
             File.Move(tempPath, filePath, overwrite: true);
             tempPath = null;   // published — don't delete on a later throw
+            var dumpElapsed = dumpClock.Elapsed;
 
             var byteLength = new FileInfo(filePath).Length;
+            var (indexNote, indexWritten) = indexEstimate is null
+                ? ("", false)
+                : await WriteObjectIndexAsync(filePath, indexEstimate, dumpProgress, ct);
+            // An index left by an earlier export to this name pairs with this dump on every key it carries (module,
+            // pe_hash, file name), yet lists another moment's objects: say so rather than delete the user's file.
+            if (!indexWritten && File.Exists(ObjectIndexService.FileNameFor(filePath)))
+                indexNote += Res.Format("str.DumpAll.Index.StaleSibling",
+                                        Path.GetFileName(ObjectIndexService.FileNameFor(filePath)));
             // Report from what the dump ACTUALLY produced (class/error counts), not
             // from the file's byte length, and format the size in floating point (X4).
             progress.Complete(Helpers.DumpCompletionFormatter.Format(
-                result, byteLength, Path.GetFileName(filePath)));
-            _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes, " +
-                      $"{result.ClassesEmitted} classes, {result.Errors} errors)");
+                result, byteLength, Path.GetFileName(filePath)) + indexNote);
+            _log.Info($"DumpAll exported to {filePath} ({byteLength} bytes in {dumpElapsed.TotalSeconds:F1} s, " +
+                      $"{result.ClassesEmitted} classes, {result.StructsEmitted} structs, {result.EnumsEmitted} enums, " +
+                      $"{result.Errors} errors; enums listed={result.EnumsListed}, names failed={result.EnumNamesFailed}, " +
+                      $"truncated={result.EnumsTruncated}; params from num_parms={result.ParamsFromNumParms})");
 
             // Offer a one-click load in the Dump Explorer tab (no auto-load — the
             // user may re-export or be mid-operation there).
@@ -3795,6 +3854,49 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             SetError(ex);
             _log.Error("DumpAll export failed", ex);
             TryDeletePartial(tempPath);
+        }
+    }
+
+    /// <summary>
+    /// [EXTPR-539-540-2026-10-02] D4: the object index beside a published class dump, temp-then-rename like it.
+    /// The class dump is already published, so a cancelled or failed index is reported here, never as a failed
+    /// dump. Logs the estimate against what was written, so the one-page sample can be tuned.
+    /// </summary>
+    private async Task<(string Note, bool Written)> WriteObjectIndexAsync(string classDumpPath,
+        ObjectIndexEstimate estimate, IProgress<DumpProgress> progress, CancellationToken ct)
+    {
+        var indexPath = ObjectIndexService.FileNameFor(classDumpPath);
+        var indexTemp = indexPath + ".partial";
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        try
+        {
+            ObjectIndexResult r;
+            await using (var fs = new FileStream(
+                indexTemp, FileMode.Create, FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true))
+            {
+                r = await ObjectIndexService.GenerateAsync(_dump, _engineState!, fs, GetBuildNumber(),
+                    Path.GetFileName(classDumpPath), progress, ct);
+            }
+            File.Move(indexTemp, indexPath, overwrite: true);
+            long bytes = new FileInfo(indexPath).Length;
+            _log.Info($"DumpAll object index: {r.Written} objects in {r.Total} slots, {bytes} bytes, " +
+                      $"{sw.Elapsed.TotalSeconds:F1} s; estimated {estimate.Objects} objects in {estimate.Slots} slots, " +
+                      $"{estimate.Bytes} bytes, {estimate.Duration.TotalSeconds:F1} s; index missing={r.IndexMissing}");
+            return (Res.Format("str.DumpAll.Index.Done", r.Written,
+                               Helpers.DumpCompletionFormatter.FormatSize(bytes), Path.GetFileName(indexPath))
+                    + (r.IndexMissing ? Res.Get("str.DumpAll.Index.NoSlots") : ""), true);
+        }
+        catch (OperationCanceledException)
+        {
+            TryDeletePartial(indexTemp);
+            _log.Info("DumpAll object index cancelled; the class dump is published");
+            return (Res.Get("str.DumpAll.Index.Cancelled"), false);
+        }
+        catch (Exception ex)
+        {
+            TryDeletePartial(indexTemp);
+            _log.Error("DumpAll object index failed; the class dump is published", ex);
+            return (Res.Format("str.DumpAll.Index.Failed", ex.Message), false);
         }
     }
 

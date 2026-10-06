@@ -1,0 +1,74 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [
+    {
+     "path": "Game/AOther",
+     "name": "AOther",
+     "walk_failed": true
+    }
+   ],
+   "changed": [],
+   "unchanged": 1,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [],
+   "removed": [
+    {
+     "path": "Script/FakeGame.FHit",
+     "name": "FHit",
+     "walk_failed": false
+    }
+   ],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [],
+   "removed": [
+    {
+     "path": "Script/FakeGame.EKind",
+     "name": "EKind"
+    }
+   ],
+   "changed": [],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [
+    "the new dump has 1 error line(s), walks that failed; a type listed as missing because of one is tagged"
+   ],
+   "enum": [],
+   "param": []
+  }
+ }
+}

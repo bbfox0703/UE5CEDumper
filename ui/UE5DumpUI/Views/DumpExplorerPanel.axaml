@@ -30,6 +30,26 @@
                 Command="{Binding RecheckLiveCommand}"
                 ToolTip.Tip="{StaticResource str.Tip.Dump.Recheck}"
                 Padding="12,4"/>
+        <!-- [DUMPDIFF-UI] Compare: the main part runs it at once; the arrow holds the report's two options, which
+             persist, so they stay out of the way of the common click. -->
+        <SplitButton Content="{StaticResource str.Dump.Compare}"
+                     Command="{Binding CompareCommand}"
+                     ToolTip.Tip="{StaticResource str.Tip.Dump.Compare}"
+                     ToolTip.ShowOnDisabled="True"
+                     Padding="12,4">
+          <SplitButton.Flyout>
+            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+              <MenuItem Header="{StaticResource str.Dump.Compare.IncludeEngine}"
+                        ToggleType="CheckBox"
+                        IsChecked="{Binding DiffIncludeEngine, Mode=TwoWay}"
+                        ToolTip.Tip="{StaticResource str.Tip.Dump.Compare.IncludeEngine}"/>
+              <MenuItem Header="{StaticResource str.Dump.Compare.BreakingOnly}"
+                        ToggleType="CheckBox"
+                        IsChecked="{Binding DiffBreakingOnly, Mode=TwoWay}"
+                        ToolTip.Tip="{StaticResource str.Tip.Dump.Compare.BreakingOnly}"/>
+            </MenuFlyout>
+          </SplitButton.Flyout>
+        </SplitButton>
         <Button Content="{StaticResource str.Dump.Cancel}"
                 Command="{Binding CancelCommand}"
                 IsVisible="{Binding IsBusy}"
@@ -57,6 +77,9 @@
         <ComboBoxItem Content="{StaticResource str.Dump.Cat.Class}"/>
         <ComboBoxItem Content="{StaticResource str.Dump.Cat.Property}"/>
         <ComboBoxItem Content="{StaticResource str.Dump.Cat.Function}"/>
+        <ComboBoxItem Content="{StaticResource str.Dump.Cat.Struct}"/>
+        <ComboBoxItem Content="{StaticResource str.Dump.Cat.Enum}"/>
+        <ComboBoxItem Content="{StaticResource str.Dump.Cat.Enumerator}"/>
       </ComboBox>
     </StackPanel>
 
@@ -97,7 +120,7 @@
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColKind}"
                                 Binding="{Binding KindLabel}" SortMemberPath="KindLabel"
-                                Width="60" CanUserSort="True"/>
+                                Width="100" CanUserSort="True"/>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColName}"
                                 Binding="{Binding Name}" SortMemberPath="Name"
                                 Width="260" MinWidth="140" CanUserSort="True"/>
@@ -167,7 +190,7 @@
           <DataGrid.Columns>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColKind}"
                                 Binding="{Binding KindLabel}" SortMemberPath="KindLabel"
-                                Width="60" CanUserSort="True"/>
+                                Width="100" CanUserSort="True"/>
             <DataGridTextColumn Header="{StaticResource str.Dump.ColName}"
                                 Binding="{Binding Name}" SortMemberPath="Name"
                                 Width="260" MinWidth="140" CanUserSort="True"/>

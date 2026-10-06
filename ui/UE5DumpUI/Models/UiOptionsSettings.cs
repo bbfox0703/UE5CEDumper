@@ -44,6 +44,16 @@ public sealed class UiOptionsSettings
     public GameClassFilterUiOptions GameClassFilter { get; set; } = new();
     public ProxyDeployUiOptions ProxyDeploy { get; set; } = new();
     public SystemUiOptions System { get; set; } = new();
+    public LiveFuncsUiOptions LiveFuncs { get; set; } = new();
+    public DumpExplorerUiOptions DumpExplorer { get; set; } = new();
+}
+
+/// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options (D8). Both OFF by default: a default report is the
+/// script's default, the game's own types in full.</summary>
+public sealed class DumpExplorerUiOptions
+{
+    public bool DiffIncludeEngine { get; set; }
+    public bool DiffBreakingOnly { get; set; }
 }
 
 /// <summary>System-tab maintenance preferences.</summary>
@@ -74,6 +84,9 @@ public sealed class MainUiOptions
     public int DeepScanElemCapExponent { get; set; } = 8;
     public int CeStringLengthExponent { get; set; } = 8;   // 2^8 = 256 (CE String leaf <Length>)
     public int FabricateArrayCountExponent { get; set; } = 2;   // 2^2 = 4 rows (default); 0 = off, 2^N = Copy CE Field array fabricate count
+    /// <summary>[EXTPR-539-540-2026-10-02] D4.1: Dump All also writes the object index. OFF by default; a
+    /// remembered ON still shows the estimate and asks on every export.</summary>
+    public bool DumpAllObjectIndex { get; set; }
 }
 
 public sealed class LiveWalkerUiOptions
@@ -205,6 +218,16 @@ public sealed class InterestingPropsUiOptions
 public sealed class ConsoleUiOptions
 {
     public bool GameOnly { get; set; }
+}
+
+/// <summary>Live Funcs capture settings. Each is stored as its slider's exponent, like the toolbar's power-of-two
+/// sliders, so a loaded value needs no snapping; the view model clamps it to the slider's range.</summary>
+public sealed class LiveFuncsUiOptions
+{
+    public int FetchLimitExponent { get; set; } = 9;
+    public int MinCallsExponent { get; set; }
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] Leave out the per-frame functions in the DLL. OFF by default.</summary>
+    public bool HidePerFrame { get; set; }
 }
 
 public sealed class GameClassFilterUiOptions

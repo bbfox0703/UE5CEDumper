@@ -14,13 +14,22 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class LiveFuncsViewModelTests
 {
-    private sealed class FakeDumpService : StubDumpService
+    private sealed class FakeDumpService : StubDumpService, IDumpService
     {
+        public bool? LastSkipPerFrame { get; private set; }
+
+        Task<PeProfileResult> IDumpService.PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct)
+        {
+            LastSkipPerFrame = skipPerFrame;
+            return PeProfileGetAsync(limit, ct);
+        }
+
         public bool StartHookActive { get; set; } = true;
         public string StartDetail { get; set; } = "";
         public int StartCalls { get; private set; }
         public int StopCalls { get; private set; }
         public int GetCalls { get; private set; }
+        public int LastLimit { get; private set; }
         public PeProfileResult NextGet { get; set; } = new();
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
@@ -36,6 +45,7 @@ public class LiveFuncsViewModelTests
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
         {
             GetCalls++;
+            LastLimit = limit;
             return Task.FromResult(NextGet);
         }
     }
@@ -717,5 +727,990 @@ public class LiveFuncsViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.DoesNotContain(vm.Results, r => r.FuncName == "Tick");
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] L1: the fetch limit is a slider over powers of two,
+    // 2^6 = 64 .. 2^15 = 32768, default 2^9 = 512. A recording keeps the value it
+    // started with (L4).
+    // ==================================================================
+
+    [Fact]
+    public async Task FetchLimit_Default_AsksFor512()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(9, vm.FetchLimitExponent);
+        Assert.Equal(512, vm.FetchLimit);
+        Assert.Equal(512, dump.LastLimit);
+    }
+
+    [Fact]
+    public async Task FetchLimit_FollowsTheExponent_UpTo32768()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+
+        vm.FetchLimitExponent = 15;
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(32768, vm.FetchLimit);
+        Assert.Equal(32768, dump.LastLimit);
+    }
+
+    [Theory]
+    [InlineData(5, 6)]
+    [InlineData(-3, 6)]
+    [InlineData(16, 15)]
+    [InlineData(99, 15)]
+    [InlineData(12, 12)]
+    public void FetchLimitExponent_StaysInTheSliderRange(int set, int expected)
+    {
+        // A hand-edited ui-options.json reaches the property without the slider's own bounds.
+        var (vm, _) = MakeVm();
+
+        vm.FetchLimitExponent = set;
+
+        Assert.Equal(expected, vm.FetchLimitExponent);
+        Assert.Equal(1 << expected, vm.FetchLimit);
+    }
+
+    [Fact]
+    public async Task FetchLimit_ARecordingUsesTheValueItStartedWith()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+        vm.FetchLimitExponent = 7;                  // 128
+        await vm.StartCommand.ExecuteAsync(null);
+
+        vm.FetchLimitExponent = 12;                 // the slider is disabled now; a change reaches the VM anyway
+        await vm.RefreshCommand.ExecuteAsync(null); // a peek during the recording
+        Assert.Equal(128, dump.LastLimit);
+        await vm.StopCommand.ExecuteAsync(null);    // Stop's own fetch belongs to the recording too
+        Assert.Equal(128, dump.LastLimit);
+
+        await vm.RefreshCommand.ExecuteAsync(null); // after it, a re-pull uses the current value
+        Assert.Equal(4096, dump.LastLimit);
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] When does a higher Fetch limit help? Only when the DLL sent
+    // as many rows as it was asked for (the cap is what cut the page) and the slider can still
+    // go higher. A page short of BOTH the limit and distinct_funcs lost rows the DLL could not
+    // read (stale UFunctions) or an abort cut it; no limit brings those back. Measured on
+    // Avowed 2026-10-06: 648 distinct, 543 rows at every limit from 8192 up.
+    // ==================================================================
+
+    private static PeProfileEntry[] Rows(int n)
+        => Enumerable.Range(0, n).Select(i => new PeProfileEntry
+        {
+            ClassName = "C" + i, FuncName = "F" + i, Count = n - i, FuncAddr = "0x" + (i + 1).ToString("X"),
+        }).ToArray();
+
+    [Fact]
+    public async Task CapHit_BelowTheMaximum_RaiseHelps()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;   // 64
+        dump.NextGet = TruncatedResultOf(900, Rows(64));
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task ShortOfTheLimit_RaiseDoesNotHelp()
+    {
+        var (vm, dump) = MakeVm();   // 512
+        dump.NextGet = TruncatedResultOf(900, Rows(2));
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+        Assert.Contains("showing top 2 of 900", vm.StatusText);   // still reported as incomplete
+    }
+
+    [Fact]
+    public async Task CapHit_AtTheMaximum_RaiseDoesNotHelp()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 15;   // 32768, the slider's end
+        dump.NextGet = TruncatedResultOf(40000, Rows(32768));
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task WholePage_RaiseDoesNotHelp()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        dump.NextGet = ResultOf(Rows(64));   // exactly the limit, but nothing more was recorded
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task BaselineCutByTheCap_RaiseHelps_EvenWhenTheActionPageIsWhole()
+    {
+        // The baseline has to be recorded again with a higher limit, so the advice stands.
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        dump.NextGet = TruncatedResultOf(900, Rows(64));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = ResultOf(Rows(3));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task ClearBaseline_ForgetsTheBaselinesCap()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        dump.NextGet = TruncatedResultOf(900, Rows(64));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(Rows(3));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        vm.ClearBaselineCommand.Execute(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] L2: Save .jsonl writes the rows on screen, in the order the
+    // game first called them, under one summary line. Disabled while recording (L4).
+    // ==================================================================
+
+    /// <summary>A platform whose save dialog answers with a temp path (or with nothing, to cancel).</summary>
+    private sealed class SavePlatform : IPlatformService
+    {
+        public string? Answer { get; set; } = Path.Combine(Path.GetTempPath(), $"lf-save-{Guid.NewGuid():N}.jsonl");
+        public int Asked { get; private set; }
+        public string? DefaultName { get; private set; }
+        public string? Extension { get; private set; }
+
+        public Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension)
+        {
+            Asked++;
+            DefaultName = defaultFileName;
+            Extension = filterExtension;
+            return Task.FromResult(Answer);
+        }
+        public bool TryAcquireSingleInstance() => true;
+        public void ReleaseSingleInstance() { }
+        public string GetAppDataPath() => Path.GetTempPath();
+        public string GetLogDirectoryPath() => Path.GetTempPath();
+        public Task<bool> CopyToClipboardAsync(string text) => Task.FromResult(true);
+        public Task RevealInExplorerAsync(string path) => Task.CompletedTask;
+        public string GetMachineName() => "TEST";
+        public void CloseImeForWindow(IntPtr windowHandle) { }
+    }
+
+    private static (LiveFuncsViewModel vm, FakeDumpService dump, SavePlatform platform) MakeSavingVm()
+    {
+        var dump = new FakeDumpService();
+        var platform = new SavePlatform();
+        return (new LiveFuncsViewModel(dump, new NoopLogger(), platform), dump, platform);
+    }
+
+    // ==================================================================
+    // [LIVEFUNCS-HIDE-PERFRAME] Hide per-frame: asked of the DLL, fixed at Start, and the cut counted without it.
+    // ==================================================================
+
+    private static PeProfileResult PerFramePage(int shown, int distinct, int? perFrameHidden) => new()
+    {
+        DistinctFuncs = distinct, TotalCalls = 100_000, PerFrameHidden = perFrameHidden,
+        Entries = Enumerable.Range(0, shown).Select(i => new PeProfileEntry
+            { ClassName = "A", FuncName = "F" + i, Count = 100 - i % 50, FirstSeq = i + 1, FuncAddr = "0x" + i }).ToList(),
+    };
+
+    [Fact]
+    public async Task HidePerFrame_IsOff_ByDefault_AndAskedOfTheDllWhenOn()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, null) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger());
+        Assert.False(vm.HidePerFrame);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(dump.LastSkipPerFrame);
+
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 3, 5);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(dump.LastSkipPerFrame);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_IsFixedAtStart_LikeTheFetchLimit()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, 0) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        vm.HidePerFrame = false;                       // moved while recording
+        await vm.RefreshCommand.ExecuteAsync(null);    // a peek ranks the recording as it began
+        Assert.True(dump.LastSkipPerFrame);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(dump.LastSkipPerFrame);
+
+        await vm.RefreshCommand.ExecuteAsync(null);    // after Stop, a re-pull takes the current value
+        Assert.False(dump.LastSkipPerFrame);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_TheRowsLeftOutAreNotRowsTheLimitCut()
+    {
+        // 1000 distinct, 488 of them per-frame and left out, 512 shown at a 512 limit: nothing else is missing, so
+        // no higher limit is offered. Without the count from the DLL the same page reads as cut.
+        var dump = new FakeDumpService { NextGet = PerFramePage(512, 1000, 488) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(488, vm.LastPerFrameHidden);
+        Assert.False(vm.RaiseFetchLimitHelps);
+
+        dump.NextGet = PerFramePage(512, 1000, 400);   // 88 more were cut by the limit
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_AnOlderDllThatLeftNothingOut_IsSaidSo()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, null) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(vm.PerFrameUnsupported);
+        Assert.Equal(0, vm.LastPerFrameHidden);
+
+        dump.NextGet = PerFramePage(3, 10, 7);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.False(vm.PerFrameUnsupported);
+        Assert.Equal(7, vm.LastPerFrameHidden);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_ABaselineFetchedTheOtherWay_IsFlagged()
+    {
+        // Per-frame rows missing from one side only would all come back NEW (or vanish) in the diff.
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 3, null) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger());
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        Assert.False(vm.BaselinePerFrameMismatch);
+
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 10, 7);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(vm.BaselinePerFrameMismatch);
+
+        vm.SetBaselineCommand.Execute(null);           // a baseline fetched the same way
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(vm.BaselinePerFrameMismatch);
+
+        // A DLL that ignored the option left nothing out: that page matches a baseline that hid nothing.
+        vm.HidePerFrame = false;
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 3, null);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(vm.BaselinePerFrameMismatch);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_AFunctionLeftOutOfTheBaseline_IsNotNew_WhenTheActionFiredItLess()
+    {
+        // Review: the idle baseline left the HUD's Tick out as per-frame; the action paused the game for a menu, so
+        // the Tick fired too little to be per-frame there and came back -- with no baseline row, it read NEW and
+        // topped the New/changed-only list the baseline exists to clean.
+        var dump = new FakeDumpService
+        {
+            NextGet = new PeProfileResult
+            {
+                DistinctFuncs = 2, TotalCalls = 700, PerFrameHidden = 1, PerFrameFuncs = new[] { "0xA" },
+                Entries = new() { new PeProfileEntry { ClassName = "AIdle", FuncName = "Wander", Count = 3, FirstSeq = 5, FuncAddr = "0xB" } },
+            },
+        };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 3, TotalCalls = 200, PerFrameHidden = 0, PerFrameFuncs = Array.Empty<string>(),
+            Entries = new()
+            {
+                new PeProfileEntry { ClassName = "AHUD", FuncName = "ReceiveTick", Count = 120, FirstSeq = 1, FuncAddr = "0xA" },
+                new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 1, FirstSeq = 9, FuncAddr = "0xC" },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "ReceiveTick");   // New/changed-only is on by default
+        Assert.Contains(vm.Results, r => r.FuncName == "OpenShop" && r.IsNew);
+        vm.NewChangedOnly = false;
+        var tick = Assert.Single(vm.Results, r => r.FuncName == "ReceiveTick");
+        Assert.False(tick.IsNew);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_APartialBaseline_CountsWithoutTheLeftOutFunctions()
+    {
+        // 1000 distinct, 600 left out as per-frame, 64 shown at a 64 limit: 64 of 400 were fetched, not of 1,000.
+        var dump = new FakeDumpService { NextGet = PerFramePage(64, 1000, 600) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true, FetchLimitExponent = 6 };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        Assert.Contains("64 of 400", vm.BaselineStatus);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_AgainstAMismatchedBaseline_TheStatusMakesNoClaimAboutTheNewRows()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 10, 7) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        vm.HidePerFrame = false;                       // the action fetched the other way
+        dump.NextGet = PerFramePage(10, 10, null);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.True(vm.BaselinePerFrameMismatch);
+        Assert.DoesNotContain("almost certainly", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_InDiffMode_RecordsWhetherTheBaselineLeftThePerFrameFunctionsOut()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 10, 7);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.NewChangedOnly = false;                     // keep rows on screen to save
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("diff").GetBoolean());
+            Assert.True(head.GetProperty("baseline_hide_per_frame").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_RecordsHidePerFrame_AndHowManyWereLeftOut()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(2, 9, 7);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("hide_per_frame").GetBoolean());
+            Assert.Equal(7, head.GetProperty("per_frame_hidden").GetInt32());
+        }
+        finally { File.Delete(platform.Answer!); }
+
+        // Off: the key says so, and no count is claimed.
+        var (vm2, dump2, platform2) = MakeSavingVm();
+        dump2.NextGet = PerFramePage(2, 2, null);
+        await vm2.StartCommand.ExecuteAsync(null);
+        await vm2.StopCommand.ExecuteAsync(null);
+        await vm2.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var head = ReadLines(platform2.Answer!)[0].RootElement;
+            Assert.False(head.GetProperty("hide_per_frame").GetBoolean());
+            Assert.False(head.TryGetProperty("per_frame_hidden", out _));
+        }
+        finally { File.Delete(platform2.Answer!); }
+    }
+
+    [Fact]
+    public void HidePerFrame_PersistsThroughTheMainWindow()
+    {
+        // MainWindowViewModel cannot be built in a unit test; pin its persistence sites by source.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "build.ps1"))) root = root.Parent;
+        Assert.NotNull(root);
+        var src = File.ReadAllText(Path.Combine(root!.FullName, "ui", "UE5DumpUI", "ViewModels", "MainWindowViewModel.cs"));
+        Assert.Contains("nameof(LiveFuncsViewModel.HidePerFrame)", src);
+        Assert.Contains("LiveFuncs.HidePerFrame = o.LiveFuncs.HidePerFrame", src);
+        Assert.Contains("o.LiveFuncs.HidePerFrame = LiveFuncs.HidePerFrame", src);
+    }
+
+    private static List<System.Text.Json.JsonDocument> ReadLines(string path)
+        => File.ReadAllLines(path).Where(l => l.Length > 0).Select(l => System.Text.Json.JsonDocument.Parse(l)).ToList();
+
+    [Fact]
+    public async Task SaveJsonl_WritesTheRowsOnScreen_InFirstCallOrder_UnderASummaryLine()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 5, TotalCalls = 1234,
+            Entries = new()
+            {
+                new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 5, FuncAddr = "0x10" },
+                new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 3, FirstSeq = 2, FuncAddr = "0x20",
+                                     NumParms = 2, ParmsSize = 16 },
+                new PeProfileEntry { ClassName = "AHUD", FuncName = "Draw", Count = 40, FirstSeq = 0, FuncAddr = "0x30" },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, platform.Asked);
+        Assert.Equal(".jsonl", platform.Extension);   // the dialog builds "*" + this as its pattern
+        Assert.StartsWith("live-funcs-", platform.DefaultName);
+        Assert.EndsWith(".jsonl", platform.DefaultName);
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.Equal(4, lines.Count);
+            var head = lines[0].RootElement;
+            Assert.Equal("live_funcs", head.GetProperty("kind").GetString());
+            Assert.Equal(3, head.GetProperty("rows").GetInt32());
+            Assert.Equal(3, head.GetProperty("fetched").GetInt32());
+            Assert.Equal(5, head.GetProperty("distinct").GetInt32());
+            Assert.Equal(1234, head.GetProperty("total_calls").GetInt64());
+            Assert.Equal(512, head.GetProperty("fetch_limit").GetInt32());
+            Assert.False(head.GetProperty("diff").GetBoolean());
+            Assert.Equal("", head.GetProperty("filter").GetString());
+            Assert.True(head.TryGetProperty("saved_at", out _));
+
+            // First call first; an unknown order (0) goes last.
+            Assert.Equal(new[] { "OpenShop", "Tick", "Draw" },
+                         lines.Skip(1).Select(l => l.RootElement.GetProperty("func").GetString()).ToArray());
+            var shop = lines[1].RootElement;
+            Assert.Equal("func", shop.GetProperty("kind").GetString());
+            Assert.Equal("AShop", shop.GetProperty("class").GetString());
+            Assert.Equal(2, shop.GetProperty("order").GetInt64());
+            Assert.Equal(3, shop.GetProperty("calls").GetInt64());
+            Assert.Equal("0x20", shop.GetProperty("addr").GetString());
+            Assert.Equal(2, shop.GetProperty("params").GetInt32());
+            Assert.Equal(16, shop.GetProperty("params_size").GetInt32());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_LeavesOutRowsTheFilterHides_AndRecordsTheFilter()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 3, FirstSeq = 2 },
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.FilterText = "shop";
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.Equal(2, lines.Count);
+            Assert.Equal(1, lines[0].RootElement.GetProperty("rows").GetInt32());
+            Assert.Equal(2, lines[0].RootElement.GetProperty("fetched").GetInt32());
+            Assert.Equal("shop", lines[0].RootElement.GetProperty("filter").GetString());
+            Assert.Equal("OpenShop", lines[1].RootElement.GetProperty("func").GetString());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_NamesThatNeedEscaping_ReadBackUnchanged()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        const string cls = "AShop\"Vendor\\Ü 商店";
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = cls, FuncName = "Open\tShop", Count = 1, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var row = ReadLines(platform.Answer!)[1].RootElement;
+            Assert.Equal(cls, row.GetProperty("class").GetString());
+            Assert.Equal("Open\tShop", row.GetProperty("func").GetString());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_InDiffMode_CarriesTheDeltaAndTheNewFlag()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 950, FirstSeq = 1 },
+            new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 2, FirstSeq = 3 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.NewChangedOnly = false;
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.True(lines[0].RootElement.GetProperty("diff").GetBoolean());
+            Assert.Equal(1, lines[0].RootElement.GetProperty("baseline_funcs").GetInt32());
+            var tick = lines.Skip(1).Single(l => l.RootElement.GetProperty("func").GetString() == "Tick").RootElement;
+            var shop = lines.Skip(1).Single(l => l.RootElement.GetProperty("func").GetString() == "OpenShop").RootElement;
+            Assert.Equal(50, tick.GetProperty("delta").GetInt64());
+            Assert.False(tick.GetProperty("new").GetBoolean());
+            Assert.True(shop.GetProperty("new").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_WhileRecording_DoesNotAsk()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.RefreshCommand.ExecuteAsync(null);   // rows on screen, still recording
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, platform.Asked);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_EmptyTable_DoesNotAsk()
+    {
+        var (vm, _, platform) = MakeSavingVm();
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, platform.Asked);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_Cancelled_WritesNothing()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        string path = platform.Answer!;
+        platform.Answer = null;   // the user closed the dialog
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        Assert.Equal(1, platform.Asked);
+        Assert.False(File.Exists(path));
+    }
+
+    // Review of a20af931: the summary must say why rows are missing and whether NEW can be trusted.
+
+    [Fact]
+    public async Task SaveJsonl_RecordsTheCheckBoxesThatHideRows()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.HideWidgets = true;
+        vm.HideEvents = true;
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("hide_widgets").GetBoolean());
+            Assert.True(head.GetProperty("hide_events").GetBoolean());
+            Assert.False(head.GetProperty("periodic_only").GetBoolean());
+            Assert.False(head.TryGetProperty("new_changed_only", out _));   // only means something in diff mode
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_InDiffMode_SaysWhetherTheBaselineWasPartial()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = TruncatedResultOf(900, new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 2, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("baseline_partial").GetBoolean());
+            Assert.Equal(900, head.GetProperty("baseline_distinct").GetInt32());
+            Assert.True(head.GetProperty("new_changed_only").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_RowsFromAPeekDuringTheRecording_SaySo()
+    {
+        // A Refresh during the recording leaves its rows on screen when the recording ends without a
+        // fetch (a disconnect, leaving the tab), and Save is enabled again.
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = new PeProfileResult
+        {
+            Recording = true, DistinctFuncs = 1, TotalCalls = 9,
+            Entries = new() { new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9, FirstSeq = 1 } },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        vm.ResetOnDisconnect();
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            Assert.True(ReadLines(platform.Answer!)[0].RootElement.GetProperty("recording_at_fetch").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_CadenceValuesReadBackExactly_AndThePanelsVerdictIsSaved()
+    {
+        // Just past the Timer thresholds: a rounded cv of 0.25 would turn the panel's "not periodic" into "periodic".
+        var entry = new PeProfileEntry
+        {
+            ClassName = "AHUD", FuncName = "Pulse", Count = 30, FirstSeq = 1,
+            MeanPeriodMs = 40.0004, Cv = 0.2504, GapSamples = 9,
+        };
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(entry);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var row = ReadLines(platform.Answer!)[1].RootElement;
+            Assert.Equal(0.2504, row.GetProperty("cv").GetDouble());
+            Assert.Equal(40.0004, row.GetProperty("period_ms").GetDouble());
+            Assert.Equal(entry.IsPeriodic, row.GetProperty("periodic").GetBoolean());
+            Assert.Equal(entry.Kind, row.GetProperty("badge").GetString());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SetBaseline_AgainWhileDiffIsOn_RecomputesTheRowsAgainstTheNewBaseline()
+    {
+        // DiffMode = true re-applied the diff only when it CHANGED, so a second Set Baseline kept every row's
+        // Delta / IsNew against the old baseline while the status (and a saved file) named the new one.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(
+            new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 950 },
+            new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 2 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.NewChangedOnly = false;
+        Assert.Contains(vm.Results, r => r.IsNew);   // against the idle baseline
+
+        vm.SetBaselineCommand.Execute(null);          // this table is now the baseline
+
+        Assert.Equal(2, vm.Results.Count);
+        Assert.All(vm.Results, r => { Assert.False(r.IsNew); Assert.Equal(0, r.Delta); });
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] L3: Min calls, a slider over 1, 2, 4 .. 32 (exponent 0..5,
+    // default 1). It hides rows with FEWER calls (Count < MinCalls, so the default hides
+    // nothing; R1: NEW rows get no exemption). It is a VIEW filter on the capture it was set
+    // for: read at Start, kept for that capture, and moving it later changes nothing until the
+    // next Start. The baseline is built from every fetched row, never from the filtered view.
+    // ==================================================================
+
+    private static PeProfileResult CallsResult(params (string func, long count)[] rows)
+        => ResultOf(rows.Select((r, i) => new PeProfileEntry
+        {
+            ClassName = "C", FuncName = r.func, Count = r.count, FirstSeq = i + 1, FuncAddr = "0x" + (i + 1).ToString("X"),
+        }).ToArray());
+
+    [Fact]
+    public async Task MinCalls_Default_IsOne_AndHidesNothing()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Once", 1), ("Often", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(0, vm.MinCallsExponent);
+        Assert.Equal(1, vm.MinCalls);
+        Assert.Equal(2, vm.Results.Count);
+    }
+
+    [Fact]
+    public async Task MinCalls_HidesRowsWithFewerCalls_KeepsTheEqualOne()
+    {
+        var (vm, dump) = MakeVm();
+        vm.MinCallsExponent = 2;   // 4
+        dump.NextGet = CallsResult(("Three", 3), ("Four", 4), ("Fifty", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "Four", "Fifty" }, vm.Results.Select(r => r.FuncName).OrderBy(n => n).Reverse().ToArray());
+    }
+
+    [Fact]
+    public async Task MinCalls_MovedAfterStart_ChangesNothingUntilTheNextStart()
+    {
+        var (vm, dump) = MakeVm();
+        vm.MinCallsExponent = 2;   // 4, read at Start
+        dump.NextGet = CallsResult(("Three", 3), ("Fifty", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        vm.MinCallsExponent = 0;                      // moved after the capture
+        Assert.Single(vm.Results);
+        await vm.RefreshCommand.ExecuteAsync(null);   // a re-pull of the same capture
+        Assert.Single(vm.Results);
+
+        await vm.StartCommand.ExecuteAsync(null);     // the next capture reads 1
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.Results.Count);
+    }
+
+    [Theory]
+    [InlineData(-1, 0)]
+    [InlineData(6, 5)]
+    [InlineData(40, 5)]
+    [InlineData(3, 3)]
+    public void MinCallsExponent_StaysInTheSliderRange(int set, int expected)
+    {
+        var (vm, _) = MakeVm();
+
+        vm.MinCallsExponent = set;
+
+        Assert.Equal(expected, vm.MinCallsExponent);
+        Assert.Equal(1 << expected, vm.MinCalls);
+    }
+
+    [Fact]
+    public async Task MinCalls_HidesANewRowToo()
+    {
+        // R1 (maintainer, 2026-10-06): no exemption for NEW rows.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Tick", 900));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        vm.MinCallsExponent = 2;   // 4, for the action capture
+        dump.NextGet = CallsResult(("Tick", 950), ("OpenShop", 2));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "OpenShop");
+    }
+
+    [Fact]
+    public async Task MinCalls_TheBaselineStillHoldsTheRowsItHid()
+    {
+        // A view filter: if it cut what SetBaseline reads, an idle function with few calls would be
+        // missing from the baseline and come back as a false NEW.
+        var (vm, dump) = MakeVm();
+        vm.MinCallsExponent = 2;   // 4
+        dump.NextGet = CallsResult(("Tick", 900), ("Rare", 2));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "Rare");
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = CallsResult(("Tick", 950), ("Rare", 6));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        var rare = Assert.Single(vm.Results, r => r.FuncName == "Rare");
+        Assert.False(rare.IsNew);
+        Assert.Equal(4, rare.Delta);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_RecordsTheMinCallsOfTheCapture()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        vm.MinCallsExponent = 3;   // 8
+        dump.NextGet = CallsResult(("Fifty", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.MinCallsExponent = 0;   // moved afterwards: the rows still came from 8
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            Assert.Equal(8, ReadLines(platform.Answer!)[0].RootElement.GetProperty("min_calls").GetInt32());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    // Review of f45dca96: the minimum belongs to the rows it filtered, not to the latest Start.
+
+    [Fact]
+    public async Task MinCalls_ANewStart_DoesNotRefilterTheRowsStillOnScreen()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Once", 1), ("Often", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.Results.Count);
+
+        vm.MinCallsExponent = 3;                    // 8, for the next capture
+        await vm.StartCommand.ExecuteAsync(null);   // the old rows stay until this capture is fetched
+        vm.FilterText = "o";                        // any re-filter
+
+        Assert.Equal(2, vm.Results.Count);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_AfterARecordingThatEndedWithoutAFetch_RecordsTheShownRowsMinimum()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = CallsResult(("Once", 1), ("Often", 50));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.MinCallsExponent = 3;
+        await vm.StartCommand.ExecuteAsync(null);
+        vm.ResetOnDisconnect();                     // the recording ends, nothing fetched
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.Equal(1, lines[0].RootElement.GetProperty("min_calls").GetInt32());
+            Assert.Equal(3, lines.Count);   // both rows, as shown
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task CapHit_ButEveryCutRowIsBelowMinCalls_RaiseDoesNotHelp()
+    {
+        // The DLL cuts the lowest counts, so every row a higher limit brings back has at most the page's
+        // lowest count; with that below Min calls, all of them would be hidden.
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;   // 64
+        vm.MinCallsExponent = 3;     // 8
+        var rows = Rows(64).Select((e, i) => new PeProfileEntry
+        {
+            ClassName = e.ClassName, FuncName = e.FuncName, FuncAddr = e.FuncAddr, FirstSeq = i + 1,
+            Count = i < 10 ? 100 : 2,
+        }).ToArray();
+        dump.NextGet = TruncatedResultOf(500, rows);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task CapHit_WithTheLowestCountAtMinCalls_RaiseStillHelps()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        vm.MinCallsExponent = 3;     // 8
+        var rows = Rows(64).Select((e, i) => new PeProfileEntry
+        {
+            ClassName = e.ClassName, FuncName = e.FuncName, FuncAddr = e.FuncAddr, FirstSeq = i + 1, Count = 8,
+        }).ToArray();
+        dump.NextGet = TruncatedResultOf(500, rows);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task DiffStatus_DoesNotClaimTheTargetIsOnScreen_WhenMinCallsHidANewRow()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Tick", 900));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        vm.MinCallsExponent = 2;   // 4
+        dump.NextGet = CallsResult(("Tick", 950), ("OpenShop", 2));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("almost certainly", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task DiffStatus_KeepsItsClaim_WhenNoNewRowIsHidden()
+    {
+        // Negative control for the test above.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = CallsResult(("Tick", 900));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        vm.MinCallsExponent = 2;
+        dump.NextGet = CallsResult(("Tick", 950), ("OpenShop", 6));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.Contains("almost certainly", vm.StatusText);
     }
 }

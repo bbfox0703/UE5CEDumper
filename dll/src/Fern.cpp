@@ -1930,10 +1930,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int total  = Aura::GetCount();
             // Opt-in per-object full path (Ubel::GetFullName). Gated behind
             // include_path so the hot Object Tree paginate stays lean — a path
-            // string per object costs ~19 MB over 486K objects, and only
-            // DumpAllService's GameOnly pass needs it (to skip engine-package
-            // classes BEFORE walking them, restoring the pre-walk skip).
+            // string per object costs ~19 MB over 486K objects, so a caller asks
+            // for it only when it needs paths.
             bool includePath = request.value("include_path", false);
+            // [EXTPR-539-540-2026-10-02] D4 (R3): opt-in GObjects slot per object, for the object index. The
+            // rows skip null and unnamed slots, so a reader cannot work the slot out from a row's position.
+            bool includeIndex = request.value("include_index", false);
 
             json objects = json::array();
             int end = (std::min)(offset + limit, total);
@@ -1957,6 +1959,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
                 if (includePath) {
                     item["full_path"] = Ubel::GetFullName(obj);
+                }
+                if (includeIndex) {
+                    item["index"] = i;
                 }
 
                 objects.push_back(item);
@@ -2410,6 +2415,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     pj["offset"] = p.offset;
                     pj["out"]    = p.isOut;
                     pj["ret"]    = p.isReturn;
+                    // [EXTPR-539-540-2026-10-02] Always sent, so a reader can tell "not a parameter" (a Blueprint
+                    // local in the same chain) from a DLL that predates the key.
+                    pj["parm"]   = p.isParm;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
                     // Stage 1 (Invoke param picker): target UClass for
@@ -4324,12 +4332,26 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         if (cmd == Renge::CMD_PE_PROFILE_GET) {
             int limit = request.value("limit", 200);
+            // [LIVEFUNCS-HIDE-PERFRAME] Opt-in: leave out the functions that fire every frame through the recording,
+            // BEFORE the limit, so their rows go to the low-count functions instead of being cut after them.
+            bool skipPerFrame = request.value("skip_per_frame", false);
 
             std::vector<Linie::FuncStat> snap;
-            Linie::Snapshot(snap);
+            uint64_t windowMs = 0;
+            Linie::Snapshot(snap, windowMs);
 
             uint64_t totalCalls = 0;
-            for (const auto& s : snap) totalCalls += s.count;
+            int perFrameHidden = 0;
+            // Which ones, by address: a diff needs to know a function was left out of its baseline, or it reads NEW
+            // in an action recording where it fired less (the game paused for a menu) and was not left out.
+            json perFrameFuncs = json::array();
+            for (const auto& s : snap) {
+                totalCalls += s.count;
+                if (skipPerFrame && Linie::IsPerFrame(s, windowMs)) {
+                    ++perFrameHidden;
+                    perFrameFuncs.push_back(Renge::AddrToStr(s.func));
+                }
+            }
 
             // Sort by fire count desc; resolve only the capped set (name resolution
             // is the cost, so we pay it after the sort + cap, not per stored entry).
@@ -4357,6 +4379,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // profile reads as "the game called fewer functions", which is exactly
                 // the wrong conclusion to hand a profiler.
                 if ((i & 0xFFF) == 0 && Tot::Requested()) { profileTruncated = true; break; }
+                if (skipPerFrame && Linie::IsPerFrame(snap[i], windowMs)) continue;   // counted above, never emitted
                 FunctionInfo fi{};
                 if (!Ubel::ResolveFunctionInfo(snap[i].func, fi)) continue;  // drop stale/recycled
                 uintptr_t classAddr = Ubel::GetOuter(snap[i].func);  // UFunction's Outer == its UClass
@@ -4394,9 +4417,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
 
             Sein::Info("PIPE:profile",
-                       "pe_profile_get: %d distinct funcs, %llu total calls, %d emitted (limit %d); "
-                       "%d periodic-looking [%s]",
+                       "pe_profile_get: %d distinct funcs, %llu total calls, %d emitted (limit %d), "
+                       "%d per-frame hidden (asked: %d, window %llu ms); %d periodic-looking [%s]",
                        static_cast<int>(snap.size()), (unsigned long long)totalCalls, emitted, limit,
+                       perFrameHidden, skipPerFrame ? 1 : 0, (unsigned long long)windowMs,
                        periodicCount, periodicSummary.c_str());
 
             json data;
@@ -4404,6 +4428,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["distinct_funcs"] = static_cast<int>(snap.size());
             data["total_calls"]    = totalCalls;
             data["functions"]      = functions;
+            // Only when asked: an absent key tells the UI this DLL predates the option, so nothing was left out.
+            if (skipPerFrame) {
+                data["per_frame_hidden"] = perFrameHidden;
+                data["per_frame_funcs"]  = perFrameFuncs;
+            }
             if (profileTruncated) data["truncated"] = true;
             return Renge::MakeResponse(id, data).dump();
         }

@@ -98,9 +98,9 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 
 # Run tests only
 # ⚠ -Target Test does NOT compile the whole DLL. It builds 5 test executables, and
-#   **10 of the 31** dll/src .cpp files reach a test target at all: dll_core_test #includes
-#   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme into one TU, and
-#   grausam_window_test / sein_retention_test take one each. The other 21 — **Fern.cpp and
+#   **11 of the 31** dll/src .cpp files reach a test target at all: dll_core_test #includes
+#   Aura / Genau / Macht / Radar / Serie / Ubel / Denken / Flamme / Linie into one TU, and
+#   grausam_window_test / sein_retention_test take one each. The other 20 — **Fern.cpp and
 #   Stark.cpp among them** — are compiled by NO test target, so a syntax error there passes
 #   it clean. A green -Target Test after editing one of THOSE measures nothing about that
 #   file. Build the DLL target (build_dll.py --targets UE5Dumper, or -Target DLL) before
@@ -244,7 +244,7 @@ line, trim a row, do not grow.
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
-| [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 40 .h** DLL files, **230** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
+| [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 40 .h** DLL files, **236** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface — C ABI exports (**63** — derive it, never hand-edit), the public headers, DynOff runtime offset tables, the CE Lua inject-only bridge. ⚠ The headers are ground truth; this doc trails them. |
 | [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here.** Long — read the section the task needs: §1 before a verification claim, §2 before an audit, §3 before an Avalonia / CE / SQLite / build change, §4 for UE and CE facts, §6 before proposing an architecture or UX change (settled decisions), §8 before writing a code comment. Write new lessons here. |
 | [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |

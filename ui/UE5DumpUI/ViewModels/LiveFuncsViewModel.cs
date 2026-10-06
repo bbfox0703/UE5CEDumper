@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
 using System.Linq;
+using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -26,9 +28,45 @@ public partial class LiveFuncsViewModel : ViewModelBase
 {
     private readonly IDumpService _dump;
     private readonly ILoggingService _log;
+    /// <summary>The save dialog Save .jsonl asks for a path; null in hosts without one, where Save does nothing.</summary>
+    private readonly IPlatformService? _platform;
 
-    /// <summary>How many top rows to fetch from the DLL (ranked by fire count).</summary>
-    private const int FetchLimit = 300;
+    /// <summary>[EXTPR-539-540-2026-10-02] How many rows a fetch asks the DLL for, as a power of two (the
+    /// slider's position). The DLL ranks the recording by call count and sends the top rows, so a small limit
+    /// cuts exactly the low-count functions this panel is for; the user raises it when the status says rows
+    /// were cut. The panel's slider has the same bounds; a value from ui-options.json is clamped here.</summary>
+    internal const int FetchLimitMinExponent = 6;
+    internal const int FetchLimitMaxExponent = 15;
+    [ObservableProperty] private int _fetchLimitExponent = 9;
+
+    /// <summary>The fetch limit itself, 2^<see cref="FetchLimitExponent"/>.</summary>
+    public int FetchLimit => 1 << FetchLimitExponent;
+
+    /// <summary>[EXTPR-539-540-2026-10-02] L3: hide rows with fewer calls than 2^<see cref="MinCallsExponent"/>.
+    /// Read at Start and kept for that capture, so the rows on screen never change under a moved slider (the
+    /// maintainer's choice over filtering at once). Only the view is filtered: SetBaseline reads every fetched row,
+    /// or an idle function with few calls would be missing from the baseline and come back as a false NEW.</summary>
+    internal const int MinCallsMinExponent = 0;
+    internal const int MinCallsMaxExponent = 5;
+    [ObservableProperty] private int _minCallsExponent;
+
+    /// <summary>The minimum itself, 2^<see cref="MinCallsExponent"/>.</summary>
+    public int MinCalls => 1 << MinCallsExponent;
+
+    /// <summary>The minimum the running or last capture was started with, and the one the rows on screen were
+    /// fetched under. They differ between a Start and its first fetch, and stay apart when a recording ends without
+    /// one (leaving the tab, a disconnect, a failed Stop): the rows on screen keep their own minimum.</summary>
+    private int _captureMinCalls = 1;
+    private int _shownMinCalls = 1;
+
+    /// <summary>The lowest call count on the last page. Every row a higher fetch limit would add has at most this
+    /// many calls, so when it is below Min calls the added rows would all be hidden.</summary>
+    private long _lastPageMinCount;
+
+    /// <summary>The limit a running recording fetches with, fixed at Start: a peek and Stop's own fetch then
+    /// rank the same table the same way whatever happens to the slider meanwhile (it is disabled while
+    /// recording, but a value can still reach the property).</summary>
+    private int _recordingFetchLimit;
 
     /// <summary>Full unfiltered result set — the filter rebuilds <see cref="Results"/> from this.</summary>
     private List<PeProfileEntry> _allEntries = new();
@@ -42,12 +80,15 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>Rows the DLL actually sent for the last fetch, and the distinct count it
     /// recorded BEFORE the cap. The DLL sorts the whole table by count desc and emits only
     /// the first <see cref="FetchLimit"/> rows, while <c>distinct_funcs</c> stays pre-cap
-    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> is a conservative, correct test for
-    /// "not everything is on screen" — it is also true when stale UFunction pointers were
+    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> — less the per-frame functions left out on request — is a
+    /// conservative, correct test for "not everything is on screen" — it is also true when stale UFunction pointers were
     /// dropped or a cooperative abort cut the emit loop short, and all three mean the same
     /// thing to the user.</summary>
     private int _lastShown;
     private int _lastDistinct;
+    private long _lastTotalCalls;
+    /// <summary>Whether the DLL was still recording when the rows on screen were fetched (a peek).</summary>
+    private bool _lastRecordingAtFetch;
 
     /// <summary>Was the page the baseline was captured from truncated, and how big was the
     /// table it came from? This matters more than it looks: the DLL's cap keeps the HIGHEST
@@ -61,8 +102,34 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private bool _baselineTruncated;
     private int  _baselineDistinct;
 
-    /// <summary>True when the last fetch did not show every recorded function.</summary>
-    private bool LastTruncated => _lastShown < _lastDistinct;
+    /// <summary>The limit the last fetch asked for, and whether the baseline's page was cut by ITS limit and at
+    /// which value. An incomplete page is not always the cap's doing: the DLL also drops UFunctions it can no
+    /// longer read (still counted in distinct_funcs), and an abort can cut the emit loop. Only a page that came
+    /// back as long as the limit was cut by it, and only then does a higher limit bring rows back.</summary>
+    private int  _lastLimit;
+    private bool _baselineCapHit;
+    private int  _baselineLimit;
+
+    /// <summary>True when the last fetch did not show every recorded function it was asked for: the per-frame ones
+    /// the DLL left out on request are not missing.</summary>
+    private bool LastTruncated => _lastShown < _lastDistinct - _lastPerFrameHidden;
+
+    /// <summary>The last page was cut by the fetch limit itself (see <see cref="_lastLimit"/>).</summary>
+    private bool LastCapHit => LastTruncated && _lastShown >= _lastLimit;
+
+    private static bool BelowMaximum(int limit) => limit < (1 << FetchLimitMaxExponent);
+
+    /// <summary>[EXTPR-539-540-2026-10-02] Would a higher Fetch limit show what is missing? For the last page,
+    /// or for the baseline in diff mode (which then has to be recorded again). Picks the remedy the status
+    /// lines offer.</summary>
+    internal bool RaiseFetchLimitHelps =>
+        LastPageRaiseHelps
+        || (_baseline.Count > 0 && _baselineCapHit && BelowMaximum(_baselineLimit));
+
+    /// <summary>The last page's part of <see cref="RaiseFetchLimitHelps"/>. The baseline's part ignores Min calls,
+    /// because SetBaseline reads every fetched row.</summary>
+    private bool LastPageRaiseHelps =>
+        LastCapHit && BelowMaximum(_lastLimit) && _lastPageMinCount >= _shownMinCalls;
 
     [ObservableProperty] private bool   _isRecording;
     [ObservableProperty] private string _filterText = "";
@@ -101,6 +168,40 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// count/diff. The causal ordering: an action's entry point fires before the reactions
     /// it triggers, so combined with New/changed-only this floats the true opener to the top.</summary>
     [ObservableProperty] private bool   _earliestFirst;
+
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] Ask the DLL to leave out the functions that fire every frame through the
+    /// recording, BEFORE the fetch limit, so its rows go to the low-count functions this panel is for (a filter here
+    /// could not bring back what the limit cut). Opt-in; fixed at Start like the fetch limit.</summary>
+    [ObservableProperty] private bool   _hidePerFrame;
+
+    /// <summary>The option a running recording fetches with, fixed at Start (see <see cref="_recordingFetchLimit"/>).</summary>
+    private bool _recordingHidePerFrame;
+
+    /// <summary>Whether the rows on screen were asked for without the per-frame functions, whether the DLL did it
+    /// (one older than the option answers no count and leaves nothing out), and how many it left out. Those are no
+    /// rows the limit cut, so the cut is counted without them.</summary>
+    private bool _lastPerFrameAsked;
+    private bool _lastPerFrameEffective;
+    private int  _lastPerFrameHidden;
+    /// <summary>Whether the baseline's page had the per-frame functions left out: against a page fetched the other
+    /// way, every one of them reads NEW, or is missing.</summary>
+    private bool _baselinePerFrameEffective;
+
+    /// <summary>Which functions the last page and the baseline's page left out as per-frame, by address. The DLL
+    /// decides per recording, so a Tick left out of an idle baseline comes back in an action that paused the game for
+    /// a menu; with no baseline row it would read NEW, at the top of the list the baseline exists to clean.</summary>
+    private HashSet<string> _lastPerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _baselinePerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
+
+    internal int LastPerFrameHidden => _lastPerFrameHidden;
+    internal bool PerFrameUnsupported => _lastPerFrameAsked && !_lastPerFrameEffective;
+    internal bool BaselinePerFrameMismatch => _baseline.Count > 0 && _baselinePerFrameEffective != _lastPerFrameEffective;
+
+    /// <summary>What the status line adds about the option: the count left out, or that this DLL cannot.</summary>
+    private string PerFrameNote() =>
+        PerFrameUnsupported ? Res.Get("str.LF.PerFrame.Unsupported")
+        : _lastPerFrameEffective ? Res.Format("str.LF.PerFrame.Hidden", _lastPerFrameHidden)
+        : "";
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
@@ -115,10 +216,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// Payload = (className, funcName). Mirrors InterestingFunctionsViewModel.</summary>
     public event Action<string, string>? NavigateToFunction;
 
-    /// <summary>Raised by the per-row "Name" action; MainWindow routes it through
-    /// the platform clipboard so this VM stays free of IPlatformService.</summary>
     /// <summary>
-    /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
+    /// Raised by the per-row "Name" action: ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
@@ -146,6 +245,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         _dump = dump;
         _log = log;
+        _platform = platform;
         AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
     }
@@ -161,6 +261,28 @@ public partial class LiveFuncsViewModel : ViewModelBase
     partial void OnHideWidgetsChanged(bool value) => ApplyFilter();
     partial void OnHideEventsChanged(bool value) => ApplyFilter();
     partial void OnPeriodicOnlyChanged(bool value) => ApplyFilter();
+
+    partial void OnFetchLimitExponentChanged(int value)
+    {
+        int clamped = Math.Clamp(value, FetchLimitMinExponent, FetchLimitMaxExponent);
+        if (clamped != value)
+        {
+            FetchLimitExponent = clamped;   // re-enters with the clamped value, which raises FetchLimit
+            return;
+        }
+        OnPropertyChanged(nameof(FetchLimit));
+    }
+
+    partial void OnMinCallsExponentChanged(int value)
+    {
+        int clamped = Math.Clamp(value, MinCallsMinExponent, MinCallsMaxExponent);
+        if (clamped != value)
+        {
+            MinCallsExponent = clamped;   // re-enters with the clamped value, which raises MinCalls
+            return;
+        }
+        OnPropertyChanged(nameof(MinCalls));
+    }
 
     private static string Key(PeProfileEntry e) => $"{e.ClassName}::{e.FuncName}";
 
@@ -180,12 +302,20 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // reaching for and is independent of however the grid happens to be sorted.
         _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.Max(x => x.Count));
         _baselineTruncated = LastTruncated;
-        _baselineDistinct  = _lastDistinct;
-        DiffMode = true;   // triggers ApplyDiffAndFilter via OnDiffModeChanged
+        _baselineDistinct  = _lastDistinct - _lastPerFrameHidden;   // what it could have fetched; see LastTruncated
+        _baselineCapHit    = LastCapHit;
+        _baselineLimit     = _lastLimit;
+        _baselinePerFrameEffective = _lastPerFrameEffective;
+        _baselinePerFrameAddrs = new(_lastPerFrameAddrs, StringComparer.OrdinalIgnoreCase);
+        // OnDiffModeChanged re-applies the diff only when DiffMode CHANGES; with diff already on, a new baseline
+        // would leave every row's Delta / IsNew against the old one.
+        if (DiffMode) ApplyDiffAndFilter();
+        else DiffMode = true;   // OnDiffModeChanged applies it
         BaselineStatus = _baselineTruncated
             ? $"⚠ PARTIAL baseline: {_baseline.Count:N0} of {_baselineDistinct:N0} idle funcs "
-              + "(the rest ranked below the fetch cap). A row can show as NEW just for having "
+              + "(the rest were not fetched). A row can show as NEW just for having "
               + "been below the cut — treat NEW as \"not in the idle top N\"."
+              + (_baselineCapHit && BelowMaximum(_baselineLimit) ? " " + Res.Get("str.LF.Cap.BaselineRemedy") : "")
             : $"Baseline: {_baseline.Count} funcs. Now record the ACTION — new/increased rows float to the top.";
         StatusText = "Baseline set. Start → perform the action (open shop) → Stop.";
     }
@@ -197,6 +327,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baseline = new();
         _baselineTruncated = false;
         _baselineDistinct  = 0;
+        _baselineCapHit    = false;
+        _baselineLimit     = 0;
+        _baselinePerFrameEffective = false;
+        _baselinePerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }
@@ -213,6 +347,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
             ClearError();
             IsBusy = true;
             var start = await _dump.PeProfileStartAsync();
+            _recordingFetchLimit = FetchLimit;
+            _recordingHidePerFrame = HidePerFrame;
+            _captureMinCalls = MinCalls;
             IsRecording = true;
             StatusText = start.HookActive
                 ? "Recording… ALT-TAB to the game, perform the action (open shop / dash), then click Stop."
@@ -253,6 +390,52 @@ public partial class LiveFuncsViewModel : ViewModelBase
         finally { IsBusy = false; IsRecording = false; }
     }
 
+    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter, the check boxes and Min calls
+    /// leave) to a JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
+    /// recording, when the table is still changing; the button is disabled then too. A peek's rows can outlive the
+    /// recording (it can end without a final fetch), so the summary says when the rows came from one.</summary>
+    [RelayCommand]
+    private async Task SaveJsonlAsync()
+    {
+        if (IsRecording) return;
+        if (_platform == null)
+        {
+            _log.Warn("LivePEProfiler: Save .jsonl has no save dialog in this host");
+            return;
+        }
+        if (Results.Count == 0)
+        {
+            StatusText = Res.Get("str.LF.Save.Empty");
+            return;
+        }
+        // Taken before the dialog: the rows saved are the rows on screen when Save was pressed.
+        var rows = Results.ToList();
+        bool diff = DiffMode && _baseline.Count > 0;
+        var summary = new Helpers.LiveFuncsJsonl.Summary(
+            rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit, _lastRecordingAtFetch,
+            FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly, _shownMinCalls,
+            diff, NewChangedOnly, diff ? _baseline.Count : 0, diff && _baselineTruncated, diff ? _baselineDistinct : 0,
+            DateTime.UtcNow, _lastPerFrameAsked, _lastPerFrameEffective ? _lastPerFrameHidden : null,
+            diff && _baselinePerFrameEffective);
+        try
+        {
+            ClearError();
+            string defaultName = "live-funcs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".jsonl";
+            string? path = await _platform.ShowSaveFileDialogAsync(defaultName, Res.Get("str.LF.Save.FileType"), ".jsonl");
+            if (string.IsNullOrEmpty(path)) return;
+            await File.WriteAllTextAsync(path, Helpers.LiveFuncsJsonl.Format(summary, rows),
+                                         new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
+            StatusText = Res.Format("str.LF.Save.Done", rows.Count, path);
+            _log.Info($"LivePEProfiler: saved {rows.Count} row(s) to {path}");
+        }
+        catch (Exception ex)
+        {
+            SetError(ex);
+            StatusText = Res.Format("str.LF.Save.Failed", ex.Message);
+            _log.Error("LivePEProfiler save failed", ex);
+        }
+    }
+
     /// <summary>Re-fetch the current table without stopping — a live peek while
     /// recording, or a re-pull after Stop.</summary>
     [RelayCommand]
@@ -275,18 +458,31 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     private async Task FetchAndPopulateAsync()
     {
-        var result = await _dump.PeProfileGetAsync(FetchLimit);
+        int limit = IsRecording ? _recordingFetchLimit : FetchLimit;
+        bool skipPerFrame = IsRecording ? _recordingHidePerFrame : HidePerFrame;
+        var result = await _dump.PeProfileGetAsync(limit, skipPerFrame);
+        _lastLimit    = limit;
+        _lastPerFrameAsked     = skipPerFrame;
+        _lastPerFrameEffective = skipPerFrame && result.PerFrameHidden.HasValue;
+        _lastPerFrameHidden    = _lastPerFrameEffective ? result.PerFrameHidden!.Value : 0;
+        _lastPerFrameAddrs     = new(_lastPerFrameEffective ? result.PerFrameFuncs : Array.Empty<string>(),
+                                     StringComparer.OrdinalIgnoreCase);
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
+        _lastTotalCalls = result.TotalCalls;
+        _lastRecordingAtFetch = result.Recording;
+        _lastPageMinCount = result.Entries.Count > 0 ? result.Entries.Min(e => e.Count) : 0;
+        _shownMinCalls = _captureMinCalls;   // before the filter runs over the new rows
         ApplyDiffAndFilter();
 
         // House convention for surfacing a cap (SnapshotViewModel / SpcQueryViewModel).
-        // Spelled out rather than "(capped at 300)" because WHICH rows were cut is the
+        // Spelled out rather than "(capped at N)" because WHICH rows were cut is the
         // point here: the DLL keeps the highest counts, and the function this panel is
         // for has a low one.
         string trunc = LastTruncated
-            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count)"
+            ? $" (showing top {_lastShown:N0} of {_lastDistinct - _lastPerFrameHidden:N0} by count"
+              + (LastPageRaiseHelps ? Res.Get("str.LF.Cap.MoreRows") : "") + ")"
             : "";
 
         bool diff = DiffMode && _baseline.Count > 0;
@@ -299,20 +495,27 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             int newCount = _allEntries.Count(e => e.IsNew);
             int increased = _allEntries.Count(e => !e.IsNew && e.Delta > 0);
+            // A NEW row Min calls hid is counted above but not on screen, so the claim that the action's function
+            // is among the NEW rows shown would point at a table that does not hold it.
+            bool newRowHidden = _allEntries.Any(e => e.IsNew && e.Count < _shownMinCalls);
             // newCount/increased are counted over the PAGE, so they cannot be reported
             // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
-            // population those 3 were selected from, when only 300 were ever examined.
+            // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
-              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
+              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}). "
+              + (BaselinePerFrameMismatch ? Res.Get("str.LF.PerFrame.BaselineMismatch") + " " : "")
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
-                    + "idle\" — a rare idle function below the cut also shows as NEW. Only a "
-                    + "shorter recording window brings it back; the filter narrows only the rows already fetched."
-                  : "The action's function is almost certainly among the NEW rows at the top.");
+                    + "idle\" — a rare idle function below the cut also shows as NEW. "
+                    + (RaiseFetchLimitHelps ? Res.Get("str.LF.Cap.DiffRaise") + " "
+                       : LastCapHit || _baselineCapHit ? Res.Get("str.LF.Cap.DiffShorter") + " " : "")
+                    + "The filter narrows only the rows already fetched."
+                  : newRowHidden || BaselinePerFrameMismatch ? "" : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
         {
             StatusText = $"{result.DistinctFuncs:N0} distinct functions, {result.TotalCalls:N0} total calls"
+              + PerFrameNote()
               + trunc
               + (result.Recording ? " (still recording)" : "")
               + ". Tip: Set Baseline on an idle window, then re-record to isolate the action.";
@@ -335,6 +538,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 {
                     e.IsNew = false;
                     e.Delta = e.Count - baseCount;
+                }
+                else if (_baselinePerFrameAddrs.Contains(e.FuncAddr))
+                {
+                    // Fired every frame while idle and was left out of the baseline: not new, and its idle count is
+                    // unknown, so no increase is claimed either.
+                    e.IsNew = false;
+                    e.Delta = 0;
                 }
                 else { e.IsNew = true; e.Delta = e.Count; }
             }
@@ -396,6 +606,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (HideEvents && e.IsEventLike) continue;
             // Periodic-only: keep just the regular timer-like cadence functions.
             if (PeriodicOnly && !e.IsPeriodic) continue;
+            // Min calls the rows were fetched under. No exemption for NEW rows (R1): the default 1 hides nothing.
+            if (e.Count < _shownMinCalls) continue;
             if (terms.Length > 0 &&
                 !ObjectTreeFilter.MatchesAllTerms(terms, e.FuncName, e.ClassName))
             {

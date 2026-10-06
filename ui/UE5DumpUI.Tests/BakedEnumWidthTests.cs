@@ -174,6 +174,7 @@ public class BakedEnumWidthTests
         {
             Name = "SetMode",
             ParmsSize = 8,
+            NumParms = 2,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "Mode",  TypeName = "EnumProperty", Size = enumSize, Offset = 0 },

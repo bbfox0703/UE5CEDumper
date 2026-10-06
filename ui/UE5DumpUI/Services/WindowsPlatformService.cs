@@ -154,6 +154,14 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
         }
     }
 
+    /// <summary>The picker pattern for an extension given with or without its leading dot. Windows' save
+    /// dialog appends, to a name typed without an extension, the extension it reads from the selected
+    /// filter's pattern: "*csv" yields none and the file is written with no extension, and the open dialog
+    /// filtering on "*csv" also lists files whose name merely ends in "csv". The interface leaves the dot
+    /// to the caller, so the service adds it.</summary>
+    internal static string FilePickerPattern(string extension) =>
+        extension.StartsWith('.') ? "*" + extension : "*." + extension;
+
     public async Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension)
     {
         if (Avalonia.Application.Current?.ApplicationLifetime is
@@ -170,7 +178,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                     {
                         new FilePickerFileType(filterName)
                         {
-                            Patterns = new[] { $"*{filterExtension}" }
+                            Patterns = new[] { FilePickerPattern(filterExtension) }
                         }
                     }
                 });
@@ -196,7 +204,7 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
                     {
                         new FilePickerFileType(filterName)
                         {
-                            Patterns = new[] { $"*{filterExtension}" }
+                            Patterns = new[] { FilePickerPattern(filterExtension) }
                         }
                     }
                 });

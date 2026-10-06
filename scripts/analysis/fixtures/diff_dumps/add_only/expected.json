@@ -1,0 +1,55 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Game/C/C",
+     "name": "C",
+     "old_size": 8,
+     "new_size": 16,
+     "breaking": false,
+     "props": [
+      {
+       "name": "B",
+       "kind": "added",
+       "old": null,
+       "new": {
+        "offset": 4,
+        "size": 4,
+        "type": "Int32Property"
+       }
+      }
+     ],
+     "funcs": []
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 1,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 1
+   }
+  },
+  "structs": {
+   "skipped": "the old dump has no struct lines (Dump All writes them from build 3620)"
+  },
+  "enums": {
+   "skipped": "the old dump has no enum lines (Dump All writes them from build 3621)"
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

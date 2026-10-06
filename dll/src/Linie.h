@@ -37,7 +37,26 @@ struct FuncStat {
     double    meanPeriodMs = 0.0;  // mean inter-arrival gap (ms); 0 with <2 fires
     double    cv           = 0.0;  // stddev/mean of the gaps; 0 with <2 gaps
     uint64_t  gapSamples   = 0;    // number of inter-arrival gaps measured (count-1)
+    uint64_t  firstMs      = 0;    // wall-clock of the first and the latest fire, on the clock RecordCall gets
+    uint64_t  lastMs       = 0;
+    uint64_t  activeMs     = 0;    // the time it kept firing at frame cadence: the sum of its gaps up to kActiveGapMaxMs
 };
+
+// [LIVEFUNCS-HIDE-PERFRAME] A function that fires every frame through most of the recording: the per-frame noise
+// pe_profile_get can leave out so it stops taking the fetch limit's rows from the low-count functions Live Funcs is
+// for. A count cannot say it -- every frame for a minute is 3,600 fires at 60 fps and 8,640 at 144 -- so it is a
+// cadence: a mean gap inside the frame band (the band the UI's periodic test excludes, FrameBandMaxMs) over enough
+// gaps, KEPT UP for at least half of `windowMs`. Kept up is activeMs, the sum of its gaps of kActiveGapMaxMs or less,
+// not the span from its first fire to its last: an action done twice six seconds apart spans the recording and
+// fired for two seconds of it, and a broadcast to 80 instances in one frame adds nothing.
+inline constexpr double   kPerFrameMaxMeanMs = 40.0;
+inline constexpr uint64_t kPerFrameMinGaps   = 3;
+inline constexpr uint64_t kActiveGapMaxMs    = 100;   // a frame at 10 fps; a longer gap is a pause, not a frame
+
+inline bool IsPerFrame(const FuncStat& s, uint64_t windowMs) {
+    if (windowMs == 0 || s.gapSamples < kPerFrameMinGaps || s.meanPeriodMs > kPerFrameMaxMeanMs) return false;
+    return s.activeMs * 2 >= windowMs;
+}
 
 // Hot-path gate. Defined in Linie.cpp; declared extern so the check inlines at
 // Stark's call site (one relaxed atomic load + predicted-not-taken branch when off).
@@ -64,8 +83,10 @@ bool IsActive();
 // so a stale recording never leaks across connections and the map is freed.
 void Reset();
 
-// Copy out one FuncStat per distinct function (addr / count / firstSeq). Safe to
-// call while recording.
-void Snapshot(std::vector<FuncStat>& out);
+// Copy out one FuncStat per distinct function (addr / count / firstSeq / cadence / first and latest fire). Safe
+// to call while recording. `activityMs` is the window the table was recorded over, from its earliest fire to its
+// latest, taken under the same lock: the time the game was dispatching, not the wall clock between Start and Stop,
+// which also holds the minutes a game that idles when not foreground spent behind the UI.
+void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs);
 
 } // namespace Linie

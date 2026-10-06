@@ -1,8 +1,7 @@
 namespace UE5DumpUI.Models;
 
 /// <summary>
-/// Represents a UEnum object with its entries (name/value pairs).
-/// Used by SDK generation, USMAP export, and symbol export.
+/// Represents a UEnum object with its entries (name/value pairs), as list_enums returns it.
 /// </summary>
 public sealed class EnumDefinition
 {

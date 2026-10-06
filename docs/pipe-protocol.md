@@ -538,7 +538,12 @@ Behaviour-based UFunction discovery: record which UFunctions the game dispatches
 // Get — snapshot + rank by fire count desc, cap to `limit` (default 200), resolve
 // each UFunction* to its name/class at query time (stale/recycled pointers dropped
 // via a "Function" meta-class guard). Safe to call while recording (live peek).
-{ "id": 72, "cmd": "pe_profile_get", "limit": 200 }
+// skip_per_frame (optional, default false; build 3629+) leaves out the functions that
+// fire every frame through the recording (Linie::IsPerFrame: a mean gap <= 40 ms over
+// 3+ gaps, kept up -- gaps of 100 ms or less -- for at least half the time the table was
+// recorded over, its earliest fire to its latest) BEFORE the cap, so `limit` rows go to
+// the rest. [LIVEFUNCS-HIDE-PERFRAME]
+{ "id": 72, "cmd": "pe_profile_get", "limit": 200, "skip_per_frame": true }
 ```
 
 Response for `pe_profile_get`:
@@ -548,6 +553,13 @@ Response for `pe_profile_get`:
   "recording":      false,   // still recording?
   "distinct_funcs": 214,     // distinct UFunctions seen (pre-cap)
   "total_calls":    98213,   // sum of all fire counts
+  "per_frame_hidden": 37,    // only when skip_per_frame was asked: how many distinct
+                             // functions were left out (still counted in distinct_funcs
+                             // and total_calls). Absent = a DLL older than the option,
+                             // which left nothing out.
+  "per_frame_funcs": ["0x1B2C3D80", ...],  // with per_frame_hidden (build 3630+): their
+                             // func_addr, so a diff can tell "left out of the baseline"
+                             // from "did not fire while idle".
   "functions": [
     { "class_name": "AShopVendor", "func_name": "OpenShop",
       "func_addr": "0x1B2C3D40", "num_parms": 1, "parms_size": 8, "count": 3,
@@ -670,6 +682,14 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
   ]
 }
 ```
+
+Optional request flags, both off by default so the hot Object Tree paginate stays lean:
+
+- **`include_path`** — each object also carries `full_path` (`Ubel::GetFullName`).
+- **`include_index`** (build 3625 on) — `[EXTPR-539-540-2026-10-02]` D4: each object also carries `index`, the
+  GObjects slot the handler read it from (the key `snapshot_chunk` uses). The handler skips null and unnamed slots,
+  so a row's position in the page is NOT its slot; a reader without `index` (an older DLL) must not compute one.
+  Dump All's object index asks for both.
 
 ### begin_snapshot / snapshot_chunk
 
@@ -1501,8 +1521,9 @@ eyeball calibration (tweak constants until names look like real UObjects).
 
 ### walk_functions
 
-Walk all UFunctions of a UClass. Returns function signatures with parameters,
-including StructProperty sub-field layouts discovered by walking the UScriptStruct.
+Walk all UFunctions of a UClass. Returns each function with its property chain (`params`):
+its parameters and, on a Blueprint function, its locals after them; `parm` tells them apart.
+StructProperty entries include the sub-field layouts discovered by walking the UScriptStruct.
 
 ```jsonc
 // Request
@@ -1530,6 +1551,7 @@ including StructProperty sub-field layouts discovered by walking the UScriptStru
           "offset": 0,
           "out": false,
           "ret": false,
+          "parm": true,
           "struct_type": "GameplayAttributeData",
           "struct_fields": [
             { "name": "BaseValue", "type": "FloatProperty", "offset": 0, "size": 4 },
@@ -1541,6 +1563,15 @@ including StructProperty sub-field layouts discovered by walking the UScriptStru
   ]
 }
 ```
+
+**`parm`** (bool, always sent from build 3622) — `[EXTPR-539-540-2026-10-02]`: CPF_Parm, read from the
+same PropertyFlags word as `out` / `ret`. `true` for a parameter, the return value included; `false` for
+a Blueprint function's locals (`CallFunc_*_ReturnValue`, `K2Node_*`, `Temp_*`), which follow the
+parameters in the same chain at offsets past `parms_size`. An absent key means a DLL older than 3622,
+which cannot tell the two apart; a reader then takes the leading `num_parms` entries, UE's own
+definition of the parameter block. Measured on build 3622 with `tools/verify/d3_parm_flags.py`: on
+Avowed, 15,820 locals in 1,126 Blueprint functions all came back `false`, and on every function with
+parameters the `true` count equalled `num_parms`.
 
 **`struct_fields[].bool_mask`** (optional, uint8) — [A3-FIRE-STRUCT-BOOLMASK]: a
 `BoolProperty` sub-field PACKED into a byte it shares with sibling bools (`FHitResult`'s

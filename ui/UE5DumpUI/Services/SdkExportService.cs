@@ -798,11 +798,10 @@ public static class SdkExportService
         sb.Append(func.Name);
         sb.Append('(');
 
-        // Parameters (exclude return param)
+        // The arguments: not the return, and not a Blueprint function's locals ([FUNCPARM-CONSUMERS])
         bool first = true;
-        foreach (var p in func.Params)
+        foreach (var p in func.InputParams)
         {
-            if (p.IsReturn) continue;
             if (!first) sb.Append(", ");
             first = false;
 

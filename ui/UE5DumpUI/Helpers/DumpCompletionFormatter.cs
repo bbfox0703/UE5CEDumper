@@ -5,7 +5,7 @@ namespace UE5DumpUI.Helpers;
 /// <summary>
 /// Pure composition of the "Dump All" completion status line (audit X4).
 ///
-/// Two defects it exists to prevent:
+/// Defects it exists to prevent:
 /// <list type="bullet">
 ///   <item>The old line was derived from the output file's byte length, so a
 ///     zero-class or all-errored dump still read as a successful export. The
@@ -16,6 +16,9 @@ namespace UE5DumpUI.Helpers;
 ///     1 MB printed "0.0 MB". <see cref="FormatSize"/> divides in
 ///     <see cref="double"/> and steps down to KB / bytes so a small dump is not
 ///     rounded to "0.0 MB".</item>
+///   <item>A dump whose enums are missing, partial or nameless ending on a bare
+///     success line: only the file's summary line recorded it, and no reader
+///     shows that line.</item>
 /// </list>
 /// </summary>
 internal static class DumpCompletionFormatter
@@ -32,6 +35,16 @@ internal static class DumpCompletionFormatter
         if (bytes >= 1024L)
             return $"{bytes / 1024.0:F1} KB";
         return $"{bytes} B";
+    }
+
+    /// <summary>[EXTPR-539-540-2026-10-02] D4.2: an estimate's time, as the confirmation shows it — rounded,
+    /// because it is scaled from one page. Each form carries its own "about", so the sentence around it reads
+    /// for "less than a second" too.</summary>
+    internal static string FormatDuration(TimeSpan t)
+    {
+        if (t < TimeSpan.FromSeconds(1)) return Core.Res.Get("str.Duration.UnderSecond");
+        if (t < TimeSpan.FromMinutes(2)) return Core.Res.Format("str.Duration.Seconds", Math.Round(t.TotalSeconds));
+        return Core.Res.Format("str.Duration.Minutes", Math.Round(t.TotalMinutes));
     }
 
     /// <summary>
@@ -52,8 +65,23 @@ internal static class DumpCompletionFormatter
         }
 
         string size = FormatSize(byteLength);
+        var parts = new List<string> { $"{result.ClassesEmitted:N0} classes" };
+        if (result.StructsEmitted > 0) parts.Add($"{result.StructsEmitted:N0} structs");
+        if (result.EnumsEmitted > 0) parts.Add($"{result.EnumsEmitted:N0} enums");
+        string types = parts.Count == 1
+            ? parts[0]
+            : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1];
+        // [EXTPR-539-540-2026-10-02] As for USMAP [P1-ENUMNAMES]. The worst condition only, to keep the status
+        // one line; the summary line records each.
+        string enumNote = !result.EnumsListed
+            ? " — ⚠ the enum list could not be read (see the file's list_enums error line)"
+            : result.EnumNamesFailed
+                ? " — ⚠ enum member names are unavailable on this build, so every enum's entries are empty"
+                : result.EnumsTruncated
+                    ? " — ⚠ the enum list was cut short; re-export for a complete file"
+                    : "";
         return result.Errors > 0
-            ? $"Dumped {result.ClassesEmitted:N0} classes ({size}, {result.Errors} errors) to {fileName}"
-            : $"Dumped {result.ClassesEmitted:N0} classes ({size}) to {fileName}";
+            ? $"Dumped {types} ({size}, {result.Errors} errors) to {fileName}{enumNote}"
+            : $"Dumped {types} ({size}) to {fileName}{enumNote}";
     }
 }

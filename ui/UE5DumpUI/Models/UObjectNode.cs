@@ -12,6 +12,10 @@ public sealed class UObjectNode
     public string ClassName { get; init; } = "";
     public string OuterAddr { get; init; } = "";
     public string FullPath { get; init; } = "";
+    /// <summary>[EXTPR-539-540-2026-10-02] The GObjects slot, when the page was asked for it
+    /// (<see cref="Core.IDumpService.GetObjectIndexPageAsync"/>); null otherwise, and from a DLL that predates
+    /// the key.</summary>
+    public int? Index { get; init; }
     public bool IsExpanded { get; set; }
 
     // Lazy-initialized to save ~64 bytes per node when Children is not used.

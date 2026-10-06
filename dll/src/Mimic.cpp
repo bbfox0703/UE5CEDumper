@@ -708,23 +708,24 @@ static void HandleInvoke() {
     // "was it written", not "did it run" -- for that, read the ProcessEvent return code
     // and the route line logged just below. Pick a fixture with a non-zero expected
     // return when the question is whether the call happened.
-    if (flagsResolved && fi.returnValueOffset != 0xFFFF) {
-        for (const auto& prm : fi.params) {
-            if (!prm.isReturn || prm.offset < 0 || prm.size <= 0) continue;
-            const size_t off = static_cast<size_t>(prm.offset);
-            const size_t len = static_cast<size_t>(prm.size);
-            // Bounds are checked against the real buffer, not against ParmsSize: a
-            // forked layout can report a ParmsSize larger than the mailbox slab, and a
-            // memset past the end would corrupt whatever follows it in the struct.
-            if (off + len > sizeof(g_invokeMailbox.paramsData)) {
-                LOG_WARN("Mailbox: INVOKE return slot +%zu size %zu exceeds paramsData "
-                         "(%zu) — not clearing", off, len,
-                         sizeof(g_invokeMailbox.paramsData));
-                break;
-            }
+    //
+    // The slot comes from the function's own chain ([FUNCPARM-CONSUMERS] review): fi is
+    // ResolveFunctionInfo's, which reads the tail only, so its params were always empty
+    // and the loop that used to stand here never ran.
+    int32_t retOff = -1, retSize = 0;
+    if (flagsResolved && fi.returnValueOffset != 0xFFFF && Ubel::ReadReturnSlot(ufuncAddr, retOff, retSize)) {
+        const size_t off = static_cast<size_t>(retOff);
+        const size_t len = static_cast<size_t>(retSize);
+        // Bounds are checked against the real buffer, not against ParmsSize: a
+        // forked layout can report a ParmsSize larger than the mailbox slab, and a
+        // memset past the end would corrupt whatever follows it in the struct.
+        if (off + len > sizeof(g_invokeMailbox.paramsData)) {
+            LOG_WARN("Mailbox: INVOKE return slot +%zu size %zu exceeds paramsData "
+                     "(%zu) — not clearing", off, len,
+                     sizeof(g_invokeMailbox.paramsData));
+        } else {
             memset(g_invokeMailbox.paramsData + off, 0, len);
             LOG_DEBUG("Mailbox: INVOKE cleared ReturnValue slot +%zu (%zu bytes)", off, len);
-            break;
         }
     }
 

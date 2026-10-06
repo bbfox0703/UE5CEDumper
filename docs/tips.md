@@ -117,6 +117,12 @@ only a handful of times — sinks to the bottom. **Use the baseline diff to isol
    the causal opener sorts to the top of the NEW set (see the **Order** column) — name-independent.
 6. Click **Live** on the top candidate to open it in Live Walker and invoke it.
 
+> **A busy game cuts the rare functions before you see them.** The fetch keeps the highest call counts, so when
+> hundreds of functions tick every frame, the shop opener can fall below the Fetch limit. Tick **Hide per-frame**
+> *before* step 1 (and keep it for step 2, so the baseline and the action are recorded the same way): the DLL leaves
+> out everything that fires every frame through the recording, so the limit's rows go to the rest. Your action's
+> short bursts stay; an action you hold for most of the recording counts as per-frame.
+
 > **If Start says the PE hook couldn't install** (counts stay 0 even though the game is running):
 > MinHook couldn't place its trampoline near ProcessEvent in this process. **Change to another
 > map/scene and Start again** — a level reload reshuffles memory and almost always frees the space

@@ -1600,6 +1600,86 @@ public class DumpServiceTests
         Assert.Null(field.ArrayElements);
     }
 
+    // [EXTPR-539-540-2026-10-02] D4 (R3): the object index asks get_object_list for paths and GObjects indexes;
+    // a DLL that predates include_index sends no index, and the node keeps none rather than one guessed from
+    // the page position (the handler skips null and unnamed slots).
+    [Fact]
+    public async Task GetObjectIndexPageAsync_AsksForPathsAndIndexes_AndReadsTheIndex()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["total"] = 10,
+                ["scanned"] = 10,
+                ["objects"] = new JsonArray
+                {
+                    new JsonObject { ["addr"] = "0x10", ["name"] = "A", ["class"] = "Class", ["outer"] = "", ["full_path"] = "/Script/Game.A", ["index"] = 7 },
+                    new JsonObject { ["addr"] = "0x20", ["name"] = "B", ["class"] = "Class", ["outer"] = "", ["full_path"] = "/Script/Game.B" },
+                }
+            };
+        });
+
+        IDumpService svc = CreateService();
+        var page = await svc.GetObjectIndexPageAsync(0, 10, TestContext.Current.CancellationToken);
+
+        Assert.True(sent!["include_path"]!.GetValue<bool>());
+        Assert.True(sent["include_index"]!.GetValue<bool>());
+        Assert.Equal(7, page.Objects[0].Index);
+        Assert.Null(page.Objects[1].Index);
+        Assert.Equal("/Script/Game.A", page.Objects[0].FullPath);
+    }
+
+    [Fact]
+    public async Task GetObjectListAsync_StaysLean_AsksForNoIndex()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject { ["ok"] = true, ["total"] = 0, ["scanned"] = 0, ["objects"] = new JsonArray() };
+        });
+
+        await CreateService().GetObjectListAsync(0, 10, TestContext.Current.CancellationToken);
+
+        Assert.False(sent!.ContainsKey("include_index"));
+    }
+
+    // [LIVEFUNCS-HIDE-PERFRAME] skip_per_frame goes on the wire only when asked, and per_frame_hidden is read back;
+    // absent, it stays null (a DLL that predates the option left nothing out).
+    [Fact]
+    public async Task PeProfileGetAsync_AsksToSkipPerFrame_OnlyWhenToldTo_AndReadsTheCount()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            var reply = new JsonObject { ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 9, ["total_calls"] = 99L,
+                                         ["functions"] = new JsonArray() };
+            if (req["skip_per_frame"]?.GetValue<bool>() == true)
+            {
+                reply["per_frame_hidden"] = 2;
+                reply["per_frame_funcs"] = new JsonArray { "0x1A", "0x2B" };
+            }
+            return reply;
+        });
+        IDumpService svc = CreateService();
+
+        var asked = await svc.PeProfileGetAsync(64, skipPerFrame: true, TestContext.Current.CancellationToken);
+        Assert.True(sent!["skip_per_frame"]!.GetValue<bool>());
+        Assert.Equal(64, sent["limit"]!.GetValue<int>());
+        Assert.Equal(2, asked.PerFrameHidden);
+        Assert.Equal(new[] { "0x1A", "0x2B" }, asked.PerFrameFuncs);
+
+        var plain = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.False(sent!.ContainsKey("skip_per_frame"));
+        Assert.Null(plain.PerFrameHidden);
+        Assert.Empty(plain.PerFrameFuncs);
+    }
+
     // --- WalkFunctionsAsync: struct_fields parsing ---
 
     [Fact]
@@ -1658,6 +1738,44 @@ public class DumpServiceTests
         Assert.Equal(4, param.StructFields[0].Size);
         Assert.Equal("CurrentValue", param.StructFields[1].Name);
         Assert.Equal(4, param.StructFields[1].Offset);
+    }
+
+    // [EXTPR-539-540-2026-10-02] D3: `parm` says which chain entries are parameters (a Blueprint function's
+    // locals follow them in the same chain). A DLL that predates the key sends none, and that must stay apart
+    // from "not a parameter".
+    [Fact]
+    public async Task WalkFunctionsAsync_ReadsTheParmFlag_AndKeepsItsAbsenceApart()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true,
+            ["count"] = 1,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject
+                {
+                    ["name"] = "DoIt",
+                    ["addr"] = "0x100",
+                    ["num_parms"] = (byte)1,
+                    ["parms_size"] = (ushort)4,
+                    ["params"] = new JsonArray
+                    {
+                        new JsonObject { ["name"] = "Count", ["type"] = "IntProperty", ["size"] = 4, ["offset"] = 0, ["parm"] = true },
+                        new JsonObject { ["name"] = "Temp_int_Variable", ["type"] = "IntProperty", ["size"] = 4, ["offset"] = 4, ["parm"] = false },
+                        new JsonObject { ["name"] = "FromAnOlderDll", ["type"] = "IntProperty", ["size"] = 4, ["offset"] = 8 },
+                    }
+                }
+            }
+        });
+
+        var svc = CreateService();
+        var funcs = await svc.WalkFunctionsAsync("0x7FF000", TestContext.Current.CancellationToken);
+
+        var ps = Assert.Single(funcs).Params;
+        Assert.Equal(3, ps.Count);
+        Assert.True(ps[0].IsParm);
+        Assert.False(ps[1].IsParm);
+        Assert.Null(ps[2].IsParm);
     }
 
     // [A3-FIRE-STRUCT-BOOLMASK] A packed bool sub-field carries its single-bit mask on the wire,

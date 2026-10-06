@@ -27,6 +27,299 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3630) — Live Funcs can leave out the functions that fire every frame `[LIVEFUNCS-HIDE-PERFRAME]`
+
+- **Live Funcs ▸ Hide per-frame** (off by default, remembered): the DLL leaves out the functions that fire every
+  frame through the recording — Tick, animation and camera updates — **before** the Fetch limit, so the limit's
+  rows go to the rare functions you are looking for instead of cutting them. The status line says how many were
+  left out.
+- Per-frame means a gap of 40 ms or less, kept up for at least half the time the game was recorded; your action's
+  short bursts stay, even repeated, and an action you hold for most of the recording counts as per-frame. Below
+  25 fps nothing is per-frame.
+- With a baseline, record it the same way: a function left out of the baseline is not shown as NEW, and a baseline
+  recorded the other way is flagged. Save .jsonl records the option.
+- Needs this build's UE5Dumper.dll; an older one leaves nothing out, and the status line says so.
+- Build 3629 was the first live check; 3630 adds the review's fixes (the kept-up time instead of the first-to-last
+  span, the window over the recorded activity, the baseline's left-out functions).
+- Build 3630: AOT `dist\UE5DumpUI.exe` 59,966,976 B, sha256 `180cd772c234`; `dist\UE5Dumper.dll` `cf7a2cc4d970`.
+  C# 6223/6223, headless 19/19, dll_core 634 checks, 32 gates.
+
+## 2026-10-06 (build 3628) — Dump Explorer compares two dumps and writes the diff as an HTML report `[DUMPDIFF-UI]`
+
+- **Dump Explorer ▸ Compare…**: compare the loaded Dump All file with another dump of the same game and get an
+  **HTML report** of what a patch changed — classes, structs and enums added or removed, fields that moved or changed
+  type, function signatures, enum values — each under its owner. The dump taken earlier is the old one. The ▾ holds
+  **Include engine types** and **Breaking changes only**, both remembered.
+- The report says when the two dumps come from different games, and what it could not compare and why (a dump from
+  before struct / enum lines, a cut-off file, unreadable lines).
+- It is `scripts/analysis/diff_dumps.py`, which release builds do not include, ported to C#; the two are held to
+  the same results by shared test cases. The script now skips lines it cannot read the way the UI does.
+- From fireundubh's PR 539 (its diff of structs and enums), built our way.
+- Build 3627 was the first live check; 3628 adds the review's fixes and a clearer status line ("not compared"
+  instead of 0).
+- Build 3628: AOT `dist\UE5DumpUI.exe` 59,950,080 B, sha256 `d2a50aec0fff`; `dist\UE5Dumper.dll` `d4a3588ccb5f`
+  (no DLL change). C# 6211/6211, headless 19/19, 32 gates.
+
+## 2026-10-06 (build 3626) — Dump Explorer reads structs, enums and parameters; the diff compares them; an optional object index `[EXTPR-539-540-2026-10-02]`
+
+- **Dump Explorer** shows structs, enums and each enum's values beside the classes, and a function's arguments
+  and return type; a parameter name now finds its functions. The category picker reaches every kind, and a
+  struct or enum matches the live game by kind, so it no longer borrows a class's address of the same name.
+- **`diff_dumps.py`** compares structs, enums and function parameters between two dumps and names each change.
+  It skips what a file cannot tell it (a dump from before these lines, an enum list that could not be read) and
+  says so, instead of reporting everything as added.
+- **Object index (optional):** tick Export ▸ "Dump All also writes the object index" and Dump All also writes
+  `<name>.objects.jsonl`, every loaded object with its GObjects index. It shows the estimated size and time and
+  asks first; "Class dump only" skips it.
+- **Invoke, the SDK header and Find Func** (build 3624) no longer take a Blueprint function's local variables
+  for parameters; review fixes here keep the CE Invoke script clearing the whole parameter buffer and make the
+  DLL clear an invoke's return slot, which it had never done.
+- From fireundubh's PR 539, built our way.
+- Measured on build 3625: DumperTest 5.4 Shipping, a 15.6 MB dump in 5.6 s (3,868 classes, 3,820 structs, 1,568
+  enums); Avowed's main menu, 39.9 MB in 13.4 s (7,404 classes, 5,562 structs, 2,142 enums), and its object index
+  19.5 MB in 1.7 s.
+- Build 3626: AOT `dist\UE5DumpUI.exe` 59,476,480 B, sha256 `a78a0ba980fb`; `dist\UE5Dumper.dll` `1e2f3c3fbcb9`
+  (`get_object_list`'s `include_index`, Mimic's return-slot clear). C# 6153/6153, headless 17/17, dll_core 608
+  checks, 32 gates. Build 3625 was the live-check build; 3626 adds two fixes it found (the Explorer's Kind column,
+  a stale header over an object index).
+
+## 2026-10-06 (build 3624) — Invoke, the SDK header and Find Func stop taking a Blueprint function's locals for parameters `[FUNCPARM-CONSUMERS]`
+
+- A Blueprint function keeps its local variables in the same list as its parameters in the game's data, and since
+  build 3622 only Dump All told them apart. Now the rest do too: the **Invoke** dialog (Live Walker, Interesting
+  Functions, Console) and the CE Invoke script offer only the function's arguments as inputs, and the dialog's
+  post-call readout lists only its parameters. The **SDK header** signature lists only the arguments.
+  **Find Func** (functions taking a class as a parameter) no longer lists a Blueprint function that only casts to
+  the class.
+- A Blueprint function whose parameters fit the mailbox is no longer refused because one of its locals lies past it.
+- With a DLL older than build 3622, the parameters are taken from the function's parameter count, as Dump All does.
+- Build 3624: AOT `dist\UE5DumpUI.exe` 59,264,512 B, sha256 `70fc4054301e`; `dist\UE5Dumper.dll` `5527995e0ba9`
+  (Find Func's matcher). C# 6126/6126, headless 15/15, dll_core 603 checks, 30 gates run (2 skipped in this
+  worktree: no vendored RE-UE4SS templates, no CE Lua host). Build 3623 was this worktree's configure build and
+  was never handed over. Not yet checked on a game: `verification-register.md` `[FUNCPARM-CONSUMERS]`.
+
+## 2026-10-06 (build 3622) — Dump All writes function parameters `[EXTPR-539-540-2026-10-02]`
+
+- **Dump All** now writes each function's parameters on the class lines: name, type, offset, size, and
+  whether it is an out parameter or the return value.
+- A Blueprint function keeps its local variables in the same list as its parameters in the game's data. The DLL
+  now tells the two apart, and only real parameters are written: on Avowed that left out 15,820 locals in
+  1,126 Blueprint functions. The Invoke form and the SDK header still show such locals as parameters; that is
+  a separate open item.
+- With a DLL older than this build (for example an old proxy left in a game folder), the parameters are taken
+  from the function's parameter count instead, and the file's summary line counts those functions.
+- Dump Explorer and the analysis scripts do not read the parameters yet.
+- From fireundubh's PR 539, built our way.
+- Build 3622: AOT `dist\UE5DumpUI.exe` 59,266,048 B, sha256 `349cba66cb93`; `dist\UE5Dumper.dll` `c67e6ad2a6d4`
+  (`walk_functions` sends `parm`). C# 6109/6109, headless 15/15, dll_core 602 checks, 32 gates. Live,
+  `tools/verify/d3_parm_flags.py`: PASS on Avowed (UE 5.3) and UE423_Flying Shipping (UE 4.23, the UProperty
+  path); DumperTest 5.4 Shipping agreed on all 8,001 functions with parameters but has only one function with
+  locals. Dump All itself is not yet measured on a game.
+
+## 2026-10-06 (build 3621) — Dump All writes enums `[EXTPR-539-540-2026-10-02]`
+
+- **Dump All** now writes a line for every enum with its members and values, after the classes and structs, and
+  its summary and completion message count the enums. "Game classes only" leaves the engine's enums out too.
+- When the enums could not be read in full, the completion message says so: the list failed, it was cut short,
+  or the members' names cannot be located on this game, which leaves every enum empty. The file's summary line
+  records the same, so a later comparison can tell an empty enum from an unreadable one.
+- The Dump Explorer and the analysis scripts do not read enum lines yet.
+- From fireundubh's PR 539, built our way.
+- Build 3621: AOT `dist\UE5DumpUI.exe` 59,252,736 B, sha256 `2eca0528045c`; `dist\UE5Dumper.dll` `254ba0c2e250`
+  (no DLL source change; the build stamp moved). C# 6099/6099, headless 15/15, dll_core 593 checks, 32 gates.
+  Not yet checked on a game, as for build 3620.
+
+## 2026-10-06 (build 3620) — Dump All writes structs `[EXTPR-539-540-2026-10-02]`
+
+- **Dump All** now writes a line for every struct (native and Blueprint user-defined) with its properties, beside
+  the class lines, and its summary and completion message count the structs. A struct the DLL could not read is
+  an error line instead of an empty struct.
+- The Dump Explorer and the analysis scripts read class lines only, for now.
+- From fireundubh's PR 539, built our way.
+- Build 3620: AOT `dist\UE5DumpUI.exe` 59,237,376 B, sha256 `1488b5154285`; `dist\UE5Dumper.dll` `86bfcda310ce`.
+  C# 6085/6085, headless 15/15, dll_core 593 checks, 32 gates. Not yet checked on a game: the plan measures Dump
+  All's time and size on a game once structs, enums and parameters are all in.
+
+## 2026-10-06 (no build change) — Live Funcs' Fetch limit, Save .jsonl and Min calls checked live on Avowed `[EXTPR-539-540-2026-10-02]`
+
+- Build 3619 on Avowed, through the UI: a cut page says so and suggests a higher Fetch limit; at 32768 the same
+  recording showed 722 of 906 functions with no such suggestion (the rest cannot be read). Min calls 8 showed and
+  saved 220 of 475 rows, all with 8 calls or more, and moving the slider changed neither table. A peek left on
+  screen after leaving the tab was saved with `recording_at_fetch` true. The controls are disabled while recording,
+  and a file name typed without an extension is saved as `.jsonl`.
+- PR 540's three features are done.
+
+## 2026-10-06 (build 3619) — Live Funcs: a Min calls slider; file dialogs keep their extension `[EXTPR-539-540-2026-10-02]`
+
+- Live Funcs has a **Min calls** slider (1 to 32, default 1, which hides nothing) beside Fetch limit. It hides
+  functions called fewer times than that. It applies to the next recording: the value is read at Start, and moving
+  it later does not change the table on screen. Set Baseline still uses every fetched row, and Save .jsonl records
+  the value. Disabled while recording; remembered across restarts.
+- With Min calls set, the status line no longer suggests a higher Fetch limit when every row it would add is below
+  the minimum, and no longer says the action's function is surely among the NEW rows when the slider hid one.
+- Teleport's CSV and Lua export / import dialogs add the extension when you type a name without one (the fix in
+  the "(no build change)" entry below ships in this build).
+- From fireundubh's PR 540, built our way.
+- Build 3619: AOT `dist\UE5DumpUI.exe` 59,228,160 B, sha256 `23dc3b7d3db5`; `dist\UE5Dumper.dll` `198c35caf8d5`.
+  C# 6077/6077, headless 15/15, dll_core 593 checks, 32 gates. Checked in the AOT UI without a game (the slider
+  reaches 32, is saved, and was set back to 1); not yet checked live.
+
+## 2026-10-06 (no build change) — the file dialogs' file type always has its dot `[PICKER-EXT-DOT-2026-10-06]`
+
+- Teleport's coordinate library passed `csv` / `lua` to the file dialogs, which build their filter as `*` plus
+  the extension, so they offered `*csv` / `*lua`. A name typed without an extension in Export CSV, Sample CSV or
+  Save .lua was saved with no extension, and Import CSV… / Import .lua… also listed files whose name merely ends
+  in "csv" / "lua".
+- Measured on Windows 11 with a probe that makes Avalonia 12.1.3's `IFileDialog` calls in its order: with `*csv`
+  a typed "test" is saved as `test`, with `*.csv` as `test.csv`; the open dialog lists 2 of a.csv, b.txt, dcsv,
+  e.lua with `*csv` and 1 with `*.csv`.
+- `WindowsPlatformService.FilePickerPattern` adds a missing dot, for every caller (`ba16c035`, test `92bb2ad0`).
+  The Teleport dialogs name their type "CSV (*.csv)" / "Lua script (*.lua)" from en.axaml (`6c419495`).
+- Not in a build yet: it needs an AOT publish (`build.ps1 -Mode Publish`). C# 6045 passed, 0 failed, 15 skipped;
+  headless 15/15; 30 gates. Not yet checked in the app.
+
+-----
+
+## 2026-10-06 (build 3618) — Live Funcs: Save .jsonl `[EXTPR-539-540-2026-10-02]`
+
+- Live Funcs has a **Save .jsonl** button. It saves the rows on screen to a JSON Lines file: a summary line, then
+  one line per function in the order the game first called it, which a table ranked by count loses.
+- The summary records what decided the rows: the filter, the check boxes, the fetch limit, and in diff mode
+  whether the baseline was partial (NEW is then not reliable). It also says when the rows came from a Refresh
+  made during the recording.
+- Disabled while recording.
+- Fixed on the way: pressing Set Baseline a second time with Diff already on kept every row's Δ and NEW against
+  the old baseline.
+- From fireundubh's PR 540, built our way.
+- Build 3618: AOT `dist\UE5DumpUI.exe` 59,215,360 B, sha256 `a0b29b4c3c0c`; `dist\UE5Dumper.dll` `b6d055c828b5`.
+  C# 6054/6054, headless 15/15, dll_core 593 checks, 32 gates. Checked in the AOT UI without a game (the button,
+  and "Nothing to save" on an empty table); not yet checked live.
+
+## 2026-10-06 (build 3617) — Live Funcs: a Fetch limit slider `[EXTPR-539-540-2026-10-02]`
+
+- Live Funcs has a **Fetch limit** slider (64 to 32768, default 512) in place of the fixed 300. The table ranks
+  functions by call count and the limit cuts the lowest counts first, which is where the function you are
+  looking for usually is. Measured on Avowed: an active 75-second recording had 543 functions, and 300 came back.
+- The slider is disabled while recording; a recording uses the value it started with. To see more after Stop,
+  raise it and press Refresh. The value is remembered across restarts.
+- When the limit cut the table, the status line now says a higher Fetch limit shows more; it no longer says that
+  when the rows were missing for another reason, or when the slider is already at its maximum.
+- The baseline's status has a line of its own and wraps, instead of running off the right edge.
+- From fireundubh's PR 540, re-implemented.
+- Build 3617: AOT `dist\UE5DumpUI.exe` 59,189,760 B, sha256 `cf10dbc1656e`; `dist\UE5Dumper.dll` `89d3f799c088`.
+  C# 6042/6042, headless 15/15, dll_core 593 checks, 32 gates. Not yet checked live.
+
+## 2026-10-06 (no build change) — `analyze_dumps.py` counts the game's own C++ classes too `[EXTPR-539-540-2026-10-02]`
+
+- `scripts/analysis/analyze_dumps.py`, which suggests keywords for the Interesting Properties / Funcs tables from
+  several games' dumps, had the same "`/Script/` is engine" test as `diff_dumps.py`. Its game-only statistics now
+  include the game's native classes, where many games keep stats like Health and Mana (`74dc127e`). Reports made
+  before this are not comparable with new ones.
+- Both scripts take the engine-module list from the new `scripts/analysis/engine_paths.py`; the gate compares
+  that file with the DLL's and Dump All's lists. `analyze_dumps.py` has a `--self-test` now, run by the gates.
+
+## 2026-10-06 (no build change) — `diff_dumps.py` reports the game's own C++ classes; two new gates `[EXTPR-539-540-2026-10-02]`
+
+- `scripts/analysis/diff_dumps.py` treated every `/Script/` path as engine, so a default patch diff left out the
+  game's own native classes. It now skips only the engine's modules, from the same list the DLL and Dump All use;
+  `--include-engine` adds them (`6ade4435`, with fireundubh as co-author; the test is `80e7bfbf`).
+- New gates (32 now): `check_engine_prefixes` keeps the three copies of that list equal, and
+  `check_analysis_selftests` runs the self-tests of the scripts in `scripts/analysis/`, which nothing ran before.
+- `analyze_dumps.py` has the same old test; left for the maintainer to decide.
+
+## 2026-10-06 (no build change) — Live Funcs: fetching 32768 rows measured on a game; R1–R4 decided `[EXTPR-539-540-2026-10-02]`
+
+- On Avowed, build 3616: 75 s of walking and opening menus recorded 648 distinct functions; a fetch at the
+  planned maximum of 32768 returned 543 rows, 144 KB, in 10–15 ms. Standing still for 60 s recorded only 67.
+  The fetch stays on the interactive lane. Today's fixed cap of 300 did cut the active recording.
+- New rig `tools/verify/livefuncs_fetch_measure.py`; `pipe_client` now keeps each reply's size on the wire.
+- The maintainer decided the re-check's four questions (R1–R4); the plan has them. Next: `diff_dumps.py`'s engine
+  test (R4).
+
+## 2026-10-06 (no build change) — the PR 539 / 540 plan re-checked; build 3616's early changes verified on Windows `[EXTPR-539-540-2026-10-02]`
+
+- Every claim in `docs/ext-pr-539-540-plan.md` was re-checked against the two PRs, `dev` and the two reference
+  dumpers: 77 of 100 held, 21 needed a qualifier, 2 could not be checked, none was wrong outright. The plan's new
+  "Re-check 2026-10-06" section has the corrections, what the first review missed, and four questions for the
+  maintainer (R1–R4) before the work starts.
+- Build 3616's early changes, on Windows: C# 6025/6025, headless 15/15 at `bb651f08`. `dist\UE5DumpUI.exe`
+  59,165,184 B, sha256 `83e8b518119c`.
+- Correction to the 3616 entry below: the status line updates **at most** twice a second, after each class is
+  written; one slow class walk still leaves it quiet.
+- D7's tests now cross the 200-class chunk boundary (`8358bdd9`). A chunk-local `Done` passed every earlier test.
+- Comments in `DumpAllService` that no longer matched the code (`6897e913`), and the "50–500 MB" figure left in
+  `scripts/analysis/README.md` (`76556244`). Neither changes the program.
+
+## 2026-10-04 (no build change) — feasibility of a Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+Written down, not built: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). Live Funcs could keep one
+record per `ProcessEvent` call in a buffer of fixed size that stops when full, with the nesting depth that turns it
+into a call tree; then, for functions the user ticks, a copy of the parameters and of the native stack. The stack
+would get a few views of its own (frames named by the UFunction they fall in, an annotated stack copy, the decoded
+parameters) and hand disassembly to Cheat Engine. Nothing is measured yet. This is our own feature, not part of
+PRs 539 / 540, so its commits carry no co-author trailer.
+
+## 2026-10-04 (no build change) — Live Funcs fetch limit: the planned max is now 32768 `[EXTPR-539-540-2026-10-02]`
+
+The plan for PR 540 had the fetch-limit slider top out at 8192. It now tops out at 32768 (2^15). On the PR, the
+contributor replied that they feed Live Funcs output to an AI assistant to write UE4SS mods and wanted a fuller
+picture of what fired; they agreed 50,000 is too much. The default stays 512, because the table is mainly for
+tracing what one in-game action calls. The DLL needs no change. The plan now asks for the reply size and time to
+be measured at 32768 before deciding whether the command stays on the interactive pipe lane. Nothing is built yet:
+[ext-pr-539-540-plan.md](ext-pr-539-540-plan.md), row L1.
+
+## 2026-10-02 (build 3616) — Dump All: progress twice a second; no time or size in its tooltip `[EXTPR-539-540-2026-10-02]`
+
+- While Dump All walks the classes, the status line now updates every half second. It used to update once every
+  50 classes, which could leave it still for a long time on slow walks. The first class shows at once, and the
+  "Counting instances" step still updates once per page of objects.
+- The Dump All tooltip no longer promises "~30-60s per game" or "50-500 MB". It says that time and file size
+  vary with the game and the export settings.
+- The first change is item D7 of the plan for external PR 539
+  ([ext-pr-539-540-plan.md](ext-pr-539-540-plan.md)), done before the rest of it. Its commit (`14ecb189`)
+  credits fireundubh as co-author. The commits are `42217904` (tooltip), `cc254fd1` (a matching code comment)
+  and `14ecb189` (progress).
+- Build 3616, published AOT by the maintainer with `build.cmd publish` on 2026-10-02 and reported OK. That run
+  includes the C# tests. The exe size, SHA and test count were not recorded in this entry. Before the publish, the
+  C# suite also ran on Linux (.NET SDK 10.0.112, RID linux-x64): 5896 passed, the same 112 Windows-only failures
+  as the unchanged tree, 17 skipped.
+
+## 2026-10-02 (no build change) — the object index from PR 539 will be built after all, as an opt-in `[EXTPR-539-540-2026-10-02]`
+
+The entry below says the object index is not kept. That changed the same day. Dumper-7 writes the same kind of
+list (`GObjects-Dump.txt`) on every SDK generation, and RE-UE4SS writes one (`UE4SS_ObjectDump.txt`) on a
+keybind. Users of either tool will expect it, and our UI has no way to save the whole object list today. It will
+be a checkbox, off by default. When ticked, the export first estimates the object count, file size and time, and
+asks before writing anything. Plan: [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md), section D4.
+
+## 2026-10-02 (no build change) — external PRs 539 / 540 reviewed; what we take is planned, not built `[EXTPR-539-540-2026-10-02]`
+
+Two pull requests from fireundubh were read for the first time: PR 540 (Live Funcs: fetch limit, min calls,
+save `.jsonl`) and PR 539 (Dump All: structs, enums, function params, an object index). Neither is merged. We
+re-implement the parts we keep, with the contributor as co-author on each commit.
+
+- **Kept from 540**, rebuilt as sliders over powers of two: the fetch limit (default 512, max 8192, replacing the
+  fixed 300), Save `.jsonl`, and Min calls (default 1, max 32, applies to the next capture only). All three are
+  disabled while recording and remembered across restarts.
+- **Kept from 539:** struct lines, enum lines and function parameters in Dump All. **Not kept:** the object index.
+  Its addresses mean nothing once the game closes, and it adds a line for every live object.
+- **The review found** that PR 540 fails the `check_vm_status_literals` gate, that 50,000 as a fetch ceiling means
+  "fetch everything" on the interactive pipe lane, and that PR 539's progress reports fire once per struct line
+  and its Dump Explorer index can send a class jump to a struct of the same name.
+
+The plan and every finding are in [ext-pr-539-540-plan.md](ext-pr-539-540-plan.md); the open rows are in
+[todo.md](todo.md).
+
+## 2026-10-02 (no build change) — README: the built-in pointer scan leads the highlights
+
+`README.md` and `README_zh-TW.md` now open their highlights with what most UE dumpers lack: GObjects, GNames
+and GWorld are found automatically on most UE games. The scanner ships its own AOB signatures and symbol-export
+lookups for GObjects, GNames, GWorld, GEngine and SparseDelegates, checked against UE 4.11–5.8 binaries. When no
+pattern matches it falls back: a data-section scan for GObjects, string-reference and pointer scans for GNames,
+and for GWorld a search for a UWorld instance, then `GEngine → GameViewport → World`.
+
+-----
+
 ## 2026-10-01 (no build change) — corrections to the entries for builds 3599–3614
 
 The entries below stay as written (this log is append-only). Reading the v3598…3615 code against them found

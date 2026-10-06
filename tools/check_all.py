@@ -145,6 +145,18 @@ GATES = [
      "a tracked text file holds a control byte (NUL, backspace, vertical tab ...): a backslash escape that a "
      "shell heredoc collapsed before a patch script ran. The output names the file, line and byte", False),
 
+    ("check_engine_prefixes",
+     ["tools/check_engine_prefixes.py"],
+     "the engine-package lists in Aura.h, DumpAllService.cs and scripts/analysis/engine_paths.py name "
+     "different modules, so the DLL, Dump All and the analysis scripts disagree about which classes are the "
+     "engine's. Aura.h is the source",
+     False),
+
+    ("check_analysis_selftests",
+     ["tools/check_analysis_selftests.py"],
+     "a script under scripts/analysis/ fails its own --self-test (diff_dumps.py: the patch diff no longer "
+     "reports what its specification says). The output names each failed assertion", False),
+
     ("check_md_links",
      ["tools/check_md_links.py"],
      "a relative link in a tracked .md file does not resolve. Run "

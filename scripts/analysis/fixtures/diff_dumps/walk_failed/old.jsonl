@@ -1,0 +1,6 @@
+{"kind":"meta","module":"FakeGame.exe","ue_version":505,"dumper_build":999,"dumped_at":"2026-01-01T00:00:00Z"}
+{"kind":"class","name":"AHero","addr":"0x1","path":"/Game/Heroes/AHero","meta":"BlueprintGeneratedClass","super":"","super_addr":"","is_bpgc":true,"props_size":8,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"class","name":"AOther","addr":"0x1","path":"/Game/AOther","meta":"BlueprintGeneratedClass","super":"","super_addr":"","is_bpgc":true,"props_size":8,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"struct","name":"FHit","addr":"0x5","path":"/Script/FakeGame.FHit","meta":"ScriptStruct","super":"","super_addr":"","props_size":8,"props":[]}
+{"kind":"enum","name":"EKind","addr":"0x6","path":"/Script/FakeGame.EKind","entries":[{"name":"EKind::A","value":0}]}
+{"kind":"summary","classes_emitted":0,"structs_emitted":1,"enums_emitted":1,"enums_listed":true,"enum_names_failed":false,"enums_truncated":false,"params_from_num_parms":0}

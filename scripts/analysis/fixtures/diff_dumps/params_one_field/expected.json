@@ -1,0 +1,237 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Game/Heroes/AHero",
+     "name": "AHero",
+     "old_size": 8,
+     "new_size": 8,
+     "breaking": true,
+     "props": [],
+     "funcs": [
+      {
+       "name": "NameOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Damage@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "TypeOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(DoubleProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "StructOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Rotator> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "ObjClassOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Pawn Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "OutOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(out FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "RetOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4) -> ObjectProperty:Actor Source@0x8/8"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "OffsetOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x4/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "SizeOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/8, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      },
+      {
+       "name": "CountOnly",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": "(FloatProperty Amount@0x0/4, ObjectProperty:Actor Source@0x8/8, IntProperty Extra@0x1C/4) -> StructProperty<Vector> ReturnValue@0x10/12"
+       },
+       "params_changed": true
+      }
+     ]
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 9,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 1,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}

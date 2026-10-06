@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using UE5DumpUI.Core;
@@ -6,18 +7,17 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Streams a full classes + properties + functions dump as JSON Lines
+/// Streams a full dump of classes (properties + functions), structs (properties) and enums (entries) as JSON Lines
 /// (one JSON object per line). Used as input for offline analysis —
 /// Python scripts under <c>scripts/analysis/</c> aggregate across
 /// multiple game dumps to inform keyword tables, class-location
 /// bonuses, and threshold calibration. Replaces hand-curated guesses
 /// with empirically-grounded patterns.
 ///
-/// All work is orchestrated client-side via the existing pipe
-/// endpoints (<c>get_object_list</c> + <c>walk_class</c> +
-/// <c>walk_functions</c>); no new DLL command is required. The
-/// trade-off is per-class round-trips — ~30-60 seconds for a
-/// 3-5k-class game — vs. zero DLL maintenance burden.
+/// All work is orchestrated client-side over existing pipe commands; no
+/// DLL command of its own is required. The trade-off is per-class
+/// round-trips, so the run time grows with the game's class count, vs.
+/// zero DLL maintenance burden.
 ///
 /// **BPGC inclusion**: unlike <c>SearchProperties</c> (build 671
 /// `IsClassLikeMeta` fix) the dumper accepts every class-flavoured
@@ -47,6 +47,13 @@ public static class DumpAllService
     /// counts. Matches <see cref="SdkExportService.FullSdkBatchChunkSize"/>.
     /// </summary>
     internal const int WalkClassBatchChunkSize = 200;
+
+    /// <summary>
+    /// How often the class walk reports progress. By time, not every N classes: a count
+    /// step goes quiet for as long as N slow walks take. Two updates a second is enough
+    /// for a status line.
+    /// </summary>
+    internal static readonly TimeSpan ProgressReportInterval = TimeSpan.FromMilliseconds(500);
 
     /// <summary>
     /// Engine-package path prefixes — kept in sync with the DLL's
@@ -80,15 +87,25 @@ public static class DumpAllService
     ///   <item><c>{"kind":"meta", ...}</c> — first line; UE version,
     ///     module, object count, build, options.</item>
     ///   <item><c>{"kind":"class", "name":..., "props":[...],
-    ///     "funcs":[...]}</c> — one per class-like object.</item>
-    ///   <item><c>{"kind":"error", "addr":..., "msg":...}</c> — when a
-    ///     specific class walk fails; iteration continues.</item>
-    ///   <item><c>{"kind":"summary", ...}</c> — last line; counters.</item>
+    ///     "funcs":[{..., "params":[...]}]}</c> — one per class-like object; each
+    ///     function with its parameters, the return included, and not a Blueprint
+    ///     function's locals.</item>
+    ///   <item><c>{"kind":"struct", "name":..., "props":[...]}</c> — one per
+    ///     ScriptStruct / UserDefinedStruct: a class line's identity, super and props,
+    ///     without functions, instance count or the Blueprint-class flag.</item>
+    ///   <item><c>{"kind":"enum", "name":..., "entries":[{"name":...,"value":...}]}</c> —
+    ///     one per UEnum from a single list_enums call, after the type lines.</item>
+    ///   <item><c>{"kind":"error", "addr":..., "name":..., "msg":...}</c> — when a
+    ///     walk or the enum list fails (the list's line has an empty addr); iteration continues.</item>
+    ///   <item><c>{"kind":"summary", ...}</c> — last line; counters, what the enum list
+    ///     could not say (enums_listed, enum_names_failed, enums_truncated), and how many
+    ///     functions' parameters came from num_parms (params_from_num_parms).</item>
     /// </list>
-    /// Returns a <see cref="DumpResult"/> carrying the same counters the
-    /// summary line reports, so the caller can compose an honest completion
+    /// Returns a <see cref="DumpResult"/> carrying what the summary line
+    /// reports, so the caller can compose an honest completion
     /// message from what the dump actually produced (classes emitted / errors)
     /// rather than from the output file's byte length (audit X4).
+    /// <paramref name="clock"/> paces the progress reports; tests pass a manual one.
     /// </summary>
     public static async Task<DumpResult> GenerateAsync(
         IDumpService dump,
@@ -96,9 +113,11 @@ public static class DumpAllService
         Stream output,
         DumpOptions? options = null,
         IProgress<DumpProgress>? progress = null,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        TimeProvider? clock = null)
     {
         options ??= new DumpOptions();
+        var walkProgress = new ProgressThrottle(clock ?? TimeProvider.System, ProgressReportInterval);
 
         await using var writer = new StreamWriter(output, new UTF8Encoding(false), bufferSize: 64 * 1024, leaveOpen: true)
         {
@@ -137,7 +156,7 @@ public static class DumpAllService
             } while (true);
         }
 
-        // ----- Pass 2: walk every class-like object -----
+        // ----- Pass 2: walk every class-like and struct type -----
         //
         // Classes are walked in chunks of WalkClassBatchChunkSize via
         // walk_class_batch (build 693). The DLL batch is a trivial loop
@@ -150,6 +169,9 @@ public static class DumpAllService
         // calls so per-class error attribution is preserved.
         int classesEmitted = 0;
         int classesSkipped = 0;
+        int structsEmitted = 0;
+        int structsSkipped = 0;
+        int paramsFromNumParms = 0;
         int errors = 0;
         int scannedObjects = 0;
         {
@@ -169,9 +191,9 @@ public static class DumpAllService
                 {
                     scannedObjects++;
                     // [DUMPALL-METACLASS-CDO] A metaclass's class-default object reads its METAclass
-                    // (Default__Class is a Class), so the meta test alone admitted it as a class.
-                    if (!ClassLikeMetas.Contains(obj.ClassName)
-                        || obj.Name.StartsWith("Default__", StringComparison.Ordinal))
+                    // (Default__Class is a Class), so a meta test alone admits it; IsExportedTypeRow
+                    // drops it, for structs as for classes.
+                    if (!IsExportedTypeRow(obj.ClassName, obj.Name))
                     {
                         continue;
                     }
@@ -186,19 +208,23 @@ public static class DumpAllService
                     // so it falls through to be walked and re-checked on classInfo.FullPath.
                     if (options.GameOnly && IsEnginePath(obj.FullPath))
                     {
-                        classesSkipped++;
+                        if (IsStructMetaName(obj.ClassName)) structsSkipped++;
+                        else classesSkipped++;
                         continue;
                     }
 
                     chunkBuffer.Add(obj);
                     if (chunkBuffer.Count >= WalkClassBatchChunkSize)
                     {
-                        var (emitted, errs, skipped) = await FlushClassChunkAsync(
+                        var c = await FlushClassChunkAsync(
                             dump, writer, chunkBuffer, instanceCounts, options,
-                            classesEmitted, progress, ct);
-                        classesEmitted += emitted;
-                        errors         += errs;
-                        classesSkipped += skipped;
+                            classesEmitted + structsEmitted, progress, walkProgress, ct);
+                        classesEmitted += c.Classes;
+                        structsEmitted += c.Structs;
+                        errors         += c.Errors;
+                        classesSkipped += c.ClassesSkipped;
+                        structsSkipped += c.StructsSkipped;
+                        paramsFromNumParms += c.ParamsFromNumParms;
                         chunkBuffer.Clear();
                     }
                 }
@@ -210,30 +236,85 @@ public static class DumpAllService
             // Final partial chunk.
             if (chunkBuffer.Count > 0)
             {
-                var (emitted, errs, skipped) = await FlushClassChunkAsync(
+                var c = await FlushClassChunkAsync(
                     dump, writer, chunkBuffer, instanceCounts, options,
-                    classesEmitted, progress, ct);
-                classesEmitted += emitted;
-                errors         += errs;
-                classesSkipped += skipped;
+                    classesEmitted + structsEmitted, progress, walkProgress, ct);
+                classesEmitted += c.Classes;
+                structsEmitted += c.Structs;
+                errors         += c.Errors;
+                classesSkipped += c.ClassesSkipped;
+                structsSkipped += c.StructsSkipped;
+                paramsFromNumParms += c.ParamsFromNumParms;
                 chunkBuffer.Clear();
             }
         }
 
+        // ----- Pass 3: the enums, one list_enums call -----
+        // The summary records what the list alone cannot say: whether it was obtained at all, and whether
+        // the DLL could read member names or was cut short. Without them a reader comparing two dumps
+        // cannot tell an enum with no entries from one whose entries could not be read.
+        int enumsEmitted = 0;
+        int enumsSkipped = 0;
+        var enumState = new EnumListState(Listed: false, NamesFailed: false, Truncated: false);
+        ct.ThrowIfCancellationRequested();
+        // Done 0: nothing is counted yet, and the UI shows a report without a total as "Phase (Done)".
+        progress?.Report(new DumpProgress(Phase: "Listing enums", Done: 0, Total: -1));
+        EnumListResult? enumList = null;
+        try
+        {
+            enumList = await dump.ListEnumsDetailedAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            errors++;
+            await WriteErrorLineAsync(writer, "", "list_enums", ex.Message, ct);
+        }
+        if (enumList != null)
+        {
+            enumState = new EnumListState(Listed: true, enumList.EnumNamesFailed, enumList.Truncated);
+            foreach (var e in enumList.Enums)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (options.GameOnly && IsEnginePath(e.FullPath))
+                {
+                    enumsSkipped++;
+                    continue;
+                }
+                await WriteEnumLineAsync(writer, e, ct);
+                enumsEmitted++;
+            }
+        }
+
         // ----- Summary line -----
-        await WriteSummaryLineAsync(writer, classesEmitted, classesSkipped, errors, scannedObjects, ct);
+        await WriteSummaryLineAsync(writer, classesEmitted, classesSkipped, structsEmitted, structsSkipped,
+                                    enumsEmitted, enumsSkipped, enumState, paramsFromNumParms, errors, scannedObjects, ct);
         await writer.FlushAsync();
 
+        int written = classesEmitted + structsEmitted + enumsEmitted;
         progress?.Report(new DumpProgress(
-            Phase: $"Done — {classesEmitted} classes",
-            Done: classesEmitted,
-            Total: classesEmitted));
+            Phase: $"Done — {classesEmitted} classes, {structsEmitted} structs, {enumsEmitted} enums",
+            Done: written,
+            Total: written));
 
-        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects);
+        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted, structsSkipped,
+                              enumsEmitted, enumsSkipped, enumState.Listed, enumState.NamesFailed, enumState.Truncated,
+                              paramsFromNumParms);
     }
 
+    /// <summary>What the enum list said about itself, for the summary line.</summary>
+    private readonly record struct EnumListState(bool Listed, bool NamesFailed, bool Truncated);
+
+    /// <summary>What one chunk of the type walk wrote and skipped, by kind, and how many of its functions had
+    /// their parameters decided by num_parms.</summary>
+    private readonly record struct ChunkCounts(int Classes, int Structs, int Errors, int ClassesSkipped, int StructsSkipped,
+                                               int ParamsFromNumParms);
+
     /// <summary>
-    /// Walk a chunk of class objects and emit one class line per entry.
+    /// Walk a chunk of class and struct objects and emit one class or struct line per entry.
     /// Tries the batched walk_class_batch path first; on any failure
     /// (pipe exception, unexpected result count) falls back to single
     /// WalkClassAsync calls so per-class error attribution survives.
@@ -241,15 +322,14 @@ public static class DumpAllService
     /// half of the per-class round-trip cost is a separate batching
     /// candidate (build 693 only batches walk_class).
     ///
-    /// Returns (emittedDelta, errorsDelta, skippedDelta) so the caller can
-    /// maintain the cumulative <c>classesEmitted</c> / <c>errors</c> /
-    /// <c>classesSkipped</c> counters the summary line reports. The GameOnly
+    /// Returns the chunk's counts so the caller can maintain the cumulative
+    /// counters the summary line reports. The GameOnly
     /// engine-package skip is applied HERE (post-walk) because the walked
     /// <c>classInfo.FullPath</c> is the only reliable package path — the
-    /// object-list <c>obj.FullPath</c> is always empty (get_object_list carries
-    /// no path).
+    /// object-list <c>obj.FullPath</c> is empty unless the page was fetched with
+    /// include_path, and can differ from the walked path.
     /// </summary>
-    private static async Task<(int emitted, int errors, int skipped)> FlushClassChunkAsync(
+    private static async Task<ChunkCounts> FlushClassChunkAsync(
         IDumpService dump,
         TextWriter writer,
         List<UObjectNode> chunk,
@@ -257,9 +337,10 @@ public static class DumpAllService
         DumpOptions options,
         int cumulativeEmittedBefore,
         IProgress<DumpProgress>? progress,
+        ProgressThrottle walkProgress,
         CancellationToken ct)
     {
-        if (chunk.Count == 0) return (0, 0, 0);
+        if (chunk.Count == 0) return default;
 
         // Try the batched path first.
         var addrs = new string[chunk.Count];
@@ -283,14 +364,18 @@ public static class DumpAllService
             // path did.
         }
 
-        int emittedThisChunk = 0;
+        int classesThisChunk = 0;
+        int structsThisChunk = 0;
         int errorsThisChunk = 0;
-        int skippedThisChunk = 0;
+        int classesSkippedThisChunk = 0;
+        int structsSkippedThisChunk = 0;
+        int paramsFromNumParmsThisChunk = 0;
 
         for (int i = 0; i < chunk.Count; i++)
         {
             ct.ThrowIfCancellationRequested();
             var obj = chunk[i];
+            bool isStruct = IsStructMetaName(obj.ClassName);
             try
             {
                 var classInfo = batchResult != null
@@ -298,38 +383,56 @@ public static class DumpAllService
                     : await dump.WalkClassAsync(obj.Address, ct);
 
                 // GameOnly engine-package skip — applied on the walked path (the
-                // reliable one) rather than obj.FullPath (always empty). Skips
+                // reliable one) rather than obj.FullPath (empty without include_path). Skips
                 // BEFORE WalkFunctions so an engine class costs no extra round-trip.
                 if (options.GameOnly && IsEnginePath(classInfo.FullPath))
                 {
-                    skippedThisChunk++;
+                    if (isStruct) structsSkippedThisChunk++;
+                    else classesSkippedThisChunk++;
                     continue;
                 }
 
-                List<FunctionInfoModel>? functions = null;
-                if (options.IncludeFunctions)
+                if (isStruct && string.IsNullOrEmpty(classInfo.Name))
                 {
-                    functions = await dump.WalkFunctionsAsync(obj.Address, ct);
+                    // Ubel::WalkClassEx answers an address it refuses with an EMPTY ClassInfo, not an
+                    // error. Written, it would be a struct named "" that a struct diff matches with any
+                    // other refused one; the SDK export makes it an error line too [SDK-TYPE-NAMES].
+                    errorsThisChunk++;
+                    await WriteErrorLineAsync(writer, obj.Address, obj.Name, "struct walk refused (empty result)", ct);
+                    continue;
                 }
 
-                int instCount = 0;
-                if (instanceCounts != null)
+                if (isStruct)
                 {
-                    instanceCounts.TryGetValue(classInfo.Name, out instCount);
+                    // A struct has no functions and no instances of its own to count.
+                    await WriteStructLineAsync(writer, obj, classInfo, ct);
+                    structsThisChunk++;
+                }
+                else
+                {
+                    List<FunctionInfoModel>? functions = null;
+                    if (options.IncludeFunctions)
+                    {
+                        functions = await dump.WalkFunctionsAsync(obj.Address, ct);
+                    }
+
+                    int instCount = 0;
+                    if (instanceCounts != null)
+                    {
+                        instanceCounts.TryGetValue(classInfo.Name, out instCount);
+                    }
+
+                    paramsFromNumParmsThisChunk += await WriteClassLineAsync(writer, obj, classInfo, functions, instCount, ct);
+                    classesThisChunk++;
                 }
 
-                await WriteClassLineAsync(writer, obj, classInfo, functions, instCount, ct);
-                emittedThisChunk++;
-
-                // Preserves the pre-batch path's per-50-class progress
-                // granularity, measured against the cumulative emit
-                // count (not the chunk-local count). Matches old
-                // behaviour exactly so progress messages line up.
-                int cumulative = cumulativeEmittedBefore + emittedThisChunk;
-                if ((cumulative % 50) == 0)
+                // Paced by ProgressReportInterval; Done is the cumulative
+                // count of types written across chunks, not the chunk-local one.
+                int cumulative = cumulativeEmittedBefore + classesThisChunk + structsThisChunk;
+                if (progress != null && walkProgress.Due())
                 {
-                    progress?.Report(new DumpProgress(
-                        Phase: "Walking classes",
+                    progress.Report(new DumpProgress(
+                        Phase: "Walking classes and structs",
                         Done: cumulative,
                         Total: -1));
                 }
@@ -345,19 +448,22 @@ public static class DumpAllService
             }
         }
 
-        return (emittedThisChunk, errorsThisChunk, skippedThisChunk);
+        return new ChunkCounts(classesThisChunk, structsThisChunk, errorsThisChunk,
+                               classesSkippedThisChunk, structsSkippedThisChunk, paramsFromNumParmsThisChunk);
     }
 
     // ------------------------------------------------------------------
     // Internal: writers
     // ------------------------------------------------------------------
+    // Numbers go through CultureInfo.InvariantCulture: StringBuilder.Append(int) formats with the current
+    // culture, and some cultures' minus is U+2212, which is not JSON. An unreadable parameter offset is -1.
 
     private static async Task WriteMetaLineAsync(
         TextWriter w, EngineState es, DumpOptions opts, CancellationToken ct)
     {
         var sb = new StringBuilder(512);
         sb.Append("{\"kind\":\"meta\"");
-        sb.Append(",\"ue_version\":").Append(es.UEVersion);
+        sb.Append(CultureInfo.InvariantCulture, $",\"ue_version\":{es.UEVersion}");
         sb.Append(",\"ue_version_detected\":").Append(es.VersionDetected ? "true" : "false");
         sb.Append(",\"is_user_override\":").Append(es.IsUserOverride ? "true" : "false");
         AppendJsonString(sb, ",\"module\":", es.ModuleName ?? "");
@@ -365,12 +471,12 @@ public static class DumpAllService
         AppendJsonString(sb, ",\"gobjects\":", es.GObjectsAddr ?? "");
         AppendJsonString(sb, ",\"gnames\":",   es.GNamesAddr ?? "");
         AppendJsonString(sb, ",\"gworld\":",   es.GWorldAddr ?? "");
-        sb.Append(",\"object_count\":").Append(es.ObjectCount);
+        sb.Append(CultureInfo.InvariantCulture, $",\"object_count\":{es.ObjectCount}");
         // FUObjectItem layout — lets offline analysis flag UE5.7+ (un)packed dumps.
         // "packed57" addresses are UNVERIFIED reconstructions (no shipping game uses
         // it yet), so a dump captured under it must be treated as best-effort.
         AppendJsonString(sb, ",\"item_layout\":", es.ItemLayoutMode);
-        sb.Append(",\"item_obj_offset\":").Append(es.ItemObjOffset);
+        sb.Append(CultureInfo.InvariantCulture, $",\"item_obj_offset\":{es.ItemObjOffset}");
         sb.Append(",\"packed_unverified\":").Append(es.ItemPacked ? "true" : "false");
         // [W4-STRIDE-TENTATIVE] The stride verdict beside it: a dump taken on a guessed stride may hold an
         // alias of the real pool (every k-th object), and offline analysis must be able to tell.
@@ -378,7 +484,7 @@ public static class DumpAllService
         sb.Append(",\"stride_untrusted\":").Append(es.ItemStrideUntrusted ? "true" : "false");
         AppendJsonString(sb, ",\"pe_hash\":", es.PeHash ?? "");
         AppendJsonString(sb, ",\"publisher_thumbprint\":", es.PublisherThumbprint ?? "");
-        sb.Append(",\"dumper_build\":").Append(opts.DumperBuildNumber);
+        sb.Append(CultureInfo.InvariantCulture, $",\"dumper_build\":{opts.DumperBuildNumber}");
         AppendJsonString(sb, ",\"dumper_commit\":", opts.DumperCommit ?? "");
         AppendJsonString(sb, ",\"dumped_at\":", DateTime.UtcNow.ToString("o"));
         sb.Append(",\"options\":{");
@@ -389,7 +495,8 @@ public static class DumpAllService
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
     }
 
-    private static async Task WriteClassLineAsync(
+    /// <summary>Returns how many of the functions had their parameters decided by num_parms.</summary>
+    private static async Task<int> WriteClassLineAsync(
         TextWriter w,
         UObjectNode obj,
         ClassInfoModel classInfo,
@@ -397,6 +504,7 @@ public static class DumpAllService
         int instanceCount,
         CancellationToken ct)
     {
+        int fromNumParms = 0;
         var sb = new StringBuilder(classInfo.Fields.Count * 100 + 256);
         sb.Append("{\"kind\":\"class\"");
         AppendJsonString(sb, ",\"name\":", classInfo.Name);
@@ -406,8 +514,88 @@ public static class DumpAllService
         AppendJsonString(sb, ",\"super\":", classInfo.SuperName);
         AppendJsonString(sb, ",\"super_addr\":", classInfo.SuperAddress);
         sb.Append(",\"is_bpgc\":").Append(obj.ClassName != "Class" ? "true" : "false");
-        sb.Append(",\"props_size\":").Append(classInfo.PropertiesSize);
-        sb.Append(",\"instance_count\":").Append(instanceCount);
+        sb.Append(CultureInfo.InvariantCulture, $",\"props_size\":{classInfo.PropertiesSize}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"instance_count\":{instanceCount}");
+        AppendProps(sb, classInfo);
+
+        if (functions != null)
+        {
+            sb.Append(",\"funcs\":[");
+            for (int i = 0; i < functions.Count; i++)
+            {
+                if (i > 0) sb.Append(',');
+                var fn = functions[i];
+                sb.Append('{');
+                AppendJsonString(sb, "\"name\":", fn.Name);
+                AppendJsonString(sb, ",\"addr\":", fn.Address);
+                AppendJsonString(sb, ",\"return_type\":", fn.ReturnType);
+                sb.Append(CultureInfo.InvariantCulture, $",\"num_parms\":{fn.NumParms}");
+                sb.Append(CultureInfo.InvariantCulture, $",\"parms_size\":{fn.ParmsSize}");
+                sb.Append(",\"flags\":\"0x").Append(fn.FunctionFlags.ToString("X")).Append('"');
+                if (AppendParams(sb, fn)) fromNumParms++;
+                sb.Append('}');
+            }
+            sb.Append(']');
+        }
+        sb.Append('}');
+        await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
+        return fromNumParms;
+    }
+
+    /// <summary>
+    /// [EXTPR-539-540-2026-10-02] D3: a function's parameters, the return included, in the DLL's order.
+    /// walk_functions lists the function's whole property chain, and a Blueprint function's locals follow its
+    /// parameters there; <see cref="FunctionInfoModel.Parameters"/> leaves them out, with the DLL's CPF_Parm
+    /// flag or, from a DLL that predates it, num_parms. No struct_fields: the struct's own line carries them.
+    /// Returns true when that fallback decided something.
+    /// </summary>
+    private static bool AppendParams(StringBuilder sb, FunctionInfoModel fn)
+    {
+        sb.Append(",\"params\":[");
+        bool first = true;
+        foreach (var p in fn.Parameters)
+        {
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append('{');
+            AppendJsonString(sb, "\"name\":", p.Name);
+            AppendJsonString(sb, ",\"type\":", p.TypeName);
+            sb.Append(CultureInfo.InvariantCulture, $",\"offset\":{p.Offset}");
+            sb.Append(CultureInfo.InvariantCulture, $",\"size\":{p.Size}");
+            if (p.IsOut) sb.Append(",\"out\":true");
+            if (p.IsReturn) sb.Append(",\"ret\":true");
+            if (!string.IsNullOrEmpty(p.StructName))
+                AppendJsonString(sb, ",\"struct_type\":", p.StructName);
+            if (!string.IsNullOrEmpty(p.ObjectClassName))
+                AppendJsonString(sb, ",\"obj_class\":", p.ObjectClassName);
+            sb.Append('}');
+        }
+        sb.Append(']');
+        return fn.ParametersFromNumParms;
+    }
+
+    /// <summary>[EXTPR-539-540-2026-10-02] D1: a struct's line. The class line's identity, super and props, so a
+    /// reader parses both the same way; no functions, instance count or Blueprint-class flag.</summary>
+    private static async Task WriteStructLineAsync(
+        TextWriter w, UObjectNode obj, ClassInfoModel structInfo, CancellationToken ct)
+    {
+        var sb = new StringBuilder(structInfo.Fields.Count * 100 + 256);
+        sb.Append("{\"kind\":\"struct\"");
+        AppendJsonString(sb, ",\"name\":", structInfo.Name);
+        AppendJsonString(sb, ",\"addr\":", obj.Address);
+        AppendJsonString(sb, ",\"path\":", structInfo.FullPath);
+        AppendJsonString(sb, ",\"meta\":", obj.ClassName);  // "ScriptStruct" or "UserDefinedStruct"
+        AppendJsonString(sb, ",\"super\":", structInfo.SuperName);
+        AppendJsonString(sb, ",\"super_addr\":", structInfo.SuperAddress);
+        sb.Append(CultureInfo.InvariantCulture, $",\"props_size\":{structInfo.PropertiesSize}");
+        AppendProps(sb, structInfo);
+        sb.Append('}');
+        await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
+    }
+
+    /// <summary>The <c>"props"</c> array, the same for a class line and a struct line.</summary>
+    private static void AppendProps(StringBuilder sb, ClassInfoModel classInfo)
+    {
         sb.Append(",\"props\":[");
         for (int i = 0; i < classInfo.Fields.Count; i++)
         {
@@ -416,15 +604,15 @@ public static class DumpAllService
             sb.Append('{');
             AppendJsonString(sb, "\"name\":", f.Name);
             AppendJsonString(sb, ",\"type\":", f.TypeName);
-            sb.Append(",\"offset\":").Append(f.Offset);
-            sb.Append(",\"size\":").Append(f.Size);
+            sb.Append(CultureInfo.InvariantCulture, $",\"offset\":{f.Offset}");
+            sb.Append(CultureInfo.InvariantCulture, $",\"size\":{f.Size}");
             // Reflection flags + static-array dim (auto-detect features).
             // prop_flags as an "0x" hex string — CPF_* is uint64 with high
             // bits set. Both omitted at defaults (flags 0 / dim 1).
             if (f.PropertyFlags != 0)
                 sb.Append(",\"prop_flags\":\"0x").Append(f.PropertyFlags.ToString("X")).Append('"');
             if (f.ArrayDim != 1)
-                sb.Append(",\"array_dim\":").Append(f.ArrayDim);
+                sb.Append(CultureInfo.InvariantCulture, $",\"array_dim\":{f.ArrayDim}");
             if (!string.IsNullOrEmpty(f.StructType))
                 AppendJsonString(sb, ",\"struct_type\":", f.StructType);
             if (!string.IsNullOrEmpty(f.InnerType))
@@ -438,26 +626,27 @@ public static class DumpAllService
             sb.Append('}');
         }
         sb.Append(']');
+    }
 
-        if (functions != null)
+    /// <summary>[EXTPR-539-540-2026-10-02] D2: an enum's line, entries in the DLL's order.</summary>
+    private static async Task WriteEnumLineAsync(TextWriter w, EnumDefinition e, CancellationToken ct)
+    {
+        var sb = new StringBuilder(e.Entries.Count * 40 + 128);
+        sb.Append("{\"kind\":\"enum\"");
+        AppendJsonString(sb, ",\"name\":", e.Name);
+        AppendJsonString(sb, ",\"addr\":", e.Address);
+        AppendJsonString(sb, ",\"path\":", e.FullPath);
+        sb.Append(",\"entries\":[");
+        for (int i = 0; i < e.Entries.Count; i++)
         {
-            sb.Append(",\"funcs\":[");
-            for (int i = 0; i < functions.Count; i++)
-            {
-                if (i > 0) sb.Append(',');
-                var fn = functions[i];
-                sb.Append('{');
-                AppendJsonString(sb, "\"name\":", fn.Name);
-                AppendJsonString(sb, ",\"addr\":", fn.Address);
-                AppendJsonString(sb, ",\"return_type\":", fn.ReturnType);
-                sb.Append(",\"num_parms\":").Append(fn.NumParms);
-                sb.Append(",\"parms_size\":").Append(fn.ParmsSize);
-                sb.Append(",\"flags\":\"0x").Append(fn.FunctionFlags.ToString("X")).Append('"');
-                sb.Append('}');
-            }
-            sb.Append(']');
+            if (i > 0) sb.Append(',');
+            var entry = e.Entries[i];
+            sb.Append('{');
+            AppendJsonString(sb, "\"name\":", entry.Name);
+            sb.Append(",\"value\":").Append(entry.Value.ToString(CultureInfo.InvariantCulture));
+            sb.Append('}');
         }
-        sb.Append('}');
+        sb.Append("]}");
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
     }
 
@@ -474,14 +663,24 @@ public static class DumpAllService
     }
 
     private static async Task WriteSummaryLineAsync(
-        TextWriter w, int emitted, int skipped, int errors, int scanned, CancellationToken ct)
+        TextWriter w, int emitted, int skipped, int structsEmitted, int structsSkipped,
+        int enumsEmitted, int enumsSkipped, EnumListState enums, int paramsFromNumParms, int errors, int scanned,
+        CancellationToken ct)
     {
-        var sb = new StringBuilder(128);
+        var sb = new StringBuilder(256);
         sb.Append("{\"kind\":\"summary\"");
-        sb.Append(",\"classes_emitted\":").Append(emitted);
-        sb.Append(",\"classes_skipped_engine\":").Append(skipped);
-        sb.Append(",\"errors\":").Append(errors);
-        sb.Append(",\"objects_scanned\":").Append(scanned);
+        sb.Append(CultureInfo.InvariantCulture, $",\"classes_emitted\":{emitted}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"classes_skipped_engine\":{skipped}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"structs_emitted\":{structsEmitted}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"structs_skipped_engine\":{structsSkipped}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"enums_emitted\":{enumsEmitted}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"enums_skipped_engine\":{enumsSkipped}");
+        sb.Append(",\"enums_listed\":").Append(enums.Listed ? "true" : "false");
+        sb.Append(",\"enum_names_failed\":").Append(enums.NamesFailed ? "true" : "false");
+        sb.Append(",\"enums_truncated\":").Append(enums.Truncated ? "true" : "false");
+        sb.Append(CultureInfo.InvariantCulture, $",\"params_from_num_parms\":{paramsFromNumParms}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"errors\":{errors}");
+        sb.Append(CultureInfo.InvariantCulture, $",\"objects_scanned\":{scanned}");
         sb.Append('}');
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
     }
@@ -535,16 +734,48 @@ public static class DumpAllService
     /// (its own UScriptStruct subclass, so its row reads "UserDefinedStruct").</summary>
     internal static bool IsStructMetaName(string meta) => meta is "ScriptStruct" or "UserDefinedStruct";
 
+    /// <summary>A native UEnum or a Blueprint UserDefinedEnum, as Aura::IsListedEnumClass and list_enums have it.</summary>
+    internal static bool IsEnumMetaName(string meta) => meta is "Enum" or "UserDefinedEnum";
+
     /// <summary>
-    /// The GObjects rows the whole-pool exporters (SDK header, USMAP) turn into type definitions.
-    /// ONE predicate for both, because two copies drifted: the SDK exporter learned
-    /// UserDefinedStruct and to skip class-default objects while the USMAP collector kept the old
-    /// rule [USMAP-UDS-MISSING]. A CDO's row reads its METAclass (Default__ScriptStruct is a
-    /// ScriptStruct), so it passes a meta test; UE reserves the prefix for CDOs.
+    /// The GObjects rows the whole-pool exports turn into type definitions. One predicate for all of
+    /// them, because copies drifted: one exporter learned UserDefinedStruct and to skip class-default
+    /// objects while another kept the old rule [USMAP-UDS-MISSING]. Changing it changes every
+    /// whole-pool export, Dump All's struct lines and counters included. A CDO's row reads its
+    /// METAclass (Default__ScriptStruct is a ScriptStruct), so it passes a meta test; UE reserves the
+    /// prefix for CDOs.
     /// </summary>
     internal static bool IsExportedTypeRow(string meta, string name) =>
         (IsClassLikeMetaName(meta) || IsStructMetaName(meta))
         && !name.StartsWith("Default__", StringComparison.Ordinal);
+
+    /// <summary>
+    /// Says when the next progress report is due. The first call is always due, so the
+    /// status line leaves the previous phase as soon as the first class is written.
+    /// </summary>
+    internal sealed class ProgressThrottle
+    {
+        private readonly TimeProvider _clock;
+        private readonly TimeSpan _interval;
+        private long _lastReport;
+        private bool _reported;
+
+        public ProgressThrottle(TimeProvider clock, TimeSpan interval)
+        {
+            _clock = clock;
+            _interval = interval;
+        }
+
+        public bool Due()
+        {
+            long now = _clock.GetTimestamp();
+            if (_reported && _clock.GetElapsedTime(_lastReport, now) < _interval)
+                return false;
+            _lastReport = now;
+            _reported = true;
+            return true;
+        }
+    }
 }
 
 /// <summary>What a dump run actually produced — the same counters the trailing
@@ -552,7 +783,9 @@ public static class DumpAllService
 /// <see cref="DumpAllService.GenerateAsync"/> so callers can report success
 /// (and its scale) from what happened, not from the file's byte length.</summary>
 public sealed record DumpResult(
-    int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned);
+    int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned,
+    int StructsEmitted = 0, int StructsSkippedEngine = 0, int EnumsEmitted = 0, int EnumsSkippedEngine = 0,
+    bool EnumsListed = true, bool EnumNamesFailed = false, bool EnumsTruncated = false, int ParamsFromNumParms = 0);
 
 /// <summary>Options controlling what the dumper emits.</summary>
 public sealed record DumpOptions(

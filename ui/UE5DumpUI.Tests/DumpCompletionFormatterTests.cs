@@ -84,4 +84,58 @@ public class DumpCompletionFormatterTests
 
         Assert.Equal("Dumped 42 classes (1.0 MB, 4 errors) to g.jsonl", s);
     }
+
+    [Fact]
+    public void Format_NamesTheStructsBesideTheClasses()
+    {
+        // [EXTPR-539-540-2026-10-02] D1: Dump All writes struct lines too, and the message says how many.
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 1200, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 90000,
+                           StructsEmitted: 340),
+            2_500_000L, "game.jsonl"));
+
+        Assert.Contains("1,200 classes", s);
+        Assert.Contains("340 structs", s);
+    }
+
+    [Fact]
+    public void Format_NamesTheEnumsToo()
+    {
+        // [EXTPR-539-540-2026-10-02] D2.
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 1200, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 90000,
+                           StructsEmitted: 340, EnumsEmitted: 56),
+            2_500_000L, "game.jsonl"));
+
+        Assert.Contains("1,200 classes", s);
+        Assert.Contains("340 structs", s);
+        Assert.Contains("56 enums", s);
+    }
+
+    [Theory]
+    [InlineData(true, false, true, "enum member names are unavailable")]
+    [InlineData(true, true, false, "enum list was cut short")]
+    [InlineData(false, false, false, "enum list could not be read")]
+    public void Format_SaysWhatTheEnumListCouldNotSay(bool listed, bool truncated, bool namesFailed, string expected)
+    {
+        // [EXTPR-539-540-2026-10-02] D2 review: a dump whose enums are empty or partial must not end on a bare
+        // success line, as USMAP's did before [P1-ENUMNAMES].
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 10, ClassesSkippedEngine: 0, Errors: listed ? 0 : 1, ObjectsScanned: 900,
+                           EnumsEmitted: listed ? 5 : 0, EnumsListed: listed, EnumNamesFailed: namesFailed,
+                           EnumsTruncated: truncated),
+            2_500_000L, "game.jsonl"));
+
+        Assert.Contains(expected, s);
+    }
+
+    [Fact]
+    public void Format_ACompleteEnumList_AddsNoWarning()
+    {
+        var s = Invariant(() => DumpCompletionFormatter.Format(
+            new DumpResult(ClassesEmitted: 10, ClassesSkippedEngine: 0, Errors: 0, ObjectsScanned: 900, EnumsEmitted: 5),
+            2_500_000L, "game.jsonl"));
+
+        Assert.DoesNotContain("⚠", s);
+    }
 }

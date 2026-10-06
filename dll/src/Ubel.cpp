@@ -1960,6 +1960,37 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
 // was reused after a GC / level-load): a recycled object won't deref to a class
 // named "Function". All reads are SEH-safe via Macht::ReadSafe, so a dead pointer
 // fails safe. Returns false when funcAddr is not (or no longer) a UFunction.
+bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size) {
+    constexpr uint64_t CPF_ReturnParm = 0x0400;
+    if (!funcAddr) return false;
+    // The same chain WalkFunctions reads (ChildProperties/FField::Next, or Children/UField::Next before 4.25).
+    const bool fprop = DynOff::bUseFProperty;
+    uintptr_t cur = 0;
+    if (!Macht::ReadSafe(funcAddr + (fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN), cur))
+        return false;
+    if (fprop) cur = DynOff::StripFFieldTag(cur);
+    for (int limit = 256; cur != 0 && limit-- > 0; ) {
+        if (fprop && DynOff::IsFFieldVariantUObject(cur)) break;
+        uint64_t flags = 0;
+        if (!Macht::ReadSafe<uint64_t>(cur + (fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS), flags))
+            break;
+        if (flags & CPF_ReturnParm) {
+            int32_t off = -1, sz = 0;
+            if (!Macht::ReadSafe<int32_t>(cur + (fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET), off)
+                || !Macht::ReadSafe<int32_t>(cur + (fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE), sz)
+                || off < 0 || sz <= 0)
+                return false;
+            offset = off;
+            size = sz;
+            return true;
+        }
+        uintptr_t next = 0;
+        if (!Macht::ReadSafe(cur + (fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT), next)) break;
+        cur = fprop ? DynOff::StripFFieldTag(next) : next;
+    }
+    return false;
+}
+
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out) {
     if (!funcAddr) return false;
     uintptr_t metaClass = 0;
@@ -1981,7 +2012,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
     std::vector<FunctionInfo> funcs;
     if (!uclassAddr) return funcs;
 
-    // CPF_ReturnParm = 0x0400, CPF_OutParm = 0x0100
+    constexpr uint64_t CPF_Parm       = 0x0080;
     constexpr uint64_t CPF_ReturnParm = 0x0400;
     constexpr uint64_t CPF_OutParm    = 0x0100;
 
@@ -2015,8 +2046,9 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
                 // probe shared with ResolveFunctionInfo (the Live PE profiler path).
                 ReadFuncFlagsAndParams(child, fi);
 
-                // Walk the UFunction's own property chain (its parameters)
-                // UFunction inherits UStruct, so ChildProperties is at USTRUCT_CHILDPROPS
+                // Walk the UFunction's whole property chain: its parameters, then on a Blueprint function
+                // its locals; isParm (CPF_Parm) tells them apart. UFunction inherits UStruct, so
+                // ChildProperties is at USTRUCT_CHILDPROPS.
                 if (DynOff::bUseFProperty) {
                     uintptr_t paramChain = 0;
                     if (Macht::ReadSafe(child + DynOff::USTRUCT_CHILDPROPS, paramChain) && paramChain) {
@@ -2041,6 +2073,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
+                            param.isParm = (propFlags & CPF_Parm) != 0;
 
                             // StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
@@ -2109,6 +2142,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
+                            param.isParm = (propFlags & CPF_Parm) != 0;
 
                             // UE4 StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {

@@ -567,4 +567,281 @@ public class DumpExplorerTests
         }
         finally { File.Delete(path); }
     }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] The Explorer reads what Dump All writes since builds 3620-3622: struct lines,
+    // enum lines and each function's params. A struct and a class can share a short name, so the live match
+    // keys each kind apart (PR 539 put all three in one dictionary, last write wins); an enumerator has its own
+    // label; the category picker reaches every kind; Find Instances is for classes only.
+    // ==================================================================
+
+    private const string TypesJsonl =
+        "{\"kind\":\"meta\",\"ue_version\":505,\"module\":\"Game.exe\",\"object_count\":1000,\"dumper_build\":3622}\n" +
+        "{\"kind\":\"class\",\"name\":\"Foo\",\"addr\":\"0x10\",\"path\":\"/Script/Game.Foo\",\"meta\":\"Class\",\"super\":\"Object\",\"props\":[" +
+            "{\"name\":\"Count\",\"type\":\"IntProperty\",\"offset\":40,\"size\":4}]," +
+            "\"funcs\":[{\"name\":\"TryOpen\",\"addr\":\"0x20\",\"return_type\":\"BoolProperty\",\"num_parms\":4,\"params\":[" +
+                "{\"name\":\"Who\",\"type\":\"ObjectProperty\",\"offset\":0,\"size\":8,\"obj_class\":\"Pawn\"}," +
+                "{\"name\":\"Where\",\"type\":\"StructProperty\",\"offset\":8,\"size\":12,\"struct_type\":\"Vector\"}," +
+                "{\"name\":\"Hit\",\"type\":\"StructProperty\",\"offset\":24,\"size\":136,\"out\":true,\"struct_type\":\"HitResult\"}," +
+                "{\"name\":\"ReturnValue\",\"type\":\"BoolProperty\",\"offset\":160,\"size\":1,\"out\":true,\"ret\":true}]}," +
+            "{\"name\":\"Tick\",\"addr\":\"0x28\",\"return_type\":\"\",\"num_parms\":0,\"params\":[]}]}\n" +
+        "{\"kind\":\"struct\",\"name\":\"Foo\",\"addr\":\"0x30\",\"path\":\"/Game/Data/Foo.Foo\",\"meta\":\"UserDefinedStruct\",\"super\":\"\",\"props\":[" +
+            "{\"name\":\"Amount_2_ABC\",\"type\":\"FloatProperty\",\"offset\":0,\"size\":4}]}\n" +
+        "{\"kind\":\"enum\",\"name\":\"EKind\",\"addr\":\"0x40\",\"path\":\"/Script/Game.EKind\",\"entries\":[" +
+            "{\"name\":\"EKind::A\",\"value\":0},{\"name\":\"EKind::B\",\"value\":5}]}\n" +
+        "{\"kind\":\"summary\",\"classes_emitted\":1,\"structs_emitted\":1,\"enums_emitted\":1}\n";
+
+    private static FakeDumpService LiveGameWithTypes()
+    {
+        var dump = new FakeDumpService();
+        dump.Objects.Add(new UObjectNode { Address = "0xC1", Name = "Foo", ClassName = "Class" });
+        dump.Objects.Add(new UObjectNode { Address = "0xD1", Name = "Foo", ClassName = "UserDefinedStruct" });
+        dump.Objects.Add(new UObjectNode { Address = "0xE1", Name = "EKind", ClassName = "Enum" });
+        return dump;
+    }
+
+    [Fact]
+    public async Task Reader_ReadsStructAndEnumLines_AsTheirOwnKinds()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.Equal(1, model.ClassCount);
+            Assert.Equal(1, model.StructCount);
+            Assert.Equal(1, model.EnumCount);
+            // class + prop + 2 funcs, struct + member, enum + 2 enumerators
+            Assert.Equal(9, model.Entries.Count);
+
+            var st = model.Entries.Single(e => e.Kind == DumpEntryKind.Struct);
+            Assert.Equal("Foo", st.Name);
+            Assert.Equal("/Game/Data/Foo.Foo", st.Path);
+            Assert.Equal("0x30", st.ClassAddr);
+            Assert.Equal(DumpEntryKind.Struct, st.OwnerKind);
+
+            var member = model.Entries.Single(e => e.Name == "Amount_2_ABC");
+            Assert.Equal(DumpEntryKind.Property, member.Kind);
+            Assert.Equal("Foo", member.OwnerClass);
+            Assert.Equal(DumpEntryKind.Struct, member.OwnerKind);
+            Assert.Equal(DumpEntryKind.Class, model.Entries.Single(e => e.Name == "Count").OwnerKind);
+
+            var en = model.Entries.Single(e => e.Kind == DumpEntryKind.Enum);
+            Assert.Equal("EKind", en.Name);
+            Assert.Equal("2 entries", en.TypeInfo);
+            var b = model.Entries.Single(e => e.Name == "EKind::B");
+            Assert.Equal(DumpEntryKind.Enumerator, b.Kind);
+            Assert.Equal("EKind", b.OwnerClass);
+            Assert.Equal(DumpEntryKind.Enum, b.OwnerKind);
+            Assert.Equal("= 5", b.TypeInfo);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_KindLabels_TellAnEnumeratorFromItsEnum()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.Equal("Struct", model.Entries.Single(e => e.Kind == DumpEntryKind.Struct).KindLabel);
+            Assert.Equal("Enum", model.Entries.Single(e => e.Kind == DumpEntryKind.Enum).KindLabel);
+            Assert.Equal("Enumerator", model.Entries.First(e => e.Kind == DumpEntryKind.Enumerator).KindLabel);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_AFunctionRow_ShowsItsParameters_AndIsFoundByAParameterName()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            var tryOpen = model.Entries.Single(e => e.Name == "TryOpen");
+            // The return is the type in front; an out parameter says so.
+            Assert.Equal("BoolProperty (ObjectProperty:Pawn Who, StructProperty<Vector> Where, out StructProperty<HitResult> Hit)",
+                tryOpen.TypeInfo);
+            Assert.Contains("where", tryOpen.Haystack);
+            // A function the file says has no parameters reads as such, not as an unknown count.
+            Assert.Equal("()", model.Entries.Single(e => e.Name == "Tick").TypeInfo);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Vm_LiveMatch_KeysEachKindApart_AClassAndAStructWithOneNameKeepTheirAddresses()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithTypes(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            await vm.LoadFromPathAsync(path);
+
+            Assert.Empty(vm.Unmatched);
+            Assert.All(vm.Matched.Where(e => e.OwnerKind == DumpEntryKind.Class), e => Assert.Equal("0xC1", e.LiveAddr));
+            Assert.All(vm.Matched.Where(e => e.OwnerKind == DumpEntryKind.Struct), e => Assert.Equal("0xD1", e.LiveAddr));
+            Assert.All(vm.Matched.Where(e => e.OwnerKind == DumpEntryKind.Enum), e => Assert.Equal("0xE1", e.LiveAddr));
+            Assert.Equal(2, vm.Matched.Count(e => e.OwnerKind == DumpEntryKind.Struct));
+            Assert.Equal(3, vm.Matched.Count(e => e.OwnerKind == DumpEntryKind.Enum));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Theory]
+    [InlineData(4, DumpEntryKind.Struct, 1)]
+    [InlineData(5, DumpEntryKind.Enum, 1)]
+    [InlineData(6, DumpEntryKind.Enumerator, 2)]
+    public async Task Vm_TheCategoryPicker_ReachesStructsEnumsAndEnumerators(int index, DumpEntryKind kind, int count)
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(new FakeDumpService(), new MockPlatformService(Path.GetTempPath()));
+            await vm.LoadFromPathAsync(path);
+
+            vm.SelectedCategoryIndex = index;
+
+            Assert.Equal(count, vm.Unmatched.Count);
+            Assert.All(vm.Unmatched, e => Assert.Equal(kind, e.Kind));
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Vm_FindInstances_OnAStructOrEnumRow_DoesNotNavigate()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(LiveGameWithTypes(), new MockPlatformService(Path.GetTempPath()));
+            vm.SetConnected(true);
+            var asked = new List<string>();
+            vm.NavigateToInstanceFinder += c => asked.Add(c);
+            await vm.LoadFromPathAsync(path);
+
+            vm.FindInstancesCommand.Execute(vm.Matched.Single(e => e.Kind == DumpEntryKind.Struct));
+            vm.FindInstancesCommand.Execute(vm.Matched.Single(e => e.Name == "Amount_2_ABC"));
+            vm.FindInstancesCommand.Execute(vm.Matched.First(e => e.Kind == DumpEntryKind.Enumerator));
+            Assert.Empty(asked);
+
+            vm.FindInstancesCommand.Execute(vm.Matched.Single(e => e.Name == "Count"));
+            Assert.Equal(new[] { "Foo" }, asked);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Vm_Header_CountsStructsAndEnums()
+    {
+        var path = await WriteTempAsync(TypesJsonl);
+        try
+        {
+            var vm = CreateVm(new FakeDumpService(), new MockPlatformService(Path.GetTempPath()));
+            await vm.LoadFromPathAsync(path);
+
+            Assert.Contains("1 classes", vm.HeaderText);
+            Assert.Contains("1 structs", vm.HeaderText);
+            Assert.Contains("1 enums", vm.HeaderText);
+        }
+        finally { File.Delete(path); }
+    }
+
+    // ---- review of ea9c94fa ----
+
+    [Fact]
+    public async Task Reader_TheSummarysEnumFlags_ReachTheModel_AndNamelessEnumsSaySo()
+    {
+        // With UEnum::Names never located, every enum line has empty entries; "0 entries" would read as empty enums.
+        var jsonl = TypesJsonl
+            .Replace("{\"name\":\"EKind::A\",\"value\":0},{\"name\":\"EKind::B\",\"value\":5}", "")
+            .Replace("\"enums_emitted\":1}", "\"enums_emitted\":1,\"enums_listed\":true,\"enum_names_failed\":true,\"enums_truncated\":true}");
+        var path = await WriteTempAsync(jsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.True(model.EnumNamesFailed);
+            Assert.True(model.EnumsTruncated);
+            Assert.True(model.EnumsListed);
+            Assert.Equal("entries unreadable", model.Entries.Single(e => e.Kind == DumpEntryKind.Enum).TypeInfo);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_AFileWithoutTheFlags_ClaimsNothingAboutIts_Enums()
+    {
+        var path = await WriteTempAsync(SampleJsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.Null(model.EnumsListed);
+            Assert.False(model.EnumNamesFailed);
+            Assert.False(model.EnumsTruncated);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_AFunctionReturningAStructOrAnObject_SaysWhichOne()
+    {
+        var jsonl = TypesJsonl.Replace(
+            "{\"name\":\"Tick\",\"addr\":\"0x28\",\"return_type\":\"\",\"num_parms\":0,\"params\":[]}",
+            "{\"name\":\"Trace\",\"addr\":\"0x28\",\"return_type\":\"StructProperty\",\"num_parms\":1,\"params\":[" +
+                "{\"name\":\"ReturnValue\",\"type\":\"StructProperty\",\"offset\":0,\"size\":136,\"out\":true,\"ret\":true,\"struct_type\":\"HitResult\"}]}," +
+            "{\"name\":\"Owner\",\"addr\":\"0x30\",\"return_type\":\"ObjectProperty\",\"num_parms\":1,\"params\":[" +
+                "{\"name\":\"ReturnValue\",\"type\":\"ObjectProperty\",\"offset\":0,\"size\":8,\"out\":true,\"ret\":true,\"obj_class\":\"Actor\"}]}");
+        var path = await WriteTempAsync(jsonl);
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            var trace = model.Entries.Single(e => e.Name == "Trace");
+            Assert.Equal("StructProperty<HitResult> ()", trace.TypeInfo);
+            Assert.Contains("hitresult", trace.Haystack);
+            Assert.Equal("ObjectProperty:Actor ()", model.Entries.Single(e => e.Name == "Owner").TypeInfo);
+            // The bool return without detail reads as before.
+            Assert.StartsWith("BoolProperty (", model.Entries.Single(e => e.Name == "TryOpen").TypeInfo);
+        }
+        finally { File.Delete(path); }
+    }
+
+    [Fact]
+    public async Task Reader_DumpAllsObjectIndex_IsRecognised_NotReadAsAClassDump()
+    {
+        // D4 writes <name>.objects.jsonl beside the class dump, and the open dialog's *.jsonl lists both.
+        var path = await WriteTempAsync(
+            "{\"kind\":\"meta\",\"file\":\"objects\",\"module\":\"Game.exe\",\"class_dump\":\"game-dump.jsonl\"}\n" +
+            "{\"kind\":\"object\",\"index\":0,\"addr\":\"0x1\",\"name\":\"A\",\"class\":\"Class\",\"outer\":\"\",\"path\":\"/Script/Game.A\"}\n" +
+            "{\"kind\":\"summary\",\"objects_written\":1,\"objects_total\":1,\"index_missing\":false}\n");
+        try
+        {
+            var model = await DumpJsonlReader.ReadAsync(path, ct: TestContext.Current.CancellationToken);
+
+            Assert.True(model.IsObjectIndex);
+            Assert.Equal("game-dump.jsonl", model.ClassDumpFile);
+            Assert.Empty(model.Entries);
+
+            var vm = CreateVm(new FakeDumpService(), new MockPlatformService(Path.GetTempPath()));
+            var classDump = await WriteTempAsync(SampleJsonl);
+            try { await vm.LoadFromPathAsync(classDump); }
+            finally { File.Delete(classDump); }
+            Assert.Contains("2 classes", vm.HeaderText);
+
+            await vm.LoadFromPathAsync(path);
+
+            Assert.False(vm.HasFile);
+            // Live check, build 3625: the previous file's header and group counts stayed above the empty grids.
+            Assert.DoesNotContain("classes", vm.HeaderText);
+            Assert.DoesNotContain("6", vm.UnmatchedHeader);
+            Assert.Empty(vm.Unmatched);
+        }
+        finally { File.Delete(path); }
+    }
 }

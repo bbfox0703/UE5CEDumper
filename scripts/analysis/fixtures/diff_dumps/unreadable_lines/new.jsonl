@@ -1,0 +1,4 @@
+{"kind":"meta","module":"FakeGame.exe","ue_version":505,"dumper_build":999,"dumped_at":"2026-01-01T00:00:00Z"}
+{"kind":"class","name":"AKeep","addr":"0x1","path":"/Game/AKeep","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":8,"instance_count":0,"props":[],"funcs":[]}
+{"kind":"class","name":"AFloat","addr":"0x1","path":"/Game/AFloat","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":8,"instance_count":0,"props":[{"name":"V","type":"IntProperty","offset":0,"size":4}],"funcs":[]}
+{"kind":"summary","classes_emitted":0,"structs_emitted":0,"enums_emitted":0,"enums_listed":1,"enum_names_failed":false,"enums_truncated":false,"params_from_num_parms":0}

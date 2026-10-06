@@ -12,8 +12,9 @@ Two scripts share the same dump corpus:
   behind the Interesting Properties / Interesting Funcs tabs).
 - **`diff_dumps.py`** — same-game patch comparison. Diffs two dumps
   taken before/after a game update; surfaces moved field offsets,
-  added/removed classes and functions, and function signature
-  changes. Saves cheat-table maintainers from binary-searching offsets
+  added/removed classes, structs, enums and functions, function
+  signature changes (parameters included), and enumerators whose value
+  changed. Saves cheat-table maintainers from binary-searching offsets
   by hand when a patch silently breaks their working table.
 
 A third script needs no dump corpus either — it reads the UI's own pipe logs:
@@ -47,13 +48,18 @@ A fourth script needs no dump corpus at all — it reads installed games directl
 
 1. Launch a UE4/5 game, attach UE5DumpUI as usual.
 2. **Export → Dump All Metadata (.jsonl)** — saves
-   `<game>-dump-<timestamp>.jsonl` (50–500 MB depending on game size).
+   `<game>-dump-<timestamp>.jsonl`. Its size grows with the game.
 3. Repeat for 3–6 games spanning UE versions and genres for cross-game
    signal.
 4. Run the analyzer:
    ```bash
    python scripts/analysis/analyze_dumps.py dump1.jsonl dump2.jsonl dump3.jsonl
    ```
+   It counts game classes only: Blueprint classes and the game's own C++
+   modules (`/Script/<GameModule>/`). `--include-engine` adds the engine's
+   own modules. Both scripts take the list of engine modules from
+   `engine_paths.py`, a copy of the DLL's that a gate keeps equal to it.
+   `--self-test` runs its synthetic-dump tests.
    Produces `analysis-report.md` with four sections:
    - **Dump summary** — UE version / object count / BPGC count per game.
    - **Top N property names** — exact field names, ranked by total hits.
@@ -75,9 +81,11 @@ Each line is a self-contained JSON object with a `kind` discriminator:
 | `kind` | Notes |
 |---|---|
 | `meta` | Always first. UE version, module name, object count, dumper build, options snapshot. |
-| `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. |
-| `error` | One per class walk failure. Iteration continues. |
-| `summary` | Always last. Counters: classes_emitted / skipped / errors / scanned. |
+| `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. From build 3622 each function carries `params[]`: its parameters in order, the return included, with `name` / `type` / `offset` / `size` and, when set, `out` / `ret` / `struct_type` / `obj_class`. A Blueprint function's locals are left out. An `offset` of -1 means the DLL could not read it. |
+| `struct` | One per `ScriptStruct` / `UserDefinedStruct`. A class record's `name` / `addr` / `path` / `meta` / `super` / `super_addr` / `props_size` / `props[]`, without `funcs[]`, `instance_count` or `is_bpgc`. `diff_dumps.py` compares them; `analyze_dumps.py` reads class records only. |
+| `enum` | One per UEnum, from one `list_enums` call after the type lines: `name` / `addr` / `path` / `entries[]` (`{name, value}`, in the DLL's order). `diff_dumps.py` compares them; `analyze_dumps.py` does not read them. |
+| `error` | One per class or struct walk failure, and one for an enum list that could not be read (`name` `list_enums`, empty `addr`). Iteration continues. |
+| `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / enums_emitted / enums_skipped_engine / errors / objects_scanned. What the enum list could not say: `enums_listed` (false: the list failed, see its error line), `enum_names_failed` (UEnum::Names was not located, so every enum's `entries` is empty), `enums_truncated` (the list was cut short). Without them an enum with no entries cannot be told from one whose entries could not be read. `params_from_num_parms` counts the functions whose `params` were taken as the leading `num_parms` entries, because the DLL predates the flag that marks parameters (0 with a DLL from build 3622 on). |
 
 Per-class record (excerpt):
 ```json
@@ -96,9 +104,38 @@ Per-class record (excerpt):
     {"name":"Max_Health","type":"FloatProperty","offset":1728,"size":4},
     {"name":"IsDead","type":"BoolProperty","offset":1732,"size":1}
   ],
-  "funcs": [...]
+  "funcs": [
+    {"name":"ApplyDamage","addr":"0x16FC4C1180","return_type":"FloatProperty","num_parms":2,
+     "parms_size":8,"flags":"0x4020400","params":[
+       {"name":"Amount","type":"FloatProperty","offset":0,"size":4},
+       {"name":"ReturnValue","type":"FloatProperty","offset":4,"size":4,"out":true,"ret":true}]}
+  ]
 }
 ```
+
+## The object index (`<name>.objects.jsonl`)
+
+Opt-in (Export ▸ "Dump All also writes the object index", OFF by
+default): before the class dump, Dump All shows an estimate of the index's
+size and time and asks; agreed, it writes a second file beside the first
+once the class dump is done.
+Every object the DLL lists — packages, types, class-default objects and
+instances — one line each:
+
+| `kind` | Notes |
+|---|---|
+| `meta` | First. `"file":"objects"`, the class dump's identity (module, pe_hash, UE version, object count, dumper build) and its file name (`class_dump`), so the two files pair. |
+| `object` | `index` (the GObjects slot; build 3625 on, absent from an older DLL rather than guessed), `addr`, `name`, `class`, `outer`, `path`. |
+| `summary` | Last. `objects_written`; `objects_total`, the pool's slot count, null and unnamed slots included, so it exceeds `objects_written` on any pool with holes; `index_missing` (some object came without an index). |
+
+Addresses and slots hold for that run of the game only: match two
+indexes by `path` (by `index` only within one session), and a class dump
+with its own index by `addr` or `path` — class lines carry no slot. An
+index left beside a class dump by an earlier export to the same name is
+not that dump's: Dump All says so when it does not write a new one, and
+the index's `dumped_at` precedes the class dump's. `analyze_dumps.py`
+skips this file and `diff_dumps.py` refuses it; the Dump Explorer names
+the class dump to open instead.
 
 ## Privacy
 
@@ -145,6 +182,14 @@ but not yet implemented.
 
 ## Workflow: same-game patch diff (`diff_dumps.py`)
 
+> Without a clone of the repository (release builds do not include this folder), the same diff runs in the UI:
+> Dump Explorer → load the newer dump → **Compare…** → pick the older one, and it writes the report as HTML
+> *(build 3628)*. That is a C# port of this script, which stays the reference: `--write-fixtures` writes the
+> cases in `fixtures/diff_dumps/` (two dumps and this script's result for them, `canonical()`), the self-test
+> fails when they no longer match the script, and the UI's `DumpDiffParityTests` fails when the port no longer
+> matches them. After changing the diff here: `--write-fixtures`, then bring the port back in line.
+> `tools/verify/dumpdiff_real_parity.py <old> <new>` runs the same comparison on a pair of real dumps.
+
 When a game ships a patch, the cooker can shuffle UPROPERTY offsets and
 add/remove fields silently — every cheat table that hard-codes an
 offset breaks. The diff tool surfaces exactly what changed at
@@ -160,7 +205,9 @@ seconds instead of binary-searching offsets by hand.
    python scripts/analysis/diff_dumps.py <game>-pre.jsonl <game>-post.jsonl -o diff.md
    ```
 5. Read `diff.md`. For cheat-table fixing, the **Moved fields** and
-   **Function signatures changed** sections are usually all you need.
+   **Function signatures changed** sections are usually all you need,
+   with **Changed Structs** (a struct a table reads through) and the
+   changed enumerator values under **Changed Enums**.
    Pass `--minimal` to suppress the added/removed lists and emit only
    those breaking-change sections:
    ```bash
@@ -169,16 +216,30 @@ seconds instead of binary-searching offsets by hand.
 
 ### Other flags
 
-- `--include-engine` — by default `/Script/<Module>/` engine classes
-  are skipped (they rarely shift across game patches; suppressing them
-  cuts ~60% of the noise on big games). Add this flag for an exhaustive
-  comparison.
+- `--include-engine` — by default the engine's own modules
+  (`/Script/Engine`, `/Script/UMG` and the rest of the DLL's list of engine
+  packages) are skipped: they rarely shift across game patches. Blueprint
+  classes and the game's own C++ modules (`/Script/<GameModule>/`) are
+  always compared. Add this flag to compare the engine's modules too.
 - `--self-test` — runs the built-in synthetic-fixture test suite. Use
   this after editing the script to confirm the diff logic still
   matches its specification:
   ```bash
   python scripts/analysis/diff_dumps.py --self-test
   ```
+
+### What a dump cannot say is not reported as a change
+
+Dump All writes struct lines from build 3620, enum lines from 3621 and
+each function's `params` from 3622. Against an older dump the diff does
+not compare that kind at all (the report says "not compared" and why),
+so nothing reads as added just because the old file never had it. The
+enum comparison also follows the summary line: an enum list that could
+not be read (`enums_listed: false`) is not compared; with no member
+names (`enum_names_failed`) only the enums' presence is; a cut-short
+list (`enums_truncated`) reports no enum missing on its side. Function
+parameters are compared only when both files carry them, and the report
+notes a dump whose parameters came from `num_parms`.
 
 ### Match key + known limitations
 
@@ -191,7 +252,8 @@ seconds instead of binary-searching offsets by hand.
   the report for a same-offset removed/added pair.
 - Same applies to renamed classes.
 - Function bodies aren't in the dump — only metadata
-  (`return_type` / `num_parms` / `parms_size` / `flags`). A patch that
+  (`return_type` / `num_parms` / `parms_size` / `flags`) and, from build
+  3622, each function's `params[]`, compared when both files carry them. A patch that
   changes function logic without changing the signature is **invisible**
   to this diff (covered by Live ProcessEvent Call Profiler instead — see
   `docs/todo.md`).

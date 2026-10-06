@@ -1,0 +1,6 @@
+{"kind":"meta","module":"FakeGame.exe","ue_version":505,"dumper_build":999,"dumped_at":"2026-01-01T00:00:00Z"}
+{"kind":"class","name":"ADup","addr":"0x1","path":"/Game/Dup","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":8,"instance_count":0,"props":[{"name":"V","type":"IntProperty","offset":4,"size":4}],"funcs":[]}
+{"kind":"class","name":"AProps","addr":"0x1","path":"/Game/Props","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":16,"instance_count":0,"props":[{"name":"Y","type":"IntProperty","offset":8,"size":4},{"name":"X","type":"IntProperty","offset":12,"size":4}],"funcs":[]}
+{"kind":"class","name":"A<b>&\"c\"","addr":"0x1","path":"/Game/Esc/A<b>&\"c\"","meta":"Class","super":"","super_addr":"0x0","is_bpgc":false,"props_size":8,"instance_count":0,"props":[{"name":"<script>","type":"Int64Property","offset":0,"size":8}],"funcs":[]}
+{"kind":"enum","name":"EDup","addr":"0x6","path":"/Game/EDup","entries":[{"name":"B","value":1},{"name":"A","value":6}]}
+{"kind":"summary","classes_emitted":0,"structs_emitted":0,"enums_emitted":1,"enums_listed":true,"enum_names_failed":false,"enums_truncated":false,"params_from_num_parms":0}

@@ -6287,9 +6287,13 @@ static uintptr_t ParamTargetType(uintptr_t fieldAddr) {
 // Count `func`'s params whose declared type pointer == targetClass; set
 // hasReturnMatch if any matched param is the return value. Walks the function's
 // own FProperty (USTRUCT_CHILDPROPS) or UE4 UProperty (USTRUCT_CHILDREN) chain
-// exactly as Ubel::WalkFunctions does.
+// exactly as Ubel::WalkFunctions does. Only CPF_Parm entries count: a Blueprint
+// function's chain holds its locals after the parameters, and a local typed with
+// the class (a cast node's output) is not the function taking it
+// ([FUNCPARM-CONSUMERS]).
 static int32_t CountClassParams(uintptr_t func, uintptr_t targetClass,
                                 bool& hasReturnMatch) {
+    constexpr uint64_t CPF_Parm       = 0x0080;
     constexpr uint64_t CPF_ReturnParm = 0x0400;
     hasReturnMatch = false;
     const bool fprop = DynOff::bUseFProperty;
@@ -6304,11 +6308,13 @@ static int32_t CountClassParams(uintptr_t func, uintptr_t targetClass,
         if (fprop && DynOff::IsFFieldVariantUObject(cur)) break;
 
         if (ParamTargetType(cur) == targetClass) {   // targetClass != 0 (caller-checked)
-            matches++;
             uint64_t flags = 0;
             const int flagsOff = fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS;
             Macht::ReadSafe(cur + flagsOff, flags);
-            if (flags & CPF_ReturnParm) hasReturnMatch = true;
+            if (flags & CPF_Parm) {
+                matches++;
+                if (flags & CPF_ReturnParm) hasReturnMatch = true;
+            }
         }
         uintptr_t next = 0;
         const int nextOff = fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT;

@@ -32,11 +32,16 @@ public interface IDumpService
     /// DLL emit each object's full path (Ubel::GetFullName) as <c>full_path</c>,
     /// surfaced on <see cref="UObjectNode.FullPath"/>. Off by default so the hot
     /// Object Tree paginate stays lean (a path string per object is ~19 MB over
-    /// 486K objects); only DumpAllService's GameOnly pass sets it, to skip
-    /// engine-package classes before walking them. Placed after <c>ct</c> to keep
-    /// the existing 3-arg call sites unchanged.
+    /// 486K objects), so a caller sets it only when it needs paths. Placed after
+    /// <c>ct</c> to keep the existing 3-arg call sites unchanged.
     /// </summary>
     Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false);
+
+    /// <summary>[EXTPR-539-540-2026-10-02] D4: a page for the object index — each object's full path and its
+    /// GObjects slot (<see cref="UObjectNode.Index"/>). A DLL that predates <c>include_index</c> sends no slot,
+    /// and the node then has none. The default serves fakes: the page with paths and no slots.</summary>
+    Task<ObjectListResult> GetObjectIndexPageAsync(int offset, int limit, CancellationToken ct = default)
+        => GetObjectListAsync(offset, limit, ct, includePath: true);
     Task<ObjectDetail> GetObjectAsync(string addr, CancellationToken ct = default);
     Task<ObjectDetail> FindObjectAsync(string path, CancellationToken ct = default);
     /// <summary>Server-side keyword search over all objects. <paramref name="query"/> is
@@ -405,6 +410,12 @@ public interface IDumpService
     Task PeProfileStopAsync(CancellationToken ct = default);
     // Fetch the ranked fire-count table (top <paramref name="limit"/> by count).
     Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default);
+
+    /// <summary>[LIVEFUNCS-HIDE-PERFRAME] The same table with the per-frame functions left out by the DLL before
+    /// <paramref name="limit"/> when <paramref name="skipPerFrame"/>. The default serves fakes: the plain table,
+    /// which is what a DLL that predates the option answers too.</summary>
+    Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
+        => PeProfileGetAsync(limit, ct);
 
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has

@@ -6912,7 +6912,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 || desktop.MainWindow is not { } owner)
                 return;
 
-            var inputParams = func.Params.Where(p => !p.IsReturn).ToList();
+            var inputParams = func.InputParams.ToList();
 
             // Dialog owns the entire invoke lifecycle:
             // - Shows input fields (or "no params" message)
@@ -6922,7 +6922,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             // - Decoded results shown inline (return values, out params)
             // - Returns "ok" on Close, null on Cancel
             var dialog = new Views.InvokeParamDialog(
-                CurrentClassName, func.Name, inputParams, func.Params, func.ParmsSize,
+                CurrentClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
                 CurrentAddress, _dump, _engineState?.UEVersion ?? 0,
                 aobMaker: _aobMaker, platform: _platform,
                 mode: Views.InvokeDialogMode.PipeInvoke);
@@ -6959,8 +6959,8 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
         {
             ClearStatus();
 
-            var inputParams = func.Params.Where(p => !p.IsReturn).ToList();
-            var hasReturn = func.Params.Any(p => p.IsReturn);
+            var inputParams = func.InputParams.ToList();
+            var hasReturn = func.Parameters.Any(p => p.IsReturn);
 
             // Fast-path: TRULY trivial functions only (no inputs AND no return).
             // For functions that return a value but take no inputs (e.g.
@@ -7013,7 +7013,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
                 return;
 
             var dialog = new Views.InvokeParamDialog(
-                CurrentClassName, func.Name, inputParams, func.Params, func.ParmsSize,
+                CurrentClassName, func.Name, inputParams, func.Parameters.ToList(), func.ParmsSize,
                 CurrentAddress, _dump, _engineState?.UEVersion ?? 0,
                 aobMaker: _aobMaker, platform: _platform,
                 mode: Views.InvokeDialogMode.CopyBakedScript);

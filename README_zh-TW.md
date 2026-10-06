@@ -38,7 +38,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 - **Console（主控台）** — 發現並一鍵呼叫許多遊戲保留的 `fly` / `god` / `ghost` / 遊戲特定 exec 指令。
 - **即時函式剖析器（Live Funcs）** — 錄下*一個*遊戲內動作（開商店、衝刺），就能看到實際觸發了哪些 UFunction，附 baseline 差異 + 雜訊過濾。名稱搜尋找不到時，用「行為」找。
 - **一鍵 CE 匯出** — 指標鏈 XML、Structure Dissect (CSX)、SDK headers、AA 腳本、多列 `.CT` 批次。
-- **Dump Explorer（離線瀏覽）** — 離線瀏覽匯出的「Dump All」`.jsonl`，一個關鍵字同時搜尋 class + property + function。
+- **Dump Explorer（離線瀏覽）** — 離線瀏覽匯出的「Dump All」`.jsonl`，一個關鍵字同時搜尋 class + property + function。**Compare…** 可與同一款遊戲的另一份 dump 比對，輸出 HTML 報告，列出修補檔移動、改型別、新增或移除了哪些項目。
 - **注入免 Cheat Engine** — `version.dll` **proxy DLL**、UI 的 **Inject into running game…**，或 **`inject-ue.ps1`** 命令列（管理員遊戲會自動提權）。Proxy Deploy **逐遊戲建議正確的 proxy**。
 
 > ¹ 少數被大量精簡的 Shipping build（例如泰坦任務 2）無法做*游標*傳送 — 它們移除了標準的游標 / viewport / line-trace API 並改用自訂虛擬游標。詳見 [docs/teleport-spec.md](docs/teleport-spec.md)。

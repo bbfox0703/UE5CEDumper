@@ -36,7 +36,8 @@ public static class InvokeScriptGenerator
     public static string Generate(string className, string funcName, FunctionInfoModel func)
     {
         var sb = new StringBuilder(8192);
-        var inputParams = func.Params.Where(p => !p.IsReturn).ToList();
+        // The arguments only: a Blueprint function's locals follow them in the chain ([FUNCPARM-CONSUMERS]).
+        var inputParams = func.InputParams.ToList();
         var hasParams = inputParams.Count > 0;
 
         Line(sb, "[ENABLE]");
@@ -261,8 +262,8 @@ public static class InvokeScriptGenerator
 
     /// <summary>
     /// [A3-CEFORM-4X-STALESLAB] How many bytes of the mailbox's params slab the script zero-fills
-    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over every param INCLUDING the
-    /// return value, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
+    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over EVERY walked entry, the return
+    /// value included, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
     ///
     /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
     /// clears only the return slot itself. So every byte the callee reads, and every out-param
@@ -270,24 +271,39 @@ public static class InvokeScriptGenerator
     /// pointer it finds. ParmsSize alone was not enough, because on UE 4.11-4.17 the DLL read
     /// NumParms into it ([A2-UFUNC-TAIL-4X]).</para>
     ///
+    /// <para>The whole chain, not <see cref="FunctionInfoModel.Parameters"/>: from a DLL older than
+    /// build 3622 the parameters are the leading NumParms entries, another tail read older DLLs have
+    /// misread, and this span must not depend on one ([FUNCPARM-CONSUMERS] review). A Blueprint
+    /// local's bytes are zeroed too, which costs nothing: ProcessEvent never copies them.</para>
+    ///
     /// <para>⛔ Never the walked size ALONE: a failed param walk yields 0 and would zero nothing.
     /// The clamp keeps a forked or garbage size from writing past the slab into what follows it;
     /// the sum is taken in <c>long</c> so a garbage Offset cannot overflow into a small number.</para>
     /// </summary>
     internal static int ZeroFillSpan(FunctionInfoModel func)
-        => (int)Math.Min(RequiredSpan(func), CeMailboxLayout.ParamsDataBytes);
+    {
+        long span = func.ParmsSize;
+        foreach (var p in func.Params)
+            if (p.Offset >= 0 && p.Size > 0)
+                span = Math.Max(span, (long)p.Offset + p.Size);
+        return (int)Math.Min(span, CeMailboxLayout.ParamsDataBytes);
+    }
 
     /// <summary>
     /// The params bytes the call really needs: <c>max(ParmsSize, max(Offset + Size))</c> over every
-    /// param, the return slot included, UNclamped. More than
+    /// parameter, the return slot included, UNclamped. More than
     /// <see cref="CeMailboxLayout.ParamsDataBytes"/> cannot go through the mailbox at all -- see
     /// <see cref="AppendSlabRefusal"/>. (Review of 9abc03c8: the clamp alone covered only the
     /// zero-fill, and a param past the slab was still written and the call fired.)
+    ///
+    /// <para>A Blueprint function's locals do not count ([FUNCPARM-CONSUMERS]): ProcessEvent copies
+    /// only ParmsSize bytes of the caller's buffer and builds the locals in its own frame, so a local
+    /// past the slab must not refuse a call whose parameters fit.</para>
     /// </summary>
     internal static long RequiredSpan(FunctionInfoModel func)
     {
         long span = func.ParmsSize;
-        foreach (var p in func.Params)
+        foreach (var p in func.Parameters)
             if (p.Offset >= 0 && p.Size > 0)
                 span = Math.Max(span, (long)p.Offset + p.Size);
         return span;

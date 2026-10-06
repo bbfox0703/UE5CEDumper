@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -11,17 +14,19 @@ namespace UE5DumpUI.ViewModels;
 /// <summary>
 /// ViewModel for the "Dump Explorer" panel — an offline browser over a "Dump
 /// All" JSON-Lines file (see <see cref="DumpAllService"/>). One keyword box
-/// searches classes, properties AND functions at once (no need to pick a
-/// category or switch tabs first), and results split into two groups:
+/// searches every row at once (no need to pick a category or switch tabs
+/// first), and results split into two groups:
 ///
-///   • In current game    — the owning class resolves to a live object in the
-///     connected game (matched by object PATH, so it survives game restarts);
-///     each row can jump straight to that live class in the Live Walker.
-///   • Not in current game — the class isn't live right now (dump from another
+///   • In current game    — the owning type (a class, struct or enum) resolves to a
+///     live object in the connected game, matched by kind and short name, so it
+///     survives game restarts (see the live-match section); each row can jump
+///     straight to that live type object in the Live Walker.
+///   • Not in current game — the type isn't live right now (dump from another
 ///     session/game, or not yet spawned); shown read-only as a metadata reference.
 ///
 /// Parsing is fully offline; the live-match / jump features require a connected
 /// (and scanned) game and reuse the existing GObjects list + Live Walker handoff.
+/// Compare diffs the loaded dump against another one, offline too (see CompareAsync).
 /// </summary>
 public partial class DumpExplorerViewModel : ViewModelBase
 {
@@ -50,10 +55,11 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     [ObservableProperty] private string _filePath = "";
     [ObservableProperty] private string _searchText = "";
-    /// <summary>0 = All, 1 = Class, 2 = Property, 3 = Function.</summary>
+    /// <summary>0 = All, 1 = Class, 2 = Property, 3 = Function, 4 = Struct, 5 = Enum, 6 = Enumerator: the
+    /// panel's ComboBox order. The kinds added later are appended, so the older indices keep their meaning.</summary>
     [ObservableProperty] private int _selectedCategoryIndex;
     [ObservableProperty] private string _statusText =
-        "Load a “Dump All” (.jsonl) file to browse its classes, properties and functions.";
+        "Load a “Dump All” (.jsonl) file to browse its classes, structs, enums, properties and functions.";
     [ObservableProperty] private string _headerText = "";
     [ObservableProperty] private bool _isBusy;
     [ObservableProperty] private bool _hasFile;
@@ -94,7 +100,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private readonly KeywordSearchMemory _searchMemory;
     public ObservableCollection<string> SearchHistory => _searchMemory.History;
 
-    /// <summary>Jump the selected row's owning class into the Live Walker.
+    /// <summary>Jump the selected row's owning type into the Live Walker.
     /// Payload = the CURRENT live address (only raised for matched rows).</summary>
     public event Action<string>? NavigateToLiveWalker;
 
@@ -147,7 +153,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanStartOp))]
     private async Task LoadFileAsync()
     {
-        var path = await _platform.ShowOpenFileDialogAsync("Dump JSON Lines (*.jsonl)", ".jsonl");
+        var path = await _platform.ShowOpenFileDialogAsync(Res.Get("str.Dump.JsonlFilter"), ".jsonl");
         if (string.IsNullOrEmpty(path)) return;
         await LoadFromPathAsync(path);
     }
@@ -189,6 +195,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         try
         {
             IsBusy = true;
+            ClearError();
             HasFile = false;
             LiveChecked = false;
             FilePath = path;
@@ -204,6 +211,18 @@ public partial class DumpExplorerViewModel : ViewModelBase
             progress.Complete($"Parsed {model.Entries.Count:N0} rows");
             ct.ThrowIfCancellationRequested();
 
+            if (model.IsObjectIndex)
+            {
+                // [EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl sits beside the class dump under the same
+                // extension; name the file the user wanted rather than asking whether this is a Dump All file.
+                var classDump = model.ClassDumpFile.Length > 0 ? model.ClassDumpFile : Res.Get("str.Dump.ObjectIndexFile.Unknown");
+                // Nothing of the previous file may stay above the emptied grids.
+                HeaderText = "";
+                ApplyFilter();
+                StatusText = Res.Format("str.Dump.ObjectIndexFile", classDump);
+                return;
+            }
+
             _all.AddRange(model.Entries);
             _loadedMeta = model.Meta;
             HeaderText = BuildHeader(model);
@@ -216,7 +235,8 @@ public partial class DumpExplorerViewModel : ViewModelBase
             }
 
             _log.Info($"DumpExplorer loaded {System.IO.Path.GetFileName(path)}: " +
-                      $"{model.ClassCount} classes / {model.PropertyCount} props / {model.FunctionCount} funcs");
+                      $"{model.ClassCount} classes / {model.StructCount} structs / {model.EnumCount} enums / " +
+                      $"{model.PropertyCount} props / {model.FunctionCount} funcs");
 
             // Auto-classify against the live game if one is connected; otherwise
             // everything lands in "Not in current game" until the user Re-checks.
@@ -255,6 +275,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         try
         {
             IsBusy = true;
+            ClearError();
             await RunLiveMatchAsync(cts.Token);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -287,6 +308,129 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     private bool CanRecheck() => HasFile && IsGameConnected && !IsBusy;
 
+    // [DUMPDIFF-UI] Compare: the loaded class dump against one the user picks, written as an HTML report and opened.
+    // The maintainer's decision (2026-10-06): HTML only, started from this panel, because release users do not have
+    // scripts/analysis/diff_dumps.py; DumpDiffService is its port. Both options persist (D8).
+
+    /// <summary>Also compare the engine's own modules; off, the game's own types only (the script's default).</summary>
+    [ObservableProperty] private bool _diffIncludeEngine;
+
+    /// <summary>Write the minimal report: only what breaks a working cheat table.</summary>
+    [ObservableProperty] private bool _diffBreakingOnly;
+
+    [RelayCommand(CanExecute = nameof(CanCompare))]
+    private async Task CompareAsync()
+    {
+        var loaded = FilePath;
+        var picked = await _platform.ShowOpenFileDialogAsync(Res.Get("str.Dump.JsonlFilter"), ".jsonl");
+        if (string.IsNullOrEmpty(picked)) return;
+
+        CancelInFlight();
+        var cts = new CancellationTokenSource();
+        _opCts = cts;
+        var ct = cts.Token;
+        try
+        {
+            IsBusy = true;
+            ClearError();
+            StatusText = Res.Get("str.Dump.Compare.Loading");
+            DumpDiffInput loadedDump, pickedDump;
+            try
+            {
+                loadedDump = await Task.Run(() => DumpDiffService.LoadAsync(loaded, ct: ct), ct);
+                pickedDump = await Task.Run(() => DumpDiffService.LoadAsync(picked, ct: ct), ct);
+            }
+            catch (DumpDiffObjectIndexException ex)
+            {
+                // Diffed as a class dump, an object index would report every class removed; name the right file.
+                StatusText = Res.Format("str.Dump.Compare.ObjectIndex",
+                    ex.ClassDump.Length > 0 ? ex.ClassDump : Res.Get("str.Dump.ObjectIndexFile.Unknown"));
+                return;
+            }
+
+            // Dump All writes its meta line first. Without one the file is something else (a Live Funcs export is a
+            // .jsonl too), and diffed it would read as a dump cut off before its first type.
+            foreach (var d in new[] { loadedDump, pickedDump })
+            {
+                if (d.Meta.Kind == "meta") continue;
+                StatusText = Res.Format("str.Dump.Compare.NotADump", Path.GetFileName(d.FilePath));
+                return;
+            }
+
+            var (oldDump, newDump) = OrderByDumpTime(loadedDump, pickedDump);
+            bool includeEngine = DiffIncludeEngine, minimal = DiffBreakingOnly;
+            // The live match's rule, pe_hash aside (a patch changes it): case-blind, and an older DLL's '?' name of the
+            // same exe is not another game.
+            string om = oldDump.Meta.Module ?? "", nm = newDump.Meta.Module ?? "";
+            bool otherGame = JudgeIdentity(om, "", nm, "").Refused;
+            var diff = await Task.Run(() => DumpDiffService.Diff(oldDump, newDump, includeEngine), ct);
+            var html = await Task.Run(() => DumpDiffHtmlRenderer.Render(diff, minimal, otherGame), ct);
+            // Neither step watches the token; a Cancel pressed meanwhile must not be followed by a save dialog.
+            ct.ThrowIfCancellationRequested();
+
+            var suggested = $"{Path.GetFileNameWithoutExtension(oldDump.FilePath)} to " +
+                            $"{Path.GetFileNameWithoutExtension(newDump.FilePath)}.html";
+            var save = await _platform.ShowSaveFileDialogAsync(suggested, Res.Get("str.Dump.Compare.HtmlFilter"), ".html");
+            if (string.IsNullOrEmpty(save))
+            {
+                StatusText = Res.Get("str.Dump.Compare.Cancelled");
+                return;
+            }
+            await File.WriteAllTextAsync(save, html, new UTF8Encoding(false), ct);
+            await _platform.OpenWithShellAsync(save);
+
+            var (classes, structs, enums) = StatusCounts(diff, minimal, Res.Get("str.Dump.Compare.NotCompared"));
+            StatusText = otherGame
+                ? Res.Format("str.Dump.Compare.DoneOtherGame", Path.GetFileName(save), om, nm)
+                : Res.Format(minimal ? "str.Dump.Compare.DoneBreaking" : "str.Dump.Compare.Done",
+                             Path.GetFileName(save), classes, structs, enums);
+            _log.Info($"DumpExplorer compare: {Path.GetFileName(oldDump.FilePath)} -> {Path.GetFileName(newDump.FilePath)}, " +
+                      $"{diff.ChangedClasses.Count} classes / {diff.ChangedStructs.Count} structs / " +
+                      $"{diff.ChangedEnums.Count} enums changed, engine={includeEngine}, minimal={minimal}, " +
+                      $"written to {save}");
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            StatusText = Res.Get("str.Dump.Compare.Cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = Res.Format("str.Dump.Compare.Failed", ex.Message);
+            SetError(ex);
+            _log.Error("DumpExplorer compare failed", ex);
+        }
+        finally
+        {
+            EndOp(cts);
+        }
+    }
+
+    private bool CanCompare() => HasFile && !IsBusy;
+
+    /// <summary>The counts the status line gives, taken from what the report shows: breaking changes only in the
+    /// minimal report, and <paramref name="notCompared"/> for a kind that was not compared (a 0 there would claim a
+    /// comparison that never ran).</summary>
+    internal static (string Classes, string Structs, string Enums) StatusCounts(DumpDiffResult d, bool minimal,
+        string notCompared)
+    {
+        static string N(int n) => n.ToString(CultureInfo.InvariantCulture);
+        int Types(List<DumpDiffTypeChange> c) => minimal ? c.Count(x => x.HasBreakingChange) : c.Count;
+        return (N(Types(d.ChangedClasses)),
+                d.StructsSkipped.Length > 0 ? notCompared : N(Types(d.ChangedStructs)),
+                d.EnumsSkipped.Length > 0 ? notCompared
+                    : N(minimal ? d.ChangedEnums.Count(e => e.HasBreakingChange) : d.ChangedEnums.Count));
+    }
+
+    /// <summary>The dump taken earlier is the old one. When the times are equal or unreadable the loaded dump is the
+    /// new one: the user loads the latest dump and picks an older one to compare it with.</summary>
+    internal static (DumpDiffInput Old, DumpDiffInput New) OrderByDumpTime(DumpDiffInput loaded, DumpDiffInput picked)
+    {
+        static DateTimeOffset? When(DumpDiffInput d) =>
+            DateTimeOffset.TryParse(d.Meta.DumpedAt, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out var t) ? t : null;
+        return When(picked) is { } p && When(loaded) is { } l && p > l ? (loaded, picked) : (picked, loaded);
+    }
+
     [RelayCommand]
     private void Cancel() => CancelInFlight();
 
@@ -308,6 +452,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
     {
         SelectEntry(row);
         if (row is null || string.IsNullOrEmpty(row.OwningClassName)) return;
+        // [EXTPR-539-540-2026-10-02] The Instance Finder lists objects of a class; a struct or an enum has none
+        // of its own, and saying nothing on the click read as a broken button.
+        if (row.OwnerKind != DumpEntryKind.Class)
+        {
+            StatusText = Res.Get("str.Dump.FindInstances.NotAClass");
+            return;
+        }
         NavigateToInstanceFinder?.Invoke(row.OwningClassName);
     }
 
@@ -341,14 +492,16 @@ public partial class DumpExplorerViewModel : ViewModelBase
     }
 
     // ------------------------------------------------------------------
-    // Live match: one GObjects pass -> class short name -> current address.
-    // Keyed by the class's short FName (not full path) because the live object
+    // Live match: one GObjects pass -> (kind, short name) -> current address.
+    // Keyed by the type's short FName (not full path) because the live object
     // list (get_object_list) only exposes the short name — full paths aren't on
-    // the wire, and a per-class find_object is an O(n) scan (O(n^2) overall).
+    // the wire, and a per-type find_object is an O(n) scan (O(n^2) overall).
     // Names are stable across restarts (unlike addresses), which is what makes
-    // this restart-safe; the trade-off is same-named classes in different
-    // packages collide (last one indexed wins) — rare, and the row still opens a
-    // real live class the user can verify in the Live Walker.
+    // this restart-safe; the trade-off is same-named types of one kind in
+    // different packages collide (last one indexed wins) — rare, and the row
+    // still opens a real live object the user can verify in the Live Walker.
+    // The kind is part of the key because a class and a struct DO commonly share
+    // a short name, and one dictionary would hand a class row the struct.
     // ------------------------------------------------------------------
 
     /// <summary>
@@ -465,7 +618,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
 
         StatusText = "Scanning the live game's classes…";
-        var index = await BuildLiveClassIndexAsync(ct);
+        var index = await BuildLiveTypeIndexAsync(ct);
         ct.ThrowIfCancellationRequested();
 
         int matched = 0;
@@ -474,7 +627,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         int liveClasses = 0;
         foreach (var e in _all)
         {
-            bool ok = index.TryGetValue(e.OwningClassName, out var live)
+            bool ok = index.TryGetValue((e.OwnerKind, e.OwningClassName), out var live)
                       && !string.IsNullOrEmpty(live);
             e.IsMatched = ok;
             e.LiveAddr = ok ? live! : "";
@@ -489,12 +642,13 @@ public partial class DumpExplorerViewModel : ViewModelBase
                      $"({matched:N0} of {_all.Count:N0} rows matched).";
     }
 
-    /// <summary>Paginate GObjects once and index class-like objects by their short
-    /// name -> CURRENT live address. Name (not path) because that's all
-    /// get_object_list carries; same-name collisions resolve last-wins.</summary>
-    private async Task<Dictionary<string, string>> BuildLiveClassIndexAsync(CancellationToken ct)
+    /// <summary>Paginate GObjects once and index class, struct and enum objects by
+    /// (kind, short name) -> CURRENT live address. Name (not path) because that's all
+    /// get_object_list carries; same-kind, same-name collisions resolve last-wins.</summary>
+    private async Task<Dictionary<(DumpEntryKind Kind, string Name), string>> BuildLiveTypeIndexAsync(
+        CancellationToken ct)
     {
-        var dict = new Dictionary<string, string>(StringComparer.Ordinal);
+        var dict = new Dictionary<(DumpEntryKind Kind, string Name), string>();
         int offset = 0;
         const int pageSize = Constants.GObjectsWalkPageSize;
         while (true)
@@ -504,8 +658,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
             foreach (var o in page.Objects)
             {
                 if (string.IsNullOrEmpty(o.Name)) continue;
-                if (!DumpAllService.IsClassLikeMetaName(o.ClassName)) continue;
-                dict[o.Name] = o.Address;   // short class name -> current live address
+                var kind = LiveTypeKind(o.ClassName);
+                if (kind is null) continue;
+                dict[(kind.Value, o.Name)] = o.Address;   // (kind, short name) -> current live address
             }
             int advanced = page.Scanned > 0 ? page.Scanned : page.Objects.Count;
             offset += advanced;
@@ -513,6 +668,14 @@ public partial class DumpExplorerViewModel : ViewModelBase
         }
         return dict;
     }
+
+    /// <summary>Which row kind a live object's meta class makes it; null for anything else (an instance, a
+    /// function, a property object).</summary>
+    internal static DumpEntryKind? LiveTypeKind(string meta) =>
+        DumpAllService.IsClassLikeMetaName(meta) ? DumpEntryKind.Class
+        : DumpAllService.IsStructMetaName(meta) ? DumpEntryKind.Struct
+        : DumpAllService.IsEnumMetaName(meta) ? DumpEntryKind.Enum
+        : null;
 
     // ------------------------------------------------------------------
     // Filtering.
@@ -545,6 +708,9 @@ public partial class DumpExplorerViewModel : ViewModelBase
             1 => DumpEntryKind.Class,
             2 => DumpEntryKind.Property,
             3 => DumpEntryKind.Function,
+            4 => DumpEntryKind.Struct,
+            5 => DumpEntryKind.Enum,
+            6 => DumpEntryKind.Enumerator,
             _ => null,
         };
 
@@ -592,7 +758,15 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private static string BuildHeader(DumpFileModel model)
     {
         var m = model.Meta;
-        var counts = $"{model.ClassCount:N0} classes · {model.PropertyCount:N0} props · {model.FunctionCount:N0} funcs";
+        // Structs and enums only when the file has them: a dump from before build 3620 has neither.
+        var counts = $"{model.ClassCount:N0} classes";
+        if (model.StructCount > 0) counts += $" · {model.StructCount:N0} structs";
+        if (model.EnumCount > 0) counts += $" · {model.EnumCount:N0} enums";
+        counts += $" · {model.PropertyCount:N0} props · {model.FunctionCount:N0} funcs";
+        // What the enum list could not say, as the completion message said it when the file was written.
+        if (model.EnumsListed == false) counts += Res.Get("str.Dump.Header.EnumsUnread");
+        else if (model.EnumNamesFailed) counts += Res.Get("str.Dump.Header.EnumNamesFailed");
+        else if (model.EnumsTruncated) counts += Res.Get("str.Dump.Header.EnumsTruncated");
         if (m is null) return counts;
         var ue = m.UeVersion > 0 ? $"UE {m.UeVersion / 100}.{m.UeVersion % 100}" : "UE ?";
         var mod = string.IsNullOrEmpty(m.Module) ? "" : $" · {m.Module}";
@@ -605,13 +779,18 @@ public partial class DumpExplorerViewModel : ViewModelBase
         try { _opCts?.Cancel(); } catch { /* already disposed */ }
     }
 
-    partial void OnHasFileChanged(bool value) => RecheckLiveCommand.NotifyCanExecuteChanged();
+    partial void OnHasFileChanged(bool value)
+    {
+        RecheckLiveCommand.NotifyCanExecuteChanged();
+        CompareCommand.NotifyCanExecuteChanged();
+    }
     partial void OnIsGameConnectedChanged(bool value) => RecheckLiveCommand.NotifyCanExecuteChanged();
     partial void OnIsBusyChanged(bool value)
     {
         RecheckLiveCommand.NotifyCanExecuteChanged();
         LoadFileCommand.NotifyCanExecuteChanged();
         LoadLastExportCommand.NotifyCanExecuteChanged();
+        CompareCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnLastExportPathChanged(string value)

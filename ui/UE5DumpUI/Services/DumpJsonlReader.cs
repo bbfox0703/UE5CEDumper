@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using UE5DumpUI.Models;
@@ -7,9 +8,10 @@ namespace UE5DumpUI.Services;
 /// <summary>
 /// Reads a "Dump All" JSON-Lines file (see <see cref="DumpAllService"/>) back
 /// into a flattened, searchable corpus for the Dump Explorer panel. Every
-/// class line is expanded into one class row + one row per property + one row
-/// per function, all carrying the owning class's object path and dump-time
-/// address so a single per-class live match classifies the whole family.
+/// class or struct line is expanded into its own row + one row per property +
+/// one row per function, and every enum line into its row + one row per
+/// enumerator, all carrying the owning type's object path and dump-time
+/// address so a single per-type live match classifies the whole family.
 ///
 /// Purely client-side and offline: parsing a dump requires no live game. The
 /// live-match / jump features (which DO need a connected game) live in the
@@ -20,7 +22,7 @@ public static class DumpJsonlReader
     /// <summary>
     /// Parse the JSON-Lines file at <paramref name="filePath"/>. Malformed
     /// lines are skipped (a dump can be truncated mid-write if the game exited);
-    /// the meta header and every well-formed class line are returned.
+    /// the meta header and every well-formed type line are returned.
     /// </summary>
     public static async Task<DumpFileModel> ReadAsync(
         string filePath,
@@ -28,8 +30,12 @@ public static class DumpJsonlReader
         CancellationToken ct = default)
     {
         DumpMetaLine? meta = null;
+        DumpSummaryLine? summary = null;
         var entries = new List<DumpEntry>();
-        int classCount = 0, propCount = 0, funcCount = 0;
+        // Enum lines come before the summary, whose enum_names_failed decides how an empty enum reads; their rows
+        // are written once the file is read.
+        var enumLines = new List<DumpEnumLine>();
+        int classCount = 0, structCount = 0, enumCount = 0, propCount = 0, funcCount = 0;
 
         await using var fs = new FileStream(
             filePath, FileMode.Open, FileAccess.Read, FileShare.Read, 64 * 1024, useAsync: true);
@@ -56,7 +62,25 @@ public static class DumpJsonlReader
             switch (probe.Kind)
             {
                 case "class":
-                    AppendClass(entries, probe, ref classCount, ref propCount, ref funcCount);
+                    AppendType(entries, probe, DumpEntryKind.Class, ref classCount, ref propCount, ref funcCount);
+                    break;
+                case "struct":
+                    AppendType(entries, probe, DumpEntryKind.Struct, ref structCount, ref propCount, ref funcCount);
+                    break;
+                case "enum":
+                    try
+                    {
+                        var e = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpEnumLine);
+                        if (e is not null) enumLines.Add(e);
+                    }
+                    catch (JsonException) { /* skip a corrupt enum line */ }
+                    break;
+                case "summary":
+                    try
+                    {
+                        summary = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpSummaryLine);
+                    }
+                    catch (JsonException) { /* leave summary null */ }
                     break;
                 case "meta":
                     try
@@ -64,36 +88,51 @@ public static class DumpJsonlReader
                         meta = JsonSerializer.Deserialize(line, DumpJsonlContext.Default.DumpMetaLine);
                     }
                     catch (JsonException) { /* leave meta null */ }
+                    // [EXTPR-539-540-2026-10-02] Dump All's object index shares the extension and can hold over a
+                    // million object lines, none of them browsable here: stop at its meta line.
+                    if (meta?.File == "objects")
+                        return new DumpFileModel { Meta = meta, IsObjectIndex = true, ClassDumpFile = meta.ClassDump };
                     break;
-                // "error" / "summary" lines carry no browsable metadata.
+                // "error" lines carry no browsable metadata.
             }
 
             if ((lineNo & 0x3FF) == 0)
                 progress?.Report(entries.Count);
         }
 
+        bool namesFailed = summary?.EnumNamesFailed == true;
+        foreach (var e in enumLines)
+            AppendEnum(entries, e, namesFailed, ref enumCount);
+
         return new DumpFileModel
         {
             Meta = meta,
             Entries = entries,
+            EnumsListed = summary?.EnumsListed,
+            EnumNamesFailed = namesFailed,
+            EnumsTruncated = summary?.EnumsTruncated == true,
             ClassCount = classCount,
+            StructCount = structCount,
+            EnumCount = enumCount,
             PropertyCount = propCount,
             FunctionCount = funcCount,
         };
     }
 
-    private static void AppendClass(
-        List<DumpEntry> entries, DumpClassLine c,
-        ref int classCount, ref int propCount, ref int funcCount)
+    /// <summary>A class or struct line: they share a shape, a struct's having no functions.</summary>
+    private static void AppendType(
+        List<DumpEntry> entries, DumpClassLine c, DumpEntryKind kind,
+        ref int typeCount, ref int propCount, ref int funcCount)
     {
         var path = c.Path ?? "";
         var classAddr = c.Addr ?? "";
 
-        // Class row.
+        // The type's own row.
         var superInfo = string.IsNullOrEmpty(c.Super) ? "" : $": {c.Super}";
         entries.Add(new DumpEntry
         {
-            Kind = DumpEntryKind.Class,
+            Kind = kind,
+            OwnerKind = kind,
             Name = c.Name,
             OwnerClass = "",
             TypeInfo = superInfo,
@@ -102,7 +141,7 @@ public static class DumpJsonlReader
             ClassAddr = classAddr,
             Haystack = BuildHaystack(c.Name, c.Meta, superInfo, path),
         });
-        classCount++;
+        typeCount++;
 
         // Property rows.
         if (c.Props is { Count: > 0 })
@@ -113,6 +152,7 @@ public static class DumpJsonlReader
                 entries.Add(new DumpEntry
                 {
                     Kind = DumpEntryKind.Property,
+                    OwnerKind = kind,
                     Name = p.Name,
                     OwnerClass = c.Name,
                     TypeInfo = typeInfo,
@@ -130,12 +170,11 @@ public static class DumpJsonlReader
         {
             foreach (var f in c.Funcs)
             {
-                var sig = string.IsNullOrEmpty(f.ReturnType)
-                    ? $"({f.NumParms})"
-                    : $"{f.ReturnType} ({f.NumParms})";
+                var sig = ComposeSignature(f);
                 entries.Add(new DumpEntry
                 {
                     Kind = DumpEntryKind.Function,
+                    OwnerKind = kind,
                     Name = f.Name,
                     OwnerClass = c.Name,
                     TypeInfo = sig,
@@ -148,6 +187,83 @@ public static class DumpJsonlReader
                 funcCount++;
             }
         }
+    }
+
+    /// <summary>[EXTPR-539-540-2026-10-02] An enum line: its row, then one row per enumerator. The enum's
+    /// dump-time address stands in for the class address every member row carries.</summary>
+    private static void AppendEnum(List<DumpEntry> entries, DumpEnumLine e, bool namesFailed, ref int enumCount)
+    {
+        var path = e.Path ?? "";
+        var addr = e.Addr ?? "";
+        int n = e.Entries?.Count ?? 0;
+        // With no member names (the summary's enum_names_failed) every enum has none: "0 entries" would read as
+        // an empty enum.
+        var typeInfo = namesFailed && n == 0 ? "entries unreadable" : n.ToString(CultureInfo.InvariantCulture) + " entries";
+        entries.Add(new DumpEntry
+        {
+            Kind = DumpEntryKind.Enum,
+            OwnerKind = DumpEntryKind.Enum,
+            Name = e.Name,
+            OwnerClass = "",
+            TypeInfo = typeInfo,
+            Offset = -1,
+            Path = path,
+            ClassAddr = addr,
+            Haystack = BuildHaystack(e.Name, "Enum", typeInfo, path),
+        });
+        enumCount++;
+
+        if (e.Entries is null) return;
+        foreach (var x in e.Entries)
+        {
+            var value = "= " + x.Value.ToString(CultureInfo.InvariantCulture);
+            entries.Add(new DumpEntry
+            {
+                Kind = DumpEntryKind.Enumerator,
+                OwnerKind = DumpEntryKind.Enum,
+                Name = x.Name,
+                OwnerClass = e.Name,
+                TypeInfo = value,
+                Offset = -1,
+                Path = path,
+                ClassAddr = addr,
+                Haystack = BuildHaystack(x.Name, e.Name, value, path),
+            });
+        }
+    }
+
+    /// <summary>[EXTPR-539-540-2026-10-02] A function row's signature: the return type in front, then the
+    /// arguments, an out one marked. A dump from before build 3622 has no params, so it shows the count it
+    /// recorded instead.</summary>
+    internal static string ComposeSignature(DumpFuncLine f)
+    {
+        var sb = new StringBuilder();
+        // The return in front: from its params entry when there is one, which says which struct or class comes
+        // back (return_type is only the property type).
+        var ret = f.Params?.FirstOrDefault(p => p.Ret);
+        if (ret is not null) AppendParamType(sb, ret).Append(' ');
+        else if (!string.IsNullOrEmpty(f.ReturnType)) sb.Append(f.ReturnType).Append(' ');
+        sb.Append('(');
+        if (f.Params is null)
+            return sb.Append(f.NumParms.ToString(CultureInfo.InvariantCulture)).Append(')').ToString();
+        bool first = true;
+        foreach (var p in f.Params)
+        {
+            if (p.Ret) continue;
+            if (!first) sb.Append(", ");
+            first = false;
+            if (p.Out) sb.Append("out ");
+            AppendParamType(sb, p).Append(' ').Append(p.Name);
+        }
+        return sb.Append(')').ToString();
+    }
+
+    private static StringBuilder AppendParamType(StringBuilder sb, DumpFuncParamLine p)
+    {
+        sb.Append(p.Type);
+        if (!string.IsNullOrEmpty(p.StructType)) sb.Append('<').Append(p.StructType).Append('>');
+        if (!string.IsNullOrEmpty(p.ObjClass)) sb.Append(':').Append(p.ObjClass);
+        return sb;
     }
 
     /// <summary>Human-readable type string: base type plus struct/inner/enum/obj-class detail.</summary>
