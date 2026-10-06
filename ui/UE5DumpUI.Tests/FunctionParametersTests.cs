@@ -152,4 +152,17 @@ public class FunctionParametersTests
         Assert.Contains("btnFire", script, StringComparison.Ordinal);
         Assert.Contains("for i = 0, 15 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
     }
+
+    // --- the SDK header's function signature ---
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public void The_SDK_signature_lists_the_argument_and_no_local(bool flagged)
+    {
+        Assert.Equal("    bool OnUse(UObject* User); // 0x7FF600001000",
+            SdkExportService.GenerateFunctionSignature(BlueprintFunction(flagged)));
+        Assert.Equal("    void Recalc(); // 0x7FF600002000",
+            SdkExportService.GenerateFunctionSignature(LocalsOnlyFunction(flagged)));
+    }
 }
