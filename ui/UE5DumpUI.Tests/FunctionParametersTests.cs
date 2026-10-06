@@ -25,7 +25,7 @@ public class FunctionParametersTests
         bool? Parm(bool isParm) => flagged ? isParm : null;
         return new FunctionInfoModel
         {
-            Name = "OnUse", Address = "0x7FF600001000", NumParms = 2, ParmsSize = 16, ReturnType = "BoolProperty",
+            Name = "OnUse", Address = "0x7FF600001000", NumParms = 2, ParmsSize = 9, ReturnType = "BoolProperty",
             Params = new()
             {
                 new() { Name = "User", TypeName = "ObjectProperty", Offset = 0, Size = 8, ObjectClassName = "Pawn",
@@ -126,7 +126,7 @@ public class FunctionParametersTests
     [InlineData(false)]
     public void The_span_a_call_needs_ends_at_the_parameters(bool flagged)
     {
-        Assert.Equal(16, InvokeScriptGenerator.RequiredSpan(BlueprintFunction(flagged)));
+        Assert.Equal(9, InvokeScriptGenerator.RequiredSpan(BlueprintFunction(flagged)));
         Assert.Equal(0, InvokeScriptGenerator.RequiredSpan(LocalsOnlyFunction(flagged)));
     }
 
@@ -150,7 +150,29 @@ public class FunctionParametersTests
 
         Assert.DoesNotContain("bytes of parameters, but the mailbox holds", script, StringComparison.Ordinal);
         Assert.Contains("btnFire", script, StringComparison.Ordinal);
-        Assert.Contains("for i = 0, 15 do writeByte(PD + i, 0) end", script, StringComparison.Ordinal);
+        // The zero-fill still covers the whole walked chain, clamped to the slab: zeroing bytes ProcessEvent never
+        // copies costs nothing, and it must not depend on which entries are parameters.
+        Assert.Contains($"for i = 0, {CeMailboxLayout.ParamsDataBytes - 1} do writeByte(PD + i, 0) end", script,
+            StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_zero_fill_covers_every_walked_entry_even_when_NumParms_was_misread()
+    {
+        // [A3-CEFORM-4X-STALESLAB], review of 2bc914dc: with a DLL older than 3622 the parameters come from NumParms,
+        // a tail read older DLLs have misread (0 here, and ParmsSize with it). The zero-fill must not depend on it:
+        // the callee frees whatever Data pointer it finds in an out-FString slot left dirty.
+        var fn = new FunctionInfoModel
+        {
+            Name = "SetName", NumParms = 0, ParmsSize = 0,
+            Params = new()
+            {
+                new() { Name = "Id", TypeName = "IntProperty", Offset = 0, Size = 4 },
+                new() { Name = "OutName", TypeName = "StrProperty", Offset = 8, Size = 16, IsOut = true },
+            },
+        };
+
+        Assert.Equal(24, InvokeScriptGenerator.ZeroFillSpan(fn));
     }
 
     // --- the SDK header's function signature ---

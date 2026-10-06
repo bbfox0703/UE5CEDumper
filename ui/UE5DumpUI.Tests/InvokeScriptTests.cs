@@ -102,6 +102,7 @@ public class InvokeScriptTests
         {
             Name = "getValue",
             ReturnType = "IntProperty",
+            NumParms = 1,   // the return IS a parameter: IsReturn, not a missing count, keeps it out of the form
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "ReturnValue", TypeName = "IntProperty", Size = 4, Offset = 0, IsReturn = true },
@@ -122,6 +123,7 @@ public class InvokeScriptTests
         {
             Name = "setTarget",
             ParmsSize = 8,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "Target", TypeName = "ObjectProperty", Size = 8, Offset = 0 },
@@ -130,6 +132,7 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("AI_C", "setTarget", func);
 
+        Assert.Contains("createForm", script);
         Assert.Contains("writeQword", script); // 8-byte pointer write
         Assert.Contains("0x0", script);        // default for pointer
     }
@@ -172,6 +175,7 @@ public class InvokeScriptTests
         {
             Name = "setTarget",
             ParmsSize = 8,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() {
@@ -183,6 +187,8 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("AI_C", "setTarget", func);
 
+        // The label exists (the form path), so its missing suffix is a finding, not a missing label.
+        Assert.Contains("UObject*", script);
         // No ": " suffix between the type tag and the size tag.
         Assert.DoesNotContain("UObject*:", script);
     }
@@ -378,6 +384,7 @@ public class InvokeScriptTests
         {
             Name = "addMoney",
             ParmsSize = 42,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "Amount", TypeName = "IntProperty", Size = 4, Offset = 0 },
@@ -386,6 +393,7 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("TestClass", "addMoney", func);
 
+        Assert.Contains("createForm", script);
         // PARMS_SIZE embedded in script
         Assert.Contains("PARMS_SIZE   = 42", script);
         // Mailbox zero-fill uses PD base
@@ -661,6 +669,7 @@ public class InvokeScriptTests
         {
             Name = "AddMoney",
             ParmsSize = 4,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "Amount", TypeName = "IntProperty", Size = 4, Offset = 0 },
@@ -669,6 +678,7 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("C", "AddMoney", func);
 
+        Assert.Contains("createForm", script);
         Assert.DoesNotContain("writeFStr", script);
     }
 
@@ -729,6 +739,7 @@ public class InvokeScriptTests
         {
             Name = "SetName",
             ParmsSize = 16,
+            NumParms = 1,
             Params = new List<FunctionParamModel>
             {
                 new() { Name = "NewName", TypeName = "StrProperty", Size = 16, Offset = 0 },
@@ -737,6 +748,7 @@ public class InvokeScriptTests
 
         var script = InvokeScriptGenerator.Generate("Pawn_C", "SetName", func);
 
+        Assert.Contains("writeFStr(", script);   // the FString input path this test is about
         Assert.All(script, c => Assert.True(c < 128, $"Non-ASCII char: U+{(int)c:X4}"));
     }
 
