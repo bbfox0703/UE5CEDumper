@@ -278,7 +278,8 @@ the list from `scripts/analysis/engine_paths.py`.
   max 2^15 = 32768, raised from 2^13 on 2026-10-04) → Save `.jsonl` → Min calls slider (default 1, max 32, affects the next capture only). All three
   disabled while recording; both values persisted in `ui-options.json`. ✅ **The fetch-limit slider and its
   persistence are in source (2026-10-06, `51cb4f69`, `baa6dcef`; the plan's "L1 and L5 built")**; AOT publish and
-  live check owed. Next: Save `.jsonl` (L2).
+  live check owed. ✅ **Save `.jsonl` (L2) is in source too (2026-10-06, `a20af931`, `feee40cf`)**; AOT publish and
+  live check owed. Next: Min calls (L3).
 - ⬜ **PR 539 — Dump All** (UI + `scripts/analysis/diff_dumps.py`). Effort **M**, risk **low–med** (the default
   dump grows). Take structs, enums and function params; the object index as an opt-in, OFF by default, that
   shows a size / time estimate and asks before exporting, written to its own `<name>.objects.jsonl` (reversed

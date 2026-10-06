@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — PR 540's L1 (fetch limit) and L5 (persisted) are in source, 2026-10-06** (see "L1 and L5 built" under PR 540); L2, L3 and all of PR 539 are not built. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: IN PROGRESS — PR 540's L1 (fetch limit), L5 (persisted) and L2 (Save .jsonl) are in source, 2026-10-06** (see "L1 and L5 built" and "L2 built" under PR 540); L3 and all of PR 539 are not built. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -255,6 +255,21 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | L4 | **Recording lock** | All three controls (both sliders and the Save button) are **disabled (greyed out) while a recording runs**, and usable before and after it. Refresh during a recording then always uses the cap fixed at Start. |
 | L1a | **Why the max is 32768 (2026-10-04)** | On PR 540 the contributor replied that they use the tool with an AI assistant to write UE4SS mods, and wanted more rows to give it a fuller picture of what fired; they agreed 50,000 is too much. The maintainer raised the max to 2^15 = 32768. The default stays 512: the fixed 300 was meant for tracing what one in-game action calls, and a small table still serves that best. The DLL needs no change: `pe_profile_get` takes any `limit` and only resolves names for the rows it sends. A per-call timeline and stack snapshots came up in the same discussion; they are a separate feature of ours with no co-author trailer, in [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). |
 | L5 | **Persisted** | Fetch limit and Min calls survive a UI restart: a new `LiveFuncs` sub-object in `UiOptionsSettings` (`ui-options.json`), defaults equal to the VM initializers (that file's own rule), every field written (`check_json_default_ignore`). A loaded value snaps to the nearest power of two and clamps to the range. |
+
+### L2 built (2026-10-06)
+
+Built for the PR's function in this repo's way, not from its code (see "How the code is written").
+
+| Commit | What | Co-author |
+|---|---|---|
+| `c6c8af2e` red, `a20af931` | Save .jsonl beside Clear, disabled while recording; the platform save dialog; `Helpers/LiveFuncsJsonl` writes a summary line, then the rows on screen in first-call order (unknown last), by hand like Dump All's lines, so no serializer metadata under AOT | `a20af931` |
+| `161c4313` red, `feee40cf` | Review fixes: the summary records the check boxes that hide rows, a partial baseline (`baseline_partial`, `baseline_distinct`) and `recording_at_fetch` (a peek left on screen when a recording ends without a fetch); exact `period_ms` / `cv` and the panel's `periodic` / `badge` per row; the dialog's extension `.jsonl` | `feee40cf` |
+| `a3c71df2` red, `bc3d052e` | Older bug the review found: a second Set Baseline while diff was on kept every row's Delta / IsNew against the old baseline | no |
+
+The summary's `recording` field of the PR is not written: Save is disabled while recording, so the UI flag at
+save time is always false; `recording_at_fetch` is the fetch's own state instead. C# 6054/6054.
+**Still owed:** the AOT publish, and a live check with a game (Save after a recording; after a peek and a tab
+switch).
 
 ### L1 and L5 built (2026-10-06)
 
