@@ -27,6 +27,21 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3619) — Live Funcs: a Min calls slider; file dialogs keep their extension `[EXTPR-539-540-2026-10-02]`
+
+- Live Funcs has a **Min calls** slider (1 to 32, default 1, which hides nothing) beside Fetch limit. It hides
+  functions called fewer times than that. It applies to the next recording: the value is read at Start, and moving
+  it later does not change the table on screen. Set Baseline still uses every fetched row, and Save .jsonl records
+  the value. Disabled while recording; remembered across restarts.
+- With Min calls set, the status line no longer suggests a higher Fetch limit when every row it would add is below
+  the minimum, and no longer says the action's function is surely among the NEW rows when the slider hid one.
+- Teleport's CSV and Lua export / import dialogs add the extension when you type a name without one (the fix in
+  the "(no build change)" entry below ships in this build).
+- From fireundubh's PR 540, built our way.
+- Build 3619: AOT `dist\UE5DumpUI.exe` 59,228,160 B, sha256 `23dc3b7d3db5`; `dist\UE5Dumper.dll` `198c35caf8d5`.
+  C# 6077/6077, headless 15/15, dll_core 593 checks, 32 gates. Checked in the AOT UI without a game (the slider
+  reaches 32, is saved, and was set back to 1); not yet checked live.
+
 ## 2026-10-06 (no build change) — the file dialogs' file type always has its dot `[PICKER-EXT-DOT-2026-10-06]`
 
 - Teleport's coordinate library passed `csv` / `lua` to the file dialogs, which build their filter as `*` plus

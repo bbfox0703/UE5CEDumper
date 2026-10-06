@@ -265,8 +265,10 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | `b5538086` red, `3d278c75` | Review fixes: the rows are filtered by the minimum they were FETCHED under (a Start no longer re-filters the previous capture's rows, and Save records the shown rows' minimum); the higher-Fetch-limit advice needs the page's lowest count to reach Min calls; the diff line drops "almost certainly among the NEW rows" when Min calls hid a NEW row; the tooltip carries no NEW-row warning (R1: neither) | `3d278c75` |
 
 Mutation-checked: filtering by the Start value again, dropping the Min-calls condition from the advice, and
-always making the diff claim each fail exactly one of the new tests. C# 6077/6077. **Still owed:** the AOT
-publish and a live check with a game.
+always making the diff claim each fail exactly one of the new tests. C# 6077/6077. **Published as build 3619**
+(AOT `UE5DumpUI.exe` 59,228,160 B, sha256 `23dc3b7d3db5`); in the AOT UI without a game the slider sits beside Fetch
+limit, reaches 32, is written to `ui-options.json` (`minCallsExponent` 5) and was set back to 1. **Still owed:** a
+live check with a game.
 
 ### L2 built (2026-10-06)
 
