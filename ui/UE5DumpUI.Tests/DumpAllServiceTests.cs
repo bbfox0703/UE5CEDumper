@@ -989,4 +989,133 @@ public class DumpAllServiceTests
         var listing = Assert.Single(sink.Reports, r => r.Phase == "Listing enums");
         Assert.Equal(0, listing.Done);
     }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] D3: every function carries its parameters. walk_functions lists the
+    // UFunction's whole property chain, and a Blueprint function's locals follow its parameters there, so
+    // only the entries the DLL flags as parameters (CPF_Parm, the return included) are written. A DLL that
+    // predates the flag falls back to UE's own definition, the leading num_parms entries, and the summary
+    // counts the functions that needed it.
+    // ==================================================================
+
+    /// <summary>TryOpen: two parameters and the return, then two Blueprint locals. Tick: an empty chain.
+    /// Recalc: one local and no parameter. <paramref name="flagged"/> false = a DLL that sends no flag.</summary>
+    private static FakeDumpForDump ParamsFixture(bool flagged)
+    {
+        bool? Parm(bool isParm) => flagged ? isParm : null;
+        var dump = new FakeDumpForDump();
+        dump.Objects.Add(Obj("0x1", "BP_Door_C", "BlueprintGeneratedClass", "/Game/Door/BP_Door"));
+        dump.ClassWalks["0x1"] = new ClassInfoModel { Name = "BP_Door_C", FullPath = "/Game/Door/BP_Door.BP_Door_C" };
+        dump.FunctionWalks["0x1"] = new List<FunctionInfoModel>
+        {
+            new()
+            {
+                Name = "TryOpen", Address = "0xF1", NumParms = 3, ParmsSize = 0x18, ReturnType = "BoolProperty",
+                Params = new()
+                {
+                    new() { Name = "Who", TypeName = "ObjectProperty", Offset = 0, Size = 8,
+                            ObjectClassName = "Pawn", IsParm = Parm(true) },
+                    new() { Name = "Where", TypeName = "StructProperty", Offset = 8, Size = 12, StructName = "Vector",
+                            StructFields = new[] { new DynamicStructField("X", "FloatProperty", 0, 4) },
+                            IsParm = Parm(true) },
+                    new() { Name = "ReturnValue", TypeName = "BoolProperty", Offset = 0x14, Size = 1,
+                            IsOut = true, IsReturn = true, IsParm = Parm(true) },
+                    new() { Name = "CallFunc_IsValid_ReturnValue", TypeName = "BoolProperty", Offset = 0x18, Size = 1,
+                            IsParm = Parm(false) },
+                    new() { Name = "K2Node_DynamicCast_AsPawn", TypeName = "ObjectProperty", Offset = 0x20, Size = 8,
+                            ObjectClassName = "Pawn", IsParm = Parm(false) },
+                },
+            },
+            new() { Name = "Tick", Address = "0xF2" },
+            new()
+            {
+                Name = "Recalc", Address = "0xF3",
+                Params = new() { new() { Name = "Temp_int_Variable", TypeName = "IntProperty", Offset = 0, Size = 4,
+                                         IsParm = Parm(false) } },
+            },
+        };
+        return dump;
+    }
+
+    private static JsonElement[] FuncsOf(List<string> lines)
+    {
+        using var doc = JsonDocument.Parse(lines.Single(l => l.StartsWith("{\"kind\":\"class\"")));
+        return doc.RootElement.GetProperty("funcs").EnumerateArray().Select(f => f.Clone()).ToArray();
+    }
+
+    private static string[] ParamNames(JsonElement func) =>
+        func.GetProperty("params").EnumerateArray().Select(p => p.GetProperty("name").GetString()!).ToArray();
+
+    [Fact]
+    public void Generate_Funcs_CarryTheirParameters_NotTheBlueprintLocals()
+    {
+        var funcs = FuncsOf(Dump(ParamsFixture(flagged: true)));
+
+        Assert.Equal(new[] { "Who", "Where", "ReturnValue" }, ParamNames(funcs[0]));
+        Assert.Empty(ParamNames(funcs[1]));
+        Assert.Empty(ParamNames(funcs[2]));
+    }
+
+    [Fact]
+    public void Generate_AParameter_HasTheWalkersKeys_AndOutRetOnlyWhenSet()
+    {
+        var ps = FuncsOf(Dump(ParamsFixture(flagged: true)))[0].GetProperty("params").EnumerateArray().ToArray();
+
+        var who = ps[0];
+        Assert.Equal("ObjectProperty", who.GetProperty("type").GetString());
+        Assert.Equal(0, who.GetProperty("offset").GetInt32());
+        Assert.Equal(8, who.GetProperty("size").GetInt32());
+        Assert.Equal("Pawn", who.GetProperty("obj_class").GetString());
+        Assert.False(who.TryGetProperty("out", out _));
+        Assert.False(who.TryGetProperty("ret", out _));
+        Assert.False(who.TryGetProperty("struct_type", out _));
+
+        // The struct's own line carries its fields; repeating them under every function that takes it would not.
+        var where = ps[1];
+        Assert.Equal("Vector", where.GetProperty("struct_type").GetString());
+        Assert.False(where.TryGetProperty("struct_fields", out _));
+
+        var ret = ps[2];
+        Assert.True(ret.GetProperty("ret").GetBoolean());
+        Assert.True(ret.GetProperty("out").GetBoolean());
+    }
+
+    [Fact]
+    public void Generate_AnOlderDll_TakesTheLeadingNumParmsEntries_AndTheSummaryCountsThem()
+    {
+        var lines = Dump(ParamsFixture(flagged: false));
+        var funcs = FuncsOf(lines);
+
+        Assert.Equal(new[] { "Who", "Where", "ReturnValue" }, ParamNames(funcs[0]));
+        Assert.Empty(ParamNames(funcs[2]));   // num_parms 0: the local is not a parameter either way
+        using var summary = JsonDocument.Parse(lines[^1]);
+        // TryOpen and Recalc were decided by num_parms; Tick had nothing to decide.
+        Assert.Equal(2, summary.RootElement.GetProperty("params_from_num_parms").GetInt32());
+    }
+
+    [Fact]
+    public void Generate_Summary_CountsNoNumParmsFallback_WhenTheDllFlagsParameters()
+    {
+        var lines = Dump(ParamsFixture(flagged: true));
+
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.Equal(0, summary.RootElement.GetProperty("params_from_num_parms").GetInt32());
+    }
+
+    [Fact]
+    public void Generate_AnOlderDll_NumParmsPastTheList_WritesWhatIsThere()
+    {
+        // A misread num_parms (the [VND583-01] shape) must not fail the class.
+        var dump = ParamsFixture(flagged: false);
+        dump.FunctionWalks["0x1"][0] = new FunctionInfoModel
+        {
+            Name = "TryOpen", Address = "0xF1", NumParms = 75,
+            Params = new() { new() { Name = "Who", TypeName = "ObjectProperty", Offset = 0, Size = 8 } },
+        };
+
+        var lines = Dump(dump);
+
+        Assert.Equal(new[] { "Who" }, ParamNames(FuncsOf(lines)[0]));
+        Assert.DoesNotContain(lines, l => l.StartsWith("{\"kind\":\"error\""));
+    }
 }
