@@ -59,6 +59,9 @@ internal static class LiveFuncsJsonl
             Int(sb, "baseline_funcs", s.BaselineFuncs);
             Bool(sb, "baseline_partial", s.BaselinePartial);
             Int(sb, "baseline_distinct", s.BaselineDistinct);
+            // [LIVEFUNCS-HIDE-PERFRAME] Against a baseline fetched the other way, the per-frame rows' NEW flags are
+            // not to be trusted.
+            Bool(sb, "baseline_hide_per_frame", s.BaselineHidePerFrame);
         }
         Str(sb, "saved_at", s.SavedAtUtc.ToString("o", CultureInfo.InvariantCulture));
         sb.Append("}\n");

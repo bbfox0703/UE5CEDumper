@@ -2897,6 +2897,9 @@ public sealed class DumpService : IDumpService
             DistinctFuncs = res["distinct_funcs"]?.GetValue<int>() ?? 0,
             TotalCalls    = res["total_calls"]?.GetValue<long>() ?? 0L,
             PerFrameHidden = res["per_frame_hidden"]?.GetValue<int>(),
+            PerFrameFuncs  = res["per_frame_funcs"] is JsonArray pf
+                ? pf.Select(a => a?.GetValue<string>() ?? "").Where(a => a.Length > 0).ToList()
+                : Array.Empty<string>(),
             Entries       = entries,
         };
     }

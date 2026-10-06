@@ -187,6 +187,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// way, every one of them reads NEW, or is missing.</summary>
     private bool _baselinePerFrameEffective;
 
+    /// <summary>Which functions the last page and the baseline's page left out as per-frame, by address. The DLL
+    /// decides per recording, so a Tick left out of an idle baseline comes back in an action that paused the game for
+    /// a menu; with no baseline row it would read NEW, at the top of the list the baseline exists to clean.</summary>
+    private HashSet<string> _lastPerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
+    private HashSet<string> _baselinePerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
+
     internal int LastPerFrameHidden => _lastPerFrameHidden;
     internal bool PerFrameUnsupported => _lastPerFrameAsked && !_lastPerFrameEffective;
     internal bool BaselinePerFrameMismatch => _baseline.Count > 0 && _baselinePerFrameEffective != _lastPerFrameEffective;
@@ -296,10 +302,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // reaching for and is independent of however the grid happens to be sorted.
         _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.Max(x => x.Count));
         _baselineTruncated = LastTruncated;
-        _baselineDistinct  = _lastDistinct;
+        _baselineDistinct  = _lastDistinct - _lastPerFrameHidden;   // what it could have fetched; see LastTruncated
         _baselineCapHit    = LastCapHit;
         _baselineLimit     = _lastLimit;
         _baselinePerFrameEffective = _lastPerFrameEffective;
+        _baselinePerFrameAddrs = new(_lastPerFrameAddrs, StringComparer.OrdinalIgnoreCase);
         // OnDiffModeChanged re-applies the diff only when DiffMode CHANGES; with diff already on, a new baseline
         // would leave every row's Delta / IsNew against the old one.
         if (DiffMode) ApplyDiffAndFilter();
@@ -323,6 +330,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baselineCapHit    = false;
         _baselineLimit     = 0;
         _baselinePerFrameEffective = false;
+        _baselinePerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }
@@ -407,7 +415,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
             rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit, _lastRecordingAtFetch,
             FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly, _shownMinCalls,
             diff, NewChangedOnly, diff ? _baseline.Count : 0, diff && _baselineTruncated, diff ? _baselineDistinct : 0,
-            DateTime.UtcNow, _lastPerFrameAsked, _lastPerFrameEffective ? _lastPerFrameHidden : null);
+            DateTime.UtcNow, _lastPerFrameAsked, _lastPerFrameEffective ? _lastPerFrameHidden : null,
+            diff && _baselinePerFrameEffective);
         try
         {
             ClearError();
@@ -456,6 +465,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastPerFrameAsked     = skipPerFrame;
         _lastPerFrameEffective = skipPerFrame && result.PerFrameHidden.HasValue;
         _lastPerFrameHidden    = _lastPerFrameEffective ? result.PerFrameHidden!.Value : 0;
+        _lastPerFrameAddrs     = new(_lastPerFrameEffective ? result.PerFrameFuncs : Array.Empty<string>(),
+                                     StringComparer.OrdinalIgnoreCase);
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
@@ -499,7 +510,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     + (RaiseFetchLimitHelps ? Res.Get("str.LF.Cap.DiffRaise") + " "
                        : LastCapHit || _baselineCapHit ? Res.Get("str.LF.Cap.DiffShorter") + " " : "")
                     + "The filter narrows only the rows already fetched."
-                  : newRowHidden ? "" : "The action's function is almost certainly among the NEW rows at the top.");
+                  : newRowHidden || BaselinePerFrameMismatch ? "" : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
         {
@@ -527,6 +538,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 {
                     e.IsNew = false;
                     e.Delta = e.Count - baseCount;
+                }
+                else if (_baselinePerFrameAddrs.Contains(e.FuncAddr))
+                {
+                    // Fired every frame while idle and was left out of the baseline: not new, and its idle count is
+                    // unknown, so no increase is claimed either.
+                    e.IsNew = false;
+                    e.Delta = 0;
                 }
                 else { e.IsNew = true; e.Delta = e.Count; }
             }
