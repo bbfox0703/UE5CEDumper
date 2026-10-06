@@ -27,6 +27,21 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3618) — Live Funcs: Save .jsonl `[EXTPR-539-540-2026-10-02]`
+
+- Live Funcs has a **Save .jsonl** button. It saves the rows on screen to a JSON Lines file: a summary line, then
+  one line per function in the order the game first called it, which a table ranked by count loses.
+- The summary records what decided the rows: the filter, the check boxes, the fetch limit, and in diff mode
+  whether the baseline was partial (NEW is then not reliable). It also says when the rows came from a Refresh
+  made during the recording.
+- Disabled while recording.
+- Fixed on the way: pressing Set Baseline a second time with Diff already on kept every row's Δ and NEW against
+  the old baseline.
+- From fireundubh's PR 540, built our way.
+- Build 3618: AOT `dist\UE5DumpUI.exe` 59,215,360 B, sha256 `a0b29b4c3c0c`; `dist\UE5Dumper.dll` `b6d055c828b5`.
+  C# 6054/6054, headless 15/15, dll_core 593 checks, 32 gates. Checked in the AOT UI without a game (the button,
+  and "Nothing to save" on an empty table); not yet checked live.
+
 ## 2026-10-06 (build 3617) — Live Funcs: a Fetch limit slider `[EXTPR-539-540-2026-10-02]`
 
 - Live Funcs has a **Fetch limit** slider (64 to 32768, default 512) in place of the fixed 300. The table ranks

@@ -268,8 +268,9 @@ Built for the PR's function in this repo's way, not from its code (see "How the 
 
 The summary's `recording` field of the PR is not written: Save is disabled while recording, so the UI flag at
 save time is always false; `recording_at_fetch` is the fetch's own state instead. C# 6054/6054.
-**Still owed:** the AOT publish, and a live check with a game (Save after a recording; after a peek and a tab
-switch).
+**Published as build 3618** (AOT `UE5DumpUI.exe` 59,215,360 B, sha256 `a0b29b4c3c0c`); in the AOT UI without a
+game the button sits beside Clear and an empty table answers "Nothing to save: the table is empty." **Still
+owed:** a live check with a game (Save after a recording; after a peek and a tab switch).
 
 ### L1 and L5 built (2026-10-06)
 
