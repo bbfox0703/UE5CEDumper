@@ -30,6 +30,25 @@
                 Command="{Binding RecheckLiveCommand}"
                 ToolTip.Tip="{StaticResource str.Tip.Dump.Recheck}"
                 Padding="12,4"/>
+        <!-- [DUMPDIFF-UI] Compare: the main part runs it at once; the arrow holds the report's two options, which
+             persist, so they stay out of the way of the common click. -->
+        <SplitButton Content="{StaticResource str.Dump.Compare}"
+                     Command="{Binding CompareCommand}"
+                     ToolTip.Tip="{StaticResource str.Tip.Dump.Compare}"
+                     Padding="12,4">
+          <SplitButton.Flyout>
+            <MenuFlyout Placement="BottomEdgeAlignedLeft">
+              <MenuItem Header="{StaticResource str.Dump.Compare.IncludeEngine}"
+                        ToggleType="CheckBox"
+                        IsChecked="{Binding DiffIncludeEngine, Mode=TwoWay}"
+                        ToolTip.Tip="{StaticResource str.Tip.Dump.Compare.IncludeEngine}"/>
+              <MenuItem Header="{StaticResource str.Dump.Compare.BreakingOnly}"
+                        ToggleType="CheckBox"
+                        IsChecked="{Binding DiffBreakingOnly, Mode=TwoWay}"
+                        ToolTip.Tip="{StaticResource str.Tip.Dump.Compare.BreakingOnly}"/>
+            </MenuFlyout>
+          </SplitButton.Flyout>
+        </SplitButton>
         <Button Content="{StaticResource str.Dump.Cancel}"
                 Command="{Binding CancelCommand}"
                 IsVisible="{Binding IsBusy}"

@@ -2416,6 +2416,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Track(InterestingProperties, InterestingPropsPersist);
         Track(Console, ConsolePersist);
         Track(LiveFuncs, LiveFuncsPersist);
+        Track(DumpExplorer, DumpExplorerPersist);
         Track(GameClassFilter, GameClassFilterPersist);
         if (Snapshot != null) Track(Snapshot, SnapshotPersist);
         if (Spc != null) Track(Spc, SpcPersist);
@@ -2519,6 +2520,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         nameof(LiveFuncsViewModel.FetchLimitExponent), nameof(LiveFuncsViewModel.MinCallsExponent),
     };
+    private static readonly HashSet<string> DumpExplorerPersist = new()
+    {
+        nameof(DumpExplorerViewModel.DiffIncludeEngine), nameof(DumpExplorerViewModel.DiffBreakingOnly),
+    };
     private static readonly HashSet<string> GameClassFilterPersist = new()
     {
         nameof(GameClassFilterViewModel.GameClassesOnly),
@@ -2613,6 +2618,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Console.GameOnly = o.Console.GameOnly;
         LiveFuncs.FetchLimitExponent = o.LiveFuncs.FetchLimitExponent;   // the VM clamps a hand-edited value
         LiveFuncs.MinCallsExponent = o.LiveFuncs.MinCallsExponent;
+        DumpExplorer.DiffIncludeEngine = o.DumpExplorer.DiffIncludeEngine;
+        DumpExplorer.DiffBreakingOnly = o.DumpExplorer.DiffBreakingOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
         // Clamped on LOAD too: ui-options.json is plain text a user can edit, and a
         // hand-written 0 would make the Classes tab return nothing with no visible cause.
@@ -2771,6 +2778,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.Console.GameOnly = Console.GameOnly;
         o.LiveFuncs.FetchLimitExponent = LiveFuncs.FetchLimitExponent;
         o.LiveFuncs.MinCallsExponent = LiveFuncs.MinCallsExponent;
+        o.DumpExplorer.DiffIncludeEngine = DumpExplorer.DiffIncludeEngine;
+        o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
         o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
 

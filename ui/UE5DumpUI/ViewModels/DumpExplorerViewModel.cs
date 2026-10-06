@@ -1,4 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Globalization;
+using System.IO;
+using System.Text;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UE5DumpUI.Core;
@@ -23,6 +26,7 @@ namespace UE5DumpUI.ViewModels;
 ///
 /// Parsing is fully offline; the live-match / jump features require a connected
 /// (and scanned) game and reuse the existing GObjects list + Live Walker handoff.
+/// Compare diffs the loaded dump against another one, offline too (see CompareAsync).
 /// </summary>
 public partial class DumpExplorerViewModel : ViewModelBase
 {
@@ -302,12 +306,99 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     private bool CanRecheck() => HasFile && IsGameConnected && !IsBusy;
 
-    // [DUMPDIFF-UI] Placeholder until Compare lands.
+    // [DUMPDIFF-UI] Compare: the loaded class dump against one the user picks, written as an HTML report and opened.
+    // The maintainer's decision (2026-10-06): HTML only, started from this panel, because release users do not have
+    // scripts/analysis/diff_dumps.py; DumpDiffService is its port. Both options persist (D8).
+
+    /// <summary>Also compare the engine's own modules; off, the game's own types only (the script's default).</summary>
     [ObservableProperty] private bool _diffIncludeEngine;
+
+    /// <summary>Write the minimal report: only what breaks a working cheat table.</summary>
     [ObservableProperty] private bool _diffBreakingOnly;
 
-    [RelayCommand]
-    private Task CompareAsync() => Task.CompletedTask;
+    [RelayCommand(CanExecute = nameof(CanCompare))]
+    private async Task CompareAsync()
+    {
+        var loaded = FilePath;
+        var picked = await _platform.ShowOpenFileDialogAsync("Dump JSON Lines (*.jsonl)", ".jsonl");
+        if (string.IsNullOrEmpty(picked)) return;
+
+        CancelInFlight();
+        var cts = new CancellationTokenSource();
+        _opCts = cts;
+        var ct = cts.Token;
+        try
+        {
+            IsBusy = true;
+            ClearError();
+            StatusText = Res.Get("str.Dump.Compare.Loading");
+            DumpDiffInput loadedDump, pickedDump;
+            try
+            {
+                loadedDump = await Task.Run(() => DumpDiffService.LoadAsync(loaded, ct: ct), ct);
+                pickedDump = await Task.Run(() => DumpDiffService.LoadAsync(picked, ct: ct), ct);
+            }
+            catch (DumpDiffObjectIndexException ex)
+            {
+                // Diffed as a class dump, an object index would report every class removed; name the right file.
+                StatusText = Res.Format("str.Dump.Compare.ObjectIndex",
+                    ex.ClassDump.Length > 0 ? ex.ClassDump : Res.Get("str.Dump.ObjectIndexFile.Unknown"));
+                return;
+            }
+
+            var (oldDump, newDump) = OrderByDumpTime(loadedDump, pickedDump);
+            bool includeEngine = DiffIncludeEngine, minimal = DiffBreakingOnly;
+            var diff = await Task.Run(() => DumpDiffService.Diff(oldDump, newDump, includeEngine), ct);
+            var html = await Task.Run(() => DumpDiffHtmlRenderer.Render(diff, minimal), ct);
+
+            var suggested = $"{Path.GetFileNameWithoutExtension(oldDump.FilePath)} to " +
+                            $"{Path.GetFileNameWithoutExtension(newDump.FilePath)}.html";
+            var save = await _platform.ShowSaveFileDialogAsync(suggested, Res.Get("str.Dump.Compare.HtmlFilter"), ".html");
+            if (string.IsNullOrEmpty(save))
+            {
+                StatusText = Res.Get("str.Dump.Compare.Cancelled");
+                return;
+            }
+            await File.WriteAllTextAsync(save, html, new UTF8Encoding(false), ct);
+            await _platform.OpenWithShellAsync(save);
+
+            string om = oldDump.Meta.Module ?? "", nm = newDump.Meta.Module ?? "";
+            StatusText = om.Length > 0 && nm.Length > 0 && om != nm
+                ? Res.Format("str.Dump.Compare.DoneOtherGame", Path.GetFileName(save), om, nm)
+                : Res.Format("str.Dump.Compare.Done", Path.GetFileName(save), diff.ChangedClasses.Count,
+                             diff.ChangedStructs.Count, diff.ChangedEnums.Count);
+            _log.Info($"DumpExplorer compare: {Path.GetFileName(oldDump.FilePath)} -> {Path.GetFileName(newDump.FilePath)}, " +
+                      $"{diff.ChangedClasses.Count} classes / {diff.ChangedStructs.Count} structs / " +
+                      $"{diff.ChangedEnums.Count} enums changed, engine={includeEngine}, minimal={minimal}, " +
+                      $"written to {save}");
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested)
+        {
+            StatusText = Res.Get("str.Dump.Compare.Cancelled");
+        }
+        catch (Exception ex)
+        {
+            StatusText = Res.Format("str.Dump.Compare.Failed", ex.Message);
+            SetError(ex);
+            _log.Error("DumpExplorer compare failed", ex);
+        }
+        finally
+        {
+            EndOp(cts);
+        }
+    }
+
+    private bool CanCompare() => HasFile && !IsBusy;
+
+    /// <summary>The dump taken earlier is the old one. When the times are equal or unreadable the loaded dump is the
+    /// new one: the user loads the latest dump and picks an older one to compare it with.</summary>
+    internal static (DumpDiffInput Old, DumpDiffInput New) OrderByDumpTime(DumpDiffInput loaded, DumpDiffInput picked)
+    {
+        static DateTimeOffset? When(DumpDiffInput d) =>
+            DateTimeOffset.TryParse(d.Meta.DumpedAt, CultureInfo.InvariantCulture,
+                DateTimeStyles.AssumeUniversal, out var t) ? t : null;
+        return When(picked) is { } p && When(loaded) is { } l && p > l ? (loaded, picked) : (picked, loaded);
+    }
 
     [RelayCommand]
     private void Cancel() => CancelInFlight();
@@ -657,13 +748,18 @@ public partial class DumpExplorerViewModel : ViewModelBase
         try { _opCts?.Cancel(); } catch { /* already disposed */ }
     }
 
-    partial void OnHasFileChanged(bool value) => RecheckLiveCommand.NotifyCanExecuteChanged();
+    partial void OnHasFileChanged(bool value)
+    {
+        RecheckLiveCommand.NotifyCanExecuteChanged();
+        CompareCommand.NotifyCanExecuteChanged();
+    }
     partial void OnIsGameConnectedChanged(bool value) => RecheckLiveCommand.NotifyCanExecuteChanged();
     partial void OnIsBusyChanged(bool value)
     {
         RecheckLiveCommand.NotifyCanExecuteChanged();
         LoadFileCommand.NotifyCanExecuteChanged();
         LoadLastExportCommand.NotifyCanExecuteChanged();
+        CompareCommand.NotifyCanExecuteChanged();
     }
 
     partial void OnLastExportPathChanged(string value)
