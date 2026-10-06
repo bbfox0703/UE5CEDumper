@@ -262,8 +262,8 @@ public static class InvokeScriptGenerator
 
     /// <summary>
     /// [A3-CEFORM-4X-STALESLAB] How many bytes of the mailbox's params slab the script zero-fills
-    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over every parameter INCLUDING the
-    /// return value, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
+    /// before a call: <c>max(ParmsSize, max(Offset + Size))</c> over EVERY walked entry, the return
+    /// value included, clamped to <see cref="CeMailboxLayout.ParamsDataBytes"/>.
     ///
     /// <para>Mimic runs ProcessEvent on the PERSISTENT slab, which other commands dirty, and it
     /// clears only the return slot itself. So every byte the callee reads, and every out-param
@@ -271,12 +271,23 @@ public static class InvokeScriptGenerator
     /// pointer it finds. ParmsSize alone was not enough, because on UE 4.11-4.17 the DLL read
     /// NumParms into it ([A2-UFUNC-TAIL-4X]).</para>
     ///
+    /// <para>The whole chain, not <see cref="FunctionInfoModel.Parameters"/>: from a DLL older than
+    /// build 3622 the parameters are the leading NumParms entries, another tail read older DLLs have
+    /// misread, and this span must not depend on one ([FUNCPARM-CONSUMERS] review). A Blueprint
+    /// local's bytes are zeroed too, which costs nothing: ProcessEvent never copies them.</para>
+    ///
     /// <para>⛔ Never the walked size ALONE: a failed param walk yields 0 and would zero nothing.
     /// The clamp keeps a forked or garbage size from writing past the slab into what follows it;
     /// the sum is taken in <c>long</c> so a garbage Offset cannot overflow into a small number.</para>
     /// </summary>
     internal static int ZeroFillSpan(FunctionInfoModel func)
-        => (int)Math.Min(RequiredSpan(func), CeMailboxLayout.ParamsDataBytes);
+    {
+        long span = func.ParmsSize;
+        foreach (var p in func.Params)
+            if (p.Offset >= 0 && p.Size > 0)
+                span = Math.Max(span, (long)p.Offset + p.Size);
+        return (int)Math.Min(span, CeMailboxLayout.ParamsDataBytes);
+    }
 
     /// <summary>
     /// The params bytes the call really needs: <c>max(ParmsSize, max(Offset + Size))</c> over every
