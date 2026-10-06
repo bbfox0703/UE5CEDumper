@@ -1669,6 +1669,7 @@ int main() {
         };
         auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        constexpr uintptr_t kWfParm = 0x0080;   // CPF_Parm
         // Actor is a UClass and HitResult a UScriptStruct -- a param's slot is read only when it holds that kind
         // ([STRUCTPROBE-ANY-NAME]); Decoy is an instance of a class called Thing, neither.
         put(wfNamed[9], Grimoire::OFF_UOBJECT_CLASS, named(9));     // Class : Class
@@ -1689,10 +1690,12 @@ int main() {
             put32(wfFn[c], Grimoire::OFF_UOBJECT_NAME, 8);                       // "DoIt"
             put32(wfFn[c], DynOff::FunctionFlagsOffsetFor(ver, false), 0x00080401);
             put(wfFn[c], DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(wfObjP[c]));
-            // param 1: ObjectProperty "Target" -> PropertyClass "Actor" at the REAL subclass start
+            // param 1: ObjectProperty "Target" -> PropertyClass "Actor" at the REAL subclass start. Both params carry
+            // CPF_Parm, as every parameter UE lays out does.
             put(wfObjP[c], Grimoire::OFF_UOBJECT_CLASS, named(2));
             put32(wfObjP[c], Grimoire::OFF_UOBJECT_NAME, 3);
             put32(wfObjP[c], DynOff::UPROPERTY_ELEMSIZE, 8);
+            put(wfObjP[c], DynOff::UPROPERTY_FLAGS, kWfParm);
             put32(wfObjP[c], offsetInternal, 0);
             put(wfObjP[c], subclassStart, objTarget ? objTarget : named(4));
             put(wfObjP[c], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(wfStrP[c]));
@@ -1700,6 +1703,7 @@ int main() {
             put(wfStrP[c], Grimoire::OFF_UOBJECT_CLASS, named(5));
             put32(wfStrP[c], Grimoire::OFF_UOBJECT_NAME, 6);
             put32(wfStrP[c], DynOff::UPROPERTY_ELEMSIZE, 0x88);
+            put(wfStrP[c], DynOff::UPROPERTY_FLAGS, kWfParm);
             put32(wfStrP[c], offsetInternal, 8);
             put(wfStrP[c], subclassStart, structTarget ? structTarget : named(7));
             return Ubel::WalkFunctions(reinterpret_cast<uintptr_t>(wfCls[c]));
