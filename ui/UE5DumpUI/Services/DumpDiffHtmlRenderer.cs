@@ -36,6 +36,8 @@ public static class DumpDiffHtmlRenderer
         footer { margin-top: 2.5em; border-top: 1px solid var(--line); padding-top: 0.6em; }
         """;
 
+    /// <param name="differentGames">The two dumps come from different games, by the rule Dump Explorer's live match
+    /// uses (its caller judges it); the report then says so above everything else.</param>
     public static string Render(DumpDiffResult diff, bool minimal, bool differentGames = false)
     {
         var o = diff.OldDump;
@@ -51,6 +53,11 @@ public static class DumpDiffHtmlRenderer
         sb.Append("</ul>\n<p class=\"muted\">Engine types: ")
           .Append(diff.IncludeEngine ? "included" : "left out (the game's own types only)")
           .Append(". Report: ").Append(minimal ? "breaking changes only" : "full").Append(".</p>\n");
+        // The status line says it too, but the browser opens over it; the report is what is read and kept.
+        if (differentGames)
+            sb.Append("<p class=\"banner\">⚠ The two dumps come from <b>different games</b> (<code>")
+              .Append(H(o.Meta.Module)).Append("</code> and <code>").Append(H(n.Meta.Module))
+              .Append("</code>). This report compares one game across patches, so most of it is noise.</p>\n");
         if (minimal)
             sb.Append("<p class=\"banner\"><b>Minimal mode</b> — showing only the changes that break existing cheat " +
                       "tables (moved or retyped fields, signature changes, changed enum values, struct size changes). " +
@@ -85,8 +92,9 @@ public static class DumpDiffHtmlRenderer
 
     private static void FileLine(StringBuilder sb, string label, DumpDiffInput d) =>
         sb.Append("<li><b>").Append(label).Append("</b>: <code>").Append(H(FileName(d))).Append("</code> (module=")
-          .Append(H(d.Meta.Module ?? "?")).Append(", UE=").Append(d.UeVersion).Append(", dumper build=")
-          .Append(d.DumperBuild).Append(", dumped ").Append(H(d.Meta.DumpedAt ?? "?")).Append(")</li>\n");
+          .Append(H(d.Meta.Module ?? "?")).Append(", UE=").Append(DumpDiffService.FormatNumber(d.UeVersion))
+          .Append(", dumper build=").Append(DumpDiffService.FormatNumber(d.DumperBuild)).Append(", dumped ")
+          .Append(H(d.Meta.DumpedAt ?? "?")).Append(")</li>\n");
 
     private static void Summary(StringBuilder sb, DumpDiffResult d)
     {
@@ -220,9 +228,12 @@ public static class DumpDiffHtmlRenderer
     {
         sb.Append("<h3><code>").Append(H(cd.Name)).Append("</code></h3>\n<p class=\"muted\">Path: <code>")
           .Append(H(cd.Path)).Append("</code>");
+        // Invariant: under a culture whose minus sign is U+2212 a shrunk struct would read "(−4)", which no search
+        // for "-4" finds and the script never prints.
         if (cd.PropsSizeDelta != 0)
-            sb.Append("<br>props_size: ").Append(cd.OldSize).Append(" → ").Append(cd.NewSize).Append(" (")
-              .Append(cd.PropsSizeDelta > 0 ? "+" : "").Append(cd.PropsSizeDelta).Append(')');
+            sb.Append("<br>props_size: ").Append(DumpDiffService.FormatNumber(cd.OldSize)).Append(" → ")
+              .Append(DumpDiffService.FormatNumber(cd.NewSize)).Append(" (").Append(cd.PropsSizeDelta > 0 ? "+" : "")
+              .Append(DumpDiffService.FormatNumber(cd.PropsSizeDelta)).Append(')');
         sb.Append("</p>\n");
 
         var moved = cd.PropChanges.Where(p => p.Kind == DumpDiffPropKind.Moved).ToList();
