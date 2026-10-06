@@ -1600,6 +1600,54 @@ public class DumpServiceTests
         Assert.Null(field.ArrayElements);
     }
 
+    // [EXTPR-539-540-2026-10-02] D4 (R3): the object index asks get_object_list for paths and GObjects indexes;
+    // a DLL that predates include_index sends no index, and the node keeps none rather than one guessed from
+    // the page position (the handler skips null and unnamed slots).
+    [Fact]
+    public async Task GetObjectIndexPageAsync_AsksForPathsAndIndexes_AndReadsTheIndex()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true,
+                ["total"] = 10,
+                ["scanned"] = 10,
+                ["objects"] = new JsonArray
+                {
+                    new JsonObject { ["addr"] = "0x10", ["name"] = "A", ["class"] = "Class", ["outer"] = "", ["full_path"] = "/Script/Game.A", ["index"] = 7 },
+                    new JsonObject { ["addr"] = "0x20", ["name"] = "B", ["class"] = "Class", ["outer"] = "", ["full_path"] = "/Script/Game.B" },
+                }
+            };
+        });
+
+        IDumpService svc = CreateService();
+        var page = await svc.GetObjectIndexPageAsync(0, 10, TestContext.Current.CancellationToken);
+
+        Assert.True(sent!["include_path"]!.GetValue<bool>());
+        Assert.True(sent["include_index"]!.GetValue<bool>());
+        Assert.Equal(7, page.Objects[0].Index);
+        Assert.Null(page.Objects[1].Index);
+        Assert.Equal("/Script/Game.A", page.Objects[0].FullPath);
+    }
+
+    [Fact]
+    public async Task GetObjectListAsync_StaysLean_AsksForNoIndex()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject { ["ok"] = true, ["total"] = 0, ["scanned"] = 0, ["objects"] = new JsonArray() };
+        });
+
+        await CreateService().GetObjectListAsync(0, 10, TestContext.Current.CancellationToken);
+
+        Assert.False(sent!.ContainsKey("include_index"));
+    }
+
     // --- WalkFunctionsAsync: struct_fields parsing ---
 
     [Fact]

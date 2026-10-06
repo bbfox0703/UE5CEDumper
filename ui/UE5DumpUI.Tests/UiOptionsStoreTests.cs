@@ -52,6 +52,7 @@ public class UiOptionsStoreTests : IDisposable
         Assert.Equal(ProxyType.Version, o.ProxyDeploy.SelectedProxyType);
         Assert.Equal(9, o.LiveFuncs.FetchLimitExponent);   // must match VM _fetchLimitExponent default (2^9 = 512)
         Assert.Equal(0, o.LiveFuncs.MinCallsExponent);     // must match VM _minCallsExponent default (2^0 = 1)
+        Assert.False(o.Main.DumpAllObjectIndex);           // D4.1: the object index is opt-in, OFF by default
 
         Assert.False(File.Exists(store.FilePath)); // load must not create the file
     }
@@ -94,6 +95,7 @@ public class UiOptionsStoreTests : IDisposable
         o.ProxyDeploy.SelectedProxyType = ProxyType.Dxgi;
         o.LiveFuncs.FetchLimitExponent = 13;
         o.LiveFuncs.MinCallsExponent = 3;
+        o.Main.DumpAllObjectIndex = true;
 
         store.Save(o);
         Assert.True(File.Exists(store.FilePath));
@@ -121,6 +123,7 @@ public class UiOptionsStoreTests : IDisposable
         Assert.Equal(ProxyType.Dxgi, r.ProxyDeploy.SelectedProxyType);
         Assert.Equal(13, r.LiveFuncs.FetchLimitExponent);
         Assert.Equal(3, r.LiveFuncs.MinCallsExponent);
+        Assert.True(r.Main.DumpAllObjectIndex);
     }
 
     [Fact]
