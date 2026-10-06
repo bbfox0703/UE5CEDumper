@@ -27,6 +27,15 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — Live Funcs: fetching 32768 rows measured on a game; R1–R4 decided `[EXTPR-539-540-2026-10-02]`
+
+- On Avowed, build 3616: 75 s of walking and opening menus recorded 648 distinct functions; a fetch at the
+  planned maximum of 32768 returned 543 rows, 144 KB, in 10–15 ms. Standing still for 60 s recorded only 67.
+  The fetch stays on the interactive lane. Today's fixed cap of 300 did cut the active recording.
+- New rig `tools/verify/livefuncs_fetch_measure.py`; `pipe_client` now keeps each reply's size on the wire.
+- The maintainer decided the re-check's four questions (R1–R4); the plan has them. Next: `diff_dumps.py`'s engine
+  test (R4).
+
 ## 2026-10-06 (no build change) — the PR 539 / 540 plan re-checked; build 3616's early changes verified on Windows `[EXTPR-539-540-2026-10-02]`
 
 - Every claim in `docs/ext-pr-539-540-plan.md` was re-checked against the two PRs, `dev` and the two reference

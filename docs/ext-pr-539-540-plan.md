@@ -239,6 +239,23 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
   costs a name lookup in the DLL. Record the reply size and the time. If the interactive lane stalls noticeably,
   decide then whether the command moves to the bulk lane; do not move it on a guess. A game that fired fewer
   distinct functions than the limit sends only what it has, so measure on one that fires many.
+  ✅ **Measured 2026-10-06, build 3616, Avowed (UE 5.4) through its `dxgi.dll` proxy**, with
+  `tools/verify/livefuncs_fetch_measure.py` (raw results in `out/livefuncs-fetch-measure/`, not committed):
+
+  | Recording | Distinct functions | Calls | Limit 300 | Limit 512 | Limit 8192 / 32768 |
+  |---|---|---|---|---|---|
+  | 60 s standing still in the world | 67 | 534,692 | 67 rows, 19.6 KB, 1 ms | same | same |
+  | 75 s walking, jumping, one swing, inventory / map / journal opened and closed | 648 | 593,676 | 300 rows, 83 KB, 4–6 ms | 512 rows, 136 KB, 6–12 ms | 543 rows, 144 KB, 10–15 ms |
+
+  Times are on the client, from sending the request to the last byte of the reply, three runs each. A cheap
+  command (`get_pointers`) took 0.2–0.4 ms before and right after the largest fetch. The fetch while still
+  recording took 16 ms. The DLL's own log lines (`PIPE:profile`) match every row.
+  **Verdict: the fetch stays on the interactive lane.** At this game's size the largest fetch holds the lane for
+  about 15 ms. Two more facts from the run: the fixed cap of 300 did cut this recording (543 resolvable rows), and
+  105 of the 648 functions were dropped by the handler as no longer resolvable, so `distinct_funcs` overstates
+  what a fetch can return. Not measured: a recording with combat or dialogue, which may fire more functions. At
+  about 265 bytes and 0.025 ms per row, a table of 32,768 rows would be roughly 9 MB and 0.8 s, an
+  extrapolation, not a measurement; measure again if a game ever comes near it.
 
 -----
 
