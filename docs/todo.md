@@ -324,7 +324,7 @@ the list from `scripts/analysis/engine_paths.py`.
   checked live the same day, builds 3627–3628: Dump Explorer ▸ **Compare…**, held to the script by 30 shared cases
   and on real dumps; the plan's "[DUMPDIFF-UI] built" has the commits and the checks. Persisted: include-engine and
   breaking-only. The last folder is not: the file pickers take no start folder.
-- ⬜ `[LIVEFUNCS-HIDE-PERFRAME]` **Live Funcs: hide the per-frame functions, in the DLL** (M, low risk). The
+- ✅ `[LIVEFUNCS-HIDE-PERFRAME]` **Live Funcs: hide the per-frame functions, in the DLL** (M, low risk). The
   maintainer's request (2026-10-06), after asking whether Min calls could reach 8192 to drop the 60 fps band: Min
   calls hides LOW counts (`Count < MinCalls`), the opposite end, and a count threshold depends on the frame rate and
   the recording's length (60 fps x 60 s = 3,600; 144 fps = 8,640). Per-frame is a cadence instead: a mean gap of 40 ms
@@ -332,6 +332,15 @@ the list from `scripts/analysis/engine_paths.py`.
   action's short burst stays. `pe_profile_get` skips them BEFORE the fetch limit, so their rows go to the low-count
   functions this panel is for; a UI-side filter could not bring back what the limit cut. Opt-in, OFF by default,
   remembered, fixed at Start like the fetch limit.
+  ✅ **Built, reviewed and checked live 2026-10-06, builds 3629–3630.** The review (3 reviewers, 1 verifier; 1 MED,
+  6 LOW, the INFO tier, all fixed red before green) moved the rule from the first-to-last span to the time a
+  function KEPT firing (gaps of 100 ms or less) over the window the table was recorded in, and made the DLL name what
+  it left out, so a Tick left out of a baseline is never a NEW row in the action. dll_core_test now compiles
+  Linie.cpp. Live on DumperTest 5.4 Shipping (`tools/verify/livefuncs_hide_per_frame.py`, input from computer use):
+  at 60 fps all six per-frame functions left out (camera modifiers at 8.3 ms, the anim updates at 16.7 ms), the jump,
+  its input triggers and a 2 s walk kept; at the fixture's usual 15 fps the anim updates (66.7 ms) are NOT per-frame,
+  which is the band's floor (25 fps) and is said in the tooltip's 40 ms. The UI: the count in the status line, the
+  option persisting across a restart.
 
 *Parent:* PRs [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) and
 [#540](https://github.com/bbfox0703/UE5CEDumper/pull/540) by fireundubh, both based on `main` @ `c74daa4b`.

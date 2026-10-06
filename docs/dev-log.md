@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3630) — Live Funcs can leave out the functions that fire every frame `[LIVEFUNCS-HIDE-PERFRAME]`
+
+- **Live Funcs ▸ Hide per-frame** (off by default, remembered): the DLL leaves out the functions that fire every
+  frame through the recording — Tick, animation and camera updates — **before** the Fetch limit, so the limit's
+  rows go to the rare functions you are looking for instead of cutting them. The status line says how many were
+  left out.
+- Per-frame means a gap of 40 ms or less, kept up for at least half the time the game was recorded; your action's
+  short bursts stay, even repeated, and an action you hold for most of the recording counts as per-frame. Below
+  25 fps nothing is per-frame.
+- With a baseline, record it the same way: a function left out of the baseline is not shown as NEW, and a baseline
+  recorded the other way is flagged. Save .jsonl records the option.
+- Needs this build's UE5Dumper.dll; an older one leaves nothing out, and the status line says so.
+- Build 3629 was the first live check; 3630 adds the review's fixes (the kept-up time instead of the first-to-last
+  span, the window over the recorded activity, the baseline's left-out functions).
+- Build 3630: AOT `dist\UE5DumpUI.exe` 59,966,976 B, sha256 `180cd772c234`; `dist\UE5Dumper.dll` `cf7a2cc4d970`.
+  C# 6223/6223, headless 19/19, dll_core 634 checks, 32 gates.
+
 ## 2026-10-06 (build 3628) — Dump Explorer compares two dumps and writes the diff as an HTML report `[DUMPDIFF-UI]`
 
 - **Dump Explorer ▸ Compare…**: compare the loaded Dump All file with another dump of the same game and get an
