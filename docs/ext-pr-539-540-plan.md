@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: PLAN — no PR feature is built yet** (three small changes landed early and shipped in build 3616, D7 among them — see "Landed ahead of the plan"). **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4).
+**Status: IN PROGRESS — PR 540's L1 (fetch limit) and L5 (persisted) are in source, 2026-10-06** (see "L1 and L5 built" under PR 540); L2, L3 and all of PR 539 are not built. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -250,6 +250,21 @@ Build in this order: **fetch limit → Save .jsonl → Min calls.**
 | L4 | **Recording lock** | All three controls (both sliders and the Save button) are **disabled (greyed out) while a recording runs**, and usable before and after it. Refresh during a recording then always uses the cap fixed at Start. |
 | L1a | **Why the max is 32768 (2026-10-04)** | On PR 540 the contributor replied that they use the tool with an AI assistant to write UE4SS mods, and wanted more rows to give it a fuller picture of what fired; they agreed 50,000 is too much. The maintainer raised the max to 2^15 = 32768. The default stays 512: the fixed 300 was meant for tracing what one in-game action calls, and a small table still serves that best. The DLL needs no change: `pe_profile_get` takes any `limit` and only resolves names for the rows it sends. A per-call timeline and stack snapshots came up in the same discussion; they are a separate feature of ours with no co-author trailer, in [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). |
 | L5 | **Persisted** | Fetch limit and Min calls survive a UI restart: a new `LiveFuncs` sub-object in `UiOptionsSettings` (`ui-options.json`), defaults equal to the VM initializers (that file's own rule), every field written (`check_json_default_ignore`). A loaded value snaps to the nearest power of two and clamps to the range. |
+
+### L1 and L5 built (2026-10-06)
+
+| Commit | What | Co-author |
+|---|---|---|
+| `8d7d7e3c` red, `51cb4f69` | Fetch-limit slider 2^6..2^15, default 2^9, on its own row under Start / Stop; disabled while recording, and a recording fetches with the value from Start (L1, L4) | `51cb4f69` |
+| `34ac0206` red, `baa6dcef` | Persisted as `LiveFuncs.FetchLimitExponent` in `ui-options.json` (L5) | no |
+| `a698b129` red, `cbf4ec36`, then `9ca4e7cf` red, `a1eab927` | Problem 4: the "rows were cut" messages offer a higher Fetch limit, but only when the limit cut the page and is below the maximum (`RaiseFetchLimitHelps`); the remedies are `en.axaml` strings | no |
+| `46a4c364`, then `bb2db0b3` | Problem 3: the baseline status on a full-width wrapping line of its own (the first attempt squeezed it beside the controls) | no |
+| `4baf6fe7` | The slider, the VM clamp, the persisted default and the tooltip pinned to each other | no |
+
+A two-reviewer pass before the publish found the advice and layout defects fixed in `a1eab927` and `bb2db0b3`.
+C# 6042/6042. **Still owed:** the AOT publish and its build number, and a live check on a fixture (the slider at
+32768, the advice after a cut page). The Wiki's Live Funcs pages (en, zh-TW, ja-JP) still describe a fixed 300 and
+"only a shorter window"; the Wiki is a separate repository and is not changed from here.
 
 ### Implementation notes (from the review — confirm while building)
 
