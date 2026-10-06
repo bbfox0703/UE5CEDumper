@@ -52,9 +52,12 @@ internal static class DumpCompletionFormatter
         }
 
         string size = FormatSize(byteLength);
-        string types = result.StructsEmitted > 0
-            ? $"{result.ClassesEmitted:N0} classes and {result.StructsEmitted:N0} structs"
-            : $"{result.ClassesEmitted:N0} classes";
+        var parts = new List<string> { $"{result.ClassesEmitted:N0} classes" };
+        if (result.StructsEmitted > 0) parts.Add($"{result.StructsEmitted:N0} structs");
+        if (result.EnumsEmitted > 0) parts.Add($"{result.EnumsEmitted:N0} enums");
+        string types = parts.Count == 1
+            ? parts[0]
+            : string.Join(", ", parts.Take(parts.Count - 1)) + " and " + parts[^1];
         return result.Errors > 0
             ? $"Dumped {types} ({size}, {result.Errors} errors) to {fileName}"
             : $"Dumped {types} ({size}) to {fileName}";

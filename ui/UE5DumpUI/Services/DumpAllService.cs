@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text;
 using System.Text.Json;
 using UE5DumpUI.Core;
@@ -6,7 +7,7 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Services;
 
 /// <summary>
-/// Streams a full dump of classes (properties + functions) and structs (properties) as JSON Lines
+/// Streams a full dump of classes (properties + functions), structs (properties) and enums (entries) as JSON Lines
 /// (one JSON object per line). Used as input for offline analysis —
 /// Python scripts under <c>scripts/analysis/</c> aggregate across
 /// multiple game dumps to inform keyword tables, class-location
@@ -91,6 +92,8 @@ public static class DumpAllService
     ///   <item><c>{"kind":"struct", "name":..., "props":[...]}</c> — one per
     ///     ScriptStruct / UserDefinedStruct: a class line's identity, super and props,
     ///     without functions, instance count or the Blueprint-class flag.</item>
+    ///   <item><c>{"kind":"enum", "name":..., "entries":[{"name":...,"value":...}]}</c> —
+    ///     one per UEnum from a single list_enums call, after the type lines.</item>
     ///   <item><c>{"kind":"error", "addr":..., "msg":...}</c> — when a
     ///     specific class or struct walk fails; iteration continues.</item>
     ///   <item><c>{"kind":"summary", ...}</c> — last line; counters.</item>
@@ -240,19 +243,62 @@ public static class DumpAllService
             }
         }
 
+        // ----- Pass 3: the enums, one list_enums call -----
+        // The summary records what the list alone cannot say: whether it was obtained at all, and whether
+        // the DLL could read member names or was cut short. Without them a reader comparing two dumps
+        // cannot tell an enum with no entries from one whose entries could not be read.
+        int enumsEmitted = 0;
+        int enumsSkipped = 0;
+        var enumState = new EnumListState(Listed: false, NamesFailed: false, Truncated: false);
+        ct.ThrowIfCancellationRequested();
+        progress?.Report(new DumpProgress(Phase: "Listing enums", Done: classesEmitted + structsEmitted, Total: -1));
+        EnumListResult? enumList = null;
+        try
+        {
+            enumList = await dump.ListEnumsDetailedAsync(ct);
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception ex)
+        {
+            errors++;
+            await WriteErrorLineAsync(writer, "", "list_enums", ex.Message, ct);
+        }
+        if (enumList != null)
+        {
+            enumState = new EnumListState(Listed: true, enumList.EnumNamesFailed, enumList.Truncated);
+            foreach (var e in enumList.Enums)
+            {
+                ct.ThrowIfCancellationRequested();
+                if (options.GameOnly && IsEnginePath(e.FullPath))
+                {
+                    enumsSkipped++;
+                    continue;
+                }
+                await WriteEnumLineAsync(writer, e, ct);
+                enumsEmitted++;
+            }
+        }
+
         // ----- Summary line -----
         await WriteSummaryLineAsync(writer, classesEmitted, classesSkipped, structsEmitted, structsSkipped,
-                                    errors, scannedObjects, ct);
+                                    enumsEmitted, enumsSkipped, enumState, errors, scannedObjects, ct);
         await writer.FlushAsync();
 
-        int types = classesEmitted + structsEmitted;
+        int written = classesEmitted + structsEmitted + enumsEmitted;
         progress?.Report(new DumpProgress(
-            Phase: $"Done — {classesEmitted} classes, {structsEmitted} structs",
-            Done: types,
-            Total: types));
+            Phase: $"Done — {classesEmitted} classes, {structsEmitted} structs, {enumsEmitted} enums",
+            Done: written,
+            Total: written));
 
-        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted, structsSkipped);
+        return new DumpResult(classesEmitted, classesSkipped, errors, scannedObjects, structsEmitted, structsSkipped,
+                              enumsEmitted, enumsSkipped);
     }
+
+    /// <summary>What the enum list said about itself, for the summary line.</summary>
+    private readonly record struct EnumListState(bool Listed, bool NamesFailed, bool Truncated);
 
     /// <summary>What one chunk of the type walk wrote and skipped, by kind.</summary>
     private readonly record struct ChunkCounts(int Classes, int Structs, int Errors, int ClassesSkipped, int StructsSkipped);
@@ -533,6 +579,28 @@ public static class DumpAllService
         sb.Append(']');
     }
 
+    /// <summary>[EXTPR-539-540-2026-10-02] D2: an enum's line, entries in the DLL's order.</summary>
+    private static async Task WriteEnumLineAsync(TextWriter w, EnumDefinition e, CancellationToken ct)
+    {
+        var sb = new StringBuilder(e.Entries.Count * 40 + 128);
+        sb.Append("{\"kind\":\"enum\"");
+        AppendJsonString(sb, ",\"name\":", e.Name);
+        AppendJsonString(sb, ",\"addr\":", e.Address);
+        AppendJsonString(sb, ",\"path\":", e.FullPath);
+        sb.Append(",\"entries\":[");
+        for (int i = 0; i < e.Entries.Count; i++)
+        {
+            if (i > 0) sb.Append(',');
+            var entry = e.Entries[i];
+            sb.Append('{');
+            AppendJsonString(sb, "\"name\":", entry.Name);
+            sb.Append(",\"value\":").Append(entry.Value.ToString(CultureInfo.InvariantCulture));
+            sb.Append('}');
+        }
+        sb.Append("]}");
+        await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
+    }
+
     private static async Task WriteErrorLineAsync(
         TextWriter w, string addr, string name, string msg, CancellationToken ct)
     {
@@ -546,15 +614,20 @@ public static class DumpAllService
     }
 
     private static async Task WriteSummaryLineAsync(
-        TextWriter w, int emitted, int skipped, int structsEmitted, int structsSkipped, int errors, int scanned,
-        CancellationToken ct)
+        TextWriter w, int emitted, int skipped, int structsEmitted, int structsSkipped,
+        int enumsEmitted, int enumsSkipped, EnumListState enums, int errors, int scanned, CancellationToken ct)
     {
-        var sb = new StringBuilder(160);
+        var sb = new StringBuilder(256);
         sb.Append("{\"kind\":\"summary\"");
         sb.Append(",\"classes_emitted\":").Append(emitted);
         sb.Append(",\"classes_skipped_engine\":").Append(skipped);
         sb.Append(",\"structs_emitted\":").Append(structsEmitted);
         sb.Append(",\"structs_skipped_engine\":").Append(structsSkipped);
+        sb.Append(",\"enums_emitted\":").Append(enumsEmitted);
+        sb.Append(",\"enums_skipped_engine\":").Append(enumsSkipped);
+        sb.Append(",\"enums_listed\":").Append(enums.Listed ? "true" : "false");
+        sb.Append(",\"enum_names_failed\":").Append(enums.NamesFailed ? "true" : "false");
+        sb.Append(",\"enums_truncated\":").Append(enums.Truncated ? "true" : "false");
         sb.Append(",\"errors\":").Append(errors);
         sb.Append(",\"objects_scanned\":").Append(scanned);
         sb.Append('}');
@@ -657,7 +730,7 @@ public static class DumpAllService
 /// (and its scale) from what happened, not from the file's byte length.</summary>
 public sealed record DumpResult(
     int ClassesEmitted, int ClassesSkippedEngine, int Errors, int ObjectsScanned,
-    int StructsEmitted = 0, int StructsSkippedEngine = 0);
+    int StructsEmitted = 0, int StructsSkippedEngine = 0, int EnumsEmitted = 0, int EnumsSkippedEngine = 0);
 
 /// <summary>Options controlling what the dumper emits.</summary>
 public sealed record DumpOptions(
