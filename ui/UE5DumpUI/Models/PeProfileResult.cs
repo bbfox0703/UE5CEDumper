@@ -136,6 +136,8 @@ public sealed class PeProfileResult
     /// <summary>[LIVEFUNCS-HIDE-PERFRAME] How many distinct functions the DLL left out as per-frame (still counted in
     /// <see cref="DistinctFuncs"/>); null when it was not asked, or is older than the option and left nothing out.</summary>
     public int? PerFrameHidden { get; init; }
+    /// <summary>The addresses (func_addr) of those functions, when the DLL names them (build 3630+); empty otherwise.</summary>
+    public IReadOnlyList<string> PerFrameFuncs { get; init; } = Array.Empty<string>();
 
     public bool Recording     { get; init; }
     public int  DistinctFuncs { get; init; }

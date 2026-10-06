@@ -1042,6 +1042,96 @@ public class LiveFuncsViewModelTests
     }
 
     [Fact]
+    public async Task HidePerFrame_AFunctionLeftOutOfTheBaseline_IsNotNew_WhenTheActionFiredItLess()
+    {
+        // Review: the idle baseline left the HUD's Tick out as per-frame; the action paused the game for a menu, so
+        // the Tick fired too little to be per-frame there and came back -- with no baseline row, it read NEW and
+        // topped the New/changed-only list the baseline exists to clean.
+        var dump = new FakeDumpService
+        {
+            NextGet = new PeProfileResult
+            {
+                DistinctFuncs = 2, TotalCalls = 700, PerFrameHidden = 1, PerFrameFuncs = new[] { "0xA" },
+                Entries = new() { new PeProfileEntry { ClassName = "AIdle", FuncName = "Wander", Count = 3, FirstSeq = 5, FuncAddr = "0xB" } },
+            },
+        };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 3, TotalCalls = 200, PerFrameHidden = 0, PerFrameFuncs = Array.Empty<string>(),
+            Entries = new()
+            {
+                new PeProfileEntry { ClassName = "AHUD", FuncName = "ReceiveTick", Count = 120, FirstSeq = 1, FuncAddr = "0xA" },
+                new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 1, FirstSeq = 9, FuncAddr = "0xC" },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "ReceiveTick");   // New/changed-only is on by default
+        Assert.Contains(vm.Results, r => r.FuncName == "OpenShop" && r.IsNew);
+        vm.NewChangedOnly = false;
+        var tick = Assert.Single(vm.Results, r => r.FuncName == "ReceiveTick");
+        Assert.False(tick.IsNew);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_APartialBaseline_CountsWithoutTheLeftOutFunctions()
+    {
+        // 1000 distinct, 600 left out as per-frame, 64 shown at a 64 limit: 64 of 400 were fetched, not of 1,000.
+        var dump = new FakeDumpService { NextGet = PerFramePage(64, 1000, 600) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true, FetchLimitExponent = 6 };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        Assert.Contains("64 of 400", vm.BaselineStatus);
+    }
+
+    [Fact]
+    public async Task HidePerFrame_AgainstAMismatchedBaseline_TheStatusMakesNoClaimAboutTheNewRows()
+    {
+        var dump = new FakeDumpService { NextGet = PerFramePage(3, 10, 7) };
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger()) { HidePerFrame = true };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        vm.HidePerFrame = false;                       // the action fetched the other way
+        dump.NextGet = PerFramePage(10, 10, null);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.True(vm.BaselinePerFrameMismatch);
+        Assert.DoesNotContain("almost certainly", vm.StatusText);
+    }
+
+    [Fact]
+    public async Task SaveJsonl_InDiffMode_RecordsWhetherTheBaselineLeftThePerFrameFunctionsOut()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        vm.HidePerFrame = true;
+        dump.NextGet = PerFramePage(3, 10, 7);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.NewChangedOnly = false;                     // keep rows on screen to save
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("diff").GetBoolean());
+            Assert.True(head.GetProperty("baseline_hide_per_frame").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
     public async Task SaveJsonl_RecordsHidePerFrame_AndHowManyWereLeftOut()
     {
         var (vm, dump, platform) = MakeSavingVm();

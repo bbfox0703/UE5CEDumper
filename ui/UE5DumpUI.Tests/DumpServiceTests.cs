@@ -1659,7 +1659,11 @@ public class DumpServiceTests
             sent = req;
             var reply = new JsonObject { ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 9, ["total_calls"] = 99L,
                                          ["functions"] = new JsonArray() };
-            if (req["skip_per_frame"]?.GetValue<bool>() == true) reply["per_frame_hidden"] = 7;
+            if (req["skip_per_frame"]?.GetValue<bool>() == true)
+            {
+                reply["per_frame_hidden"] = 2;
+                reply["per_frame_funcs"] = new JsonArray { "0x1A", "0x2B" };
+            }
             return reply;
         });
         IDumpService svc = CreateService();
@@ -1667,11 +1671,13 @@ public class DumpServiceTests
         var asked = await svc.PeProfileGetAsync(64, skipPerFrame: true, TestContext.Current.CancellationToken);
         Assert.True(sent!["skip_per_frame"]!.GetValue<bool>());
         Assert.Equal(64, sent["limit"]!.GetValue<int>());
-        Assert.Equal(7, asked.PerFrameHidden);
+        Assert.Equal(2, asked.PerFrameHidden);
+        Assert.Equal(new[] { "0x1A", "0x2B" }, asked.PerFrameFuncs);
 
         var plain = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
         Assert.False(sent!.ContainsKey("skip_per_frame"));
         Assert.Null(plain.PerFrameHidden);
+        Assert.Empty(plain.PerFrameFuncs);
     }
 
     // --- WalkFunctionsAsync: struct_fields parsing ---
