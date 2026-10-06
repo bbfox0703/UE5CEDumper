@@ -208,8 +208,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         DiffMode = true;   // triggers ApplyDiffAndFilter via OnDiffModeChanged
         BaselineStatus = _baselineTruncated
             ? $"⚠ PARTIAL baseline: {_baseline.Count:N0} of {_baselineDistinct:N0} idle funcs "
-              + "(the rest ranked below the fetch cap). A row can show as NEW just for having "
-              + "been below the cut — treat NEW as \"not in the idle top N\"."
+              + "(the rest ranked below the Fetch limit). A row can show as NEW just for having "
+              + "been below the cut — treat NEW as \"not in the idle top N\", or raise the Fetch "
+              + "limit and record the baseline again."
             : $"Baseline: {_baseline.Count} funcs. Now record the ACTION — new/increased rows float to the top.";
         StatusText = "Baseline set. Start → perform the action (open shop) → Stop.";
     }
@@ -311,7 +312,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // point here: the DLL keeps the highest counts, and the function this panel is
         // for has a low one.
         string trunc = LastTruncated
-            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count)"
+            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count; a higher Fetch limit shows more)"
             : "";
 
         bool diff = DiffMode && _baseline.Count > 0;
@@ -331,8 +332,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
-                    + "idle\" — a rare idle function below the cut also shows as NEW. Only a "
-                    + "shorter recording window brings it back; the filter narrows only the rows already fetched."
+                    + "idle\" — a rare idle function below the cut also shows as NEW. A higher Fetch "
+                    + "limit brings it back (Refresh after Stop; a partial baseline must be recorded again), "
+                    + "as does a shorter recording window; the filter narrows only the rows already fetched."
                   : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
