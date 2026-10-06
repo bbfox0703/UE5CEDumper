@@ -8,17 +8,19 @@ namespace UE5DumpUI.Services;
 
 /// <summary>
 /// [DUMPDIFF-UI] Dump Explorer's Compare: a C# port of <c>scripts/analysis/diff_dumps.py</c>, which a release user
-/// does not have (dist\ ships nothing under scripts/analysis/). The script stays the reference; the 24 cases in
+/// does not have (dist\ ships nothing under scripts/analysis/). The script stays the reference; the cases in
 /// scripts/analysis/fixtures/diff_dumps/ are what both must compute, so follow the script rule for rule, its quirks
 /// included: a duplicate path keeps the FIRST record, a duplicate member name keeps its first PLACE and its LAST value
-/// (a Python dict built from a list), a missing key differs from an empty one, ties keep file order (Python's sort is
-/// stable, List.Sort is not), and paths sort by code point.
+/// (a Python dict built from a list), an empty string differs from a missing key while null is the same as missing,
+/// ties keep file order (Python's sort is stable, List.Sort is not), and paths sort by code point. Both read a file
+/// the same way: a line this class's typed reader cannot read is skipped and counted by the script as well.
 /// </summary>
 public static class DumpDiffService
 {
     // ---------------------------------------------------------------- loading
 
-    /// <summary>Read a Dump All file. A line that is not JSON is skipped and counted, as the script skips it.</summary>
+    /// <summary>Read a Dump All file. A line that is not JSON, or holds a value of a type Dump All does not write, is
+    /// skipped and counted, as the script skips it.</summary>
     /// <exception cref="DumpDiffObjectIndexException">The file is Dump All's object index.</exception>
     public static async Task<DumpDiffInput> LoadAsync(string path, IProgress<long>? linesRead = null,
         CancellationToken ct = default)
@@ -42,7 +44,8 @@ public static class DumpDiffService
                 d.BadLines++;
                 continue;
             }
-            if (rec is null) { d.BadLines++; continue; }
+            // A null inside a list is no record; the typed reader keeps it, and every member access would throw.
+            if (rec is null || HasNullElement(rec)) { d.BadLines++; continue; }
             switch (rec.Kind)
             {
                 case "meta":
@@ -63,6 +66,10 @@ public static class DumpDiffService
         linesRead?.Report(n);
         return d;
     }
+
+    private static bool HasNullElement(DumpDiffLine rec) =>
+        (rec.Props?.Contains(null!) ?? false) || (rec.Entries?.Contains(null!) ?? false)
+        || (rec.Funcs is { } funcs && (funcs.Contains(null!) || funcs.Exists(f => f.Params?.Contains(null!) ?? false)));
 
     // ---------------------------------------------------------------- the diff
 
@@ -104,6 +111,10 @@ public static class DumpDiffService
             if (d.Errors.Count > 0)
                 r.DumpNotes.Add($"the {label} dump has {d.Errors.Count} error line(s), walks that failed; a type " +
                                 "listed as missing because of one is tagged");
+        foreach (var (label, d) in Sides(oldDump, newDump))
+            if (d.BadLines > 0)
+                r.DumpNotes.Add($"the {label} dump has {d.BadLines} line(s) that could not be read (not JSON, or a " +
+                                "value of a type Dump All does not write); they were skipped");
         return r;
     }
 

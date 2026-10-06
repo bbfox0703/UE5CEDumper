@@ -5,9 +5,10 @@ namespace UE5DumpUI.Models;
 
 // ---------------------------------------------------------------------------
 // [DUMPDIFF-UI] Dump Explorer's "Compare": the C# port of scripts/analysis/diff_dumps.py, which stays the reference.
-// Its DTOs read only the keys the diff compares, and every one is nullable where the script tells "absent" from
-// "empty" (a missing key and "" are different values to it): a port that defaulted them would report changes the
-// script does not. scripts/analysis/fixtures/diff_dumps/ holds the cases both must agree on.
+// Its DTOs read only the keys the diff compares, each nullable, because the script tells "absent" from "empty" (a
+// missing key and "" are different values to it, while null counts as missing on both sides): a port that defaulted
+// them would report changes the script does not. A line whose value does not fit its field's type is unreadable here,
+// and the script skips it too. scripts/analysis/fixtures/diff_dumps/ holds the cases both must agree on.
 // ---------------------------------------------------------------------------
 
 /// <summary>One line of a Dump All file as the diff reads it: the union of the keys it compares across the meta,

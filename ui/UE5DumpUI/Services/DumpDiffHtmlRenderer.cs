@@ -124,11 +124,6 @@ public static class DumpDiffHtmlRenderer
         }
         foreach (var note in d.DumpNotes.Concat(d.EnumNotes).Concat(d.ParamNotes))
             sb.Append("<li class=\"warn\">⚠ ").Append(H(note)).Append("</li>\n");
-        // Not in the script's report (it warns on stderr): a skipped line is something the diff did not see.
-        foreach (var (label, dump) in new[] { ("old", d.OldDump), ("new", d.NewDump) })
-            if (dump.BadLines > 0)
-                sb.Append("<li class=\"warn\">⚠ the ").Append(label).Append(" dump has ").Append(dump.BadLines)
-                  .Append(" line(s) that are not JSON; they were skipped</li>\n");
         sb.Append("</ul>\n");
     }
 
