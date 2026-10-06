@@ -6,6 +6,7 @@ JSONL dumps produced by UE5DumpUI's "Export -> Dump All Metadata" feature.
 USAGE
     python analyze_dumps.py <dump1.jsonl> [dump2.jsonl ...]
     python analyze_dumps.py *.jsonl --top 100 --keyword Health,Damage
+    python analyze_dumps.py --self-test
 
 WHAT IT DOES
     1. Loads N dumps (one per game). Each dump = meta line + class lines
@@ -667,11 +668,57 @@ def report_meta(aggs: list[GameAggregates], dumps: list[Dump]) -> str:
 # Entry
 # =====================================================================
 
+# =====================================================================
+# Self-test -- synthetic dumps, so the engine/game split is checkable without a real
+# export. Run via --self-test; tools/check_analysis_selftests.py runs it in every gate pass.
+# =====================================================================
+
+def run_self_test() -> int:
+    errors: list[str] = []
+    # (path, own property, is engine). The game's own C++ module is the game's; so is a module
+    # whose name merely starts like an engine one. Engine modules are written either way the
+    # dumper writes them: one or two leading slashes, '/' or '.' after the module.
+    rows = (
+        ("//Script/FakeGame/AHeroBase", "Health", False),
+        ("//Script/EngineOverride/Foo", "Stamina", False),
+        ("/Game/Heroes/BP_Hero.BP_Hero_C", "Mana", False),
+        ("/Script/Engine/Actor", "bHidden", True),
+        ("//Script/UMG.UserWidget", "Visibility", True),
+    )
+    d = Dump(path=Path("<FakeGame>"))
+    d.meta = {"module": "FakeGame.exe"}
+    for i, (path, prop, _) in enumerate(rows, 1):
+        d.classes.append({"kind": "class", "name": f"C{i}", "addr": f"0x{i:X}", "path": path,
+                          "meta": "Class", "super": "", "super_addr": "0x0", "is_bpgc": False,
+                          "props_size": 8, "instance_count": 0,
+                          "props": [{"name": prop, "type": "FloatProperty", "offset": 0, "size": 4}],
+                          "funcs": []})
+    agg = aggregate(d, game_only=True)
+    n_engine = sum(1 for r in rows if r[2])
+    if agg.engine_class_count != n_engine:
+        errors.append(f"engine classes: {agg.engine_class_count}, expected {n_engine}")
+    if agg.game_class_count != len(rows) - n_engine:
+        errors.append(f"game classes: {agg.game_class_count}, expected {len(rows) - n_engine}")
+    for path, prop, engine in rows:
+        counted = prop in agg.own_prop_name_freq
+        if counted == engine:
+            errors.append(f"{path}: {prop} {'counted' if counted else 'not counted'} with game_only")
+    if errors:
+        print(f"SELF-TEST FAILED ({len(errors)} error(s)):")
+        for e in errors:
+            print(f"  - {e}")
+        return 1
+    print("self-test: all assertions passed.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__,
                                 formatter_class=argparse.RawDescriptionHelpFormatter)
-    p.add_argument("dumps", nargs="+", type=Path,
+    p.add_argument("dumps", nargs="*", type=Path,
                    help="JSONL dump files (one per game)")
+    p.add_argument("--self-test", action="store_true",
+                   help="Run the built-in synthetic-dump tests and exit")
     p.add_argument("--top", type=int, default=100,
                    help="Top N rows in frequency tables (default 100)")
     p.add_argument("--min-games", type=int, default=3,
@@ -684,6 +731,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--output", type=Path, default=Path("analysis-report.md"),
                    help="Markdown report path (default: analysis-report.md)")
     args = p.parse_args(argv)
+    if args.self_test:
+        return run_self_test()
+    if not args.dumps:
+        p.error("at least one dump file is required")
 
     dumps: list[Dump] = []
     for path in args.dumps:
