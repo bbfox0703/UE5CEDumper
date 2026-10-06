@@ -11,6 +11,7 @@
 
 #include "Linie.h"
 
+#include <chrono>
 #include <cmath>
 #include <mutex>
 #include <unordered_map>
@@ -25,6 +26,7 @@ std::atomic<bool> g_recording{false};
 struct Stat {
     uint64_t count    = 0;
     uint64_t firstSeq = 0;
+    uint64_t firstMs  = 0;   // wall-clock of the first fire: with lastMs, how long the function kept firing
     uint64_t lastMs   = 0;   // wall-clock of the previous fire (inter-arrival base)
     uint64_t gaps     = 0;   // number of gaps measured (== count-1)
     double   mean     = 0.0; // Welford running mean of the gaps (ms)
@@ -35,6 +37,15 @@ static std::unordered_map<uintptr_t, Stat> g_stats;
 // Monotonic call-stream position (1-based), reset per recording. A function's
 // firstSeq is g_seq at the moment it was first seen — the causal ordering.
 static uint64_t g_seq = 0;
+// [LIVEFUNCS-HIDE-PERFRAME] The recording window, on the clock RecordCall's nowMs comes from (Stark's NowMs: steady
+// clock ms since its epoch), so a function's span and the window compare. g_stopMs is 0 while recording.
+static uint64_t g_startMs = 0;
+static uint64_t g_stopMs  = 0;
+
+static uint64_t SteadyMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
 
 void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     std::lock_guard<std::mutex> lk(g_mu);
@@ -42,6 +53,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     auto& s = g_stats[ufunc];       // default-constructs on first sight
     if (s.count == 0) {
         s.firstSeq = seq;
+        s.firstMs = nowMs;
         s.lastMs = nowMs;
     } else if (nowMs >= s.lastMs) {
         //
@@ -85,13 +97,25 @@ void StartRecording() {
     g_stats.clear();
     g_stats.reserve(4096);  // bound rehash churn over the recording window
     g_seq = 0;
+    g_startMs = SteadyMs();
+    g_stopMs = 0;
     // Flip on UNDER the lock so a concurrent RecordCall can never observe
     // recording==true against a half-cleared table.
     g_recording.store(true, std::memory_order_relaxed);
 }
 
 void StopRecording() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    // Idempotent for the window too: a second Stop must not stretch a finished recording to now.
+    if (g_recording.load(std::memory_order_relaxed)) g_stopMs = SteadyMs();
     g_recording.store(false, std::memory_order_relaxed);
+}
+
+uint64_t WindowMs() {
+    std::lock_guard<std::mutex> lk(g_mu);
+    if (g_startMs == 0) return 0;
+    uint64_t end = g_recording.load(std::memory_order_relaxed) ? SteadyMs() : g_stopMs;
+    return end > g_startMs ? end - g_startMs : 0;
 }
 
 bool IsActive() {
@@ -103,6 +127,8 @@ void Reset() {
     g_recording.store(false, std::memory_order_relaxed);
     g_stats.clear();
     g_seq = 0;
+    g_startMs = 0;
+    g_stopMs = 0;
 }
 
 void Snapshot(std::vector<FuncStat>& out) {
@@ -117,7 +143,7 @@ void Snapshot(std::vector<FuncStat>& out) {
             double variance = s.m2 / static_cast<double>(s.gaps);  // population variance
             cv = std::sqrt(variance) / meanMs;
         }
-        out.push_back(FuncStat{ kv.first, s.count, s.firstSeq, meanMs, cv, s.gaps });
+        out.push_back(FuncStat{ kv.first, s.count, s.firstSeq, meanMs, cv, s.gaps, s.firstMs, s.lastMs });
     }
 }
 

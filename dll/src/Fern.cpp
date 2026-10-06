@@ -4332,12 +4332,20 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         if (cmd == Renge::CMD_PE_PROFILE_GET) {
             int limit = request.value("limit", 200);
+            // [LIVEFUNCS-HIDE-PERFRAME] Opt-in: leave out the functions that fire every frame through the recording,
+            // BEFORE the limit, so their rows go to the low-count functions instead of being cut after them.
+            bool skipPerFrame = request.value("skip_per_frame", false);
 
             std::vector<Linie::FuncStat> snap;
             Linie::Snapshot(snap);
+            const uint64_t windowMs = Linie::WindowMs();
 
             uint64_t totalCalls = 0;
-            for (const auto& s : snap) totalCalls += s.count;
+            int perFrameHidden = 0;
+            for (const auto& s : snap) {
+                totalCalls += s.count;
+                if (skipPerFrame && Linie::IsPerFrame(s, windowMs)) ++perFrameHidden;
+            }
 
             // Sort by fire count desc; resolve only the capped set (name resolution
             // is the cost, so we pay it after the sort + cap, not per stored entry).
@@ -4365,6 +4373,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // profile reads as "the game called fewer functions", which is exactly
                 // the wrong conclusion to hand a profiler.
                 if ((i & 0xFFF) == 0 && Tot::Requested()) { profileTruncated = true; break; }
+                if (skipPerFrame && Linie::IsPerFrame(snap[i], windowMs)) continue;   // counted above, never emitted
                 FunctionInfo fi{};
                 if (!Ubel::ResolveFunctionInfo(snap[i].func, fi)) continue;  // drop stale/recycled
                 uintptr_t classAddr = Ubel::GetOuter(snap[i].func);  // UFunction's Outer == its UClass
@@ -4402,9 +4411,10 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
 
             Sein::Info("PIPE:profile",
-                       "pe_profile_get: %d distinct funcs, %llu total calls, %d emitted (limit %d); "
-                       "%d periodic-looking [%s]",
+                       "pe_profile_get: %d distinct funcs, %llu total calls, %d emitted (limit %d), "
+                       "%d per-frame hidden (asked: %d, window %llu ms); %d periodic-looking [%s]",
                        static_cast<int>(snap.size()), (unsigned long long)totalCalls, emitted, limit,
+                       perFrameHidden, skipPerFrame ? 1 : 0, (unsigned long long)windowMs,
                        periodicCount, periodicSummary.c_str());
 
             json data;
@@ -4412,6 +4422,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["distinct_funcs"] = static_cast<int>(snap.size());
             data["total_calls"]    = totalCalls;
             data["functions"]      = functions;
+            // Only when asked: an absent key tells the UI this DLL predates the option, so nothing was left out.
+            if (skipPerFrame) data["per_frame_hidden"] = perFrameHidden;
             if (profileTruncated) data["truncated"] = true;
             return Renge::MakeResponse(id, data).dump();
         }

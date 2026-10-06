@@ -538,7 +538,11 @@ Behaviour-based UFunction discovery: record which UFunctions the game dispatches
 // Get — snapshot + rank by fire count desc, cap to `limit` (default 200), resolve
 // each UFunction* to its name/class at query time (stale/recycled pointers dropped
 // via a "Function" meta-class guard). Safe to call while recording (live peek).
-{ "id": 72, "cmd": "pe_profile_get", "limit": 200 }
+// skip_per_frame (optional, default false; build 3629+) leaves out the functions that
+// fire every frame through the recording (Linie::IsPerFrame: a mean gap <= 40 ms over
+// 3+ gaps, held over at least half the recording) BEFORE the cap, so `limit` rows go to
+// the rest. [LIVEFUNCS-HIDE-PERFRAME]
+{ "id": 72, "cmd": "pe_profile_get", "limit": 200, "skip_per_frame": true }
 ```
 
 Response for `pe_profile_get`:
@@ -548,6 +552,10 @@ Response for `pe_profile_get`:
   "recording":      false,   // still recording?
   "distinct_funcs": 214,     // distinct UFunctions seen (pre-cap)
   "total_calls":    98213,   // sum of all fire counts
+  "per_frame_hidden": 37,    // only when skip_per_frame was asked: how many distinct
+                             // functions were left out (still counted in distinct_funcs
+                             // and total_calls). Absent = a DLL older than the option,
+                             // which left nothing out.
   "functions": [
     { "class_name": "AShopVendor", "func_name": "OpenShop",
       "func_addr": "0x1B2C3D40", "num_parms": 1, "parms_size": 8, "count": 3,

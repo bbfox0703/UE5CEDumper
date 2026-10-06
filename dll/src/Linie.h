@@ -41,8 +41,20 @@ struct FuncStat {
     uint64_t  lastMs       = 0;
 };
 
-// [LIVEFUNCS-HIDE-PERFRAME] Placeholder until the classifier lands.
-inline bool IsPerFrame(const FuncStat&, uint64_t /*windowMs*/) { return false; }
+// [LIVEFUNCS-HIDE-PERFRAME] A function that fires every frame through most of the recording: the per-frame noise
+// pe_profile_get can leave out so it stops taking the fetch limit's rows from the low-count functions Live Funcs is
+// for. A count cannot say it -- every frame for a minute is 3,600 fires at 60 fps and 8,640 at 144 -- so it is a
+// cadence: a mean gap inside the frame band (the band the UI's periodic test excludes, FrameBandMaxMs) measured over
+// enough gaps, held over at least half of `windowMs`, the recording's length. The span keeps an action's own burst
+// (ten fires in 50 ms has frame-band gaps too) and an effect that started late in the recording.
+inline constexpr double   kPerFrameMaxMeanMs = 40.0;
+inline constexpr uint64_t kPerFrameMinGaps   = 3;
+
+inline bool IsPerFrame(const FuncStat& s, uint64_t windowMs) {
+    if (windowMs == 0 || s.gapSamples < kPerFrameMinGaps || s.meanPeriodMs > kPerFrameMaxMeanMs) return false;
+    uint64_t span = s.lastMs >= s.firstMs ? s.lastMs - s.firstMs : 0;
+    return span * 2 >= windowMs;
+}
 
 // Hot-path gate. Defined in Linie.cpp; declared extern so the check inlines at
 // Stark's call site (one relaxed atomic load + predicted-not-taken branch when off).
@@ -62,6 +74,9 @@ void StartRecording();
 // Flip recording off; the accumulated counts are retained for a later Snapshot.
 void StopRecording();
 
+// The recording's length in ms: from Start to Stop, or to now while it runs; 0 before any Start.
+uint64_t WindowMs();
+
 // == IsRecording(). Named for readers at the pipe layer.
 bool IsActive();
 
@@ -69,8 +84,8 @@ bool IsActive();
 // so a stale recording never leaks across connections and the map is freed.
 void Reset();
 
-// Copy out one FuncStat per distinct function (addr / count / firstSeq). Safe to
-// call while recording.
+// Copy out one FuncStat per distinct function (addr / count / firstSeq / cadence / first and latest fire). Safe
+// to call while recording.
 void Snapshot(std::vector<FuncStat>& out);
 
 } // namespace Linie
