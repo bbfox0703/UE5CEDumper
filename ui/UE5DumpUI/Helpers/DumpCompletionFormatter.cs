@@ -52,8 +52,11 @@ internal static class DumpCompletionFormatter
         }
 
         string size = FormatSize(byteLength);
+        string types = result.StructsEmitted > 0
+            ? $"{result.ClassesEmitted:N0} classes and {result.StructsEmitted:N0} structs"
+            : $"{result.ClassesEmitted:N0} classes";
         return result.Errors > 0
-            ? $"Dumped {result.ClassesEmitted:N0} classes ({size}, {result.Errors} errors) to {fileName}"
-            : $"Dumped {result.ClassesEmitted:N0} classes ({size}) to {fileName}";
+            ? $"Dumped {types} ({size}, {result.Errors} errors) to {fileName}"
+            : $"Dumped {types} ({size}) to {fileName}";
     }
 }
