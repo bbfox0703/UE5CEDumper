@@ -101,6 +101,11 @@ class Dump:
     # Every Dump All file ends with its summary line, so a file without one was cut off mid-write (the game
     # exited): what it lacks may simply be what it never reached.
     has_summary: bool = False
+    # [DUMPDIFF-UI] Lines skipped as unreadable: not JSON, or a value of a type Dump All does not write.
+    bad_lines: int = 0
+    # Fixture files only: raw lines written before the summary line, and a UTF-8 byte-order mark.
+    raw_lines: list[str] = field(default_factory=list)
+    bom: bool = False
 
     @property
     def label(self) -> str:
@@ -150,18 +155,82 @@ class ObjectIndexFile(Exception):
     dump would report every class removed. Raised by load_dump with the class dump's name to use instead."""
 
 
+# [DUMPDIFF-UI] The keys the diff reads, with the JSON type Dump All writes for each. The UI's C# port reads lines
+# into typed fields (DumpDiffModels.cs) and cannot read a line where one of these holds another type, so this script
+# skips such a line too and both say so: before this, the script compared 0.0 with 0, took 1 for true, and crashed on
+# a string props_size. null is allowed anywhere and means the key is absent (_drop_nulls), as the port's `??` reads it.
+_PARAM_KEYS = {"name": "str", "type": "str", "struct_type": "str", "obj_class": "str", "out": "bool", "ret": "bool",
+               "offset": "int", "size": "int"}
+_PROP_KEYS = {"name": "str", "type": "str", "inner_type": "str", "struct_type": "str", "obj_class": "str",
+              "enum": "str", "offset": "int", "size": "int"}
+_FUNC_KEYS = {"name": "str", "return_type": "str", "num_parms": "int", "parms_size": "int", "flags": "any",
+              "params": _PARAM_KEYS}
+_ENTRY_KEYS = {"name": "str", "value": "int"}
+_LINE_KEYS = {"kind": "str", "name": "str", "path": "str", "props_size": "int", "props": _PROP_KEYS,
+              "funcs": _FUNC_KEYS, "entries": _ENTRY_KEYS, "module": "str", "ue_version": "int",
+              "dumper_build": "int", "dumped_at": "str", "file": "str", "class_dump": "str",
+              "structs_emitted": "int", "enums_emitted": "int", "enums_listed": "bool", "enum_names_failed": "bool",
+              "enums_truncated": "bool", "params_from_num_parms": "int"}
+
+
+def _value_fits(v, t) -> bool:
+    if v is None or t == "any":
+        return True
+    if t == "str":
+        return isinstance(v, str)
+    if t == "int":   # a 64-bit integer: not a bool (Python's bool is an int), not a float
+        return type(v) is int and -(1 << 63) <= v < (1 << 63)
+    if t == "bool":
+        return type(v) is bool
+    # a list of objects; a null element is no object
+    return isinstance(v, list) and all(isinstance(x, dict) and _object_fits(x, t) for x in v)
+
+
+def _object_fits(o: dict, keys: dict) -> bool:
+    return all(_value_fits(o[k], t) for k, t in keys.items() if k in o)
+
+
+def _drop_nulls(v):
+    if isinstance(v, dict):
+        return {k: _drop_nulls(x) for k, x in v.items() if x is not None}
+    if isinstance(v, list):
+        return [_drop_nulls(x) for x in v]
+    return v
+
+
+def _flags_text(v) -> str:
+    """Flags are compared as text, as the port reads them: a string as itself, any other value as its JSON form
+    (so the string "1024" and the number 1024 are the same flags, and 1024.0 is not)."""
+    return v if isinstance(v, str) else json.dumps(v, ensure_ascii=False, separators=(",", ":"))
+
+
+def _reject_constant(name: str):
+    raise ValueError(f"{name} is not JSON")   # NaN / Infinity, which the port's reader rejects
+
+
 def load_dump(path: Path) -> Dump:
     d = Dump(path=path)
-    with path.open(encoding="utf-8") as f:
+    # utf-8-sig: a file re-saved by an editor may start with a byte-order mark, which is not part of its meta line.
+    with path.open(encoding="utf-8-sig") as f:
         for lineno, line in enumerate(f, 1):
             line = line.strip()
             if not line:
                 continue
             try:
-                rec = json.loads(line)
-            except json.JSONDecodeError as e:
+                rec = json.loads(line, parse_constant=_reject_constant)
+            except ValueError as e:
                 print(f"  [warn] {path.name}:{lineno} bad JSON: {e}", file=sys.stderr)
+                d.bad_lines += 1
                 continue
+            if not isinstance(rec, dict) or not _object_fits(rec, _LINE_KEYS):
+                print(f"  [warn] {path.name}:{lineno} skipped: not an object, or a value of a type Dump All does "
+                      f"not write", file=sys.stderr)
+                d.bad_lines += 1
+                continue
+            rec = _drop_nulls(rec)
+            for fn in rec.get("funcs", []):
+                if "flags" in fn:
+                    fn["flags"] = _flags_text(fn["flags"])
             kind = rec.get("kind")
             if kind == "meta":
                 if rec.get("file") == "objects":
@@ -585,6 +654,10 @@ def diff_dumps(old_dump: Dump, new_dump: Dump,
         if d.errors:
             out.dump_notes.append(f"the {label} dump has {len(d.errors)} error line(s), walks that failed; a type "
                                   f"listed as missing because of one is tagged")
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.bad_lines:
+            out.dump_notes.append(f"the {label} dump has {d.bad_lines} line(s) that could not be read (not JSON, or a "
+                                  f"value of a type Dump All does not write); they were skipped")
     return out
 
 
@@ -1723,6 +1796,43 @@ def fixture_cases() -> list[tuple[str, Dump, Dump, bool]]:
             {"name": "<script>", "type": "Int64Property", "offset": 0, "size": 8}]),
     ], enums=[_enum("EDup", "/Game/EDup", [("B", 1), ("A", 6)])], summary=_summary(enums_emitted=1))
 
+    # A BOM before the meta line (an editor re-saved the file): the meta line still counts.
+    bom_cut = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    bom_cut.meta["dumper_build"] = 3622
+    bom_cut.bom = True
+
+    # null values in the summary mean absent keys: this dump says nothing about structs or enums.
+    nulls = _make_dump("FakeGame", [_cls_with([])], summary={"kind": "summary", "structs_emitted": None,
+                                                             "enums_emitted": None, "enums_listed": None})
+
+    # Flags compare as text: "1024" and 1024 are the same, 1024 and 1024.0 are not; params null is params absent.
+    flags_old = _make_dump("FakeGame", [_cls_with([
+        {**_func("Same", None), "flags": "1024"}, {**_func("Float", None), "flags": 1024},
+        {**_func("Hex", None), "flags": "0x10"}, {**_func("NullParams", None), "params": None}])],
+        summary=_summary())
+    flags_new = _make_dump("FakeGame", [_cls_with([
+        {**_func("Same", None), "flags": 1024}, {**_func("Float", None), "flags": 1024.0},
+        {**_func("Hex", None), "flags": "0x20"}, {**_func("NullParams", None), "params": []}])],
+        summary=_summary())
+
+    # Lines neither side can read are skipped and counted: not JSON, not an object, NaN, a float or a string where
+    # Dump All writes an integer, a null inside a list, an int where it writes a bool (here, the summary line).
+    bad_old = _make_dump("FakeGame", [_fx_class("AKeep", "/Game/AKeep", 8)], summary=_summary())
+    bad_old.raw_lines = [
+        '{"kind":"class","name":"AFloat","path":"/Game/AFloat","props_size":8,'
+        '"props":[{"name":"V","type":"IntProperty","offset":0.0,"size":4}]}',
+        "null",
+        "[1]",
+        '{"kind":"class","name":"ABroken"',
+        '{"kind":"class","name":"ANaN","path":"/Game/ANaN","props_size":NaN}',
+        '{"kind":"class","name":"ANullProp","path":"/Game/ANullProp","props_size":8,"props":[null]}',
+        '{"kind":"class","name":"AStr","path":"/Game/AStr","props_size":"8"}',
+    ]
+    bad_new = _make_dump("FakeGame", [_fx_class("AKeep", "/Game/AKeep", 8),
+                                      _fx_class("AFloat", "/Game/AFloat", 8, [
+                                          {"name": "V", "type": "IntProperty", "offset": 0, "size": 4}])],
+                         summary=_summary(enums_listed=1))
+
     return [
         ("classes_basic", hero_old, hero_new, False),
         ("classes_self", hero_old, hero_old, False),
@@ -1750,12 +1860,24 @@ def fixture_cases() -> list[tuple[str, Dump, Dump, bool]]:
         ("old_build_cut_off", full, cut_old_build, False),
         ("walk_failed", full, failed, False),
         ("edges", edge_old, edge_new, False),
+        ("bom_new_cut_off", full, bom_cut, False),
+        ("summary_nulls", full, nulls, False),
+        ("flags_types", flags_old, flags_new, False),
+        ("unreadable_lines", bad_old, bad_new, False),
     ]
 
 
-def _write_jsonl(path: Path, lines: list[dict]) -> None:
-    path.write_text("".join(json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in lines),
-                    encoding="utf-8", newline="\n")
+def _file_text(d: Dump) -> str:
+    """A fixture dump as file text: its records, its raw lines before the summary line, and its BOM."""
+    lines = [json.dumps(x, ensure_ascii=False, separators=(",", ":")) for x in _dump_lines(d)]
+    at = len(lines) - 1 if d.has_summary else len(lines)
+    lines[at:at] = d.raw_lines
+    text = "".join(x + "\n" for x in lines)
+    return "\ufeff" + text if d.bom else text
+
+
+def _write_jsonl(path: Path, d: Dump) -> None:
+    path.write_text(_file_text(d), encoding="utf-8", newline="\n")
 
 
 def _case_files(name: str) -> tuple[Path, Path, Path]:
@@ -1776,8 +1898,8 @@ def write_fixtures() -> int:
     for name, old, new, include_engine in cases:
         old_p, new_p, exp_p = _case_files(name)
         old_p.parent.mkdir(exist_ok=True)
-        _write_jsonl(old_p, _dump_lines(old))
-        _write_jsonl(new_p, _dump_lines(new))
+        _write_jsonl(old_p, old)
+        _write_jsonl(new_p, new)
         # Diffed from the written FILES, as the port will read them, not from the in-memory dumps.
         diff = diff_dumps(load_dump(old_p), load_dump(new_p), include_engine=include_engine)
         exp_p.write_text(_expected_text(diff, include_engine), encoding="utf-8", newline="\n")
@@ -1800,10 +1922,7 @@ def run_self_test_fixtures(errors: list[str]) -> None:
         if not (old_p.is_file() and new_p.is_file() and exp_p.is_file()):
             errors.append(f"fixtures: {name}/ is missing a file (run --write-fixtures)")
             continue
-        if old_p.read_text(encoding="utf-8") != "".join(
-                json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in _dump_lines(old)) \
-                or new_p.read_text(encoding="utf-8") != "".join(
-                json.dumps(x, ensure_ascii=False, separators=(",", ":")) + "\n" for x in _dump_lines(new)):
+        if old_p.read_text(encoding="utf-8") != _file_text(old) or new_p.read_text(encoding="utf-8") != _file_text(new):
             errors.append(f"fixtures: {name}/ input files differ from the case (run --write-fixtures)")
         diff = diff_dumps(load_dump(old_p), load_dump(new_p), include_engine=include_engine)
         if exp_p.read_text(encoding="utf-8") != _expected_text(diff, include_engine):

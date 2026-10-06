@@ -1,0 +1,104 @@
+{
+ "include_engine": false,
+ "diff": {
+  "classes": {
+   "added": [],
+   "removed": [],
+   "changed": [
+    {
+     "path": "Game/Heroes/AHero",
+     "name": "AHero",
+     "old_size": 8,
+     "new_size": 8,
+     "breaking": true,
+     "props": [],
+     "funcs": [
+      {
+       "name": "Float",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "1024",
+        "params": null
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "1024.0",
+        "params": null
+       },
+       "params_changed": false
+      },
+      {
+       "name": "Hex",
+       "kind": "signature_changed",
+       "old": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x10",
+        "params": null
+       },
+       "new": {
+        "return_type": "",
+        "num_parms": 2,
+        "parms_size": 8,
+        "flags": "0x20",
+        "params": null
+       },
+       "params_changed": false
+      }
+     ]
+    }
+   ],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 2,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 1,
+    "classes_with_size_delta": 0
+   }
+  },
+  "structs": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "counts": {
+    "prop_added": 0,
+    "prop_removed": 0,
+    "prop_moved": 0,
+    "prop_type_changed": 0,
+    "func_added": 0,
+    "func_removed": 0,
+    "func_signature_changed": 0,
+    "classes_with_moved_fields": 0,
+    "classes_with_sig_changes": 0,
+    "classes_with_size_delta": 0
+   }
+  },
+  "enums": {
+   "skipped": "",
+   "added": [],
+   "removed": [],
+   "changed": [],
+   "unchanged": 0,
+   "uncompared": 0
+  },
+  "notes": {
+   "dump": [],
+   "enum": [],
+   "param": []
+  }
+ }
+}
