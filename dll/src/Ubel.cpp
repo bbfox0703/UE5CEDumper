@@ -1981,7 +1981,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
     std::vector<FunctionInfo> funcs;
     if (!uclassAddr) return funcs;
 
-    // CPF_ReturnParm = 0x0400, CPF_OutParm = 0x0100
+    constexpr uint64_t CPF_Parm       = 0x0080;
     constexpr uint64_t CPF_ReturnParm = 0x0400;
     constexpr uint64_t CPF_OutParm    = 0x0100;
 
@@ -2041,6 +2041,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
+                            param.isParm = (propFlags & CPF_Parm) != 0;
 
                             // StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {
@@ -2109,6 +2110,7 @@ std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
 
                             param.isReturn = (propFlags & CPF_ReturnParm) != 0;
                             param.isOut = (propFlags & CPF_OutParm) != 0;
+                            param.isParm = (propFlags & CPF_Parm) != 0;
 
                             // UE4 StructProperty -> read UScriptStruct name + sub-field layout
                             if (param.typeName == "StructProperty") {

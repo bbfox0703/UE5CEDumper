@@ -101,6 +101,9 @@ struct FunctionParam {
     int32_t     offset = -1;  // Offset_Internal within param buffer (-1 = unknown)
     bool        isOut = false;
     bool        isReturn = false;
+    // [EXTPR-539-540-2026-10-02] CPF_Parm: a parameter, the return included. A Blueprint function's chain
+    // also holds its locals after the parameters (CallFunc_*_ReturnValue, K2Node_*, Temp_*), which are not.
+    bool        isParm = false;
     std::string structType;     // UScriptStruct name for StructProperty params (empty otherwise)
     // Stage 1 (Invoke param picker): target UClass name for pointer-flavoured
     // params (ObjectProperty / ClassProperty / Soft* / Weak* / Lazy* /

@@ -2410,6 +2410,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     pj["offset"] = p.offset;
                     pj["out"]    = p.isOut;
                     pj["ret"]    = p.isReturn;
+                    // [EXTPR-539-540-2026-10-02] Always sent, so a reader can tell "not a parameter" (a Blueprint
+                    // local in the same chain) from a DLL that predates the key.
+                    pj["parm"]   = p.isParm;
                     if (!p.structType.empty())
                         pj["struct_type"] = p.structType;
                     // Stage 1 (Invoke param picker): target UClass for
