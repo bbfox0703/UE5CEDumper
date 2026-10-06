@@ -892,9 +892,11 @@ def _render_type_diff(lines: list[str], cd: ClassDiff, minimal: bool) -> None:
 # =====================================================================
 
 def _make_dump(module: str, classes: list[dict], structs: list[dict] | None = None,
-               enums: list[dict] | None = None, summary: dict | None = None) -> Dump:
-    """Construct a fake Dump in-memory for self-test purposes."""
+               enums: list[dict] | None = None, summary: dict | None = None, complete: bool = True) -> Dump:
+    """Construct a fake Dump in-memory for self-test purposes. complete=False: as if cut off before its
+    summary line."""
     d = Dump(path=Path(f"<{module}>"))
+    d.has_summary = complete
     d.meta = {"module": f"{module}.exe", "ue_version": 505,
               "dumper_build": 999, "dumped_at": "2026-01-01T00:00:00Z"}
     d.classes = classes
@@ -1137,6 +1139,7 @@ def run_self_test() -> int:
             "Minimal mode hides Added Classes", errors)
 
     run_self_test_types(errors)
+    run_self_test_review(errors)
 
     if errors:
         print(f"SELF-TEST FAILED ({len(errors)} error(s)):", file=sys.stderr)
@@ -1299,6 +1302,99 @@ def run_self_test_types(errors: list[str]) -> None:
     f_pre = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", None)])], summary={"kind": "summary"})
     _assert(not diff_dumps(f_pre, f_new).changed,
             "an older dump without params compares the function's metadata only", errors)
+
+
+def run_self_test_review(errors: list[str]) -> None:
+    """[EXTPR-539-540-2026-10-02] Review of 513fdd16: what the first D5 self-test left unpinned."""
+    # --- a dump with no summary line was cut off mid-write: what it lacks is not "removed" ---
+    full = _make_dump("FakeGame", [_cls_with([]), {**_cls_with([]), "name": "AOther", "path": "/Game/AOther"}],
+                      structs=[_struct("FHit", "/Script/FakeGame.FHit", 8, [])],
+                      enums=[_enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0)])],
+                      summary=_summary(structs_emitted=1, enums_emitted=1))
+    cut = _make_dump("FakeGame", [_cls_with([])], complete=False)
+    cut.meta["dumper_build"] = 3622
+    dcut = diff_dumps(full, cut)
+    _assert(not dcut.removed_classes, "a cut-off new dump reports no removed class", errors)
+    md = render_report(dcut)
+    _assert("no summary line" in md, "the report says the new dump was cut off", errors)
+    _assert("ends before its struct lines" in md, "a cut-off dump of a build with structs says so", errors)
+    dcut_old = diff_dumps(cut, full)
+    _assert(not dcut_old.added_classes, "a cut-off old dump reports no added class", errors)
+
+    # --- a type whose walk failed is tagged, not just "removed" ---
+    failed = _make_dump("FakeGame", [_cls_with([])], structs=[], summary=_summary(structs_emitted=0))
+    failed.errors = [{"kind": "error", "addr": "0x9", "name": "AOther", "msg": "pipe dropped"}]
+    md = render_report(diff_dumps(full, failed))
+    _assert("walk failed in the new dump" in md, "a removed class with an error line is tagged", errors)
+    _assert("error line(s)" in md, "the report counts each dump's error lines", errors)
+
+    # --- the report's own wording, not the notes list ---
+    md = render_report(diff_dumps(_make_dump("FakeGame", [], summary={"kind": "summary"}),
+                                  _make_dump("FakeGame", [], structs=[_struct("FHit", "/Script/G.FHit", 8, [])],
+                                             summary=_summary(structs_emitted=1))))
+    _assert("Structs: not compared" in md, "the report says structs were not compared", errors)
+    _assert("Enums: not compared" in md, "the report says enums were not compared", errors)
+    n_old = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)])],
+                       summary=_summary(enums_emitted=1))
+    n_noname = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [])],
+                          summary=_summary(enums_emitted=1, enum_names_failed=True))
+    md = render_report(diff_dumps(n_old, n_noname))
+    _assert("member names were unavailable" in md, "the rendered report carries the names note", errors)
+    _assert("entries not compared" in md and "1** unchanged" not in md,
+            "enums matched without names are not counted as unchanged", errors)
+
+    # --- an old cut-short list cannot say an enum was added ---
+    n_cut_old = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)])],
+                           summary=_summary(enums_emitted=1, enums_truncated=True))
+    n_more = _make_dump("FakeGame", [], enums=[_enum("EKind", "/Script/G.EKind", [("EKind::A", 0)]),
+                                               _enum("ENew", "/Script/G.ENew", [("ENew::A", 0)])],
+                        summary=_summary(enums_emitted=2))
+    _assert(not diff_dumps(n_cut_old, n_more).added_enums, "a truncated old list reports no added enum", errors)
+
+    # --- params: offset-only, out-only and return-only changes are signature changes, and the report shows them ---
+    base = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+            {"name": "ReturnValue", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Actor",
+             "out": True, "ret": True}]
+    for label, change in (("offset", {0: {"offset": 4}}),
+                          ("out", {0: {"out": True}}),
+                          ("return class", {1: {"obj_class": "Pawn"}})):
+        changed = [dict(p, **change.get(i, {})) for i, p in enumerate(base)]
+        d = diff_dumps(_make_dump("FakeGame", [_cls_with([_func("Spawn", base)])], summary=_summary()),
+                       _make_dump("FakeGame", [_cls_with([_func("Spawn", changed)])], summary=_summary()))
+        sig = [f for cd in d.changed for f in cd.func_changes if f.kind == "signature_changed"]
+        _assert(len(sig) == 1, f"a {label}-only parameter change is a signature change", errors)
+    d = diff_dumps(_make_dump("FakeGame", [_cls_with([_func("Spawn", base)])], summary=_summary()),
+                   _make_dump("FakeGame", [_cls_with([_func("Spawn", [base[0], dict(base[1], obj_class="Pawn")])])],
+                              summary=_summary()))
+    _assert("Pawn" in render_report(d), "the report shows a changed return entry", errors)
+
+    # --- a dump whose params came from num_parms says so in the report ---
+    md = render_report(diff_dumps(_make_dump("FakeGame", [], summary=_summary(params_from_num_parms=3)),
+                                  _make_dump("FakeGame", [], summary=_summary())))
+    _assert("from num_parms" in md, "the report notes params taken from num_parms", errors)
+
+    # --- a struct that only grew is breaking: its size is the stride of every array of it ---
+    g_old = _make_dump("FakeGame", [], structs=[_struct("FSlot", "/Script/G.FSlot", 0x18, [])],
+                       summary=_summary(structs_emitted=1))
+    g_new = _make_dump("FakeGame", [], structs=[_struct("FSlot", "/Script/G.FSlot", 0x20, [])],
+                       summary=_summary(structs_emitted=1))
+    _assert("`FSlot`" in render_report(diff_dumps(g_old, g_new), minimal=True),
+            "a struct whose size changed is in the minimal report", errors)
+    _assert("changed enum values" in render_report(diff_dumps(g_old, g_new), minimal=True),
+            "the minimal banner names what it keeps", errors)
+
+    # --- the object index is not a class dump ---
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        idx = Path(tmp) / "game.objects.jsonl"
+        idx.write_text('{"kind":"meta","file":"objects","class_dump":"game.jsonl"}\n'
+                       '{"kind":"object","index":0,"addr":"0x1","name":"A","class":"Class","outer":"","path":"/A"}\n',
+                       encoding="utf-8")
+        try:
+            load_dump(idx)
+            _assert(False, "loading an object index is refused", errors)
+        except ObjectIndexFile as e:
+            _assert("game.jsonl" in str(e), "the refusal names the class dump to use instead", errors)
 
 
 # =====================================================================
