@@ -21,6 +21,7 @@ public class LiveFuncsViewModelTests
         public int StartCalls { get; private set; }
         public int StopCalls { get; private set; }
         public int GetCalls { get; private set; }
+        public int LastLimit { get; private set; }
         public PeProfileResult NextGet { get; set; } = new();
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
@@ -36,6 +37,7 @@ public class LiveFuncsViewModelTests
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
         {
             GetCalls++;
+            LastLimit = limit;
             return Task.FromResult(NextGet);
         }
     }
@@ -717,5 +719,72 @@ public class LiveFuncsViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.DoesNotContain(vm.Results, r => r.FuncName == "Tick");
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] L1: the fetch limit is a slider over powers of two,
+    // 2^6 = 64 .. 2^15 = 32768, default 2^9 = 512. A recording keeps the value it
+    // started with (L4).
+    // ==================================================================
+
+    [Fact]
+    public async Task FetchLimit_Default_AsksFor512()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(9, vm.FetchLimitExponent);
+        Assert.Equal(512, vm.FetchLimit);
+        Assert.Equal(512, dump.LastLimit);
+    }
+
+    [Fact]
+    public async Task FetchLimit_FollowsTheExponent_UpTo32768()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+
+        vm.FetchLimitExponent = 15;
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.Equal(32768, vm.FetchLimit);
+        Assert.Equal(32768, dump.LastLimit);
+    }
+
+    [Theory]
+    [InlineData(5, 6)]
+    [InlineData(-3, 6)]
+    [InlineData(16, 15)]
+    [InlineData(99, 15)]
+    [InlineData(12, 12)]
+    public void FetchLimitExponent_StaysInTheSliderRange(int set, int expected)
+    {
+        // A hand-edited ui-options.json reaches the property without the slider's own bounds.
+        var (vm, _) = MakeVm();
+
+        vm.FetchLimitExponent = set;
+
+        Assert.Equal(expected, vm.FetchLimitExponent);
+        Assert.Equal(1 << expected, vm.FetchLimit);
+    }
+
+    [Fact]
+    public async Task FetchLimit_ARecordingUsesTheValueItStartedWith()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9 });
+        vm.FetchLimitExponent = 7;                  // 128
+        await vm.StartCommand.ExecuteAsync(null);
+
+        vm.FetchLimitExponent = 12;                 // the slider is disabled now; a change reaches the VM anyway
+        await vm.RefreshCommand.ExecuteAsync(null); // a peek during the recording
+        Assert.Equal(128, dump.LastLimit);
+        await vm.StopCommand.ExecuteAsync(null);    // Stop's own fetch belongs to the recording too
+        Assert.Equal(128, dump.LastLimit);
+
+        await vm.RefreshCommand.ExecuteAsync(null); // after it, a re-pull uses the current value
+        Assert.Equal(4096, dump.LastLimit);
     }
 }
