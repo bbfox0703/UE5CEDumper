@@ -15,10 +15,12 @@ namespace UE5DumpUI.Tests;
 /// </summary>
 public class ObjectIndexServiceTests
 {
-    /// <summary>Pages through a fixed list as get_object_list does: Scanned counts slots, not rows.</summary>
+    /// <summary>Pages through a fixed list of GObjects SLOTS as get_object_list does: a null slot is skipped,
+    /// so Scanned counts the slots taken and Objects only the rows (review of 41cf418d: the first fake had no
+    /// null slot, so the advance by Scanned and the estimate's per-slot rate were never tested).</summary>
     private sealed class FakeIndexDump : StubDumpService, IDumpService
     {
-        public List<UObjectNode> Objects { get; } = new();
+        public List<UObjectNode?> Objects { get; } = new();
         public int Calls { get; private set; }
         public Action? OnPage { get; set; }
 
@@ -27,8 +29,11 @@ public class ObjectIndexServiceTests
             ct.ThrowIfCancellationRequested();
             Calls++;
             OnPage?.Invoke();
-            var slice = Objects.Skip(offset).Take(limit).ToList();
-            return Task.FromResult(new ObjectListResult { Total = Objects.Count, Scanned = slice.Count, Objects = slice });
+            var slots = Objects.Skip(offset).Take(limit).ToList();
+            return Task.FromResult(new ObjectListResult
+            {
+                Total = Objects.Count, Scanned = slots.Count, Objects = slots.Where(o => o != null).Select(o => o!).ToList(),
+            });
         }
     }
 
@@ -169,6 +174,50 @@ public class ObjectIndexServiceTests
         Assert.Equal(n, est.Objects);
         Assert.Equal(TimeSpan.FromSeconds(2 * pages), est.Duration);
         dump.OnPage = null;
+        var ms = new MemoryStream();
+        await ObjectIndexService.GenerateAsync(dump, State(), ms, 3625, "game-dump.jsonl",
+            ct: TestContext.Current.CancellationToken);
+        Assert.InRange(est.Bytes, ms.Length * 0.97, ms.Length * 1.03);
+    }
+
+    /// <summary>Every other slot null, the way a pool after garbage collection has holes.</summary>
+    private static FakeIndexDump Holey(int slots)
+    {
+        var dump = new FakeIndexDump();
+        for (int i = 0; i < slots; i++)
+            dump.Objects.Add(i % 2 == 0 ? Obj(i, $"Obj_{i % 1000:D4}", "Class", $"/Script/Game.Obj_{i % 1000:D4}") : null);
+        return dump;
+    }
+
+    [Fact]
+    public async Task Generate_WalksBySlots_SoNoObjectIsWrittenTwiceOrMissed()
+    {
+        int slots = Constants.GObjectsWalkPageSize * 2 + 7;
+        var dump = Holey(slots);
+
+        var lines = await GenerateLinesAsync(dump);
+
+        var indexes = lines.Skip(1).Take(lines.Count - 2).Select(l =>
+        {
+            using var d = JsonDocument.Parse(l);
+            return d.RootElement.GetProperty("index").GetInt32();
+        }).ToList();
+        Assert.Equal(Enumerable.Range(0, slots).Where(i => i % 2 == 0), indexes);
+        Assert.Equal(3, dump.Calls);
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.Equal(slots, summary.RootElement.GetProperty("objects_total").GetInt32());
+    }
+
+    [Fact]
+    public async Task Estimate_CountsObjects_NotSlots_AndItsBytesFollowTheRows()
+    {
+        int slots = Constants.GObjectsWalkPageSize * 4;
+        var dump = Holey(slots);
+
+        var est = await ObjectIndexService.EstimateAsync(dump, TestContext.Current.CancellationToken);
+
+        Assert.Equal(slots, est.Slots);
+        Assert.Equal(slots / 2, est.Objects);
         var ms = new MemoryStream();
         await ObjectIndexService.GenerateAsync(dump, State(), ms, 3625, "game-dump.jsonl",
             ct: TestContext.Current.CancellationToken);

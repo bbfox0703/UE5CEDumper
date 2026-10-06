@@ -700,6 +700,17 @@ def run_self_test() -> int:
         counted = prop in agg.own_prop_name_freq
         if counted == engine:
             errors.append(f"{path}: {prop} {'counted' if counted else 'not counted'} with game_only")
+    # [EXTPR-539-540-2026-10-02] D4's object index sits beside the class dump as <name>.objects.jsonl, so the
+    # README's `your-dumps/*.jsonl` picks it up too: it must be skipped, not read as one more game.
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        cls_file = Path(tmp) / "game.jsonl"
+        idx_file = Path(tmp) / "game.objects.jsonl"
+        cls_file.write_text('{"kind":"meta","module":"Game.exe"}\n{"kind":"summary"}\n', encoding="utf-8")
+        idx_file.write_text('{"kind":"meta","file":"objects","class_dump":"game.jsonl"}\n', encoding="utf-8")
+        loaded = load_dumps([cls_file, idx_file])
+        if [d.path.name for d in loaded] != ["game.jsonl"]:
+            errors.append(f"object index not skipped: loaded {[d.path.name for d in loaded]}")
     if errors:
         print(f"SELF-TEST FAILED ({len(errors)} error(s)):")
         for e in errors:
