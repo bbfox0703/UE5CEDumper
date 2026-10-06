@@ -147,8 +147,9 @@ GATES = [
 
     ("check_engine_prefixes",
      ["tools/check_engine_prefixes.py"],
-     "the engine-package lists in Aura.h, DumpAllService.cs and diff_dumps.py name different modules, so the "
-     "DLL, Dump All and the patch diff disagree about which classes are the engine's. Aura.h is the source",
+     "the engine-package lists in Aura.h, DumpAllService.cs and scripts/analysis/engine_paths.py name "
+     "different modules, so the DLL, Dump All and the analysis scripts disagree about which classes are the "
+     "engine's. Aura.h is the source",
      False),
 
     ("check_analysis_selftests",

@@ -9,7 +9,9 @@ in three places that cannot share code:
 
   * `dll/src/Aura.h` `IsEnginePackage` -- the source: GameOnly filters in the DLL;
   * `ui/UE5DumpUI/Services/DumpAllService.cs` `EnginePathPrefixes` -- Dump All's GameOnly skip;
-  * `scripts/analysis/diff_dumps.py` `ENGINE_PATH_PREFIXES` -- what a default patch diff leaves out.
+  * `scripts/analysis/engine_paths.py` `ENGINE_PATH_PREFIXES` -- what the analysis scripts treat as
+    engine: what a default patch diff (diff_dumps.py) leaves out, and what the keyword statistics
+    (analyze_dumps.py) count apart.
 
 A module added to one and not the others makes the DLL, Dump All and the diff disagree about the same
 class, silently: each side still runs and reports. Before 2026-10-06 the diff used no list at all and
@@ -37,7 +39,7 @@ COPIES = (
      r"kEnginePrefixes\[\]\s*=\s*\{(.*?)\};"),
     ("DumpAllService.EnginePathPrefixes", "ui/UE5DumpUI/Services/DumpAllService.cs",
      r"EnginePathPrefixes\s*=\s*\{(.*?)\};"),
-    ("diff_dumps.ENGINE_PATH_PREFIXES", "scripts/analysis/diff_dumps.py",
+    ("engine_paths.ENGINE_PATH_PREFIXES", "scripts/analysis/engine_paths.py",
      r"ENGINE_PATH_PREFIXES\s*=\s*\((.*?)\)\n"),
 )
 LITERAL = re.compile(r'"(/Script/[^"]*)"')
