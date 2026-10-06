@@ -293,7 +293,7 @@ the list from `scripts/analysis/engine_paths.py`.
   added / removed; timer-based progress (✅ done early, `14ecb189`); fix the Explorer short-name collision and the enum labels; move the
   `DumpJsonlContext` doc comment back; the tooltip names the new contents (it states no time or size — fixed 2026-10-02);
   the Explorer searches parameter names (the reason D3 was taken; the file carries them since build 3622).
-- 🟡 `[FUNCPARM-CONSUMERS]` (LOW; found by D3, split off by the maintainer 2026-10-06). `walk_functions` lists a
+- ✅ `[FUNCPARM-CONSUMERS]` (LOW; found by D3, split off by the maintainer 2026-10-06). `walk_functions` lists a
   UFunction's whole property chain, and every consumer but Dump All treated a Blueprint function's locals as
   parameters. ✅ **Fixed in source 2026-10-06, build 3624**, red before green per consumer.
   `FunctionInfoModel.Parameters` holds the one rule: the `parm`-flagged entries, or, from a DLL older than 3622,
@@ -316,8 +316,9 @@ the list from `scripts/analysis/engine_paths.py`.
   (`a5026d80` red, `620a6c5a`). Seven test fixtures with parameters but no `NumParms` had silently moved to the
   no-parameter script; each carries its count and the form tests pin the form path (`13e0465a`). The SDK
   signature builder has no production caller, so its change shows in no export (the 3624 dev-log line
-  overstated it). 🟡 **Live, build 3625:** steps 1, 2a and 3 PASS; step 2b (the CE Invoke script) owed — the
-  AOBMaker bridge did not come up (`verification-register.md` `[FUNCPARM-CONSUMERS]`).
+  overstated it). ✅ **Live PASS, 2026-10-06:** steps 1, 2a and 3 on build 3625, step 2b (the CE Invoke script:
+  `PARAM_COUNT = 1`, no local, the zero-fill spans the chain) on build 3626 (`verification-register.md`
+  `[FUNCPARM-CONSUMERS]`).
 - ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
   weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
   HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.

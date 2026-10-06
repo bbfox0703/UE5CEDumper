@@ -1061,20 +1061,27 @@ plugin, CE attached to the game:
 Needs: DumperTest + the new UI (all steps), AOBMaker.UI (step 5), a second process for CE to open (step 4), Avowed
 (step 5's adjusted-signature case).
 
-### 🟡 FIXED 2026-10-06, LIVE 3 OF 4 STEPS PASS (build 3625) — `[FUNCPARM-CONSUMERS]`: no consumer takes a Blueprint function's locals for its arguments
+### ✅ FIXED + LIVE-VERIFIED 2026-10-06 `[FUNCPARM-CONSUMERS]` — no consumer takes a Blueprint function's locals for its arguments
 
-**Live, build 3625, 2026-10-06** (one game at a time; DumperTest 5.4 Shipping injected, Avowed through its
-refreshed `dxgi.dll`):
+**Live, builds 3625 and 3626, 2026-10-06** (one game at a time; DumperTest 5.4 Shipping injected, Avowed through
+its refreshed `dxgi.dll`). All four steps PASS:
 - **Step 1 PASS** (`tools/verify/funcparm_xref_live.py`, `out/funcparm/dumpertest_shipping_3625.json`):
   `find_functions_by_class` on Character's class lists no `ExecuteUbergraph_ABP_Manny`; on Actor's class it
   lists `D4_OnActorHitProbe` (DumperTestActor) and `OnPeerBeginOverlap` (DumperTestSparseListener), `kind`
   `param` — the positive control. Both replies complete.
 - **Step 2a PASS:** Live Walker on `Default__ABP_Manny_C`, Functions, `ExecuteUbergraph_ABP_Manny` AA(Baked):
   ONE input row, `EntryPoint [int32, 4B, off=0]`, no local. Not fired.
-- **Step 2b OWED:** the CE Invoke-script button (INV) stayed disabled. CE (SSE4-AVX2, the AOBMaker plugin
-  enabled in its list, attached to DumperTest) and the AOBMaker UI were running, but the dumper's "AOBMaker DLL"
-  indicator stayed grey after a refresh. The script's content is pinned by
-  `FunctionParametersTests.The_invoke_script_offers_the_argument_and_no_local`.
+- **Step 2b PASS, build 3626:** with CE (SSE4-AVX2) up and `CEPlugin.log` reading `PipeServer: listening`, ⟳
+  turned the "AOBMaker DLL" dot green and enabled INV. Live Walker on `Default__ABP_Manny_C`, Functions,
+  `ExecuteUbergraph_ABP_Manny` (`1 (4B)`), INV: "Invoke script created in CE", and CE gained the unticked record
+  `Invoke: ABP_Manny_C::ExecuteUbergraph_ABP_Manny`. Its script reads `PARMS_SIZE = 4`, `local PARAM_COUNT = 1`,
+  one form row `EntryPoint  [int32, 4 B]`, and names no `K2Node_*` or `CallFunc_*` local. FIRE would zero
+  `0..113` first: 114 B, the end of the walked chain (its last local, `CallFunc_BooleanAND_ReturnValue_1`, sits
+  at +113, 1 B, in `out/d3/dumpertest_shipping_3622.json`), so the review's zero-fill fix holds live too. Not
+  ticked, not fired; CE closed without saving.
+  - The first attempt (build 3625) left this step owed, and the bridge was never at fault: `CEPlugin.log` had the
+    pipe listening at 19:29:37, and the UI's last probe was at 19:28:26, before it. The DLL dot does not poll; it
+    re-probes on ⟳ and when an action uses the bridge. The handover said it flipped by itself; it now says this.
 - **Step 3 PASS** on Avowed: Live Walker on `Default__EQSContext_QuerierFeet_C`, `ProvideSingleLocation` (3
   parameters, 40 B; the chain also holds `K2Node_DynamicCast_AsCharacter`, `K2Node_DynamicCast_bSuccess`,
   `CallFunc_K2_GetActorLocation_ReturnValue`). The PIPE form offers `QuerierObject` and `QuerierActor` and
