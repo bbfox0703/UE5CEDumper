@@ -1064,6 +1064,11 @@
     <sys:String x:Key="str.LF.PeriodicOnly">Periodic only</sys:String>
     <sys:String x:Key="str.LF.EarliestFirst">Earliest first</sys:String>
     <sys:String x:Key="str.LF.FetchLimit">Fetch limit</sys:String>
+    <!-- [EXTPR-539-540-2026-10-02] Remedies for a cut page, offered only when the fetch limit is what cut it. -->
+    <sys:String x:Key="str.LF.Cap.MoreRows">; a higher Fetch limit shows more</sys:String>
+    <sys:String x:Key="str.LF.Cap.BaselineRemedy">Raise the Fetch limit and record the baseline again to avoid it.</sys:String>
+    <sys:String x:Key="str.LF.Cap.DiffRaise">A higher Fetch limit brings it back (Refresh after Stop; a partial baseline must be recorded again), as does a shorter recording window.</sys:String>
+    <sys:String x:Key="str.LF.Cap.DiffShorter">A shorter recording window brings it back.</sys:String>
     <sys:String x:Key="str.LF.Col.Order">Order</sys:String>
     <sys:String x:Key="str.LF.Col.Calls">Calls</sys:String>
     <sys:String x:Key="str.LF.Col.DeltaVsBase">Δ vs base</sys:String>

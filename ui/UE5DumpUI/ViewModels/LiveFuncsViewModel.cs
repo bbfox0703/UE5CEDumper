@@ -74,8 +74,28 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private bool _baselineTruncated;
     private int  _baselineDistinct;
 
+    /// <summary>The limit the last fetch asked for, and whether the baseline's page was cut by ITS limit and at
+    /// which value. An incomplete page is not always the cap's doing: the DLL also drops UFunctions it can no
+    /// longer read (still counted in distinct_funcs), and an abort can cut the emit loop. Only a page that came
+    /// back as long as the limit was cut by it, and only then does a higher limit bring rows back.</summary>
+    private int  _lastLimit;
+    private bool _baselineCapHit;
+    private int  _baselineLimit;
+
     /// <summary>True when the last fetch did not show every recorded function.</summary>
     private bool LastTruncated => _lastShown < _lastDistinct;
+
+    /// <summary>The last page was cut by the fetch limit itself (see <see cref="_lastLimit"/>).</summary>
+    private bool LastCapHit => LastTruncated && _lastShown >= _lastLimit;
+
+    private static bool BelowMaximum(int limit) => limit < (1 << FetchLimitMaxExponent);
+
+    /// <summary>[EXTPR-539-540-2026-10-02] Would a higher Fetch limit show what is missing? For the last page,
+    /// or for the baseline in diff mode (which then has to be recorded again). Picks the remedy the status
+    /// lines offer.</summary>
+    internal bool RaiseFetchLimitHelps =>
+        (LastCapHit && BelowMaximum(_lastLimit))
+        || (_baseline.Count > 0 && _baselineCapHit && BelowMaximum(_baselineLimit));
 
     [ObservableProperty] private bool   _isRecording;
     [ObservableProperty] private string _filterText = "";
@@ -205,12 +225,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baseline = _allEntries.GroupBy(Key).ToDictionary(g => g.Key, g => g.Max(x => x.Count));
         _baselineTruncated = LastTruncated;
         _baselineDistinct  = _lastDistinct;
+        _baselineCapHit    = LastCapHit;
+        _baselineLimit     = _lastLimit;
         DiffMode = true;   // triggers ApplyDiffAndFilter via OnDiffModeChanged
         BaselineStatus = _baselineTruncated
             ? $"⚠ PARTIAL baseline: {_baseline.Count:N0} of {_baselineDistinct:N0} idle funcs "
-              + "(the rest ranked below the Fetch limit). A row can show as NEW just for having "
-              + "been below the cut — treat NEW as \"not in the idle top N\", or raise the Fetch "
-              + "limit and record the baseline again."
+              + "(the rest were not fetched). A row can show as NEW just for having "
+              + "been below the cut — treat NEW as \"not in the idle top N\"."
+              + (_baselineCapHit && BelowMaximum(_baselineLimit) ? " " + Res.Get("str.LF.Cap.BaselineRemedy") : "")
             : $"Baseline: {_baseline.Count} funcs. Now record the ACTION — new/increased rows float to the top.";
         StatusText = "Baseline set. Start → perform the action (open shop) → Stop.";
     }
@@ -222,6 +244,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baseline = new();
         _baselineTruncated = false;
         _baselineDistinct  = 0;
+        _baselineCapHit    = false;
+        _baselineLimit     = 0;
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }
@@ -301,7 +325,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     private async Task FetchAndPopulateAsync()
     {
-        var result = await _dump.PeProfileGetAsync(IsRecording ? _recordingFetchLimit : FetchLimit);
+        int limit = IsRecording ? _recordingFetchLimit : FetchLimit;
+        var result = await _dump.PeProfileGetAsync(limit);
+        _lastLimit    = limit;
         _allEntries   = result.Entries;
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
@@ -312,7 +338,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // point here: the DLL keeps the highest counts, and the function this panel is
         // for has a low one.
         string trunc = LastTruncated
-            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count; a higher Fetch limit shows more)"
+            ? $" (showing top {_lastShown:N0} of {_lastDistinct:N0} by count"
+              + (LastCapHit && BelowMaximum(_lastLimit) ? Res.Get("str.LF.Cap.MoreRows") : "") + ")"
             : "";
 
         bool diff = DiffMode && _baseline.Count > 0;
@@ -332,9 +359,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded). "
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
-                    + "idle\" — a rare idle function below the cut also shows as NEW. A higher Fetch "
-                    + "limit brings it back (Refresh after Stop; a partial baseline must be recorded again), "
-                    + "as does a shorter recording window; the filter narrows only the rows already fetched."
+                    + "idle\" — a rare idle function below the cut also shows as NEW. "
+                    + (RaiseFetchLimitHelps ? Res.Get("str.LF.Cap.DiffRaise") + " "
+                       : LastCapHit || _baselineCapHit ? Res.Get("str.LF.Cap.DiffShorter") + " " : "")
+                    + "The filter narrows only the rows already fetched."
                   : "The action's function is almost certainly among the NEW rows at the top.");
         }
         else
