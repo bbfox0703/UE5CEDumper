@@ -97,6 +97,9 @@ class Dump:
     enums: list[dict] = field(default_factory=list)
     errors: list[dict] = field(default_factory=list)
     summary: dict = field(default_factory=dict)
+    # Every Dump All file ends with its summary line, so a file without one was cut off mid-write (the game
+    # exited): what it lacks may simply be what it never reached.
+    has_summary: bool = False
 
     @property
     def label(self) -> str:
@@ -141,6 +144,11 @@ class Dump:
         return int(self.summary.get("params_from_num_parms", 0))
 
 
+class ObjectIndexFile(Exception):
+    """[EXTPR-539-540-2026-10-02] D4's <name>.objects.jsonl lists objects, not types: diffing it as a class
+    dump would report every class removed. Raised by load_dump with the class dump's name to use instead."""
+
+
 def load_dump(path: Path) -> Dump:
     d = Dump(path=path)
     with path.open(encoding="utf-8") as f:
@@ -155,6 +163,10 @@ def load_dump(path: Path) -> Dump:
                 continue
             kind = rec.get("kind")
             if kind == "meta":
+                if rec.get("file") == "objects":
+                    raise ObjectIndexFile(
+                        f"{path.name} is Dump All's object index, not a class dump; pass "
+                        f"{rec.get('class_dump') or 'the class dump beside it'} instead")
                 d.meta = rec
             elif kind == "class":
                 d.classes.append(rec)
@@ -166,6 +178,7 @@ def load_dump(path: Path) -> Dump:
                 d.errors.append(rec)
             elif kind == "summary":
                 d.summary = rec
+                d.has_summary = True
     return d
 
 
@@ -228,6 +241,8 @@ class ClassDiff:
     new: dict
     prop_changes: list[PropChange] = field(default_factory=list)
     func_changes: list[FuncChange] = field(default_factory=list)
+    # A struct's size is the stride of every array and map holding it, so its growth alone breaks a table.
+    is_struct: bool = False
 
     @property
     def props_size_delta(self) -> int:
@@ -243,7 +258,10 @@ class ClassDiff:
         prop moves (offset/size) or function signature changes. Added /
         removed fields aren't 'breaking' a working table (the table
         just references an offset that's still there or no longer
-        there)."""
+        there). A struct whose size changed is breaking too: the size
+        is the element stride of every container of it."""
+        if self.is_struct and self.props_size_delta != 0:
+            return True
         for pc in self.prop_changes:
             if pc.kind == "moved" or pc.kind == "type_changed":
                 return True
@@ -293,7 +311,11 @@ class DumpDiff:
     removed_enums: list[dict] = field(default_factory=list)
     changed_enums: list[EnumDiff] = field(default_factory=list)
     unchanged_enums: int = 0
+    # Enums on both sides whose enumerators could not be compared (no member names on one side).
+    uncompared_enums: int = 0
     enums_skipped: str = ""
+    # What a whole dump cannot say: cut off before its summary, or carrying error lines.
+    dump_notes: list[str] = field(default_factory=list)
     enum_notes: list[str] = field(default_factory=list)
     param_notes: list[str] = field(default_factory=list)
 
@@ -438,6 +460,7 @@ def _diff_types(old_records: list[dict], new_records: list[dict], old_label: str
                 new=new_cls,
                 prop_changes=prop_changes,
                 func_changes=func_changes,
+                is_struct=(what == "struct"),
             ))
         else:
             unchanged += 1
@@ -470,15 +493,23 @@ def _skip_reason(old_dump: Dump, new_dump: Dump, what: str) -> str:
     if what == "struct":
         for label, d in sides:
             if not d.carries_structs:
-                return f"the {label} dump has no struct lines (Dump All writes them from build 3620)"
+                return _missing_lines(label, d, "struct", 3620)
         return ""
     for label, d in sides:
         if not d.carries_enums:
-            return f"the {label} dump has no enum lines (Dump All writes them from build 3621)"
+            return _missing_lines(label, d, "enum", 3621)
     for label, d in sides:
         if not d.enums_listed:
             return f"the {label} dump's enum list could not be read (see its list_enums error line)"
     return ""
+
+
+def _missing_lines(label: str, d: Dump, what: str, since: int) -> str:
+    """A dump of a build that writes these lines, cut off before them, is not a dump of an older build."""
+    if not d.has_summary and d.dumper_build >= since:
+        return (f"the {label} dump ends before its {what} lines (it has no summary line: it was cut off "
+                f"mid-write)")
+    return f"the {label} dump has no {what} lines (Dump All writes them from build {since})"
 
 
 def _diff_enums(out: DumpDiff, old_dump: Dump, new_dump: Dump, include_engine: bool) -> None:
@@ -504,7 +535,10 @@ def _diff_enums(out: DumpDiff, old_dump: Dump, new_dump: Dump, include_engine: b
             if not old_dump.enums_truncated:
                 out.added_enums.append(ne)
             continue
-        changes = _diff_enum_entries(old_idx[path], ne) if names_ok else []
+        if not names_ok:
+            out.uncompared_enums += 1
+            continue
+        changes = _diff_enum_entries(old_idx[path], ne)
         if changes:
             out.changed_enums.append(EnumDiff(name=ne.get("name", ""), path=path, changes=changes))
         else:
@@ -536,6 +570,20 @@ def diff_dumps(old_dump: Dump, new_dump: Dump,
             out.param_notes.append(
                 f"{d.params_from_num_parms} function(s) in the {label} dump had their parameters taken from "
                 f"num_parms (a DLL older than build 3622), so a parameter change there may be that approximation")
+
+    # A cut-off dump lacks what it never reached: that is not a removal (new side) or an addition (old side).
+    if not new_dump.has_summary:
+        out.removed_classes, out.removed_structs, out.removed_enums = [], [], []
+        out.dump_notes.append("the new dump has no summary line: it was cut off mid-write, so a type it lacks "
+                              "is not reported as removed")
+    if not old_dump.has_summary:
+        out.added_classes, out.added_structs, out.added_enums = [], [], []
+        out.dump_notes.append("the old dump has no summary line: it was cut off mid-write, so a type it lacks "
+                              "is not reported as added")
+    for label, d in (("old", old_dump), ("new", new_dump)):
+        if d.errors:
+            out.dump_notes.append(f"the {label} dump has {len(d.errors)} error line(s), walks that failed; a type "
+                                  f"listed as missing because of one is tagged")
     return out
 
 
@@ -568,20 +616,21 @@ def _fmt_prop_typestr(p: dict) -> str:
 
 
 def _fmt_params(f: dict) -> str:
-    """A function's arguments, an out one marked and each with its offset; the return is left out (the
-    table's return column has it)."""
-    parts = []
-    for p in f.get("params", []):
-        if p.get("ret"):
-            continue
+    """A function's parameters as compared: each argument with its offset and size, an out one marked, then
+    the return entry. The table's return column has only the return's property type, not its class or
+    struct, so the entry is shown here."""
+    def one(p: dict) -> str:
         t = p.get("type", "?")
         if p.get("struct_type"):
             t += f"<{p['struct_type']}>"
         if p.get("obj_class"):
             t += f":{p['obj_class']}"
-        out = "out " if p.get("out") else ""
-        parts.append(f"{out}{t} {p.get('name', '?')}@{_fmt_offset(p.get('offset'))}")
-    return "(" + ", ".join(parts) + ")"
+        return f"{t} {p.get('name', '?')}@{_fmt_offset(p.get('offset'))}/{p.get('size', '?')}"
+
+    params = f.get("params", [])
+    args = ", ".join(("out " if p.get("out") else "") + one(p) for p in params if not p.get("ret"))
+    ret = [one(p) for p in params if p.get("ret")]
+    return f"({args})" + (f" -> {ret[0]}" if ret else "")
 
 
 def _count_changes(changed: list[ClassDiff]) -> dict[str, int]:
@@ -628,9 +677,10 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     lines.append("")
     if minimal:
         lines.append("> **Minimal mode** — showing only the changes that "
-                     "break existing cheat tables (moved fields + "
-                     "signature changes). Added / removed entries are "
-                     "hidden; full report omits the `--minimal` flag.")
+                     "break existing cheat tables (moved or retyped fields, "
+                     "signature changes, changed enum values, struct size changes). "
+                     "Added / removed entries are hidden; full report omits the "
+                     "`--minimal` flag.")
         lines.append("")
 
     # Summary
@@ -665,31 +715,23 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
         lines.append(f"- Enums: not compared — {diff.enums_skipped}")
     else:
         values = sum(1 for ed in diff.changed_enums for c in ed.changes if c.kind == "value_changed")
+        uncompared = (f", **{diff.uncompared_enums}** present on both sides (entries not compared)"
+                      if diff.uncompared_enums else "")
         lines.append(f"- Enums: **{len(diff.added_enums)}** added, "
                      f"**{len(diff.removed_enums)}** removed, "
                      f"**{len(diff.changed_enums)}** changed, "
-                     f"**{diff.unchanged_enums}** unchanged")
+                     f"**{diff.unchanged_enums}** unchanged{uncompared}")
         lines.append(f"- Enumerator values changed: **{values}** across "
                      f"**{sum(1 for ed in diff.changed_enums if ed.has_breaking_change)}** enum(s)")
-    for note in diff.enum_notes + diff.param_notes:
+    for note in diff.dump_notes + diff.enum_notes + diff.param_notes:
         lines.append(f"- ⚠ {note}")
     lines.append("")
 
     if not minimal:
         # Added classes
-        if diff.added_classes:
-            lines.append(f"## Added Classes ({len(diff.added_classes)})")
-            lines.append("")
-            for cls in diff.added_classes:
-                lines.append(f"- `{cls.get('name','')}` — `{normalize_path(cls.get('path',''))}`")
-            lines.append("")
+        _render_listing(lines, "Added Classes", diff.added_classes, _failed_tag(diff.old_dump, "old"))
         # Removed classes
-        if diff.removed_classes:
-            lines.append(f"## Removed Classes ({len(diff.removed_classes)})")
-            lines.append("")
-            for cls in diff.removed_classes:
-                lines.append(f"- `{cls.get('name','')}` — `{normalize_path(cls.get('path',''))}`")
-            lines.append("")
+        _render_listing(lines, "Removed Classes", diff.removed_classes, _failed_tag(diff.new_dump, "new"))
 
     # Per-class changes
     if minimal:
@@ -713,20 +755,28 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
     return "\n".join(lines)
 
 
-def _render_listing(lines: list[str], title: str, records: list[dict]) -> None:
+def _failed_tag(d: Dump, label: str):
+    """A type missing from a dump that has an error line of its name was not read there, which is not the same
+    as gone. Error lines carry the object's name, not its path, so the match is by name."""
+    failed = {e.get("name") for e in d.errors if e.get("name")}
+    return lambda rec: f" (its walk failed in the {label} dump)" if rec.get("name") in failed else ""
+
+
+def _render_listing(lines: list[str], title: str, records: list[dict], tag=None) -> None:
     if records:
         lines.append(f"## {title} ({len(records)})")
         lines.append("")
         for rec in records:
-            lines.append(f"- `{rec.get('name','')}` — `{normalize_path(rec.get('path',''))}`")
+            suffix = tag(rec) if tag else ""
+            lines.append(f"- `{rec.get('name','')}` — `{normalize_path(rec.get('path',''))}`{suffix}")
         lines.append("")
 
 
 def _render_structs(lines: list[str], diff: DumpDiff, minimal: bool) -> None:
     """[EXTPR-539-540-2026-10-02] D5: structs, laid out as the classes are."""
     if not minimal:
-        _render_listing(lines, "Added Structs", diff.added_structs)
-        _render_listing(lines, "Removed Structs", diff.removed_structs)
+        _render_listing(lines, "Added Structs", diff.added_structs, _failed_tag(diff.old_dump, "old"))
+        _render_listing(lines, "Removed Structs", diff.removed_structs, _failed_tag(diff.new_dump, "new"))
         emit = list(diff.changed_structs)
         lines.append(f"## Changed Structs ({len(emit)})")
     else:
@@ -1402,6 +1452,10 @@ def run_self_test_review(errors: list[str]) -> None:
 # =====================================================================
 
 def main(argv: list[str] | None = None) -> int:
+    # The report carries non-ASCII (the warning sign, arrows); a redirected stdout on a cp950 console cannot
+    # encode U+26A0 and the write would raise.
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    sys.stderr.reconfigure(encoding="utf-8", errors="replace")
     ap = argparse.ArgumentParser(
         description="Diff two `Dump All Metadata` JSONL files from the same game.")
     ap.add_argument("old", nargs="?", help="Older dump (.jsonl)")
@@ -1409,8 +1463,9 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("-o", "--output", default=None,
                     help="Output Markdown path (default: stdout)")
     ap.add_argument("--minimal", action="store_true",
-                    help="Emit only breaking changes (moved fields + "
-                         "signature changes); skip added/removed lists.")
+                    help="Emit only breaking changes (moved or retyped fields, "
+                         "signature changes, changed enum values, struct size "
+                         "changes); skip added/removed lists.")
     ap.add_argument("--include-engine", action="store_true",
                     help="Include the engine's own modules in the diff "
                          "(default: skip — they rarely change between "
@@ -1435,12 +1490,16 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: new dump not found: {new_path}", file=sys.stderr)
         return 2
 
-    print(f"loading old: {old_path.name}", file=sys.stderr)
-    old_dump = load_dump(old_path)
-    print(f"  {len(old_dump.classes)} classes, {len(old_dump.errors)} errors",
-          file=sys.stderr)
-    print(f"loading new: {new_path.name}", file=sys.stderr)
-    new_dump = load_dump(new_path)
+    try:
+        print(f"loading old: {old_path.name}", file=sys.stderr)
+        old_dump = load_dump(old_path)
+        print(f"  {len(old_dump.classes)} classes, {len(old_dump.errors)} errors",
+              file=sys.stderr)
+        print(f"loading new: {new_path.name}", file=sys.stderr)
+        new_dump = load_dump(new_path)
+    except ObjectIndexFile as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     print(f"  {len(new_dump.classes)} classes, {len(new_dump.errors)} errors",
           file=sys.stderr)
 
