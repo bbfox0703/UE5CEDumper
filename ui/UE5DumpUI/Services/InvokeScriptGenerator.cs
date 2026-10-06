@@ -36,7 +36,8 @@ public static class InvokeScriptGenerator
     public static string Generate(string className, string funcName, FunctionInfoModel func)
     {
         var sb = new StringBuilder(8192);
-        var inputParams = func.Params.Where(p => !p.IsReturn).ToList();
+        // The arguments only: a Blueprint function's locals follow them in the chain ([FUNCPARM-CONSUMERS]).
+        var inputParams = func.InputParams.ToList();
         var hasParams = inputParams.Count > 0;
 
         Line(sb, "[ENABLE]");
