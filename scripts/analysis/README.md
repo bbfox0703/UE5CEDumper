@@ -12,8 +12,9 @@ Two scripts share the same dump corpus:
   behind the Interesting Properties / Interesting Funcs tabs).
 - **`diff_dumps.py`** — same-game patch comparison. Diffs two dumps
   taken before/after a game update; surfaces moved field offsets,
-  added/removed classes and functions, and function signature
-  changes. Saves cheat-table maintainers from binary-searching offsets
+  added/removed classes, structs, enums and functions, function
+  signature changes (parameters included), and enumerators whose value
+  changed. Saves cheat-table maintainers from binary-searching offsets
   by hand when a patch silently breaks their working table.
 
 A third script needs no dump corpus either — it reads the UI's own pipe logs:
@@ -112,6 +113,24 @@ Per-class record (excerpt):
 }
 ```
 
+## The object index (`<name>.objects.jsonl`)
+
+Opt-in (Export ▸ "Dump All also writes the object index", OFF by
+default): after the class dump, Dump All shows an estimate of the index's
+size and time and asks; agreed, it writes a second file beside the first.
+Every object the DLL lists — packages, types, class-default objects and
+instances — one line each:
+
+| `kind` | Notes |
+|---|---|
+| `meta` | First. `"file":"objects"`, the class dump's identity (module, pe_hash, UE version, object count, dumper build) and its file name (`class_dump`), so the two files pair. |
+| `object` | `index` (the GObjects slot; build 3625 on, absent from an older DLL rather than guessed), `addr`, `name`, `class`, `outer`, `path`. |
+| `summary` | Last. `objects_written`, `objects_total`, `index_missing` (some object came without an index). |
+
+Addresses and slots hold for that run of the game only: match two
+indexes by `path`, and a class dump with its own index by `index`. The
+analysis scripts and the Dump Explorer do not read this file.
+
 ## Privacy
 
 The dump contains class names, property names + offsets, and function
@@ -172,7 +191,9 @@ seconds instead of binary-searching offsets by hand.
    python scripts/analysis/diff_dumps.py <game>-pre.jsonl <game>-post.jsonl -o diff.md
    ```
 5. Read `diff.md`. For cheat-table fixing, the **Moved fields** and
-   **Function signatures changed** sections are usually all you need.
+   **Function signatures changed** sections are usually all you need,
+   with **Changed Structs** (a struct a table reads through) and the
+   changed enumerator values under **Changed Enums**.
    Pass `--minimal` to suppress the added/removed lists and emit only
    those breaking-change sections:
    ```bash
@@ -192,6 +213,19 @@ seconds instead of binary-searching offsets by hand.
   ```bash
   python scripts/analysis/diff_dumps.py --self-test
   ```
+
+### What a dump cannot say is not reported as a change
+
+Dump All writes struct lines from build 3620, enum lines from 3621 and
+each function's `params` from 3622. Against an older dump the diff does
+not compare that kind at all (the report says "not compared" and why),
+so nothing reads as added just because the old file never had it. The
+enum comparison also follows the summary line: an enum list that could
+not be read (`enums_listed: false`) is not compared; with no member
+names (`enum_names_failed`) only the enums' presence is; a cut-short
+list (`enums_truncated`) reports no enum missing on its side. Function
+parameters are compared only when both files carry them, and the report
+notes a dump whose parameters came from `num_parms`.
 
 ### Match key + known limitations
 

@@ -671,6 +671,14 @@ capped (`SOLIDE_MAX_INSTANCES` = 256), which a broad base class reaches easily �
 }
 ```
 
+Optional request flags, both off by default so the hot Object Tree paginate stays lean:
+
+- **`include_path`** — each object also carries `full_path` (`Ubel::GetFullName`).
+- **`include_index`** (build 3625 on) — `[EXTPR-539-540-2026-10-02]` D4: each object also carries `index`, the
+  GObjects slot the handler read it from (the key `snapshot_chunk` uses). The handler skips null and unnamed slots,
+  so a row's position in the page is NOT its slot; a reader without `index` (an older DLL) must not compute one.
+  Dump All's object index asks for both.
+
 ### begin_snapshot / snapshot_chunk
 
 ```jsonc
