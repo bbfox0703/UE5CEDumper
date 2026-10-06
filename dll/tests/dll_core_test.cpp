@@ -1802,6 +1802,10 @@ int main() {
         DynOff::bCasePreservingName = false;
 
         constexpr uint64_t kParm = 0x0080, kOut = 0x0100, kRet = 0x0400;
+        // What a numeric property carries anyway: ZeroConstructor | IsPlainOldData | NoDestructor |
+        // HasGetValueTypeHash. On every entry, so a local is never flags 0 and "any bit set" cannot pass for
+        // CPF_Parm (review of 0fa23e3f).
+        constexpr uint64_t kPod = 0x0008001040000200ull;
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
         auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
@@ -1821,9 +1825,9 @@ int main() {
         // The chain in UE's order: Count (an int32 parameter), ReturnValue (the return, which UE marks
         // CPF_Parm | CPF_OutParm | CPF_ReturnParm), then Temp_int_Variable, a local past the parameter block.
         struct Entry { int name, type; int32_t size, offset; uint64_t flags; };
-        const Entry chain[3] = { { 4, 2, 4, 0, kParm },
-                                 { 5, 3, 1, 4, kParm | kOut | kRet },
-                                 { 6, 2, 4, 8, 0 } };
+        const Entry chain[3] = { { 4, 2, 4, 0, kParm | kPod },
+                                 { 5, 3, 1, 4, kParm | kOut | kRet | kPod },
+                                 { 6, 2, 4, 8, kPod } };
 
         // ONE set of blobs per property model.
         static uint8_t upCls[2][0x100] = {}, upFn[2][0x100] = {}, upProp[2][3][0x100] = {};
