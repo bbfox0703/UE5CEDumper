@@ -29,8 +29,10 @@
 #include <windows.h>
 #include <stdio.h>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 #include <atomic>
+#include <thread>
 
 namespace Sein {
 void Info(const char*, const char*, ...) {}
@@ -6647,6 +6649,257 @@ int main() {
         Linie::Reset();
         Linie::Snapshot(lsnap, lwin);
         check("an empty table has no window", lsnap.empty() && lwin == 0, std::to_string(lwin).c_str());
+
+        // T5 (b) reads the previous recording's per-frame functions before StartRecording clears the table.
+        Linie::StartRecording();
+        for (uint64_t t = 0; t <= 9984; t += 16) Linie::RecordCall(0xA, 1000 + t);
+        Linie::RecordCall(0xB, 5000); Linie::RecordCall(0xB, 5008);
+        Linie::StopRecording();
+        const auto pf = Linie::PerFrameFuncs();
+        check("PerFrameFuncs: the Tick, not the action", pf.size() == 1 && pf[0] == 0xA, std::to_string(pf.size()).c_str());
+        Linie::Reset();
+        check("PerFrameFuncs of an empty table is empty", Linie::PerFrameFuncs().empty());
+    }
+
+    {
+        blk("LIVEFUNCS-TIMELINE: Linie's call trace -- the ring, the ticked scope, what Stop leaves behind");
+        // A clock that counts, so the ticks of every record are known.
+        static uint64_t s_fakeTicks = 0;
+        Linie::SetTraceClockForTest([]() -> uint64_t { return s_fakeTicks += 10; });
+        auto cfg = [](uint64_t records, std::vector<uintptr_t> ticked = {}, std::vector<uintptr_t> exclude = {}) {
+            Linie::TraceConfig c;
+            c.bytes   = records * sizeof(Linie::TraceRecord);
+            c.ticked  = std::move(ticked);
+            c.exclude = std::move(exclude);
+            return c;
+        };
+        std::vector<Linie::TraceRecord> recs;
+        auto copyAll = [&recs]() { recs.clear(); return Linie::CopyTrace(0, SIZE_MAX, recs); };
+        auto sz = [](size_t n) { return std::to_string(n); };
+
+        Linie::AddrSet set;
+        set.Build({ 0x1000, 0x2000, 0x3000, 0 });
+        check("AddrSet holds what it was built from", set.Contains(0x1000) && set.Contains(0x2000) && set.Contains(0x3000));
+        check("...and nothing else", !set.Contains(0x1800) && !set.Contains(0x4000));
+        check("...and never 0, the empty slot, even when 0 was passed in", !set.Contains(0) && set.Size() == 3,
+              sz(set.Size()).c_str());
+        std::vector<uintptr_t> many;
+        for (uintptr_t i = 1; i <= 5000; ++i) many.push_back(i * 0x40);
+        Linie::AddrSet big;
+        big.Build(many);
+        bool allIn = true;
+        for (uintptr_t x : many) allIn = allIn && big.Contains(x);
+        check("a set of 5000 holds every one of them", allIn && big.Size() == 5000, sz(big.Size()).c_str());
+        check("...and not an address between two of them", !big.Contains(0x40 * 2500 + 8));
+        Linie::AddrSet none;
+        none.Build({});
+        check("an empty set holds nothing", none.Empty() && !none.Contains(0x1000));
+        Linie::AddrSet dup;
+        dup.Build({ 0x1000, 0x1000 });
+        check("a duplicate counts once", dup.Size() == 1 && dup.Contains(0x1000), sz(dup.Size()).c_str());
+
+        auto b64 = [](const char* s) { return Linie::Base64Encode(reinterpret_cast<const uint8_t*>(s), strlen(s)); };
+        check("base64: RFC 4648's test vectors",
+              b64("") == "" && b64("f") == "Zg==" && b64("fo") == "Zm8=" && b64("foo") == "Zm9v" &&
+              b64("foob") == "Zm9vYg==" && b64("fooba") == "Zm9vYmE=" && b64("foobar") == "Zm9vYmFy",
+              b64("foobar").c_str());
+        const uint8_t high[] = { 0xFF, 0xFE, 0x00 };
+        check("base64: bytes above 0x7F and a zero byte", Linie::Base64Encode(high, 3) == "//4A",
+              Linie::Base64Encode(high, 3).c_str());
+
+        Linie::FreeTrace();
+        check("a ring of one record is refused", Linie::StartTrace(cfg(1)) == Linie::TraceStartStatus::TooSmall &&
+                                                 !Linie::IsTracing());
+
+        // Two nested calls on one thread, nothing ticked: four records, the returns pointing at their entries.
+        check("a ring of 8 records starts", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Ok && Linie::IsTracing());
+        Linie::TraceToken t1, t2;
+        Linie::TraceEnter(0xF1, 0xB1, 1000, 7, t1);
+        Linie::TraceEnter(0xF2, 0xB2, 900, 7, t2);
+        Linie::TraceReturn(t2, 7);
+        Linie::TraceReturn(t1, 7);
+        check("both calls traced, neither opened a scope (nothing is ticked)",
+              t1.traced && t2.traced && !t1.opened && !t2.opened && t2.entrySeq == 1);
+        Linie::StopTrace();
+        Linie::TraceInfo info = Linie::GetTraceInfo();
+        check("after Stop: 4 records written and all 4 kept",
+              info.allocated && !info.tracing && info.quiesced && info.written == 4 && info.firstValid == 0 &&
+              info.capacity == 8 && info.qpcFreq > 0, sz(info.written).c_str());
+        check("...and they copy out", copyAll() && recs.size() == 4, sz(recs.size()).c_str());
+        if (recs.size() == 4) {
+            check("entry 1: the function, the object, the thread, sequence 0",
+                  recs[0].seqKind == 0 && recs[0].a == 0xF1 && recs[0].b == 0xB1 && recs[0].tid == 7 && recs[0].flags == 0);
+            check("entry 2, nested: sequence 1", recs[1].seqKind == 1 && recs[1].a == 0xF2 && recs[1].b == 0xB2);
+            check("the inner return points at entry 2",
+                  recs[2].seqKind == (2 | Linie::kTraceReturnBit) && recs[2].a == 1 && recs[2].b == 0 && recs[2].tid == 7);
+            check("the outer return points at entry 1", recs[3].seqKind == (3 | Linie::kTraceReturnBit) && recs[3].a == 0);
+            check("one clock read per record, in order",
+                  recs[0].ticks < recs[1].ticks && recs[1].ticks < recs[2].ticks && recs[2].ticks < recs[3].ticks);
+        }
+        Linie::TraceToken late;
+        Linie::TraceEnter(0xF3, 0, 800, 7, late);
+        check("after Stop a call is not traced", !late.traced && Linie::GetTraceInfo().written == 4);
+
+        // A call that entered before Stop and returns after it: no record lands in the stopped ring.
+        Linie::StartTrace(cfg(8));
+        Linie::TraceToken r1;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, r1);
+        std::vector<Linie::TraceRecord> during;
+        check("the ring is not copied while the trace runs", !Linie::CopyTrace(0, 10, during));
+        Linie::StopTrace();
+        Linie::TraceReturn(r1, 1);
+        check("a call that returns after Stop adds no record", r1.traced && Linie::GetTraceInfo().written == 1,
+              sz(Linie::GetTraceInfo().written).c_str());
+
+        // The ring keeps the last records: 6 into 4 slots keeps [2, 6).
+        Linie::StartTrace(cfg(4));
+        for (uintptr_t i = 0; i < 6; ++i) { Linie::TraceToken t; Linie::TraceEnter(0x100 + i, 0, 1000, 1, t); }
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("the ring keeps the LAST 4 of 6: [2, 6)", info.written == 6 && info.firstValid == 2,
+              sz(info.firstValid).c_str());
+        check("...and copies them in order", copyAll() && recs.size() == 4 && recs[0].seqKind == 2 &&
+                                            recs[0].a == 0x102 && recs[3].seqKind == 5 && recs[3].a == 0x105);
+        recs.clear();
+        check("a copy from inside the window starts there",
+              Linie::CopyTrace(4, 10, recs) && recs.size() == 2 && recs[0].seqKind == 4);
+        recs.clear();
+        check("a copy that begins before the window is clipped to it",
+              Linie::CopyTrace(0, 3, recs) && recs.size() == 1 && recs[0].seqKind == 2, sz(recs.size()).c_str());
+        recs.clear();
+        check("a copy past the end is empty, not a failure", Linie::CopyTrace(6, 10, recs) && recs.empty());
+
+        // T5 (a): with a function ticked, only its calls and what they call are traced, on its own thread.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken s0, s1, s2, s3, s4;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, s0);   // outside any ticked call
+        Linie::TraceEnter(0xA7, 0, 900, 1, s1);    // the ticked function opens the scope
+        Linie::TraceEnter(0xF2, 0, 800, 1, s2);    // called inside it
+        Linie::TraceReturn(s2, 1);
+        Linie::TraceReturn(s1, 1);                 // closes it
+        Linie::TraceEnter(0xF3, 0, 900, 1, s3);    // after it, at the same depth
+        Linie::TraceEnter(0xF4, 0, 800, 2, s4);    // another thread
+        check("scope: a call outside the ticked function is not traced", !s0.traced);
+        check("scope: the ticked call opens it", s1.traced && s1.opened);
+        check("scope: a call inside it is traced and opens nothing", s2.traced && !s2.opened);
+        check("scope: once the ticked call returned, the next call is not traced", !s3.traced);
+        Linie::StopTrace();
+        check("scope: the ticked call's entry carries the root flag, the inner one does not",
+              copyAll() && recs.size() == 4 && recs[0].a == 0xA7 && recs[0].flags == Linie::kTraceScopeRoot &&
+              recs[1].flags == 0, sz(recs.size()).c_str());
+
+        // The other thread above ran on this OS thread too (the tid is only a label), so give the cross-thread case
+        // a real second thread: a scope opened here is not open there.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken o1;
+        Linie::TraceEnter(0xA7, 0, 900, 1, o1);
+        bool otherTraced = true;
+        std::thread([&otherTraced] {
+            Linie::TraceToken o2;
+            Linie::TraceEnter(0xF2, 0, 800, 2, o2);
+            otherTraced = o2.traced;
+        }).join();
+        check("scope: another thread is not in this thread's scope", o1.opened && !otherTraced);
+        Linie::TraceReturn(o1, 1);
+        Linie::StopTrace();
+
+        // An exception unwinds the ticked call: no return closes the scope, the next call from higher up does.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken u1, u2, u3, u4, u5, u6;
+        Linie::TraceEnter(0xA7, 0, 900, 1, u1);
+        Linie::TraceEnter(0xF2, 0, 800, 1, u2);
+        Linie::TraceEnter(0xF5, 0, 950, 1, u3);    // above the root's frame: the root is gone
+        Linie::TraceEnter(0xF6, 0, 850, 1, u4);    // deeper again, but the scope is closed
+        check("unwound: a call from above the ticked call's frame closes its scope",
+              u1.opened && u2.traced && !u3.traced && !u4.traced);
+        Linie::TraceEnter(0xA7, 0, 900, 1, u5);
+        Linie::TraceEnter(0xA7, 0, 800, 1, u6);    // the ticked function called inside itself
+        check("a ticked call inside its own scope is traced, not a new root", u5.opened && u6.traced && !u6.opened);
+        Linie::StopTrace();
+        // u5's scope is still open on this thread. The next recording does not inherit it.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken g1;
+        Linie::TraceEnter(0xF2, 0, 700, 1, g1);
+        check("a scope the last recording left open does not carry into the next", !g1.traced);
+        Linie::TraceReturn(u5, 1);   // the old root returns now
+        check("...and its late return writes nothing into the new recording", Linie::GetTraceInfo().written == 0,
+              sz(Linie::GetTraceInfo().written).c_str());
+        Linie::StopTrace();
+
+        // T5 (b): an excluded function is left out; what it calls is not.
+        Linie::StartTrace(cfg(64, {}, { 0xEE }));
+        Linie::TraceToken e1, e2;
+        Linie::TraceEnter(0xEE, 0, 900, 1, e1);
+        Linie::TraceEnter(0xF2, 0, 800, 1, e2);
+        check("exclude: the per-frame function is left out", !e1.traced);
+        check("exclude: what it calls is still traced", e2.traced);
+        Linie::StopTrace();
+        Linie::StartTrace(cfg(64, { 0xEE }, { 0xEE }));
+        Linie::TraceToken e3, e4;
+        Linie::TraceEnter(0xEE, 0, 900, 1, e3);
+        Linie::TraceEnter(0xEE, 0, 800, 1, e4);
+        check("exclude: a ticked function still opens its scope", e3.traced && e3.opened);
+        check("exclude: inside the scope the excluded function is still left out", !e4.traced);
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("info counts the two sets", info.ticked == 1 && info.excluded == 1);
+
+        // The distinct functions and objects of the KEPT window: the overwritten first record is not among them.
+        Linie::StartTrace(cfg(4));
+        const uintptr_t calls[5][2] = { { 0xF9, 0xB9 }, { 0xF2, 0xB2 }, { 0xF1, 0xB1 }, { 0xF2, 0 }, { 0xF1, 0xB1 } };
+        for (const auto& c : calls) { Linie::TraceToken t; Linie::TraceEnter(c[0], c[1], 1000, 1, t); }
+        Linie::StopTrace();
+        std::vector<uintptr_t> dfuncs, dobjs;
+        check("distinct: the functions and objects of the kept window, sorted, no 0",
+              Linie::TraceDistinct(dfuncs, dobjs) && dfuncs == std::vector<uintptr_t>{ 0xF1, 0xF2 } &&
+              dobjs == std::vector<uintptr_t>{ 0xB1, 0xB2 }, sz(dfuncs.size()).c_str());
+
+        Linie::FreeTrace();
+        info = Linie::GetTraceInfo();
+        check("FreeTrace releases the ring", !info.allocated && !Linie::CopyTrace(0, 10, recs));
+
+        check("a trace starts again after a free", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Ok);
+        Linie::Reset();
+        check("Linie::Reset (the last client left) stops and frees the trace too",
+              !Linie::IsTracing() && !Linie::GetTraceInfo().allocated);
+
+        // Four threads trace while Stop runs: once Stop returns nothing changes, and every kept slot holds the
+        // record its sequence number says.
+        Linie::SetTraceClockForTest(nullptr);
+        Linie::StartTrace(cfg(1 << 14));
+        std::atomic<bool> go{ true };
+        std::vector<std::thread> threads;
+        for (uint32_t tid = 1; tid <= 4; ++tid) {
+            threads.emplace_back([&go, tid] {
+                while (go.load(std::memory_order_relaxed)) {
+                    Linie::TraceToken outer, inner;
+                    Linie::TraceEnter(0x500 + tid, tid, 2000, tid, outer);
+                    Linie::TraceEnter(0x600 + tid, tid, 1900, tid, inner);
+                    Linie::TraceReturn(inner, tid);
+                    Linie::TraceReturn(outer, tid);
+                }
+            });
+        }
+        Sleep(30);
+        Linie::StopTrace();
+        const uint64_t w1 = Linie::GetTraceInfo().written;
+        Sleep(20);
+        const uint64_t w2 = Linie::GetTraceInfo().written;
+        go = false;
+        for (auto& th : threads) th.join();
+        info = Linie::GetTraceInfo();
+        check("threads: nothing is written once Stop returns", w1 == w2 && w1 > 0, sz(w2 - w1).c_str());
+        bool slotsOk = copyAll() && !recs.empty();
+        for (size_t k = 0; slotsOk && k < recs.size(); ++k) {
+            const Linie::TraceRecord& r = recs[k];
+            const uint64_t seq = r.seqKind & Linie::kTraceSeqMask;
+            const bool isRet = (r.seqKind & Linie::kTraceReturnBit) != 0;
+            slotsOk = seq == info.firstValid + k && r.tid >= 1 && r.tid <= 4 &&
+                      (isRet ? (r.a < seq && r.b == 0)
+                             : ((r.a == 0x500 + r.tid || r.a == 0x600 + r.tid) && r.b == r.tid));
+        }
+        check("threads: every kept slot holds the record its sequence number says", slotsOk, sz(recs.size()).c_str());
+        Linie::FreeTrace();
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

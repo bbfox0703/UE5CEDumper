@@ -130,4 +130,24 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
+std::vector<uintptr_t> PerFrameFuncs() { return {}; }
+
+// ---- [LIVEFUNCS-TIMELINE-2026-10-04] the call trace (red: not built yet) ----
+
+std::atomic<bool> g_tracing{false};
+
+void AddrSet::Build(const std::vector<uintptr_t>&) {}
+bool AddrSet::Contains(uintptr_t) const { return false; }
+
+TraceStartStatus StartTrace(const TraceConfig&) { return TraceStartStatus::TooSmall; }
+void StopTrace() {}
+void FreeTrace() {}
+void TraceEnter(uintptr_t, uintptr_t, uintptr_t, uint32_t, TraceToken&) {}
+void TraceReturn(const TraceToken&, uint32_t) {}
+TraceInfo GetTraceInfo() { return {}; }
+bool CopyTrace(uint64_t, size_t, std::vector<TraceRecord>&) { return false; }
+bool TraceDistinct(std::vector<uintptr_t>&, std::vector<uintptr_t>&) { return false; }
+std::string Base64Encode(const uint8_t*, size_t) { return {}; }
+void SetTraceClockForTest(uint64_t (*)()) {}
+
 } // namespace Linie

@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <atomic>
+#include <string>
 #include <vector>
 #include <utility>
 
@@ -88,5 +89,107 @@ void Reset();
 // latest, taken under the same lock: the time the game was dispatching, not the wall clock between Start and Stop,
 // which also holds the minutes a game that idles when not foreground spent behind the UI.
 void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs);
+
+// The functions IsPerFrame picks out of the table as it stands. pe_profile_start reads it BEFORE StartRecording
+// clears the table, so the trace can leave out what the previous recording found firing every frame (T5 (b)).
+std::vector<uintptr_t> PerFrameFuncs();
+
+// ============================================================
+// [LIVEFUNCS-TIMELINE-2026-10-04] The call trace: one record when a call enters ProcessEvent and one when it
+// returns, into a ring the user sized, so Stop keeps the calls just before it. The plan, its decisions (T1-T8) and
+// the design review (TR1-TR7) are docs/live-funcs-timeline-plan.md.
+// ============================================================
+
+// One slot of the ring, and the wire format: pe_trace_get ships the slots as they are and the UI reads the same
+// 40 bytes, so a field added here is a protocol change on both sides.
+struct TraceRecord {
+    uint64_t seqKind;   // the record's sequence number (its write index); kTraceReturnBit set on a return record
+    uint64_t ticks;     // QueryPerformanceCounter when the hook saw it
+    uint64_t a;         // entry: the UFunction*; return: the sequence number of the call's ENTRY record
+    uint64_t b;         // entry: the object it was called on; return: 0
+    uint32_t tid;       // the calling thread
+    uint32_t flags;     // entry: kTraceScopeRoot when this call opened a ticked-function scope
+};
+static_assert(sizeof(TraceRecord) == 40, "TraceRecord is the wire format: the UI decodes 40-byte slots");
+inline constexpr uint64_t kTraceReturnBit = 1ull << 63;
+inline constexpr uint64_t kTraceSeqMask   = kTraceReturnBit - 1;
+inline constexpr uint32_t kTraceScopeRoot = 1;
+
+// The slider's range (T1): powers of two from 32 to 512 MB. Linie itself takes any size of two records or more,
+// so a test can wrap a small ring; the pipe handler holds the user to this range.
+inline constexpr uint64_t kTraceMinBytes = 32ull << 20;
+inline constexpr uint64_t kTraceMaxBytes = 512ull << 20;
+
+// A read-only address set for the hook: built at Start and never changed while a recording runs, so the hook reads
+// it without a lock. Open addressing; 0 is the empty slot, so a 0 address is never a member.
+class AddrSet {
+public:
+    void Build(const std::vector<uintptr_t>& addrs);
+    bool Contains(uintptr_t addr) const;
+    size_t Size() const { return count_; }
+    bool Empty() const { return count_ == 0; }
+private:
+    std::vector<uintptr_t> slots_;
+    uint64_t mask_  = 0;
+    size_t   count_ = 0;
+};
+
+struct TraceConfig {
+    uint64_t bytes = 0;
+    std::vector<uintptr_t> ticked;    // T5 (a): not empty = record only the calls of these and what they call
+    std::vector<uintptr_t> exclude;   // T5 (b): never record these, unless the call opens a ticked scope
+};
+enum class TraceStartStatus { Ok, TooSmall, NoMemory };
+
+// Stops and frees any earlier trace, allocates the ring and touches every page on the calling thread (so the game
+// thread never takes the first lap's page faults), then arms the hook.
+TraceStartStatus StartTrace(const TraceConfig& cfg);
+// Disarms the hook and waits until no hook is inside a write (TR2). Afterwards the ring does not change.
+void StopTrace();
+// StopTrace, then releases the memory.
+void FreeTrace();
+
+// Hot-path gate, like IsRecording: one relaxed load when no trace runs.
+extern std::atomic<bool> g_tracing;
+inline bool IsTracing() { return g_tracing.load(std::memory_order_relaxed); }
+
+// What TraceEnter hands TraceReturn for the same call; it lives in the hook's frame across the original call.
+struct TraceToken {
+    uint64_t entrySeq = 0;
+    uint64_t gen      = 0;
+    bool     traced   = false;   // an entry record was written: write a return record too
+    bool     opened   = false;   // this call opened the thread's ticked scope: its return closes it
+};
+// `sp` is the hook frame's own stack address (_AddressOfReturnAddress): lower for a call nested inside another on
+// the same thread, which is how a ticked scope tells its calls from the ones after it, even when an exception
+// unwound the scope's root without a return.
+void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok);
+void TraceReturn(const TraceToken& tok, uint32_t tid);
+
+struct TraceInfo {
+    bool     allocated  = false;
+    bool     tracing    = false;
+    bool     quiesced   = true;    // false: a hook never left its write within StopTrace's wait (the ring is not read)
+    uint64_t bytes      = 0;
+    uint64_t capacity   = 0;       // records
+    uint64_t written    = 0;       // records ever written; the ring keeps [firstValid, written)
+    uint64_t firstValid = 0;
+    uint64_t gen        = 0;       // one per StartTrace
+    uint64_t qpcFreq    = 0;       // ticks per second
+    size_t   ticked     = 0;
+    size_t   excluded   = 0;
+};
+TraceInfo GetTraceInfo();
+// Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
+// none is allocated, or when the last stop could not quiesce.
+bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out);
+// The distinct functions and calling objects of the kept window, sorted; computed once per stopped trace.
+bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs);
+
+// The trace's wire encoding for the slots (RFC 4648, with padding).
+std::string Base64Encode(const uint8_t* data, size_t len);
+
+// Tests replace the clock; nullptr restores QueryPerformanceCounter.
+void SetTraceClockForTest(uint64_t (*clock)());
 
 } // namespace Linie
