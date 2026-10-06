@@ -39,6 +39,7 @@ struct FuncStat {
     uint64_t  gapSamples   = 0;    // number of inter-arrival gaps measured (count-1)
     uint64_t  firstMs      = 0;    // wall-clock of the first and the latest fire, on the clock RecordCall gets
     uint64_t  lastMs       = 0;
+    uint64_t  activeMs     = 0;    // the time it kept firing at frame cadence: the sum of its gaps up to kActiveGapMaxMs
 };
 
 // [LIVEFUNCS-HIDE-PERFRAME] A function that fires every frame through most of the recording: the per-frame noise

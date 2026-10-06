@@ -6575,10 +6575,14 @@ int main() {
 
     {
         blk("LIVEFUNCS-HIDE-PERFRAME: Linie::IsPerFrame -- the frame band, sustained over the recording");
-        // A 10 s recording from t=1000 ms.
+        // A 10 s recording from t=1000 ms. Unless a case says otherwise the function fired steadily, so the time it
+        // kept firing is its span.
         const uint64_t W = 10000;
-        auto fs = [](uint64_t count, double meanMs, uint64_t gaps, uint64_t firstMs, uint64_t lastMs) {
-            return Linie::FuncStat{ 0x1000, count, 1, meanMs, 0.05, gaps, firstMs, lastMs };
+        auto fsa = [](uint64_t count, double meanMs, uint64_t gaps, uint64_t firstMs, uint64_t lastMs, uint64_t activeMs) {
+            return Linie::FuncStat{ 0x1000, count, 1, meanMs, 0.05, gaps, firstMs, lastMs, activeMs };
+        };
+        auto fs = [&](uint64_t count, double meanMs, uint64_t gaps, uint64_t firstMs, uint64_t lastMs) {
+            return fsa(count, meanMs, gaps, firstMs, lastMs, lastMs - firstMs);
         };
         check("every frame at 60 fps for the whole recording is per-frame",
               Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), W));
@@ -6603,6 +6607,16 @@ int main() {
         check("an empty recording window: nothing is per-frame", !Linie::IsPerFrame(fs(600, 16.7, 599, 1000, 10990), 0));
         check("a span just under half the recording is NOT per-frame",
               !Linie::IsPerFrame(fs(299, 16.7, 298, 1000, 5999), W));
+        // Review of the first version: the span from the first fire to the last is not how long a function kept
+        // firing. Each of these spans more than half the recording with a frame-band mean, and fired for far less.
+        check("the action done twice (1 s of frames at t=1 s and t=7 s) is NOT per-frame",
+              !Linie::IsPerFrame(fsa(240, 29.3, 239, 1000, 7992, 1990), W));
+        check("four 1 s repetitions spread over the recording are NOT per-frame",
+              !Linie::IsPerFrame(fsa(240, 35.5, 239, 1000, 9480, 3960), W));
+        check("one broadcast to 80 instances in one frame, twice 6 s apart, is NOT per-frame",
+              !Linie::IsPerFrame(fsa(160, 37.7, 159, 2000, 8000, 0), W));
+        check("a Tick through a 1 s loading hitch is still per-frame (the control)",
+              Linie::IsPerFrame(fsa(540, 18.5, 539, 1000, 10990, 8990), W));
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
