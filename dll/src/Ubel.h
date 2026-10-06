@@ -360,6 +360,12 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // is not (or no longer) a UFunction.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
+// [FUNCPARM-CONSUMERS] review: the return value's slot in the parameter buffer, from the function's own chain —
+// the entry flagged CPF_ReturnParm (its Offset_Internal and ElementSize). ResolveFunctionInfo reads only the
+// tail, which records where the return starts but not how long it is. False when the function has no return
+// or the chain cannot be read.
+bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
+
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
