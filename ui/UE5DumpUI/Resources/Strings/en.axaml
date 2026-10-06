@@ -78,6 +78,7 @@
     <sys:String x:Key="str.Dump.Cat.Enum">Enums</sys:String>
     <sys:String x:Key="str.Dump.Cat.Enumerator">Enumerators</sys:String>
     <sys:String x:Key="str.Dump.ObjectIndexFile">This is Dump All's object index, not a class dump: open {0} beside it to browse the types.</sys:String>
+    <sys:String x:Key="str.Dump.ObjectIndexFile.Unknown">the class dump</sys:String>
     <sys:String x:Key="str.Dump.Header.EnumsUnread"> · ⚠ the enum list could not be read</sys:String>
     <sys:String x:Key="str.Dump.Header.EnumNamesFailed"> · ⚠ enum member names were unreadable</sys:String>
     <sys:String x:Key="str.Dump.Header.EnumsTruncated"> · ⚠ the enum list was cut short</sys:String>
