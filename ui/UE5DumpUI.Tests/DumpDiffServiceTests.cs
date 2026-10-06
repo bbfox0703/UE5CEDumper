@@ -252,21 +252,31 @@ public class DumpDiffServiceTests
     public async Task Every_value_a_dump_supplies_is_escaped_wherever_it_is_written()
     {
         // One hostile text per place a dump value reaches the page: the header, the added / removed listings, a
-        // function's name, return type, flags and parameters, an enum and its enumerators.
+        // function's name, return type, flags and parameters, every member list of a changed class, an enum and its
+        // enumerators.
         const string Meta = "{\"kind\":\"meta\",\"module\":\"<m>&.exe\",\"dumped_at\":\"<d>\"}\n";
         const string Summary = "{\"kind\":\"summary\",\"structs_emitted\":1,\"enums_emitted\":1,\"enums_listed\":true}\n";
-        string Cls(string flags, string pclass) =>
-            "{\"kind\":\"class\",\"name\":\"C\",\"path\":\"/Game/C\",\"props_size\":8,\"funcs\":[{\"name\":\"<fn>\"," +
+        string Cls(string flags, string pclass, string props, string extraFunc) =>
+            "{\"kind\":\"class\",\"name\":\"C\",\"path\":\"/Game/C\",\"props_size\":8,\"props\":[" + props + "]," +
+            "\"funcs\":[{\"name\":\"<fn>\"," +
             "\"return_type\":\"<rt>\",\"num_parms\":1,\"parms_size\":8,\"flags\":\"" + flags + "\",\"params\":[{\"name\":\"<pn>\"," +
-            "\"type\":\"ObjectProperty\",\"obj_class\":\"" + pclass + "\",\"offset\":0,\"size\":8}]}]}\n";
+            "\"type\":\"ObjectProperty\",\"obj_class\":\"" + pclass + "\",\"offset\":0,\"size\":8}]}," + extraFunc + "]}\n";
+        string Prop(string name, string type, int offset) =>
+            "{\"name\":\"" + name + "\",\"type\":\"" + type + "\",\"offset\":" + offset + ",\"size\":4}";
+        string Func(string name) =>
+            "{\"name\":\"" + name + "\",\"return_type\":\"<frt>\",\"num_parms\":0,\"parms_size\":0,\"flags\":\"0x1\"}";
+        var oldProps = string.Join(",", Prop("<mp>", "IntProperty", 0), Prop("<tp>", "<t1>", 4), Prop("<rp>", "<rpt>", 8));
+        var newProps = string.Join(",", Prop("<mp>", "IntProperty", 12), Prop("<tp>", "<t2>", 4), Prop("<ap>", "<apt>", 16));
         string Enum(int v) =>
             "{\"kind\":\"enum\",\"name\":\"<en>\",\"path\":\"/Game/<en>\",\"entries\":[{\"name\":\"<ev>\",\"value\":" + v + "}]}\n";
         var diff = await DiffTextsAsync(
-            Meta + Cls("<f1>", "<p1>") + "{\"kind\":\"struct\",\"name\":\"<rem>\",\"path\":\"/Game/<rem>\",\"props_size\":4}\n" + Enum(0) + Summary,
-            Meta + Cls("<f2>", "<p2>") + "{\"kind\":\"class\",\"name\":\"<add>\",\"path\":\"/Game/<add>\",\"props_size\":4}\n" + Enum(1) + Summary);
+            Meta + Cls("<f1>", "<p1>", oldProps, Func("<rf>")) + "{\"kind\":\"struct\",\"name\":\"<rem>\",\"path\":\"/Game/<rem>\",\"props_size\":4}\n" + Enum(0) + Summary,
+            Meta + Cls("<f2>", "<p2>", newProps, Func("<af>")) + "{\"kind\":\"class\",\"name\":\"<add>\",\"path\":\"/Game/<add>\",\"props_size\":4}\n" + Enum(1) + Summary);
 
         var html = DumpDiffHtmlRenderer.Render(diff, minimal: false);
-        foreach (var raw in new[] { "<m>", "<d>", "<add>", "<rem>", "<fn>", "<rt>", "<f1>", "<f2>", "<pn>", "<p1>", "<p2>", "<en>", "<ev>" })
+        foreach (var raw in new[] { "<m>", "<d>", "<add>", "<rem>", "<fn>", "<rt>", "<f1>", "<f2>", "<pn>", "<p1>", "<p2>",
+                                    "<mp>", "<tp>", "<t1>", "<t2>", "<rp>", "<rpt>", "<ap>", "<apt>", "<af>", "<rf>", "<frt>",
+                                    "<en>", "<ev>" })
         {
             Assert.DoesNotContain(raw, html);
             Assert.Contains("&lt;" + raw[1..^1] + "&gt;", html);

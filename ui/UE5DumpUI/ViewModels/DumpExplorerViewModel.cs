@@ -153,7 +153,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     [RelayCommand(CanExecute = nameof(CanStartOp))]
     private async Task LoadFileAsync()
     {
-        var path = await _platform.ShowOpenFileDialogAsync("Dump JSON Lines (*.jsonl)", ".jsonl");
+        var path = await _platform.ShowOpenFileDialogAsync(Res.Get("str.Dump.JsonlFilter"), ".jsonl");
         if (string.IsNullOrEmpty(path)) return;
         await LoadFromPathAsync(path);
     }
@@ -195,6 +195,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         try
         {
             IsBusy = true;
+            ClearError();
             HasFile = false;
             LiveChecked = false;
             FilePath = path;
@@ -274,6 +275,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
         try
         {
             IsBusy = true;
+            ClearError();
             await RunLiveMatchAsync(cts.Token);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested)
@@ -320,7 +322,7 @@ public partial class DumpExplorerViewModel : ViewModelBase
     private async Task CompareAsync()
     {
         var loaded = FilePath;
-        var picked = await _platform.ShowOpenFileDialogAsync("Dump JSON Lines (*.jsonl)", ".jsonl");
+        var picked = await _platform.ShowOpenFileDialogAsync(Res.Get("str.Dump.JsonlFilter"), ".jsonl");
         if (string.IsNullOrEmpty(picked)) return;
 
         CancelInFlight();
@@ -346,10 +348,25 @@ public partial class DumpExplorerViewModel : ViewModelBase
                 return;
             }
 
+            // Dump All writes its meta line first. Without one the file is something else (a Live Funcs export is a
+            // .jsonl too), and diffed it would read as a dump cut off before its first type.
+            foreach (var d in new[] { loadedDump, pickedDump })
+            {
+                if (d.Meta.Kind == "meta") continue;
+                StatusText = Res.Format("str.Dump.Compare.NotADump", Path.GetFileName(d.FilePath));
+                return;
+            }
+
             var (oldDump, newDump) = OrderByDumpTime(loadedDump, pickedDump);
             bool includeEngine = DiffIncludeEngine, minimal = DiffBreakingOnly;
+            // The live match's rule, pe_hash aside (a patch changes it): case-blind, and an older DLL's '?' name of the
+            // same exe is not another game.
+            string om = oldDump.Meta.Module ?? "", nm = newDump.Meta.Module ?? "";
+            bool otherGame = JudgeIdentity(om, "", nm, "").Refused;
             var diff = await Task.Run(() => DumpDiffService.Diff(oldDump, newDump, includeEngine), ct);
-            var html = await Task.Run(() => DumpDiffHtmlRenderer.Render(diff, minimal), ct);
+            var html = await Task.Run(() => DumpDiffHtmlRenderer.Render(diff, minimal, otherGame), ct);
+            // Neither step watches the token; a Cancel pressed meanwhile must not be followed by a save dialog.
+            ct.ThrowIfCancellationRequested();
 
             var suggested = $"{Path.GetFileNameWithoutExtension(oldDump.FilePath)} to " +
                             $"{Path.GetFileNameWithoutExtension(newDump.FilePath)}.html";
@@ -362,11 +379,11 @@ public partial class DumpExplorerViewModel : ViewModelBase
             await File.WriteAllTextAsync(save, html, new UTF8Encoding(false), ct);
             await _platform.OpenWithShellAsync(save);
 
-            string om = oldDump.Meta.Module ?? "", nm = newDump.Meta.Module ?? "";
-            StatusText = om.Length > 0 && nm.Length > 0 && om != nm
+            var (classes, structs, enums) = StatusCounts(diff, minimal, Res.Get("str.Dump.Compare.NotCompared"));
+            StatusText = otherGame
                 ? Res.Format("str.Dump.Compare.DoneOtherGame", Path.GetFileName(save), om, nm)
-                : Res.Format("str.Dump.Compare.Done", Path.GetFileName(save), diff.ChangedClasses.Count,
-                             diff.ChangedStructs.Count, diff.ChangedEnums.Count);
+                : Res.Format(minimal ? "str.Dump.Compare.DoneBreaking" : "str.Dump.Compare.Done",
+                             Path.GetFileName(save), classes, structs, enums);
             _log.Info($"DumpExplorer compare: {Path.GetFileName(oldDump.FilePath)} -> {Path.GetFileName(newDump.FilePath)}, " +
                       $"{diff.ChangedClasses.Count} classes / {diff.ChangedStructs.Count} structs / " +
                       $"{diff.ChangedEnums.Count} enums changed, engine={includeEngine}, minimal={minimal}, " +
@@ -390,9 +407,19 @@ public partial class DumpExplorerViewModel : ViewModelBase
 
     private bool CanCompare() => HasFile && !IsBusy;
 
-    // [DUMPDIFF-UI] Placeholder until the review's status counts land.
+    /// <summary>The counts the status line gives, taken from what the report shows: breaking changes only in the
+    /// minimal report, and <paramref name="notCompared"/> for a kind that was not compared (a 0 there would claim a
+    /// comparison that never ran).</summary>
     internal static (string Classes, string Structs, string Enums) StatusCounts(DumpDiffResult d, bool minimal,
-        string notCompared) => ("", "", "");
+        string notCompared)
+    {
+        static string N(int n) => n.ToString(CultureInfo.InvariantCulture);
+        int Types(List<DumpDiffTypeChange> c) => minimal ? c.Count(x => x.HasBreakingChange) : c.Count;
+        return (N(Types(d.ChangedClasses)),
+                d.StructsSkipped.Length > 0 ? notCompared : N(Types(d.ChangedStructs)),
+                d.EnumsSkipped.Length > 0 ? notCompared
+                    : N(minimal ? d.ChangedEnums.Count(e => e.HasBreakingChange) : d.ChangedEnums.Count));
+    }
 
     /// <summary>The dump taken earlier is the old one. When the times are equal or unreadable the loaded dump is the
     /// new one: the user loads the latest dump and picks an older one to compare it with.</summary>

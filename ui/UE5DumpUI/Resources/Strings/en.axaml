@@ -76,7 +76,11 @@
     <sys:String x:Key="str.Dump.Compare.Loading">Reading both dumps…</sys:String>
     <sys:String x:Key="str.Dump.Compare.ObjectIndex">That file is Dump All's object index, not a class dump: pick {0} instead.</sys:String>
     <sys:String x:Key="str.Dump.Compare.Cancelled">Compare cancelled; no report written.</sys:String>
-    <sys:String x:Key="str.Dump.Compare.Done">Diff report written to {0}: {1} classes, {2} structs and {3} enums changed.</sys:String>
+    <sys:String x:Key="str.Dump.Compare.Done">Diff report written to {0}. Changed: classes {1}, structs {2}, enums {3}.</sys:String>
+    <sys:String x:Key="str.Dump.Compare.DoneBreaking">Diff report written to {0}. Breaking changes: classes {1}, structs {2}, enums {3}.</sys:String>
+    <sys:String x:Key="str.Dump.Compare.NotCompared">not compared</sys:String>
+    <sys:String x:Key="str.Dump.Compare.NotADump">{0} is not a Dump All file (it has no meta line), so there is nothing to compare.</sys:String>
+    <sys:String x:Key="str.Dump.JsonlFilter">Dump JSON Lines (*.jsonl)</sys:String>
     <sys:String x:Key="str.Dump.Compare.DoneOtherGame">Diff report written to {0}, but the two dumps come from different games ({1} and {2}), so most of it is noise.</sys:String>
     <sys:String x:Key="str.Dump.Compare.Failed">Compare failed: {0}</sys:String>
     <sys:String x:Key="str.Dump.SearchHint">Keyword — searches class / struct / enum / property / function / parameter names at once (space = AND)</sys:String>
@@ -106,7 +110,7 @@
     <!-- Dump Explorer tooltips -->
     <sys:String x:Key="str.Tip.Dump.Load">Open a “Dump All” .jsonl file (Export ▸ Dump All) and browse every class, struct, enum, property and function in one searchable list — no game connection required.</sys:String>
     <sys:String x:Key="str.Tip.Dump.LoadLast">Load the most recent Export ▸ Dump All from this session (no file dialog). Disabled until you export one.</sys:String>
-    <sys:String x:Key="str.Tip.Dump.Compare">Compare the loaded dump with another Dump All file of the same game, and write an HTML report of what changed: classes, structs and enums added or removed, fields that moved or changed type, function signatures, enum values. The dump taken earlier is the old one. The arrow holds the report's options.</sys:String>
+    <sys:String x:Key="str.Tip.Dump.Compare">Compare the loaded dump with another Dump All file of the same game, and write an HTML report of what changed: classes, structs and enums added or removed, fields that moved or changed type, function signatures, enum values. The dump taken earlier is the old one. The arrow holds the report's options. Load a dump first.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Compare.IncludeEngine">Also compare the engine's own modules (/Script/Engine, /Script/CoreUObject, …). Off: the game's own types only, its Blueprints and its C++ modules. Engine types rarely change between game patches and would bury the rest.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Compare.BreakingOnly">Report only what breaks a working cheat table: fields that moved or changed type, changed function signatures, changed enum values, and structs whose size changed. Added and removed entries are left out.</sys:String>
     <sys:String x:Key="str.Tip.Dump.Recheck">Scan the connected game's live classes, structs and enums and re-split results into “in current game” (matched by kind and name, restart-safe) vs. not. Requires a connected, scanned game.</sys:String>

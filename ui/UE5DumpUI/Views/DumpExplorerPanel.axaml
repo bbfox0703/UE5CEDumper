@@ -35,6 +35,7 @@
         <SplitButton Content="{StaticResource str.Dump.Compare}"
                      Command="{Binding CompareCommand}"
                      ToolTip.Tip="{StaticResource str.Tip.Dump.Compare}"
+                     ToolTip.ShowOnDisabled="True"
                      Padding="12,4">
           <SplitButton.Flyout>
             <MenuFlyout Placement="BottomEdgeAlignedLeft">
