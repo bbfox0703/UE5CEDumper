@@ -16,10 +16,15 @@ namespace UE5DumpUI.Helpers;
 /// </summary>
 internal static class LiveFuncsJsonl
 {
-    /// <summary>What the summary line records about the table the rows came from.</summary>
+    /// <summary>What the summary line records: the table the rows came from, everything on the panel that hid
+    /// rows from it (so <c>rows &lt; fetched</c> has a recorded reason), whether a diff's NEW flags can be trusted
+    /// (a partial baseline makes rare idle functions NEW), and whether the rows came from a fetch made while the
+    /// DLL was still recording (a peek left on screen after the recording ended without a final fetch).</summary>
     internal sealed record Summary(
-        int Rows, int Fetched, int Distinct, long TotalCalls, int FetchLimit,
-        string Filter, bool Diff, int BaselineFuncs, DateTime SavedAtUtc);
+        int Rows, int Fetched, int Distinct, long TotalCalls, int FetchLimit, bool RecordingAtFetch,
+        string Filter, bool HideWidgets, bool HideEvents, bool PeriodicOnly,
+        bool Diff, bool NewChangedOnly, int BaselineFuncs, bool BaselinePartial, int BaselineDistinct,
+        DateTime SavedAtUtc);
 
     /// <summary>First call first; a row whose order is unknown (0) goes last. Ties by name keep the file stable.</summary>
     internal static IEnumerable<PeProfileEntry> InFirstCallOrder(IEnumerable<PeProfileEntry> rows)
@@ -36,9 +41,20 @@ internal static class LiveFuncsJsonl
         Int(sb, "distinct", s.Distinct);
         Int(sb, "total_calls", s.TotalCalls);
         Int(sb, "fetch_limit", s.FetchLimit);
+        Bool(sb, "recording_at_fetch", s.RecordingAtFetch);
         Str(sb, "filter", s.Filter);
+        Bool(sb, "hide_widgets", s.HideWidgets);
+        Bool(sb, "hide_events", s.HideEvents);
+        Bool(sb, "periodic_only", s.PeriodicOnly);
         Bool(sb, "diff", s.Diff);
-        if (s.Diff) Int(sb, "baseline_funcs", s.BaselineFuncs);
+        if (s.Diff)
+        {
+            // Written only in diff mode, where they mean something.
+            Bool(sb, "new_changed_only", s.NewChangedOnly);
+            Int(sb, "baseline_funcs", s.BaselineFuncs);
+            Bool(sb, "baseline_partial", s.BaselinePartial);
+            Int(sb, "baseline_distinct", s.BaselineDistinct);
+        }
         Str(sb, "saved_at", s.SavedAtUtc.ToString("o", CultureInfo.InvariantCulture));
         sb.Append("}\n");
 
@@ -58,6 +74,9 @@ internal static class LiveFuncsJsonl
             Dbl(sb, "period_ms", e.MeanPeriodMs);
             Dbl(sb, "cv", e.Cv);
             Int(sb, "gap_samples", e.GapSamples);
+            // The panel's own verdict, so a reader need not re-derive its thresholds from the values above.
+            Bool(sb, "periodic", e.IsPeriodic);
+            Str(sb, "badge", e.Kind);
             if (s.Diff)
             {
                 Int(sb, "delta", e.Delta);
@@ -77,8 +96,9 @@ internal static class LiveFuncsJsonl
     private static void Bool(StringBuilder sb, string key, bool value)
         => sb.Append(",\"").Append(key).Append("\":").Append(value ? "true" : "false");
 
-    /// <summary>A double the JSON grammar can hold: NaN and infinities have no JSON form, so they become null.</summary>
+    /// <summary>The shortest text that reads back as the same double (an exponent is valid JSON). NaN and the
+    /// infinities have no JSON form, so they become null.</summary>
     private static void Dbl(StringBuilder sb, string key, double value)
         => sb.Append(",\"").Append(key).Append("\":")
-             .Append(double.IsFinite(value) ? value.ToString("0.###", CultureInfo.InvariantCulture) : "null");
+             .Append(double.IsFinite(value) ? value.ToString(CultureInfo.InvariantCulture) : "null");
 }

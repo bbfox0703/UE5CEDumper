@@ -66,6 +66,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private int _lastShown;
     private int _lastDistinct;
     private long _lastTotalCalls;
+    /// <summary>Whether the DLL was still recording when the rows on screen were fetched (a peek).</summary>
+    private bool _lastRecordingAtFetch;
 
     /// <summary>Was the page the baseline was captured from truncated, and how big was the
     /// table it came from? This matters more than it looks: the DLL's cap keeps the HIGHEST
@@ -153,10 +155,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// Payload = (className, funcName). Mirrors InterestingFunctionsViewModel.</summary>
     public event Action<string, string>? NavigateToFunction;
 
-    /// <summary>Raised by the per-row "Name" action; MainWindow routes it through
-    /// the platform clipboard.</summary>
     /// <summary>
-    /// Ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
+    /// Raised by the per-row "Name" action: ask the host to put <c>text</c> on the clipboard. Returns whether it ACTUALLY
     /// arrived, so the raiser can decide what to claim.
     ///
     /// <para><b>Why this is <c>Func&lt;string, Task&lt;bool&gt;&gt;</c> and not
@@ -309,9 +309,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         finally { IsBusy = false; IsRecording = false; }
     }
 
-    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter and the diff view leave) to a
-    /// JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
-    /// recording: the table is still changing under a peek, and the button is disabled then too.</summary>
+    /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter and the check boxes leave) to
+    /// a JSON Lines file, in the order the game first called them (<see cref="Helpers.LiveFuncsJsonl"/>). Not while
+    /// recording, when the table is still changing; the button is disabled then too. A peek's rows can outlive the
+    /// recording (it can end without a final fetch), so the summary says when the rows came from one.</summary>
     [RelayCommand]
     private async Task SaveJsonlAsync()
     {
@@ -330,13 +331,15 @@ public partial class LiveFuncsViewModel : ViewModelBase
         var rows = Results.ToList();
         bool diff = DiffMode && _baseline.Count > 0;
         var summary = new Helpers.LiveFuncsJsonl.Summary(
-            rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit,
-            FilterText ?? "", diff, diff ? _baseline.Count : 0, DateTime.UtcNow);
+            rows.Count, _allEntries.Count, _lastDistinct, _lastTotalCalls, _lastLimit, _lastRecordingAtFetch,
+            FilterText ?? "", HideWidgets, HideEvents, PeriodicOnly,
+            diff, NewChangedOnly, diff ? _baseline.Count : 0, diff && _baselineTruncated, diff ? _baselineDistinct : 0,
+            DateTime.UtcNow);
         try
         {
             ClearError();
             string defaultName = "live-funcs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".jsonl";
-            string? path = await _platform.ShowSaveFileDialogAsync(defaultName, Res.Get("str.LF.Save.FileType"), "jsonl");
+            string? path = await _platform.ShowSaveFileDialogAsync(defaultName, Res.Get("str.LF.Save.FileType"), ".jsonl");
             if (string.IsNullOrEmpty(path)) return;
             await File.WriteAllTextAsync(path, Helpers.LiveFuncsJsonl.Format(summary, rows),
                                          new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
@@ -380,6 +383,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
         _lastTotalCalls = result.TotalCalls;
+        _lastRecordingAtFetch = result.Recording;
         ApplyDiffAndFilter();
 
         // House convention for surfacing a cap (SnapshotViewModel / SpcQueryViewModel).
