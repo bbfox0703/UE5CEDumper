@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines) is in source and published (build 3620); the rest is not built. The reply on the PRs is written after PR 539. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: IN PROGRESS — PR 540 is DONE: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5 are built, shipped in build 3619 and checked live on Avowed, 2026-10-06** (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620) and D2 (enum lines, build 3621) are in source and published; the rest is not built. The reply on the PRs is written after PR 539. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -447,6 +447,18 @@ What this tells us:
   appears on every export, a remembered ON can never run the big export silently.
 - The export stays cancellable through the existing Dump All cancellation; a cancelled index leaves the class dump
   intact.
+
+### D2 built (2026-10-06)
+
+| Commit | What | Co-author |
+|---|---|---|
+| `268bd42d` red, `0c43deae` | One `list_enums` call (`ListEnumsDetailedAsync`) after the type walk; each UEnum is a `kind:"enum"` line with `name` / `addr` / `path` / `entries[]` (`{name, value}`); "Game classes only" skips engine enums by path; a list that fails is an error line named `list_enums` and the dump completes; summary `enums_emitted` / `enums_skipped_engine` / `enums_listed` / `enum_names_failed` / `enums_truncated`; progress "Listing enums"; `DumpResult.EnumsEmitted` / `EnumsSkippedEngine`; the completion message and the tooltip name enums | `0c43deae` |
+| `dc4462ce` red, `ed9a3da7` | Review fixes: `DumpResult` carries the enum list's three flags and the completion status names the worst one, as USMAP does `[P1-ENUMNAMES]`; "Listing enums" no longer shows the type count, which read as an enum count; the log line counts structs and enums; stale comments | `ed9a3da7` |
+| `c2b04a2e` | The `.jsonl` schema in `scripts/analysis/README.md` (the enum row, the `list_enums` error line, the summary's enum keys), the analysis scripts' docstrings, the export coverage table, the closed R7-D-02 recipe's expected message | no |
+
+Published as build 3621 (AOT `UE5DumpUI.exe` 59,252,736 B, sha256 `2eca0528045c`). C# 6099/6099. The enum
+compare in `diff_dumps.py` is D5, which must honour `enums_listed` and `enum_names_failed`. **Owed:** the same
+live measurement as D1, after D3.
 
 ### D1 built (2026-10-06)
 

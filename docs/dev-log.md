@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3621) — Dump All writes enums `[EXTPR-539-540-2026-10-02]`
+
+- **Dump All** now writes a line for every enum with its members and values, after the classes and structs, and
+  its summary and completion message count the enums. "Game classes only" leaves the engine's enums out too.
+- When the enums could not be read in full, the completion message says so: the list failed, it was cut short,
+  or the members' names cannot be located on this game, which leaves every enum empty. The file's summary line
+  records the same, so a later comparison can tell an empty enum from an unreadable one.
+- The Dump Explorer and the analysis scripts do not read enum lines yet.
+- From fireundubh's PR 539, built our way.
+- Build 3621: AOT `dist\UE5DumpUI.exe` 59,252,736 B, sha256 `2eca0528045c`; `dist\UE5Dumper.dll` `254ba0c2e250`
+  (no DLL source change; the build stamp moved). C# 6099/6099, headless 15/15, dll_core 593 checks, 32 gates.
+  Not yet checked on a game, as for build 3620.
+
 ## 2026-10-06 (build 3620) — Dump All writes structs `[EXTPR-539-540-2026-10-02]`
 
 - **Dump All** now writes a line for every struct (native and Blueprint user-defined) with its properties, beside
