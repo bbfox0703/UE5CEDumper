@@ -591,12 +591,16 @@ def render_report(diff: DumpDiff, minimal: bool = False) -> str:
 # without external dumps. Run via --self-test.
 # =====================================================================
 
-def _make_dump(module: str, classes: list[dict]) -> Dump:
+def _make_dump(module: str, classes: list[dict], structs: list[dict] | None = None,
+               enums: list[dict] | None = None, summary: dict | None = None) -> Dump:
     """Construct a fake Dump in-memory for self-test purposes."""
     d = Dump(path=Path(f"<{module}>"))
     d.meta = {"module": f"{module}.exe", "ue_version": 505,
               "dumper_build": 999, "dumped_at": "2026-01-01T00:00:00Z"}
     d.classes = classes
+    d.structs = structs or []
+    d.enums = enums or []
+    d.summary = summary or {}
     return d
 
 
@@ -832,6 +836,8 @@ def run_self_test() -> int:
     _assert("Added Classes" not in md_min,
             "Minimal mode hides Added Classes", errors)
 
+    run_self_test_types(errors)
+
     if errors:
         print(f"SELF-TEST FAILED ({len(errors)} error(s)):", file=sys.stderr)
         for e in errors:
@@ -839,6 +845,160 @@ def run_self_test() -> int:
         return 1
     print("self-test: all assertions passed.")
     return 0
+
+
+# ---------------------------------------------------------------------
+# [EXTPR-539-540-2026-10-02] D5: structs, enums and function params.
+# Kept apart from run_self_test so the class fixtures above stay as they were.
+# ---------------------------------------------------------------------
+
+def _struct(name: str, path: str, size: int, props: list[dict]) -> dict:
+    return {"kind": "struct", "name": name, "addr": "0x5", "path": path, "meta": "ScriptStruct",
+            "super": "", "super_addr": "", "props_size": size, "props": props}
+
+
+def _enum(name: str, path: str, entries: list[tuple[str, int]]) -> dict:
+    return {"kind": "enum", "name": name, "addr": "0x6", "path": path,
+            "entries": [{"name": n, "value": v} for n, v in entries]}
+
+
+def _summary(**flags) -> dict:
+    """A summary line from build 3622 on: it names structs, enums and the enum list's flags."""
+    s = {"kind": "summary", "classes_emitted": 0, "structs_emitted": 0, "enums_emitted": 0,
+         "enums_listed": True, "enum_names_failed": False, "enums_truncated": False,
+         "params_from_num_parms": 0}
+    s.update(flags)
+    return s
+
+
+def _func(name: str, params: list[dict] | None, num_parms: int = 2, parms_size: int = 8) -> dict:
+    f = {"name": name, "addr": "0x7", "return_type": "", "num_parms": num_parms,
+         "parms_size": parms_size, "flags": "0x10"}
+    if params is not None:
+        f["params"] = params
+    return f
+
+
+def _cls_with(funcs: list[dict]) -> dict:
+    return {"kind": "class", "name": "AHero", "addr": "0x1", "path": "/Game/Heroes/AHero",
+            "meta": "BlueprintGeneratedClass", "super": "", "super_addr": "", "is_bpgc": True,
+            "props_size": 8, "instance_count": 0, "props": [], "funcs": funcs}
+
+
+def run_self_test_types(errors: list[str]) -> None:
+    # --- Structs: added, removed, and a field that moved ---
+    s_old = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 8, [
+            {"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+            {"name": "B", "type": "IntProperty", "offset": 4, "size": 4}]),
+        _struct("FGone", "/Game/Data/FGone.FGone", 4, []),
+    ], summary=_summary(structs_emitted=2))
+    s_new = _make_dump("FakeGame", [], structs=[
+        _struct("FHit", "/Script/FakeGame.FHit", 12, [
+            {"name": "A", "type": "IntProperty", "offset": 0, "size": 4},
+            {"name": "B", "type": "IntProperty", "offset": 8, "size": 4}]),
+        _struct("FNew", "/Game/Data/FNew.FNew", 4, []),
+    ], summary=_summary(structs_emitted=2))
+    ds = diff_dumps(s_old, s_new)
+    _assert(ds.structs_skipped == "", "structs compared when both dumps carry them", errors)
+    _assert([s["name"] for s in ds.added_structs] == ["FNew"], "added struct FNew", errors)
+    _assert([s["name"] for s in ds.removed_structs] == ["FGone"], "removed struct FGone", errors)
+    _assert(len(ds.changed_structs) == 1 and ds.changed_structs[0].name == "FHit", "changed struct FHit", errors)
+    if ds.changed_structs:
+        moved = [p.name for p in ds.changed_structs[0].prop_changes if p.kind == "moved"]
+        _assert(moved == ["B"], f"FHit.B moved (got {moved})", errors)
+        _assert(ds.changed_structs[0].has_breaking_change, "a moved struct field is breaking", errors)
+    md = render_report(ds)
+    _assert("Changed Structs" in md and "Added Structs" in md and "Removed Structs" in md,
+            "report has the struct sections", errors)
+    _assert("`FHit`" in md, "report names the changed struct", errors)
+    md_min = render_report(ds, minimal=True)
+    _assert("`FHit`" in md_min and "Added Structs" not in md_min,
+            "minimal report keeps the moved struct, hides the added one", errors)
+
+    # --- Structs: an older dump has none, so nothing is "added" ---
+    s_pre = _make_dump("FakeGame", [], summary={"kind": "summary", "classes_emitted": 0})
+    dp = diff_dumps(s_pre, s_new)
+    _assert(dp.structs_skipped != "" and not dp.added_structs,
+            "a dump from before struct lines skips the struct comparison", errors)
+    _assert("not compared" in render_report(dp), "the report says structs were not compared", errors)
+
+    # --- Structs: an engine struct is skipped by default ---
+    e_old = _make_dump("FakeGame", [], structs=[_struct("Vector", "/Script/CoreUObject.Vector", 12, [])],
+                       summary=_summary(structs_emitted=1))
+    e_new = _make_dump("FakeGame", [], structs=[_struct("Vector", "/Script/CoreUObject.Vector", 24, [])],
+                       summary=_summary(structs_emitted=1))
+    _assert(not diff_dumps(e_old, e_new).changed_structs, "engine struct skipped by default", errors)
+    _assert(len(diff_dumps(e_old, e_new, include_engine=True).changed_structs) == 1,
+            "engine struct diffed with --include-engine", errors)
+
+    # --- Enums: a value changed, an enumerator added, an enum added and one removed ---
+    n_old = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 1)]),
+        _enum("EOld", "/Game/Data/EOld.EOld", [("NewEnumerator0", 0)]),
+    ], summary=_summary(enums_emitted=2))
+    n_new = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 2), ("EKind::C", 3)]),
+        _enum("ENew", "/Game/Data/ENew.ENew", [("NewEnumerator0", 0)]),
+    ], summary=_summary(enums_emitted=2))
+    dn = diff_dumps(n_old, n_new)
+    _assert(dn.enums_skipped == "", "enums compared when both lists were read", errors)
+    _assert([e["name"] for e in dn.added_enums] == ["ENew"], "added enum ENew", errors)
+    _assert([e["name"] for e in dn.removed_enums] == ["EOld"], "removed enum EOld", errors)
+    _assert(len(dn.changed_enums) == 1 and dn.changed_enums[0].name == "EKind", "changed enum EKind", errors)
+    if dn.changed_enums:
+        kinds = sorted((c.name, c.kind) for c in dn.changed_enums[0].changes)
+        _assert(kinds == [("EKind::B", "value_changed"), ("EKind::C", "added")],
+                f"EKind's changes (got {kinds})", errors)
+    md = render_report(dn)
+    _assert("Changed Enums" in md and "EKind::B" in md, "report names the changed enumerator", errors)
+    _assert("EKind::B" in render_report(dn, minimal=True), "a changed enum value is breaking", errors)
+    _assert(not diff_dumps(n_old, n_old).changed_enums, "enum self-diff is empty", errors)
+
+    # --- Enums: a list that could not be read is not compared ---
+    n_failed = _make_dump("FakeGame", [], enums=[], summary=_summary(enums_listed=False))
+    df = diff_dumps(n_old, n_failed)
+    _assert(df.enums_skipped != "" and not df.removed_enums,
+            "a failed enum list skips the comparison, so no enum reads as removed", errors)
+
+    # --- Enums: member names unavailable -> entries not compared, presence still is ---
+    n_noname = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", []),
+        _enum("ENew", "/Game/Data/ENew.ENew", []),
+    ], summary=_summary(enums_emitted=2, enum_names_failed=True))
+    dnn = diff_dumps(n_old, n_noname)
+    _assert(not dnn.changed_enums, "with no member names, an enum's entries are not compared", errors)
+    _assert([e["name"] for e in dnn.added_enums] == ["ENew"], "an enum's presence is still compared", errors)
+    _assert(any("names" in note for note in dnn.enum_notes), "the report says member names were unavailable", errors)
+
+    # --- Enums: a cut-short list cannot say an enum was removed ---
+    n_cut = _make_dump("FakeGame", [], enums=[
+        _enum("EKind", "/Script/FakeGame.EKind", [("EKind::A", 0), ("EKind::B", 1)]),
+    ], summary=_summary(enums_emitted=1, enums_truncated=True))
+    dc = diff_dumps(n_old, n_cut)
+    _assert(not dc.removed_enums, "a truncated new list reports no removed enum", errors)
+    _assert(any("cut short" in note for note in dc.enum_notes), "the report says the list was cut short", errors)
+
+    # --- Enums: an older dump has none, so nothing is "added" ---
+    dpe = diff_dumps(_make_dump("FakeGame", [], summary={"kind": "summary"}), n_new)
+    _assert(dpe.enums_skipped != "" and not dpe.added_enums,
+            "a dump from before enum lines skips the enum comparison", errors)
+
+    # --- Function params: a parameter change is a signature change; one missing side compares metadata ---
+    p_a = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Actor"}]
+    p_b = [{"name": "Amount", "type": "FloatProperty", "offset": 0, "size": 4},
+           {"name": "Source", "type": "ObjectProperty", "offset": 8, "size": 8, "obj_class": "Pawn"}]
+    f_old = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_a)])], summary=_summary())
+    f_new = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", p_b)])], summary=_summary())
+    dfp = diff_dumps(f_old, f_new)
+    sig = [f for cd in dfp.changed for f in cd.func_changes if f.kind == "signature_changed"]
+    _assert(len(sig) == 1 and sig[0].name == "TakeDamage",
+            "a parameter whose class changed is a signature change", errors)
+    _assert("Source" in render_report(dfp), "the report shows the parameters that changed", errors)
+    f_pre = _make_dump("FakeGame", [_cls_with([_func("TakeDamage", None)])], summary={"kind": "summary"})
+    _assert(not diff_dumps(f_pre, f_new).changed,
+            "an older dump without params compares the function's metadata only", errors)
 
 
 # =====================================================================
