@@ -946,7 +946,7 @@ public class LiveFuncsViewModelTests
         await vm.SaveJsonlCommand.ExecuteAsync(null);
 
         Assert.Equal(1, platform.Asked);
-        Assert.Equal("jsonl", platform.Extension);
+        Assert.Equal(".jsonl", platform.Extension);   // the dialog builds "*" + this as its pattern
         Assert.StartsWith("live-funcs-", platform.DefaultName);
         Assert.EndsWith(".jsonl", platform.DefaultName);
         try
@@ -1092,5 +1092,105 @@ public class LiveFuncsViewModelTests
 
         Assert.Equal(1, platform.Asked);
         Assert.False(File.Exists(path));
+    }
+
+    // Review of a20af931: the summary must say why rows are missing and whether NEW can be trusted.
+
+    [Fact]
+    public async Task SaveJsonl_RecordsTheCheckBoxesThatHideRows()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.HideWidgets = true;
+        vm.HideEvents = true;
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("hide_widgets").GetBoolean());
+            Assert.True(head.GetProperty("hide_events").GetBoolean());
+            Assert.False(head.GetProperty("periodic_only").GetBoolean());
+            Assert.False(head.TryGetProperty("new_changed_only", out _));   // only means something in diff mode
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_InDiffMode_SaysWhetherTheBaselineWasPartial()
+    {
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = TruncatedResultOf(900, new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 900, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(new PeProfileEntry { ClassName = "AShop", FuncName = "OpenShop", Count = 2, FirstSeq = 1 });
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var head = ReadLines(platform.Answer!)[0].RootElement;
+            Assert.True(head.GetProperty("baseline_partial").GetBoolean());
+            Assert.Equal(900, head.GetProperty("baseline_distinct").GetInt32());
+            Assert.True(head.GetProperty("new_changed_only").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_RowsFromAPeekDuringTheRecording_SaySo()
+    {
+        // A Refresh during the recording leaves its rows on screen when the recording ends without a
+        // fetch (a disconnect, leaving the tab), and Save is enabled again.
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = new PeProfileResult
+        {
+            Recording = true, DistinctFuncs = 1, TotalCalls = 9,
+            Entries = new() { new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 9, FirstSeq = 1 } },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.RefreshCommand.ExecuteAsync(null);
+        vm.ResetOnDisconnect();
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            Assert.True(ReadLines(platform.Answer!)[0].RootElement.GetProperty("recording_at_fetch").GetBoolean());
+        }
+        finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_CadenceValuesReadBackExactly_AndThePanelsVerdictIsSaved()
+    {
+        // Just past the Timer thresholds: a rounded cv of 0.25 would turn the panel's "not periodic" into "periodic".
+        var entry = new PeProfileEntry
+        {
+            ClassName = "AHUD", FuncName = "Pulse", Count = 30, FirstSeq = 1,
+            MeanPeriodMs = 40.0004, Cv = 0.2504, GapSamples = 9,
+        };
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = ResultOf(entry);
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+
+        try
+        {
+            var row = ReadLines(platform.Answer!)[1].RootElement;
+            Assert.Equal(0.2504, row.GetProperty("cv").GetDouble());
+            Assert.Equal(40.0004, row.GetProperty("period_ms").GetDouble());
+            Assert.Equal(entry.IsPeriodic, row.GetProperty("periodic").GetBoolean());
+            Assert.Equal(entry.Kind, row.GetProperty("badge").GetString());
+        }
+        finally { File.Delete(platform.Answer!); }
     }
 }
