@@ -562,7 +562,6 @@ public class LiveFuncsViewModelTests
         await vm.StopCommand.ExecuteAsync(null);
 
         Assert.Contains("showing top 2 of 900", vm.StatusText);
-        Assert.Contains("Fetch limit", vm.StatusText);   // [EXTPR-539-540-2026-10-02] the remedy, now that the cap is the user's
     }
 
     [Fact]
@@ -592,7 +591,6 @@ public class LiveFuncsViewModelTests
 
         Assert.Contains("PARTIAL", vm.BaselineStatus);
         Assert.Contains("900", vm.BaselineStatus);
-        Assert.Contains("Fetch limit", vm.BaselineStatus);
         Assert.True(vm.DiffMode);   // still usable — refusing would disable Diff on busy games
     }
 
@@ -630,7 +628,6 @@ public class LiveFuncsViewModelTests
 
         Assert.DoesNotContain("almost certainly", vm.StatusText);
         Assert.Contains("not in the idle top N", vm.StatusText);
-        Assert.Contains("Fetch limit", vm.StatusText);
     }
 
     [Fact]
@@ -789,5 +786,102 @@ public class LiveFuncsViewModelTests
 
         await vm.RefreshCommand.ExecuteAsync(null); // after it, a re-pull uses the current value
         Assert.Equal(4096, dump.LastLimit);
+    }
+
+    // ==================================================================
+    // [EXTPR-539-540-2026-10-02] When does a higher Fetch limit help? Only when the DLL sent
+    // as many rows as it was asked for (the cap is what cut the page) and the slider can still
+    // go higher. A page short of BOTH the limit and distinct_funcs lost rows the DLL could not
+    // read (stale UFunctions) or an abort cut it; no limit brings those back. Measured on
+    // Avowed 2026-10-06: 648 distinct, 543 rows at every limit from 8192 up.
+    // ==================================================================
+
+    private static PeProfileEntry[] Rows(int n)
+        => Enumerable.Range(0, n).Select(i => new PeProfileEntry
+        {
+            ClassName = "C" + i, FuncName = "F" + i, Count = n - i, FuncAddr = "0x" + (i + 1).ToString("X"),
+        }).ToArray();
+
+    [Fact]
+    public async Task CapHit_BelowTheMaximum_RaiseHelps()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;   // 64
+        dump.NextGet = TruncatedResultOf(900, Rows(64));
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task ShortOfTheLimit_RaiseDoesNotHelp()
+    {
+        var (vm, dump) = MakeVm();   // 512
+        dump.NextGet = TruncatedResultOf(900, Rows(2));
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+        Assert.Contains("showing top 2 of 900", vm.StatusText);   // still reported as incomplete
+    }
+
+    [Fact]
+    public async Task CapHit_AtTheMaximum_RaiseDoesNotHelp()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 15;   // 32768, the slider's end
+        dump.NextGet = TruncatedResultOf(40000, Rows(32768));
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task WholePage_RaiseDoesNotHelp()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        dump.NextGet = ResultOf(Rows(64));   // exactly the limit, but nothing more was recorded
+
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task BaselineCutByTheCap_RaiseHelps_EvenWhenTheActionPageIsWhole()
+    {
+        // The baseline has to be recorded again with a higher limit, so the advice stands.
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        dump.NextGet = TruncatedResultOf(900, Rows(64));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+
+        dump.NextGet = ResultOf(Rows(3));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.True(vm.RaiseFetchLimitHelps);
+    }
+
+    [Fact]
+    public async Task ClearBaseline_ForgetsTheBaselinesCap()
+    {
+        var (vm, dump) = MakeVm();
+        vm.FetchLimitExponent = 6;
+        dump.NextGet = TruncatedResultOf(900, Rows(64));
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.SetBaselineCommand.Execute(null);
+        dump.NextGet = ResultOf(Rows(3));
+        await vm.RefreshCommand.ExecuteAsync(null);
+
+        vm.ClearBaselineCommand.Execute(null);
+
+        Assert.False(vm.RaiseFetchLimitHelps);
     }
 }
