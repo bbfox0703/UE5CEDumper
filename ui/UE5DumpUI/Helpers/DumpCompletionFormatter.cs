@@ -38,12 +38,13 @@ internal static class DumpCompletionFormatter
     }
 
     /// <summary>[EXTPR-539-540-2026-10-02] D4.2: an estimate's time, as the confirmation shows it — rounded,
-    /// because it is scaled from one page.</summary>
+    /// because it is scaled from one page. Each form carries its own "about", so the sentence around it reads
+    /// for "less than a second" too.</summary>
     internal static string FormatDuration(TimeSpan t)
     {
-        if (t < TimeSpan.FromSeconds(1)) return "under a second";
-        if (t < TimeSpan.FromMinutes(2)) return $"{Math.Round(t.TotalSeconds):F0} s";
-        return $"{Math.Round(t.TotalMinutes):F0} min";
+        if (t < TimeSpan.FromSeconds(1)) return Core.Res.Get("str.Duration.UnderSecond");
+        if (t < TimeSpan.FromMinutes(2)) return Core.Res.Format("str.Duration.Seconds", Math.Round(t.TotalSeconds));
+        return Core.Res.Format("str.Duration.Minutes", Math.Round(t.TotalMinutes));
     }
 
     /// <summary>

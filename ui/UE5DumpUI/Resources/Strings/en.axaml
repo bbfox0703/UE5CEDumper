@@ -929,12 +929,16 @@
     <sys:String x:Key="str.Tip.Export.DumpAllObjectIndex">With this ticked, Dump All also writes &lt;name&gt;.objects.jsonl beside its file: every loaded object (packages, types and instances) with its GObjects index, address, class, outer and path. Addresses hold for this run of the game only. Before writing it, Dump All shows the estimated size and time and asks; declining still writes the class dump.</sys:String>
     <sys:String x:Key="str.DumpAll.Index.Estimating">Estimating the object index…</sys:String>
     <sys:String x:Key="str.DumpAll.Index.ConfirmTitle">Write the object index?</sys:String>
-    <sys:String x:Key="str.DumpAll.Index.ConfirmBody">The object index lists every loaded object: about {0:N0} objects, roughly {1}, taking about {2} (estimated from the first page). It is written to {3} after the class dump. Write it?</sys:String>
+    <sys:String x:Key="str.DumpAll.Index.ConfirmBody">The object index lists every loaded object: about {0:N0} objects, roughly {1}, taking {2} (estimated from the first page). It is written to {3} after the class dump. Write it?</sys:String>
     <sys:String x:Key="str.DumpAll.Index.ConfirmYes">Write both</sys:String>
     <sys:String x:Key="str.DumpAll.Index.ConfirmNo">Class dump only</sys:String>
     <sys:String x:Key="str.DumpAll.Index.Done"> + object index: {0:N0} objects ({1}) to {2}</sys:String>
     <sys:String x:Key="str.DumpAll.Index.NoSlots"> — ⚠ the DLL sent no GObjects index (an older build), so the objects carry none</sys:String>
     <sys:String x:Key="str.DumpAll.Index.Cancelled"> — the object index was cancelled; the class dump is complete</sys:String>
+    <sys:String x:Key="str.DumpAll.Index.StaleSibling"> — ⚠ an older object index, {0}, is still beside it; it is not this dump's</sys:String>
+    <sys:String x:Key="str.Duration.UnderSecond">less than a second</sys:String>
+    <sys:String x:Key="str.Duration.Seconds">about {0:F0} s</sys:String>
+    <sys:String x:Key="str.Duration.Minutes">about {0:F0} min</sys:String>
     <sys:String x:Key="str.DumpAll.Index.Failed"> — the object index failed ({0}); the class dump is complete</sys:String>
     <sys:String x:Key="str.Tip.Export.DumpAll">Stream every currently-loaded class (including BPGCs) with its properties and functions (with their parameters), every struct with its properties, and every enum with its entries, to a JSON Lines file. ⓘ Blueprint types exist only after their asset loads — load a level first, or a title-screen dump will miss most of them. Used by scripts/analysis/analyze_dumps.py to derive keyword tables / class bonuses / threshold calibration from real-game data. Time and file size vary with the game and the export settings.</sys:String>
     <sys:String x:Key="str.LiveWalker.ExportHeader">Export .h</sys:String>

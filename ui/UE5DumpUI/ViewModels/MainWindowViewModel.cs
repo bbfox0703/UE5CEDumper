@@ -3809,9 +3809,14 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             var dumpElapsed = dumpClock.Elapsed;
 
             var byteLength = new FileInfo(filePath).Length;
-            string indexNote = indexEstimate is null
-                ? ""
+            var (indexNote, indexWritten) = indexEstimate is null
+                ? ("", false)
                 : await WriteObjectIndexAsync(filePath, indexEstimate, dumpProgress, ct);
+            // An index left by an earlier export to this name pairs with this dump on every key it carries (module,
+            // pe_hash, file name), yet lists another moment's objects: say so rather than delete the user's file.
+            if (!indexWritten && File.Exists(ObjectIndexService.FileNameFor(filePath)))
+                indexNote += Res.Format("str.DumpAll.Index.StaleSibling",
+                                        Path.GetFileName(ObjectIndexService.FileNameFor(filePath)));
             // Report from what the dump ACTUALLY produced (class/error counts), not
             // from the file's byte length, and format the size in floating point (X4).
             progress.Complete(Helpers.DumpCompletionFormatter.Format(
@@ -3845,8 +3850,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// The class dump is already published, so a cancelled or failed index is reported here, never as a failed
     /// dump. Logs the estimate against what was written, so the one-page sample can be tuned.
     /// </summary>
-    private async Task<string> WriteObjectIndexAsync(string classDumpPath, ObjectIndexEstimate estimate,
-                                                     IProgress<DumpProgress> progress, CancellationToken ct)
+    private async Task<(string Note, bool Written)> WriteObjectIndexAsync(string classDumpPath,
+        ObjectIndexEstimate estimate, IProgress<DumpProgress> progress, CancellationToken ct)
     {
         var indexPath = ObjectIndexService.FileNameFor(classDumpPath);
         var indexTemp = indexPath + ".partial";
@@ -3862,24 +3867,24 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
             }
             File.Move(indexTemp, indexPath, overwrite: true);
             long bytes = new FileInfo(indexPath).Length;
-            _log.Info($"DumpAll object index: {r.Written} of {r.Total} slots' objects, {bytes} bytes, " +
-                      $"{sw.Elapsed.TotalSeconds:F1} s; estimated {estimate.Objects} objects, {estimate.Bytes} bytes, " +
-                      $"{estimate.Duration.TotalSeconds:F1} s; index missing={r.IndexMissing}");
-            return Res.Format("str.DumpAll.Index.Done", r.Written,
-                              Helpers.DumpCompletionFormatter.FormatSize(bytes), Path.GetFileName(indexPath))
-                   + (r.IndexMissing ? Res.Get("str.DumpAll.Index.NoSlots") : "");
+            _log.Info($"DumpAll object index: {r.Written} objects in {r.Total} slots, {bytes} bytes, " +
+                      $"{sw.Elapsed.TotalSeconds:F1} s; estimated {estimate.Objects} objects in {estimate.Slots} slots, " +
+                      $"{estimate.Bytes} bytes, {estimate.Duration.TotalSeconds:F1} s; index missing={r.IndexMissing}");
+            return (Res.Format("str.DumpAll.Index.Done", r.Written,
+                               Helpers.DumpCompletionFormatter.FormatSize(bytes), Path.GetFileName(indexPath))
+                    + (r.IndexMissing ? Res.Get("str.DumpAll.Index.NoSlots") : ""), true);
         }
         catch (OperationCanceledException)
         {
             TryDeletePartial(indexTemp);
             _log.Info("DumpAll object index cancelled; the class dump is published");
-            return Res.Get("str.DumpAll.Index.Cancelled");
+            return (Res.Get("str.DumpAll.Index.Cancelled"), false);
         }
         catch (Exception ex)
         {
             TryDeletePartial(indexTemp);
             _log.Error("DumpAll object index failed; the class dump is published", ex);
-            return Res.Format("str.DumpAll.Index.Failed", ex.Message);
+            return (Res.Format("str.DumpAll.Index.Failed", ex.Message), false);
         }
     }
 

@@ -74,6 +74,20 @@ class Dump:
         return m.replace("-Win64-Shipping.exe", "").replace(".exe", "")
 
 
+def load_dumps(paths: list[Path]) -> list[Dump]:
+    """[EXTPR-539-540-2026-10-02] Load each class dump, skipping Dump All's object index: it sits beside the
+    class dump as <name>.objects.jsonl, which a `dumps/*.jsonl` glob also matches, and read as a game it
+    would add one with no classes to every cross-game count."""
+    out: list[Dump] = []
+    for path in paths:
+        d = load_dump(path)
+        if d.meta.get("file") == "objects":
+            print(f"[skip] {path.name}: Dump All's object index, not a class dump", file=sys.stderr)
+            continue
+        out.append(d)
+    return out
+
+
 def load_dump(path: Path) -> Dump:
     d = Dump(path=path)
     with path.open(encoding="utf-8") as f:
@@ -745,13 +759,15 @@ def main(argv: list[str] | None = None) -> int:
     if not args.dumps:
         p.error("at least one dump file is required")
 
-    dumps: list[Dump] = []
     for path in args.dumps:
         if not path.exists():
             print(f"[error] missing dump: {path}", file=sys.stderr)
             return 2
         print(f"[load] {path} ...", file=sys.stderr)
-        dumps.append(load_dump(path))
+    dumps = load_dumps(list(args.dumps))
+    if not dumps:
+        print("[error] no class dump among the files (only object indexes)", file=sys.stderr)
+        return 2
 
     aggs = [aggregate(d, game_only=not args.include_engine) for d in dumps]
 

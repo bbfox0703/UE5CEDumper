@@ -32,9 +32,8 @@ public interface IDumpService
     /// DLL emit each object's full path (Ubel::GetFullName) as <c>full_path</c>,
     /// surfaced on <see cref="UObjectNode.FullPath"/>. Off by default so the hot
     /// Object Tree paginate stays lean (a path string per object is ~19 MB over
-    /// 486K objects); only DumpAllService's GameOnly pass sets it, to skip
-    /// engine-package classes before walking them. Placed after <c>ct</c> to keep
-    /// the existing 3-arg call sites unchanged.
+    /// 486K objects), so a caller sets it only when it needs paths. Placed after
+    /// <c>ct</c> to keep the existing 3-arg call sites unchanged.
     /// </summary>
     Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false);
 

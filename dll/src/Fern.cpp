@@ -1930,8 +1930,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int total  = Aura::GetCount();
             // Opt-in per-object full path (Ubel::GetFullName). Gated behind
             // include_path so the hot Object Tree paginate stays lean — a path
-            // string per object costs ~19 MB over 486K objects, and few callers
-            // need one (Dump All's pre-walk engine skip, the object index).
+            // string per object costs ~19 MB over 486K objects, so a caller asks
+            // for it only when it needs paths.
             bool includePath = request.value("include_path", false);
             // [EXTPR-539-540-2026-10-02] D4 (R3): opt-in GObjects slot per object, for the object index. The
             // rows skip null and unnamed slots, so a reader cannot work the slot out from a row's position.

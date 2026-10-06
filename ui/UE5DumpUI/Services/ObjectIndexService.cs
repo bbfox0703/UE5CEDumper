@@ -17,7 +17,9 @@ namespace UE5DumpUI.Services;
 ///     <c>index</c> is the GObjects slot (Dumper-7's lesson: two files match by slot within one session).
 ///     A DLL older than build 3625 sends none, and then the line has none: the handler skips null and unnamed
 ///     slots, so a row's place in the page is not its slot.</item>
-///   <item><c>{"kind":"summary","objects_written":...,"objects_total":...,"index_missing":...}</c> — last.</item>
+///   <item><c>{"kind":"summary","objects_written":...,"objects_total":...,"index_missing":...}</c> — last.
+///     <c>objects_total</c> is the pool's SLOT count, null and unnamed slots included, so it exceeds
+///     <c>objects_written</c> on any pool with holes.</item>
 /// </list>
 /// Addresses are valid for that run of the game only. The file can run to hundreds of megabytes on a big pool,
 /// so the caller shows <see cref="EstimateAsync"/>'s numbers and asks before writing it (D4.2).
@@ -31,8 +33,10 @@ public static class ObjectIndexService
 
     /// <summary>
     /// Fetch ONE page, serialize it exactly as <see cref="GenerateAsync"/> will, and scale it to the pool:
-    /// bytes per scanned slot × the pool's slot count, and the page's round trip × the page count. An
-    /// approximation, since the pool's later pages are not its first.
+    /// rows and bytes per scanned slot × the pool's slot count, and the page's round trip × the page count.
+    /// The pool's slot count includes the null and unnamed slots the list skips, so objects are estimated from
+    /// the page's rows per slot, not taken as the slot count. An approximation, since the pool's later pages
+    /// are not its first.
     /// </summary>
     public static async Task<ObjectIndexEstimate> EstimateAsync(
         IDumpService dump, CancellationToken ct = default, TimeProvider? clock = null)
@@ -43,7 +47,7 @@ public static class ObjectIndexService
         var elapsed = clock.GetElapsedTime(start);
         int scanned = page.Scanned > 0 ? page.Scanned : page.Objects.Count;
         if (page.Total <= 0 || scanned <= 0)
-            return new ObjectIndexEstimate(0, 0, TimeSpan.Zero);
+            return new ObjectIndexEstimate(0, 0, 0, TimeSpan.Zero);
 
         long pageBytes = 0;
         var sb = new StringBuilder(256);
@@ -55,7 +59,8 @@ public static class ObjectIndexService
         }
         int pages = (page.Total + scanned - 1) / scanned;
         long bytes = (long)Math.Round((double)pageBytes / scanned * page.Total) + EnvelopeBytes;
-        return new ObjectIndexEstimate(page.Total, bytes, elapsed * pages);
+        int objects = (int)Math.Round((double)page.Objects.Count / scanned * page.Total);
+        return new ObjectIndexEstimate(objects, page.Total, bytes, elapsed * pages);
     }
 
     /// <summary>Write the index to <paramref name="output"/>. <paramref name="classDumpFile"/> is the class
@@ -139,8 +144,9 @@ public static class ObjectIndexService
     }
 }
 
-/// <summary>What the object index will roughly cost: objects, file bytes, time to write.</summary>
-public sealed record ObjectIndexEstimate(int Objects, long Bytes, TimeSpan Duration);
+/// <summary>What the object index will roughly cost: objects (estimated from the first page's rows per slot),
+/// the pool's slot count, file bytes, time to write.</summary>
+public sealed record ObjectIndexEstimate(int Objects, int Slots, long Bytes, TimeSpan Duration);
 
 /// <summary>What the object index wrote. <see cref="IndexMissing"/>: the DLL sent no GObjects index for some
 /// object (a DLL older than build 3625).</summary>
