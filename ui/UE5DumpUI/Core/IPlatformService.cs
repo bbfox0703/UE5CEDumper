@@ -69,6 +69,8 @@ public interface IPlatformService
     /// <summary>
     /// Show a platform save-file dialog.
     /// Returns the chosen file path, or null if user cancelled.
+    /// <paramref name="filterExtension"/> is the one file type's extension, with or without its
+    /// leading dot (".csv" or "csv").
     /// </summary>
     Task<string?> ShowSaveFileDialogAsync(string defaultFileName, string filterName, string filterExtension);
 
@@ -76,6 +78,7 @@ public interface IPlatformService
     /// Show a platform open-file dialog. Returns the chosen file path, or null if
     /// the user cancelled. Default returns null so non-Windows implementations and
     /// test doubles need not provide it; the real Windows service overrides it.
+    /// <paramref name="filterExtension"/> takes either form, as for <see cref="ShowSaveFileDialogAsync"/>.
     /// </summary>
     Task<string?> ShowOpenFileDialogAsync(string filterName, string filterExtension) =>
         Task.FromResult<string?>(null);
