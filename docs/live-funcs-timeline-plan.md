@@ -1,8 +1,9 @@
 # Live Funcs — call timeline and stack snapshots (feasibility) `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 **Status: FEASIBILITY ONLY — nothing is built, and nothing here is decided until the maintainer says so.**
-**Decided 2026-10-06:** T1 (now a ring buffer), T4, T5 and T6 — see "Decisions" — after a design review whose
-findings are TR1–TR7 below. Not measured yet: the maintainer deferred "Measure before building" the same day.
+**Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8 — see
+"Decisions" — after a design review whose findings are TR1–TR7 below. **Step 1 (the timeline) is being built from
+2026-10-07** (maintainer: "start"); the measurements below are taken as part of it.
 Written 2026-10-04 from a reading of the code, not from a measurement: every size and rate below is arithmetic or
 an example, and the section "Measure before building" lists what has to be measured first.
 
@@ -26,7 +27,7 @@ fetch limit, but nothing here comes from those PRs. Its commits do **not** carry
   native entry point), `ParmsSize` / `NumParms` / `ReturnValueOffset` offsets, the function-parameter walk, and
   the AOBMaker CE bridge's `NavigateDisassembler` / `NavigateHexView` ([aobmaker-integration.md](aobmaker-integration.md)).
 
-## The buffer — a ring, 64 or 128 MB (T1, changed 2026-10-06)
+## The buffer — a ring, 32 to 512 MB (T1, changed 2026-10-06 and 2026-10-07)
 
 The first proposal (2026-10-04) was fill-then-stop: append until full, then stop the log. **Changed 2026-10-06 to
 a ring** (TR1): when the buffer is full, the newest call overwrites the oldest, so Stop always keeps the calls just
@@ -37,11 +38,14 @@ camera) can fill a fill-then-stop buffer before the action happens, and the acti
   and the same cost as the fill-then-stop shape.
 - **The size is a cap the user picks, never computed from a time target.** How many seconds the ring kept is the
   result, reported after Stop ("kept the last 21 s"), not a setting: a seconds target on a busy game could ask for
-  a gigabyte inside the game process (maintainer, 2026-10-06).
+  a gigabyte inside the game process (maintainer, 2026-10-06). Beside the slider the UI shows an **estimate** of
+  the seconds it would keep, from the last Live Funcs recording's calls per second; how much memory the game can
+  spare is the user's call (T1, 2026-10-07).
 - Every record carries its sequence number, so after Stop the oldest kept call is known, and a call whose entry
   record was overwritten is marked as entered before the window.
-- Allocate at Start and free on Reset / client disconnect, as Linie's table already is: 128 MB sitting in the
-  game process when nobody is recording is not acceptable. Freeing it safely needs TR2.
+- Allocate at Start and free on Reset / client disconnect, as Linie's table already is: 512 MB sitting in the
+  game process when nobody is recording is not acceptable. Freeing it safely needs TR2. A failed allocation
+  refuses the Start with a message; the trace never records without its buffer.
 - The buffer size is a slider, persisted with the trace's other settings — see "Decisions" below.
 
 ## 1. Call timeline — feasible, recommended first
@@ -162,12 +166,14 @@ T5); the others are requirements for building.
 
 | # | Item | Decision |
 |---|---|---|
-| T1 | **Buffer** (maintainer, 2026-10-04; **changed 2026-10-06**) | A **ring** that keeps the calls just before Stop (TR1), not fill-then-stop. A **slider: 64 / 128 MB, default 64**. The size is a cap the user picks, never computed from a seconds target; how many seconds it kept is reported after Stop. 128 is dropped if measuring shows it too heavy after Stop ("Measure before building"). Persisted across UI sessions, and disabled while recording, like the Live Funcs sliders. Was: fill-then-stop, 32 / 64 / 128 MB, default 32. |
+| T1 | **Buffer** (maintainer, 2026-10-04; changed 2026-10-06 and **2026-10-07**) | A **ring** that keeps the calls just before Stop (TR1), not fill-then-stop. A **power-of-two slider: 32 / 64 / 128 / 256 / 512 MB, default 64**; whether the game can spare the memory is the user's call. Beside it, an **estimate of the seconds it keeps**, from the last Live Funcs recording's calls per second and the bytes per call; no estimate before a recording. The maintainer offered a time-first choice (pick seconds, the UI works out the memory) and a memory-first slider; built as the slider with the time shown beside it, because the call rate changes with what the game is doing and a time target could ask for any amount of memory. The size is never computed from a seconds target. How many seconds it kept is reported after Stop. A failed allocation refuses the Start. Persisted across UI sessions, and disabled while recording, like the Live Funcs sliders. Was: 64 / 128 MB (2026-10-06); fill-then-stop, 32 / 64 / 128 MB, default 32 (2026-10-04). |
 | T2 | **Recording** (maintainer's direction 2026-10-04; details ⚠ to confirm) | **The trace rides on the Live Funcs recording; it has no Start / Stop of its own.** Live Funcs' toolbar gains a "Trace" checkbox and the buffer slider; ticked, the one Start records the count table and the trace over the same window. With Live Funcs not recording, the trace cannot record either. Replaces the first proposal of a separate tab with its own Start. |
-| T3 | **Viewing and choosing functions** (proposal 2026-10-04, ⚠ awaiting the maintainer) | The trace is **viewed** in its own top-level tab (working name "Call Trace"). Functions for snapshots (sections 2 and 3) are **ticked in the Live Funcs table** from an earlier recording, and the next Start captures them. |
+| T3 | **Viewing and choosing functions** (proposal 2026-10-04; **decided 2026-10-07**) | The trace is **viewed** in its own top-level tab (working name "Call Trace"). Functions are **ticked in the Live Funcs table** from an earlier recording; the next Start traces only inside them (T5 (a)) and, from step 2 on, snapshots them (sections 2 and 3). **With nothing ticked, the trace records every call** — the first proposal — after a confirmation (T7). |
 | T4 | **Registers** (maintainer, 2026-10-06) | **Kept as planned: no register capture.** The maintainer first asked for GPR / XMM / YMM snapshots. At the hook only rcx, rdx and r8 (object, UFunction, parameter block) mean anything: the rest of the register file is the dispatcher's, and `ProcessEvent` takes no float arguments, so XMM / YMM hold leftovers. A UFunction's float and vector arguments are in the parameter block, decoded by name in view C. Registers matter inside the native implementation, which is Cheat Engine's debugger; view D hands the entry point over. A faithful capture would also need a MASM entry stub, because the C++ detour can change volatile registers before it reads them. |
-| T5 | **Recording scope** (maintainer, 2026-10-06) | Two opt-in filters applied at record time (TR4), **(a) built first**. **(a) Ticked-function scope:** record only the ticked functions' calls and everything nested inside them on the same thread — tick OnJump, get the call tree under OnJump. **(b) Leave out per-frame functions:** the previous recording's per-frame list (`per_frame_funcs`, build 3630 on), passed at Start. Both off records everything. ⚠ To confirm when building: (a) uses the same tick column as the snapshots (T3). |
+| T5 | **Recording scope** (maintainer, 2026-10-06) | Two opt-in filters applied at record time (TR4), **(a) built first**. **(a) Ticked-function scope:** applies whenever functions are ticked (T3) — record only the ticked functions' calls and everything nested inside them on the same thread; tick OnJump, get the call tree under OnJump. **(b) Leave out per-frame functions:** a checkbox; the previous recording's per-frame list (`per_frame_funcs`, build 3630 on), passed at Start. Nothing ticked and (b) off records everything. One tick column serves (a) and the snapshots (maintainer, 2026-10-07). |
 | T6 | **Experimental only** (maintainer, 2026-10-06) | The Trace checkbox, the buffer slider, the scope options, the tick column and the Call Trace tab show only while the experimental tabs are enabled (the System tab's checkbox, `ExperimentalGate`). The DLL never sees that flag: it allocates the buffer and records only when Start asks for the trace, so with the trace off its hot path is exactly today's. |
+| T7 | **Nothing ticked** (maintainer, 2026-10-07) | A Start with Trace on and no function ticked asks first: nothing is ticked, so the trace records every call — a wide range, and more load on the game. Confirmed once, it does not ask again in the same UI session; a second Start with nothing ticked runs at once. Cancel leaves everything as it was and starts nothing. |
+| T8 | **The ticks seen from the Call Trace tab** (maintainer, 2026-10-07) | One tick state, set in the Live Funcs table. The Call Trace tab shows a copy of the trace settings and of the ticked functions, grayed out and read-only, with a hint that they are changed in Live Funcs. |
 
 ### Why the trace rides on Live Funcs (T2, T3)
 

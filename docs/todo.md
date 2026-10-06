@@ -251,16 +251,18 @@ Open work only. **Read this when deciding what to do next.**
 
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-- ⬜ **Planned, not built, not measured:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). A ring
-  buffer (64 / 128 MB, default 64) that keeps the calls just before Stop, two small records per call (entry and
-  return), the call tree computed after Stop; then parameter and native-stack snapshots for ticked functions only.
+- ⬜ **Step 1 (the timeline) in progress from 2026-10-07:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+  A ring buffer (a power-of-two slider, 32–512 MB, default 64, with the seconds it keeps estimated beside it) that
+  keeps the calls just before Stop, two small records per call (entry and return), the call tree computed after
+  Stop; then parameter and native-stack snapshots for ticked functions only.
   Effort **L** across the three steps, risk **med** (it adds work to the ProcessEvent hot path; measure first).
-  Our own feature: its commits carry **no** `Co-authored-by: fireundubh` trailer. **Decided 2026-10-06** after a
-  design review (TR1–TR7): the ring (T1), no register capture (T4), two record-time filters — the ticked-function
-  scope first, then leaving out per-frame functions (T5) — and experimental only (T6). The trace rides on the
-  Live Funcs recording (a "Trace" checkbox, no Start of its own); viewed in its own "Call Trace" tab; snapshot
-  functions ticked in the Live Funcs table (proposal, awaiting the maintainer). **Next:** the plan's "Measure
-  before building", deferred by the maintainer on 2026-10-06.
+  Our own feature: its commits carry **no** `Co-authored-by: fireundubh` trailer. **Decided 2026-10-06 and
+  2026-10-07** after a design review (TR1–TR7): the ring (T1), no register capture (T4), two record-time filters —
+  the ticked-function scope first, then leaving out per-frame functions (T5) — experimental only (T6), and a
+  once-per-session confirmation when nothing is ticked (T7). The trace rides on the Live Funcs recording (a
+  "Trace" checkbox, no Start of its own); viewed in its own "Call Trace" tab, which shows the ticks and the trace
+  settings grayed out (T8); functions ticked in the Live Funcs table (T3). The plan's "Measure before building"
+  is taken as part of step 1.
 
 -----
 
