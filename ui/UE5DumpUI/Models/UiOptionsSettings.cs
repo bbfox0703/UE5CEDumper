@@ -44,6 +44,7 @@ public sealed class UiOptionsSettings
     public GameClassFilterUiOptions GameClassFilter { get; set; } = new();
     public ProxyDeployUiOptions ProxyDeploy { get; set; } = new();
     public SystemUiOptions System { get; set; } = new();
+    public LiveFuncsUiOptions LiveFuncs { get; set; } = new();
 }
 
 /// <summary>System-tab maintenance preferences.</summary>
@@ -205,6 +206,13 @@ public sealed class InterestingPropsUiOptions
 public sealed class ConsoleUiOptions
 {
     public bool GameOnly { get; set; }
+}
+
+/// <summary>Live Funcs capture settings. The fetch limit is stored as the slider's exponent, like the toolbar's
+/// power-of-two sliders, so a loaded value needs no snapping; the view model clamps it to the slider's range.</summary>
+public sealed class LiveFuncsUiOptions
+{
+    public int FetchLimitExponent { get; set; } = 9;
 }
 
 public sealed class GameClassFilterUiOptions

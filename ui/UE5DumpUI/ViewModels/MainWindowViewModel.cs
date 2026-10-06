@@ -2412,6 +2412,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Track(InterestingFunctions, InterestingFuncsPersist);
         Track(InterestingProperties, InterestingPropsPersist);
         Track(Console, ConsolePersist);
+        Track(LiveFuncs, LiveFuncsPersist);
         Track(GameClassFilter, GameClassFilterPersist);
         if (Snapshot != null) Track(Snapshot, SnapshotPersist);
         if (Spc != null) Track(Spc, SpcPersist);
@@ -2510,6 +2511,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(InterestingPropertiesViewModel.ShowAll),
     };
     private static readonly HashSet<string> ConsolePersist = new() { nameof(ConsoleViewModel.GameOnly) };
+    private static readonly HashSet<string> LiveFuncsPersist = new() { nameof(LiveFuncsViewModel.FetchLimitExponent) };
     private static readonly HashSet<string> GameClassFilterPersist = new()
     {
         nameof(GameClassFilterViewModel.GameClassesOnly),
@@ -2601,6 +2603,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         InterestingProperties.ShowAll = o.InterestingProps.ShowAll;
 
         Console.GameOnly = o.Console.GameOnly;
+        LiveFuncs.FetchLimitExponent = o.LiveFuncs.FetchLimitExponent;   // the VM clamps a hand-edited value
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
         // Clamped on LOAD too: ui-options.json is plain text a user can edit, and a
         // hand-written 0 would make the Classes tab return nothing with no visible cause.
@@ -2756,6 +2759,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.InterestingProps.ShowAll = InterestingProperties.ShowAll;
 
         o.Console.GameOnly = Console.GameOnly;
+        o.LiveFuncs.FetchLimitExponent = LiveFuncs.FetchLimitExponent;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
         o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
 
