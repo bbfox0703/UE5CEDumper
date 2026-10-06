@@ -251,14 +251,16 @@ Open work only. **Read this when deciding what to do next.**
 
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-- ⬜ **Feasibility written, nothing decided:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). A
-  fill-then-stop buffer (32 / 64 MB) of per-call records with nesting depth and duration, then parameter and
-  native-stack snapshots for ticked functions only. Effort **L** across the three steps, risk **med** (it adds
-  work to the ProcessEvent hot path; measure first). Our own feature: its commits carry **no**
-  `Co-authored-by: fireundubh` trailer. Buffer: slider 32 / 64 / 128 MB, default 32 (16 / 32 / 64 if 128
-  measures too heavy). The trace rides on the Live Funcs recording (a "Trace" checkbox, no Start of
-  its own); viewed in its own experimental "Call Trace" tab; snapshot functions ticked in the Live Funcs table
-  (proposal, awaiting the maintainer).
+- ⬜ **Planned, not built, not measured:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). A ring
+  buffer (64 / 128 MB, default 64) that keeps the calls just before Stop, two small records per call (entry and
+  return), the call tree computed after Stop; then parameter and native-stack snapshots for ticked functions only.
+  Effort **L** across the three steps, risk **med** (it adds work to the ProcessEvent hot path; measure first).
+  Our own feature: its commits carry **no** `Co-authored-by: fireundubh` trailer. **Decided 2026-10-06** after a
+  design review (TR1–TR7): the ring (T1), no register capture (T4), two record-time filters — the ticked-function
+  scope first, then leaving out per-frame functions (T5) — and experimental only (T6). The trace rides on the
+  Live Funcs recording (a "Trace" checkbox, no Start of its own); viewed in its own "Call Trace" tab; snapshot
+  functions ticked in the Live Funcs table (proposal, awaiting the maintainer). **Next:** the plan's "Measure
+  before building", deferred by the maintainer on 2026-10-06.
 
 -----
 

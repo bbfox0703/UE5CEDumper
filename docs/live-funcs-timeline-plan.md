@@ -1,6 +1,8 @@
 # Live Funcs — call timeline and stack snapshots (feasibility) `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 **Status: FEASIBILITY ONLY — nothing is built, and nothing here is decided until the maintainer says so.**
+**Decided 2026-10-06:** T1 (now a ring buffer), T4, T5 and T6 — see "Decisions" — after a design review whose
+findings are TR1–TR7 below. Not measured yet: the maintainer deferred "Measure before building" the same day.
 Written 2026-10-04 from a reading of the code, not from a measurement: every size and rate below is arithmetic or
 an example, and the section "Measure before building" lists what has to be measured first.
 
@@ -24,28 +26,39 @@ fetch limit, but nothing here comes from those PRs. Its commits do **not** carry
   native entry point), `ParmsSize` / `NumParms` / `ReturnValueOffset` offsets, the function-parameter walk, and
   the AOBMaker CE bridge's `NavigateDisassembler` / `NavigateHexView` ([aobmaker-integration.md](aobmaker-integration.md)).
 
-## The shape the maintainer proposed
+## The buffer — a ring, 64 or 128 MB (T1, changed 2026-10-06)
 
-One buffer of fixed size (32 MB or 64 MB), allocated at Start. Calls are appended until it is full; then
-recording of the log stops (the count table can keep going). After Stop the UI shows it or exports it.
+The first proposal (2026-10-04) was fill-then-stop: append until full, then stop the log. **Changed 2026-10-06 to
+a ring** (TR1): when the buffer is full, the newest call overwrites the oldest, so Stop always keeps the calls just
+before it. The usual use is Start, go and do the action, Stop; the calls that fire every frame (Tick, animation,
+camera) can fill a fill-then-stop buffer before the action happens, and the action is lost.
 
-- Appending is one atomic `fetch_add` on the write index: no lock, and a full buffer is just "index ≥ capacity".
-- Allocate at Start and free on Reset / client disconnect, as Linie's table already is: 64 MB sitting in the
-  game process when nobody is recording is not acceptable.
+- Appending is one atomic `fetch_add` on the write index; the slot is that index modulo the capacity. No lock,
+  and the same cost as the fill-then-stop shape.
+- **The size is a cap the user picks, never computed from a time target.** How many seconds the ring kept is the
+  result, reported after Stop ("kept the last 21 s"), not a setting: a seconds target on a busy game could ask for
+  a gigabyte inside the game process (maintainer, 2026-10-06).
+- Every record carries its sequence number, so after Stop the oldest kept call is known, and a call whose entry
+  record was overwritten is marked as entered before the window.
+- Allocate at Start and free on Reset / client disconnect, as Linie's table already is: 128 MB sitting in the
+  game process when nobody is recording is not acceptable. Freeing it safely needs TR2.
 - The buffer size is a slider, persisted with the trace's other settings — see "Decisions" below.
 
 ## 1. Call timeline — feasible, recommended first
 
-**One record per call, about 40 bytes:** a high-resolution timestamp (the current `nowMs` is too coarse for a
-timeline; this costs one more clock read per call), the UFunction, the calling object (`thisObj`), the thread id,
-the **nesting depth**, and the duration, written back into the same record when the call returns (the same thread
-writes both, so no lock). 64 MB holds about 1.6 million records, 32 MB about 0.8 million. How long that lasts depends on how often the
-game calls `ProcessEvent`, which has not been measured: as an example only, at 50,000 calls per second 64 MB
-lasts about half a minute.
+**Two records per call, about 32–40 bytes each (TR3, 2026-10-06):** an entry record — a high-resolution timestamp
+(the current `nowMs` is too coarse for a timeline; this costs one more clock read per call), the UFunction, the
+calling object (`thisObj`), the thread id — and a return record (timestamp, thread id) written after the original
+returns. The first plan wrote the duration back into the entry record; a separate return record never writes into
+a slot the ring has already handed to a newer call. 64 MB holds close to 1 million calls, 128 MB about 2 million.
+How long that lasts depends on how often the game calls `ProcessEvent`, which has not been measured: as an example
+only, at 50,000 calls per second 64 MB keeps about the last 20 seconds.
 
-**Nesting depth is the part worth having.** `ProcessEvent` is re-entered from inside UFunctions. A `thread_local`
-counter raised before calling the original and lowered after it turns the flat log into a call tree: which
-UFunction ran inside which. That is the "fuller call stack" asked for on PR 540, and it is cheap.
+**Nesting depth is the part worth having.** `ProcessEvent` is re-entered from inside UFunctions, so one thread's
+entry and return records nest, and pairing them after Stop turns the flat log into a call tree: which UFunction
+ran inside which, and for how long. That is the "fuller call stack" asked for on PR 540. It is computed after
+Stop, not kept in a `thread_local` counter on the hot path (TR3): a counter that an exception unwinds past stays
+wrong for the rest of the recording, while a missing return record marks only that one call as "did not return".
 
 **Names are resolved after Stop**, once per distinct function and object, never on the hot path. Objects can be
 destroyed between the call and Stop, so a name resolved later is "what is at that address now"; validate it
@@ -65,13 +78,13 @@ dump is mostly noise. What is worth keeping is the **parameter block**:
 - Limit: an `FString`, `TArray` or object parameter is stored as a pointer. Following it at call time costs time
   and risks reading freed memory; following it at Stop reads what is there then. Start with pointers only.
 - Doing this for every call would fill the buffer many times faster. **Only for functions the user ticks** in the
-  Live Funcs table.
+  Live Funcs table. Snapshots go to a buffer of their own, and the call's entry record holds their index (TR6).
 
 ## 3. Native stack snapshots — feasible, chosen functions only
 
 `RtlCaptureStackBackTrace` (or `RtlVirtualUnwind` over `.pdata`) gives the native return addresses above the
 hook. It costs far more than a timeline record, so again **only for ticked functions**, with a fixed depth
-(16 frames = 128 bytes).
+(16 frames = 128 bytes) and a cap on how many are taken (TR7).
 
 ### Several views, like Cheat Engine — or just a dump?
 
@@ -84,13 +97,14 @@ Recommendation: **give the views that only we can give, and hand everything else
 | **C. Parameters** | The parameter block from section 2, decoded by name and type | CE has no idea where a UFunction's parameters are. |
 | **D. To Cheat Engine** | "Open in CE disassembler" on a frame, and "copy as CE address" (`"Game-Win64-Shipping.exe"+1A2B3C`, quoted because of the hyphens) | Through the existing AOBMaker bridge (`NavigateDisassembler`). Disassembly, breakpoints and tracing stay CE's job; we do not rebuild them. |
 
-Not planned: our own disassembler view, register views beyond the three arguments, and Blueprint's script stack
+Not planned: our own disassembler view, register views beyond the three arguments (T4), and Blueprint's script stack
 (`FFrame`), whose layout changes between UE versions — the nesting depth from section 1 already gives the
 UFunction-level stack.
 
 ## Recommended order
 
-1. **Timeline** with nesting depth and duration, fill-then-stop buffer, export to `.jsonl` / CSV. Then the call-tree
+1. **Timeline** with nesting depth and duration, the ring buffer (T1) and the recording scope (T5: the
+   ticked-function scope first, then leaving out per-frame functions), export to `.jsonl` / CSV. Then the call-tree
    view in the UI.
 2. **Parameter snapshots** for ticked functions (view C).
 3. **Native stack** for ticked functions: view A first, view D next to it, view B last.
@@ -101,17 +115,59 @@ UFunction-level stack.
 - What the extra clock read and record write cost per call, with and without recording (frame time on a fixture).
 - What one stack capture costs, to decide how many ticked functions are reasonable.
 - What a **128 MB** buffer costs after Stop, which decides whether 128 stays on the slider: moving it out of
-  the game over the pipe, resolving its names, and loading about 3.3 million rows into the UI. The hot-path
+  the game (TR5), resolving its names, and loading about 2 million calls into the UI. The hot-path
   cost per call does not depend on the buffer size; what grows is the memory held in the game process and
   everything that happens after Stop.
+- Not measured yet: the maintainer deferred this list on 2026-10-06. Nothing is built before it is measured.
+
+## Design review, 2026-10-06 (TR1–TR7)
+
+A reading of this plan against `Stark.cpp` and `Linie.cpp`, not a measurement. TR1 and TR4 became decisions (T1,
+T5); the others are requirements for building.
+
+- **TR1 — fill-then-stop loses the action.** → T1, a ring.
+- **TR2 — freeing the buffer under a call in flight crashes the game.** A `ProcessEvent` call can nest deep and
+  run long. If Stop, Reset or a disconnect frees the buffer while a call is still inside the original, its return
+  record lands in freed memory, on the game's thread. Linie's table is safe because every touch is under its
+  mutex; a lock-free buffer needs a guard of its own: a generation number and an in-flight count around each short
+  write (never held across the call to the original), and the buffer freed only at a count of zero.
+- **TR3 — a separate return record, not a write-back.** See section 1. It also means the hook does work after
+  the original returns. Today `HookedProcessEvent` calls the original outside its guard on purpose (Stark.cpp), so
+  that post-call work needs a guard of its own.
+- **TR4 — filter at record time, not only with a bigger buffer.** → T5. For the ticked-function scope: a fixed
+  set of ticked UFunction addresses, read-only during the recording, one lookup per call. The scope is marked
+  with the stack pointer at the ticked call's entry, and its return clears the mark; if an exception unwinds past
+  the ticked call, the first call made from higher up the stack clears it instead, so the scope cannot stay open.
+- **TR5 — the volume after Stop.** 64 MB is about 1 million calls; as JSON over the pipe that is roughly 100 MB
+  of text, and `pe_profile_get` moved 144 KB in about 15 ms, so this would take on the order of ten seconds. Move
+  it as binary pages with a separate name table, and have the UI load a time range or one subtree, never a tree
+  of a million nodes.
+- **TR6 — snapshots in a buffer of their own.** Parameter blocks and stack copies vary in size; in the ring they
+  would push calls out faster and make slots variable. The entry record holds the snapshot's index.
+- **TR7 — cap the native stack captures.** One walk costs microseconds (an estimate). A ticked function that
+  runs on every actor every frame would be tens of thousands a second and drop frames. Cap it per function (the
+  first N calls) or per second.
+
+### Cost on and off — arithmetic, not measured
+
+| What is on | Extra per `ProcessEvent` call | Expected effect |
+|---|---|---|
+| Trace off, or the experimental tabs off | nothing beyond today's one relaxed atomic load and branch | none |
+| Timeline (entry and return records) | about 20–50 ns: a clock read, a `fetch_add`, two small writes | at 50,000 calls a second, about 0.1–0.25% of one core |
+| Parameter snapshots, ticked functions only | two copies of the parameter block, tens of ns | negligible |
+| Native stack, ticked functions only | 1–10 µs a capture | drops frames on a busy function without TR7's cap |
+| Every register on every call (not planned, T4) | about 700 B a record | about 20 times the buffer use: 64 MB would last under two seconds |
 
 ## Decisions
 
 | # | Item | Decision |
 |---|---|---|
-| T1 | **Buffer size** (maintainer, 2026-10-04) | A **slider: 32 / 64 / 128 MB, default 32**. Planned, not final: if measuring shows 128 MB is too heavy ("Measure before building"), the slider becomes **16 / 32 / 64 MB**, default still 32. Persisted across UI sessions, and disabled while recording, like the Live Funcs sliders. |
+| T1 | **Buffer** (maintainer, 2026-10-04; **changed 2026-10-06**) | A **ring** that keeps the calls just before Stop (TR1), not fill-then-stop. A **slider: 64 / 128 MB, default 64**. The size is a cap the user picks, never computed from a seconds target; how many seconds it kept is reported after Stop. 128 is dropped if measuring shows it too heavy after Stop ("Measure before building"). Persisted across UI sessions, and disabled while recording, like the Live Funcs sliders. Was: fill-then-stop, 32 / 64 / 128 MB, default 32. |
 | T2 | **Recording** (maintainer's direction 2026-10-04; details ⚠ to confirm) | **The trace rides on the Live Funcs recording; it has no Start / Stop of its own.** Live Funcs' toolbar gains a "Trace" checkbox and the buffer slider; ticked, the one Start records the count table and the trace over the same window. With Live Funcs not recording, the trace cannot record either. Replaces the first proposal of a separate tab with its own Start. |
 | T3 | **Viewing and choosing functions** (proposal 2026-10-04, ⚠ awaiting the maintainer) | The trace is **viewed** in its own top-level tab (working name "Call Trace"). Functions for snapshots (sections 2 and 3) are **ticked in the Live Funcs table** from an earlier recording, and the next Start captures them. |
+| T4 | **Registers** (maintainer, 2026-10-06) | **Kept as planned: no register capture.** The maintainer first asked for GPR / XMM / YMM snapshots. At the hook only rcx, rdx and r8 (object, UFunction, parameter block) mean anything: the rest of the register file is the dispatcher's, and `ProcessEvent` takes no float arguments, so XMM / YMM hold leftovers. A UFunction's float and vector arguments are in the parameter block, decoded by name in view C. Registers matter inside the native implementation, which is Cheat Engine's debugger; view D hands the entry point over. A faithful capture would also need a MASM entry stub, because the C++ detour can change volatile registers before it reads them. |
+| T5 | **Recording scope** (maintainer, 2026-10-06) | Two opt-in filters applied at record time (TR4), **(a) built first**. **(a) Ticked-function scope:** record only the ticked functions' calls and everything nested inside them on the same thread — tick OnJump, get the call tree under OnJump. **(b) Leave out per-frame functions:** the previous recording's per-frame list (`per_frame_funcs`, build 3630 on), passed at Start. Both off records everything. ⚠ To confirm when building: (a) uses the same tick column as the snapshots (T3). |
+| T6 | **Experimental only** (maintainer, 2026-10-06) | The Trace checkbox, the buffer slider, the scope options, the tick column and the Call Trace tab show only while the experimental tabs are enabled (the System tab's checkbox, `ExperimentalGate`). The DLL never sees that flag: it allocates the buffer and records only when Start asks for the trace, so with the trace off its hot path is exactly today's. |
 
 ### Why the trace rides on Live Funcs (T2, T3)
 

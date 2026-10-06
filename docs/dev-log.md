@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (no build change) — Live Funcs call trace: a ring buffer, record-time filters, no register capture `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- A design review of [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md) and the maintainer's decisions.
+  Nothing is built or measured yet.
+- The trace buffer becomes a **ring** of 64 or 128 MB that keeps the calls just before Stop, instead of filling up
+  and stopping: Tick and the other per-frame calls could fill it before the action you are recording. Its size is
+  a cap you pick, never derived from a time target.
+- Two opt-in filters at record time: record only inside the ticked functions' calls, or leave out the functions
+  the previous recording found firing every frame.
+- No register capture: at the ProcessEvent hook only the object, the function and the parameter block mean
+  anything. The parameters are decoded by name instead, and registers inside native code stay Cheat Engine's job.
+- The trace options and the Call Trace tab show only with the experimental tabs on.
+- What the review requires of the build: freeing the buffer safely while calls are in flight, a separate return
+  record per call, a binary transfer after Stop, a separate buffer for snapshots, and a cap on native stack
+  captures.
+
 ## 2026-10-06 (build 3630) — Live Funcs can leave out the functions that fire every frame `[LIVEFUNCS-HIDE-PERFRAME]`
 
 - **Live Funcs ▸ Hide per-frame** (off by default, remembered): the DLL leaves out the functions that fire every
