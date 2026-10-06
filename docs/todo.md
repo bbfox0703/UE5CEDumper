@@ -319,9 +319,10 @@ the list from `scripts/analysis/engine_paths.py`.
   overstated it). ✅ **Live PASS, 2026-10-06:** steps 1, 2a and 3 on build 3625, step 2b (the CE Invoke script:
   `PARAM_COUNT = 1`, no local, the zero-fill spans the chain) on build 3626 (`verification-register.md`
   `[FUNCPARM-CONSUMERS]`).
-- ⬜ **Open question — diff inside the UI.** Release builds do not ship `diff_dumps.py`; the plan's last section
-  weighs a C# port (M) against starting Python or copying a command line (S, repo users only). The report is
-  HTML and/or CSV, not Markdown (maintainer 2026-10-02). Maintainer to decide the rest.
+- ⬜ `[DUMPDIFF-UI]` **A diff inside the UI** (M, low risk). Release builds do not ship `diff_dumps.py`, so the
+  maintainer decided (2026-10-06): a C# port of it, **HTML report only**, started from **a Dump Explorer button**.
+  `diff_dumps.py` stays the reference; the port must give the same result on the same inputs. Settings that persist
+  (D8): include-engine, the minimal report, the last folder. The plan's "Open question" section has the facts.
 
 *Parent:* PRs [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) and
 [#540](https://github.com/bbfox0703/UE5CEDumper/pull/540) by fireundubh, both based on `main` @ `c74daa4b`.

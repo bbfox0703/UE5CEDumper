@@ -1,6 +1,6 @@
 # External PRs 539 / 540 — first review and the maintainer's decisions `[EXTPR-539-540-2026-10-02]`
 
-**Status: BUILT — both PRs, 2026-10-06.** PR 540: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5, shipped in build 3619 and checked live on Avowed (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620), D2 (enum lines, 3621), D3 (function parameters, 3622, with a DLL flag that tells a parameter from a Blueprint local), the Dump Explorer reading them (E1), D5 (the diff), D4 (the object index) and D8, builds 3625–3626, each reviewed and checked live (see "PR 539 finished" under PR 539). Left for the maintainer: the open question of a diff inside the UI, and the reply on the PRs — a draft is in `out/pr-539-540-reply-draft.md`, not posted. Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
+**Status: BUILT — both PRs, 2026-10-06.** PR 540: L1 (fetch limit), L2 (Save .jsonl), L3 (Min calls), L4 and L5, shipped in build 3619 and checked live on Avowed (see "Live check, 2026-10-06" under PR 540). PR 539: D1 (struct lines, build 3620), D2 (enum lines, 3621), D3 (function parameters, 3622, with a DLL flag that tells a parameter from a Blueprint local), the Dump Explorer reading them (E1), D5 (the diff), D4 (the object index) and D8, builds 3625–3626, each reviewed and checked live (see "PR 539 finished" under PR 539). Left for the maintainer: the reply on the PRs — a draft is in `out/pr-539-540-reply-draft.md`, not posted. The open question of a diff inside the UI is decided (a C# port, HTML only, a Dump Explorer button; `[DUMPDIFF-UI]`). Three small changes landed earlier and shipped in build 3616, D7 among them — see "Landed ahead of the plan". **Re-checked 2026-10-06**, with four questions for the maintainer (R1–R4), all decided.
 First-pass review on 2026-10-02 plus the maintainer's decisions on the same day. ⚠ **The review is a first
 reading, not a verdict**: the maintainer will re-read both PRs, and a row below can still change. Close a row by
 editing it here AND its line in [todo.md](todo.md) in the same commit.
@@ -565,6 +565,9 @@ measurement of Dump All's time and size on a game, after D2 and D3.
 
 ### Open question — a diff that users can actually run
 
+✅ **Decided by the maintainer, 2026-10-06:** the C# port inside the UI, **HTML only** (no CSV), started from
+**a button in Dump Explorer**, the page that already opens a dump. Built as `[DUMPDIFF-UI]` in `todo.md`.
+
 `diff_dumps.py` has to be run by hand, and the maintainer doubts many users will. Facts that bear on it:
 
 - **A release user does not have the script.** `build.ps1` copies the `.CT`, `ue5_dissect.lua`, `inject-ue.ps1`
@@ -590,7 +593,7 @@ measurement of Dump All's time and size on a game, after D2 and D3.
     call. Python's `--output` stays Markdown for repo users.
 - Settings to persist either way (D8): include-engine and minimal-report flags, the output format, and the last
   folder used.
-- **First-review recommendation:** the C# port, after D1–D7 land. Not decided — the maintainer will choose.
+- **First-review recommendation:** the C# port, after D1–D7 land. Decided as above: the port, HTML only.
 
 -----
 
