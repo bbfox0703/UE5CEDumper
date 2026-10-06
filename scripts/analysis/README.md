@@ -82,8 +82,8 @@ Each line is a self-contained JSON object with a `kind` discriminator:
 |---|---|
 | `meta` | Always first. UE version, module name, object count, dumper build, options snapshot. |
 | `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. From build 3622 each function carries `params[]`: its parameters in order, the return included, with `name` / `type` / `offset` / `size` and, when set, `out` / `ret` / `struct_type` / `obj_class`. A Blueprint function's locals are left out. An `offset` of -1 means the DLL could not read it. |
-| `struct` | One per `ScriptStruct` / `UserDefinedStruct`. A class record's `name` / `addr` / `path` / `meta` / `super` / `super_addr` / `props_size` / `props[]`, without `funcs[]`, `instance_count` or `is_bpgc`. The two scripts here read class records only. |
-| `enum` | One per UEnum, from one `list_enums` call after the type lines: `name` / `addr` / `path` / `entries[]` (`{name, value}`, in the DLL's order). The two scripts here do not read them yet. |
+| `struct` | One per `ScriptStruct` / `UserDefinedStruct`. A class record's `name` / `addr` / `path` / `meta` / `super` / `super_addr` / `props_size` / `props[]`, without `funcs[]`, `instance_count` or `is_bpgc`. `diff_dumps.py` compares them; `analyze_dumps.py` reads class records only. |
+| `enum` | One per UEnum, from one `list_enums` call after the type lines: `name` / `addr` / `path` / `entries[]` (`{name, value}`, in the DLL's order). `diff_dumps.py` compares them; `analyze_dumps.py` does not read them. |
 | `error` | One per class or struct walk failure, and one for an enum list that could not be read (`name` `list_enums`, empty `addr`). Iteration continues. |
 | `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / enums_emitted / enums_skipped_engine / errors / objects_scanned. What the enum list could not say: `enums_listed` (false: the list failed, see its error line), `enum_names_failed` (UEnum::Names was not located, so every enum's `entries` is empty), `enums_truncated` (the list was cut short). Without them an enum with no entries cannot be told from one whose entries could not be read. `params_from_num_parms` counts the functions whose `params` were taken as the leading `num_parms` entries, because the DLL predates the flag that marks parameters (0 with a DLL from build 3622 on). |
 
@@ -116,8 +116,9 @@ Per-class record (excerpt):
 ## The object index (`<name>.objects.jsonl`)
 
 Opt-in (Export ▸ "Dump All also writes the object index", OFF by
-default): after the class dump, Dump All shows an estimate of the index's
-size and time and asks; agreed, it writes a second file beside the first.
+default): before the class dump, Dump All shows an estimate of the index's
+size and time and asks; agreed, it writes a second file beside the first
+once the class dump is done.
 Every object the DLL lists — packages, types, class-default objects and
 instances — one line each:
 
@@ -125,11 +126,16 @@ instances — one line each:
 |---|---|
 | `meta` | First. `"file":"objects"`, the class dump's identity (module, pe_hash, UE version, object count, dumper build) and its file name (`class_dump`), so the two files pair. |
 | `object` | `index` (the GObjects slot; build 3625 on, absent from an older DLL rather than guessed), `addr`, `name`, `class`, `outer`, `path`. |
-| `summary` | Last. `objects_written`, `objects_total`, `index_missing` (some object came without an index). |
+| `summary` | Last. `objects_written`; `objects_total`, the pool's slot count, null and unnamed slots included, so it exceeds `objects_written` on any pool with holes; `index_missing` (some object came without an index). |
 
 Addresses and slots hold for that run of the game only: match two
-indexes by `path`, and a class dump with its own index by `index`. The
-analysis scripts and the Dump Explorer do not read this file.
+indexes by `path` (by `index` only within one session), and a class dump
+with its own index by `addr` or `path` — class lines carry no slot. An
+index left beside a class dump by an earlier export to the same name is
+not that dump's: Dump All says so when it does not write a new one, and
+the index's `dumped_at` precedes the class dump's. `analyze_dumps.py`
+skips this file and `diff_dumps.py` refuses it; the Dump Explorer names
+the class dump to open instead.
 
 ## Privacy
 
@@ -239,7 +245,7 @@ notes a dump whose parameters came from `num_parms`.
 - Same applies to renamed classes.
 - Function bodies aren't in the dump — only metadata
   (`return_type` / `num_parms` / `parms_size` / `flags`) and, from build
-  3622, each function's `params[]`, which this diff does not compare yet. A patch that
+  3622, each function's `params[]`, compared when both files carry them. A patch that
   changes function logic without changing the signature is **invisible**
   to this diff (covered by Live ProcessEvent Call Profiler instead — see
   `docs/todo.md`).

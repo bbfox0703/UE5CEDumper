@@ -3319,6 +3319,10 @@ architecture or UX changes in these areas.
   `check_vm_status_literals` freezes their per-file count, so only a new literal fails. The views are
   held to more: no literal attribute text at all, and binding text only in three allow-listed
   `StringFormat`s kept by the same cost/benefit call (`check_axaml_strings`, INLINE).
+  The same rule covers a display switch or format that EXTENDS an existing literal list (a kind label, a
+  header's counts — the Dump Explorer's struct / enum / enumerator labels, 2026-10-06): the new arms follow
+  the old ones and move with them if the list is ever swept. A wholly new status sentence still goes to
+  en.axaml.
 - **Hierarchical Copy CE XML direct-push to CE** — DEFERRED, not refused: it needs an unbuilt bulk-tree
   client plus a `CeXmlExportService` Emit-layer refactor (there is no tree model today). Per-row `+CE`
   (PR #251) and flat `+CE Fields` (PR #252) **did** ship.
