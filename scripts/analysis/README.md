@@ -182,6 +182,14 @@ but not yet implemented.
 
 ## Workflow: same-game patch diff (`diff_dumps.py`)
 
+> Without a clone of the repository (release builds do not include this folder), the same diff runs in the UI:
+> Dump Explorer → load the newer dump → **Compare…** → pick the older one, and it writes the report as HTML
+> *(build 3628)*. That is a C# port of this script, which stays the reference: `--write-fixtures` writes the
+> cases in `fixtures/diff_dumps/` (two dumps and this script's result for them, `canonical()`), the self-test
+> fails when they no longer match the script, and the UI's `DumpDiffParityTests` fails when the port no longer
+> matches them. After changing the diff here: `--write-fixtures`, then bring the port back in line.
+> `tools/verify/dumpdiff_real_parity.py <old> <new>` runs the same comparison on a pair of real dumps.
+
 When a game ships a patch, the cooker can shuffle UPROPERTY offsets and
 add/remove fields silently — every cheat table that hard-codes an
 offset breaks. The diff tool surfaces exactly what changed at

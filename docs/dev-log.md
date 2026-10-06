@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-06 (build 3628) — Dump Explorer compares two dumps and writes the diff as an HTML report `[DUMPDIFF-UI]`
+
+- **Dump Explorer ▸ Compare…**: compare the loaded Dump All file with another dump of the same game and get an
+  **HTML report** of what a patch changed — classes, structs and enums added or removed, fields that moved or changed
+  type, function signatures, enum values — each under its owner. The dump taken earlier is the old one. The ▾ holds
+  **Include engine types** and **Breaking changes only**, both remembered.
+- The report says when the two dumps come from different games, and what it could not compare and why (a dump from
+  before struct / enum lines, a cut-off file, unreadable lines).
+- It is `scripts/analysis/diff_dumps.py`, which release builds do not include, ported to C#; the two are held to
+  the same results by shared test cases. The script now skips lines it cannot read the way the UI does.
+- From fireundubh's PR 539 (its diff of structs and enums), built our way.
+- Build 3627 was the first live check; 3628 adds the review's fixes and a clearer status line ("not compared"
+  instead of 0).
+- Build 3628: AOT `dist\UE5DumpUI.exe` 59,950,080 B, sha256 `d2a50aec0fff`; `dist\UE5Dumper.dll` `d4a3588ccb5f`
+  (no DLL change). C# 6211/6211, headless 19/19, 32 gates.
+
 ## 2026-10-06 (build 3626) — Dump Explorer reads structs, enums and parameters; the diff compares them; an optional object index `[EXTPR-539-540-2026-10-02]`
 
 - **Dump Explorer** shows structs, enums and each enum's values beside the classes, and a function's arguments

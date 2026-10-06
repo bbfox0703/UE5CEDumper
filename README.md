@@ -40,7 +40,7 @@ A quick look at what you can *do* with it — the full table-maker feature list 
 - **Console** — discover and one-click invoke the `fly` / `god` / `ghost` / game-specific exec commands many games leave in.
 - **Live function profiler** — record *one* in-game action (open a shop, dash) and see exactly which UFunctions fired, ranked with baseline-diff + noise filters. Behaviour-first, when name search can't.
 - **One-click CE export** — pointer-chain XML, Structure Dissect (CSX), SDK headers, AA scripts, multi-row `.CT` batches.
-- **Dump Explorer** — browse an exported "Dump All" `.jsonl` offline, one keyword search across classes, structs, enums, their members and function parameters.
+- **Dump Explorer** — browse an exported "Dump All" `.jsonl` offline, one keyword search across classes, structs, enums, their members and function parameters. **Compare…** diffs it against another dump of the same game and writes an HTML report of what a patch moved, retyped, added or removed.
 - **No Cheat Engine needed to inject** — a `version.dll` **proxy DLL**, in-UI **Inject into running game…**, or the **`inject-ue.ps1`** CLI (auto-elevates for admin games). Proxy Deploy **suggests the right proxy per game**.
 
 > ¹ A few heavily-stripped Shipping builds (e.g. Titan Quest II) can't do *cursor* teleport — they remove the standard cursor / viewport / line-trace APIs and use a custom virtual cursor. See [docs/teleport-spec.md](docs/teleport-spec.md).

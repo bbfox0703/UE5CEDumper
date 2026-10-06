@@ -567,6 +567,53 @@ measurement of Dump All's time and size on a game, after D2 and D3.
 
 ✅ **Decided by the maintainer, 2026-10-06:** the C# port inside the UI, **HTML only** (no CSV), started from
 **a button in Dump Explorer**, the page that already opens a dump. Built as `[DUMPDIFF-UI]` in `todo.md`.
+✅ **Built, reviewed and checked live the same day, build 3628** — see "[DUMPDIFF-UI] built" below.
+
+#### [DUMPDIFF-UI] built (2026-10-06, builds 3627–3628)
+
+**What it is.** Dump Explorer ▸ **Compare…** (a SplitButton, the repository's first): the loaded class dump
+against one the user picks; the dump taken earlier (`dumped_at`) is the old one, the loaded one when that cannot
+be told. The report is one self-contained HTML page with the sections and wording of `diff_dumps.py`'s Markdown
+report, saved where the user says and opened. The ▾ holds **Include engine types** and **Breaking changes only**,
+OFF by default and remembered (`UiOptionsSettings.DumpExplorer`). Its footer says, as the maintainer asked, that the
+same diff is `scripts/analysis/diff_dumps.py`, a CLI only a clone of the repository has.
+
+**Held to the script.** `DumpDiffService` is the script's diff rule for rule, its quirks included (a duplicate path
+keeps the first record, a duplicate member its first place and last value, ties keep file order, paths sort by code
+point). `diff_dumps.py --write-fixtures` writes `scripts/analysis/fixtures/diff_dumps/` (30 cases: two dumps and the
+script's `canonical()` for them); the script's self-test fails when they no longer match it, and
+`DumpDiffParityTests` fails when the port no longer matches them. `tools/verify/dumpdiff_real_parity.py` runs the
+same comparison on a pair of real dumps (env-gated test, skipped elsewhere).
+
+| Commit | What | Co-author |
+|---|---|---|
+| `af5fc321` | `canonical()`, `--write-fixtures`, 24 cases, the self-test checks them | no |
+| `b5ee1538` | red: parity, the HTML report, the panel | no |
+| `3253d6c7` | two cases the mutation check needed (one parameter field at a time; 40 equal sort keys) | no |
+| `037e5ac1` | `DumpDiffService` (the port) and `DumpDiffHtmlRenderer` | yes |
+| `31532d3c` | the Compare SplitButton, its options, persistence, a headless test of the SplitButton | no |
+| `9315b461` | the real-pair rig | no |
+| `a5771ad8` | build 3627 (AOT, first live check) | no |
+| `de835692` | review: one loading rule for script and port (types Dump All never writes skipped and counted by both, null = absent, BOM stripped, flags as text), 4 cases | no |
+| `07e95398` | review: the port skips a line with a null inside a list; the unreadable-lines note on both sides | yes |
+| `beaaa4d2` | red: the review's report and panel findings | no |
+| `ee491f88` | review: invariant numbers; the different-games banner | yes |
+| `a16705bc` | review: a non-dump refused, "another game" by the live match's rule, the status counts, Cancel before the save dialog, the error line, the filter string, the tooltip while disabled | no |
+
+**Checked.** 30 of 30 cases; 10 + 9 + 16 mutations of the port, the report and the review fixes each fail a test
+(the first two rounds found three holes, now cases or asserts). Real pairs, all exact: two DumperTest 3625 dumps
+(0 changes); the 09-12 DumperTest dump (build 3546) against 3625, game-only and with engine types (structs and enums
+"not compared" with the reason); DumperTest against Avowed with engine types (4,064 classes added, 528 removed, 1,004
+changed, plus structs and enums) — about 4 s for that pair. The review (3 reviewers, 3 verifiers; findings merged
+across them): 1 MED, 6 LOW and 9 INFO, all confirmed and fixed; one more judged by design (the SplitButton greys
+its arrow with the command, so its options wait for a loaded dump).
+
+**Live, build 3627 and 3628** (no game needed): the button greyed until a dump is loaded; 09-12 → 3625 written,
+opened in the browser and read (2 classes added, `DumperTestActor` +36 properties, structs and enums "not compared",
+the footer line); both options ticked, saved to `ui-options.json` and back after a restart; DumperTest → Avowed with
+both options: the minimal report (821 / 397 / 41) and the different-games status; the object index refused by
+name; the 3627 check found the status's "0 structs" for a kind not compared, fixed in 3628. Not checked: the
+report's dark colours (the preview pane renders local files light only).
 
 `diff_dumps.py` has to be run by hand, and the maintainer doubts many users will. Facts that bear on it:
 

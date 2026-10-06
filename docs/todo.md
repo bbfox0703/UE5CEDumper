@@ -319,10 +319,11 @@ the list from `scripts/analysis/engine_paths.py`.
   overstated it). ✅ **Live PASS, 2026-10-06:** steps 1, 2a and 3 on build 3625, step 2b (the CE Invoke script:
   `PARAM_COUNT = 1`, no local, the zero-fill spans the chain) on build 3626 (`verification-register.md`
   `[FUNCPARM-CONSUMERS]`).
-- ⬜ `[DUMPDIFF-UI]` **A diff inside the UI** (M, low risk). Release builds do not ship `diff_dumps.py`, so the
-  maintainer decided (2026-10-06): a C# port of it, **HTML report only**, started from **a Dump Explorer button**.
-  `diff_dumps.py` stays the reference; the port must give the same result on the same inputs. Settings that persist
-  (D8): include-engine, the minimal report, the last folder. The plan's "Open question" section has the facts.
+- ✅ `[DUMPDIFF-UI]` **A diff inside the UI.** Release builds do not ship `diff_dumps.py`, so the maintainer decided
+  (2026-10-06): a C# port of it, **HTML report only**, started from **a Dump Explorer button**. Built, reviewed and
+  checked live the same day, builds 3627–3628: Dump Explorer ▸ **Compare…**, held to the script by 30 shared cases
+  and on real dumps; the plan's "[DUMPDIFF-UI] built" has the commits and the checks. Persisted: include-engine and
+  breaking-only. The last folder is not: the file pickers take no start folder.
 
 *Parent:* PRs [#539](https://github.com/bbfox0703/UE5CEDumper/pull/539) and
 [#540](https://github.com/bbfox0703/UE5CEDumper/pull/540) by fireundubh, both based on `main` @ `c74daa4b`.
