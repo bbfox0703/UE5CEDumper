@@ -80,11 +80,11 @@ Each line is a self-contained JSON object with a `kind` discriminator:
 | `kind` | Notes |
 |---|---|
 | `meta` | Always first. UE version, module name, object count, dumper build, options snapshot. |
-| `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. |
+| `class` | One per class-like UObject (`Class` + BPGC variants). Embeds `props[]` + `funcs[]`. From build 3622 each function carries `params[]`: its parameters in order, the return included, with `name` / `type` / `offset` / `size` and, when set, `out` / `ret` / `struct_type` / `obj_class`. A Blueprint function's locals are left out. An `offset` of -1 means the DLL could not read it. |
 | `struct` | One per `ScriptStruct` / `UserDefinedStruct`. A class record's `name` / `addr` / `path` / `meta` / `super` / `super_addr` / `props_size` / `props[]`, without `funcs[]`, `instance_count` or `is_bpgc`. The two scripts here read class records only. |
 | `enum` | One per UEnum, from one `list_enums` call after the type lines: `name` / `addr` / `path` / `entries[]` (`{name, value}`, in the DLL's order). The two scripts here do not read them yet. |
 | `error` | One per class or struct walk failure, and one for an enum list that could not be read (`name` `list_enums`, empty `addr`). Iteration continues. |
-| `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / enums_emitted / enums_skipped_engine / errors / objects_scanned. What the enum list could not say: `enums_listed` (false: the list failed, see its error line), `enum_names_failed` (UEnum::Names was not located, so every enum's `entries` is empty), `enums_truncated` (the list was cut short). Without them an enum with no entries cannot be told from one whose entries could not be read. |
+| `summary` | Always last. Counters: classes_emitted / classes_skipped_engine / structs_emitted / structs_skipped_engine / enums_emitted / enums_skipped_engine / errors / objects_scanned. What the enum list could not say: `enums_listed` (false: the list failed, see its error line), `enum_names_failed` (UEnum::Names was not located, so every enum's `entries` is empty), `enums_truncated` (the list was cut short). Without them an enum with no entries cannot be told from one whose entries could not be read. `params_from_num_parms` counts the functions whose `params` were taken as the leading `num_parms` entries, because the DLL predates the flag that marks parameters (0 with a DLL from build 3622 on). |
 
 Per-class record (excerpt):
 ```json
@@ -103,7 +103,12 @@ Per-class record (excerpt):
     {"name":"Max_Health","type":"FloatProperty","offset":1728,"size":4},
     {"name":"IsDead","type":"BoolProperty","offset":1732,"size":1}
   ],
-  "funcs": [...]
+  "funcs": [
+    {"name":"ApplyDamage","addr":"0x16FC4C1180","return_type":"FloatProperty","num_parms":2,
+     "parms_size":8,"flags":"0x4020400","params":[
+       {"name":"Amount","type":"FloatProperty","offset":0,"size":4},
+       {"name":"ReturnValue","type":"FloatProperty","offset":4,"size":4,"out":true,"ret":true}]}
+  ]
 }
 ```
 
@@ -199,7 +204,8 @@ seconds instead of binary-searching offsets by hand.
   the report for a same-offset removed/added pair.
 - Same applies to renamed classes.
 - Function bodies aren't in the dump — only metadata
-  (`return_type` / `num_parms` / `parms_size` / `flags`). A patch that
+  (`return_type` / `num_parms` / `parms_size` / `flags`) and, from build
+  3622, each function's `params[]`, which this diff does not compare yet. A patch that
   changes function logic without changing the signature is **invisible**
   to this diff (covered by Live ProcessEvent Call Profiler instead — see
   `docs/todo.md`).

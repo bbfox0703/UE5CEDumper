@@ -1501,8 +1501,9 @@ eyeball calibration (tweak constants until names look like real UObjects).
 
 ### walk_functions
 
-Walk all UFunctions of a UClass. Returns function signatures with parameters,
-including StructProperty sub-field layouts discovered by walking the UScriptStruct.
+Walk all UFunctions of a UClass. Returns each function with its property chain (`params`):
+its parameters and, on a Blueprint function, its locals after them; `parm` tells them apart.
+StructProperty entries include the sub-field layouts discovered by walking the UScriptStruct.
 
 ```jsonc
 // Request
@@ -1530,6 +1531,7 @@ including StructProperty sub-field layouts discovered by walking the UScriptStru
           "offset": 0,
           "out": false,
           "ret": false,
+          "parm": true,
           "struct_type": "GameplayAttributeData",
           "struct_fields": [
             { "name": "BaseValue", "type": "FloatProperty", "offset": 0, "size": 4 },
@@ -1541,6 +1543,15 @@ including StructProperty sub-field layouts discovered by walking the UScriptStru
   ]
 }
 ```
+
+**`parm`** (bool, always sent from build 3622) — `[EXTPR-539-540-2026-10-02]`: CPF_Parm, read from the
+same PropertyFlags word as `out` / `ret`. `true` for a parameter, the return value included; `false` for
+a Blueprint function's locals (`CallFunc_*_ReturnValue`, `K2Node_*`, `Temp_*`), which follow the
+parameters in the same chain at offsets past `parms_size`. An absent key means a DLL older than 3622,
+which cannot tell the two apart; a reader then takes the leading `num_parms` entries, UE's own
+definition of the parameter block. Measured on build 3622 with `tools/verify/d3_parm_flags.py`: on
+Avowed, 15,820 locals in 1,126 Blueprint functions all came back `false`, and on every function with
+parameters the `true` count equalled `num_parms`.
 
 **`struct_fields[].bool_mask`** (optional, uint8) — [A3-FIRE-STRUCT-BOOLMASK]: a
 `BoolProperty` sub-field PACKED into a byte it shares with sibling bools (`FHitResult`'s

@@ -166,7 +166,8 @@ without one; it does not guess the slot from the page position, because the hand
 **Reference dumpers — corrections** (re-read on GitHub at the cited commits):
 
 - Dumper-7's `-WithProperties` file lists properties under every UStruct, functions included (a function's
-  properties are its parameters). A property line puts the offset where an object line puts the index.
+  properties are its parameters and, on a Blueprint function, its locals after them; D3 found this). A property
+  line puts the offset where an object line puts the index.
 - RE-UE4SS `[ObjectDumper]` has a second option, `UseModuleOffsets` (default 0). Its crash warning is conditional
   (loading past the main menu after a dump), force-loaded assets are freed afterwards, and the option is ignored
   below UE 4.17.
