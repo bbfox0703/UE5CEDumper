@@ -1102,6 +1102,23 @@ public class DumpAllServiceTests
         Assert.Equal(0, summary.RootElement.GetProperty("params_from_num_parms").GetInt32());
     }
 
+    [Theory]
+    [InlineData(0)]
+    [InlineData(5)]
+    public void Generate_TheDllsFlag_WinsOverAMisreadNumParms(int misread)
+    {
+        // num_parms comes from a probed offset that has been misread before [VND583-01]; the flag comes from
+        // each property's own PropertyFlags, so it decides whenever the DLL sends it.
+        var dump = ParamsFixture(flagged: true);
+        var tryOpen = dump.FunctionWalks["0x1"][0];
+        dump.FunctionWalks["0x1"][0] = new FunctionInfoModel
+        {
+            Name = tryOpen.Name, Address = tryOpen.Address, NumParms = (byte)misread, Params = tryOpen.Params,
+        };
+
+        Assert.Equal(new[] { "Who", "Where", "ReturnValue" }, ParamNames(FuncsOf(Dump(dump))[0]));
+    }
+
     [Fact]
     public void Generate_AnOlderDll_NumParmsPastTheList_WritesWhatIsThere()
     {

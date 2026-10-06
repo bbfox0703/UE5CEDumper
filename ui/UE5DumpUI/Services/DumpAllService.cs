@@ -87,7 +87,9 @@ public static class DumpAllService
     ///   <item><c>{"kind":"meta", ...}</c> — first line; UE version,
     ///     module, object count, build, options.</item>
     ///   <item><c>{"kind":"class", "name":..., "props":[...],
-    ///     "funcs":[...]}</c> — one per class-like object.</item>
+    ///     "funcs":[{..., "params":[...]}]}</c> — one per class-like object; each
+    ///     function with its parameters, the return included, and not a Blueprint
+    ///     function's locals.</item>
     ///   <item><c>{"kind":"struct", "name":..., "props":[...]}</c> — one per
     ///     ScriptStruct / UserDefinedStruct: a class line's identity, super and props,
     ///     without functions, instance count or the Blueprint-class flag.</item>
@@ -95,8 +97,9 @@ public static class DumpAllService
     ///     one per UEnum from a single list_enums call, after the type lines.</item>
     ///   <item><c>{"kind":"error", "addr":..., "name":..., "msg":...}</c> — when a
     ///     walk or the enum list fails (the list's line has an empty addr); iteration continues.</item>
-    ///   <item><c>{"kind":"summary", ...}</c> — last line; counters, and what the enum list
-    ///     could not say (enums_listed, enum_names_failed, enums_truncated).</item>
+    ///   <item><c>{"kind":"summary", ...}</c> — last line; counters, what the enum list
+    ///     could not say (enums_listed, enum_names_failed, enums_truncated), and how many
+    ///     functions' parameters came from num_parms (params_from_num_parms).</item>
     /// </list>
     /// Returns a <see cref="DumpResult"/> carrying what the summary line
     /// reports, so the caller can compose an honest completion
@@ -168,6 +171,7 @@ public static class DumpAllService
         int classesSkipped = 0;
         int structsEmitted = 0;
         int structsSkipped = 0;
+        int paramsFromNumParms = 0;
         int errors = 0;
         int scannedObjects = 0;
         {
@@ -220,6 +224,7 @@ public static class DumpAllService
                         errors         += c.Errors;
                         classesSkipped += c.ClassesSkipped;
                         structsSkipped += c.StructsSkipped;
+                        paramsFromNumParms += c.ParamsFromNumParms;
                         chunkBuffer.Clear();
                     }
                 }
@@ -239,6 +244,7 @@ public static class DumpAllService
                 errors         += c.Errors;
                 classesSkipped += c.ClassesSkipped;
                 structsSkipped += c.StructsSkipped;
+                paramsFromNumParms += c.ParamsFromNumParms;
                 chunkBuffer.Clear();
             }
         }
@@ -285,7 +291,7 @@ public static class DumpAllService
 
         // ----- Summary line -----
         await WriteSummaryLineAsync(writer, classesEmitted, classesSkipped, structsEmitted, structsSkipped,
-                                    enumsEmitted, enumsSkipped, enumState, errors, scannedObjects, ct);
+                                    enumsEmitted, enumsSkipped, enumState, paramsFromNumParms, errors, scannedObjects, ct);
         await writer.FlushAsync();
 
         int written = classesEmitted + structsEmitted + enumsEmitted;
@@ -301,8 +307,10 @@ public static class DumpAllService
     /// <summary>What the enum list said about itself, for the summary line.</summary>
     private readonly record struct EnumListState(bool Listed, bool NamesFailed, bool Truncated);
 
-    /// <summary>What one chunk of the type walk wrote and skipped, by kind.</summary>
-    private readonly record struct ChunkCounts(int Classes, int Structs, int Errors, int ClassesSkipped, int StructsSkipped);
+    /// <summary>What one chunk of the type walk wrote and skipped, by kind, and how many of its functions had
+    /// their parameters decided by num_parms.</summary>
+    private readonly record struct ChunkCounts(int Classes, int Structs, int Errors, int ClassesSkipped, int StructsSkipped,
+                                               int ParamsFromNumParms);
 
     /// <summary>
     /// Walk a chunk of class and struct objects and emit one class or struct line per entry.
@@ -313,7 +321,7 @@ public static class DumpAllService
     /// half of the per-class round-trip cost is a separate batching
     /// candidate (build 693 only batches walk_class).
     ///
-    /// Returns the chunk's counts by kind so the caller can maintain the cumulative
+    /// Returns the chunk's counts so the caller can maintain the cumulative
     /// counters the summary line reports. The GameOnly
     /// engine-package skip is applied HERE (post-walk) because the walked
     /// <c>classInfo.FullPath</c> is the only reliable package path — the
@@ -360,6 +368,7 @@ public static class DumpAllService
         int errorsThisChunk = 0;
         int classesSkippedThisChunk = 0;
         int structsSkippedThisChunk = 0;
+        int paramsFromNumParmsThisChunk = 0;
 
         for (int i = 0; i < chunk.Count; i++)
         {
@@ -412,7 +421,7 @@ public static class DumpAllService
                         instanceCounts.TryGetValue(classInfo.Name, out instCount);
                     }
 
-                    await WriteClassLineAsync(writer, obj, classInfo, functions, instCount, ct);
+                    paramsFromNumParmsThisChunk += await WriteClassLineAsync(writer, obj, classInfo, functions, instCount, ct);
                     classesThisChunk++;
                 }
 
@@ -439,7 +448,7 @@ public static class DumpAllService
         }
 
         return new ChunkCounts(classesThisChunk, structsThisChunk, errorsThisChunk,
-                               classesSkippedThisChunk, structsSkippedThisChunk);
+                               classesSkippedThisChunk, structsSkippedThisChunk, paramsFromNumParmsThisChunk);
     }
 
     // ------------------------------------------------------------------
@@ -483,7 +492,8 @@ public static class DumpAllService
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
     }
 
-    private static async Task WriteClassLineAsync(
+    /// <summary>Returns how many of the functions had their parameters decided by num_parms.</summary>
+    private static async Task<int> WriteClassLineAsync(
         TextWriter w,
         UObjectNode obj,
         ClassInfoModel classInfo,
@@ -491,6 +501,7 @@ public static class DumpAllService
         int instanceCount,
         CancellationToken ct)
     {
+        int fromNumParms = 0;
         var sb = new StringBuilder(classInfo.Fields.Count * 100 + 256);
         sb.Append("{\"kind\":\"class\"");
         AppendJsonString(sb, ",\"name\":", classInfo.Name);
@@ -518,12 +529,48 @@ public static class DumpAllService
                 sb.Append(",\"num_parms\":").Append(fn.NumParms);
                 sb.Append(",\"parms_size\":").Append(fn.ParmsSize);
                 sb.Append(",\"flags\":\"0x").Append(fn.FunctionFlags.ToString("X")).Append('"');
+                if (AppendParams(sb, fn)) fromNumParms++;
                 sb.Append('}');
             }
             sb.Append(']');
         }
         sb.Append('}');
         await w.WriteLineAsync(sb.ToString().AsMemory(), ct);
+        return fromNumParms;
+    }
+
+    /// <summary>
+    /// [EXTPR-539-540-2026-10-02] D3: a function's parameters, the return included, in the DLL's order.
+    /// walk_functions lists the function's whole property chain, and a Blueprint function's locals follow its
+    /// parameters there; the DLL's CPF_Parm flag tells them apart. A DLL that predates the flag gets UE's own
+    /// definition of the parameter block, the leading num_parms entries. No struct_fields: the struct's own
+    /// line carries them. Returns true when that fallback decided something.
+    /// </summary>
+    private static bool AppendParams(StringBuilder sb, FunctionInfoModel fn)
+    {
+        bool flagged = fn.Params.Any(p => p.IsParm.HasValue);
+        var parms = flagged ? fn.Params.Where(p => p.IsParm == true) : fn.Params.Take(fn.NumParms);
+        sb.Append(",\"params\":[");
+        bool first = true;
+        foreach (var p in parms)
+        {
+            if (!first) sb.Append(',');
+            first = false;
+            sb.Append('{');
+            AppendJsonString(sb, "\"name\":", p.Name);
+            AppendJsonString(sb, ",\"type\":", p.TypeName);
+            sb.Append(",\"offset\":").Append(p.Offset);
+            sb.Append(",\"size\":").Append(p.Size);
+            if (p.IsOut) sb.Append(",\"out\":true");
+            if (p.IsReturn) sb.Append(",\"ret\":true");
+            if (!string.IsNullOrEmpty(p.StructName))
+                AppendJsonString(sb, ",\"struct_type\":", p.StructName);
+            if (!string.IsNullOrEmpty(p.ObjectClassName))
+                AppendJsonString(sb, ",\"obj_class\":", p.ObjectClassName);
+            sb.Append('}');
+        }
+        sb.Append(']');
+        return !flagged && fn.Params.Count > 0;
     }
 
     /// <summary>[EXTPR-539-540-2026-10-02] D1: a struct's line. The class line's identity, super and props, so a
@@ -616,7 +663,8 @@ public static class DumpAllService
 
     private static async Task WriteSummaryLineAsync(
         TextWriter w, int emitted, int skipped, int structsEmitted, int structsSkipped,
-        int enumsEmitted, int enumsSkipped, EnumListState enums, int errors, int scanned, CancellationToken ct)
+        int enumsEmitted, int enumsSkipped, EnumListState enums, int paramsFromNumParms, int errors, int scanned,
+        CancellationToken ct)
     {
         var sb = new StringBuilder(256);
         sb.Append("{\"kind\":\"summary\"");
@@ -629,6 +677,7 @@ public static class DumpAllService
         sb.Append(",\"enums_listed\":").Append(enums.Listed ? "true" : "false");
         sb.Append(",\"enum_names_failed\":").Append(enums.NamesFailed ? "true" : "false");
         sb.Append(",\"enums_truncated\":").Append(enums.Truncated ? "true" : "false");
+        sb.Append(",\"params_from_num_parms\":").Append(paramsFromNumParms);
         sb.Append(",\"errors\":").Append(errors);
         sb.Append(",\"objects_scanned\":").Append(scanned);
         sb.Append('}');
