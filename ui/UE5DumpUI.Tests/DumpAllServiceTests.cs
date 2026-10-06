@@ -775,4 +775,38 @@ public class DumpAllServiceTests
         Assert.Equal(3, done.Done);
         Assert.Contains("2 structs", done.Phase);
     }
+
+    [Fact]
+    public void Generate_ARefusedStructWalk_IsAnErrorLine_NotANamelessStruct()
+    {
+        // Ubel::WalkClassEx answers an address it refuses with an EMPTY ClassInfo, not an error. Written, it
+        // would be a struct named "" that a struct diff matches with any other refused one; the SDK export
+        // turns the same result into an error line [SDK-TYPE-NAMES].
+        var dump = StructFixture();
+        dump.Objects.Add(Obj("0x6", "FBroken", "ScriptStruct", "/Script/MyGame.Broken"));   // no walk result: empty
+
+        var lines = Dump(dump);
+
+        Assert.DoesNotContain(lines, l => l.StartsWith("{\"kind\":\"struct\"") && l.Contains("\"name\":\"\""));
+        using var error = JsonDocument.Parse(lines.Single(l => l.StartsWith("{\"kind\":\"error\"")));
+        Assert.Equal("0x6", error.RootElement.GetProperty("addr").GetString());
+        Assert.Equal("FBroken", error.RootElement.GetProperty("name").GetString());
+        using var summary = JsonDocument.Parse(lines[^1]);
+        Assert.Equal(2, summary.RootElement.GetProperty("structs_emitted").GetInt32());
+        Assert.Equal(1, summary.RootElement.GetProperty("errors").GetInt32());
+    }
+
+    [Fact]
+    public async Task Generate_GameOnly_ResultCarriesTheStructSkipCount()
+    {
+        // DumpResult carries the summary line's counters, the struct skip count included.
+        var dump = StructFixture();
+        dump.Objects.Add(Obj("0x5", "FVector", "ScriptStruct", "//Script/CoreUObject/Vector"));
+        dump.ClassWalks["0x5"] = new ClassInfoModel { Name = "FVector", FullPath = "//Script/CoreUObject/Vector" };
+
+        var result = await DumpAllService.GenerateAsync(dump, DefaultEngineState(), new MemoryStream(),
+            new DumpOptions(GameOnly: true), ct: TestContext.Current.CancellationToken);
+
+        Assert.Equal(1, result.StructsSkippedEngine);
+    }
 }
