@@ -13,7 +13,8 @@ holds the pipe), this records with and without the trace and checks what only a 
      earlier entry, entries and returns pair up per thread;
   3. paging: pe_trace_get hands the kept window back page by page in order, `next` moves forward, and paging ends
      at `written`; how long that takes, in MB/s;
-  4. names: pe_trace_names names every function the ring holds, and says which objects are still live;
+  4. names: pe_trace_names names every function the ring holds -- live, or unloaded since it fired and named from
+     its first call (build 3634+) -- and says which objects are still live;
   5. release: pe_trace_release frees the ring, and a later read finds nothing;
   6. ticked scope (unless --skip-scope): a function that calls other UFunctions is ticked; the scoped trace holds
      only that function's calls (each flagged a scope root) and calls nested under them;
@@ -166,7 +167,7 @@ def main() -> int:
     try:
         # 1. the plain rate
         _, _ = record(c, args.plain_s if args.plain_s is not None else args.record_s)
-        plain = data_of(c.request("pe_profile_get", limit=32768, skip_per_frame=True))
+        plain = data_of(c.request("pe_profile_get", limit=32768, skip_per_frame=True, include_unloaded=True))
         total, window_ms = plain.get("total_calls", 0), plain.get("window_ms", 0)
         if total == 0 or not window_ms:
             say(f"no calls recorded (total {total}, window_ms {window_ms}): is the game running and the hook up?")
@@ -176,6 +177,11 @@ def main() -> int:
         out["plain"] = {"total_calls": total, "window_ms": window_ms, "calls_per_s": rate,
                         "distinct": plain.get("distinct_funcs"), "per_frame": len(per_frame)}
         say(f"rate: {rate:,.0f} calls/s ({total:,} calls over {window_ms:,} ms; {len(per_frame)} per-frame)")
+        if "unloaded_funcs" in plain:   # build 3634+: the table's own count of what is no longer at its address
+            out["plain"]["unloaded"] = {k: plain.get(k) for k in
+                                        ("unloaded_funcs", "unloaded_calls", "unnamed_funcs", "unnamed_calls")}
+            say(f"table: {plain['unloaded_funcs']} functions unloaded since they fired ({plain['unloaded_calls']:,} "
+                f"calls), {plain['unnamed_funcs']} with no name ({plain['unnamed_calls']:,} calls)")
         # What fired besides the per-frame functions: the first thing to read when a later check finds nothing.
         rest = [(f.get("count", 0), f"{f.get('class_name')}::{f.get('func_name')}") for f in plain.get("functions", [])]
         out["plain"]["not_per_frame"] = [{"count": n, "func": f} for n, f in rest]
@@ -224,20 +230,30 @@ def main() -> int:
         ob, ob_s = names(c, "objs")
         out["names"] = {"funcs": len(fn), "funcs_s": fn_s, "objs": len(ob), "objs_s": ob_s,
                         "funcs_live": sum(1 for x in fn if x.get("live")),
+                        "funcs_unloaded": sum(1 for x in fn if x.get("unloaded")),
+                        "funcs_named": sum(1 for x in fn if x.get("func_name")),
                         "objs_live": sum(1 for x in ob if x.get("live"))}
         ring_funcs = {r[2] for r in recs if not r[0] & RET_BIT}
         named = {addr(x["addr"]) for x in fn}
         check("names cover every function the ring holds", ring_funcs <= named,
               f"{len(ring_funcs)} in the ring, {len(named)} named")
-        check("the functions resolve (live)", out["names"]["funcs_live"] >= 0.99 * len(fn),
-              f"{out['names']['funcs_live']} of {len(fn)}")
+        # Live, or unloaded since it fired and named from its first call: either way the tab shows a name. Before
+        # build 3634 an unloaded function had none (Avowed, a 512 MB recording: 184 of 796).
+        check("every function has a name (live, or unloaded and named from its first call)",
+              out["names"]["funcs_named"] >= 0.99 * len(fn),
+              f"{out['names']['funcs_named']} of {len(fn)}: {out['names']['funcs_live']} live, "
+              f"{out['names']['funcs_unloaded']} unloaded")
         say(f"names: {len(fn)} functions in {fn_s:.2f} s, {len(ob)} objects in {ob_s:.2f} s "
             f"({out['names']['objs_live']} live)")
-        # A function that no longer resolves was unloaded before Stop (a closed UI or a map change frees its Blueprint
-        # classes): its calls show as a bare address. How many calls that is, and when each last fired -- alive then;
-        # it went at some point after, which a last call cannot date.
-        dead = {addr(x["addr"]) for x in fn if not x.get("live")}
-        if dead:
+        # A function no longer at its address was unloaded before Stop (a closed UI or a map change frees its
+        # Blueprint classes). Since build 3634 it keeps the name read at its first call; one with no name at all shows
+        # as a bare address. How many calls each kind is, and when each last fired -- alive then; it went at some
+        # point after, which a last call cannot date.
+        for label, dead in (("unloaded, named", {addr(x["addr"]) for x in fn
+                                                 if not x.get("live") and x.get("func_name")}),
+                            ("unnamed", {addr(x["addr"]) for x in fn if not x.get("live") and not x.get("func_name")})):
+            if not dead:
+                continue
             freq = info.get("qpc_freq") or 1
             t0 = min((r[1] for r in recs), default=0)
             n_dead, last = 0, {}
@@ -248,10 +264,9 @@ def main() -> int:
             n_all = sum(1 for r in recs if not r[0] & RET_BIT)
             lasts = sorted((t - t0) / freq for t in last.values())
             window = (max((r[1] for r in recs), default=0) - t0) / freq
-            out["names"]["unresolved"] = {"funcs": len(dead), "calls": n_dead, "of_calls": n_all,
-                                          "last_fired_s": [lasts[0], lasts[-1]] if lasts else None,
-                                          "window_s": window}
-            say(f"unresolved: {len(dead)} functions, {n_dead:,} of {n_all:,} calls ({n_dead / max(1, n_all):.2%}); "
+            out["names"][label] = {"funcs": len(dead), "calls": n_dead, "of_calls": n_all,
+                                   "last_fired_s": [lasts[0], lasts[-1]] if lasts else None, "window_s": window}
+            say(f"{label}: {len(dead)} functions, {n_dead:,} of {n_all:,} calls ({n_dead / max(1, n_all):.2%}); "
                 + (f"each last fired between {lasts[0]:.1f} s and {lasts[-1]:.1f} s of a {window:.1f} s window"
                    if lasts else "none of them in the kept window"))
 
