@@ -27,6 +27,24 @@ builds ≤696 in
 
 -----
 
+## 2026-10-07 (build 3633) — Live Funcs records a call trace, read in the new Call Trace tab (experimental) `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- With the experimental tabs on, Live Funcs has a **Trace** row: tick it and the same Start also records every call
+  in order, with what called it and how long it took, into a ring buffer in the game. The buffer is a slider from
+  32 to 512 MB, with the seconds it would keep estimated beside it from your last recording; Stop keeps the calls
+  just before it.
+- **Tick functions in the table** to trace only inside them: tick the action's opener and get everything it called.
+  With nothing ticked the trace records every call; once the table has rows to tick from, that is asked once per
+  session. **Leave out per-frame** drops the previous recording's Tick-like functions.
+- The **Call Trace** tab (beside Live Funcs; it cannot record on its own) shows the trace as a call tree: expand and
+  collapse, a filter, Show in tree, the chain of callers of any call, and JSONL / CSV export.
+- About 130 ns per traced call on the test PC; nothing when the trace is off. Needs this build's UE5Dumper.dll.
+- Checked on DumperTest 5.4 and DumperTest58 (UE 5.8); DumperTest58 now calls a nested chain every 0.5 s
+  (`TraceNest_*`) so a ticked scope has something to show.
+- Build 3633: AOT `dist\UE5DumpUI.exe` 60,308,992 B, sha256 `886364b80ba0`; `dist\UE5Dumper.dll` `2df6a1c68baf`.
+  C# 6286/6286 (+1 env-gated skip), headless 19/19, dll_core 702 checks, 32 gates. Build 3631 was spent by a failed
+  AOT publish and not reused; 3632 was the build before the review's fixes.
+
 ## 2026-10-06 (no build change) — Live Funcs call trace: a ring buffer, record-time filters, no register capture `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 - A design review of [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md) and the maintainer's decisions.

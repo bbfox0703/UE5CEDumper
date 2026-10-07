@@ -251,7 +251,10 @@ Open work only. **Read this when deciding what to do next.**
 
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-- ⬜ **Step 1 (the timeline) in progress from 2026-10-07:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+- ✅ **Step 1 (the timeline) BUILT, build 3633, 2026-10-07** — reviewed (36 findings, all fixed) and checked live on
+  DumperTest 5.4 and DumperTest58 (18/18); details in the plan's "Step 1 built". ⬜ **Open:** a busy commercial game's
+  call rate and a full 128 / 512 MB ring's after-Stop cost (the Avowed attempt did not start); steps 2 and 3.
+  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
   A ring buffer (a power-of-two slider, 32–512 MB, default 64, with the seconds it keeps estimated beside it) that
   keeps the calls just before Stop, two small records per call (entry and return), the call tree computed after
   Stop; then parameter and native-stack snapshots for ticked functions only.

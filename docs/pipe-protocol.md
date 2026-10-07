@@ -575,10 +575,10 @@ Response for `pe_profile_get`:
   ] }
 ```
 
-`window_ms` (build 3631+): the window the counts cover, the table's earliest fire to its latest. With `total_calls`
+`window_ms` (build 3633+): the window the counts cover, the table's earliest fire to its latest. With `total_calls`
 it gives the call rate the Live Funcs trace slider estimates its seconds from. `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-#### The call trace (build 3631+) `[LIVEFUNCS-TIMELINE-2026-10-04]`
+#### The call trace (build 3633+) `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 One record when a call enters `ProcessEvent` and one when it returns, into a ring the user sized, so Stop keeps the
 calls just before it. It rides on the recording above: `pe_profile_start` arms it, `pe_profile_stop` stops it, and

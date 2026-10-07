@@ -1,11 +1,11 @@
-# Live Funcs — call timeline and stack snapshots (feasibility) `[LIVEFUNCS-TIMELINE-2026-10-04]`
+# Live Funcs — call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-**Status: FEASIBILITY ONLY — nothing is built, and nothing here is decided until the maintainer says so.**
-**Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8 — see
-"Decisions" — after a design review whose findings are TR1–TR7 below. **Step 1 (the timeline) is being built from
-2026-10-07** (maintainer: "start"); the measurements below are taken as part of it.
-Written 2026-10-04 from a reading of the code, not from a measurement: every size and rate below is arithmetic or
-an example, and the section "Measure before building" lists what has to be measured first.
+**Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; steps 2 (parameter snapshots) and 3 (native stack)
+not started.** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
+built" at the end. **Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8
+— see "Decisions" — after a design review whose findings are TR1–TR7 below.
+Written 2026-10-04 from a reading of the code; the sizes and rates in the sections before "Step 1 built" are
+arithmetic or examples, and "Measure before building" now says which have been measured.
 
 ⚠ **This is our own feature, not part of external PRs 539 / 540.** The idea came up while discussing PR 540's
 fetch limit, but nothing here comes from those PRs. Its commits do **not** carry the
@@ -122,7 +122,11 @@ UFunction-level stack.
   the game (TR5), resolving its names, and loading about 2 million calls into the UI. The hot-path
   cost per call does not depend on the buffer size; what grows is the memory held in the game process and
   everything that happens after Stop.
-- Not measured yet: the maintainer deferred this list on 2026-10-06. Nothing is built before it is measured.
+- **Measured 2026-10-07, with step 1** (details under "Step 1 built"): the cost per call (129 ns traced, 21 ns
+  outside a ticked scope, this PC), a fixture's call rate (121 calls/s on DumperTest 5.4 at 15 fps; 1,040–1,670 on
+  DumperTest58 uncapped), and a traced Start's cost (5–7 ms at 32 MB, 17–26 at 128, 67–150 at 512).
+  **Still open:** a busy commercial game's rate, and what a full 128 / 512 MB ring costs after Stop (reading,
+  naming and building ~2 / ~7 million calls). The Avowed attempt did not start — see "Step 1 built".
 
 ## Design review, 2026-10-06 (TR1–TR7)
 
@@ -201,3 +205,42 @@ in order. A trace started on its own would have nothing to point at.
   are enabled, until the hot-path cost is measured on real games.
 - **Not mixed with PR 540:** the Live Funcs controls from PR 540 are built first and unchanged; the Trace
   checkbox, buffer slider and tick column are added later as this feature, without the co-author trailer.
+
+-----
+
+## Step 1 built (build 3633, 2026-10-07)
+
+**What was built.** Linie's ring (entry and return records, 40 bytes each), the ticked scope (T5 (a)) and the
+per-frame exclusion (T5 (b)) on Stark's hook; `pe_profile_start`'s `trace` option, `window_ms` on `pe_profile_get`,
+and `pe_trace_get` / `pe_trace_names` / `pe_trace_release` ([pipe-protocol.md](pipe-protocol.md), "The call
+trace"); in the UI, the Trace row and tick column in Live Funcs (T1, T3, T6, T7) and the Call Trace tab (T8): a
+flat virtualized tree, a space = AND filter, the callers of any call, JSONL / CSV export.
+
+**One deviation from TR5, recorded rather than hidden.** TR5 asked the UI to load a time range or one subtree. Step 1
+loads the whole kept window — but as columns (about 70 bytes per call) under a row list that makes a row object only
+for the rows on screen, never a node object per call. What that costs for a full 512 MB ring is the open measurement
+above.
+
+**Review.** Three reviewers (the DLL; the UI's data and logic; the UI's integration, AOT and the docs), each finding
+put to a skeptic: 36 findings, one refuted. Fixed one per commit, red before green where testable: a reader's release
+or names tied to its recording (DLL-1); the quiesce state machine — an RAII in-flight count, nothing the hook reads
+changed while it may be inside, a Start meanwhile refused as Busy, a later wait clearing the give-up (DLL-2, -3); a
+refused Start, an unarmed trace and a failed stop reported as what they are (DLL-4, F8, F9); an empty ring released
+at Stop (DLL-5); the distinct pass in sets, not a vector per record (DLL-6); rows from an earlier connection not
+tickable (F1, F3, MED); a new process's first trace read though its generation repeats (F2, MED); a tick by name
+covering every class of that name; the time base from the earliest clock reading (F4); the load's lifecycle (F5, F6,
+CT-RELEASE-CANCELLED); export with its own flag; an older trace on screen marked (F7); comments and wording.
+
+**Live checks.**
+
+| Fixture | What held |
+|---|---|
+| DumperTest 5.4 Shipping, 15 fps | The rig (`tools/verify/livefuncs_trace_live.py`): 15 of 16 — records exactly twice the table's calls (2,400 for 1,200), paging, names, release, the per-frame exclusion, a bad size refused. The 16th, the ticked scope, had nothing to tick: the stock template's ProcessEvent traffic is flat. The UI walkthrough: T7 not asking on the first run, asking with rows to tick, Cancel not counted, once per session; a ticked recording; the filter, Show in tree, the detail pane, CSV export. Found there: a long function name ran into the Object column (fixed). |
+| DumperTest58 Shipping, uncapped | After adding a nested ProcessEvent chain to the fixture (`TraceNest_*`, tools/ue-sample/README.md): **18 of 18**. Ticking `TraceNest_Outer` gave exactly 20 roots and 60 entries for 20 rounds — three nested calls each — against 16,772 calls in the unscoped trace. The UI showed Outer ▾ Inner ▾ Leaf with nesting durations and the caller chain, and the long-name clip. |
+
+⚠ **Found while building the fixture:** a BlueprintNativeEvent called from C++ does NOT go through ProcessEvent when
+the owning class is native — UHT's thunk calls `_Implementation` directly. The first package's chain reached the
+hook only at the delegate's binding. The fixture now dispatches by name through ProcessEvent.
+
+**Not done.** A commercial game: the Avowed launch through Steam did not start, and Steam itself could not be
+inspected (access declined), so the busy-game rate and the full-ring costs stay open.
