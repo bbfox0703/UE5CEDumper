@@ -12,6 +12,7 @@
 
 #include <cstdint>
 #include <atomic>
+#include <memory>
 #include <string>
 #include <vector>
 #include <utility>
@@ -93,18 +94,24 @@ inline bool IsPerFrame(const FuncStat& s, uint64_t windowMs) {
 extern std::atomic<bool> g_recording;
 inline bool IsRecording() { return g_recording.load(std::memory_order_relaxed); }
 
+struct ArmHint;    // [LIVEFUNCS-STEP2], below
+struct ArmState;
+
 // Record one PE fire for `ufunc` at wall-clock `nowMs` (Stark passes the same
 // timestamp it already stamped for the responsiveness check — no extra clock
 // read). ONLY call when IsRecording() is already true (Stark inlines that check).
-// Takes the profile mutex; safe from any thread.
-void RecordCall(uintptr_t ufunc, uint64_t nowMs);
+// Takes the profile mutex; safe from any thread. `hint`, when given, receives what this address is armed for
+// in the recording's ArmState: a default hint when it is armed for nothing.
+void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint = nullptr);
 
 // Clear the table (reserve to bound rehash churn), then flip recording on
 // under the lock so there is never a half-cleared window. `reader`, when given, reads each function's identity at
 // its first call; `keyReader`, when given with it, checks on every later call that the address still holds that
-// function, and reads it again when not. Both are installed under the same lock, so no call of this recording runs
+// function, and reads it again when not. `arms`, when given, is the names this recording follows: an identity read
+// that matches one arms its address. All are installed under the same lock, so no call of this recording runs
 // without them.
-void StartRecording(FuncIdentityReader reader = nullptr, FuncKeyReader keyReader = nullptr);
+void StartRecording(FuncIdentityReader reader = nullptr, FuncKeyReader keyReader = nullptr,
+                    std::shared_ptr<ArmState> arms = nullptr);
 
 // Flip recording off; the accumulated counts are retained for a later Snapshot.
 void StopRecording();
@@ -310,6 +317,33 @@ inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return parmsSiz
 inline bool ArmTakesAfter(uint32_t functionFlags) {
     return functionFlags == 0 || (functionFlags & kFuncHasOutParms) != 0;
 }
+
+// One name a recording follows, and what an address with that name is armed for.
+struct ArmSpec {
+    NameKey  key;
+    bool     tick    = false;   // a trace tick: its calls open a scope
+    int32_t  ring    = -1;      // a snapshot choice: its ring; -1 when the name is not chosen
+    uint32_t ringCap = 0;       // that ring's slot payload, RingCapFor of the choice's parameter size
+};
+// One arming of a chosen name: the first call of a matching address, or a call after the address's key changed.
+struct ArmRecord {
+    uintptr_t    addr     = 0;
+    FuncIdentity ident;           // what the table read at that call
+    uint32_t     spec     = 0;    // index into ArmState::specs
+    int32_t      ring     = -1;
+    uint64_t     armMs    = 0;    // the table's clock at the arming
+};
+// The names one recording follows and the arms it made. The table touches it under its lock; its lifetime is the
+// shared_ptr's, so a reader that holds one is never left with freed memory.
+struct ArmState {
+    uint64_t gen = 0;                  // the trace recording it belongs to (1 and up)
+    std::vector<ArmSpec>   specs;      // sorted by key, one per key
+    std::vector<ArmRecord> log;        // reserved when built: the hook never allocates for it
+    size_t                 capacity = 0;
+};
+inline constexpr size_t kArmLogCapacity = 16384;
+// Sorts the specs by key and merges a key both ticked and chosen into one; reserves the log for `logCapacity` arms.
+std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity);
 
 // Tests replace the clock; nullptr restores QueryPerformanceCounter.
 void SetTraceClockForTest(uint64_t (*clock)());

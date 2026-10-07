@@ -7378,6 +7378,78 @@ int main() {
         check("a default hint belongs to no recording and no ring", none.gen == 0 && none.ring == -1 && none.flags == 0);
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: arming by name -- the table's first read of an address arms it for a name it matches");
+        // docs/live-funcs-step2-items.md, N1 (T10): a tick or a choice is a name, and the table reads every function
+        // at its first call anyway. A stub reader stands in for Ubel's: the function's FName is its address's low 16
+        // bits, its class's FName 7 -- except 0xC1, whose FName carries a Number, and 0xC2, whose class is 8.
+        static int s_armReads = 0;
+        auto armStub = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            ++s_armReads;
+            out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
+            out.nameNumber    = (f == 0xC1) ? 1 : 0;
+            out.classIndex    = (f == 0xC2) ? 8 : 7;
+            out.functionFlags = 0x400;
+            out.numParms      = 2;
+            out.parmsSize     = 16;
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto build = [] {
+            auto a = Linie::BuildArmState({
+                Linie::ArmSpec{ Linie::NameKey{ 0xB, 0, 7, 0 }, false, 0, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xA, 0, 7, 0 }, true, -1, 0 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xC1, 0, 7, 0 }, false, 1, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xC2, 0, 7, 0 }, false, 2, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, true, -1, 0 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, false, 3, 32 },
+            }, 8);
+            a->gen = 5;
+            return a;
+        };
+        auto st = build();
+        bool sorted = true;
+        for (size_t i = 1; i < st->specs.size(); ++i) sorted = sorted && st->specs[i - 1].key < st->specs[i].key;
+        const Linie::ArmSpec* dSpec = nullptr;
+        for (const auto& sp : st->specs) if (sp.key == Linie::NameKey{ 0xD, 0, 7, 0 }) dSpec = &sp;
+        check("BuildArmState sorts the names and merges one ticked and chosen into one spec",
+              st->specs.size() == 5 && sorted && dSpec && dSpec->tick && dSpec->ring == 3 && dSpec->ringCap == 32 &&
+              st->log.capacity() >= 8, u(st->specs.size()).c_str());
+
+        Linie::Reset();
+        Linie::StartRecording(armStub, nullptr, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xA, 1000, &h);
+        check("a ticked name: its first call is armed to open a scope, with no ring",
+              h.gen == 5 && (h.flags & Linie::kArmTick) && h.ring == -1 && st->log.empty(), u(h.gen).c_str());
+        Linie::RecordCall(0xB, 1001, &h);
+        check("a chosen name: armed with its ring, its first arm, its own copy size",
+              h.gen == 5 && h.ring == 0 && h.arm == 0 && h.copy == 16 && !(h.flags & Linie::kArmTick) &&
+              st->log.size() == 1 && st->log[0].addr == 0xB && st->log[0].ring == 0 && st->log[0].armMs == 1001,
+              u(st->log.size()).c_str());
+        check("...the after copy and the cut follow the arm rules (flags 0x400: no out parameters; 16 fits)",
+              !(h.flags & Linie::kArmAfter) && !(h.flags & Linie::kArmTruncated));
+        Linie::ArmHint h2;
+        Linie::RecordCall(0xB, 1002, &h2);
+        check("its next call carries the same hint, and arms nothing new",
+              h2.gen == 5 && h2.ring == 0 && h2.arm == 0 && h2.copy == 16 && st->log.size() == 1, u(st->log.size()).c_str());
+        Linie::RecordCall(0xD, 1003, &h);
+        check("a name both ticked and chosen: one arm does both",
+              (h.flags & Linie::kArmTick) && h.ring == 3 && h.arm == 1 && st->log.size() == 2);
+        Linie::RecordCall(0xC1, 1004, &h);
+        check("the same FName index with another Number is another name: not armed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xC2, 1005, &h);
+        check("the same function name in another class is another name: not armed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xE, 1006, &h);
+        check("a name nobody follows: a default hint", h.gen == 0 && h.ring == -1 && h.flags == 0);
+        check("...and the log holds the two arms only", st->log.size() == 2, u(st->log.size()).c_str());
+
+        Linie::StartRecording(armStub);
+        Linie::RecordCall(0xB, 2000, &h);
+        check("a recording that follows no names arms nothing", h.gen == 0 && h.ring == -1);
+        Linie::Reset();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

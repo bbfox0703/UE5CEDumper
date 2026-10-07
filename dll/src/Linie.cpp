@@ -37,18 +37,39 @@ struct Stat {
     double   m2       = 0.0; // Welford running M2 (sum of squared deltas)
     FuncIdentity ident;      // read at the first call (TRACE-UNLOADED-NAMES)
     uint8_t  identTries = 0; // reads tried so far, up to kIdentityTries
+    ArmHint  arm;            // what this address is armed for ([LIVEFUNCS-STEP2]); default: nothing
 };
 static std::mutex g_mu;
 static std::unordered_map<uintptr_t, Stat> g_stats;
 // The identity reader of the running recording, and its key check; nullptr reads nothing. Set and cleared under g_mu.
 static FuncIdentityReader g_reader = nullptr;
 static FuncKeyReader      g_keyReader = nullptr;
+// The names the running recording follows; nullptr follows none. Set and cleared under g_mu.
+static std::shared_ptr<ArmState> g_arms;
+
+std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity) {
+    std::sort(specs.begin(), specs.end(), [](const ArmSpec& a, const ArmSpec& b) { return a.key < b.key; });
+    auto st = std::make_shared<ArmState>();
+    for (const ArmSpec& sp : specs) {
+        if (!st->specs.empty() && st->specs.back().key == sp.key) {
+            ArmSpec& m = st->specs.back();   // the same name ticked and chosen: one spec does both
+            m.tick = m.tick || sp.tick;
+            if (sp.ring >= 0) { m.ring = sp.ring; m.ringCap = sp.ringCap; }
+            continue;
+        }
+        st->specs.push_back(sp);
+    }
+    st->capacity = logCapacity;
+    st->log.reserve(logCapacity);
+    return st;
+}
 // Monotonic call-stream position (1-based), reset per recording. A function's
 // firstSeq is g_seq at the moment it was first seen — the causal ordering.
 static uint64_t g_seq = 0;
 
-void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
+void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
     std::lock_guard<std::mutex> lk(g_mu);
+    if (hint) *hint = ArmHint{};
     uint64_t seq = ++g_seq;
     auto& s = g_stats[ufunc];       // default-constructs on first sight
     // [TRACE-UNLOADED-NAMES] The function is being dispatched, so it is alive: read what it is now, once. A later
@@ -122,13 +143,14 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     ++s.count;
 }
 
-void StartRecording(FuncIdentityReader reader, FuncKeyReader keyReader) {
+void StartRecording(FuncIdentityReader reader, FuncKeyReader keyReader, std::shared_ptr<ArmState> arms) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_stats.clear();
     g_stats.reserve(4096);  // bound rehash churn over the recording window
     g_seq = 0;
     g_reader = reader;
     g_keyReader = keyReader;
+    g_arms = std::move(arms);
     // Flip on UNDER the lock so a concurrent RecordCall can never observe
     // recording==true against a half-cleared table.
     g_recording.store(true, std::memory_order_relaxed);
@@ -150,6 +172,7 @@ void Reset() {
         g_seq = 0;
         g_reader = nullptr;
         g_keyReader = nullptr;
+        g_arms.reset();
     }
     // A client that left takes its trace with it: up to 512 MB of the game's memory, outside g_mu because the
     // trace has its own lock.
