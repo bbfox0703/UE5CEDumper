@@ -8812,6 +8812,19 @@ int main() {
         const auto vc = Ubel::DecodeParamSnapshot(cpn, c, sizeof c, false, ctx12);
         check("a soft path on a case-preserving build: the asset's FName after a 12-byte one",
               vc.size() == 1 && vc[0].text == "/Game/Maps/Arena.Arena", vc.empty() ? "" : vc[0].text.c_str());
+        // Measured on DumperTest58 (2026-10-07): a soft pointer to an actor is its level's asset path plus a sub-path
+        // (":PersistentLevel.<actor>") in an FString whose text is not in the copy. Shown without it, the actor's
+        // pointer read as the level's.
+        alignas(8) uint8_t s2[0x50] = {};
+        memcpy(s2, b + 0x28, 0x30);
+        const int32_t subNum = 34;
+        memcpy(s2 + 0x20 + 8, &subNum, 4);   // SubPathString {Data, Num, Max} after the two FNames
+        Ubel::ParamLayout sp;
+        sp.params = { field("Soft", "SoftObjectProperty", 0, 0x30) };
+        const auto vs = Ubel::DecodeParamSnapshot(sp, s2, 0x30, false, ctx);
+        check("a soft path with a sub-path says so, and that its text was not copied",
+              vs.size() == 1 && vs[0].text == "/Game/Maps/Arena.Arena:<sub-path, 33 chars, not copied>" &&
+              vs[0].mark == SM::Header, vs.empty() ? "" : vs[0].text.c_str());
     }
 
     {
