@@ -299,7 +299,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     // it holds the window (the ring's own size), the trace's columns (73 of every 80 bytes a call takes in the ring)
     // and the tree's state, plus one page's reply in flight; after the load, only the columns and the tree. 2 x N is
     // that structure; the extra quarter is what the live check of 2026-10-07 (build 3636, Avowed) needed for "up to"
-    // to hold: a full 128 MB load peaked 303 MB over its start, a full 512 MB one 1,206 MB over a freshly started UI.
+    // to hold over the load's start: a full 128 MB load peaked 303 MB above it, a full 512 MB one 1,054 MB. What the
+    // UI already held before the load is not the trace's cost (that 512 MB run was 1,206 MB above a fresh UI).
     internal const double TraceUiPeakFactor = 2.25;
     internal const int    TraceUiPageMb     = 45;
     public int TraceGameMb   => TraceBufferMb;
