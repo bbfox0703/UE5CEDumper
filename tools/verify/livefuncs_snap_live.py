@@ -384,14 +384,14 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     bad["class"] += "X"
     r = c.request("pe_profile_start", trace={"bytes": 32 << 20, "ticked_names": [bad]})
     c.request("pe_profile_stop")
-    after = data_of(c.request("pe_trace_get", **{"from": 0, "max": 1}))
+    after = c.request("pe_trace_get", **{"from": 0, "max": 1})   # its own `data` is the records: not data_of
     check("F2 a key whose class string was altered is refused, and alone refuses the Start", not ok_of(r),
           str(r.get("error", ""))[:90])
     check("F2 ...after which no trace is allocated", after.get("allocated") is False, str(after.get("allocated")))
     many = [dict(item(rows["SnapProbe_Call"]), parms_size=2048) for _ in range(512)]
     r = c.request("pe_profile_start", trace={"bytes": 32 << 20, "snapshots": {"funcs": many, "bytes": 8 << 20}})
     c.request("pe_profile_stop")
-    after = data_of(c.request("pe_trace_get", **{"from": 0, "max": 1}))
+    after = c.request("pe_trace_get", **{"from": 0, "max": 1})   # its own `data` is the records: not data_of
     check("F3 512 choices of 2,048 B into 8 MB are refused (K = %d < 8), naming the count" %
           k_for(8 << 20, [2048] * 512), not ok_of(r) and "512" in str(r.get("error", "")), str(r.get("error", ""))[:90])
     check("F3 ...and nothing stays allocated", after.get("allocated") is False and "snap" not in after)
@@ -540,7 +540,7 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
 
     # ---- release.
     c.request("pe_trace_release")
-    after = data_of(c.request("pe_trace_get", **{"from": 0, "max": 1}))
+    after = c.request("pe_trace_get", **{"from": 0, "max": 1})   # its own `data` is the records: not data_of
     check("the release frees everything", after.get("allocated") is False and "snap" not in after)
 
 
