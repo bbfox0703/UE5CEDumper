@@ -487,6 +487,8 @@ bool PublishArmLayout(ArmState& st, uint32_t index, ArmLayoutState state, std::s
                       std::string why = {}, uint64_t readMs = 0);
 // Stop has passed: every arm not published becomes NotReadBeforeStop, and no later publish lands.
 void SealArms(ArmState& st);
+// Arm `index` still waits for its layout: not published, not sealed. A reader skips the read otherwise.
+bool ArmIsPending(ArmState& st, uint32_t index);
 // Every arm the log holds, with its layout's state.
 std::vector<ArmView> CopyArms(ArmState& st);
 inline constexpr size_t kArmLogCapacity = 16384;

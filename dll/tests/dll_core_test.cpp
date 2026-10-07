@@ -8620,7 +8620,8 @@ int main() {
 
         // Sealed: Stop has passed; nothing is read for it.
         add(0x50);
-        st2->log.back().addr = 0xB1;
+        st2->log.back().addr = 0xB7;                 // a live function no earlier arm read: only the seal stops it
+        st2->log.back().ident.nameIndex = 0xB7;
         st2->logCount = st2->log.size();
         Linie::SealArms(*st2);
         const size_t before = memo2.captures;

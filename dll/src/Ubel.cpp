@@ -2258,11 +2258,78 @@ bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
     return true;
 }
 
-ArmCaptureOps DefaultArmCaptureOps() { return ArmCaptureOps{}; }
+static bool ReadLiveKey(uintptr_t func, Linie::NameKey& key, uint64_t& outer) {
+    if (!ReadNameKey(func, key)) return false;
+    uintptr_t o = 0;
+    outer = Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, o) ? o : 0;
+    return true;
+}
+static uint64_t SteadyNowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+ArmCaptureOps DefaultArmCaptureOps() {
+    ArmCaptureOps ops;
+    ops.classify    = &ClassifyFunction;
+    ops.readKey     = &ReadLiveKey;
+    ops.capture     = &CaptureParamLayout;
+    ops.nowMs       = &SteadyNowMs;
+    ops.tailDecided = DynOff::UFUNCTION_FLAGS != 0;
+    return ops;
+}
 
 size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOps& ops, ArmLayoutMemo& memo) {
-    (void)st; (void)maxArms; (void)ops; (void)memo;
-    return 0;
+    using LS = Linie::ArmLayoutState;
+    const std::vector<Linie::PendingArm> arms = Linie::TakePendingArms(st, maxArms);
+    for (const Linie::PendingArm& pa : arms) {
+        if (!Linie::ArmIsPending(st, pa.index)) continue;   // sealed: Stop has passed
+        const Linie::FuncIdentity& id = pa.rec.ident;
+        const Linie::NameKey armKey{ id.nameIndex, id.nameNumber, id.classIndex, id.classNumber };
+        const uint64_t waited = ops.nowMs() > pa.rec.armMs ? ops.nowMs() - pa.rec.armMs : 0;
+        // The same five numbers -- the address, its Outer and the names -- are the same function: its layout, read
+        // once, holds for every arm of it, even after it unloaded again.
+        const ArmLayoutMemo::Key key{ pa.rec.addr, id.outer, armKey };
+        if (const auto it = memo.layouts.find(key); it != memo.layouts.end()) {
+            Linie::PublishArmLayout(st, pa.index, LS::Read, it->second, {}, waited);
+            continue;
+        }
+        // Still the function that was armed: in its slot, under its names and its class.
+        auto stillItself = [&] {
+            Linie::NameKey live{};
+            uint64_t outer = 0;
+            return ops.readKey(pa.rec.addr, live, outer) && live == armKey && outer == id.outer;
+        };
+        const FuncState state = ops.classify(pa.rec.addr, id);
+        if (state == FuncState::Unloaded || state == FuncState::Unnamed) {
+            Linie::PublishArmLayout(st, pa.index, LS::UnloadedBeforeRead, nullptr, {}, waited);
+            continue;
+        }
+        if (state == FuncState::Recycled || !stillItself()) {
+            Linie::PublishArmLayout(st, pa.index, LS::ReplacedBeforeRead, nullptr, {}, waited);
+            continue;
+        }
+        auto layout = std::make_shared<ParamLayout>();
+        std::string why;
+        ++memo.captures;
+        if (!ops.capture(pa.rec.addr, *layout, why)) {
+            Linie::PublishArmLayout(st, pa.index, LS::Failed, nullptr, why, waited);
+            continue;
+        }
+        if (!stillItself()) {   // another function took the address while it was read: the read is not its
+            Linie::PublishArmLayout(st, pa.index, LS::ReplacedBeforeRead, nullptr, {}, waited);
+            continue;
+        }
+        // The vote's own rule, against the arm's own NumParms / ParmsSize, when the flags offset says where they are.
+        // A mismatch is published as Doubtful: its calls still decode, marked.
+        const bool doubtful = ops.tailDecided && id.numParms != 0 && id.parmsSize != 0 &&
+            !DynOff::FunctionTailMatches(layout->numParms ? layout->numParms : id.numParms, id.parmsSize,
+                                           static_cast<int>(layout->params.size()), static_cast<int>(layout->layoutEnd));
+        std::shared_ptr<const ParamLayout> published = std::move(layout);
+        memo.layouts.emplace(key, published);
+        Linie::PublishArmLayout(st, pa.index, doubtful ? LS::Doubtful : LS::Read, published, {}, waited);
+    }
+    return arms.size();
 }
 
 // [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:

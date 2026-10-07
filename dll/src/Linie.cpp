@@ -295,6 +295,11 @@ void SealArms(ArmState& st) {
             l.state = static_cast<uint8_t>(ArmLayoutState::NotReadBeforeStop);
 }
 
+bool ArmIsPending(ArmState& st, uint32_t index) {
+    std::lock_guard<std::mutex> lk(st.layoutMu);
+    return index < st.layouts.size() && st.layouts[index].state == static_cast<uint8_t>(ArmLayoutState::Pending);
+}
+
 std::vector<ArmView> CopyArms(ArmState& st) {
     std::vector<ArmRecord> recs;
     {
