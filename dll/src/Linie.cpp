@@ -761,7 +761,9 @@ TraceInfo GetTraceInfo() {
     return InfoLocked();
 }
 
-bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next) {
+bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next,
+               uint64_t* orphans) {
+    if (orphans) *orphans = 0;
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (!g_trace.snapBlock || ring >= g_trace.snapCount || g_tracing.load(std::memory_order_seq_cst) ||
         !g_trace.quiesced)

@@ -8210,6 +8210,130 @@ int main() {
         s_mode = 0;
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the rings' windows -- a busy ring laps only itself; orphans left out; paging");
+        // docs/live-funcs-step2-items.md, S7. K = 8 for both rings: 64 * 2 + 8 * (24 + 8) * 2 bytes.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](uint64_t records, uint64_t snapBytes) {
+            Linie::TraceConfig c;
+            c.bytes = records * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = snapBytes;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        auto hint = [](uint64_t gen, int32_t ring) { Linie::ArmHint h{}; h.gen = gen; h.ring = ring; h.copy = 8; return h; };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        uint64_t gen = start(256, 128 + 8 * 32 * 2);
+        check("setup: K = 8", Linie::GetTraceInfo().snap.slotsPerRing == 8, u(Linie::GetTraceInfo().snap.slotsPerRing).c_str());
+        for (int i = 0; i < 3; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA2, 0, 1000, 1, t, params, hint(gen, 1)); }
+        for (int i = 0; i < 20; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA1, 0, 1000, 1, t, params, hint(gen, 0)); }
+        Linie::StopTrace();
+        std::vector<Linie::SnapRingInfo> rings;
+        Linie::SnapRings(rings);
+        check("the busy ring kept its last 8 of 20; the rare one all 3 of its own",
+              rings.size() == 2 && rings[0].written == 20 && rings[0].firstValid == 12 && rings[1].written == 3 &&
+              rings[1].firstValid == 0, rings.size() == 2 ? (u(rings[0].firstValid) + "/" + u(rings[1].firstValid)).c_str() : "");
+        std::vector<Linie::SnapCopy> busy, rare;
+        uint64_t orphans = 99;
+        check("...the rare ring's three, untouched by the busy one",
+              Linie::CopySnaps(1, 0, 64, rare, nullptr, &orphans) && rare.size() == 3 && rare[0].entrySeq == 0 &&
+              rare[2].entrySeq == 2 && orphans == 0, u(rare.size()).c_str());
+        check("...the busy ring's window, in order", Linie::CopySnaps(0, 0, 64, busy) && busy.size() == 8 &&
+              busy[0].index == 12 && busy[7].index == 19 && busy[0].entrySeq == 15, u(busy.size()).c_str());
+        uint64_t next = 0;
+        busy.clear();
+        check("a page asked from before the window does not reach into it, and the next page is the window's start",
+              Linie::CopySnaps(0, 0, 3, busy, &next) && busy.empty() && next == 12, u(next).c_str());
+        check("...a page inside it, and the page after", Linie::CopySnaps(0, 12, 3, busy, &next) && busy.size() == 3 &&
+              busy[0].index == 12 && next == 15, u(next).c_str());
+        Linie::FreeTrace();
+
+        // The trace's ring laps the calls' entry records while the snapshot ring still keeps their slots.
+        gen = start(8, 128 + 32 * 32 * 2);                  // K = 32 > the 8 records the trace keeps
+        for (int i = 0; i < 20; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA1, 0, 1000, 1, t, params, hint(gen, 0)); }
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> kept;
+        orphans = 0;
+        check("a slot whose call the trace no longer keeps is left out, and counted an orphan",
+              Linie::CopySnaps(0, 0, 64, kept, nullptr, &orphans) && kept.size() == 8 && orphans == 12 &&
+              kept[0].entrySeq == 12 && Linie::GetTraceInfo().firstValid == 12, (u(kept.size()) + "/" + u(orphans)).c_str());
+        Linie::FreeTrace();
+
+        // What step 2 costs on the hook: printed, not checked (a timing is the machine's).
+        {
+            constexpr int N = 1 << 20;
+            LARGE_INTEGER f, t0, t1;
+            QueryPerformanceFrequency(&f);
+            auto nsPer = [&](LARGE_INTEGER a, LARGE_INTEGER b, int n) {
+                return double(b.QuadPart - a.QuadPart) * 1e9 / double(f.QuadPart) / n;
+            };
+            // The table with 1,000 names followed: steady state, and first sights.
+            std::vector<Linie::ArmSpec> specs;
+            for (int i = 0; i < 1000; ++i) specs.push_back(Linie::ArmSpec{ Linie::NameKey{ 0x10000 + i, 0, 7, 0 }, false, i % 8, 64 });
+            auto st = Linie::BuildArmState(specs, Linie::kArmLogCapacity);
+            st->gen = 1;
+            auto rd = [](uintptr_t fn, Linie::FuncIdentity& out) -> bool {
+                out.nameIndex = static_cast<int32_t>(fn); out.classIndex = 7; out.parmsSize = 16; return true;
+            };
+            Linie::StartRecording(rd, nullptr, st);
+            Linie::ArmHint h;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(0x10000 + (i & 1023), 1000 + i, &h);
+            QueryPerformanceCounter(&t1);
+            const double steady = nsPer(t0, t1, N);
+            constexpr int M = 1 << 14;
+            Linie::StartRecording(rd, nullptr, st);
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < M; ++i) Linie::RecordCall(0x20000 + i, 1000 + i, &h);   // first sights, no match
+            QueryPerformanceCounter(&t1);
+            const double firsts = nsPer(t0, t1, M);
+            Linie::Reset();
+            // The trace: a call whose hint chose nothing, and a 64-byte entry plus after copy.
+            Linie::TraceConfig c;
+            c.bytes = (2ull * N + 16) * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 64 };
+            c.snapBytes = 64ull << 20;
+            c.snapPerRingPerSec = 0xFFFFFF;
+            c.snapTotalPerSec = 0xFFFFFF;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            const uint64_t g = Linie::GetTraceInfo().gen;
+            Linie::ArmHint plain{};
+            plain.gen = g;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000 + (i & 63), 0x2000, 1000, 1, t, params, plain);
+                Linie::TraceReturn(t, 1, params);
+            }
+            QueryPerformanceCounter(&t1);
+            const double unchosen = nsPer(t0, t1, N);
+            Linie::StartTrace(c);
+            uint8_t block[64] = {};
+            Linie::ArmHint chosen{};
+            chosen.gen = Linie::GetTraceInfo().gen; chosen.ring = 0; chosen.copy = 64; chosen.flags = Linie::kArmAfter;
+            constexpr int P = 1 << 16;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < P; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000, 0x2000, 1000, 1, t, reinterpret_cast<uintptr_t>(block), chosen);
+                Linie::TraceReturn(t, 1, reinterpret_cast<uintptr_t>(block));
+            }
+            QueryPerformanceCounter(&t1);
+            const double copied = nsPer(t0, t1, P);
+            Linie::FreeTrace();
+            printf("  info  step-2 cost: table %.1f ns per call with 1,000 names followed, %.1f ns per first sight; "
+                   "trace %.1f ns per unchosen call, %.1f ns per chosen call with a 64-byte entry and after copy\n",
+                   steady, firsts, unchosen, copied);
+        }
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

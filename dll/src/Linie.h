@@ -325,8 +325,10 @@ struct SnapCopy {
     std::vector<uint8_t> bytes;
 };
 // Ring `ring`'s slots [from, from + maxSlots), clipped to what it kept, in order; the same refusals as CopyTrace.
-// `next`, when given, is where the following page starts.
-bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next = nullptr);
+// `next`, when given, is where the following page starts. A slot whose call's entry record the trace's ring no longer
+// keeps is an orphan -- it has no call to belong to -- and is left out; `orphans`, when given, counts them.
+bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next = nullptr,
+               uint64_t* orphans = nullptr);
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
 // none is allocated, or when the last stop could not quiesce. `next`, when given, is where the following page
 // starts: past this page, never before the window, and at or past `written` once there is nothing more.
