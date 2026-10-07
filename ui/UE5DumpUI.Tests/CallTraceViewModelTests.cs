@@ -844,6 +844,20 @@ public class CallTraceViewModelTests
         Assert.Contains(pane.Parent!.Elements(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
     }
 
+    [Fact]
+    public void The_panels_thumbs_have_a_template_so_they_can_be_seen_and_dragged()
+    {
+        // Measured on build 3639 (2026-10-08): Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a
+        // Slider. A bare Thumb has no template, renders nothing and is never hit, so no column or pane could be dragged
+        // although every DragDelta handler was wired. The panel styles its own.
+        var doc = PanelAxaml();
+        Assert.NotEmpty(doc.Descendants(Av + "Thumb"));
+        var style = doc.Descendants(Av + "Style").SingleOrDefault(s => (string?)s.Attribute("Selector") == "Thumb");
+        Assert.NotNull(style);
+        Assert.Contains(style!.Descendants(Av + "Setter"), s => (string?)s.Attribute("Property") == "Template"
+                        && s.Descendants(Av + "ControlTemplate").Any());
+    }
+
     // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----
 
     /// <summary>en.axaml's strings, read as the app shows them: Res has no Avalonia application in a unit test, so
