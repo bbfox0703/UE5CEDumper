@@ -8106,6 +8106,110 @@ int main() {
         Linie::SetTraceClockForTest(nullptr);
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: a copy that cannot be made -- no block, a fault, a cut -- and TR2 with the copier inside");
+        // docs/live-funcs-step2-items.md, S6. The copier is the step-2 work that runs inside the hook's in-flight
+        // section; a copier that blocks or throws stands in for a fault in the game's memory.
+        static int      s_mode = 0;   // 0 memcpy, 1 fails, 2 blocks once, 3 throws once
+        static HANDLE   s_in   = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE   s_out  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        auto copier = [](uintptr_t src, void* dst, size_t n) -> bool {
+            const int m = s_mode;
+            if (m == 1) return false;
+            if (m == 2) { s_mode = 0; SetEvent(s_in); WaitForSingleObject(s_out, INFINITE); }
+            if (m == 3) { s_mode = 0; throw std::runtime_error("copy fault"); }
+            memcpy(dst, reinterpret_cast<const void*>(src), n);
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[64] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [&] {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 64 * 1024;
+            c.copier = copier;
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        auto hint = [](uint64_t gen, uint8_t flags = 0) {
+            Linie::ArmHint h{}; h.gen = gen; h.ring = 0; h.copy = 16; h.flags = flags; return h;
+        };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        s_mode = 0;
+        uint64_t gen = start();
+        Linie::TraceToken a, b, c;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, a, 0, hint(gen));                              // no parameter block
+        s_mode = 1;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, b, params, hint(gen));                         // the copy faults
+        s_mode = 0;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, c, params, hint(gen, Linie::kArmTruncated));   // larger than its slot
+        const ULONGLONG t0 = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stopMs = GetTickCount64() - t0;
+        std::vector<Linie::SnapCopy> s;
+        Linie::CopySnaps(0, 0, 10, s);
+        check("no parameter block: the slot says so, and holds nothing",
+              s.size() == 3 && s[0].flags == Linie::kSnapNullParams && s[0].len == 0 && s[0].bytes.empty(), u(s.size()).c_str());
+        check("a copy that faults: the slot says so, and holds nothing",
+              s.size() == 3 && s[1].flags == Linie::kSnapCopyFault && s[1].len == 0);
+        check("a block larger than the slot: the slot says it was cut, and holds what fits",
+              s.size() == 3 && s[2].flags == Linie::kSnapTruncated && s[2].len == 16);
+        check("...and a faulting copy leaves Stop nothing to wait for", Linie::GetTraceInfo().quiesced && stopMs < 1000,
+              u(stopMs).c_str());
+
+        // A copier that blocks holds the hook inside its section: Stop waits for it.
+        gen = start();
+        ResetEvent(s_in); ResetEvent(s_out);
+        s_mode = 2;
+        std::thread writer([&] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, hint(gen)); });
+        WaitForSingleObject(s_in, 5000);
+        std::atomic<bool> stopped{ false };
+        std::thread stopper([&stopped] { Linie::StopTrace(); stopped = true; });
+        Sleep(100);
+        const bool waited = !stopped.load();
+        SetEvent(s_out);
+        writer.join();
+        stopper.join();
+        check("Stop waits while a copy is under way", waited && stopped.load() && Linie::GetTraceInfo().quiesced);
+
+        // ...and when it never leaves, the rings are neither read nor freed, and a Start is busy.
+        gen = start();
+        ResetEvent(s_in); ResetEvent(s_out);
+        s_mode = 2;
+        std::thread stuck([&] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, hint(gen)); });
+        WaitForSingleObject(s_in, 5000);
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> none;
+        std::vector<Linie::SnapRingInfo> rings;
+        Linie::FreeTrace();
+        check("a copy that never ends: the rings are not read, not freed, and a Start is busy",
+              !Linie::CopySnaps(0, 0, 10, none) && !Linie::SnapRings(rings) && Linie::GetTraceInfo().snap.allocated &&
+              Linie::StartTrace(Linie::TraceConfig{}) == Linie::TraceStartStatus::Busy);
+        SetEvent(s_out);
+        stuck.join();
+        Linie::StopTrace();
+        check("...once it has left, they are read again", Linie::CopySnaps(0, 0, 10, none) && none.size() == 1,
+              u(none.size()).c_str());
+
+        // A copier that throws (under the DLL's /EHa an SEH fault unwinds the same way) leaves no count behind.
+        gen = start();
+        s_mode = 3;
+        bool threw = false;
+        try { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, hint(gen)); }
+        catch (const std::exception&) { threw = true; }
+        const ULONGLONG t1 = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stop2 = GetTickCount64() - t1;
+        check("a copy that throws: Stop quiesces at once", threw && Linie::GetTraceInfo().quiesced && stop2 < 1000,
+              u(stop2).c_str());
+        Linie::FreeTrace();
+        s_mode = 0;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
