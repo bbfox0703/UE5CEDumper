@@ -83,13 +83,14 @@ def record(c: PipeClient, seconds: float, trace: dict | None = None) -> tuple[di
 
 def read_ring(c: PipeClient) -> tuple[dict, list[tuple], float, int]:
     """Every kept record, in order. Returns (trace info, records, seconds, bytes moved)."""
-    head = data_of(c.request("pe_trace_get", **{"from": 0, "max": 1}))
+    # Not data_of: pe_trace_get carries its own `data` field (the records), so the reply is read as it is.
+    head = c.request("pe_trace_get", **{"from": 0, "max": 1})
     frm, written = head.get("first_valid", 0), head.get("written", 0)
     recs: list[tuple] = []
     moved = 0
     t0 = time.perf_counter()
     while frm < written:
-        page = data_of(c.request("pe_trace_get", **{"from": frm, "max": PAGE}))
+        page = c.request("pe_trace_get", **{"from": frm, "max": PAGE})
         moved += c.last_reply_bytes
         raw = base64.b64decode(page.get("data", ""))
         recs.extend(REC.iter_unpack(raw))
@@ -178,7 +179,10 @@ def main() -> int:
         info = stop.get("trace", {})
         out["traced_start_s"] = start["_start_s"]
         out["traced_info"] = info
-        check("the traced Start answered the trace object", start.get("trace", {}).get("bytes") == mb)
+        # The DLL reports what it allocated: whole 40-byte records.
+        check("the traced Start answered the trace object",
+              start.get("trace", {}).get("bytes") == (mb // REC.size) * REC.size,
+              str(start.get("trace", {}).get("bytes")))
         check("Stop answered the trace, quiesced", info.get("allocated") and info.get("quiesced"), json.dumps(info))
         written, first = info.get("written", 0), info.get("first_valid", 0)
         calls = table.get("total_calls", 0)
@@ -225,7 +229,7 @@ def main() -> int:
                           "callers": len(nested)}
 
         c.request("pe_trace_release")
-        after = data_of(c.request("pe_trace_get", **{"from": 0, "max": 1}))
+        after = c.request("pe_trace_get", **{"from": 0, "max": 1})
         check("release frees the ring; a read finds nothing", not after.get("allocated") and after.get("count") == 0)
 
         # 6. the ticked scope: tick the function that calls the most other UFunctions
