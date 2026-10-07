@@ -8746,6 +8746,15 @@ int main() {
             check(("..." + who + ": the object's class and the struct's type, from this model's slot").c_str(),
                   pl.params[1].objClass == "Actor" && pl.params[2].structType == "HitResult",
                   (pl.params[1].objClass + "/" + pl.params[2].structType).c_str());
+            putP(props[1], slotOff, obj(17));   // a struct where the object's class should be
+            putP(props[2], slotOff, obj(16));   // a class where the struct should be
+            Ubel::ParamLayout wrong;
+            Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(fnBlob), wrong, why);
+            check(("..." + who + ": a slot holding the wrong kind of object names nothing").c_str(),
+                  wrong.params.size() == 5 && wrong.params[1].objClass.empty() && wrong.params[2].structType.empty(),
+                  wrong.params.size() == 5 ? (wrong.params[1].objClass + "/" + wrong.params[2].structType).c_str() : "");
+            putP(props[1], slotOff, obj(16));
+            putP(props[2], slotOff, obj(17));
 
             putP(notFn, Grimoire::OFF_UOBJECT_CLASS, obj(14));     // a Class, not a Function
             put32(notFn, Grimoire::OFF_UOBJECT_NAME, 21);

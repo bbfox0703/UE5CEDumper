@@ -2101,11 +2101,73 @@ bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, ui
     return true;
 }
 
+// [LIVEFUNCS-STEP2] The struct a StructProperty parameter holds, or the class an object-family one points at, read in
+// this engine's property model: an FField's at FSTRUCTPROP_STRUCT; a UProperty's at the measured subclass start
+// (UPropertySubclassStart), as WalkFunctions reads it -- FSTRUCTPROP_STRUCT is an FField offset, and on a UProperty
+// engine it can land on another field. The slot is taken only when it holds that kind of object.
+static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
+    const bool isStruct = p.typeName == "StructProperty";
+    const bool isObject = p.typeName == "ObjectProperty" || p.typeName == "ClassProperty" ||
+                          p.typeName == "WeakObjectProperty" || p.typeName == "SoftObjectProperty" ||
+                          p.typeName == "SoftClassProperty" || p.typeName == "InterfaceProperty" ||
+                          p.typeName == "LazyObjectProperty";
+    if (!isStruct && !isObject) return;
+    const int slot = DynOff::bUseFProperty ? DynOff::FSTRUCTPROP_STRUCT : DynOff::UPropertySubclassStart(g_cachedUEVersion);
+    uintptr_t ptr = 0;
+    if (!Macht::ReadSafe(prop + slot, ptr) || !ptr) return;
+    if (isStruct ? !IsScriptStructObject(ptr) : !IsClassObject(ptr)) return;
+    std::string name = GetName(ptr);
+    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
+    (isStruct ? p.structType : p.objClass) = std::move(name);
+}
+
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
-    (void)func;
     out = ParamLayout{};
-    why = "not built";
-    return false;
+    why.clear();
+    FunctionInfo fi;
+    if (!ResolveFunctionInfo(func, fi)) { why = "not a UFunction"; return false; }
+    out.func          = func;
+    out.funcName      = fi.name;
+    out.functionFlags = fi.functionFlags;
+    out.parmsSize     = fi.parmsSize;
+    out.numParms      = fi.numParms;
+    uintptr_t outer = 0;
+    if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, outer) && outer) out.className = GetName(outer);
+
+    // Its own chain only: WalkClass would prepend the SuperStruct's -- an override's parent function -- and keeps an
+    // address-keyed memo a layout read by value must not lean on.
+    std::vector<FieldInfo> fields;
+    uintptr_t first = 0;
+    if (DynOff::bUseFProperty) {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDPROPS, first) && first) WalkFFieldChain(first, fields);
+    } else {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
+    }
+    constexpr uint64_t kCpfParm = 0x80;
+    for (const FieldInfo& f : fields) {
+        if (!(f.PropertyFlags & kCpfParm)) continue;   // a Blueprint function's locals follow its parameters
+        if (f.Offset < 0 || f.Offset > 0x10000 || f.Size <= 0 || f.Size > 0x10000) {
+            why = "implausible parameter '" + f.Name + "'";
+            out.params.clear();
+            return false;
+        }
+        ParamField p;
+        p.name       = f.Name;
+        p.typeName   = f.TypeName;
+        p.offset     = f.Offset;
+        p.size       = f.Size;
+        p.arrayDim   = f.ArrayDim;
+        p.flags      = f.PropertyFlags;
+        p.kind       = ParamKindOf(f.PropertyFlags);
+        p.boolMask   = f.boolFieldMask;
+        p.boolNative = f.boolNative;
+        ReadParamSlotNames(f.Address, p);
+        const uint64_t end = static_cast<uint64_t>(p.offset) + static_cast<uint64_t>(p.size) * p.arrayDim;
+        if (end > out.layoutEnd) out.layoutEnd = static_cast<uint32_t>(end);
+        out.params.push_back(std::move(p));
+    }
+    if (out.params.empty()) { why = "no parameters"; return false; }
+    return true;
 }
 
 // [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:
