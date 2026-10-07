@@ -19,6 +19,15 @@ public sealed class MockPlatformService : IPlatformService
         _appDataPath = appDataPath;
     }
 
+    /// <summary>[TRACE-UI-LOAD-MEMORY] What GetAvailablePhysicalMemoryBytes answers, and how often it was asked.</summary>
+    public long AvailablePhysicalMemory { get; set; } = long.MaxValue;
+    public int AvailableMemoryReads { get; private set; }
+    public long GetAvailablePhysicalMemoryBytes()
+    {
+        AvailableMemoryReads++;
+        return AvailablePhysicalMemory;
+    }
+
     public bool TryAcquireSingleInstance() => true;
     public void ReleaseSingleInstance() { }
     public string GetAppDataPath() => _appDataPath;

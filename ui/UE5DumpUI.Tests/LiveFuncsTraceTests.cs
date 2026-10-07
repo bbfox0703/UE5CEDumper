@@ -79,10 +79,11 @@ public class LiveFuncsTraceTests
         public void StopProcessMirror() { }
     }
 
-    private static (LiveFuncsViewModel vm, FakeDumpService dump) MakeVm(bool experimental = true)
+    private static (LiveFuncsViewModel vm, FakeDumpService dump) MakeVm(bool experimental = true,
+                                                                         IPlatformService? platform = null)
     {
         var dump = new FakeDumpService();
-        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), experimentalGate: new Gate(experimental));
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), platform, experimentalGate: new Gate(experimental));
         return (vm, dump);
     }
 
@@ -413,6 +414,56 @@ public class LiveFuncsTraceTests
         vm.ToggleTickCommand.Execute(vm.Results.First(r => r.FuncName == "Open"));
         Assert.All(vm.Results, r => Assert.False(r.IsTicked));
         Assert.Empty(vm.TickedFunctions);
+    }
+
+    // [TRACE-UI-LOAD-MEMORY] D3: what a full buffer costs, beside the slider, from the buffer alone -- before any
+    // recording, at any call rate: the game holds N MB from Start; the UI holds the window and the trace's columns
+    // while it loads (about twice N, plus a page in flight) and the columns after (about N).
+    [Theory]
+    [InlineData(5, 32, 109, 32)]
+    [InlineData(6, 64, 173, 64)]
+    [InlineData(9, 512, 1069, 512)]
+    public void The_memory_estimate_comes_from_the_buffer_alone(int exponent, int gameMb, int uiPeakMb, int uiHeldMb)
+    {
+        var (vm, _) = MakeVm();
+        Assert.Equal(0, vm.LastCallsPerSecond);   // no recording yet
+        vm.TraceBufferExponent = exponent;
+        Assert.Equal(gameMb, vm.TraceGameMb);
+        Assert.Equal(uiPeakMb, vm.TraceUiPeakMb);
+        Assert.Equal(uiHeldMb, vm.TraceUiHeldMb);
+    }
+
+    [Fact]
+    public async Task Above_the_available_memory_the_estimate_warns_and_Start_still_starts()
+    {
+        var platform = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 1L << 30 };   // 1 GB
+        var (vm, dump) = MakeVm(platform: platform);
+        vm.TraceEnabled = true;
+        vm.TraceBufferExponent = 9;   // 512 MB in the game and about 1 GB in the UI: more than 1 GB free
+        Assert.True(vm.TraceMemoryOverAvailable);
+
+        int reads = platform.AvailableMemoryReads;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);                      // a warning, never a refusal (D3)
+        Assert.Equal(1, dump.StartCalls);
+        Assert.True(platform.AvailableMemoryReads > reads);   // read again at Start: memory moves while the slider waits
+
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.TraceBufferExponent = 5;
+        Assert.False(vm.TraceMemoryOverAvailable);        // 32 MB + about 110 MB fits in 1 GB
+    }
+
+    [Fact]
+    public void With_plenty_of_memory_or_none_known_there_is_no_warning()
+    {
+        var plenty = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 64L << 30 };
+        var (vm, _) = MakeVm(platform: plenty);
+        vm.TraceBufferExponent = 9;
+        Assert.False(vm.TraceMemoryOverAvailable);
+
+        var (vm2, _) = MakeVm();   // no platform service: unknown, so no warning
+        vm2.TraceBufferExponent = 9;
+        Assert.False(vm2.TraceMemoryOverAvailable);
     }
 
     // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded since it fired keeps its row, named from its first call,
