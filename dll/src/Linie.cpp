@@ -38,7 +38,11 @@ struct Stat {
     FuncIdentity ident;      // read at the first call (TRACE-UNLOADED-NAMES)
     uint8_t  identTries = 0; // reads tried so far, up to kIdentityTries
     ArmHint  arm;            // what this address is armed for ([LIVEFUNCS-STEP2]); default: nothing
-    int32_t  armSpec = -1;   // the followed name it last matched, so an address counts once per name
+    int32_t  armSpec = -1;   // the followed name it last matched; -1: no followed name ever claimed it
+    // The followed names that have counted this address, so each counts it once while names take turns at it
+    // (review R4). A fifth name at one address counts again: an address held by five followed names in one
+    // recording is not a case worth a vector per entry.
+    int32_t  countedFor[4] = { -1, -1, -1, -1 };
 };
 static std::mutex g_mu;
 static std::unordered_map<uintptr_t, Stat> g_stats;
@@ -83,10 +87,13 @@ static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
     if (it == specs.end() || !(it->key == key)) return;
     const size_t si = static_cast<size_t>(it - specs.begin());
     ArmState::Count& count = g_arms->counts[si];
-    if (s.armSpec != static_cast<int32_t>(si)) {   // a new address for this name, not a reload at the same one
+    bool counted = false;   // a new address for this name -- not a reload at the same one, nor its return there
+    for (int32_t c : s.countedFor) counted = counted || c == static_cast<int32_t>(si);
+    if (!counted) {
         ++count.addresses;
-        s.armSpec = static_cast<int32_t>(si);
+        for (int32_t& c : s.countedFor) if (c < 0) { c = static_cast<int32_t>(si); break; }
     }
+    s.armSpec = static_cast<int32_t>(si);
     s.arm.gen = g_arms->gen;
     if (it->tick) s.arm.flags |= kArmTick;
     if (it->ring < 0) return;
