@@ -27,6 +27,7 @@
 //   version.lib — linked by CMake.
 
 #include <windows.h>
+#include <intrin.h>   // __cpuid: the benchmarks name the CPU they ran on
 #include <stdio.h>
 #include <cstdint>
 #include <cstring>
@@ -7029,6 +7030,20 @@ int main() {
         // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
         // not checked -- a timing depends on the machine. One thread, the real clock, a ring that never laps.
         {
+            // ...so the benchmarks say which CPU they ran on: a nanosecond figure is that CPU's, and the two PCs this
+            // project is measured on differ (the maintainer, 2026-10-07).
+            int regs[4] = {};
+            char brand[49] = {};
+            __cpuid(regs, static_cast<int>(0x80000000u));
+            if (static_cast<unsigned>(regs[0]) >= 0x80000004u) {
+                for (int leaf = 0; leaf < 3; ++leaf) {
+                    __cpuid(regs, static_cast<int>(0x80000002u) + leaf);
+                    memcpy(brand + leaf * 16, regs, 16);
+                }
+            }
+            printf("  info  the benchmarks below ran on: %s\n", brand[0] ? brand : "(CPU brand unknown)");
+        }
+        {
             constexpr int N = 1 << 20;
             LARGE_INTEGER f, t0, t1;
             QueryPerformanceFrequency(&f);
@@ -7183,9 +7198,13 @@ int main() {
         check("another function at the address: read again and marked reused",
               ru.ident.reused && ru.ident.nameIndex == 0x60 && ru.ident.classIndex == 0xA0 && ru.count == 5,
               num(ru.ident.nameIndex).c_str());
-        s_occName = 0x50; s_occClass = 0x90; s_occOuter = 0x9000;
+        s_occOuter = 0xA100;   // the new occupant's class reloaded: the same names, so no new reuse...
         Linie::RecordCall(0xF0, 6005);
-        check("...and stays marked when the first one comes back", statOf(0xF0).ident.reused);
+        check("...and the mark stays when the new one's class reloads (the address did hold two functions)",
+              statOf(0xF0).ident.reused && statOf(0xF0).ident.outer == 0xA100);
+        s_occName = 0x50; s_occClass = 0x90; s_occOuter = 0x9000;
+        Linie::RecordCall(0xF0, 6006);
+        check("...and when the first one comes back", statOf(0xF0).ident.reused);
         Linie::Reset();
 
         // Ubel's reader: loads only, from what Fern installs at Start. A fake UFunction whose Outer is a class two
