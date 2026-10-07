@@ -296,6 +296,42 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public async Task While_a_load_runs_neither_export_nor_another_load_is_offered()
+    {
+        var dump = Dump();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);   // a trace on screen: export is offered
+        Assert.True(vm.CanExport && vm.CanLoad);
+
+        var gate = new TaskCompletionSource();
+        dump.ProbeGate = gate;
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 9, QpcFreq = 1_000_000 };
+        dump.NamesGen = 8;
+        var load = vm.LoadCommand.ExecuteAsync(null);
+        Assert.True(vm.IsLoading);
+        Assert.False(vm.CanExport);
+        Assert.False(vm.CanLoad);
+        gate.SetResult();
+        await load;
+        Assert.True(vm.CanExport && vm.CanLoad);
+    }
+
+    [Fact]
+    public async Task A_newer_recording_that_cannot_be_read_marks_the_trace_on_screen_as_older()
+    {
+        var dump = Dump();
+        var (vm, _) = MakeVm(dump);
+        await vm.OnActivatedAsync();
+        Assert.False(vm.ShownIsOlder);
+
+        // The next recording kept nothing: the trace on screen is no longer the last recording's.
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 0, QpcFreq = 1_000_000 };
+        await vm.OnActivatedAsync();
+        Assert.True(vm.HasTrace);
+        Assert.True(vm.ShownIsOlder);
+    }
+
+    [Fact]
     public async Task Toggle_expands_a_call_and_the_rows_follow()
     {
         var (vm, _) = MakeVm(Dump());

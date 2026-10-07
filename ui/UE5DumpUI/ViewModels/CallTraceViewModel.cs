@@ -45,6 +45,10 @@ public partial class CallTraceViewModel : ViewModelBase
     private int[] _matches = Array.Empty<int>();
     private ulong _loadedGen;
     private CancellationTokenSource? _loadCts;
+    /// <summary>Red stubs.</summary>
+    public bool CanExport => HasTrace;
+    public bool CanLoad => !IsLoading;
+    public bool ShownIsOlder => false;
     /// <summary>An activation waiting on Live Funcs' stop and the probe: leaving the tab cancels it before a load starts.</summary>
     private CancellationTokenSource? _activationCts;
 
