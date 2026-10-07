@@ -8390,6 +8390,44 @@ int main() {
         check("ReadObjectNameKey: an object's FName ints",
               Ubel::ReadObjectNameKey(reinterpret_cast<uint64_t>(cls), oi, on) && oi == 22 && on == 0);
         check("...and an unreadable object is refused", !Ubel::ReadObjectNameKey(0x1000, oi, on));
+
+        // The UObject header of every engine the project supports (UE 4.11 - 4.27 and UE5; the maintainer, 2026-10-07:
+        // UE4 is covered here, not live). VTable, flags, index and class are fixed; NamePrivate is at 0x18 and its
+        // ComparisonIndex first; what moves is the FName's size: standard, Number at +4 and Outer at 0x20; case-
+        // preserving (a DisplayIndex added), Number at +4 or +8 and Outer at 0x28 (Grimoire.h, the UObject offsets).
+        struct HeaderLayout { const char* name; bool cpn; int number; int outer; };
+        const HeaderLayout layouts[] = {
+            { "standard (UE 4.11 - 4.27, UE5)", false, 4, 0x20 },
+            { "case-preserving, Number at +4", true, 4, 0x28 },
+            { "case-preserving, Number at +8", true, 8, 0x28 },
+        };
+        const int  savedNumber = DynOff::FNAME_NUMBER, savedOuter = DynOff::UOBJECT_OUTER;
+        const bool savedCpn = DynOff::bCasePreservingName;
+        for (const HeaderLayout& L : layouts) {
+            DynOff::FNAME_NUMBER = L.number;
+            DynOff::UOBJECT_OUTER = L.outer;
+            DynOff::bCasePreservingName = L.cpn;
+            static uint8_t lf[0x100], lc[0x100];
+            memset(lf, 0, sizeof lf);
+            memset(lc, 0, sizeof lc);
+            put32(lf, Grimoire::OFF_UOBJECT_NAME, 21);
+            put32(lf, Grimoire::OFF_UOBJECT_NAME + L.number, 3);
+            if (L.cpn) put32(lf, Grimoire::OFF_UOBJECT_NAME + (L.number == 4 ? 8 : 4), 21);   // the DisplayIndex
+            put(lf, L.outer, reinterpret_cast<uintptr_t>(lc));
+            put32(lc, Grimoire::OFF_UOBJECT_NAME, 22);
+            Linie::NameKey lk{};
+            const std::string what = std::string(L.name);
+            check(("ReadNameKey, " + what + ": the Number and the Outer where this header keeps them").c_str(),
+                  Ubel::ReadNameKey(reinterpret_cast<uintptr_t>(lf), lk) && lk == Linie::NameKey{ 21, 3, 22, 0 } &&
+                  Ubel::NameKeyMatches(lk, "Actor_C", "Fire_2"),
+                  (std::to_string(lk.fnNum) + "/" + std::to_string(lk.clsIdx)).c_str());
+            int32_t ci = 0, cn = 0;
+            check(("ReadObjectNameKey, " + what).c_str(),
+                  Ubel::ReadObjectNameKey(reinterpret_cast<uint64_t>(lf), ci, cn) && ci == 21 && cn == 3);
+        }
+        DynOff::FNAME_NUMBER = savedNumber;
+        DynOff::UOBJECT_OUTER = savedOuter;
+        DynOff::bCasePreservingName = savedCpn;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
