@@ -1115,6 +1115,7 @@
     <sys:String x:Key="str.LF.Unloaded.Note">; unloaded since firing: {0:N0} (named from their first call)</sys:String>
     <sys:String x:Key="str.LF.Unnamed.Note">; without a name: {0:N0} (gone, and unreadable at their first calls)</sys:String>
     <sys:String x:Key="str.LF.Unloaded.Marker">(unloaded)</sys:String>
+    <sys:String x:Key="str.LF.Reused.Marker">(address reused)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Unsupported">; Hide per-frame needs a newer UE5Dumper.dll (this one left nothing out)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.BaselineMismatch">⚠ The baseline was fetched with Hide per-frame the other way, so the per-frame functions read as NEW or are missing: set it the same way and record the baseline again.</sys:String>
     <!-- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace (experimental) -->
@@ -1167,6 +1168,8 @@
     <sys:String x:Key="str.CT.Status.Matches">{0:N0} matching calls. Select one and Show in tree to see what called it.</sys:String>
     <sys:String x:Key="str.CT.Status.MatchesCapped">{0:N0} matching calls (capped): narrow the filter.</sys:String>
     <sys:String x:Key="str.CT.Detail.Function">Function: {0}</sys:String>
+    <sys:String x:Key="str.CT.Detail.Recycled">Another function holds that address now. The calls here are still this one's.</sys:String>
+    <sys:String x:Key="str.CT.Detail.Reused">Another function used this address during the recording: the calls at it are both functions', under the name of the one read last.</sys:String>
     <sys:String x:Key="str.CT.Detail.Unloaded">No longer loaded when the trace was read: the name is the one it had at its first call, and the address below no longer holds it.</sys:String>
     <sys:String x:Key="str.CT.Detail.FuncAddr">UFunction: {0}</sys:String>
     <sys:String x:Key="str.CT.Detail.Object">Object: {0} ({1}) at {2}</sys:String>
@@ -1244,6 +1247,7 @@
     <sys:String x:Key="str.Tip.LF.SaveJsonl">Save the rows on screen to a JSON Lines file: a summary line, then one line per function, in the order the game first called it. The filter, the check boxes and Min calls decide which rows are saved, and the summary line records them. Not available while recording.</sys:String>
     <sys:String x:Key="str.Tip.LF.Refresh">Re-fetch the current fire-count table without stopping — a live peek while recording, or a re-pull after Stop.</sys:String>
     <sys:String x:Key="str.Tip.LF.Filter">Substring match against function name OR class name (space = AND, case-insensitive). e.g. "shop" or "open".</sys:String>
+    <sys:String x:Key="str.Tip.LF.Reused">Another function used this address during the recording (the game freed one and loaded another in its place). The calls and the count at this address are both functions'; the name is the one read last.</sys:String>
     <sys:String x:Key="str.Tip.LF.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out). The name is the one it had at its first call; its address is no longer valid, so it cannot be ticked for the trace or opened in the disassembler.</sys:String>
     <sys:String x:Key="str.Tip.CT.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out): it was gone when this trace was read, which can be after Stop. The name is the one it had at its first call.</sys:String>
     <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live instance of its class (falls back to Class Struct if the class has no live instance). From there you can invoke it.</sys:String>

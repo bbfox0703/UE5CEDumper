@@ -2945,6 +2945,7 @@ public sealed class DumpService : IDumpService
                     Live = i["live"]?.GetValue<bool>() ?? false,
                     Unloaded = i["unloaded"]?.GetValue<bool>() ?? false,
                     Recycled = i["recycled"]?.GetValue<bool>() ?? false,
+                    Reused = i["reused"]?.GetValue<bool>() ?? false,
                     ClassName = i["class_name"]?.GetValue<string>() ?? "",
                     FuncName = i["func_name"]?.GetValue<string>() ?? "",
                     FunctionFlags = (uint)(i["function_flags"]?.GetValue<long>() ?? 0L),
@@ -3056,6 +3057,7 @@ public sealed class DumpService : IDumpService
                     GapSamples   = obj["gap_samples"]?.GetValue<long>() ?? 0L,
                     IsUnloaded   = obj["unloaded"]?.GetValue<bool>() ?? false,
                     IsRecycled   = obj["recycled"]?.GetValue<bool>() ?? false,
+                    IsReused     = obj["reused"]?.GetValue<bool>() ?? false,
                 });
             }
         }

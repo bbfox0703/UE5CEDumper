@@ -83,6 +83,9 @@ public sealed class TraceFuncName
     public bool   Unloaded      { get; init; }
     /// <summary>With <see cref="Unloaded"/>: another function has taken the address since.</summary>
     public bool   Recycled      { get; init; }
+    /// <summary>The address held another function during the recording (review DLL-3): its calls are both functions',
+    /// under the latest one's name.</summary>
+    public bool   Reused        { get; init; }
     public string ClassName     { get; init; } = "";
     public string FuncName      { get; init; } = "";
     public uint   FunctionFlags { get; init; }

@@ -307,6 +307,11 @@
                            IsVisible="{Binding IsUnloaded}"
                            ToolTip.Tip="{StaticResource str.Tip.LF.Unloaded}"
                            Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                <!-- Review DLL-3: the address held another function during the recording; the count is both. -->
+                <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
+                           IsVisible="{Binding IsReused}"
+                           ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"
+                           Foreground="#C08040" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
                 <TextBlock Text="{Binding FuncName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
               </DockPanel>
             </DataTemplate>

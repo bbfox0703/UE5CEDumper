@@ -37,6 +37,9 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     public bool   IsUnloaded { get; init; }
     /// <summary>With <see cref="IsUnloaded"/>: another function has taken the address since.</summary>
     public bool   IsRecycled { get; init; }
+    /// <summary>Another function took this address DURING the recording (review DLL-3): the count is both functions',
+    /// and the name the latest one's.</summary>
+    public bool   IsReused   { get; init; }
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,

@@ -96,6 +96,10 @@ public sealed class CallTrace
     /// <summary>The function was gone when the trace was read (pe_trace_names classifies then, not at Stop): its name
     /// is the one it had at its first call.</summary>
     public bool FuncUnloaded(int i) => Funcs.TryGetValue(Func[i], out var f) && !f.Live && f.Unloaded;
+    /// <summary>The address held another function during the recording (review DLL-3): this call may be either one's.</summary>
+    public bool FuncReused(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Reused;
+    /// <summary>Gone, and another function holds the address now (review UI-6). Its calls are still this one's.</summary>
+    public bool FuncRecycled(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Recycled;
 
     /// <summary>A share of a whole as the status shows it: "0%" only when nothing, "100%" only when all, otherwise up
     /// to two decimals, clamped to "&lt;0.01%" / "&gt;99.99%" so rounding never claims the clean or the total answer

@@ -17,7 +17,7 @@ internal static class CallTraceExport
     internal static readonly string[] CsvColumns =
     {
         "seq", "t_ms", "dur_us", "returned", "tid", "depth", "parent_seq", "class", "func", "func_addr",
-        "object", "object_class", "object_addr", "object_live", "scope_root", "func_unloaded",
+        "object", "object_class", "object_addr", "object_live", "scope_root", "func_unloaded", "func_reused",
     };
 
     internal static void WriteJsonl(CallTrace t, TextWriter w, DateTime savedAtUtc)
@@ -65,6 +65,7 @@ internal static class CallTraceExport
             Bool(sb, "scope_root", (t.Flags[i] & TraceRecord.ScopeRootFlag) != 0);
             // Only when true, like the object keys only with an object: a live function's line is as it was.
             if (t.FuncUnloaded(i)) Bool(sb, "func_unloaded", true);
+            if (t.FuncReused(i)) Bool(sb, "func_reused", true);
             sb.Append("}\n");
             w.Write(sb);
         }
@@ -93,6 +94,7 @@ internal static class CallTraceExport
             cells[13] = t.Obj[i] == 0 ? "" : (t.ObjStale(i) ? "false" : "true");
             cells[14] = (t.Flags[i] & TraceRecord.ScopeRootFlag) != 0 ? "true" : "false";
             cells[15] = t.FuncUnloaded(i) ? "true" : "false";
+            cells[16] = t.FuncReused(i) ? "true" : "false";
             w.Write(string.Join(",", cells));
             w.Write("\r\n");
         }

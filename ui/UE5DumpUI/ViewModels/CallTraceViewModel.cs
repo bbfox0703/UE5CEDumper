@@ -371,6 +371,8 @@ public partial class CallTraceViewModel : ViewModelBase
         var sb = new StringBuilder();
         sb.AppendLine(Res.Format("str.CT.Detail.Function", Label(t, i)));
         if (t.FuncUnloaded(i)) sb.AppendLine(Res.Get("str.CT.Detail.Unloaded"));
+        if (t.FuncRecycled(i)) sb.AppendLine(Res.Get("str.CT.Detail.Recycled"));
+        if (t.FuncReused(i)) sb.AppendLine(Res.Get("str.CT.Detail.Reused"));
         sb.AppendLine(Res.Format("str.CT.Detail.FuncAddr", "0x" + t.Func[i].ToString("X", CultureInfo.InvariantCulture)));
         if (t.Obj[i] != 0)
         {
@@ -470,6 +472,8 @@ public sealed class CallTraceRow
     public string FunctionText { get; init; } = "";
     /// <summary>[TRACE-UNLOADED-NAMES] Gone when the trace was read: the view marks it beside the name.</summary>
     public bool FuncUnloaded { get; init; }
+    /// <summary>Its address held another function during the recording (review DLL-3): marked too.</summary>
+    public bool FuncReused { get; init; }
     public string ObjectText { get; init; } = "";
     public bool ObjectStale { get; init; }
     /// <summary>A stale object shows its address dimmed: what is there now may not be what was called.</summary>
@@ -516,6 +520,7 @@ public sealed class CallTraceRowList : IList, IReadOnlyList<CallTraceRow>
                 ThreadText = _t.Tid[i].ToString(CultureInfo.InvariantCulture),
                 FunctionText = CallTraceViewModel.Label(_t, i) + (hasKids ? $"  ({_t.ChildCount[i]:N0})" : ""),
                 FuncUnloaded = _t.FuncUnloaded(i),
+                FuncReused = _t.FuncReused(i),
                 ObjectText = _t.ObjName(i),
                 ObjectStale = _t.ObjStale(i),
                 IsScopeRoot = (_t.Flags[i] & TraceRecord.ScopeRootFlag) != 0,
