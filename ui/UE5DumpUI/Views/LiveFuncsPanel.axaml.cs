@@ -13,8 +13,9 @@ public partial class LiveFuncsPanel : UserControl
     // AOT-safe sort comparers for every column whose sort path no column binding
     // roots — a template column (no column-level Binding at all) or a text column
     // whose SortMemberPath differs from its Binding path. Their reflection sort is
-    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Class and Function bind and sort on the
-    // same path, so they are rooted and need nothing.
+    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Class binds and sorts on the
+    // same path, so it is rooted and needs nothing. Function became a template column for the unloaded marker
+    // ([TRACE-UNLOADED-NAMES]), so it needs one.
     //
     // ⚠ ROOTED IS NOT THE SAME AS CORRECT. This comment used to include Params in that
     // list, and it was right that Params was rooted — and that is exactly why it went
@@ -43,6 +44,7 @@ public partial class LiveFuncsPanel : UserControl
             // because the audit asked "is the header inert under trimming?" and these three
             // were not inert — just wrong.
             ["NumParms"] = DataGridSortComparers.Number<PeProfileEntry>(r => r.NumParms),
+            ["FuncName"] = DataGridSortComparers.Ordinal<PeProfileEntry>(r => r.FuncName),
         };
 
     public LiveFuncsPanel()

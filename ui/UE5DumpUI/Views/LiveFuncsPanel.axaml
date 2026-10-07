@@ -221,6 +221,7 @@
                         Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleTickCommand}"
                         CommandParameter="{Binding}"
                         IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanTick}"
+                        IsVisible="{Binding !IsUnloaded}"
                         ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Tick}"
                         HorizontalAlignment="Center" Margin="6,0"/>
             </DataTemplate>
@@ -279,7 +280,22 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="{StaticResource str.LF.Col.Class}" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="240"/>
-        <DataGridTextColumn Header="{StaticResource str.LF.Col.Function}" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="240"/>
+        <!-- [TRACE-UNLOADED-NAMES] A function the game unloaded since it fired: its name from its first call, and a grey
+             marker beside it. The marker is its own TextBlock, never part of the name, so Name copies, the filter and
+             the sort see the plain name. -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Function}" Width="240" SortMemberPath="FuncName" CanUserSort="True">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <DockPanel VerticalAlignment="Center" Margin="6,0">
+                <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
+                           IsVisible="{Binding IsUnloaded}"
+                           ToolTip.Tip="{StaticResource str.Tip.LF.Unloaded}"
+                           Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding FuncName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              </DockPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTextColumn Header="{StaticResource str.LF.Col.Params}" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="90" CanUserSort="True"/>
         <!-- Period: mean inter-arrival cadence (Phase E); "Timer" in the Kind column
              marks a regular timer-like callback. -->
@@ -307,6 +323,7 @@
                         Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).AsmFuncCommand}"
                         CommandParameter="{Binding}"
                         IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).AobMaker.IsAvailable}"
+                        IsVisible="{Binding !IsUnloaded}"
                         ToolTip.Tip="{StaticResource str.Tip.AobMaker.FuncAsm}"
                         Foreground="#E5C07B" Background="Transparent"
                         BorderThickness="1" BorderBrush="#E5C07B"
