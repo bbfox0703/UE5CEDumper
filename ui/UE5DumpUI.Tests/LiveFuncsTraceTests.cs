@@ -453,6 +453,37 @@ public class LiveFuncsTraceTests
         Assert.False(vm.TraceMemoryOverAvailable);        // 32 MB + about 110 MB fits in 1 GB
     }
 
+    private sealed class RaisingGate : IExperimentalGate
+    {
+        public bool IsEnabled { get; set; }
+        public int SnapshotQuotaMb { get; set; }
+        public bool IsLocked => false;
+        public void Lock() { }
+        public event EventHandler? Changed;
+        public void Turn(bool on) { IsEnabled = on; Changed?.Invoke(this, EventArgs.Empty); }
+    }
+
+    [Fact]
+    public void The_free_memory_is_read_again_when_the_tab_is_shown_and_when_the_experimental_tabs_come_on()
+    {
+        // Review INT-4 / UI-7: read once at startup, the line kept a figure from before the game was launched.
+        var platform = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 64L << 30 };
+        var gate = new RaisingGate();
+        var vm = new LiveFuncsViewModel(new FakeDumpService(), new NoopLogger(), platform, experimentalGate: gate);
+        vm.TraceBufferExponent = 9;
+        Assert.False(vm.TraceMemoryOverAvailable);
+
+        platform.AvailablePhysicalMemory = 1L << 30;   // the game came up and took the rest
+        vm.OnEnteringTab();
+        Assert.True(vm.TraceMemoryOverAvailable);
+
+        platform.AvailablePhysicalMemory = 64L << 30;
+        int reads = platform.AvailableMemoryReads;
+        gate.Turn(true);
+        Assert.True(platform.AvailableMemoryReads > reads);
+        Assert.False(vm.TraceMemoryOverAvailable);
+    }
+
     [Fact]
     public void With_plenty_of_memory_or_none_known_there_is_no_warning()
     {
