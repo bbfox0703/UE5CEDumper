@@ -8334,6 +8334,19 @@ int main() {
         }
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: a parameter's way -- in, const reference, out, in-out, return -- from its flags");
+        // docs/live-funcs-step2-items.md, B1. CPF_Parm 0x80, CPF_OutParm 0x100, CPF_ReturnParm 0x400, CPF_ConstParm
+        // 0x2, CPF_ReferenceParm 0x08000000. The const-ref value is UHT's own for a `const FString&` parameter.
+        using PK = Ubel::ParamKind;
+        check("a plain parameter is in", Ubel::ParamKindOf(0x80) == PK::In);
+        check("a const reference is in, though it carries the out flag",
+              Ubel::ParamKindOf(0x0010000008000182ull) == PK::ConstRef);
+        check("an out parameter", Ubel::ParamKindOf(0x180) == PK::Out);
+        check("a reference that is not const goes both ways", Ubel::ParamKindOf(0x08000180) == PK::InOut);
+        check("the return value, though it carries the out flag too", Ubel::ParamKindOf(0x580) == PK::Return);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

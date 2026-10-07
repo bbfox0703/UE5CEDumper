@@ -423,6 +423,17 @@ struct FunctionDescription {
 };
 FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& ident);
 
+// ============================================================
+// [LIVEFUNCS-STEP2] Parameter snapshots (docs/live-funcs-timeline-plan.md, "Step 2 design"): what a chosen
+// function's parameters are -- read once per arm while the function is alive -- and how a copy of its parameter
+// block decodes after Stop.
+// ============================================================
+
+// Which way a parameter goes, from its property flags. A `const T&` carries CPF_OutParm as well as CPF_ConstParm and
+// CPF_ReferenceParm (UHT's own flags), so "out" alone over-reports; the return value is CPF_ReturnParm | CPF_OutParm.
+enum class ParamKind : uint8_t { In, ConstRef, Out, InOut, Return };
+inline ParamKind ParamKindOf(uint64_t propertyFlags) { (void)propertyFlags; return ParamKind::In; }
+
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
