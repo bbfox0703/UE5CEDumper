@@ -4,6 +4,20 @@
              x:Class="UE5DumpUI.Views.CallTracePanel"
              x:DataType="vm:CallTraceViewModel">
 
+  <!-- [LIVEFUNCS-STEP2] U10: the drag handles. Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a
+       Slider; a bare Thumb has no template, renders nothing and is never hit (measured on build 3639). A Border that
+       carries the Thumb's own background and edge is all a handle needs. -->
+  <UserControl.Styles>
+    <Style Selector="Thumb">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"/>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+  </UserControl.Styles>
+
   <!-- [LIVEFUNCS-TIMELINE-2026-10-04] The Call Trace tab: it records nothing itself. Live Funcs arms the trace and
        stops it; this tab reads, names and shows what the last traced recording kept (T2, T8). -->
   <DockPanel Margin="8">
