@@ -1163,6 +1163,8 @@
     <sys:String x:Key="str.CT.Status.BeforeWindow">{0:N0} calls began before the kept part; what they called shows without them.</sys:String>
     <sys:String x:Key="str.CT.Status.Scoped">Traced inside {0} ticked function(s).</sys:String>
     <sys:String x:Key="str.CT.Status.Unscoped">Every call traced.</sys:String>
+    <sys:String x:Key="str.CT.Status.ScopedNames">Traced inside {0} ticked function(s), followed by name.</sys:String>
+    <sys:String x:Key="str.CT.Status.SnapOnly">Only the calls of the functions chosen for parameters were traced (nothing ticked).</sys:String>
     <sys:String x:Key="str.CT.Status.Excluded">{0} per-frame functions left out; a call they made shows under their caller.</sys:String>
     <sys:String x:Key="str.CT.Status.MatchesOne">1 matching call. Select it and Show in tree to see what called it.</sys:String>
     <sys:String x:Key="str.CT.Status.Matches">{0:N0} matching calls. Select one and Show in tree to see what called it.</sys:String>
@@ -1218,6 +1220,8 @@
     <sys:String x:Key="str.LF.Trace.StartCancelled">Start cancelled. Tick the functions to trace in the table, or Start again and confirm to trace every call.</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingTicked">Tracing ({0} MB) inside {1} ticked function(s).</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingAll">Tracing every call ({0} MB).</sys:String>
+    <sys:String x:Key="str.LF.Trace.RecordingSnapOnly">Tracing ({0} MB) only the calls of the {1} function(s) chosen for parameters.</sys:String>
+    <sys:String x:Key="str.LF.Trace.NotCalled">Followed but never called while recording: {0}.</sys:String>
     <sys:String x:Key="str.LF.Trace.NotArmed">This UE5Dumper.dll did not arm the call trace (an older one?), so this recording is not traced.</sys:String>
     <sys:String x:Key="str.LF.Trace.NoneKept">The trace kept nothing: this UE5Dumper.dll has no call trace (an older one?).</sys:String>
     <sys:String x:Key="str.LF.Trace.NotQuiesced">⚠ The trace could not be stopped cleanly and will not be read. Start again.</sys:String>

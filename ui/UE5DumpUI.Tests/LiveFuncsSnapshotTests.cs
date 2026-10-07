@@ -45,7 +45,8 @@ public class LiveFuncsSnapshotTests
         }
 
         public override Task PeProfileStopAsync(CancellationToken ct = default) => Task.CompletedTask;
-        Task<TraceInfo?> IDumpService.PeProfileStopWithTraceAsync(CancellationToken ct) => Task.FromResult<TraceInfo?>(null);
+        public TraceInfo? StopTrace { get; set; }
+        Task<TraceInfo?> IDumpService.PeProfileStopWithTraceAsync(CancellationToken ct) => Task.FromResult(StopTrace);
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
             => Task.FromResult(NextGet);
     }
@@ -251,6 +252,53 @@ public class LiveFuncsSnapshotTests
         vm.FilterText = "";
         vm.SnapshotShownRowsCommand.Execute(null);   // recording: nothing changes
         Assert.Equal(before, vm.SnapshotFunctions.Count);
+    }
+
+    // ---- U9 ----
+
+    [Fact]
+    public void The_trace_says_what_it_followed_by_name_snapshots_only_or_every_call()
+    {
+        Assert.Equal("str.CT.Status.ScopedNames",
+                     CallTraceViewModel.ScopeKey(new TraceInfo { Scoped = true, TickedNames = 2, Ticked = 0 }));
+        Assert.Equal("str.CT.Status.SnapOnly", CallTraceViewModel.ScopeKey(new TraceInfo { Scoped = true, SnapOnly = true }));
+        Assert.Equal("str.CT.Status.Unscoped", CallTraceViewModel.ScopeKey(new TraceInfo { Scoped = false }));
+        // A DLL that predates names sends no `scoped`: its ticks by address say it.
+        Assert.Equal("str.CT.Status.Scoped", CallTraceViewModel.ScopeKey(new TraceInfo { Ticked = 3 }));
+        Assert.Equal("str.CT.Status.Unscoped", CallTraceViewModel.ScopeKey(new TraceInfo()));
+        Assert.Null(CallTraceViewModel.ScopeKey(new TraceInfo { Excluded = 4 }));
+
+        Assert.Equal("str.LF.Trace.RecordingTicked", LiveFuncsViewModel.TraceStartKey(new TraceStartOptions
+        {
+            TickedNames = new[] { new NamedFunction { ClassName = "A", FuncName = "F", Keys = new[] { new NameKey(1, 0, 2, 0) } } },
+        }));
+        Assert.Equal("str.LF.Trace.RecordingSnapOnly",
+                     LiveFuncsViewModel.TraceStartKey(new TraceStartOptions { Snapshots = new SnapshotStartOptions() }));
+        Assert.Equal("str.LF.Trace.RecordingAll", LiveFuncsViewModel.TraceStartKey(new TraceStartOptions()));
+    }
+
+    [Fact]
+    public async Task The_Stop_lists_the_followed_names_never_called_and_a_disconnect_forgets_them()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "Late", "0x1", new NameKey(1, 0, 9, 0)));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleSnapshotCommand.Execute(vm.Results.Single());
+        dump.StopTrace = new TraceInfo
+        {
+            Allocated = false, Quiesced = true, Written = 0,
+            Followed = new[]
+            {
+                new FollowedName { ClassName = "A", FuncName = "Late", Chosen = true, Addresses = 0 },
+                new FollowedName { ClassName = "A", FuncName = "Busy", Tick = true, Addresses = 2 },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "A::Late" }, vm.NotCalledNames);
+        vm.ResetOnDisconnect();
+        Assert.Empty(vm.NotCalledNames);
     }
 
     // ---- U8 ----

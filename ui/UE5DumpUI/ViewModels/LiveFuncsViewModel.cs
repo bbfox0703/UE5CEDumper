@@ -716,6 +716,30 @@ public partial class LiveFuncsViewModel : ViewModelBase
         };
     }
 
+    /// <summary>[LIVEFUNCS-STEP2] What a traced Start's status says it records: inside ticked functions (by name or by
+    /// address), only the chosen calls (T11), or every call. Each takes the MB and a count.</summary>
+    internal static string TraceStartKey(TraceStartOptions trace)
+        => trace.Ticked.Count > 0 || trace.TickedNames.Count > 0 ? "str.LF.Trace.RecordingTicked"
+         : trace.Snapshots != null ? "str.LF.Trace.RecordingSnapOnly"
+         : "str.LF.Trace.RecordingAll";
+
+    /// <summary>[LIVEFUNCS-STEP2] The followed names the last Stop found never called: "not called", never "not loaded"
+    /// -- the DLL sees calls, not loads. Shown here and in the Call Trace tab's copy (T8).</summary>
+    public ObservableCollection<string> NotCalledNames { get; } = new();
+    public bool HasNotCalledNames => NotCalledNames.Count > 0;
+    public string NotCalledText => Res.Format("str.LF.Trace.NotCalled", string.Join(", ", NotCalledNames));
+
+    private void NoteNotCalled(TraceInfo? info)
+    {
+        NotCalledNames.Clear();
+        if (info != null)
+            foreach (var f in info.Followed.Where(f => f.NotCalled)
+                                           .Select(f => $"{f.ClassName}::{f.FuncName}").Distinct().OrderBy(n => n, StringComparer.Ordinal))
+                NotCalledNames.Add(f);
+        OnPropertyChanged(nameof(HasNotCalledNames));
+        OnPropertyChanged(nameof(NotCalledText));
+    }
+
     /// <summary>A box for an out-value an async method can set.</summary>
     private sealed class Ref<T> { public T Value = default!; }
 
@@ -855,10 +879,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (trace != null && start.HookActive)
             {
                 StatusText += " " + (start.Trace == null ? Res.Get("str.LF.Trace.NotArmed")
-                    : trace.Ticked.Count > 0 || trace.TickedNames.Count > 0
-                        ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb,
-                                     trace.TickedNames.Count > 0 ? trace.TickedNames.Count : trace.Ticked.Count)
-                        : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
+                    : Res.Format(TraceStartKey(trace), TraceBufferMb,
+                                 trace.TickedNames.Count > 0 ? trace.TickedNames.Count
+                                 : trace.Ticked.Count > 0 ? trace.Ticked.Count
+                                 : trace.Snapshots?.Funcs.Count ?? 0));
                 if (trace.Snapshots != null)
                 {
                     StatusText += " " + (start.Trace?.Snap == null ? Res.Get("str.LF.Snap.NotArmed")
@@ -918,6 +942,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         if (!traced) return;
         LastTraceInfo = info;
+        NoteNotCalled(info);
         HasTraceToOpen = info is { Allocated: true, Quiesced: true } && info.Written > 0;
     }
 
@@ -927,7 +952,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // No trace object at all is a DLL without the trace. One that wrote nothing is reported empty, and the DLL has
         // already given its ring back (review DLL-5), so it reads as not allocated.
         if (i == null) return Res.Get("str.LF.Trace.NoneKept");
-        if (i.Written == 0) return Res.Get("str.LF.Trace.Empty");
+        if (i.Written == 0) return Res.Get("str.LF.Trace.Empty") + (HasNotCalledNames ? " " + NotCalledText : "");
         if (!i.Quiesced) return Res.Get("str.LF.Trace.NotQuiesced");
         if (!i.Allocated) return Res.Get("str.LF.Trace.NoneKept");
         string kept = i.FirstValid > 0
@@ -936,6 +961,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         if (i.Snap != null)
             kept += " " + Res.Format("str.LF.Snap.StopNote", i.SnapRings.Sum(r => (long)(r.Written - r.FirstValid)),
                                      (long)(i.Snap.SkippedBudget + i.Snap.DroppedBudget));
+        if (HasNotCalledNames) kept += " " + NotCalledText;
         return kept;
     }
 
@@ -1266,6 +1292,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _recordingTrace = false;
         HasTraceToOpen = false;
         LastTraceInfo = null;
+        NoteNotCalled(null);
         _ticked.Clear();
         foreach (var e in _allEntries) e.IsTicked = false;
         _rowsFromEarlierConnection = _allEntries.Count > 0;

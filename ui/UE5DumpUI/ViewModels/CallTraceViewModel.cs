@@ -393,8 +393,13 @@ public partial class CallTraceViewModel : ViewModelBase
         if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(Res.Get("str.CT.Status.BeforeWindowOne"));
         else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
         // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
-        if (t.Info.Ticked > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Scoped", t.Info.Ticked));
-        else if (t.Info.Excluded == 0) sb.Append(' ').Append(Res.Get("str.CT.Status.Unscoped"));
+        switch (ScopeKey(t.Info))
+        {
+            case "str.CT.Status.Scoped": sb.Append(' ').Append(Res.Format("str.CT.Status.Scoped", t.Info.Ticked)); break;
+            case "str.CT.Status.ScopedNames":
+                sb.Append(' ').Append(Res.Format("str.CT.Status.ScopedNames", t.Info.TickedNames)); break;
+            case { } key: sb.Append(' ').Append(Res.Get(key)); break;
+        }
         if (t.Info.Excluded > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Excluded", t.Info.Excluded));
         // [TRACE-UNLOADED-NAMES] Always, whatever the buffer: how much is named only from a first call, and how much
         // has no name at all -- 0% included, so a clean trace says so.
@@ -404,6 +409,17 @@ public partial class CallTraceViewModel : ViewModelBase
         sb.Append(' ').Append(Res.Format("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
                                          t.UnnamedFuncs, t.DistinctFuncs));
         return sb.ToString();
+    }
+
+    /// <summary>[LIVEFUNCS-STEP2] Which sentence says what the trace followed: ticked functions (by address, or by
+    /// name), only the chosen calls (T11), or every call -- that one only when nothing was left out. A DLL that
+    /// predates names sends no `scoped`: its ticks by address say it.</summary>
+    internal static string? ScopeKey(TraceInfo i)
+    {
+        if (i.SnapOnly) return "str.CT.Status.SnapOnly";
+        if (i.Scoped ?? i.Ticked > 0)
+            return i.TickedNames > 0 ? "str.CT.Status.ScopedNames" : "str.CT.Status.Scoped";
+        return i.Excluded == 0 ? "str.CT.Status.Unscoped" : null;
     }
 
     // ---- the rows ----

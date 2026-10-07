@@ -52,6 +52,11 @@
             </ItemsControl.ItemTemplate>
           </ItemsControl>
         </DockPanel>
+        <!-- [LIVEFUNCS-STEP2] The functions chosen for parameters, and the followed names the last Stop never saw called. -->
+        <TextBlock Text="{Binding LiveFuncs.SnapshotCountText}" IsVisible="{Binding LiveFuncs.HasSnapshotChoices}"
+                   Foreground="#DCDCAA" FontSize="12" Opacity="0.6"/>
+        <TextBlock Text="{Binding LiveFuncs.NotCalledText}" IsVisible="{Binding LiveFuncs.HasNotCalledNames}"
+                   Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"/>
       </StackPanel>
     </Border>
 
