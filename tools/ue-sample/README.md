@@ -653,6 +653,26 @@ nothing under it to show.
 | `TraceNest_Outer` → `TraceNest_Inner` → `OnTraceNestLeaf` → `TraceNest_Leaf` | one round every `TraceNest_PeriodSeconds` (`0.5` s), from a timer | Three **nested** ProcessEvent calls per round on the game thread: Outer and Inner are dispatched by name through ProcessEvent, and a dynamic broadcast reaches each binding through ProcessEvent. ⚠ Not BlueprintNativeEvents: UHT's thunk calls `_Implementation` directly when the owning class is native, so the first package's chain reached the hook only at Leaf (measured 2026-10-07). Live Funcs with Trace on and `TraceNest_Outer` ticked: every root of the trace is `TraceNest_Outer` (flagged the scope root), with `TraceNest_Inner` under it and `TraceNest_Leaf` under that, about two rounds per second of recording. `tools/verify/livefuncs_trace_live.py` ticks the function with the most nested calls, which is one of these |
 | `TraceNest_Rounds` · `TraceNest_Leaves` | counts | Equal unless a link of the chain is broken; a trace's round count can be checked against them |
 
+**Parameter snapshots** (`[LIVEFUNCS-STEP2]`, 2026-10-07). On their own timer, so `TraceNest_*` keeps step 1's
+counts. Every argument of `SnapProbe_Call` is a fixed function of the round `R`, so a decoded snapshot is checked from
+its `Round` alone. The parameter block is built the engine's way, from the function's own properties, so the layout
+under test is UHT's. `tools/verify/livefuncs_snap_live.py` is the rig; `--fixture-check` says whether a package carries
+the probes at all.
+
+| field | value | check |
+|---|---|---|
+| `SnapNest_Outer` → `SnapProbe_Call`, then `SnapProbe_Call` alone | one round every `SnapNest_PeriodSeconds` (`0.5` s), from a timer, both with the same `R` | Tick `SnapNest_Outer` and choose `SnapProbe_Call`: per round one call **in scope** (under Outer) and one **lone** |
+| `SnapProbe_Call` inputs | `Round = R`, `F = R + 0.5`, `D = R × 0.25`, `bFlag = R odd`, `Kind = R % 3` (`EDumperTest58SnapKind` Alpha/Beta/Gamma), `Tag = SnapTag_<R % 3>` (Number `R % 3 + 1`), `Label = "Label<R>"`, `Values = {R, R+1, R+2}`, `Who` = `Soft` = the Anchor, `V = (R, -R, 0.5)`, `S = {A = R, bP = R odd, bQ = R even, W = V}` | Each entry copy decodes to these. `Label` is a `const FString&` (kind `const_ref`); `Label` / `Values` decode as headers with the right Num |
+| `SnapProbe_Call` outs | going in `OutTwice = -1`, `InOut = 100`; the body sets `OutTwice = 2R`, adds `R` to `InOut` and returns `3R` | The after copy reads `OutTwice = 2R`, `InOut = 100 + R`, `ReturnValue = 3R`; the entry copy reads `ReturnValue` as missing |
+| `SnapProbe_LastOutTwice` · `SnapProbe_LastInOut` · `SnapProbe_LastReturn` | the outs of the last `SnapProbe_Call`, read back from its block | Agree with the last after copy |
+| `SnapProbe_Calls` · `SnapNest_Rounds` | counts | `SnapProbe_Calls = 2 × SnapNest_Rounds` |
+| `SnapProbe_RetOnly()` | returns `7 × SnapNest_Rounds`, once a round | A return value alone: whether `FUNC_HasOutParms` covers it (it takes an after copy if so) |
+| `SnapProbe_ConstRefOnly(const FString&)` | `"Const<R>"`, once a round | Whether a const-ref-only function takes an after copy |
+| `SnapProbe_PerFrame(float Delta)` · `SnapProbe_PerFrameCalls` | every frame from `Tick`, through ProcessEvent | The only probe with `per_frame` in `pe_profile_get`; the budget's subject |
+| `SnapLate_Begin(int32)` → `SnapLate_Call(int32)` · `SnapLate_Calls` · `SnapLate_LastValue` | only when called (the rig's `invoke_function`) | A function first called after the Start: its arm's layout is read late, by Stop's final pass when Stop follows at once |
+
+The struct's members `A`, `bP`, `bQ` and `W` belong to `FDumperTest58SnapStruct`, the type of `S`.
+
 ### DumperTest51 (2026-09-24) — the first UE 5.0-5.2 sample, stock template
 
 The maintainer's **stock UE 5.1.1 Third Person template** (`D:\Unreal Projects\DumperTest51`, packaged

@@ -15,6 +15,14 @@
 
 namespace
 {
+	/// [LIVEFUNCS-STEP2] A parameter's memory inside a block built for `F`, found by the parameter's name.
+	template <typename T>
+	T* SnapParm(UFunction* F, uint8* Parms, const TCHAR* Name)
+	{
+		FProperty* P = FindFProperty<FProperty>(F, FName(Name));
+		return P ? P->ContainerPtrToValuePtr<T>(Parms) : nullptr;
+	}
+
 	/// L86: would the PRE-FIX gate's 16-byte read from `Field` fault? Only when it crosses into
 	/// the next page and that page is not readable. The post-fix read (4 bytes, inside the
 	/// object) never can.
@@ -86,6 +94,9 @@ void ADumperTest58Actor::BeginPlay()
 	{
 		W->GetTimerManager().SetTimer(TraceNestTimer, this, &ADumperTest58Actor::TraceNest_Fire,
 									  FMath::Max(0.05f, TraceNest_PeriodSeconds), /*bLoop=*/true);
+		// [LIVEFUNCS-STEP2] The snapshot rounds, on their own timer so TraceNest's counts stay step 1's.
+		W->GetTimerManager().SetTimer(SnapNestTimer, this, &ADumperTest58Actor::SnapNest_Fire,
+									  FMath::Max(0.05f, SnapNest_PeriodSeconds), /*bLoop=*/true);
 	}
 }
 
@@ -124,6 +135,148 @@ void ADumperTest58Actor::Tick(float DeltaSeconds)
 {
 	Super::Tick(DeltaSeconds);
 	++FrameCountReflected;
+	// [LIVEFUNCS-STEP2] The per-frame probe, by name through ProcessEvent: a direct C++ call never reaches the hook.
+	Snap_Call(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, SnapProbe_PerFrame),
+			  [DeltaSeconds](UFunction* F, uint8* P)
+			  {
+				  if (float* V = SnapParm<float>(F, P, TEXT("Delta"))) *V = DeltaSeconds;
+			  },
+			  [](UFunction*, uint8*) {});
+}
+
+void ADumperTest58Actor::Snap_Call(FName Func, TFunctionRef<void(UFunction*, uint8*)> Fill,
+								   TFunctionRef<void(UFunction*, uint8*)> Read)
+{
+	UFunction* F = FindFunction(Func);
+	if (!F)
+	{
+		return;
+	}
+	// The engine's way: memory for ParmsSize, every parameter initialised by its own property, then destroyed by it.
+	uint8* Parms = F->ParmsSize > 0
+		? static_cast<uint8*>(FMemory_Alloca_Aligned(F->ParmsSize, F->GetMinAlignment()))
+		: nullptr;
+	if (Parms)
+	{
+		FMemory::Memzero(Parms, F->ParmsSize);
+		for (TFieldIterator<FProperty> It(F); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+		{
+			It->InitializeValue_InContainer(Parms);
+		}
+	}
+	Fill(F, Parms);
+	ProcessEvent(F, Parms);
+	Read(F, Parms);
+	if (Parms)
+	{
+		for (TFieldIterator<FProperty> It(F); It && It->HasAnyPropertyFlags(CPF_Parm); ++It)
+		{
+			It->DestroyValue_InContainer(Parms);
+		}
+	}
+}
+
+void ADumperTest58Actor::SnapProbe_Dispatch(int32 Round)
+{
+	const int32 R = Round;
+	Snap_Call(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, SnapProbe_Call),
+			  [this, R](UFunction* F, uint8* P)
+			  {
+				  const FVector Vec(static_cast<double>(R), static_cast<double>(-R), 0.5);
+				  if (int32* V = SnapParm<int32>(F, P, TEXT("Round"))) *V = R;
+				  if (float* V = SnapParm<float>(F, P, TEXT("F"))) *V = static_cast<float>(R) + 0.5f;
+				  if (double* V = SnapParm<double>(F, P, TEXT("D"))) *V = static_cast<double>(R) * 0.25;
+				  if (FBoolProperty* B = CastField<FBoolProperty>(FindFProperty<FProperty>(F, FName(TEXT("bFlag")))))
+				  {
+					  B->SetPropertyValue_InContainer(P, (R % 2) != 0);
+				  }
+				  if (EDumperTest58SnapKind* V = SnapParm<EDumperTest58SnapKind>(F, P, TEXT("Kind")))
+				  {
+					  *V = static_cast<EDumperTest58SnapKind>(R % 3);
+				  }
+				  if (FName* V = SnapParm<FName>(F, P, TEXT("Tag"))) *V = FName(TEXT("SnapTag"), R % 3 + 1);
+				  if (FString* V = SnapParm<FString>(F, P, TEXT("Label"))) *V = FString::Printf(TEXT("Label%d"), R);
+				  if (TArray<int32>* V = SnapParm<TArray<int32>>(F, P, TEXT("Values"))) *V = { R, R + 1, R + 2 };
+				  if (AActor** V = SnapParm<AActor*>(F, P, TEXT("Who"))) *V = Anchor.Get();
+				  if (TSoftObjectPtr<AActor>* V = SnapParm<TSoftObjectPtr<AActor>>(F, P, TEXT("Soft")))
+				  {
+					  *V = TSoftObjectPtr<AActor>(Anchor.Get());
+				  }
+				  if (FVector* V = SnapParm<FVector>(F, P, TEXT("V"))) *V = Vec;
+				  if (FDumperTest58SnapStruct* V = SnapParm<FDumperTest58SnapStruct>(F, P, TEXT("S")))
+				  {
+					  V->A = R;
+					  V->bP = (R % 2) != 0;
+					  V->bQ = (R % 2) == 0;
+					  V->W = Vec;
+				  }
+				  if (int32* V = SnapParm<int32>(F, P, TEXT("OutTwice"))) *V = -1;
+				  if (int32* V = SnapParm<int32>(F, P, TEXT("InOut"))) *V = 100;
+			  },
+			  [this](UFunction* F, uint8* P)
+			  {
+				  if (int32* V = SnapParm<int32>(F, P, TEXT("OutTwice"))) SnapProbe_LastOutTwice = *V;
+				  if (int32* V = SnapParm<int32>(F, P, TEXT("InOut"))) SnapProbe_LastInOut = *V;
+				  if (int32* V = SnapParm<int32>(F, P, TEXT("ReturnValue"))) SnapProbe_LastReturn = *V;
+			  });
+}
+
+void ADumperTest58Actor::SnapNest_Fire()
+{
+	const int32 R = ++SnapNest_Rounds;
+	// In scope: SnapNest_Outer is the root, SnapProbe_Call under it.
+	TraceNest_Dispatch(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, SnapNest_Outer), R);
+	// Lone: the same call outside every scope.
+	SnapProbe_Dispatch(R);
+	Snap_Call(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, SnapProbe_RetOnly),
+			  [](UFunction*, uint8*) {}, [](UFunction*, uint8*) {});
+	Snap_Call(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, SnapProbe_ConstRefOnly),
+			  [R](UFunction* F, uint8* P)
+			  {
+				  if (FString* V = SnapParm<FString>(F, P, TEXT("Label"))) *V = FString::Printf(TEXT("Const%d"), R);
+			  },
+			  [](UFunction*, uint8*) {});
+}
+
+void ADumperTest58Actor::SnapNest_Outer(int32 Round)
+{
+	SnapProbe_Dispatch(Round);
+}
+
+int32 ADumperTest58Actor::SnapProbe_Call(int32 Round, float F, double D, bool bFlag, EDumperTest58SnapKind Kind,
+										 FName Tag, const FString& Label, const TArray<int32>& Values, AActor* Who,
+										 TSoftObjectPtr<AActor> Soft, FVector V, FDumperTest58SnapStruct S,
+										 int32& OutTwice, int32& InOut)
+{
+	++SnapProbe_Calls;
+	OutTwice = 2 * Round;
+	InOut += Round;
+	return 3 * Round;
+}
+
+int32 ADumperTest58Actor::SnapProbe_RetOnly()
+{
+	return 7 * SnapNest_Rounds;
+}
+
+void ADumperTest58Actor::SnapProbe_ConstRefOnly(const FString& Label)
+{
+}
+
+void ADumperTest58Actor::SnapProbe_PerFrame(float Delta)
+{
+	++SnapProbe_PerFrameCalls;
+}
+
+void ADumperTest58Actor::SnapLate_Begin(int32 Value)
+{
+	TraceNest_Dispatch(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, SnapLate_Call), Value);
+}
+
+void ADumperTest58Actor::SnapLate_Call(int32 Value)
+{
+	++SnapLate_Calls;
+	SnapLate_LastValue = Value;
 }
 
 void ADumperTest58Actor::Opt_SetObject()
