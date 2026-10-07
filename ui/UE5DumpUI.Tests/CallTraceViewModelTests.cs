@@ -234,6 +234,20 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public async Task After_a_disconnect_the_next_processs_first_trace_is_loaded_though_its_gen_repeats()
+    {
+        // Every game process numbers its traces from 1, so gen 7 in a new process is not the gen 7 already shown.
+        var dump = Dump();
+        var (vm, _) = MakeVm(dump);
+        await vm.OnActivatedAsync();
+        Assert.Equal(1, dump.ReleaseCalls);
+
+        vm.ClearOnDisconnect();
+        await vm.OnActivatedAsync();
+        Assert.Equal(2, dump.ReleaseCalls);   // read again, not taken for the one already shown
+    }
+
+    [Fact]
     public async Task Toggle_expands_a_call_and_the_rows_follow()
     {
         var (vm, _) = MakeVm(Dump());

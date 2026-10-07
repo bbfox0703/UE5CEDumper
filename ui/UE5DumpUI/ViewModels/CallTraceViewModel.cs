@@ -356,6 +356,9 @@ public partial class CallTraceViewModel : ViewModelBase
         finally { IsLoading = false; }
     }
 
+    /// <summary>Red stub.</summary>
+    public void ClearOnDisconnect() { }
+
     /// <summary>Leaving the tab: keep the keyword, and stop reading a trace the user walked away from.</summary>
     public void OnLeavingTab()
     {
