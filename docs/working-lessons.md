@@ -2748,6 +2748,19 @@ old `dist\` stayed in place, so a quick "sizes look right" check passed on the P
 **How to apply:** (1) before a publish, close every game injected from `dist\` and the UI (`tasklist`). (2) Read the
 publish's exit code and `dist\build_number.txt` before calling it done — a size that matches the last build is not
 evidence. (3) A number spent this way is gone: say so in its commit and in the dev-log, and do not reuse it.
+⚠ **Reverting `build_number.txt` after a failed publish IS reusing it.** 2026-10-07: two publishes failed on AOT and the
+bump was reverted twice, so the third would have shipped 3631 a second time (the first failure had already put a 3631
+`UE5Dumper.dll` into `dist\`). Leave the bump; the next publish takes the next number.
+
+### 3.xc Catch an AOT-only error in a minute, before the six-minute publish
+
+`dotnet build ui/UE5DumpUI/UE5DumpUI.csproj -c Release -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true` reports
+the IL2026 / IL3050 errors a trimmed publish fails on, from a plain build. Measured 2026-10-07: the publish's own
+failure (`JsonArray.Add<T>` at `DumpService.cs`) showed up as the same two errors in about a minute, and a clean
+build showed none — the negative control, with the bad line put back, is what made the clean result mean something.
+**How to apply:** run it after any UI change that touches JSON nodes, reflection-shaped APIs or bindings, before
+`-Mode Publish`. ⚠ `JsonArray.Add(JsonValue.Create(x))` is **still** the generic `Add<T>` — the identity conversion
+to `T` beats the conversion to `JsonNode`, and the first fix for that publish was exactly this. Cast to `JsonNode?`.
 
 -----
 
