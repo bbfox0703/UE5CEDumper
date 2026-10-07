@@ -431,6 +431,25 @@ public interface IDumpService
     }
     Task<TracePage> PeTraceGetAsync(ulong from, int max, CancellationToken ct = default)
         => throw new NotSupportedException("This service has no call trace.");
+    /// <summary>[TRACE-UI-LOAD-MEMORY] One page decoded straight into <paramref name="into"/>, the load's window: the
+    /// page's Count is the records written there, and its Data stays empty. Ask no more than <paramref name="into"/>
+    /// holds. This default reads a page and copies it, for a service with nothing better.</summary>
+    async Task<TracePage> PeTraceGetIntoAsync(ulong from, int max, Memory<TraceRecord> into, CancellationToken ct = default)
+    {
+        var page = await PeTraceGetAsync(from, max, ct);
+        return new TracePage { Info = page.Info, Count = CopyPageInto(page.Data, into.Span), Next = page.Next };
+    }
+
+    private static int CopyPageInto(byte[] data, Span<TraceRecord> into)
+    {
+        if (data.Length % System.Runtime.CompilerServices.Unsafe.SizeOf<TraceRecord>() != 0)
+            throw new InvalidDataException($"A trace page of {data.Length} bytes is not whole records.");
+        var recs = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, TraceRecord>(data);
+        if (recs.Length > into.Length)
+            throw new InvalidDataException($"A trace page of {recs.Length} records does not fit {into.Length}.");
+        recs.CopyTo(into);
+        return recs.Length;
+    }
     /// <summary>Names for recording <paramref name="gen"/>; a page for another recording comes back Stale and empty.</summary>
     Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
         => throw new NotSupportedException("This service has no call trace.");

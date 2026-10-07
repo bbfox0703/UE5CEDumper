@@ -124,6 +124,7 @@ public partial class CallTraceViewModel : ViewModelBase
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
+        bool reclaim = false;
         try
         {
             ClearError();
@@ -144,55 +145,14 @@ public partial class CallTraceViewModel : ViewModelBase
             if (!info.Quiesced) { StatusText = Res.Get("str.CT.Status.NotQuiesced"); return; }
 
             ulong kept = info.Written - info.FirstValid;
-            var all = new TraceRecord[kept];
-            long n = 0;
-            ulong from = info.FirstValid;
-            while (from < info.Written)
+            reclaim = true;   // a window is about to be made: whatever happens next, collect it afterwards
+            var read = await ReadAndBuildAsync(info, kept, ct);
+            if (read.Trace == null)
             {
-                ct.ThrowIfCancellationRequested();
-                var page = await _dump.PeTraceGetAsync(from, PageRecords, ct);
-                // The ring belongs to one recording; a new Start in between would hand back another one's records, and
-                // a ring that is gone (another reader released it) or a page that does not move before the end would
-                // leave a partial read that looks whole: in each case the read is dropped, not built.
-                if (page.Info.Gen != info.Gen || !page.Info.Allocated || page.Next <= from)
-                {
-                    StatusText = Res.Get("str.CT.Status.Changed");
-                    return;
-                }
-                var recs = CallTraceBuilder.Decode(page.Data);
-                int take = (int)Math.Min(recs.Length, all.LongLength - n);
-                Array.Copy(recs, 0, all, n, take);
-                n += take;
-                from = page.Next;
-                Progress = 0.8 * (from - info.FirstValid) / Math.Max(1.0, kept);
-                StatusText = Res.Format("str.CT.Status.ReadingRecords", n, kept);
+                StatusText = Res.Get(read.StatusKey ?? "str.CT.Status.Changed");
+                return;
             }
-
-            StatusText = Res.Get("str.CT.Status.Naming");
-            var funcs = new List<TraceFuncName>();
-            for (int off = 0; ; off += NamesPage)
-            {
-                var p = await _dump.PeTraceFuncNamesAsync(info.Gen, off, NamesPage, ct);
-                if (p.Stale) { StatusText = Res.Get("str.CT.Status.Changed"); return; }
-                funcs.AddRange(p.Items);
-                if (p.Items.Count == 0 || off + p.Items.Count >= p.Total || p.Truncated) break;
-            }
-            Progress = 0.85;
-            var objs = new List<TraceObjName>();
-            for (int off = 0; ; off += NamesPage)
-            {
-                var p = await _dump.PeTraceObjNamesAsync(info.Gen, off, NamesPage, ct);
-                if (p.Stale) { StatusText = Res.Get("str.CT.Status.Changed"); return; }
-                objs.AddRange(p.Items);
-                if (p.Items.Count == 0 || off + p.Items.Count >= p.Total || p.Truncated) break;
-                Progress = 0.85 + 0.1 * Math.Min(1.0, (off + p.Items.Count) / Math.Max(1.0, p.Total));
-            }
-
-            StatusText = Res.Get("str.CT.Status.Building");
-            long count = n;
-            // Everything is read: the build and the release no longer take the load's token. Cancelling now would only
-            // leave the ring in the game until the next Start (review CT-RELEASE-CANCELLED).
-            var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs));
+            var trace = read.Trace;
 
             // Read: give the game its memory back now, not at the next Start or when the UI disconnects.
             try { await _dump.PeTraceReleaseAsync(info.Gen, CancellationToken.None); }
@@ -210,7 +170,7 @@ public partial class CallTraceViewModel : ViewModelBase
             Progress = 1;
             StatusText = Summary(trace);
             _log.Info($"CallTrace: loaded {trace.Count} calls ({kept} records, gen {info.Gen}), " +
-                      $"{funcs.Count} functions, {objs.Count} objects");
+                      $"{read.Funcs} functions, {read.Objs} objects");
         }
         catch (OperationCanceledException)
         {
@@ -225,7 +185,77 @@ public partial class CallTraceViewModel : ViewModelBase
         finally
         {
             IsLoading = false;
+            if (reclaim) ReclaimAfterLoad();
         }
+    }
+
+    /// <summary>[TRACE-UI-LOAD-MEMORY] Every page of the ring straight into one window, the names of what it saw, then
+    /// the tree. The window lives only in here: once this returns nothing reaches it, so the collection after the load
+    /// can give it back. A null trace comes with the status that says why the read was dropped.</summary>
+    private async Task<(CallTrace? Trace, string? StatusKey, int Funcs, int Objs)> ReadAndBuildAsync(
+        TraceInfo info, ulong kept, CancellationToken ct)
+    {
+        var all = new TraceRecord[kept];
+        long n = 0;
+        ulong from = info.FirstValid;
+        while (from < info.Written && n < all.LongLength)
+        {
+            ct.ThrowIfCancellationRequested();
+            // Never more than the window has left: the page is decoded into it.
+            int max = (int)Math.Min(PageRecords, all.LongLength - n);
+            var page = await _dump.PeTraceGetIntoAsync(from, max, all.AsMemory((int)n, (int)(all.LongLength - n)), ct);
+            // The ring belongs to one recording; a new Start in between would hand back another one's records, and
+            // a ring that is gone (another reader released it) or a page that does not move before the end would
+            // leave a partial read that looks whole: in each case the read is dropped, not built.
+            if (page.Info.Gen != info.Gen || !page.Info.Allocated || page.Next <= from)
+                return (null, "str.CT.Status.Changed", 0, 0);
+            n += page.Count;
+            from = page.Next;
+            Progress = 0.8 * (from - info.FirstValid) / Math.Max(1.0, kept);
+            StatusText = Res.Format("str.CT.Status.ReadingRecords", n, kept);
+        }
+
+        StatusText = Res.Get("str.CT.Status.Naming");
+        var funcs = new List<TraceFuncName>();
+        for (int off = 0; ; off += NamesPage)
+        {
+            var p = await _dump.PeTraceFuncNamesAsync(info.Gen, off, NamesPage, ct);
+            if (p.Stale) return (null, "str.CT.Status.Changed", 0, 0);
+            funcs.AddRange(p.Items);
+            if (p.Items.Count == 0 || off + p.Items.Count >= p.Total || p.Truncated) break;
+        }
+        Progress = 0.85;
+        var objs = new List<TraceObjName>();
+        for (int off = 0; ; off += NamesPage)
+        {
+            var p = await _dump.PeTraceObjNamesAsync(info.Gen, off, NamesPage, ct);
+            if (p.Stale) return (null, "str.CT.Status.Changed", 0, 0);
+            objs.AddRange(p.Items);
+            if (p.Items.Count == 0 || off + p.Items.Count >= p.Total || p.Truncated) break;
+            Progress = 0.85 + 0.1 * Math.Min(1.0, (off + p.Items.Count) / Math.Max(1.0, p.Total));
+        }
+
+        StatusText = Res.Get("str.CT.Status.Building");
+        long count = n;
+        // Everything is read: the build and the release no longer take the load's token. Cancelling now would only
+        // leave the ring in the game until the next Start (review CT-RELEASE-CANCELLED).
+        var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs));
+        return (trace, null, funcs.Count, objs.Count);
+    }
+
+    /// <summary>[TRACE-UI-LOAD-MEMORY] A load leaves its window and every page's reply behind, and nothing makes the GC
+    /// run after it: on Avowed a 512 MB load held the working set at 3.25 GB a minute later (2026-10-07). One blocking,
+    /// compacting collection gives it back -- a pause after a load of seconds, the snapshot capture's precedent -- and
+    /// the log line is what the memory estimate beside the trace slider is checked against.</summary>
+    private void ReclaimAfterLoad()
+    {
+        var proc = System.Diagnostics.Process.GetCurrentProcess();
+        proc.Refresh();
+        long ws = proc.WorkingSet64 >> 20, heap = GC.GetTotalMemory(false) >> 20, peak = proc.PeakWorkingSet64 >> 20;
+        GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
+        proc.Refresh();
+        _log.Info($"CallTrace: after the load, managed heap {heap:N0}->{GC.GetTotalMemory(false) >> 20:N0} MB, " +
+                  $"working set {ws:N0}->{proc.WorkingSet64 >> 20:N0} MB (process peak so far {peak:N0} MB)");
     }
 
     [RelayCommand]

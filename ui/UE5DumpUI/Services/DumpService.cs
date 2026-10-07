@@ -2895,6 +2895,38 @@ public sealed class DumpService : IDumpService
         };
     }
 
+    /// <summary>[TRACE-UI-LOAD-MEMORY] One page decoded straight into the load's window: no base64 string, no byte[]
+    /// and no record array per page -- about half of the 14 MB page's garbage, which held the UI at 3.25 GB after a
+    /// 512 MB load (Avowed, 2026-10-07).</summary>
+    public async Task<TracePage> PeTraceGetIntoAsync(ulong from, int max, Memory<TraceRecord> into, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_get", ["from"] = from, ["max"] = max }, ct);
+        CheckResponse(res);
+        return new TracePage
+        {
+            Info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Count = DecodePageInto(res["data"], into.Span),
+            Next  = res["next"]?.GetValue<ulong>() ?? from,
+        };
+    }
+
+    // A reply parsed from the pipe's text holds the value as a JSON element over the reply's own UTF-8: decode those
+    // bytes between the quotes, with no string made. Base64 needs no escaping, so a backslash means it was escaped
+    // anyway; then the element's own unescape. A value built in code (the tests' replies) is a string.
+    private static int DecodePageInto(JsonNode? data, Span<TraceRecord> into)
+    {
+        if (data is not JsonValue v) return 0;
+        if (v.TryGetValue(out System.Text.Json.JsonElement el))
+        {
+            if (el.ValueKind != System.Text.Json.JsonValueKind.String) return 0;
+            ReadOnlySpan<byte> raw = System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(el);
+            if (raw.Length >= 2 && raw.IndexOf((byte)'\\') < 0)
+                return CallTraceBuilder.DecodeInto(raw[1..^1], into);
+            return CallTraceBuilder.DecodeInto((el.GetString() ?? "").AsSpan(), into);
+        }
+        return v.TryGetValue(out string? s) && s != null ? CallTraceBuilder.DecodeInto(s.AsSpan(), into) : 0;
+    }
+
     /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct functions, resolved now.</summary>
     public async Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
     {

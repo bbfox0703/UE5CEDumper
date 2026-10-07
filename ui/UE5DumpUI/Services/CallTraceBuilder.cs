@@ -21,6 +21,33 @@ public static class CallTraceBuilder
         return MemoryMarshal.Cast<byte, TraceRecord>(data).ToArray();
     }
 
+    /// <summary>[TRACE-UI-LOAD-MEMORY] One page's base64 -- the pipe's UTF-8 -- decoded straight into
+    /// <paramref name="into"/>, the load's window, with no array of its own. Returns the records written. A page that
+    /// is not base64, not whole records, or larger than <paramref name="into"/> is a protocol mismatch, as in
+    /// <see cref="Decode"/>.</summary>
+    public static int DecodeInto(ReadOnlySpan<byte> base64Utf8, Span<TraceRecord> into)
+    {
+        var st = System.Buffers.Text.Base64.DecodeFromUtf8(base64Utf8, MemoryMarshal.AsBytes(into), out _, out int written);
+        if (st != System.Buffers.OperationStatus.Done)
+            throw new InvalidDataException(
+                $"A trace page of {base64Utf8.Length} base64 bytes does not decode into {into.Length} records ({st}).");
+        return WholeRecords(written);
+    }
+
+    /// <summary>The same from chars: a reply whose value is a string.</summary>
+    public static int DecodeInto(ReadOnlySpan<char> base64, Span<TraceRecord> into)
+    {
+        if (base64.IsEmpty) return 0;
+        if (!Convert.TryFromBase64Chars(base64, MemoryMarshal.AsBytes(into), out int written))
+            throw new InvalidDataException(
+                $"A trace page of {base64.Length} base64 chars is not base64, or does not fit {into.Length} records.");
+        return WholeRecords(written);
+    }
+
+    private static int WholeRecords(int bytes) => bytes % RecordSize == 0
+        ? bytes / RecordSize
+        : throw new InvalidDataException($"A trace page of {bytes} bytes is not whole {RecordSize}-byte records.");
+
     /// <summary>
     /// Builds the tree. Each thread keeps a stack of its open calls: an entry's caller is the top of its thread's
     /// stack. A return closes its call, and any call still open above it on that thread never returned (an

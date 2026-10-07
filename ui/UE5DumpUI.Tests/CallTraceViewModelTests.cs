@@ -165,8 +165,9 @@ public class CallTraceViewModelTests
 
         await vm.LoadCommand.ExecuteAsync(null);
 
-        var pages = dump.PageCalls.Where(p => p.max != 1).ToList();
+        var pages = dump.PageCalls.Skip(1).ToList();   // the first call is the load's one-record probe
         Assert.Equal(new ulong[] { 0, 4, 8 }, pages.Select(p => p.from).ToArray());
+        Assert.Equal(new[] { 9, 5, 1 }, pages.Select(p => p.max).ToArray());
         Assert.All(pages, p => Assert.True((ulong)p.max <= dump.Info.Written - p.from, $"page at {p.from} asked {p.max}"));
     }
 
