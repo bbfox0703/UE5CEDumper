@@ -352,6 +352,18 @@ inline constexpr size_t kArmLogCapacity = 16384;
 // Sorts the specs by key and merges a key both ticked and chosen into one; reserves the log for `logCapacity` arms.
 std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity);
 
+// What became of one followed name in the recording, for the Stop reply and the UI's notes.
+struct ArmSummary {
+    NameKey  key;
+    bool     tick      = false;
+    int32_t  ring      = -1;
+    uint64_t addresses = 0;   // distinct addresses that matched it; 0: never called
+    uint64_t arms      = 0;   // snapshot arms made for it
+    uint64_t armsFull  = 0;   // matches the full arm log could not take: no snapshots there, the tick still opened
+};
+// One per spec of the running (or last) recording's ArmState, in its order; empty when it follows no names.
+std::vector<ArmSummary> ArmsSummary();
+
 // Tests replace the clock; nullptr restores QueryPerformanceCounter.
 void SetTraceClockForTest(uint64_t (*clock)());
 

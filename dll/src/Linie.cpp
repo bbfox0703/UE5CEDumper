@@ -238,6 +238,10 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
+std::vector<ArmSummary> ArmsSummary() {
+    return {};
+}
+
 void IdentitiesOf(const std::vector<uintptr_t>& addrs, std::vector<FuncIdentity>& out) {
     std::lock_guard<std::mutex> lk(g_mu);
     out.assign(addrs.size(), FuncIdentity{});

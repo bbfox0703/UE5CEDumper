@@ -7543,6 +7543,45 @@ int main() {
         Linie::Reset();
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the arm log's capacity and what became of each followed name");
+        // docs/live-funcs-step2-items.md, N3. Every address 0xBx is the same function by name (a class reloaded at
+        // each new address); 0xC is nobody's. A log with room for one arm.
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex = 7;
+            out.outer = 0x7000 + f;
+            out.functionFlags = 0x400;
+            out.parmsSize = 16;
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, true, 0, 64 },
+                                         Linie::ArmSpec{ Linie::NameKey{ 0x88, 0, 7, 0 }, false, 1, 64 } }, 1);
+        st->gen = 3;
+        Linie::Reset();
+        Linie::StartRecording(reader, nullptr, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xB1, 1000, &h);
+        check("setup: the first address takes the log's one place", h.ring == 0 && h.arm == 0 && st->log.size() == 1);
+        Linie::RecordCall(0xB2, 1001, &h);
+        check("a full log: no snapshots for the next address, but its tick still opens",
+              h.gen == 3 && h.ring == -1 && (h.flags & Linie::kArmTick) && st->log.size() == 1, u(st->log.size()).c_str());
+        Linie::RecordCall(0xB2, 1002, &h);
+        Linie::RecordCall(0xC, 1003, &h);
+        Linie::StopRecording();
+        const auto sum = Linie::ArmsSummary();
+        check("ArmsSummary: one per followed name, in the specs' order", sum.size() == 2 &&
+              sum[0].key == Linie::NameKey{ 0x77, 0, 7, 0 } && sum[1].key == Linie::NameKey{ 0x88, 0, 7, 0 },
+              u(sum.size()).c_str());
+        check("...the followed name: two distinct addresses (not three calls), one arm, one match the log could not take",
+              sum.size() == 2 && sum[0].addresses == 2 && sum[0].arms == 1 && sum[0].armsFull == 1 && sum[0].tick &&
+              sum[0].ring == 0, sum.empty() ? "" : u(sum[0].addresses).c_str());
+        check("...a name never called: no address", sum.size() == 2 && sum[1].addresses == 0 && sum[1].arms == 0);
+        Linie::Reset();
+        check("...and none once the recording is gone", Linie::ArmsSummary().empty());
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
