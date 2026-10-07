@@ -278,6 +278,20 @@ public class CallTraceBuilderTests
     }
 
     [Fact]
+    public void An_address_that_held_two_functions_is_marked_reused()
+    {
+        // Review DLL-3: another function took the address during the recording; its calls and the first one's share it.
+        var t = CallTraceBuilder.Build(new[] { Entry(0, 1, 0xF1), Entry(1, 2, 0xF2) }, Info, new[]
+        {
+            new TraceFuncName { Addr = 0xF1, Live = true, ClassName = "Pawn", FuncName = "Jump" },
+            new TraceFuncName { Addr = 0xF2, Live = true, Reused = true, ClassName = "WBP_Map_C", FuncName = "OnTile" },
+        });
+        Assert.False(t.FuncReused(0));
+        Assert.True(t.FuncReused(1));
+        Assert.Equal("OnTile", t.FuncName(1));
+    }
+
+    [Fact]
     public void The_trace_counts_its_unloaded_and_its_unnamed_functions_and_their_calls()
     {
         var t = UnloadedSample();

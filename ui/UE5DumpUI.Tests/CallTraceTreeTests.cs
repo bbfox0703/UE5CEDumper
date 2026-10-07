@@ -147,7 +147,7 @@ public class CallTraceTreeTests
         Assert.StartsWith("1,0.01,30,true,1,1,0,Character,Jump,0xB,BP_Hero_0,BP_Hero_C,0x20,true,false", lines[2]);
         // "=Tick,"x"": armoured against a formula, then quoted for the comma and the quotes.
         Assert.Contains(",GameMode,\"'=Tick,\"\"x\"\"\",0xE,", lines[5]);
-        Assert.EndsWith(",,,,,true,false", lines[5]);   // no object: four empty cells, the scope root, not unloaded
+        Assert.EndsWith(",,,,,true,false,false", lines[5]);   // no object: four empty cells, the scope root, not unloaded or reused
     }
 
     // [TRACE-UNLOADED-NAMES] An unloaded function's calls say so in both formats; a live one's JSONL line is unchanged.
@@ -174,9 +174,24 @@ public class CallTraceTreeTests
         var c = new StringWriter();
         CallTraceExport.WriteCsv(UnloadedSample(), c);
         var cl = c.ToString().Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
-        Assert.Equal("func_unloaded", CallTraceExport.CsvColumns[^1]);
-        Assert.EndsWith(",false", cl[1]);
+        Assert.Equal("func_unloaded", CallTraceExport.CsvColumns[^2]);
+        Assert.Equal("func_reused", CallTraceExport.CsvColumns[^1]);
+        Assert.EndsWith(",false,false", cl[1]);
         Assert.Contains(",WBP_Inventory_C,OnOpen,", cl[2]);
-        Assert.EndsWith(",true", cl[2]);
+        Assert.EndsWith(",true,false", cl[2]);
+    }
+
+    [Fact]
+    public void Export_marks_a_reused_address()
+    {
+        // Review DLL-3: the calls at an address that held two functions during the recording.
+        var t = CallTraceBuilder.Build(new[] { E(0, 1000, 0xA) }, new TraceInfo { QpcFreq = 1_000_000, Written = 1 },
+            new[] { new TraceFuncName { Addr = 0xA, Live = true, Reused = true, ClassName = "WBP_Map_C", FuncName = "OnTile" } });
+        var j = new StringWriter();
+        CallTraceExport.WriteJsonl(t, j, new DateTime(2026, 10, 7, 0, 0, 0, DateTimeKind.Utc));
+        Assert.Contains("\"func_reused\":true", j.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries)[1]);
+        var c = new StringWriter();
+        CallTraceExport.WriteCsv(t, c);
+        Assert.EndsWith(",false,true", c.ToString().Split("\r\n", StringSplitOptions.RemoveEmptyEntries)[1]);
     }
 }

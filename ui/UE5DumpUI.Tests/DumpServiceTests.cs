@@ -1737,6 +1737,8 @@ public class DumpServiceTests
                                      ["count"] = 7L, ["unloaded"] = true },
                     new JsonObject { ["class_name"] = "WBP_Tip_C", ["func_name"] = "Show", ["func_addr"] = "0x300",
                                      ["count"] = 3L, ["unloaded"] = true, ["recycled"] = true },
+                    new JsonObject { ["class_name"] = "WBP_Map_C", ["func_name"] = "OnTile", ["func_addr"] = "0x400",
+                                     ["count"] = 9L, ["reused"] = true },
                 },
                 ["unloaded_funcs"] = 2, ["unloaded_calls"] = 10L, ["unnamed_funcs"] = 1, ["unnamed_calls"] = 4L,
             };
@@ -1749,6 +1751,8 @@ public class DumpServiceTests
         Assert.True(r.Entries[1].IsUnloaded);
         Assert.False(r.Entries[1].IsRecycled);
         Assert.True(r.Entries[2].IsUnloaded && r.Entries[2].IsRecycled);
+        Assert.False(r.Entries[2].IsReused);
+        Assert.True(r.Entries[3].IsReused && !r.Entries[3].IsUnloaded);   // review DLL-3: two functions at one address
         Assert.Equal(2, r.UnloadedFuncs);
         Assert.Equal(10L, r.UnloadedCalls);
         Assert.Equal(1, r.UnnamedFuncs);
@@ -1785,6 +1789,8 @@ public class DumpServiceTests
                 new JsonObject { ["addr"] = "0x200", ["live"] = false, ["unloaded"] = true,
                                  ["class_name"] = "WBP_Inventory_C", ["func_name"] = "OnOpen" },
                 new JsonObject { ["addr"] = "0x300", ["live"] = false },
+                new JsonObject { ["addr"] = "0x400", ["live"] = true, ["reused"] = true,
+                                 ["class_name"] = "WBP_Map_C", ["func_name"] = "OnTile" },
             },
         });
         IDumpService svc = CreateService();
@@ -1797,6 +1803,8 @@ public class DumpServiceTests
         Assert.Equal("OnOpen", page.Items[1].FuncName);
         Assert.Equal("WBP_Inventory_C", page.Items[1].ClassName);
         Assert.False(page.Items[2].Live || page.Items[2].Unloaded);
+        Assert.False(page.Items[1].Reused);
+        Assert.True(page.Items[3].Reused && page.Items[3].Live);
     }
 
     // --- WalkFunctionsAsync: struct_fields parsing ---
