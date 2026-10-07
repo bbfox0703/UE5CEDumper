@@ -7522,6 +7522,10 @@ int main() {
         Linie::RecordCall(0xF0, 1040, &h);
         check("its class's FName changed at the same address: read again, and disarmed",
               h.gen == 0 && h.ring == -1 && statOf(0xF0).ident.classIndex == 0xA0);
+        s_cls = 0x90;       // review R3: and the followed class comes back at the same addresses
+        Linie::RecordCall(0xF0, 1050, &h);
+        check("...and when the followed class comes back there, armed again (review R3)",
+              h.gen == 9 && h.ring == 0 && h.arm == 2 && st->log.size() == 3, u(st->log.size()).c_str());
 
         restart();
         Linie::RecordCall(0xF0, 2000, &h);
@@ -7591,6 +7595,31 @@ int main() {
         check("...a name never called: no address", sum.size() == 2 && sum[1].addresses == 0 && sum[1].arms == 0);
         Linie::Reset();
         check("...and none once the recording is gone", Linie::ArmsSummary().empty());
+
+        // Review R4: two followed names taking turns at one address count it once each.
+        static int32_t s_turn = 0x77;
+        auto turnReader = [](uintptr_t, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = s_turn; out.classIndex = 7; out.outer = 0x7000 + s_turn; out.functionFlags = 0x400;
+            out.parmsSize = 16; return true;
+        };
+        auto turnKey = [](uintptr_t, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            idx = s_turn; n = 0; outer = 0x7000 + s_turn; return true;
+        };
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, false, 0, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0x88, 0, 7, 0 }, false, 1, 64 } }, 8);
+        st2->gen = 4;
+        s_turn = 0x77;
+        Linie::StartRecording(turnReader, turnKey, st2);
+        Linie::RecordCall(0xB1, 2000, &h);
+        s_turn = 0x88;
+        Linie::RecordCall(0xB1, 2001, &h);
+        s_turn = 0x77;
+        Linie::RecordCall(0xB1, 2002, &h);
+        const auto turns = Linie::ArmsSummary();
+        check("two names taking turns at one address: one address each, three arms (review R4)",
+              turns.size() == 2 && turns[0].addresses == 1 && turns[1].addresses == 1 && turns[0].arms == 2 &&
+              turns[1].arms == 1, turns.size() == 2 ? (u(turns[0].addresses) + "/" + u(turns[1].addresses)).c_str() : "");
+        Linie::Reset();
     }
 
     {
@@ -7636,6 +7665,10 @@ int main() {
         Linie::RecordCall(0xB4, 1003, &h);
         const auto p2 = Linie::TakePendingArms(*st, 1);
         check("...at most as many as asked, the oldest first", p2.size() == 1 && p2[0].index == 2, u(p2.size()).c_str());
+        const auto p3 = Linie::TakePendingArms(*st, SIZE_MAX);   // review R2: "all of them", twice
+        const auto p4 = Linie::TakePendingArms(*st, SIZE_MAX);
+        check("...'all of them' takes the rest, and asked again takes nothing -- no wrap-around (review R2)",
+              p3.size() == 1 && p3[0].index == 3 && p4.empty(), (u(p3.size()) + "/" + u(p4.size())).c_str());
 
         const auto lay = std::make_shared<int>(42);
         check("a layout published for an arm", Linie::PublishArmLayout(*st, 0, LS::Read, lay, {}, 15));
