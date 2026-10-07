@@ -2847,9 +2847,10 @@ public sealed class DumpService : IDumpService
         if (trace != null)
         {
             var ticked = new JsonArray();
-            // JsonValue.Create(string), not Add(a): the generic Add<T>(T) is trim/AOT-unsafe (IL2026/IL3050) and
-            // fails only the trimmed publish -- the same trap as the string params below.
-            foreach (var a in trace.Ticked) ticked.Add(JsonValue.Create(a));
+            // Cast to JsonNode? so the non-generic JsonArray.Add(JsonNode?) is picked: the generic Add<T>(T) is
+            // trim/AOT-unsafe (IL2026/IL3050) and fails only the trimmed publish. Passing a JsonValue is not enough
+            // -- the identity conversion to T still wins -- which is the same trap as the string params below.
+            foreach (var a in trace.Ticked) ticked.Add((JsonNode?)a);
             req["trace"] = new JsonObject
             {
                 ["bytes"] = trace.Bytes,
