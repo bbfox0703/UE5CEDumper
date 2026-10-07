@@ -27,6 +27,7 @@
 //   version.lib — linked by CMake.
 
 #include <windows.h>
+#include <psapi.h>    // K32GetProcessMemoryInfo (kernel32 on Windows 7+): the step-2 tests measure a ring freed
 #include <intrin.h>   // __cpuid: the benchmarks name the CPU they ran on
 #include <stdio.h>
 #include <cstdint>
@@ -7389,9 +7390,10 @@ int main() {
             out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
             out.nameNumber    = (f == 0xC1) ? 1 : 0;
             out.classIndex    = (f == 0xC2) ? 8 : (f == 0xC3) ? 6 : 7;
-            out.functionFlags = 0x400;
+            // 0xE1 has out parameters (FUNC_HasOutParms), 0xE2's flags could not be read, 0xE3's block is 100 bytes.
+            out.functionFlags = (f == 0xE1) ? 0x00400400u : (f == 0xE2) ? 0u : 0x400u;
             out.numParms      = 2;
-            out.parmsSize     = 16;
+            out.parmsSize     = (f == 0xE3) ? 100 : 16;
             return true;
         };
         auto u = [](uint64_t n) { return std::to_string(n); };
@@ -7447,6 +7449,21 @@ int main() {
         check("a name nobody follows: a default hint", h.gen == 0 && h.ring == -1 && h.flags == 0);
         check("...and the log holds the two arms only", st->log.size() == 2, u(st->log.size()).c_str());
 
+        // The Linie review (tests): the hint's after and cut bits come from the table's read, not only from a test's
+        // hand-made hint.
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xE1, 0, 7, 0 }, false, 0, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE2, 0, 7, 0 }, false, 1, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE3, 0, 7, 0 }, false, 2, 64 } }, 8);
+        st2->gen = 6;
+        Linie::StartRecording(armStub, nullptr, st2);
+        Linie::RecordCall(0xE1, 3000, &h);
+        check("out parameters: the table arms the after copy", (h.flags & Linie::kArmAfter) && !(h.flags & Linie::kArmTruncated));
+        Linie::RecordCall(0xE2, 3001, &h);
+        check("flags that could not be read: the after copy too", (h.flags & Linie::kArmAfter) != 0);
+        Linie::RecordCall(0xE3, 3002, &h);
+        check("a block larger than its ring's slot: cut to it, and flagged", (h.flags & Linie::kArmTruncated) &&
+              h.copy == 64 && !(h.flags & Linie::kArmAfter), u(h.copy).c_str());
+
         Linie::StartRecording(armStub);
         Linie::RecordCall(0xB, 2000, &h);
         check("a recording that follows no names arms nothing", h.gen == 0 && h.ring == -1);
@@ -7459,8 +7476,9 @@ int main() {
         // nobody follows. The class reader counts its reads: only armed addresses pay for it.
         static int32_t  s_fn = 0x50, s_cls = 0x90;
         static uint64_t s_outer = 0x9000;
-        static int      s_keyFail = 0, s_clsReads = 0;
+        static int      s_keyFail = 0, s_clsReads = 0, s_clsFail = 0, s_readFail = 0;
         auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            if (f == 0xF0 && s_readFail > 0) { --s_readFail; return false; }
             const bool occ = (f == 0xF0);
             out.nameIndex     = occ ? s_fn : static_cast<int32_t>(f & 0xFFFF);
             out.classIndex    = occ ? s_cls : 7;
@@ -7478,6 +7496,7 @@ int main() {
         };
         auto clsReader = [](uint64_t obj, int32_t& idx, int32_t& n) -> bool {
             ++s_clsReads;
+            if (s_clsFail > 0) { --s_clsFail; return false; }
             idx = (obj == s_outer) ? s_cls : 7;
             n = 0;
             return true;
@@ -7544,6 +7563,20 @@ int main() {
         Linie::RecordCall(0xF0, 3002, &h);
         check("...and the next call, read again, is armed as before", h.gen == 9 && h.ring == 0 && h.arm == 0 &&
               st->log.size() == 1);
+
+        // The Linie review (tests): the class read failing, and the full read failing after a key change.
+        s_clsFail = 1;
+        Linie::RecordCall(0xF0, 3003, &h);
+        check("a class that cannot be read: that call gets no hint", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 3004, &h);
+        check("...the next, read again, is armed", h.gen == 9 && h.ring == 0);
+        s_outer = 0x9200;   // its class reloaded...
+        s_readFail = 1;     // ...and the read of what is there now fails
+        Linie::RecordCall(0xF0, 3005, &h);
+        check("a changed key whose read fails: disarmed, not left with the old arm", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 3006, &h);
+        check("...and read on the next call: a new arm", h.gen == 9 && h.ring == 0 && h.arm == 1 && st->log.size() == 2,
+              u(st->log.size()).c_str());
         Linie::Reset();
     }
 
@@ -7674,6 +7707,8 @@ int main() {
         check("a layout published for an arm", Linie::PublishArmLayout(*st, 0, LS::Read, lay, {}, 15));
         check("...is not published twice", !Linie::PublishArmLayout(*st, 0, LS::Failed, nullptr, "again"));
         check("...nor for an arm the log does not hold", !Linie::PublishArmLayout(*st, 9, LS::Read, lay));
+        check("...nor for a place the log has room for but no arm has taken yet",
+              !Linie::PublishArmLayout(*st, 5, LS::Read, lay));
 
         Linie::StopTrace();
         Linie::RecordCall(0xB5, 1004, &h);
@@ -7821,6 +7856,23 @@ int main() {
         check("one byte short of K = 8: refused as a snapshot buffer too small",
               Linie::StartTrace(cfg(128 + 8 * 104 - 1)) == Linie::TraceStartStatus::SnapTooSmall);
         check("...and the trace's own ring is freed too", !Linie::GetTraceInfo().allocated && !Linie::IsTracing());
+        {
+            // The Linie review (tests): "freed" measured, not inferred -- the refused Start's own 256 MB ring is a local
+            // that the trace's state never saw. The process's committed private bytes come back.
+            auto privateBytes = [] {
+                PROCESS_MEMORY_COUNTERS_EX pmc{};
+                pmc.cb = sizeof(pmc);
+                K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc));
+                return static_cast<uint64_t>(pmc.PrivateUsage);
+            };
+            Linie::TraceConfig big = cfg(100);   // a snapshot buffer smaller than the rings' alignment
+            big.bytes = 256ull << 20;
+            const uint64_t before = privateBytes();
+            const bool refused = Linie::StartTrace(big) == Linie::TraceStartStatus::SnapTooSmall;
+            const uint64_t after = privateBytes();
+            check("...measured: a refused Start leaves no 256 MB ring committed behind it",
+                  refused && after < before + (16ull << 20), (u((after - before) >> 20) + " MB").c_str());
+        }
         check("a buffer smaller than the rings' alignment: refused, not a wrapped-around K",
               Linie::StartTrace(cfg(100)) == Linie::TraceStartStatus::SnapTooSmall && !Linie::GetTraceInfo().allocated);
         Linie::TraceConfig none = cfg(0);
@@ -8135,6 +8187,51 @@ int main() {
         check("a lone call over the budget writes no record at all, and is counted",
               l0.traced && !l1.traced && info.written == 1 && info.snap.droppedBudget == 1 && info.snap.skippedBudget == 0,
               u(info.written).c_str());
+
+        // The Linie review (tests): a call over the budget owes no after copy -- the ring would fill at the full rate.
+        info = start(1, 100, false);
+        s_now = 40 * f;
+        Linie::ArmHint owing = hintFor(info.gen, 0);
+        owing.flags = Linie::kArmAfter;
+        for (int i = 0; i < 2; ++i) {
+            Linie::TraceToken t;
+            Linie::TraceEnter(0xA7, 0, 1000, 1, t, params, owing);
+            Linie::TraceReturn(t, 1, params);
+        }
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> owed;
+        Linie::CopySnaps(0, 0, 64, owed);
+        check("an after-copy call over the budget writes no after copy: the first call's two slots only",
+              owed.size() == 2 && !owed[0].after && owed[1].after && owed[0].entrySeq == owed[1].entrySeq,
+              u(owed.size()).c_str());
+
+        // ...and an excluded choice over the budget writes nothing, as a lone one does (T5 b keeps the ring clear).
+        {
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.tickedNames = 1;
+            c.exclude = { 0xA7 };
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = 64 * 1024;
+            c.snapPerRingPerSec = 1;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            info = Linie::GetTraceInfo();
+            s_now = 50 * f;
+            Linie::ArmHint tick{};
+            tick.gen = info.gen; tick.flags = Linie::kArmTick;
+            Linie::TraceToken root, x1, x2;
+            Linie::TraceEnter(0xA1, 0, 900, 1, root, 0, tick);
+            Linie::TraceEnter(0xA7, 0, 800, 1, x1, params, hintFor(info.gen, 0));
+            Linie::TraceReturn(x1, 1, params);
+            Linie::TraceEnter(0xA7, 0, 800, 1, x2, params, hintFor(info.gen, 0));
+            Linie::StopTrace();
+            info = Linie::GetTraceInfo();
+            check("an excluded choice over the budget: no record at all, counted dropped",
+                  x1.traced && !x2.traced && info.snap.droppedBudget == 1 && info.snap.skippedBudget == 0,
+                  u(info.snap.droppedBudget).c_str());
+        }
         Linie::FreeTrace();
         Linie::SetTraceClockForTest(nullptr);
     }
@@ -8333,6 +8430,34 @@ int main() {
               Linie::CopySnaps(0, 0, 64, kept, nullptr, &orphans) && kept.size() == 8 && orphans == 12 &&
               kept[0].entrySeq == 12 && Linie::GetTraceInfo().firstValid == 12, (u(kept.size()) + "/" + u(orphans)).c_str());
         Linie::FreeTrace();
+
+        // The Linie review (tests): a write that never finished is left out by its number. Eight whole writes fill
+        // K = 8; the ninth takes slot 0 again and its copy throws, so slot 0 holds no whole write of index 8.
+        {
+            static int s_throwAt = 0;
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = 128 + 8 * 32 * 2;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool {
+                if (s_throwAt > 0 && --s_throwAt == 0) throw std::runtime_error("copy fault");
+                memcpy(dst, reinterpret_cast<const void*>(src), n);
+                return true;
+            };
+            Linie::StartTrace(c);
+            const uint64_t g9 = Linie::GetTraceInfo().gen;
+            s_throwAt = 9;
+            for (int i = 0; i < 9; ++i) {
+                Linie::TraceToken t;
+                try { Linie::TraceEnter(0xA1, 0, 1000, 1, t, params, hint(g9, 0)); } catch (const std::exception&) {}
+            }
+            Linie::StopTrace();
+            std::vector<Linie::SnapCopy> win;
+            check("an unfinished write is not handed out under its number: [1, 9) gives the seven whole ones",
+                  Linie::CopySnaps(0, 1, 64, win) && win.size() == 7 && win.front().index == 1 && win.back().index == 7,
+                  u(win.size()).c_str());
+            Linie::FreeTrace();
+        }
 
         // What step 2 costs on the hook: printed, not checked (a timing is the machine's).
         {
