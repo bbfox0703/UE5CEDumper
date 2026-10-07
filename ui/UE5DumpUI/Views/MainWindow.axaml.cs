@@ -722,6 +722,9 @@ public partial class MainWindow : Window
         // session doesn't keep the game thread taking the profile mutex per PE
         // call) and flushes its filter-keyword memory.
         if (tag != "LiveFuncs")  vm.LiveFuncs?.OnLeavingTab();
+        else                     vm.LiveFuncs?.OnEnteringTab();
+        // [LIVEFUNCS-TIMELINE-2026-10-04] Leaving Call Trace stops reading a trace the user walked away from.
+        if (tag != "CallTrace")  vm.CallTrace?.OnLeavingTab();
 
         // Same discipline for the System tab's Diagnostics auto-refresh: a forgotten
         // toggle would keep adding pipe traffic while the user works elsewhere — and
@@ -734,7 +737,7 @@ public partial class MainWindow : Window
         // opt-in: the System-tab checkbox can no longer be unticked from here
         // on. The gate persists the lock; LockExperimental is idempotent and a
         // no-op when the feature isn't enabled.
-        if (tag is "Snapshot" or "SpcQuery" or "ClassPivot")
+        if (tag is "Snapshot" or "SpcQuery" or "ClassPivot" or "CallTrace")
             vm.LockExperimental();
 
         // [AOBMAKER-EVAL-2026-09-29] Tabs whose HEX / +CE / ASM buttons read the shared AobMakerStatus.
@@ -757,6 +760,8 @@ public partial class MainWindow : Window
             // refresh on activation so a just-captured snapshot shows up.
             case "SpcQuery": _ = vm.Spc?.RefreshCommand.ExecuteAsync(null); break;
             case "ClassPivot": _ = vm.Pivot?.RefreshCommand.ExecuteAsync(null); break;
+            // Opening the tab reads the trace a traced Live Funcs recording left, if this tab has not read it yet.
+            case "CallTrace": _ = vm.CallTrace?.OnActivatedAsync(); break;
         }
     }
 }

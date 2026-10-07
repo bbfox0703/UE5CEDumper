@@ -837,6 +837,29 @@ properties), so count distinct addresses; and the expected answer came from `Rea
 should answer. (2) A probe around a slot is bounded by position (the object's own bytes, aligned) and stops once the
 slot is proven; a validator on the result is not a bound. (3) A verification tally counts each object once.
 
+### 1.al A timing names its machine -- the CPU first, and whether it is a laptop
+
+A nanosecond or millisecond figure is that CPU's: its single-core speed and its cache decide a hot path's cost, and
+this project is measured on two PCs that differ. "On this PC" does not say which. Write the CPU model beside the
+figure (the maintainer asked for it on 2026-10-07, for the call trace's per-call costs); add the memory when the
+figure is a bulk copy or a load, and the GPU only for a game's frame rate. A laptop part also moves with its power
+plan and boost: the same benchmark read 31.8 and 33.8 ns in two runs on the same machine, so a difference of a few
+percent between runs is not a finding. dll_core_test's benchmarks print the CPU brand (`__cpuid`) before their
+first line, so a pasted result carries it.
+
+### 1.am Driving a thin handle or a game: the screenshot's pixels are not the app's, and a game reads keys per frame
+
+Two traps from one night (2026-10-08), each of which read as a defect in the product first:
+- **A 5-pixel drag handle is missed by a screenshot coordinate.** The screenshot frame here is about 0.81 of the
+  app's logical pixels, so an edge computed as "text left + column width" from the XAML lands a dozen screenshot
+  pixels off -- on the next column's text. Find the edge from what is drawn (zoom on the neighbouring header's
+  text, or the handle's own line) before dragging, and press / move in steps / release (`left_mouse_down`, several
+  `mouse_move`, `left_mouse_up`): an instant `left_click_drag` may never move the pointer through the handle. A
+  Slider drag that works is the control that shows the input reaches the app at all. The miss cost a wrong claim
+  ("never hit") that had to be taken back in the commit after.
+- **A game polls input per frame: an instant key press is missed.** Avowed's inventory ignored `key i` and opened
+  for `hold_key i 0.2`. The game's window must be in front and focused first (`front_window.py`, then a click).
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -2164,6 +2187,15 @@ Unrelated second lesson from the same work: **a soft edge-fade on a bitmap is ch
 PNG's alpha than done with `OpacityMask`** — a radial mask could not dissolve the top/bottom edges
 without eating artwork that reaches them.
 
+### 3.3a Avalonia — a bare `Thumb` has no template under Fluent 12: style it
+
+`Avalonia.Themes.Fluent` 12.1.3 themes a Thumb only inside a ScrollBar (`FluentScrollBarThumb`) or a Slider
+(`FluentSliderThumbTheme`), read from its assembly 2026-10-08. A `<Thumb>` placed on its own -- a column's drag
+handle -- has no template and draws nothing: no edge to find, and no unit test notices, since every `DragDelta`
+handler is wired and the XAML compiles. Give it one: a `Style Selector="Thumb"` whose `Template` is a `Border`
+bound to the Thumb's `Background` / `BorderBrush` / `BorderThickness` (the Call Trace panel's, U10). Check any other
+control the theme might only style inside a parent the same way: search the theme assembly's strings for its name.
+
 ### 3.4 SQLite — the async that isn't
 
 Three rules for the snapshot / SPC / Class Pivot data layer, all learned from freezes the user hit.
@@ -2748,6 +2780,19 @@ old `dist\` stayed in place, so a quick "sizes look right" check passed on the P
 **How to apply:** (1) before a publish, close every game injected from `dist\` and the UI (`tasklist`). (2) Read the
 publish's exit code and `dist\build_number.txt` before calling it done — a size that matches the last build is not
 evidence. (3) A number spent this way is gone: say so in its commit and in the dev-log, and do not reuse it.
+⚠ **Reverting `build_number.txt` after a failed publish IS reusing it.** 2026-10-07: two publishes failed on AOT and the
+bump was reverted twice, so the third would have shipped 3631 a second time (the first failure had already put a 3631
+`UE5Dumper.dll` into `dist\`). Leave the bump; the next publish takes the next number.
+
+### 3.xc Catch an AOT-only error in a minute, before the six-minute publish
+
+`dotnet build ui/UE5DumpUI/UE5DumpUI.csproj -c Release -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true` reports
+the IL2026 / IL3050 errors a trimmed publish fails on, from a plain build. Measured 2026-10-07: the publish's own
+failure (`JsonArray.Add<T>` at `DumpService.cs`) showed up as the same two errors in about a minute, and a clean
+build showed none — the negative control, with the bad line put back, is what made the clean result mean something.
+**How to apply:** run it after any UI change that touches JSON nodes, reflection-shaped APIs or bindings, before
+`-Mode Publish`. ⚠ `JsonArray.Add(JsonValue.Create(x))` is **still** the generic `Add<T>` — the identity conversion
+to `T` beats the conversion to `JsonNode`, and the first fix for that publish was exactly this. Cast to `JsonNode?`.
 
 -----
 

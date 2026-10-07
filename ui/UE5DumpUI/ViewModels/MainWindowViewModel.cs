@@ -34,16 +34,18 @@ internal enum MainTabIndex
     RelatedObjects = 10,
     DumpExplorer = 11,   // offline "Dump All" .jsonl browser
     LiveFuncs = 12,      // Live ProcessEvent Call Profiler (behaviour-based discovery)
-    // Fixed tail order: the experimental tabs (hidden unless opted in), then
+    CallTrace = 13,      // [LIVEFUNCS-TIMELINE-2026-10-04] experimental; beside Live Funcs, which records for it
+    // Fixed tail order: the experimental tabs that sit at the end (hidden unless opted in; an experimental tab
+    // that belongs beside another, like Call Trace beside Live Funcs, sits above this block), then
     // Proxy Deploy (always 2nd-to-last), then System/Pointers (always last) —
     // regardless of any future tab additions. When experimental is off these
     // tabs collapse, so the visible last two are Proxy Deploy + System.
-    DetectStats = 13,   // "Detect Player Stats" (P4, experimental)
-    Snapshot = 14,
-    SpcQuery = 15,
-    ClassPivot = 16,
-    ProxyDeploy = 17,
-    Pointers = 18,   // the "System" tab (str.Tab.Pointers = "System")
+    DetectStats = 14,   // "Detect Player Stats" (P4, experimental)
+    Snapshot = 15,
+    SpcQuery = 16,
+    ClassPivot = 17,
+    ProxyDeploy = 18,
+    Pointers = 19,   // the "System" tab (str.Tab.Pointers = "System")
 }
 
 /// <summary>
@@ -278,8 +280,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public int DeepScanElemCap => 1 << DeepScanElemCapExponent;
 
     /// <summary>
-    /// Experimental analysis tabs (Snapshot / SPC Query / Class Pivot) stay
-    /// hidden unless the user opts in via the System-tab credit checkbox.
+    /// The experimental tabs stay hidden unless the user opts in via the
+    /// System-tab credit checkbox.
     /// Backed by the shared <see cref="IExperimentalGate"/> so the toggle
     /// (owned by <see cref="PointerPanelViewModel"/>) and this tab-visibility
     /// flag stay in sync. See docs/experimental-snapshot-spc-pivot.md Phase 0.
@@ -297,8 +299,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Lock the experimental opt-in for the rest of this session. Called the
-    /// first time the user opens one of the experimental tabs (Snapshot /
-    /// SPC Query / Class Pivot) while enabled — from that point the System-tab
+    /// first time the user opens an experimental tab that locks it (the list is
+    /// MainWindow.axaml.cs's tab switch) while enabled — from that point the System-tab
     /// opt-in checkbox can no longer be unticked. Session-only (a restart clears
     /// the lock). Idempotent and a no-op when the gate isn't enabled.
     /// </summary>
@@ -418,6 +420,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     /// discovery (Start → do an in-game action → Stop → see what fired). Finds
     /// game-specific functions (OpenShop / Dash) that name heuristics can't.</summary>
     public LiveFuncsViewModel LiveFuncs { get; }
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The Call Trace tab (experimental): reads what a traced Live Funcs
+    /// recording kept.</summary>
+    public CallTraceViewModel CallTrace { get; }
     public InterestingPropertiesViewModel InterestingProperties { get; }
     public ValueSearchViewModel ValueSearch { get; }
     public RelatedObjectsViewModel RelatedObjects { get; }
@@ -448,6 +453,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ObjectTree.SelectedAddressFormatIndex = value;
         LiveWalker.SelectedAddressFormatIndex = value;
         InstanceFinder.SelectedAddressFormatIndex = value;
+        CallTrace.SelectedAddressFormatIndex = value;
     }
 
     partial void OnCollapsePointerNodesChanged(bool value)
@@ -582,7 +588,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         PropertySearch = new PropertySearchViewModel(dump, log, aobMaker, platform, experimentalGate);
         GameClassFilter = new GameClassFilterViewModel(dump, log, platform);
         InterestingFunctions = new InterestingFunctionsViewModel(dump, log, aobMaker, platform);
-        LiveFuncs = new LiveFuncsViewModel(dump, log, platform, AobMakerShared);
+        LiveFuncs = new LiveFuncsViewModel(dump, log, platform, AobMakerShared, experimentalGate);
+        CallTrace = new CallTraceViewModel(dump, log, LiveFuncs, platform);
         InterestingProperties = new InterestingPropertiesViewModel(dump, log, platform);
         ValueSearch = new ValueSearchViewModel(dump, log, AobMakerShared);
         RelatedObjects = new RelatedObjectsViewModel(dump, log, platform, AobMakerShared);
@@ -810,6 +817,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 Spc?.SetEngineState(state);
                 Pivot?.SetEngineState(state);
                 Teleport.SetEngineState(state);
+                CallTrace.SetEngineState(state);
                 // Load this game's coordinate library. Keyed by MODULE NAME (not PE
                 // hash) so it survives a game patch. Idempotent -- clears in-memory
                 // first -- so calling it from both fan-out sites is safe.
@@ -1317,6 +1325,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 _log.Error($"InterestingFunctions NavigateToFunction handler error: {className}::{funcName}", ex);
             }
         };
+
+        // [LIVEFUNCS-TIMELINE-2026-10-04] "Open in Call Trace": switching the tab is enough; opening it reads the trace.
+        LiveFuncs.NavigateToCallTrace += () => SelectedTabIndex = (int)MainTabIndex.CallTrace;
 
         // Wire Live Funcs (PE profiler) -> Live Walker, same instance-based handoff
         // as the Interesting Functions finder: find a live non-CDO instance of the
@@ -2169,6 +2180,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     _proxyConfirmTimer?.Dispose();
                     _proxyConfirmTimer = null;
                     LiveFuncs.ResetOnDisconnect();   // clear stuck "recording" UI state (L16)
+                    CallTrace.ClearOnDisconnect();   // [LIVEFUNCS-TIMELINE-2026-10-04] the next process numbers traces from 1
                     // The banner names a PID. Left standing it pins a dead one for the
                     // rest of the session and keeps warning about a conflict that ended
                     // when the game closed. (B9)
@@ -2418,6 +2430,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Track(LiveFuncs, LiveFuncsPersist);
         Track(DumpExplorer, DumpExplorerPersist);
         Track(GameClassFilter, GameClassFilterPersist);
+        Track(CallTrace, CallTracePersist);
         if (Snapshot != null) Track(Snapshot, SnapshotPersist);
         if (Spc != null) Track(Spc, SpcPersist);
         if (Pivot != null) Track(Pivot, PivotPersist);
@@ -2520,6 +2533,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         nameof(LiveFuncsViewModel.FetchLimitExponent), nameof(LiveFuncsViewModel.MinCallsExponent),
         nameof(LiveFuncsViewModel.HidePerFrame),
+        nameof(LiveFuncsViewModel.TraceEnabled), nameof(LiveFuncsViewModel.TraceBufferExponent),
+        nameof(LiveFuncsViewModel.SnapshotBufferExponent),
+        nameof(LiveFuncsViewModel.TraceExcludePerFrame),
     };
     private static readonly HashSet<string> DumpExplorerPersist = new()
     {
@@ -2529,6 +2545,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         nameof(GameClassFilterViewModel.GameClassesOnly),
         nameof(GameClassFilterViewModel.ClassListCap),   // [W3-CAP-NOSAVE] as PropertySearchPersist's Max cap
+    };
+    // [LIVEFUNCS-STEP2] U10: a drag changes a width on every pointer move; the save is debounced like any other option.
+    private static readonly HashSet<string> CallTracePersist = new()
+    {
+        nameof(CallTraceViewModel.TimeColWidth), nameof(CallTraceViewModel.DurationColWidth),
+        nameof(CallTraceViewModel.ThreadColWidth), nameof(CallTraceViewModel.ObjectColWidth),
+        nameof(CallTraceViewModel.DetailPaneWidth),
     };
     private static readonly HashSet<string> ProxyDeployPersist = new()
     {
@@ -2620,6 +2643,10 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LiveFuncs.FetchLimitExponent = o.LiveFuncs.FetchLimitExponent;   // the VM clamps a hand-edited value
         LiveFuncs.MinCallsExponent = o.LiveFuncs.MinCallsExponent;
         LiveFuncs.HidePerFrame = o.LiveFuncs.HidePerFrame;
+        LiveFuncs.TraceEnabled = o.LiveFuncs.TraceEnabled;
+        LiveFuncs.TraceBufferExponent = o.LiveFuncs.TraceBufferExponent;   // the VM clamps a hand-edited value
+        LiveFuncs.SnapshotBufferExponent = o.LiveFuncs.SnapshotBufferExponent;
+        LiveFuncs.TraceExcludePerFrame = o.LiveFuncs.TraceExcludePerFrame;
         DumpExplorer.DiffIncludeEngine = o.DumpExplorer.DiffIncludeEngine;
         DumpExplorer.DiffBreakingOnly = o.DumpExplorer.DiffBreakingOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
@@ -2627,6 +2654,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // hand-written 0 would make the Classes tab return nothing with no visible cause.
         GameClassFilter.ClassListCap = Math.Clamp(
             o.GameClassFilter.ClassListCap, Constants.MinSearchCap, Constants.MaxSearchCap);
+        CallTrace.TimeColWidth = o.CallTrace.TimeColWidth;   // the VM clamps a hand-edited width
+        CallTrace.DurationColWidth = o.CallTrace.DurationColWidth;
+        CallTrace.ThreadColWidth = o.CallTrace.ThreadColWidth;
+        CallTrace.ObjectColWidth = o.CallTrace.ObjectColWidth;
+        CallTrace.DetailPaneWidth = o.CallTrace.DetailPaneWidth;
 
         if (Snapshot != null)
         {
@@ -2781,10 +2813,19 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.LiveFuncs.FetchLimitExponent = LiveFuncs.FetchLimitExponent;
         o.LiveFuncs.MinCallsExponent = LiveFuncs.MinCallsExponent;
         o.LiveFuncs.HidePerFrame = LiveFuncs.HidePerFrame;
+        o.LiveFuncs.TraceEnabled = LiveFuncs.TraceEnabled;
+        o.LiveFuncs.TraceBufferExponent = LiveFuncs.TraceBufferExponent;
+        o.LiveFuncs.SnapshotBufferExponent = LiveFuncs.SnapshotBufferExponent;
+        o.LiveFuncs.TraceExcludePerFrame = LiveFuncs.TraceExcludePerFrame;
         o.DumpExplorer.DiffIncludeEngine = DumpExplorer.DiffIncludeEngine;
         o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
         o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
+        o.CallTrace.TimeColWidth = CallTrace.TimeColWidth;
+        o.CallTrace.DurationColWidth = CallTrace.DurationColWidth;
+        o.CallTrace.ThreadColWidth = CallTrace.ThreadColWidth;
+        o.CallTrace.ObjectColWidth = CallTrace.ObjectColWidth;
+        o.CallTrace.DetailPaneWidth = CallTrace.DetailPaneWidth;
 
         if (Snapshot != null)
         {
@@ -2904,6 +2945,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Snapshot?.SetEngineState(state);
         Spc?.SetEngineState(state);
         Pivot?.SetEngineState(state);
+        CallTrace.SetEngineState(state);
 
         // Fire-and-forget: check AOBMaker availability for Live Walker + Teleport
         _ = LiveWalker.CheckAobMakerAsync();

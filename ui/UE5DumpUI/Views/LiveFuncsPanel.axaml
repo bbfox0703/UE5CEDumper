@@ -84,6 +84,103 @@
                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
     </StackPanel>
 
+    <!-- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace (experimental, T6): armed by this Start, read in the Call Trace
+         tab. Disabled while recording like the capture settings above; the slider's bounds are the view model's. -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
+                IsVisible="{Binding TraceAvailable}">
+      <CheckBox Content="{StaticResource str.LF.Trace.Enable}"
+                IsChecked="{Binding TraceEnabled}"
+                IsEnabled="{Binding !IsRecording}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Enable}"
+                Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{StaticResource str.LF.Trace.Buffer}"
+                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <Slider Value="{Binding TraceBufferExponent}"
+              Minimum="5" Maximum="9"
+              TickFrequency="1" IsSnapToTickEnabled="True"
+              Width="100" VerticalAlignment="Center"
+              IsEnabled="{Binding !IsRecording}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Buffer}"/>
+      <TextBlock Text="{Binding TraceBufferText}"
+                 Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                 VerticalAlignment="Center" MinWidth="52"/>
+      <TextBlock Text="{Binding TraceEstimate}"
+                 Foreground="#8FA0B8" FontSize="12" VerticalAlignment="Center"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Estimate}"/>
+      <CheckBox Content="{StaticResource str.LF.Trace.ExcludePerFrame}"
+                IsChecked="{Binding TraceExcludePerFrame}"
+                IsEnabled="{Binding !IsRecording}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.Trace.ExcludePerFrame}"
+                Margin="12,0,0,0"
+                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding TickedCountText}"
+                 Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Ticked}"/>
+      <Button Content="{StaticResource str.LF.Trace.ClearTicks}"
+              Command="{Binding ClearTicksCommand}"
+              IsEnabled="{Binding !IsRecording}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.LF.Trace.Open}"
+              Command="{Binding OpenCallTraceCommand}"
+              IsVisible="{Binding HasTraceToOpen}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Open}"
+              Foreground="#4EC9B0" Background="Transparent"
+              BorderThickness="1" BorderBrush="#4EC9B0"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+    </StackPanel>
+    <!-- [LIVEFUNCS-STEP2] Parameter snapshots (T9, T12, T13): the choices, the buffer and what it would keep. Disabled
+         while recording; the slider's bounds are the view model's. -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
+                IsVisible="{Binding TraceAvailable}">
+      <TextBlock Text="{StaticResource str.LF.Snap.Label}"
+                 Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding SnapshotCountText}"
+                 Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"/>
+      <Button Content="{StaticResource str.LF.Snap.ShownRows}"
+              Command="{Binding SnapshotShownRowsCommand}"
+              IsEnabled="{Binding CanSnapshot}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Snap.ShownRows}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.LF.Snap.Clear}"
+              Command="{Binding ClearSnapshotsCommand}"
+              IsEnabled="{Binding !IsRecording}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <TextBlock Text="{StaticResource str.LF.Trace.Buffer}"
+                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <Slider Value="{Binding SnapshotBufferExponent}"
+              Minimum="3" Maximum="7"
+              TickFrequency="1" IsSnapToTickEnabled="True"
+              Width="80" VerticalAlignment="Center"
+              IsEnabled="{Binding !IsRecording}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Buffer}"/>
+      <TextBlock Text="{Binding SnapshotBufferText}"
+                 Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                 VerticalAlignment="Center" MinWidth="44"/>
+    </StackPanel>
+    <!-- The estimate, orange per T13; the budget's cut in grey. Two TextBlocks toggled by a bool, the D3 pattern. -->
+    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4" IsVisible="{Binding HasSnapshotChoices}">
+      <Panel IsVisible="{Binding TraceAvailable}">
+        <TextBlock Text="{Binding SnapshotEstimate}" IsVisible="{Binding !SnapshotEstimateWarn}"
+                   Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
+                   ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Estimate}"/>
+        <TextBlock Text="{Binding SnapshotEstimate}" IsVisible="{Binding SnapshotEstimateWarn}"
+                   Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
+                   ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Estimate}"/>
+      </Panel>
+      <TextBlock Text="{Binding SnapshotBudgetNote}" IsVisible="{Binding TraceAvailable}"
+                 Foreground="#808080" FontSize="12" TextWrapping="Wrap"/>
+    </StackPanel>
+    <!-- [TRACE-UI-LOAD-MEMORY] D3: what a buffer that fills costs, from the buffer alone; above the memory free now the
+         same line turns orange: a warning, never a refusal. Two TextBlocks, so no converter. -->
+    <Panel DockPanel.Dock="Top" Margin="0,0,0,4" IsVisible="{Binding TraceAvailable}">
+      <TextBlock Text="{Binding TraceMemoryEstimate}" IsVisible="{Binding !TraceMemoryOverAvailable}"
+                 Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Memory}"/>
+      <TextBlock Text="{Binding TraceMemoryEstimate}" IsVisible="{Binding TraceMemoryOverAvailable}"
+                 Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Memory}"/>
+    </Panel>
+
     <!-- Baseline diff row: isolate the action's function from per-frame Tick noise. -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,2"
                 VerticalAlignment="Center">
@@ -166,9 +263,41 @@
               FontSize="12"
               FontFamily="Consolas, Menlo, monospace">
       <DataGrid.Columns>
+        <!-- [LIVEFUNCS-TIMELINE-2026-10-04] Tick for the call trace (T3, T5): the next traced Start records only these
+             functions' calls and what they call. Shown only with the experimental tabs on; the code-behind finds it by
+             its header. The command keeps the ticks (by Class::Func) in the view model, so they outlive this fetch's rows. -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Trace}" Width="52" CanUserSort="False" IsVisible="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <CheckBox IsChecked="{Binding IsTicked, Mode=OneWay}"
+                        Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleTickCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanTick}"
+                        IsVisible="{Binding IsTickable}"
+                        ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Tick}"
+                        HorizontalAlignment="Center" Margin="6,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <!-- [LIVEFUNCS-STEP2] Choose for parameter snapshots (T10, T11): by name, so an unloaded row with a key can be
+             chosen. Hidden with the experimental tabs off like Trace; never sorted (no SortMemberPath). -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Snapshot}" Width="52" CanUserSort="False" IsVisible="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <CheckBox IsChecked="{Binding IsSnapChosen, Mode=OneWay}"
+                        Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleSnapshotCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanSnapshot}"
+                        IsVisible="{Binding CanChooseSnapshot}"
+                        ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Choose}"
+                        HorizontalAlignment="Center" Margin="6,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <!-- Order: call-stream position of the first fire (lower = earlier = more likely
              the causal entry point). Sort ascending to put openers on top. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Order}" Width="64" SortMemberPath="FirstSeq" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Order}" Width="64" SortMemberPath="FirstSeq" CanUserSort="True"
+                                ClipboardContentBinding="{Binding FirstSeq}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding FirstSeq}"
@@ -177,7 +306,8 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Calls}" Width="80" SortMemberPath="Count" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Calls}" Width="80" SortMemberPath="Count" CanUserSort="True"
+                                ClipboardContentBinding="{Binding Count}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding Count}"
@@ -188,7 +318,8 @@
         </DataGridTemplateColumn>
         <!-- Δ vs baseline — "NEW" / "+N" (green) surfaces action-specific funcs.
              Blank outside Diff mode. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.DeltaVsBase}" Width="80" SortMemberPath="Delta" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.DeltaVsBase}" Width="80" SortMemberPath="Delta" CanUserSort="True"
+                                ClipboardContentBinding="{Binding DeltaLabel}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding DeltaLabel}"
@@ -198,7 +329,8 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <!-- Kind: "UI" marks a transient widget method (the created UI, not the opener). -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Kind}" Width="44" SortMemberPath="Kind" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Kind}" Width="44" SortMemberPath="Kind" CanUserSort="True"
+                                ClipboardContentBinding="{Binding Kind}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding Kind}"
@@ -209,7 +341,8 @@
         </DataGridTemplateColumn>
         <!-- Type: Event/Deleg (a reaction the engine fires) vs Call (an imperative
              function you can invoke) vs native. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Type}" Width="56" SortMemberPath="TypeLabel" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Type}" Width="56" SortMemberPath="TypeLabel" CanUserSort="True"
+                                ClipboardContentBinding="{Binding TypeLabel}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding TypeLabel}"
@@ -219,7 +352,33 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <DataGridTextColumn Header="{StaticResource str.LF.Col.Class}" Binding="{Binding ClassName}" SortMemberPath="ClassName" Width="240"/>
-        <DataGridTextColumn Header="{StaticResource str.LF.Col.Function}" Binding="{Binding FuncName}" SortMemberPath="FuncName" Width="240"/>
+        <!-- [TRACE-UNLOADED-NAMES] A function the game unloaded since it fired: its name from its first call, and a grey
+             marker beside it. The marker is its own TextBlock, never part of the name, so Name copies, the filter and
+             the sort see the plain name. -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Function}" Width="240" SortMemberPath="FuncName" CanUserSort="True"
+                                ClipboardContentBinding="{Binding FuncName}">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <DockPanel VerticalAlignment="Center" Margin="6,0">
+                <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
+                           IsVisible="{Binding IsUnloaded}"
+                           ToolTip.Tip="{StaticResource str.Tip.LF.Unloaded}"
+                           Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                <!-- [LIVEFUNCS-STEP2] Fired every frame: a chosen one takes the budget's share. -->
+                <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.PerFrame.Marker}"
+                           IsVisible="{Binding IsPerFrame}"
+                           ToolTip.Tip="{StaticResource str.Tip.LF.PerFrame.Marker}"
+                           Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                <!-- Review DLL-3: the address held another function during the recording; the count is both. -->
+                <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
+                           IsVisible="{Binding IsReused}"
+                           ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"
+                           Foreground="#C08040" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                <TextBlock Text="{Binding FuncName}" TextTrimming="CharacterEllipsis" VerticalAlignment="Center"/>
+              </DockPanel>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <DataGridTextColumn Header="{StaticResource str.LF.Col.Params}" Binding="{Binding ParamsLabel}" SortMemberPath="NumParms" Width="90" CanUserSort="True"/>
         <!-- Period: mean inter-arrival cadence (Phase E); "Timer" in the Kind column
              marks a regular timer-like callback. -->
@@ -247,6 +406,7 @@
                         Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).AsmFuncCommand}"
                         CommandParameter="{Binding}"
                         IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).AobMaker.IsAvailable}"
+                        IsVisible="{Binding !IsUnloaded}"
                         ToolTip.Tip="{StaticResource str.Tip.AobMaker.FuncAsm}"
                         Foreground="#E5C07B" Background="Transparent"
                         BorderThickness="1" BorderBrush="#E5C07B"

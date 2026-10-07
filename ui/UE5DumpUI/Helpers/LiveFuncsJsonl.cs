@@ -79,6 +79,8 @@ internal static class LiveFuncsJsonl
             Str(sb, "flags", "0x" + e.FunctionFlags.ToString("X8", CultureInfo.InvariantCulture));
             Str(sb, "type", e.TypeLabel);
             Bool(sb, "widget", e.IsWidget);
+            // [TRACE-UNLOADED-NAMES] Unloaded since it fired: named from its first call, and its addr is dead.
+            Bool(sb, "unloaded", e.IsUnloaded);
             Dbl(sb, "period_ms", e.MeanPeriodMs);
             Dbl(sb, "cv", e.Cv);
             Int(sb, "gap_samples", e.GapSamples);

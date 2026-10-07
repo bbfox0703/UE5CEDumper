@@ -173,6 +173,15 @@ constexpr const char* CMD_SNAPSHOT_CHUNK           = "snapshot_chunk";
 constexpr const char* CMD_PE_PROFILE_START         = "pe_profile_start";
 constexpr const char* CMD_PE_PROFILE_STOP          = "pe_profile_stop";
 constexpr const char* CMD_PE_PROFILE_GET           = "pe_profile_get";
+// [LIVEFUNCS-TIMELINE-2026-10-04] The call trace pe_profile_start can arm: read after Stop, in pages of raw
+// records (base64), the names of what it saw, then released -- up to 512 MB of the game's memory.
+constexpr const char* CMD_PE_TRACE_GET             = "pe_trace_get";
+constexpr const char* CMD_PE_TRACE_NAMES           = "pe_trace_names";
+constexpr const char* CMD_PE_TRACE_RELEASE         = "pe_trace_release";
+// [LIVEFUNCS-STEP2] The parameter snapshots of the stopped trace: each arm (one load of a chosen function) with its
+// layout, then each ring's slots decoded with their own arm's layout. Read before pe_trace_release.
+constexpr const char* CMD_PE_SNAP_LAYOUTS          = "pe_snap_layouts";
+constexpr const char* CMD_PE_SNAP_GET              = "pe_snap_get";
 
 // Diagnostics (Sense) — self-health telemetry: how long each pipe command
 // actually occupies the dispatcher (the head-of-line blocking multipipe-eval.md

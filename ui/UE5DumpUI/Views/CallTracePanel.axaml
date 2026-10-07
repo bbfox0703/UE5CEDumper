@@ -1,0 +1,308 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="using:UE5DumpUI.ViewModels"
+             x:Class="UE5DumpUI.Views.CallTracePanel"
+             x:DataType="vm:CallTraceViewModel">
+
+  <!-- [LIVEFUNCS-STEP2] U10: the drag handles. Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a
+       Slider, so a bare Thumb has no template and draws nothing: no edge to find it by. A Border that carries the
+       Thumb's own background and edge is all a handle needs (dragged live on build 3640). -->
+  <UserControl.Styles>
+    <Style Selector="Thumb">
+      <Setter Property="Template">
+        <ControlTemplate>
+          <Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
+                  BorderThickness="{TemplateBinding BorderThickness}"/>
+        </ControlTemplate>
+      </Setter>
+    </Style>
+  </UserControl.Styles>
+
+  <!-- [LIVEFUNCS-TIMELINE-2026-10-04] The Call Trace tab: it records nothing itself. Live Funcs arms the trace and
+       stops it; this tab reads, names and shows what the last traced recording kept (T2, T8). -->
+  <DockPanel Margin="8">
+
+    <!-- T8: what this tab is, before anything else on it. -->
+    <TextBlock DockPanel.Dock="Top" Margin="0,0,0,6"
+               Text="{StaticResource str.CT.Note}"
+               Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"/>
+
+    <!-- T8: a read-only copy of the trace's settings and ticks, set in Live Funcs. -->
+    <Border DockPanel.Dock="Top" Margin="0,0,0,6" Padding="8,4"
+            BorderBrush="#3C3C3C" BorderThickness="1" CornerRadius="3">
+      <StackPanel Spacing="4">
+        <TextBlock Text="{StaticResource str.CT.CopyHint}"
+                   Foreground="#888" FontSize="11" FontStyle="Italic" TextWrapping="Wrap"/>
+        <StackPanel Orientation="Horizontal" Spacing="12" IsEnabled="False" Opacity="0.6">
+          <CheckBox Content="{StaticResource str.LF.Trace.Enable}"
+                    IsChecked="{Binding LiveFuncs.TraceEnabled, Mode=OneWay}"
+                    Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+          <TextBlock Text="{StaticResource str.LF.Trace.Buffer}"
+                     Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+          <TextBlock Text="{Binding LiveFuncs.TraceBufferText}"
+                     Foreground="#D4D4D4" FontSize="12" FontWeight="Bold" VerticalAlignment="Center"/>
+          <CheckBox Content="{StaticResource str.LF.Trace.ExcludePerFrame}"
+                    IsChecked="{Binding LiveFuncs.TraceExcludePerFrame, Mode=OneWay}"
+                    Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+        </StackPanel>
+        <!-- A DockPanel, not a horizontal StackPanel: the list gets the width that is left, so it wraps. -->
+        <DockPanel IsEnabled="False" Opacity="0.6">
+          <TextBlock DockPanel.Dock="Left" Text="{StaticResource str.CT.Ticked}" Margin="0,0,6,0"
+                     Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Top"/>
+          <TextBlock DockPanel.Dock="Left" Text="{StaticResource str.CT.TickedNone}"
+                     IsVisible="{Binding !LiveFuncs.HasTickedFunctions}"
+                     Foreground="#D4D4D4" FontSize="12"/>
+          <ItemsControl ItemsSource="{Binding LiveFuncs.TickedFunctions}">
+            <ItemsControl.ItemsPanel>
+              <ItemsPanelTemplate>
+                <WrapPanel Orientation="Horizontal"/>
+              </ItemsPanelTemplate>
+            </ItemsControl.ItemsPanel>
+            <ItemsControl.ItemTemplate>
+              <DataTemplate x:DataType="x:String">
+                <TextBlock Text="{Binding}" Foreground="#DCDCAA" FontSize="12"
+                           FontFamily="Consolas, Menlo, monospace" Margin="0,0,12,0"/>
+              </DataTemplate>
+            </ItemsControl.ItemTemplate>
+          </ItemsControl>
+        </DockPanel>
+        <!-- [LIVEFUNCS-STEP2] The functions chosen for parameters, and the followed names the last Stop never saw called. -->
+        <TextBlock Text="{Binding LiveFuncs.SnapshotCountText}" IsVisible="{Binding LiveFuncs.HasSnapshotChoices}"
+                   Foreground="#DCDCAA" FontSize="12" Opacity="0.6"/>
+        <TextBlock Text="{Binding LiveFuncs.NotCalledText}" IsVisible="{Binding LiveFuncs.HasNotCalledNames}"
+                   Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"/>
+      </StackPanel>
+    </Border>
+
+    <!-- Load / view / export -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4">
+      <Button Content="{StaticResource str.CT.Load}"
+              Command="{Binding LoadCommand}"
+              ToolTip.Tip="{StaticResource str.Tip.CT.Load}"
+              IsEnabled="{Binding CanLoad}"
+              Foreground="#00BB5E" Background="Transparent"
+              BorderThickness="1" BorderBrush="#00BB5E"
+              Padding="12,4" Cursor="Hand"/>
+      <Button Content="{StaticResource str.CT.Cancel}"
+              Command="{Binding CancelLoadCommand}"
+              IsVisible="{Binding IsLoading}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.CT.ExpandAll}"
+              Command="{Binding ExpandAllCommand}"
+              IsEnabled="{Binding HasTrace}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.CT.CollapseAll}"
+              Command="{Binding CollapseAllCommand}"
+              IsEnabled="{Binding HasTrace}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <AutoCompleteBox PlaceholderText="{StaticResource str.CT.FilterHint}"
+                       Text="{Binding FilterText, Mode=TwoWay}"
+                       ItemsSource="{Binding FilterHistory}"
+                       FilterMode="Contains"
+                       IsEnabled="{Binding HasTrace}"
+                       ToolTip.Tip="{StaticResource str.Tip.CT.Filter}"
+                       Width="260" Padding="4,2"/>
+      <Button Content="{StaticResource str.CT.ShowInTree}"
+              Command="{Binding ShowInTreeCommand}"
+              IsVisible="{Binding IsFiltered}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <!-- [LIVEFUNCS-STEP2] U13: only the calls with a parameter copy; works with the box empty. -->
+      <CheckBox Content="{StaticResource str.CT.OnlyWithParams}"
+                IsChecked="{Binding OnlyWithParams}"
+                IsEnabled="{Binding HasTrace}"
+                ToolTip.Tip="{StaticResource str.Tip.CT.OnlyWithParams}"
+                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <Button Content="{StaticResource str.CT.ExportJsonl}"
+              Command="{Binding ExportJsonlCommand}"
+              IsEnabled="{Binding CanExport}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.CT.ExportCsv}"
+              Command="{Binding ExportCsvCommand}"
+              IsEnabled="{Binding CanExport}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.CT.Export.ParamsCsv}"
+              Command="{Binding ExportParamsCsvCommand}"
+              IsEnabled="{Binding CanExportParams}"
+              ToolTip.Tip="{StaticResource str.Tip.CT.ExportParamsCsv}"
+              ToolTip.ShowOnDisabled="True"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+    </StackPanel>
+
+    <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="True">
+      <ProgressBar DockPanel.Dock="Left" Minimum="0" Maximum="1" Value="{Binding Progress}"
+                   IsVisible="{Binding IsLoading}"
+                   Width="120" Height="4" VerticalAlignment="Center" Margin="0,0,8,0"/>
+      <TextBlock Text="{Binding StatusText}"
+                 Foreground="#AAB8D0" FontSize="13"
+                 FontFamily="Consolas, Menlo, monospace"
+                 TextWrapping="Wrap" VerticalAlignment="Center"
+                 ToolTip.Tip="{Binding StatusText}"/>
+    </DockPanel>
+
+    <TextBlock DockPanel.Dock="Top"
+               Text="{Binding ErrorMessage}"
+               Foreground="#F44747" Margin="0,0,0,4"
+               IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+
+    <!-- The selected call: what ran, on what, when, and its callers. Its width is dragged by the thumb on its left
+         edge and remembered (U10). -->
+    <!-- [LIVEFUNCS-STEP2] U13: the call, and its parameters (view C) in a tab of their own. -->
+    <TabControl DockPanel.Dock="Right" Width="{Binding DetailPaneWidth}" Padding="0">
+      <TabItem Header="{StaticResource str.CT.Tab.Call}" FontSize="12">
+        <TextBox Text="{Binding DetailText, Mode=OneWay}"
+                 IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 FontFamily="Consolas, Menlo, monospace" FontSize="12"
+                 Background="#1E1E1E" Foreground="#D4D4D4"/>
+      </TabItem>
+      <TabItem Header="{StaticResource str.CT.Tab.Params}" FontSize="12">
+        <DockPanel Background="#1E1E1E">
+          <TextBlock DockPanel.Dock="Top" Text="{Binding ParamsNote}" TextWrapping="Wrap"
+                     Foreground="#E5A050" FontSize="12" Margin="4,4,4,2"
+                     IsVisible="{Binding ParamsNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <!-- Fixed cells in a DockPanel, as the list's own header is laid out; the last one takes what is left. -->
+          <DockPanel DockPanel.Dock="Top" Margin="4,2">
+            <TextBlock DockPanel.Dock="Left" Width="110" Text="{StaticResource str.CT.Param.Col.Name}" Foreground="#888" FontSize="11"/>
+            <TextBlock DockPanel.Dock="Left" Width="64" Text="{StaticResource str.CT.Param.Col.Kind}" Foreground="#888" FontSize="11"/>
+            <TextBlock DockPanel.Dock="Left" Width="120" Text="{StaticResource str.CT.Param.Col.AtCall}" Foreground="#888" FontSize="11"/>
+            <TextBlock Text="{StaticResource str.CT.Param.Col.After}" Foreground="#888" FontSize="11"/>
+          </DockPanel>
+          <TextBox DockPanel.Dock="Bottom" Text="{Binding ParamsHex, Mode=OneWay}" IsReadOnly="True"
+                   TextWrapping="Wrap" MaxHeight="120" FontFamily="Consolas, Menlo, monospace" FontSize="11"
+                   Background="#252526" Foreground="#9CA3AF"
+                   IsVisible="{Binding ParamsHex, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   ToolTip.Tip="{StaticResource str.Tip.CT.Param.Hex}"/>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding ParamRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ParamRow">
+                  <DockPanel Margin="4,1">
+                    <TextBlock DockPanel.Dock="Left" Width="110" Text="{Binding Name}" Foreground="#9CDCFE" FontSize="12"
+                               FontFamily="Consolas, Menlo, monospace" TextTrimming="CharacterEllipsis"
+                               ToolTip.Tip="{Binding Type}"/>
+                    <TextBlock DockPanel.Dock="Left" Width="64" Text="{Binding Kind}" Foreground="#808080" FontSize="11"
+                               VerticalAlignment="Center"/>
+                    <StackPanel DockPanel.Dock="Left" Width="120" Orientation="Horizontal" Spacing="4">
+                      <TextBlock Text="{Binding AtCall}" Foreground="#D4D4D4" FontSize="12" TextWrapping="Wrap"
+                                 FontFamily="Consolas, Menlo, monospace" ToolTip.Tip="{Binding AtCall}"/>
+                      <TextBlock Text="{Binding AtCallMark}" Foreground="#808080" FontSize="10" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                      <TextBlock Text="{StaticResource str.CT.Param.Changed}" IsVisible="{Binding Changed}"
+                                 Foreground="#E5A050" FontSize="12" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Changed}"/>
+                      <TextBlock Text="{Binding After}" Foreground="#DCDCAA" FontSize="12" TextWrapping="Wrap"
+                                 FontFamily="Consolas, Menlo, monospace"/>
+                      <TextBlock Text="{Binding AfterMark}" Foreground="#808080" FontSize="10" VerticalAlignment="Center"/>
+                    </StackPanel>
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </TabItem>
+    </TabControl>
+    <Thumb DockPanel.Dock="Right" Width="8" Cursor="SizeWestEast"
+           Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+           DragDelta="OnDetailPaneThumbDragDelta"/>
+
+    <!-- Column header for the rows below (a ListBox: a flat, virtualized tree; see CallTraceTree). The cells are laid
+         out as each row's are and take the same widths from the view model, so header and rows move together; a
+         thumb on each fixed column's inner edge drags its width (U10). Function takes what is left. -->
+    <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2">
+      <Panel DockPanel.Dock="Left" Width="{Binding TimeColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Time}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+        <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+               DragDelta="OnTimeThumbDragDelta"/>
+      </Panel>
+      <Panel DockPanel.Dock="Left" Width="{Binding DurationColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Duration}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+        <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+               DragDelta="OnDurationThumbDragDelta"/>
+      </Panel>
+      <Panel DockPanel.Dock="Left" Width="{Binding ThreadColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Thread}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+        <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+               DragDelta="OnThreadThumbDragDelta"/>
+      </Panel>
+      <!-- Docked at the right, as in the rows: its handle is its LEFT edge, the one it shares with Function. -->
+      <Panel DockPanel.Dock="Right" Width="{Binding ObjectColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Object}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="6,0,0,0"/>
+        <Thumb HorizontalAlignment="Left" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="1,0,0,0"
+               DragDelta="OnObjectThumbDragDelta"/>
+      </Panel>
+      <TextBlock Text="{StaticResource str.CT.Col.Function}" Foreground="#888" FontSize="11"
+                 TextTrimming="CharacterEllipsis"/>
+    </DockPanel>
+
+    <ListBox ItemsSource="{Binding Rows}"
+             SelectedIndex="{Binding SelectedIndex}"
+             SelectionMode="Single"
+             Background="#1E1E1E"
+             FontFamily="Consolas, Menlo, monospace" FontSize="12">
+      <ListBox.ItemTemplate>
+        <DataTemplate x:DataType="vm:CallTraceRow">
+          <!-- U10: a DockPanel, not a Grid. Its cells take the widths the header drags, from the panel's view model by
+               the compiled $parent route the Toggle button takes; a ColumnDefinition is not a Visual, so the same
+               binding on one never resolves. -->
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Left"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).TimeColWidth}"
+                       Text="{Binding TimeText}" Foreground="#7FB6E8" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Left"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).DurationColWidth}"
+                       Text="{Binding DurationText}" Foreground="#DCDCAA" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Left"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ThreadColWidth}"
+                       Text="{Binding ThreadText}" Foreground="#808080" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Right"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ObjectColWidth}"
+                       Text="{Binding ObjectText}" ToolTip.Tip="{Binding ObjectTip}" VerticalAlignment="Center"
+                       Foreground="#B0B0B0" Opacity="{Binding ObjectOpacity}"
+                       TextTrimming="CharacterEllipsis"/>
+            <!-- A DockPanel that clips, not a horizontal StackPanel: a long name is cut with an ellipsis at the Object
+                 column instead of running into it; the tooltip has it whole. -->
+            <DockPanel ClipToBounds="True" ToolTip.Tip="{Binding FunctionText}">
+              <Border DockPanel.Dock="Left" Width="{Binding Indent}"/>
+              <Button DockPanel.Dock="Left" Content="{Binding Glyph}"
+                      Command="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ToggleCommand}"
+                      CommandParameter="{Binding}"
+                      IsVisible="{Binding Glyph, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                      Background="Transparent" BorderThickness="0" Padding="2,0" MinWidth="16"
+                      Foreground="#CCCCCC" Cursor="Hand"/>
+              <!-- [TRACE-UNLOADED-NAMES] Gone when the trace was read: named from its first call, marked at the right. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
+                         IsVisible="{Binding FuncUnloaded}" ToolTip.Tip="{StaticResource str.Tip.CT.Unloaded}"
+                         Foreground="#808080" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
+              <!-- [LIVEFUNCS-STEP2] The call carries a parameter copy: its Parameters tab has values. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Param.Marker}"
+                         IsVisible="{Binding HasParams}" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Marker}"
+                         Foreground="#C586C0" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
+              <!-- Review DLL-3: the address held another function during the recording. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
+                         IsVisible="{Binding FuncReused}" ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"
+                         Foreground="#C08040" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
+              <!-- A ticked function's call (the root of its scope) stands out; the rest are plain. -->
+              <Panel>
+                <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding IsScopeRoot}" Foreground="#4EC9B0" FontWeight="Bold"/>
+                <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding !IsScopeRoot}" Foreground="#D4D4D4"/>
+              </Panel>
+            </DockPanel>
+          </DockPanel>
+        </DataTemplate>
+      </ListBox.ItemTemplate>
+    </ListBox>
+  </DockPanel>
+</UserControl>

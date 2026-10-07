@@ -572,6 +572,30 @@ public class LiveFuncsViewModelTests
         Assert.Contains("showing top 2 of 900", vm.StatusText);
     }
 
+    // [TRACE-UNLOADED-NAMES] D1: functions with no name at all are never sent, so they are not "cut by the limit";
+    // the unloaded ones are sent, named, and counted.
+    [Fact]
+    public async Task Unnamed_functions_are_not_reported_as_cut_by_the_fetch_limit()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 4, TotalCalls = 100, UnloadedFuncs = 1, UnloadedCalls = 5, UnnamedFuncs = 1, UnnamedCalls = 2,
+            Entries = new()
+            {
+                new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 90 },
+                new PeProfileEntry { ClassName = "AHUD", FuncName = "Draw", Count = 3 },
+                new PeProfileEntry { ClassName = "WBP_Inventory_C", FuncName = "OnOpen", Count = 5, IsUnloaded = true },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        Assert.DoesNotContain("showing top", vm.StatusText);
+        Assert.Equal(1, vm.LastUnloadedFuncs);
+        Assert.Equal(1, vm.LastUnnamedFuncs);
+    }
+
     [Fact]
     public async Task NotTruncated_NonDiffStatus_HasNoCapNote()
     {
@@ -1231,6 +1255,37 @@ public class LiveFuncsViewModelTests
             Assert.Equal(16, shop.GetProperty("params_size").GetInt32());
         }
         finally { File.Delete(platform.Answer!); }
+    }
+
+    [Fact]
+    public async Task SaveJsonl_MarksTheUnloadedRows()
+    {
+        // [TRACE-UNLOADED-NAMES] A dead address must not read as a real one in the file.
+        var (vm, dump, platform) = MakeSavingVm();
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 2, TotalCalls = 20,
+            Entries = new()
+            {
+                new PeProfileEntry { ClassName = "APawn", FuncName = "Tick", Count = 15, FirstSeq = 1, FuncAddr = "0x10" },
+                new PeProfileEntry { ClassName = "WBP_Inventory_C", FuncName = "OnOpen", Count = 5, FirstSeq = 2,
+                                     FuncAddr = "0x20", IsUnloaded = true },
+            },
+        };
+        await vm.StartCommand.ExecuteAsync(null);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await vm.SaveJsonlCommand.ExecuteAsync(null);
+        try
+        {
+            var lines = ReadLines(platform.Answer!);
+            Assert.False(lines[1].RootElement.GetProperty("unloaded").GetBoolean());
+            Assert.True(lines[2].RootElement.GetProperty("unloaded").GetBoolean());
+        }
+        finally
+        {
+            File.Delete(platform.Answer!);
+        }
     }
 
     [Fact]

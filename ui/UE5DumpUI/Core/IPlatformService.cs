@@ -174,6 +174,14 @@ public interface IPlatformService
     long GetFreeDiskSpaceBytes(string path) => long.MaxValue;
 
     /// <summary>
+    /// [TRACE-UI-LOAD-MEMORY] Physical memory the system can hand out now without paging. Powers the call trace
+    /// slider's warning, which is advice, never a refusal, and how often a trace load collects. Default
+    /// <see cref="long.MaxValue"/>: unknown, so a test double or another platform warns about nothing and a load
+    /// keeps its calibrated period. Never throws.
+    /// </summary>
+    long GetAvailablePhysicalMemoryBytes() => long.MaxValue;
+
+    /// <summary>
     /// Total size in bytes of the drive that contains <paramref name="path"/>
     /// (<c>DriveInfo.TotalSize</c>). Default 0 so the percentage term of the
     /// free-space guard collapses (→ never blocks) when the drive can't be measured;

@@ -27,6 +27,104 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (builds 3639-3640) — Live Funcs follows functions by name and copies their parameters `[LIVEFUNCS-STEP2]`
+
+- **Ticks follow a function by name, not by address.** A function a closed menu unloaded can be ticked from its
+  "(unloaded)" row, and the trace scopes on it wherever it loads next. A name the recording never saw called is
+  listed after Stop.
+- **Parameter snapshots (experimental, with Trace).** A "Params?" column chooses functions. Each traced call of a
+  chosen function keeps a copy of its parameters, and functions with outputs keep a second copy after the call.
+  - The snapshots have their own buffer of 8 to 128 MB (default 32), remembered.
+  - An estimate line says how much a minute they take and how many calls each function keeps. It turns orange when
+    the busiest choice keeps less time than the trace; a grey note says what the per-function budget will skip.
+  - "Choose shown rows" chooses every row on screen.
+  - Choices with nothing ticked record only the chosen calls.
+- **Call Trace has a Parameters tab.** Each parameter's value at the call and after it is shown, struct members
+  nested, with a mark when a value names what is there now, is gone, or is a header only. "≠" flags bytes that
+  changed during the call, and the raw copies are shown too.
+  - The tree marks calls with a copy, and "Only calls with parameters" lists them, even with the filter box empty.
+  - A call without values says why: not chosen, over the budget, overwritten since, or recorded alone.
+- **The Call Trace list's columns and its detail pane can be dragged wider and are remembered.** The detail says that
+  the address it shows is the UFunction object's (data, not code) and follows the Address setting. A native
+  function's entry is given as a Cheat Engine address, `"Game.exe"+RVA`; a Blueprint function is marked as running
+  in the interpreter.
+- **Exports:** the JSONL carries each chosen call's parameters and one layout line per function load. A new
+  "Export parameters CSV" writes one row per parameter.
+- Checked live on Avowed: 64 inventory functions chosen by name, half of them unloaded by the time the trace was
+  read, and every copy still decodes.
+- 3640 makes the column handles visible: on 3639 they had no template and drew nothing.
+
+-----
+
+## 2026-10-07 (build 3638) — The call trace names every function, and the slider says what it costs in memory `[TRACE-UNLOADED-NAMES]` `[TRACE-UI-LOAD-MEMORY]`
+
+- A function the game unloads during a recording (a closed inventory's widgets, content it streams out) keeps the
+  name it had at its first call. Live Funcs lists it with a grey "(unloaded)" and no tick or ASM, since its address
+  is gone. The Call Trace tab marks it too, and its summary always says what share of the calls has no name. An
+  address that a second function took during the recording is marked "(address reused)". Both marks are in the
+  JSONL / CSV export.
+- A traced Start leaves out ticks whose function has been unloaded since, and says how many; if every tick has, it
+  refuses.
+- Loading a full trace takes far less memory. On Avowed a full 128 MB buffer now adds about 0.3 GB to the UI while it
+  loads (about 0.95 GB on 3633), and a full 512 MB one about 1.05 GB (about 2.9 GB on 3633). Most of it is given back
+  afterwards. With less memory free, the load collects more often.
+- Beside the buffer slider: what a buffer that fills costs. That is the game's N MB from Start, then this UI's peak
+  while it loads and what it keeps afterwards. The UI's figures are a reference measured on the developer's PC (a
+  Ryzen 9 9955HX3D laptop with 64 GB), and the line says so. Above the computer's free memory the line turns orange
+  and Start's status warns; it never stops you.
+- Builds 3634–3637 were steps measured live on Avowed on the way here; their numbers are in
+  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "D1–D4 built".
+- Build 3638: AOT `dist\UE5DumpUI.exe` 60,392,960 B, sha256 `3d887e402790`; `dist\UE5Dumper.dll` `eeb84214d755`.
+  C# 6335/6335 (+1 env-gated skip), headless 19/19, dll_core 738 checks, 32 gates. The DLL's code is 3634's; the
+  UI needs it (3634 or later) for the unloaded marks.
+
+## 2026-10-07 (no build change) — The call trace on Avowed: full 128 and 512 MB rings `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- Build 3633's call trace checked on Avowed (UE 5.3), a busy game: 9,800–14,500 ProcessEvent calls a second, so
+  the 128 MB buffer keeps about 2 minutes and 512 MB about 8, as the slider's estimate said.
+- A full 128 MB trace (1.7 million calls) opens in the Call Trace tab in about 11 seconds; a full 512 MB one
+  (6.7 million calls) in about 44 seconds, and the UI then uses about 3.2 GB of memory. The filter and the tree
+  stay responsive at that size.
+- Known limits found there, to be fixed next: a function the game unloads during a long recording (content it
+  streams out as you play) shows as a bare address in the Call Trace tab and is left out of the Live Funcs table;
+  and loading a full trace briefly takes about six times the buffer's size in the UI.
+- `tools/verify/livefuncs_trace_live.py` gained `--traced-only` / `--plain-s` for one long recording that fills
+  the ring, and reports what the functions that no longer resolve account for.
+
+## 2026-10-07 (build 3633) — Live Funcs records a call trace, read in the new Call Trace tab (experimental) `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- With the experimental tabs on, Live Funcs has a **Trace** row: tick it and the same Start also records every call
+  in order, with what called it and how long it took, into a ring buffer in the game. The buffer is a slider from
+  32 to 512 MB, with the seconds it would keep estimated beside it from your last recording; Stop keeps the calls
+  just before it.
+- **Tick functions in the table** to trace only inside them: tick the action's opener and get everything it called.
+  With nothing ticked the trace records every call; once the table has rows to tick from, that is asked once per
+  session. **Leave out per-frame** drops the previous recording's Tick-like functions.
+- The **Call Trace** tab (beside Live Funcs; it cannot record on its own) shows the trace as a call tree: expand and
+  collapse, a filter, Show in tree, the chain of callers of any call, and JSONL / CSV export.
+- About 130 ns per traced call on the test PC; nothing when the trace is off. Needs this build's UE5Dumper.dll.
+- Checked on DumperTest 5.4 and DumperTest58 (UE 5.8); DumperTest58 now calls a nested chain every 0.5 s
+  (`TraceNest_*`) so a ticked scope has something to show.
+- Build 3633: AOT `dist\UE5DumpUI.exe` 60,308,992 B, sha256 `886364b80ba0`; `dist\UE5Dumper.dll` `2df6a1c68baf`.
+  C# 6286/6286 (+1 env-gated skip), headless 19/19, dll_core 702 checks, 32 gates. Build 3631 was spent by a failed
+  AOT publish and not reused; 3632 was the build before the review's fixes.
+
+## 2026-10-06 (no build change) — Live Funcs call trace: a ring buffer, record-time filters, no register capture `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- A design review of [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md) and the maintainer's decisions.
+  Nothing is built or measured yet.
+- The trace buffer becomes a **ring** of 64 or 128 MB that keeps the calls just before Stop, instead of filling up
+  and stopping: Tick and the other per-frame calls could fill it before the action you are recording. Its size is
+  a cap you pick, never derived from a time target.
+- Two opt-in filters at record time: record only inside the ticked functions' calls, or leave out the functions
+  the previous recording found firing every frame.
+- No register capture: at the ProcessEvent hook only the object, the function and the parameter block mean
+  anything. The parameters are decoded by name instead, and registers inside native code stay Cheat Engine's job.
+- The trace options and the Call Trace tab show only with the experimental tabs on.
+- What the review requires of the build: freeing the buffer safely while calls are in flight, a separate return
+  record per call, a binary transfer after Stop, a separate buffer for snapshots, and a cap on native stack
+  captures.
+
 ## 2026-10-06 (build 3630) — Live Funcs can leave out the functions that fire every frame `[LIVEFUNCS-HIDE-PERFRAME]`
 
 - **Live Funcs ▸ Hide per-frame** (off by default, remembered): the DLL leaves out the functions that fire every

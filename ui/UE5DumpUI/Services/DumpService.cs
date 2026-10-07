@@ -2836,22 +2836,392 @@ public sealed class DumpService : IDumpService
 
     /// <summary>Start recording per-UFunction fire counts. Forces the game-thread
     /// PE hook to install; returns its <c>hook_active</c> (false ⇒ counts stay 0).</summary>
-    public async Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
+    public Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
+        => PeProfileStartAsync(null, ct);
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The same Start, arming the call trace when <paramref name="trace"/> is
+    /// given. The DLL refuses the whole Start (an error reply) when it cannot allocate the buffer.</summary>
+    public async Task<PeProfileStartResult> PeProfileStartAsync(TraceStartOptions? trace, CancellationToken ct = default)
     {
-        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_profile_start" }, ct);
+        var req = new JsonObject { ["cmd"] = "pe_profile_start" };
+        if (trace != null)
+        {
+            var ticked = new JsonArray();
+            // Cast to JsonNode? so the non-generic JsonArray.Add(JsonNode?) is picked: the generic Add<T>(T) is
+            // trim/AOT-unsafe (IL2026/IL3050) and fails only the trimmed publish. Passing a JsonValue is not enough
+            // -- the identity conversion to T still wins -- which is the same trap as the string params below.
+            foreach (var a in trace.Ticked) ticked.Add((JsonNode?)a);
+            var traceReq = new JsonObject
+            {
+                ["bytes"] = trace.Bytes,
+                ["ticked"] = ticked,
+                ["exclude_per_frame"] = trace.ExcludePerFrame,
+            };
+            // [LIVEFUNCS-STEP2] By name (T10). Sent only when there are names, so a Start without them is the step-1
+            // request byte for byte.
+            if (trace.TickedNames.Count > 0) traceReq["ticked_names"] = NamedFunctionsJson(trace.TickedNames, withSize: false);
+            if (trace.Snapshots is { } s)
+            {
+                traceReq["snapshots"] = new JsonObject
+                {
+                    ["funcs"] = NamedFunctionsJson(s.Funcs, withSize: true),
+                    ["bytes"] = s.Bytes,
+                    ["per_ring_per_s"] = s.PerRingPerSec,
+                    ["total_per_s"] = s.TotalPerSec,
+                };
+            }
+            req["trace"] = traceReq;
+        }
+        var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
         return new PeProfileStartResult
         {
             HookActive = res["hook_active"]?.GetValue<bool>() ?? false,
             Detail     = res["hook_detail"]?.GetValue<string>() ?? "",
+            Trace      = res["trace"] is JsonObject t ? ParseTraceInfo(t) : null,
         };
     }
 
+    /// <summary>[LIVEFUNCS-STEP2] Each function as the DLL takes it by name: the strings shown and every key, the keys
+    /// as 4-int arrays. Every node goes through the (JsonNode?) cast: the generic JsonArray.Add is not trim-safe.</summary>
+    private static JsonArray NamedFunctionsJson(IReadOnlyList<NamedFunction> funcs, bool withSize)
+    {
+        var arr = new JsonArray();
+        foreach (var f in funcs)
+        {
+            var keys = new JsonArray();
+            foreach (var k in f.Keys)
+            {
+                var ints = new JsonArray();
+                ints.Add((JsonNode?)k.FnIdx);
+                ints.Add((JsonNode?)k.FnNum);
+                ints.Add((JsonNode?)k.ClsIdx);
+                ints.Add((JsonNode?)k.ClsNum);
+                keys.Add((JsonNode?)ints);
+            }
+            var o = new JsonObject { ["class"] = f.ClassName, ["func"] = f.FuncName, ["keys"] = keys };
+            if (withSize) o["parms_size"] = f.ParmsSize;
+            arr.Add((JsonNode?)o);
+        }
+        return arr;
+    }
+
     /// <summary>Stop recording (idempotent). Counts are retained for a later get.</summary>
-    public async Task PeProfileStopAsync(CancellationToken ct = default)
+    public async Task PeProfileStopAsync(CancellationToken ct = default) => await PeProfileStopWithTraceAsync(ct);
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Stop, and the trace's state after it (null when no trace ran).</summary>
+    public async Task<TraceInfo?> PeProfileStopWithTraceAsync(CancellationToken ct = default)
     {
         var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_profile_stop" }, ct);
         CheckResponse(res);
+        // [LIVEFUNCS-STEP2] The followed names sit beside the trace: an empty trace released at Stop still names them.
+        return res["trace"] is JsonObject t ? ParseTraceInfo(t, res["names"] as JsonArray) : null;
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] One page of the stopped ring, from sequence number
+    /// <paramref name="from"/>.</summary>
+    public async Task<TracePage> PeTraceGetAsync(ulong from, int max, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_get", ["from"] = from, ["max"] = max }, ct);
+        CheckResponse(res);
+        var data = res["data"]?.GetValue<string>() ?? "";
+        return new TracePage
+        {
+            Info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Count = res["count"]?.GetValue<int>() ?? 0,
+            Next  = res["next"]?.GetValue<ulong>() ?? from,
+            Data  = data.Length == 0 ? Array.Empty<byte>() : Convert.FromBase64String(data),
+        };
+    }
+
+    /// <summary>[TRACE-UI-LOAD-MEMORY] One page decoded straight into the load's window: no base64 string, no byte[]
+    /// and no record array per page -- about half of the 14 MB page's garbage, which held the UI at 3.25 GB after a
+    /// 512 MB load (Avowed, 2026-10-07).</summary>
+    public async Task<TracePage> PeTraceGetIntoAsync(ulong from, int max, Memory<TraceRecord> into, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_get", ["from"] = from, ["max"] = max }, ct);
+        CheckResponse(res);
+        return new TracePage
+        {
+            Info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Count = DecodePageInto(res["data"], into.Span),
+            Next  = res["next"]?.GetValue<ulong>() ?? from,
+        };
+    }
+
+    // A reply parsed from the pipe's text holds the value as a JSON element over the reply's own UTF-8: decode those
+    // bytes between the quotes, with no string made. Base64 needs no escaping, so a backslash means it was escaped
+    // anyway; then the element's own unescape. A value built in code (the tests' replies) is a string.
+    private static int DecodePageInto(JsonNode? data, Span<TraceRecord> into)
+    {
+        if (data is not JsonValue v) return 0;
+        if (v.TryGetValue(out System.Text.Json.JsonElement el))
+        {
+            if (el.ValueKind != System.Text.Json.JsonValueKind.String) return 0;
+            ReadOnlySpan<byte> raw = System.Runtime.InteropServices.JsonMarshal.GetRawUtf8Value(el);
+            if (raw.Length >= 2 && raw.IndexOf((byte)'\\') < 0)
+                return CallTraceBuilder.DecodeInto(raw[1..^1], into);
+            return CallTraceBuilder.DecodeInto((el.GetString() ?? "").AsSpan(), into);
+        }
+        return v.TryGetValue(out string? s) && s != null ? CallTraceBuilder.DecodeInto(s.AsSpan(), into) : 0;
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct functions, resolved now.</summary>
+    public async Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
+    {
+        var res = await PeTraceNamesAsync("funcs", gen, offset, limit, ct);
+        return new TraceNamesPage<TraceFuncName>
+        {
+            Gen = res["gen"]?.GetValue<ulong>() ?? 0,
+            Stale = res["stale"]?.GetValue<bool>() ?? false,
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            Offset = res["offset"]?.GetValue<int>() ?? offset,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            Items = res["items"] is JsonArray arr
+                ? arr.OfType<JsonObject>().Select(i => new TraceFuncName
+                {
+                    Addr = ParseAddr(i["addr"]?.GetValue<string>()),
+                    Live = i["live"]?.GetValue<bool>() ?? false,
+                    Unloaded = i["unloaded"]?.GetValue<bool>() ?? false,
+                    Recycled = i["recycled"]?.GetValue<bool>() ?? false,
+                    Reused = i["reused"]?.GetValue<bool>() ?? false,
+                    ClassName = i["class_name"]?.GetValue<string>() ?? "",
+                    FuncName = i["func_name"]?.GetValue<string>() ?? "",
+                    FunctionFlags = (uint)(i["function_flags"]?.GetValue<long>() ?? 0L),
+                    CodeAddr = ParseAddr(i["code_addr"]?.GetValue<string>()),
+                }).ToList()
+                : new List<TraceFuncName>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct calling objects, resolved now: an
+    /// address that no longer holds its object comes back not live and unnamed.</summary>
+    public async Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
+    {
+        var res = await PeTraceNamesAsync("objs", gen, offset, limit, ct);
+        return new TraceNamesPage<TraceObjName>
+        {
+            Gen = res["gen"]?.GetValue<ulong>() ?? 0,
+            Stale = res["stale"]?.GetValue<bool>() ?? false,
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            Offset = res["offset"]?.GetValue<int>() ?? offset,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            Items = res["items"] is JsonArray arr
+                ? arr.OfType<JsonObject>().Select(i => new TraceObjName
+                {
+                    Addr = ParseAddr(i["addr"]?.GetValue<string>()),
+                    Live = i["live"]?.GetValue<bool>() ?? false,
+                    Name = i["name"]?.GetValue<string>() ?? "",
+                    ClassName = i["class_name"]?.GetValue<string>() ?? "",
+                }).ToList()
+                : new List<TraceObjName>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Give the game its memory back once the trace is read.</summary>
+    public async Task PeTraceReleaseAsync(ulong gen, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_release", ["gen"] = gen }, ct);
+        CheckResponse(res);
+    }
+
+    private async Task<JsonNode> PeTraceNamesAsync(string kind, ulong gen, int offset, int limit, CancellationToken ct)
+    {
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "pe_trace_names", ["kind"] = kind, ["gen"] = gen, ["offset"] = offset, ["limit"] = limit,
+        }, ct);
+        CheckResponse(res);
+        return res;
+    }
+
+    private static TraceInfo ParseTraceInfo(JsonObject t, JsonArray? followed = null) => new()
+    {
+        Allocated  = t["allocated"]?.GetValue<bool>() ?? false,
+        Tracing    = t["tracing"]?.GetValue<bool>() ?? false,
+        Quiesced   = t["quiesced"]?.GetValue<bool>() ?? true,
+        Gen        = t["gen"]?.GetValue<ulong>() ?? 0,
+        Bytes      = t["bytes"]?.GetValue<long>() ?? 0,
+        Capacity   = t["capacity"]?.GetValue<ulong>() ?? 0,
+        Written    = t["written"]?.GetValue<ulong>() ?? 0,
+        FirstValid = t["first_valid"]?.GetValue<ulong>() ?? 0,
+        QpcFreq    = t["qpc_freq"]?.GetValue<ulong>() ?? 0,
+        RecordSize = t["record_size"]?.GetValue<int>() ?? 0,
+        Ticked     = t["ticked"]?.GetValue<int>() ?? 0,
+        Excluded   = t["excluded"]?.GetValue<int>() ?? 0,
+        TickedDropped = t["ticked_dropped"]?.GetValue<int>() ?? 0,
+        Scoped      = t["scoped"]?.GetValue<bool>(),
+        TickedNames = t["ticked_names"]?.GetValue<int>() ?? 0,
+        SnapOnly    = t["snap_only"]?.GetValue<bool>() ?? false,
+        Snap        = t["snap"] is JsonObject s ? new SnapInfo
+        {
+            Allocated     = s["allocated"]?.GetValue<bool>() ?? false,
+            Bytes         = s["bytes"]?.GetValue<long>() ?? 0,
+            SlotsPerRing  = s["slots_per_ring"]?.GetValue<ulong>() ?? 0,
+            Rings         = s["rings"]?.GetValue<int>() ?? 0,
+            PerRingPerSec = s["per_ring_per_s"]?.GetValue<int>() ?? 0,
+            TotalPerSec   = s["total_per_s"]?.GetValue<int>() ?? 0,
+            SkippedBudget = s["skipped_budget"]?.GetValue<ulong>() ?? 0,
+            DroppedBudget = s["dropped_budget"]?.GetValue<ulong>() ?? 0,
+        } : null,
+        Names = t["names"] is JsonObject n ? new StartNames
+        {
+            Ticks  = n["ticks"]?.GetValue<int>() ?? 0,
+            Chosen = n["chosen"]?.GetValue<int>() ?? 0,
+            Refused = n["refused"] is JsonArray r
+                ? r.OfType<JsonObject>().Select(x => (x["class"]?.GetValue<string>() ?? "",
+                                                      x["func"]?.GetValue<string>() ?? "",
+                                                      x["why"]?.GetValue<string>() ?? "")).ToList()
+                : new List<(string, string, string)>(),
+        } : null,
+        Followed = followed?.OfType<JsonObject>().Select(x => new FollowedName
+        {
+            ClassName = x["class"]?.GetValue<string>() ?? "",
+            FuncName  = x["func"]?.GetValue<string>() ?? "",
+            Key       = ParseNameKey(x["key"]) ?? default,
+            Tick      = x["tick"]?.GetValue<bool>() ?? false,
+            Chosen    = x["chosen"]?.GetValue<bool>() ?? false,
+            Addresses = x["addresses"]?.GetValue<long>() ?? 0,
+            Arms      = x["arms"]?.GetValue<long>() ?? 0,
+            ArmsFull  = x["arms_full"]?.GetValue<long>() ?? 0,
+        }).ToList() ?? new List<FollowedName>(),
+        SnapRings = t["snap_rings"] is JsonArray rings ? ParseSnapRings(rings) : new List<SnapRingInfo>(),
+    };
+
+    /// <summary>[LIVEFUNCS-STEP2] A 4-int name key; null when absent or malformed (an older DLL sends none).</summary>
+    internal static NameKey? ParseNameKey(JsonNode? n)
+    {
+        if (n is not JsonArray a || a.Count != 4) return null;
+        try
+        {
+            return new NameKey(a[0]!.GetValue<int>(), a[1]!.GetValue<int>(), a[2]!.GetValue<int>(), a[3]!.GetValue<int>());
+        }
+        catch (Exception) { return null; }
+    }
+
+    private static List<SnapRingInfo> ParseSnapRings(JsonArray rings) => rings.OfType<JsonObject>().Select(r => new SnapRingInfo
+    {
+        Ring          = r["ring"]?.GetValue<int>() ?? 0,
+        Cap           = r["cap"]?.GetValue<int>() ?? 0,
+        Written       = r["written"]?.GetValue<ulong>() ?? 0,
+        FirstValid    = r["first_valid"]?.GetValue<ulong>() ?? 0,
+        SkippedBudget = r["skipped_budget"]?.GetValue<ulong>() ?? 0,
+        DroppedBudget = r["dropped_budget"]?.GetValue<ulong>() ?? 0,
+    }).ToList();
+
+    private static uint ParseHex32(string? s) => (uint)ParseAddr(s);
+
+    private static SnapParam ParseSnapParam(JsonObject p) => new()
+    {
+        Name     = p["name"]?.GetValue<string>() ?? "",
+        Type     = p["type"]?.GetValue<string>() ?? "",
+        Offset   = p["offset"]?.GetValue<int>() ?? 0,
+        Size     = p["size"]?.GetValue<int>() ?? 0,
+        ArrayDim = p["array_dim"]?.GetValue<int>() ?? 1,
+        Flags    = ParseAddr(p["flags"]?.GetValue<string>()),
+        Kind     = p["kind"]?.GetValue<string>() ?? "in",
+        Struct   = p["struct"]?.GetValue<string>() ?? "",
+        ObjClass = p["obj_class"]?.GetValue<string>() ?? "",
+        Enum     = p["enum"]?.GetValue<string>() ?? "",
+        Sub      = p["sub"] is JsonArray sub ? sub.OfType<JsonObject>().Select(ParseSnapParam).ToList() : new List<SnapParam>(),
+    };
+
+    private static SnapValue ParseSnapValue(JsonNode? n)
+    {
+        if (n is not JsonArray a || a.Count < 2) return new SnapValue { Mark = SnapMark.Raw };
+        return new SnapValue
+        {
+            Text = a[0]?.GetValue<string>() ?? "",
+            Mark = (SnapMark)(a[1]?.GetValue<int>() ?? (int)SnapMark.Raw),
+            Sub  = a.Count > 2 && a[2] is JsonArray sub ? sub.Select(ParseSnapValue).ToList() : new List<SnapValue>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-STEP2] One page of the stopped trace's arms, each with its layout.</summary>
+    public async Task<SnapLayoutsPage> PeSnapLayoutsAsync(ulong gen, int offset, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_snap_layouts", ["gen"] = gen, ["offset"] = offset }, ct);
+        CheckResponse(res);
+        var layouts = res["layouts"] is JsonArray la
+            ? la.OfType<JsonObject>().Select(l => new SnapLayout
+            {
+                ClassName     = l["class_name"]?.GetValue<string>() ?? "",
+                FuncName      = l["func_name"]?.GetValue<string>() ?? "",
+                FunctionFlags = ParseHex32(l["function_flags"]?.GetValue<string>()),
+                ParmsSize     = l["parms_size"]?.GetValue<int>() ?? 0,
+                NumParms      = l["num_parms"]?.GetValue<int>() ?? 0,
+                LayoutEnd     = l["layout_end"]?.GetValue<int>() ?? 0,
+                Params        = l["params"] is JsonArray ps ? ps.OfType<JsonObject>().Select(ParseSnapParam).ToList()
+                                                            : new List<SnapParam>(),
+            }).ToList()
+            : new List<SnapLayout>();
+        return new SnapLayoutsPage
+        {
+            Info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Stale = res["stale"]?.GetValue<bool>() ?? false,
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            Next  = res["next"]?.GetValue<int>() ?? offset,
+            Rings = res["rings"] is JsonArray rings ? ParseSnapRings(rings) : new List<SnapRingInfo>(),
+            Arms  = res["arms"] is JsonArray arms
+                ? arms.OfType<JsonObject>().Select(a => new SnapArm
+                {
+                    Index         = a["index"]?.GetValue<int>() ?? 0,
+                    Ring          = a["ring"]?.GetValue<int>() ?? -1,
+                    Addr          = ParseAddr(a["addr"]?.GetValue<string>()),
+                    ClassName     = a["class_name"]?.GetValue<string>() ?? "",
+                    FuncName      = a["func_name"]?.GetValue<string>() ?? "",
+                    FunctionFlags = ParseHex32(a["function_flags"]?.GetValue<string>()),
+                    ParmsSize     = a["parms_size"]?.GetValue<int>() ?? 0,
+                    NumParms      = a["num_parms"]?.GetValue<int>() ?? 0,
+                    State         = a["state"]?.GetValue<string>() ?? "",
+                    Why           = a["why"]?.GetValue<string>() ?? "",
+                    ReadMs        = a["read_ms"]?.GetValue<long>(),
+                    Layout        = a["layout"]?.GetValue<int>() is int li && li >= 0 && li < layouts.Count ? layouts[li] : null,
+                }).ToList()
+                : new List<SnapArm>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-STEP2] One page of one snapshot ring, each slot decoded with its own arm's layout.</summary>
+    public async Task<SnapPage> PeSnapGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "pe_snap_get", ["gen"] = gen, ["ring"] = ring, ["from"] = from, ["max"] = max,
+        }, ct);
+        CheckResponse(res);
+        return new SnapPage
+        {
+            Info    = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Stale   = res["stale"]?.GetValue<bool>() ?? false,
+            Ring    = res["ring"]?.GetValue<int>() ?? ring,
+            Count   = res["count"]?.GetValue<int>() ?? 0,
+            Next    = res["next"]?.GetValue<ulong>() ?? from,
+            Orphans = res["orphans"]?.GetValue<ulong>() ?? 0,
+            Items   = res["items"] is JsonArray items
+                ? items.OfType<JsonObject>().Select(i => new SnapSlot
+                {
+                    Index    = i["index"]?.GetValue<ulong>() ?? 0,
+                    EntrySeq = i["entry_seq"]?.GetValue<ulong>() ?? 0,
+                    IsAfter  = (i["phase"]?.GetValue<string>() ?? "") == "return",
+                    Len      = i["len"]?.GetValue<int>() ?? 0,
+                    Flags    = i["flags"]?.GetValue<int>() ?? 0,
+                    Arm      = i["arm"]?.GetValue<int>() ?? 0,
+                    Data     = i["data"]?.GetValue<string>() is { Length: > 0 } b64 ? Convert.FromBase64String(b64)
+                                                                                      : Array.Empty<byte>(),
+                    Values   = i["values"] is JsonArray vals ? vals.Select(ParseSnapValue).ToList() : null,
+                    RawOnly  = i["raw_only"]?.GetValue<string>() ?? "",
+                }).ToList()
+                : new List<SnapSlot>(),
+        };
+    }
+
+    private static ulong ParseAddr(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return 0;
+        var hex = s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? s[2..] : s;
+        return ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
     }
 
     /// <summary>Fetch the ranked fire-count table (top <paramref name="limit"/> by count).</summary>
@@ -2862,7 +3232,10 @@ public sealed class DumpService : IDumpService
     /// it always sent.</summary>
     public async Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
     {
-        var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit };
+        // [TRACE-UNLOADED-NAMES] Always asked: the rows of a function unloaded since it fired come back named and
+        // marked, and LiveFuncsViewModel must keep their dead address out of every request. A DLL older than the option
+        // ignores it and drops them, as it always did.
+        var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit, ["include_unloaded"] = true };
         if (skipPerFrame) req["skip_per_frame"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
@@ -2887,6 +3260,11 @@ public sealed class DumpService : IDumpService
                     MeanPeriodMs = obj["mean_period_ms"]?.GetValue<double>() ?? 0.0,
                     Cv           = obj["cv"]?.GetValue<double>() ?? 0.0,
                     GapSamples   = obj["gap_samples"]?.GetValue<long>() ?? 0L,
+                    IsUnloaded   = obj["unloaded"]?.GetValue<bool>() ?? false,
+                    IsRecycled   = obj["recycled"]?.GetValue<bool>() ?? false,
+                    IsReused     = obj["reused"]?.GetValue<bool>() ?? false,
+                    FnameKey     = ParseNameKey(obj["fname_key"]),
+                    IsPerFrame   = obj["per_frame"]?.GetValue<bool>() ?? false,
                 });
             }
         }
@@ -2896,7 +3274,12 @@ public sealed class DumpService : IDumpService
             Recording     = res["recording"]?.GetValue<bool>() ?? false,
             DistinctFuncs = res["distinct_funcs"]?.GetValue<int>() ?? 0,
             TotalCalls    = res["total_calls"]?.GetValue<long>() ?? 0L,
+            WindowMs      = res["window_ms"]?.GetValue<long>(),
             PerFrameHidden = res["per_frame_hidden"]?.GetValue<int>(),
+            UnloadedFuncs = res["unloaded_funcs"]?.GetValue<int>(),
+            UnloadedCalls = res["unloaded_calls"]?.GetValue<long>(),
+            UnnamedFuncs  = res["unnamed_funcs"]?.GetValue<int>(),
+            UnnamedCalls  = res["unnamed_calls"]?.GetValue<long>(),
             PerFrameFuncs  = res["per_frame_funcs"] is JsonArray pf
                 ? pf.Select(a => a?.GetValue<string>() ?? "").Where(a => a.Length > 0).ToList()
                 : Array.Empty<string>(),

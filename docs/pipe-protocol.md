@@ -536,14 +536,20 @@ Behaviour-based UFunction discovery: record which UFunctions the game dispatches
 { "id": 71, "cmd": "pe_profile_stop" }
 
 // Get — snapshot + rank by fire count desc, cap to `limit` (default 200), resolve
-// each UFunction* to its name/class at query time (stale/recycled pointers dropped
-// via a "Function" meta-class guard). Safe to call while recording (live peek).
+// each UFunction* to its name/class at query time. Safe to call while recording
+// (live peek). A function no longer at its address -- unloaded, or its address
+// taken by another function -- is left out unless include_unloaded (below) asks
+// for it; one with no name at all is always left out. Both are counted.
 // skip_per_frame (optional, default false; build 3629+) leaves out the functions that
 // fire every frame through the recording (Linie::IsPerFrame: a mean gap <= 40 ms over
 // 3+ gaps, kept up -- gaps of 100 ms or less -- for at least half the time the table was
 // recorded over, its earliest fire to its latest) BEFORE the cap, so `limit` rows go to
 // the rest. [LIVEFUNCS-HIDE-PERFRAME]
-{ "id": 72, "cmd": "pe_profile_get", "limit": 200, "skip_per_frame": true }
+// include_unloaded (optional, default false; build 3634+): also send the functions
+// unloaded since they fired, named from what the recording read at each one's first
+// call and marked "unloaded": true. Opt-in so an older UI never gets a row whose
+// func_addr is dead. [TRACE-UNLOADED-NAMES]
+{ "id": 72, "cmd": "pe_profile_get", "limit": 200, "skip_per_frame": true, "include_unloaded": true }
 ```
 
 Response for `pe_profile_get`:
@@ -568,12 +574,187 @@ Response for `pe_profile_get`:
                          // so sorting NEW rows by first_seq asc floats the true opener up.
       "function_flags": 67108864,  // UFunction::FunctionFlags — UI tags Event/Delegate
                                    // (a reaction) vs Call (an imperative entry point).
-      "is_widget": false }   // owning class derives from UUserWidget/UWidget — the
+      "is_widget": false,    // owning class derives from UUserWidget/UWidget — the
                              // transient UI created BY the action, not its opener; the
                              // UI can hide these so the persistent opener surfaces.
+      "unloaded": true,      // build 3634+, only when include_unloaded and only when true:
+                             // the address no longer holds this function. Every field above
+                             // is what was read at its FIRST call (is_widget too: a dead
+                             // class cannot be asked); func_addr is dead -- never send it
+                             // back (a trace tick, a disassembly).
+      "recycled": true,      // with unloaded: another function took the address since
+      "reused": true }       // build 3634+, only when true: another function took this address DURING the
+                             // recording -- the count is both functions', the names the latest one's
     // ... ranked by count desc, capped at `limit`
-  ] }
+  ],
+  // build 3634+, always sent; absent = an older DLL. Over the whole table, not the page.
+  "unloaded_funcs": 125, "unloaded_calls": 5387,   // no longer at their address (recycled included)
+  "unnamed_funcs": 0,    "unnamed_calls": 0 }      // gone and never read: no name to send
 ```
+
+`window_ms` (build 3633+): the window the counts cover, the table's earliest fire to its latest. With `total_calls`
+it gives the call rate the Live Funcs trace slider estimates its seconds from. `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+#### The call trace (build 3633+) `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+One record when a call enters `ProcessEvent` and one when it returns, into a ring the user sized, so Stop keeps the
+calls just before it. It rides on the recording above: `pe_profile_start` arms it, `pe_profile_stop` stops it, and
+the three `pe_trace_*` commands read it afterwards. The plan and its decisions: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+
+```jsonc
+// Start with a trace. bytes: a power of two from 32 MB to 512 MB (anything else is an error). ticked (optional):
+// UFunction addresses; when given, only their calls and what those call are traced, per thread. exclude_per_frame
+// (optional): leave out the functions the PREVIOUS recording's table found firing every frame (read before this
+// Start clears it). The ring is allocated before the recording starts; a failed allocation is an error and nothing
+// records. A Start without `trace` frees an earlier trace's buffer.
+{ "id": 73, "cmd": "pe_profile_start",
+  "trace": { "bytes": 67108864, "ticked": ["0x1B2C3D40"], "exclude_per_frame": true } }
+// Reply adds "trace": {...the trace object below...}. pe_profile_stop's reply adds it too, after the hook has left
+// its last write: from then on the ring does not change.
+// Build 3634+: each ticked address is checked against the previous recording's table; one whose function is no
+// longer there (unloaded, or its address taken by another) is left out, and the trace object carries
+// "ticked_dropped": N. When none is left the Start is an error -- never a trace of every call. [TRACE-UNLOADED-NAMES]
+
+// One page of the stopped ring. from: a sequence number (start at first_valid); max: records, 1..262144, default
+// 65536. Reply: the trace object, plus count, next (where the following page starts; paging ends at written) and
+// data, the records base64 (RFC 4648). count 0 with data "" while recording, with no trace, or when quiesced is false.
+// The trace object is the state the copy saw, under the same lock: check its gen on every page (a Start between two
+// pages is a different recording).
+{ "id": 74, "cmd": "pe_trace_get", "from": 0, "max": 65536 }
+
+// Names of the kept window's distinct functions (kind "funcs") or calling objects (kind "objs"), paged
+// (limit 1..20000, default 2000). gen (optional): the recording the names are for; when the DLL holds another one the
+// reply is "stale": true with no items. The reply always carries the gen it answered for. Resolved now, so a name is what is at that address NOW: an object whose own index
+// no longer leads back to it is live:false and not read. funcs items: addr, live, class_name, func_name,
+// function_flags, num_parms, parms_size. objs items: addr, live, name, class_name. Reply: kind, total, offset,
+// count, items, truncated (only when cut by a cancel).
+// A function is live while its address still holds it under the name the recording read at its first call. One
+// that does not (build 3634+) is live:false with "unloaded": true ("recycled": true as well when another function
+// took the address) and the names and flags read at that first call. live:false with no names: never read (traced
+// before the table started or after it stopped) and gone. "reused": true (either state): another function used the
+// address during the recording, so the calls at it are both functions', named after the one read last.
+// [TRACE-UNLOADED-NAMES]
+{ "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
+
+// Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves. gen
+// (optional): free only that recording, and only once it has stopped, so a reader never frees a newer recording.
+// Reply: released (bool).
+{ "id": 76, "cmd": "pe_trace_release", "gen": 3 }
+```
+
+The trace object:
+
+```jsonc
+{ "allocated": true, "tracing": false,
+  "quiesced": true,          // false: a hook never left its write within Stop's wait; the ring is not read
+  "gen": 3,                  // one per traced Start
+  "bytes": 67108864, "capacity": 1677721,   // capacity in records
+  "written": 2400311,        // records ever written; the ring keeps [first_valid, written)
+  "first_valid": 722590,
+  "qpc_freq": 10000000,      // QueryPerformanceCounter ticks per second
+  "record_size": 40, "ticked": 1, "excluded": 0 }
+```
+
+A record, 40 bytes, little-endian (`Linie::TraceRecord`):
+
+| Offset | Field | Entry record | Return record |
+|---|---|---|---|
+| 0 | `seqKind` u64 | its sequence number | its sequence number, bit 63 set |
+| 8 | `ticks` u64 | QueryPerformanceCounter | QueryPerformanceCounter |
+| 16 | `a` u64 | the UFunction | the sequence number of the call's entry record |
+| 24 | `b` u64 | the object it was called on | 0 |
+| 32 | `tid` u32 | the thread | the thread |
+| 36 | `flags` u32 | 1 = this call opened a ticked scope | 0 |
+
+A return whose entry is older than `first_valid` belongs to a call that began before the kept window. An entry with
+no return either still ran at Stop or was unwound by an exception.
+
+What the trace does not hold: the tool's own invokes (`invoke_function`, the CE mailbox) call the original
+`ProcessEvent` through the hook's trampoline, so the invoked call has no records of its own; the calls it makes come
+back through the hook and are recorded. A per-frame function left out by `exclude_per_frame` writes no records
+either, and the calls it makes nest under the nearest traced caller, as if that caller had made them.
+
+#### Following functions by name, and parameter snapshots (step 2) `[LIVEFUNCS-STEP2]`
+
+A tick or a snapshot choice is a NAME -- the function's FName and its class's, as the name pool's ints -- not an
+address: a widget's functions unload when it closes and come back at new addresses (plan T10). Every key travels with
+the strings the UI showed; the Start renders both halves and refuses a key that does not match. The design and its
+decisions: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "Step 2 design".
+
+```jsonc
+// pe_profile_get rows gain (always sent):
+//   "fname_key": [fnIdx, fnNum, clsIdx, clsNum]   the ints the row's func_name / class_name are rendered from
+//   "per_frame": true                            only when true: the function fired every frame (IsPerFrame)
+
+// Start by name. ticked_names: each item a function to tick; its calls open the scope. snapshots.funcs: each item a
+// function whose parameter block is copied on its calls; parms_size sizes its ring (RingCapFor: rounded to 8, at most
+// 2048, 256 when 0). snapshots.bytes: a power of two from 8 MB to 128 MB (else an error). per_ring_per_s /
+// total_per_s: the budget, clamped to 1..16777215 (defaults 1000 / 10000). With ticked_names, `ticked` (addresses)
+// is ignored. The previous trace is freed first, whatever the reply. Refused: every item refused, or every tick
+// refused when ticks were asked -- never a trace of every call, never a quiet snapshots-only trace. A buffer that
+// keeps fewer than 8 calls per chosen function is refused and names the count.
+{ "id": 77, "cmd": "pe_profile_start",
+  "trace": { "bytes": 67108864,
+             "ticked_names": [ { "class": "DumperTest58Actor", "func": "SnapNest_Outer", "keys": [[812, 0, 811, 0]] } ],
+             "snapshots": { "funcs": [ { "class": "DumperTest58Actor", "func": "SnapProbe_Call",
+                                         "keys": [[815, 0, 811, 0]], "parms_size": 152 } ],
+                            "bytes": 33554432, "per_ring_per_s": 1000, "total_per_s": 10000 } } }
+// The trace object gains: scoped, ticked_names (count), snap_only, and -- when a snapshot buffer exists -- "snap":
+//   { allocated, bytes, slots_per_ring (K: the calls each ring keeps), rings, per_ring_per_s, total_per_s,
+//     skipped_budget (in-scope calls recorded without parameters), dropped_budget (lone and excluded-but-chosen calls over the budget) }
+// The Start reply's trace also carries "names": { ticks, chosen, refused: [{ class, func, why }] }.
+// The Stop reply adds trace.snap_rings: [{ ring, cap, written, first_valid, skipped_budget, dropped_budget }] and a
+// top-level "names": [{ class, func, key, tick, chosen, addresses, arms, arms_full, not_called }] -- built before an
+// empty trace is released, so a name never called is reported even then. Stop stops the trace before the table,
+// reads the layouts still pending (2 s at most), then seals the rest raw-only.
+
+// Every arm of the stopped trace (one load of a chosen function), with its layout; paged by arms (offset, limit
+// 1..4096, default 1024, and ~1 MB a page), layouts shared by several arms sent once per page. gen as pe_trace_names.
+{ "id": 78, "cmd": "pe_snap_layouts", "gen": 3, "offset": 0 }
+// Reply: the trace object, rings (as snap_rings), total, count, next, arms, layouts.
+//   arms[i]: index, ring, addr, class_name, func_name, function_flags ("0x..."), parms_size, num_parms, arm_ms,
+//            state ("read" | "doubtful" | "failed" | "unloaded_before_read" | "replaced_before_read" |
+//            "not_read_before_stop" | "pending"), why, read_ms, layout (index into this page's layouts)
+//   layouts[j]: class_name, func_name, function_flags, parms_size, num_parms, layout_end, params:
+//            [{ name, type, offset, size, array_dim, flags ("0x..." 64-bit), kind ("in" | "const_ref" | "out" |
+//               "in_out" | "return"), bool_mask, bool_native, struct, obj_class, enum, opt_*, sub: [...] }]
+//            Enum tables are not sent: the DLL decodes.
+
+// One page of one ring (from: a slot number; max 1..4096, default 1024; ~1 MB a page), each slot decoded with ITS
+// arm's layout. Copied under the trace's lock, decoded after. count 0 while tracing, unquiesced, released, or stale.
+{ "id": 79, "cmd": "pe_snap_get", "gen": 3, "ring": 0, "from": 0, "max": 1024 }
+// Reply: the trace object, ring, count, next, orphans (slots whose call's entry record the ring no longer keeps:
+// left out), items: [{ index, entry_seq, phase ("entry" | "return"), len, flags, arm, data (base64), values }]
+//   values[i] lines up with the arm's layout params[i]: [text, mark] or [text, mark, [sub...]]. raw_only (the arm's
+//   state) instead of values when the arm has no layout.
+//   mark: 0 exact (from the copy alone), 1 now (an object named as it is NOW), 2 gone (no live object there now),
+//         3 missing (past the copy's end, or not a value this copy carries: an In parameter after the call, the
+//         return value at the call), 4 header (a string's or container's header only), 5 raw (hex)
+//   slot flags: 1 the call had no parameter block, 2 the copy faulted (nothing copied), 4 truncated (the block is
+//               larger than the ring's slot)
+
+// pe_trace_names funcs items gain code_addr (live functions only): the native code entry, for a CE address; "" for
+// a script function (its entry is the interpreter) or when none was found.
+```
+
+Entry-record flags (the record table above), from step 2:
+
+| Value | Meaning |
+|---|---|
+| 1 | the call opened a ticked scope (its root) |
+| 2 | a snapshot ring holds this call's parameters |
+| 4 | lone: a chosen call outside every scope, recorded only for its snapshot; it opened no scope |
+| 8 | excluded but chosen: a per-frame function left out by exclude_per_frame, recorded for its snapshot |
+| 16 | in scope and chosen, over the budget: recorded without its parameters |
+
+A snapshot slot is 24 bytes of header (`Linie::SnapSlotHeader`: the slot's number with bit 63 on the copy after the
+call, the call's entry sequence, len, flags, the arm) and the copy. The copy after the call is taken for functions
+with `FUNC_HasOutParms`, or whose flags could not be read; it is a slot of its own, never written over the entry's.
+
+What the snapshots do not hold: a call between the Start's trace and its table (microseconds) carries no name and
+takes none; a name whose class or function reloads under another Number is another key ("not called"); calls that
+skip ProcessEvent; an arm whose layout was never read (gone first, replaced, sealed at Stop) keeps raw bytes only;
+struct members are read with the function, not checked again; the per-frame exclusion stays by address.
 
 -----
 

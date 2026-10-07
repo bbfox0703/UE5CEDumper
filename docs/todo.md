@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **10 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **11 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -251,14 +251,51 @@ Open work only. **Read this when deciding what to do next.**
 
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-- ⬜ **Feasibility written, nothing decided:** [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md). A
-  fill-then-stop buffer (32 / 64 MB) of per-call records with nesting depth and duration, then parameter and
-  native-stack snapshots for ticked functions only. Effort **L** across the three steps, risk **med** (it adds
-  work to the ProcessEvent hot path; measure first). Our own feature: its commits carry **no**
-  `Co-authored-by: fireundubh` trailer. Buffer: slider 32 / 64 / 128 MB, default 32 (16 / 32 / 64 if 128
-  measures too heavy). The trace rides on the Live Funcs recording (a "Trace" checkbox, no Start of
-  its own); viewed in its own experimental "Call Trace" tab; snapshot functions ticked in the Live Funcs table
-  (proposal, awaiting the maintainer).
+- ✅ **Step 1 (the timeline) BUILT, build 3633, 2026-10-07** — reviewed (36 findings, all fixed) and checked live on
+  DumperTest 5.4 and DumperTest58 (18/18); details in the plan's "Step 1 built". ✅ **Avowed 2026-10-07:** 9.8–14.5k
+  calls/s; a full 128 MB ring loads in the UI in 11.5 s (1.3 GB), a full 512 MB one in 44 s (3.25 GB peak) — the
+  plan's "Avowed". ✅ **D1–D4 BUILT, builds 3634–3638, checked live on Avowed** (the plan's "D1–D4 built"):
+  - `[TRACE-UNLOADED-NAMES]` every function is named from its first call: 697 of 697 in a recording that unloaded 304
+    of them, where 3633 left 184 of 796 without a name. Unloaded ones are marked "(unloaded)" and never ticked by
+    their dead address.
+  - `[TRACE-UI-LOAD-MEMORY]` a full load's peak fell from about six times the ring to within 2.25 × N + 45 MB
+    (+303 MB at 128 MB, +1,054 at 512). The estimate shows beside the slider, marked as a developer-PC reference,
+    with a warning (never a refusal) above the free memory. Since 3638 the load collects more often as the free
+    memory runs low.
+  - The "1 calls began" wording is fixed, and 512 MB stays.
+  - ⬜ Live, still open: 3638's load log line (its collections' time and shortest period) on the next trace load, and
+    a load with little memory free. `[TRACE-UI-READ-SPEED]`: about 19 MB/s against the rig's 31–36.
+
+  Folded into step 2 (maintainer, 2026-10-07): the Call Trace list's columns and detail pane resizable, the
+  detail pane's addresses labelled as object addresses with the function's native entry as a CE address, and
+  the Address setting honoured (the plan's "Also built with step 2").
+  ✅ **Step 2 BUILT, builds 3639-3640, 2026-10-08** (T10-T14; every item of the ledger
+  [live-funcs-step2-items.md](live-funcs-step2-items.md) closed): ticks and parameter snapshots follow a function by
+  name; the Call Trace tab shows each chosen call's parameters (view C), with the list's columns and pane resizable
+  and the detail's addresses fixed. Checked live (the plan's "Step 2 built"): DumperTest58 33/33 and the UI
+  walkthrough on the AOT build; **Avowed 7/7** -- 64 inventory functions chosen by name, 32 of them unloaded by the
+  time the trace was read, and all their copies decode; a second run proved a reload as a second arm (34 names
+  armed twice, every arm decoding with its own layout) and the budget on a real game. ⬜ Open, in the verification
+  register (`[LIVEFUNCS-STEP2]`): the UI's memory while it loads snapshots, the default budgets on a busier game
+  (the cost measured on Avowed: -0.4% calls/s, fps unchanged). Step 3 not started.
+  ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
+  through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
+  not affected; the other callers are. Effort **S**.
+  Steps 2 and 3, as decided before: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
+  what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
+  guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").
+  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+  A ring buffer (a power-of-two slider, 32–512 MB, default 64, with the seconds it keeps estimated beside it) that
+  keeps the calls just before Stop, two small records per call (entry and return), the call tree computed after
+  Stop; then parameter and native-stack snapshots for ticked functions only.
+  Effort **L** across the three steps, risk **med** (it adds work to the ProcessEvent hot path; measure first).
+  Our own feature: its commits carry **no** `Co-authored-by: fireundubh` trailer. **Decided 2026-10-06 and
+  2026-10-07** after a design review (TR1–TR7): the ring (T1), no register capture (T4), two record-time filters —
+  the ticked-function scope first, then leaving out per-frame functions (T5) — experimental only (T6), and a
+  once-per-session confirmation when nothing is ticked (T7). The trace rides on the Live Funcs recording (a
+  "Trace" checkbox, no Start of its own); viewed in its own "Call Trace" tab, which shows the ticks and the trace
+  settings grayed out (T8); functions ticked in the Live Funcs table (T3). The plan's "Measure before building"
+  is taken as part of step 1.
 
 -----
 
@@ -268,7 +305,7 @@ Open work only. **Read this when deciding what to do next.**
 PRs are built, reviewed and checked live (2026-10-06, builds 3619–3626).** The open
 question below is decided (`[DUMPDIFF-UI]`, build 3628). The reply was posted on both PRs on 2026-10-06; the work
 reached `main` in #542, and the PRs' own commits were merged into the history with `git merge -s ours` (no file
-changed) so that GitHub lists their author as a contributor. ⚠ **Re-checked 2026-10-06** (the plan's
+changed, #543), so the author's own commits are on `main` and GitHub marked both PRs as merged. ⚠ **Re-checked 2026-10-06** (the plan's
 "Re-check 2026-10-06"); its four questions R1–R4 were decided the same day. **Order now:** ✅ `pe_profile_get`
 at 32768 measured 2026-10-06 (Avowed: 648 distinct, 543 rows, 144 KB, about 15 ms; it stays on the interactive
 lane) → ✅ `diff_dumps.py`'s engine test (R4, `6ade4435`, 2026-10-06) → the features. A commit that carries

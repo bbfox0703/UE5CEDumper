@@ -1680,6 +1680,360 @@ public class DumpServiceTests
         Assert.Empty(plain.PerFrameFuncs);
     }
 
+    // [TRACE-UI-LOAD-MEMORY] D2: pe_trace_get decoded straight into the caller's window. A reply parsed from the pipe's
+    // text holds its values as JSON elements (the UTF-8 path); one built in code holds strings (the char path). Both are
+    // run, so a test cannot pass on the path production never takes.
+    private static string TracePageJson(TraceRecord[] recs) =>
+        "{\"ok\":true,\"allocated\":true,\"tracing\":false,\"quiesced\":true,\"gen\":5,\"written\":9,\"first_valid\":0,"
+        + "\"count\":" + recs.Length + ",\"next\":9,\"data\":\""
+        + Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(recs.AsSpan())) + "\"}";
+
+    private static readonly TraceRecord[] PageRecs =
+    {
+        new(1, 100, 0xA1, 0xB1, 7, 0), new(2 | TraceRecord.ReturnBit, 110, 1, 0, 7, 0), new(3, 120, 0xA2, 0, 9, 1),
+    };
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PeTraceGetInto_decodes_the_reply_into_the_given_window(bool parsedFromText)
+    {
+        string json = TracePageJson(PageRecs);
+        _pipe.SetHandler(_ => parsedFromText
+            ? JsonNode.Parse(json)!.AsObject()
+            : new JsonObject
+            {
+                ["ok"] = true, ["allocated"] = true, ["quiesced"] = true, ["gen"] = 5UL, ["written"] = 9UL, ["next"] = 9UL,
+                ["count"] = 3,
+                ["data"] = Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(PageRecs.AsSpan())),
+            });
+        IDumpService svc = CreateService();
+        var window = new TraceRecord[5];
+
+        var page = await svc.PeTraceGetIntoAsync(0, 4, window.AsMemory(2), TestContext.Current.CancellationToken);
+        Assert.Equal(3, page.Count);
+        Assert.Equal(9UL, page.Next);
+        Assert.Equal(5UL, page.Info.Gen);
+        Assert.Equal(PageRecs, window[2..5]);
+        Assert.Equal(default, window[1]);
+    }
+
+    [Fact]
+    public async Task PeProfileStartAsync_ReadsHowManyTicksTheDllLeftOut()
+    {
+        // Review UI-1: the DLL checks the ticks against the previous recording and leaves out the unloaded ones.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["hook_active"] = true,
+            ["trace"] = new JsonObject { ["allocated"] = true, ["tracing"] = true, ["gen"] = 3UL, ["ticked"] = 1,
+                                         ["ticked_dropped"] = 2 },
+        });
+        IDumpService svc = CreateService();
+        var r = await svc.PeProfileStartAsync(new TraceStartOptions { Bytes = 32L << 20, Ticked = new[] { "0x1", "0x2", "0x3" } },
+                                              TestContext.Current.CancellationToken);
+        Assert.Equal(1, r.Trace!.Ticked);
+        Assert.Equal(2, r.Trace.TickedDropped);
+    }
+
+    // [TRACE-UNLOADED-NAMES] D1: a function unloaded since it fired comes back named from its first call, marked.
+    [Fact]
+    public async Task PeProfileGetAsync_AsksForUnloadedRows_AndReadsTheirMarksAndTheCounts()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 3, ["total_calls"] = 60L,
+                ["functions"] = new JsonArray
+                {
+                    new JsonObject { ["class_name"] = "PlayerController", ["func_name"] = "Jump", ["func_addr"] = "0x100",
+                                     ["count"] = 50L },
+                    new JsonObject { ["class_name"] = "WBP_Inventory_C", ["func_name"] = "OnOpen", ["func_addr"] = "0x200",
+                                     ["count"] = 7L, ["unloaded"] = true },
+                    new JsonObject { ["class_name"] = "WBP_Tip_C", ["func_name"] = "Show", ["func_addr"] = "0x300",
+                                     ["count"] = 3L, ["unloaded"] = true, ["recycled"] = true },
+                    new JsonObject { ["class_name"] = "WBP_Map_C", ["func_name"] = "OnTile", ["func_addr"] = "0x400",
+                                     ["count"] = 9L, ["reused"] = true },
+                },
+                ["unloaded_funcs"] = 2, ["unloaded_calls"] = 10L, ["unnamed_funcs"] = 1, ["unnamed_calls"] = 4L,
+            };
+        });
+        IDumpService svc = CreateService();
+
+        var r = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.True(sent!["include_unloaded"]!.GetValue<bool>());
+        Assert.False(r.Entries[0].IsUnloaded);
+        Assert.True(r.Entries[1].IsUnloaded);
+        Assert.False(r.Entries[1].IsRecycled);
+        Assert.True(r.Entries[2].IsUnloaded && r.Entries[2].IsRecycled);
+        Assert.False(r.Entries[2].IsReused);
+        Assert.True(r.Entries[3].IsReused && !r.Entries[3].IsUnloaded);   // review DLL-3: two functions at one address
+        Assert.Equal(2, r.UnloadedFuncs);
+        Assert.Equal(10L, r.UnloadedCalls);
+        Assert.Equal(1, r.UnnamedFuncs);
+        Assert.Equal(4L, r.UnnamedCalls);
+    }
+
+    [Fact]
+    public async Task PeProfileGetAsync_FromAnOlderDll_HasNoUnloadedCounts()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 1, ["total_calls"] = 5L,
+            ["functions"] = new JsonArray { new JsonObject { ["class_name"] = "A", ["func_name"] = "B", ["func_addr"] = "0x1" } },
+        });
+        IDumpService svc = CreateService();
+
+        var r = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.False(r.Entries[0].IsUnloaded);
+        Assert.Null(r.UnloadedFuncs);
+        Assert.Null(r.UnloadedCalls);
+        Assert.Null(r.UnnamedFuncs);
+        Assert.Null(r.UnnamedCalls);
+    }
+
+    [Fact]
+    public async Task PeTraceFuncNamesAsync_ReadsTheUnloadedMarkAndItsFirstCallName()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["gen"] = 4UL, ["total"] = 3, ["offset"] = 0,
+            ["items"] = new JsonArray
+            {
+                new JsonObject { ["addr"] = "0x100", ["live"] = true, ["class_name"] = "PlayerController", ["func_name"] = "Jump" },
+                new JsonObject { ["addr"] = "0x200", ["live"] = false, ["unloaded"] = true,
+                                 ["class_name"] = "WBP_Inventory_C", ["func_name"] = "OnOpen" },
+                new JsonObject { ["addr"] = "0x300", ["live"] = false },
+                new JsonObject { ["addr"] = "0x400", ["live"] = true, ["reused"] = true,
+                                 ["class_name"] = "WBP_Map_C", ["func_name"] = "OnTile" },
+            },
+        });
+        IDumpService svc = CreateService();
+
+        var page = await svc.PeTraceFuncNamesAsync(4, 0, 100, TestContext.Current.CancellationToken);
+        Assert.True(page.Items[0].Live);
+        Assert.False(page.Items[0].Unloaded);
+        Assert.True(page.Items[1].Unloaded);
+        Assert.False(page.Items[1].Recycled);
+        Assert.Equal("OnOpen", page.Items[1].FuncName);
+        Assert.Equal("WBP_Inventory_C", page.Items[1].ClassName);
+        Assert.False(page.Items[2].Live || page.Items[2].Unloaded);
+        Assert.False(page.Items[1].Reused);
+        Assert.True(page.Items[3].Reused && page.Items[3].Live);
+    }
+
+    // ---- [LIVEFUNCS-STEP2] following functions by name, and parameter snapshots (docs/live-funcs-step2-items.md, U1) ----
+
+    [Fact]
+    public async Task PeProfileGetAsync_ReadsTheNameKeyAndPerFrame_AndAnOlderDllHasNoKey()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 2, ["total_calls"] = 9L,
+            ["functions"] = new JsonArray
+            {
+                new JsonObject { ["class_name"] = "A", ["func_name"] = "Tick", ["func_addr"] = "0x1", ["count"] = 8L,
+                                 ["fname_key"] = new JsonArray { 11, 0, 22, 3 }, ["per_frame"] = true },
+                new JsonObject { ["class_name"] = "A", ["func_name"] = "Old", ["func_addr"] = "0x2", ["count"] = 1L },
+            },
+        });
+        IDumpService svc = CreateService();
+        var r = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.Equal(new NameKey(11, 0, 22, 3), r.Entries[0].FnameKey);   // function ints first, then the class's
+        Assert.True(r.Entries[0].IsPerFrame);
+        Assert.Null(r.Entries[1].FnameKey);
+        Assert.False(r.Entries[1].IsPerFrame);
+    }
+
+    [Fact]
+    public async Task PeProfileStartAsync_SendsNamesAndSnapshots_AndReadsWhatTheDllMadeOfThem()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["hook_active"] = true,
+                ["trace"] = new JsonObject
+                {
+                    ["allocated"] = true, ["tracing"] = true, ["gen"] = 4UL, ["ticked"] = 0, ["scoped"] = true,
+                    ["ticked_names"] = 1, ["snap_only"] = false,
+                    ["snap"] = new JsonObject { ["allocated"] = true, ["bytes"] = 33554432L, ["slots_per_ring"] = 97541UL,
+                                                ["rings"] = 2, ["per_ring_per_s"] = 30, ["total_per_s"] = 10000 },
+                    ["names"] = new JsonObject
+                    {
+                        ["ticks"] = 1, ["chosen"] = 1,
+                        ["refused"] = new JsonArray { new JsonObject { ["class"] = "B", ["func"] = "Gone", ["why"] = "no key" } },
+                    },
+                },
+            };
+        });
+        IDumpService svc = CreateService();
+        var opts = new TraceStartOptions
+        {
+            Bytes = 64L << 20,
+            TickedNames = new[] { new NamedFunction { ClassName = "A", FuncName = "Outer", Keys = new[] { new NameKey(1, 2, 3, 4) } } },
+            Snapshots = new SnapshotStartOptions
+            {
+                Funcs = new[] { new NamedFunction { ClassName = "A", FuncName = "Call", ParmsSize = 152,
+                                                    Keys = new[] { new NameKey(5, 0, 3, 4), new NameKey(5, 1, 3, 4) } } },
+                Bytes = 32L << 20, PerRingPerSec = 30, TotalPerSec = 10000,
+            },
+        };
+        var r = await svc.PeProfileStartAsync(opts, TestContext.Current.CancellationToken);
+
+        var t = sent!["trace"]!.AsObject();
+        var tick = t["ticked_names"]!.AsArray()[0]!.AsObject();
+        Assert.Equal("A", tick["class"]!.GetValue<string>());
+        Assert.Equal("Outer", tick["func"]!.GetValue<string>());
+        Assert.Equal(new[] { 1, 2, 3, 4 }, tick["keys"]!.AsArray()[0]!.AsArray().Select(n => n!.GetValue<int>()));
+        Assert.False(tick.ContainsKey("parms_size"));
+        var snaps = t["snapshots"]!.AsObject();
+        var call = snaps["funcs"]!.AsArray()[0]!.AsObject();
+        Assert.Equal(152, call["parms_size"]!.GetValue<int>());
+        Assert.Equal(2, call["keys"]!.AsArray().Count);
+        Assert.Equal(new[] { 5, 1, 3, 4 }, call["keys"]!.AsArray()[1]!.AsArray().Select(n => n!.GetValue<int>()));
+        Assert.Equal(32L << 20, snaps["bytes"]!.GetValue<long>());
+        Assert.Equal(30, snaps["per_ring_per_s"]!.GetValue<int>());
+
+        Assert.True(r.Trace!.Scoped);
+        Assert.Equal(1, r.Trace.TickedNames);
+        Assert.Equal(97541UL, r.Trace.Snap!.SlotsPerRing);
+        Assert.Equal(2, r.Trace.Snap.Rings);
+        Assert.Equal(1, r.Trace.Names!.Chosen);
+        Assert.Equal(("B", "Gone", "no key"), r.Trace.Names.Refused[0]);
+    }
+
+    [Fact]
+    public async Task PeProfileStartAsync_WithoutNames_SendsTheStepOneRequest_AndAnOlderDllReadsAsOne()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject { ["ok"] = true, ["hook_active"] = true,
+                                    ["trace"] = new JsonObject { ["allocated"] = true, ["gen"] = 2UL, ["ticked"] = 1 } };
+        });
+        IDumpService svc = CreateService();
+        var r = await svc.PeProfileStartAsync(new TraceStartOptions { Bytes = 32L << 20, Ticked = new[] { "0x10" } },
+                                              TestContext.Current.CancellationToken);
+        var t = sent!["trace"]!.AsObject();
+        Assert.False(t.ContainsKey("ticked_names"));
+        Assert.False(t.ContainsKey("snapshots"));
+        Assert.Null(r.Trace!.Scoped);    // an older DLL: Ticked > 0 says it was scoped
+        Assert.Null(r.Trace.Snap);
+        Assert.Null(r.Trace.Names);
+    }
+
+    [Fact]
+    public async Task PeProfileStopWithTraceAsync_ReadsTheFollowedNamesAndTheRings()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["recording"] = false,
+            ["trace"] = new JsonObject
+            {
+                ["allocated"] = false, ["gen"] = 5UL, ["written"] = 0UL,
+                ["snap_rings"] = new JsonArray { new JsonObject { ["ring"] = 0, ["cap"] = 152, ["written"] = 40UL,
+                                                                  ["dropped_budget"] = 7UL } },
+            },
+            ["names"] = new JsonArray
+            {
+                new JsonObject { ["class"] = "A", ["func"] = "Late", ["key"] = new JsonArray { 9, 0, 3, 0 },
+                                 ["tick"] = false, ["chosen"] = true, ["addresses"] = 0L, ["arms"] = 0L, ["arms_full"] = 0L,
+                                 ["not_called"] = true },
+            },
+        });
+        IDumpService svc = CreateService();
+        var info = await svc.PeProfileStopWithTraceAsync(TestContext.Current.CancellationToken);
+        Assert.Single(info!.Followed);
+        Assert.True(info.Followed[0].NotCalled && info.Followed[0].Chosen);
+        Assert.Equal(new NameKey(9, 0, 3, 0), info.Followed[0].Key);
+        Assert.Equal(40UL, info.SnapRings[0].Written);
+        Assert.Equal(7UL, info.SnapRings[0].DroppedBudget);
+    }
+
+    [Fact]
+    public async Task PeSnapLayoutsAndGet_ParseArmsLayoutsAndDecodedSlots()
+    {
+        _pipe.SetHandler(req => req["cmd"]!.GetValue<string>() == "pe_snap_layouts"
+            ? new JsonObject
+            {
+                ["ok"] = true, ["gen"] = 5UL, ["total"] = 2, ["next"] = 2,
+                ["arms"] = new JsonArray
+                {
+                    new JsonObject { ["index"] = 0, ["ring"] = 0, ["addr"] = "0x7FF0", ["class_name"] = "A", ["func_name"] = "Call",
+                                     ["function_flags"] = "0x0000000000C20401", ["parms_size"] = 180, ["state"] = "read",
+                                     ["read_ms"] = 3L, ["layout"] = 0 },
+                    new JsonObject { ["index"] = 1, ["ring"] = 0, ["addr"] = "0x8FF0", ["state"] = "not_read_before_stop" },
+                },
+                ["layouts"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["func_name"] = "Call", ["function_flags"] = "0x0000000000C20401", ["parms_size"] = 180,
+                        ["params"] = new JsonArray
+                        {
+                            new JsonObject { ["name"] = "Round", ["type"] = "IntProperty", ["offset"] = 0, ["size"] = 4,
+                                             ["flags"] = "0x0000000000000080", ["kind"] = "in" },
+                            new JsonObject { ["name"] = "S", ["type"] = "StructProperty", ["offset"] = 8, ["size"] = 40,
+                                             ["kind"] = "in", ["struct"] = "SnapStruct",
+                                             ["sub"] = new JsonArray { new JsonObject { ["name"] = "A", ["type"] = "IntProperty" } } },
+                        },
+                    },
+                },
+            }
+            : new JsonObject
+            {
+                ["ok"] = true, ["gen"] = 5UL, ["ring"] = 0, ["count"] = 1, ["next"] = 7UL, ["orphans"] = 0UL,
+                ["items"] = new JsonArray
+                {
+                    new JsonObject
+                    {
+                        ["index"] = 6UL, ["entry_seq"] = 51234UL, ["phase"] = "return", ["len"] = 4, ["flags"] = 0, ["arm"] = 0,
+                        ["data"] = Convert.ToBase64String(new byte[] { 41, 0, 0, 0 }),
+                        ["values"] = new JsonArray
+                        {
+                            new JsonArray { "", 3 },
+                            new JsonArray { "{A=41}", 0, new JsonArray { new JsonArray { "41", 0 } } },
+                        },
+                    },
+                },
+            });
+        IDumpService svc = CreateService();
+        var lp = await svc.PeSnapLayoutsAsync(5, 0, TestContext.Current.CancellationToken);
+        Assert.Equal(2, lp.Arms.Count);
+        Assert.Equal(0xC20401u, lp.Arms[0].FunctionFlags);
+        Assert.Equal(3L, lp.Arms[0].ReadMs);
+        Assert.Equal("SnapStruct", lp.Arms[0].Layout!.Params[1].Struct);
+        Assert.Equal("A", lp.Arms[0].Layout!.Params[1].Sub[0].Name);
+        Assert.Equal(0x80UL, lp.Arms[0].Layout!.Params[0].Flags);
+        Assert.Null(lp.Arms[1].Layout);
+        Assert.Null(lp.Arms[1].ReadMs);
+
+        var page = await svc.PeSnapGetAsync(5, 0, 0, 1024, TestContext.Current.CancellationToken);
+        var s = page.Items[0];
+        Assert.True(s.IsAfter);
+        Assert.Equal(51234UL, s.EntrySeq);
+        Assert.Equal(new byte[] { 41, 0, 0, 0 }, s.Data);
+        Assert.Equal(SnapMark.Missing, s.Values![0].Mark);
+        Assert.Equal("41", s.Values[1].Sub[0].Text);
+        Assert.Equal(7UL, page.Next);
+    }
+
+    // [LIVEFUNCS-STEP2] U2: every reader of a stopped trace pages megabytes; none may hold the interactive lane.
+    [Theory]
+    [InlineData("pe_snap_layouts", true)]
+    [InlineData("pe_snap_get", true)]
+    [InlineData("pe_trace_get", true)]
+    [InlineData("pe_trace_names", true)]
+    [InlineData("pe_profile_start", false)]
+    public void TheTraceReadersRunOnTheBulkLane(string cmd, bool bulk)
+        => Assert.Equal(bulk, LaneRoutingPipeClient.IsBulk(cmd));
+
     // --- WalkFunctionsAsync: struct_fields parsing ---
 
     [Fact]

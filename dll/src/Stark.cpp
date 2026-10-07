@@ -18,6 +18,7 @@
 
 #include <MinHook.h>
 #include <Windows.h>
+#include <intrin.h>   // _AddressOfReturnAddress -- the hook frame's stack position, for the trace's ticked scope
 
 #include <atomic>
 #include <chrono>
@@ -173,15 +174,19 @@ struct OwnPeCallGuard {
 // reachable while the game is tearing its object pool down: Linie's map insert, and the
 // `pending` vector below. Zero cost on x64 when nothing throws (table-driven EH). (B14,
 // scope corrected by in-game verification.)
-static void HookedProcessEventBody(void* ufunc, uint64_t nowMs) {
+static void HookedProcessEventBody(void* ufunc, uint64_t nowMs, Linie::ArmHint& hint) {
     // Live PE profiler (Linie): opt-in per-UFunction fire counting. The
     // not-recording path pays exactly one relaxed atomic load + a
     // predicted-not-taken branch; the mutex + map touch happen ONLY inside a
     // Start/Stop window. Mirrors the s_queueDepth "skip work unless armed" gate
-    // below. `ufunc` is the UFunction* for this dispatch — stored raw and
-    // resolved to a name at pe_profile_get time, off the hot path.
+    // below. `ufunc` is the UFunction* for this dispatch — stored raw; on its
+    // first call of a recording Linie also reads its FName ints (loads only, no
+    // string), and the names are decoded at read time, off the hot path.
+    // [TRACE-UNLOADED-NAMES]
     if (Linie::IsRecording()) {
-        Linie::RecordCall(reinterpret_cast<uintptr_t>(ufunc), nowMs);
+        // [LIVEFUNCS-STEP2] Its read of this call says what the address is armed for -- a tick or a snapshot
+        // choice by name -- and the trace gets that on the same call.
+        Linie::RecordCall(reinterpret_cast<uintptr_t>(ufunc), nowMs, &hint);
     }
 
     // Drain pending invocations from pipe thread. Fast path: skip the mutex
@@ -238,10 +243,23 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     uint64_t nowMs = NowMs();
     s_lastHookFireMs.store(nowMs, std::memory_order_relaxed);
 
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's entry record is written after the body. The invokes the body
+    // drained call the original ProcessEvent through the trampoline, not this hook, so they are not in the trace
+    // themselves; the calls they make come back through the hook and are, ahead of this call, as they ran (review
+    // DLL-7). The token stays in this frame across the game's call; this frame's stack address is how a ticked scope
+    // tells a nested call from a later one.
+    Linie::TraceToken traceTok;
+    Linie::ArmHint armHint;   // [LIVEFUNCS-STEP2] integers only, in this frame
+    const uintptr_t traceSp = reinterpret_cast<uintptr_t>(_AddressOfReturnAddress());
+
     // Our work, contained. See HookedProcessEventBody — a throw escaping here fast-fails
     // the game, because the caller is the game itself.
     Routine::RunThreadGuarded("GameThreadDispatch", [&] {
-        HookedProcessEventBody(ufunc, nowMs);
+        HookedProcessEventBody(ufunc, nowMs, armHint);
+        if (Linie::IsTracing()) {
+            Linie::TraceEnter(reinterpret_cast<uintptr_t>(ufunc), reinterpret_cast<uintptr_t>(thisObj), traceSp,
+                              GetCurrentThreadId(), traceTok, reinterpret_cast<uintptr_t>(params), armHint);
+        }
     });
 
     // Now handle the game's own ProcessEvent call. OUTSIDE the guard on purpose: this is
@@ -250,6 +268,15 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     // above prevents.
     if (s_originalPE) {
         s_originalPE(thisObj, ufunc, params);
+    }
+
+    // The return record: our work again, so guarded again (TR3). A game exception that unwinds past this frame skips
+    // it, and the trace shows that call as never returning; Linie closes a ticked scope left open that way itself.
+    if (traceTok.traced) {
+        Routine::RunThreadGuarded("GameThreadDispatch", [&] {
+            // The same block again: the copy after the call reads the out parameters and the return value there.
+            Linie::TraceReturn(traceTok, GetCurrentThreadId(), reinterpret_cast<uintptr_t>(params));
+        });
     }
 }
 

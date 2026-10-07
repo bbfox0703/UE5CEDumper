@@ -7,12 +7,21 @@ namespace UE5DumpUI.Models;
 /// Interesting Functions finder: the function the game ACTUALLY called when the
 /// user performed an in-game action.
 ///
-/// Plain init-only POCO (hand-parsed from the pipe JsonObject like
-/// <see cref="AllFunctionEntry"/>): the Start → Stop → Get flow produces an
-/// immutable snapshot per fetch, so no ObservableObject is needed.
+/// Init-only (hand-parsed from the pipe JsonObject like <see cref="AllFunctionEntry"/>): the Start → Stop → Get
+/// flow produces an immutable snapshot per fetch. The one exception is <see cref="IsTicked"/>, which the call
+/// trace's tick column changes on a row already on screen, so the row notifies.
 /// </summary>
-public sealed class PeProfileEntry
+public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Ticked for the call trace: the next traced Start records only this
+    /// function's calls and what they call. The ticks live in LiveFuncsViewModel, keyed by Class::Func; a fetch
+    /// copies them onto its new rows.</summary>
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isTicked;
+
+    /// <summary>[LIVEFUNCS-STEP2] Chosen for parameter snapshots: the next traced Start copies its parameter block on
+    /// each call. Kept by name in LiveFuncsViewModel, like the ticks.</summary>
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isSnapChosen;
+
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";
     public string FuncAddr  { get; init; } = "";
@@ -25,6 +34,29 @@ public sealed class PeProfileEntry
     /// opener above its downstream widget-creation / On* effects.</summary>
     public long   FirstSeq  { get; init; }
     public uint   FunctionFlags { get; init; }
+
+    /// <summary>[TRACE-UNLOADED-NAMES] The game unloaded this function after it fired (a closed UI, content streamed
+    /// out): every field is what the recording read at its first call, and <see cref="FuncAddr"/> is dead -- never
+    /// sent back to the DLL (a trace tick, a disassembly).</summary>
+    public bool   IsUnloaded { get; init; }
+    /// <summary>With <see cref="IsUnloaded"/>: another function has taken the address since.</summary>
+    public bool   IsRecycled { get; init; }
+    /// <summary>Another function took this address DURING the recording (review DLL-3): the count is both functions',
+    /// and the name the latest one's.</summary>
+    public bool   IsReused   { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] The name key the row's names are rendered from (T10): what a tick or a snapshot
+    /// choice by name sends back. Null from a DLL that predates it.</summary>
+    public NameKey? FnameKey { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] The function fired every frame through the recording (the DLL's IsPerFrame).</summary>
+    public bool   IsPerFrame { get; init; }
+
+    /// <summary>[LIVEFUNCS-STEP2] A row the trace can tick: by name when it has a key, else by a live address (D1).</summary>
+    public bool IsTickable => FnameKey != null || (!IsUnloaded && !string.IsNullOrEmpty(FuncAddr));
+
+    /// <summary>[LIVEFUNCS-STEP2] A row whose parameters can be chosen: chosen by name, so it needs a key, unloaded or
+    /// not; left out when the DLL read it as having no parameters. Flags of 0 are an offset never decided, not
+    /// "none": such a row stays choosable and the DLL decides.</summary>
+    public bool CanChooseSnapshot => FnameKey != null && !(NumParms == 0 && FunctionFlags != 0);
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,
@@ -124,6 +156,8 @@ public sealed class PeProfileStartResult
 {
     public bool   HookActive { get; init; }
     public string Detail     { get; init; } = "";
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The armed trace, when the Start asked for one.</summary>
+    public TraceInfo? Trace  { get; init; }
 }
 
 /// <summary>
@@ -142,5 +176,16 @@ public sealed class PeProfileResult
     public bool Recording     { get; init; }
     public int  DistinctFuncs { get; init; }
     public long TotalCalls    { get; init; }
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The window the counts cover (ms), from the table's earliest fire to its
+    /// latest; null from a DLL older than the field. With <see cref="TotalCalls"/> it is the call rate the trace
+    /// slider estimates its seconds from.</summary>
+    public long? WindowMs     { get; init; }
+    /// <summary>[TRACE-UNLOADED-NAMES] Over the whole table, not the page: the functions no longer at their address
+    /// (sent as rows marked <see cref="PeProfileEntry.IsUnloaded"/>, named from their first call) and the ones with no
+    /// name at all (never sent), with their calls. Null from a DLL older than the fields.</summary>
+    public int?  UnloadedFuncs { get; init; }
+    public long? UnloadedCalls { get; init; }
+    public int?  UnnamedFuncs  { get; init; }
+    public long? UnnamedCalls  { get; init; }
     public List<PeProfileEntry> Entries { get; init; } = new();
 }

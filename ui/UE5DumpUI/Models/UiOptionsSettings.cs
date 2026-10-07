@@ -46,6 +46,7 @@ public sealed class UiOptionsSettings
     public SystemUiOptions System { get; set; } = new();
     public LiveFuncsUiOptions LiveFuncs { get; set; } = new();
     public DumpExplorerUiOptions DumpExplorer { get; set; } = new();
+    public CallTraceUiOptions CallTrace { get; set; } = new();
 }
 
 /// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options (D8). Both OFF by default: a default report is the
@@ -220,6 +221,18 @@ public sealed class ConsoleUiOptions
     public bool GameOnly { get; set; }
 }
 
+/// <summary>[LIVEFUNCS-STEP2] U10: the Call Trace list's column widths and its detail pane's width, in pixels, as the
+/// user dragged them. The defaults are the fixed layout the tab had before they could be dragged; the view model
+/// clamps a hand-edited value.</summary>
+public sealed class CallTraceUiOptions
+{
+    public double TimeColWidth { get; set; } = 96;
+    public double DurationColWidth { get; set; } = 88;
+    public double ThreadColWidth { get; set; } = 64;
+    public double ObjectColWidth { get; set; } = 260;
+    public double DetailPaneWidth { get; set; } = 380;
+}
+
 /// <summary>Live Funcs capture settings. Each is stored as its slider's exponent, like the toolbar's power-of-two
 /// sliders, so a loaded value needs no snapping; the view model clamps it to the slider's range.</summary>
 public sealed class LiveFuncsUiOptions
@@ -228,6 +241,15 @@ public sealed class LiveFuncsUiOptions
     public int MinCallsExponent { get; set; }
     /// <summary>[LIVEFUNCS-HIDE-PERFRAME] Leave out the per-frame functions in the DLL. OFF by default.</summary>
     public bool HidePerFrame { get; set; }
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Arm the call trace with each Start (experimental only). OFF by default.</summary>
+    public bool TraceEnabled { get; set; }
+    /// <summary>The trace buffer, 2^N MB: 5..9 is 32..512 MB, default 64.</summary>
+    public int TraceBufferExponent { get; set; } = 6;
+    /// <summary>Leave the previous recording's per-frame functions out of the trace. OFF by default.</summary>
+    public bool TraceExcludePerFrame { get; set; }
+    /// <summary>[LIVEFUNCS-STEP2] The snapshot buffer, 2^N MB: 3..7 is 8..128 MB, default 32 (T12). The choices
+    /// themselves are never kept: they are name keys of one game process.</summary>
+    public int SnapshotBufferExponent { get; set; } = 5;
 }
 
 public sealed class GameClassFilterUiOptions

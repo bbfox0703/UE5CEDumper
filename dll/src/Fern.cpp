@@ -46,6 +46,7 @@
 #include <json.hpp>
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>   // [LIVEFUNCS-STEP2] the arm-capture worker
 #include <cstdlib>   // malloc/free for by-value FString INPUT-param buffers
 #include <cstring>
 #include <sstream>
@@ -53,6 +54,10 @@
 #include <vector>
 
 using json = nlohmann::json;
+
+namespace {
+void JoinArmWorker();   // [LIVEFUNCS-STEP2] defined with the worker, beside TraceInfoToJson
+}
 
 // This DLL's own module handle (defined in Heiter.cpp DllMain). Used to self-report
 // the load path in the init response: for a proxy build g_hDllModule IS the proxy
@@ -781,6 +786,7 @@ void Fern::Stop(bool graceful) {
     // No handler thread is running now — free every remaining value-scan session.
     Radar::SessionManager::Instance().DropAll();
     Radar::GroupSessionManager::Instance().DropAll();
+    JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
     Linie::Reset();   // drop any live PE-profile recording + free the table
     Ubel::ClearNameCache();   // same reason as the last-connection teardown (D5/F3)
 
@@ -1231,6 +1237,7 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     if (last) {
         Radar::SessionManager::Instance().DropAll();
         Radar::GroupSessionManager::Instance().DropAll();
+        JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
         Linie::Reset();   // last client gone — drop any live PE-profile recording
         Sense::Reset();   // ...and restart diagnostics so the next session's numbers are its own
         // Un-hide any see-through occluders + stop its worker — the header contract is
@@ -1733,6 +1740,282 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
 
     return fj;
 }
+
+// [LIVEFUNCS-TIMELINE-2026-10-04] The trace's state as the UI reads it: what it needs to page the ring
+// ([first_valid, written)), to turn ticks into time (qpc_freq), and to tell an unreadable ring from an empty one.
+static json TraceInfoToJson(const Linie::TraceInfo& i) {
+    json t;
+    t["allocated"]   = i.allocated;
+    t["tracing"]     = i.tracing;
+    t["quiesced"]    = i.quiesced;
+    t["gen"]         = i.gen;
+    t["bytes"]       = i.bytes;
+    t["capacity"]    = i.capacity;
+    t["written"]     = i.written;
+    t["first_valid"] = i.firstValid;
+    t["qpc_freq"]    = i.qpcFreq;
+    t["record_size"] = sizeof(Linie::TraceRecord);
+    t["ticked"]      = i.ticked;
+    t["excluded"]    = i.excluded;
+    // [LIVEFUNCS-STEP2] What the trace follows: a scope by address or by name, or only the chosen calls (T11).
+    t["scoped"]       = i.scoped;
+    t["ticked_names"] = i.tickedNames;
+    t["snap_only"]    = i.snapOnly;
+    // Only when parameters were chosen: an absent key tells the UI no snapshot buffer exists (or the DLL predates it).
+    if (i.snap.allocated) {
+        json s;
+        s["allocated"]      = true;
+        s["bytes"]          = i.snap.bytes;
+        s["slots_per_ring"] = i.snap.slotsPerRing;
+        s["rings"]          = i.snap.rings;
+        s["per_ring_per_s"] = i.snap.perRingPerSec;
+        s["total_per_s"]    = i.snap.totalPerSec;
+        s["skipped_budget"] = i.snap.skippedBudget;
+        s["dropped_budget"] = i.snap.droppedBudget;
+        t["snap"] = s;
+    }
+    return t;
+}
+
+// ============================================================
+// [LIVEFUNCS-STEP2] The arms' layouts, read in the background (F4). A chosen function is armed on the hook at its
+// first call; its parameters are read here, on a thread of its own, while it is alive -- never on the hook, never on
+// the interactive lane (the first enum detection can walk GObjects for seconds), and not in MonitorLoop, whose job is
+// the disconnect and the cancel (the second design critic). One worker per traced Start with snapshot choices; Stop
+// gives it a deadline, runs the last pass itself, then seals what is left raw-only.
+// ============================================================
+namespace {
+
+constexpr int    kArmPollMs    = 50;     // a widget's functions live for as long as it is open: far longer than this
+constexpr size_t kArmsPerPass  = 64;
+constexpr int    kArmStopMs    = 2000;   // Stop's wait for the worker and its own last passes, together
+
+struct ArmCaptureWorker {
+    std::shared_ptr<Linie::ArmState> arms;
+    std::mutex                       mu;
+    std::condition_variable          cv;
+    bool                             stop = false;
+    bool                             done = false;   // the thread has left its loop
+    Ubel::ArmLayoutMemo              memo;           // the worker's, then Stop's once the worker is gone
+    Routine::SafeThread              th;   // detaches at process exit, where nothing joins it
+};
+std::mutex                        g_armWorkerMu;   // the pointer; pipe threads only
+std::unique_ptr<ArmCaptureWorker> g_armWorker;
+
+size_t RunArmPass(ArmCaptureWorker& w, const Ubel::ArmCaptureOps& ops, const char* who) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const size_t n = Ubel::RunArmCapturePass(*w.arms, kArmsPerPass, ops, w.memo);
+    if (n) {
+        Sein::Info("PIPE:profile", "arm capture (%s): %zu arm(s) read in %lld ms", who, n,
+                   (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - t0).count());
+    }
+    return n;
+}
+
+// Whatever worker is left -- one that outlived Stop's deadline, or a Start's predecessor -- told to stop and joined.
+void JoinArmWorker() {
+    std::unique_ptr<ArmCaptureWorker> w;
+    {
+        std::lock_guard<std::mutex> lk(g_armWorkerMu);
+        w = std::move(g_armWorker);
+    }
+    if (!w) return;
+    {
+        std::lock_guard<std::mutex> lk(w->mu);
+        w->stop = true;
+    }
+    w->cv.notify_all();
+    if (w->th.joinable()) w->th.join();
+}
+
+void StartArmWorker(std::shared_ptr<Linie::ArmState> arms) {
+    JoinArmWorker();
+    auto w = std::make_unique<ArmCaptureWorker>();
+    w->arms = std::move(arms);
+    ArmCaptureWorker* wp = w.get();
+    w->th = std::thread([wp] {
+        Routine::RunThreadGuarded("LiveFuncs: arm capture", [wp] {
+            // Immune to a client's per-command cancel: a pass cut short leaves an arm raw for no reason.
+            Tot::CancelContextScope scope(Tot::CancelContext{ nullptr, true });
+            Genau::DetectUEnumNames();   // its first run, here rather than inside the first layout read's latency
+            const Ubel::ArmCaptureOps ops = Ubel::DefaultArmCaptureOps();
+            std::unique_lock<std::mutex> lk(wp->mu);
+            while (!wp->stop) {
+                lk.unlock();
+                RunArmPass(*wp, ops, "worker");
+                lk.lock();
+                wp->cv.wait_for(lk, std::chrono::milliseconds(kArmPollMs), [wp] { return wp->stop; });
+            }
+        });
+        {
+            std::lock_guard<std::mutex> lk(wp->mu);
+            wp->done = true;
+        }
+        wp->cv.notify_all();
+    });
+    std::lock_guard<std::mutex> lk(g_armWorkerMu);
+    g_armWorker = std::move(w);
+}
+
+// Stop's half, after the trace and the table stopped: the worker gets the deadline, the last passes run here, then
+// every arm still unread is sealed raw-only. A worker past the deadline (inside the first enum detection) keeps
+// running with its arms sealed and is joined at the next Start, a release, or the last disconnect.
+void FinishArms() {
+    std::lock_guard<std::mutex> lk(g_armWorkerMu);
+    ArmCaptureWorker* w = g_armWorker.get();
+    if (!w) return;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kArmStopMs);
+    bool exited = false;
+    {
+        std::unique_lock<std::mutex> wl(w->mu);
+        w->stop = true;
+        w->cv.notify_all();
+        exited = w->cv.wait_until(wl, deadline, [w] { return w->done; });
+    }
+    size_t last = 0;
+    if (exited) {
+        if (w->th.joinable()) w->th.join();
+        Tot::CancelContextScope scope(Tot::CancelContext{ nullptr, true });
+        const Ubel::ArmCaptureOps ops = Ubel::DefaultArmCaptureOps();
+        while (std::chrono::steady_clock::now() < deadline) {
+            const size_t n = RunArmPass(*w, ops, "stop");
+            last += n;
+            if (n == 0) break;
+        }
+    }
+    Linie::SealArms(*w->arms);
+    Sein::Info("PIPE:profile", "pe_profile_stop: arm capture finished (%zu read by the last pass%s)", last,
+               exited ? "" : "; the worker missed the deadline, its arms are sealed raw-only");
+    if (exited) g_armWorker.reset();
+}
+
+// What became of every name the recording followed: the Stop reply's `names`.
+json ArmsSummaryToJson() {
+    json out = json::array();
+    for (const Linie::ArmSummary& s : Linie::ArmsSummary()) {
+        json n;
+        n["class"]     = Serie::GetString(s.key.clsIdx, s.key.clsNum);
+        n["func"]      = Serie::GetString(s.key.fnIdx, s.key.fnNum);
+        n["key"]       = json::array({ s.key.fnIdx, s.key.fnNum, s.key.clsIdx, s.key.clsNum });
+        n["tick"]      = s.tick;
+        n["chosen"]    = s.ring >= 0;
+        n["addresses"] = s.addresses;
+        n["arms"]      = s.arms;
+        n["arms_full"] = s.armsFull;
+        // "Not called", never "not loaded": the DLL sees calls, not loads.
+        if (s.addresses == 0) n["not_called"] = true;
+        out.push_back(n);
+    }
+    return out;
+}
+
+// ---- pe_snap_layouts / pe_snap_get: the snapshots after Stop (F5) ----
+
+const char* ParamKindName(Ubel::ParamKind k) {
+    switch (k) {
+    case Ubel::ParamKind::In:       return "in";
+    case Ubel::ParamKind::ConstRef: return "const_ref";
+    case Ubel::ParamKind::Out:      return "out";
+    case Ubel::ParamKind::InOut:    return "in_out";
+    case Ubel::ParamKind::Return:   return "return";
+    }
+    return "in";
+}
+
+const char* ArmStateName(Linie::ArmLayoutState s) {
+    switch (s) {
+    case Linie::ArmLayoutState::Pending:            return "pending";
+    case Linie::ArmLayoutState::Read:               return "read";
+    case Linie::ArmLayoutState::UnloadedBeforeRead: return "unloaded_before_read";
+    case Linie::ArmLayoutState::ReplacedBeforeRead: return "replaced_before_read";
+    case Linie::ArmLayoutState::Doubtful:           return "doubtful";
+    case Linie::ArmLayoutState::Failed:             return "failed";
+    case Linie::ArmLayoutState::NotReadBeforeStop:  return "not_read_before_stop";
+    }
+    return "pending";
+}
+
+std::string Hex64(uint64_t v) {   // flags as strings: 64 bits do not fit a JSON double exactly
+    char b[24];
+    snprintf(b, sizeof(b), "0x%016llX", (unsigned long long)v);
+    return b;
+}
+
+json ParamFieldToJson(const Ubel::ParamField& f) {
+    json p;
+    p["name"]      = f.name;
+    p["type"]      = f.typeName;
+    p["offset"]    = f.offset;
+    p["size"]      = f.size;
+    p["array_dim"] = f.arrayDim;
+    p["flags"]     = Hex64(f.flags);
+    p["kind"]      = ParamKindName(f.kind);
+    if (f.boolMask)               p["bool_mask"]  = f.boolMask;
+    if (f.boolNative)             p["bool_native"] = true;
+    if (!f.structType.empty())    p["struct"]     = f.structType;
+    if (!f.objClass.empty())      p["obj_class"]  = f.objClass;
+    if (!f.enumName.empty())      p["enum"]       = f.enumName;   // the DLL decodes enums: no table is sent
+    if (!f.optInnerType.empty()) {
+        p["opt_layout"]     = f.optLayout;
+        p["opt_inner_type"] = f.optInnerType;
+        p["opt_inner_size"] = f.optInnerSize;
+    }
+    if (!f.sub.empty()) {
+        json sub = json::array();
+        for (const auto& s : f.sub) sub.push_back(ParamFieldToJson(s));
+        p["sub"] = std::move(sub);
+    }
+    return p;
+}
+
+json ParamLayoutToJson(const Ubel::ParamLayout& l) {
+    json j;
+    j["class_name"]     = l.className;
+    j["func_name"]      = l.funcName;
+    j["function_flags"] = Hex64(l.functionFlags);
+    j["parms_size"]     = l.parmsSize;
+    j["num_parms"]      = l.numParms;
+    j["layout_end"]     = l.layoutEnd;
+    json ps = json::array();
+    for (const auto& f : l.params) ps.push_back(ParamFieldToJson(f));
+    j["params"] = std::move(ps);
+    return j;
+}
+
+// [text, mark] or [text, mark, [sub...]]: compact, since a page holds thousands of slots.
+json SnapValueToJson(const Ubel::SnapValue& v) {
+    json a = json::array({ v.text, static_cast<int>(v.mark) });
+    if (!v.sub.empty()) {
+        json sub = json::array();
+        for (const auto& s : v.sub) sub.push_back(SnapValueToJson(s));
+        a.push_back(std::move(sub));
+    }
+    return a;
+}
+
+// What an object pointer in a copy is NOW: the decoder marks it "now", never "at the call".
+bool SnapObjectNow(uintptr_t ptr, std::string& name, std::string& className) {
+    const int32_t idx = Ubel::GetIndex(ptr);
+    if (idx < 0 || Aura::GetByIndex(idx) != ptr) return false;
+    name = Ubel::GetName(ptr);
+    const uintptr_t cls = Ubel::GetClass(ptr);
+    className = cls ? Ubel::GetName(cls) : std::string();
+    return true;
+}
+
+Ubel::SnapDecodeCtx LiveSnapDecodeCtx() {
+    Ubel::SnapDecodeCtx c;
+    c.fname      = [](int32_t i, int32_t n) { return Serie::GetString(i, n); };
+    c.object     = &SnapObjectNow;
+    c.weak       = &Ubel::ResolveWeakObjectPtr;
+    c.garbageTag = &Ubel::WeakTargetGarbageTag;
+    return c;
+}
+
+constexpr size_t kSnapPageBytes = 1u << 20;   // a reply line stays inside the size measured to pool no buffers
+
+}  // namespace
 
 std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const std::string& jsonLine) {
     json request;
@@ -4169,12 +4452,228 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // calls without first issuing an invoke. hook_active=false means the
             // vtable-offset detection failed on this game → counts will stay 0.
             bool hookActive = UE5_EnsureGameThreadHook();
-            Linie::StartRecording();
-            Sein::Info("PIPE:profile", "pe_profile_start: recording begun (hook_active=%d)",
-                       hookActive ? 1 : 0);
+
+            // [TRACE-UNLOADED-NAMES] Each function's identity is read at its first call, so one the game unloads before
+            // Stop keeps its name. What the reader needs -- the flags offset, whose first decision can run a GObjects
+            // vote, and UMG's widget classes -- is decided here on the pipe thread, before the ring starts, so the
+            // calls traced before the table starts stay as few as before.
+            const Ubel::FunctionCaptureSetup captureSetup = Ubel::PrepareFunctionCapture();
+
+            // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording (T2). Asked for: the ring is
+            // allocated BEFORE the table starts, and a failed allocation refuses the whole Start, so the user picks
+            // a smaller buffer instead of getting a recording without the trace they asked for (T1).
+            // [LIVEFUNCS-STEP2] A worker the last Stop left past its deadline belongs to the trace this Start replaces.
+            JoinArmWorker();
+            json traceReply;
+            json namesReply;                          // [LIVEFUNCS-STEP2] what became of the names asked for
+            std::shared_ptr<Linie::ArmState> arms;    // the names this recording follows, installed with it
+            const auto startT0 = std::chrono::steady_clock::now();
+            if (request.contains("trace") && request["trace"].is_object()) {
+                const json& t = request["trace"];
+                const uint64_t bytes = t.value("bytes", uint64_t(0));
+                if (bytes < Linie::kTraceMinBytes || bytes > Linie::kTraceMaxBytes || (bytes & (bytes - 1)) != 0) {
+                    return Renge::MakeError(id, "trace.bytes must be a power of two from 32 MB to 512 MB").dump();
+                }
+                Linie::TraceConfig cfg;
+                cfg.bytes = bytes;
+                // [LIVEFUNCS-STEP2] Ticks and snapshot choices by NAME (T10). The previous trace goes first, whatever
+                // follows: every refusal below then leaves the game as the UI assumes, any Start having given it up.
+                // Nothing is classified and no layout is read here -- each key costs two GetString -- because every
+                // address is first-sight in the new recording and is armed on the hook when its call matches.
+                const bool namesTicked = t.contains("ticked_names") && t["ticked_names"].is_array();
+                const bool snapsAsked  = t.contains("snapshots") && t["snapshots"].is_object();
+                if (namesTicked || snapsAsked) {
+                    Linie::FreeTrace();
+                    std::vector<Linie::ArmSpec> specs;
+                    json refused = json::array();
+                    size_t tickAsked = 0, tickOk = 0, snapAsked = 0, snapOk = 0;
+                    // The keys of one item that still name what the UI showed: both halves rendered and compared.
+                    auto goodKeys = [](const json& item, std::string& cls, std::string& fn) {
+                        std::vector<Linie::NameKey> keys;
+                        cls = item.value("class", std::string());
+                        fn  = item.value("func", std::string());
+                        if (fn.empty() || !item.contains("keys") || !item["keys"].is_array()) return keys;
+                        for (const auto& k : item["keys"]) {
+                            if (!k.is_array() || k.size() != 4) continue;
+                            bool ints = true;
+                            for (const auto& v : k) ints = ints && v.is_number_integer();
+                            if (!ints) continue;
+                            const Linie::NameKey nk{ k[0].get<int32_t>(), k[1].get<int32_t>(),
+                                                     k[2].get<int32_t>(), k[3].get<int32_t>() };
+                            if (Ubel::NameKeyMatches(nk, cls, fn)) keys.push_back(nk);
+                        }
+                        return keys;
+                    };
+                    auto refuse = [&](const std::string& cls, const std::string& fn) {
+                        refused.push_back({ { "class", cls }, { "func", fn },
+                                            { "why", "no key names it in this process" } });
+                    };
+                    if (namesTicked) {
+                        for (const auto& item : t["ticked_names"]) {
+                            if (!item.is_object()) continue;
+                            ++tickAsked;
+                            std::string cls, fn;
+                            const auto keys = goodKeys(item, cls, fn);
+                            if (keys.empty()) { refuse(cls, fn); continue; }
+                            ++tickOk;
+                            for (const auto& k : keys) {
+                                Linie::ArmSpec sp;
+                                sp.key  = k;
+                                sp.tick = true;
+                                specs.push_back(sp);
+                            }
+                        }
+                    }
+                    if (snapsAsked) {
+                        const json& s = t["snapshots"];
+                        const uint64_t sb = s.value("bytes", uint64_t(0));
+                        if (sb < Linie::kSnapMinBytes || sb > Linie::kSnapMaxBytes || (sb & (sb - 1)) != 0) {
+                            return Renge::MakeError(id,
+                                "trace.snapshots.bytes must be a power of two from 8 MB to 128 MB").dump();
+                        }
+                        cfg.snapBytes = sb;
+                        // The budget words hold a count in 24 bits; Linie clamps too, the reply says what was used.
+                        auto budget = [&s](const char* key, uint32_t def) {
+                            const int64_t v = s.contains(key) && s[key].is_number_integer() ? s[key].get<int64_t>()
+                                                                                             : int64_t(def);
+                            return static_cast<uint32_t>(std::clamp<int64_t>(v, 1, 0xFFFFFF));
+                        };
+                        cfg.snapPerRingPerSec = budget("per_ring_per_s", cfg.snapPerRingPerSec);
+                        cfg.snapTotalPerSec   = budget("total_per_s", cfg.snapTotalPerSec);
+                        cfg.copier = &Macht::ReadBytesSafe;
+                        if (s.contains("funcs") && s["funcs"].is_array()) {
+                            for (const auto& item : s["funcs"]) {
+                                if (!item.is_object()) continue;
+                                ++snapAsked;
+                                std::string cls, fn;
+                                const auto keys = goodKeys(item, cls, fn);
+                                if (keys.empty()) { refuse(cls, fn); continue; }
+                                ++snapOk;
+                                const int32_t ring = static_cast<int32_t>(cfg.snapRingCaps.size());
+                                const int64_t ps = item.value("parms_size", int64_t(0));
+                                const uint32_t cap = Linie::RingCapFor(
+                                    static_cast<uint32_t>(std::clamp<int64_t>(ps, 0, 0xFFFF)));
+                                cfg.snapRingCaps.push_back(cap);
+                                for (const auto& k : keys) {
+                                    Linie::ArmSpec sp;
+                                    sp.key     = k;
+                                    sp.ring    = ring;
+                                    sp.ringCap = cap;
+                                    specs.push_back(sp);
+                                }
+                            }
+                        }
+                    }
+                    // Nothing left is a refusal, never a trace of every call; and ticks that all failed never quietly
+                    // become a snapshots-only trace -- the user asked for a scope.
+                    if (tickOk + snapOk == 0 || (tickAsked != 0 && tickOk == 0)) {
+                        Sein::Warn("PIPE:profile", "pe_profile_start: refused by name (%llu/%llu ticks, %llu/%llu "
+                                   "choices still named)", (unsigned long long)tickOk, (unsigned long long)tickAsked,
+                                   (unsigned long long)snapOk, (unsigned long long)snapAsked);
+                        return Renge::MakeError(id, tickAsked != 0 && tickOk == 0
+                            ? "None of the ticked functions is known by that name in this game any more, so the trace "
+                              "would follow none of them. Record once without the trace so the table names them again."
+                            : "None of the chosen functions is known by that name in this game any more. Record once "
+                              "without the trace so the table names them again.").dump();
+                    }
+                    cfg.arms = Linie::BuildArmState(std::move(specs), snapOk ? Linie::kArmLogCapacity : 0);
+                    cfg.arms->classNameReader = &Ubel::ReadObjectNameKey;
+                    cfg.scoped      = true;
+                    cfg.tickedNames = tickOk;
+                    namesReply = { { "ticks", tickOk }, { "chosen", snapOk }, { "refused", refused } };
+                }
+                // `ticked` addresses are for a DLL that predates names; one that reads ticked_names ignores them.
+                if (!namesTicked && t.contains("ticked") && t["ticked"].is_array()) {
+                    for (const auto& v : t["ticked"]) {
+                        uintptr_t a = 0;
+                        if (v.is_string() && Renge::TryStrToAddr(v.get<std::string>(), a) && a) cfg.ticked.push_back(a);
+                    }
+                }
+                // [TRACE-UNLOADED-NAMES] review UI-1. A tick is an address from an earlier fetch. A function unloaded
+                // since -- its row cut by the fetch limit, so the UI never learned -- would scope the trace on a freed
+                // address: nothing, or whatever function took it. Checked here against the previous recording's table,
+                // which StartRecording has not cleared yet: only a tick that still holds the function it named stays.
+                // None left is a refusal, never a trace of every call -- the opposite of what was ticked.
+                size_t tickedDropped = 0;
+                if (!cfg.ticked.empty()) {
+                    std::vector<Linie::FuncIdentity> ids;
+                    Linie::IdentitiesOf(cfg.ticked, ids);
+                    std::vector<uintptr_t> live;
+                    for (size_t k = 0; k < cfg.ticked.size(); ++k)
+                        if (Ubel::ClassifyFunction(cfg.ticked[k], ids[k]) == Ubel::FuncState::Live)
+                            live.push_back(cfg.ticked[k]);
+                    tickedDropped = cfg.ticked.size() - live.size();
+                    if (live.empty()) {
+                        Sein::Warn("PIPE:profile", "pe_profile_start: all %llu ticked functions are unloaded; refused",
+                                   (unsigned long long)tickedDropped);
+                        return Renge::MakeError(id,
+                            "Every ticked function has been unloaded since it fired, so the trace would follow none of "
+                            "them. Clear ticks, or record once without the trace so the table finds them again.").dump();
+                    }
+                    cfg.ticked.swap(live);
+                }
+                // T5 (b): the previous recording's per-frame functions, read before StartRecording clears its table.
+                if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
+                // Chosen functions and nothing ticked records only the chosen calls (T11).
+                cfg.snapOnly = !cfg.snapRingCaps.empty() && cfg.tickedNames == 0 && cfg.ticked.empty();
+                const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
+                if (st == Linie::TraceStartStatus::SnapTooSmall || st == Linie::TraceStartStatus::SnapNoMemory) {
+                    Sein::Warn("PIPE:profile", "pe_profile_start: snapshot buffer of %llu MB for %llu functions "
+                               "refused (%s)", (unsigned long long)(cfg.snapBytes >> 20),
+                               (unsigned long long)cfg.snapRingCaps.size(),
+                               st == Linie::TraceStartStatus::SnapNoMemory ? "no memory" : "too small");
+                    return Renge::MakeError(id, st == Linie::TraceStartStatus::SnapNoMemory
+                        ? "The game process could not spare " + std::to_string(cfg.snapBytes >> 20) +
+                          " MB for the snapshot buffer. Pick a smaller one and Start again."
+                        : "The snapshot buffer of " + std::to_string(cfg.snapBytes >> 20) + " MB cannot keep " +
+                          std::to_string(Linie::kSnapMinSlots) + " calls for each of the " +
+                          std::to_string(cfg.snapRingCaps.size()) +
+                          " chosen functions. Choose fewer functions, or a larger snapshot buffer.").dump();
+                }
+                if (st != Linie::TraceStartStatus::Ok) {
+                    const char* why = st == Linie::TraceStartStatus::NoMemory ? "no memory"
+                                    : st == Linie::TraceStartStatus::Busy     ? "busy" : "too small";
+                    Sein::Warn("PIPE:profile", "pe_profile_start: trace of %llu MB refused (%s)",
+                               (unsigned long long)(bytes >> 20), why);
+                    return Renge::MakeError(id,
+                        st == Linie::TraceStartStatus::NoMemory
+                            ? "The game process could not spare " + std::to_string(bytes >> 20) +
+                              " MB for the trace buffer. Pick a smaller buffer and Start again. The previous trace "
+                              "was released before the new buffer was tried."
+                        : st == Linie::TraceStartStatus::Busy
+                            ? std::string("A game thread is still inside the previous trace's buffer, so it cannot be "
+                                          "replaced yet. Wait a moment and Start again.")
+                            : std::string("The trace buffer is too small.")).dump();
+                }
+                traceReply = TraceInfoToJson(Linie::GetTraceInfo());
+                if (tickedDropped) traceReply["ticked_dropped"] = tickedDropped;
+                if (!namesReply.is_null()) traceReply["names"] = namesReply;
+                arms = cfg.arms;
+            } else {
+                // A recording without the trace leaves no earlier trace's buffer behind in the game.
+                Linie::FreeTrace();
+            }
+
+            Ubel::SetFunctionCapture(captureSetup);
+            Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey, arms);
+            // Snapshot choices need their layouts read while their functions are alive (F4); ticks alone need none.
+            if (arms && arms->capacity != 0) StartArmWorker(arms);
+            const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startT0).count();
+            Sein::Info("PIPE:profile", "pe_profile_start: recording begun in %lld ms (hook_active=%d, trace=%llu MB, "
+                       "ticked=%llu, by name=%llu, chosen=%llu, snapshot buffer=%llu MB, excluded=%llu)",
+                       startMs, hookActive ? 1 : 0,
+                       (unsigned long long)(traceReply.is_null() ? 0 : traceReply["bytes"].get<uint64_t>() >> 20),
+                       (unsigned long long)(traceReply.is_null() ? 0 : traceReply["ticked"].get<uint64_t>()),
+                       (unsigned long long)(namesReply.is_null() ? 0 : namesReply["ticks"].get<uint64_t>()),
+                       (unsigned long long)(namesReply.is_null() ? 0 : namesReply["chosen"].get<uint64_t>()),
+                       (unsigned long long)(traceReply.is_null() || !traceReply.contains("snap") ? 0
+                                            : traceReply["snap"]["bytes"].get<uint64_t>() >> 20),
+                       (unsigned long long)(traceReply.is_null() ? 0 : traceReply["excluded"].get<uint64_t>()));
             json data;
             data["recording"]   = true;
             data["hook_active"] = hookActive;
+            if (!traceReply.is_null()) data["trace"] = traceReply;
             if (!hookActive) {
                 // THREE failure modes, three remedies. The old text collapsed the
                 // first two and told the user to "do any invoke first", which on the
@@ -4218,10 +4717,42 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         if (cmd == Renge::CMD_PE_PROFILE_STOP) {
+            // [LIVEFUNCS-STEP2] The trace before the table: a name arms its address on the table's read, so arms keep
+            // applying until the trace itself has stopped -- no call between the two loses its hint.
+            // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
+            Linie::StopTrace();
             Linie::StopRecording();   // idempotent; counts retained for pe_profile_get
-            Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen");
+            FinishArms();             // the last layout reads, then the seal
+            Linie::TraceInfo ti = Linie::GetTraceInfo();
+            // Read before the release below: a trace of name ticks that never ran is empty and released there, and
+            // its reply must still say which names were never called.
+            const json names = ArmsSummaryToJson();
+            json snapRings = json::array();
+            {
+                std::vector<Linie::SnapRingInfo> rings;
+                if (Linie::SnapRings(rings)) {
+                    for (const auto& r : rings) {
+                        snapRings.push_back({ { "ring", r.index }, { "cap", r.cap }, { "written", r.written },
+                                              { "first_valid", r.firstValid },
+                                              { "skipped_budget", r.skippedBudget },
+                                              { "dropped_budget", r.droppedBudget } });
+                    }
+                }
+            }
+            // A trace that wrote nothing has nothing to read: give its ring back now instead of leaving it in the game
+            // until the next Start (review DLL-5). The reply still reports it, empty, so the UI can say so.
+            const bool hadTrace = ti.allocated;
+            if (hadTrace && Linie::ReleaseIfEmpty()) ti.allocated = false;
+            Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen (trace: %llu records written, %llu kept%s)",
+                       (unsigned long long)ti.written, (unsigned long long)(ti.written - ti.firstValid),
+                       ti.quiesced ? "" : ", NOT quiesced: the ring will not be read");
             json data;
             data["recording"] = false;
+            if (hadTrace) {
+                data["trace"] = TraceInfoToJson(ti);
+                if (!snapRings.empty()) data["trace"]["snap_rings"] = snapRings;
+            }
+            if (!names.empty()) data["names"] = names;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -4335,10 +4866,31 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [LIVEFUNCS-HIDE-PERFRAME] Opt-in: leave out the functions that fire every frame through the recording,
             // BEFORE the limit, so their rows go to the low-count functions instead of being cut after them.
             bool skipPerFrame = request.value("skip_per_frame", false);
+            // [TRACE-UNLOADED-NAMES] Opt-in, like skip_per_frame: a function unloaded since it fired comes back named
+            // from its first call and marked `unloaded`. An older UI never asks, so it never gets a row whose address
+            // is dead -- it would offer to tick it or disassemble it.
+            const bool includeUnloaded = request.value("include_unloaded", false);
 
             std::vector<Linie::FuncStat> snap;
             uint64_t windowMs = 0;
             Linie::Snapshot(snap, windowMs);
+
+            // Over the whole table, not the page: how many functions (and their calls) are no longer what fired --
+            // unloaded or their address taken by another function -- and how many of those have no name at all.
+            // The cheap test (a slot and a name read), not DescribeFunction: name resolution is what the cap below
+            // exists to bound.
+            int unloadedFuncs = 0, unnamedFuncs = 0;
+            uint64_t unloadedCalls = 0, unnamedCalls = 0;
+            for (const auto& s : snap) {
+                const Ubel::FuncState st = Ubel::ClassifyFunction(s.func, s.ident);
+                if (st == Ubel::FuncState::Unloaded || st == Ubel::FuncState::Recycled) {
+                    ++unloadedFuncs;
+                    unloadedCalls += s.count;
+                } else if (st == Ubel::FuncState::Unnamed) {
+                    ++unnamedFuncs;
+                    unnamedCalls += s.count;
+                }
+            }
 
             uint64_t totalCalls = 0;
             int perFrameHidden = 0;
@@ -4380,20 +4932,47 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // the wrong conclusion to hand a profiler.
                 if ((i & 0xFFF) == 0 && Tot::Requested()) { profileTruncated = true; break; }
                 if (skipPerFrame && Linie::IsPerFrame(snap[i], windowMs)) continue;   // counted above, never emitted
-                FunctionInfo fi{};
-                if (!Ubel::ResolveFunctionInfo(snap[i].func, fi)) continue;  // drop stale/recycled
-                uintptr_t classAddr = Ubel::GetOuter(snap[i].func);  // UFunction's Outer == its UClass
-                std::string cls = Ubel::GetName(classAddr);
+                // [TRACE-UNLOADED-NAMES] What the address is now, against what was read at the function's first call.
+                const Ubel::FunctionDescription fd = Ubel::DescribeFunction(snap[i].func, snap[i].ident);
+                const bool gone = fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled;
+                if (fd.state == Ubel::FuncState::Unnamed) continue;   // nothing says what it was: counted, not emitted
+                if (gone && !includeUnloaded) continue;              // an older UI: no row with a dead address
+                // [LIVEFUNCS-STEP2] The row's name key (T10): the four ints its strings are rendered from, read once,
+                // so a key the UI sends back names exactly the row it showed. A live function's now; a gone one's, or
+                // one whose slot no longer reads as a Function, from its first call.
+                std::string cls = fd.className, fname = fd.name;
+                Linie::NameKey key{};
+                bool haveKey = false;
+                if (fd.state == Ubel::FuncState::Live && Ubel::ReadNameKey(snap[i].func, key) && key.clsIdx != 0) {
+                    haveKey = true;
+                    fname = Serie::GetString(key.fnIdx, key.fnNum);
+                    cls   = Serie::GetString(key.clsIdx, key.clsNum);
+                } else if (snap[i].ident.captured) {
+                    haveKey = true;
+                    key = Linie::NameKey{ snap[i].ident.nameIndex, snap[i].ident.nameNumber,
+                                          snap[i].ident.classIndex, snap[i].ident.classNumber };
+                    fname = Serie::GetString(key.fnIdx, key.fnNum);
+                    cls   = Serie::GetString(key.clsIdx, key.clsNum);
+                }
                 json item;
                 item["class_name"] = cls;
-                item["func_name"]  = fi.name;
+                item["func_name"]  = fname;
+                if (haveKey) item["fname_key"] = json::array({ key.fnIdx, key.fnNum, key.clsIdx, key.clsNum });
+                // Always, not only behind skip_per_frame: the UI marks the row, and its snapshot estimate counts it.
+                if (Linie::IsPerFrame(snap[i], windowMs)) item["per_frame"] = true;
                 item["func_addr"]  = Renge::AddrToStr(snap[i].func);
-                item["num_parms"]  = fi.numParms;
-                item["parms_size"] = fi.parmsSize;
+                item["num_parms"]  = fd.numParms;
+                item["parms_size"] = fd.parmsSize;
                 item["count"]      = snap[i].count;
                 item["first_seq"]  = snap[i].firstSeq;        // call-stream position of first fire
-                item["function_flags"] = fi.functionFlags;   // let the UI tag Event/Delegate/Callable
-                item["is_widget"]  = Aura::ClassDerivesFromAny(classAddr, kWidgetBases);
+                item["function_flags"] = fd.functionFlags;   // let the UI tag Event/Delegate/Callable
+                // A dead class cannot be asked: the capture made the widget test at the first call.
+                item["is_widget"]  = fd.widgetKnown ? fd.isWidget
+                                                    : Aura::ClassDerivesFromAny(Ubel::GetOuter(snap[i].func), kWidgetBases);
+                if (gone) item["unloaded"] = true;
+                if (fd.state == Ubel::FuncState::Recycled) item["recycled"] = true;
+                // Review DLL-3: another function took this address during the recording; the count is both.
+                if (snap[i].ident.reused) item["reused"] = true;
                 item["mean_period_ms"] = snap[i].meanPeriodMs;   // cadence (Phase E): inter-arrival mean
                 item["cv"]             = snap[i].cv;             //   + coefficient of variation (regularity)
                 item["gap_samples"]    = snap[i].gapSamples;     //   + how many gaps measured
@@ -4407,7 +4986,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (periodicLogged < 12) {
                         char buf[192];
                         snprintf(buf, sizeof(buf), "%s%s::%s ~%.0fms cv=%.2f x%llu",
-                                 periodicLogged ? ", " : "", cls.c_str(), fi.name.c_str(),
+                                 periodicLogged ? ", " : "", cls.c_str(), fname.c_str(),
                                  snap[i].meanPeriodMs, snap[i].cv,
                                  (unsigned long long)snap[i].gapSamples);
                         periodicSummary += buf;
@@ -4427,13 +5006,304 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["recording"]      = Linie::IsActive();
             data["distinct_funcs"] = static_cast<int>(snap.size());
             data["total_calls"]    = totalCalls;
+            // [LIVEFUNCS-TIMELINE-2026-10-04] The window the counts cover, so the UI can turn total_calls into a
+            // call rate: the trace slider's estimate of how many seconds a buffer keeps (T1).
+            data["window_ms"]      = windowMs;
             data["functions"]      = functions;
+            // [TRACE-UNLOADED-NAMES] Always sent: an absent key tells the UI this DLL predates them.
+            data["unloaded_funcs"] = unloadedFuncs;
+            data["unloaded_calls"] = unloadedCalls;
+            data["unnamed_funcs"]  = unnamedFuncs;
+            data["unnamed_calls"]  = unnamedCalls;
             // Only when asked: an absent key tells the UI this DLL predates the option, so nothing was left out.
             if (skipPerFrame) {
                 data["per_frame_hidden"] = perFrameHidden;
                 data["per_frame_funcs"]  = perFrameFuncs;
             }
             if (profileTruncated) data["truncated"] = true;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // === [LIVEFUNCS-TIMELINE-2026-10-04] The stopped call trace, read by the Call Trace tab. ===
+        // pe_trace_get: one page of the ring as its 40-byte slots, base64 (hex would double the bytes on a buffer
+        // of up to 512 MB). Stateless paging like the other paged commands: the reply's `next` is where the
+        // following page starts, and paging ends at `written`.
+        if (cmd == Renge::CMD_PE_TRACE_GET) {
+            constexpr int64_t kPageDefault = 65536;
+            constexpr int64_t kPageMax     = 262144;   // 10 MB of records, about 13 MB of base64 per reply
+            const uint64_t from = request.value("from", uint64_t(0));
+            int64_t maxRecs = request.value("max", kPageDefault);
+            if (maxRecs < 1) maxRecs = 1;
+            if (maxRecs > kPageMax) maxRecs = kPageMax;
+
+            // The state reported is the one the copy saw, under the same lock: a Start between a separate read and
+            // the copy would hand back another recording's state with this one's records (review DLL-1).
+            Linie::TraceInfo ti;
+            std::vector<Linie::TraceRecord> recs;
+            uint64_t next = from;
+            const bool copied = Linie::CopyTrace(from, static_cast<size_t>(maxRecs), recs, &next, &ti);
+            json data = TraceInfoToJson(ti);
+            if (!copied) {
+                // Nothing to read: no trace, one still recording, or a stop that never quiesced.
+                data["count"] = 0;
+                data["next"]  = from;
+                data["data"]  = "";
+                return Renge::MakeResponse(id, data).dump();
+            }
+            data["count"] = recs.size();
+            data["next"]  = next;
+            data["data"]  = Linie::Base64Encode(reinterpret_cast<const uint8_t*>(recs.data()),
+                                                recs.size() * sizeof(Linie::TraceRecord));
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // pe_trace_names: the names of the distinct functions (kind "funcs") or calling objects (kind "objs") in the
+        // kept window, paged. Resolved now, after Stop, so a name is what is at that address NOW: an object whose
+        // own index no longer leads back to it is reported not live and is not read.
+        if (cmd == Renge::CMD_PE_TRACE_NAMES) {
+            const std::string kind = request.value("kind", std::string("funcs"));
+            if (kind != "funcs" && kind != "objs") return Renge::MakeError(id, "kind must be \"funcs\" or \"objs\"").dump();
+            int64_t offset = request.value("offset", int64_t(0));
+            int64_t limit  = request.value("limit", int64_t(2000));
+            if (offset < 0) offset = 0;
+            if (limit < 1) limit = 1;
+            if (limit > 20000) limit = 20000;
+
+            std::vector<uintptr_t> funcs, objs;
+            std::vector<Linie::FuncIdentity> idents;   // parallel to funcs: what the table read at each first call
+            uint64_t gen = 0;
+            json data;
+            data["kind"] = kind;
+            const bool have = Linie::TraceDistinct(funcs, objs, &gen, &idents);
+            data["gen"] = gen;
+            // Asked for one recording's names while the DLL holds another: answer nothing and say so (review DLL-1).
+            if (have && request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
+                data["stale"] = true;
+                data["total"] = 0;
+                data["offset"] = offset;
+                data["count"] = 0;
+                data["items"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            if (!have) {
+                data["total"] = 0;
+                data["offset"] = offset;
+                data["count"] = 0;
+                data["items"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            const std::vector<uintptr_t>& list = (kind == "objs") ? objs : funcs;
+            json items = json::array();
+            bool truncated = false;
+            const size_t end = std::min(list.size(), static_cast<size_t>(offset) + static_cast<size_t>(limit));
+            for (size_t i = static_cast<size_t>(offset); i < end; ++i) {
+                if ((i & 0xFF) == 0 && Tot::Requested()) { truncated = true; break; }
+                const uintptr_t a = list[i];
+                json it;
+                it["addr"] = Renge::AddrToStr(a);
+                if (kind == "objs") {
+                    const int32_t idx = Ubel::GetIndex(a);
+                    const bool live = idx >= 0 && Aura::GetByIndex(idx) == a;
+                    it["live"] = live;
+                    if (live) {
+                        it["name"] = Ubel::GetName(a);
+                        const uintptr_t cls = Ubel::GetClass(a);
+                        it["class_name"] = cls ? Ubel::GetName(cls) : std::string();
+                    }
+                } else {
+                    // [TRACE-UNLOADED-NAMES] `live` keeps its meaning -- the address still holds the function that
+                    // fired -- so an older UI, which names only what is live, shows the address as before. An unloaded
+                    // or recycled one carries the name read at its first call, marked.
+                    const Ubel::FunctionDescription fd =
+                        Ubel::DescribeFunction(a, i < idents.size() ? idents[i] : Linie::FuncIdentity{});
+                    it["live"] = fd.state == Ubel::FuncState::Live;
+                    if (fd.state != Ubel::FuncState::Unnamed) {
+                        it["func_name"]      = fd.name;
+                        it["class_name"]     = fd.className;
+                        it["function_flags"] = fd.functionFlags;
+                        it["num_parms"]      = fd.numParms;
+                        it["parms_size"]     = fd.parmsSize;
+                    }
+                    if (fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled)
+                        it["unloaded"] = true;
+                    if (fd.state == Ubel::FuncState::Recycled) it["recycled"] = true;
+                    // Review DLL-3: the address held another function during the recording; its calls are mixed.
+                    if (i < idents.size() && idents[i].reused) it["reused"] = true;
+                    // [LIVEFUNCS-STEP2] F6: where a live native function's code is, for a CE address; "" for a script
+                    // function (its Func is the interpreter) or one not found. Never for a dead address.
+                    if (fd.state == Ubel::FuncState::Live) {
+                        constexpr uint32_t kFuncNative = 0x00000400;
+                        const bool script = fd.functionFlags != 0 && !(fd.functionFlags & kFuncNative);
+                        const uintptr_t code = script ? 0 : Aura::GetFunctionCodeAddr(a);
+                        it["code_addr"] = code ? Renge::AddrToStr(code) : std::string();
+                    }
+                }
+                items.push_back(std::move(it));
+            }
+            data["total"]  = list.size();
+            data["offset"] = offset;
+            data["count"]  = items.size();
+            data["items"]  = std::move(items);
+            if (truncated) data["truncated"] = true;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // pe_trace_release: the UI has read the trace; give the game its memory back now rather than at the next
+        // Start or when the client leaves. With `gen`, only that recording, and only once it has stopped: the release
+        // a reader sends for what it read never frees a newer recording (review DLL-1).
+        // [LIVEFUNCS-STEP2] F5. pe_snap_layouts: every arm of the stopped trace -- one load of a chosen function --
+        // with its layout, paged by arms; layouts shared by several arms are sent once per page. Read once per load.
+        if (cmd == Renge::CMD_PE_SNAP_LAYOUTS) {
+            int64_t offset = request.value("offset", int64_t(0));
+            int64_t limit  = request.value("limit", int64_t(1024));
+            if (offset < 0) offset = 0;
+            if (limit < 1) limit = 1;
+            if (limit > 4096) limit = 4096;
+            uint64_t gen = 0;
+            const std::shared_ptr<Linie::ArmState> arms = Linie::TraceArms(&gen);
+            const Linie::TraceInfo ti = Linie::GetTraceInfo();
+            json data = TraceInfoToJson(ti);
+            data["offset"] = offset;
+            if (request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
+                data["stale"] = true;   // another recording than the one asked for: nothing of it
+                data["total"] = 0;
+                data["count"] = 0;
+                data["arms"] = json::array();
+                data["layouts"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            std::vector<Linie::ArmView> views;
+            if (arms) views = Linie::CopyArms(*arms);
+            json rings = json::array();
+            std::vector<Linie::SnapRingInfo> ri;
+            if (Linie::SnapRings(ri)) {
+                for (const auto& r : ri) {
+                    rings.push_back({ { "ring", r.index }, { "cap", r.cap }, { "written", r.written },
+                                      { "first_valid", r.firstValid }, { "skipped_budget", r.skippedBudget },
+                                      { "dropped_budget", r.droppedBudget } });
+                }
+            }
+            data["rings"] = std::move(rings);
+            json armsJ = json::array(), layoutsJ = json::array();
+            std::unordered_map<const void*, size_t> layoutIndex;
+            size_t bytes = 0, i = static_cast<size_t>(offset);
+            bool truncated = false;
+            for (; i < views.size() && armsJ.size() < static_cast<size_t>(limit); ++i) {
+                if ((i & 0xFF) == 0 && Tot::Requested()) { truncated = true; break; }
+                if (bytes > kSnapPageBytes) break;
+                const Linie::ArmView& v = views[i];
+                json a;
+                a["index"]          = v.index;
+                a["ring"]           = v.rec.ring;
+                a["addr"]           = Renge::AddrToStr(v.rec.addr);
+                a["class_name"]     = Serie::GetString(v.rec.ident.classIndex, v.rec.ident.classNumber);
+                a["func_name"]      = Serie::GetString(v.rec.ident.nameIndex, v.rec.ident.nameNumber);
+                a["function_flags"] = Hex64(v.rec.ident.functionFlags);
+                a["parms_size"]     = v.rec.ident.parmsSize;
+                a["num_parms"]      = v.rec.ident.numParms;
+                a["arm_ms"]         = v.rec.armMs;
+                a["state"]          = ArmStateName(v.state);
+                if (!v.why.empty()) a["why"] = v.why;
+                if (v.state != Linie::ArmLayoutState::Pending &&
+                    v.state != Linie::ArmLayoutState::NotReadBeforeStop) a["read_ms"] = v.readMs;
+                if (v.layout) {
+                    auto it = layoutIndex.find(v.layout.get());
+                    if (it == layoutIndex.end()) {
+                        json lj = ParamLayoutToJson(*static_cast<const Ubel::ParamLayout*>(v.layout.get()));
+                        bytes += lj.dump().size();
+                        it = layoutIndex.emplace(v.layout.get(), layoutsJ.size()).first;
+                        layoutsJ.push_back(std::move(lj));
+                    }
+                    a["layout"] = it->second;
+                }
+                bytes += 256;
+                armsJ.push_back(std::move(a));
+            }
+            data["total"]   = views.size();
+            data["count"]   = armsJ.size();
+            data["next"]    = i;
+            data["arms"]    = std::move(armsJ);
+            data["layouts"] = std::move(layoutsJ);
+            if (truncated) data["truncated"] = true;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // pe_snap_get: one page of one snapshot ring, each slot decoded with its own arm's layout. The slots are copied
+        // under the trace's lock, decoded outside it. Refused (count 0) while tracing, unquiesced or released.
+        if (cmd == Renge::CMD_PE_SNAP_GET) {
+            const int64_t ringIn = request.value("ring", int64_t(-1));
+            const uint64_t from  = request.value("from", uint64_t(0));
+            int64_t maxSlots = request.value("max", int64_t(1024));
+            if (maxSlots < 1) maxSlots = 1;
+            if (maxSlots > 4096) maxSlots = 4096;
+            uint64_t gen = 0;
+            const std::shared_ptr<Linie::ArmState> arms = Linie::TraceArms(&gen);
+            json data = TraceInfoToJson(Linie::GetTraceInfo());
+            data["ring"] = ringIn;
+            const bool stale = request.contains("gen") && request.value("gen", uint64_t(0)) != gen;
+            std::vector<Linie::SnapCopy> slots;
+            uint64_t next = from, orphans = 0;
+            const bool copied = !stale && ringIn >= 0 &&
+                Linie::CopySnaps(static_cast<uint32_t>(ringIn), from, static_cast<size_t>(maxSlots), slots, &next,
+                                 &orphans);
+            if (stale) data["stale"] = true;
+            if (!copied) {
+                data["count"] = 0;
+                data["next"]  = from;
+                data["items"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            std::vector<Linie::ArmView> views;
+            if (arms) views = Linie::CopyArms(*arms);
+            const Ubel::SnapDecodeCtx ctx = LiveSnapDecodeCtx();
+            json items = json::array();
+            size_t bytes = 0;
+            uint64_t pageNext = next;
+            for (size_t k = 0; k < slots.size(); ++k) {
+                const Linie::SnapCopy& s = slots[k];
+                if (bytes > kSnapPageBytes || ((k & 0xFF) == 0 && k && Tot::Requested())) {
+                    pageNext = s.index;   // the rest on the next page
+                    break;
+                }
+                json it;
+                it["index"]     = s.index;
+                it["entry_seq"] = s.entrySeq;
+                it["phase"]     = s.after ? "return" : "entry";
+                it["len"]       = s.len;
+                it["flags"]     = s.flags;
+                it["arm"]       = s.arm;
+                it["data"]      = Linie::Base64Encode(s.bytes.data(), s.bytes.size());
+                const Ubel::SlotDecode d = Ubel::DecodeSlot(views, s.arm, s.bytes.data(),
+                                                            static_cast<uint32_t>(s.bytes.size()), s.after, ctx);
+                if (d.layout) {
+                    json vals = json::array();
+                    for (const auto& v : d.values) vals.push_back(SnapValueToJson(v));
+                    it["values"] = std::move(vals);
+                } else {
+                    it["raw_only"] = ArmStateName(d.state);   // why there are no values: the arm's layout state
+                }
+                bytes += it.dump().size();
+                items.push_back(std::move(it));
+            }
+            data["count"]   = items.size();
+            data["next"]    = pageNext;
+            data["orphans"] = orphans;
+            data["items"]   = std::move(items);
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
+            JoinArmWorker();   // [LIVEFUNCS-STEP2] its arms go with the trace
+            bool released;
+            if (request.contains("gen")) {
+                released = Linie::FreeTraceIfGen(request.value("gen", uint64_t(0)));
+            } else {
+                Linie::FreeTrace();
+                released = !Linie::GetTraceInfo().allocated;
+            }
+            Sein::Info("PIPE:profile", "pe_trace_release: %s", released ? "trace buffer released" : "nothing released");
+            json data;
+            data["released"] = released;
             return Renge::MakeResponse(id, data).dump();
         }
 

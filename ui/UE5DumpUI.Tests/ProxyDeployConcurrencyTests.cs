@@ -94,7 +94,10 @@ public class ProxyDeployConcurrencyTests : IDisposable
             if (ParkRefreshes)
             {
                 var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-                PendingRefreshes.Add(tcs);
+                // Continuations run on the pool (RunContinuationsAsynchronously), so a correcting refresh can add
+                // here while a test copies the list: the copy then threw "Destination array was not long enough"
+                // (CI, 2026-10-07). Writes and the tests' snapshots share this lock.
+                lock (PendingRefreshes) PendingRefreshes.Add(tcs);
                 await tcs.Task;
             }
             // Deliberately NOT honouring ct here. The real service checks the token inside its
@@ -106,7 +109,7 @@ public class ProxyDeployConcurrencyTests : IDisposable
             if (ClearDetailsOnRefresh)
                 foreach (var g in games)
                     if (preserve is null || !preserve.Contains(g.BinariesDir)) g.StatusDetail = RefreshDetail?.Invoke(g);
-            Applied.Add(proxyType);
+            lock (Applied) Applied.Add(proxyType);
         }
 
         /// <summary>Every deploy the VM asked for, with the options it passed. [PROXY-FORCE-UPDATEALL] Kept apart
@@ -1431,11 +1434,18 @@ public class ProxyDeployConcurrencyTests : IDisposable
 
         // Drain, releasing anything that parks afterwards — the CORRECTION is itself a refresh,
         // so a test that only released the first two would deadlock the fix it is measuring.
-        for (int i = 0; i < 200; i++)
+        // On a deadline, not a count of yields: the continuations run on the pool, and 200 yields on this thread
+        // were sometimes over before the correcting refresh had landed (1 run in 5 locally, 2026-10-08).
+        var deadline = DateTime.UtcNow.AddSeconds(5);
+        while (DateTime.UtcNow < deadline)
         {
-            await Task.Yield();
-            foreach (var t in svc.PendingRefreshes.ToList()) t.TrySetResult();
-            if (svc.Applied.LastOrDefault() == ProxyType.Dxgi && svc.PendingRefreshes.Count >= 3) break;
+            await Task.Delay(1, TestContext.Current.CancellationToken);
+            TaskCompletionSource[] pending;
+            lock (svc.PendingRefreshes) pending = svc.PendingRefreshes.ToArray();
+            foreach (var t in pending) t.TrySetResult();
+            ProxyType? last;
+            lock (svc.Applied) last = svc.Applied.Count > 0 ? svc.Applied[^1] : null;
+            if (last == ProxyType.Dxgi && pending.Length >= 3) break;
         }
 
         // The contract is not "the newest one runs" — it is that the grid ends up showing the

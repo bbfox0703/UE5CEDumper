@@ -417,6 +417,53 @@ public interface IDumpService
     Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
         => PeProfileGetAsync(limit, ct);
 
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace. The defaults serve fakes that know nothing of it: a Start
+    // without a trace is the plain Start, and one with a trace is refused rather than silently dropped.
+
+    /// <summary>Start, arming the call trace when <paramref name="trace"/> is given.</summary>
+    Task<PeProfileStartResult> PeProfileStartAsync(TraceStartOptions? trace, CancellationToken ct = default)
+        => trace == null ? PeProfileStartAsync(ct) : throw new NotSupportedException("This service has no call trace.");
+    /// <summary>Stop, and the trace's state after it; null when no trace ran.</summary>
+    async Task<TraceInfo?> PeProfileStopWithTraceAsync(CancellationToken ct = default)
+    {
+        await PeProfileStopAsync(ct);
+        return null;
+    }
+    Task<TracePage> PeTraceGetAsync(ulong from, int max, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no call trace.");
+    /// <summary>[TRACE-UI-LOAD-MEMORY] One page decoded straight into <paramref name="into"/>, the load's window: the
+    /// page's Count is the records written there, and its Data stays empty. Ask no more than <paramref name="into"/>
+    /// holds. This default reads a page and copies it, for a service with nothing better.</summary>
+    async Task<TracePage> PeTraceGetIntoAsync(ulong from, int max, Memory<TraceRecord> into, CancellationToken ct = default)
+    {
+        var page = await PeTraceGetAsync(from, max, ct);
+        return new TracePage { Info = page.Info, Count = CopyPageInto(page.Data, into.Span), Next = page.Next };
+    }
+
+    private static int CopyPageInto(byte[] data, Span<TraceRecord> into)
+    {
+        if (data.Length % System.Runtime.CompilerServices.Unsafe.SizeOf<TraceRecord>() != 0)
+            throw new InvalidDataException($"A trace page of {data.Length} bytes is not whole records.");
+        var recs = System.Runtime.InteropServices.MemoryMarshal.Cast<byte, TraceRecord>(data);
+        if (recs.Length > into.Length)
+            throw new InvalidDataException($"A trace page of {recs.Length} records does not fit {into.Length}.");
+        recs.CopyTo(into);
+        return recs.Length;
+    }
+    /// <summary>Names for recording <paramref name="gen"/>; a page for another recording comes back Stale and empty.</summary>
+    Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no call trace.");
+    Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no call trace.");
+    /// <summary>Free recording <paramref name="gen"/> once it has stopped; never a newer one.</summary>
+    Task PeTraceReleaseAsync(ulong gen, CancellationToken ct = default) => Task.CompletedTask;
+    /// <summary>[LIVEFUNCS-STEP2] The stopped trace's arms with their layouts, from <paramref name="offset"/>.</summary>
+    Task<SnapLayoutsPage> PeSnapLayoutsAsync(ulong gen, int offset, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no parameter snapshots.");
+    /// <summary>[LIVEFUNCS-STEP2] One page of snapshot ring <paramref name="ring"/>, decoded.</summary>
+    Task<SnapPage> PeSnapGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no parameter snapshots.");
+
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has
     /// occupied the DLL's dispatcher, plus Win32 process facts and game-thread

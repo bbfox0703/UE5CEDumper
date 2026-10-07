@@ -428,6 +428,36 @@ public sealed class WindowsPlatformService : IPlatformService, IDisposable
         catch { return long.MaxValue; }
     }
 
+    // [TRACE-UI-LOAD-MEMORY] ullAvailPhys: what the system can hand out without paging -- the figure Task Manager
+    // shows as Available. A failed call is unknown: long.MaxValue, which warns about nothing.
+    public long GetAvailablePhysicalMemoryBytes()
+    {
+        try
+        {
+            var st = new MEMORYSTATUSEX { dwLength = (uint)System.Runtime.CompilerServices.Unsafe.SizeOf<MEMORYSTATUSEX>() };
+            return GlobalMemoryStatusEx(ref st) ? (long)Math.Min(st.ullAvailPhys, (ulong)long.MaxValue) : long.MaxValue;
+        }
+        catch { return long.MaxValue; }
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MEMORYSTATUSEX
+    {
+        public uint  dwLength;
+        public uint  dwMemoryLoad;
+        public ulong ullTotalPhys;
+        public ulong ullAvailPhys;
+        public ulong ullTotalPageFile;
+        public ulong ullAvailPageFile;
+        public ulong ullTotalVirtual;
+        public ulong ullAvailVirtual;
+        public ulong ullAvailExtendedVirtual;
+    }
+
+    [DllImport("kernel32.dll", SetLastError = true, ExactSpelling = true)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static extern bool GlobalMemoryStatusEx(ref MEMORYSTATUSEX lpBuffer);
+
     public long GetTotalDiskSpaceBytes(string path)
     {
         string? root = VolumeRoot.Resolve(path);

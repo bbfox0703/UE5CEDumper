@@ -13,8 +13,9 @@ public partial class LiveFuncsPanel : UserControl
     // AOT-safe sort comparers for every column whose sort path no column binding
     // roots — a template column (no column-level Binding at all) or a text column
     // whose SortMemberPath differs from its Binding path. Their reflection sort is
-    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Class and Function bind and sort on the
-    // same path, so they are rooted and need nothing.
+    // trimmed under AOT (the sort trap explained in Helpers/DataGridSortComparers.cs). Class binds and sorts on the
+    // same path, so it is rooted and needs nothing. Function became a template column for the unloaded marker
+    // ([TRACE-UNLOADED-NAMES]), so it needs one.
     //
     // ⚠ ROOTED IS NOT THE SAME AS CORRECT. This comment used to include Params in that
     // list, and it was right that Params was rooted — and that is exactly why it went
@@ -43,6 +44,7 @@ public partial class LiveFuncsPanel : UserControl
             // because the audit asked "is the header inert under trimming?" and these three
             // were not inert — just wrong.
             ["NumParms"] = DataGridSortComparers.Number<PeProfileEntry>(r => r.NumParms),
+            ["FuncName"] = DataGridSortComparers.Ordinal<PeProfileEntry>(r => r.FuncName),
         };
 
     public LiveFuncsPanel()
@@ -50,6 +52,39 @@ public partial class LiveFuncsPanel : UserControl
         InitializeComponent();
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
         this.AttachFilterView<LiveFuncsViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
+        DataContextChanged += (_, _) => WireTrace();
+    }
+
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's view-side pieces: T7's question needs a window to ask in, and
+    // the tick column shows only with the experimental tabs on (T6). A DataGrid column is not in the visual tree, so
+    // its visibility cannot be bound to the view model; it follows TraceAvailable from here.
+    private LiveFuncsViewModel? _wired;
+
+    private void WireTrace()
+    {
+        if (_wired != null) _wired.PropertyChanged -= OnVmPropertyChanged;
+        _wired = DataContext as LiveFuncsViewModel;
+        if (_wired == null) return;
+        _wired.ConfirmTraceAllCalls = () => ConfirmDialog.ShowAsync(
+            Core.Res.Get("str.LF.Trace.Confirm.Title"), Core.Res.Get("str.LF.Trace.Confirm.Message"),
+            Core.Res.Get("str.LF.Trace.Confirm.Run"), Core.Res.Get("str.LF.Trace.Confirm.Cancel"));
+        _wired.PropertyChanged += OnVmPropertyChanged;
+        ApplyTickColumnVisibility();
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(LiveFuncsViewModel.TraceAvailable)) ApplyTickColumnVisibility();
+    }
+
+    private void ApplyTickColumnVisibility()
+    {
+        var grid = this.FindControl<DataGrid>("ResultsGrid");
+        if (grid == null || _wired == null) return;
+        // [LIVEFUNCS-STEP2] The Snapshot column with it: both ride on the experimental trace.
+        string header = Core.Res.Get("str.LF.Col.Trace"), snapHeader = Core.Res.Get("str.LF.Col.Snapshot");
+        foreach (var col in grid.Columns)
+            if (col.Header as string == header || col.Header as string == snapHeader) col.IsVisible = _wired.TraceAvailable;
     }
 
     private void InitializeComponent()

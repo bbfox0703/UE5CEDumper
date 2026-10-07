@@ -9,9 +9,13 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
+
+#include "Linie.h"   // FuncIdentity: what the profiler's table read at a function's first call
 
 struct FieldInfo {
     uintptr_t   Address;        // FField* address
@@ -357,7 +361,10 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // parmsSize) — no param-chain walk. Validates the meta-class name == "Function"
 // first so a stale/recycled pointer (e.g. one recorded by the Live PE profiler
 // before a GC/level-load reused its slot) fails safe. Returns false when funcAddr
-// is not (or no longer) a UFunction.
+// is not (or no longer) a UFunction. An address freed and taken by ANOTHER
+// UFunction still passes, under the new function's name: the profiler's readers go
+// through DescribeFunction, which compares the names (the function's and its
+// class's) read at the first call.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
 // [FUNCPARM-CONSUMERS] review: the return value's slot in the parameter buffer, from the function's own chain —
@@ -365,6 +372,196 @@ bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 // tail, which records where the return starts but not how long it is. False when the function has no return
 // or the chain cannot be read.
 bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
+
+// [TRACE-UNLOADED-NAMES] D1: a function the game unloads before Stop keeps the name it had when it fired.
+//
+// What CaptureFunctionIdentity reads beyond the FNames, decided on the pipe thread before a recording starts: the
+// FunctionFlags offset (deciding it can run a GObjects vote, which must never happen on the game thread), where
+// NumParms / ParmsSize sit after it, and UMG's widget classes, so "its class is a widget's" is a compare of
+// addresses up the super chain. flagsOffset <= 0 reads no flags.
+struct FunctionCaptureSetup {
+    int flagsOffset = -1;
+    int tailOffset  = 0;
+    std::vector<uintptr_t> widgetBases;   // at most four are used
+};
+// Decides the setup (pipe thread). The widget classes are looked up once per process and kept.
+FunctionCaptureSetup PrepareFunctionCapture();
+// Installs it for CaptureFunctionIdentity. Call before Linie::StartRecording: the table's lock orders the two.
+void SetFunctionCapture(const FunctionCaptureSetup& setup);
+// Linie's identity reader, run on the hook under the table's lock while `func` is being dispatched: ReadSafe loads
+// only -- no allocation, no lock, no string, never the flags vote. False when the function's own FName cannot be
+// read; a class that cannot be read leaves the class fields 0.
+bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out);
+// Linie's key check on every later call: the function's FName ints and its Outer, three loads. False when the FName
+// cannot be read.
+bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, uint64_t& outer);
+
+// What a recorded function address is at read time, against what the table read at its first call.
+//   Live     -- still in its GUObjectArray slot, under the name it was read with, in the class it was read with
+//               (or never read: named now)
+//   Recycled -- still in a slot under ANOTHER name or class: freed, and another function took the address
+//   Unloaded -- no longer in its slot; named from what was read
+//   Unnamed  -- gone, and never read
+enum class FuncState { Live, Unloaded, Recycled, Unnamed };
+// The decision alone, for tests: `slotLive` is GetByIndex(GetIndex(func)) == func, `witnessRead` whether its FName
+// could be read, `now` that FName, `nowClass` its Outer's ({0, 0} when it could not be read).
+FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now, const NameWitness& nowClass,
+                                const Linie::FuncIdentity& ident);
+FuncState ClassifyFunction(uintptr_t func, const Linie::FuncIdentity& ident);
+
+// A recorded function as the pipe sends it. Live: what ResolveFunctionInfo reads now; a live function it refuses
+// (a UFunction subclass that is not literally "Function") is named from the capture, or Unnamed without one. Unloaded
+// and Recycled: the captured names, flags and parameters, and `widgetKnown` with the captured widget test -- a dead
+// class cannot be asked. Unnamed: nothing.
+struct FunctionDescription {
+    FuncState   state = FuncState::Unnamed;
+    std::string name;
+    std::string className;
+    uint32_t    functionFlags = 0;
+    uint8_t     numParms      = 0;
+    uint16_t    parmsSize     = 0;
+    bool        widgetKnown   = false;
+    bool        isWidget      = false;
+};
+FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& ident);
+
+// ============================================================
+// [LIVEFUNCS-STEP2] Parameter snapshots (docs/live-funcs-timeline-plan.md, "Step 2 design"): what a chosen
+// function's parameters are -- read once per arm while the function is alive -- and how a copy of its parameter
+// block decodes after Stop.
+// ============================================================
+
+// Which way a parameter goes, from its property flags. A `const T&` carries CPF_OutParm as well as CPF_ConstParm and
+// CPF_ReferenceParm (UHT's own flags), so "out" alone over-reports; the return value is CPF_ReturnParm | CPF_OutParm.
+enum class ParamKind : uint8_t { In, ConstRef, Out, InOut, Return };
+// A live function's name key: its FName ints and its class's (its Outer's). Loads only. False when the function's
+// FName cannot be read; the class half is 0 when its Outer or the Outer's FName cannot be.
+bool ReadNameKey(uintptr_t func, Linie::NameKey& out);
+// Linie's ObjectNameReader: an object's FName ints. Loads only -- no lock, no string -- on the hook.
+bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber);
+// Whether `key` still names what the UI showed: the function's and its class's names as Serie renders them, the
+// Number included ("Fire_2"). The Start's check of every tick and choice by name (T10).
+bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName);
+
+// One parameter of a chosen function, by value: nothing in it points into the engine, so it stays true after the
+// function unloads (T10, the D1 lesson).
+struct ParamField {
+    std::string name;
+    std::string typeName;
+    int32_t     offset   = 0;
+    int32_t     size     = 0;   // one element
+    int32_t     arrayDim = 1;
+    uint64_t    flags    = 0;
+    ParamKind   kind     = ParamKind::In;
+    uint8_t     boolMask   = 0;   // a packed bool's bit
+    bool        boolNative = false;
+    std::string structType;       // a StructProperty's UScriptStruct
+    std::string objClass;         // an object-family property's PropertyClass
+    std::vector<ParamField> sub;  // a struct's members, its supers' first, kParamStructDepth deep at most
+    std::string enumName;         // an EnumProperty's UEnum, or a ByteProperty's with one
+    std::vector<std::pair<int64_t, std::string>> enumEntries;   // that enum's table, read fresh (never a cache's)
+    uint8_t     optLayout    = 0; // an OptionalProperty's OptionalLayout (UE 5.4+), its wrapped type and size
+    std::string optInnerType;
+    int32_t     optInnerSize = 0;
+};
+inline constexpr int kParamStructDepth = 4;     // struct members nest this deep at most (a struct may hold itself)
+inline constexpr int kParamLeaves      = 256;   // members captured per function at most
+// A chosen function's parameters, read once per arm while it is alive.
+struct ParamLayout {
+    uintptr_t   func = 0;
+    std::string funcName;
+    std::string className;
+    uint32_t    functionFlags = 0;
+    uint16_t    parmsSize     = 0;
+    uint8_t     numParms      = 0;
+    uint32_t    layoutEnd     = 0;   // past the last parameter: its offset + size * arrayDim
+    std::vector<ParamField> params;
+};
+// The function's OWN chain -- never its SuperStruct's (an override's parent) -- in this engine's property model, kept
+// to its CPF_Parm entries (a Blueprint function's locals follow them). False with `why` when `func` is not a
+// UFunction, has no parameter, or reads as an implausible layout.
+bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why);
+
+// [LIVEFUNCS-STEP2] The background read of the arms' layouts (T10). The checks one arm goes through, injectable so a
+// test needs no game memory: is it still the function that was armed, before and after its layout is read.
+struct ArmCaptureOps {
+    FuncState (*classify)(uintptr_t func, const Linie::FuncIdentity& ident) = nullptr;
+    bool (*readKey)(uintptr_t func, Linie::NameKey& key, uint64_t& outer) = nullptr;   // the live name key and Outer
+    bool (*capture)(uintptr_t func, ParamLayout& out, std::string& why) = nullptr;
+    uint64_t (*nowMs)() = nullptr;   // the table's clock, which stamped each arm
+    bool tailDecided = false;        // the flags offset is decided: NumParms / ParmsSize can be checked against it
+};
+ArmCaptureOps DefaultArmCaptureOps();
+// A layout read once, by the full key that made it: the address, its Outer and the four name ints. Owned by the
+// one worker that reads a recording's arms; never a cache keyed by address alone (the second design critic).
+struct ArmLayoutMemo {
+    struct Key {
+        uintptr_t addr; uint64_t outer; Linie::NameKey name;
+        bool operator<(const Key& o) const {
+            if (addr != o.addr) return addr < o.addr;
+            if (outer != o.outer) return outer < o.outer;
+            return name < o.name;
+        }
+    };
+    std::map<Key, std::shared_ptr<const ParamLayout>> layouts;
+    size_t captures = 0;   // CaptureParamLayout runs, for the test of reuse
+};
+// One pass over the arms not yet taken, at most `maxArms`: each checked live, read, checked again and published --
+// Read, UnloadedBeforeRead, ReplacedBeforeRead, Doubtful (it still decodes) or Failed -- with its arm-to-read wait.
+// Returns how many arms it handled.
+size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOps& ops, ArmLayoutMemo& memo);
+
+// [LIVEFUNCS-STEP2] A parameter copy decoded after Stop, against its arm's layout. Each value says how far to trust it.
+enum class SnapMark : uint8_t {
+    Exact   = 0,   // decoded from the copy alone
+    Now     = 1,   // names what is at that address now, which may not be what was there at the call
+    Gone    = 2,   // an address that holds no live object now
+    Missing = 3,   // not in this copy: past its end, or not a value this copy carries (an In after the call)
+    Header  = 4,   // a string's or a container's header only; its data was not copied
+    Raw     = 5,   // a type the decoder does not read: hex
+};
+struct SnapValue {
+    std::string            text;
+    SnapMark               mark = SnapMark::Exact;
+    std::vector<SnapValue> sub;   // a struct's members, in its layout's order
+};
+// What decoding needs from the process, injectable so a test needs no game: FName text, and an object's liveness.
+struct SnapDecodeCtx {
+    std::string (*fname)(int32_t index, int32_t number) = nullptr;
+    bool (*object)(uintptr_t ptr, std::string& name, std::string& className) = nullptr;
+    uintptr_t (*weak)(int32_t objectIndex, int32_t serial) = nullptr;            // ResolveWeakObjectPtr
+    const char* (*garbageTag)(uintptr_t target, int32_t objectIndex) = nullptr;  // WeakTargetGarbageTag
+    // The soft and lazy pointers' shapes; -1 / 0 ask the engine (SoftPathOffset, SoftPathIsTopLevel, SizeofFName,
+    // LazyGuidOffset), a test sets them.
+    int softPathOffset = -1;
+    int softTopLevel   = -1;
+    int fnameSize      = 0;
+    int lazyGuidOffset = -1;
+};
+// One value per parameter of `layout`, in order. `after`: the copy taken when the call returned, which carries the
+// out parameters and the return value -- the rest read Missing; an entry copy reads the return value Missing.
+std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
+                                           const SnapDecodeCtx& ctx);
+// [LIVEFUNCS-STEP2] One snapshot slot decoded with ITS arm's layout. Every load of a function is an arm of its own and
+// a slot says which arm wrote it, so two loads of one name never share a layout. `layout` is that arm's; nullptr -- and
+// no values -- when the arm has none (sealed before its read, unloaded or replaced first, refused, or not in `arms`),
+// which leaves the slot raw for the reader, `state` and `why` saying why.
+struct SlotDecode {
+    const ParamLayout*     layout = nullptr;
+    Linie::ArmLayoutState  state  = Linie::ArmLayoutState::Pending;
+    std::string            why;
+    std::vector<SnapValue> values;
+};
+SlotDecode DecodeSlot(const std::vector<Linie::ArmView>& arms, uint32_t arm, const uint8_t* bytes, uint32_t len,
+                      bool after, const SnapDecodeCtx& ctx);
+
+inline ParamKind ParamKindOf(uint64_t propertyFlags) {
+    constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;
+    if (propertyFlags & kReturn) return ParamKind::Return;
+    if (!(propertyFlags & kOut)) return ParamKind::In;
+    if (propertyFlags & kConst) return ParamKind::ConstRef;
+    return (propertyFlags & kReference) ? ParamKind::InOut : ParamKind::Out;
+}
 
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
@@ -1269,7 +1466,8 @@ const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex);
 // [R7-B-04] A delegate binding's display text: DescribeScriptDelegate + WeakTargetGarbageTag. Every reader that renders
 // a binding goes through this one function.
 std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
-                                    int32_t objIdx, int32_t serial, const std::string& funcName);
+                                    int32_t objIdx, int32_t serial, const std::string& funcName,
+                                    const char* (*garbageTag)(uintptr_t, int32_t) = &WeakTargetGarbageTag);
 
 // Phase E: check if inner type is a weak-pointer type
 bool IsWeakPointerArrayType(const std::string& innerTypeName);

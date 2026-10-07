@@ -540,6 +540,23 @@ public class DataGridSortWiringTests
         return map;
     }
 
+    /// <summary>
+    /// [TRACE-UNLOADED-NAMES] review INT-1. Ctrl+C on a DataGrid row copies each cell through its column's
+    /// ClipboardContentBinding; only a bound column falls back to its Binding, so a template column without one copies
+    /// an empty cell. The Live Funcs Function column became a template column (the "(unloaded)" marker), and a copied
+    /// row lost the one value the panel exists to find. Every sortable template column there now says what it copies.
+    /// </summary>
+    [Fact]
+    public void Live_Funcs_template_columns_say_what_a_row_copy_holds()
+    {
+        var doc = XDocument.Load(Path.Combine(ViewsDir(), "LiveFuncsPanel.axaml"));
+        var silent = doc.Descendants(Av + "DataGridTemplateColumn")
+            .Where(c => c.Attribute("SortMemberPath") != null && c.Attribute("ClipboardContentBinding") == null)
+            .Select(c => (string?)c.Attribute("SortMemberPath"))
+            .ToList();
+        Assert.True(silent.Count == 0, "copied as an empty cell: " + string.Join(", ", silent));
+    }
+
     private static string ViewsDir()
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);

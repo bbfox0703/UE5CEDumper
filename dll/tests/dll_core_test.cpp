@@ -27,10 +27,14 @@
 //   version.lib — linked by CMake.
 
 #include <windows.h>
+#include <psapi.h>    // K32GetProcessMemoryInfo (kernel32 on Windows 7+): the step-2 tests measure a ring freed
+#include <intrin.h>   // __cpuid: the benchmarks name the CPU they ran on
 #include <stdio.h>
 #include <cstdint>
+#include <cstring>
 #include <vector>
 #include <atomic>
+#include <thread>
 
 namespace Sein {
 void Info(const char*, const char*, ...) {}
@@ -1089,11 +1093,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -6647,6 +6651,2629 @@ int main() {
         Linie::Reset();
         Linie::Snapshot(lsnap, lwin);
         check("an empty table has no window", lsnap.empty() && lwin == 0, std::to_string(lwin).c_str());
+
+        // T5 (b) reads the previous recording's per-frame functions before StartRecording clears the table.
+        Linie::StartRecording();
+        for (uint64_t t = 0; t <= 9984; t += 16) Linie::RecordCall(0xA, 1000 + t);
+        Linie::RecordCall(0xB, 5000); Linie::RecordCall(0xB, 5008);
+        Linie::StopRecording();
+        const auto pf = Linie::PerFrameFuncs();
+        check("PerFrameFuncs: the Tick, not the action", pf.size() == 1 && pf[0] == 0xA, std::to_string(pf.size()).c_str());
+        Linie::Reset();
+        check("PerFrameFuncs of an empty table is empty", Linie::PerFrameFuncs().empty());
+    }
+
+    {
+        blk("LIVEFUNCS-TIMELINE: Linie's call trace -- the ring, the ticked scope, what Stop leaves behind");
+        // A clock that counts, so the ticks of every record are known.
+        static uint64_t s_fakeTicks = 0;
+        Linie::SetTraceClockForTest([]() -> uint64_t { return s_fakeTicks += 10; });
+        auto cfg = [](uint64_t records, std::vector<uintptr_t> ticked = {}, std::vector<uintptr_t> exclude = {}) {
+            Linie::TraceConfig c;
+            c.bytes   = records * sizeof(Linie::TraceRecord);
+            c.ticked  = std::move(ticked);
+            c.exclude = std::move(exclude);
+            return c;
+        };
+        std::vector<Linie::TraceRecord> recs;
+        auto copyAll = [&recs]() { recs.clear(); return Linie::CopyTrace(0, SIZE_MAX, recs); };
+        auto sz = [](size_t n) { return std::to_string(n); };
+
+        Linie::AddrSet set;
+        set.Build({ 0x1000, 0x2000, 0x3000, 0 });
+        check("AddrSet holds what it was built from", set.Contains(0x1000) && set.Contains(0x2000) && set.Contains(0x3000));
+        check("...and nothing else", !set.Contains(0x1800) && !set.Contains(0x4000));
+        check("...and never 0, the empty slot, even when 0 was passed in", !set.Contains(0) && set.Size() == 3,
+              sz(set.Size()).c_str());
+        std::vector<uintptr_t> many;
+        for (uintptr_t i = 1; i <= 5000; ++i) many.push_back(i * 0x40);
+        Linie::AddrSet big;
+        big.Build(many);
+        bool allIn = true;
+        for (uintptr_t x : many) allIn = allIn && big.Contains(x);
+        check("a set of 5000 holds every one of them", allIn && big.Size() == 5000, sz(big.Size()).c_str());
+        check("...and not an address between two of them", !big.Contains(0x40 * 2500 + 8));
+        Linie::AddrSet none;
+        none.Build({});
+        check("an empty set holds nothing", none.Empty() && !none.Contains(0x1000));
+        Linie::AddrSet dup;
+        dup.Build({ 0x1000, 0x1000 });
+        check("a duplicate counts once", dup.Size() == 1 && dup.Contains(0x1000), sz(dup.Size()).c_str());
+
+        auto b64 = [](const char* s) { return Linie::Base64Encode(reinterpret_cast<const uint8_t*>(s), strlen(s)); };
+        check("base64: RFC 4648's test vectors",
+              b64("") == "" && b64("f") == "Zg==" && b64("fo") == "Zm8=" && b64("foo") == "Zm9v" &&
+              b64("foob") == "Zm9vYg==" && b64("fooba") == "Zm9vYmE=" && b64("foobar") == "Zm9vYmFy",
+              b64("foobar").c_str());
+        const uint8_t high[] = { 0xFF, 0xFE, 0x00 };
+        check("base64: bytes above 0x7F and a zero byte", Linie::Base64Encode(high, 3) == "//4A",
+              Linie::Base64Encode(high, 3).c_str());
+
+        Linie::FreeTrace();
+        check("a ring of one record is refused", Linie::StartTrace(cfg(1)) == Linie::TraceStartStatus::TooSmall &&
+                                                 !Linie::IsTracing());
+
+        // Two nested calls on one thread, nothing ticked: four records, the returns pointing at their entries.
+        check("a ring of 8 records starts", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Ok && Linie::IsTracing());
+        Linie::TraceToken t1, t2;
+        Linie::TraceEnter(0xF1, 0xB1, 1000, 7, t1);
+        Linie::TraceEnter(0xF2, 0xB2, 900, 7, t2);
+        Linie::TraceReturn(t2, 7);
+        Linie::TraceReturn(t1, 7);
+        check("both calls traced, neither opened a scope (nothing is ticked)",
+              t1.traced && t2.traced && !t1.opened && !t2.opened && t2.entrySeq == 1);
+        Linie::StopTrace();
+        Linie::TraceInfo info = Linie::GetTraceInfo();
+        check("after Stop: 4 records written and all 4 kept",
+              info.allocated && !info.tracing && info.quiesced && info.written == 4 && info.firstValid == 0 &&
+              info.capacity == 8 && info.qpcFreq > 0, sz(info.written).c_str());
+        check("...and they copy out", copyAll() && recs.size() == 4, sz(recs.size()).c_str());
+        if (recs.size() == 4) {
+            check("entry 1: the function, the object, the thread, sequence 0",
+                  recs[0].seqKind == 0 && recs[0].a == 0xF1 && recs[0].b == 0xB1 && recs[0].tid == 7 && recs[0].flags == 0);
+            check("entry 2, nested: sequence 1", recs[1].seqKind == 1 && recs[1].a == 0xF2 && recs[1].b == 0xB2);
+            check("the inner return points at entry 2",
+                  recs[2].seqKind == (2 | Linie::kTraceReturnBit) && recs[2].a == 1 && recs[2].b == 0 && recs[2].tid == 7);
+            check("the outer return points at entry 1", recs[3].seqKind == (3 | Linie::kTraceReturnBit) && recs[3].a == 0);
+            check("one clock read per record, in order",
+                  recs[0].ticks < recs[1].ticks && recs[1].ticks < recs[2].ticks && recs[2].ticks < recs[3].ticks);
+        }
+        Linie::TraceToken late;
+        Linie::TraceEnter(0xF3, 0, 800, 7, late);
+        check("after Stop a call is not traced", !late.traced && Linie::GetTraceInfo().written == 4);
+
+        // A call that entered before Stop and returns after it: no record lands in the stopped ring.
+        Linie::StartTrace(cfg(8));
+        Linie::TraceToken r1;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, r1);
+        std::vector<Linie::TraceRecord> during;
+        check("the ring is not copied while the trace runs", !Linie::CopyTrace(0, 10, during));
+        Linie::StopTrace();
+        Linie::TraceReturn(r1, 1);
+        check("a call that returns after Stop adds no record", r1.traced && Linie::GetTraceInfo().written == 1,
+              sz(Linie::GetTraceInfo().written).c_str());
+
+        // The ring keeps the last records: 6 into 4 slots keeps [2, 6).
+        Linie::StartTrace(cfg(4));
+        for (uintptr_t i = 0; i < 6; ++i) { Linie::TraceToken t; Linie::TraceEnter(0x100 + i, 0, 1000, 1, t); }
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("the ring keeps the LAST 4 of 6: [2, 6)", info.written == 6 && info.firstValid == 2,
+              sz(info.firstValid).c_str());
+        check("...and copies them in order", copyAll() && recs.size() == 4 && recs[0].seqKind == 2 &&
+                                            recs[0].a == 0x102 && recs[3].seqKind == 5 && recs[3].a == 0x105);
+        uint64_t nextSeq = 0;
+        recs.clear();
+        check("a copy from inside the window starts there, and the next page starts at the end",
+              Linie::CopyTrace(4, 10, recs, &nextSeq) && recs.size() == 2 && recs[0].seqKind == 4 && nextSeq == 6,
+              sz(nextSeq).c_str());
+        recs.clear();
+        check("a copy that begins before the window is clipped to it, and the next page follows it",
+              Linie::CopyTrace(0, 3, recs, &nextSeq) && recs.size() == 1 && recs[0].seqKind == 2 && nextSeq == 3,
+              sz(nextSeq).c_str());
+        recs.clear();
+        check("a page wholly before the window moves the next page to the window",
+              Linie::CopyTrace(0, 1, recs, &nextSeq) && recs.empty() && nextSeq == 2, sz(nextSeq).c_str());
+        recs.clear();
+        check("a copy past the end is empty, not a failure, and does not go back",
+              Linie::CopyTrace(6, 10, recs, &nextSeq) && recs.empty() && nextSeq == 6);
+
+        // T5 (a): with a function ticked, only its calls and what they call are traced, on its own thread.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken s0, s1, s2, s3, s4;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, s0);   // outside any ticked call
+        Linie::TraceEnter(0xA7, 0, 900, 1, s1);    // the ticked function opens the scope
+        Linie::TraceEnter(0xF2, 0, 800, 1, s2);    // called inside it
+        Linie::TraceReturn(s2, 1);
+        Linie::TraceReturn(s1, 1);                 // closes it
+        Linie::TraceEnter(0xF3, 0, 900, 1, s3);    // after it, at the same depth
+        Linie::TraceEnter(0xF4, 0, 800, 2, s4);    // another thread
+        check("scope: a call outside the ticked function is not traced", !s0.traced);
+        check("scope: the ticked call opens it", s1.traced && s1.opened);
+        check("scope: a call inside it is traced and opens nothing", s2.traced && !s2.opened);
+        check("scope: once the ticked call returned, the next call is not traced", !s3.traced);
+        Linie::StopTrace();
+        check("scope: the ticked call's entry carries the root flag, the inner one does not",
+              copyAll() && recs.size() == 4 && recs[0].a == 0xA7 && recs[0].flags == Linie::kTraceScopeRoot &&
+              recs[1].flags == 0, sz(recs.size()).c_str());
+
+        // The other thread above ran on this OS thread too (the tid is only a label), so give the cross-thread case
+        // a real second thread: a scope opened here is not open there.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken o1;
+        Linie::TraceEnter(0xA7, 0, 900, 1, o1);
+        bool otherTraced = true;
+        std::thread([&otherTraced] {
+            Linie::TraceToken o2;
+            Linie::TraceEnter(0xF2, 0, 800, 2, o2);
+            otherTraced = o2.traced;
+        }).join();
+        check("scope: another thread is not in this thread's scope", o1.opened && !otherTraced);
+        Linie::TraceReturn(o1, 1);
+        Linie::StopTrace();
+
+        // An exception unwinds the ticked call: no return closes the scope, the next call from higher up does.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken u1, u2, u3, u4, u5, u6;
+        Linie::TraceEnter(0xA7, 0, 900, 1, u1);
+        Linie::TraceEnter(0xF2, 0, 800, 1, u2);
+        Linie::TraceEnter(0xF5, 0, 950, 1, u3);    // above the root's frame: the root is gone
+        Linie::TraceEnter(0xF6, 0, 850, 1, u4);    // deeper again, but the scope is closed
+        check("unwound: a call from above the ticked call's frame closes its scope",
+              u1.opened && u2.traced && !u3.traced && !u4.traced);
+        Linie::TraceEnter(0xA7, 0, 900, 1, u5);
+        Linie::TraceEnter(0xA7, 0, 800, 1, u6);    // the ticked function called inside itself
+        check("a ticked call inside its own scope is traced, not a new root", u5.opened && u6.traced && !u6.opened);
+        Linie::StopTrace();
+        // u5's scope is still open on this thread. The next recording does not inherit it.
+        Linie::StartTrace(cfg(64, { 0xA7 }));
+        Linie::TraceToken g1;
+        Linie::TraceEnter(0xF2, 0, 700, 1, g1);
+        check("a scope the last recording left open does not carry into the next", !g1.traced);
+        Linie::TraceReturn(u5, 1);   // the old root returns now
+        check("...and its late return writes nothing into the new recording", Linie::GetTraceInfo().written == 0,
+              sz(Linie::GetTraceInfo().written).c_str());
+        Linie::StopTrace();
+
+        // T5 (b): an excluded function is left out; what it calls is not.
+        Linie::StartTrace(cfg(64, {}, { 0xEE }));
+        Linie::TraceToken e1, e2;
+        Linie::TraceEnter(0xEE, 0, 900, 1, e1);
+        Linie::TraceEnter(0xF2, 0, 800, 1, e2);
+        check("exclude: the per-frame function is left out", !e1.traced);
+        check("exclude: what it calls is still traced", e2.traced);
+        Linie::StopTrace();
+        Linie::StartTrace(cfg(64, { 0xEE }, { 0xEE }));
+        Linie::TraceToken e3, e4;
+        Linie::TraceEnter(0xEE, 0, 900, 1, e3);
+        Linie::TraceEnter(0xEE, 0, 800, 1, e4);
+        check("exclude: a ticked function still opens its scope", e3.traced && e3.opened);
+        check("exclude: inside the scope the excluded function is still left out", !e4.traced);
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("info counts the two sets", info.ticked == 1 && info.excluded == 1);
+
+        // The distinct functions and objects of the KEPT window: the overwritten first record is not among them, and
+        // a return record (its `a` is a sequence number, not a function) is not either.
+        Linie::StartTrace(cfg(4));
+        {
+            Linie::TraceToken d0, d1, d2, d3;
+            Linie::TraceEnter(0xF9, 0xB9, 1000, 1, d0);   // seq 0, overwritten
+            Linie::TraceEnter(0xF2, 0xB2, 1000, 1, d1);   // seq 1
+            Linie::TraceEnter(0xF1, 0xB1, 900, 1, d2);    // seq 2
+            Linie::TraceReturn(d2, 1);                    // seq 3, a = 2
+            Linie::TraceEnter(0xF2, 0, 900, 1, d3);       // seq 4
+        }
+        Linie::StopTrace();
+        std::vector<uintptr_t> dfuncs, dobjs;
+        check("distinct: the functions and objects of the kept window, sorted, no 0",
+              Linie::TraceDistinct(dfuncs, dobjs) && dfuncs == std::vector<uintptr_t>{ 0xF1, 0xF2 } &&
+              dobjs == std::vector<uintptr_t>{ 0xB1, 0xB2 }, sz(dfuncs.size()).c_str());
+
+        // Review DLL-1: what the UI reads and releases belongs to one recording. The copy reports the state it copied
+        // under the same lock, the names say which recording they are, and a release names its recording.
+        {
+            const uint64_t gen = Linie::GetTraceInfo().gen;
+            Linie::TraceInfo seen;
+            recs.clear();
+            check("a copy reports the trace it copied from, under the same lock",
+                  Linie::CopyTrace(0, 10, recs, nullptr, &seen) && seen.gen == gen && seen.written == 5 &&
+                  seen.firstValid == 1 && seen.allocated && !seen.tracing, sz(seen.written).c_str());
+            uint64_t ngen = 0;
+            check("the distinct names say which recording they are",
+                  Linie::TraceDistinct(dfuncs, dobjs, &ngen) && ngen == gen, sz(ngen).c_str());
+            check("a release that names another recording frees nothing",
+                  !Linie::FreeTraceIfGen(gen + 1) && Linie::GetTraceInfo().allocated);
+            check("a release that names this one frees it",
+                  Linie::FreeTraceIfGen(gen) && !Linie::GetTraceInfo().allocated);
+            Linie::StartTrace(cfg(8));
+            const uint64_t running = Linie::GetTraceInfo().gen;
+            Linie::TraceInfo during;
+            std::vector<Linie::TraceRecord> none;
+            check("a copy refused while recording still reports the trace it saw",
+                  !Linie::CopyTrace(0, 10, none, nullptr, &during) && during.tracing && during.gen == running);
+            check("a release never frees a recording that is still running",
+                  !Linie::FreeTraceIfGen(running) && Linie::IsTracing());
+            Linie::StopTrace();
+        }
+
+        // Review DLL-5: a recording that wrote nothing has nothing to read, and must not keep its ring in the game.
+        Linie::StartTrace(cfg(8));
+        check("a running trace is never released as empty", !Linie::ReleaseIfEmpty() && Linie::IsTracing());
+        Linie::StopTrace();
+        check("a stopped trace that wrote nothing is released", Linie::ReleaseIfEmpty() && !Linie::GetTraceInfo().allocated);
+        Linie::StartTrace(cfg(8));
+        { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); }
+        Linie::StopTrace();
+        check("one that wrote something is kept for the reader", !Linie::ReleaseIfEmpty() && Linie::GetTraceInfo().allocated);
+
+        Linie::FreeTrace();
+        info = Linie::GetTraceInfo();
+        check("FreeTrace releases the ring", !info.allocated && !Linie::CopyTrace(0, 10, recs));
+
+        check("a trace starts again after a free", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Ok);
+        Linie::Reset();
+        check("Linie::Reset (the last client left) stops and frees the trace too",
+              !Linie::IsTracing() && !Linie::GetTraceInfo().allocated);
+
+        // TR2, made deterministic: the clock is read inside a hook's write, so a clock that blocks holds a writer
+        // inside its section. Stop must wait for it; and when it never leaves, the ring is neither read nor freed.
+        static HANDLE s_inside  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE s_release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static std::atomic<int> s_blockNext{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_blockNext.exchange(0) == 1) {
+                SetEvent(s_inside);
+                WaitForSingleObject(s_release, INFINITE);
+            }
+            return 42;
+        });
+        Linie::StartTrace(cfg(8));
+        s_blockNext = 1;
+        std::thread writer([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_inside, 5000);
+        std::atomic<bool> stopped{ false };
+        std::thread stopper([&stopped] { Linie::StopTrace(); stopped = true; });
+        Sleep(100);
+        const bool waited = !stopped.load();
+        SetEvent(s_release);
+        writer.join();
+        stopper.join();
+        check("Stop waits while a hook is inside its write", waited && stopped.load());
+        info = Linie::GetTraceInfo();
+        check("...and keeps the write it waited for", info.written == 1 && info.quiesced, sz(info.written).c_str());
+
+        ResetEvent(s_inside);
+        ResetEvent(s_release);
+        Linie::StartTrace(cfg(8));
+        s_blockNext = 1;
+        std::thread stuck([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_inside, 5000);
+        Linie::StopTrace();   // gives up after its wait
+        info = Linie::GetTraceInfo();
+        std::vector<Linie::TraceRecord> unread;
+        check("a hook that never leaves its write: Stop gives up and the ring is not read",
+              !info.quiesced && !Linie::CopyTrace(0, 10, unread));
+        // Review DLL-2: everything the hook reads stays as it was while it may still be inside -- the ring, its
+        // capacity, the sets -- so a Free leaves it all, and a Start is refused instead of re-arming under it.
+        Linie::FreeTrace();
+        info = Linie::GetTraceInfo();
+        check("...a Free while it may still be inside leaves the ring and its capacity as they were",
+              info.allocated && info.capacity == 8, sz(info.capacity).c_str());
+        check("...and a Start is refused as busy", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Busy);
+        SetEvent(s_release);
+        stuck.join();         // the hook finishes its write into the ring it was given: no fault
+        // Review DLL-3: once the hook has left, the next wait reaches zero and the ring is readable again.
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("once the hook has left, Stop finds it quiesced and the ring is read again",
+              info.quiesced && info.written == 1 && Linie::CopyTrace(0, 10, unread) && unread.size() == 1,
+              sz(unread.size()).c_str());
+        Linie::FreeTrace();
+        check("...and a Free then releases it", !Linie::GetTraceInfo().allocated);
+
+        // Review DLL-2: a fault inside the section (here a C++ throw from the clock; under the DLL's /EHa an SEH
+        // fault unwinds the same way) must not leave the in-flight count up, or every later Stop waits it out.
+        static std::atomic<int> s_throwNext{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_throwNext.exchange(0) == 1) throw std::runtime_error("clock fault");
+            return 42;
+        });
+        Linie::StartTrace(cfg(8));
+        s_throwNext = 1;
+        bool threw = false;
+        try { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); } catch (const std::exception&) { threw = true; }
+        const ULONGLONG stopAt = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stopMs = GetTickCount64() - stopAt;
+        check("a fault inside the hook's write does not leave Stop waiting: it quiesces at once",
+              threw && Linie::GetTraceInfo().quiesced && stopMs < 1000, std::to_string(stopMs).c_str());
+        Linie::FreeTrace();
+
+        // Four threads trace while Stop runs: once Stop returns nothing changes, and every kept slot holds the
+        // record its sequence number says.
+        Linie::SetTraceClockForTest(nullptr);
+        Linie::StartTrace(cfg(1 << 14));
+        std::atomic<bool> go{ true };
+        std::vector<std::thread> threads;
+        for (uint32_t tid = 1; tid <= 4; ++tid) {
+            threads.emplace_back([&go, tid] {
+                while (go.load(std::memory_order_relaxed)) {
+                    Linie::TraceToken outer, inner;
+                    Linie::TraceEnter(0x500 + tid, tid, 2000, tid, outer);
+                    Linie::TraceEnter(0x600 + tid, tid, 1900, tid, inner);
+                    Linie::TraceReturn(inner, tid);
+                    Linie::TraceReturn(outer, tid);
+                }
+            });
+        }
+        Sleep(30);
+        Linie::StopTrace();
+        const uint64_t w1 = Linie::GetTraceInfo().written;
+        Sleep(20);
+        const uint64_t w2 = Linie::GetTraceInfo().written;
+        go = false;
+        for (auto& th : threads) th.join();
+        info = Linie::GetTraceInfo();
+        check("threads: nothing is written once Stop returns", w1 == w2 && w1 > 0, sz(w2 - w1).c_str());
+        bool slotsOk = copyAll() && !recs.empty();
+        for (size_t k = 0; slotsOk && k < recs.size(); ++k) {
+            const Linie::TraceRecord& r = recs[k];
+            const uint64_t seq = r.seqKind & Linie::kTraceSeqMask;
+            const bool isRet = (r.seqKind & Linie::kTraceReturnBit) != 0;
+            slotsOk = seq == info.firstValid + k && r.tid >= 1 && r.tid <= 4 &&
+                      (isRet ? (r.a < seq && r.b == 0)
+                             : ((r.a == 0x500 + r.tid || r.a == 0x600 + r.tid) && r.b == r.tid));
+        }
+        check("threads: every kept slot holds the record its sequence number says", slotsOk, sz(recs.size()).c_str());
+        Linie::FreeTrace();
+
+        // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
+        // not checked -- a timing depends on the machine. One thread, the real clock, a ring that never laps.
+        {
+            // ...so the benchmarks say which CPU they ran on: a nanosecond figure is that CPU's, and the two PCs this
+            // project is measured on differ (the maintainer, 2026-10-07).
+            int regs[4] = {};
+            char brand[49] = {};
+            __cpuid(regs, static_cast<int>(0x80000000u));
+            if (static_cast<unsigned>(regs[0]) >= 0x80000004u) {
+                for (int leaf = 0; leaf < 3; ++leaf) {
+                    __cpuid(regs, static_cast<int>(0x80000002u) + leaf);
+                    memcpy(brand + leaf * 16, regs, 16);
+                }
+            }
+            printf("  info  the benchmarks below ran on: %s\n", brand[0] ? brand : "(CPU brand unknown)");
+        }
+        {
+            constexpr int N = 1 << 20;
+            LARGE_INTEGER f, t0, t1;
+            QueryPerformanceFrequency(&f);
+            auto nsPer = [&](LARGE_INTEGER a, LARGE_INTEGER b) {
+                return double(b.QuadPart - a.QuadPart) * 1e9 / double(f.QuadPart) / N;
+            };
+            Linie::StartTrace(cfg(2ull * N + 16));
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000 + (i & 63), 0x2000, 1000, 1, t);
+                Linie::TraceReturn(t, 1);
+            }
+            QueryPerformanceCounter(&t1);
+            const double traced = nsPer(t0, t1);
+            Linie::StartTrace(cfg(16, { 0xA7 }));
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000 + (i & 63), 0x2000, 1000, 1, t);   // not ticked, not in scope: no record
+            }
+            QueryPerformanceCounter(&t1);
+            const double outOfScope = nsPer(t0, t1);
+            Linie::FreeTrace();
+            printf("  info  trace cost: %.1f ns per traced call (entry + return), %.1f ns per call outside a ticked scope\n",
+                   traced, outOfScope);
+        }
+    }
+
+    {
+        blk("TRACE-UNLOADED-NAMES: a function's identity is read when the recording first sees it");
+        // D1 (docs/live-funcs-timeline-plan.md, "Decided 2026-10-07"): a function the game unloads before Stop keeps
+        // the name it had when it fired. The hook reads it once per distinct function, while it is being dispatched
+        // and so certainly alive; a stub reader stands in for Ubel's here.
+        static int s_reads = 0;
+        static int s_failNext = 0;   // the next N reads fail
+        auto stub = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            ++s_reads;
+            if (s_failNext > 0) { --s_failNext; return false; }
+            out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex    = 7;
+            out.functionFlags = 0x400;
+            out.numParms      = 2;
+            out.parmsSize     = 16;
+            out.isWidget      = (f == 0xB);
+            return true;
+        };
+        auto statOf = [](uintptr_t f) {
+            std::vector<Linie::FuncStat> st;
+            uint64_t w = 0;
+            Linie::Snapshot(st, w);
+            for (const auto& x : st) if (x.func == f) return x;
+            return Linie::FuncStat{};
+        };
+        auto num = [](long long n) { return std::to_string(n); };
+
+        Linie::Reset();
+        s_reads = 0;
+        Linie::StartRecording(stub);
+        Linie::RecordCall(0xA, 1000); Linie::RecordCall(0xA, 1001); Linie::RecordCall(0xA, 1002);
+        Linie::RecordCall(0xB, 1003);
+        Linie::StopRecording();
+        const auto ia = statOf(0xA).ident, ib = statOf(0xB).ident;
+        check("the reader runs once per distinct function, not once per call", s_reads == 2, num(s_reads).c_str());
+        check("...and the table keeps what it read", ia.captured && ia.nameIndex == 0xA && ia.classIndex == 7 &&
+              ia.functionFlags == 0x400 && ia.numParms == 2 && ia.parmsSize == 16 && !ia.isWidget);
+        check("...for each function", ib.captured && ib.nameIndex == 0xB && ib.isWidget);
+
+        // A read that fails is tried again on the function's next calls, a bounded number of times.
+        Linie::StartRecording(stub);
+        s_reads = 0; s_failNext = 1;
+        Linie::RecordCall(0xC, 2000); Linie::RecordCall(0xC, 2001); Linie::RecordCall(0xC, 2002);
+        check("a failed read is tried again on the next call, and not after it succeeds",
+              statOf(0xC).ident.captured && s_reads == 2, num(s_reads).c_str());
+        s_reads = 0; s_failNext = 1000;
+        for (int i = 0; i < 20; ++i) Linie::RecordCall(0xD, 3000 + i);
+        check("...a bounded number of times",
+              !statOf(0xD).ident.captured && s_reads == Linie::kIdentityTries, num(s_reads).c_str());
+        s_failNext = 0;
+        check("...and the calls still count", statOf(0xD).count == 20, num(statOf(0xD).count).c_str());
+
+        // A recording without a reader reads nothing; a new recording keeps nothing of the last one's.
+        Linie::StartRecording();
+        s_reads = 0;
+        Linie::RecordCall(0xA, 4000);
+        check("a recording without a reader reads nothing", !statOf(0xA).ident.captured && s_reads == 0);
+        Linie::StartRecording(stub);
+        check("a new recording starts from an empty table", statOf(0xA).func == 0);
+        Linie::Reset();
+
+        // The trace's distinct functions carry what the table read; a function only the trace saw has nothing (a call
+        // traced between StartTrace and StartRecording, or after StopRecording).
+        Linie::TraceConfig tc;
+        tc.bytes = 64 * sizeof(Linie::TraceRecord);
+        check("setup: a ring of 64 records starts", Linie::StartTrace(tc) == Linie::TraceStartStatus::Ok);
+        Linie::StartRecording(stub);
+        Linie::TraceToken ta, te;
+        Linie::RecordCall(0xA, 5000);
+        Linie::TraceEnter(0xA, 0xB1, 1000, 7, ta);
+        Linie::TraceReturn(ta, 7);
+        Linie::TraceEnter(0xE, 0xB2, 1000, 7, te);   // traced, never counted
+        Linie::TraceReturn(te, 7);
+        Linie::StopRecording();
+        Linie::StopTrace();
+        std::vector<uintptr_t> df, dob;
+        std::vector<Linie::FuncIdentity> di;
+        const bool got = Linie::TraceDistinct(df, dob, nullptr, &di);
+        check("TraceDistinct hands one identity per distinct function, in the same order",
+              got && df.size() == 2 && di.size() == 2 && df[0] == 0xA && df[1] == 0xE, num(di.size()).c_str());
+        check("...the table's for a counted function, none for one only the trace saw",
+              di.size() == 2 && di[0].captured && di[0].nameIndex == 0xA && !di[1].captured);
+        Linie::StartRecording(stub);   // a new recording empties the table: the stopped trace's names stay frozen
+        std::vector<Linie::FuncIdentity> di2;
+        Linie::TraceDistinct(df, dob, nullptr, &di2);
+        check("...frozen with the trace: a table cleared since does not take them back",
+              di2.size() == 2 && di2[0].captured && di2[0].nameIndex == 0xA);
+        Linie::Reset();
+
+        // Review DLL-3: a freed function's address taken by another that fires in the same recording. Each call checks
+        // the function's key -- its FName and its Outer -- against what was read; another function is read again and
+        // the entry marked reused: its count is both functions', and its name the one now there.
+        static int32_t  s_occName  = 0x50;     // the function now at 0xF0
+        static int32_t  s_occClass = 0x90;     // its class's FName
+        static uint64_t s_occOuter = 0x9000;   // its class
+        static int      s_keyReads = 0;
+        auto occReader = [](uintptr_t, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = s_occName;
+            out.classIndex = s_occClass;
+            out.outer = s_occOuter;
+            return true;
+        };
+        auto occKey = [](uintptr_t, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            ++s_keyReads;
+            idx = s_occName;
+            n = 0;
+            outer = s_occOuter;
+            return true;
+        };
+        Linie::StartRecording(occReader, occKey);
+        s_keyReads = 0;
+        Linie::RecordCall(0xF0, 6000); Linie::RecordCall(0xF0, 6001);
+        check("the same function at its address: not reused",
+              !statOf(0xF0).ident.reused && statOf(0xF0).ident.nameIndex == 0x50);
+        check("...the key is checked on the calls after the first sight", s_keyReads == 1, num(s_keyReads).c_str());
+        s_occOuter = 0x9100;   // its class reloaded: a new UClass object, the same names
+        Linie::RecordCall(0xF0, 6002);
+        check("...its class reloaded under the same names: not reused, the new class kept",
+              !statOf(0xF0).ident.reused && statOf(0xF0).ident.outer == 0x9100);
+        s_occName = 0x60; s_occClass = 0xA0; s_occOuter = 0xA000;   // another function took the address
+        Linie::RecordCall(0xF0, 6003); Linie::RecordCall(0xF0, 6004);
+        const auto ru = statOf(0xF0);
+        check("another function at the address: read again and marked reused",
+              ru.ident.reused && ru.ident.nameIndex == 0x60 && ru.ident.classIndex == 0xA0 && ru.count == 5,
+              num(ru.ident.nameIndex).c_str());
+        s_occOuter = 0xA100;   // the new occupant's class reloaded: the same names, so no new reuse...
+        Linie::RecordCall(0xF0, 6005);
+        check("...and the mark stays when the new one's class reloads (the address did hold two functions)",
+              statOf(0xF0).ident.reused && statOf(0xF0).ident.outer == 0xA100);
+        s_occName = 0x50; s_occClass = 0x90; s_occOuter = 0x9000;
+        Linie::RecordCall(0xF0, 6006);
+        check("...and when the first one comes back", statOf(0xF0).ident.reused);
+        Linie::Reset();
+
+        // Review UI-1: a tick is an address from an earlier fetch, and the function there may have been unloaded since
+        // without the UI learning it (its row cut by the fetch limit). pe_profile_start checks the ticks against the
+        // previous recording's table -- still there, since StartRecording has not cleared it yet.
+        Linie::StartRecording(stub);
+        Linie::RecordCall(0xA, 7000);
+        Linie::RecordCall(0xB, 7001);
+        Linie::StopRecording();
+        std::vector<Linie::FuncIdentity> tids;
+        Linie::IdentitiesOf({ 0xA, 0xC, 0xB }, tids);
+        check("IdentitiesOf: the table's identity for each address asked, in order; none for one it never saw",
+              tids.size() == 3 && tids[0].captured && tids[0].nameIndex == 0xA && !tids[1].captured &&
+              tids[2].captured && tids[2].nameIndex == 0xB, num(tids.size()).c_str());
+        Linie::Reset();
+        Linie::IdentitiesOf({ 0xA }, tids);
+        check("...and none from an empty table", tids.size() == 1 && !tids[0].captured);
+
+        // Ubel's reader: loads only, from what Fern installs at Start. A fake UFunction whose Outer is a class two
+        // steps below a widget base, and one whose class derives from nothing.
+        static uint8_t fFn[0x100] = {}, fFn2[0x100] = {}, fCls[0x100] = {}, fMid[0x100] = {}, fBase[0x100] = {},
+                       fOther[0x100] = {};
+        auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        auto at    = [](uint8_t* p) { return reinterpret_cast<uintptr_t>(p); };
+        constexpr int kFlagsOff = 0xB0;
+        put32(fFn, Grimoire::OFF_UOBJECT_NAME, 21);
+        put32(fFn, Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, 3);
+        put(fFn, DynOff::UOBJECT_OUTER, at(fCls));
+        put32(fFn, kFlagsOff, 0x00080401);
+        fFn[kFlagsOff + 4] = 2;                                   // NumParms
+        put32(fFn, kFlagsOff + 6, 24);                            // ParmsSize (uint16; the int32 store's high half is 0)
+        put32(fCls, Grimoire::OFF_UOBJECT_NAME, 22);
+        put(fCls, DynOff::USTRUCT_SUPER, at(fMid));
+        put(fMid, DynOff::USTRUCT_SUPER, at(fBase));
+        put32(fFn2, Grimoire::OFF_UOBJECT_NAME, 23);
+        put(fFn2, DynOff::UOBJECT_OUTER, at(fOther));
+        put(fOther, DynOff::USTRUCT_SUPER, at(fOther));          // a chain that points at itself must end
+
+        Ubel::FunctionCaptureSetup cs;
+        cs.flagsOffset = kFlagsOff;
+        cs.tailOffset  = kFlagsOff;
+        cs.widgetBases = { at(fBase) };
+        Ubel::SetFunctionCapture(cs);
+        Linie::FuncIdentity id{};
+        const bool okA = Ubel::CaptureFunctionIdentity(at(fFn), id);
+        check("Ubel's reader: the function's FName and its class's", okA && id.nameIndex == 21 && id.nameNumber == 3 &&
+              id.classIndex == 22 && id.outer == at(fCls), num(id.nameIndex).c_str());
+        int32_t kIdx = 0, kNum = 0;
+        uint64_t kOuter = 0;
+        check("Ubel's key reader: the FName and the Outer, for the check on every call",
+              Ubel::ReadFunctionKey(at(fFn), kIdx, kNum, kOuter) && kIdx == 21 && kNum == 3 && kOuter == at(fCls));
+        check("...an address that cannot be read is refused", !Ubel::ReadFunctionKey(0x1000, kIdx, kNum, kOuter));
+        check("...its flags and parameters at the offsets set up at Start",
+              id.functionFlags == 0x00080401 && id.numParms == 2 && id.parmsSize == 24, num(id.parmsSize).c_str());
+        check("...a class two steps below a widget base is a widget's", id.isWidget);
+        Linie::FuncIdentity id2{};
+        const bool okB = Ubel::CaptureFunctionIdentity(at(fFn2), id2);
+        check("...a class whose chain points at itself is not, and the walk ends", okB && id2.nameIndex == 23 &&
+              !id2.isWidget);
+        Linie::FuncIdentity id3{};
+        check("...an address that cannot be read is refused", !Ubel::CaptureFunctionIdentity(0x1000, id3));
+        cs.flagsOffset = -1;
+        Ubel::SetFunctionCapture(cs);
+        Linie::FuncIdentity id4{};
+        Ubel::CaptureFunctionIdentity(at(fFn), id4);
+        check("...without a flags offset it reads no flags (it never guesses on the game thread)",
+              id4.nameIndex == 21 && id4.functionFlags == 0 && id4.numParms == 0 && id4.parmsSize == 0);
+        Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
+
+        // The classifier the pipe applies at read time.
+        Linie::FuncIdentity cap{};
+        cap.captured = true;
+        cap.nameIndex = 21;
+        cap.nameNumber = 3;
+        cap.classIndex = 22;
+        const Ubel::NameWitness same{ 21, 3 }, other{ 40, 0 }, sameCls{ 22, 0 }, otherCls{ 45, 0 }, noCls{};
+        using FS = Ubel::FuncState;
+        check("classify: still in its slot, its name and its class's unchanged -> live",
+              Ubel::ClassifyFunctionState(true, true, same, sameCls, cap) == FS::Live);
+        check("...still in its slot under another name -> recycled: another function took the address",
+              Ubel::ClassifyFunctionState(true, true, other, sameCls, cap) == FS::Recycled);
+        // Review DLL-1: every Blueprint class has its own Construct, ReceiveBeginPlay..., all one FName.
+        check("...the same name in ANOTHER class -> recycled too",
+              Ubel::ClassifyFunctionState(true, true, same, otherCls, cap) == FS::Recycled);
+        check("...a class that cannot be read now, or was not read then, is not a difference",
+              Ubel::ClassifyFunctionState(true, true, same, noCls, cap) == FS::Live &&
+              Ubel::ClassifyFunctionState(true, true, same, otherCls,
+                                          [&] { auto c = cap; c.classIndex = 0; return c; }()) == FS::Live);
+        check("...gone from its slot -> unloaded, named from what was read",
+              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, noCls, cap) == FS::Unloaded);
+        check("...gone and never read -> unnamed",
+              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, noCls, Linie::FuncIdentity{}) == FS::Unnamed);
+        check("...never read but still there -> live, named now as before",
+              Ubel::ClassifyFunctionState(true, true, other, otherCls, Linie::FuncIdentity{}) == FS::Live);
+        check("...in its slot but its name unreadable -> unloaded when it was read, unnamed when not",
+              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, noCls, cap) == FS::Unloaded &&
+              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, noCls, Linie::FuncIdentity{}) == FS::Unnamed);
+
+        // What the read costs, printed and not checked: the steady state with a reader installed against none, and
+        // one first sight through Ubel's reader.
+        {
+            constexpr int N = 1 << 20;
+            LARGE_INTEGER f, t0, t1;
+            QueryPerformanceFrequency(&f);
+            auto nsPer = [&](LARGE_INTEGER a, LARGE_INTEGER b, int n) {
+                return double(b.QuadPart - a.QuadPart) * 1e9 / double(f.QuadPart) / n;
+            };
+            Linie::StartRecording();
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(0x1000 + (i & 63), 1000 + i);
+            QueryPerformanceCounter(&t1);
+            const double bare = nsPer(t0, t1, N);
+            Linie::StartRecording(stub);
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(0x1000 + (i & 63), 1000 + i);
+            QueryPerformanceCounter(&t1);
+            const double withReader = nsPer(t0, t1, N);
+            // Review DLL-3's check on every call, through Ubel's readers on the fake function.
+            Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey);
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(at(fFn), 1000 + i);
+            QueryPerformanceCounter(&t1);
+            const double withKey = nsPer(t0, t1, N);
+            Linie::Reset();
+            cs.flagsOffset = kFlagsOff;
+            Ubel::SetFunctionCapture(cs);
+            constexpr int M = 1 << 16;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < M; ++i) { Linie::FuncIdentity x{}; Ubel::CaptureFunctionIdentity(at(fFn), x); }
+            QueryPerformanceCounter(&t1);
+            const double firstSight = nsPer(t0, t1, M);
+            Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
+            printf("  info  table cost: %.1f ns per call with no reader, %.1f ns with one (after the first sight), "
+                   "%.1f ns with Ubel's key check on every call; %.1f ns per first sight through Ubel's reader\n",
+                   bare, withReader, withKey, firstSight);
+        }
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the arm rules -- a name's key, what one arm copies, when it copies after the call");
+        // docs/live-funcs-step2-items.md, N0. Pure rules: the ring a choice gets, what each arming of it copies.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        check("a ring's slot: the parameter block rounded to 8", Linie::RingCapFor(41) == 48 && Linie::RingCapFor(40) == 40,
+              u(Linie::RingCapFor(41)).c_str());
+        check("...capped at kSnapMaxCopy", Linie::RingCapFor(3000) == Linie::kSnapMaxCopy && Linie::kSnapMaxCopy == 2048,
+              u(Linie::RingCapFor(3000)).c_str());
+        check("...kSnapUnknownCopy when the size could not be read",
+              Linie::RingCapFor(0) == Linie::kSnapUnknownCopy && Linie::kSnapUnknownCopy == 256, u(Linie::RingCapFor(0)).c_str());
+        check("an arm copies its own parameter size", Linie::ArmCopyBytes(40, 0x400, 64) == 40,
+              u(Linie::ArmCopyBytes(40, 0x400, 64)).c_str());
+        check("...at most its ring's slot, and says it was cut",
+              Linie::ArmCopyBytes(100, 0x400, 64) == 64 && Linie::ArmTruncated(100, 64) && !Linie::ArmTruncated(64, 64),
+              u(Linie::ArmCopyBytes(100, 0x400, 64)).c_str());
+        check("...the whole slot when nothing could be read", Linie::ArmCopyBytes(0, 0, 64) == 64,
+              u(Linie::ArmCopyBytes(0, 0, 64)).c_str());
+        check("...nothing for a function read as having no parameters", Linie::ArmCopyBytes(0, 0x400, 64) == 0,
+              u(Linie::ArmCopyBytes(0, 0x400, 64)).c_str());
+        check("the after copy: out parameters or a return (FUNC_HasOutParms), or flags never read",
+              Linie::ArmTakesAfter(Linie::kFuncHasOutParms | 0x400) && Linie::ArmTakesAfter(0) &&
+              !Linie::ArmTakesAfter(0x400));
+        check("...and a return value alone, which FUNC_HasOutParms does not cover (measured: SnapProbe_RetOnly)",
+              Linie::ArmTakesAfter(0x400, 4) && !Linie::ArmTakesAfter(0x400, 0xFFFF));
+        const Linie::NameKey k1{ 1, 0, 7, 0 }, k2{ 1, 0, 8, 0 }, k3{ 1, 1, 7, 0 }, k4{ 2, 0, 0, 0 };
+        check("a key orders over its four ints, function first",
+              k1 < k2 && k1 < k3 && k3 < k4 && k2 < k4 && !(k2 < k1) && !(k1 < k1) && k1 == Linie::NameKey{ 1, 0, 7, 0 } &&
+              !(k1 == k2));
+        std::vector<Linie::NameKey> ks{ k4, k2, k1, k3 };
+        std::sort(ks.begin(), ks.end());
+        check("...so a sorted list of keys can be searched", ks[0] == k1 && ks[3] == k4 &&
+              std::binary_search(ks.begin(), ks.end(), k2) && !std::binary_search(ks.begin(), ks.end(), Linie::NameKey{ 1, 0, 9, 0 }));
+        const Linie::ArmHint none{};
+        check("a default hint belongs to no recording and no ring", none.gen == 0 && none.ring == -1 && none.flags == 0);
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: arming by name -- the table's first read of an address arms it for a name it matches");
+        // docs/live-funcs-step2-items.md, N1 (T10): a tick or a choice is a name, and the table reads every function
+        // at its first call anyway. A stub reader stands in for Ubel's: the function's FName is its address's low 16
+        // bits, its class's FName 7 -- except 0xC1, whose FName carries a Number, and 0xC2, whose class is 8.
+        static int s_armReads = 0;
+        auto armStub = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            ++s_armReads;
+            out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
+            out.nameNumber    = (f == 0xC1) ? 1 : 0;
+            out.classIndex    = (f == 0xC2) ? 8 : (f == 0xC3) ? 6 : 7;
+            // 0xE1 has out parameters (FUNC_HasOutParms), 0xE2's flags could not be read, 0xE3's block is 100 bytes.
+            out.functionFlags = (f == 0xE1) ? 0x00400400u : (f == 0xE2) ? 0u : 0x400u;
+            if (f == 0xE4) out.returnValueOffset = 12;   // a return value, and no FUNC_HasOutParms
+            out.numParms      = 2;
+            out.parmsSize     = (f == 0xE3) ? 100 : 16;
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto build = [] {
+            auto a = Linie::BuildArmState({
+                Linie::ArmSpec{ Linie::NameKey{ 0xB, 0, 7, 0 }, false, 0, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xA, 0, 7, 0 }, true, -1, 0 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xC1, 0, 7, 0 }, false, 1, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xC2, 0, 7, 0 }, false, 2, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xC3, 0, 7, 0 }, false, 4, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, true, -1, 0 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, false, 3, 32 },
+            }, 8);
+            a->gen = 5;
+            return a;
+        };
+        auto st = build();
+        bool sorted = true;
+        for (size_t i = 1; i < st->specs.size(); ++i) sorted = sorted && st->specs[i - 1].key < st->specs[i].key;
+        const Linie::ArmSpec* dSpec = nullptr;
+        for (const auto& sp : st->specs) if (sp.key == Linie::NameKey{ 0xD, 0, 7, 0 }) dSpec = &sp;
+        check("BuildArmState sorts the names and merges one ticked and chosen into one spec",
+              st->specs.size() == 6 && sorted && dSpec && dSpec->tick && dSpec->ring == 3 && dSpec->ringCap == 32 &&
+              st->log.capacity() >= 8, u(st->specs.size()).c_str());
+
+        Linie::Reset();
+        Linie::StartRecording(armStub, nullptr, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xA, 1000, &h);
+        check("a ticked name: its first call is armed to open a scope, with no ring",
+              h.gen == 5 && (h.flags & Linie::kArmTick) && h.ring == -1 && st->log.empty(), u(h.gen).c_str());
+        Linie::RecordCall(0xB, 1001, &h);
+        check("a chosen name: armed with its ring, its first arm, its own copy size",
+              h.gen == 5 && h.ring == 0 && h.arm == 0 && h.copy == 16 && !(h.flags & Linie::kArmTick) &&
+              st->log.size() == 1 && st->log[0].addr == 0xB && st->log[0].ring == 0 && st->log[0].armMs == 1001,
+              u(st->log.size()).c_str());
+        check("...the after copy and the cut follow the arm rules (flags 0x400: no out parameters; 16 fits)",
+              !(h.flags & Linie::kArmAfter) && !(h.flags & Linie::kArmTruncated));
+        Linie::ArmHint h2;
+        Linie::RecordCall(0xB, 1002, &h2);
+        check("its next call carries the same hint, and arms nothing new",
+              h2.gen == 5 && h2.ring == 0 && h2.arm == 0 && h2.copy == 16 && st->log.size() == 1, u(st->log.size()).c_str());
+        Linie::RecordCall(0xD, 1003, &h);
+        check("a name both ticked and chosen: one arm does both",
+              (h.flags & Linie::kArmTick) && h.ring == 3 && h.arm == 1 && st->log.size() == 2);
+        Linie::RecordCall(0xC1, 1004, &h);
+        check("the same FName index with another Number is another name: not armed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xC2, 1005, &h);
+        check("the same function name in another class is another name: not armed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xC3, 1005, &h);   // its class sorts just below the followed one: the search lands on it
+        check("...whichever side of the followed class it sorts on", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xE, 1006, &h);
+        check("a name nobody follows: a default hint", h.gen == 0 && h.ring == -1 && h.flags == 0);
+        check("...and the log holds the two arms only", st->log.size() == 2, u(st->log.size()).c_str());
+
+        // The Linie review (tests): the hint's after and cut bits come from the table's read, not only from a test's
+        // hand-made hint.
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xE1, 0, 7, 0 }, false, 0, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE2, 0, 7, 0 }, false, 1, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE3, 0, 7, 0 }, false, 2, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE4, 0, 7, 0 }, false, 3, 64 } }, 8);
+        st2->gen = 6;
+        Linie::StartRecording(armStub, nullptr, st2);
+        Linie::RecordCall(0xE1, 3000, &h);
+        check("out parameters: the table arms the after copy", (h.flags & Linie::kArmAfter) && !(h.flags & Linie::kArmTruncated));
+        Linie::RecordCall(0xE2, 3001, &h);
+        check("flags that could not be read: the after copy too", (h.flags & Linie::kArmAfter) != 0);
+        Linie::RecordCall(0xE3, 3002, &h);
+        check("a block larger than its ring's slot: cut to it, and flagged", (h.flags & Linie::kArmTruncated) &&
+              h.copy == 64 && !(h.flags & Linie::kArmAfter), u(h.copy).c_str());
+        Linie::RecordCall(0xE4, 3003, &h);
+        check("a return value without FUNC_HasOutParms: the table arms the after copy", (h.flags & Linie::kArmAfter) != 0);
+
+        Linie::StartRecording(armStub);
+        Linie::RecordCall(0xB, 2000, &h);
+        check("a recording that follows no names arms nothing", h.gen == 0 && h.ring == -1);
+        Linie::Reset();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: arm upkeep -- a key that changes disarms, a reload is a new arm, an armed class is checked");
+        // docs/live-funcs-step2-items.md, N2. 0xF0 holds whatever the statics say; any other address is a function
+        // nobody follows. The class reader counts its reads: only armed addresses pay for it.
+        static int32_t  s_fn = 0x50, s_cls = 0x90;
+        static uint64_t s_outer = 0x9000;
+        static int      s_keyFail = 0, s_clsReads = 0, s_clsFail = 0, s_readFail = 0;
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            if (f == 0xF0 && s_readFail > 0) { --s_readFail; return false; }
+            const bool occ = (f == 0xF0);
+            out.nameIndex     = occ ? s_fn : static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex    = occ ? s_cls : 7;
+            out.outer         = occ ? s_outer : 0x7000;
+            out.functionFlags = 0x400;
+            out.parmsSize     = 16;
+            return true;
+        };
+        auto keyReader = [](uintptr_t f, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            if (f == 0xF0 && s_keyFail > 0) { --s_keyFail; return false; }
+            idx = (f == 0xF0) ? s_fn : static_cast<int32_t>(f & 0xFFFF);
+            n = 0;
+            outer = (f == 0xF0) ? s_outer : 0x7000;
+            return true;
+        };
+        auto clsReader = [](uint64_t obj, int32_t& idx, int32_t& n) -> bool {
+            ++s_clsReads;
+            if (s_clsFail > 0) { --s_clsFail; return false; }
+            idx = (obj == s_outer) ? s_cls : 7;
+            n = 0;
+            return true;
+        };
+        auto statOf = [](uintptr_t f) {
+            std::vector<Linie::FuncStat> st;
+            uint64_t w = 0;
+            Linie::Snapshot(st, w);
+            for (const auto& x : st) if (x.func == f) return x;
+            return Linie::FuncStat{};
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        std::shared_ptr<Linie::ArmState> st;
+        auto restart = [&] {
+            s_fn = 0x50; s_cls = 0x90; s_outer = 0x9000; s_keyFail = 0;
+            st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x50, 0, 0x90, 0 }, false, 0, 64 } }, 8);
+            st->gen = 9;
+            st->classNameReader = clsReader;
+            Linie::StartRecording(reader, keyReader, st);
+        };
+        Linie::ArmHint h;
+
+        restart();
+        Linie::RecordCall(0xF0, 1000, &h);
+        check("setup: the followed function arms its address", h.gen == 9 && h.ring == 0 && h.arm == 0);
+        s_clsReads = 0;
+        for (int i = 0; i < 10; ++i) Linie::RecordCall(0xF1, 1001 + i, &h);
+        check("an address armed for nothing never has its class read", s_clsReads == 0 && h.gen == 0, u(s_clsReads).c_str());
+        Linie::RecordCall(0xF0, 1020, &h);
+        check("an armed one has, on each later call, and stays armed", s_clsReads == 1 && h.gen == 9 && h.arm == 0,
+              u(s_clsReads).c_str());
+
+        s_outer = 0x9100;   // the class reloaded: a new UClass object, the same names
+        Linie::RecordCall(0xF0, 1030, &h);
+        check("its class reloaded under the same names: a new arm, the same ring",
+              h.gen == 9 && h.ring == 0 && h.arm == 1 && st->log.size() == 2, u(st->log.size()).c_str());
+        check("...the two arms keep their own class, and the address is not called reused",
+              st->log.size() == 2 && st->log[0].ident.outer == 0x9000 && st->log[1].ident.outer == 0x9100 &&
+              !statOf(0xF0).ident.reused);
+
+        s_cls = 0xA0;       // another class at the same address: the function's FName and the Outer unchanged
+        Linie::RecordCall(0xF0, 1040, &h);
+        check("its class's FName changed at the same address: read again, and disarmed",
+              h.gen == 0 && h.ring == -1 && statOf(0xF0).ident.classIndex == 0xA0);
+        s_cls = 0x90;       // review R3: and the followed class comes back at the same addresses
+        Linie::RecordCall(0xF0, 1050, &h);
+        check("...and when the followed class comes back there, armed again (review R3)",
+              h.gen == 9 && h.ring == 0 && h.arm == 2 && st->log.size() == 3, u(st->log.size()).c_str());
+
+        restart();
+        Linie::RecordCall(0xF0, 2000, &h);
+        s_fn = 0x60; s_cls = 0xA0; s_outer = 0xA000;   // another function took the address
+        Linie::RecordCall(0xF0, 2001, &h);
+        check("another function at the address: disarmed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 2002, &h);
+        check("...and it stays so, while the table marks the address reused",
+              h.gen == 0 && statOf(0xF0).ident.reused && st->log.size() == 1, u(st->log.size()).c_str());
+
+        restart();
+        Linie::RecordCall(0xF0, 3000, &h);
+        s_keyFail = 1;
+        Linie::RecordCall(0xF0, 3001, &h);
+        check("a key that cannot be read: that call gets no hint", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 3002, &h);
+        check("...and the next call, read again, is armed as before", h.gen == 9 && h.ring == 0 && h.arm == 0 &&
+              st->log.size() == 1);
+
+        // The Linie review (tests): the class read failing, and the full read failing after a key change.
+        s_clsFail = 1;
+        Linie::RecordCall(0xF0, 3003, &h);
+        check("a class that cannot be read: that call gets no hint", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 3004, &h);
+        check("...the next, read again, is armed", h.gen == 9 && h.ring == 0);
+        s_outer = 0x9200;   // its class reloaded...
+        s_readFail = 1;     // ...and the read of what is there now fails
+        Linie::RecordCall(0xF0, 3005, &h);
+        check("a changed key whose read fails: disarmed, not left with the old arm", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 3006, &h);
+        check("...and read on the next call: a new arm", h.gen == 9 && h.ring == 0 && h.arm == 1 && st->log.size() == 2,
+              u(st->log.size()).c_str());
+        Linie::Reset();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the arm log's capacity and what became of each followed name");
+        // docs/live-funcs-step2-items.md, N3. Every address 0xBx is the same function by name (a class reloaded at
+        // each new address); 0xC is nobody's. A log with room for one arm. s_reload moves 0xB1's class: a reload at
+        // the same address, which is the same address for the count.
+        static uint64_t s_reload = 0;
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex = 7;
+            out.outer = 0x7000 + f + (f == 0xB1 ? s_reload : 0);
+            out.functionFlags = 0x400;
+            out.parmsSize = 16;
+            return true;
+        };
+        auto keyReader = [](uintptr_t f, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            idx = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            n = 0;
+            outer = 0x7000 + f + (f == 0xB1 ? s_reload : 0);
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, true, 0, 64 },
+                                         Linie::ArmSpec{ Linie::NameKey{ 0x88, 0, 7, 0 }, false, 1, 64 } }, 1);
+        st->gen = 3;
+        s_reload = 0;
+        Linie::Reset();
+        Linie::StartRecording(reader, keyReader, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xB1, 1000, &h);
+        check("setup: the first address takes the log's one place", h.ring == 0 && h.arm == 0 && st->log.size() == 1);
+        Linie::RecordCall(0xB2, 1001, &h);
+        check("a full log: no snapshots for the next address, but its tick still opens",
+              h.gen == 3 && h.ring == -1 && (h.flags & Linie::kArmTick) && st->log.size() == 1, u(st->log.size()).c_str());
+        Linie::RecordCall(0xB2, 1002, &h);
+        s_reload = 0x100;
+        Linie::RecordCall(0xB1, 1003, &h);   // read again under a new class: the log is full, the address the same
+        Linie::RecordCall(0xC, 1004, &h);
+        Linie::StopRecording();
+        const auto sum = Linie::ArmsSummary();
+        check("ArmsSummary: one per followed name, in the specs' order", sum.size() == 2 &&
+              sum[0].key == Linie::NameKey{ 0x77, 0, 7, 0 } && sum[1].key == Linie::NameKey{ 0x88, 0, 7, 0 },
+              u(sum.size()).c_str());
+        check("...the followed name: two distinct addresses (not four calls, not three readings), one arm, two matches "
+              "the log could not take", sum.size() == 2 && sum[0].addresses == 2 && sum[0].arms == 1 &&
+              sum[0].armsFull == 2 && sum[0].tick && sum[0].ring == 0, sum.empty() ? "" : u(sum[0].addresses).c_str());
+        check("...a name never called: no address", sum.size() == 2 && sum[1].addresses == 0 && sum[1].arms == 0);
+        Linie::Reset();
+        check("...and none once the recording is gone", Linie::ArmsSummary().empty());
+
+        // Review R4: two followed names taking turns at one address count it once each.
+        static int32_t s_turn = 0x77;
+        auto turnReader = [](uintptr_t, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = s_turn; out.classIndex = 7; out.outer = 0x7000 + s_turn; out.functionFlags = 0x400;
+            out.parmsSize = 16; return true;
+        };
+        auto turnKey = [](uintptr_t, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            idx = s_turn; n = 0; outer = 0x7000 + s_turn; return true;
+        };
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, false, 0, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0x88, 0, 7, 0 }, false, 1, 64 } }, 8);
+        st2->gen = 4;
+        s_turn = 0x77;
+        Linie::StartRecording(turnReader, turnKey, st2);
+        Linie::RecordCall(0xB1, 2000, &h);
+        s_turn = 0x88;
+        Linie::RecordCall(0xB1, 2001, &h);
+        s_turn = 0x77;
+        Linie::RecordCall(0xB1, 2002, &h);
+        const auto turns = Linie::ArmsSummary();
+        check("two names taking turns at one address: one address each, three arms (review R4)",
+              turns.size() == 2 && turns[0].addresses == 1 && turns[1].addresses == 1 && turns[0].arms == 2 &&
+              turns[1].arms == 1, turns.size() == 2 ? (u(turns[0].addresses) + "/" + u(turns[1].addresses)).c_str() : "");
+        Linie::Reset();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: arms handed to the background read, sealed at Stop, freed with the trace");
+        // docs/live-funcs-step2-items.md, N4. Every 0xBx address is the followed function (a reload per address).
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex = 7;
+            out.outer = 0x7000 + f;
+            out.functionFlags = 0x400;
+            out.parmsSize = 16;
+            return true;
+        };
+        auto keyReader = [](uintptr_t f, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            idx = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            n = 0;
+            outer = 0x7000 + f;
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto build = [] { return Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, false, 0, 64 } }, 8); };
+        using LS = Linie::ArmLayoutState;
+
+        Linie::Reset();
+        Linie::FreeTrace();
+        auto st = build();
+        Linie::TraceConfig tc;
+        tc.bytes = 64 * sizeof(Linie::TraceRecord);
+        tc.arms = st;
+        check("setup: a trace that follows names starts", Linie::StartTrace(tc) == Linie::TraceStartStatus::Ok);
+        check("StartTrace stamps the names with its recording", st->gen != 0 && st->gen == Linie::GetTraceInfo().gen,
+              u(st->gen).c_str());
+        Linie::StartRecording(reader, keyReader, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xB1, 1000, &h);
+        Linie::RecordCall(0xB2, 1001, &h);
+        const auto p1 = Linie::TakePendingArms(*st, 64);
+        check("the arms made so far are handed out, in order",
+              p1.size() == 2 && p1[0].index == 0 && p1[0].rec.addr == 0xB1 && p1[1].index == 1 && p1[1].rec.addr == 0xB2,
+              u(p1.size()).c_str());
+        check("...once each", Linie::TakePendingArms(*st, 64).empty());
+        Linie::RecordCall(0xB3, 1002, &h);
+        Linie::RecordCall(0xB4, 1003, &h);
+        const auto p2 = Linie::TakePendingArms(*st, 1);
+        check("...at most as many as asked, the oldest first", p2.size() == 1 && p2[0].index == 2, u(p2.size()).c_str());
+        const auto p3 = Linie::TakePendingArms(*st, SIZE_MAX);   // review R2: "all of them", twice
+        const auto p4 = Linie::TakePendingArms(*st, SIZE_MAX);
+        check("...'all of them' takes the rest, and asked again takes nothing -- no wrap-around (review R2)",
+              p3.size() == 1 && p3[0].index == 3 && p4.empty(), (u(p3.size()) + "/" + u(p4.size())).c_str());
+
+        const auto lay = std::make_shared<int>(42);
+        check("a layout published for an arm", Linie::PublishArmLayout(*st, 0, LS::Read, lay, {}, 15));
+        check("...is not published twice", !Linie::PublishArmLayout(*st, 0, LS::Failed, nullptr, "again"));
+        check("...nor for an arm the log does not hold", !Linie::PublishArmLayout(*st, 9, LS::Read, lay));
+        check("...nor for a place the log has room for but no arm has taken yet",
+              !Linie::PublishArmLayout(*st, 5, LS::Read, lay));
+
+        Linie::StopTrace();
+        Linie::RecordCall(0xB5, 1004, &h);
+        check("once the trace has stopped, a new address is armed for no snapshots", h.ring == -1 && st->log.size() == 4,
+              u(st->log.size()).c_str());
+
+        Linie::SealArms(*st);
+        check("sealed: a late publish does not land", !Linie::PublishArmLayout(*st, 1, LS::Read, lay));
+        const auto v = Linie::CopyArms(*st);
+        check("CopyArms: every arm, with what became of its layout",
+              v.size() == 4 && v[0].state == LS::Read && v[0].layout == lay && v[0].readMs == 15 &&
+              v[1].state == LS::NotReadBeforeStop && v[3].state == LS::NotReadBeforeStop && !v[1].layout &&
+              v[2].rec.addr == 0xB3, u(v.size()).c_str());
+
+        uint64_t armsGen = 0;
+        auto held = Linie::TraceArms(&armsGen);
+        check("the stopped trace hands its readers the names it follows, with its gen",
+              held.get() == st.get() && armsGen == Linie::GetTraceInfo().gen && armsGen != 0);
+        held.reset();   // a reader's copy, let go: the trace's own reference is what the next checks follow
+        std::weak_ptr<Linie::ArmState> w = st;
+        st.reset();
+        tc.arms.reset();
+        Linie::StopRecording();
+        const uint64_t gen = Linie::GetTraceInfo().gen;
+        check("freeing the trace lets go of the names -- the trace's and the recording's",
+              Linie::FreeTraceIfGen(gen) && w.expired());
+        check("...after which there are none to hand out", !Linie::TraceArms());
+
+        // TR2: while a hook may still be inside, a Free changes nothing, the names included.
+        static HANDLE s_in2  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE s_out2 = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static std::atomic<int> s_block2{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_block2.exchange(0) == 1) { SetEvent(s_in2); WaitForSingleObject(s_out2, INFINITE); }
+            return 42;
+        });
+        auto st2 = build();
+        std::weak_ptr<Linie::ArmState> w2 = st2;
+        Linie::TraceConfig tc2;
+        tc2.bytes = 64 * sizeof(Linie::TraceRecord);
+        tc2.arms = std::move(st2);
+        Linie::StartTrace(tc2);
+        tc2.arms.reset();
+        Linie::StartRecording(reader, keyReader, w2.lock());
+        s_block2 = 1;
+        std::thread stuck([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_in2, 5000);
+        Linie::StopTrace();   // gives up after its wait
+        Linie::StopRecording();
+        const uint64_t gen2 = Linie::GetTraceInfo().gen;
+        check("a Free while a hook may still be inside keeps the names", !Linie::FreeTraceIfGen(gen2) && !w2.expired());
+        SetEvent(s_out2);
+        stuck.join();
+        Linie::StopTrace();
+        check("...and lets them go once it has left", Linie::FreeTraceIfGen(gen2) && w2.expired());
+        Linie::SetTraceClockForTest(nullptr);
+
+        auto st3 = build();
+        std::weak_ptr<Linie::ArmState> w3 = st3;
+        Linie::StartRecording(reader, keyReader, std::move(st3));
+        Linie::Reset();
+        check("Reset lets go of the recording's names", w3.expired());
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the trace's scope by name -- a ticked name opens it, a waiting tick records nothing");
+        // docs/live-funcs-step2-items.md, T1 (T10). The scope is the Start's: fixed from what was ASKED.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        Linie::Reset();
+        Linie::FreeTrace();
+        Linie::TraceConfig c;
+        c.bytes = 64 * sizeof(Linie::TraceRecord);
+        c.scoped = true;
+        c.tickedNames = 1;
+        check("setup: a trace scoped by one ticked name, no ticked address",
+              Linie::StartTrace(c) == Linie::TraceStartStatus::Ok);
+        const uint64_t gen = Linie::GetTraceInfo().gen;
+        Linie::ArmHint tick{};
+        tick.gen = gen;
+        tick.flags = Linie::kArmTick;
+        Linie::TraceToken a, b, d, e, f;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, e);            // nothing armed yet: the tick waits
+        Linie::TraceEnter(0xF0, 0, 900, 1, a, 0, tick);    // its first call: armed by name
+        Linie::TraceEnter(0xF2, 0, 800, 1, b);             // called inside it
+        Linie::TraceReturn(b, 1);
+        Linie::TraceReturn(a, 1);
+        Linie::TraceEnter(0xF3, 0, 1000, 1, d);            // after it
+        Linie::ArmHint old = tick;
+        old.gen = gen - 1;
+        Linie::TraceEnter(0xF0, 0, 900, 1, f, 0, old);     // armed, but by another recording's hint
+        check("a call before its ticked name is called: nothing (not every call -- the tick waits)", !e.traced);
+        check("the ticked name's call opens the scope", a.traced && a.opened);
+        check("...the call inside it is traced", b.traced && !b.opened);
+        check("...the one after it is not", !d.traced);
+        check("a hint of another recording opens nothing", !f.traced);
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        check("the records: the root with its flag, then the nested call, then the two returns",
+              Linie::CopyTrace(0, 64, recs) && recs.size() == 4 && recs[0].a == 0xF0 &&
+              recs[0].flags == Linie::kTraceScopeRoot && recs[1].a == 0xF2, u(recs.size()).c_str());
+        const Linie::TraceInfo info = Linie::GetTraceInfo();
+        check("the info says what was asked: scoped, one ticked name, not snapshots-only",
+              info.scoped && info.tickedNames == 1 && !info.snapOnly && info.ticked == 0);
+        Linie::FreeTrace();
+
+        Linie::TraceConfig legacy;
+        legacy.bytes = 64 * sizeof(Linie::TraceRecord);
+        legacy.ticked = { 0xA7 };
+        Linie::StartTrace(legacy);
+        check("ticked addresses scope a trace whatever `scoped` says", Linie::GetTraceInfo().scoped);
+        Linie::TraceToken g;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, g);
+        check("...so a call outside them is not traced", !g.traced);
+        Linie::FreeTrace();
+        Linie::TraceConfig every;
+        every.bytes = 64 * sizeof(Linie::TraceRecord);
+        Linie::StartTrace(every);
+        Linie::TraceToken k;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, k);
+        check("nothing asked: every call, as before", !Linie::GetTraceInfo().scoped && k.traced);
+        Linie::FreeTrace();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the snapshot rings -- one per choice in one allocation, the same K, freed with the trace");
+        // docs/live-funcs-step2-items.md, S1 (T12). Two rings of 16 and 40 bytes: slots of 24 + 16 and 24 + 40, each
+        // ring 64-aligned. K = (bytes - 64 * rings) / (40 + 64).
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto cfg = [](uint64_t snapBytes) {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 16, 40 };
+            c.snapBytes = snapBytes;
+            return c;
+        };
+        Linie::Reset();
+        Linie::FreeTrace();
+        check("bytes for K = 8 exactly: the trace starts", Linie::StartTrace(cfg(128 + 8 * 104)) == Linie::TraceStartStatus::Ok);
+        Linie::TraceInfo info = Linie::GetTraceInfo();
+        check("...the rings are there, keeping 8 calls each",
+              info.snap.allocated && info.snap.rings == 2 && info.snap.slotsPerRing == 8 && info.snap.bytes > 0,
+              u(info.snap.slotsPerRing).c_str());
+        std::vector<Linie::SnapRingInfo> rings;
+        check("SnapRings is refused while the trace runs", !Linie::SnapRings(rings));
+        Linie::StopTrace();
+        uint64_t rgen = 0;
+        check("...and after Stop gives each ring, in order, with nothing written yet",
+              Linie::SnapRings(rings, &rgen) && rings.size() == 2 && rings[0].index == 0 && rings[0].cap == 16 &&
+              rings[1].cap == 40 && rings[0].written == 0 && rgen == info.gen, u(rings.size()).c_str());
+
+        check("one byte short of K = 8: refused as a snapshot buffer too small",
+              Linie::StartTrace(cfg(128 + 8 * 104 - 1)) == Linie::TraceStartStatus::SnapTooSmall);
+        check("...and the trace's own ring is freed too", !Linie::GetTraceInfo().allocated && !Linie::IsTracing());
+        {
+            // The Linie review (tests): "freed" measured, not inferred -- the refused Start's own 256 MB ring is a local
+            // that the trace's state never saw. The process's committed private bytes come back.
+            auto privateBytes = [] {
+                PROCESS_MEMORY_COUNTERS_EX pmc{};
+                pmc.cb = sizeof(pmc);
+                K32GetProcessMemoryInfo(GetCurrentProcess(), reinterpret_cast<PROCESS_MEMORY_COUNTERS*>(&pmc), sizeof(pmc));
+                return static_cast<uint64_t>(pmc.PrivateUsage);
+            };
+            Linie::TraceConfig big = cfg(100);   // a snapshot buffer smaller than the rings' alignment
+            big.bytes = 256ull << 20;
+            const uint64_t before = privateBytes();
+            const bool refused = Linie::StartTrace(big) == Linie::TraceStartStatus::SnapTooSmall;
+            const uint64_t after = privateBytes();
+            check("...measured: a refused Start leaves no 256 MB ring committed behind it",
+                  refused && after < before + (16ull << 20), (u((after - before) >> 20) + " MB").c_str());
+        }
+        check("a buffer smaller than the rings' alignment: refused, not a wrapped-around K",
+              Linie::StartTrace(cfg(100)) == Linie::TraceStartStatus::SnapTooSmall && !Linie::GetTraceInfo().allocated);
+        Linie::TraceConfig none = cfg(0);
+        none.snapRingCaps.clear();
+        Linie::StartTrace(none);
+        check("no choices: no snapshot rings", Linie::GetTraceInfo().allocated && !Linie::GetTraceInfo().snap.allocated);
+
+        auto startStop = [&] { Linie::StartTrace(cfg(4096)); Linie::StopTrace(); return Linie::GetTraceInfo().snap.allocated; };
+        check("FreeTrace frees the rings", startStop() && (Linie::FreeTrace(), !Linie::GetTraceInfo().snap.allocated));
+        check("FreeTraceIfGen frees them", startStop() &&
+              Linie::FreeTraceIfGen(Linie::GetTraceInfo().gen) && !Linie::GetTraceInfo().snap.allocated);
+        check("ReleaseIfEmpty frees them", startStop() && Linie::ReleaseIfEmpty() && !Linie::GetTraceInfo().snap.allocated);
+        check("Reset frees them", startStop() && (Linie::Reset(), !Linie::GetTraceInfo().snap.allocated));
+
+        // TR2: while a hook may still be inside, a Free changes nothing, the rings included.
+        static HANDLE s_in3  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE s_out3 = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static std::atomic<int> s_block3{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_block3.exchange(0) == 1) { SetEvent(s_in3); WaitForSingleObject(s_out3, INFINITE); }
+            return 42;
+        });
+        Linie::StartTrace(cfg(4096));
+        s_block3 = 1;
+        std::thread stuck([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_in3, 5000);
+        Linie::StopTrace();
+        Linie::FreeTrace();
+        check("a hook that may still be inside: the rings stay, SnapRings is refused, a Start is busy",
+              Linie::GetTraceInfo().snap.allocated && !Linie::SnapRings(rings) &&
+              Linie::StartTrace(cfg(4096)) == Linie::TraceStartStatus::Busy);
+        SetEvent(s_out3);
+        stuck.join();
+        Linie::StopTrace();
+        Linie::FreeTrace();
+        check("...and go once it has left", !Linie::GetTraceInfo().snap.allocated);
+        Linie::SetTraceClockForTest(nullptr);
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the entry copy -- a chosen call's parameters into its ring, the entry record flagged");
+        // docs/live-funcs-step2-items.md, S2. A copier that is plain memcpy stands in for Macht's.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        Linie::Reset();
+        Linie::FreeTrace();
+        Linie::TraceConfig c;
+        c.bytes = 64 * sizeof(Linie::TraceRecord);
+        c.snapRingCaps = { 64, 16 };
+        c.snapBytes = 64 * 1024;
+        c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+        Linie::StartTrace(c);
+        const uint64_t gen = Linie::GetTraceInfo().gen;
+        uint8_t buf[128];
+        for (int i = 0; i < 128; ++i) buf[i] = static_cast<uint8_t>(i * 3 + 1);
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        Linie::ArmHint h{};
+        h.gen = gen; h.ring = 0; h.arm = 3; h.copy = 16;
+        Linie::TraceToken t0, t1, t2, t3;
+        Linie::TraceEnter(0xF0, 0xB0, 1000, 1, t0);                 // not chosen
+        Linie::TraceEnter(0xF1, 0xB1, 1000, 1, t1, params, h);       // chosen: ring 0, arm 3, 16 bytes
+        Linie::ArmHint bad = h;
+        bad.ring = 5;                                                 // a ring the trace does not have
+        Linie::TraceEnter(0xF2, 0xB2, 1000, 1, t2, params, bad);
+        Linie::ArmHint big = h;
+        big.ring = 1; big.copy = 100;                                 // more than ring 1's 16-byte slot
+        Linie::TraceEnter(0xF3, 0xB3, 1000, 1, t3, params, big);
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        Linie::CopyTrace(0, 64, recs);
+        check("the chosen call's entry record says its parameters were taken; the others do not",
+              recs.size() == 4 && recs[0].flags == 0 && (recs[1].flags & Linie::kTraceSnapTaken) &&
+              !(recs[2].flags & Linie::kTraceSnapTaken) && (recs[3].flags & Linie::kTraceSnapTaken), u(recs.size()).c_str());
+        std::vector<Linie::SnapCopy> s0, s1;
+        uint64_t next = 0;
+        check("ring 0 holds one slot: the call's entry sequence number, its arm, the 16 bytes of its block",
+              Linie::CopySnaps(0, 0, 10, s0, &next) && s0.size() == 1 && s0[0].index == 0 && s0[0].entrySeq == 1 &&
+              s0[0].arm == 3 && !s0[0].after && s0[0].len == 16 && s0[0].flags == 0 && s0[0].bytes.size() == 16 &&
+              memcmp(s0[0].bytes.data(), buf, 16) == 0 && next == 1, u(s0.size()).c_str());
+        check("a ring the trace does not have takes nothing", recs.size() == 4 && t2.traced);
+        check("a copy larger than its ring's slot is cut to the slot",
+              Linie::CopySnaps(1, 0, 10, s1) && s1.size() == 1 && s1[0].len == 16 && s1[0].entrySeq == 3 &&
+              memcmp(s1[0].bytes.data(), buf, 16) == 0, s1.empty() ? "" : u(s1[0].len).c_str());
+        Linie::FreeTrace();
+
+        Linie::TraceConfig plain;
+        plain.bytes = 64 * sizeof(Linie::TraceRecord);
+        Linie::StartTrace(plain);
+        Linie::ArmHint h2 = h;
+        h2.gen = Linie::GetTraceInfo().gen;
+        Linie::TraceToken t4;
+        Linie::TraceEnter(0xF1, 0xB1, 1000, 1, t4, params, h2);
+        Linie::StopTrace();
+        recs.clear();
+        std::vector<Linie::SnapCopy> none;
+        check("a trace without snapshot rings: the record is step 1's, and there is nothing to copy",
+              Linie::CopyTrace(0, 64, recs) && recs.size() == 1 && recs[0].flags == 0 && !Linie::CopySnaps(0, 0, 10, none));
+        Linie::FreeTrace();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the copy after the call -- its own slot, the same entry, only when owed, only this recording");
+        // docs/live-funcs-step2-items.md, S3 (TR3: never a write-back).
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto memcpyCopier = [](uintptr_t src, void* dst, size_t n) -> bool {
+            memcpy(dst, reinterpret_cast<const void*>(src), n); return true;
+        };
+        auto start = [&] {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 64 * 1024;
+            c.copier = memcpyCopier;
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        Linie::Reset();
+        Linie::FreeTrace();
+        uint8_t buf[16];
+        memset(buf, 0x11, sizeof buf);
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        uint64_t gen = start();
+        Linie::ArmHint h{};
+        h.gen = gen; h.ring = 0; h.arm = 2; h.copy = 16; h.flags = Linie::kArmAfter;
+        Linie::TraceToken t;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, h);
+        memset(buf, 0x22, sizeof buf);                     // the call writes its out parameters and its return
+        Linie::TraceReturn(t, 1, params);
+        Linie::ArmHint noAfter = h;
+        noAfter.flags = 0;
+        Linie::TraceToken t2;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, t2, params, noAfter);
+        Linie::TraceReturn(t2, 1, params);
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> s;
+        Linie::CopySnaps(0, 0, 10, s);
+        check("three slots: the call's two copies, then the second call's entry copy only",
+              s.size() == 3 && !s[0].after && s[1].after && !s[2].after, u(s.size()).c_str());
+        if (s.size() == 3) {
+            check("the entry copy holds the block as the call began, the after copy as it returned",
+                  s[0].bytes.size() == 16 && s[0].bytes[0] == 0x11 && s[1].bytes.size() == 16 && s[1].bytes[0] == 0x22);
+            check("...both carry the call's entry sequence number and its arm",
+                  s[0].entrySeq == 0 && s[1].entrySeq == 0 && s[1].arm == 2 && s[2].entrySeq == 2,
+                  u(s[1].entrySeq).c_str());
+        }
+
+        // A call that entered under the last recording returns under a new one: nothing lands in the new rings.
+        gen = start();
+        h.gen = gen;
+        Linie::TraceToken t3;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, t3, params, h);
+        Linie::StopTrace();
+        start();
+        Linie::TraceReturn(t3, 1, params);
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> s2;
+        Linie::CopySnaps(0, 0, 10, s2);
+        check("a return after Stop and a new Start writes no after copy into the new rings", s2.empty(),
+              u(s2.size()).c_str());
+        Linie::FreeTrace();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a chosen call the scope would not record is recorded alone; snapshots-only; excluded kept");
+        // docs/live-funcs-step2-items.md, S4 (T11). A1 is ticked by name, A7 chosen (ring 0).
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](bool ticks, std::vector<uintptr_t> exclude) {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.tickedNames = ticks ? 1 : 0;
+            c.snapOnly = !ticks;
+            c.exclude = std::move(exclude);
+            c.snapRingCaps = { 8 };
+            c.snapBytes = 64 * 1024;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        auto copyAll = [] { std::vector<Linie::TraceRecord> r; Linie::CopyTrace(0, 64, r); return r; };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        uint64_t gen = start(true, {});
+        Linie::ArmHint tick{}, chosen{};
+        tick.gen = gen; tick.flags = Linie::kArmTick;
+        chosen.gen = gen; chosen.ring = 0; chosen.copy = 8;
+        Linie::TraceToken a, b, c1, c2, d;
+        Linie::TraceEnter(0xA7, 0, 900, 1, a, params, chosen);   // outside any scope
+        Linie::TraceEnter(0xF2, 0, 800, 1, b);                   // called by it
+        Linie::TraceReturn(b, 1);
+        Linie::TraceReturn(a, 1);
+        Linie::TraceEnter(0xA1, 0, 900, 1, c1, 0, tick);         // the tick opens its scope
+        Linie::TraceEnter(0xA7, 0, 800, 1, c2, params, chosen);  // the chosen one inside it
+        Linie::TraceReturn(c2, 1);
+        Linie::TraceReturn(c1, 1);
+        Linie::TraceEnter(0xF3, 0, 900, 1, d);                   // outside again, not chosen
+        Linie::StopTrace();
+        auto r = copyAll();
+        check("outside every scope the chosen call is recorded alone, its parameters taken",
+              a.traced && !a.opened && r.size() >= 1 && r[0].a == 0xA7 &&
+              r[0].flags == (Linie::kTraceSnapTaken | Linie::kTraceSnapLone), u(r.empty() ? 0 : r[0].flags).c_str());
+        check("...and opens no scope: the call it makes is not recorded", !b.traced);
+        check("inside the tick's scope it is an ordinary traced call: not lone",
+              c2.traced && r.size() == 6 && r[3].a == 0xA7 && r[3].flags == Linie::kTraceSnapTaken, u(r.size()).c_str());
+        check("an unchosen call outside the scope is not recorded", !d.traced);
+
+        gen = start(false, {});
+        chosen.gen = gen;
+        Linie::TraceToken e, f;
+        Linie::TraceEnter(0xF1, 0, 900, 1, e);
+        Linie::TraceEnter(0xA7, 0, 900, 1, f, params, chosen);
+        Linie::TraceReturn(f, 1);
+        Linie::StopTrace();
+        r = copyAll();
+        check("snapshots-only (chosen, nothing ticked): an unchosen call is not recorded, the chosen one alone",
+              !e.traced && f.traced && r.size() == 2 && r[0].a == 0xA7 && (r[0].flags & Linie::kTraceSnapLone) &&
+              Linie::GetTraceInfo().snapOnly, u(r.size()).c_str());
+
+        gen = start(true, { 0xA7, 0xA9 });
+        tick.gen = gen; chosen.gen = gen;
+        Linie::TraceToken g1, g2, g3, g4;
+        Linie::TraceEnter(0xA1, 0, 900, 1, g1, 0, tick);
+        Linie::TraceEnter(0xA7, 0, 800, 1, g2, params, chosen);   // excluded per-frame, but chosen
+        Linie::TraceEnter(0xF2, 0, 700, 1, g3);                   // what it calls
+        Linie::TraceReturn(g3, 1);
+        Linie::TraceReturn(g2, 1);
+        Linie::TraceEnter(0xA9, 0, 800, 1, g4);                   // excluded, not chosen
+        Linie::TraceReturn(g1, 1);
+        Linie::StopTrace();
+        r = copyAll();
+        check("an excluded function that is chosen is kept inside the scope, flagged excluded -- not lone",
+              g2.traced && r.size() >= 2 && r[1].a == 0xA7 &&
+              r[1].flags == (Linie::kTraceSnapTaken | Linie::kTraceSnapExcluded), u(r.size() >= 2 ? r[1].flags : 0).c_str());
+        check("...and what it calls is still traced (the scope is open)", g3.traced);
+        check("an excluded function that is not chosen is left out, as before", !g4.traced);
+        Linie::FreeTrace();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the budget -- per ring and in all, per second, the first calls of each second kept");
+        // docs/live-funcs-step2-items.md, S5 (T9 item 3: the budget is the guarantee). A clock that is set, in
+        // QueryPerformanceCounter ticks: the budget's second is ticks / the frequency the trace reports.
+        static uint64_t s_now = 0;
+        Linie::SetTraceClockForTest([]() -> uint64_t { return s_now; });
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](uint32_t perRing, uint32_t total, bool scoped) {
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.scoped = scoped;
+            c.snapOnly = scoped;
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = 64 * 1024;
+            c.snapPerRingPerSec = perRing;
+            c.snapTotalPerSec = total;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo();
+        };
+        auto hintFor = [](uint64_t gen, int32_t ring) { Linie::ArmHint h{}; h.gen = gen; h.ring = ring; h.copy = 8; return h; };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        Linie::TraceInfo info = start(3, 100, false);
+        const uint64_t f = info.qpcFreq;
+        s_now = 10 * f;                                    // second 10
+        for (int i = 0; i < 5; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 1000, 1, t, params, hintFor(info.gen, 0)); }
+        s_now = 11 * f + 5;                                // second 11
+        { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 1000, 1, t, params, hintFor(info.gen, 0)); }
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        Linie::CopyTrace(0, 256, recs);
+        int taken = 0, budget = 0;
+        for (const auto& r : recs) {
+            if (r.flags & Linie::kTraceSnapTaken) ++taken;
+            if (r.flags & Linie::kTraceSnapBudget) ++budget;
+        }
+        std::vector<Linie::SnapCopy> s;
+        Linie::CopySnaps(0, 0, 64, s);
+        check("a budget of 3 a second: five calls in one second, three taken, two recorded over the budget",
+              recs.size() == 6 && taken == 4 && budget == 2, (u(taken) + "/" + u(budget)).c_str());
+        check("...the next second admits again", s.size() == 4 && recs.size() == 6 &&
+              (recs[5].flags & Linie::kTraceSnapTaken), u(s.size()).c_str());
+        info = Linie::GetTraceInfo();
+        check("...and the info counts the two over the budget", info.snap.skippedBudget == 2 && info.snap.droppedBudget == 0 &&
+              info.snap.perRingPerSec == 3 && info.snap.totalPerSec == 100, u(info.snap.skippedBudget).c_str());
+
+        info = start(100, 4, false);
+        s_now = 20 * f;
+        for (int i = 0; i < 3; ++i) {
+            Linie::TraceToken t0, t1;
+            Linie::TraceEnter(0xA7, 0, 1000, 1, t0, params, hintFor(info.gen, 0));
+            Linie::TraceEnter(0xA8, 0, 1000, 1, t1, params, hintFor(info.gen, 1));
+        }
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> r0, r1;
+        Linie::CopySnaps(0, 0, 64, r0);
+        Linie::CopySnaps(1, 0, 64, r1);
+        check("a total of 4 a second caps the two rings together", r0.size() + r1.size() == 4,
+              u(r0.size() + r1.size()).c_str());
+
+        info = start(1, 100, true);                        // snapshots-only: every chosen call is lone
+        s_now = 30 * f;
+        Linie::TraceToken l0, l1;
+        Linie::TraceEnter(0xA7, 0, 1000, 1, l0, params, hintFor(info.gen, 0));
+        Linie::TraceEnter(0xA7, 0, 1000, 1, l1, params, hintFor(info.gen, 0));
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("a lone call over the budget writes no record at all, and is counted",
+              l0.traced && !l1.traced && info.written == 1 && info.snap.droppedBudget == 1 && info.snap.skippedBudget == 0,
+              u(info.written).c_str());
+
+        // The Linie review (tests): a call over the budget owes no after copy -- the ring would fill at the full rate.
+        info = start(1, 100, false);
+        s_now = 40 * f;
+        Linie::ArmHint owing = hintFor(info.gen, 0);
+        owing.flags = Linie::kArmAfter;
+        for (int i = 0; i < 2; ++i) {
+            Linie::TraceToken t;
+            Linie::TraceEnter(0xA7, 0, 1000, 1, t, params, owing);
+            Linie::TraceReturn(t, 1, params);
+        }
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> owed;
+        Linie::CopySnaps(0, 0, 64, owed);
+        check("an after-copy call over the budget writes no after copy: the first call's two slots only",
+              owed.size() == 2 && !owed[0].after && owed[1].after && owed[0].entrySeq == owed[1].entrySeq,
+              u(owed.size()).c_str());
+
+        // ...and an excluded choice over the budget writes nothing, as a lone one does (T5 b keeps the ring clear).
+        {
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.tickedNames = 1;
+            c.exclude = { 0xA7 };
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = 64 * 1024;
+            c.snapPerRingPerSec = 1;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            info = Linie::GetTraceInfo();
+            s_now = 50 * f;
+            Linie::ArmHint tick{};
+            tick.gen = info.gen; tick.flags = Linie::kArmTick;
+            Linie::TraceToken root, x1, x2;
+            Linie::TraceEnter(0xA1, 0, 900, 1, root, 0, tick);
+            Linie::TraceEnter(0xA7, 0, 800, 1, x1, params, hintFor(info.gen, 0));
+            Linie::TraceReturn(x1, 1, params);
+            Linie::TraceEnter(0xA7, 0, 800, 1, x2, params, hintFor(info.gen, 0));
+            Linie::StopTrace();
+            info = Linie::GetTraceInfo();
+            check("an excluded choice over the budget: no record at all, counted dropped",
+                  x1.traced && !x2.traced && info.snap.droppedBudget == 1 && info.snap.skippedBudget == 0,
+                  u(info.snap.droppedBudget).c_str());
+        }
+        Linie::FreeTrace();
+        Linie::SetTraceClockForTest(nullptr);
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a copy that cannot be made -- no block, a fault, a cut -- and TR2 with the copier inside");
+        // docs/live-funcs-step2-items.md, S6. The copier is the step-2 work that runs inside the hook's in-flight
+        // section; a copier that blocks or throws stands in for a fault in the game's memory.
+        static int      s_mode = 0;   // 0 memcpy, 1 fails, 2 blocks once, 3 throws once
+        static HANDLE   s_in   = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE   s_out  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        auto copier = [](uintptr_t src, void* dst, size_t n) -> bool {
+            const int m = s_mode;
+            if (m == 1) return false;
+            if (m == 2) { s_mode = 0; SetEvent(s_in); WaitForSingleObject(s_out, INFINITE); }
+            if (m == 3) { s_mode = 0; throw std::runtime_error("copy fault"); }
+            memcpy(dst, reinterpret_cast<const void*>(src), n);
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[64] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [&] {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 64 * 1024;
+            c.copier = copier;
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        auto hint = [](uint64_t gen, uint8_t flags = 0) {
+            Linie::ArmHint h{}; h.gen = gen; h.ring = 0; h.copy = 16; h.flags = flags; return h;
+        };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        s_mode = 0;
+        uint64_t gen = start();
+        Linie::TraceToken a, b, c;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, a, 0, hint(gen));                              // no parameter block
+        s_mode = 1;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, b, params, hint(gen));                         // the copy faults
+        s_mode = 0;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, c, params, hint(gen, Linie::kArmTruncated));   // larger than its slot
+        const ULONGLONG t0 = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stopMs = GetTickCount64() - t0;
+        std::vector<Linie::SnapCopy> s;
+        Linie::CopySnaps(0, 0, 10, s);
+        check("no parameter block: the slot says so, and holds nothing",
+              s.size() == 3 && s[0].flags == Linie::kSnapNullParams && s[0].len == 0 && s[0].bytes.empty(), u(s.size()).c_str());
+        check("a copy that faults: the slot says so, and holds nothing",
+              s.size() == 3 && s[1].flags == Linie::kSnapCopyFault && s[1].len == 0);
+        check("a block larger than the slot: the slot says it was cut, and holds what fits",
+              s.size() == 3 && s[2].flags == Linie::kSnapTruncated && s[2].len == 16);
+        check("...and a faulting copy leaves Stop nothing to wait for", Linie::GetTraceInfo().quiesced && stopMs < 1000,
+              u(stopMs).c_str());
+
+        // A copier that blocks holds the hook inside its section: Stop waits for it.
+        gen = start();
+        ResetEvent(s_in); ResetEvent(s_out);
+        s_mode = 2;
+        std::thread writer([&] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, hint(gen)); });
+        WaitForSingleObject(s_in, 5000);
+        std::atomic<bool> stopped{ false };
+        std::thread stopper([&stopped] { Linie::StopTrace(); stopped = true; });
+        Sleep(100);
+        const bool waited = !stopped.load();
+        SetEvent(s_out);
+        writer.join();
+        stopper.join();
+        check("Stop waits while a copy is under way", waited && stopped.load() && Linie::GetTraceInfo().quiesced);
+
+        // ...and when it never leaves, the rings are neither read nor freed, and a Start is busy.
+        gen = start();
+        ResetEvent(s_in); ResetEvent(s_out);
+        s_mode = 2;
+        std::thread stuck([&] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, hint(gen)); });
+        WaitForSingleObject(s_in, 5000);
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> none;
+        std::vector<Linie::SnapRingInfo> rings;
+        Linie::FreeTrace();
+        check("a copy that never ends: the rings are not read, not freed, and a Start is busy",
+              !Linie::CopySnaps(0, 0, 10, none) && !Linie::SnapRings(rings) && Linie::GetTraceInfo().snap.allocated &&
+              Linie::StartTrace(Linie::TraceConfig{}) == Linie::TraceStartStatus::Busy);
+        SetEvent(s_out);
+        stuck.join();
+        Linie::StopTrace();
+        check("...once it has left, they are read again", Linie::CopySnaps(0, 0, 10, none) && none.size() == 1,
+              u(none.size()).c_str());
+
+        // A copier that throws (under the DLL's /EHa an SEH fault unwinds the same way) leaves no count behind.
+        gen = start();
+        s_mode = 3;
+        bool threw = false;
+        try { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, hint(gen)); }
+        catch (const std::exception&) { threw = true; }
+        const ULONGLONG t1 = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stop2 = GetTickCount64() - t1;
+        check("a copy that throws: Stop quiesces at once", threw && Linie::GetTraceInfo().quiesced && stop2 < 1000,
+              u(stop2).c_str());
+        Linie::FreeTrace();
+
+        // Review (the Linie review, tr2): a copy that throws mid-call leaves a coherent trace. A ticked, chosen call
+        // opens its scope and its copy throws: its record says what it is without "taken", the token still owes the
+        // return (which closes the scope), and its slot -- the ring's first, on the first lap -- is not handed out as
+        // a copy that worked.
+        {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.tickedNames = 1;
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 64 * 1024;
+            c.copier = copier;
+            Linie::StartTrace(c);
+            Linie::ArmHint th = hint(Linie::GetTraceInfo().gen);
+            th.flags = Linie::kArmTick;
+            s_mode = 3;
+            Linie::TraceToken root;
+            bool threw2 = false;
+            try { Linie::TraceEnter(0xA1, 0, 900, 1, root, params, th); } catch (const std::exception&) { threw2 = true; }
+            check("a throwing copy: the token still owes the return and closes the scope",
+                  threw2 && root.traced && root.opened);
+            Linie::TraceReturn(root, 1, params);
+            Linie::TraceToken after;
+            Linie::TraceEnter(0xF2, 0, 800, 1, after);
+            check("...so a call after it, deeper on the stack, is not taken for its callee", !after.traced);
+            Linie::StopTrace();
+            std::vector<Linie::TraceRecord> rr;
+            Linie::CopyTrace(0, 64, rr);
+            check("...its record says root, without 'taken'", rr.size() == 2 && rr[0].flags == Linie::kTraceScopeRoot,
+                  rr.empty() ? "" : u(rr[0].flags).c_str());
+            std::vector<Linie::SnapCopy> ss;
+            Linie::CopySnaps(0, 0, 10, ss);
+            check("...and its unfinished slot is not handed out as a copy", ss.empty(), u(ss.size()).c_str());
+            Linie::FreeTrace();
+        }
+        s_mode = 0;
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the rings' windows -- a busy ring laps only itself; orphans left out; paging");
+        // docs/live-funcs-step2-items.md, S7. K = 8 for both rings: 64 * 2 + 8 * (24 + 8) * 2 bytes.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](uint64_t records, uint64_t snapBytes) {
+            Linie::TraceConfig c;
+            c.bytes = records * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = snapBytes;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        auto hint = [](uint64_t gen, int32_t ring) { Linie::ArmHint h{}; h.gen = gen; h.ring = ring; h.copy = 8; return h; };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        uint64_t gen = start(256, 128 + 8 * 32 * 2);
+        check("setup: K = 8", Linie::GetTraceInfo().snap.slotsPerRing == 8, u(Linie::GetTraceInfo().snap.slotsPerRing).c_str());
+        for (int i = 0; i < 3; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA2, 0, 1000, 1, t, params, hint(gen, 1)); }
+        for (int i = 0; i < 20; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA1, 0, 1000, 1, t, params, hint(gen, 0)); }
+        Linie::StopTrace();
+        std::vector<Linie::SnapRingInfo> rings;
+        Linie::SnapRings(rings);
+        check("the busy ring kept its last 8 of 20; the rare one all 3 of its own",
+              rings.size() == 2 && rings[0].written == 20 && rings[0].firstValid == 12 && rings[1].written == 3 &&
+              rings[1].firstValid == 0, rings.size() == 2 ? (u(rings[0].firstValid) + "/" + u(rings[1].firstValid)).c_str() : "");
+        std::vector<Linie::SnapCopy> busy, rare;
+        uint64_t orphans = 99;
+        check("...the rare ring's three, untouched by the busy one",
+              Linie::CopySnaps(1, 0, 64, rare, nullptr, &orphans) && rare.size() == 3 && rare[0].entrySeq == 0 &&
+              rare[2].entrySeq == 2 && orphans == 0, u(rare.size()).c_str());
+        check("...the busy ring's window, in order", Linie::CopySnaps(0, 0, 64, busy) && busy.size() == 8 &&
+              busy[0].index == 12 && busy[7].index == 19 && busy[0].entrySeq == 15, u(busy.size()).c_str());
+        uint64_t next = 0;
+        busy.clear();
+        check("a page asked from before the window does not reach into it, and the next page is the window's start",
+              Linie::CopySnaps(0, 0, 3, busy, &next) && busy.empty() && next == 12, u(next).c_str());
+        check("...a page inside it, and the page after", Linie::CopySnaps(0, 12, 3, busy, &next) && busy.size() == 3 &&
+              busy[0].index == 12 && next == 15, u(next).c_str());
+        Linie::FreeTrace();
+
+        // The trace's ring laps the calls' entry records while the snapshot ring still keeps their slots.
+        gen = start(8, 128 + 32 * 32 * 2);                  // K = 32 > the 8 records the trace keeps
+        for (int i = 0; i < 20; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA1, 0, 1000, 1, t, params, hint(gen, 0)); }
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> kept;
+        orphans = 0;
+        check("a slot whose call the trace no longer keeps is left out, and counted an orphan",
+              Linie::CopySnaps(0, 0, 64, kept, nullptr, &orphans) && kept.size() == 8 && orphans == 12 &&
+              kept[0].entrySeq == 12 && Linie::GetTraceInfo().firstValid == 12, (u(kept.size()) + "/" + u(orphans)).c_str());
+        Linie::FreeTrace();
+
+        // The Linie review (tests): a write that never finished is left out by its number. Eight whole writes fill
+        // K = 8; the ninth takes slot 0 again and its copy throws, so slot 0 holds no whole write of index 8.
+        {
+            static int s_throwAt = 0;
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = 128 + 8 * 32 * 2;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool {
+                if (s_throwAt > 0 && --s_throwAt == 0) throw std::runtime_error("copy fault");
+                memcpy(dst, reinterpret_cast<const void*>(src), n);
+                return true;
+            };
+            Linie::StartTrace(c);
+            const uint64_t g9 = Linie::GetTraceInfo().gen;
+            s_throwAt = 9;
+            for (int i = 0; i < 9; ++i) {
+                Linie::TraceToken t;
+                try { Linie::TraceEnter(0xA1, 0, 1000, 1, t, params, hint(g9, 0)); } catch (const std::exception&) {}
+            }
+            Linie::StopTrace();
+            std::vector<Linie::SnapCopy> win;
+            check("an unfinished write is not handed out under its number: [1, 9) gives the seven whole ones",
+                  Linie::CopySnaps(0, 1, 64, win) && win.size() == 7 && win.front().index == 1 && win.back().index == 7,
+                  u(win.size()).c_str());
+            Linie::FreeTrace();
+        }
+
+        // What step 2 costs on the hook: printed, not checked (a timing is the machine's).
+        {
+            constexpr int N = 1 << 20;
+            LARGE_INTEGER f, t0, t1;
+            QueryPerformanceFrequency(&f);
+            auto nsPer = [&](LARGE_INTEGER a, LARGE_INTEGER b, int n) {
+                return double(b.QuadPart - a.QuadPart) * 1e9 / double(f.QuadPart) / n;
+            };
+            // The table with 1,000 names followed: steady state, and first sights.
+            std::vector<Linie::ArmSpec> specs;
+            for (int i = 0; i < 1000; ++i) specs.push_back(Linie::ArmSpec{ Linie::NameKey{ 0x10000 + i, 0, 7, 0 }, false, i % 8, 64 });
+            auto st = Linie::BuildArmState(specs, Linie::kArmLogCapacity);
+            st->gen = 1;
+            auto rd = [](uintptr_t fn, Linie::FuncIdentity& out) -> bool {
+                out.nameIndex = static_cast<int32_t>(fn); out.classIndex = 7; out.parmsSize = 16; return true;
+            };
+            Linie::StartRecording(rd, nullptr, st);
+            Linie::ArmHint h;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(0x10000 + (i & 1023), 1000 + i, &h);
+            QueryPerformanceCounter(&t1);
+            const double steady = nsPer(t0, t1, N);
+            constexpr int M = 1 << 14;
+            Linie::StartRecording(rd, nullptr, st);
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < M; ++i) Linie::RecordCall(0x20000 + i, 1000 + i, &h);   // first sights, no match
+            QueryPerformanceCounter(&t1);
+            const double firsts = nsPer(t0, t1, M);
+            Linie::Reset();
+            // The trace: a call whose hint chose nothing, and a 64-byte entry plus after copy.
+            Linie::TraceConfig c;
+            c.bytes = (2ull * N + 16) * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 64 };
+            c.snapBytes = 64ull << 20;
+            c.snapPerRingPerSec = 0xFFFFFF;
+            c.snapTotalPerSec = 0xFFFFFF;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            const uint64_t g = Linie::GetTraceInfo().gen;
+            Linie::ArmHint plain{};
+            plain.gen = g;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000 + (i & 63), 0x2000, 1000, 1, t, params, plain);
+                Linie::TraceReturn(t, 1, params);
+            }
+            QueryPerformanceCounter(&t1);
+            const double unchosen = nsPer(t0, t1, N);
+            Linie::StartTrace(c);
+            uint8_t block[64] = {};
+            Linie::ArmHint chosen{};
+            chosen.gen = Linie::GetTraceInfo().gen; chosen.ring = 0; chosen.copy = 64; chosen.flags = Linie::kArmAfter;
+            constexpr int P = 1 << 16;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < P; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000, 0x2000, 1000, 1, t, reinterpret_cast<uintptr_t>(block), chosen);
+                Linie::TraceReturn(t, 1, reinterpret_cast<uintptr_t>(block));
+            }
+            QueryPerformanceCounter(&t1);
+            const double copied = nsPer(t0, t1, P);
+            Linie::FreeTrace();
+            printf("  info  step-2 cost: table %.1f ns per call with 1,000 names followed, %.1f ns per first sight; "
+                   "trace %.1f ns per unchosen call, %.1f ns per chosen call with a 64-byte entry and after copy\n",
+                   steady, firsts, unchosen, copied);
+        }
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a parameter's way -- in, const reference, out, in-out, return -- from its flags");
+        // docs/live-funcs-step2-items.md, B1. CPF_Parm 0x80, CPF_OutParm 0x100, CPF_ReturnParm 0x400, CPF_ConstParm
+        // 0x2, CPF_ReferenceParm 0x08000000. The const-ref value is UHT's own for a `const FString&` parameter.
+        using PK = Ubel::ParamKind;
+        check("a plain parameter is in", Ubel::ParamKindOf(0x80) == PK::In);
+        check("a const reference is in, though it carries the out flag",
+              Ubel::ParamKindOf(0x0010000008000182ull) == PK::ConstRef);
+        check("an out parameter", Ubel::ParamKindOf(0x180) == PK::Out);
+        check("a reference that is not const goes both ways", Ubel::ParamKindOf(0x08000180) == PK::InOut);
+        check("the return value, though it carries the out flag too", Ubel::ParamKindOf(0x580) == PK::Return);
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the arms' layouts read in the background -- checked live before and after, reused by key");
+        // docs/live-funcs-step2-items.md, B5. Stub checks: no game memory. Every arm's function is 0xBx (or 0xC1 for
+        // reuse); its live key, slot state and layout come from the statics below.
+        using LS = Linie::ArmLayoutState;
+        static int32_t s_liveName = 0x50;   // 0xC1's live FName, moved between passes
+        static bool    s_flipB4 = false;    // the capture of 0xB4 finds another function there afterwards
+        Ubel::ArmCaptureOps ops;
+        ops.classify = [](uintptr_t f, const Linie::FuncIdentity&) -> Ubel::FuncState {
+            return f == 0xB2 ? Ubel::FuncState::Unloaded : f == 0xB3 ? Ubel::FuncState::Recycled : Ubel::FuncState::Live;
+        };
+        ops.readKey = [](uintptr_t f, Linie::NameKey& k, uint64_t& outer) -> bool {
+            k = Linie::NameKey{ f == 0xC1 ? s_liveName : static_cast<int32_t>(f), 0, 7, 0 };
+            outer = 0x9000;
+            if (f == 0xB4 && s_flipB4) k.fnIdx = 0x99;
+            return true;
+        };
+        ops.capture = [](uintptr_t f, Ubel::ParamLayout& out, std::string& why) -> bool {
+            out = Ubel::ParamLayout{};
+            if (f == 0xB6) { why = "no parameters"; return false; }
+            if (f == 0xB4) s_flipB4 = true;
+            out.func = f;
+            out.numParms = (f == 0xB5) ? 3 : 2;   // 0xB5 claims three parameters and has two
+            out.parmsSize = 8;
+            for (int i = 0; i < 2; ++i) {
+                Ubel::ParamField p;
+                p.name = "P" + std::to_string(i); p.offset = 4 * i; p.size = 4;
+                out.params.push_back(p);
+            }
+            out.layoutEnd = 8;
+            return true;
+        };
+        ops.nowMs = []() -> uint64_t { return 1500; };
+        ops.tailDecided = true;
+        auto arm = [](uintptr_t addr, int32_t name) {
+            Linie::ArmRecord r;
+            r.addr = addr;
+            r.ident.captured = true; r.ident.nameIndex = name; r.ident.classIndex = 7; r.ident.outer = 0x9000;
+            r.ident.numParms = 2; r.ident.parmsSize = 8;
+            r.ring = 0; r.armMs = 1000;
+            return r;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+
+        auto st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x50, 0, 7, 0 }, false, 0, 64 } }, 16);
+        for (uintptr_t a : { 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6 })
+            st->log.push_back(arm(a, static_cast<int32_t>(a)));
+        st->logCount = st->log.size();
+        Ubel::ArmLayoutMemo memo;
+        check("a pass takes at most what it is asked", Ubel::RunArmCapturePass(*st, 1, ops, memo) == 1);
+        check("...and the next pass the rest", Ubel::RunArmCapturePass(*st, 64, ops, memo) == 5);
+        const auto v = Linie::CopyArms(*st);
+        check("a live function, unchanged across the read: Read, with its arm-to-read wait",
+              v.size() == 6 && v[0].state == LS::Read && v[0].layout && v[0].readMs == 500, v.empty() ? "" : u(v[0].readMs).c_str());
+        check("gone from its slot first: unloaded before the read, no layout", v.size() == 6 &&
+              v[1].state == LS::UnloadedBeforeRead && !v[1].layout);
+        check("another function in its slot: replaced before the read", v.size() == 6 && v[2].state == LS::ReplacedBeforeRead);
+        check("another function there by the time the read finished: replaced, the read discarded",
+              v.size() == 6 && v[3].state == LS::ReplacedBeforeRead && !v[3].layout);
+        check("parameters that do not fill the function's count: doubtful, but published -- it still decodes",
+              v.size() == 6 && v[4].state == LS::Doubtful && v[4].layout);
+        check("a read that refuses: failed, and why", v.size() == 6 && v[5].state == LS::Failed && v[5].why == "no parameters",
+              v.size() == 6 ? v[5].why.c_str() : "");
+
+        // Reuse only under the same five numbers: the address, its Outer, and the four name ints.
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x50, 0, 7, 0 }, false, 0, 64 } }, 16);
+        Ubel::ArmLayoutMemo memo2;
+        auto add = [&](int32_t name) { st2->log.push_back(arm(0xC1, name)); st2->logCount = st2->log.size(); };
+        s_liveName = 0x50; add(0x50); Ubel::RunArmCapturePass(*st2, 64, ops, memo2);
+        s_liveName = 0x60; add(0x60); Ubel::RunArmCapturePass(*st2, 64, ops, memo2);   // the same address, another name
+        check("another name at the same address and Outer: read again", memo2.captures == 2, u(memo2.captures).c_str());
+        s_liveName = 0x50; add(0x50); Ubel::RunArmCapturePass(*st2, 64, ops, memo2);   // the first one back
+        const auto v2 = Linie::CopyArms(*st2);
+        check("...the first one back, under the same five numbers: its layout reused, not read again",
+              memo2.captures == 2 && v2.size() == 3 && v2[2].state == LS::Read && v2[2].layout == v2[0].layout &&
+              v2[1].layout != v2[0].layout, u(memo2.captures).c_str());
+
+        // Sealed: Stop has passed; nothing is read for it.
+        add(0x50);
+        st2->log.back().addr = 0xB7;                 // a live function no earlier arm read: only the seal stops it
+        st2->log.back().ident.nameIndex = 0xB7;
+        st2->logCount = st2->log.size();
+        Linie::SealArms(*st2);
+        const size_t before = memo2.captures;
+        Ubel::RunArmCapturePass(*st2, 64, ops, memo2);
+        check("after SealArms an arm is not read", memo2.captures == before && Linie::CopyArms(*st2)[3].state == LS::NotReadBeforeStop);
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a parameter copy decoded -- numbers, bools, enums, names, structs, arrays, what is missing");
+        // docs/live-funcs-step2-items.md, B6. A layout by hand, a copy of plain bytes, a stub for FName text: nothing
+        // here reads the game.
+        using PK = Ubel::ParamKind;
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size, PK kind = PK::In) {
+            Ubel::ParamField f; f.name = name; f.typeName = type; f.offset = off; f.size = size; f.kind = kind; return f;
+        };
+        Ubel::ParamLayout L;
+        L.params.push_back(field("F", "FloatProperty", 0, 4));
+        L.params.push_back(field("D", "DoubleProperty", 8, 8));
+        L.params.push_back(field("I8", "Int8Property", 16, 1));
+        auto packed = field("B", "BoolProperty", 17, 1); packed.boolMask = 0x04; L.params.push_back(packed);
+        L.params.push_back(field("BU", "BoolProperty", 18, 1));   // its layout was not resolved
+        auto e = field("E", "EnumProperty", 19, 1); e.enumName = "EKind"; e.enumEntries = { { 0, "EKind::A" }, { 255, "EKind::MAX" } };
+        L.params.push_back(e);
+        auto e2 = e; e2.name = "E2"; e2.offset = 20; L.params.push_back(e2);
+        auto by = field("By", "ByteProperty", 21, 1); L.params.push_back(by);
+        L.params.push_back(field("N", "NameProperty", 24, 8));
+        auto v = field("V", "StructProperty", 32, 24); v.structType = "Vector";
+        v.sub = { field("X", "DoubleProperty", 0, 8), field("Y", "DoubleProperty", 8, 8), field("Z", "DoubleProperty", 16, 8) };
+        L.params.push_back(v);
+        auto arr = field("A", "IntProperty", 56, 4); arr.arrayDim = 3; L.params.push_back(arr);
+        L.params.push_back(field("O", "IntProperty", 68, 4, PK::Out));
+        L.params.push_back(field("R", "IntProperty", 72, 4, PK::Return));
+        L.params.push_back(field("Past", "IntProperty", 200, 4));
+        L.params.push_back(field("Odd", "WhateverProperty", 76, 4));
+
+        uint8_t b[80] = {};
+        const float f = 1.5f; memcpy(b + 0, &f, 4);
+        const double d = 20.5; memcpy(b + 8, &d, 8);
+        b[16] = 0xFF;                 // Int8 -1
+        b[17] = 0x04;                 // the packed bit set, its siblings clear
+        b[18] = 0x02;                 // unresolved: the whole byte
+        b[19] = 255; b[20] = 7; b[21] = 200;
+        const int32_t nm[2] = { 21, 3 }; memcpy(b + 24, nm, 8);
+        const double xyz[3] = { 1.5, 2, 3 }; memcpy(b + 32, xyz, 24);
+        const int32_t a3[3] = { 1, 2, 3 }; memcpy(b + 56, a3, 12);
+        const int32_t o = 41, r = 99; memcpy(b + 68, &o, 4); memcpy(b + 72, &r, 4);
+        const uint8_t odd[4] = { 0xDE, 0xAD, 0xBE, 0xEF }; memcpy(b + 76, odd, 4);
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fname = [](int32_t i, int32_t n) -> std::string { return i == 21 ? (n ? "Tag_" + std::to_string(n - 1) : "Tag") : "?"; };
+
+        const auto in = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = in.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(in.size()).c_str());
+        if (shaped) {
+            auto is = [&](size_t i, const char* text, SM mark) { return in[i].text == text && in[i].mark == mark; };
+            check("float and double", is(0, "1.5", SM::Exact) && is(1, "20.5", SM::Exact), (in[0].text + "/" + in[1].text).c_str());
+            check("an Int8 is signed", is(2, "-1", SM::Exact), in[2].text.c_str());
+            check("a packed bool reads its own bit", is(3, "true", SM::Exact), in[3].text.c_str());
+            check("an unresolved bool reads the whole byte, and says so", is(4, "true (layout unresolved)", SM::Exact),
+                  in[4].text.c_str());
+            check("an enum value named from its table", is(5, "EKind::MAX (255)", SM::Exact), in[5].text.c_str());
+            check("...and one the table does not have", is(6, "7 (not in EKind)", SM::Exact), in[6].text.c_str());
+            check("a plain byte", is(7, "200", SM::Exact), in[7].text.c_str());
+            check("an FName with its Number, through the name pool", is(8, "Tag_2", SM::Exact), in[8].text.c_str());
+            check("a struct: its members, from their own offsets", is(9, "{X=1.5, Y=2, Z=3}", SM::Exact) &&
+                  in[9].sub.size() == 3 && in[9].sub[2].text == "3", in[9].text.c_str());
+            check("a static array", is(10, "[1, 2, 3]", SM::Exact), in[10].text.c_str());
+            check("an out parameter as the call began", is(11, "41", SM::Exact), in[11].text.c_str());
+            check("the return value, at the call: not yet", is(12, "\xE2\x80\x94", SM::Missing), in[12].text.c_str());
+            check("a parameter past the copy's end", in[13].mark == SM::Missing, in[13].text.c_str());
+            check("a type the decoder does not read: hex", is(14, "DE AD BE EF", SM::Raw), in[14].text.c_str());
+        }
+        const auto out = Ubel::DecodeParamSnapshot(L, b, sizeof b, true, ctx);
+        check("after the call: the out parameter and the return value, nothing else",
+              out.size() == L.params.size() && out[11].text == "41" && out[11].mark == SM::Exact &&
+              out[12].text == "99" && out[12].mark == SM::Exact && out[0].mark == SM::Missing && out[0].text.empty());
+        const auto cut = Ubel::DecodeParamSnapshot(L, b, 12, false, ctx);
+        check("a copy cut short: what lies past it is missing, what fits is read",
+              cut.size() == L.params.size() && cut[0].text == "1.5" && cut[1].mark == SM::Missing);
+        const auto cutArr = Ubel::DecodeParamSnapshot(L, b, 64, false, ctx);   // ends inside A[3] (56..68)
+        check("...an array the copy ends inside is missing whole, not shown in part",
+              cutArr.size() == L.params.size() && cutArr[10].mark == SM::Missing && cutArr[9].text == "{X=1.5, Y=2, Z=3}",
+              cutArr.size() == L.params.size() ? cutArr[10].text.c_str() : "");
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a parameter copy decoded -- objects, weak and soft pointers, strings and containers");
+        // docs/live-funcs-step2-items.md, B7. Pointers name what is there NOW (marked so); string and container data
+        // was not copied, only their headers. 0x1000 is a live Pawn_0; weak {5, 7} resolves to it.
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
+            Ubel::ParamField f; f.name = name; f.typeName = type; f.offset = off; f.size = size; return f;
+        };
+        Ubel::ParamLayout L;
+        L.params = { field("Who", "ObjectProperty", 0x00, 8), field("Gone", "ObjectProperty", 0x08, 8),
+                     field("Null", "ObjectProperty", 0x10, 8), field("Weak", "WeakObjectProperty", 0x18, 8),
+                     field("WeakStale", "WeakObjectProperty", 0x20, 8), field("Soft", "SoftObjectProperty", 0x28, 0x30),
+                     field("Lazy", "LazyObjectProperty", 0x58, 0x1C), field("S", "StrProperty", 0x78, 16),
+                     field("Arr", "ArrayProperty", 0x88, 16), field("Map", "MapProperty", 0x98, 0x50),
+                     field("T", "TextProperty", 0xE8, 0x18), field("Dg", "DelegateProperty", 0x100, 16),
+                     field("SD", "MulticastSparseDelegateProperty", 0x110, 1),
+                     field("MD", "MulticastInlineDelegateProperty", 0x118, 16), field("Iface", "InterfaceProperty", 0x128, 16) };
+        auto opt = field("OptT", "OptionalProperty", 0x138, 8);
+        opt.optLayout = static_cast<uint8_t>(Ubel::OptionalLayout::TrailingFlag); opt.optInnerType = "IntProperty"; opt.optInnerSize = 4;
+        L.params.push_back(opt);
+        auto optU = opt; optU.name = "OptU"; optU.offset = 0x140; L.params.push_back(optU);
+        auto optN = field("OptN", "OptionalProperty", 0x148, 8);
+        optN.optLayout = static_cast<uint8_t>(Ubel::OptionalLayout::Intrusive); optN.optInnerType = "NameProperty"; optN.optInnerSize = 8;
+        L.params.push_back(optN);
+
+        alignas(8) uint8_t b[0x150] = {};
+        auto put64 = [&](int off, uint64_t v) { memcpy(b + off, &v, 8); };
+        auto put32 = [&](int off, int32_t v) { memcpy(b + off, &v, 4); };
+        put64(0x00, 0x1000); put64(0x08, 0x2000);                               // live, gone; Null stays 0
+        put32(0x18, 5); put32(0x1C, 7); put32(0x20, 6); put32(0x24, 9);         // weak: resolves; stale
+        put32(0x28 + 0x10, 31); put32(0x28 + 0x18, 32);                         // soft: package and asset FNames
+        put32(0x58 + 0x0C, 1); put32(0x58 + 0x10, 2); put32(0x58 + 0x14, 3); put32(0x58 + 0x18, 4);   // lazy GUID
+        put64(0x78, 0xABC0); put32(0x80, 5);                                    // FString header: Num 5
+        put64(0x88, 0xDEF0); put32(0x90, 3);                                    // TArray: Num 3
+        put64(0x98, 0x5550); put32(0xA0, 4); put32(0x98 + 0x34, 1);             // TMap: 4 slots, 1 free
+        put32(0x100, 5); put32(0x104, 7); put32(0x108, 33);                     // delegate: weak to Pawn_0, OnHit
+        b[0x110] = 1;
+        put64(0x118, 0x7770); put32(0x120, 2);
+        put64(0x128, 0x1000);                                                   // interface: its object half
+        put32(0x138, 42); b[0x13C] = 1;                                         // TOptional<int32>: set
+        put32(0x140, 9);  b[0x144] = 0;                                         //   ...unset
+        put32(0x148, -1);                                                       // TOptional<FName>: index ~0u, unset
+
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fname = [](int32_t i, int32_t) -> std::string {
+            return i == 31 ? "/Game/Maps/Arena" : i == 32 ? "Arena" : i == 33 ? "OnHit" : "None";
+        };
+        ctx.object = [](uintptr_t p, std::string& name, std::string& cls) -> bool {
+            if (p != 0x1000) return false;
+            name = "Pawn_0"; cls = "Pawn_C"; return true;
+        };
+        ctx.weak = [](int32_t idx, int32_t serial) -> uintptr_t { return (idx == 5 && serial == 7) ? 0x1000 : 0; };
+        ctx.softPathOffset = 0x10; ctx.softTopLevel = 1; ctx.fnameSize = 8; ctx.lazyGuidOffset = 0x0C;
+
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = v.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(v.size()).c_str());
+        if (shaped) {
+            auto is = [&](size_t i, const std::string& text, SM mark) { return v[i].text == text && v[i].mark == mark; };
+            check("an object: its name and class now", is(0, "Pawn_0 (Pawn_C)", SM::Now), v[0].text.c_str());
+            check("an address with no live object now", is(1, "0x2000 (no longer a live object)", SM::Gone), v[1].text.c_str());
+            check("a null object", is(2, "null", SM::Exact), v[2].text.c_str());
+            check("a weak pointer that resolves", is(3, "Pawn_0 (Pawn_C)", SM::Now), v[3].text.c_str());
+            check("...and one that no longer does", is(4, "null (stale)", SM::Gone), v[4].text.c_str());
+            check("a soft pointer: its path, from FNames, which never go stale", is(5, "/Game/Maps/Arena.Arena", SM::Exact),
+                  v[5].text.c_str());
+            check("a lazy pointer: its GUID", is(6, "{00000001-00000002-00000003-00000004}", SM::Exact), v[6].text.c_str());
+            check("a string: its header only", is(7, "Num=5 (Data 0xABC0)", SM::Header), v[7].text.c_str());
+            check("an array: its header only", is(8, "Num=3 (Data 0xDEF0)", SM::Header), v[8].text.c_str());
+            check("a map: its element count, the free slots taken off", is(9, "Num=3 (Data 0x5550)", SM::Header),
+                  v[9].text.c_str());
+            check("an empty text", is(10, "(empty)", SM::Header), v[10].text.c_str());
+            check("a delegate: through the shared binding text", is(11, "Pawn_0::OnHit", SM::Now), v[11].text.c_str());
+            check("a sparse delegate's byte", is(12, "sparse (1)", SM::Exact), v[12].text.c_str());
+            check("a multicast delegate: its list's header", is(13, "Num=2 (Data 0x7770)", SM::Header), v[13].text.c_str());
+            check("an interface: its object half", is(14, "Pawn_0 (Pawn_C)", SM::Now), v[14].text.c_str());
+            check("a set TOptional: its value", is(15, "42", SM::Exact), v[15].text.c_str());
+            check("...an unset one", is(16, "unset", SM::Exact), v[16].text.c_str());
+            check("...an intrusive one, unset by its type's sentinel", is(17, "unset", SM::Exact), v[17].text.c_str());
+        }
+        // A case-preserving build: sizeof(FName) is 12, so the asset's FName starts 12 bytes after the package's.
+        Ubel::ParamLayout cpn;
+        cpn.params = { field("Soft", "SoftObjectProperty", 0, 0x38) };
+        alignas(8) uint8_t c[0x40] = {};
+        const int32_t pk = 31, as = 32;
+        memcpy(c + 0x10, &pk, 4);
+        memcpy(c + 0x10 + 12, &as, 4);
+        Ubel::SnapDecodeCtx ctx12 = ctx;
+        ctx12.fnameSize = 12;
+        const auto vc = Ubel::DecodeParamSnapshot(cpn, c, sizeof c, false, ctx12);
+        check("a soft path on a case-preserving build: the asset's FName after a 12-byte one",
+              vc.size() == 1 && vc[0].text == "/Game/Maps/Arena.Arena", vc.empty() ? "" : vc[0].text.c_str());
+        // Measured on DumperTest58 (2026-10-07): a soft pointer to an actor is its level's asset path plus a sub-path
+        // (":PersistentLevel.<actor>") in an FString whose text is not in the copy. Shown without it, the actor's
+        // pointer read as the level's.
+        alignas(8) uint8_t s2[0x50] = {};
+        memcpy(s2, b + 0x28, 0x30);
+        const int32_t subNum = 34;
+        memcpy(s2 + 0x20 + 8, &subNum, 4);   // SubPathString {Data, Num, Max} after the two FNames
+        Ubel::ParamLayout sp;
+        sp.params = { field("Soft", "SoftObjectProperty", 0, 0x30) };
+        const auto vs = Ubel::DecodeParamSnapshot(sp, s2, 0x30, false, ctx);
+        check("a soft path with a sub-path says so, and that its text was not copied",
+              vs.size() == 1 && vs[0].text == "/Game/Maps/Arena.Arena:<sub-path, 33 chars, not copied>" &&
+              vs[0].mark == SM::Header, vs.empty() ? "" : vs[0].text.c_str());
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a slot decoded with its own arm's layout -- two loads of one name, arms without one");
+        // docs/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
+        using LS = Linie::ArmLayoutState;
+        auto lay = [](int32_t off) {
+            auto L = std::make_shared<Ubel::ParamLayout>();
+            Ubel::ParamField f; f.name = "X"; f.typeName = "IntProperty"; f.offset = off; f.size = 4;
+            L->params.push_back(f);
+            return L;
+        };
+        std::vector<Linie::ArmView> arms(4);
+        arms[0].index = 0; arms[0].state = LS::Read; arms[0].layout = lay(0);
+        arms[1].index = 1; arms[1].state = LS::Read; arms[1].layout = lay(4);   // the same name reloaded: X moved
+        arms[2].index = 2; arms[2].state = LS::NotReadBeforeStop;
+        arms[3].index = 3; arms[3].state = LS::Doubtful; arms[3].layout = lay(4);
+        uint8_t b[8] = {};
+        const int32_t v0 = 7, v1 = 9; memcpy(b, &v0, 4); memcpy(b + 4, &v1, 4);
+        Ubel::SnapDecodeCtx ctx;
+        const auto d0 = Ubel::DecodeSlot(arms, 0, b, 8, false, ctx);
+        const auto d1 = Ubel::DecodeSlot(arms, 1, b, 8, false, ctx);
+        const auto d2 = Ubel::DecodeSlot(arms, 2, b, 8, false, ctx);
+        const auto d3 = Ubel::DecodeSlot(arms, 3, b, 8, false, ctx);
+        const auto d9 = Ubel::DecodeSlot(arms, 9, b, 8, false, ctx);
+        check("arm 0's slot read with arm 0's layout", d0.layout && d0.values.size() == 1 && d0.values[0].text == "7",
+              d0.values.empty() ? "" : d0.values[0].text.c_str());
+        check("arm 1's slot with arm 1's layout, not arm 0's", d1.layout && d1.values.size() == 1 &&
+              d1.values[0].text == "9", d1.values.empty() ? "" : d1.values[0].text.c_str());
+        check("an arm sealed before its read stays raw, and says so",
+              !d2.layout && d2.values.empty() && d2.state == LS::NotReadBeforeStop);
+        check("a doubtful layout still decodes", d3.layout && d3.values.size() == 1 && d3.values[0].text == "9");
+        check("an arm the log does not hold: raw", !d9.layout && d9.values.empty());
+        const std::vector<Linie::ArmView> rev = { arms[1], arms[0] };
+        const auto r1 = Ubel::DecodeSlot(rev, 1, b, 8, false, ctx);
+        check("an arm found by its index, not its place in the list", r1.values.size() == 1 && r1.values[0].text == "9");
+        const auto a1 = Ubel::DecodeSlot(arms, 1, b, 8, true, ctx);
+        check("an after copy leaves an In parameter blank", a1.values.size() == 1 &&
+              a1.values[0].mark == Ubel::SnapMark::Missing && a1.values[0].text.empty());
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
+        // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
+        static uint8_t nkEntry[24][0x40] = {};
+        static uintptr_t nkChunk[25] = {};
+        const char* nkNames[24] = {};
+        nkNames[21] = "Fire"; nkNames[22] = "Actor_C"; nkNames[23] = "Other_C";
+        for (int i = 1; i < 24; ++i) {
+            const char* n = nkNames[i] ? nkNames[i] : "Pad";
+            memcpy(nkEntry[i] + 0x10, n, strlen(n) + 1);
+            nkChunk[i] = reinterpret_cast<uintptr_t>(nkEntry[i]);
+        }
+        static uintptr_t nkChunks[2] = { reinterpret_cast<uintptr_t>(nkChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(nkChunks), 0x10);
+        check("setup: the pool resolves the names", Serie::GetString(21) == "Fire" && Serie::GetString(22) == "Actor_C" &&
+              Serie::GetString(21, 3) == "Fire_2", Serie::GetString(21, 3).c_str());
+
+        static uint8_t fn[0x100] = {}, cls[0x100] = {}, fn3[0x100] = {};
+        auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        put32(fn, Grimoire::OFF_UOBJECT_NAME, 21);
+        put(fn, DynOff::UOBJECT_OUTER, reinterpret_cast<uintptr_t>(cls));
+        put32(cls, Grimoire::OFF_UOBJECT_NAME, 22);
+        put32(fn3, Grimoire::OFF_UOBJECT_NAME, 21);
+        put32(fn3, Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, 3);
+        put(fn3, DynOff::UOBJECT_OUTER, reinterpret_cast<uintptr_t>(cls));
+
+        Linie::NameKey k{};
+        check("ReadNameKey: the function's FName ints and its class's",
+              Ubel::ReadNameKey(reinterpret_cast<uintptr_t>(fn), k) && k == Linie::NameKey{ 21, 0, 22, 0 },
+              std::to_string(k.fnIdx).c_str());
+        check("NameKeyMatches: the names the UI shows", Ubel::NameKeyMatches(k, "Actor_C", "Fire"));
+        check("...not under another class", !Ubel::NameKeyMatches(k, "Other_C", "Fire"));
+        Linie::NameKey k3{};
+        check("a Number renders as the UI shows it, and the bare name is another name",
+              Ubel::ReadNameKey(reinterpret_cast<uintptr_t>(fn3), k3) && k3 == Linie::NameKey{ 21, 3, 22, 0 } &&
+              Ubel::NameKeyMatches(k3, "Actor_C", "Fire_2") && !Ubel::NameKeyMatches(k3, "Actor_C", "Fire"));
+        Linie::NameKey bad{};
+        check("an address that cannot be read is refused", !Ubel::ReadNameKey(0x1000, bad));
+        int32_t oi = 0, on = 0;
+        check("ReadObjectNameKey: an object's FName ints",
+              Ubel::ReadObjectNameKey(reinterpret_cast<uint64_t>(cls), oi, on) && oi == 22 && on == 0);
+        check("...and an unreadable object is refused", !Ubel::ReadObjectNameKey(0x1000, oi, on));
+
+        // The UObject header of every engine the project supports (UE 4.11 - 4.27 and UE5; the maintainer, 2026-10-07:
+        // UE4 is covered here, not live). VTable, flags, index and class are fixed; NamePrivate is at 0x18 and its
+        // ComparisonIndex first; what moves is the FName's size: standard, Number at +4 and Outer at 0x20; case-
+        // preserving (a DisplayIndex added), Number at +4 or +8 and Outer at 0x28 (Grimoire.h, the UObject offsets).
+        struct HeaderLayout { const char* name; bool cpn; int number; int outer; };
+        const HeaderLayout layouts[] = {
+            { "standard (UE 4.11 - 4.27, UE5)", false, 4, 0x20 },
+            { "case-preserving, Number at +4", true, 4, 0x28 },
+            { "case-preserving, Number at +8", true, 8, 0x28 },
+        };
+        const int  savedNumber = DynOff::FNAME_NUMBER, savedOuter = DynOff::UOBJECT_OUTER;
+        const bool savedCpn = DynOff::bCasePreservingName;
+        for (const HeaderLayout& L : layouts) {
+            DynOff::FNAME_NUMBER = L.number;
+            DynOff::UOBJECT_OUTER = L.outer;
+            DynOff::bCasePreservingName = L.cpn;
+            static uint8_t lf[0x100], lc[0x100];
+            memset(lf, 0, sizeof lf);
+            memset(lc, 0, sizeof lc);
+            put32(lf, Grimoire::OFF_UOBJECT_NAME, 21);
+            put32(lf, Grimoire::OFF_UOBJECT_NAME + L.number, 3);
+            if (L.cpn) put32(lf, Grimoire::OFF_UOBJECT_NAME + (L.number == 4 ? 8 : 4), 21);   // the DisplayIndex
+            put(lf, L.outer, reinterpret_cast<uintptr_t>(lc));
+            put32(lc, Grimoire::OFF_UOBJECT_NAME, 22);
+            Linie::NameKey lk{};
+            const std::string what = std::string(L.name);
+            check(("ReadNameKey, " + what + ": the Number and the Outer where this header keeps them").c_str(),
+                  Ubel::ReadNameKey(reinterpret_cast<uintptr_t>(lf), lk) && lk == Linie::NameKey{ 21, 3, 22, 0 } &&
+                  Ubel::NameKeyMatches(lk, "Actor_C", "Fire_2"),
+                  (std::to_string(lk.fnNum) + "/" + std::to_string(lk.clsIdx)).c_str());
+            int32_t ci = 0, cn = 0;
+            check(("ReadObjectNameKey, " + what).c_str(),
+                  Ubel::ReadObjectNameKey(reinterpret_cast<uint64_t>(lf), ci, cn) && ci == 21 && cn == 3);
+        }
+        DynOff::FNAME_NUMBER = savedNumber;
+        DynOff::UOBJECT_OUTER = savedOuter;
+        DynOff::bCasePreservingName = savedCpn;
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a chosen function's parameter layout -- its own chain, CPF_Parm only, both property models");
+        // docs/live-funcs-step2-items.md, B3. ⛔ POOL-FAKING: own pool, first. The layouts the project supports (the
+        // maintainer, 2026-10-07: UE4 in the tests): FField on UE5 / 4.25+, standard and case-preserving headers;
+        // UProperty on 4.15 (4.11-4.17: the first subclass field at +0x28) and 4.22 (4.18-4.24: +0x2C).
+        static uint8_t plEntry[22][0x40] = {};
+        static uintptr_t plChunk[23] = {};
+        const char* plNames[22] = { "", "Function", "IntProperty", "ObjectProperty", "StructProperty", "BoolProperty",
+                                    "Count", "Who", "Hit", "Flag", "ReturnValue", "Temp_Local", "DoIt", "MyActor_C",
+                                    "Class", "ScriptStruct", "Actor", "HitResult", "Parent", "Inherited", "NoParms",
+                                    "Decoy" };
+        for (int i = 1; i < 22; ++i) {
+            memcpy(plEntry[i] + 0x10, plNames[i], strlen(plNames[i]) + 1);
+            plChunk[i] = reinterpret_cast<uintptr_t>(plEntry[i]);
+        }
+        static uintptr_t plChunks[2] = { reinterpret_cast<uintptr_t>(plChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(plChunks), 0x10);
+        check("setup: the pool resolves Function", Serie::GetString(1) == "Function");
+
+        const bool savedFProp = DynOff::bUseFProperty, savedCpn = DynOff::bCasePreservingName;
+        const int savedOuter = DynOff::UOBJECT_OUTER, savedNum = DynOff::FNAME_NUMBER, savedOff = DynOff::UPROPERTY_OFFSET;
+        const int savedStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const uint32_t savedVer = g_cachedUEVersion;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        static uint8_t named[22][0x100];
+        static uint8_t fclassBlob[22][0x20];
+        auto obj = [&](int idx) { return reinterpret_cast<uintptr_t>(named[idx]); };
+        auto fclass = [&](int idx) { return reinterpret_cast<uintptr_t>(fclassBlob[idx]); };
+
+        struct Layout { const char* name; bool fprop, cpn; unsigned ver; int offsetInternal, slot; };
+        const Layout layouts[] = {
+            { "FField (UE5, 4.25+), standard header", true, false, 504, 0, 0 },
+            { "FField, case-preserving header", true, true, 427, 0, 0 },
+            { "UProperty 4.15", false, false, 415, 0x50, 0x78 },
+            { "UProperty 4.22", false, false, 422, 0x44, 0x70 },
+        };
+        constexpr uint64_t kParm = 0x80, kOut = 0x100, kRet = 0x400, kPod = 0x0008001040000200ull;
+        struct Entry { int name, type; int32_t size, offset, arrayDim; uint64_t flags; int slotObj; };
+        // Count[2] (in), Who (an object -> Actor), Hit (an out struct -> HitResult), Flag (a packed bool), the return,
+        // then a Blueprint local past them.
+        const Entry chain[6] = { { 6, 2, 4, 0x00, 2, kParm | kPod, 0 },  { 7, 3, 8, 0x08, 1, kParm, 16 },
+                                 { 8, 4, 0x88, 0x10, 1, kParm | kOut, 17 }, { 9, 5, 1, 0x98, 1, kParm, 0 },
+                                 { 10, 2, 4, 0xA0, 1, kParm | kOut | kRet | kPod, 0 }, { 11, 2, 4, 0xA4, 1, kPod, 0 } };
+        static uint8_t fnBlob[0x200], parentBlob[0x200], notFn[0x200], bareFn[0x200];
+        static uint8_t props[6][0x100], parentProp[0x100], bareProp[0x100];
+
+        for (const Layout& L : layouts) {
+            memset(named, 0, sizeof named);
+            memset(fclassBlob, 0, sizeof fclassBlob);
+            memset(fnBlob, 0, sizeof fnBlob); memset(parentBlob, 0, sizeof parentBlob);
+            memset(notFn, 0, sizeof notFn); memset(bareFn, 0, sizeof bareFn);
+            memset(props, 0, sizeof props); memset(parentProp, 0, sizeof parentProp); memset(bareProp, 0, sizeof bareProp);
+            DynOff::bUseFProperty = L.fprop;
+            DynOff::bCasePreservingName = L.cpn;
+            DynOff::UOBJECT_OUTER = L.cpn ? 0x28 : 0x20;
+            DynOff::FNAME_NUMBER = 4;
+            g_cachedUEVersion = L.ver;
+            if (!L.fprop) { DynOff::UPROPERTY_OFFSET = L.offsetInternal; DynOff::UPROPERTY_SUBCLASS_START = 0; }
+            for (int i = 1; i < 22; ++i) {
+                put32(named[i], Grimoire::OFF_UOBJECT_NAME, i);
+                put32(fclassBlob[i], DynOff::FFIELDCLASS_NAME, i);
+            }
+            putP(named[16], Grimoire::OFF_UOBJECT_CLASS, obj(14));   // Actor : Class
+            putP(named[13], Grimoire::OFF_UOBJECT_CLASS, obj(14));   // MyActor_C : Class
+            putP(named[21], Grimoire::OFF_UOBJECT_CLASS, obj(14));   // Decoy : Class
+            putP(named[17], Grimoire::OFF_UOBJECT_CLASS, obj(15));   // HitResult : ScriptStruct
+
+            const int nextOff  = L.fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT;
+            const int elemOff  = L.fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE;
+            const int flagsOff = L.fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS;
+            const int offOff   = L.fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET;
+            const int slotOff  = L.fprop ? DynOff::FSTRUCTPROP_STRUCT : L.slot;
+            const int boolOff  = L.fprop ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            auto writeProp = [&](uint8_t* pr, const Entry& e, uintptr_t next) {
+                if (L.fprop) { putP(pr, DynOff::FFIELD_CLASS, fclass(e.type)); put32(pr, DynOff::FFIELD_NAME, e.name); }
+                else         { putP(pr, Grimoire::OFF_UOBJECT_CLASS, obj(e.type)); put32(pr, Grimoire::OFF_UOBJECT_NAME, e.name); }
+                put32(pr, elemOff - 4, e.arrayDim);
+                put32(pr, elemOff, e.size);
+                put64(pr, flagsOff, e.flags);
+                put32(pr, offOff, e.offset);
+                if (e.slotObj) putP(pr, slotOff, obj(e.slotObj));
+                if (!L.fprop && slotOff != DynOff::FSTRUCTPROP_STRUCT && e.slotObj)
+                    putP(pr, DynOff::FSTRUCTPROP_STRUCT, obj(21));   // a class where an FField would keep it: a decoy
+                if (e.type == 5) { pr[boolOff] = 1; pr[boolOff + 1] = 0; pr[boolOff + 2] = 0x04; pr[boolOff + 3] = 0x04; }
+                putP(pr, nextOff, next);
+            };
+            for (int i = 0; i < 6; ++i)
+                writeProp(props[i], chain[i], i < 5 ? reinterpret_cast<uintptr_t>(props[i + 1]) : 0);
+            auto writeFn = [&](uint8_t* fb, int name, uintptr_t first) {
+                putP(fb, Grimoire::OFF_UOBJECT_CLASS, obj(1));
+                put32(fb, Grimoire::OFF_UOBJECT_NAME, name);
+                putP(fb, DynOff::UOBJECT_OUTER, obj(13));
+                putP(fb, L.fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN, first);
+            };
+            writeFn(fnBlob, 12, reinterpret_cast<uintptr_t>(props[0]));
+            // The parent this function overrides, with a parameter of its own: never this function's.
+            writeProp(parentProp, Entry{ 19, 2, 4, 0, 1, kParm, 0 }, 0);
+            writeFn(parentBlob, 18, reinterpret_cast<uintptr_t>(parentProp));
+            putP(fnBlob, DynOff::USTRUCT_SUPER, reinterpret_cast<uintptr_t>(parentBlob));
+
+            const std::string who = L.name;
+            Ubel::ParamLayout pl;
+            std::string why;
+            const bool ok = Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(fnBlob), pl, why);
+            check(("CaptureParamLayout, " + who + ": the five parameters, not the local, not the parent's").c_str(),
+                  ok && pl.params.size() == 5 && pl.params[0].name == "Count" && pl.params[4].name == "ReturnValue",
+                  (why + " " + std::to_string(pl.params.size())).c_str());
+            if (!ok || pl.params.size() != 5) continue;
+            check(("..." + who + ": the function and its class").c_str(), pl.funcName == "DoIt" && pl.className == "MyActor_C",
+                  pl.className.c_str());
+            using PK = Ubel::ParamKind;
+            check(("..." + who + ": each parameter's way").c_str(),
+                  pl.params[0].kind == PK::In && pl.params[2].kind == PK::Out && pl.params[4].kind == PK::Return);
+            check(("..." + who + ": types, offsets, sizes, the static array").c_str(),
+                  pl.params[0].typeName == "IntProperty" && pl.params[0].arrayDim == 2 && pl.params[1].offset == 8 &&
+                  pl.params[2].size == 0x88 && pl.layoutEnd == 0xA4, std::to_string(pl.layoutEnd).c_str());
+            check(("..." + who + ": the packed bool's bit").c_str(), pl.params[3].boolMask == 0x04);
+            check(("..." + who + ": the object's class and the struct's type, from this model's slot").c_str(),
+                  pl.params[1].objClass == "Actor" && pl.params[2].structType == "HitResult",
+                  (pl.params[1].objClass + "/" + pl.params[2].structType).c_str());
+            putP(props[1], slotOff, obj(17));   // a struct where the object's class should be
+            putP(props[2], slotOff, obj(16));   // a class where the struct should be
+            Ubel::ParamLayout wrong;
+            Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(fnBlob), wrong, why);
+            check(("..." + who + ": a slot holding the wrong kind of object names nothing").c_str(),
+                  wrong.params.size() == 5 && wrong.params[1].objClass.empty() && wrong.params[2].structType.empty(),
+                  wrong.params.size() == 5 ? (wrong.params[1].objClass + "/" + wrong.params[2].structType).c_str() : "");
+            putP(props[1], slotOff, obj(16));
+            putP(props[2], slotOff, obj(17));
+
+            putP(notFn, Grimoire::OFF_UOBJECT_CLASS, obj(14));     // a Class, not a Function
+            put32(notFn, Grimoire::OFF_UOBJECT_NAME, 21);
+            check(("..." + who + ": not a UFunction is refused").c_str(),
+                  !Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(notFn), pl, why) &&
+                  why.find("not a UFunction") != std::string::npos, why.c_str());
+            writeProp(bareProp, chain[5], 0);                      // only a local
+            writeFn(bareFn, 20, reinterpret_cast<uintptr_t>(bareProp));
+            check(("..." + who + ": a function without parameters is refused").c_str(),
+                  !Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(bareFn), pl, why) &&
+                  why.find("no parameters") != std::string::npos, why.c_str());
+            put32(props[1], offOff, 0x20000);                      // an offset no parameter block has
+            check(("..." + who + ": an implausible layout is refused").c_str(),
+                  !Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(fnBlob), pl, why) &&
+                  why.find("implausible") != std::string::npos, why.c_str());
+        }
+        DynOff::bUseFProperty = savedFProp;
+        DynOff::bCasePreservingName = savedCpn;
+        DynOff::UOBJECT_OUTER = savedOuter;
+        DynOff::FNAME_NUMBER = savedNum;
+        DynOff::UPROPERTY_OFFSET = savedOff;
+        DynOff::UPROPERTY_SUBCLASS_START = savedStart;
+        g_cachedUEVersion = savedVer;
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: the layout by value -- struct members (supers, nesting, a cap), enum tables read fresh");
+        // docs/live-funcs-step2-items.md, B4. ⛔ POOL-FAKING: own pool, first. FField and UProperty 4.22 (UE4 in the
+        // tests). The second design critic: WalkClassEx's memo and s_enumCache are address-keyed and never erased, so
+        // under widget reload churn a freed struct's or enum's address can hold another -- the capture uses neither.
+        enum : int { nFunction = 1, nInt, nStructP, nBoolP, nEnumP, nByteP, nFloatP, nHit, nKind, nLevel, nLooped,
+                     nDoIt, nMyActor, nClass, nScriptStruct, nEnum, nHitResult, nBaseResult, nInnerStruct, nX, nBase,
+                     nInner, nOn, nEKind, nEKindA, nEKindB, nLoop, nNext, nStale, nCount };
+        const char* lvNames[nCount] = { "", "Function", "IntProperty", "StructProperty", "BoolProperty",
+            "EnumProperty", "ByteProperty", "FloatProperty", "Hit", "Kind", "Level", "Looped", "DoIt", "MyActor_C",
+            "Class", "ScriptStruct", "Enum", "HitResult", "BaseResult", "InnerStruct", "X", "Base", "Inner", "bOn",
+            "EKind", "EKind::A", "EKind::B", "Loop", "Next", "Stale" };
+        static uint8_t lvEntry[nCount][0x40] = {};
+        static uintptr_t lvChunk[nCount + 1] = {};
+        for (int i = 1; i < nCount; ++i) {
+            memcpy(lvEntry[i] + 0x10, lvNames[i], strlen(lvNames[i]) + 1);
+            lvChunk[i] = reinterpret_cast<uintptr_t>(lvEntry[i]);
+        }
+        static uintptr_t lvChunks[2] = { reinterpret_cast<uintptr_t>(lvChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(lvChunks), 0x10);
+        check("setup: the pool resolves EKind", Serie::GetString(nEKind) == "EKind");
+
+        const bool savedFProp = DynOff::bUseFProperty, savedCpn = DynOff::bCasePreservingName;
+        const int savedOff = DynOff::UPROPERTY_OFFSET, savedStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const uint32_t savedVer = g_cachedUEVersion;
+        const int savedNames = DynOff::UENUM_NAMES, savedWidth = DynOff::UENUM_VALUE_SIZE, savedStride = DynOff::UENUM_PAIR_STRIDE;
+        const bool savedNew = DynOff::bEnumNamesNewContainer, savedDet = DynOff::bUEnumNamesDetected.load();
+        const bool savedFailed = DynOff::bUEnumNamesFailed.load(), savedProbed = DynOff::bFNameAlignProbed.load();
+        const int savedAlign = DynOff::FNAME_ALIGN_MEASURED.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bFNameAlignProbed = true;
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+        DynOff::UENUM_NAMES = 0x40;
+        DynOff::bEnumNamesNewContainer = false;
+        DynOff::UENUM_VALUE_SIZE = 8;
+        DynOff::UENUM_PAIR_STRIDE = 16;
+        DynOff::bUEnumNamesDetected = true;
+        DynOff::bUEnumNamesFailed = false;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        alignas(16) static uint8_t obj[nCount][0x200];
+        static uint8_t fcls[nCount][0x20];
+        alignas(16) static uint8_t enumData[2 * 16];
+        enum { pHit, pKind, pLevel, pLooped, mBase, mX, mInner, mOn, mNext, kProps };
+        static uint8_t prop[kProps][0x100];
+        auto O = [&](int i) { return reinterpret_cast<uintptr_t>(obj[i]); };
+        auto P = [&](int i) { return reinterpret_cast<uintptr_t>(prop[i]); };
+
+        struct Layout { const char* name; bool fprop; unsigned ver; int offsetInternal, slot; };
+        const Layout layouts[] = { { "FField", true, 504, 0, 0 }, { "UProperty 4.22", false, 422, 0x44, 0x70 } };
+        for (const Layout& L : layouts) {
+            memset(obj, 0, sizeof obj); memset(fcls, 0, sizeof fcls); memset(prop, 0, sizeof prop);
+            DynOff::bUseFProperty = L.fprop;
+            g_cachedUEVersion = L.ver;
+            if (!L.fprop) { DynOff::UPROPERTY_OFFSET = L.offsetInternal; DynOff::UPROPERTY_SUBCLASS_START = 0; }
+            for (int i = 1; i < nCount; ++i) { put32(obj[i], Grimoire::OFF_UOBJECT_NAME, i); put32(fcls[i], DynOff::FFIELDCLASS_NAME, i); }
+            for (int s : { nHitResult, nBaseResult, nInnerStruct, nLoop }) putP(obj[s], Grimoire::OFF_UOBJECT_CLASS, O(nScriptStruct));
+            putP(obj[nMyActor], Grimoire::OFF_UOBJECT_CLASS, O(nClass));
+            for (int e : { nEKind, nStale }) putP(obj[e], Grimoire::OFF_UOBJECT_CLASS, O(nEnum));
+            // EKind's Names: {A = 0, B = 2}.
+            memset(enumData, 0, sizeof enumData);
+            put32(enumData, 0, nEKindA);  put64(enumData, 8, 0);
+            put32(enumData, 16, nEKindB); put64(enumData, 24, 2);
+            putP(obj[nEKind], 0x40, reinterpret_cast<uintptr_t>(enumData));
+            put32(obj[nEKind], 0x48, 2);
+            put32(obj[nEKind], 0x4C, 2);
+
+            const int nextOff = L.fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT;
+            const int elemOff = L.fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE;
+            const int flagsOff = L.fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS;
+            const int offOff = L.fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET;
+            const int structSlot = L.fprop ? DynOff::FSTRUCTPROP_STRUCT : L.slot;
+            const int byteSlot = L.fprop ? DynOff::FBYTEPROP_ENUM : L.slot;
+            const int enumSlot = L.fprop ? DynOff::FENUMPROP_ENUM : L.slot + 8;
+            const int boolOff = L.fprop ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            auto write = [&](int pi, int name, int type, int32_t size, int32_t offset, uintptr_t next, uintptr_t slotObj) {
+                uint8_t* pr = prop[pi];
+                if (L.fprop) { putP(pr, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(fcls[type])); put32(pr, DynOff::FFIELD_NAME, name); }
+                else         { putP(pr, Grimoire::OFF_UOBJECT_CLASS, O(type)); put32(pr, Grimoire::OFF_UOBJECT_NAME, name); }
+                put32(pr, elemOff - 4, 1);
+                put32(pr, elemOff, size);
+                put64(pr, flagsOff, 0x80);
+                put32(pr, offOff, offset);
+                if (type == nStructP) putP(pr, structSlot, slotObj);
+                if (type == nByteP) putP(pr, byteSlot, slotObj);
+                if (type == nEnumP) putP(pr, enumSlot, slotObj);
+                if (type == nBoolP) { pr[boolOff] = 1; pr[boolOff + 2] = 0x02; pr[boolOff + 3] = 0x02; }
+                putP(pr, nextOff, next);
+            };
+            const int chainOff = L.fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN;
+            // HitResult : BaseResult { Base } { X, Inner : InnerStruct { bOn } }; Loop { Next : Loop }.
+            write(mBase, nBase, nInt, 4, 0, 0, 0);
+            write(mX, nX, nFloatP, 4, 4, P(mInner), 0);
+            write(mInner, nInner, nStructP, 1, 8, 0, O(nInnerStruct));
+            write(mOn, nOn, nBoolP, 1, 0, 0, 0);
+            write(mNext, nNext, nStructP, 8, 0, 0, O(nLoop));
+            putP(obj[nBaseResult], chainOff, P(mBase));
+            putP(obj[nHitResult], chainOff, P(mX));
+            putP(obj[nHitResult], DynOff::USTRUCT_SUPER, O(nBaseResult));
+            putP(obj[nInnerStruct], chainOff, P(mOn));
+            putP(obj[nLoop], chainOff, P(mNext));
+            // DoIt(Hit, Kind, Level, Looped).
+            write(pHit, nHit, nStructP, 0x10, 0x00, P(pKind), O(nHitResult));
+            write(pKind, nKind, nEnumP, 1, 0x10, P(pLevel), O(nEKind));
+            write(pLevel, nLevel, nByteP, 1, 0x11, P(pLooped), O(nEKind));
+            write(pLooped, nLooped, nStructP, 8, 0x18, 0, O(nLoop));
+            if (!L.fprop) {   // what an FField reader would take on a UProperty engine: decoys
+                putP(prop[pLevel], DynOff::FBYTEPROP_ENUM, O(nStale));
+            }
+            putP(obj[nDoIt], Grimoire::OFF_UOBJECT_CLASS, O(nFunction));
+            put32(obj[nDoIt], Grimoire::OFF_UOBJECT_NAME, nDoIt);
+            putP(obj[nDoIt], DynOff::UOBJECT_OUTER, O(nMyActor));
+            putP(obj[nDoIt], chainOff, P(pHit));
+            {
+                // A stale table cached at EKind's address: another enum lived there once.
+                std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+                Ubel::s_enumCache[O(nEKind)] = { { 0, "Stale::A" } };
+            }
+
+            const std::string who = L.name;
+            Ubel::ParamLayout pl;
+            std::string why;
+            const bool ok = Ubel::CaptureParamLayout(O(nDoIt), pl, why) && pl.params.size() == 4;
+            check(("layout by value, " + who + ": the four parameters").c_str(), ok, why.c_str());
+            if (!ok) continue;
+            const auto& hit = pl.params[0];
+            check(("..." + who + ": a struct's members, its super's first").c_str(),
+                  hit.sub.size() == 3 && hit.sub[0].name == "Base" && hit.sub[1].name == "X" && hit.sub[1].offset == 4 &&
+                  hit.sub[2].name == "Inner", std::to_string(hit.sub.size()).c_str());
+            check(("..." + who + ": a nested struct's members, with its packed bool's bit").c_str(),
+                  hit.sub.size() == 3 && hit.sub[2].sub.size() == 1 && hit.sub[2].sub[0].name == "bOn" &&
+                  hit.sub[2].sub[0].boolMask == 0x02);
+            const auto& kind = pl.params[1];
+            check(("..." + who + ": an EnumProperty's enum and its table, read fresh -- not the stale cache").c_str(),
+                  kind.enumName == "EKind" && kind.enumEntries.size() == 2 && kind.enumEntries[0].second == "EKind::A" &&
+                  kind.enumEntries[1].first == 2 && kind.enumEntries[1].second == "EKind::B",
+                  (kind.enumName + " " + (kind.enumEntries.empty() ? std::string() : kind.enumEntries[0].second)).c_str());
+            check(("..." + who + ": a ByteProperty's enum, at its own slot").c_str(),
+                  pl.params[2].enumName == "EKind" && pl.params[2].enumEntries.size() == 2, pl.params[2].enumName.c_str());
+            int depth = 0;
+            for (const Ubel::ParamField* f = &pl.params[3]; !f->sub.empty(); f = &f->sub[0]) ++depth;
+            check(("..." + who + ": a struct that holds itself stops at kParamStructDepth").c_str(),
+                  depth == Ubel::kParamStructDepth, std::to_string(depth).c_str());
+
+            // By value: wipe every blob the capture read; what it captured does not change.
+            memset(obj, 0, sizeof obj); memset(prop, 0, sizeof prop); memset(enumData, 0, sizeof enumData);
+            check(("..." + who + ": the captured layout outlives the objects it was read from").c_str(),
+                  pl.params[0].sub.size() == 3 && pl.params[0].sub[2].sub[0].name == "bOn" &&
+                  pl.params[1].enumEntries.size() == 2 && pl.params[1].enumEntries[1].second == "EKind::B");
+        }
+        {
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            Ubel::s_enumCache.erase(reinterpret_cast<uintptr_t>(obj[nEKind]));
+        }
+        DynOff::bUseFProperty = savedFProp;
+        DynOff::bCasePreservingName = savedCpn;
+        DynOff::UPROPERTY_OFFSET = savedOff;
+        DynOff::UPROPERTY_SUBCLASS_START = savedStart;
+        g_cachedUEVersion = savedVer;
+        DynOff::UENUM_NAMES = savedNames;
+        DynOff::UENUM_VALUE_SIZE = savedWidth;
+        DynOff::UENUM_PAIR_STRIDE = savedStride;
+        DynOff::bEnumNamesNewContainer = savedNew;
+        DynOff::bUEnumNamesDetected = savedDet;
+        DynOff::bUEnumNamesFailed = savedFailed;
+        DynOff::bFNameAlignProbed = savedProbed;
+        DynOff::FNAME_ALIGN_MEASURED = savedAlign;
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

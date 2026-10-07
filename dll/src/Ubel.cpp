@@ -144,6 +144,55 @@ static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
 }
 
 // ============================================================
+// ParseEnumTable — read a UEnum's Names from game memory, no cache involved. The container is either the legacy
+// TArray<TPair<FName,int64>> or the UE5.7+ FNameData struct-of-arrays; the format is a per-game constant established
+// by DetectUEnumNames, so the layout is built for that KNOWN format (Neu::BuildLayout -- no per-enum guessing). The
+// caller has checked that detection succeeded. False only when a mid-table read broke the loop (a truncated table).
+// ============================================================
+static bool ParseEnumTable(uintptr_t enumAddr, std::vector<std::pair<int64_t, std::string>>& entries) {
+    entries.clear();
+    auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
+        return Macht::ReadBytesSafe(a, o, n);
+    };
+    const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
+        ? Neu::EnumNamesFormat::FNameData57
+        : Neu::EnumNamesFormat::Legacy;
+    const int fnameSize = DynOff::SizeofFName();
+
+    Neu::EnumNamesLayout layout;
+    // False ONLY when a mid-table read broke the loop below. BuildLayout returning
+    // false is a COMPLETE answer, not a truncated one: Neu rejects count == 0 /
+    // num <= 0 (Neu.h), so a legitimately member-less UEnum — and any address that
+    // is not a UEnum — lands there, and caching "" for it is correct and must stay
+    // cached, or every lookup re-probes. A half-read table is the opposite case.
+    bool tableComplete = true;
+    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
+        if (fmt == Neu::EnumNamesFormat::Legacy) {   // [VND583-04] uint8 values on 4.9-4.14
+            layout.valueSize    = DynOff::UENUM_VALUE_SIZE;
+            layout.legacyStride = DynOff::UENUM_PAIR_STRIDE;
+        }
+        entries.reserve(layout.count);
+        for (int32_t i = 0; i < layout.count; ++i) {
+            int32_t nameIdx = 0;
+            int64_t val = 0;
+            if (!Neu::ReadEntry(readMem, layout, i, nameIdx, val)) break;
+            std::string name = Serie::GetString(nameIdx);
+            entries.push_back({val, std::move(name)});
+        }
+        tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
+        // Report what was STORED, not what was intended. This used to print
+        // layout.count unconditionally, so a truncated table logged as a full one —
+        // the report and the reality computed by different code paths (audit #4's
+        // own root cause), which is what hid this defect.
+        LOG_DEBUG("ParseEnumTable: UEnum 0x%llX — read %zu of %d entries (%s)%s",
+            static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
+            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
+            tableComplete ? "" : " — TRUNCATED");
+    }
+    return tableComplete;
+}
+
+// ============================================================
 // ResolveEnumValue — resolve an enum integer value to its name string.
 // Uses a per-UEnum cache (static unordered_map) for performance.
 // Triggers lazy DetectUEnumNames() on first call.
@@ -176,49 +225,9 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     }
 
     // Slow path: parse UEnum::Names WITHOUT the lock (game-memory reads are the
-    // expensive part), then insert. The container is either the legacy
-    // TArray<TPair<FName,int64>> or the UE5.7+ FNameData struct-of-arrays; the
-    // format is a per-game constant established by DetectUEnumNames, so we build
-    // the layout for that KNOWN format (Neu::BuildLayout — no per-enum guessing).
-    auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
-        return Macht::ReadBytesSafe(a, o, n);
-    };
-    const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
-        ? Neu::EnumNamesFormat::FNameData57
-        : Neu::EnumNamesFormat::Legacy;
-    const int fnameSize = DynOff::SizeofFName();
-
+    // expensive part), then insert.
     std::vector<std::pair<int64_t, std::string>> entries;
-    Neu::EnumNamesLayout layout;
-    // False ONLY when a mid-table read broke the loop below. BuildLayout returning
-    // false is a COMPLETE answer, not a truncated one: Neu rejects count == 0 /
-    // num <= 0 (Neu.h), so a legitimately member-less UEnum — and any address that
-    // is not a UEnum — lands there, and caching "" for it is correct and must stay
-    // cached, or every lookup re-probes. A half-read table is the opposite case.
-    bool tableComplete = true;
-    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
-        if (fmt == Neu::EnumNamesFormat::Legacy) {   // [VND583-04] uint8 values on 4.9-4.14
-            layout.valueSize    = DynOff::UENUM_VALUE_SIZE;
-            layout.legacyStride = DynOff::UENUM_PAIR_STRIDE;
-        }
-        entries.reserve(layout.count);
-        for (int32_t i = 0; i < layout.count; ++i) {
-            int32_t nameIdx = 0;
-            int64_t val = 0;
-            if (!Neu::ReadEntry(readMem, layout, i, nameIdx, val)) break;
-            std::string name = Serie::GetString(nameIdx);
-            entries.push_back({val, std::move(name)});
-        }
-        tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
-        // Report what was STORED, not what was intended. This used to print
-        // layout.count unconditionally, so a truncated table logged as a full one —
-        // the report and the reality computed by different code paths (audit #4's
-        // own root cause), which is what hid this defect.
-        LOG_DEBUG("ResolveEnumValue: UEnum 0x%llX — read %zu of %d entries (%s)%s",
-            static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
-            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
-            tableComplete ? "" : " — TRUNCATED, not cached");
-    }
+    const bool tableComplete = ParseEnumTable(enumAddr, entries);
 
     // Insert (another thread may have built the same enum meanwhile — emplace
     // is a no-op then, and we read the existing entry while holding the lock).
@@ -2006,6 +2015,653 @@ bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out) {
     return true;
 }
 
+// ---- [TRACE-UNLOADED-NAMES] a function's identity, read at its first call ----
+//
+// The setup lives in atomics: SetFunctionCapture runs on the pipe thread, the reader on the hook. The table's lock
+// orders a Set before StartRecording against every read of that recording; the atomics keep a Set during a
+// recording (a second Start) from being a data race.
+namespace {
+constexpr size_t kMaxWidgetBases = 4;
+std::atomic<int>       s_capFlagsOff{ -1 };
+std::atomic<int>       s_capTailOff{ 0 };
+std::atomic<uintptr_t> s_capWidget[kMaxWidgetBases] = {};
+std::mutex             s_widgetBasesMutex;
+std::vector<uintptr_t> s_widgetBases;   // UMG's classes, looked up once per process (native classes never unload)
+}
+
+FunctionCaptureSetup PrepareFunctionCapture() {
+    FunctionCaptureSetup s;
+    // The same choice ReadFuncFlagsAndParams makes, minus its sweep: a decided offset, else the version's primary.
+    // FunctionFlagsOffset() runs the one-time vote here, on the pipe thread.
+    const int decided = FunctionFlagsOffset();
+    const int primary = decided > 0 ? decided
+        : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
+                                          DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                          DynOff::bUseFProperty);
+    if (primary > 0) {
+        s.flagsOffset = primary;
+        s.tailOffset  = primary + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
+                      + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);
+    }
+    // pe_profile_get's is_widget tests the class chain for these two names; the capture tests for these classes.
+    std::lock_guard<std::mutex> lk(s_widgetBasesMutex);
+    if (s_widgetBases.empty()) {
+        for (const char* path : { "/Script/UMG.UserWidget", "/Script/UMG.Widget" }) {
+            if (const uintptr_t c = Aura::FindClassByPath(path)) s_widgetBases.push_back(c);
+        }
+    }
+    s.widgetBases = s_widgetBases;
+    return s;
+}
+
+void SetFunctionCapture(const FunctionCaptureSetup& setup) {
+    s_capFlagsOff.store(setup.flagsOffset, std::memory_order_relaxed);
+    s_capTailOff.store(setup.tailOffset, std::memory_order_relaxed);
+    for (size_t i = 0; i < kMaxWidgetBases; ++i)
+        s_capWidget[i].store(i < setup.widgetBases.size() ? setup.widgetBases[i] : 0, std::memory_order_relaxed);
+}
+
+bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out) {
+    if (!func) return false;
+    const uintptr_t fname = func + Grimoire::OFF_UOBJECT_NAME;
+    if (!Macht::ReadSafe(fname, out.nameIndex)) return false;
+    Macht::ReadSafe(fname + DynOff::FNAME_NUMBER, out.nameNumber);   // may fail and stay 0, as GetName allows
+
+    uintptr_t cls = 0;
+    if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) && cls) {   // a UFunction's Outer is its UClass
+        out.outer = cls;
+        Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, out.classIndex);
+        Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, out.classNumber);
+        uintptr_t bases[kMaxWidgetBases];
+        size_t nb = 0;
+        for (size_t i = 0; i < kMaxWidgetBases; ++i)
+            if (const uintptr_t b = s_capWidget[i].load(std::memory_order_relaxed)) bases[nb++] = b;
+        // The class itself, then up its super chain -- bounded like ClassDerivesFromAny, and ended by a chain that
+        // points at itself.
+        uintptr_t c = cls;
+        for (int guard = 0; nb && c && guard < 64; ++guard) {
+            for (size_t i = 0; i < nb; ++i) if (c == bases[i]) out.isWidget = true;
+            if (out.isWidget) break;
+            uintptr_t super = 0;
+            if (!Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) || !super || super == c)
+                break;
+            c = super;
+        }
+    }
+
+    const int fo = s_capFlagsOff.load(std::memory_order_relaxed);
+    if (fo > 0) {
+        const int tail = s_capTailOff.load(std::memory_order_relaxed);
+        Macht::ReadSafe<uint32_t>(func + fo, out.functionFlags);
+        Macht::ReadSafe<uint8_t>(func + tail + 0x04, out.numParms);
+        Macht::ReadSafe<uint16_t>(func + tail + 0x06, out.parmsSize);
+        Macht::ReadSafe<uint16_t>(func + tail + 0x08, out.returnValueOffset);   // [LIVEFUNCS-STEP2] the after copy's
+    }
+    return true;
+}
+
+bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, uint64_t& outer) {
+    if (!func) return false;
+    const uintptr_t fname = func + Grimoire::OFF_UOBJECT_NAME;
+    if (!Macht::ReadSafe(fname, nameIndex)) return false;
+    nameNumber = 0;
+    Macht::ReadSafe(fname + DynOff::FNAME_NUMBER, nameNumber);
+    uintptr_t cls = 0;
+    outer = Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) ? cls : 0;
+    return true;
+}
+
+// [LIVEFUNCS-STEP2] The struct a StructProperty parameter holds, or the class an object-family one points at, read in
+// this engine's property model: an FField's at FSTRUCTPROP_STRUCT; a UProperty's at the measured subclass start
+// (UPropertySubclassStart), as WalkFunctions reads it -- FSTRUCTPROP_STRUCT is an FField offset, and on a UProperty
+// engine it can land on another field. The slot is taken only when it holds that kind of object.
+static uintptr_t ParamSlotObject(uintptr_t prop, const std::string& typeName) {
+    const bool isStruct = typeName == "StructProperty";
+    const bool isObject = typeName == "ObjectProperty" || typeName == "ClassProperty" ||
+                          typeName == "WeakObjectProperty" || typeName == "SoftObjectProperty" ||
+                          typeName == "SoftClassProperty" || typeName == "InterfaceProperty" ||
+                          typeName == "LazyObjectProperty";
+    if (!isStruct && !isObject) return 0;
+    const int slot = DynOff::bUseFProperty ? DynOff::FSTRUCTPROP_STRUCT : DynOff::UPropertySubclassStart(g_cachedUEVersion);
+    uintptr_t ptr = 0;
+    if (!Macht::ReadSafe(prop + slot, ptr) || !ptr) return 0;
+    if (isStruct ? !IsScriptStructObject(ptr) : !IsClassObject(ptr)) return 0;
+    return ptr;
+}
+
+static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
+    const uintptr_t ptr = ParamSlotObject(prop, p.typeName);
+    if (!ptr) return;
+    std::string name = GetName(ptr);
+    if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
+    (p.typeName == "StructProperty" ? p.structType : p.objClass) = std::move(name);
+}
+
+// The UEnum of an EnumProperty or a ByteProperty, in this engine's property model: FField mode at FBYTEPROP_ENUM /
+// FENUMPROP_ENUM (ReadPropertyEnum); UProperty mode at the measured subclass start, an EnumProperty's one pointer later
+// (its UnderlyingProp comes first) -- the FField slots name another field there.
+static uintptr_t ParamEnumObject(uintptr_t prop, const std::string& typeName) {
+    if (DynOff::bUseFProperty) return ReadPropertyEnum(prop, typeName);
+    const int start = DynOff::UPropertySubclassStart(g_cachedUEVersion);
+    const int slot = typeName == "ByteProperty" ? start : typeName == "EnumProperty" ? start + 8 : -1;
+    uintptr_t e = 0;
+    if (slot < 0 || !prop || !Macht::ReadSafe(prop + slot, e) || !IsUEnumObject(e)) return 0;
+    return e;
+}
+
+static std::vector<ParamField> CaptureStructMembers(uintptr_t structAddr, int depth, int& leaves);
+
+static ParamField ParamFieldOf(const FieldInfo& f) {
+    ParamField p;
+    p.name       = f.Name;
+    p.typeName   = f.TypeName;
+    p.offset     = f.Offset;
+    p.size       = f.Size;
+    p.arrayDim   = f.ArrayDim;
+    p.flags      = f.PropertyFlags;
+    p.kind       = ParamKindOf(f.PropertyFlags);
+    p.boolMask   = f.boolFieldMask;
+    p.boolNative = f.boolNative;
+    return p;
+}
+
+// What a parameter's decode needs beyond its own entry, read now -- the function is alive -- and kept by value. No
+// cache is consulted: WalkClassEx's memo and s_enumCache are keyed by address and never erased, and under widget
+// reload churn a freed struct's or enum's address can hold another (the second design critic).
+static void EnrichParam(uintptr_t prop, ParamField& p, int depth, int& leaves) {
+    ReadParamSlotNames(prop, p);
+    if (p.typeName == "StructProperty") {
+        if (depth < kParamStructDepth)
+            if (const uintptr_t s = ParamSlotObject(prop, p.typeName)) p.sub = CaptureStructMembers(s, depth + 1, leaves);
+    } else if (p.typeName == "EnumProperty" || p.typeName == "ByteProperty") {
+        if (const uintptr_t e = ParamEnumObject(prop, p.typeName)) {
+            p.enumName = GetName(e);
+            if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire) &&
+                !DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+                ParseEnumTable(e, p.enumEntries);
+        }
+    } else if (p.typeName == "OptionalProperty") {
+        const OptionalLayoutInfo ol = ResolveOptionalLayout(prop, p.size, "");
+        p.optLayout    = static_cast<uint8_t>(ol.layout);
+        p.optInnerType = ol.innerType;
+        p.optInnerSize = ol.innerSize;
+    }
+}
+
+// A struct's members by value: its supers' first (a struct inherits its parent struct's members), each enriched in
+// turn; at most kParamLeaves for the whole function.
+static std::vector<ParamField> CaptureStructMembers(uintptr_t structAddr, int depth, int& leaves) {
+    std::vector<uintptr_t> chain;
+    for (uintptr_t cur = structAddr; cur && chain.size() < 8 && IsScriptStructObject(cur);) {
+        chain.push_back(cur);
+        uintptr_t super = 0;
+        if (!Macht::ReadSafe(cur + DynOff::USTRUCT_SUPER, super) || super == cur) break;
+        cur = super;
+    }
+    std::vector<ParamField> out;
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        std::vector<FieldInfo> fields;
+        uintptr_t first = 0;
+        if (DynOff::bUseFProperty) {
+            if (Macht::ReadSafe(*it + DynOff::USTRUCT_CHILDPROPS, first) && first) WalkFFieldChain(first, fields);
+        } else {
+            if (Macht::ReadSafe(*it + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
+        }
+        for (const FieldInfo& f : fields) {
+            if (leaves >= kParamLeaves) return out;
+            ++leaves;
+            ParamField m = ParamFieldOf(f);
+            EnrichParam(f.Address, m, depth, leaves);
+            out.push_back(std::move(m));
+        }
+    }
+    return out;
+}
+
+bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
+    out = ParamLayout{};
+    why.clear();
+    FunctionInfo fi;
+    if (!ResolveFunctionInfo(func, fi)) { why = "not a UFunction"; return false; }
+    out.func          = func;
+    out.funcName      = fi.name;
+    out.functionFlags = fi.functionFlags;
+    out.parmsSize     = fi.parmsSize;
+    out.numParms      = fi.numParms;
+    uintptr_t outer = 0;
+    if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, outer) && outer) out.className = GetName(outer);
+
+    // Its own chain only: WalkClass would prepend the SuperStruct's -- an override's parent function -- and keeps an
+    // address-keyed memo a layout read by value must not lean on.
+    std::vector<FieldInfo> fields;
+    uintptr_t first = 0;
+    if (DynOff::bUseFProperty) {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDPROPS, first) && first) WalkFFieldChain(first, fields);
+    } else {
+        if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
+    }
+    constexpr uint64_t kCpfParm = 0x80;
+    int leaves = 0;
+    for (const FieldInfo& f : fields) {
+        if (!(f.PropertyFlags & kCpfParm)) continue;   // a Blueprint function's locals follow its parameters
+        if (f.Offset < 0 || f.Offset > 0x10000 || f.Size <= 0 || f.Size > 0x10000) {
+            why = "implausible parameter '" + f.Name + "'";
+            out.params.clear();
+            return false;
+        }
+        ParamField p = ParamFieldOf(f);
+        EnrichParam(f.Address, p, 0, leaves);
+        const uint64_t end = static_cast<uint64_t>(p.offset) + static_cast<uint64_t>(p.size) * p.arrayDim;
+        if (end > out.layoutEnd) out.layoutEnd = static_cast<uint32_t>(end);
+        out.params.push_back(std::move(p));
+    }
+    if (out.params.empty()) { why = "no parameters"; return false; }
+    return true;
+}
+
+static bool ReadLiveKey(uintptr_t func, Linie::NameKey& key, uint64_t& outer) {
+    if (!ReadNameKey(func, key)) return false;
+    uintptr_t o = 0;
+    outer = Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, o) ? o : 0;
+    return true;
+}
+static uint64_t SteadyNowMs() {
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(
+        std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+ArmCaptureOps DefaultArmCaptureOps() {
+    ArmCaptureOps ops;
+    ops.classify    = &ClassifyFunction;
+    ops.readKey     = &ReadLiveKey;
+    ops.capture     = &CaptureParamLayout;
+    ops.nowMs       = &SteadyNowMs;
+    ops.tailDecided = DynOff::UFUNCTION_FLAGS != 0;
+    return ops;
+}
+
+size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOps& ops, ArmLayoutMemo& memo) {
+    using LS = Linie::ArmLayoutState;
+    const std::vector<Linie::PendingArm> arms = Linie::TakePendingArms(st, maxArms);
+    for (const Linie::PendingArm& pa : arms) {
+        if (!Linie::ArmIsPending(st, pa.index)) continue;   // sealed: Stop has passed
+        const Linie::FuncIdentity& id = pa.rec.ident;
+        const Linie::NameKey armKey{ id.nameIndex, id.nameNumber, id.classIndex, id.classNumber };
+        const uint64_t waited = ops.nowMs() > pa.rec.armMs ? ops.nowMs() - pa.rec.armMs : 0;
+        // The same five numbers -- the address, its Outer and the names -- are the same function: its layout, read
+        // once, holds for every arm of it, even after it unloaded again.
+        const ArmLayoutMemo::Key key{ pa.rec.addr, id.outer, armKey };
+        if (const auto it = memo.layouts.find(key); it != memo.layouts.end()) {
+            Linie::PublishArmLayout(st, pa.index, LS::Read, it->second, {}, waited);
+            continue;
+        }
+        // Still the function that was armed: in its slot, under its names and its class.
+        auto stillItself = [&] {
+            Linie::NameKey live{};
+            uint64_t outer = 0;
+            return ops.readKey(pa.rec.addr, live, outer) && live == armKey && outer == id.outer;
+        };
+        const FuncState state = ops.classify(pa.rec.addr, id);
+        if (state == FuncState::Unloaded || state == FuncState::Unnamed) {
+            Linie::PublishArmLayout(st, pa.index, LS::UnloadedBeforeRead, nullptr, {}, waited);
+            continue;
+        }
+        if (state == FuncState::Recycled || !stillItself()) {
+            Linie::PublishArmLayout(st, pa.index, LS::ReplacedBeforeRead, nullptr, {}, waited);
+            continue;
+        }
+        auto layout = std::make_shared<ParamLayout>();
+        std::string why;
+        ++memo.captures;
+        if (!ops.capture(pa.rec.addr, *layout, why)) {
+            Linie::PublishArmLayout(st, pa.index, LS::Failed, nullptr, why, waited);
+            continue;
+        }
+        if (!stillItself()) {   // another function took the address while it was read: the read is not its
+            Linie::PublishArmLayout(st, pa.index, LS::ReplacedBeforeRead, nullptr, {}, waited);
+            continue;
+        }
+        // The vote's own rule, against the arm's own NumParms / ParmsSize, when the flags offset says where they are.
+        // A mismatch is published as Doubtful: its calls still decode, marked.
+        const bool doubtful = ops.tailDecided && id.numParms != 0 && id.parmsSize != 0 &&
+            !DynOff::FunctionTailMatches(layout->numParms ? layout->numParms : id.numParms, id.parmsSize,
+                                           static_cast<int>(layout->params.size()), static_cast<int>(layout->layoutEnd));
+        std::shared_ptr<const ParamLayout> published = std::move(layout);
+        memo.layouts.emplace(key, published);
+        Linie::PublishArmLayout(st, pa.index, doubtful ? LS::Doubtful : LS::Read, published, {}, waited);
+    }
+    return arms.size();
+}
+
+// [LIVEFUNCS-STEP2] The decoder. Pure: the copy's bytes, the arm's layout, and what the ctx answers; nothing here reads
+// the game, so it runs after Stop, on the pipe thread, from a layout read while the function was alive.
+static std::string SnapHex(const uint8_t* p, size_t n) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string s;
+    const size_t shown = n < 32 ? n : 32;
+    for (size_t i = 0; i < shown; ++i) {
+        if (i) s += ' ';
+        s += kHex[p[i] >> 4];
+        s += kHex[p[i] & 15];
+    }
+    if (shown < n) s += " ...";
+    return s;
+}
+
+static SnapValue DecodeSnapField(const ParamField& f, const uint8_t* p, uint32_t avail, const SnapDecodeCtx& ctx);
+
+static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32_t avail, const SnapDecodeCtx& ctx) {
+    SnapValue v;
+    if (f.size <= 0 || avail < static_cast<uint32_t>(f.size)) { v.mark = SnapMark::Missing; return v; }
+    const std::string& t = f.typeName;
+    if (t == "Int8Property") {   // signed: PreviewScalarValue reads it through uint8_t
+        int8_t x = 0;
+        memcpy(&x, p, 1);
+        v.text = std::to_string(x);
+        return v;
+    }
+    if (t == "BoolProperty") {
+        if (f.boolMask) v.text = (p[0] & f.boolMask) ? "true" : "false";
+        else if (f.boolNative) v.text = p[0] ? "true" : "false";
+        else v.text = std::string(p[0] ? "true" : "false") + " (layout unresolved)";
+        return v;
+    }
+    if ((t == "EnumProperty" || t == "ByteProperty") && !f.enumName.empty()) {
+        const int64_t raw = ReadEnumRawValue(p, f.size);
+        for (const auto& [value, name] : f.enumEntries)
+            if (value == raw) { v.text = name + " (" + std::to_string(raw) + ")"; return v; }
+        v.text = std::to_string(raw) + " (not in " + f.enumName + ")";
+        return v;
+    }
+    if (t == "NameProperty") {
+        int32_t idx = 0, num = 0;
+        memcpy(&idx, p, 4);
+        if (f.size >= DynOff::FNAME_NUMBER + 4) memcpy(&num, p + DynOff::FNAME_NUMBER, 4);
+        v.text = ctx.fname ? ctx.fname(idx, num) : std::to_string(idx) + "_" + std::to_string(num);
+        return v;
+    }
+    if (t == "StructProperty" && !f.sub.empty()) {
+        std::string text = "{";
+        for (const ParamField& m : f.sub) {
+            SnapValue mv = (m.offset >= 0 && static_cast<uint32_t>(m.offset) < avail)
+                ? DecodeSnapField(m, p + m.offset, avail - static_cast<uint32_t>(m.offset), ctx)
+                : SnapValue{ "", SnapMark::Missing, {} };
+            if (text.size() > 1) text += ", ";
+            text += m.name + "=" + (mv.text.empty() ? "?" : mv.text);
+            v.sub.push_back(std::move(mv));
+        }
+        v.text = text + "}";
+        return v;
+    }
+    // The pointer family names what is at the address NOW: the object at the call may have gone since (Now / Gone).
+    auto objectAt = [&](uintptr_t ptr, SnapValue& out) {
+        if (!ptr) { out.text = "null"; out.mark = SnapMark::Exact; return; }
+        std::string name, cls;
+        if (ctx.object && ctx.object(ptr, name, cls)) { out.text = name + " (" + cls + ")"; out.mark = SnapMark::Now; return; }
+        char buf[40];
+        snprintf(buf, sizeof buf, "0x%llX", static_cast<unsigned long long>(ptr));
+        out.text = std::string(buf) + " (no longer a live object)";
+        out.mark = SnapMark::Gone;
+    };
+    auto load32 = [&](int off) { int32_t x = 0; if (off >= 0 && off + 4 <= f.size) memcpy(&x, p + off, 4); return x; };
+    auto load64 = [&](int off) { uint64_t x = 0; if (off >= 0 && off + 8 <= f.size) memcpy(&x, p + off, 8); return x; };
+    auto fnameAt = [&](int off, int fsz) {
+        const int32_t idx = load32(off);
+        const int32_t num = fsz >= DynOff::FNAME_NUMBER + 4 ? load32(off + DynOff::FNAME_NUMBER) : 0;
+        return ctx.fname ? ctx.fname(idx, num) : std::to_string(idx);
+    };
+    auto header = [&](int64_t num, uint64_t data) {
+        char buf[64];
+        snprintf(buf, sizeof buf, "Num=%lld (Data 0x%llX)", static_cast<long long>(num), static_cast<unsigned long long>(data));
+        v.text = buf;
+        v.mark = SnapMark::Header;
+    };
+    const int fsz = ctx.fnameSize > 0 ? ctx.fnameSize : DynOff::SizeofFName();
+    if (t == "ObjectProperty" || t == "ClassProperty" || t == "InterfaceProperty") {   // an interface: its object half
+        objectAt(static_cast<uintptr_t>(load64(0)), v);
+        return v;
+    }
+    if (t == "WeakObjectProperty") {
+        const int32_t idx = load32(0), serial = load32(4);
+        const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
+        if (target) { objectAt(target, v); return v; }
+        v.text = UnresolvedWeakLabel(idx, serial);
+        v.mark = v.text == "null" ? SnapMark::Exact : SnapMark::Gone;
+        return v;
+    }
+    if (t == "SoftObjectProperty" || t == "SoftClassProperty") {   // the path: FNames, stable for the process
+        const int off = ctx.softPathOffset >= 0 ? ctx.softPathOffset : SoftPathOffset(f.size);
+        const bool top = ctx.softTopLevel >= 0 ? ctx.softTopLevel == 1 : SoftPathIsTopLevel();
+        const std::string pkg = fnameAt(off, fsz);
+        const std::string asset = top ? fnameAt(off + fsz, fsz) : std::string();
+        v.text = (pkg.empty() || pkg == "None") ? "null" : (asset.empty() || asset == "None") ? pkg : pkg + "." + asset;
+        // The sub-path (an actor in a level: ":PersistentLevel.<actor>") is an FString after the FNames; its text is
+        // on the heap, not in the copy. Said, never dropped: without it an actor's pointer reads as its level's.
+        const int subOff = (off + (top ? 2 : 1) * fsz + 7) & ~7;
+        const int32_t subNum = subOff + 16 <= f.size ? load32(subOff + 8) : 0;
+        if (subNum > 1 && v.text != "null") {
+            v.text += ":<sub-path, " + std::to_string(subNum - 1) + " chars, not copied>";
+            v.mark = SnapMark::Header;
+        }
+        return v;
+    }
+    if (t == "LazyObjectProperty") {
+        const int off = ctx.lazyGuidOffset >= 0 ? ctx.lazyGuidOffset : LazyGuidOffset(f.size);
+        char buf[48];
+        snprintf(buf, sizeof buf, "{%08X-%08X-%08X-%08X}", static_cast<uint32_t>(load32(off)), static_cast<uint32_t>(load32(off + 4)),
+                 static_cast<uint32_t>(load32(off + 8)), static_cast<uint32_t>(load32(off + 12)));
+        v.text = buf;
+        return v;
+    }
+    if (t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty" || t == "ArrayProperty" ||
+        t == "MulticastInlineDelegateProperty") {   // a TArray header {Data, Num, Max}; the data was not copied
+        header(load32(8), load64(0));
+        return v;
+    }
+    if (t == "SetProperty" || t == "MapProperty") {
+        // Compact (5.7+ opt-in): {Elements, NumElements, MaxElements}. Sparse: a TSparseArray -- its TArray of slots,
+        // the allocation bits (32 bytes), FirstFreeIndex and NumFreeIndices at +0x34 -- so the count is slots - free.
+        header(DynOff::bCompactSets ? load32(8) : static_cast<int64_t>(load32(8)) - load32(0x34), load64(0));
+        return v;
+    }
+    if (t == "TextProperty") {
+        const uint64_t data = load64(0);
+        char buf[48];
+        snprintf(buf, sizeof buf, "TextData 0x%llX", static_cast<unsigned long long>(data));
+        v.text = data ? buf : "(empty)";
+        v.mark = SnapMark::Header;
+        return v;
+    }
+    if (t == "DelegateProperty") {   // FScriptDelegate: a weak object, then the function's FName (after any pad)
+        const int32_t idx = load32(0), serial = load32(4);
+        const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 8 + fsz);
+        const std::string fn = fnameAt(8 + (pad > 0 ? pad : 0), fsz);
+        const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
+        std::string name, cls;
+        const bool live = target && ctx.object && ctx.object(target, name, cls);
+        v.text = DescribeDelegateBinding(live ? target : 0, name, idx, serial, fn, ctx.garbageTag);   // [R7-B-04]
+        v.mark = live ? SnapMark::Now : (serial == 0 ? SnapMark::Exact : SnapMark::Gone);
+        return v;
+    }
+    if (t == "MulticastSparseDelegateProperty") {
+        v.text = "sparse (" + std::to_string(p[0]) + ")";
+        return v;
+    }
+    if (t == "OptionalProperty") {
+        int32_t flagOff = -1;
+        OptionalUnsetSentinel sentinel = OptionalUnsetSentinel::None;
+        if (V1cOptionalGate(static_cast<OptionalLayout>(f.optLayout), f.optInnerType, f.optInnerSize, flagOff, sentinel)) {
+            bool unset = false;
+            if (flagOff >= 0) unset = flagOff < f.size && p[flagOff] == 0;
+            else if (sentinel == OptionalUnsetSentinel::FStringMaxNone) unset = load32(12) == -1;
+            else if (sentinel == OptionalUnsetSentinel::FNameIndexNone) unset = static_cast<uint32_t>(load32(0)) == ~0u;
+            else if (sentinel == OptionalUnsetSentinel::FTextNull) unset = load64(0) == 0;
+            if (unset) { v.text = "unset"; return v; }
+            ParamField inner;
+            inner.typeName = f.optInnerType;
+            inner.size = f.optInnerSize;
+            return DecodeSnapElement(inner, p, avail, ctx);
+        }
+    }
+    std::string s = PreviewScalarValue(t, p, f.size, f.boolMask);
+    if (!s.empty()) { v.text = std::move(s); return v; }
+    v.text = SnapHex(p, static_cast<size_t>(f.size));
+    v.mark = SnapMark::Raw;
+    return v;
+}
+
+static SnapValue DecodeSnapField(const ParamField& f, const uint8_t* p, uint32_t avail, const SnapDecodeCtx& ctx) {
+    if (f.arrayDim <= 1) return DecodeSnapElement(f, p, avail, ctx);
+    const uint64_t whole = static_cast<uint64_t>(f.size) * static_cast<uint64_t>(f.arrayDim);
+    if (f.size <= 0 || whole > avail) return SnapValue{ "", SnapMark::Missing, {} };
+    SnapValue v;
+    v.text = "[";
+    const int shown = f.arrayDim < 8 ? f.arrayDim : 8;
+    for (int i = 0; i < shown; ++i) {
+        SnapValue e = DecodeSnapElement(f, p + static_cast<size_t>(i) * f.size, avail - static_cast<uint32_t>(i * f.size), ctx);
+        if (i) v.text += ", ";
+        v.text += e.text;
+        v.sub.push_back(std::move(e));
+    }
+    if (shown < f.arrayDim) v.text += ", ...";
+    v.text += "]";
+    return v;
+}
+
+SlotDecode DecodeSlot(const std::vector<Linie::ArmView>& arms, uint32_t arm, const uint8_t* bytes, uint32_t len,
+                      bool after, const SnapDecodeCtx& ctx) {
+    SlotDecode d;
+    const Linie::ArmView* v = nullptr;
+    if (arm < arms.size() && arms[arm].index == arm) {
+        v = &arms[arm];   // CopyArms hands them over in log order
+    } else {
+        for (const auto& a : arms) if (a.index == arm) { v = &a; break; }
+    }
+    if (!v) {
+        d.why = "no such arm";
+        return d;
+    }
+    d.state = v->state;
+    d.why   = v->why;
+    // Only a Read or Doubtful arm is ever published with a layout (RunArmCapturePass), so the layout is the test.
+    if (v->layout) {
+        d.layout = static_cast<const ParamLayout*>(v->layout.get());   // RunArmCapturePass publishes ParamLayouts
+        d.values = DecodeParamSnapshot(*d.layout, bytes, len, after, ctx);
+    }
+    return d;
+}
+
+std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
+                                           const SnapDecodeCtx& ctx) {
+    std::vector<SnapValue> out;
+    out.reserve(layout.params.size());
+    for (const ParamField& f : layout.params) {
+        const bool carriedAfter = f.kind == ParamKind::Out || f.kind == ParamKind::InOut || f.kind == ParamKind::Return;
+        if (after && !carriedAfter) { out.push_back({ "", SnapMark::Missing, {} }); continue; }
+        if (!after && f.kind == ParamKind::Return) { out.push_back({ "\xE2\x80\x94", SnapMark::Missing, {} }); continue; }
+        // It must start inside the copy; one that runs past its end is Missing one level down (an element, an array).
+        if (!bytes || f.offset < 0 || static_cast<uint32_t>(f.offset) >= len) { out.push_back({ "", SnapMark::Missing, {} }); continue; }
+        out.push_back(DecodeSnapField(f, bytes + f.offset, len - static_cast<uint32_t>(f.offset), ctx));
+    }
+    return out;
+}
+
+// [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:
+// +4 standard, +4 or +8 case-preserving). Loads only.
+bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber) {
+    if (!obj) return false;
+    const uintptr_t fname = static_cast<uintptr_t>(obj) + Grimoire::OFF_UOBJECT_NAME;
+    if (!Macht::ReadSafe(fname, nameIndex)) return false;
+    nameNumber = 0;
+    Macht::ReadSafe(fname + DynOff::FNAME_NUMBER, nameNumber);
+    return true;
+}
+
+bool ReadNameKey(uintptr_t func, Linie::NameKey& out) {
+    out = Linie::NameKey{};
+    if (!ReadObjectNameKey(func, out.fnIdx, out.fnNum)) return false;
+    uintptr_t cls = 0;
+    if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) && cls && !ReadObjectNameKey(cls, out.clsIdx, out.clsNum)) {
+        out.clsIdx = out.clsNum = 0;
+    }
+    return true;
+}
+
+bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName) {
+    return Serie::GetString(key.fnIdx, key.fnNum) == funcName && Serie::GetString(key.clsIdx, key.clsNum) == className;
+}
+
+FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now, const NameWitness& nowClass,
+                                const Linie::FuncIdentity& ident) {
+    if (slotLive && witnessRead) {
+        if (!ident.captured) return FuncState::Live;
+        if (now.comparisonIndex != ident.nameIndex || now.number != ident.nameNumber) return FuncState::Recycled;
+        // The function's own name is not enough (review DLL-1): every Blueprint class has its own Construct,
+        // ReceiveBeginPlay..., all one FName. Compared only when both reads have a class -- index 0 is "None",
+        // which no class is called.
+        if (ident.classIndex != 0 && nowClass.comparisonIndex != 0
+            && (nowClass.comparisonIndex != ident.classIndex || nowClass.number != ident.classNumber))
+            return FuncState::Recycled;
+        return FuncState::Live;
+    }
+    return ident.captured ? FuncState::Unloaded : FuncState::Unnamed;
+}
+
+FuncState ClassifyFunction(uintptr_t func, const Linie::FuncIdentity& ident) {
+    // A live UObject sits in its own GUObjectArray slot; a freed one's InternalIndex reads garbage or names a slot
+    // that holds something else now. The same test pe_trace_names applies to objects.
+    const int32_t idx = func ? GetIndex(func) : -1;
+    const bool slotLive = idx >= 0 && Aura::GetByIndex(idx) == func;
+    NameWitness now{}, nowClass{};
+    const bool read = slotLive && Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME, now.comparisonIndex);
+    if (read) {
+        Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, now.number);
+        if (const uintptr_t cls = GetOuter(func)) {
+            if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, nowClass.comparisonIndex)) nowClass = {};
+            else Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, nowClass.number);
+        }
+    }
+    return ClassifyFunctionState(slotLive, read, now, nowClass, ident);
+}
+
+FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& ident) {
+    FunctionDescription d;
+    d.state = ClassifyFunction(func, ident);
+    auto fromCapture = [&] {
+        d.name          = Serie::GetString(ident.nameIndex, ident.nameNumber);
+        d.className     = Serie::GetString(ident.classIndex, ident.classNumber);
+        d.functionFlags = ident.functionFlags;
+        d.numParms      = ident.numParms;
+        d.parmsSize     = ident.parmsSize;
+        d.widgetKnown   = true;
+        d.isWidget      = ident.isWidget;
+    };
+    switch (d.state) {
+    case FuncState::Live: {
+        FunctionInfo fi{};
+        if (ResolveFunctionInfo(func, fi)) {
+            d.name          = fi.name;
+            d.className     = GetName(GetOuter(func));
+            d.functionFlags = fi.functionFlags;
+            d.numParms      = fi.numParms;
+            d.parmsSize     = fi.parmsSize;
+        } else if (ident.captured) {
+            fromCapture();   // in its slot under the name it was read with, but not literally a "Function"
+        } else {
+            d.state = FuncState::Unnamed;   // nothing to say what it is: the meta-class guard keeps it out, as before
+        }
+        break;
+    }
+    case FuncState::Unloaded:
+    case FuncState::Recycled:
+        fromCapture();
+        break;
+    case FuncState::Unnamed:
+        break;
+    }
+    return d;
+}
+
 // --- WalkFunctions: enumerate UFunctions of a UClass ---
 
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
@@ -3339,10 +3995,12 @@ const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
 // [R7-B-04] ONE delegate-binding label: DescribeScriptDelegate's ladder PLUS the [garbage] tag. Five readers render a
 // binding, and the tag was appended at four of them by hand -- the sparse-binding element loop was the fifth, the
 // exact "repaired two of them" shape DescribeScriptDelegate's own header warns about. Every site calls this.
+// `garbageTag` is the engine's WeakTargetGarbageTag everywhere but the snapshot decoder, whose tests inject theirs.
 std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
-                                    int32_t objIdx, int32_t serial, const std::string& funcName) {
+                                    int32_t objIdx, int32_t serial, const std::string& funcName,
+                                    const char* (*garbageTag)(uintptr_t, int32_t)) {
     return DescribeScriptDelegate(target != 0, targetName, objIdx, serial, funcName)
-         + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
+         + (garbageTag ? garbageTag(target, objIdx) : "");   // [VND583-06]
 }
 
 // ============================================================

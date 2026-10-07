@@ -31,7 +31,37 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TimerManager.h"
 #include "DumperTest58Actor.generated.h"
+
+/// [LIVEFUNCS-TIMELINE-2026-10-04] The trace chain's last link: a dynamic delegate's broadcast reaches each binding
+/// through ProcessEvent, which is one of the ways a game nests calls the trace has to show.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDumperTest58TraceLeaf, int32, Round);
+
+/// [LIVEFUNCS-STEP2] The snapshot probe's enum: a uint8 enum class with a MAX, the shape most game enums take.
+UENUM()
+enum class EDumperTest58SnapKind : uint8
+{
+	Alpha,
+	Beta,
+	Gamma,
+	MAX UMETA(Hidden)
+};
+
+/// [LIVEFUNCS-STEP2] The snapshot probe's struct parameter: an int, two packed bools sharing one byte and a vector, so
+/// a decoder has to follow a sub-layout, a bit mask and a struct inside a struct.
+USTRUCT()
+struct FDumperTest58SnapStruct
+{
+	GENERATED_BODY()
+
+	UPROPERTY() int32 A = 0;
+	UPROPERTY() uint8 bP : 1;
+	UPROPERTY() uint8 bQ : 1;
+	UPROPERTY() FVector W = FVector::ZeroVector;
+
+	FDumperTest58SnapStruct() : bP(0), bQ(0) {}
+};
 
 /// The struct optional's inner. Deliberately holds a bare object pointer AND a container of
 /// them: `[A2-TOPTIONAL-STRUCT-DESCENT]`'s reset case is a struct optional whose descent
@@ -183,4 +213,105 @@ public:
 	/// offset of Opt_Tail. The host is only valid while offset + 8 == size.
 	UPROPERTY() int32 OptTail_ObjectSize = 0;
 	UPROPERTY() int32 OptTail_FieldOffset = 0;
+
+	// ---- [LIVEFUNCS-TIMELINE-2026-10-04] a nested ProcessEvent chain for the Live Funcs call trace -------------
+	// The stock template's ProcessEvent traffic is flat: every call is a root, so a ticked scope has nothing under it
+	// to show. Every TraceNest_PeriodSeconds this actor runs TraceNest_Outer; Outer runs TraceNest_Inner; Inner
+	// broadcasts OnTraceNestLeaf, bound to TraceNest_Leaf. Outer and Inner are dispatched by name through ProcessEvent
+	// (TraceNest_Dispatch), the way native code calls a reflected function, and a dynamic broadcast reaches each
+	// binding through ProcessEvent, so every round is three NESTED ProcessEvent calls on the game thread, with known
+	// counts: Outer, Inner and Leaf once per round, Leaf under Inner under Outer. Tick Outer in Live Funcs and the
+	// trace holds exactly those rounds.
+	//
+	// ⚠ NOT BlueprintNativeEvents. Measured on the first package (2026-10-07): only Leaf reached the hook. UHT's thunk
+	// for a BlueprintNativeEvent calls _Implementation DIRECTLY when the owning class is native (nothing overrides it in
+	// a Blueprint), so a C++ call to one never touches ProcessEvent.
+
+	UFUNCTION(BlueprintCallable, Category = "DumperTest58|Trace")
+	void TraceNest_Outer(int32 Round);
+
+	UFUNCTION(BlueprintCallable, Category = "DumperTest58|Trace")
+	void TraceNest_Inner(int32 Round);
+
+	/// Bound to OnTraceNestLeaf in BeginPlay; a UFUNCTION because a dynamic delegate binds by name.
+	UFUNCTION()
+	void TraceNest_Leaf(int32 Round);
+
+	UPROPERTY(BlueprintAssignable, Category = "DumperTest58|Trace")
+	FDumperTest58TraceLeaf OnTraceNestLeaf;
+
+	/// Rounds started, and leaves reached: equal unless a link of the chain is broken.
+	UPROPERTY() int32 TraceNest_Rounds = 0;
+	UPROPERTY() int32 TraceNest_Leaves = 0;
+
+	/// Seconds between rounds. Slower than any frame, so the chain is never mistaken for per-frame work and is not
+	/// left out by Leave out per-frame.
+	UPROPERTY() float TraceNest_PeriodSeconds = 0.5f;
+
+	// ---- [LIVEFUNCS-STEP2] parameter snapshots -------------------------------------------------------------------
+	// Every SnapNest_PeriodSeconds the timer runs SnapNest_Outer (by name through ProcessEvent), which calls
+	// SnapProbe_Call INSIDE its scope; then the timer calls SnapProbe_Call again on its own, outside every scope, so a
+	// chosen SnapProbe_Call is recorded both nested and LONE. Both calls get the same round, and every argument is a
+	// fixed function of it, so a decoded snapshot is checked by its Round alone:
+	//   F = R + 0.5, D = R * 0.25, bFlag = R odd, Kind = R % 3, Tag = SnapTag with Number R % 3 + 1 ("SnapTag_<R%3>"),
+	//   Label = "Label<R>", Values = {R, R+1, R+2}, Who = Anchor, Soft = Anchor, V = (R, -R, 0.5),
+	//   S = {A = R, bP = R odd, bQ = R even, W = V}; OutTwice = -1 and InOut = 100 going in.
+	// The body sets OutTwice = 2R, adds R to InOut and returns 3R. The parameter block is built the ENGINE's way, from
+	// the function's own properties, so the layout under test is UHT's and not a hand-written struct's.
+	// ⚠ TraceNest_* is left exactly as it was: its counts are step 1's acceptance figures.
+
+	UFUNCTION()
+	void SnapNest_Outer(int32 Round);
+
+	UFUNCTION()
+	int32 SnapProbe_Call(int32 Round, float F, double D, bool bFlag, EDumperTest58SnapKind Kind, FName Tag,
+						 const FString& Label, const TArray<int32>& Values, AActor* Who, TSoftObjectPtr<AActor> Soft,
+						 FVector V, FDumperTest58SnapStruct S, int32& OutTwice, UPARAM(ref) int32& InOut);
+
+	/// A return value and nothing else: pins whether FUNC_HasOutParms covers a lone return (the after copy's rule).
+	UFUNCTION()
+	int32 SnapProbe_RetOnly();
+
+	/// A const reference and nothing else: pins whether a const-ref-only function takes an after copy.
+	UFUNCTION()
+	void SnapProbe_ConstRefOnly(const FString& Label);
+
+	/// Every frame, by name through ProcessEvent from Tick: the per-frame probe (per_frame, the budget).
+	UFUNCTION()
+	void SnapProbe_PerFrame(float Delta);
+
+	/// The rig calls it (invoke_function); it calls SnapLate_Call through ProcessEvent, so SnapLate_Call is first
+	/// called after a Start and its arm's layout is read late -- by Stop's final pass when Stop follows at once.
+	UFUNCTION()
+	void SnapLate_Begin(int32 Value);
+
+	UFUNCTION()
+	void SnapLate_Call(int32 Value);
+
+	/// Receipts, read back by the rig.
+	UPROPERTY() int32 SnapNest_Rounds = 0;
+	UPROPERTY() int32 SnapProbe_Calls = 0;
+	UPROPERTY() int32 SnapProbe_LastOutTwice = 0;
+	UPROPERTY() int32 SnapProbe_LastInOut = 0;
+	UPROPERTY() int32 SnapProbe_LastReturn = 0;
+	UPROPERTY() int32 SnapProbe_PerFrameCalls = 0;
+	UPROPERTY() int32 SnapLate_Calls = 0;
+	UPROPERTY() int32 SnapLate_LastValue = 0;
+
+	/// Seconds between snapshot rounds, like TraceNest_PeriodSeconds: slower than any frame.
+	UPROPERTY() float SnapNest_PeriodSeconds = 0.5f;
+
+private:
+	FTimerHandle TraceNestTimer;
+	void TraceNest_Fire();
+	/// Run this actor's UFUNCTION `Func(int32 Round)` through ProcessEvent.
+	void TraceNest_Dispatch(FName Func, int32 Round);
+
+	FTimerHandle SnapNestTimer;
+	void SnapNest_Fire();
+	/// SnapProbe_Call for round `Round`, through ProcessEvent.
+	void SnapProbe_Dispatch(int32 Round);
+	/// Run this actor's UFUNCTION `Func` through ProcessEvent with a parameter block built from its own properties:
+	/// `Fill` sets the inputs, `Read` takes the receipts before the block is destroyed.
+	void Snap_Call(FName Func, TFunctionRef<void(UFunction*, uint8*)> Fill, TFunctionRef<void(UFunction*, uint8*)> Read);
 };

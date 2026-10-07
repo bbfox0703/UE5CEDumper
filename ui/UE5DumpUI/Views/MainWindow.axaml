@@ -507,8 +507,13 @@
         <TabItem Header="{StaticResource str.Tab.LiveFuncs}" Tag="LiveFuncs">
           <views:LiveFuncsPanel DataContext="{Binding LiveFuncs}"/>
         </TabItem>
+        <!-- [LIVEFUNCS-TIMELINE-2026-10-04] Experimental, beside the tab that records for it. -->
+        <TabItem Header="{StaticResource str.Tab.CallTrace}" Tag="CallTrace"
+                 IsVisible="{Binding ExperimentalEnabled}">
+          <views:CallTracePanel DataContext="{Binding CallTrace}"/>
+        </TabItem>
 
-        <!-- Fixed tail order (see MainTabIndex): the experimental tabs (hidden
+        <!-- Fixed tail order (see MainTabIndex): the experimental tabs that sit at the end (hidden
              unless opted in via the System-tab credit checkbox), then Proxy
              Deploy (always 2nd-to-last), then System (always last). New tabs go
              ABOVE this block so these stay anchored at the end. -->
