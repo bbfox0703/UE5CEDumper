@@ -847,6 +847,19 @@ plan and boost: the same benchmark read 31.8 and 33.8 ns in two runs on the same
 percent between runs is not a finding. dll_core_test's benchmarks print the CPU brand (`__cpuid`) before their
 first line, so a pasted result carries it.
 
+### 1.am Driving a thin handle or a game: the screenshot's pixels are not the app's, and a game reads keys per frame
+
+Two traps from one night (2026-10-08), each of which read as a defect in the product first:
+- **A 5-pixel drag handle is missed by a screenshot coordinate.** The screenshot frame here is about 0.81 of the
+  app's logical pixels, so an edge computed as "text left + column width" from the XAML lands a dozen screenshot
+  pixels off -- on the next column's text. Find the edge from what is drawn (zoom on the neighbouring header's
+  text, or the handle's own line) before dragging, and press / move in steps / release (`left_mouse_down`, several
+  `mouse_move`, `left_mouse_up`): an instant `left_click_drag` may never move the pointer through the handle. A
+  Slider drag that works is the control that shows the input reaches the app at all. The miss cost a wrong claim
+  ("never hit") that had to be taken back in the commit after.
+- **A game polls input per frame: an instant key press is missed.** Avowed's inventory ignored `key i` and opened
+  for `hold_key i 0.2`. The game's window must be in front and focused first (`front_window.py`, then a click).
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
@@ -2173,6 +2186,15 @@ and avoids `TransformAnimator` entirely. Reference: `LiveWalkerPanel.axaml.cs`.
 Unrelated second lesson from the same work: **a soft edge-fade on a bitmap is cheaper baked into the
 PNG's alpha than done with `OpacityMask`** — a radial mask could not dissolve the top/bottom edges
 without eating artwork that reaches them.
+
+### 3.3a Avalonia — a bare `Thumb` has no template under Fluent 12: style it
+
+`Avalonia.Themes.Fluent` 12.1.3 themes a Thumb only inside a ScrollBar (`FluentScrollBarThumb`) or a Slider
+(`FluentSliderThumbTheme`), read from its assembly 2026-10-08. A `<Thumb>` placed on its own -- a column's drag
+handle -- has no template and draws nothing: no edge to find, and no unit test notices, since every `DragDelta`
+handler is wired and the XAML compiles. Give it one: a `Style Selector="Thumb"` whose `Template` is a `Border`
+bound to the Thumb's `Background` / `BorderBrush` / `BorderThickness` (the Call Trace panel's, U10). Check any other
+control the theme might only style inside a parent the same way: search the theme assembly's strings for its name.
 
 ### 3.4 SQLite — the async that isn't
 
