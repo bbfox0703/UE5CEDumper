@@ -282,12 +282,18 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>The ticked functions, keyed by Class::Func (stable across fetches) with the address the last fetch
-    /// saw them at, which is what the DLL matches on. A tick from an earlier game session has no address here.</summary>
+    /// saw them at, which is what the DLL matches on. An address is good only within the connection that fetched it:
+    /// a disconnect clears the ticks, and the rows left on screen cannot be ticked until a fetch replaces them.</summary>
     private readonly Dictionary<string, string> _ticked = new(StringComparer.Ordinal);
+    /// <summary>The rows on screen came from a connection that has since dropped: their addresses belong to a process
+    /// that may be gone, so they cannot be ticked and are nothing to tick for T7.</summary>
+    private bool _rowsFromEarlierConnection;
     /// <summary>The ticked functions as Class::Func, for this panel and the Call Trace tab's read-only copy (T8).</summary>
     public ObservableCollection<string> TickedFunctions { get; } = new();
-    /// <summary>Red stub: whether the rows on screen can be ticked.</summary>
-    public bool CanTick => !IsRecording;
+    /// <summary>Whether the rows on screen can be ticked: not while recording (a recording traces the ticks it started
+    /// with), and not when they came from an earlier connection.</summary>
+    public bool CanTick => !IsRecording && !_rowsFromEarlierConnection;
+    partial void OnIsRecordingChanged(bool value) => OnPropertyChanged(nameof(CanTick));
     public bool HasTickedFunctions => TickedFunctions.Count > 0;
     public string TickedCountText => Res.Format("str.LF.Trace.TickedCount", TickedFunctions.Count);
 
@@ -337,7 +343,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     [RelayCommand]
     private void ToggleTick(PeProfileEntry? row)
     {
-        if (row == null || IsRecording || string.IsNullOrEmpty(row.FuncAddr)) return;
+        if (row == null || !CanTick || string.IsNullOrEmpty(row.FuncAddr)) return;
         string key = Key(row);
         if (_ticked.Remove(key)) row.IsTicked = false;
         else { _ticked[key] = row.FuncAddr; row.IsTicked = true; }
@@ -369,10 +375,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task<TraceStartOptions?> TraceOptionsForStartAsync(Ref<bool> cancelled)
     {
         if (!TraceAvailable || !TraceEnabled) return null;
-        var ticked = _ticked.Values.Where(a => a.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var ticked = _ticked.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         // T7: only when there is something to tick. The first recording, or any Start with the table empty, has no
         // rows to tick from, and records every call without asking.
-        if (ticked.Count == 0 && _allEntries.Count > 0 && !_traceAllConfirmed)
+        if (ticked.Count == 0 && _allEntries.Count > 0 && !_rowsFromEarlierConnection && !_traceAllConfirmed)
         {
             var confirm = ConfirmTraceAllCalls;
             if (confirm == null || !await confirm())
@@ -658,6 +664,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastPerFrameAddrs     = new(_lastPerFrameEffective ? result.PerFrameFuncs : Array.Empty<string>(),
                                      StringComparer.OrdinalIgnoreCase);
         _allEntries   = result.Entries;
+        if (_rowsFromEarlierConnection)
+        {
+            _rowsFromEarlierConnection = false;
+            OnPropertyChanged(nameof(CanTick));
+        }
         // The ticks are kept by name; the new rows carry them, and their addresses are the ones the DLL matches on.
         foreach (var e in _allEntries)
         {
@@ -894,6 +905,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         HasTraceToOpen = false;
         LastTraceInfo = null;
         _ticked.Clear();
+        foreach (var e in _allEntries) e.IsTicked = false;
+        _rowsFromEarlierConnection = _allEntries.Count > 0;
+        OnPropertyChanged(nameof(CanTick));
         RefreshTickedList();
         _lastCallsPerSecond = 0;
         OnPropertyChanged(nameof(TraceEstimate));
