@@ -129,8 +129,10 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
             keyOk = false;   // [LIVEFUNCS-STEP2] unverified: this call is armed for nothing
         } else {
             bool changed = idx != s.ident.nameIndex || num != s.ident.nameNumber || outer != s.ident.outer;
-            // [LIVEFUNCS-STEP2] An armed address's class is checked by its FName too; an unarmed one pays nothing.
-            if (!changed && s.arm.gen != 0 && g_arms && g_arms->classNameReader) {
+            // [LIVEFUNCS-STEP2] An address a followed name ever claimed has its class checked by its FName too -- one
+            // disarmed when another class came to it must see the followed class come back (review R3); an address
+            // no followed name ever claimed pays nothing.
+            if (!changed && s.armSpec >= 0 && g_arms && g_arms->classNameReader) {
                 int32_t ci = 0, cn = 0;
                 if (!g_arms->classNameReader(outer, ci, cn)) keyOk = false;
                 else changed = ci != s.ident.classIndex || cn != s.ident.classNumber;
