@@ -17,6 +17,7 @@
 #include <mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 
 namespace Linie {
 
@@ -418,20 +419,22 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, 
     if (gen) *gen = g_trace.gen;
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     if (!g_trace.distinctReady) {
-        std::vector<uintptr_t> f, o;
+        // Sets, not a vector per record: this runs in the game's process, and a 512 MB ring holds about 6.7 million
+        // entries but only thousands of distinct functions and objects (review DLL-6).
+        std::unordered_set<uintptr_t> f, o;
+        f.reserve(4096);
+        o.reserve(16384);
         const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
         for (uint64_t seq = FirstValidLocked(); seq < w; ++seq) {
             const TraceRecord& r = g_trace.buf[seq % g_trace.cap];
             if (r.seqKind != seq) continue;   // a return record, or a slot written out of turn
-            f.push_back(static_cast<uintptr_t>(r.a));
-            if (r.b) o.push_back(static_cast<uintptr_t>(r.b));
+            f.insert(static_cast<uintptr_t>(r.a));
+            if (r.b) o.insert(static_cast<uintptr_t>(r.b));
         }
-        std::sort(f.begin(), f.end());
-        f.erase(std::unique(f.begin(), f.end()), f.end());
-        std::sort(o.begin(), o.end());
-        o.erase(std::unique(o.begin(), o.end()), o.end());
-        g_trace.distinctFuncs.swap(f);
-        g_trace.distinctObjs.swap(o);
+        g_trace.distinctFuncs.assign(f.begin(), f.end());
+        std::sort(g_trace.distinctFuncs.begin(), g_trace.distinctFuncs.end());
+        g_trace.distinctObjs.assign(o.begin(), o.end());
+        std::sort(g_trace.distinctObjs.begin(), g_trace.distinctObjs.end());
         g_trace.distinctReady = true;
     }
     funcs = g_trace.distinctFuncs;
