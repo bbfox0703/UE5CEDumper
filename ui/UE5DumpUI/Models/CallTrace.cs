@@ -96,13 +96,17 @@ public sealed class CallTrace
     /// <summary>The function was unloaded before Stop: its name is the one it had at its first call.</summary>
     public bool FuncUnloaded(int i) => Funcs.TryGetValue(Func[i], out var f) && !f.Live && f.Unloaded;
 
-    /// <summary>A share of a whole as the status shows it: "0%", "&lt;0.01%", or up to two decimals. Invariant, like
-    /// the trace's other numbers.</summary>
+    /// <summary>A share of a whole as the status shows it: "0%" only when nothing, "100%" only when all, otherwise up
+    /// to two decimals, clamped to "&lt;0.01%" / "&gt;99.99%" so rounding never claims the clean or the total answer
+    /// (review UI-3). Invariant, like the trace's other numbers.</summary>
     public static string ShareText(long part, long whole)
     {
         if (part <= 0 || whole <= 0) return "0%";
-        double pct = part * 100.0 / whole;
-        return pct < 0.005 ? "<0.01%" : Math.Round(pct, 2).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+        if (part >= whole) return "100%";
+        double rounded = Math.Round(part * 100.0 / whole, 2);
+        if (rounded <= 0) return "<0.01%";
+        if (rounded >= 100) return ">99.99%";
+        return rounded.ToString("0.##", CultureInfo.InvariantCulture) + "%";
     }
     public string ObjName(int i) => Obj[i] == 0 ? ""
         : Objs.TryGetValue(Obj[i], out var o) && o.Live ? o.Name : "0x" + Obj[i].ToString("X", CultureInfo.InvariantCulture);
