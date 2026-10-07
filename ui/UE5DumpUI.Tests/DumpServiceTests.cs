@@ -1718,6 +1718,23 @@ public class DumpServiceTests
         Assert.Equal(default, window[1]);
     }
 
+    [Fact]
+    public async Task PeProfileStartAsync_ReadsHowManyTicksTheDllLeftOut()
+    {
+        // Review UI-1: the DLL checks the ticks against the previous recording and leaves out the unloaded ones.
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["hook_active"] = true,
+            ["trace"] = new JsonObject { ["allocated"] = true, ["tracing"] = true, ["gen"] = 3UL, ["ticked"] = 1,
+                                         ["ticked_dropped"] = 2 },
+        });
+        IDumpService svc = CreateService();
+        var r = await svc.PeProfileStartAsync(new TraceStartOptions { Bytes = 32L << 20, Ticked = new[] { "0x1", "0x2", "0x3" } },
+                                              TestContext.Current.CancellationToken);
+        Assert.Equal(1, r.Trace!.Ticked);
+        Assert.Equal(2, r.Trace.TickedDropped);
+    }
+
     // [TRACE-UNLOADED-NAMES] D1: a function unloaded since it fired comes back named from its first call, marked.
     [Fact]
     public async Task PeProfileGetAsync_AsksForUnloadedRows_AndReadsTheirMarksAndTheCounts()

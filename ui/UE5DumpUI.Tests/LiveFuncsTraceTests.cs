@@ -31,6 +31,8 @@ public class LiveFuncsTraceTests
         /// <summary>A DLL that predates the trace: it ignores the `trace` key and answers no trace object.</summary>
         public bool StartOmitsTrace { get; set; }
         public bool StartThrows { get; set; }
+        /// <summary>What the traced Start's reply says the DLL left out of the ticks (review UI-1).</summary>
+        public int StartTickedDropped { get; set; }
         public bool StopThrows { get; set; }
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
@@ -50,7 +52,8 @@ public class LiveFuncsTraceTests
             return Task.FromResult(new PeProfileStartResult
             {
                 HookActive = true,
-                Trace = trace == null || StartOmitsTrace ? null : new TraceInfo { Allocated = true, Tracing = true, Gen = 1 },
+                Trace = trace == null || StartOmitsTrace ? null
+                    : new TraceInfo { Allocated = true, Tracing = true, Gen = 1, TickedDropped = StartTickedDropped },
             });
         }
 
@@ -554,6 +557,24 @@ public class LiveFuncsTraceTests
         vm.TraceEnabled = true;
         await vm.StartCommand.ExecuteAsync(null);
         Assert.Equal(new[] { "0x900" }, dump.LastTrace!.Ticked.ToArray());
+    }
+
+    [Fact]
+    public async Task A_traced_Start_says_how_many_ticks_the_DLL_left_out()
+    {
+        // Review UI-1: a tick whose function unloaded after the last fetch (its row cut by the fetch limit) is caught by
+        // the DLL at Start; the UI says so instead of tracing fewer functions in silence.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("Character", "Jump", "0x100"), Row("WBP_Inventory_C", "OnOpen", "0x200"));
+        await RecordOnce(vm);
+        vm.ToggleTickCommand.Execute(vm.Results.Single(r => r.FuncName == "Jump"));
+        vm.ToggleTickCommand.Execute(vm.Results.Single(r => r.FuncName == "OnOpen"));
+        dump.StartTickedDropped = 1;
+        vm.TraceEnabled = true;
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        Assert.Equal(1, vm.LastTickedDropped);
     }
 
     [Fact]
