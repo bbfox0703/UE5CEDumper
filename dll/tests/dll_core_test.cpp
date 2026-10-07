@@ -7593,6 +7593,112 @@ int main() {
         check("...and none once the recording is gone", Linie::ArmsSummary().empty());
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: arms handed to the background read, sealed at Stop, freed with the trace");
+        // docs/live-funcs-step2-items.md, N4. Every 0xBx address is the followed function (a reload per address).
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex = 7;
+            out.outer = 0x7000 + f;
+            out.functionFlags = 0x400;
+            out.parmsSize = 16;
+            return true;
+        };
+        auto keyReader = [](uintptr_t f, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            idx = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            n = 0;
+            outer = 0x7000 + f;
+            return true;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto build = [] { return Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, false, 0, 64 } }, 8); };
+        using LS = Linie::ArmLayoutState;
+
+        Linie::Reset();
+        Linie::FreeTrace();
+        auto st = build();
+        Linie::TraceConfig tc;
+        tc.bytes = 64 * sizeof(Linie::TraceRecord);
+        tc.arms = st;
+        check("setup: a trace that follows names starts", Linie::StartTrace(tc) == Linie::TraceStartStatus::Ok);
+        check("StartTrace stamps the names with its recording", st->gen != 0 && st->gen == Linie::GetTraceInfo().gen,
+              u(st->gen).c_str());
+        Linie::StartRecording(reader, keyReader, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xB1, 1000, &h);
+        Linie::RecordCall(0xB2, 1001, &h);
+        const auto p1 = Linie::TakePendingArms(*st, 64);
+        check("the arms made so far are handed out, in order",
+              p1.size() == 2 && p1[0].index == 0 && p1[0].rec.addr == 0xB1 && p1[1].index == 1 && p1[1].rec.addr == 0xB2,
+              u(p1.size()).c_str());
+        check("...once each", Linie::TakePendingArms(*st, 64).empty());
+        Linie::RecordCall(0xB3, 1002, &h);
+        Linie::RecordCall(0xB4, 1003, &h);
+        const auto p2 = Linie::TakePendingArms(*st, 1);
+        check("...at most as many as asked, the oldest first", p2.size() == 1 && p2[0].index == 2, u(p2.size()).c_str());
+
+        const auto lay = std::make_shared<int>(42);
+        check("a layout published for an arm", Linie::PublishArmLayout(*st, 0, LS::Read, lay, {}, 15));
+        check("...is not published twice", !Linie::PublishArmLayout(*st, 0, LS::Failed, nullptr, "again"));
+        check("...nor for an arm the log does not hold", !Linie::PublishArmLayout(*st, 9, LS::Read, lay));
+
+        Linie::StopTrace();
+        Linie::RecordCall(0xB5, 1004, &h);
+        check("once the trace has stopped, a new address is armed for no snapshots", h.ring == -1 && st->log.size() == 4,
+              u(st->log.size()).c_str());
+
+        Linie::SealArms(*st);
+        check("sealed: a late publish does not land", !Linie::PublishArmLayout(*st, 1, LS::Read, lay));
+        const auto v = Linie::CopyArms(*st);
+        check("CopyArms: every arm, with what became of its layout",
+              v.size() == 4 && v[0].state == LS::Read && v[0].layout == lay && v[0].readMs == 15 &&
+              v[1].state == LS::NotReadBeforeStop && v[3].state == LS::NotReadBeforeStop && !v[1].layout &&
+              v[2].rec.addr == 0xB3, u(v.size()).c_str());
+
+        std::weak_ptr<Linie::ArmState> w = st;
+        st.reset();
+        tc.arms.reset();
+        Linie::StopRecording();
+        const uint64_t gen = Linie::GetTraceInfo().gen;
+        check("freeing the trace lets go of the names -- the trace's and the recording's",
+              Linie::FreeTraceIfGen(gen) && w.expired());
+
+        // TR2: while a hook may still be inside, a Free changes nothing, the names included.
+        static HANDLE s_in2  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE s_out2 = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static std::atomic<int> s_block2{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_block2.exchange(0) == 1) { SetEvent(s_in2); WaitForSingleObject(s_out2, INFINITE); }
+            return 42;
+        });
+        auto st2 = build();
+        std::weak_ptr<Linie::ArmState> w2 = st2;
+        Linie::TraceConfig tc2;
+        tc2.bytes = 64 * sizeof(Linie::TraceRecord);
+        tc2.arms = std::move(st2);
+        Linie::StartTrace(tc2);
+        tc2.arms.reset();
+        Linie::StartRecording(reader, keyReader, w2.lock());
+        s_block2 = 1;
+        std::thread stuck([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_in2, 5000);
+        Linie::StopTrace();   // gives up after its wait
+        Linie::StopRecording();
+        const uint64_t gen2 = Linie::GetTraceInfo().gen;
+        check("a Free while a hook may still be inside keeps the names", !Linie::FreeTraceIfGen(gen2) && !w2.expired());
+        SetEvent(s_out2);
+        stuck.join();
+        Linie::StopTrace();
+        check("...and lets them go once it has left", Linie::FreeTraceIfGen(gen2) && w2.expired());
+        Linie::SetTraceClockForTest(nullptr);
+
+        auto st3 = build();
+        std::weak_ptr<Linie::ArmState> w3 = st3;
+        Linie::StartRecording(reader, keyReader, std::move(st3));
+        Linie::Reset();
+        check("Reset lets go of the recording's names", w3.expired());
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

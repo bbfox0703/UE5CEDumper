@@ -248,6 +248,13 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
+std::vector<PendingArm> TakePendingArms(ArmState&, size_t) { return {}; }
+bool PublishArmLayout(ArmState&, uint32_t, ArmLayoutState, std::shared_ptr<const void>, std::string, uint64_t) {
+    return false;
+}
+void SealArms(ArmState&) {}
+std::vector<ArmView> CopyArms(ArmState&) { return {}; }
+
 std::vector<ArmSummary> ArmsSummary() {
     std::lock_guard<std::mutex> lk(g_mu);
     std::vector<ArmSummary> out;

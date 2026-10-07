@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 #include <utility>
@@ -182,6 +183,9 @@ struct TraceConfig {
     uint64_t bytes = 0;
     std::vector<uintptr_t> ticked;    // T5 (a): not empty = record only the calls of these and what they call
     std::vector<uintptr_t> exclude;   // T5 (b): never record these, unless the call opens a ticked scope
+    // [LIVEFUNCS-STEP2] The names this recording follows. StartTrace stamps them with its gen and keeps them for the
+    // trace's readers; they go when the trace is freed.
+    std::shared_ptr<ArmState> arms;
 };
 // Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
 enum class TraceStartStatus { Ok, TooSmall, NoMemory, Busy };
@@ -349,7 +353,54 @@ struct ArmState {
     std::vector<Count>     counts;     // parallel to specs: what ArmsSummary reports
     std::vector<ArmRecord> log;        // reserved when built: the hook never allocates for it
     size_t                 capacity = 0;
+    // StopTrace sets it: once the trace stopped, no call is traced, so nothing more is armed for snapshots.
+    std::atomic<bool>      stopped{ false };
+    size_t                 taken = 0;  // TakePendingArms' place in the log, under the table's lock
+    // Each arm's parameter layout, read in the background while its function is alive. Under layoutMu, which no
+    // hook takes; parallel to the log, sized to its capacity when built.
+    std::mutex             layoutMu;
+    bool                   sealed = false;   // SealArms: Stop has passed; nothing more is published
+    struct Layout {
+        uint8_t                     state  = 0;   // ArmLayoutState
+        std::shared_ptr<const void> layout;       // the reader's (Ubel's), opaque here
+        std::string                 why;          // what went wrong, for Failed
+        uint64_t                    readMs = 0;   // the arm-to-read wait, for the log and the live check
+    };
+    std::vector<Layout>    layouts;
 };
+enum class ArmLayoutState : uint8_t {
+    Pending = 0,              // not read yet
+    Read,                     // read while the function was alive
+    UnloadedBeforeRead,       // gone from its slot before the read: its calls keep raw bytes only
+    ReplacedBeforeRead,       // another function at the address by then
+    Doubtful,                 // read, but its parameters do not fill the function's parameter size
+    Failed,                   // the read refused it; `why` says why
+    NotReadBeforeStop,        // Stop came first (SealArms)
+};
+// One arm handed to the background read, with its index in the log.
+struct PendingArm {
+    uint32_t  index = 0;
+    ArmRecord rec;
+};
+// One arm as a reader sees it: the record, what became of its layout, and the layout.
+struct ArmView {
+    uint32_t                    index = 0;
+    ArmRecord                   rec;
+    ArmLayoutState              state = ArmLayoutState::Pending;
+    std::shared_ptr<const void> layout;
+    std::string                 why;
+    uint64_t                    readMs = 0;
+};
+// The arms made since the last take, at most `max`, each handed out once and in order.
+std::vector<PendingArm> TakePendingArms(ArmState& st, size_t max);
+// Records arm `index`'s layout. False -- and nothing changes -- once sealed, for an arm the log does not hold, or
+// for one already published.
+bool PublishArmLayout(ArmState& st, uint32_t index, ArmLayoutState state, std::shared_ptr<const void> layout,
+                      std::string why = {}, uint64_t readMs = 0);
+// Stop has passed: every arm not published becomes NotReadBeforeStop, and no later publish lands.
+void SealArms(ArmState& st);
+// Every arm the log holds, with its layout's state.
+std::vector<ArmView> CopyArms(ArmState& st);
 inline constexpr size_t kArmLogCapacity = 16384;
 // Sorts the specs by key and merges a key both ticked and chosen into one; reserves the log for `logCapacity` arms.
 std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity);
