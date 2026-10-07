@@ -91,7 +91,7 @@ UE5CEDumper/
 │
 ├── ui/                             ← C# Avalonia UI App
 │   ├── UE5DumpUI.sln
-│   ├── UE5DumpUI.Tests/            ← xUnit test project (240 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
+│   ├── UE5DumpUI.Tests/            ← xUnit test project (241 .cs test files; runs under Microsoft.Testing.Platform via global.json opt-in)
 │   ├── UE5DumpUI.HeadlessTests/    ← real Avalonia controls on the headless platform (Avalonia.Headless, same version as the app); its OWN process because a headless session replaces the global UI Dispatcher the view-model tests must not share
 │   └── UE5DumpUI/
 │       ├── UE5DumpUI.csproj        ← .NET 10 windows, Avalonia 12.1.0, Native AOT

@@ -330,12 +330,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     partial void OnTraceEnabledChanged(bool value) => RefreshAvailableMemory();
 
-    /// <summary>The ticked functions, keyed by Class::Func (stable across fetches) with every address the last fetch
-    /// saw under that name, which is what the DLL matches on: a class is named by its short name, so two classes in
-    /// different folders can share a key, and a tick by name traces both. An address is good only within the
-    /// connection that fetched it: a disconnect clears the ticks, and the rows left on screen cannot be ticked until a
-    /// fetch replaces them.</summary>
-    private readonly Dictionary<string, HashSet<string>> _ticked = new(StringComparer.Ordinal);
+    /// <summary>The ticked functions, followed by name (Class::Func) with their name keys and the live addresses the
+    /// last fetch saw ([LIVEFUNCS-STEP2] T10; the rules are FunctionTickSet's). A key is good only within the connection
+    /// that fetched it: a disconnect clears the ticks, and the rows left on screen cannot be ticked until a fetch
+    /// replaces them.</summary>
+    private readonly FunctionTickSet _ticked = new();
     /// <summary>The rows on screen came from a connection that has since dropped: their addresses belong to a process
     /// that may be gone, so they cannot be ticked and are nothing to tick for T7.</summary>
     private bool _rowsFromEarlierConnection;
@@ -404,17 +403,20 @@ public partial class LiveFuncsViewModel : ViewModelBase
     [RelayCommand]
     private void ToggleTick(PeProfileEntry? row)
     {
-        // [TRACE-UNLOADED-NAMES] An unloaded row's address is dead: it never ticks, and a live row of the same name
-        // sends only the live addresses.
-        if (row == null || !CanTick || row.IsUnloaded || string.IsNullOrEmpty(row.FuncAddr)) return;
+        // [LIVEFUNCS-STEP2] A row with a name key ticks by name, unloaded or not: the DLL follows the name to wherever
+        // the function loads next (T10). A row without one (a DLL that predates keys) keeps D1's rule: its address is
+        // all the DLL can match, and an unloaded row's is dead.
+        if (row == null || !CanTick || !Tickable(row)) return;
+        bool tick = _ticked.Toggle(row, _allEntries);
         string key = Key(row);
-        var same = _allEntries.Where(e => Key(e) == key && !e.IsUnloaded && !string.IsNullOrEmpty(e.FuncAddr)).ToList();
-        if (!same.Contains(row)) same.Add(row);
-        bool tick = !_ticked.Remove(key);
-        if (tick) _ticked[key] = new HashSet<string>(same.Select(e => e.FuncAddr), StringComparer.OrdinalIgnoreCase);
-        foreach (var e in same) e.IsTicked = tick;
+        foreach (var e in _allEntries.Where(e => Key(e) == key)) e.IsTicked = tick && Tickable(e);
+        row.IsTicked = tick;
         RefreshTickedList();
     }
+
+    /// <summary>A row that can be followed by name, or by a live address.</summary>
+    private static bool Tickable(PeProfileEntry e)
+        => e.FnameKey != null || (!e.IsUnloaded && !string.IsNullOrEmpty(e.FuncAddr));
 
     [RelayCommand]
     private void ClearTicks()
@@ -428,7 +430,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private void RefreshTickedList()
     {
         TickedFunctions.Clear();
-        foreach (var k in _ticked.Keys.OrderBy(k => k, StringComparer.Ordinal)) TickedFunctions.Add(k);
+        foreach (var k in _ticked.Names) TickedFunctions.Add(k);
         OnPropertyChanged(nameof(HasTickedFunctions));
         OnPropertyChanged(nameof(TickedCountText));
     }
@@ -441,17 +443,19 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task<TraceStartOptions?> TraceOptionsForStartAsync(Ref<string?> refusal)
     {
         if (!TraceAvailable || !TraceEnabled) return null;
-        var ticked = _ticked.Values.SelectMany(a => a).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        // [TRACE-UNLOADED-NAMES] Ticked, but every ticked function was unloaded since it fired: no address to scope
-        // on. Not T7's case -- the user did tick -- and never a trace of every call, the opposite of what was asked.
-        if (ticked.Count == 0 && _ticked.Count > 0)
+        var ticked = _ticked.LiveAddresses().ToList();
+        // [LIVEFUNCS-STEP2] By name, for a DLL that reads names; the live addresses ride along for one that does not.
+        var named = _ticked.Named();
+        // [TRACE-UNLOADED-NAMES] Ticked, but nothing to scope on: no name key, and every ticked function unloaded since
+        // it fired. Not T7's case -- the user did tick -- and never a trace of every call, the opposite of what was asked.
+        if (ticked.Count == 0 && named.Count == 0 && _ticked.Count > 0)
         {
             refusal.Value = "str.LF.Trace.TickedAllUnloaded";
             return null;
         }
         // T7: only when there is something to tick. The first recording, or any Start with no row that can be ticked
-        // (none, or only unloaded ones), records every call without asking.
-        if (ticked.Count == 0 && _allEntries.Any(e => !e.IsUnloaded) && !_rowsFromEarlierConnection
+        // (none, or only unloaded ones without a key), records every call without asking.
+        if (_ticked.Count == 0 && _allEntries.Any(Tickable) && !_rowsFromEarlierConnection
             && !_traceAllConfirmed)
         {
             var confirm = ConfirmTraceAllCalls;
@@ -466,6 +470,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             Bytes = (long)TraceBufferMb << 20,
             Ticked = ticked,
+            TickedNames = named,
             ExcludePerFrame = TraceExcludePerFrame,
         };
     }
@@ -582,6 +587,17 @@ public partial class LiveFuncsViewModel : ViewModelBase
             HasTraceToOpen = false;
             LastTraceInfo = null;
             var start = trace == null ? await _dump.PeProfileStartAsync() : await _dump.PeProfileStartAsync(trace);
+            // [LIVEFUNCS-STEP2] A DLL that predates names answers without trace.names: it ignored them and traces the
+            // addresses alone, or every call -- not what was asked. Stop it and give the game its memory back.
+            if (trace != null && (trace.TickedNames.Count > 0 || trace.Snapshots != null) && start.Trace is { } armed
+                && armed.Names == null)
+            {
+                var stopped = await _dump.PeProfileStopWithTraceAsync();
+                await _dump.PeTraceReleaseAsync(stopped?.Gen ?? armed.Gen);
+                StatusText = Res.Get("str.LF.Trace.NamesNotSupported");
+                _log.Warn("LivePEProfiler: the DLL ignored ticks by name; the recording was stopped and released");
+                return;
+            }
             _recordingFetchLimit = FetchLimit;
             _recordingHidePerFrame = HidePerFrame;
             _captureMinCalls = MinCalls;
@@ -596,8 +612,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (trace != null && start.HookActive)
             {
                 StatusText += " " + (start.Trace == null ? Res.Get("str.LF.Trace.NotArmed")
-                    : trace.Ticked.Count > 0
-                        ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb, trace.Ticked.Count)
+                    : trace.Ticked.Count > 0 || trace.TickedNames.Count > 0
+                        ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb,
+                                     trace.TickedNames.Count > 0 ? trace.TickedNames.Count : trace.Ticked.Count)
                         : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
                 LastTickedDropped = start.Trace?.TickedDropped ?? 0;
                 if (LastTickedDropped > 0)
@@ -750,26 +767,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
             _rowsFromEarlierConnection = false;
             OnPropertyChanged(nameof(CanTick));
         }
-        // The ticks are kept by name; the new rows carry them, and their addresses are the ones the DLL matches on. A
-        // name this page does not show keeps the addresses it had. A name whose rows here are all unloaded keeps its
-        // tick with no address: theirs are dead, and the tick follows the function if a later fetch finds it loaded.
-        var refreshed = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
-        foreach (var e in _allEntries)
-        {
-            string k = Key(e);
-            if (!_ticked.ContainsKey(k)) continue;
-            if (e.IsUnloaded)
-            {
-                if (!refreshed.ContainsKey(k)) refreshed[k] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-                continue;
-            }
-            e.IsTicked = true;
-            if (string.IsNullOrEmpty(e.FuncAddr)) continue;
-            if (!refreshed.TryGetValue(k, out var addrs))
-                refreshed[k] = addrs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-            addrs.Add(e.FuncAddr);
-        }
-        foreach (var kv in refreshed) _ticked[kv.Key] = kv.Value;
+        // The ticks are kept by name (FunctionTickSet): the new rows carry them, a shown name takes their keys and
+        // live addresses, and one this page does not show keeps what it had.
+        _ticked.Refresh(_allEntries);
+        foreach (var e in _allEntries) e.IsTicked = _ticked.Contains(e) && Tickable(e);
         if (result.WindowMs is > 0 && result.TotalCalls > 0)
         {
             _lastCallsPerSecond = result.TotalCalls / (result.WindowMs.Value / 1000.0);

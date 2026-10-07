@@ -34,6 +34,16 @@ public class LiveFuncsTraceTests
         /// <summary>What the traced Start's reply says the DLL left out of the ticks (review UI-1).</summary>
         public int StartTickedDropped { get; set; }
         public bool StopThrows { get; set; }
+        /// <summary>[LIVEFUNCS-STEP2] A DLL that predates names: it answers the trace but no trace.names.</summary>
+        public bool StartOmitsNames { get; set; }
+        public List<ulong> Released { get; } = new();
+        public int StopCalls { get; private set; }
+
+        Task IDumpService.PeTraceReleaseAsync(ulong gen, CancellationToken ct)
+        {
+            Released.Add(gen);
+            return Task.CompletedTask;
+        }
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
         {
@@ -53,14 +63,22 @@ public class LiveFuncsTraceTests
             {
                 HookActive = true,
                 Trace = trace == null || StartOmitsTrace ? null
-                    : new TraceInfo { Allocated = true, Tracing = true, Gen = 1, TickedDropped = StartTickedDropped },
+                    : new TraceInfo
+                    {
+                        Allocated = true, Tracing = true, Gen = 1, TickedDropped = StartTickedDropped,
+                        Names = StartOmitsNames || (trace.TickedNames.Count == 0 && trace.Snapshots == null) ? null
+                            : new StartNames { Ticks = trace.TickedNames.Count, Chosen = trace.Snapshots?.Funcs.Count ?? 0 },
+                    },
             });
         }
 
         public override Task PeProfileStopAsync(CancellationToken ct = default) => Task.CompletedTask;
 
         Task<TraceInfo?> IDumpService.PeProfileStopWithTraceAsync(CancellationToken ct)
-            => StopThrows ? throw new InvalidOperationException("pipe closed") : Task.FromResult(StopTrace);
+        {
+            StopCalls++;
+            return StopThrows ? throw new InvalidOperationException("pipe closed") : Task.FromResult(StopTrace);
+        }
 
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
             => Task.FromResult(NextGet);
@@ -523,8 +541,35 @@ public class LiveFuncsTraceTests
     private static PeProfileEntry Unloaded(string cls, string func, string addr, long count = 10)
         => new() { ClassName = cls, FuncName = func, FuncAddr = addr, Count = count, IsUnloaded = true };
 
+    private static PeProfileEntry Keyed(PeProfileEntry e, NameKey key) => new()
+    {
+        ClassName = e.ClassName, FuncName = e.FuncName, FuncAddr = e.FuncAddr, Count = e.Count, IsUnloaded = e.IsUnloaded,
+        FnameKey = key, ParmsSize = e.ParmsSize,
+    };
+
     [Fact]
-    public async Task An_unloaded_row_cannot_be_ticked_and_its_address_is_never_sent()
+    public async Task An_unloaded_keyed_row_ticks_by_name_and_its_dead_address_is_never_sent()
+    {
+        // [LIVEFUNCS-STEP2] T10: the name follows the function to wherever it loads next.
+        var (vm, dump) = MakeVm();
+        var key = new NameKey(70, 0, 90, 0);
+        dump.NextGet = ResultOf(10_000, Keyed(Unloaded("WBP_Inventory_C", "OnOpen", "0x100"), key));
+        await RecordOnce(vm);
+        var dead = vm.Results.Single();
+
+        vm.ToggleTickCommand.Execute(dead);
+        Assert.Equal(new[] { "WBP_Inventory_C::OnOpen" }, vm.TickedFunctions);
+        Assert.True(dead.IsTicked);
+        vm.TraceEnabled = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        Assert.Empty(dump.LastTrace!.Ticked);   // 0x100 is dead: never sent
+        var named = Assert.Single(dump.LastTrace.TickedNames);
+        Assert.Equal(key, Assert.Single(named.Keys));
+    }
+
+    [Fact]
+    public async Task An_unloaded_row_without_a_key_cannot_be_ticked_and_its_address_is_never_sent()
     {
         var (vm, dump) = MakeVm();
         dump.NextGet = ResultOf(10_000, Unloaded("WBP_Inventory_C", "OnOpen", "0x100"),
@@ -547,7 +592,46 @@ public class LiveFuncsTraceTests
     }
 
     [Fact]
-    public async Task A_ticked_function_that_unloaded_sends_no_dead_address_and_is_not_traced_as_every_call()
+    public async Task A_ticked_function_that_unloaded_is_traced_by_name_without_asking()
+    {
+        var (vm, dump) = MakeVm();
+        var key = new NameKey(70, 0, 90, 0);
+        dump.NextGet = ResultOf(10_000, Keyed(Row("WBP_Inventory_C", "OnOpen", "0x100"), key), Row("Character", "Jump", "0x200"));
+        await RecordOnce(vm);
+        vm.ToggleTickCommand.Execute(vm.Results.Single(r => r.FuncName == "OnOpen"));
+        dump.NextGet = ResultOf(10_000, Keyed(Unloaded("WBP_Inventory_C", "OnOpen", "0x100"), key), Row("Character", "Jump", "0x200"));
+        await RecordOnce(vm);
+        int asked = 0;
+        vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(true); };
+        vm.TraceEnabled = true;
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(0, asked);
+        Assert.True(vm.IsRecording);
+        Assert.Empty(dump.LastTrace!.Ticked);
+        Assert.Equal(key, Assert.Single(Assert.Single(dump.LastTrace.TickedNames).Keys));
+    }
+
+    [Fact]
+    public async Task Names_sent_to_a_DLL_that_ignores_them_stop_the_recording_and_release_it()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Keyed(Row("Character", "Jump", "0x200"), new NameKey(1, 0, 2, 0)));
+        await RecordOnce(vm);
+        vm.ToggleTickCommand.Execute(vm.Results.Single());
+        dump.StartOmitsNames = true;
+        dump.StopTrace = new TraceInfo { Allocated = true, Gen = 1 };
+        vm.TraceEnabled = true;
+        int stopsBefore = dump.StopCalls;
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.False(vm.IsRecording);
+        Assert.Equal(stopsBefore + 1, dump.StopCalls);
+        Assert.Equal(new[] { 1UL }, dump.Released);
+    }
+
+    [Fact]
+    public async Task A_ticked_keyless_function_that_unloaded_sends_no_dead_address_and_is_not_traced_as_every_call()
     {
         var (vm, dump) = MakeVm();
         dump.NextGet = ResultOf(10_000, Row("WBP_Inventory_C", "OnOpen", "0x100"), Row("Character", "Jump", "0x200"));
@@ -593,6 +677,21 @@ public class LiveFuncsTraceTests
         await vm.StartCommand.ExecuteAsync(null);
         Assert.True(vm.IsRecording);
         Assert.Equal(1, vm.LastTickedDropped);
+    }
+
+    [Fact]
+    public async Task Unloaded_rows_with_a_key_are_something_to_tick_so_the_question_is_asked()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Keyed(Unloaded("WBP_Inventory_C", "OnOpen", "0x100"), new NameKey(7, 0, 9, 0)));
+        await RecordOnce(vm);
+        int asked = 0;
+        vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(false); };
+        vm.TraceEnabled = true;
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(1, asked);
+        Assert.False(vm.IsRecording);
     }
 
     [Fact]
