@@ -2258,6 +2258,13 @@ bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
     return true;
 }
 
+ArmCaptureOps DefaultArmCaptureOps() { return ArmCaptureOps{}; }
+
+size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOps& ops, ArmLayoutMemo& memo) {
+    (void)st; (void)maxArms; (void)ops; (void)memo;
+    return 0;
+}
+
 // [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:
 // +4 standard, +4 or +8 case-preserving). Loads only.
 bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber) {

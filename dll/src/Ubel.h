@@ -9,6 +9,8 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <map>
+#include <memory>
 #include <string>
 #include <unordered_map>
 #include <vector>
@@ -479,6 +481,35 @@ struct ParamLayout {
 // to its CPF_Parm entries (a Blueprint function's locals follow them). False with `why` when `func` is not a
 // UFunction, has no parameter, or reads as an implausible layout.
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why);
+
+// [LIVEFUNCS-STEP2] The background read of the arms' layouts (T10). The checks one arm goes through, injectable so a
+// test needs no game memory: is it still the function that was armed, before and after its layout is read.
+struct ArmCaptureOps {
+    FuncState (*classify)(uintptr_t func, const Linie::FuncIdentity& ident) = nullptr;
+    bool (*readKey)(uintptr_t func, Linie::NameKey& key, uint64_t& outer) = nullptr;   // the live name key and Outer
+    bool (*capture)(uintptr_t func, ParamLayout& out, std::string& why) = nullptr;
+    uint64_t (*nowMs)() = nullptr;   // the table's clock, which stamped each arm
+    bool tailDecided = false;        // the flags offset is decided: NumParms / ParmsSize can be checked against it
+};
+ArmCaptureOps DefaultArmCaptureOps();
+// A layout read once, by the full key that made it: the address, its Outer and the four name ints. Owned by the
+// one worker that reads a recording's arms; never a cache keyed by address alone (the second design critic).
+struct ArmLayoutMemo {
+    struct Key {
+        uintptr_t addr; uint64_t outer; Linie::NameKey name;
+        bool operator<(const Key& o) const {
+            if (addr != o.addr) return addr < o.addr;
+            if (outer != o.outer) return outer < o.outer;
+            return name < o.name;
+        }
+    };
+    std::map<Key, std::shared_ptr<const ParamLayout>> layouts;
+    size_t captures = 0;   // CaptureParamLayout runs, for the test of reuse
+};
+// One pass over the arms not yet taken, at most `maxArms`: each checked live, read, checked again and published --
+// Read, UnloadedBeforeRead, ReplacedBeforeRead, Doubtful (it still decodes) or Failed -- with its arm-to-read wait.
+// Returns how many arms it handled.
+size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOps& ops, ArmLayoutMemo& memo);
 
 inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;

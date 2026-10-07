@@ -8542,6 +8542,93 @@ int main() {
     }
 
     {
+        blk("LIVEFUNCS-STEP2: the arms' layouts read in the background -- checked live before and after, reused by key");
+        // docs/live-funcs-step2-items.md, B5. Stub checks: no game memory. Every arm's function is 0xBx (or 0xC1 for
+        // reuse); its live key, slot state and layout come from the statics below.
+        using LS = Linie::ArmLayoutState;
+        static int32_t s_liveName = 0x50;   // 0xC1's live FName, moved between passes
+        static bool    s_flipB4 = false;    // the capture of 0xB4 finds another function there afterwards
+        Ubel::ArmCaptureOps ops;
+        ops.classify = [](uintptr_t f, const Linie::FuncIdentity&) -> Ubel::FuncState {
+            return f == 0xB2 ? Ubel::FuncState::Unloaded : f == 0xB3 ? Ubel::FuncState::Recycled : Ubel::FuncState::Live;
+        };
+        ops.readKey = [](uintptr_t f, Linie::NameKey& k, uint64_t& outer) -> bool {
+            k = Linie::NameKey{ f == 0xC1 ? s_liveName : static_cast<int32_t>(f), 0, 7, 0 };
+            outer = 0x9000;
+            if (f == 0xB4 && s_flipB4) k.fnIdx = 0x99;
+            return true;
+        };
+        ops.capture = [](uintptr_t f, Ubel::ParamLayout& out, std::string& why) -> bool {
+            out = Ubel::ParamLayout{};
+            if (f == 0xB6) { why = "no parameters"; return false; }
+            if (f == 0xB4) s_flipB4 = true;
+            out.func = f;
+            out.numParms = (f == 0xB5) ? 3 : 2;   // 0xB5 claims three parameters and has two
+            out.parmsSize = 8;
+            for (int i = 0; i < 2; ++i) {
+                Ubel::ParamField p;
+                p.name = "P" + std::to_string(i); p.offset = 4 * i; p.size = 4;
+                out.params.push_back(p);
+            }
+            out.layoutEnd = 8;
+            return true;
+        };
+        ops.nowMs = []() -> uint64_t { return 1500; };
+        ops.tailDecided = true;
+        auto arm = [](uintptr_t addr, int32_t name) {
+            Linie::ArmRecord r;
+            r.addr = addr;
+            r.ident.captured = true; r.ident.nameIndex = name; r.ident.classIndex = 7; r.ident.outer = 0x9000;
+            r.ident.numParms = 2; r.ident.parmsSize = 8;
+            r.ring = 0; r.armMs = 1000;
+            return r;
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+
+        auto st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x50, 0, 7, 0 }, false, 0, 64 } }, 16);
+        for (uintptr_t a : { 0xB1, 0xB2, 0xB3, 0xB4, 0xB5, 0xB6 })
+            st->log.push_back(arm(a, static_cast<int32_t>(a)));
+        st->logCount = st->log.size();
+        Ubel::ArmLayoutMemo memo;
+        check("a pass takes at most what it is asked", Ubel::RunArmCapturePass(*st, 1, ops, memo) == 1);
+        check("...and the next pass the rest", Ubel::RunArmCapturePass(*st, 64, ops, memo) == 5);
+        const auto v = Linie::CopyArms(*st);
+        check("a live function, unchanged across the read: Read, with its arm-to-read wait",
+              v.size() == 6 && v[0].state == LS::Read && v[0].layout && v[0].readMs == 500, v.empty() ? "" : u(v[0].readMs).c_str());
+        check("gone from its slot first: unloaded before the read, no layout", v.size() == 6 &&
+              v[1].state == LS::UnloadedBeforeRead && !v[1].layout);
+        check("another function in its slot: replaced before the read", v.size() == 6 && v[2].state == LS::ReplacedBeforeRead);
+        check("another function there by the time the read finished: replaced, the read discarded",
+              v.size() == 6 && v[3].state == LS::ReplacedBeforeRead && !v[3].layout);
+        check("parameters that do not fill the function's count: doubtful, but published -- it still decodes",
+              v.size() == 6 && v[4].state == LS::Doubtful && v[4].layout);
+        check("a read that refuses: failed, and why", v.size() == 6 && v[5].state == LS::Failed && v[5].why == "no parameters",
+              v.size() == 6 ? v[5].why.c_str() : "");
+
+        // Reuse only under the same five numbers: the address, its Outer, and the four name ints.
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x50, 0, 7, 0 }, false, 0, 64 } }, 16);
+        Ubel::ArmLayoutMemo memo2;
+        auto add = [&](int32_t name) { st2->log.push_back(arm(0xC1, name)); st2->logCount = st2->log.size(); };
+        s_liveName = 0x50; add(0x50); Ubel::RunArmCapturePass(*st2, 64, ops, memo2);
+        s_liveName = 0x60; add(0x60); Ubel::RunArmCapturePass(*st2, 64, ops, memo2);   // the same address, another name
+        check("another name at the same address and Outer: read again", memo2.captures == 2, u(memo2.captures).c_str());
+        s_liveName = 0x50; add(0x50); Ubel::RunArmCapturePass(*st2, 64, ops, memo2);   // the first one back
+        const auto v2 = Linie::CopyArms(*st2);
+        check("...the first one back, under the same five numbers: its layout reused, not read again",
+              memo2.captures == 2 && v2.size() == 3 && v2[2].state == LS::Read && v2[2].layout == v2[0].layout &&
+              v2[1].layout != v2[0].layout, u(memo2.captures).c_str());
+
+        // Sealed: Stop has passed; nothing is read for it.
+        add(0x50);
+        st2->log.back().addr = 0xB1;
+        st2->logCount = st2->log.size();
+        Linie::SealArms(*st2);
+        const size_t before = memo2.captures;
+        Ubel::RunArmCapturePass(*st2, 64, ops, memo2);
+        check("after SealArms an arm is not read", memo2.captures == before && Linie::CopyArms(*st2)[3].state == LS::NotReadBeforeStop);
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
         // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
         static uint8_t nkEntry[24][0x40] = {};
