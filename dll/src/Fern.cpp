@@ -4513,10 +4513,29 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 const bool gone = fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled;
                 if (fd.state == Ubel::FuncState::Unnamed) continue;   // nothing says what it was: counted, not emitted
                 if (gone && !includeUnloaded) continue;              // an older UI: no row with a dead address
-                const std::string& cls = fd.className;
+                // [LIVEFUNCS-STEP2] The row's name key (T10): the four ints its strings are rendered from, read once,
+                // so a key the UI sends back names exactly the row it showed. A live function's now; a gone one's, or
+                // one whose slot no longer reads as a Function, from its first call.
+                std::string cls = fd.className, fname = fd.name;
+                Linie::NameKey key{};
+                bool haveKey = false;
+                if (fd.state == Ubel::FuncState::Live && Ubel::ReadNameKey(snap[i].func, key) && key.clsIdx != 0) {
+                    haveKey = true;
+                    fname = Serie::GetString(key.fnIdx, key.fnNum);
+                    cls   = Serie::GetString(key.clsIdx, key.clsNum);
+                } else if (snap[i].ident.captured) {
+                    haveKey = true;
+                    key = Linie::NameKey{ snap[i].ident.nameIndex, snap[i].ident.nameNumber,
+                                          snap[i].ident.classIndex, snap[i].ident.classNumber };
+                    fname = Serie::GetString(key.fnIdx, key.fnNum);
+                    cls   = Serie::GetString(key.clsIdx, key.clsNum);
+                }
                 json item;
                 item["class_name"] = cls;
-                item["func_name"]  = fd.name;
+                item["func_name"]  = fname;
+                if (haveKey) item["fname_key"] = json::array({ key.fnIdx, key.fnNum, key.clsIdx, key.clsNum });
+                // Always, not only behind skip_per_frame: the UI marks the row, and its snapshot estimate counts it.
+                if (Linie::IsPerFrame(snap[i], windowMs)) item["per_frame"] = true;
                 item["func_addr"]  = Renge::AddrToStr(snap[i].func);
                 item["num_parms"]  = fd.numParms;
                 item["parms_size"] = fd.parmsSize;
@@ -4543,7 +4562,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (periodicLogged < 12) {
                         char buf[192];
                         snprintf(buf, sizeof(buf), "%s%s::%s ~%.0fms cv=%.2f x%llu",
-                                 periodicLogged ? ", " : "", cls.c_str(), fd.name.c_str(),
+                                 periodicLogged ? ", " : "", cls.c_str(), fname.c_str(),
                                  snap[i].meanPeriodMs, snap[i].cv,
                                  (unsigned long long)snap[i].gapSamples);
                         periodicSummary += buf;
