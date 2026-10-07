@@ -45,6 +45,8 @@ public partial class CallTraceViewModel : ViewModelBase
     private int[] _matches = Array.Empty<int>();
     private ulong _loadedGen;
     private CancellationTokenSource? _loadCts;
+    /// <summary>An activation waiting on Live Funcs' stop and the probe: leaving the tab cancels it before a load starts.</summary>
+    private CancellationTokenSource? _activationCts;
 
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
@@ -67,12 +69,19 @@ public partial class CallTraceViewModel : ViewModelBase
     public async Task OnActivatedAsync()
     {
         if (IsLoading) return;
+        _activationCts?.Cancel();
+        var activation = _activationCts = new CancellationTokenSource();
         // Leaving Live Funcs mid-recording stops it on the way here; read only once that stop is done.
         try { await LiveFuncs.PendingAutoStop; } catch { /* Live Funcs logs its own failure */ }
+        if (activation.IsCancellationRequested) return;   // the user left the tab meanwhile
         TracePage probe;
         try
         {
-            probe = await _dump.PeTraceGetAsync(0, 1);
+            probe = await _dump.PeTraceGetAsync(0, 1, activation.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            return;
         }
         catch (Exception ex)
         {
@@ -81,6 +90,7 @@ public partial class CallTraceViewModel : ViewModelBase
             if (_trace == null) StatusText = Res.Get("str.CT.Status.NoTrace");
             return;
         }
+        if (activation.IsCancellationRequested) return;
         var i = probe.Info;
         if (i.Allocated && !i.Tracing && i.Quiesced && i.Written > 0 && i.Gen != _loadedGen)
             await LoadAsync();
@@ -118,13 +128,18 @@ public partial class CallTraceViewModel : ViewModelBase
             {
                 ct.ThrowIfCancellationRequested();
                 var page = await _dump.PeTraceGetAsync(from, PageRecords, ct);
-                // The ring belongs to one recording; a new Start in between would hand back another one's records.
-                if (page.Info.Gen != info.Gen) { StatusText = Res.Get("str.CT.Status.Changed"); return; }
+                // The ring belongs to one recording; a new Start in between would hand back another one's records, and
+                // a ring that is gone (another reader released it) or a page that does not move before the end would
+                // leave a partial read that looks whole: in each case the read is dropped, not built.
+                if (page.Info.Gen != info.Gen || !page.Info.Allocated || page.Next <= from)
+                {
+                    StatusText = Res.Get("str.CT.Status.Changed");
+                    return;
+                }
                 var recs = CallTraceBuilder.Decode(page.Data);
                 int take = (int)Math.Min(recs.Length, all.LongLength - n);
                 Array.Copy(recs, 0, all, n, take);
                 n += take;
-                if (page.Next <= from) break;   // nothing more: never loop on a page that did not move
                 from = page.Next;
                 Progress = 0.8 * (from - info.FirstValid) / Math.Max(1.0, kept);
                 StatusText = Res.Format("str.CT.Status.ReadingRecords", n, kept);
@@ -152,10 +167,12 @@ public partial class CallTraceViewModel : ViewModelBase
 
             StatusText = Res.Get("str.CT.Status.Building");
             long count = n;
-            var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs), ct);
+            // Everything is read: the build and the release no longer take the load's token. Cancelling now would only
+            // leave the ring in the game until the next Start (review CT-RELEASE-CANCELLED).
+            var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs));
 
             // Read: give the game its memory back now, not at the next Start or when the UI disconnects.
-            try { await _dump.PeTraceReleaseAsync(info.Gen, ct); }
+            try { await _dump.PeTraceReleaseAsync(info.Gen, CancellationToken.None); }
             catch (Exception ex) { _log.Warn($"CallTrace: release failed ({ex.Message})"); }
 
             _trace = trace;
@@ -370,6 +387,7 @@ public partial class CallTraceViewModel : ViewModelBase
     public void OnLeavingTab()
     {
         _filterMemory.Flush();
+        _activationCts?.Cancel();
         _loadCts?.Cancel();
     }
 }
