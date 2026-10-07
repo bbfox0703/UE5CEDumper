@@ -1200,9 +1200,9 @@
     <sys:String x:Key="str.LF.Trace.Buffer">Buffer</sys:String>
     <sys:String x:Key="str.LF.Trace.BufferMb">{0} MB</sys:String>
     <sys:String x:Key="str.LF.Trace.Gb">{0:0.0} GB</sys:String>
-    <sys:String x:Key="str.LF.Trace.Memory">Memory for a buffer that fills: the game {0} from Start; this UI up to {1} while it loads the trace, about {2} after.</sys:String>
-    <sys:String x:Key="str.LF.Trace.MemoryOver">⚠ Memory for a buffer that fills: the game {0} from Start; this UI up to {1} while it loads the trace, about {2} after -- more than the {3} free now. Start still runs.</sys:String>
-    <sys:String x:Key="str.LF.Trace.MemoryWarnStart">⚠ A full buffer may need more memory than the {0} free now; recording anyway.</sys:String>
+    <sys:String x:Key="str.LF.Trace.Memory">Memory for a buffer that fills: the game {0} from Start; this UI up to {1} while it loads the trace, about {2} after (the UI's figures: a reference measured on the developer's PC; yours may differ).</sys:String>
+    <sys:String x:Key="str.LF.Trace.MemoryOver">⚠ Memory for a buffer that fills: the game {0} from Start; this UI up to {1} while it loads the trace, about {2} after -- more than the {3} free now. The UI's figures are a reference measured on the developer's PC. Start still runs.</sys:String>
+    <sys:String x:Key="str.LF.Trace.MemoryWarnStart">⚠ A full buffer may need more memory than the {0} free now, by a reference measured on the developer's PC; recording anyway.</sys:String>
     <sys:String x:Key="str.LF.Trace.ExcludePerFrame">Leave out per-frame</sys:String>
     <sys:String x:Key="str.LF.Trace.TickedCount">Ticked: {0}</sys:String>
     <sys:String x:Key="str.LF.Trace.ClearTicks">Clear ticks</sys:String>
@@ -1237,7 +1237,7 @@
     <sys:String x:Key="str.Tip.LF.MinCalls">Hide functions called fewer times than this (1 to 32, default 1, which hides nothing). It applies to the next recording: the value is read when you press Start, and moving it later does not change the table on screen. It only hides rows: Set Baseline still uses every fetched row.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Enable">Experimental. With Start, also record every call in order, with what called it, into a buffer in the game; read it after Stop in the Call Trace tab. With functions ticked in the table, only their calls and what they call are recorded.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Buffer">The trace buffer in the game's memory, 32 to 512 MB. When it is full the newest calls overwrite the oldest, so Stop keeps the calls just before it. Whether the game can spare the memory is your call; if it cannot, Start is refused.</sys:String>
-    <sys:String x:Key="str.Tip.LF.Trace.Memory">What a buffer that fills costs. The game holds the whole buffer from Start until this UI has read the trace. While this UI loads it, it holds the buffer's records and the call tree, then only the tree. A recording that stops before the buffer fills costs this UI less. Compared with the memory free now: above it this is a warning, and Start still runs.</sys:String>
+    <sys:String x:Key="str.Tip.LF.Trace.Memory">What a buffer that fills costs. The game holds the whole buffer from Start until this UI has read the trace. While this UI loads it, it holds the buffer's records and the call tree, then only the tree. A recording that stops before the buffer fills costs this UI less. The game's figure is the buffer itself; the UI's figures were measured on the developer's PC and are only a reference: another PC, game or trace can use more or less. Compared with the memory free now: above it this is a warning, and Start still runs.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Estimate">How long the buffer would last with every call traced, at your last recording's call rate. Ticked functions and leaving out per-frame ones make it last longer.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.ExcludePerFrame">Leave out of the trace the functions the previous recording found firing every frame (Tick and the like). What they call is still traced.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Ticked">Functions ticked in the table. A traced Start records only their calls and what they call; with none ticked, every call.</sys:String>
