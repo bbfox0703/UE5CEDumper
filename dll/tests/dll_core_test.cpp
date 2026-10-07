@@ -7344,6 +7344,40 @@ int main() {
         }
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the arm rules -- a name's key, what one arm copies, when it copies after the call");
+        // docs/live-funcs-step2-items.md, N0. Pure rules: the ring a choice gets, what each arming of it copies.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        check("a ring's slot: the parameter block rounded to 8", Linie::RingCapFor(41) == 48 && Linie::RingCapFor(40) == 40,
+              u(Linie::RingCapFor(41)).c_str());
+        check("...capped at kSnapMaxCopy", Linie::RingCapFor(3000) == Linie::kSnapMaxCopy && Linie::kSnapMaxCopy == 2048,
+              u(Linie::RingCapFor(3000)).c_str());
+        check("...kSnapUnknownCopy when the size could not be read",
+              Linie::RingCapFor(0) == Linie::kSnapUnknownCopy && Linie::kSnapUnknownCopy == 256, u(Linie::RingCapFor(0)).c_str());
+        check("an arm copies its own parameter size", Linie::ArmCopyBytes(40, 0x400, 64) == 40,
+              u(Linie::ArmCopyBytes(40, 0x400, 64)).c_str());
+        check("...at most its ring's slot, and says it was cut",
+              Linie::ArmCopyBytes(100, 0x400, 64) == 64 && Linie::ArmTruncated(100, 64) && !Linie::ArmTruncated(64, 64),
+              u(Linie::ArmCopyBytes(100, 0x400, 64)).c_str());
+        check("...the whole slot when nothing could be read", Linie::ArmCopyBytes(0, 0, 64) == 64,
+              u(Linie::ArmCopyBytes(0, 0, 64)).c_str());
+        check("...nothing for a function read as having no parameters", Linie::ArmCopyBytes(0, 0x400, 64) == 0,
+              u(Linie::ArmCopyBytes(0, 0x400, 64)).c_str());
+        check("the after copy: out parameters or a return (FUNC_HasOutParms), or flags never read",
+              Linie::ArmTakesAfter(Linie::kFuncHasOutParms | 0x400) && Linie::ArmTakesAfter(0) &&
+              !Linie::ArmTakesAfter(0x400));
+        const Linie::NameKey k1{ 1, 0, 7, 0 }, k2{ 1, 0, 8, 0 }, k3{ 1, 1, 7, 0 }, k4{ 2, 0, 0, 0 };
+        check("a key orders over its four ints, function first",
+              k1 < k2 && k1 < k3 && k3 < k4 && k2 < k4 && !(k2 < k1) && !(k1 < k1) && k1 == Linie::NameKey{ 1, 0, 7, 0 } &&
+              !(k1 == k2));
+        std::vector<Linie::NameKey> ks{ k4, k2, k1, k3 };
+        std::sort(ks.begin(), ks.end());
+        check("...so a sorted list of keys can be searched", ks[0] == k1 && ks[3] == k4 &&
+              std::binary_search(ks.begin(), ks.end(), k2) && !std::binary_search(ks.begin(), ks.end(), Linie::NameKey{ 1, 0, 9, 0 }));
+        const Linie::ArmHint none{};
+        check("a default hint belongs to no recording and no ring", none.gen == 0 && none.ring == -1 && none.flags == 0);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

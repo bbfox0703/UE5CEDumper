@@ -242,6 +242,61 @@ bool ReleaseIfEmpty();
 // The trace's wire encoding for the slots (RFC 4648, with padding).
 std::string Base64Encode(const uint8_t* data, size_t len);
 
+// ============================================================
+// [LIVEFUNCS-STEP2] Parameter snapshots and following a function by name (docs/live-funcs-timeline-plan.md, "Step 2
+// design"; T10-T14). A choice or a tick is a NAME -- its function's FName and its class's, as ints -- not an address:
+// a widget's functions unload when it closes and come back at new addresses (T10). The table reads each function at
+// its first call anyway; a name that matches arms that address, and the hook hands the trace an ArmHint.
+// ============================================================
+
+// A function's name as the FNamePool's ints: the function's FName and its class's (its Outer's). Stable for the life
+// of the process (FNamePool entries are never freed), so a key taken from an earlier recording still names the
+// function after it reloads.
+struct NameKey {
+    int32_t fnIdx  = 0;
+    int32_t fnNum  = 0;
+    int32_t clsIdx = 0;
+    int32_t clsNum = 0;
+};
+inline bool operator==(const NameKey& a, const NameKey& b) {
+    return a.fnIdx == b.fnIdx && a.fnNum == b.fnNum && a.clsIdx == b.clsIdx && a.clsNum == b.clsNum;
+}
+inline bool operator<(const NameKey& a, const NameKey& b) { return false; }
+
+// What the table's read of one call hands the trace for the same call: integers only, in the hook's own frame.
+// `gen` is the trace recording the arm belongs to (1 and up), so a default hint never matches a running trace.
+struct ArmHint {
+    uint64_t gen   = 0;
+    int32_t  ring  = -1;   // the snapshot ring of the choice this address is armed for; -1: no snapshot
+    uint32_t arm   = 0;    // which arming of the name: a reload at a new address, or a new class, is a new arm
+    uint16_t copy  = 0;    // bytes to copy from the parameter block
+    uint8_t  flags = 0;
+};
+inline constexpr uint8_t kArmTick      = 1;   // the address is a ticked function's: its call opens a scope
+inline constexpr uint8_t kArmAfter     = 2;   // take a copy after the call returns too (out parameters, the return)
+inline constexpr uint8_t kArmTruncated = 4;   // the parameter block is larger than its ring's slot
+
+// The snapshot limits. The UI's estimate works with the same numbers.
+inline constexpr uint32_t kSnapMaxCopy     = 2048;   // bytes copied per call at most
+inline constexpr uint32_t kSnapUnknownCopy = 256;    // copied when the parameter size could not be read
+inline constexpr uint32_t kSnapMinSlots    = 8;      // a ring that keeps fewer calls refuses the Start
+inline constexpr uint32_t kSnapHeaderBytes = 24;     // per slot, before its copy
+inline constexpr uint64_t kSnapMinBytes    = 8ull << 20;     // the slider's range (T12); the pipe holds the user to it
+inline constexpr uint64_t kSnapMaxBytes    = 128ull << 20;
+inline constexpr uint32_t kFuncHasOutParms = 0x00400000;     // UFunction::FunctionFlags: an out parameter or a return
+
+// A ring's slot payload for a choice whose parameter block is `parmsSize` bytes: the block, rounded to 8 and capped;
+// kSnapUnknownCopy when the size could not be read (0).
+inline uint32_t RingCapFor(uint32_t parmsSize) { return 0; }
+// What one arm copies: its function's own parameter size, at most its ring's slot. A size of 0 with flags that were
+// read is a function without parameters; with nothing read, the slot is copied whole and the decoder marks what lies
+// past the parameters.
+inline uint32_t ArmCopyBytes(uint32_t parmsSize, uint32_t functionFlags, uint32_t ringCap) { return 0; }
+inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return false; }
+// The after-return copy: for out parameters and the return value (FUNC_HasOutParms), and whenever the flags could not
+// be read -- a copy too many beats a return value lost.
+inline bool ArmTakesAfter(uint32_t functionFlags) { return false; }
+
 // Tests replace the clock; nullptr restores QueryPerformanceCounter.
 void SetTraceClockForTest(uint64_t (*clock)());
 
