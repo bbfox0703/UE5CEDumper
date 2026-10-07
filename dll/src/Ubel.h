@@ -542,6 +542,18 @@ struct SnapDecodeCtx {
 // out parameters and the return value -- the rest read Missing; an entry copy reads the return value Missing.
 std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
                                            const SnapDecodeCtx& ctx);
+// [LIVEFUNCS-STEP2] One snapshot slot decoded with ITS arm's layout. Every load of a function is an arm of its own and
+// a slot says which arm wrote it, so two loads of one name never share a layout. `layout` is that arm's; nullptr -- and
+// no values -- when the arm has none (sealed before its read, unloaded or replaced first, refused, or not in `arms`),
+// which leaves the slot raw for the reader, `state` and `why` saying why.
+struct SlotDecode {
+    const ParamLayout*     layout = nullptr;
+    Linie::ArmLayoutState  state  = Linie::ArmLayoutState::Pending;
+    std::string            why;
+    std::vector<SnapValue> values;
+};
+SlotDecode DecodeSlot(const std::vector<Linie::ArmView>& arms, uint32_t arm, const uint8_t* bytes, uint32_t len,
+                      bool after, const SnapDecodeCtx& ctx);
 
 inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;

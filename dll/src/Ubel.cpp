@@ -2519,6 +2519,12 @@ static SnapValue DecodeSnapField(const ParamField& f, const uint8_t* p, uint32_t
     return v;
 }
 
+SlotDecode DecodeSlot(const std::vector<Linie::ArmView>& arms, uint32_t arm, const uint8_t* bytes, uint32_t len,
+                      bool after, const SnapDecodeCtx& ctx) {
+    (void)arms; (void)arm; (void)bytes; (void)len; (void)after; (void)ctx;
+    return SlotDecode{};
+}
+
 std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
                                            const SnapDecodeCtx& ctx) {
     std::vector<SnapValue> out;

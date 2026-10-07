@@ -8803,6 +8803,45 @@ int main() {
     }
 
     {
+        blk("LIVEFUNCS-STEP2: a slot decoded with its own arm's layout -- two loads of one name, arms without one");
+        // docs/live-funcs-step2-items.md, F5. The pipe's pe_snap_get decodes through this; nothing here reads the game.
+        using LS = Linie::ArmLayoutState;
+        auto lay = [](int32_t off) {
+            auto L = std::make_shared<Ubel::ParamLayout>();
+            Ubel::ParamField f; f.name = "X"; f.typeName = "IntProperty"; f.offset = off; f.size = 4;
+            L->params.push_back(f);
+            return L;
+        };
+        std::vector<Linie::ArmView> arms(4);
+        arms[0].index = 0; arms[0].state = LS::Read; arms[0].layout = lay(0);
+        arms[1].index = 1; arms[1].state = LS::Read; arms[1].layout = lay(4);   // the same name reloaded: X moved
+        arms[2].index = 2; arms[2].state = LS::NotReadBeforeStop;
+        arms[3].index = 3; arms[3].state = LS::Doubtful; arms[3].layout = lay(4);
+        uint8_t b[8] = {};
+        const int32_t v0 = 7, v1 = 9; memcpy(b, &v0, 4); memcpy(b + 4, &v1, 4);
+        Ubel::SnapDecodeCtx ctx;
+        const auto d0 = Ubel::DecodeSlot(arms, 0, b, 8, false, ctx);
+        const auto d1 = Ubel::DecodeSlot(arms, 1, b, 8, false, ctx);
+        const auto d2 = Ubel::DecodeSlot(arms, 2, b, 8, false, ctx);
+        const auto d3 = Ubel::DecodeSlot(arms, 3, b, 8, false, ctx);
+        const auto d9 = Ubel::DecodeSlot(arms, 9, b, 8, false, ctx);
+        check("arm 0's slot read with arm 0's layout", d0.layout && d0.values.size() == 1 && d0.values[0].text == "7",
+              d0.values.empty() ? "" : d0.values[0].text.c_str());
+        check("arm 1's slot with arm 1's layout, not arm 0's", d1.layout && d1.values.size() == 1 &&
+              d1.values[0].text == "9", d1.values.empty() ? "" : d1.values[0].text.c_str());
+        check("an arm sealed before its read stays raw, and says so",
+              !d2.layout && d2.values.empty() && d2.state == LS::NotReadBeforeStop);
+        check("a doubtful layout still decodes", d3.layout && d3.values.size() == 1 && d3.values[0].text == "9");
+        check("an arm the log does not hold: raw", !d9.layout && d9.values.empty());
+        const std::vector<Linie::ArmView> rev = { arms[1], arms[0] };
+        const auto r1 = Ubel::DecodeSlot(rev, 1, b, 8, false, ctx);
+        check("an arm found by its index, not its place in the list", r1.values.size() == 1 && r1.values[0].text == "9");
+        const auto a1 = Ubel::DecodeSlot(arms, 1, b, 8, true, ctx);
+        check("an after copy leaves an In parameter blank", a1.values.size() == 1 &&
+              a1.values[0].mark == Ubel::SnapMark::Missing && a1.values[0].text.empty());
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
         // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
         static uint8_t nkEntry[24][0x40] = {};
