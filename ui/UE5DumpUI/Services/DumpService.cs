@@ -2847,7 +2847,9 @@ public sealed class DumpService : IDumpService
         if (trace != null)
         {
             var ticked = new JsonArray();
-            foreach (var a in trace.Ticked) ticked.Add(a);
+            // JsonValue.Create(string), not Add(a): the generic Add<T>(T) is trim/AOT-unsafe (IL2026/IL3050) and
+            // fails only the trimmed publish -- the same trap as the string params below.
+            foreach (var a in trace.Ticked) ticked.Add(JsonValue.Create(a));
             req["trace"] = new JsonObject
             {
                 ["bytes"] = trace.Bytes,
