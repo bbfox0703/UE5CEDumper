@@ -6958,6 +6958,37 @@ int main() {
         }
         check("threads: every kept slot holds the record its sequence number says", slotsOk, sz(recs.size()).c_str());
         Linie::FreeTrace();
+
+        // The plan's "what one traced call costs" (docs/live-funcs-timeline-plan.md, Measure before building): printed,
+        // not checked -- a timing depends on the machine. One thread, the real clock, a ring that never laps.
+        {
+            constexpr int N = 1 << 20;
+            LARGE_INTEGER f, t0, t1;
+            QueryPerformanceFrequency(&f);
+            auto nsPer = [&](LARGE_INTEGER a, LARGE_INTEGER b) {
+                return double(b.QuadPart - a.QuadPart) * 1e9 / double(f.QuadPart) / N;
+            };
+            Linie::StartTrace(cfg(2ull * N + 16));
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000 + (i & 63), 0x2000, 1000, 1, t);
+                Linie::TraceReturn(t, 1);
+            }
+            QueryPerformanceCounter(&t1);
+            const double traced = nsPer(t0, t1);
+            Linie::StartTrace(cfg(16, { 0xA7 }));
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) {
+                Linie::TraceToken t;
+                Linie::TraceEnter(0x1000 + (i & 63), 0x2000, 1000, 1, t);   // not ticked, not in scope: no record
+            }
+            QueryPerformanceCounter(&t1);
+            const double outOfScope = nsPer(t0, t1);
+            Linie::FreeTrace();
+            printf("  info  trace cost: %.1f ns per traced call (entry + return), %.1f ns per call outside a ticked scope\n",
+                   traced, outOfScope);
+        }
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
