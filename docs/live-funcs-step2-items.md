@@ -16,7 +16,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | S2 | DLL | Linie: the entry slot (header {seqKind, entrySeq, len, flags, arm}), kTraceSnapTaken, CopySnaps; ring bound; copy clamped; step-1 equivalence | S1 | ✅ e8ddce3b red |
 | S3 | DLL | Linie: the after-return slot in TraceReturn(params) when the hint has kArmAfter, under the gen check | S2 | ✅ 46d9624f red |
 | S4 | DLL | Linie: lone calls outside every scope, snapshots-only (scoped with no ticks), kTraceSnapExcluded inside an open scope | S2 | ✅ 6a6525b8 red |
-| S5 | DLL | Linie: the per-ring and total budgets (one CAS word each; the first calls of each second kept) | S4 | ⬜ |
+| S5 | DLL | Linie: the per-ring and total budgets (one CAS word each; the first calls of each second kept) | S4 | ✅ 921e08b8 red |
 | S6 | DLL | Linie: null params, copy faults, the truncated flag, and TR2 with snapshots | S3 | ⬜ |
 | S7 | DLL | Linie: SnapRings / CopySnaps windows, ring isolation, out-of-turn and orphan filtering; benchmark lines | S5, S6 | ⬜ |
 | B1 | DLL | Ubel: the pure ParamKindOf | — | ⬜ |

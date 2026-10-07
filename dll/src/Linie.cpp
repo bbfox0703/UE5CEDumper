@@ -357,6 +357,9 @@ struct alignas(64) SnapRing {
     uint32_t cap  = 0;         // slot payload
     uint32_t slot = 0;         // kSnapHeaderBytes + cap
     std::atomic<uint64_t> next{ 0 };
+    std::atomic<uint64_t> window{ 0 };          // the budget: the second in the high 40 bits, its count in the low 24
+    std::atomic<uint64_t> skippedBudget{ 0 };
+    std::atomic<uint64_t> droppedBudget{ 0 };
 };
 
 struct TraceState {
@@ -382,6 +385,8 @@ struct TraceState {
     uint32_t snapCount = 0;
     std::unique_ptr<SnapRing[]> snapRings;
     BytesCopier copier = nullptr;
+    uint32_t snapPerRing = 0, snapTotal = 0;
+    std::atomic<uint64_t> snapTotalWindow{ 0 };
 };
 
 TraceState            g_trace;
@@ -461,6 +466,28 @@ bool FreeTraceLocked() {
         if (g_arms == dropTrace) dropRecording = std::move(g_arms);
     }
     return true;
+}
+
+// [LIVEFUNCS-STEP2] One budget word: the second in the high 40 bits, the calls admitted in it in the low 24. A newer
+// second starts again at one; the same or an older second (threads stamp out of order) counts up to the cap. The
+// first calls of each second are the ones kept.
+bool AdmitWord(std::atomic<uint64_t>& w, uint64_t sec, uint32_t cap) {
+    uint64_t cur = w.load(std::memory_order_relaxed);
+    for (;;) {
+        uint64_t nxt;
+        if (sec > (cur >> 24)) nxt = (sec << 24) | 1;
+        else if ((cur & 0xFFFFFFull) < cap) nxt = cur + 1;
+        else return false;
+        if (w.compare_exchange_weak(cur, nxt, std::memory_order_relaxed)) return true;
+    }
+}
+
+// The ring's budget, then the total. A call the total refuses has used one of its ring's places: approximate at the
+// boundary, which a guard may be.
+bool SnapAdmit(int32_t ring, uint64_t ticks) {
+    const uint64_t sec = ticks / QpcFreq();
+    return AdmitWord(g_trace.snapRings[ring].window, sec, g_trace.snapPerRing) &&
+           AdmitWord(g_trace.snapTotalWindow, sec, g_trace.snapTotal);
 }
 
 // [LIVEFUNCS-STEP2] One slot of ring `ring`, inside the hook's in-flight section: the header, the copy, the slot's
@@ -576,6 +603,10 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
     g_trace.snapCount = static_cast<uint32_t>(nRings);
     g_trace.snapRings = std::move(snapRings);
     g_trace.copier    = cfg.copier;
+    // The budget's words hold a count in 24 bits; a cap of 0 would admit nothing ever.
+    g_trace.snapPerRing = std::clamp<uint32_t>(cfg.snapPerRingPerSec, 1, 0xFFFFFF);
+    g_trace.snapTotal   = std::clamp<uint32_t>(cfg.snapTotalPerSec, 1, 0xFFFFFF);
+    g_trace.snapTotalWindow.store(0, std::memory_order_relaxed);
 
     g_trace.buf   = static_cast<TraceRecord*>(p);
     g_trace.bytes = size;
@@ -638,21 +669,35 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
         if (ring < 0) return;
         excluded = true;            // [LIVEFUNCS-STEP2] kept for its parameters; the scope around it stays as it was
     }
+    const uint64_t ticks = g_clock();   // one read: the record's time and the budget's second
+    // [LIVEFUNCS-STEP2] The budget. Over it, a call the scope records anyway keeps its record, flagged; one recorded
+    // only for its parameters (lone, or kept from the exclusion) writes nothing -- no record only to say "skipped".
+    bool taken = false;
+    if (ring >= 0) {
+        taken = SnapAdmit(ring, ticks);
+        if (!taken) {
+            if (lone || excluded) {
+                g_trace.snapRings[ring].droppedBudget.fetch_add(1, std::memory_order_relaxed);
+                return;
+            }
+            g_trace.snapRings[ring].skippedBudget.fetch_add(1, std::memory_order_relaxed);
+        }
+    }
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
     r.seqKind = seq;
-    r.ticks   = g_clock();
+    r.ticks   = ticks;
     r.a       = ufunc;
     r.b       = obj;
     r.tid     = tid;
-    if (ring >= 0) SnapWrite(ring, seq, false, params, hint);
-    r.flags   = (open ? kTraceScopeRoot : 0) | (ring >= 0 ? kTraceSnapTaken : 0) | (lone ? kTraceSnapLone : 0) |
-                (excluded ? kTraceSnapExcluded : 0);
+    if (taken) SnapWrite(ring, seq, false, params, hint);
+    r.flags   = (open ? kTraceScopeRoot : 0) | (taken ? kTraceSnapTaken : 0) | (lone ? kTraceSnapLone : 0) |
+                (excluded ? kTraceSnapExcluded : 0) | ((ring >= 0 && !taken) ? kTraceSnapBudget : 0);
     tok.entrySeq = seq;
     tok.gen      = gen;
     tok.traced   = true;
     tok.opened   = open;
-    if (ring >= 0 && (hint.flags & kArmAfter)) {
+    if (taken && (hint.flags & kArmAfter)) {
         tok.after = hint;
         tok.after.ring = ring;
     }
@@ -699,6 +744,14 @@ TraceInfo InfoLocked() {
     i.snap.bytes        = g_trace.snapBytes;
     i.snap.slotsPerRing = g_trace.snapK;
     i.snap.rings        = g_trace.snapCount;
+    if (g_trace.snapBlock) {
+        i.snap.perRingPerSec = g_trace.snapPerRing;
+        i.snap.totalPerSec   = g_trace.snapTotal;
+        for (uint32_t r = 0; r < g_trace.snapCount; ++r) {
+            i.snap.skippedBudget += g_trace.snapRings[r].skippedBudget.load(std::memory_order_relaxed);
+            i.snap.droppedBudget += g_trace.snapRings[r].droppedBudget.load(std::memory_order_relaxed);
+        }
+    }
     return i;
 }
 }  // namespace
@@ -749,7 +802,9 @@ bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
     for (uint32_t r = 0; r < g_trace.snapCount; ++r) {
         const SnapRing& ring = g_trace.snapRings[r];
         const uint64_t w = ring.next.load(std::memory_order_relaxed);
-        out.push_back(SnapRingInfo{ r, ring.cap, w, w > g_trace.snapK ? w - g_trace.snapK : 0 });
+        out.push_back(SnapRingInfo{ r, ring.cap, w, w > g_trace.snapK ? w - g_trace.snapK : 0,
+                                    ring.skippedBudget.load(std::memory_order_relaxed),
+                                    ring.droppedBudget.load(std::memory_order_relaxed) });
     }
     return true;
 }
