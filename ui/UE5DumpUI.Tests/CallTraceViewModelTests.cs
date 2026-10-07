@@ -155,6 +155,29 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public async Task A_new_load_lets_go_of_the_trace_on_screen_before_it_reads()
+    {
+        // [TRACE-UI-LOAD-MEMORY] Live, build 3634: a 512 MB load after a 128 MB one peaked at 3.77 GB, the earlier
+        // trace still held beside the new window and columns. The new read starts without it.
+        var dump = Dump();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.Trace);
+
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 9, FirstValid = 0, QpcFreq = 1_000_000 };
+        dump.NamesGen = 8;
+        CallTrace? heldDuringRead = vm.Trace;
+        bool wasShown = true;
+        dump.DuringObjNames = () => { heldDuringRead = vm.Trace; wasShown = vm.HasTrace; };
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Null(heldDuringRead);   // let go before the read
+        Assert.False(wasShown);
+        Assert.NotNull(vm.Trace);      // and the new one shown after it
+        Assert.True(vm.HasTrace);
+    }
+
+    [Fact]
     public async Task A_long_read_collects_the_pages_garbage_as_it_goes()
     {
         // [TRACE-UI-LOAD-MEMORY] Live, build 3634, Avowed: a full 128 MB load still peaked at 1.27 GB working set. Each
