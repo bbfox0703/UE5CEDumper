@@ -295,6 +295,10 @@ public class CallTraceBuilderTests
     [InlineData(1L, 3L, "33.33%")]
     [InlineData(3L, 3L, "100%")]
     [InlineData(0L, 0L, "0%")]
+    // Review UI-3: 50 in a million is exactly 0.005%, which banker's rounding takes to 0; 999,960 in a million rounds
+    // to 100 while 40 calls are named. Neither may claim the clean (or the total) answer.
+    [InlineData(50L, 1_000_000L, "<0.01%")]
+    [InlineData(999_960L, 1_000_000L, ">99.99%")]
     public void The_share_with_no_name_reads_as_a_percentage_at_any_size(long part, long whole, string expected)
         => Assert.Equal(expected, CallTrace.ShareText(part, whole));
 }
