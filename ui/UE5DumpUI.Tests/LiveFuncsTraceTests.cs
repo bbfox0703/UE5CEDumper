@@ -311,6 +311,30 @@ public class LiveFuncsTraceTests
     }
 
     [Fact]
+    public void The_trace_settings_persist_through_the_main_window_and_default_off_at_64_MB()
+    {
+        // MainWindowViewModel cannot be built in a unit test; pin its persistence sites by source.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "build.ps1"))) root = root.Parent;
+        Assert.NotNull(root);
+        var src = File.ReadAllText(Path.Combine(root!.FullName, "ui", "UE5DumpUI", "ViewModels", "MainWindowViewModel.cs"));
+        foreach (var p in new[] { "TraceEnabled", "TraceBufferExponent", "TraceExcludePerFrame" })
+        {
+            Assert.Contains($"nameof(LiveFuncsViewModel.{p})", src);
+            Assert.Contains($"LiveFuncs.{p} = o.LiveFuncs.{p}", src);
+            Assert.Contains($"o.LiveFuncs.{p} = LiveFuncs.{p}", src);
+        }
+        // The stored defaults are the view model's: a first run is the same with or without ui-options.json.
+        var o = new LiveFuncsUiOptions();
+        var (vm, _) = MakeVm();
+        Assert.Equal(vm.TraceEnabled, o.TraceEnabled);
+        Assert.Equal(vm.TraceBufferExponent, o.TraceBufferExponent);
+        Assert.Equal(vm.TraceExcludePerFrame, o.TraceExcludePerFrame);
+        Assert.False(o.TraceEnabled);
+        Assert.Equal(6, o.TraceBufferExponent);
+    }
+
+    [Fact]
     public async Task A_disconnect_drops_the_ticks_the_offer_and_the_rate()
     {
         var (vm, dump) = MakeVm();

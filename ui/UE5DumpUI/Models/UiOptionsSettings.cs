@@ -228,6 +228,12 @@ public sealed class LiveFuncsUiOptions
     public int MinCallsExponent { get; set; }
     /// <summary>[LIVEFUNCS-HIDE-PERFRAME] Leave out the per-frame functions in the DLL. OFF by default.</summary>
     public bool HidePerFrame { get; set; }
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Arm the call trace with each Start (experimental only). OFF by default.</summary>
+    public bool TraceEnabled { get; set; }
+    /// <summary>The trace buffer, 2^N MB: 5..9 is 32..512 MB, default 64.</summary>
+    public int TraceBufferExponent { get; set; } = 6;
+    /// <summary>Leave the previous recording's per-frame functions out of the trace. OFF by default.</summary>
+    public bool TraceExcludePerFrame { get; set; }
 }
 
 public sealed class GameClassFilterUiOptions

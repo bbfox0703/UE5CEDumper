@@ -50,6 +50,38 @@ public partial class LiveFuncsPanel : UserControl
         InitializeComponent();
         this.FindControl<DataGrid>("ResultsGrid")?.WireSortComparers(ResultsSortComparers);
         this.AttachFilterView<LiveFuncsViewModel>(this.FindControl<DataGrid>("ResultsGrid"), vm => vm.ResultsView);
+        DataContextChanged += (_, _) => WireTrace();
+    }
+
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's view-side pieces: T7's question needs a window to ask in, and
+    // the tick column shows only with the experimental tabs on (T6). A DataGrid column is not in the visual tree, so
+    // its visibility cannot be bound to the view model; it follows TraceAvailable from here.
+    private LiveFuncsViewModel? _wired;
+
+    private void WireTrace()
+    {
+        if (_wired != null) _wired.PropertyChanged -= OnVmPropertyChanged;
+        _wired = DataContext as LiveFuncsViewModel;
+        if (_wired == null) return;
+        _wired.ConfirmTraceAllCalls = () => ConfirmDialog.ShowAsync(
+            Core.Res.Get("str.LF.Trace.Confirm.Title"), Core.Res.Get("str.LF.Trace.Confirm.Message"),
+            Core.Res.Get("str.LF.Trace.Confirm.Run"), Core.Res.Get("str.LF.Trace.Confirm.Cancel"));
+        _wired.PropertyChanged += OnVmPropertyChanged;
+        ApplyTickColumnVisibility();
+    }
+
+    private void OnVmPropertyChanged(object? sender, System.ComponentModel.PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(LiveFuncsViewModel.TraceAvailable)) ApplyTickColumnVisibility();
+    }
+
+    private void ApplyTickColumnVisibility()
+    {
+        var grid = this.FindControl<DataGrid>("ResultsGrid");
+        if (grid == null || _wired == null) return;
+        string header = Core.Res.Get("str.LF.Col.Trace");
+        foreach (var col in grid.Columns)
+            if (col.Header as string == header) col.IsVisible = _wired.TraceAvailable;
     }
 
     private void InitializeComponent()

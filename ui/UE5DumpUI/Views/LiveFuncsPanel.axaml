@@ -84,6 +84,51 @@
                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
     </StackPanel>
 
+    <!-- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace (experimental, T6): armed by this Start, read in the Call Trace
+         tab. Disabled while recording like the capture settings above; the slider's bounds are the view model's. -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
+                IsVisible="{Binding TraceAvailable}">
+      <CheckBox Content="{StaticResource str.LF.Trace.Enable}"
+                IsChecked="{Binding TraceEnabled}"
+                IsEnabled="{Binding !IsRecording}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Enable}"
+                Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{StaticResource str.LF.Trace.Buffer}"
+                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <Slider Value="{Binding TraceBufferExponent}"
+              Minimum="5" Maximum="9"
+              TickFrequency="1" IsSnapToTickEnabled="True"
+              Width="100" VerticalAlignment="Center"
+              IsEnabled="{Binding !IsRecording}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Buffer}"/>
+      <TextBlock Text="{Binding TraceBufferText}"
+                 Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                 VerticalAlignment="Center" MinWidth="52"/>
+      <TextBlock Text="{Binding TraceEstimate}"
+                 Foreground="#8FA0B8" FontSize="12" VerticalAlignment="Center"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Estimate}"/>
+      <CheckBox Content="{StaticResource str.LF.Trace.ExcludePerFrame}"
+                IsChecked="{Binding TraceExcludePerFrame}"
+                IsEnabled="{Binding !IsRecording}"
+                ToolTip.Tip="{StaticResource str.Tip.LF.Trace.ExcludePerFrame}"
+                Margin="12,0,0,0"
+                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding TickedCountText}"
+                 Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Ticked}"/>
+      <Button Content="{StaticResource str.LF.Trace.ClearTicks}"
+              Command="{Binding ClearTicksCommand}"
+              IsEnabled="{Binding !IsRecording}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.LF.Trace.Open}"
+              Command="{Binding OpenCallTraceCommand}"
+              IsVisible="{Binding HasTraceToOpen}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Open}"
+              Foreground="#4EC9B0" Background="Transparent"
+              BorderThickness="1" BorderBrush="#4EC9B0"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+    </StackPanel>
+
     <!-- Baseline diff row: isolate the action's function from per-frame Tick noise. -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,2"
                 VerticalAlignment="Center">
@@ -166,6 +211,21 @@
               FontSize="12"
               FontFamily="Consolas, Menlo, monospace">
       <DataGrid.Columns>
+        <!-- [LIVEFUNCS-TIMELINE-2026-10-04] Tick for the call trace (T3, T5): the next traced Start records only these
+             functions' calls and what they call. Shown only with the experimental tabs on; the code-behind finds it by
+             its header. The command keeps the ticks (by Class::Func) in the view model, so they outlive this fetch's rows. -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Trace}" Width="52" CanUserSort="False" IsVisible="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <CheckBox IsChecked="{Binding IsTicked, Mode=OneWay}"
+                        Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleTickCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding !$parent[UserControl].((vm:LiveFuncsViewModel)DataContext).IsRecording}"
+                        ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Tick}"
+                        HorizontalAlignment="Center" Margin="6,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
         <!-- Order: call-stream position of the first fire (lower = earlier = more likely
              the causal entry point). Sort ascending to put openers on top. -->
         <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Order}" Width="64" SortMemberPath="FirstSeq" CanUserSort="True">

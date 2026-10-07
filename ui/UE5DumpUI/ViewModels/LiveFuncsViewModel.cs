@@ -256,6 +256,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>T5 (b): leave out the functions the previous recording found firing every frame.</summary>
     [ObservableProperty] private bool _traceExcludePerFrame;
     public int TraceBufferMb => 1 << TraceBufferExponent;
+    public string TraceBufferText => Res.Format("str.LF.Trace.BufferMb", TraceBufferMb);
 
     /// <summary>Two 40-byte records per call: its entry and its return.</summary>
     internal const int TraceBytesPerCall = 80;
@@ -285,6 +286,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private readonly Dictionary<string, string> _ticked = new(StringComparer.Ordinal);
     /// <summary>The ticked functions as Class::Func, for this panel and the Call Trace tab's read-only copy (T8).</summary>
     public ObservableCollection<string> TickedFunctions { get; } = new();
+    public bool HasTickedFunctions => TickedFunctions.Count > 0;
+    public string TickedCountText => Res.Format("str.LF.Trace.TickedCount", TickedFunctions.Count);
 
     /// <summary>T7: asked before a traced Start with nothing ticked while there are rows to tick from. The view sets
     /// it; without one a Start that needs the question does not start.</summary>
@@ -323,6 +326,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             return;
         }
         OnPropertyChanged(nameof(TraceBufferMb));
+        OnPropertyChanged(nameof(TraceBufferText));
         OnPropertyChanged(nameof(TraceEstimate));
     }
 
@@ -351,6 +355,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         TickedFunctions.Clear();
         foreach (var k in _ticked.Keys.OrderBy(k => k, StringComparer.Ordinal)) TickedFunctions.Add(k);
+        OnPropertyChanged(nameof(HasTickedFunctions));
+        OnPropertyChanged(nameof(TickedCountText));
     }
 
     [RelayCommand]
@@ -840,8 +846,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public void OnLeavingTab()
     {
         _filterMemory.Flush();
-        if (IsRecording) _ = AutoStopOnLeaveAsync();
+        if (IsRecording) PendingAutoStop = AutoStopOnLeaveAsync();
     }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The stop leaving the tab started; the Call Trace tab, opened by that
+    /// same tab switch, waits for it before asking the DLL for the trace the stop finishes.</summary>
+    public Task PendingAutoStop { get; private set; } = Task.CompletedTask;
 
     private async Task AutoStopOnLeaveAsync()
     {
