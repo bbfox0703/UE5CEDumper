@@ -2332,6 +2332,12 @@ size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOp
     return arms.size();
 }
 
+std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
+                                           const SnapDecodeCtx& ctx) {
+    (void)layout; (void)bytes; (void)len; (void)after; (void)ctx;
+    return {};
+}
+
 // [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:
 // +4 standard, +4 or +8 case-preserving). Loads only.
 bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber) {

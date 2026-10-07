@@ -511,6 +511,30 @@ struct ArmLayoutMemo {
 // Returns how many arms it handled.
 size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOps& ops, ArmLayoutMemo& memo);
 
+// [LIVEFUNCS-STEP2] A parameter copy decoded after Stop, against its arm's layout. Each value says how far to trust it.
+enum class SnapMark : uint8_t {
+    Exact   = 0,   // decoded from the copy alone
+    Now     = 1,   // names what is at that address now, which may not be what was there at the call
+    Gone    = 2,   // an address that holds no live object now
+    Missing = 3,   // not in this copy: past its end, or not a value this copy carries (an In after the call)
+    Header  = 4,   // a string's or a container's header only; its data was not copied
+    Raw     = 5,   // a type the decoder does not read: hex
+};
+struct SnapValue {
+    std::string            text;
+    SnapMark               mark = SnapMark::Exact;
+    std::vector<SnapValue> sub;   // a struct's members, in its layout's order
+};
+// What decoding needs from the process, injectable so a test needs no game: FName text, and an object's liveness.
+struct SnapDecodeCtx {
+    std::string (*fname)(int32_t index, int32_t number) = nullptr;
+    bool (*object)(uintptr_t ptr, std::string& name, std::string& className) = nullptr;
+};
+// One value per parameter of `layout`, in order. `after`: the copy taken when the call returned, which carries the
+// out parameters and the return value -- the rest read Missing; an entry copy reads the return value Missing.
+std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
+                                           const SnapDecodeCtx& ctx);
+
 inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;
     if (propertyFlags & kReturn) return ParamKind::Return;

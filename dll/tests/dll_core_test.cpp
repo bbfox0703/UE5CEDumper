@@ -8630,6 +8630,81 @@ int main() {
     }
 
     {
+        blk("LIVEFUNCS-STEP2: a parameter copy decoded -- numbers, bools, enums, names, structs, arrays, what is missing");
+        // docs/live-funcs-step2-items.md, B6. A layout by hand, a copy of plain bytes, a stub for FName text: nothing
+        // here reads the game.
+        using PK = Ubel::ParamKind;
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size, PK kind = PK::In) {
+            Ubel::ParamField f; f.name = name; f.typeName = type; f.offset = off; f.size = size; f.kind = kind; return f;
+        };
+        Ubel::ParamLayout L;
+        L.params.push_back(field("F", "FloatProperty", 0, 4));
+        L.params.push_back(field("D", "DoubleProperty", 8, 8));
+        L.params.push_back(field("I8", "Int8Property", 16, 1));
+        auto packed = field("B", "BoolProperty", 17, 1); packed.boolMask = 0x04; L.params.push_back(packed);
+        L.params.push_back(field("BU", "BoolProperty", 18, 1));   // its layout was not resolved
+        auto e = field("E", "EnumProperty", 19, 1); e.enumName = "EKind"; e.enumEntries = { { 0, "EKind::A" }, { 255, "EKind::MAX" } };
+        L.params.push_back(e);
+        auto e2 = e; e2.name = "E2"; e2.offset = 20; L.params.push_back(e2);
+        auto by = field("By", "ByteProperty", 21, 1); L.params.push_back(by);
+        L.params.push_back(field("N", "NameProperty", 24, 8));
+        auto v = field("V", "StructProperty", 32, 24); v.structType = "Vector";
+        v.sub = { field("X", "DoubleProperty", 0, 8), field("Y", "DoubleProperty", 8, 8), field("Z", "DoubleProperty", 16, 8) };
+        L.params.push_back(v);
+        auto arr = field("A", "IntProperty", 56, 4); arr.arrayDim = 3; L.params.push_back(arr);
+        L.params.push_back(field("O", "IntProperty", 68, 4, PK::Out));
+        L.params.push_back(field("R", "IntProperty", 72, 4, PK::Return));
+        L.params.push_back(field("Past", "IntProperty", 200, 4));
+        L.params.push_back(field("Odd", "WhateverProperty", 76, 4));
+
+        uint8_t b[80] = {};
+        const float f = 1.5f; memcpy(b + 0, &f, 4);
+        const double d = 20.5; memcpy(b + 8, &d, 8);
+        b[16] = 0xFF;                 // Int8 -1
+        b[17] = 0x04;                 // the packed bit set, its siblings clear
+        b[18] = 0x02;                 // unresolved: the whole byte
+        b[19] = 255; b[20] = 7; b[21] = 200;
+        const int32_t nm[2] = { 21, 3 }; memcpy(b + 24, nm, 8);
+        const double xyz[3] = { 1.5, 2, 3 }; memcpy(b + 32, xyz, 24);
+        const int32_t a3[3] = { 1, 2, 3 }; memcpy(b + 56, a3, 12);
+        const int32_t o = 41, r = 99; memcpy(b + 68, &o, 4); memcpy(b + 72, &r, 4);
+        const uint8_t odd[4] = { 0xDE, 0xAD, 0xBE, 0xEF }; memcpy(b + 76, odd, 4);
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fname = [](int32_t i, int32_t n) -> std::string { return i == 21 ? (n ? "Tag_" + std::to_string(n - 1) : "Tag") : "?"; };
+
+        const auto in = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = in.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(in.size()).c_str());
+        if (shaped) {
+            auto is = [&](size_t i, const char* text, SM mark) { return in[i].text == text && in[i].mark == mark; };
+            check("float and double", is(0, "1.5", SM::Exact) && is(1, "20.5", SM::Exact), (in[0].text + "/" + in[1].text).c_str());
+            check("an Int8 is signed", is(2, "-1", SM::Exact), in[2].text.c_str());
+            check("a packed bool reads its own bit", is(3, "true", SM::Exact), in[3].text.c_str());
+            check("an unresolved bool reads the whole byte, and says so", is(4, "true (layout unresolved)", SM::Exact),
+                  in[4].text.c_str());
+            check("an enum value named from its table", is(5, "EKind::MAX (255)", SM::Exact), in[5].text.c_str());
+            check("...and one the table does not have", is(6, "7 (not in EKind)", SM::Exact), in[6].text.c_str());
+            check("a plain byte", is(7, "200", SM::Exact), in[7].text.c_str());
+            check("an FName with its Number, through the name pool", is(8, "Tag_2", SM::Exact), in[8].text.c_str());
+            check("a struct: its members, from their own offsets", is(9, "{X=1.5, Y=2, Z=3}", SM::Exact) &&
+                  in[9].sub.size() == 3 && in[9].sub[2].text == "3", in[9].text.c_str());
+            check("a static array", is(10, "[1, 2, 3]", SM::Exact), in[10].text.c_str());
+            check("an out parameter as the call began", is(11, "41", SM::Exact), in[11].text.c_str());
+            check("the return value, at the call: not yet", is(12, "\xE2\x80\x94", SM::Missing), in[12].text.c_str());
+            check("a parameter past the copy's end", in[13].mark == SM::Missing, in[13].text.c_str());
+            check("a type the decoder does not read: hex", is(14, "DE AD BE EF", SM::Raw), in[14].text.c_str());
+        }
+        const auto out = Ubel::DecodeParamSnapshot(L, b, sizeof b, true, ctx);
+        check("after the call: the out parameter and the return value, nothing else",
+              out.size() == L.params.size() && out[11].text == "41" && out[11].mark == SM::Exact &&
+              out[12].text == "99" && out[12].mark == SM::Exact && out[0].mark == SM::Missing && out[0].text.empty());
+        const auto cut = Ubel::DecodeParamSnapshot(L, b, 12, false, ctx);
+        check("a copy cut short: what lies past it is missing, what fits is read",
+              cut.size() == L.params.size() && cut[0].text == "1.5" && cut[1].mark == SM::Missing);
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
         // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
         static uint8_t nkEntry[24][0x40] = {};
