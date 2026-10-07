@@ -1,7 +1,8 @@
 # Live Funcs — call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-**Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; steps 2 (parameter snapshots) and 3 (native stack)
-not started.** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
+**Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; step 2 (parameter snapshots) DESIGNED 2026-10-07
+(T10-T14, "Step 2 design", the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); step 3 (native
+stack) not started.** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
 built" at the end. **Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8
 — see "Decisions" — after a design review whose findings are TR1–TR7 below.
 Written 2026-10-04 from a reading of the code; the sizes and rates in the sections before "Step 1 built" are
@@ -470,3 +471,200 @@ UI says so.
 **Not yet seen live:** 3638's collection period that follows the free memory. This machine always had more than
 2.5 GB free, so every load so far ran the calibrated 16 pages. 3638's load log line also gives the collections' time
 in total; the next trace load reports both.
+
+-----
+
+## Step 2 design (decided 2026-10-07)
+
+**Status: designed, not built.** It covers three things:
+- section 2, parameter snapshots and view C;
+- following a function by name (T10);
+- the Call Trace list and detail-pane fixes ("Also built with step 2").
+
+The maintainer's decisions are T10 to T14 in "Decisions". This section is what they settle. A "Step 2 built" section will follow it, as step 1's did. The build, item by item with each red test and
+mutation, is the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md).
+
+### What is decided, and why
+
+The maintainer's:
+- **T10. Ticks and choices follow a function by name** (its class and function). A function unloaded at Start is never refused or dropped: it waits for its first call.
+- **T11. A chosen call the trace would not record is recorded alone.** It is flagged lone and opens no scope. With nothing ticked and something chosen, the trace records only the chosen functions' calls, and T7 is not asked.
+- **T12. The snapshot buffer has its own slider:** 8 to 128 MB, default 32, remembered. It is shown while something is chosen and counted in the game's memory figure.
+- **T13. The estimate turns orange** when the busiest chosen function keeps less time than the trace buffer. A grey note says how many calls a second the budget will skip.
+- **T14. One Snapshot checkbox.** Step 3 decides about stacks.
+
+Derived from the code and the plan, and not asked:
+- **Snapshots ride on the trace.** The same Start, Stop and release apply. Every snapshot points at a call in the ring.
+- **One ring per chosen function, all in one allocation, each with the same number of slots K.** A per-frame function can lap only its own ring, never a rare function's.
+- **A budget per function and in total, per second.** The first calls of each second are kept and the rest are counted as skipped. The defaults, 1,000 and 10,000 a second, are provisional and get measured live.
+- **The DLL decodes, after Stop.** The raw bytes travel beside every value. Each value says whether it is exact, what an address holds now, gone, missing, a header only, or raw.
+- **Choices are kept for the UI session**, by class and function, like ticks. They are cleared on disconnect and never saved.
+- **A bulk "Snapshot shown rows" includes per-frame rows.** T9 left those out only for stacks. The rings and the budget contain them.
+- **Any traced Start gives up the previous trace**, refused Starts included.
+
+### How a function is followed by name
+
+- **The key is four numbers:** the function's FName and its class's FName, each an index and a number. Live Funcs rows carry it. Unloaded rows get it from the function's first call. The numbers stay valid for the life of the game process.
+- **At Start, the DLL checks each key against the names the UI shows.** A key that does not decode to them is refused, and refusing every key refuses the Start. Being unloaded is never a reason.
+- **During the recording**, the table already reads each function at its first call. When the names match a choice or a tick, that address is armed, and the very call that armed it is traced.
+- **A reload at a new address** is a new arm, with its own parameter layout. An address taken by another function is not armed.
+- **Armed addresses get a stricter check on every call.** It adds the class's name, which costs two more reads, so a class swapped at the same addresses is caught. Other calls cost what they cost in step 1.
+- **The parameter layout is read in the background** by a worker thread of the recording, which looks every
+  50 ms, while the function is alive. The read checks the function before and after. Stop waits up to 2 s for any
+  layout not read yet, then seals the rest as raw only. Not the pipe's thread, and not its disconnect monitor: the
+  first read of an enum's names can walk every object for seconds.
+- **A layout read once is reused** only for the same address with the same five numbers (the address's Outer and the
+  four name numbers). A struct or enum the layout reads from a cache is checked against its own names first: under
+  reload churn a freed struct's address can hold another.
+- **A layout that could not be read leaves its calls as raw hex**, with the reason: unloaded first, replaced, or not read before Stop.
+- **The report says "not called", never "not loaded".** The DLL sees calls, not loads.
+
+### Data flow
+
+1. **Live Funcs.** The rows give the key, the parameter size, the flags and per-frame. Choose and tick. The estimate line shows MB a minute, how many calls each ring keeps, and the orange warning.
+2. **Start.** The request carries the trace bytes, the ticks by name, and the snapshots (by name, with sizes, buffer and budgets). The DLL frees the previous trace and checks the keys. It allocates the ring and the snapshot rings and touches their pages. Then the recording starts.
+3. **Each call.** The table reads it, or checks its key, and hands the trace a small hint: armed, ticked, which ring. The entry record is written, then the entry copy. The game's call runs. The return record is written, then the after copy.
+4. **Every 50 ms.** The worker reads the layouts of new arms.
+5. **Stop.** The trace stops, then the recording. The DLL drains the layouts and seals them. The reply says which names were never called.
+6. **Call Trace load.** It reads the pages, then the names with each native entry, then the layouts by arm, then the snapshots per ring. Then it releases. The game's memory goes back at load, as in step 1.
+
+### Deviations, recorded as step 1 recorded TR5's
+
+- **TR6** ("the entry record holds the snapshot's index"). The 40-byte record is the wire format and has no free field. Instead:
+  - the entry record gains flag bits: taken, lone, over the budget, kept from the exclusion list;
+  - each snapshot slot carries its call's entry sequence number, the same link a return record uses.
+- **Copy size** (section 2 says "copy ParmsSize bytes").
+  - ParmsSize is copied, capped at 2,048 bytes.
+  - When it reads 0 (an offset not decided), 256 bytes are copied, and the decoder marks what lies past the copy.
+- **The after-return copy** is taken only when the function has out parameters (the engine's flag for that, whose name is FUNC_HasOutParms), or when its flags could not be read. It always goes into a new slot, never a write-back.
+
+### Limits
+
+| Limit | Value |
+|---|---|
+| Snapshot buffer | 8 to 128 MB, a power of two |
+| Copy per call | ≤ 2,048 bytes; 256 when the size is unknown |
+| Slots per ring | K ≥ 8 (fewer refuses the Start; the estimate says so first) |
+| Functions chosen | no cap on the count (T9) |
+| Addresses armed per recording | 16,384 (about 1.3 MB); more are counted, not armed |
+| Struct depth / leaves per function | 4 / 256 |
+| Layout read | a worker thread per recording with choices, every 50 ms; Stop waits up to 2 s, then seals |
+| Game memory at most | 512 MB ring + 128 MB snapshots + the arm log |
+
+### Not captured, or not matched
+
+- The tool's own drained invokes. A call that a game exception unwinds has no after copy.
+- A function called from native code without ProcessEvent, such as a BlueprintNativeEvent of a native class.
+- **Calls in the microseconds between the trace starting and the recording starting.** Nothing matches them by name.
+- A function whose identity could not be read in three tries.
+- A reload whose class or function name comes back with another number. It reports as "not called".
+- **The per-frame exclusion is still by address**, so a per-frame function that reloads escapes it.
+- Strings and containers are headers only, and their data is not followed. FText shows only whether it is empty.
+- **Object names are "what is at that address now".**
+- **A torn slot.** A writer stalled while its own ring laps: at least K/2 admitted calls, so about 4 ms at K = 8. This is the same accepted class as the ring.
+
+### Live checks
+
+Same rules as step 1:
+- one injected game at a time;
+- the binary under test rebuilt;
+- a stale proxy refreshed;
+- the rig committed before it runs.
+
+**DumperTest58 Shipping, rebuilt with new probes:**
+- one function with every parameter kind and an out, an in-out and a return;
+- a return-only function;
+- a host that calls it in scope, plus a timer that calls it alone;
+- a per-frame probe dispatched through ProcessEvent;
+- a function first called only after a later invoke.
+
+The TraceNest chain stays as recorded.
+
+**The rig (`livefuncs_snap_live.py`) checks:**
+- the key and per-frame on rows;
+- ticks by name with no address: roots equal rounds;
+- a never-called tick accepted, and listed at Stop;
+- an altered key refused, and the previous trace freed;
+- every entry decoding to its round's values;
+- the outs and the return after the call;
+- the late function's layout read in the background, with its delay logged;
+- the budget skipping as configured;
+- the native entry;
+- the release freeing everything.
+
+Also re-run `livefuncs_trace_live.py`.
+
+**UI walkthrough, on the AOT build (`-Mode Publish`):**
+- the column hidden with the experimental tabs off;
+- the per-frame mark;
+- the estimate orange after a bulk choice;
+- Start and Stop;
+- markers, "Only calls with parameters", the Parameters tab, raw hex;
+- columns and pane dragged and remembered;
+- the Address setting followed;
+- JSONL and params CSV.
+
+**The fixture cannot reload a class**: its classes are native, and native classes never unload. The reload path
+is unit-tested with fake readers, and Avowed is its live proof.
+
+**Avowed, the acceptance case** (`steam.exe -applaunch <appid>`, load a save):
+1. From the table only, while the rows show "(unloaded)", tick and choose inventory functions with parameters, plus one per-frame function.
+2. Start. Open and close the inventory twice. Stop.
+3. Pass if:
+   - each chosen name was armed, its layouts were read and its calls decode;
+   - whether its addresses changed between openings is recorded, not required: it depends on when the game's
+     garbage collection unloads the widget;
+   - skipped calls match the rate against the budget;
+   - calls/s and fps match a run without snapshots.
+4. Record:
+   - how long each layout waited to be read;
+   - the Start and load times;
+   - the UI's memory;
+   - the budget defaults, measured again;
+   - the machine.
+
+**UE 4.18, if packaged:** a float parameter follows input.
+
+### Build order
+
+Each item is red first, one per commit, with its test mutation-checked. Fern and Stark are compiled by no test target, so their items are proven by building the DLL target and by the rig.
+
+1. **Linie:**
+   - the name key and the arm rules;
+   - arming at first sight;
+   - arm upkeep (reload, reuse, the stricter check);
+   - capacity;
+   - layouts' handover, and freeing with the trace;
+   - the scope by name;
+   - then the snapshot rings, the entry copy, the after copy, lone and excluded calls, the budgets, faults and TR2, and the windows.
+2. **Ubel:**
+   - parameter kinds;
+   - the name-key check;
+   - the layout read (the UE4 slot included);
+   - its enrichment;
+   - the checked background read;
+   - the two decoder items.
+3. **Fixture and rig**, then **Fern and Stark:**
+   - the row key;
+   - the Start by name;
+   - the snapshot Start;
+   - Stark's hint;
+   - the background pass and Stop;
+   - the two new commands (the pipe count goes from 102 to 104);
+   - the native entry.
+4. **UI:**
+   - models;
+   - the bulk lane;
+   - the tick set;
+   - ticks by name;
+   - the choice;
+   - the estimate;
+   - the bulk choice;
+   - the view;
+   - what the summaries say;
+   - the list's columns;
+   - the detail's addresses;
+   - the snapshot load;
+   - view C;
+   - export.
+5. **Docs, then the AOT publish and the live checks.**
