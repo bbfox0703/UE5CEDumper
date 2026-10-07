@@ -2089,12 +2089,18 @@ bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out) {
     return true;
 }
 
-FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now,
+FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now, const NameWitness& nowClass,
                                 const Linie::FuncIdentity& ident) {
     if (slotLive && witnessRead) {
         if (!ident.captured) return FuncState::Live;
-        return (now.comparisonIndex == ident.nameIndex && now.number == ident.nameNumber) ? FuncState::Live
-                                                                                          : FuncState::Recycled;
+        if (now.comparisonIndex != ident.nameIndex || now.number != ident.nameNumber) return FuncState::Recycled;
+        // The function's own name is not enough (review DLL-1): every Blueprint class has its own Construct,
+        // ReceiveBeginPlay..., all one FName. Compared only when both reads have a class -- index 0 is "None",
+        // which no class is called.
+        if (ident.classIndex != 0 && nowClass.comparisonIndex != 0
+            && (nowClass.comparisonIndex != ident.classIndex || nowClass.number != ident.classNumber))
+            return FuncState::Recycled;
+        return FuncState::Live;
     }
     return ident.captured ? FuncState::Unloaded : FuncState::Unnamed;
 }
@@ -2104,10 +2110,16 @@ FuncState ClassifyFunction(uintptr_t func, const Linie::FuncIdentity& ident) {
     // that holds something else now. The same test pe_trace_names applies to objects.
     const int32_t idx = func ? GetIndex(func) : -1;
     const bool slotLive = idx >= 0 && Aura::GetByIndex(idx) == func;
-    NameWitness now{};
+    NameWitness now{}, nowClass{};
     const bool read = slotLive && Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME, now.comparisonIndex);
-    if (read) Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, now.number);
-    return ClassifyFunctionState(slotLive, read, now, ident);
+    if (read) {
+        Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, now.number);
+        if (const uintptr_t cls = GetOuter(func)) {
+            if (!Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, nowClass.comparisonIndex)) nowClass = {};
+            else Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, nowClass.number);
+        }
+    }
+    return ClassifyFunctionState(slotLive, read, now, nowClass, ident);
 }
 
 FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& ident) {

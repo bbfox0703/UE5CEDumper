@@ -361,7 +361,8 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // before a GC/level-load reused its slot) fails safe. Returns false when funcAddr
 // is not (or no longer) a UFunction. An address freed and taken by ANOTHER
 // UFunction still passes, under the new function's name: the profiler's readers go
-// through DescribeFunction, which compares the name read at the first call.
+// through DescribeFunction, which compares the names (the function's and its
+// class's) read at the first call.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
 // [FUNCPARM-CONSUMERS] review: the return value's slot in the parameter buffer, from the function's own chain —
@@ -391,14 +392,15 @@ void SetFunctionCapture(const FunctionCaptureSetup& setup);
 bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out);
 
 // What a recorded function address is at read time, against what the table read at its first call.
-//   Live     -- still in its GUObjectArray slot, under the name it was read with (or never read: named now)
-//   Recycled -- still in a slot under ANOTHER name: freed, and another function took the address
+//   Live     -- still in its GUObjectArray slot, under the name it was read with, in the class it was read with
+//               (or never read: named now)
+//   Recycled -- still in a slot under ANOTHER name or class: freed, and another function took the address
 //   Unloaded -- no longer in its slot; named from what was read
 //   Unnamed  -- gone, and never read
 enum class FuncState { Live, Unloaded, Recycled, Unnamed };
 // The decision alone, for tests: `slotLive` is GetByIndex(GetIndex(func)) == func, `witnessRead` whether its FName
-// could be read, `now` that FName.
-FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now,
+// could be read, `now` that FName, `nowClass` its Outer's ({0, 0} when it could not be read).
+FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now, const NameWitness& nowClass,
                                 const Linie::FuncIdentity& ident);
 FuncState ClassifyFunction(uintptr_t func, const Linie::FuncIdentity& ident);
 
