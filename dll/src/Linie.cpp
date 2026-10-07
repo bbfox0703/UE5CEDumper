@@ -35,9 +35,13 @@ struct Stat {
     uint64_t gaps     = 0;   // number of gaps measured (== count-1)
     double   mean     = 0.0; // Welford running mean of the gaps (ms)
     double   m2       = 0.0; // Welford running M2 (sum of squared deltas)
+    FuncIdentity ident;      // read at the first call (TRACE-UNLOADED-NAMES)
+    uint8_t  identTries = 0; // reads tried so far, up to kIdentityTries
 };
 static std::mutex g_mu;
 static std::unordered_map<uintptr_t, Stat> g_stats;
+// The identity reader of the running recording; nullptr reads nothing. Set and cleared under g_mu.
+static FuncIdentityReader g_reader = nullptr;
 // Monotonic call-stream position (1-based), reset per recording. A function's
 // firstSeq is g_seq at the moment it was first seen — the causal ordering.
 static uint64_t g_seq = 0;
@@ -46,6 +50,16 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     std::lock_guard<std::mutex> lk(g_mu);
     uint64_t seq = ++g_seq;
     auto& s = g_stats[ufunc];       // default-constructs on first sight
+    // [TRACE-UNLOADED-NAMES] The function is being dispatched, so it is alive: read what it is now, once. A later
+    // call costs one test of `captured` (or of the try count, for a function whose reads keep failing).
+    if (g_reader && !s.ident.captured && s.identTries < kIdentityTries) {
+        ++s.identTries;
+        FuncIdentity id{};
+        if (g_reader(ufunc, id)) {
+            id.captured = true;
+            s.ident = id;
+        }
+    }
     if (s.count == 0) {
         s.firstSeq = seq;
         s.firstMs = nowMs;
@@ -89,11 +103,12 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     ++s.count;
 }
 
-void StartRecording() {
+void StartRecording(FuncIdentityReader reader) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_stats.clear();
     g_stats.reserve(4096);  // bound rehash churn over the recording window
     g_seq = 0;
+    g_reader = reader;
     // Flip on UNDER the lock so a concurrent RecordCall can never observe
     // recording==true against a half-cleared table.
     g_recording.store(true, std::memory_order_relaxed);
@@ -113,6 +128,7 @@ void Reset() {
         g_recording.store(false, std::memory_order_relaxed);
         g_stats.clear();
         g_seq = 0;
+        g_reader = nullptr;
     }
     // A client that left takes its trace with it: up to 512 MB of the game's memory, outside g_mu because the
     // trace has its own lock.
@@ -132,7 +148,8 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
             double variance = s.m2 / static_cast<double>(s.gaps);  // population variance
             cv = std::sqrt(variance) / meanMs;
         }
-        out.push_back(FuncStat{ kv.first, s.count, s.firstSeq, meanMs, cv, s.gaps, s.firstMs, s.lastMs, s.activeMs });
+        out.push_back(FuncStat{ kv.first, s.count, s.firstSeq, meanMs, cv, s.gaps, s.firstMs, s.lastMs, s.activeMs,
+                                s.ident });
         if (s.firstMs < earliest) earliest = s.firstMs;
         if (s.lastMs > latest) latest = s.lastMs;
     }
@@ -177,6 +194,7 @@ struct TraceState {
     bool distinctReady = false;
     std::vector<uintptr_t> distinctFuncs;
     std::vector<uintptr_t> distinctObjs;
+    std::vector<FuncIdentity> distinctIdents;   // parallel to distinctFuncs (TRACE-UNLOADED-NAMES)
 };
 
 TraceState            g_trace;
@@ -239,6 +257,7 @@ bool FreeTraceLocked() {
     g_trace.distinctReady = false;
     std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
     std::vector<uintptr_t>().swap(g_trace.distinctObjs);
+    std::vector<FuncIdentity>().swap(g_trace.distinctIdents);
     return true;
 }
 
@@ -414,7 +433,8 @@ bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, 
     return true;
 }
 
-bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen) {
+bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen,
+                   std::vector<FuncIdentity>* idents) {
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (gen) *gen = g_trace.gen;
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
@@ -435,10 +455,23 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, 
         std::sort(g_trace.distinctFuncs.begin(), g_trace.distinctFuncs.end());
         g_trace.distinctObjs.assign(o.begin(), o.end());
         std::sort(g_trace.distinctObjs.begin(), g_trace.distinctObjs.end());
+        // [TRACE-UNLOADED-NAMES] The identities the table read, frozen with the trace. g_mu inside g_traceMu: the
+        // one place the two nest, and never the other way round (Reset leaves g_mu before FreeTrace; the hook never
+        // takes g_traceMu). The table is this trace's recording's -- pe_profile_start replaces or frees the trace
+        // before StartRecording clears the table -- so a later Start cannot hand these a newer recording's names.
+        g_trace.distinctIdents.assign(g_trace.distinctFuncs.size(), FuncIdentity{});
+        {
+            std::lock_guard<std::mutex> lk2(g_mu);
+            for (size_t i = 0; i < g_trace.distinctFuncs.size(); ++i) {
+                auto it = g_stats.find(g_trace.distinctFuncs[i]);
+                if (it != g_stats.end()) g_trace.distinctIdents[i] = it->second.ident;
+            }
+        }
         g_trace.distinctReady = true;
     }
     funcs = g_trace.distinctFuncs;
     objs  = g_trace.distinctObjs;
+    if (idents) *idents = g_trace.distinctIdents;
     return true;
 }
 

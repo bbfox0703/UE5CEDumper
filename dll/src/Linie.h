@@ -18,6 +18,28 @@
 
 namespace Linie {
 
+// [TRACE-UNLOADED-NAMES] What a function was when the recording first saw it, read by the hook while it was being
+// dispatched and so certainly alive. A function the game unloads before Stop (a closed UI, content streamed out) no
+// longer resolves at read time; this is what names it then. Not strings: the two int32s of each FName, which decode
+// later because FNamePool entries are never freed (Ubel::NameWitness), and what the Live Funcs table shows beside a
+// name -- its flags, its parameters, whether its class is a widget's.
+struct FuncIdentity {
+    int32_t  nameIndex     = 0;   // the UFunction's FName {ComparisonIndex, Number}
+    int32_t  nameNumber    = 0;
+    int32_t  classIndex    = 0;   // its Outer's -- its UClass's -- FName
+    int32_t  classNumber   = 0;
+    uint32_t functionFlags = 0;
+    uint16_t parmsSize     = 0;
+    uint8_t  numParms      = 0;
+    bool     isWidget      = false;
+    bool     captured      = false;   // false: never read (a reader that failed, or none installed)
+};
+// Reads `ufunc`'s identity on the hook, under the table's lock: loads only -- no allocation, no lock, no string.
+// Linie knows nothing of UObjects, so the pipe installs Ubel's reader at Start and a test installs a stub.
+using FuncIdentityReader = bool (*)(uintptr_t ufunc, FuncIdentity& out);
+// A read that fails is tried again on the function's next calls, this many times in all.
+inline constexpr int kIdentityTries = 3;
+
 // One profiled function: how many times it fired + WHEN it first fired (its
 // position in the recording's call stream, 1-based). firstSeq is the causal
 // signal — an action's entry point (e.g. OpenShop) fires BEFORE the reactions
@@ -41,6 +63,7 @@ struct FuncStat {
     uint64_t  firstMs      = 0;    // wall-clock of the first and the latest fire, on the clock RecordCall gets
     uint64_t  lastMs       = 0;
     uint64_t  activeMs     = 0;    // the time it kept firing at frame cadence: the sum of its gaps up to kActiveGapMaxMs
+    FuncIdentity ident;            // read at its first call (TRACE-UNLOADED-NAMES); last, so aggregate inits stay valid
 };
 
 // [LIVEFUNCS-HIDE-PERFRAME] A function that fires every frame through most of the recording: the per-frame noise
@@ -71,8 +94,9 @@ inline bool IsRecording() { return g_recording.load(std::memory_order_relaxed); 
 void RecordCall(uintptr_t ufunc, uint64_t nowMs);
 
 // Clear the table (reserve to bound rehash churn), then flip recording on
-// under the lock so there is never a half-cleared window.
-void StartRecording();
+// under the lock so there is never a half-cleared window. `reader`, when given, reads each function's identity at
+// its first call; it is installed under the same lock, so no call of this recording runs without it.
+void StartRecording(FuncIdentityReader reader = nullptr);
 
 // Flip recording off; the accumulated counts are retained for a later Snapshot.
 void StopRecording();
@@ -84,7 +108,8 @@ bool IsActive();
 // so a stale recording never leaks across connections and the map is freed.
 void Reset();
 
-// Copy out one FuncStat per distinct function (addr / count / firstSeq / cadence / first and latest fire). Safe
+// Copy out one FuncStat per distinct function (addr / count / firstSeq / cadence / first and latest fire / the
+// identity read at its first call). Safe
 // to call while recording. `activityMs` is the window the table was recorded over, from its earliest fire to its
 // latest, taken under the same lock: the time the game was dispatching, not the wall clock between Start and Stop,
 // which also holds the minutes a game that idles when not foreground spent behind the UI.
@@ -189,8 +214,12 @@ TraceInfo GetTraceInfo();
 bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next = nullptr,
                TraceInfo* seen = nullptr);
 // The distinct functions and calling objects of the kept window, sorted; computed once per stopped trace. `gen`,
-// when given, is the recording they belong to.
-bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen = nullptr);
+// when given, is the recording they belong to. `idents`, when given, holds one FuncIdentity per entry of `funcs`:
+// what the table read at that function's first call. They are taken from the table when the list is first computed
+// and kept with the trace, so a recording started since cannot take them back; a function only the trace saw (a
+// call traced before StartRecording or after StopRecording) has none.
+bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen = nullptr,
+                   std::vector<FuncIdentity>* idents = nullptr);
 // Free the trace only when it is recording `gen` and that recording has stopped: a reader's release never frees a
 // newer recording. True when it freed it.
 bool FreeTraceIfGen(uint64_t gen);

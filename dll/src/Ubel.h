@@ -13,6 +13,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Linie.h"   // FuncIdentity: what the profiler's table read at a function's first call
+
 struct FieldInfo {
     uintptr_t   Address;        // FField* address
     std::string Name;
@@ -357,7 +359,9 @@ inline bool ResolveFunctionInChain(uintptr_t classAddr, const char* funcName,
 // parmsSize) — no param-chain walk. Validates the meta-class name == "Function"
 // first so a stale/recycled pointer (e.g. one recorded by the Live PE profiler
 // before a GC/level-load reused its slot) fails safe. Returns false when funcAddr
-// is not (or no longer) a UFunction.
+// is not (or no longer) a UFunction. An address freed and taken by ANOTHER
+// UFunction still passes, under the new function's name: the profiler's readers go
+// through DescribeFunction, which compares the name read at the first call.
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 
 // [FUNCPARM-CONSUMERS] review: the return value's slot in the parameter buffer, from the function's own chain —
@@ -365,6 +369,54 @@ bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 // tail, which records where the return starts but not how long it is. False when the function has no return
 // or the chain cannot be read.
 bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
+
+// [TRACE-UNLOADED-NAMES] D1: a function the game unloads before Stop keeps the name it had when it fired.
+//
+// What CaptureFunctionIdentity reads beyond the FNames, decided on the pipe thread before a recording starts: the
+// FunctionFlags offset (deciding it can run a GObjects vote, which must never happen on the game thread), where
+// NumParms / ParmsSize sit after it, and UMG's widget classes, so "its class is a widget's" is a compare of
+// addresses up the super chain. flagsOffset <= 0 reads no flags.
+struct FunctionCaptureSetup {
+    int flagsOffset = -1;
+    int tailOffset  = 0;
+    std::vector<uintptr_t> widgetBases;   // at most four are used
+};
+// Decides the setup (pipe thread). The widget classes are looked up once per process and kept.
+FunctionCaptureSetup PrepareFunctionCapture();
+// Installs it for CaptureFunctionIdentity. Call before Linie::StartRecording: the table's lock orders the two.
+void SetFunctionCapture(const FunctionCaptureSetup& setup);
+// Linie's identity reader, run on the hook under the table's lock while `func` is being dispatched: ReadSafe loads
+// only -- no allocation, no lock, no string, never the flags vote. False when the function's own FName cannot be
+// read; a class that cannot be read leaves the class fields 0.
+bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out);
+
+// What a recorded function address is at read time, against what the table read at its first call.
+//   Live     -- still in its GUObjectArray slot, under the name it was read with (or never read: named now)
+//   Recycled -- still in a slot under ANOTHER name: freed, and another function took the address
+//   Unloaded -- no longer in its slot; named from what was read
+//   Unnamed  -- gone, and never read
+enum class FuncState { Live, Unloaded, Recycled, Unnamed };
+// The decision alone, for tests: `slotLive` is GetByIndex(GetIndex(func)) == func, `witnessRead` whether its FName
+// could be read, `now` that FName.
+FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now,
+                                const Linie::FuncIdentity& ident);
+FuncState ClassifyFunction(uintptr_t func, const Linie::FuncIdentity& ident);
+
+// A recorded function as the pipe sends it. Live: what ResolveFunctionInfo reads now; a live function it refuses
+// (a UFunction subclass that is not literally "Function") is named from the capture, or Unnamed without one. Unloaded
+// and Recycled: the captured names, flags and parameters, and `widgetKnown` with the captured widget test -- a dead
+// class cannot be asked. Unnamed: nothing.
+struct FunctionDescription {
+    FuncState   state = FuncState::Unnamed;
+    std::string name;
+    std::string className;
+    uint32_t    functionFlags = 0;
+    uint8_t     numParms      = 0;
+    uint16_t    parmsSize     = 0;
+    bool        widgetKnown   = false;
+    bool        isWidget      = false;
+};
+FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& ident);
 
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe

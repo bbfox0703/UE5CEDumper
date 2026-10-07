@@ -2006,6 +2006,148 @@ bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out) {
     return true;
 }
 
+// ---- [TRACE-UNLOADED-NAMES] a function's identity, read at its first call ----
+//
+// The setup lives in atomics: SetFunctionCapture runs on the pipe thread, the reader on the hook. The table's lock
+// orders a Set before StartRecording against every read of that recording; the atomics keep a Set during a
+// recording (a second Start) from being a data race.
+namespace {
+constexpr size_t kMaxWidgetBases = 4;
+std::atomic<int>       s_capFlagsOff{ -1 };
+std::atomic<int>       s_capTailOff{ 0 };
+std::atomic<uintptr_t> s_capWidget[kMaxWidgetBases] = {};
+std::mutex             s_widgetBasesMutex;
+std::vector<uintptr_t> s_widgetBases;   // UMG's classes, looked up once per process (native classes never unload)
+}
+
+FunctionCaptureSetup PrepareFunctionCapture() {
+    FunctionCaptureSetup s;
+    // The same choice ReadFuncFlagsAndParams makes, minus its sweep: a decided offset, else the version's primary.
+    // FunctionFlagsOffset() runs the one-time vote here, on the pipe thread.
+    const int decided = FunctionFlagsOffset();
+    const int primary = decided > 0 ? decided
+        : DynOff::FunctionFlagsPrimaryFor(g_cachedUEVersion, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
+                                          DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                          DynOff::bUseFProperty);
+    if (primary > 0) {
+        s.flagsOffset = primary;
+        s.tailOffset  = primary + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
+                      + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);
+    }
+    // pe_profile_get's is_widget tests the class chain for these two names; the capture tests for these classes.
+    std::lock_guard<std::mutex> lk(s_widgetBasesMutex);
+    if (s_widgetBases.empty()) {
+        for (const char* path : { "/Script/UMG.UserWidget", "/Script/UMG.Widget" }) {
+            if (const uintptr_t c = Aura::FindClassByPath(path)) s_widgetBases.push_back(c);
+        }
+    }
+    s.widgetBases = s_widgetBases;
+    return s;
+}
+
+void SetFunctionCapture(const FunctionCaptureSetup& setup) {
+    s_capFlagsOff.store(setup.flagsOffset, std::memory_order_relaxed);
+    s_capTailOff.store(setup.tailOffset, std::memory_order_relaxed);
+    for (size_t i = 0; i < kMaxWidgetBases; ++i)
+        s_capWidget[i].store(i < setup.widgetBases.size() ? setup.widgetBases[i] : 0, std::memory_order_relaxed);
+}
+
+bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out) {
+    if (!func) return false;
+    const uintptr_t fname = func + Grimoire::OFF_UOBJECT_NAME;
+    if (!Macht::ReadSafe(fname, out.nameIndex)) return false;
+    Macht::ReadSafe(fname + DynOff::FNAME_NUMBER, out.nameNumber);   // may fail and stay 0, as GetName allows
+
+    uintptr_t cls = 0;
+    if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) && cls) {   // a UFunction's Outer is its UClass
+        Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, out.classIndex);
+        Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, out.classNumber);
+        uintptr_t bases[kMaxWidgetBases];
+        size_t nb = 0;
+        for (size_t i = 0; i < kMaxWidgetBases; ++i)
+            if (const uintptr_t b = s_capWidget[i].load(std::memory_order_relaxed)) bases[nb++] = b;
+        // The class itself, then up its super chain -- bounded like ClassDerivesFromAny, and ended by a chain that
+        // points at itself.
+        uintptr_t c = cls;
+        for (int guard = 0; nb && c && guard < 64; ++guard) {
+            for (size_t i = 0; i < nb; ++i) if (c == bases[i]) out.isWidget = true;
+            if (out.isWidget) break;
+            uintptr_t super = 0;
+            if (!Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super) || !super || super == c)
+                break;
+            c = super;
+        }
+    }
+
+    const int fo = s_capFlagsOff.load(std::memory_order_relaxed);
+    if (fo > 0) {
+        const int tail = s_capTailOff.load(std::memory_order_relaxed);
+        Macht::ReadSafe<uint32_t>(func + fo, out.functionFlags);
+        Macht::ReadSafe<uint8_t>(func + tail + 0x04, out.numParms);
+        Macht::ReadSafe<uint16_t>(func + tail + 0x06, out.parmsSize);
+    }
+    return true;
+}
+
+FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now,
+                                const Linie::FuncIdentity& ident) {
+    if (slotLive && witnessRead) {
+        if (!ident.captured) return FuncState::Live;
+        return (now.comparisonIndex == ident.nameIndex && now.number == ident.nameNumber) ? FuncState::Live
+                                                                                          : FuncState::Recycled;
+    }
+    return ident.captured ? FuncState::Unloaded : FuncState::Unnamed;
+}
+
+FuncState ClassifyFunction(uintptr_t func, const Linie::FuncIdentity& ident) {
+    // A live UObject sits in its own GUObjectArray slot; a freed one's InternalIndex reads garbage or names a slot
+    // that holds something else now. The same test pe_trace_names applies to objects.
+    const int32_t idx = func ? GetIndex(func) : -1;
+    const bool slotLive = idx >= 0 && Aura::GetByIndex(idx) == func;
+    NameWitness now{};
+    const bool read = slotLive && Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME, now.comparisonIndex);
+    if (read) Macht::ReadSafe(func + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, now.number);
+    return ClassifyFunctionState(slotLive, read, now, ident);
+}
+
+FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& ident) {
+    FunctionDescription d;
+    d.state = ClassifyFunction(func, ident);
+    auto fromCapture = [&] {
+        d.name          = Serie::GetString(ident.nameIndex, ident.nameNumber);
+        d.className     = Serie::GetString(ident.classIndex, ident.classNumber);
+        d.functionFlags = ident.functionFlags;
+        d.numParms      = ident.numParms;
+        d.parmsSize     = ident.parmsSize;
+        d.widgetKnown   = true;
+        d.isWidget      = ident.isWidget;
+    };
+    switch (d.state) {
+    case FuncState::Live: {
+        FunctionInfo fi{};
+        if (ResolveFunctionInfo(func, fi)) {
+            d.name          = fi.name;
+            d.className     = GetName(GetOuter(func));
+            d.functionFlags = fi.functionFlags;
+            d.numParms      = fi.numParms;
+            d.parmsSize     = fi.parmsSize;
+        } else if (ident.captured) {
+            fromCapture();   // in its slot under the name it was read with, but not literally a "Function"
+        } else {
+            d.state = FuncState::Unnamed;   // nothing to say what it is: the meta-class guard keeps it out, as before
+        }
+        break;
+    }
+    case FuncState::Unloaded:
+    case FuncState::Recycled:
+        fromCapture();
+        break;
+    case FuncState::Unnamed:
+        break;
+    }
+    return d;
+}
+
 // --- WalkFunctions: enumerate UFunctions of a UClass ---
 
 std::vector<FunctionInfo> WalkFunctions(uintptr_t uclassAddr) {
