@@ -8207,6 +8207,42 @@ int main() {
         check("a copy that throws: Stop quiesces at once", threw && Linie::GetTraceInfo().quiesced && stop2 < 1000,
               u(stop2).c_str());
         Linie::FreeTrace();
+
+        // Review (the Linie review, tr2): a copy that throws mid-call leaves a coherent trace. A ticked, chosen call
+        // opens its scope and its copy throws: its record says what it is without "taken", the token still owes the
+        // return (which closes the scope), and its slot -- the ring's first, on the first lap -- is not handed out as
+        // a copy that worked.
+        {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.tickedNames = 1;
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 64 * 1024;
+            c.copier = copier;
+            Linie::StartTrace(c);
+            Linie::ArmHint th = hint(Linie::GetTraceInfo().gen);
+            th.flags = Linie::kArmTick;
+            s_mode = 3;
+            Linie::TraceToken root;
+            bool threw2 = false;
+            try { Linie::TraceEnter(0xA1, 0, 900, 1, root, params, th); } catch (const std::exception&) { threw2 = true; }
+            check("a throwing copy: the token still owes the return and closes the scope",
+                  threw2 && root.traced && root.opened);
+            Linie::TraceReturn(root, 1, params);
+            Linie::TraceToken after;
+            Linie::TraceEnter(0xF2, 0, 800, 1, after);
+            check("...so a call after it, deeper on the stack, is not taken for its callee", !after.traced);
+            Linie::StopTrace();
+            std::vector<Linie::TraceRecord> rr;
+            Linie::CopyTrace(0, 64, rr);
+            check("...its record says root, without 'taken'", rr.size() == 2 && rr[0].flags == Linie::kTraceScopeRoot,
+                  rr.empty() ? "" : u(rr[0].flags).c_str());
+            std::vector<Linie::SnapCopy> ss;
+            Linie::CopySnaps(0, 0, 10, ss);
+            check("...and its unfinished slot is not handed out as a copy", ss.empty(), u(ss.size()).c_str());
+            Linie::FreeTrace();
+        }
         s_mode = 0;
     }
 
