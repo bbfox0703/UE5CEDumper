@@ -615,7 +615,7 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     // 1, so a default hint never is); its ring only when this trace has it.
     const bool named = hint.gen == gen;
     const int32_t ring = (named && hint.ring >= 0 && static_cast<uint32_t>(hint.ring) < g_trace.snapCount) ? hint.ring : -1;
-    bool open = false;
+    bool open = false, lone = false, excluded = false;
     if (g_trace.scoped) {
         if (t_scopeGen != gen) {
             t_scopeSp = 0;          // a scope left open by an earlier recording is not this one's
@@ -624,12 +624,20 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
             t_scopeSp = 0;          // called from at or above the root's frame: the root is gone (unwound)
         }
         if (t_scopeSp == 0) {
-            if (!(named && (hint.flags & kArmTick)) && !g_trace.ticked.Contains(ufunc)) return;
-            t_scopeSp = sp;
-            open = true;
+            if ((named && (hint.flags & kArmTick)) || g_trace.ticked.Contains(ufunc)) {
+                t_scopeSp = sp;
+                open = true;
+            } else if (ring >= 0) {
+                lone = true;        // [LIVEFUNCS-STEP2] T11: alone, for its parameters; it opens no scope
+            } else {
+                return;
+            }
         }
     }
-    if (!open && g_trace.exclude.Contains(ufunc)) return;
+    if (!open && !lone && g_trace.exclude.Contains(ufunc)) {
+        if (ring < 0) return;
+        excluded = true;            // [LIVEFUNCS-STEP2] kept for its parameters; the scope around it stays as it was
+    }
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
     r.seqKind = seq;
@@ -638,7 +646,8 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     r.b       = obj;
     r.tid     = tid;
     if (ring >= 0) SnapWrite(ring, seq, false, params, hint);
-    r.flags   = (open ? kTraceScopeRoot : 0) | (ring >= 0 ? kTraceSnapTaken : 0);
+    r.flags   = (open ? kTraceScopeRoot : 0) | (ring >= 0 ? kTraceSnapTaken : 0) | (lone ? kTraceSnapLone : 0) |
+                (excluded ? kTraceSnapExcluded : 0);
     tok.entrySeq = seq;
     tok.gen      = gen;
     tok.traced   = true;
