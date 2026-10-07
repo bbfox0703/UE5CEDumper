@@ -155,6 +155,22 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public async Task Each_page_asks_no_more_than_the_window_has_left()
+    {
+        // [TRACE-UI-LOAD-MEMORY] D2: a page is decoded into what is left of the window, so it must never be asked
+        // for more: the old read asked 262,144 records of every page and copied what fitted.
+        var dump = Dump();
+        dump.PageMax = 4;
+        var (vm, _) = MakeVm(dump);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        var pages = dump.PageCalls.Where(p => p.max != 1).ToList();
+        Assert.Equal(new ulong[] { 0, 4, 8 }, pages.Select(p => p.from).ToArray());
+        Assert.All(pages, p => Assert.True((ulong)p.max <= dump.Info.Written - p.from, $"page at {p.from} asked {p.max}"));
+    }
+
+    [Fact]
     public async Task The_release_names_the_recording_that_was_read()
     {
         var dump = Dump();

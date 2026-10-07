@@ -1680,6 +1680,44 @@ public class DumpServiceTests
         Assert.Empty(plain.PerFrameFuncs);
     }
 
+    // [TRACE-UI-LOAD-MEMORY] D2: pe_trace_get decoded straight into the caller's window. A reply parsed from the pipe's
+    // text holds its values as JSON elements (the UTF-8 path); one built in code holds strings (the char path). Both are
+    // run, so a test cannot pass on the path production never takes.
+    private static string TracePageJson(TraceRecord[] recs) =>
+        "{\"ok\":true,\"allocated\":true,\"tracing\":false,\"quiesced\":true,\"gen\":5,\"written\":9,\"first_valid\":0,"
+        + "\"count\":" + recs.Length + ",\"next\":9,\"data\":\""
+        + Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(recs.AsSpan())) + "\"}";
+
+    private static readonly TraceRecord[] PageRecs =
+    {
+        new(1, 100, 0xA1, 0xB1, 7, 0), new(2 | TraceRecord.ReturnBit, 110, 1, 0, 7, 0), new(3, 120, 0xA2, 0, 9, 1),
+    };
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task PeTraceGetInto_decodes_the_reply_into_the_given_window(bool parsedFromText)
+    {
+        string json = TracePageJson(PageRecs);
+        _pipe.SetHandler(_ => parsedFromText
+            ? JsonNode.Parse(json)!.AsObject()
+            : new JsonObject
+            {
+                ["ok"] = true, ["allocated"] = true, ["quiesced"] = true, ["gen"] = 5UL, ["written"] = 9UL, ["next"] = 9UL,
+                ["count"] = 3,
+                ["data"] = Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(PageRecs.AsSpan())),
+            });
+        IDumpService svc = CreateService();
+        var window = new TraceRecord[5];
+
+        var page = await svc.PeTraceGetIntoAsync(0, 4, window.AsMemory(2), TestContext.Current.CancellationToken);
+        Assert.Equal(3, page.Count);
+        Assert.Equal(9UL, page.Next);
+        Assert.Equal(5UL, page.Info.Gen);
+        Assert.Equal(PageRecs, window[2..5]);
+        Assert.Equal(default, window[1]);
+    }
+
     // [TRACE-UNLOADED-NAMES] D1: a function unloaded since it fired comes back named from its first call, marked.
     [Fact]
     public async Task PeProfileGetAsync_AsksForUnloadedRows_AndReadsTheirMarksAndTheCounts()

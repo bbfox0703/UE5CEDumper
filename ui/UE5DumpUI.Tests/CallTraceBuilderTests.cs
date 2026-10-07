@@ -199,6 +199,48 @@ public class CallTraceBuilderTests
         Assert.False(t.ObjStale(2));
     }
 
+    // [TRACE-UI-LOAD-MEMORY] D2: a page goes from its base64 straight into the caller's window -- no byte[] and no
+    // TraceRecord[] of its own -- whether the base64 arrives as UTF-8 (the pipe's JSON) or as chars.
+    private static TraceRecord[] Three() => new[]
+    {
+        Entry(10, 100, 0xA1, 0xB1), Return(11, 110, 10), Entry(12, 120, 0xA2, 0, tid: 9, flags: TraceRecord.ScopeRootFlag),
+    };
+
+    [Fact]
+    public void DecodeInto_writes_a_page_straight_into_the_callers_window()
+    {
+        var recs = Three();
+        string b64 = Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(recs.AsSpan()));
+        var window = new TraceRecord[5];
+
+        int fromChars = CallTraceBuilder.DecodeInto(b64.AsSpan(), window.AsSpan(1));
+        Assert.Equal(3, fromChars);
+        Assert.Equal(recs, window[1..4]);
+        Assert.Equal(default, window[0]);
+        Assert.Equal(default, window[4]);
+
+        var window2 = new TraceRecord[3];
+        int fromUtf8 = CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes(b64), window2.AsSpan());
+        Assert.Equal(3, fromUtf8);
+        Assert.Equal(recs, window2);
+
+        Assert.Equal(0, CallTraceBuilder.DecodeInto(ReadOnlySpan<char>.Empty, window.AsSpan()));
+    }
+
+    [Fact]
+    public void DecodeInto_refuses_a_page_that_is_not_whole_records_or_does_not_fit()
+    {
+        string partial = Convert.ToBase64String(new byte[41]);
+        Assert.Throws<InvalidDataException>(() => CallTraceBuilder.DecodeInto(partial.AsSpan(), new TraceRecord[2]));
+        Assert.Throws<InvalidDataException>(() =>
+            CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes(partial), new TraceRecord[2]));
+        string three = Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(Three().AsSpan()));
+        Assert.Throws<InvalidDataException>(() => CallTraceBuilder.DecodeInto(three.AsSpan(), new TraceRecord[2]));
+        Assert.Throws<InvalidDataException>(() =>
+            CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes(three), new TraceRecord[2]));
+        Assert.Throws<InvalidDataException>(() => CallTraceBuilder.DecodeInto("not base64!".AsSpan(), new TraceRecord[2]));
+    }
+
     // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded before Stop keeps the name read at its first call.
     private static CallTrace UnloadedSample() => CallTraceBuilder.Build(new[]
         {
