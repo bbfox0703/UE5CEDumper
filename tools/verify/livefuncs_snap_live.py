@@ -327,22 +327,29 @@ def run_game(c: PipeClient, check: Checks, out: dict, args) -> None:
     rows = [f for f in table.get("functions", []) if isinstance(f.get("fname_key"), list)]
     pats = [p.lower() for p in args.choose]
     picked: dict[str, dict] = {}
+    # The busiest per-frame function with parameters first, so the cap below never leaves it out: it is what the
+    # budget is checked on.
+    per_frame = sorted((f for f in rows if f.get("per_frame") and f.get("num_parms", 0) > 0),
+                       key=lambda f: -f.get("count", 0))
+    if per_frame:
+        picked[f"{per_frame[0]['class_name']}::{per_frame[0]['func_name']}"] = per_frame[0]
     for f in rows:
         name = f"{f.get('class_name')}::{f.get('func_name')}"
         if f.get("num_parms", 0) > 0 and any(p in name.lower() for p in pats):
             picked.setdefault(name, f)
-    per_frame = sorted((f for f in rows if f.get("per_frame") and f.get("num_parms", 0) > 0),
-                       key=lambda f: -f.get("count", 0))
-    if per_frame:
-        picked.setdefault(f"{per_frame[0]['class_name']}::{per_frame[0]['func_name']}", per_frame[0])
     chosen = list(picked.values())[: args.max_choices]
+    window_s = table.get("window_ms", 0) / 1000.0
+    out["per_frame_choice"] = ({"name": f"{per_frame[0]['class_name']}::{per_frame[0]['func_name']}",
+                                "calls_per_s": per_frame[0].get("count", 0) / window_s if window_s else 0}
+                               if per_frame else None)
     out["chosen"] = [f"{f['class_name']}::{f['func_name']}" for f in chosen]
     check("functions to choose were found", len(chosen) > 0, ", ".join(out["chosen"][:12]))
     if not chosen:
         return
 
     say(f"\nsnapshots-only recording ({args.record_s:.0f} s), {len(chosen)} chosen:")
-    trace = {"bytes": 64 << 20, "snapshots": {"funcs": [item(f) for f in chosen], "bytes": 32 << 20}}
+    trace = {"bytes": 64 << 20, "snapshots": {"funcs": [item(f) for f in chosen], "bytes": 32 << 20,
+                                               "per_ring_per_s": args.per_ring}}
     t0 = time.perf_counter()
     start = c.request("pe_profile_start", trace=trace)
     out["start_s"] = time.perf_counter() - t0
@@ -374,7 +381,16 @@ def run_game(c: PipeClient, check: Checks, out: dict, args) -> None:
     say(f"     arms: {len(arms)} {states}; read after (ms) {out['read_ms'][:10]}")
     check("every arm's layout was read", arms != [] and all(a.get("state") in ("read", "doubtful") for a in arms),
           json.dumps(states))
+    # A name loaded twice in the window (a widget closed, collected and opened again) is two arms, each with its own
+    # address and layout: the register's [LIVEFUNCS-STEP2] row 1.
+    per_name: dict[str, list[dict]] = {}
+    for a in arms:
+        per_name.setdefault(f"{a.get('class_name')}::{a.get('func_name')}", []).append(a)
+    reloaded = {n: v for n, v in per_name.items() if len(v) > 1}
+    out["reloaded"] = {n: [x["addr"] for x in v] for n, v in reloaded.items()}
+    say(f"     names armed more than once: {len(reloaded)} {list(reloaded)[:6]}")
     decoded = undecoded = gone_decoded = 0
+    arm_decoded: dict[int, int] = {}
     gone_funcs = {a for a, it in fnames.items() if it.get("unloaded")}
     arm_addr = {a["index"]: int(a["addr"], 16) for a in arms}
     rings = {a["ring"] for a in arms}
@@ -383,6 +399,7 @@ def run_game(c: PipeClient, check: Checks, out: dict, args) -> None:
         for s in slots:
             if s.get("values"):
                 decoded += 1
+                arm_decoded[s.get("arm")] = arm_decoded.get(s.get("arm"), 0) + 1
                 if arm_addr.get(s.get("arm")) in gone_funcs:
                     gone_decoded += 1
             else:
@@ -397,9 +414,27 @@ def run_game(c: PipeClient, check: Checks, out: dict, args) -> None:
               str(gone_decoded))
     else:
         check.not_run("calls of functions unloaded before Stop still decode", "nothing chosen unloaded by Stop")
+    if reloaded:
+        both = [n for n, v in reloaded.items()
+                if len({x["addr"] for x in v}) > 1 and all(arm_decoded.get(x["index"], 0) > 0 for x in v)]
+        check("a name reloaded at a new address: each arm's own slots decode", both != [],
+              f"{len(both)} of {len(reloaded)}: {both[:4]}")
+    else:
+        check.not_run("a name reloaded at a new address is a second arm", "nothing reloaded inside the window")
     snap = stop.get("trace", {}).get("snap", {})
     out["budget"] = {"skipped": snap.get("skipped_budget"), "dropped": snap.get("dropped_budget")}
     say(f"     budget: skipped {snap.get('skipped_budget')}, dropped {snap.get('dropped_budget')}")
+    pf = out.get("per_frame_choice")
+    ring0 = next((r for r in stop.get("trace", {}).get("snap_rings", []) if r.get("ring") == 0), {})
+    if pf and pf["calls_per_s"] > args.per_ring * 1.5:
+        kept_per_s = ring0.get("written", 0) / max(1.0, args.record_s)
+        say(f"     {pf['name']}: about {pf['calls_per_s']:.0f} calls/s; its ring wrote {ring0.get('written')} "
+            f"slots (~{kept_per_s:.0f}/s), dropped {ring0.get('dropped_budget')}")
+        check("the budget held on the per-frame choice: lone calls over it dropped, about the budget kept",
+              ring0.get("dropped_budget", 0) > 0 and kept_per_s <= args.per_ring * 2.5,
+              f"{kept_per_s:.0f}/s kept against {args.per_ring}/s")
+    else:
+        check.not_run("the budget on the per-frame choice", "no per-frame choice busier than the budget")
     c.request("pe_trace_release")
 
 
@@ -412,6 +447,7 @@ def main() -> int:
     ap.add_argument("--choose", nargs="*", default=None,
                     help="a real game: choose the functions whose class or name holds one of these substrings")
     ap.add_argument("--max-choices", type=int, default=64)
+    ap.add_argument("--per-ring", type=int, default=1000, help="the per-function budget a second (game mode)")
     args = ap.parse_args()
 
     check = Checks()
