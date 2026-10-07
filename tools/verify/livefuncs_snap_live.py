@@ -2,6 +2,7 @@ r"""Live check of Live Funcs step 2 -- parameter snapshots and following functio
 
     py tools/verify/livefuncs_snap_live.py --fixture-check
     py tools/verify/livefuncs_snap_live.py --label <run> [--record-s 8]
+    py tools/verify/livefuncs_snap_live.py --label avowed --choose Inventory --plain-s 20 --record-s 30
 
 `[LIVEFUNCS-STEP2]` Runs against the game whose DLL serves the pipe (one game at a time, never while the UI holds
 the pipe). Its subject is the DumperTest58 fixture's snapshot probes (tools/ue-sample/README.md, "DumperTest58"):
@@ -315,12 +316,102 @@ def entry_expect(vals: list, names: list[str]) -> list[str]:
     return bad
 
 
+def run_game(c: PipeClient, check: Checks, out: dict, args) -> None:
+    """A real game (`--choose`): a plain recording finds the functions whose class or name holds one of the given
+    substrings, with parameters and a key; a snapshots-only recording chooses them by name, plus the busiest per-frame
+    function with parameters. Whatever the game does in between (an inventory opened and closed, `I` on Avowed) is the
+    test: a widget's functions unload when it closes, and their calls must still decode -- their layouts were read
+    while they were alive (T10)."""
+    say(f"\nplain recording ({args.plain_s:.0f} s) to find the functions to choose:")
+    table = plain_table(c, args.plain_s)
+    rows = [f for f in table.get("functions", []) if isinstance(f.get("fname_key"), list)]
+    pats = [p.lower() for p in args.choose]
+    picked: dict[str, dict] = {}
+    for f in rows:
+        name = f"{f.get('class_name')}::{f.get('func_name')}"
+        if f.get("num_parms", 0) > 0 and any(p in name.lower() for p in pats):
+            picked.setdefault(name, f)
+    per_frame = sorted((f for f in rows if f.get("per_frame") and f.get("num_parms", 0) > 0),
+                       key=lambda f: -f.get("count", 0))
+    if per_frame:
+        picked.setdefault(f"{per_frame[0]['class_name']}::{per_frame[0]['func_name']}", per_frame[0])
+    chosen = list(picked.values())[: args.max_choices]
+    out["chosen"] = [f"{f['class_name']}::{f['func_name']}" for f in chosen]
+    check("functions to choose were found", len(chosen) > 0, ", ".join(out["chosen"][:12]))
+    if not chosen:
+        return
+
+    say(f"\nsnapshots-only recording ({args.record_s:.0f} s), {len(chosen)} chosen:")
+    trace = {"bytes": 64 << 20, "snapshots": {"funcs": [item(f) for f in chosen], "bytes": 32 << 20}}
+    t0 = time.perf_counter()
+    start = c.request("pe_profile_start", trace=trace)
+    out["start_s"] = time.perf_counter() - t0
+    if not check("the Start is accepted", ok_of(start), str(start.get("error", ""))[:120]):
+        return
+    st = data_of(start).get("trace", {})
+    check("snapshots-only: scoped, no ticks, every choice named", st.get("snap_only") is True and
+          st.get("names", {}).get("chosen") == len(chosen), json.dumps(st.get("names"))[:160])
+    time.sleep(args.record_s)
+    t0 = time.perf_counter()
+    stop = data_of(c.request("pe_profile_stop"))
+    stop_s = time.perf_counter() - t0
+    out["stop"] = stop
+    check("Stop returns within about 2.5 s", stop_s < 2.5, f"{stop_s:.2f} s")
+    gen = stop.get("trace", {}).get("gen", 0)
+    not_called = [n["func"] for n in stop.get("names", []) if n.get("not_called")]
+    say(f"     followed names never called: {len(not_called)} {not_called[:8]}")
+    if not stop.get("trace", {}).get("allocated"):
+        check("the trace kept calls", False, "empty: nothing chosen was called")
+        return
+
+    fnames = trace_names(c, gen)
+    head, arms, layouts = snap_layouts(c, gen)
+    states: dict[str, int] = {}
+    for a in arms:
+        states[a.get("state", "?")] = states.get(a.get("state", "?"), 0) + 1
+    out["arm_states"] = states
+    out["read_ms"] = sorted(a.get("read_ms", 0) for a in arms if "read_ms" in a)
+    say(f"     arms: {len(arms)} {states}; read after (ms) {out['read_ms'][:10]}")
+    check("every arm's layout was read", arms != [] and all(a.get("state") in ("read", "doubtful") for a in arms),
+          json.dumps(states))
+    decoded = undecoded = gone_decoded = 0
+    gone_funcs = {a for a, it in fnames.items() if it.get("unloaded")}
+    arm_addr = {a["index"]: int(a["addr"], 16) for a in arms}
+    rings = {a["ring"] for a in arms}
+    for r in sorted(rings):
+        slots, _ = snap_slots(c, gen, r)
+        for s in slots:
+            if s.get("values"):
+                decoded += 1
+                if arm_addr.get(s.get("arm")) in gone_funcs:
+                    gone_decoded += 1
+            else:
+                undecoded += 1
+    out["slots"] = {"decoded": decoded, "raw": undecoded, "unloaded_decoded": gone_decoded,
+                    "unloaded_funcs": len(gone_funcs)}
+    say(f"     slots: {decoded} decoded, {undecoded} raw; {len(gone_funcs)} functions unloaded by now, "
+        f"{gone_decoded} of their slots decoded")
+    check("the chosen calls' parameters decode", decoded > 0 and undecoded == 0, f"{decoded} / {undecoded}")
+    if gone_funcs:
+        check("calls of functions unloaded before Stop still decode (layouts read while alive)", gone_decoded > 0,
+              str(gone_decoded))
+    else:
+        check.not_run("calls of functions unloaded before Stop still decode", "nothing chosen unloaded by Stop")
+    snap = stop.get("trace", {}).get("snap", {})
+    out["budget"] = {"skipped": snap.get("skipped_budget"), "dropped": snap.get("dropped_budget")}
+    say(f"     budget: skipped {snap.get('skipped_budget')}, dropped {snap.get('dropped_budget')}")
+    c.request("pe_trace_release")
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--label", default="dumpertest58")
     ap.add_argument("--fixture-check", action="store_true", help="only check that the package carries the probes")
     ap.add_argument("--plain-s", type=float, default=3.0)
     ap.add_argument("--record-s", type=float, default=8.0)
+    ap.add_argument("--choose", nargs="*", default=None,
+                    help="a real game: choose the functions whose class or name holds one of these substrings")
+    ap.add_argument("--max-choices", type=int, default=64)
     args = ap.parse_args()
 
     check = Checks()
@@ -333,13 +424,16 @@ def main() -> int:
     try:
         out["build"] = c.assert_build()
         say(f"DLL build {out['build']}")
-        say("fixture:")
-        out["fixture"] = fixture_check(c, check, args.plain_s)
-        if out["fixture"]["total_calls"] == 0:
-            say("no calls recorded: is the game running, scanned, and the hook up?")
-            return 2
-        if not args.fixture_check:
-            run_full(c, check, out, args)
+        if args.choose is not None:
+            run_game(c, check, out, args)
+        else:
+            say("fixture:")
+            out["fixture"] = fixture_check(c, check, args.plain_s)
+            if out["fixture"]["total_calls"] == 0:
+                say("no calls recorded: is the game running, scanned, and the hook up?")
+                return 2
+            if not args.fixture_check:
+                run_full(c, check, out, args)
     except PipeError as e:
         check("the run reached its end", False, str(e))
     finally:
