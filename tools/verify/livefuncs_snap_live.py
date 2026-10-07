@@ -56,6 +56,9 @@ RET_BIT = 1 << 63
 F_ROOT, F_TAKEN, F_LONE, F_EXCLUDED, F_BUDGET = 1, 2, 4, 8, 16
 MARK_EXACT, MARK_NOW, MARK_GONE, MARK_MISSING, MARK_HEADER, MARK_RAW = range(6)
 SNAP_NULL_PARAMS = 1
+# SnapProbe_Call's parameters as the fixture declares them, by their case-folded name.
+CANON = {n.lower(): n for n in ("Round", "F", "D", "bFlag", "Kind", "Tag", "Label", "Values", "Who", "Soft", "V", "S",
+                                "OutTwice", "InOut", "ReturnValue")}
 
 
 def say(s: str) -> None:
@@ -485,12 +488,16 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
         say(f"     SnapLate_Call: armed then read after {late[0].get('read_ms')} ms")
     call_arms = arm_by.get("SnapProbe_Call", [])
     lay = layouts[call_arms[0]["layout"]] if call_arms and "layout" in call_arms[0] else {}
-    kinds = {p["name"]: p.get("kind") for p in lay.get("params", [])}
+    # FNames compare without case and the pool keeps the casing it saw FIRST: on DumperTest58 "Round" renders "round"
+    # (measured, 2026-10-07). The rig matches the fixture's names the same way.
+    names_l = [CANON.get(p["name"].lower(), p["name"]) for p in lay.get("params", [])]
+    kinds = {n: p.get("kind") for n, p in zip(names_l, lay.get("params", []))}
     out["call_kinds"] = kinds
-    check("F5 Label is const_ref; OutTwice out; InOut in_out; ReturnValue return",
-          kinds.get("Label") == "const_ref" and kinds.get("OutTwice") == "out" and kinds.get("InOut") == "in_out" and
-          kinds.get("ReturnValue") == "return", json.dumps(kinds)[:160])
-    names_l = [p["name"] for p in lay.get("params", [])]
+    # What UHT emits, measured 2026-10-07: a const TArray& carries CPF_OutParm | CPF_ConstParm (const_ref); a const
+    # FString& carries neither and is a plain input.
+    check("F5 kinds as UHT emits them: Values const_ref, Label in, OutTwice out, InOut in_out, ReturnValue return",
+          kinds.get("Values") == "const_ref" and kinds.get("Label") == "in" and kinds.get("OutTwice") == "out" and
+          kinds.get("InOut") == "in_out" and kinds.get("ReturnValue") == "return", json.dumps(kinds)[:160])
     ring_of = {n: chosen.index(n) for n in chosen}
     slots, orphans = snap_slots(c, gen, ring_of["SnapProbe_Call"])
     ent = [s for s in slots if s.get("phase") == "entry"]
