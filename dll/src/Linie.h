@@ -495,6 +495,10 @@ inline constexpr size_t kArmLogCapacity = 16384;
 // Sorts the specs by key and merges a key both ticked and chosen into one; reserves the log for `logCapacity` arms.
 std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity);
 
+// The names the trace follows, for its readers after Stop (the arms and their layouts); `gen`, when given, is the
+// trace's recording. nullptr when no trace is allocated or it follows no names.
+std::shared_ptr<ArmState> TraceArms(uint64_t* gen = nullptr);
+
 // What became of one followed name in the recording, for the Stop reply and the UI's notes.
 struct ArmSummary {
     NameKey  key;

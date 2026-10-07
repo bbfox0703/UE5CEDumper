@@ -7723,6 +7723,10 @@ int main() {
               v[1].state == LS::NotReadBeforeStop && v[3].state == LS::NotReadBeforeStop && !v[1].layout &&
               v[2].rec.addr == 0xB3, u(v.size()).c_str());
 
+        uint64_t armsGen = 0;
+        const auto held = Linie::TraceArms(&armsGen);
+        check("the stopped trace hands its readers the names it follows, with its gen",
+              held.get() == st.get() && armsGen == Linie::GetTraceInfo().gen && armsGen != 0);
         std::weak_ptr<Linie::ArmState> w = st;
         st.reset();
         tc.arms.reset();
@@ -7730,6 +7734,7 @@ int main() {
         const uint64_t gen = Linie::GetTraceInfo().gen;
         check("freeing the trace lets go of the names -- the trace's and the recording's",
               Linie::FreeTraceIfGen(gen) && w.expired());
+        check("...after which there are none to hand out", !Linie::TraceArms());
 
         // TR2: while a hook may still be inside, a Free changes nothing, the names included.
         static HANDLE s_in2  = CreateEventW(nullptr, TRUE, FALSE, nullptr);

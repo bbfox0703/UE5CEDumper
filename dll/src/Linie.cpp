@@ -317,6 +317,11 @@ std::vector<ArmView> CopyArms(ArmState& st) {
     return out;
 }
 
+std::shared_ptr<ArmState> TraceArms(uint64_t* gen) {
+    (void)gen;
+    return nullptr;
+}
+
 std::vector<ArmSummary> ArmsSummary() {
     std::lock_guard<std::mutex> lk(g_mu);
     std::vector<ArmSummary> out;
