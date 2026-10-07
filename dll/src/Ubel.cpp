@@ -2435,6 +2435,14 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         const std::string pkg = fnameAt(off, fsz);
         const std::string asset = top ? fnameAt(off + fsz, fsz) : std::string();
         v.text = (pkg.empty() || pkg == "None") ? "null" : (asset.empty() || asset == "None") ? pkg : pkg + "." + asset;
+        // The sub-path (an actor in a level: ":PersistentLevel.<actor>") is an FString after the FNames; its text is
+        // on the heap, not in the copy. Said, never dropped: without it an actor's pointer reads as its level's.
+        const int subOff = (off + (top ? 2 : 1) * fsz + 7) & ~7;
+        const int32_t subNum = subOff + 16 <= f.size ? load32(subOff + 8) : 0;
+        if (subNum > 1 && v.text != "null") {
+            v.text += ":<sub-path, " + std::to_string(subNum - 1) + " chars, not copied>";
+            v.mark = SnapMark::Header;
+        }
         return v;
     }
     if (t == "LazyObjectProperty") {
