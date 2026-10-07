@@ -1112,8 +1112,8 @@
     <!-- [LIVEFUNCS-HIDE-PERFRAME] -->
     <sys:String x:Key="str.LF.HidePerFrame">Hide per-frame</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Hidden">; {0:N0} per-frame functions left out</sys:String>
-    <sys:String x:Key="str.LF.Unloaded.Note">; {0:N0} unloaded since they fired (named from their first call)</sys:String>
-    <sys:String x:Key="str.LF.Unnamed.Note">; {0:N0} with no name (unloaded before the recording could read them)</sys:String>
+    <sys:String x:Key="str.LF.Unloaded.Note">; {0:N0} of them unloaded since firing (named from their first call)</sys:String>
+    <sys:String x:Key="str.LF.Unnamed.Note">; {0:N0} of them with no name (unloaded before the recording could read them)</sys:String>
     <sys:String x:Key="str.LF.Unloaded.Marker">(unloaded)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Unsupported">; Hide per-frame needs a newer UE5Dumper.dll (this one left nothing out)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.BaselineMismatch">⚠ The baseline was fetched with Hide per-frame the other way, so the per-frame functions read as NEW or are missing: set it the same way and record the baseline again.</sys:String>
@@ -1156,13 +1156,18 @@
     <sys:String x:Key="str.CT.Status.EarlierConnection">The game disconnected. The trace below is from that connection; the next traced recording replaces it.</sys:String>
     <sys:String x:Key="str.CT.Status.Loaded">{0:N0} calls over {1:N1} s.</sys:String>
     <sys:String x:Key="str.CT.Status.Lapped">The buffer filled and wrapped: the first {0:N0} records were overwritten, so this is the end of the recording.</sys:String>
+    <sys:String x:Key="str.CT.Status.BeforeWindowOne">1 call began before the kept part; what it called shows without it.</sys:String>
+    <sys:String x:Key="str.CT.Status.Unloaded">{0:N0} of {1:N0} functions were unloaded before Stop and are named from their first call ({2} of the calls).</sys:String>
+    <sys:String x:Key="str.CT.Status.Unnamed">{0} of the calls have no name ({1:N0} of {2:N0} functions).</sys:String>
     <sys:String x:Key="str.CT.Status.BeforeWindow">{0:N0} calls began before the kept part; what they called shows without them.</sys:String>
     <sys:String x:Key="str.CT.Status.Scoped">Traced inside {0} ticked function(s).</sys:String>
     <sys:String x:Key="str.CT.Status.Unscoped">Every call traced.</sys:String>
     <sys:String x:Key="str.CT.Status.Excluded">{0} per-frame functions left out; a call they made shows under their caller.</sys:String>
+    <sys:String x:Key="str.CT.Status.MatchesOne">1 matching call. Select it and Show in tree to see what called it.</sys:String>
     <sys:String x:Key="str.CT.Status.Matches">{0:N0} matching calls. Select one and Show in tree to see what called it.</sys:String>
     <sys:String x:Key="str.CT.Status.MatchesCapped">{0:N0} matching calls (capped): narrow the filter.</sys:String>
     <sys:String x:Key="str.CT.Detail.Function">Function: {0}</sys:String>
+    <sys:String x:Key="str.CT.Detail.Unloaded">Unloaded before Stop: the name is the one it had at its first call, and the address below no longer holds it.</sys:String>
     <sys:String x:Key="str.CT.Detail.FuncAddr">UFunction: {0}</sys:String>
     <sys:String x:Key="str.CT.Detail.Object">Object: {0} ({1}) at {2}</sys:String>
     <sys:String x:Key="str.CT.Detail.ObjectStale">Object: {0} (no longer the object it was, so not named)</sys:String>
@@ -1235,6 +1240,7 @@
     <sys:String x:Key="str.Tip.LF.Refresh">Re-fetch the current fire-count table without stopping — a live peek while recording, or a re-pull after Stop.</sys:String>
     <sys:String x:Key="str.Tip.LF.Filter">Substring match against function name OR class name (space = AND, case-insensitive). e.g. "shop" or "open".</sys:String>
     <sys:String x:Key="str.Tip.LF.Unloaded">The game unloaded this function after it fired (a closed UI, content streamed out). The name is the one it had at its first call; its address is no longer valid, so it cannot be ticked for the trace or opened in the disassembler.</sys:String>
+    <sys:String x:Key="str.Tip.CT.Unloaded">The game unloaded this function before Stop (a closed UI, content streamed out). The name is the one it had at its first call.</sys:String>
     <sys:String x:Key="str.Tip.LF.OpenLive">Open this function in Live Walker on a live instance of its class (falls back to Class Struct if the class has no live instance). From there you can invoke it.</sys:String>
     <sys:String x:Key="str.Tip.LF.CopyName">Copy this function's name to the clipboard.</sys:String>
     <sys:String x:Key="str.Tip.LF.SetBaseline">Capture the CURRENT results as a baseline (an idle reference). Do this: Start → stand still a few seconds → Stop → Set Baseline. Then record the ACTION (open shop) and the list flips to a diff — functions that DIDN'T fire while idle ("NEW") rank to the top, so the action's function stops drowning under per-frame Tick/Update noise.</sys:String>

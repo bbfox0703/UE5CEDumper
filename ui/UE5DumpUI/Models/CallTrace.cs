@@ -36,6 +36,14 @@ public sealed class CallTrace
     /// <summary>Returns whose call began before the kept window: the ring overwrote their entry.</summary>
     public int ReturnsBeforeWindow { get; internal set; }
 
+    /// <summary>[TRACE-UNLOADED-NAMES] The trace's distinct functions; those unloaded before Stop (named from their
+    /// first call) and those with no name at all, each with its calls. Counted once, after the names are in.</summary>
+    public int  DistinctFuncs { get; internal set; }
+    public int  UnloadedFuncs { get; internal set; }
+    public long UnloadedCalls { get; internal set; }
+    public int  UnnamedFuncs  { get; internal set; }
+    public long UnnamedCalls  { get; internal set; }
+
     public Dictionary<ulong, TraceFuncName> Funcs { get; } = new();
     public Dictionary<ulong, TraceObjName> Objs { get; } = new();
 
@@ -80,9 +88,22 @@ public sealed class CallTrace
     public double WindowSeconds => Count == 0 ? 0 : (LastTicks - OriginTicks) / (double)QpcFreq;
     public ulong LastTicks { get; init; }
 
-    public string ClassName(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Live ? f.ClassName : "";
-    public string FuncName(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Live
+    // [TRACE-UNLOADED-NAMES] Live, or unloaded and named from its first call: a name either way. Only a function
+    // with neither shows its address.
+    public string ClassName(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Named ? f.ClassName : "";
+    public string FuncName(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Named
         ? f.FuncName : "0x" + Func[i].ToString("X", CultureInfo.InvariantCulture);
+    /// <summary>The function was unloaded before Stop: its name is the one it had at its first call.</summary>
+    public bool FuncUnloaded(int i) => Funcs.TryGetValue(Func[i], out var f) && !f.Live && f.Unloaded;
+
+    /// <summary>A share of a whole as the status shows it: "0%", "&lt;0.01%", or up to two decimals. Invariant, like
+    /// the trace's other numbers.</summary>
+    public static string ShareText(long part, long whole)
+    {
+        if (part <= 0 || whole <= 0) return "0%";
+        double pct = part * 100.0 / whole;
+        return pct < 0.005 ? "<0.01%" : Math.Round(pct, 2).ToString("0.##", CultureInfo.InvariantCulture) + "%";
+    }
     public string ObjName(int i) => Obj[i] == 0 ? ""
         : Objs.TryGetValue(Obj[i], out var o) && o.Live ? o.Name : "0x" + Obj[i].ToString("X", CultureInfo.InvariantCulture);
     public string ObjClass(int i) => Objs.TryGetValue(Obj[i], out var o) && o.Live ? o.ClassName : "";

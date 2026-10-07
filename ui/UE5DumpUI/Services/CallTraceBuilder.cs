@@ -114,6 +114,34 @@ public static class CallTraceBuilder
         t.ReturnsBeforeWindow = beforeWindow;
         if (funcs != null) foreach (var f in funcs) t.Funcs[f.Addr] = f;
         if (objs != null) foreach (var o in objs) t.Objs[o.Addr] = o;
+        CountNames(t);
         return t;
+    }
+
+    /// <summary>[TRACE-UNLOADED-NAMES] How many of the trace's functions, and of their calls, are named only from their
+    /// first call (unloaded before Stop) or not at all. One pass over the calls: a dictionary per distinct function,
+    /// thousands of them against millions of calls.</summary>
+    private static void CountNames(CallTrace t)
+    {
+        var calls = new Dictionary<ulong, long>();
+        for (int i = 0; i < t.Count; i++)
+        {
+            ref long c = ref System.Runtime.InteropServices.CollectionsMarshal.GetValueRefOrAddDefault(calls, t.Func[i], out _);
+            c++;
+        }
+        t.DistinctFuncs = calls.Count;
+        foreach (var (addr, n) in calls)
+        {
+            if (!t.Funcs.TryGetValue(addr, out var f) || !f.Named)
+            {
+                t.UnnamedFuncs++;
+                t.UnnamedCalls += n;
+            }
+            else if (!f.Live)
+            {
+                t.UnloadedFuncs++;
+                t.UnloadedCalls += n;
+            }
+        }
     }
 }

@@ -150,6 +150,10 @@
                       IsVisible="{Binding Glyph, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                       Background="Transparent" BorderThickness="0" Padding="2,0" MinWidth="16"
                       Foreground="#CCCCCC" Cursor="Hand"/>
+              <!-- [TRACE-UNLOADED-NAMES] Unloaded before Stop: named from its first call, marked at the right. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
+                         IsVisible="{Binding FuncUnloaded}" ToolTip.Tip="{StaticResource str.Tip.CT.Unloaded}"
+                         Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
               <!-- A ticked function's call (the root of its scope) stands out; the rest are plain. -->
               <Panel>
                 <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"

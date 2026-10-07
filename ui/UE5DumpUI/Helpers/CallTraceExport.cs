@@ -17,7 +17,7 @@ internal static class CallTraceExport
     internal static readonly string[] CsvColumns =
     {
         "seq", "t_ms", "dur_us", "returned", "tid", "depth", "parent_seq", "class", "func", "func_addr",
-        "object", "object_class", "object_addr", "object_live", "scope_root",
+        "object", "object_class", "object_addr", "object_live", "scope_root", "func_unloaded",
     };
 
     internal static void WriteJsonl(CallTrace t, TextWriter w, DateTime savedAtUtc)
@@ -31,6 +31,12 @@ internal static class CallTraceExport
         Int(sb, "ticked", t.Info.Ticked);
         Int(sb, "excluded_per_frame", t.Info.Excluded);
         Int(sb, "returns_before_window", t.ReturnsBeforeWindow);
+        // [TRACE-UNLOADED-NAMES] What the names below rest on.
+        Int(sb, "distinct_funcs", t.DistinctFuncs);
+        Int(sb, "unloaded_funcs", t.UnloadedFuncs);
+        Int(sb, "unloaded_calls", t.UnloadedCalls);
+        Int(sb, "unnamed_funcs", t.UnnamedFuncs);
+        Int(sb, "unnamed_calls", t.UnnamedCalls);
         Dbl(sb, "window_s", t.WindowSeconds);
         Str(sb, "saved_at", savedAtUtc.ToString("o", CultureInfo.InvariantCulture));
         sb.Append("}\n");
@@ -57,6 +63,8 @@ internal static class CallTraceExport
                 Bool(sb, "object_live", !t.ObjStale(i));
             }
             Bool(sb, "scope_root", (t.Flags[i] & TraceRecord.ScopeRootFlag) != 0);
+            // Only when true, like the object keys only with an object: a live function's line is as it was.
+            if (t.FuncUnloaded(i)) Bool(sb, "func_unloaded", true);
             sb.Append("}\n");
             w.Write(sb);
         }
@@ -84,6 +92,7 @@ internal static class CallTraceExport
             cells[12] = t.Obj[i] == 0 ? "" : Hex(t.Obj[i]);
             cells[13] = t.Obj[i] == 0 ? "" : (t.ObjStale(i) ? "false" : "true");
             cells[14] = (t.Flags[i] & TraceRecord.ScopeRootFlag) != 0 ? "true" : "false";
+            cells[15] = t.FuncUnloaded(i) ? "true" : "false";
             w.Write(string.Join(",", cells));
             w.Write("\r\n");
         }

@@ -235,11 +235,19 @@ public partial class CallTraceViewModel : ViewModelBase
     {
         var sb = new StringBuilder(Res.Format("str.CT.Status.Loaded", t.Count, t.WindowSeconds));
         if (t.Info.FirstValid > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Lapped", t.Info.FirstValid));
-        if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
+        if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(Res.Get("str.CT.Status.BeforeWindowOne"));
+        else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
         // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
         if (t.Info.Ticked > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Scoped", t.Info.Ticked));
         else if (t.Info.Excluded == 0) sb.Append(' ').Append(Res.Get("str.CT.Status.Unscoped"));
         if (t.Info.Excluded > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Excluded", t.Info.Excluded));
+        // [TRACE-UNLOADED-NAMES] Always, whatever the buffer: how much is named only from a first call, and how much
+        // has no name at all -- 0% included, so a clean trace says so.
+        if (t.UnloadedFuncs > 0)
+            sb.Append(' ').Append(Res.Format("str.CT.Status.Unloaded", t.UnloadedFuncs, t.DistinctFuncs,
+                                             CallTrace.ShareText(t.UnloadedCalls, t.Count)));
+        sb.Append(' ').Append(Res.Format("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
+                                         t.UnnamedFuncs, t.DistinctFuncs));
         return sb.ToString();
     }
 
@@ -276,6 +284,7 @@ public partial class CallTraceViewModel : ViewModelBase
         SelectedIndex = -1;
         StatusText = capped
             ? Res.Format("str.CT.Status.MatchesCapped", _matches.Length)
+            : _matches.Length == 1 ? Res.Get("str.CT.Status.MatchesOne")
             : Res.Format("str.CT.Status.Matches", _matches.Length);
         _filterMemory.Schedule(value);
     }
@@ -331,6 +340,7 @@ public partial class CallTraceViewModel : ViewModelBase
         if (t == null || i < 0 || i >= t.Count) return "";
         var sb = new StringBuilder();
         sb.AppendLine(Res.Format("str.CT.Detail.Function", Label(t, i)));
+        if (t.FuncUnloaded(i)) sb.AppendLine(Res.Get("str.CT.Detail.Unloaded"));
         sb.AppendLine(Res.Format("str.CT.Detail.FuncAddr", "0x" + t.Func[i].ToString("X", CultureInfo.InvariantCulture)));
         if (t.Obj[i] != 0)
         {
@@ -428,6 +438,8 @@ public sealed class CallTraceRow
     public string DurationText { get; init; } = "";
     public string ThreadText { get; init; } = "";
     public string FunctionText { get; init; } = "";
+    /// <summary>[TRACE-UNLOADED-NAMES] Unloaded before Stop: the view marks it beside the name.</summary>
+    public bool FuncUnloaded { get; init; }
     public string ObjectText { get; init; } = "";
     public bool ObjectStale { get; init; }
     /// <summary>A stale object shows its address dimmed: what is there now may not be what was called.</summary>
@@ -473,6 +485,7 @@ public sealed class CallTraceRowList : IList, IReadOnlyList<CallTraceRow>
                 DurationText = _t.DurationUs(i) is { } us ? us.ToString("F1", CultureInfo.InvariantCulture) : "—",
                 ThreadText = _t.Tid[i].ToString(CultureInfo.InvariantCulture),
                 FunctionText = CallTraceViewModel.Label(_t, i) + (hasKids ? $"  ({_t.ChildCount[i]:N0})" : ""),
+                FuncUnloaded = _t.FuncUnloaded(i),
                 ObjectText = _t.ObjName(i),
                 ObjectStale = _t.ObjStale(i),
                 IsScopeRoot = (_t.Flags[i] & TraceRecord.ScopeRootFlag) != 0,
