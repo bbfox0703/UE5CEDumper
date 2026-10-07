@@ -194,6 +194,9 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, 
 // Free the trace only when it is recording `gen` and that recording has stopped: a reader's release never frees a
 // newer recording. True when it freed it.
 bool FreeTraceIfGen(uint64_t gen);
+// Free a stopped trace that wrote nothing: there is nothing to read, and its ring must not stay in the game until
+// the next Start. True when it freed one.
+bool ReleaseIfEmpty();
 
 // The trace's wire encoding for the slots (RFC 4648, with padding).
 std::string Base64Encode(const uint8_t* data, size_t len);

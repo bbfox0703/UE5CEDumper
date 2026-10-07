@@ -439,6 +439,8 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, 
     return true;
 }
 
+bool ReleaseIfEmpty() { return false; }   // red: not built yet
+
 bool FreeTraceIfGen(uint64_t gen) {
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (!g_trace.buf || g_trace.gen != gen || g_tracing.load(std::memory_order_seq_cst)) return false;

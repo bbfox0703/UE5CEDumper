@@ -6895,6 +6895,16 @@ int main() {
             Linie::StopTrace();
         }
 
+        // Review DLL-5: a recording that wrote nothing has nothing to read, and must not keep its ring in the game.
+        Linie::StartTrace(cfg(8));
+        check("a running trace is never released as empty", !Linie::ReleaseIfEmpty() && Linie::IsTracing());
+        Linie::StopTrace();
+        check("a stopped trace that wrote nothing is released", Linie::ReleaseIfEmpty() && !Linie::GetTraceInfo().allocated);
+        Linie::StartTrace(cfg(8));
+        { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); }
+        Linie::StopTrace();
+        check("one that wrote something is kept for the reader", !Linie::ReleaseIfEmpty() && Linie::GetTraceInfo().allocated);
+
         Linie::FreeTrace();
         info = Linie::GetTraceInfo();
         check("FreeTrace releases the ring", !info.allocated && !Linie::CopyTrace(0, 10, recs));
