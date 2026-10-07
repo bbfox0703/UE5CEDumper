@@ -392,6 +392,47 @@ public class LiveFuncsTraceTests
     }
 
     [Fact]
+    public async Task Rows_from_an_earlier_connection_lose_their_ticks_and_cannot_be_ticked()
+    {
+        // Their addresses belong to a process that is gone: a tick on one would send a dead address.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("Character", "Jump", "0x100"));
+        await RecordOnce(vm);
+        var row = vm.Results.Single();
+        vm.ToggleTickCommand.Execute(row);
+        Assert.True(row.IsTicked);
+
+        vm.ResetOnDisconnect();
+        Assert.False(row.IsTicked);
+        Assert.False(vm.CanTick);
+        vm.ToggleTickCommand.Execute(row);
+        Assert.False(row.IsTicked);
+        Assert.Empty(vm.TickedFunctions);
+
+        // A fetch in the new connection brings fresh rows, and ticking works again.
+        dump.NextGet = ResultOf(10_000, Row("Character", "Jump", "0x180"));
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.True(vm.CanTick);
+        vm.ToggleTickCommand.Execute(vm.Results.Single());
+        Assert.Equal(new[] { "Character::Jump" }, vm.TickedFunctions);
+    }
+
+    [Fact]
+    public async Task Rows_from_an_earlier_connection_are_nothing_to_tick_for_the_question()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("Character", "Jump", "0x100"));
+        await RecordOnce(vm);
+        vm.ResetOnDisconnect();
+        int asked = 0;
+        vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(true); };
+        vm.TraceEnabled = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(0, asked);
+        Assert.NotNull(dump.LastTrace);
+    }
+
+    [Fact]
     public async Task A_disconnect_drops_the_ticks_the_offer_and_the_rate()
     {
         var (vm, dump) = MakeVm();

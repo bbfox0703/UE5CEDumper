@@ -286,6 +286,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private readonly Dictionary<string, string> _ticked = new(StringComparer.Ordinal);
     /// <summary>The ticked functions as Class::Func, for this panel and the Call Trace tab's read-only copy (T8).</summary>
     public ObservableCollection<string> TickedFunctions { get; } = new();
+    /// <summary>Red stub: whether the rows on screen can be ticked.</summary>
+    public bool CanTick => !IsRecording;
     public bool HasTickedFunctions => TickedFunctions.Count > 0;
     public string TickedCountText => Res.Format("str.LF.Trace.TickedCount", TickedFunctions.Count);
 
