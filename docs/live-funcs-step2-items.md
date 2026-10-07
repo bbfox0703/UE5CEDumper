@@ -51,7 +51,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | U13 | UI | Call Trace: detail TabControl (Call \| Parameters), view C rows, reasons (Lone / Excluded / budget / overwritten / raw-only arm and why / null / fault / truncated), Changed, tree markers, 'Only calls with parameters' (works with no text) | U12, U11 | ⬜ |
 | U14 | UI | Export: JSONL snapshot keys, layout lines per arm, scoped / snapshots_only in the header; a separate params CSV | U13 | ⬜ |
 | X1 | docs | Plan 'Step 2 built' (decisions, TR6 / copy-size / after-copy deviations, name matching), dev-log entry, verification-register and todo rows (D1's tick refusal row rewritten; the Int8 preview quirk as its own row); comment pass | F5, U14, U8, U9, U10 | ⬜ |
-| X2 | docs | AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance, UE418 if packaged; measurements and the machine recorded | X1 | ⬜ |
+| X2 | docs | AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance; measurements and the machine recorded (UE4 not live: its headers are in the tests) | X1 | ⬜ |
 
 -----
 
@@ -341,7 +341,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 - **Mutation:** Leave a stale pipe count or test-file count (check_derived_counts fails).
 - **Files:** `docs/live-funcs-timeline-plan.md`, `docs/dev-log.md`, `docs/verification-register.md`, `docs/todo.md`
 
-## X2 — AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance, UE418 if packaged; measurements and the machine recorded
+## X2 — AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance; measurements and the machine recorded (UE4 not live: its headers are in the tests)
 
 - **Red:** The walkthrough's first check (a Snapshot column with the experimental tabs on) fails on 3638. After build.ps1 -Mode Publish the exe is about 54 MB, with its SHA recorded. Avowed: inventory functions ticked and chosen while '(unloaded)'; the inventory opened and closed twice. Accepted by D1's unloaded count plus arms: each chosen name is armed, its layouts are read and its calls decode; whether the addresses changed between openings is recorded (it depends on the game's GC), not required. latency_ms, skipped_budget and the Start and load times are recorded.
 - **Mutation:** Hand over the non-trimmed build (the size and SHA check fails).

@@ -623,7 +623,10 @@ is unit-tested with fake readers, and Avowed is its live proof.
    - the budget defaults, measured again;
    - the machine.
 
-**UE 4.18, if packaged:** a float parameter follows input.
+**UE4: not checked live** (the maintainer, 2026-10-07). DumperTest and DumperTest58 come first, then Avowed. UE4's
+UObject headers -- 4.11 to 4.27, the standard one and both case-preserving shapes -- and its UProperty and FField
+property models are covered by dll_core_test, since after the UE5 live checks what differs is the offsets. A
+UE4 live check, if one is ever needed, is UE 4.27.
 
 ### Build order
 
