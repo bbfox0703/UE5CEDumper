@@ -1147,6 +1147,9 @@
     <sys:String x:Key="str.CT.Status.Cancelled">Loading cancelled.</sys:String>
     <sys:String x:Key="str.CT.Status.Changed">A new recording replaced the trace while it was read. Load it again.</sys:String>
     <sys:String x:Key="str.CT.Status.Failed">Loading the trace failed.</sys:String>
+    <sys:String x:Key="str.CT.Status.OlderNoCalls">The last recording traced no calls, so the trace below is from an earlier recording.</sys:String>
+    <sys:String x:Key="str.CT.Status.OlderUnread">The last recording's trace could not be read (its stop did not finish cleanly), so the trace below is from an earlier recording.</sys:String>
+    <sys:String x:Key="str.CT.Status.NothingNewer">{0} The DLL holds nothing newer.</sys:String>
     <sys:String x:Key="str.CT.Status.EarlierConnection">The game disconnected. The trace below is from that connection; the next traced recording replaces it.</sys:String>
     <sys:String x:Key="str.CT.Status.Loaded">{0:N0} calls over {1:N1} s.</sys:String>
     <sys:String x:Key="str.CT.Status.Lapped">The buffer filled and wrapped: the first {0:N0} records were overwritten, so this is the end of the recording.</sys:String>

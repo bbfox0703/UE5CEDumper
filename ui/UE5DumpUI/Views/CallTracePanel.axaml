@@ -59,7 +59,7 @@
       <Button Content="{StaticResource str.CT.Load}"
               Command="{Binding LoadCommand}"
               ToolTip.Tip="{StaticResource str.Tip.CT.Load}"
-              IsEnabled="{Binding !IsLoading}"
+              IsEnabled="{Binding CanLoad}"
               Foreground="#00BB5E" Background="Transparent"
               BorderThickness="1" BorderBrush="#00BB5E"
               Padding="12,4" Cursor="Hand"/>
@@ -88,11 +88,11 @@
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
       <Button Content="{StaticResource str.CT.ExportJsonl}"
               Command="{Binding ExportJsonlCommand}"
-              IsEnabled="{Binding HasTrace}"
+              IsEnabled="{Binding CanExport}"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
       <Button Content="{StaticResource str.CT.ExportCsv}"
               Command="{Binding ExportCsvCommand}"
-              IsEnabled="{Binding HasTrace}"
+              IsEnabled="{Binding CanExport}"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
 

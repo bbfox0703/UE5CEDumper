@@ -45,10 +45,17 @@ public partial class CallTraceViewModel : ViewModelBase
     private int[] _matches = Array.Empty<int>();
     private ulong _loadedGen;
     private CancellationTokenSource? _loadCts;
-    /// <summary>Red stubs.</summary>
-    public bool CanExport => HasTrace;
-    public bool CanLoad => !IsLoading;
-    public bool ShownIsOlder => false;
+    /// <summary>An export is writing a file. Its own flag: an export that shared IsLoading cleared it under a running
+    /// load, which re-enabled Load and started a second reader on the same ring.</summary>
+    [ObservableProperty] private bool _isExporting;
+    public bool CanExport => HasTrace && !IsLoading && !IsExporting;
+    public bool CanLoad => !IsLoading && !IsExporting;
+    /// <summary>The DLL has a newer recording than the trace on screen, which could not be read (it kept no calls, or
+    /// its stop did not quiesce): what is shown is not what the last recording traced.</summary>
+    [ObservableProperty] private bool _shownIsOlder;
+    partial void OnIsLoadingChanged(bool value) { OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(CanLoad)); }
+    partial void OnIsExportingChanged(bool value) { OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(CanLoad)); }
+    partial void OnHasTraceChanged(bool value) => OnPropertyChanged(nameof(CanExport));
     /// <summary>An activation waiting on Live Funcs' stop and the probe: leaving the tab cancels it before a load starts.</summary>
     private CancellationTokenSource? _activationCts;
 
@@ -100,6 +107,12 @@ public partial class CallTraceViewModel : ViewModelBase
             await LoadAsync();
         else if (_trace == null)
             StatusText = i.Tracing ? Res.Get("str.CT.Status.StillRecording") : Res.Get("str.CT.Status.NoTrace");
+        else if (i.Gen != _loadedGen && i.Gen != 0 && !i.Tracing)
+        {
+            // A newer recording exists but could not be read: say so over the older trace still on screen.
+            ShownIsOlder = true;
+            StatusText = Res.Get(i.Written == 0 ? "str.CT.Status.OlderNoCalls" : "str.CT.Status.OlderUnread");
+        }
     }
 
     /// <summary>Read the DLL's stopped trace: every page of the ring, the names of what it saw, then free the DLL's
@@ -107,7 +120,7 @@ public partial class CallTraceViewModel : ViewModelBase
     [RelayCommand]
     private async Task LoadAsync()
     {
-        if (IsLoading) return;
+        if (!CanLoad) return;
         _loadCts?.Dispose();
         _loadCts = new CancellationTokenSource();
         var ct = _loadCts.Token;
@@ -120,7 +133,13 @@ public partial class CallTraceViewModel : ViewModelBase
 
             var head = await _dump.PeTraceGetAsync(0, 1, ct);
             var info = head.Info;
-            if (!info.Allocated || info.Written == 0) { StatusText = Res.Get("str.CT.Status.NoTrace"); return; }
+            if (!info.Allocated || info.Written == 0)
+            {
+                // Nothing newer to read; a trace already on screen keeps its summary.
+                StatusText = _trace != null ? Res.Format("str.CT.Status.NothingNewer", Summary(_trace))
+                                            : Res.Get("str.CT.Status.NoTrace");
+                return;
+            }
             if (info.Tracing) { StatusText = Res.Get("str.CT.Status.StillRecording"); return; }
             if (!info.Quiesced) { StatusText = Res.Get("str.CT.Status.NotQuiesced"); return; }
 
@@ -183,6 +202,7 @@ public partial class CallTraceViewModel : ViewModelBase
             _tree = new CallTraceTree(trace);
             _loadedGen = info.Gen;
             HasTrace = true;
+            ShownIsOlder = false;
             LiveFuncs.HasTraceToOpen = false;
             _filterMemory.Flush();
             FilterText = "";
@@ -349,14 +369,14 @@ public partial class CallTraceViewModel : ViewModelBase
     private async Task ExportAsync(string ext, string typeKey, bool jsonl)
     {
         var t = _trace;
-        if (t == null || _platform == null) return;
+        if (t == null || _platform == null || !CanExport) return;
         try
         {
             ClearError();
             string name = "call-trace-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ext;
             string? path = await _platform.ShowSaveFileDialogAsync(name, Res.Get(typeKey), ext);
             if (string.IsNullOrEmpty(path)) return;
-            IsLoading = true;
+            IsExporting = true;
             await Task.Run(() =>
             {
                 // CSV carries a BOM so a spreadsheet reads non-ASCII names, as the coordinate CSV does; JSONL does
@@ -374,7 +394,7 @@ public partial class CallTraceViewModel : ViewModelBase
             StatusText = Res.Format("str.CT.Export.Failed", ex.Message);
             _log.Error("CallTrace export failed", ex);
         }
-        finally { IsLoading = false; }
+        finally { IsExporting = false; }
     }
 
     /// <summary>The pipe dropped. Every game process numbers its traces from 1, so the generation already shown means
