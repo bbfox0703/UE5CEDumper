@@ -7058,6 +7058,196 @@ int main() {
         }
     }
 
+    {
+        blk("TRACE-UNLOADED-NAMES: a function's identity is read when the recording first sees it");
+        // D1 (docs/live-funcs-timeline-plan.md, "Decided 2026-10-07"): a function the game unloads before Stop keeps
+        // the name it had when it fired. The hook reads it once per distinct function, while it is being dispatched
+        // and so certainly alive; a stub reader stands in for Ubel's here.
+        static int s_reads = 0;
+        static int s_failNext = 0;   // the next N reads fail
+        auto stub = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            ++s_reads;
+            if (s_failNext > 0) { --s_failNext; return false; }
+            out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex    = 7;
+            out.functionFlags = 0x400;
+            out.numParms      = 2;
+            out.parmsSize     = 16;
+            out.isWidget      = (f == 0xB);
+            return true;
+        };
+        auto statOf = [](uintptr_t f) {
+            std::vector<Linie::FuncStat> st;
+            uint64_t w = 0;
+            Linie::Snapshot(st, w);
+            for (const auto& x : st) if (x.func == f) return x;
+            return Linie::FuncStat{};
+        };
+        auto num = [](long long n) { return std::to_string(n); };
+
+        Linie::Reset();
+        s_reads = 0;
+        Linie::StartRecording(stub);
+        Linie::RecordCall(0xA, 1000); Linie::RecordCall(0xA, 1001); Linie::RecordCall(0xA, 1002);
+        Linie::RecordCall(0xB, 1003);
+        Linie::StopRecording();
+        const auto ia = statOf(0xA).ident, ib = statOf(0xB).ident;
+        check("the reader runs once per distinct function, not once per call", s_reads == 2, num(s_reads).c_str());
+        check("...and the table keeps what it read", ia.captured && ia.nameIndex == 0xA && ia.classIndex == 7 &&
+              ia.functionFlags == 0x400 && ia.numParms == 2 && ia.parmsSize == 16 && !ia.isWidget);
+        check("...for each function", ib.captured && ib.nameIndex == 0xB && ib.isWidget);
+
+        // A read that fails is tried again on the function's next calls, a bounded number of times.
+        Linie::StartRecording(stub);
+        s_reads = 0; s_failNext = 1;
+        Linie::RecordCall(0xC, 2000); Linie::RecordCall(0xC, 2001); Linie::RecordCall(0xC, 2002);
+        check("a failed read is tried again on the next call, and not after it succeeds",
+              statOf(0xC).ident.captured && s_reads == 2, num(s_reads).c_str());
+        s_reads = 0; s_failNext = 1000;
+        for (int i = 0; i < 20; ++i) Linie::RecordCall(0xD, 3000 + i);
+        check("...a bounded number of times",
+              !statOf(0xD).ident.captured && s_reads == Linie::kIdentityTries, num(s_reads).c_str());
+        s_failNext = 0;
+        check("...and the calls still count", statOf(0xD).count == 20, num(statOf(0xD).count).c_str());
+
+        // A recording without a reader reads nothing; a new recording keeps nothing of the last one's.
+        Linie::StartRecording();
+        s_reads = 0;
+        Linie::RecordCall(0xA, 4000);
+        check("a recording without a reader reads nothing", !statOf(0xA).ident.captured && s_reads == 0);
+        Linie::StartRecording(stub);
+        check("a new recording starts from an empty table", statOf(0xA).func == 0);
+        Linie::Reset();
+
+        // The trace's distinct functions carry what the table read; a function only the trace saw has nothing (a call
+        // traced between StartTrace and StartRecording, or after StopRecording).
+        Linie::TraceConfig tc;
+        tc.bytes = 64 * sizeof(Linie::TraceRecord);
+        check("setup: a ring of 64 records starts", Linie::StartTrace(tc) == Linie::TraceStartStatus::Ok);
+        Linie::StartRecording(stub);
+        Linie::TraceToken ta, te;
+        Linie::RecordCall(0xA, 5000);
+        Linie::TraceEnter(0xA, 0xB1, 1000, 7, ta);
+        Linie::TraceReturn(ta, 7);
+        Linie::TraceEnter(0xE, 0xB2, 1000, 7, te);   // traced, never counted
+        Linie::TraceReturn(te, 7);
+        Linie::StopRecording();
+        Linie::StopTrace();
+        std::vector<uintptr_t> df, dob;
+        std::vector<Linie::FuncIdentity> di;
+        const bool got = Linie::TraceDistinct(df, dob, nullptr, &di);
+        check("TraceDistinct hands one identity per distinct function, in the same order",
+              got && df.size() == 2 && di.size() == 2 && df[0] == 0xA && df[1] == 0xE, num(di.size()).c_str());
+        check("...the table's for a counted function, none for one only the trace saw",
+              di.size() == 2 && di[0].captured && di[0].nameIndex == 0xA && !di[1].captured);
+        Linie::StartRecording(stub);   // a new recording empties the table: the stopped trace's names stay frozen
+        std::vector<Linie::FuncIdentity> di2;
+        Linie::TraceDistinct(df, dob, nullptr, &di2);
+        check("...frozen with the trace: a table cleared since does not take them back",
+              di2.size() == 2 && di2[0].captured && di2[0].nameIndex == 0xA);
+        Linie::Reset();
+
+        // Ubel's reader: loads only, from what Fern installs at Start. A fake UFunction whose Outer is a class two
+        // steps below a widget base, and one whose class derives from nothing.
+        static uint8_t fFn[0x100] = {}, fFn2[0x100] = {}, fCls[0x100] = {}, fMid[0x100] = {}, fBase[0x100] = {},
+                       fOther[0x100] = {};
+        auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        auto at    = [](uint8_t* p) { return reinterpret_cast<uintptr_t>(p); };
+        constexpr int kFlagsOff = 0xB0;
+        put32(fFn, Grimoire::OFF_UOBJECT_NAME, 21);
+        put32(fFn, Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, 3);
+        put(fFn, DynOff::UOBJECT_OUTER, at(fCls));
+        put32(fFn, kFlagsOff, 0x00080401);
+        fFn[kFlagsOff + 4] = 2;                                   // NumParms
+        put32(fFn, kFlagsOff + 6, 24);                            // ParmsSize (uint16; the int32 store's high half is 0)
+        put32(fCls, Grimoire::OFF_UOBJECT_NAME, 22);
+        put(fCls, DynOff::USTRUCT_SUPER, at(fMid));
+        put(fMid, DynOff::USTRUCT_SUPER, at(fBase));
+        put32(fFn2, Grimoire::OFF_UOBJECT_NAME, 23);
+        put(fFn2, DynOff::UOBJECT_OUTER, at(fOther));
+        put(fOther, DynOff::USTRUCT_SUPER, at(fOther));          // a chain that points at itself must end
+
+        Ubel::FunctionCaptureSetup cs;
+        cs.flagsOffset = kFlagsOff;
+        cs.tailOffset  = kFlagsOff;
+        cs.widgetBases = { at(fBase) };
+        Ubel::SetFunctionCapture(cs);
+        Linie::FuncIdentity id{};
+        const bool okA = Ubel::CaptureFunctionIdentity(at(fFn), id);
+        check("Ubel's reader: the function's FName and its class's", okA && id.nameIndex == 21 && id.nameNumber == 3 &&
+              id.classIndex == 22, num(id.nameIndex).c_str());
+        check("...its flags and parameters at the offsets set up at Start",
+              id.functionFlags == 0x00080401 && id.numParms == 2 && id.parmsSize == 24, num(id.parmsSize).c_str());
+        check("...a class two steps below a widget base is a widget's", id.isWidget);
+        Linie::FuncIdentity id2{};
+        const bool okB = Ubel::CaptureFunctionIdentity(at(fFn2), id2);
+        check("...a class whose chain points at itself is not, and the walk ends", okB && id2.nameIndex == 23 &&
+              !id2.isWidget);
+        Linie::FuncIdentity id3{};
+        check("...an address that cannot be read is refused", !Ubel::CaptureFunctionIdentity(0x1000, id3));
+        cs.flagsOffset = -1;
+        Ubel::SetFunctionCapture(cs);
+        Linie::FuncIdentity id4{};
+        Ubel::CaptureFunctionIdentity(at(fFn), id4);
+        check("...without a flags offset it reads no flags (it never guesses on the game thread)",
+              id4.nameIndex == 21 && id4.functionFlags == 0 && id4.numParms == 0 && id4.parmsSize == 0);
+        Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
+
+        // The classifier the pipe applies at read time.
+        Linie::FuncIdentity cap{};
+        cap.captured = true;
+        cap.nameIndex = 21;
+        cap.nameNumber = 3;
+        const Ubel::NameWitness same{ 21, 3 }, other{ 40, 0 };
+        using FS = Ubel::FuncState;
+        check("classify: still in its slot, its name unchanged -> live",
+              Ubel::ClassifyFunctionState(true, true, same, cap) == FS::Live);
+        check("...still in its slot under another name -> recycled: another function took the address",
+              Ubel::ClassifyFunctionState(true, true, other, cap) == FS::Recycled);
+        check("...gone from its slot -> unloaded, named from what was read",
+              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, cap) == FS::Unloaded);
+        check("...gone and never read -> unnamed",
+              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, Linie::FuncIdentity{}) == FS::Unnamed);
+        check("...never read but still there -> live, named now as before",
+              Ubel::ClassifyFunctionState(true, true, other, Linie::FuncIdentity{}) == FS::Live);
+        check("...in its slot but its name unreadable -> unloaded when it was read, unnamed when not",
+              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, cap) == FS::Unloaded &&
+              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, Linie::FuncIdentity{}) == FS::Unnamed);
+
+        // What the read costs, printed and not checked: the steady state with a reader installed against none, and
+        // one first sight through Ubel's reader.
+        {
+            constexpr int N = 1 << 20;
+            LARGE_INTEGER f, t0, t1;
+            QueryPerformanceFrequency(&f);
+            auto nsPer = [&](LARGE_INTEGER a, LARGE_INTEGER b, int n) {
+                return double(b.QuadPart - a.QuadPart) * 1e9 / double(f.QuadPart) / n;
+            };
+            Linie::StartRecording();
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(0x1000 + (i & 63), 1000 + i);
+            QueryPerformanceCounter(&t1);
+            const double bare = nsPer(t0, t1, N);
+            Linie::StartRecording(stub);
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(0x1000 + (i & 63), 1000 + i);
+            QueryPerformanceCounter(&t1);
+            const double withReader = nsPer(t0, t1, N);
+            Linie::Reset();
+            cs.flagsOffset = kFlagsOff;
+            Ubel::SetFunctionCapture(cs);
+            constexpr int M = 1 << 16;
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < M; ++i) { Linie::FuncIdentity x{}; Ubel::CaptureFunctionIdentity(at(fFn), x); }
+            QueryPerformanceCounter(&t1);
+            const double firstSight = nsPer(t0, t1, M);
+            Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
+            printf("  info  table cost: %.1f ns per call with no reader, %.1f ns with one (after the first sight); "
+                   "%.1f ns per first sight through Ubel's reader\n", bare, withReader, firstSight);
+        }
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
