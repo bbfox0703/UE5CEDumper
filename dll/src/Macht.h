@@ -440,4 +440,38 @@ inline int32_t ComputeMapValueOffset(int32_t keySize, int32_t valueSize, int32_t
     return (keySize + valAlign - 1) & ~(valAlign - 1);
 }
 
+// ============================================================
+// [LIVEFUNCS-STEP3] The native stack above a hooked call (docs/live-funcs-step3-design.md, section 2.4; ledger
+// S3-M1). Taken on the GAME's thread inside ProcessEvent's hook, so it must never fault, never run the stack out, and
+// never take a lock: the bounds are checked first, the walk runs under __try, and our own frames are cut at the
+// game's return address (the anchor), which no inlining can move.
+// ============================================================
+
+// Stack-slot flags. Macht owns bits 0-14; Linie adds only its "no capturer" bit.
+inline constexpr uint16_t kStackPartial  = 1;    // the anchor was not among the walked frames: only the caller is known
+inline constexpr uint16_t kStackFault    = 2;    // the walk faulted: nothing kept
+inline constexpr uint16_t kStackMore     = 4;    // the stack is deeper than what was kept
+inline constexpr uint16_t kStackBadSp    = 8;    // the return slot is not on this thread's stack: nothing read
+inline constexpr uint16_t kStackLowStack = 16;   // too little stack left to walk safely: nothing read
+inline constexpr uint32_t kStackOwnSlack  = 12;          // our frames above the anchor, at most (Release about 5)
+inline constexpr uint32_t kStackMaxFrames = 62;          // the most frames one capture keeps
+inline constexpr uint32_t kStackRawFrames = kStackOwnSlack + kStackMaxFrames + 1;
+inline constexpr uintptr_t kStackHeadroom = 32 * 1024;  // D16: the walk's CONTEXT and buffers, with margin
+
+// The first i below min(n, window) with raw[i] == ret; n when there is none. Pure.
+inline uint32_t AnchorIndex(void* const* raw, uint32_t n, uintptr_t ret, uint32_t window) {
+    (void)raw; (void)ret; (void)window;
+    return n;
+}
+
+// RtlCaptureStackBackTrace's shape, so a test can hand in a walker that misbehaves.
+using StackWalker = WORD (NTAPI*)(DWORD framesToSkip, DWORD framesToCapture, PVOID* backTrace, PDWORD hash);
+
+// The return addresses above the hooked call, the game's caller first: `retSlot` is the hook's own return-address slot
+// (_AddressOfReturnAddress in the hook). At most `max` (clamped to kStackMaxFrames) go to `out`; `flags` says what
+// happened. `headroom` and `walk` are parameters for the tests; the hook goes through CaptureCallerStack.
+uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
+                              StackWalker walk);
+uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);
+
 } // namespace Macht

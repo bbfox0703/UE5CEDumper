@@ -828,4 +828,16 @@ std::vector<BatchScanResult> AOBScanBatch(
     return results;
 }
 
+// [LIVEFUNCS-STEP3] S3-M1: the capture (stubbed).
+uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
+                              StackWalker walk) {
+    (void)retSlot; (void)out; (void)max; (void)headroom; (void)walk;
+    flags = 0;
+    return 0;
+}
+
+uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags) {
+    return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
+}
+
 } // namespace Macht

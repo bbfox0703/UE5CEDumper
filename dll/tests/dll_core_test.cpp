@@ -155,6 +155,37 @@ static void ResetCancel() {
     Tot::g_shutdown.store(false);
 }
 
+// [LIVEFUNCS-STEP3] S3-M1: a stack captured from a known frame. Not inlined, and every one uses its callee's result
+// after the call, so no call is a tail call that the compiler could turn into a jump (the design review's M5).
+static __declspec(noinline) uint32_t S3CaptureFromHere(uint64_t* out, uint32_t max, uint16_t& fl, uint64_t& myRet) {
+    myRet = reinterpret_cast<uint64_t>(_ReturnAddress());
+    const uint32_t n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(_AddressOfReturnAddress()), out, max, fl);
+    return n + 0 * static_cast<uint32_t>(myRet & 1);
+}
+static __declspec(noinline) uint32_t S3Outer(uint64_t* out, uint32_t max, uint16_t& fl, uint64_t& myRet, uint64_t& outerRet) {
+    outerRet = reinterpret_cast<uint64_t>(_ReturnAddress());
+    const uint32_t n = S3CaptureFromHere(out, max, fl, myRet);
+    return n + static_cast<uint32_t>(outerRet & 0);
+}
+static __declspec(noinline) uint32_t S3Deep(int depth, uint64_t* out, uint32_t max, uint16_t& fl) {
+    if (depth <= 0) {
+        uint64_t r = 0;
+        return S3CaptureFromHere(out, max, fl, r);
+    }
+    const uint32_t n = S3Deep(depth - 1, out, max, fl);
+    return n + (depth == 1000000 ? 1u : 0u);   // work after the call: the recursion stays a recursion
+}
+static WORD NTAPI S3WalkerNoAnchor(DWORD, DWORD count, PVOID* frames, PDWORD) {
+    const DWORD n = count < 3 ? count : 3;
+    for (DWORD i = 0; i < n; ++i) frames[i] = reinterpret_cast<PVOID>(static_cast<uintptr_t>(0x5000 + i));
+    return static_cast<WORD>(n);
+}
+static WORD NTAPI S3WalkerFaults(DWORD, DWORD, PVOID*, PDWORD) {
+    volatile int* p = nullptr;
+    *p = 1;   // the walk itself faults: the capture must survive it
+    return 0;
+}
+
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
     printf("dll_core_test — the DLL core, against a fake object pool in this process\n");
@@ -8537,6 +8568,80 @@ int main() {
             printf("  info  step-2 cost: table %.1f ns per call with 1,000 names followed, %.1f ns per first sight; "
                    "trace %.1f ns per unchosen call, %.1f ns per chosen call with a 64-byte entry and after copy\n",
                    steady, firsts, unchosen, copied);
+        }
+    }
+
+    {
+        blk("LIVEFUNCS-STEP3: a native stack from the hook's return slot -- bounds, headroom, the anchor, faults");
+        // docs/live-funcs-step3-items.md, S3-M1. Case 8 (through TraceEnter) waits for S3-L1.
+        static_assert(Macht::kStackRawFrames >= Macht::kStackOwnSlack + Macht::kStackMaxFrames + 1,
+                      "the raw buffer holds our frames, the most kept, and one to tell More");
+        void* raw[4] = { reinterpret_cast<void*>(5), reinterpret_cast<void*>(6), reinterpret_cast<void*>(7),
+                         reinterpret_cast<void*>(8) };
+        check("the anchor is found inside its window", Macht::AnchorIndex(raw, 4, 7, 3) == 2);
+        check("...and not past it", Macht::AnchorIndex(raw, 4, 8, 3) == 4);
+        check("...and an address never walked is absent", Macht::AnchorIndex(raw, 4, 9, 13) == 4);
+
+        uint64_t out[64] = {};
+        uint16_t fl = 0xFFFF;
+        uint64_t myRet = 0, outerRet = 0;
+        uint32_t n = S3Outer(out, 16, fl, myRet, outerRet);
+        check("the caller's frame first, then its caller's: our own frames cut at the anchor",
+              n >= 2 && out[0] == myRet && out[1] == outerRet && fl == 0,
+              (std::to_string(n) + " frames, flags " + std::to_string(fl)).c_str());
+
+        fl = 0xFFFF;
+        n = S3Deep(40, out, 16, fl);
+        check("a deep stack: the most asked for, and More", n == 16 && (fl & Macht::kStackMore) != 0,
+              (std::to_string(n) + " frames, flags " + std::to_string(fl)).c_str());
+        fl = 0xFFFF;
+        n = S3Outer(out, 62, fl, myRet, outerRet);
+        check("a shallow stack under the maximum: no More", n >= 2 && (fl & Macht::kStackMore) == 0,
+              std::to_string(fl).c_str());
+
+        uint64_t local = 0x1234;
+        fl = 0;
+        n = Macht::CaptureCallerStack(1000, out, 16, fl);
+        check("a return slot that is no stack address: BadSp, nothing read", n == 0 && fl == Macht::kStackBadSp);
+        fl = 0;
+        n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(&local) + 1, out, 16, fl);
+        check("...a misaligned one", n == 0 && fl == Macht::kStackBadSp);
+        fl = 0;
+        n = S3CaptureFromHere(out, 16, fl, myRet);   // its own slot is above the capturer: valid
+        uint64_t below[2] = {};
+        fl = 0;
+        n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(&below[0]) - 4096, out, 16, fl);
+        check("...one below the capturer's own frame", n == 0 && fl == Macht::kStackBadSp);
+
+        fl = 0;
+        n = Macht::CaptureCallerStackEx(reinterpret_cast<uintptr_t>(&local), out, 16, fl, uintptr_t(1) << 40,
+                                        &RtlCaptureStackBackTrace);
+        check("too little stack left: LowStack, nothing read", n == 0 && fl == Macht::kStackLowStack);
+
+        fl = 0;
+        n = Macht::CaptureCallerStackEx(reinterpret_cast<uintptr_t>(&local), out, 16, fl, Macht::kStackHeadroom,
+                                        &S3WalkerNoAnchor);
+        check("no anchor among the frames: only the immediate caller, Partial",
+              n == 1 && out[0] == 0x1234 && fl == Macht::kStackPartial,
+              (std::to_string(n) + " / " + std::to_string(fl)).c_str());
+
+        fl = 0;
+        n = Macht::CaptureCallerStackEx(reinterpret_cast<uintptr_t>(&local), out, 16, fl, Macht::kStackHeadroom,
+                                        &S3WalkerFaults);
+        check("a walk that faults: Fault, nothing kept, and the process goes on", n == 0 && fl == Macht::kStackFault);
+
+        // The cost of one capture, printed (Release), for the budget's defaults (T17).
+        {
+            constexpr int kRuns = 65536;
+            uint64_t sink = 0;
+            const auto t0 = std::chrono::steady_clock::now();
+            for (int i = 0; i < kRuns; ++i) {
+                uint16_t f = 0;
+                sink += S3Deep(20, out, 16, f);
+            }
+            const double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
+            std::printf("  bench: one 16-frame capture from 20 deep: %.0f ns (%d runs, %llu frames)\n", ns / kRuns,
+                        kRuns, static_cast<unsigned long long>(sink));
         }
     }
 
