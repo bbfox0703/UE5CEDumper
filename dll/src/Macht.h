@@ -447,7 +447,7 @@ inline int32_t ComputeMapValueOffset(int32_t keySize, int32_t valueSize, int32_t
 // game's return address (the anchor), which no inlining can move.
 // ============================================================
 
-// Stack-slot flags. Macht owns bits 0-14; Linie adds only its "no capturer" bit.
+// Stack-slot flags: bits 0-14 are Macht's; bit 15 is left free for the slot's owner.
 inline constexpr uint16_t kStackPartial  = 1;    // the anchor was not among the walked frames: only the caller is known
 inline constexpr uint16_t kStackFault    = 2;    // the walk faulted: nothing kept
 inline constexpr uint16_t kStackMore     = 4;    // the stack is deeper than what was kept
@@ -460,7 +460,9 @@ inline constexpr uintptr_t kStackHeadroom = 32 * 1024;  // D16: the walk's CONTE
 
 // The first i below min(n, window) with raw[i] == ret; n when there is none. Pure.
 inline uint32_t AnchorIndex(void* const* raw, uint32_t n, uintptr_t ret, uint32_t window) {
-    (void)raw; (void)ret; (void)window;
+    const uint32_t lim = n < window ? n : window;
+    for (uint32_t i = 0; i < lim; ++i)
+        if (reinterpret_cast<uintptr_t>(raw[i]) == ret) return i;
     return n;
 }
 

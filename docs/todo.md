@@ -280,7 +280,8 @@ Open work only. **Read this when deciding what to do next.**
   (the cost measured on Avowed: -0.4% calls/s, fps unchanged). ⬜ **Step 3 (native stack snapshots) DESIGNED
   2026-10-08, not built** -- [live-funcs-step3-design.md](live-funcs-step3-design.md) and its ledger
   [live-funcs-step3-items.md](live-funcs-step3-items.md); T15-T19 are decisions built as proposed and to be confirmed
-  by the maintainer. Next: S3-L1 + S3-L2 as one cycle (the review's H1).
+  by the maintainer. S3-M1's capture is built (about 1.4 µs per 16-frame capture). Next: S3-L1 + S3-L2 as one
+  cycle (the review's H1).
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.

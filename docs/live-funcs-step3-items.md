@@ -15,8 +15,10 @@ Fern.cpp and Stark.cpp are compiled by no test target. Their items are proven by
   - M5 (M1): `noinline` on the capturers, and recursion that works after its call.
 - **The LOW items L1-L11** are notes on the items they name.
 
-**Status 2026-10-08 07:00: designed, not built.** The design workflow (three code maps, two designs, a merge, a
-critic) took an hour of the unattended window, so the build starts in the next session at S3-L1.
+**Status 2026-10-08 06:45: S3-M1's capture built (cases 1-7); everything else open.** The design workflow (three
+code maps, two designs, a merge, a critic) took an hour of the unattended window. S3-M1 went first because it needs
+nothing else, it is the safety-critical part, and its bench gives T17 a number: **about 1.4 µs per 16-frame capture
+from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as one cycle (H1), then S3-M1's case 8.
 
 | # | Layer | Item | Depends on | Status |
 |---|---|---|---|---|
@@ -24,7 +26,7 @@ critic) took an hour of the unattended window, so the build starts in the next s
 | S3-R1 | pipe | Rig `tools/verify/livefuncs_snap_live.py --stacks` (paths as arguments; committed before it runs) | S3-X0 | open (red: 3640 has no `trace.stack`) |
 | S3-L1 | DLL | Linie: a stack choice armed by name (`stackRing` in ArmSpec / ArmHint, still 24 B / ArmSummary; the merge; ArmLocked before the parameters-only return); stack rings after the param rings in one allocation (own index space, same K); TraceConfig stack fields and constants; StackWrite through the injected capturer; TraceEnter's stack gate, lone and excluded for stack choices, flag 32; StackRings / CopyStacks; step-2 readers param rings only; TraceInfo.stack | — | open |
 | S3-L2 | DLL | Linie: the stack budget (own per-ring word, own total window), D10's drop rule, flag 64, skipped / dropped by kind, captures / spent / max ticks, the slot's ticks | S3-L1 | open |
-| S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | open |
+| S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | ◐ cases 1-7 + the capture bench (red 49dde439, green after it; 7 / 7 mutants killed); case 8 and the TraceEnter bench wait for S3-L1 |
 | S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | open |
 | S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | open |
 | S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | open |
@@ -142,6 +144,17 @@ critic) took an hour of the unattended window, so the build starts in the next s
   - `static_assert(Linie::kStackMaxDepth + Macht::kStackOwnSlack + 1 <= Macht::kStackRawFrames)` goes in the block, and again in Fern.cpp.
   - CaptureCallerStackEx holds no C++ object (C2712 under the test's /EHsc).
 - **Files:** `dll/src/Macht.h`, `dll/src/Macht.cpp`, `dll/tests/dll_core_test.cpp`
+- **Done 2026-10-08 (cases 1-7):**
+  - Bench: **1,413 ns per 16-frame capture from 20 deep** (65,536 runs, Release). At T17's proposed 200 a second in
+    all, that is about 0.3 ms of one core a second; the per-function 100 a second is about 0.14 ms.
+  - Mutants, all killed: copy from `raw[0]`; no More; no bound test; the `__try` that does not catch (the run dies,
+    0xC0000005); no headroom test; the anchor window ignored; Partial keeps nothing.
+  - ⚠ **The red's helpers had become tail calls**, which is the review's M5 in the test itself. `return n + 0 * x` and
+    `n + (x & 0)` fold to `return n`, so `S3Outer` compiled to a `jmp`, its frame was gone, and case 2 saw `main`'s
+    caller where `S3Outer`'s return address should be. The helpers now store the callee's result to a volatile after
+    the call. Plain arithmetic is never a guard against a tail call; a store or a call is.
+  - Owed: case 8 (through TraceEnter) and the TraceEnter bench, both after S3-L1; the `kStackMaxDepth` static_assert
+    lands with S3-L1's constant.
 
 ## S3-M2 — Macht: what a return address is
 

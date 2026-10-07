@@ -155,17 +155,21 @@ static void ResetCancel() {
     Tot::g_shutdown.store(false);
 }
 
-// [LIVEFUNCS-STEP3] S3-M1: a stack captured from a known frame. Not inlined, and every one uses its callee's result
-// after the call, so no call is a tail call that the compiler could turn into a jump (the design review's M5).
+// [LIVEFUNCS-STEP3] S3-M1: a stack captured from a known frame. Not inlined, and every one stores its callee's result
+// to a volatile after the call, so no call is a tail call that the compiler could turn into a jump (the design review's
+// M5). Arithmetic is not enough: `n + 0 * x` folds to `n`, and the first green run lost S3Outer's frame to exactly that.
+static volatile uint32_t g_s3Sink = 0;
 static __declspec(noinline) uint32_t S3CaptureFromHere(uint64_t* out, uint32_t max, uint16_t& fl, uint64_t& myRet) {
     myRet = reinterpret_cast<uint64_t>(_ReturnAddress());
     const uint32_t n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(_AddressOfReturnAddress()), out, max, fl);
-    return n + 0 * static_cast<uint32_t>(myRet & 1);
+    g_s3Sink = n;
+    return n;
 }
 static __declspec(noinline) uint32_t S3Outer(uint64_t* out, uint32_t max, uint16_t& fl, uint64_t& myRet, uint64_t& outerRet) {
     outerRet = reinterpret_cast<uint64_t>(_ReturnAddress());
     const uint32_t n = S3CaptureFromHere(out, max, fl, myRet);
-    return n + static_cast<uint32_t>(outerRet & 0);
+    g_s3Sink = n;
+    return n;
 }
 static __declspec(noinline) uint32_t S3Deep(int depth, uint64_t* out, uint32_t max, uint16_t& fl) {
     if (depth <= 0) {
@@ -173,7 +177,8 @@ static __declspec(noinline) uint32_t S3Deep(int depth, uint64_t* out, uint32_t m
         return S3CaptureFromHere(out, max, fl, r);
     }
     const uint32_t n = S3Deep(depth - 1, out, max, fl);
-    return n + (depth == 1000000 ? 1u : 0u);   // work after the call: the recursion stays a recursion
+    g_s3Sink = n;   // work after the call: the recursion stays a recursion
+    return n;
 }
 static WORD NTAPI S3WalkerNoAnchor(DWORD, DWORD count, PVOID* frames, PDWORD) {
     const DWORD n = count < 3 ? count : 3;
@@ -8606,11 +8611,10 @@ int main() {
         fl = 0;
         n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(&local) + 1, out, 16, fl);
         check("...a misaligned one", n == 0 && fl == Macht::kStackBadSp);
-        fl = 0;
-        n = S3CaptureFromHere(out, 16, fl, myRet);   // its own slot is above the capturer: valid
         uint64_t below[2] = {};
         fl = 0;
-        n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(&below[0]) - 4096, out, 16, fl);
+        // A megabyte down: always below the capturer's frame, whatever main's own frame holds. Never read.
+        n = Macht::CaptureCallerStack(reinterpret_cast<uintptr_t>(&below[0]) - (uintptr_t(1) << 20), out, 16, fl);
         check("...one below the capturer's own frame", n == 0 && fl == Macht::kStackBadSp);
 
         fl = 0;

@@ -15,6 +15,7 @@
 #include <string>
 #include <cstring>
 #include <immintrin.h>  // AVX2 intrinsics for SIMD pattern scanning
+#include <malloc.h>     // _resetstkoflw: re-arm the guard page after a stack overflow the capture caught
 
 namespace Macht {
 
@@ -828,15 +829,56 @@ std::vector<BatchScanResult> AOBScanBatch(
     return results;
 }
 
-// [LIVEFUNCS-STEP3] S3-M1: the capture (stubbed).
-uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
-                              StackWalker walk) {
-    (void)retSlot; (void)out; (void)max; (void)headroom; (void)walk;
+// [LIVEFUNCS-STEP3] S3-M1: the capture. Plain C inside: a __try may not share a function with a C++ object that needs
+// unwinding (the test target builds with /EHsc), the CallProcessEventSEH pattern. Not inlined, so `here` -- its own
+// return slot -- always lies below the caller's `retSlot` (the design review's M5).
+__declspec(noinline) uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags,
+                                                   uintptr_t headroom, StackWalker walk) {
     flags = 0;
-    return 0;
+    if (max == 0 || out == nullptr || walk == nullptr) return 0;
+    if (max > kStackMaxFrames) max = kStackMaxFrames;
+    ULONG_PTR low = 0, high = 0;
+    GetCurrentThreadStackLimits(&low, &high);   // the TEB's: a fiber's or a switched stack's limits too
+    const uintptr_t here = reinterpret_cast<uintptr_t>(_AddressOfReturnAddress());
+    // The slot must be on this thread's stack, above this frame: anything else is not a hook's return slot, and is
+    // never read.
+    if ((retSlot & 7) != 0 || retSlot <= here || retSlot + 8 > high || here < low) {
+        flags = kStackBadSp;
+        return 0;
+    }
+    if (here - low < headroom) {   // the walk's CONTEXT and buffers need room; a stack overflow here would kill the game
+        flags = kStackLowStack;
+        return 0;
+    }
+    void* raw[kStackRawFrames];
+    uintptr_t ret = 0;
+    WORD n = 0;
+    __try {
+        ret = *reinterpret_cast<const uintptr_t*>(retSlot);   // inside the __try: a bad slot is a Fault, never a crash
+        n = walk(0, kStackOwnSlack + max + 1, raw, nullptr);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER) {
+        // The guard page is gone after an overflow until it is re-armed; the next one would end the process silently.
+        if (GetExceptionCode() == STATUS_STACK_OVERFLOW) _resetstkoflw();
+        flags = kStackFault;
+        return 0;
+    }
+    if (n > kStackRawFrames) n = static_cast<WORD>(kStackRawFrames);
+    // Our own frames (this one, the capturer's caller, the hook's) sit above the game's return address: cut there.
+    const uint32_t i = AnchorIndex(raw, n, ret, kStackOwnSlack + 1);
+    if (i == n) {
+        out[0] = ret;   // the walk never met it: the immediate caller is still exact
+        flags = kStackPartial;
+        return 1;
+    }
+    const uint32_t avail = n - i;
+    const uint32_t c = avail < max ? avail : max;
+    for (uint32_t k = 0; k < c; ++k) out[k] = reinterpret_cast<uint64_t>(raw[i + k]);
+    if (avail > max) flags |= kStackMore;
+    return c;
 }
 
-uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags) {
+__declspec(noinline) uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags) {
     return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
 }
 
