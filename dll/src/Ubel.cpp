@@ -2479,7 +2479,7 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
         std::string name, cls;
         const bool live = target && ctx.object && ctx.object(target, name, cls);
-        v.text = DescribeScriptDelegate(live, name, idx, serial, fn) + (ctx.garbageTag ? ctx.garbageTag(target, idx) : "");
+        v.text = DescribeDelegateBinding(live ? target : 0, name, idx, serial, fn, ctx.garbageTag);   // [R7-B-04]
         v.mark = live ? SnapMark::Now : (serial == 0 ? SnapMark::Exact : SnapMark::Gone);
         return v;
     }
@@ -3995,10 +3995,12 @@ const char* WeakTargetGarbageTag(uintptr_t target, int32_t objectIndex) {
 // [R7-B-04] ONE delegate-binding label: DescribeScriptDelegate's ladder PLUS the [garbage] tag. Five readers render a
 // binding, and the tag was appended at four of them by hand -- the sparse-binding element loop was the fifth, the
 // exact "repaired two of them" shape DescribeScriptDelegate's own header warns about. Every site calls this.
+// `garbageTag` is the engine's WeakTargetGarbageTag everywhere but the snapshot decoder, whose tests inject theirs.
 std::string DescribeDelegateBinding(uintptr_t target, const std::string& targetName,
-                                    int32_t objIdx, int32_t serial, const std::string& funcName) {
+                                    int32_t objIdx, int32_t serial, const std::string& funcName,
+                                    const char* (*garbageTag)(uintptr_t, int32_t)) {
     return DescribeScriptDelegate(target != 0, targetName, objIdx, serial, funcName)
-         + WeakTargetGarbageTag(target, objIdx);   // [VND583-06]
+         + (garbageTag ? garbageTag(target, objIdx) : "");   // [VND583-06]
 }
 
 // ============================================================
