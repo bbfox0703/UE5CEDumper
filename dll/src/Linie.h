@@ -123,6 +123,10 @@ void Reset();
 // which also holds the minutes a game that idles when not foreground spent behind the UI.
 void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs);
 
+// The identity the table read for each of `addrs`, in order; an address it never saw gets an uncaptured one. For
+// pe_profile_start to check a traced Start's ticks against the previous recording before StartRecording clears it.
+void IdentitiesOf(const std::vector<uintptr_t>& addrs, std::vector<FuncIdentity>& out);
+
 // The functions IsPerFrame picks out of the table as it stands. pe_profile_start reads it BEFORE StartRecording
 // clears the table, so the trace can leave out what the previous recording found firing every frame (T5 (b)).
 std::vector<uintptr_t> PerFrameFuncs();

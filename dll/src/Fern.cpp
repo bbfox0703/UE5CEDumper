@@ -4213,6 +4213,29 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         if (v.is_string() && Renge::TryStrToAddr(v.get<std::string>(), a) && a) cfg.ticked.push_back(a);
                     }
                 }
+                // [TRACE-UNLOADED-NAMES] review UI-1. A tick is an address from an earlier fetch. A function unloaded
+                // since -- its row cut by the fetch limit, so the UI never learned -- would scope the trace on a freed
+                // address: nothing, or whatever function took it. Checked here against the previous recording's table,
+                // which StartRecording has not cleared yet: only a tick that still holds the function it named stays.
+                // None left is a refusal, never a trace of every call -- the opposite of what was ticked.
+                size_t tickedDropped = 0;
+                if (!cfg.ticked.empty()) {
+                    std::vector<Linie::FuncIdentity> ids;
+                    Linie::IdentitiesOf(cfg.ticked, ids);
+                    std::vector<uintptr_t> live;
+                    for (size_t k = 0; k < cfg.ticked.size(); ++k)
+                        if (Ubel::ClassifyFunction(cfg.ticked[k], ids[k]) == Ubel::FuncState::Live)
+                            live.push_back(cfg.ticked[k]);
+                    tickedDropped = cfg.ticked.size() - live.size();
+                    if (live.empty()) {
+                        Sein::Warn("PIPE:profile", "pe_profile_start: all %llu ticked functions are unloaded; refused",
+                                   (unsigned long long)tickedDropped);
+                        return Renge::MakeError(id,
+                            "Every ticked function has been unloaded since it fired, so the trace would follow none of "
+                            "them. Clear ticks, or record once without the trace so the table finds them again.").dump();
+                    }
+                    cfg.ticked.swap(live);
+                }
                 // T5 (b): the previous recording's per-frame functions, read before StartRecording clears its table.
                 if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
                 const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
@@ -4232,6 +4255,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             : std::string("The trace buffer is too small.")).dump();
                 }
                 traceReply = TraceInfoToJson(Linie::GetTraceInfo());
+                if (tickedDropped) traceReply["ticked_dropped"] = tickedDropped;
             } else {
                 // A recording without the trace leaves no earlier trace's buffer behind in the game.
                 Linie::FreeTrace();

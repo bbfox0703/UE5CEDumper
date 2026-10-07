@@ -177,6 +177,15 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
+void IdentitiesOf(const std::vector<uintptr_t>& addrs, std::vector<FuncIdentity>& out) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    out.assign(addrs.size(), FuncIdentity{});
+    for (size_t i = 0; i < addrs.size(); ++i) {
+        auto it = g_stats.find(addrs[i]);
+        if (it != g_stats.end()) out[i] = it->second.ident;
+    }
+}
+
 std::vector<uintptr_t> PerFrameFuncs() {
     std::vector<FuncStat> snap;
     uint64_t windowMs = 0;
