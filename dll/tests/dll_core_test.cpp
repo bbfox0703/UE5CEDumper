@@ -1092,11 +1092,11 @@ int main() {
     // -- TMAPGEOM-2026-09-09 -- a faulted FStructProperty::Struct must REFUSE ----------
     //
     // ⛔ MUST STAY IN THE POOL-FAKING TAIL OF THIS FUNCTION, with IFACEREAD and
-    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
+    // UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks below it and NOTHING ELSE after any of them. It calls Serie::InitUE4,
     // and Serie's pool state (s_poolAddr / s_isUE4Mode / s_initialized) lives in
     // file-statics that no header exposes -- so it CANNOT be restored. Anything appended
     // after this block would run against a fake UE4 name pool and could pass or fail for
-    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ and WEAKLABEL are the legal exceptions: each installs its OWN
+    // that reason. IFACEREAD, UNREADVAL, BOOLNATIVE, UFUNCWALK, OPTLAYOUT, PROBECLASS, UFIELDNEXT, FNAMEMEASURE, ENUMU8, FNAMENUMBER, FNAMESIZE, CALLFOLLOW, SOFTPATH, COMPACTSET, STATICGOBJ, WEAKLABEL and the LIVEFUNCS-STEP2 name / layout blocks are the legal exceptions: each installs its OWN
     // pool first and depends on nothing the block above it leaves behind.
     //
     // THE DEFECT. `GetMapPairLayout` dropped both `FStructProperty::Struct` reads. On a
@@ -8345,6 +8345,51 @@ int main() {
         check("an out parameter", Ubel::ParamKindOf(0x180) == PK::Out);
         check("a reference that is not const goes both ways", Ubel::ParamKindOf(0x08000180) == PK::InOut);
         check("the return value, though it carries the out flag too", Ubel::ParamKindOf(0x580) == PK::Return);
+    }
+
+    {
+        blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
+        // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
+        static uint8_t nkEntry[24][0x40] = {};
+        static uintptr_t nkChunk[25] = {};
+        const char* nkNames[24] = {};
+        nkNames[21] = "Fire"; nkNames[22] = "Actor_C"; nkNames[23] = "Other_C";
+        for (int i = 1; i < 24; ++i) {
+            const char* n = nkNames[i] ? nkNames[i] : "Pad";
+            memcpy(nkEntry[i] + 0x10, n, strlen(n) + 1);
+            nkChunk[i] = reinterpret_cast<uintptr_t>(nkEntry[i]);
+        }
+        static uintptr_t nkChunks[2] = { reinterpret_cast<uintptr_t>(nkChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(nkChunks), 0x10);
+        check("setup: the pool resolves the names", Serie::GetString(21) == "Fire" && Serie::GetString(22) == "Actor_C" &&
+              Serie::GetString(21, 3) == "Fire_2", Serie::GetString(21, 3).c_str());
+
+        static uint8_t fn[0x100] = {}, cls[0x100] = {}, fn3[0x100] = {};
+        auto put   = [](uint8_t* base, int off, uintptr_t v) { memcpy(base + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* base, int off, int32_t v)   { memcpy(base + off, &v, sizeof(v)); };
+        put32(fn, Grimoire::OFF_UOBJECT_NAME, 21);
+        put(fn, DynOff::UOBJECT_OUTER, reinterpret_cast<uintptr_t>(cls));
+        put32(cls, Grimoire::OFF_UOBJECT_NAME, 22);
+        put32(fn3, Grimoire::OFF_UOBJECT_NAME, 21);
+        put32(fn3, Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, 3);
+        put(fn3, DynOff::UOBJECT_OUTER, reinterpret_cast<uintptr_t>(cls));
+
+        Linie::NameKey k{};
+        check("ReadNameKey: the function's FName ints and its class's",
+              Ubel::ReadNameKey(reinterpret_cast<uintptr_t>(fn), k) && k == Linie::NameKey{ 21, 0, 22, 0 },
+              std::to_string(k.fnIdx).c_str());
+        check("NameKeyMatches: the names the UI shows", Ubel::NameKeyMatches(k, "Actor_C", "Fire"));
+        check("...not under another class", !Ubel::NameKeyMatches(k, "Other_C", "Fire"));
+        Linie::NameKey k3{};
+        check("a Number renders as the UI shows it, and the bare name is another name",
+              Ubel::ReadNameKey(reinterpret_cast<uintptr_t>(fn3), k3) && k3 == Linie::NameKey{ 21, 3, 22, 0 } &&
+              Ubel::NameKeyMatches(k3, "Actor_C", "Fire_2") && !Ubel::NameKeyMatches(k3, "Actor_C", "Fire"));
+        Linie::NameKey bad{};
+        check("an address that cannot be read is refused", !Ubel::ReadNameKey(0x1000, bad));
+        int32_t oi = 0, on = 0;
+        check("ReadObjectNameKey: an object's FName ints",
+              Ubel::ReadObjectNameKey(reinterpret_cast<uint64_t>(cls), oi, on) && oi == 22 && on == 0);
+        check("...and an unreadable object is refused", !Ubel::ReadObjectNameKey(0x1000, oi, on));
     }
 
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);

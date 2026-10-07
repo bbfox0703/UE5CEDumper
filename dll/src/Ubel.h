@@ -432,6 +432,15 @@ FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& 
 // Which way a parameter goes, from its property flags. A `const T&` carries CPF_OutParm as well as CPF_ConstParm and
 // CPF_ReferenceParm (UHT's own flags), so "out" alone over-reports; the return value is CPF_ReturnParm | CPF_OutParm.
 enum class ParamKind : uint8_t { In, ConstRef, Out, InOut, Return };
+// A live function's name key: its FName ints and its class's (its Outer's). Loads only. False when the function's
+// FName cannot be read; the class half is 0 when its Outer or the Outer's FName cannot be.
+bool ReadNameKey(uintptr_t func, Linie::NameKey& out);
+// Linie's ObjectNameReader: an object's FName ints. Loads only -- no lock, no string -- on the hook.
+bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber);
+// Whether `key` still names what the UI showed: the function's and its class's names as Serie renders them, the
+// Number included ("Fire_2"). The Start's check of every tick and choice by name (T10).
+bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName);
+
 inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;
     if (propertyFlags & kReturn) return ParamKind::Return;

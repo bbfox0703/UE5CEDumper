@@ -2101,6 +2101,14 @@ bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, ui
     return true;
 }
 
+bool ReadNameKey(uintptr_t func, Linie::NameKey& out) { (void)func; (void)out; return false; }
+bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber) {
+    (void)obj; (void)nameIndex; (void)nameNumber; return false;
+}
+bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName) {
+    (void)key; (void)className; (void)funcName; return false;
+}
+
 FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now, const NameWitness& nowClass,
                                 const Linie::FuncIdentity& ident) {
     if (slotLive && witnessRead) {
