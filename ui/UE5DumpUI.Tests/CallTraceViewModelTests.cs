@@ -155,6 +155,27 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public async Task A_long_read_collects_the_pages_garbage_as_it_goes()
+    {
+        // [TRACE-UI-LOAD-MEMORY] Live, build 3634, Avowed: a full 128 MB load still peaked at 1.27 GB working set. Each
+        // page leaves the pipe's line and its parsed document behind (~40 MB for a full page), and nothing collected
+        // them during a load of dozens of pages. A collection every CollectEveryPages pages, and one before the build.
+        var dump = new FakeDumpService
+        {
+            Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = 40, FirstValid = 0, QpcFreq = 1_000_000 },
+            PageMax = 4,   // ten pages
+        };
+        for (ulong k = 0; k < 40; k++) dump.Ring.Add(new TraceRecord(k, 1000 + k, 0xA, 0, 1, 0));
+        var (vm, _) = MakeVm(dump);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Equal(40, vm.Trace!.Count);   // forty calls, ten pages read
+        Assert.True(vm.CollectionsDuringLastLoad >= 10 / CallTraceViewModel.CollectEveryPages,
+                    $"{vm.CollectionsDuringLastLoad} collections over ten pages");
+    }
+
+    [Fact]
     public async Task Each_page_asks_no_more_than_the_window_has_left()
     {
         // [TRACE-UI-LOAD-MEMORY] D2: a page is decoded into what is left of the window, so it must never be asked
