@@ -42,7 +42,7 @@ public sealed class SnapInfo
     public int   TotalPerSec   { get; init; }
     /// <summary>In-scope calls recorded without their parameters: over the budget.</summary>
     public ulong SkippedBudget { get; init; }
-    /// <summary>Lone calls over the budget: not recorded at all.</summary>
+    /// <summary>Lone and excluded-but-chosen calls over the budget: not recorded at all.</summary>
     public ulong DroppedBudget { get; init; }
 }
 

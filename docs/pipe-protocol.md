@@ -701,7 +701,7 @@ decisions: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "Step 2 d
                             "bytes": 33554432, "per_ring_per_s": 1000, "total_per_s": 10000 } } }
 // The trace object gains: scoped, ticked_names (count), snap_only, and -- when a snapshot buffer exists -- "snap":
 //   { allocated, bytes, slots_per_ring (K: the calls each ring keeps), rings, per_ring_per_s, total_per_s,
-//     skipped_budget (in-scope calls recorded without parameters), dropped_budget (lone calls over the budget) }
+//     skipped_budget (in-scope calls recorded without parameters), dropped_budget (lone and excluded-but-chosen calls over the budget) }
 // The Start reply's trace also carries "names": { ticks, chosen, refused: [{ class, func, why }] }.
 // The Stop reply adds trace.snap_rings: [{ ring, cap, written, first_valid, skipped_budget, dropped_budget }] and a
 // top-level "names": [{ class, func, key, tick, chosen, addresses, arms, arms_full, not_called }] -- built before an
