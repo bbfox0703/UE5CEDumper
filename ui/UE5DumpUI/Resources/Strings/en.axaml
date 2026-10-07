@@ -1163,6 +1163,8 @@
     <sys:String x:Key="str.CT.Status.BeforeWindow">{0:N0} calls began before the kept part; what they called shows without them.</sys:String>
     <sys:String x:Key="str.CT.Status.Scoped">Traced inside {0} ticked function(s).</sys:String>
     <sys:String x:Key="str.CT.Status.Unscoped">Every call traced.</sys:String>
+    <sys:String x:Key="str.CT.Status.ReadingSnapshots">Reading the parameter snapshots...</sys:String>
+    <sys:String x:Key="str.CT.Status.Snapshots">Parameters: {0} calls with a copy, from {1} load(s) of the chosen functions; {2} calls in scope had none (over the budget).</sys:String>
     <sys:String x:Key="str.CT.Status.ScopedNames">Traced inside {0} ticked function(s), followed by name.</sys:String>
     <sys:String x:Key="str.CT.Status.SnapOnly">Only the calls of the functions chosen for parameters were traced (nothing ticked).</sys:String>
     <sys:String x:Key="str.CT.Status.Excluded">{0} per-frame functions left out; a call they made shows under their caller.</sys:String>

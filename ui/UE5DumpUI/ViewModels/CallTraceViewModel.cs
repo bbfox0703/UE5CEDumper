@@ -31,6 +31,8 @@ public partial class CallTraceViewModel : ViewModelBase
     /// records, 1.75 million chars; a 512 MB ring is about 410 pages.</summary>
     internal const int PageRecords = 32768;
     internal const int NamesPage = 20000;
+    /// <summary>[LIVEFUNCS-STEP2] Slots a snapshot page asks for; the DLL also ends a page at about 1 MB of JSON.</summary>
+    internal const int SnapPage = 4096;
     /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
     /// page), and nothing collects them during a load of hundreds of pages: live on build 3634 a full 128 MB load still
     /// peaked at 1.27 GB working set. A collection at least every this many pages -- about 21 MB of records -- keeps
@@ -330,12 +332,52 @@ public partial class CallTraceViewModel : ViewModelBase
             Progress = 0.85 + 0.1 * Math.Min(1.0, (off + p.Items.Count) / Math.Max(1.0, p.Total));
         }
 
+        // [LIVEFUNCS-STEP2] The parameter snapshots, before the release that frees their rings with the trace: every
+        // arm with its layout, then every ring's slots, decoded by the DLL with each slot's own arm. A gen that moves
+        // or a stale answer drops the load, like the records' pages.
+        List<SnapArm>? arms = null;
+        var rings = new List<SnapRingInfo>();
+        var slots = new List<SnapSlot>();
+        ulong orphans = 0;
+        if (info.Snap is { Allocated: true })
+        {
+            StatusText = Res.Get("str.CT.Status.ReadingSnapshots");
+            arms = new List<SnapArm>();
+            for (int off = 0; ;)
+            {
+                var lp = await _dump.PeSnapLayoutsAsync(info.Gen, off, ct);
+                if (lp.Stale || lp.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
+                if (off == 0) rings = lp.Rings.ToList();
+                arms.AddRange(lp.Arms);
+                if (lp.Arms.Count == 0 || lp.Next >= lp.Total || lp.Next <= off) break;
+                off = lp.Next;
+            }
+            foreach (var ring in rings)
+            {
+                for (ulong slotFrom = ring.FirstValid; slotFrom < ring.Written;)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var sp = await _dump.PeSnapGetAsync(info.Gen, ring.Ring, slotFrom, SnapPage, ct);
+                    if (sp.Stale || sp.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
+                    slots.AddRange(sp.Items);
+                    orphans += sp.Orphans;
+                    if (sp.Next <= slotFrom) break;   // refused or nothing more: what was read stands
+                    slotFrom = sp.Next;
+                }
+            }
+        }
+
         StatusText = Res.Get("str.CT.Status.Building");
         CollectPageGarbage();   // the build's columns take the room the pages left, not new memory
         long count = n;
         // Everything is read: the build and the release no longer take the load's token. Cancelling now would only
         // leave the ring in the game until the next Start (review CT-RELEASE-CANCELLED).
-        var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs));
+        var trace = await Task.Run(() =>
+        {
+            var built = CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs);
+            if (arms != null) built.Snapshots = CallTraceSnapshots.Join(built, arms, rings, slots, orphans);
+            return built;
+        });
         NoteLoadPeak();   // the window and the columns at once: the load's structural peak
         return (trace, null, funcs.Count, objs.Count);
     }
@@ -408,6 +450,9 @@ public partial class CallTraceViewModel : ViewModelBase
                                              CallTrace.ShareText(t.UnloadedCalls, t.Count)));
         sb.Append(' ').Append(Res.Format("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
                                          t.UnnamedFuncs, t.DistinctFuncs));
+        if (t.Snapshots is { } s)
+            sb.Append(' ').Append(Res.Format("str.CT.Status.Snapshots", s.CallsWithParams, s.Arms.Count,
+                                             (long)(t.Info.Snap?.SkippedBudget ?? 0)));
         return sb.ToString();
     }
 

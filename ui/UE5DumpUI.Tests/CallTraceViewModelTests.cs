@@ -83,7 +83,36 @@ public class CallTraceViewModelTests
         {
             ReleaseCalls++;
             ReleasedGens.Add(gen);
+            CallLog.Add("release");
             return Task.CompletedTask;
+        }
+
+        // [LIVEFUNCS-STEP2] The snapshots: arms with layouts, then each ring's slots, all before the release.
+        public List<string> CallLog { get; } = new();
+        public List<SnapArm> SnapArms { get; } = new();
+        public List<SnapRingInfo> SnapRingList { get; } = new();
+        public List<SnapSlot> SnapSlots { get; } = new();
+        public bool SnapStale { get; set; }
+
+        Task<SnapLayoutsPage> IDumpService.PeSnapLayoutsAsync(ulong gen, int offset, CancellationToken ct)
+        {
+            CallLog.Add("layouts");
+            return Task.FromResult(new SnapLayoutsPage
+            {
+                Info = new TraceInfo { Gen = SnapStale ? gen + 1 : gen }, Stale = SnapStale, Total = SnapArms.Count,
+                Next = SnapArms.Count, Rings = SnapRingList, Arms = SnapArms,
+            });
+        }
+
+        Task<SnapPage> IDumpService.PeSnapGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct)
+        {
+            CallLog.Add($"snap{ring}@{from}");
+            var items = SnapSlots.Where(s => s.Index >= from).Take(1).ToList();   // one slot a page: paging shows
+            return Task.FromResult(new SnapPage
+            {
+                Info = new TraceInfo { Gen = gen }, Ring = ring, Count = items.Count,
+                Next = items.Count > 0 ? items[0].Index + 1 : from, Items = items,
+            });
         }
     }
 
@@ -155,6 +184,70 @@ public class CallTraceViewModelTests
         Assert.Equal("Jump", vm.Trace.FuncName(1));
         Assert.True(vm.Trace.ObjStale(1));
         Assert.Equal(2, vm.Rows.Count);   // collapsed: the two roots
+    }
+
+    // ---- [LIVEFUNCS-STEP2] U12: the snapshots, read before the release ----
+
+    private static FakeDumpService DumpWithSnapshots()
+    {
+        var d = Dump();
+        d.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = 9, FirstValid = 0, QpcFreq = 1_000_000,
+                                 Snap = new SnapInfo { Allocated = true, Rings = 1 } };
+        var lay0 = new SnapLayout { FuncName = "Jump", Params = new[] { new SnapParam { Name = "X", Type = "IntProperty", Size = 4 } } };
+        var lay1 = new SnapLayout { FuncName = "Jump", Params = new[] { new SnapParam { Name = "Y", Type = "IntProperty", Offset = 4, Size = 4 } } };
+        d.SnapArms.Add(new SnapArm { Index = 0, Ring = 0, FuncName = "Jump", State = "read", Layout = lay0 });
+        d.SnapArms.Add(new SnapArm { Index = 1, Ring = 0, FuncName = "Jump", State = "read", Layout = lay1 });   // a reload
+        d.SnapRingList.Add(new SnapRingInfo { Ring = 0, Written = 3, FirstValid = 0 });
+        d.SnapSlots.Add(new SnapSlot { Index = 0, EntrySeq = 1, Arm = 0, Values = new[] { new SnapValue { Text = "7" } } });
+        d.SnapSlots.Add(new SnapSlot { Index = 1, EntrySeq = 1, Arm = 0, IsAfter = true });
+        d.SnapSlots.Add(new SnapSlot { Index = 2, EntrySeq = 5, Arm = 1, Values = new[] { new SnapValue { Text = "9" } } });
+        return d;
+    }
+
+    [Fact]
+    public async Task The_snapshots_are_read_after_the_names_and_before_the_release()
+    {
+        var dump = DumpWithSnapshots();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+
+        Assert.Equal(new[] { "layouts", "snap0@0", "snap0@1", "snap0@2", "release" }, dump.CallLog);
+        Assert.Equal(new ulong[] { 7 }, dump.ReleasedGens);
+        var s = vm.Trace!.Snapshots!;
+        int jump = vm.Trace.FindBySeq(1), onJumped = vm.Trace.FindBySeq(5);
+        Assert.Equal("7", s.EntryOf(jump)!.Values![0].Text);
+        Assert.NotNull(s.AfterOf(jump));
+        Assert.Equal("X", s.ArmOf(s.EntryOf(jump)!)!.Layout!.Params[0].Name);
+        Assert.Equal("Y", s.ArmOf(s.EntryOf(onJumped)!)!.Layout!.Params[0].Name);   // its own arm's layout
+        Assert.Equal(2, s.CallsWithParams);
+        Assert.False(s.Has(vm.Trace.FindBySeq(0)));
+    }
+
+    [Fact]
+    public async Task A_stale_snapshot_answer_drops_the_load_without_releasing()
+    {
+        var dump = DumpWithSnapshots();
+        dump.SnapStale = true;
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Null(vm.Trace);
+        Assert.Empty(dump.ReleasedGens);
+    }
+
+    [Fact]
+    public async Task A_trace_without_snapshots_reads_none_and_keeps_none_from_the_last_one()
+    {
+        var dump = DumpWithSnapshots();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.NotNull(vm.Trace!.Snapshots);
+
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 9, FirstValid = 0, QpcFreq = 1_000_000 };
+        dump.NamesGen = 8;
+        dump.CallLog.Clear();
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "release" }, dump.CallLog);
+        Assert.Null(vm.Trace!.Snapshots);
     }
 
     [Fact]

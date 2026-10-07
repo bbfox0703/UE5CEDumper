@@ -44,6 +44,9 @@ public sealed class CallTrace
     public int  UnnamedFuncs  { get; internal set; }
     public long UnnamedCalls  { get; internal set; }
 
+    /// <summary>[LIVEFUNCS-STEP2] The parameter snapshots, when the trace took any; null otherwise.</summary>
+    public CallTraceSnapshots? Snapshots { get; internal set; }
+
     public Dictionary<ulong, TraceFuncName> Funcs { get; } = new();
     public Dictionary<ulong, TraceObjName> Objs { get; } = new();
 
