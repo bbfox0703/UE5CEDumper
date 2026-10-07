@@ -352,3 +352,98 @@ The slider's estimate, bytes / (rate × 80), matched the windows the rings kept:
   with Trace ticked, open the inventory (`I`) and close it, then Stop. Red (3633): its functions are bare addresses
   in the Call Trace tab and missing from the Live Funcs table. Green: named, marked unloaded, and the share still
   without a name shown.
+
+-----
+
+## D1–D4 built (builds 3634–3638, 2026-10-07)
+
+Everything below was measured on the machine above, on Avowed with a save loaded. The DLL was 3634 throughout: no DLL
+code changed after it.
+
+**What was built.**
+
+- **D1** `[TRACE-UNLOADED-NAMES]`. Linie reads a function's identity (its FName, its class's FName, flags, parameter
+  size) when it first sees the function, on the calling thread while the function is certainly alive, with up to
+  three tries. After that it checks only a key on each call, the FName and the Outer. A key that changes means another
+  function took the address: it is read again and marked **reused**. After Stop each function is classified Live,
+  Unloaded (its object slot no longer holds it), Recycled (the slot holds another function) or Unnamed (never read).
+  - `pe_profile_get` keeps unloaded rows when asked (`include_unloaded`) and counts them; `pe_trace_names` carries the
+    marks.
+  - A traced Start keeps only the ticks that still hold the function they named, says how many it left out
+    (`ticked_dropped`), and refuses when none is left.
+  - In the UI an unloaded row shows "(unloaded)" with no tick and no ASM, so its dead address never leaves the panel.
+    The Call Trace summary always says what share of the calls has no name (`<0.01%` and `>99.99%` at the edges,
+    never a false 0% or 100%). The JSONL / CSV export carries `func_unloaded` / `func_reused`.
+- **D2** `[TRACE-UI-LOAD-MEMORY]`. Each page decodes straight into the load's window, and pages are 32,768 records.
+  The trace on screen is let go of, and collected, before a new read. A non-compacting collection runs at least every
+  16 pages, and more often as the free memory runs low (3638: the pages' garbage, about 5 MB a page, may take 1/32 of
+  the free physical memory, read after every page). One compacting collection follows the build. The load's log
+  line gives the memory at its start, the peak working set, its collections and their time, and what is left after.
+- **D3**. Beside the slider: "Memory for a buffer that fills: the game N MB from Start; this UI up to 2.25 × N + 45 MB
+  while it loads the trace, about N MB after". Since 3638 the line, its warning and its tooltip say the UI's figures
+  are a reference measured on the developer's PC (the maintainer: another user's machine will differ). The free
+  physical memory is read again when the slider moves, when Trace is ticked, when the tab is shown, when the
+  experimental tabs change and at Start. Above it the line turns orange and Start's status warns; Start still runs.
+- **D4**: 512 MB stays. **(4)**: a single call that began before the kept part has its own sentence.
+
+**Review.** 16 findings, each put to a skeptic; 4 refuted (DLL-2, DLL-4, DLL-5, UI-2). The other 12 were fixed one
+per commit, red before green, each test mutation-checked:
+- the classifier compares the class's FName too;
+- an address another function takes during the recording is read again and marked reused, also when the new
+  occupant's class reloads;
+- a traced Start checks its ticks;
+- ShareText clamps after rounding;
+- the free memory is read again on entering the tab and when the experimental tabs change;
+- Ctrl+C on a Live Funcs row copies its template columns, the function's name included;
+- the notes' wording ("no longer loaded when the trace was read");
+- the measurements name their machine.
+
+**Live: D1** (DLL and UI 3634; the maintainer's recipe: a save loaded, the inventory opened and closed).
+
+| Where | What held |
+|---|---|
+| The rig, the inventory opened and closed twice | 11 / 11. 697 functions, **all named**: 393 live, 304 unloaded since they fired, carrying 5,748 calls (0.70%) |
+| Live Funcs | "(unloaded)" on those rows, with no tick and no ASM; the status "unloaded since firing: 491"; Ctrl+C on a row copies its class and function |
+| Call Trace, 512 MB | "345 of 689 functions were no longer loaded when the trace was read, and are named from their first call (0.48% of the calls). 0% of the calls have no name (0 of 689 functions)." |
+| A Start with only an unloaded function ticked | Refused; the DLL logged "pe_profile_start: all 1 ticked functions are unloaded; refused" |
+
+At 3633 the same game left 184 of 796 functions without a name (above, "Avowed").
+
+**Live: the load's memory.** The peak is the working set over the load's start, sampled after each page. "After" is
+measured after the compacting collection.
+
+| Build | Ring | Load | Peak over the load's start | After |
+|---|---|---|---|---|
+| 3633 | 128 MB | 11.5 s | +958 MB | nothing given back |
+| 3634 | 128 MB | 6.5 s | +940 MB | working set 727 MB |
+| 3635 | 128 MB | 9.6 s | +555 MB | heap +432 MB |
+| 3636 | 128 MB | 10.4 s | **+303 MB** | heap +156 MB, working set +109 MB |
+| 3633 | 512 MB | 44.3 s | +2,936 MB | nothing given back (3,249 MB a minute later) |
+| 3634 | 512 MB, the 128 MB trace still shown | 33.4 s | 3.77 GB working set at the peak | working set 1.09 GB |
+| 3636 | 512 MB | 38.3 s | **+1,054 MB** (480 → 1,534 MB) | heap +517 MB, working set +333 MB |
+
+D2's first cut (3634) left three causes, each found by measuring:
+1. Every page's pipe line and parsed document stayed uncollected through a load of hundreds of pages. Fix: a
+   collection every few pages (3635).
+2. The trace on screen stayed alive beside the new load's window and columns, about 0.4 GB of 3634's 3.77 GB. Fix:
+   let go of it and collect it before the read (3635).
+3. StreamReader keeps its pooled line buffers per thread. 13 lines of 14 million chars (a page of 262,144 records as
+   base64) kept 205 MB after a full collection; 104 lines of 1.75 million chars kept nothing. Fix: pages of 32,768
+   records (3636).
+
+A probe: the view model alone keeps 124 MB for 1.68 million calls (73 bytes a call), and a ListBox over 1.68 million
+rows keeps nothing of its own. After a 512 MB load the heap keeps about 517 MB for 6.7 million calls, which is the
+trace itself.
+
+**The estimate.** At 3634, 2 × N + 45 described the load's structure, but measured from the load's start it fell 2 MB
+short at 128 MB (301 against 303). 3637 uses 2.25 × N + 45: 189 MB at 64, 333 at 128 and 1,197 at 512, which is
+10–14% above the two measured loads. From a freshly started UI the 512 MB run came to 1,206 MB. The 152 MB the UI
+already held before that load (328 → 480 MB) is not the trace's. The figures are this machine's, and since 3638 the
+UI says so.
+
+**(3) The read's speed** `[TRACE-UI-READ-SPEED]` is still open. The 512 MB load took 38.3 s on 3636 (44.3 s on
+3633, and 33.4 s on 3634 with pages eight times larger): about 19 MB/s for 716 MB, against the rig's 31–36 MB/s.
+
+**Not yet seen live:** 3638's collection period that follows the free memory. This machine always had more than
+2.5 GB free, so every load so far ran the calibrated 16 pages. 3638's load log line also gives the collections' time
+in total; the next trace load reports both.

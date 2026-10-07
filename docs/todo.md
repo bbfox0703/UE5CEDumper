@@ -254,12 +254,19 @@ Open work only. **Read this when deciding what to do next.**
 - ✅ **Step 1 (the timeline) BUILT, build 3633, 2026-10-07** — reviewed (36 findings, all fixed) and checked live on
   DumperTest 5.4 and DumperTest58 (18/18); details in the plan's "Step 1 built". ✅ **Avowed 2026-10-07:** 9.8–14.5k
   calls/s; a full 128 MB ring loads in the UI in 11.5 s (1.3 GB), a full 512 MB one in 44 s (3.25 GB peak) — the
-  plan's "Avowed". ⬜ **Decided 2026-10-07, to build (D1–D4 in the plan):** `[TRACE-UNLOADED-NAMES]` name a
-  function when Linie first sees it, and show what still has no name (184 of 796 functions lost theirs in a 9-minute
-  recording; the Live Funcs table dropped them); `[TRACE-UI-LOAD-MEMORY]` the load peaks at about six times the ring:
-  fix it, then show the memory cost beside the slider, warning (never refusing) above the available memory;
-  `[TRACE-UI-READ-SPEED]` the UI reads at half the rig's speed, re-measured after; the "1 calls began" wording;
-  512 MB stays. Steps 2 and 3 not started: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
+  plan's "Avowed". ✅ **D1–D4 BUILT, builds 3634–3638, checked live on Avowed** (the plan's "D1–D4 built"):
+  - `[TRACE-UNLOADED-NAMES]` every function is named from its first call: 697 of 697 in a recording that unloaded 304
+    of them, where 3633 left 184 of 796 without a name. Unloaded ones are marked "(unloaded)" and never ticked by
+    their dead address.
+  - `[TRACE-UI-LOAD-MEMORY]` a full load's peak fell from about six times the ring to within 2.25 × N + 45 MB
+    (+303 MB at 128 MB, +1,054 at 512). The estimate shows beside the slider, marked as a developer-PC reference,
+    with a warning (never a refusal) above the free memory. Since 3638 the load collects more often as the free
+    memory runs low.
+  - The "1 calls began" wording is fixed, and 512 MB stays.
+  - ⬜ Live, still open: 3638's load log line (its collections' time and shortest period) on the next trace load, and
+    a load with little memory free. `[TRACE-UI-READ-SPEED]`: about 19 MB/s against the rig's 31–36.
+
+  Steps 2 and 3 not started: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
   what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
   guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").
   [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).

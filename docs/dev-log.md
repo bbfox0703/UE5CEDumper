@@ -27,6 +27,28 @@ builds ≤696 in
 
 -----
 
+## 2026-10-07 (build 3638) — The call trace names every function, and the slider says what it costs in memory `[TRACE-UNLOADED-NAMES]` `[TRACE-UI-LOAD-MEMORY]`
+
+- A function the game unloads during a recording (a closed inventory's widgets, content it streams out) keeps the
+  name it had at its first call. Live Funcs lists it with a grey "(unloaded)" and no tick or ASM, since its address
+  is gone. The Call Trace tab marks it too, and its summary always says what share of the calls has no name. An
+  address that a second function took during the recording is marked "(address reused)". Both marks are in the
+  JSONL / CSV export.
+- A traced Start leaves out ticks whose function has been unloaded since, and says how many; if every tick has, it
+  refuses.
+- Loading a full trace takes far less memory. On Avowed a full 128 MB buffer now adds about 0.3 GB to the UI while it
+  loads (about 0.95 GB on 3633), and a full 512 MB one about 1.05 GB (about 2.9 GB on 3633). Most of it is given back
+  afterwards. With less memory free, the load collects more often.
+- Beside the buffer slider: what a buffer that fills costs. That is the game's N MB from Start, then this UI's peak
+  while it loads and what it keeps afterwards. The UI's figures are a reference measured on the developer's PC (a
+  Ryzen 9 9955HX3D laptop with 64 GB), and the line says so. Above the computer's free memory the line turns orange
+  and Start's status warns; it never stops you.
+- Builds 3634–3637 were steps measured live on Avowed on the way here; their numbers are in
+  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "D1–D4 built".
+- Build 3638: AOT `dist\UE5DumpUI.exe` 60,392,960 B, sha256 `3d887e402790`; `dist\UE5Dumper.dll` `eeb84214d755`.
+  C# 6335/6335 (+1 env-gated skip), headless 19/19, dll_core 738 checks, 32 gates. The DLL's code is 3634's; the
+  UI needs it (3634 or later) for the unloaded marks.
+
 ## 2026-10-07 (no build change) — The call trace on Avowed: full 128 and 512 MB rings `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 - Build 3633's call trace checked on Avowed (UE 5.3), a busy game: 9,800–14,500 ProcessEvent calls a second, so
