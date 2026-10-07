@@ -172,6 +172,12 @@ inline constexpr uint64_t kTraceReturnBit = 1ull << 63;
 inline constexpr uint64_t kTraceSeqMask   = kTraceReturnBit - 1;
 inline constexpr uint32_t kTraceScopeRoot = 1;
 inline constexpr uint32_t kTraceSnapTaken = 1u << 1;   // [LIVEFUNCS-STEP2] a snapshot ring holds this call's parameters
+// [LIVEFUNCS-STEP2] A chosen call the scope would not record, recorded alone for its parameters (T11): it opened no
+// scope, so the calls it made are not in the trace.
+inline constexpr uint32_t kTraceSnapLone     = 1u << 2;
+// A chosen call on the per-frame exclusion list, kept inside an open scope for its parameters; its callees are traced
+// as the scope's are.
+inline constexpr uint32_t kTraceSnapExcluded = 1u << 3;
 
 // [LIVEFUNCS-STEP2] One snapshot slot's header; the parameter copy follows it. Inside the DLL only: pe_snap_get sends
 // slots decoded, never these bytes.
@@ -212,7 +218,8 @@ private:
 struct TraceConfig {
     uint64_t bytes = 0;
     std::vector<uintptr_t> ticked;    // T5 (a): not empty = record only the calls of these and what they call
-    std::vector<uintptr_t> exclude;   // T5 (b): never record these, unless the call opens a ticked scope
+    std::vector<uintptr_t> exclude;   // T5 (b): never record these, unless the call opens a ticked scope or its
+                                      // parameters are chosen ([LIVEFUNCS-STEP2]: lone or kTraceSnapExcluded)
     // [LIVEFUNCS-STEP2] The names this recording follows. StartTrace stamps them with its gen and keeps them for the
     // trace's readers; they go when the trace is freed.
     std::shared_ptr<ArmState> arms;

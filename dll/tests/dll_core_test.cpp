@@ -7949,6 +7949,85 @@ int main() {
         Linie::FreeTrace();
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: a chosen call the scope would not record is recorded alone; snapshots-only; excluded kept");
+        // docs/live-funcs-step2-items.md, S4 (T11). A1 is ticked by name, A7 chosen (ring 0).
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = { 1, 2, 3, 4, 5, 6, 7, 8 };
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](bool ticks, std::vector<uintptr_t> exclude) {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.tickedNames = ticks ? 1 : 0;
+            c.snapOnly = !ticks;
+            c.exclude = std::move(exclude);
+            c.snapRingCaps = { 8 };
+            c.snapBytes = 64 * 1024;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        auto copyAll = [] { std::vector<Linie::TraceRecord> r; Linie::CopyTrace(0, 64, r); return r; };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        uint64_t gen = start(true, {});
+        Linie::ArmHint tick{}, chosen{};
+        tick.gen = gen; tick.flags = Linie::kArmTick;
+        chosen.gen = gen; chosen.ring = 0; chosen.copy = 8;
+        Linie::TraceToken a, b, c1, c2, d;
+        Linie::TraceEnter(0xA7, 0, 900, 1, a, params, chosen);   // outside any scope
+        Linie::TraceEnter(0xF2, 0, 800, 1, b);                   // called by it
+        Linie::TraceReturn(b, 1);
+        Linie::TraceReturn(a, 1);
+        Linie::TraceEnter(0xA1, 0, 900, 1, c1, 0, tick);         // the tick opens its scope
+        Linie::TraceEnter(0xA7, 0, 800, 1, c2, params, chosen);  // the chosen one inside it
+        Linie::TraceReturn(c2, 1);
+        Linie::TraceReturn(c1, 1);
+        Linie::TraceEnter(0xF3, 0, 900, 1, d);                   // outside again, not chosen
+        Linie::StopTrace();
+        auto r = copyAll();
+        check("outside every scope the chosen call is recorded alone, its parameters taken",
+              a.traced && !a.opened && r.size() >= 1 && r[0].a == 0xA7 &&
+              r[0].flags == (Linie::kTraceSnapTaken | Linie::kTraceSnapLone), u(r.empty() ? 0 : r[0].flags).c_str());
+        check("...and opens no scope: the call it makes is not recorded", !b.traced);
+        check("inside the tick's scope it is an ordinary traced call: not lone",
+              c2.traced && r.size() == 6 && r[3].a == 0xA7 && r[3].flags == Linie::kTraceSnapTaken, u(r.size()).c_str());
+        check("an unchosen call outside the scope is not recorded", !d.traced);
+
+        gen = start(false, {});
+        chosen.gen = gen;
+        Linie::TraceToken e, f;
+        Linie::TraceEnter(0xF1, 0, 900, 1, e);
+        Linie::TraceEnter(0xA7, 0, 900, 1, f, params, chosen);
+        Linie::TraceReturn(f, 1);
+        Linie::StopTrace();
+        r = copyAll();
+        check("snapshots-only (chosen, nothing ticked): an unchosen call is not recorded, the chosen one alone",
+              !e.traced && f.traced && r.size() == 2 && r[0].a == 0xA7 && (r[0].flags & Linie::kTraceSnapLone) &&
+              Linie::GetTraceInfo().snapOnly, u(r.size()).c_str());
+
+        gen = start(true, { 0xA7, 0xA9 });
+        tick.gen = gen; chosen.gen = gen;
+        Linie::TraceToken g1, g2, g3, g4;
+        Linie::TraceEnter(0xA1, 0, 900, 1, g1, 0, tick);
+        Linie::TraceEnter(0xA7, 0, 800, 1, g2, params, chosen);   // excluded per-frame, but chosen
+        Linie::TraceEnter(0xF2, 0, 700, 1, g3);                   // what it calls
+        Linie::TraceReturn(g3, 1);
+        Linie::TraceReturn(g2, 1);
+        Linie::TraceEnter(0xA9, 0, 800, 1, g4);                   // excluded, not chosen
+        Linie::TraceReturn(g1, 1);
+        Linie::StopTrace();
+        r = copyAll();
+        check("an excluded function that is chosen is kept inside the scope, flagged excluded -- not lone",
+              g2.traced && r.size() >= 2 && r[1].a == 0xA7 &&
+              r[1].flags == (Linie::kTraceSnapTaken | Linie::kTraceSnapExcluded), u(r.size() >= 2 ? r[1].flags : 0).c_str());
+        check("...and what it calls is still traced (the scope is open)", g3.traced);
+        check("an excluded function that is not chosen is left out, as before", !g4.traced);
+        Linie::FreeTrace();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
