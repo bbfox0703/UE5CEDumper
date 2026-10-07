@@ -7453,6 +7453,96 @@ int main() {
         Linie::Reset();
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: arm upkeep -- a key that changes disarms, a reload is a new arm, an armed class is checked");
+        // docs/live-funcs-step2-items.md, N2. 0xF0 holds whatever the statics say; any other address is a function
+        // nobody follows. The class reader counts its reads: only armed addresses pay for it.
+        static int32_t  s_fn = 0x50, s_cls = 0x90;
+        static uint64_t s_outer = 0x9000;
+        static int      s_keyFail = 0, s_clsReads = 0;
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            const bool occ = (f == 0xF0);
+            out.nameIndex     = occ ? s_fn : static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex    = occ ? s_cls : 7;
+            out.outer         = occ ? s_outer : 0x7000;
+            out.functionFlags = 0x400;
+            out.parmsSize     = 16;
+            return true;
+        };
+        auto keyReader = [](uintptr_t f, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            if (f == 0xF0 && s_keyFail > 0) { --s_keyFail; return false; }
+            idx = (f == 0xF0) ? s_fn : static_cast<int32_t>(f & 0xFFFF);
+            n = 0;
+            outer = (f == 0xF0) ? s_outer : 0x7000;
+            return true;
+        };
+        auto clsReader = [](uint64_t obj, int32_t& idx, int32_t& n) -> bool {
+            ++s_clsReads;
+            idx = (obj == s_outer) ? s_cls : 7;
+            n = 0;
+            return true;
+        };
+        auto statOf = [](uintptr_t f) {
+            std::vector<Linie::FuncStat> st;
+            uint64_t w = 0;
+            Linie::Snapshot(st, w);
+            for (const auto& x : st) if (x.func == f) return x;
+            return Linie::FuncStat{};
+        };
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        std::shared_ptr<Linie::ArmState> st;
+        auto restart = [&] {
+            s_fn = 0x50; s_cls = 0x90; s_outer = 0x9000; s_keyFail = 0;
+            st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x50, 0, 0x90, 0 }, false, 0, 64 } }, 8);
+            st->gen = 9;
+            st->classNameReader = clsReader;
+            Linie::StartRecording(reader, keyReader, st);
+        };
+        Linie::ArmHint h;
+
+        restart();
+        Linie::RecordCall(0xF0, 1000, &h);
+        check("setup: the followed function arms its address", h.gen == 9 && h.ring == 0 && h.arm == 0);
+        s_clsReads = 0;
+        for (int i = 0; i < 10; ++i) Linie::RecordCall(0xF1, 1001 + i, &h);
+        check("an address armed for nothing never has its class read", s_clsReads == 0 && h.gen == 0, u(s_clsReads).c_str());
+        Linie::RecordCall(0xF0, 1020, &h);
+        check("an armed one has, on each later call, and stays armed", s_clsReads == 1 && h.gen == 9 && h.arm == 0,
+              u(s_clsReads).c_str());
+
+        s_outer = 0x9100;   // the class reloaded: a new UClass object, the same names
+        Linie::RecordCall(0xF0, 1030, &h);
+        check("its class reloaded under the same names: a new arm, the same ring",
+              h.gen == 9 && h.ring == 0 && h.arm == 1 && st->log.size() == 2, u(st->log.size()).c_str());
+        check("...the two arms keep their own class, and the address is not called reused",
+              st->log.size() == 2 && st->log[0].ident.outer == 0x9000 && st->log[1].ident.outer == 0x9100 &&
+              !statOf(0xF0).ident.reused);
+
+        s_cls = 0xA0;       // another class at the same address: the function's FName and the Outer unchanged
+        Linie::RecordCall(0xF0, 1040, &h);
+        check("its class's FName changed at the same address: read again, and disarmed",
+              h.gen == 0 && h.ring == -1 && statOf(0xF0).ident.classIndex == 0xA0);
+
+        restart();
+        Linie::RecordCall(0xF0, 2000, &h);
+        s_fn = 0x60; s_cls = 0xA0; s_outer = 0xA000;   // another function took the address
+        Linie::RecordCall(0xF0, 2001, &h);
+        check("another function at the address: disarmed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 2002, &h);
+        check("...and it stays so, while the table marks the address reused",
+              h.gen == 0 && statOf(0xF0).ident.reused && st->log.size() == 1, u(st->log.size()).c_str());
+
+        restart();
+        Linie::RecordCall(0xF0, 3000, &h);
+        s_keyFail = 1;
+        Linie::RecordCall(0xF0, 3001, &h);
+        check("a key that cannot be read: that call gets no hint", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xF0, 3002, &h);
+        check("...and the next call, read again, is armed as before", h.gen == 9 && h.ring == 0 && h.arm == 0 &&
+              st->log.size() == 1);
+        Linie::Reset();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

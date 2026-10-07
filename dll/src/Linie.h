@@ -333,10 +333,17 @@ struct ArmRecord {
     int32_t      ring     = -1;
     uint64_t     armMs    = 0;    // the table's clock at the arming
 };
+// An object's FName ints, read on the hook: loads only -- no lock, no string, like FuncKeyReader.
+using ObjectNameReader = bool (*)(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber);
+
 // The names one recording follows and the arms it made. The table touches it under its lock; its lifetime is the
 // shared_ptr's, so a reader that holds one is never left with freed memory.
 struct ArmState {
     uint64_t gen = 0;                  // the trace recording it belongs to (1 and up)
+    // An armed address's class is checked by its FName on every call as well as by its address: a class freed and
+    // another loaded at the same address keeps the function's FName and its Outer, and would otherwise stay armed
+    // for a name it no longer has. nullptr checks the address only.
+    ObjectNameReader classNameReader = nullptr;
     std::vector<ArmSpec>   specs;      // sorted by key, one per key
     std::vector<ArmRecord> log;        // reserved when built: the hook never allocates for it
     size_t                 capacity = 0;
