@@ -1734,6 +1734,25 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     return fj;
 }
 
+// [LIVEFUNCS-TIMELINE-2026-10-04] The trace's state as the UI reads it: what it needs to page the ring
+// ([first_valid, written)), to turn ticks into time (qpc_freq), and to tell an unreadable ring from an empty one.
+static json TraceInfoToJson(const Linie::TraceInfo& i) {
+    json t;
+    t["allocated"]   = i.allocated;
+    t["tracing"]     = i.tracing;
+    t["quiesced"]    = i.quiesced;
+    t["gen"]         = i.gen;
+    t["bytes"]       = i.bytes;
+    t["capacity"]    = i.capacity;
+    t["written"]     = i.written;
+    t["first_valid"] = i.firstValid;
+    t["qpc_freq"]    = i.qpcFreq;
+    t["record_size"] = sizeof(Linie::TraceRecord);
+    t["ticked"]      = i.ticked;
+    t["excluded"]    = i.excluded;
+    return t;
+}
+
 std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const std::string& jsonLine) {
     json request;
     try {
@@ -4169,12 +4188,52 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // calls without first issuing an invoke. hook_active=false means the
             // vtable-offset detection failed on this game → counts will stay 0.
             bool hookActive = UE5_EnsureGameThreadHook();
+
+            // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording (T2). Asked for: the ring is
+            // allocated BEFORE the table starts, and a failed allocation refuses the whole Start, so the user picks
+            // a smaller buffer instead of getting a recording without the trace they asked for (T1).
+            json traceReply;
+            if (request.contains("trace") && request["trace"].is_object()) {
+                const json& t = request["trace"];
+                const uint64_t bytes = t.value("bytes", uint64_t(0));
+                if (bytes < Linie::kTraceMinBytes || bytes > Linie::kTraceMaxBytes || (bytes & (bytes - 1)) != 0) {
+                    return Renge::MakeError(id, "trace.bytes must be a power of two from 32 MB to 512 MB").dump();
+                }
+                Linie::TraceConfig cfg;
+                cfg.bytes = bytes;
+                if (t.contains("ticked") && t["ticked"].is_array()) {
+                    for (const auto& v : t["ticked"]) {
+                        uintptr_t a = 0;
+                        if (v.is_string() && Renge::TryStrToAddr(v.get<std::string>(), a) && a) cfg.ticked.push_back(a);
+                    }
+                }
+                // T5 (b): the previous recording's per-frame functions, read before StartRecording clears its table.
+                if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
+                const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
+                if (st != Linie::TraceStartStatus::Ok) {
+                    Sein::Warn("PIPE:profile", "pe_profile_start: trace of %llu MB refused (%s)",
+                               (unsigned long long)(bytes >> 20), st == Linie::TraceStartStatus::NoMemory ? "no memory" : "too small");
+                    return Renge::MakeError(id, st == Linie::TraceStartStatus::NoMemory
+                        ? "The game process could not spare " + std::to_string(bytes >> 20) +
+                          " MB for the trace buffer. Pick a smaller buffer and Start again."
+                        : std::string("The trace buffer is too small.")).dump();
+                }
+                traceReply = TraceInfoToJson(Linie::GetTraceInfo());
+            } else {
+                // A recording without the trace leaves no earlier trace's buffer behind in the game.
+                Linie::FreeTrace();
+            }
+
             Linie::StartRecording();
-            Sein::Info("PIPE:profile", "pe_profile_start: recording begun (hook_active=%d)",
-                       hookActive ? 1 : 0);
+            Sein::Info("PIPE:profile", "pe_profile_start: recording begun (hook_active=%d, trace=%llu MB, ticked=%llu, excluded=%llu)",
+                       hookActive ? 1 : 0,
+                       (unsigned long long)(traceReply.is_null() ? 0 : traceReply["bytes"].get<uint64_t>() >> 20),
+                       (unsigned long long)(traceReply.is_null() ? 0 : traceReply["ticked"].get<uint64_t>()),
+                       (unsigned long long)(traceReply.is_null() ? 0 : traceReply["excluded"].get<uint64_t>()));
             json data;
             data["recording"]   = true;
             data["hook_active"] = hookActive;
+            if (!traceReply.is_null()) data["trace"] = traceReply;
             if (!hookActive) {
                 // THREE failure modes, three remedies. The old text collapsed the
                 // first two and told the user to "do any invoke first", which on the
@@ -4219,9 +4278,15 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         if (cmd == Renge::CMD_PE_PROFILE_STOP) {
             Linie::StopRecording();   // idempotent; counts retained for pe_profile_get
-            Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen");
+            // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
+            Linie::StopTrace();
+            const Linie::TraceInfo ti = Linie::GetTraceInfo();
+            Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen (trace: %llu records written, %llu kept%s)",
+                       (unsigned long long)ti.written, (unsigned long long)(ti.written - ti.firstValid),
+                       ti.quiesced ? "" : ", NOT quiesced: the ring will not be read");
             json data;
             data["recording"] = false;
+            if (ti.allocated) data["trace"] = TraceInfoToJson(ti);
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -4427,6 +4492,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             data["recording"]      = Linie::IsActive();
             data["distinct_funcs"] = static_cast<int>(snap.size());
             data["total_calls"]    = totalCalls;
+            // [LIVEFUNCS-TIMELINE-2026-10-04] The window the counts cover, so the UI can turn total_calls into a
+            // call rate: the trace slider's estimate of how many seconds a buffer keeps (T1).
+            data["window_ms"]      = windowMs;
             data["functions"]      = functions;
             // Only when asked: an absent key tells the UI this DLL predates the option, so nothing was left out.
             if (skipPerFrame) {
@@ -4434,6 +4502,108 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 data["per_frame_funcs"]  = perFrameFuncs;
             }
             if (profileTruncated) data["truncated"] = true;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // === [LIVEFUNCS-TIMELINE-2026-10-04] The stopped call trace, read by the Call Trace tab. ===
+        // pe_trace_get: one page of the ring as its 40-byte slots, base64 (hex would double the bytes on a buffer
+        // of up to 512 MB). Stateless paging like the other paged commands: the reply's `next` is where the
+        // following page starts, and paging ends at `written`.
+        if (cmd == Renge::CMD_PE_TRACE_GET) {
+            constexpr int64_t kPageDefault = 65536;
+            constexpr int64_t kPageMax     = 262144;   // 10 MB of records, about 13 MB of base64 per reply
+            const uint64_t from = request.value("from", uint64_t(0));
+            int64_t maxRecs = request.value("max", kPageDefault);
+            if (maxRecs < 1) maxRecs = 1;
+            if (maxRecs > kPageMax) maxRecs = kPageMax;
+
+            const Linie::TraceInfo ti = Linie::GetTraceInfo();
+            json data = TraceInfoToJson(ti);
+            std::vector<Linie::TraceRecord> recs;
+            uint64_t next = from;
+            if (!ti.allocated || !Linie::CopyTrace(from, static_cast<size_t>(maxRecs), recs, &next)) {
+                // Nothing to read: no trace, one still recording, or a stop that never quiesced.
+                data["count"] = 0;
+                data["next"]  = from;
+                data["data"]  = "";
+                return Renge::MakeResponse(id, data).dump();
+            }
+            data["count"] = recs.size();
+            data["next"]  = next;
+            data["data"]  = Linie::Base64Encode(reinterpret_cast<const uint8_t*>(recs.data()),
+                                                recs.size() * sizeof(Linie::TraceRecord));
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // pe_trace_names: the names of the distinct functions (kind "funcs") or calling objects (kind "objs") in the
+        // kept window, paged. Resolved now, after Stop, so a name is what is at that address NOW: an object whose
+        // own index no longer leads back to it is reported not live and is not read.
+        if (cmd == Renge::CMD_PE_TRACE_NAMES) {
+            const std::string kind = request.value("kind", std::string("funcs"));
+            if (kind != "funcs" && kind != "objs") return Renge::MakeError(id, "kind must be \"funcs\" or \"objs\"").dump();
+            int64_t offset = request.value("offset", int64_t(0));
+            int64_t limit  = request.value("limit", int64_t(2000));
+            if (offset < 0) offset = 0;
+            if (limit < 1) limit = 1;
+            if (limit > 20000) limit = 20000;
+
+            std::vector<uintptr_t> funcs, objs;
+            json data;
+            data["kind"] = kind;
+            if (!Linie::TraceDistinct(funcs, objs)) {
+                data["total"] = 0;
+                data["offset"] = offset;
+                data["count"] = 0;
+                data["items"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            const std::vector<uintptr_t>& list = (kind == "objs") ? objs : funcs;
+            json items = json::array();
+            bool truncated = false;
+            const size_t end = std::min(list.size(), static_cast<size_t>(offset) + static_cast<size_t>(limit));
+            for (size_t i = static_cast<size_t>(offset); i < end; ++i) {
+                if ((i & 0xFF) == 0 && Tot::Requested()) { truncated = true; break; }
+                const uintptr_t a = list[i];
+                json it;
+                it["addr"] = Renge::AddrToStr(a);
+                if (kind == "objs") {
+                    const int32_t idx = Ubel::GetIndex(a);
+                    const bool live = idx >= 0 && Aura::GetByIndex(idx) == a;
+                    it["live"] = live;
+                    if (live) {
+                        it["name"] = Ubel::GetName(a);
+                        const uintptr_t cls = Ubel::GetClass(a);
+                        it["class_name"] = cls ? Ubel::GetName(cls) : std::string();
+                    }
+                } else {
+                    FunctionInfo fi{};
+                    const bool ok = Ubel::ResolveFunctionInfo(a, fi);
+                    it["live"] = ok;
+                    if (ok) {
+                        it["func_name"]      = fi.name;
+                        it["class_name"]     = Ubel::GetName(Ubel::GetOuter(a));
+                        it["function_flags"] = fi.functionFlags;
+                        it["num_parms"]      = fi.numParms;
+                        it["parms_size"]     = fi.parmsSize;
+                    }
+                }
+                items.push_back(std::move(it));
+            }
+            data["total"]  = list.size();
+            data["offset"] = offset;
+            data["count"]  = items.size();
+            data["items"]  = std::move(items);
+            if (truncated) data["truncated"] = true;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // pe_trace_release: the UI has read the trace; give the game its memory back now rather than at the next
+        // Start or when the client leaves.
+        if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
+            Linie::FreeTrace();
+            Sein::Info("PIPE:profile", "pe_trace_release: trace buffer released");
+            json data;
+            data["released"] = true;
             return Renge::MakeResponse(id, data).dump();
         }
 

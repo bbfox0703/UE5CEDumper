@@ -18,6 +18,7 @@
 
 #include <MinHook.h>
 #include <Windows.h>
+#include <intrin.h>   // _AddressOfReturnAddress -- the hook frame's stack position, for the trace's ticked scope
 
 #include <atomic>
 #include <chrono>
@@ -238,10 +239,20 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     uint64_t nowMs = NowMs();
     s_lastHookFireMs.store(nowMs, std::memory_order_relaxed);
 
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's entry record is written after the body, so the invokes the
+    // body drained (they run first) are in the trace before this call, as they ran. The token stays in this frame
+    // across the game's call; this frame's stack address is how a ticked scope tells a nested call from a later one.
+    Linie::TraceToken traceTok;
+    const uintptr_t traceSp = reinterpret_cast<uintptr_t>(_AddressOfReturnAddress());
+
     // Our work, contained. See HookedProcessEventBody — a throw escaping here fast-fails
     // the game, because the caller is the game itself.
     Routine::RunThreadGuarded("GameThreadDispatch", [&] {
         HookedProcessEventBody(ufunc, nowMs);
+        if (Linie::IsTracing()) {
+            Linie::TraceEnter(reinterpret_cast<uintptr_t>(ufunc), reinterpret_cast<uintptr_t>(thisObj), traceSp,
+                              GetCurrentThreadId(), traceTok);
+        }
     });
 
     // Now handle the game's own ProcessEvent call. OUTSIDE the guard on purpose: this is
@@ -250,6 +261,14 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     // above prevents.
     if (s_originalPE) {
         s_originalPE(thisObj, ufunc, params);
+    }
+
+    // The return record: our work again, so guarded again (TR3). A game exception that unwinds past this frame skips
+    // it, and the trace shows that call as never returning; Linie closes a ticked scope left open that way itself.
+    if (traceTok.traced) {
+        Routine::RunThreadGuarded("GameThreadDispatch", [&] {
+            Linie::TraceReturn(traceTok, GetCurrentThreadId());
+        });
     }
 }
 

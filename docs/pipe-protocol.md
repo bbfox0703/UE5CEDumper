@@ -575,6 +575,69 @@ Response for `pe_profile_get`:
   ] }
 ```
 
+`window_ms` (build 3631+): the window the counts cover, the table's earliest fire to its latest. With `total_calls`
+it gives the call rate the Live Funcs trace slider estimates its seconds from. `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+#### The call trace (build 3631+) `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+One record when a call enters `ProcessEvent` and one when it returns, into a ring the user sized, so Stop keeps the
+calls just before it. It rides on the recording above: `pe_profile_start` arms it, `pe_profile_stop` stops it, and
+the three `pe_trace_*` commands read it afterwards. The plan and its decisions: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+
+```jsonc
+// Start with a trace. bytes: a power of two from 32 MB to 512 MB (anything else is an error). ticked (optional):
+// UFunction addresses; when given, only their calls and what those call are traced, per thread. exclude_per_frame
+// (optional): leave out the functions the PREVIOUS recording's table found firing every frame (read before this
+// Start clears it). The ring is allocated before the recording starts; a failed allocation is an error and nothing
+// records. A Start without `trace` frees an earlier trace's buffer.
+{ "id": 73, "cmd": "pe_profile_start",
+  "trace": { "bytes": 67108864, "ticked": ["0x1B2C3D40"], "exclude_per_frame": true } }
+// Reply adds "trace": {...the trace object below...}. pe_profile_stop's reply adds it too, after the hook has left
+// its last write: from then on the ring does not change.
+
+// One page of the stopped ring. from: a sequence number (start at first_valid); max: records, 1..262144, default
+// 65536. Reply: the trace object, plus count, next (where the following page starts; paging ends at written) and
+// data, the records base64 (RFC 4648). count 0 with data "" while recording, with no trace, or when quiesced is false.
+{ "id": 74, "cmd": "pe_trace_get", "from": 0, "max": 65536 }
+
+// Names of the kept window's distinct functions (kind "funcs") or calling objects (kind "objs"), paged
+// (limit 1..20000, default 2000). Resolved now, so a name is what is at that address NOW: an object whose own index
+// no longer leads back to it is live:false and not read. funcs items: addr, live, class_name, func_name,
+// function_flags, num_parms, parms_size. objs items: addr, live, name, class_name. Reply: kind, total, offset,
+// count, items, truncated (only when cut by a cancel).
+{ "id": 75, "cmd": "pe_trace_names", "kind": "objs", "offset": 0, "limit": 2000 }
+
+// Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves.
+{ "id": 76, "cmd": "pe_trace_release" }
+```
+
+The trace object:
+
+```jsonc
+{ "allocated": true, "tracing": false,
+  "quiesced": true,          // false: a hook never left its write within Stop's wait; the ring is not read
+  "gen": 3,                  // one per traced Start
+  "bytes": 67108864, "capacity": 1677721,   // capacity in records
+  "written": 2400311,        // records ever written; the ring keeps [first_valid, written)
+  "first_valid": 722590,
+  "qpc_freq": 10000000,      // QueryPerformanceCounter ticks per second
+  "record_size": 40, "ticked": 1, "excluded": 0 }
+```
+
+A record, 40 bytes, little-endian (`Linie::TraceRecord`):
+
+| Offset | Field | Entry record | Return record |
+|---|---|---|---|
+| 0 | `seqKind` u64 | its sequence number | its sequence number, bit 63 set |
+| 8 | `ticks` u64 | QueryPerformanceCounter | QueryPerformanceCounter |
+| 16 | `a` u64 | the UFunction | the sequence number of the call's entry record |
+| 24 | `b` u64 | the object it was called on | 0 |
+| 32 | `tid` u32 | the thread | the thread |
+| 36 | `flags` u32 | 1 = this call opened a ticked scope | 0 |
+
+A return whose entry is older than `first_valid` belongs to a call that began before the kept window. An entry with
+no return either still ran at Stop or was unwound by an exception.
+
 -----
 
 ### Force-field hold + stealth meter (Solide — build 2168)
