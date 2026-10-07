@@ -153,11 +153,11 @@
               <!-- [TRACE-UNLOADED-NAMES] Gone when the trace was read: named from its first call, marked at the right. -->
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
                          IsVisible="{Binding FuncUnloaded}" ToolTip.Tip="{StaticResource str.Tip.CT.Unloaded}"
-                         Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                         Foreground="#808080" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
               <!-- Review DLL-3: the address held another function during the recording. -->
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
                          IsVisible="{Binding FuncReused}" ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"
-                         Foreground="#C08040" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                         Foreground="#C08040" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
               <!-- A ticked function's call (the root of its scope) stands out; the rest are plain. -->
               <Panel>
                 <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"

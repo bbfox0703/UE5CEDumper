@@ -28,6 +28,15 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>Records per pe_trace_get page: the DLL's maximum, 10 MB of records.</summary>
     internal const int PageRecords = 262144;
     internal const int NamesPage = 20000;
+    /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~40 MB for a full
+    /// page), and nothing collects them during a load of dozens of pages: live on build 3634 a full 128 MB load still
+    /// peaked at 1.27 GB working set. A collection every this many pages keeps them to a couple of pages' worth; it
+    /// takes milliseconds, the heap being a few large arrays of plain values.</summary>
+    internal const int CollectEveryPages = 2;
+    /// <summary>The collections the last load ran while it read.</summary>
+    internal int CollectionsDuringLastLoad { get; private set; }
+    // The last load's memory, for its log line: at its start, and the largest working set seen after a page.
+    private long _loadStartWs, _loadStartHeap, _loadPeakWs;
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private double _progress;
@@ -146,6 +155,9 @@ public partial class CallTraceViewModel : ViewModelBase
 
             ulong kept = info.Written - info.FirstValid;
             reclaim = true;   // a window is about to be made: whatever happens next, collect it afterwards
+            _loadStartWs = _loadPeakWs = Environment.WorkingSet;
+            _loadStartHeap = GC.GetTotalMemory(false);
+            CollectionsDuringLastLoad = 0;
             var read = await ReadAndBuildAsync(info, kept, ct);
             if (read.Trace == null)
             {
@@ -198,6 +210,7 @@ public partial class CallTraceViewModel : ViewModelBase
         var all = new TraceRecord[kept];
         long n = 0;
         ulong from = info.FirstValid;
+        int pagesSinceCollect = 0;
         while (from < info.Written && n < all.LongLength)
         {
             ct.ThrowIfCancellationRequested();
@@ -211,6 +224,12 @@ public partial class CallTraceViewModel : ViewModelBase
                 return (null, "str.CT.Status.Changed", 0, 0);
             n += page.Count;
             from = page.Next;
+            NoteLoadPeak();
+            if (++pagesSinceCollect >= CollectEveryPages)
+            {
+                CollectPageGarbage();
+                pagesSinceCollect = 0;
+            }
             Progress = 0.8 * (from - info.FirstValid) / Math.Max(1.0, kept);
             StatusText = Res.Format("str.CT.Status.ReadingRecords", n, kept);
         }
@@ -236,12 +255,24 @@ public partial class CallTraceViewModel : ViewModelBase
         }
 
         StatusText = Res.Get("str.CT.Status.Building");
+        CollectPageGarbage();   // the build's columns take the room the pages left, not new memory
         long count = n;
         // Everything is read: the build and the release no longer take the load's token. Cancelling now would only
         // leave the ring in the game until the next Start (review CT-RELEASE-CANCELLED).
         var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs));
+        NoteLoadPeak();   // the window and the columns at once: the load's structural peak
         return (trace, null, funcs.Count, objs.Count);
     }
+
+    /// <summary>A full, blocking collection that does not compact: the pages' freed large objects go back on the free
+    /// list, and the next pages reuse them instead of growing the heap.</summary>
+    private void CollectPageGarbage()
+    {
+        GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        CollectionsDuringLastLoad++;
+    }
+
+    private void NoteLoadPeak() => _loadPeakWs = Math.Max(_loadPeakWs, Environment.WorkingSet);
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] A load leaves its window and every page's reply behind, and nothing makes the GC
     /// run after it: on Avowed a 512 MB load held the working set at 3.25 GB a minute later (2026-10-07). One blocking,
@@ -249,13 +280,13 @@ public partial class CallTraceViewModel : ViewModelBase
     /// the log line is what the memory estimate beside the trace slider is checked against.</summary>
     private void ReclaimAfterLoad()
     {
-        var proc = System.Diagnostics.Process.GetCurrentProcess();
-        proc.Refresh();
-        long ws = proc.WorkingSet64 >> 20, heap = GC.GetTotalMemory(false) >> 20, peak = proc.PeakWorkingSet64 >> 20;
+        long ws = Environment.WorkingSet >> 20, heap = GC.GetTotalMemory(false) >> 20;
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
-        proc.Refresh();
-        _log.Info($"CallTrace: after the load, managed heap {heap:N0}->{GC.GetTotalMemory(false) >> 20:N0} MB, " +
-                  $"working set {ws:N0}->{proc.WorkingSet64 >> 20:N0} MB (process peak so far {peak:N0} MB)");
+        _log.Info($"CallTrace: memory -- at the load's start heap {_loadStartHeap >> 20:N0} MB, working set " +
+                  $"{_loadStartWs >> 20:N0} MB; working set at its peak (sampled per page) {_loadPeakWs >> 20:N0} MB, " +
+                  $"{CollectionsDuringLastLoad} collections while it read; after it heap {heap:N0}->" +
+                  $"{GC.GetTotalMemory(false) >> 20:N0} MB, working set {ws:N0}->{Environment.WorkingSet >> 20:N0} MB " +
+                  "(after the compacting collection)");
     }
 
     [RelayCommand]
