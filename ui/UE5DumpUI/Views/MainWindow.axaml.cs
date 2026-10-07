@@ -722,6 +722,7 @@ public partial class MainWindow : Window
         // session doesn't keep the game thread taking the profile mutex per PE
         // call) and flushes its filter-keyword memory.
         if (tag != "LiveFuncs")  vm.LiveFuncs?.OnLeavingTab();
+        else                     vm.LiveFuncs?.OnEnteringTab();
         // [LIVEFUNCS-TIMELINE-2026-10-04] Leaving Call Trace stops reading a trace the user walked away from.
         if (tag != "CallTrace")  vm.CallTrace?.OnLeavingTab();
 

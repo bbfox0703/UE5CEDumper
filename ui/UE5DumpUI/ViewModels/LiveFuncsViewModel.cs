@@ -315,8 +315,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private static string MemText(long mb) => mb < 1024 ? Res.Format("str.LF.Trace.BufferMb", mb)
                                                         : Res.Format("str.LF.Trace.Gb", mb / 1024.0);
 
-    /// <summary>Read the free memory again: when the slider moves, when Trace is ticked, and at Start -- memory moves
-    /// while the slider waits.</summary>
+    /// <summary>Read the free memory again: when the slider moves, when Trace is ticked, when the tab is shown, when
+    /// the experimental tabs change, and at Start -- memory moves while the slider waits (a game launched after the
+    /// UI takes most of it; review INT-4).</summary>
     private void RefreshAvailableMemory()
     {
         long bytes = _platform?.GetAvailablePhysicalMemoryBytes() ?? long.MaxValue;
@@ -370,7 +371,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
         _experimentalGate = experimentalGate;
-        if (_experimentalGate != null) _experimentalGate.Changed += (_, _) => OnPropertyChanged(nameof(TraceAvailable));
+        if (_experimentalGate != null)
+            _experimentalGate.Changed += (_, _) => { OnPropertyChanged(nameof(TraceAvailable)); RefreshAvailableMemory(); };
         RefreshAvailableMemory();
     }
 
@@ -947,6 +949,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         if (row == null || row.IsUnloaded || string.IsNullOrEmpty(row.FuncAddr)) return;
         StatusText = await Helpers.AobMakerActions.DisassembleFunctionAsync(AobMaker, _dump, row.FuncAddr, row.FuncName, _log);
     }
+
+    /// <summary>Called when the Live Funcs tab is shown: the trace slider's memory line reads the free memory again.</summary>
+    public void OnEnteringTab() => RefreshAvailableMemory();
 
     /// <summary>Called when the user navigates away from the Live Funcs tab. Flushes
     /// the keyword memory and auto-stops any live recording so a forgotten session
