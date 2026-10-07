@@ -39,6 +39,8 @@ struct FuncIdentity {
     // Another function took this address during the recording (review DLL-3): read again when its key changed, so
     // the fields above are the latest occupant's, and the address's count and calls are more than one function's.
     bool     reused        = false;
+    // [LIVEFUNCS-STEP2] UFunction::ReturnValueOffset, read beside ParmsSize; 0xFFFF: no return value, or not read.
+    uint16_t returnValueOffset = 0xFFFF;
 };
 // Reads `ufunc`'s identity on the hook, under the table's lock: loads only -- no allocation, no lock, no string.
 // Linie knows nothing of UObjects, so the pipe installs Ubel's reader at Start and a test installs a stub.
@@ -405,7 +407,8 @@ inline uint32_t ArmCopyBytes(uint32_t parmsSize, uint32_t functionFlags, uint32_
 inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return parmsSize > ringCap; }
 // The after-return copy: for out parameters and the return value (FUNC_HasOutParms), and whenever the flags could not
 // be read -- a copy too many beats a return value lost.
-inline bool ArmTakesAfter(uint32_t functionFlags) {
+inline bool ArmTakesAfter(uint32_t functionFlags, uint16_t returnValueOffset = 0xFFFF) {
+    (void)returnValueOffset;
     return functionFlags == 0 || (functionFlags & kFuncHasOutParms) != 0;
 }
 

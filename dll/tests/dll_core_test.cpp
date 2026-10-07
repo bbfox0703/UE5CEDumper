@@ -7367,6 +7367,8 @@ int main() {
         check("the after copy: out parameters or a return (FUNC_HasOutParms), or flags never read",
               Linie::ArmTakesAfter(Linie::kFuncHasOutParms | 0x400) && Linie::ArmTakesAfter(0) &&
               !Linie::ArmTakesAfter(0x400));
+        check("...and a return value alone, which FUNC_HasOutParms does not cover (measured: SnapProbe_RetOnly)",
+              Linie::ArmTakesAfter(0x400, 4) && !Linie::ArmTakesAfter(0x400, 0xFFFF));
         const Linie::NameKey k1{ 1, 0, 7, 0 }, k2{ 1, 0, 8, 0 }, k3{ 1, 1, 7, 0 }, k4{ 2, 0, 0, 0 };
         check("a key orders over its four ints, function first",
               k1 < k2 && k1 < k3 && k3 < k4 && k2 < k4 && !(k2 < k1) && !(k1 < k1) && k1 == Linie::NameKey{ 1, 0, 7, 0 } &&
@@ -7392,6 +7394,7 @@ int main() {
             out.classIndex    = (f == 0xC2) ? 8 : (f == 0xC3) ? 6 : 7;
             // 0xE1 has out parameters (FUNC_HasOutParms), 0xE2's flags could not be read, 0xE3's block is 100 bytes.
             out.functionFlags = (f == 0xE1) ? 0x00400400u : (f == 0xE2) ? 0u : 0x400u;
+            if (f == 0xE4) out.returnValueOffset = 12;   // a return value, and no FUNC_HasOutParms
             out.numParms      = 2;
             out.parmsSize     = (f == 0xE3) ? 100 : 16;
             return true;
@@ -7453,7 +7456,8 @@ int main() {
         // hand-made hint.
         auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xE1, 0, 7, 0 }, false, 0, 64 },
                                           Linie::ArmSpec{ Linie::NameKey{ 0xE2, 0, 7, 0 }, false, 1, 64 },
-                                          Linie::ArmSpec{ Linie::NameKey{ 0xE3, 0, 7, 0 }, false, 2, 64 } }, 8);
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE3, 0, 7, 0 }, false, 2, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xE4, 0, 7, 0 }, false, 3, 64 } }, 8);
         st2->gen = 6;
         Linie::StartRecording(armStub, nullptr, st2);
         Linie::RecordCall(0xE1, 3000, &h);
@@ -7463,6 +7467,8 @@ int main() {
         Linie::RecordCall(0xE3, 3002, &h);
         check("a block larger than its ring's slot: cut to it, and flagged", (h.flags & Linie::kArmTruncated) &&
               h.copy == 64 && !(h.flags & Linie::kArmAfter), u(h.copy).c_str());
+        Linie::RecordCall(0xE4, 3003, &h);
+        check("a return value without FUNC_HasOutParms: the table arms the after copy", (h.flags & Linie::kArmAfter) != 0);
 
         Linie::StartRecording(armStub);
         Linie::RecordCall(0xB, 2000, &h);
