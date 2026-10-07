@@ -26,16 +26,16 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | B5 | DLL | Ubel: the checked arm capture and RunArmCapturePass (injected live/key/capture checks; reuse by the 5-field key; states; latency) | N4, B2, B4 | ✅ ff583b96 red |
 | B6 | DLL | Ubel: DecodeParamSnapshot, value types | B4 | ✅ 6a5216ab red |
 | B7 | DLL | Ubel: DecodeParamSnapshot, pointer family and containers (soft-path facts in ctx, shared delegate/weak helpers, FText header) | B6 | ✅ b4e95908 red |
-| P0 | pipe | Rig skeleton tools/verify/livefuncs_snap_live.py with --fixture-check (paths as arguments; committed before it runs) | — | ⬜ |
-| P1 | pipe | Fixture: DumperTest58 probes (SnapProbe_Call, SnapProbe_RetOnly, SnapNest_Outer host, SnapProbe_PerFrame through ProcessEvent, SnapLate_Begin / SnapLate_Call); README rows; scripted Shipping repackage | P0 | ⬜ |
-| P2 | pipe | Rig tools/verify/livefuncs_snap_live.py (paths as arguments; committed before it runs) | P1 | ⬜ |
-| F1 | pipe | Fern: fname_key and per_frame on pe_profile_get rows | B2, P2 | ⬜ |
-| F2 | pipe | Fern: pe_profile_start ticks by name (verify keys, ArmState, scoped, trace.names reply); free the previous trace first; D1's unloaded-tick refusal kept for legacy address ticks only; Start time logged | T1, N4, F1 | ⬜ |
-| F3 | pipe | Fern: trace.snapshots at Start (ring caps from parms_size, bytes 8-128 MB, budgets clamped, copier, snap keys in the ArmState); snap in TraceInfoToJson | S5, F2 | ⬜ |
-| K1 | pipe | Stark (DLL, no unit target): RecordCall(&hint), TraceEnter(..., params, hint), TraceReturn(..., params) | F3, S3 | ⬜ |
-| F4 | pipe | Fern: the layout-capture worker (a thread per traced Start with snapshot keys, polling every 50 ms, first enum detection kicked at Start); Stop = StopTrace, StopRecording, final pass with a 2 s deadline, seal; names summary before ReleaseIfEmpty | B5, K1 | ⬜ |
-| F5 | pipe | Fern/Renge: pe_snap_layouts (paged by arms, ~1 MB, layouts de-duplicated per page) and pe_snap_get (copy under the lock, decode outside); pipe count 102 -> 104; pipe-protocol.md flags table and 'does not hold' | F4, B7, S7 | ⬜ |
-| F6 | pipe | Fern: code_addr on pe_trace_names funcs (Live, native) | F2 | ⬜ |
+| P0 | pipe | Rig skeleton tools/verify/livefuncs_snap_live.py with --fixture-check (paths as arguments; committed before it runs) | — | ✅ 97114411 (red: the old package, 1/6) |
+| P1 | pipe | Fixture: DumperTest58 probes (SnapProbe_Call, SnapProbe_RetOnly, SnapNest_Outer host, SnapProbe_PerFrame through ProcessEvent, SnapLate_Begin / SnapLate_Call); README rows; scripted Shipping repackage | P0 | ✅ 97114411, package rebuilt 22:54 (green: 6/6) |
+| P2 | pipe | Rig tools/verify/livefuncs_snap_live.py (paths as arguments; committed before it runs) | P1 | ✅ 0776e2cd (red: 3638 7/11, pre-K1; green 33/33 at ce9e3c1d) |
+| F1 | pipe | Fern: fname_key and per_frame on pe_profile_get rows | B2, P2 | ✅ 2d6dae58 |
+| F2 | pipe | Fern: pe_profile_start ticks by name (verify keys, ArmState, scoped, trace.names reply); free the previous trace first; D1's unloaded-tick refusal kept for legacy address ticks only; Start time logged | T1, N4, F1 | ✅ 247156f3 (with F3) |
+| F3 | pipe | Fern: trace.snapshots at Start (ring caps from parms_size, bytes 8-128 MB, budgets clamped, copier, snap keys in the ArmState); snap in TraceInfoToJson | S5, F2 | ✅ 247156f3 |
+| K1 | pipe | Stark (DLL, no unit target): RecordCall(&hint), TraceEnter(..., params, hint), TraceReturn(..., params) | F3, S3 | ✅ d4c2dc1b (red: pre-K1 DLL, 0 roots) |
+| F4 | pipe | Fern: the layout-capture worker (a thread per traced Start with snapshot keys, polling every 50 ms, first enum detection kicked at Start); Stop = StopTrace, StopRecording, final pass with a 2 s deadline, seal; names summary before ReleaseIfEmpty | B5, K1 | ✅ 6043683d |
+| F5 | pipe | Fern/Renge: pe_snap_layouts (paged by arms, ~1 MB, layouts de-duplicated per page) and pe_snap_get (copy under the lock, decode outside); pipe count 102 -> 104; pipe-protocol.md flags table and 'does not hold' | F4, B7, S7 | ✅ d3114c55 red, 50f51651, 53a28683; lone return 99647a1b; soft sub-path ce9e3c1d |
+| F6 | pipe | Fern: code_addr on pe_trace_names funcs (Live, native) | F2 | ✅ 53a28683 |
 | U1 | UI | Models and DumpService: NameKey (fname_key), per_frame, TraceStartOptions.TickedNames / Snapshots, trace.names / scoped / snap parsed, pe_snap_layouts / pe_snap_get, code_addr | F1, F2, F3, F5, F6 | ⬜ |
 | U2 | UI | LaneRoutingPipeClient: pe_snap_layouts and pe_snap_get on the bulk lane | U1 | ⬜ |
 | U3 | UI | Helpers/FunctionTickSet extracted from _ticked, holding per Class::Func the live addresses, a set of NameKeys and the largest ParmsSize | U1 | ⬜ |
