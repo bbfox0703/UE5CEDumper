@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Xml.Linq;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
@@ -518,5 +520,112 @@ public class CallTraceViewModelTests
         Assert.True(rows[1].ObjectStale);
         Assert.True(rows[4].IsScopeRoot);
         Assert.Equal("—", rows[4].DurationText);   // never returned
+    }
+
+    // ---- [LIVEFUNCS-STEP2 U10] the list's widths: dragged from the header, shared by every row, remembered ----
+
+    [Fact]
+    public void The_widths_start_at_the_old_fixed_layout_and_the_saved_defaults_are_the_same()
+    {
+        // A file from before the widths were saved hydrates to the options' defaults, which must be what the tab
+        // showed before them: Time 96, Duration 88, Thread 64, Object 260, the detail pane 380.
+        var (vm, _) = MakeVm(Dump());
+        var o = new CallTraceUiOptions();
+        Assert.Equal((96.0, 88.0, 64.0, 260.0, 380.0),
+                     (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth, vm.DetailPaneWidth));
+        Assert.Equal((96.0, 88.0, 64.0, 260.0, 380.0),
+                     (o.TimeColWidth, o.DurationColWidth, o.ThreadColWidth, o.ObjectColWidth, o.DetailPaneWidth));
+    }
+
+    [Fact]
+    public void A_width_dragged_or_loaded_below_its_minimum_stops_there()
+    {
+        // A drag past the edge, or a hand-edited ui-options.json, must not make a column vanish: a column of 0 has no
+        // header left to drag it back by.
+        var (vm, _) = MakeVm(Dump());
+        vm.TimeColWidth = 0;
+        vm.DurationColWidth = -50;
+        vm.ThreadColWidth = 1;
+        vm.ObjectColWidth = 10;
+        vm.DetailPaneWidth = 0;
+        Assert.Equal((40.0, 40.0, 32.0, 80.0, 200.0),
+                     (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth, vm.DetailPaneWidth));
+
+        vm.TimeColWidth = double.NaN;   // Width NaN is "auto" to Avalonia: the column would size to its text
+        Assert.Equal(40.0, vm.TimeColWidth);
+        vm.ObjectColWidth = 1e9;
+        Assert.Equal(CallTraceViewModel.MaxWidth, vm.ObjectColWidth);
+        vm.ObjectColWidth = 333.5;      // inside the range: kept as dragged
+        Assert.Equal(333.5, vm.ObjectColWidth);
+    }
+
+    [Fact]
+    public void The_widths_round_trip_through_the_settings_root_with_the_source_generated_context()
+    {
+        // The JSON context reaches only what the root reaches: a CallTraceUiOptions held anywhere else is never written.
+        var o = new UiOptionsSettings();
+        o.CallTrace.TimeColWidth = 120;
+        o.CallTrace.DurationColWidth = 70;
+        o.CallTrace.ThreadColWidth = 50;
+        o.CallTrace.ObjectColWidth = 333;
+        o.CallTrace.DetailPaneWidth = 512;
+        string json = JsonSerializer.Serialize(o, UiOptionsJsonContext.Default.UiOptionsSettings);
+        var back = JsonSerializer.Deserialize(json, UiOptionsJsonContext.Default.UiOptionsSettings)!;
+        Assert.Equal((120.0, 70.0, 50.0, 333.0, 512.0),
+                     (back.CallTrace.TimeColWidth, back.CallTrace.DurationColWidth, back.CallTrace.ThreadColWidth,
+                      back.CallTrace.ObjectColWidth, back.CallTrace.DetailPaneWidth));
+
+        // A file from before the widths were saved has no callTrace object: the defaults, not zero widths.
+        var older = JsonSerializer.Deserialize("{\"schemaVersion\":1}", UiOptionsJsonContext.Default.UiOptionsSettings)!;
+        Assert.Equal(380.0, older.CallTrace.DetailPaneWidth);
+        Assert.Equal(260.0, older.CallTrace.ObjectColWidth);
+    }
+
+    private static readonly XNamespace Av = "https://github.com/avaloniaui";
+    private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+    /// <summary>A row cell's width binding: a row's DataContext is its CallTraceRow, so the width comes from the
+    /// panel's view model, by the compiled route the row's ToggleCommand already takes.</summary>
+    private const string RowWidth = "{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).";
+
+    private static XDocument PanelAxaml()
+        => XDocument.Load(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/CallTracePanel.axaml"));
+
+    private static XElement RowTemplate(XDocument doc)
+        => doc.Descendants(Av + "DataTemplate").Single(e => (string?)e.Attribute(Xaml + "DataType") == "vm:CallTraceRow");
+
+    [Fact]
+    public void Every_row_cell_binds_the_view_models_width_and_the_Object_cell_has_a_tooltip()
+    {
+        var row = RowTemplate(PanelAxaml());
+        // A ColumnDefinition is not a Visual, so a $parent binding on it never resolves: fixed columns cannot follow a drag.
+        Assert.DoesNotContain(row.DescendantsAndSelf(), e => e.Attribute("ColumnDefinitions") != null);
+        foreach (var (width, text) in new[] { ("TimeColWidth", "TimeText"), ("DurationColWidth", "DurationText"),
+                                              ("ThreadColWidth", "ThreadText"), ("ObjectColWidth", "ObjectText") })
+        {
+            var cells = row.Descendants().Where(e => (string?)e.Attribute("Width") == RowWidth + width + "}").ToList();
+            Assert.True(cells.Count == 1, $"{cells.Count} row cell(s) bind {width}");
+            Assert.Contains(cells[0].DescendantsAndSelf(), e => (string?)e.Attribute("Text") == "{Binding " + text + "}");
+        }
+        var obj = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ObjectColWidth}");
+        Assert.Contains(obj.DescendantsAndSelf(),
+                        e => ((string?)e.Attribute("ToolTip.Tip") ?? "").StartsWith("{Binding Object", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Every_header_cell_has_the_rows_width_and_a_thumb_that_drags_it_and_so_has_the_detail_pane()
+    {
+        var doc = PanelAxaml();
+        var row = RowTemplate(doc);
+        var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
+        Assert.DoesNotContain(outside, e => e.Attribute("ColumnDefinitions") != null);
+        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        {
+            var cells = outside.Where(e => (string?)e.Attribute("Width") == "{Binding " + width + "}").ToList();
+            Assert.True(cells.Count == 1, $"{cells.Count} header cell(s) bind {width}");
+            Assert.Contains(cells[0].Descendants(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
+        }
+        var pane = outside.Single(e => e.Name == Av + "TextBox" && (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
+        Assert.Equal("{Binding DetailPaneWidth}", (string?)pane.Attribute("Width"));
+        Assert.Contains(pane.Parent!.Elements(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
     }
 }

@@ -92,6 +92,13 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
+    internal const double MaxWidth = 4096;
+    public double TimeColWidth { get; set; }
+    public double DurationColWidth { get; set; }
+    public double ThreadColWidth { get; set; }
+    public double ObjectColWidth { get; set; }
+    public double DetailPaneWidth { get; set; }
+
     internal CallTrace? Trace => _trace;
     internal CallTraceTree? Tree => _tree;
 

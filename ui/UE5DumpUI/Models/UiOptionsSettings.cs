@@ -46,6 +46,7 @@ public sealed class UiOptionsSettings
     public SystemUiOptions System { get; set; } = new();
     public LiveFuncsUiOptions LiveFuncs { get; set; } = new();
     public DumpExplorerUiOptions DumpExplorer { get; set; } = new();
+    public CallTraceUiOptions CallTrace { get; set; } = new();
 }
 
 /// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options (D8). Both OFF by default: a default report is the
@@ -218,6 +219,15 @@ public sealed class InterestingPropsUiOptions
 public sealed class ConsoleUiOptions
 {
     public bool GameOnly { get; set; }
+}
+
+public sealed class CallTraceUiOptions
+{
+    public double TimeColWidth { get; set; }
+    public double DurationColWidth { get; set; }
+    public double ThreadColWidth { get; set; }
+    public double ObjectColWidth { get; set; }
+    public double DetailPaneWidth { get; set; }
 }
 
 /// <summary>Live Funcs capture settings. Each is stored as its slider's exponent, like the toolbar's power-of-two
