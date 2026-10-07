@@ -2177,6 +2177,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                     _proxyConfirmTimer?.Dispose();
                     _proxyConfirmTimer = null;
                     LiveFuncs.ResetOnDisconnect();   // clear stuck "recording" UI state (L16)
+                    CallTrace.ClearOnDisconnect();   // [LIVEFUNCS-TIMELINE-2026-10-04] the next process numbers traces from 1
                     // The banner names a PID. Left standing it pins a dead one for the
                     // rest of the session and keeps warning about a conflict that ended
                     // when the game closed. (B9)

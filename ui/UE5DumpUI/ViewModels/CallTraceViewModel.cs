@@ -356,8 +356,15 @@ public partial class CallTraceViewModel : ViewModelBase
         finally { IsLoading = false; }
     }
 
-    /// <summary>Red stub.</summary>
-    public void ClearOnDisconnect() { }
+    /// <summary>The pipe dropped. Every game process numbers its traces from 1, so the generation already shown means
+    /// nothing in the next one: forget it, so the next process's first trace is read. The trace on screen stays, marked
+    /// as from an earlier connection; a load in progress stops.</summary>
+    public void ClearOnDisconnect()
+    {
+        _loadedGen = 0;
+        _loadCts?.Cancel();
+        if (_trace != null) StatusText = Res.Get("str.CT.Status.EarlierConnection");
+    }
 
     /// <summary>Leaving the tab: keep the keyword, and stop reading a trace the user walked away from.</summary>
     public void OnLeavingTab()
