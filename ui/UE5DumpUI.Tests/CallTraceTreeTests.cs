@@ -147,6 +147,36 @@ public class CallTraceTreeTests
         Assert.StartsWith("1,0.01,30,true,1,1,0,Character,Jump,0xB,BP_Hero_0,BP_Hero_C,0x20,true,false", lines[2]);
         // "=Tick,"x"": armoured against a formula, then quoted for the comma and the quotes.
         Assert.Contains(",GameMode,\"'=Tick,\"\"x\"\"\",0xE,", lines[5]);
-        Assert.EndsWith(",,,,,true", lines[5]);   // no object: four empty cells, then the scope root
+        Assert.EndsWith(",,,,,true,false", lines[5]);   // no object: four empty cells, the scope root, not unloaded
+    }
+
+    // [TRACE-UNLOADED-NAMES] An unloaded function's calls say so in both formats; a live one's JSONL line is unchanged.
+    private static CallTrace UnloadedSample() => CallTraceBuilder.Build(new[] { E(0, 1000, 0xA), E(1, 1010, 0xB) },
+        new TraceInfo { QpcFreq = 1_000_000, Written = 2 },
+        new[]
+        {
+            new TraceFuncName { Addr = 0xA, Live = true, ClassName = "Pawn", FuncName = "Jump" },
+            new TraceFuncName { Addr = 0xB, Live = false, Unloaded = true, ClassName = "WBP_Inventory_C", FuncName = "OnOpen" },
+        });
+
+    [Fact]
+    public void Export_marks_an_unloaded_functions_calls()
+    {
+        var j = new StringWriter();
+        CallTraceExport.WriteJsonl(UnloadedSample(), j, new DateTime(2026, 10, 7, 0, 0, 0, DateTimeKind.Utc));
+        var jl = j.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Contains("\"unloaded_funcs\":1", jl[0]);
+        Assert.Contains("\"unnamed_funcs\":0", jl[0]);
+        Assert.DoesNotContain("func_unloaded", jl[1]);
+        Assert.Contains("\"func\":\"OnOpen\"", jl[2]);
+        Assert.Contains("\"func_unloaded\":true", jl[2]);
+
+        var c = new StringWriter();
+        CallTraceExport.WriteCsv(UnloadedSample(), c);
+        var cl = c.ToString().Split("\r\n", StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal("func_unloaded", CallTraceExport.CsvColumns[^1]);
+        Assert.EndsWith(",false", cl[1]);
+        Assert.Contains(",WBP_Inventory_C,OnOpen,", cl[2]);
+        Assert.EndsWith(",true", cl[2]);
     }
 }

@@ -198,4 +198,52 @@ public class CallTraceBuilderTests
         Assert.Equal("", t.ObjName(2));      // no object: a static call
         Assert.False(t.ObjStale(2));
     }
+
+    // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded before Stop keeps the name read at its first call.
+    private static CallTrace UnloadedSample() => CallTraceBuilder.Build(new[]
+        {
+            Entry(0, 1, 0xF1), Entry(1, 2, 0xF1), Entry(2, 3, 0xF1),   // live, 3 calls
+            Entry(3, 4, 0xF2),                                          // unloaded, named from its first call
+            Entry(4, 5, 0xF3), Entry(5, 6, 0xF3),                       // gone and never read
+        },
+        Info,
+        new[]
+        {
+            new TraceFuncName { Addr = 0xF1, Live = true, ClassName = "Pawn", FuncName = "Jump" },
+            new TraceFuncName { Addr = 0xF2, Live = false, Unloaded = true, ClassName = "WBP_Inventory_C", FuncName = "OnOpen" },
+            new TraceFuncName { Addr = 0xF3, Live = false },
+        });
+
+    [Fact]
+    public void An_unloaded_function_shows_the_name_from_its_first_call_and_is_marked()
+    {
+        var t = UnloadedSample();
+        Assert.Equal("OnOpen", t.FuncName(3));
+        Assert.Equal("WBP_Inventory_C", t.ClassName(3));
+        Assert.True(t.FuncUnloaded(3));
+        Assert.False(t.FuncUnloaded(0));
+        Assert.Equal("0xF3", t.FuncName(4));   // never read: an address, as before
+        Assert.False(t.FuncUnloaded(4));
+    }
+
+    [Fact]
+    public void The_trace_counts_its_unloaded_and_its_unnamed_functions_and_their_calls()
+    {
+        var t = UnloadedSample();
+        Assert.Equal(3, t.DistinctFuncs);
+        Assert.Equal(1, t.UnloadedFuncs);
+        Assert.Equal(1L, t.UnloadedCalls);
+        Assert.Equal(1, t.UnnamedFuncs);
+        Assert.Equal(2L, t.UnnamedCalls);
+    }
+
+    [Theory]
+    [InlineData(0L, 6_710_886L, "0%")]
+    [InlineData(5_387L, 6_710_886L, "0.08%")]
+    [InlineData(1L, 6_710_886L, "<0.01%")]
+    [InlineData(1L, 3L, "33.33%")]
+    [InlineData(3L, 3L, "100%")]
+    [InlineData(0L, 0L, "0%")]
+    public void The_share_with_no_name_reads_as_a_percentage_at_any_size(long part, long whole, string expected)
+        => Assert.Equal(expected, CallTrace.ShareText(part, whole));
 }
