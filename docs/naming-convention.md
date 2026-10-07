@@ -31,7 +31,7 @@ narrative identity resonates with what the module *does*.
 | **Aura.cpp** | 斷頭台的阿烏拉 | アウラ | Obedience Scale demon | #3 | ObjectArray: FUObjectArray slot enumeration | Weighs every soul on her scale — validates each object slot |
 | **Serie.cpp** | 賽莉耶 | ゼーリエ | Living-history great mage | #6 | FNamePool: FName string resolution (UE5 pool + UE4 TNameEntry) | Remembers every mage's name across millennia — the name oracle |
 | **Ubel.cpp** | 尤蓓爾 | ユーベル | Surgical-precision assassin | #15 | UStructWalker: FField chain traversal, property reading | "If she can visualize it, she can cut it" — surgical struct dissection |
-| **Fern.cpp** | 費倫 | フェルン | Frieren's apprentice | #8 | PipeServer: Named Pipe JSON IPC (102 commands) | The communicator, messenger — bridges worlds |
+| **Fern.cpp** | 費倫 | フェルン | Frieren's apprentice | #8 | PipeServer: Named Pipe JSON IPC (104 commands) | The communicator, messenger — bridges worlds |
 | **Sein.cpp** | 贊恩 | ザイン | Priest, journey chronicler | #24 | Logger: 5-category per-process file logging with rotation | The quiet observer who records everything |
 | **Himmel.cpp** | 欣梅爾 | ヒンメル | Hero, remembered forever | #2 | Signatures: 128+ AOB pattern database | The hero's *legacy* — immutable knowledge left for those who follow |
 | **Flamme.cpp** | 弗蘭梅 | フランメ | Ancient master, knowledge keeper | — | HintCache: per-game AOB result caching | Ancient wisdom passed down — accelerates future scans |

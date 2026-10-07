@@ -2,7 +2,7 @@
 
 // ============================================================
 // Fern — 費倫 (芙莉蓮的弟子 — Frieren's Apprentice)
-// PipeServer: Named Pipe JSON IPC server (102 commands)
+// PipeServer: Named Pipe JSON IPC server (104 commands)
 //
 // ⚠ DERIVED, not hand-maintained: `grep -c 'constexpr const char* CMD' dll/src/Renge.h`,
 // asserted by `tools/check_derived_counts.py` in CI. It said "~30" against a real 99 until

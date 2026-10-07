@@ -68,14 +68,14 @@ UE5CEDumper/
 │       ├── ProxyDxgi.def           ← dxgi.dll export forwarding
 │       │
 │       ├── Frieren.cpp / .h        ← ExportAPI — 63 C ABI exports for CE Lua bridge
-│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (102 commands)
+│       ├── Fern.cpp / .h           ← PipeServer — Named pipe IPC server, JSON dispatch (104 commands)
 │       └── Renge.h                 ← PipeProtocol — shared JSON command/field name constants
 │
 ├── docs/                           ← Documentation
 │   ├── architecture.md             ← This file
 │   ├── dev-log.md                  ← Running milestone log + capability matrix + gaps (read first)
 │   ├── dll-spec.md                 ← C++ header definitions, offset tables, CE Lua bridge
-│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (102 commands)
+│   ├── pipe-protocol.md            ← Named Pipe JSON IPC protocol (104 commands)
 │   ├── ui-spec.md                  ← Avalonia UI tech stack, component skeletons
 │   ├── export-formats.md           ← CE XML, CSX, SDK Header, USMAP export rules
 │   ├── technical-notes.md          ← UE version diffs, FField vs UProperty, FNamePool internals,

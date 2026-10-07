@@ -1910,6 +1910,111 @@ json ArmsSummaryToJson() {
     return out;
 }
 
+// ---- pe_snap_layouts / pe_snap_get: the snapshots after Stop (F5) ----
+
+const char* ParamKindName(Ubel::ParamKind k) {
+    switch (k) {
+    case Ubel::ParamKind::In:       return "in";
+    case Ubel::ParamKind::ConstRef: return "const_ref";
+    case Ubel::ParamKind::Out:      return "out";
+    case Ubel::ParamKind::InOut:    return "in_out";
+    case Ubel::ParamKind::Return:   return "return";
+    }
+    return "in";
+}
+
+const char* ArmStateName(Linie::ArmLayoutState s) {
+    switch (s) {
+    case Linie::ArmLayoutState::Pending:            return "pending";
+    case Linie::ArmLayoutState::Read:               return "read";
+    case Linie::ArmLayoutState::UnloadedBeforeRead: return "unloaded_before_read";
+    case Linie::ArmLayoutState::ReplacedBeforeRead: return "replaced_before_read";
+    case Linie::ArmLayoutState::Doubtful:           return "doubtful";
+    case Linie::ArmLayoutState::Failed:             return "failed";
+    case Linie::ArmLayoutState::NotReadBeforeStop:  return "not_read_before_stop";
+    }
+    return "pending";
+}
+
+std::string Hex64(uint64_t v) {   // flags as strings: 64 bits do not fit a JSON double exactly
+    char b[24];
+    snprintf(b, sizeof(b), "0x%016llX", (unsigned long long)v);
+    return b;
+}
+
+json ParamFieldToJson(const Ubel::ParamField& f) {
+    json p;
+    p["name"]      = f.name;
+    p["type"]      = f.typeName;
+    p["offset"]    = f.offset;
+    p["size"]      = f.size;
+    p["array_dim"] = f.arrayDim;
+    p["flags"]     = Hex64(f.flags);
+    p["kind"]      = ParamKindName(f.kind);
+    if (f.boolMask)               p["bool_mask"]  = f.boolMask;
+    if (f.boolNative)             p["bool_native"] = true;
+    if (!f.structType.empty())    p["struct"]     = f.structType;
+    if (!f.objClass.empty())      p["obj_class"]  = f.objClass;
+    if (!f.enumName.empty())      p["enum"]       = f.enumName;   // the DLL decodes enums: no table is sent
+    if (!f.optInnerType.empty()) {
+        p["opt_layout"]     = f.optLayout;
+        p["opt_inner_type"] = f.optInnerType;
+        p["opt_inner_size"] = f.optInnerSize;
+    }
+    if (!f.sub.empty()) {
+        json sub = json::array();
+        for (const auto& s : f.sub) sub.push_back(ParamFieldToJson(s));
+        p["sub"] = std::move(sub);
+    }
+    return p;
+}
+
+json ParamLayoutToJson(const Ubel::ParamLayout& l) {
+    json j;
+    j["class_name"]     = l.className;
+    j["func_name"]      = l.funcName;
+    j["function_flags"] = Hex64(l.functionFlags);
+    j["parms_size"]     = l.parmsSize;
+    j["num_parms"]      = l.numParms;
+    j["layout_end"]     = l.layoutEnd;
+    json ps = json::array();
+    for (const auto& f : l.params) ps.push_back(ParamFieldToJson(f));
+    j["params"] = std::move(ps);
+    return j;
+}
+
+// [text, mark] or [text, mark, [sub...]]: compact, since a page holds thousands of slots.
+json SnapValueToJson(const Ubel::SnapValue& v) {
+    json a = json::array({ v.text, static_cast<int>(v.mark) });
+    if (!v.sub.empty()) {
+        json sub = json::array();
+        for (const auto& s : v.sub) sub.push_back(SnapValueToJson(s));
+        a.push_back(std::move(sub));
+    }
+    return a;
+}
+
+// What an object pointer in a copy is NOW: the decoder marks it "now", never "at the call".
+bool SnapObjectNow(uintptr_t ptr, std::string& name, std::string& className) {
+    const int32_t idx = Ubel::GetIndex(ptr);
+    if (idx < 0 || Aura::GetByIndex(idx) != ptr) return false;
+    name = Ubel::GetName(ptr);
+    const uintptr_t cls = Ubel::GetClass(ptr);
+    className = cls ? Ubel::GetName(cls) : std::string();
+    return true;
+}
+
+Ubel::SnapDecodeCtx LiveSnapDecodeCtx() {
+    Ubel::SnapDecodeCtx c;
+    c.fname      = [](int32_t i, int32_t n) { return Serie::GetString(i, n); };
+    c.object     = &SnapObjectNow;
+    c.weak       = &Ubel::ResolveWeakObjectPtr;
+    c.garbageTag = &Ubel::WeakTargetGarbageTag;
+    return c;
+}
+
+constexpr size_t kSnapPageBytes = 1u << 20;   // a reply line stays inside the size measured to pool no buffers
+
 }  // namespace
 
 std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const std::string& jsonLine) {
@@ -5024,6 +5129,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (fd.state == Ubel::FuncState::Recycled) it["recycled"] = true;
                     // Review DLL-3: the address held another function during the recording; its calls are mixed.
                     if (i < idents.size() && idents[i].reused) it["reused"] = true;
+                    // [LIVEFUNCS-STEP2] F6: where a live native function's code is, for a CE address; "" for a script
+                    // function (its Func is the interpreter) or one not found. Never for a dead address.
+                    if (fd.state == Ubel::FuncState::Live) {
+                        constexpr uint32_t kFuncNative = 0x00000400;
+                        const bool script = fd.functionFlags != 0 && !(fd.functionFlags & kFuncNative);
+                        const uintptr_t code = script ? 0 : Aura::GetFunctionCodeAddr(a);
+                        it["code_addr"] = code ? Renge::AddrToStr(code) : std::string();
+                    }
                 }
                 items.push_back(std::move(it));
             }
@@ -5038,6 +5151,147 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // pe_trace_release: the UI has read the trace; give the game its memory back now rather than at the next
         // Start or when the client leaves. With `gen`, only that recording, and only once it has stopped: the release
         // a reader sends for what it read never frees a newer recording (review DLL-1).
+        // [LIVEFUNCS-STEP2] F5. pe_snap_layouts: every arm of the stopped trace -- one load of a chosen function --
+        // with its layout, paged by arms; layouts shared by several arms are sent once per page. Read once per load.
+        if (cmd == Renge::CMD_PE_SNAP_LAYOUTS) {
+            int64_t offset = request.value("offset", int64_t(0));
+            int64_t limit  = request.value("limit", int64_t(1024));
+            if (offset < 0) offset = 0;
+            if (limit < 1) limit = 1;
+            if (limit > 4096) limit = 4096;
+            uint64_t gen = 0;
+            const std::shared_ptr<Linie::ArmState> arms = Linie::TraceArms(&gen);
+            const Linie::TraceInfo ti = Linie::GetTraceInfo();
+            json data = TraceInfoToJson(ti);
+            data["offset"] = offset;
+            if (request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
+                data["stale"] = true;   // another recording than the one asked for: nothing of it
+                data["total"] = 0;
+                data["count"] = 0;
+                data["arms"] = json::array();
+                data["layouts"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            std::vector<Linie::ArmView> views;
+            if (arms) views = Linie::CopyArms(*arms);
+            json rings = json::array();
+            std::vector<Linie::SnapRingInfo> ri;
+            if (Linie::SnapRings(ri)) {
+                for (const auto& r : ri) {
+                    rings.push_back({ { "ring", r.index }, { "cap", r.cap }, { "written", r.written },
+                                      { "first_valid", r.firstValid }, { "skipped_budget", r.skippedBudget },
+                                      { "dropped_budget", r.droppedBudget } });
+                }
+            }
+            data["rings"] = std::move(rings);
+            json armsJ = json::array(), layoutsJ = json::array();
+            std::unordered_map<const void*, size_t> layoutIndex;
+            size_t bytes = 0, i = static_cast<size_t>(offset);
+            bool truncated = false;
+            for (; i < views.size() && armsJ.size() < static_cast<size_t>(limit); ++i) {
+                if ((i & 0xFF) == 0 && Tot::Requested()) { truncated = true; break; }
+                if (bytes > kSnapPageBytes) break;
+                const Linie::ArmView& v = views[i];
+                json a;
+                a["index"]          = v.index;
+                a["ring"]           = v.rec.ring;
+                a["addr"]           = Renge::AddrToStr(v.rec.addr);
+                a["class_name"]     = Serie::GetString(v.rec.ident.classIndex, v.rec.ident.classNumber);
+                a["func_name"]      = Serie::GetString(v.rec.ident.nameIndex, v.rec.ident.nameNumber);
+                a["function_flags"] = Hex64(v.rec.ident.functionFlags);
+                a["parms_size"]     = v.rec.ident.parmsSize;
+                a["num_parms"]      = v.rec.ident.numParms;
+                a["arm_ms"]         = v.rec.armMs;
+                a["state"]          = ArmStateName(v.state);
+                if (!v.why.empty()) a["why"] = v.why;
+                if (v.state != Linie::ArmLayoutState::Pending &&
+                    v.state != Linie::ArmLayoutState::NotReadBeforeStop) a["read_ms"] = v.readMs;
+                if (v.layout) {
+                    auto it = layoutIndex.find(v.layout.get());
+                    if (it == layoutIndex.end()) {
+                        json lj = ParamLayoutToJson(*static_cast<const Ubel::ParamLayout*>(v.layout.get()));
+                        bytes += lj.dump().size();
+                        it = layoutIndex.emplace(v.layout.get(), layoutsJ.size()).first;
+                        layoutsJ.push_back(std::move(lj));
+                    }
+                    a["layout"] = it->second;
+                }
+                bytes += 256;
+                armsJ.push_back(std::move(a));
+            }
+            data["total"]   = views.size();
+            data["count"]   = armsJ.size();
+            data["next"]    = i;
+            data["arms"]    = std::move(armsJ);
+            data["layouts"] = std::move(layoutsJ);
+            if (truncated) data["truncated"] = true;
+            return Renge::MakeResponse(id, data).dump();
+        }
+
+        // pe_snap_get: one page of one snapshot ring, each slot decoded with its own arm's layout. The slots are copied
+        // under the trace's lock, decoded outside it. Refused (count 0) while tracing, unquiesced or released.
+        if (cmd == Renge::CMD_PE_SNAP_GET) {
+            const int64_t ringIn = request.value("ring", int64_t(-1));
+            const uint64_t from  = request.value("from", uint64_t(0));
+            int64_t maxSlots = request.value("max", int64_t(1024));
+            if (maxSlots < 1) maxSlots = 1;
+            if (maxSlots > 4096) maxSlots = 4096;
+            uint64_t gen = 0;
+            const std::shared_ptr<Linie::ArmState> arms = Linie::TraceArms(&gen);
+            json data = TraceInfoToJson(Linie::GetTraceInfo());
+            data["ring"] = ringIn;
+            const bool stale = request.contains("gen") && request.value("gen", uint64_t(0)) != gen;
+            std::vector<Linie::SnapCopy> slots;
+            uint64_t next = from, orphans = 0;
+            const bool copied = !stale && ringIn >= 0 &&
+                Linie::CopySnaps(static_cast<uint32_t>(ringIn), from, static_cast<size_t>(maxSlots), slots, &next,
+                                 &orphans);
+            if (stale) data["stale"] = true;
+            if (!copied) {
+                data["count"] = 0;
+                data["next"]  = from;
+                data["items"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            std::vector<Linie::ArmView> views;
+            if (arms) views = Linie::CopyArms(*arms);
+            const Ubel::SnapDecodeCtx ctx = LiveSnapDecodeCtx();
+            json items = json::array();
+            size_t bytes = 0;
+            uint64_t pageNext = next;
+            for (size_t k = 0; k < slots.size(); ++k) {
+                const Linie::SnapCopy& s = slots[k];
+                if (bytes > kSnapPageBytes || ((k & 0xFF) == 0 && k && Tot::Requested())) {
+                    pageNext = s.index;   // the rest on the next page
+                    break;
+                }
+                json it;
+                it["index"]     = s.index;
+                it["entry_seq"] = s.entrySeq;
+                it["phase"]     = s.after ? "return" : "entry";
+                it["len"]       = s.len;
+                it["flags"]     = s.flags;
+                it["arm"]       = s.arm;
+                it["data"]      = Linie::Base64Encode(s.bytes.data(), s.bytes.size());
+                const Ubel::SlotDecode d = Ubel::DecodeSlot(views, s.arm, s.bytes.data(),
+                                                            static_cast<uint32_t>(s.bytes.size()), s.after, ctx);
+                if (d.layout) {
+                    json vals = json::array();
+                    for (const auto& v : d.values) vals.push_back(SnapValueToJson(v));
+                    it["values"] = std::move(vals);
+                } else {
+                    it["raw_only"] = ArmStateName(d.state);   // why there are no values: the arm's layout state
+                }
+                bytes += it.dump().size();
+                items.push_back(std::move(it));
+            }
+            data["count"]   = items.size();
+            data["next"]    = pageNext;
+            data["orphans"] = orphans;
+            data["items"]   = std::move(items);
+            return Renge::MakeResponse(id, data).dump();
+        }
+
         if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
             JoinArmWorker();   // [LIVEFUNCS-STEP2] its arms go with the trace
             bool released;

@@ -674,6 +674,88 @@ What the trace does not hold: the tool's own invokes (`invoke_function`, the CE 
 back through the hook and are recorded. A per-frame function left out by `exclude_per_frame` writes no records
 either, and the calls it makes nest under the nearest traced caller, as if that caller had made them.
 
+#### Following functions by name, and parameter snapshots (step 2) `[LIVEFUNCS-STEP2]`
+
+A tick or a snapshot choice is a NAME -- the function's FName and its class's, as the name pool's ints -- not an
+address: a widget's functions unload when it closes and come back at new addresses (plan T10). Every key travels with
+the strings the UI showed; the Start renders both halves and refuses a key that does not match. The design and its
+decisions: [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "Step 2 design".
+
+```jsonc
+// pe_profile_get rows gain (always sent):
+//   "fname_key": [fnIdx, fnNum, clsIdx, clsNum]   the ints the row's func_name / class_name are rendered from
+//   "per_frame": true                            only when true: the function fired every frame (IsPerFrame)
+
+// Start by name. ticked_names: each item a function to tick; its calls open the scope. snapshots.funcs: each item a
+// function whose parameter block is copied on its calls; parms_size sizes its ring (RingCapFor: rounded to 8, at most
+// 2048, 256 when 0). snapshots.bytes: a power of two from 8 MB to 128 MB (else an error). per_ring_per_s /
+// total_per_s: the budget, clamped to 1..16777215 (defaults 1000 / 10000). With ticked_names, `ticked` (addresses)
+// is ignored. The previous trace is freed first, whatever the reply. Refused: every item refused, or every tick
+// refused when ticks were asked -- never a trace of every call, never a quiet snapshots-only trace. A buffer that
+// keeps fewer than 8 calls per chosen function is refused and names the count.
+{ "id": 77, "cmd": "pe_profile_start",
+  "trace": { "bytes": 67108864,
+             "ticked_names": [ { "class": "DumperTest58Actor", "func": "SnapNest_Outer", "keys": [[812, 0, 811, 0]] } ],
+             "snapshots": { "funcs": [ { "class": "DumperTest58Actor", "func": "SnapProbe_Call",
+                                         "keys": [[815, 0, 811, 0]], "parms_size": 152 } ],
+                            "bytes": 33554432, "per_ring_per_s": 1000, "total_per_s": 10000 } } }
+// The trace object gains: scoped, ticked_names (count), snap_only, and -- when a snapshot buffer exists -- "snap":
+//   { allocated, bytes, slots_per_ring (K: the calls each ring keeps), rings, per_ring_per_s, total_per_s,
+//     skipped_budget (in-scope calls recorded without parameters), dropped_budget (lone calls over the budget) }
+// The Start reply's trace also carries "names": { ticks, chosen, refused: [{ class, func, why }] }.
+// The Stop reply adds trace.snap_rings: [{ ring, cap, written, first_valid, skipped_budget, dropped_budget }] and a
+// top-level "names": [{ class, func, key, tick, chosen, addresses, arms, arms_full, not_called }] -- built before an
+// empty trace is released, so a name never called is reported even then. Stop stops the trace before the table,
+// reads the layouts still pending (2 s at most), then seals the rest raw-only.
+
+// Every arm of the stopped trace (one load of a chosen function), with its layout; paged by arms (offset, limit
+// 1..4096, default 1024, and ~1 MB a page), layouts shared by several arms sent once per page. gen as pe_trace_names.
+{ "id": 78, "cmd": "pe_snap_layouts", "gen": 3, "offset": 0 }
+// Reply: the trace object, rings (as snap_rings), total, count, next, arms, layouts.
+//   arms[i]: index, ring, addr, class_name, func_name, function_flags ("0x..."), parms_size, num_parms, arm_ms,
+//            state ("read" | "doubtful" | "failed" | "unloaded_before_read" | "replaced_before_read" |
+//            "not_read_before_stop" | "pending"), why, read_ms, layout (index into this page's layouts)
+//   layouts[j]: class_name, func_name, function_flags, parms_size, num_parms, layout_end, params:
+//            [{ name, type, offset, size, array_dim, flags ("0x..." 64-bit), kind ("in" | "const_ref" | "out" |
+//               "in_out" | "return"), bool_mask, bool_native, struct, obj_class, enum, opt_*, sub: [...] }]
+//            Enum tables are not sent: the DLL decodes.
+
+// One page of one ring (from: a slot number; max 1..4096, default 1024; ~1 MB a page), each slot decoded with ITS
+// arm's layout. Copied under the trace's lock, decoded after. count 0 while tracing, unquiesced, released, or stale.
+{ "id": 79, "cmd": "pe_snap_get", "gen": 3, "ring": 0, "from": 0, "max": 1024 }
+// Reply: the trace object, ring, count, next, orphans (slots whose call's entry record the ring no longer keeps:
+// left out), items: [{ index, entry_seq, phase ("entry" | "return"), len, flags, arm, data (base64), values }]
+//   values[i] lines up with the arm's layout params[i]: [text, mark] or [text, mark, [sub...]]. raw_only (the arm's
+//   state) instead of values when the arm has no layout.
+//   mark: 0 exact (from the copy alone), 1 now (an object named as it is NOW), 2 gone (no live object there now),
+//         3 missing (past the copy's end, or not a value this copy carries: an In parameter after the call, the
+//         return value at the call), 4 header (a string's or container's header only), 5 raw (hex)
+//   slot flags: 1 the call had no parameter block, 2 the copy faulted (nothing copied), 4 truncated (the block is
+//               larger than the ring's slot)
+
+// pe_trace_names funcs items gain code_addr (live functions only): the native code entry, for a CE address; "" for
+// a script function (its entry is the interpreter) or when none was found.
+```
+
+Entry-record flags (the record table above), from step 2:
+
+| Value | Meaning |
+|---|---|
+| 1 | the call opened a ticked scope (its root) |
+| 2 | a snapshot ring holds this call's parameters |
+| 4 | lone: a chosen call outside every scope, recorded only for its snapshot; it opened no scope |
+| 8 | excluded but chosen: a per-frame function left out by exclude_per_frame, recorded for its snapshot |
+| 16 | in scope and chosen, over the budget: recorded without its parameters |
+
+A snapshot slot is 24 bytes of header (`Linie::SnapSlotHeader`: the slot's number with bit 63 on the copy after the
+call, the call's entry sequence, len, flags, the arm) and the copy. The copy after the call is taken for functions
+with `FUNC_HasOutParms`, or whose flags could not be read; it is a slot of its own, never written over the entry's.
+
+What the snapshots do not hold: a call between the Start's trace and its table (microseconds) carries no name and
+takes none; a name whose class or function reloads under another Number is another key ("not called"); calls that
+skip ProcessEvent; an arm whose layout was never read (gone first, replaced, sealed at Stop) keeps raw bytes only;
+struct members are read with the function, not checked again; the per-frame exclusion stays by address.
+
 -----
 
 ### Force-field hold + stealth meter (Solide — build 2168)
