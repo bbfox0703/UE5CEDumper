@@ -105,7 +105,7 @@ static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
     s.arm.ring = it->ring;
     s.arm.arm  = static_cast<uint32_t>(g_arms->log.size() - 1);
     s.arm.copy = static_cast<uint16_t>(ArmCopyBytes(s.ident.parmsSize, s.ident.functionFlags, it->ringCap));
-    if (ArmTakesAfter(s.ident.functionFlags)) s.arm.flags |= kArmAfter;
+    if (ArmTakesAfter(s.ident.functionFlags, s.ident.returnValueOffset)) s.arm.flags |= kArmAfter;
     if (ArmTruncated(s.ident.parmsSize, it->ringCap)) s.arm.flags |= kArmTruncated;
 }
 

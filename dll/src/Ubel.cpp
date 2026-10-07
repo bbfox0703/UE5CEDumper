@@ -2095,6 +2095,7 @@ bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out) {
         Macht::ReadSafe<uint32_t>(func + fo, out.functionFlags);
         Macht::ReadSafe<uint8_t>(func + tail + 0x04, out.numParms);
         Macht::ReadSafe<uint16_t>(func + tail + 0x06, out.parmsSize);
+        Macht::ReadSafe<uint16_t>(func + tail + 0x08, out.returnValueOffset);   // [LIVEFUNCS-STEP2] the after copy's
     }
     return true;
 }

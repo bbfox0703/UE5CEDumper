@@ -388,7 +388,7 @@ inline constexpr uint32_t kSnapMinSlots    = 8;      // a ring that keeps fewer 
 inline constexpr uint32_t kSnapHeaderBytes = 24;     // per slot, before its copy
 inline constexpr uint64_t kSnapMinBytes    = 8ull << 20;     // the slider's range (T12); the pipe holds the user to it
 inline constexpr uint64_t kSnapMaxBytes    = 128ull << 20;
-inline constexpr uint32_t kFuncHasOutParms = 0x00400000;     // UFunction::FunctionFlags: an out parameter or a return
+inline constexpr uint32_t kFuncHasOutParms = 0x00400000;     // UFunction::FunctionFlags: an out parameter (a lone return: no)
 
 // A ring's slot payload for a choice whose parameter block is `parmsSize` bytes: the block, rounded to 8 and capped;
 // kSnapUnknownCopy when the size could not be read (0).
@@ -405,11 +405,11 @@ inline uint32_t ArmCopyBytes(uint32_t parmsSize, uint32_t functionFlags, uint32_
     return parmsSize < ringCap ? parmsSize : ringCap;
 }
 inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return parmsSize > ringCap; }
-// The after-return copy: for out parameters and the return value (FUNC_HasOutParms), and whenever the flags could not
-// be read -- a copy too many beats a return value lost.
+// The after-return copy: for out parameters (FUNC_HasOutParms), for a return value (its offset), and whenever the flags
+// could not be read -- a copy too many beats a return value lost. FUNC_HasOutParms alone misses a function whose only
+// output is its return value: measured on DumperTest58, SnapProbe_RetOnly's flags are 0x20401.
 inline bool ArmTakesAfter(uint32_t functionFlags, uint16_t returnValueOffset = 0xFFFF) {
-    (void)returnValueOffset;
-    return functionFlags == 0 || (functionFlags & kFuncHasOutParms) != 0;
+    return functionFlags == 0 || (functionFlags & kFuncHasOutParms) != 0 || returnValueOffset != 0xFFFF;
 }
 
 // One name a recording follows, and what an address with that name is armed for.
