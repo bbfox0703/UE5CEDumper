@@ -611,6 +611,9 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
   "trace": { "bytes": 67108864, "ticked": ["0x1B2C3D40"], "exclude_per_frame": true } }
 // Reply adds "trace": {...the trace object below...}. pe_profile_stop's reply adds it too, after the hook has left
 // its last write: from then on the ring does not change.
+// Build 3634+: each ticked address is checked against the previous recording's table; one whose function is no
+// longer there (unloaded, or its address taken by another) is left out, and the trace object carries
+// "ticked_dropped": N. When none is left the Start is an error -- never a trace of every call. [TRACE-UNLOADED-NAMES]
 
 // One page of the stopped ring. from: a sequence number (start at first_valid); max: records, 1..262144, default
 // 65536. Reply: the trace object, plus count, next (where the following page starts; paging ends at written) and
