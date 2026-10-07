@@ -350,6 +350,15 @@ std::atomic<bool> g_tracing{false};
 
 namespace {
 
+// [LIVEFUNCS-STEP2] One snapshot ring: a run of fixed slots inside the trace's snapshot block, its own write index, on
+// its own cache line so two busy choices do not share one.
+struct alignas(64) SnapRing {
+    uint8_t* base = nullptr;   // the ring's first slot, 64-aligned
+    uint32_t cap  = 0;         // slot payload
+    uint32_t slot = 0;         // kSnapHeaderBytes + cap
+    std::atomic<uint64_t> next{ 0 };
+};
+
 struct TraceState {
     TraceRecord* buf      = nullptr;
     uint64_t     bytes    = 0;
@@ -367,6 +376,11 @@ struct TraceState {
     bool   scoped      = false;                 // fixed at Start from what was asked (TraceConfig::scoped)
     size_t tickedNames = 0;
     bool   snapOnly    = false;
+    uint8_t* snapBlock = nullptr;               // the rings' one allocation
+    uint64_t snapBytes = 0;
+    uint64_t snapK     = 0;                     // slots per ring
+    uint32_t snapCount = 0;
+    std::unique_ptr<SnapRing[]> snapRings;
 };
 
 TraceState            g_trace;
@@ -429,6 +443,11 @@ bool FreeTraceLocked() {
     g_trace.exclude.Build({});
     g_trace.scoped = g_trace.snapOnly = false;
     g_trace.tickedNames = 0;
+    if (g_trace.snapBlock) VirtualFree(g_trace.snapBlock, 0, MEM_RELEASE);
+    g_trace.snapBlock = nullptr;
+    g_trace.snapBytes = g_trace.snapK = 0;
+    g_trace.snapCount = 0;
+    g_trace.snapRings.reset();
     g_trace.distinctReady = false;
     std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
     std::vector<uintptr_t>().swap(g_trace.distinctObjs);
@@ -494,6 +513,45 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
     GetSystemInfo(&si);
     const size_t page = si.dwPageSize ? si.dwPageSize : 4096;
     for (size_t off = 0; off < size; off += page) static_cast<volatile uint8_t*>(p)[off] = 0;
+
+    // [LIVEFUNCS-STEP2] The snapshot rings: K slots each, K the same for every ring, each ring 64-aligned (the 64 per
+    // ring the formula sets aside). A buffer that cannot keep kSnapMinSlots calls a ring refuses the Start, the ring
+    // just made freed with it: the trace never records without what was asked (T1).
+    uint8_t* snapBlock = nullptr;
+    uint64_t snapSize = 0, snapK = 0;
+    std::unique_ptr<SnapRing[]> snapRings;
+    const uint64_t nRings = cfg.snapRingCaps.size();
+    if (nRings != 0) {
+        uint64_t perCall = 0;
+        for (uint32_t c : cfg.snapRingCaps) perCall += kSnapHeaderBytes + ((static_cast<uint64_t>(c) + 7) & ~7ull);
+        if (cfg.snapBytes <= 64 * nRings || (snapK = (cfg.snapBytes - 64 * nRings) / perCall) < kSnapMinSlots) {
+            VirtualFree(p, 0, MEM_RELEASE);
+            return TraceStartStatus::SnapTooSmall;
+        }
+        snapRings = std::make_unique<SnapRing[]>(static_cast<size_t>(nRings));
+        for (uint64_t r = 0; r < nRings; ++r) {
+            snapRings[r].cap  = (cfg.snapRingCaps[r] + 7u) & ~7u;
+            snapRings[r].slot = kSnapHeaderBytes + snapRings[r].cap;
+            snapSize += (snapK * snapRings[r].slot + 63) & ~63ull;
+        }
+        snapBlock = static_cast<uint8_t*>(VirtualAlloc(nullptr, static_cast<SIZE_T>(snapSize), MEM_RESERVE | MEM_COMMIT,
+                                                       PAGE_READWRITE));
+        if (!snapBlock) {
+            VirtualFree(p, 0, MEM_RELEASE);
+            return TraceStartStatus::SnapNoMemory;
+        }
+        for (uint64_t off = 0; off < snapSize; off += page) static_cast<volatile uint8_t*>(snapBlock)[off] = 0;
+        uint64_t at = 0;
+        for (uint64_t r = 0; r < nRings; ++r) {
+            snapRings[r].base = snapBlock + at;
+            at += (snapK * snapRings[r].slot + 63) & ~63ull;
+        }
+    }
+    g_trace.snapBlock = snapBlock;
+    g_trace.snapBytes = snapSize;
+    g_trace.snapK     = snapK;
+    g_trace.snapCount = static_cast<uint32_t>(nRings);
+    g_trace.snapRings = std::move(snapRings);
 
     g_trace.buf   = static_cast<TraceRecord*>(p);
     g_trace.bytes = size;
@@ -596,6 +654,10 @@ TraceInfo InfoLocked() {
     i.scoped     = g_trace.scoped;
     i.tickedNames = g_trace.tickedNames;
     i.snapOnly   = g_trace.snapOnly;
+    i.snap.allocated    = g_trace.snapBlock != nullptr;
+    i.snap.bytes        = g_trace.snapBytes;
+    i.snap.slotsPerRing = g_trace.snapK;
+    i.snap.rings        = g_trace.snapCount;
     return i;
 }
 }  // namespace
@@ -606,8 +668,16 @@ TraceInfo GetTraceInfo() {
 }
 
 bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
-    (void)out; (void)gen;
-    return false;
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (gen) *gen = g_trace.gen;
+    out.clear();
+    if (!g_trace.snapBlock || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
+    for (uint32_t r = 0; r < g_trace.snapCount; ++r) {
+        const SnapRing& ring = g_trace.snapRings[r];
+        const uint64_t w = ring.next.load(std::memory_order_relaxed);
+        out.push_back(SnapRingInfo{ r, ring.cap, w, w > g_trace.snapK ? w - g_trace.snapK : 0 });
+    }
+    return true;
 }
 
 bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next, TraceInfo* seen) {
