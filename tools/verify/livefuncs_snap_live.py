@@ -367,6 +367,11 @@ def run_game(c: PipeClient, check: Checks, out: dict, args) -> None:
     gen = stop.get("trace", {}).get("gen", 0)
     not_called = [n["func"] for n in stop.get("names", []) if n.get("not_called")]
     say(f"     followed names never called: {len(not_called)} {not_called[:8]}")
+    # The cost, as the game's own call rate: the same table recorded with the snapshots running, against the plain one.
+    after = data_of(c.request("pe_profile_get", limit=1))
+    rate = lambda t: t.get("total_calls", 0) / (t.get("window_ms", 0) / 1000.0) if t.get("window_ms") else 0
+    out["rates"] = {"plain": rate(table), "with_snapshots": rate(after)}
+    say(f"     calls/s: plain {out['rates']['plain']:,.0f}, with snapshots {out['rates']['with_snapshots']:,.0f}")
     if not stop.get("trace", {}).get("allocated"):
         check("the trace kept calls", False, "empty: nothing chosen was called")
         return
