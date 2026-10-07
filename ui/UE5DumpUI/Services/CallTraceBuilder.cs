@@ -146,7 +146,7 @@ public static class CallTraceBuilder
     }
 
     /// <summary>[TRACE-UNLOADED-NAMES] How many of the trace's functions, and of their calls, are named only from their
-    /// first call (unloaded before Stop) or not at all. One pass over the calls: a dictionary per distinct function,
+    /// first call (gone when the trace was read) or not at all. One pass over the calls: a dictionary per distinct function,
     /// thousands of them against millions of calls.</summary>
     private static void CountNames(CallTrace t)
     {

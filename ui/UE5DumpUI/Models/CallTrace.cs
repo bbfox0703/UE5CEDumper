@@ -36,7 +36,7 @@ public sealed class CallTrace
     /// <summary>Returns whose call began before the kept window: the ring overwrote their entry.</summary>
     public int ReturnsBeforeWindow { get; internal set; }
 
-    /// <summary>[TRACE-UNLOADED-NAMES] The trace's distinct functions; those unloaded before Stop (named from their
+    /// <summary>[TRACE-UNLOADED-NAMES] The trace's distinct functions; those gone when the trace was read (named from their
     /// first call) and those with no name at all, each with its calls. Counted once, after the names are in.</summary>
     public int  DistinctFuncs { get; internal set; }
     public int  UnloadedFuncs { get; internal set; }
@@ -93,7 +93,8 @@ public sealed class CallTrace
     public string ClassName(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Named ? f.ClassName : "";
     public string FuncName(int i) => Funcs.TryGetValue(Func[i], out var f) && f.Named
         ? f.FuncName : "0x" + Func[i].ToString("X", CultureInfo.InvariantCulture);
-    /// <summary>The function was unloaded before Stop: its name is the one it had at its first call.</summary>
+    /// <summary>The function was gone when the trace was read (pe_trace_names classifies then, not at Stop): its name
+    /// is the one it had at its first call.</summary>
     public bool FuncUnloaded(int i) => Funcs.TryGetValue(Func[i], out var f) && !f.Live && f.Unloaded;
 
     /// <summary>A share of a whole as the status shows it: "0%" only when nothing, "100%" only when all, otherwise up

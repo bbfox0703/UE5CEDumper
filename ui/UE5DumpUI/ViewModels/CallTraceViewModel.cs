@@ -468,7 +468,7 @@ public sealed class CallTraceRow
     public string DurationText { get; init; } = "";
     public string ThreadText { get; init; } = "";
     public string FunctionText { get; init; } = "";
-    /// <summary>[TRACE-UNLOADED-NAMES] Unloaded before Stop: the view marks it beside the name.</summary>
+    /// <summary>[TRACE-UNLOADED-NAMES] Gone when the trace was read: the view marks it beside the name.</summary>
     public bool FuncUnloaded { get; init; }
     public string ObjectText { get; init; } = "";
     public bool ObjectStale { get; init; }
