@@ -8780,6 +8780,177 @@ int main() {
         g_cachedUEVersion = savedVer;
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the layout by value -- struct members (supers, nesting, a cap), enum tables read fresh");
+        // docs/live-funcs-step2-items.md, B4. ⛔ POOL-FAKING: own pool, first. FField and UProperty 4.22 (UE4 in the
+        // tests). The second design critic: WalkClassEx's memo and s_enumCache are address-keyed and never erased, so
+        // under widget reload churn a freed struct's or enum's address can hold another -- the capture uses neither.
+        enum : int { nFunction = 1, nInt, nStructP, nBoolP, nEnumP, nByteP, nFloatP, nHit, nKind, nLevel, nLooped,
+                     nDoIt, nMyActor, nClass, nScriptStruct, nEnum, nHitResult, nBaseResult, nInnerStruct, nX, nBase,
+                     nInner, nOn, nEKind, nEKindA, nEKindB, nLoop, nNext, nStale, nCount };
+        const char* lvNames[nCount] = { "", "Function", "IntProperty", "StructProperty", "BoolProperty",
+            "EnumProperty", "ByteProperty", "FloatProperty", "Hit", "Kind", "Level", "Looped", "DoIt", "MyActor_C",
+            "Class", "ScriptStruct", "Enum", "HitResult", "BaseResult", "InnerStruct", "X", "Base", "Inner", "bOn",
+            "EKind", "EKind::A", "EKind::B", "Loop", "Next", "Stale" };
+        static uint8_t lvEntry[nCount][0x40] = {};
+        static uintptr_t lvChunk[nCount + 1] = {};
+        for (int i = 1; i < nCount; ++i) {
+            memcpy(lvEntry[i] + 0x10, lvNames[i], strlen(lvNames[i]) + 1);
+            lvChunk[i] = reinterpret_cast<uintptr_t>(lvEntry[i]);
+        }
+        static uintptr_t lvChunks[2] = { reinterpret_cast<uintptr_t>(lvChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(lvChunks), 0x10);
+        check("setup: the pool resolves EKind", Serie::GetString(nEKind) == "EKind");
+
+        const bool savedFProp = DynOff::bUseFProperty, savedCpn = DynOff::bCasePreservingName;
+        const int savedOff = DynOff::UPROPERTY_OFFSET, savedStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const uint32_t savedVer = g_cachedUEVersion;
+        const int savedNames = DynOff::UENUM_NAMES, savedWidth = DynOff::UENUM_VALUE_SIZE, savedStride = DynOff::UENUM_PAIR_STRIDE;
+        const bool savedNew = DynOff::bEnumNamesNewContainer, savedDet = DynOff::bUEnumNamesDetected.load();
+        const bool savedFailed = DynOff::bUEnumNamesFailed.load(), savedProbed = DynOff::bFNameAlignProbed.load();
+        const int savedAlign = DynOff::FNAME_ALIGN_MEASURED.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bFNameAlignProbed = true;
+        DynOff::FNAME_ALIGN_MEASURED = 0;
+        DynOff::UENUM_NAMES = 0x40;
+        DynOff::bEnumNamesNewContainer = false;
+        DynOff::UENUM_VALUE_SIZE = 8;
+        DynOff::UENUM_PAIR_STRIDE = 16;
+        DynOff::bUEnumNamesDetected = true;
+        DynOff::bUEnumNamesFailed = false;
+
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        alignas(16) static uint8_t obj[nCount][0x200];
+        static uint8_t fcls[nCount][0x20];
+        alignas(16) static uint8_t enumData[2 * 16];
+        enum { pHit, pKind, pLevel, pLooped, mBase, mX, mInner, mOn, mNext, kProps };
+        static uint8_t prop[kProps][0x100];
+        auto O = [&](int i) { return reinterpret_cast<uintptr_t>(obj[i]); };
+        auto P = [&](int i) { return reinterpret_cast<uintptr_t>(prop[i]); };
+
+        struct Layout { const char* name; bool fprop; unsigned ver; int offsetInternal, slot; };
+        const Layout layouts[] = { { "FField", true, 504, 0, 0 }, { "UProperty 4.22", false, 422, 0x44, 0x70 } };
+        for (const Layout& L : layouts) {
+            memset(obj, 0, sizeof obj); memset(fcls, 0, sizeof fcls); memset(prop, 0, sizeof prop);
+            DynOff::bUseFProperty = L.fprop;
+            g_cachedUEVersion = L.ver;
+            if (!L.fprop) { DynOff::UPROPERTY_OFFSET = L.offsetInternal; DynOff::UPROPERTY_SUBCLASS_START = 0; }
+            for (int i = 1; i < nCount; ++i) { put32(obj[i], Grimoire::OFF_UOBJECT_NAME, i); put32(fcls[i], DynOff::FFIELDCLASS_NAME, i); }
+            for (int s : { nHitResult, nBaseResult, nInnerStruct, nLoop }) putP(obj[s], Grimoire::OFF_UOBJECT_CLASS, O(nScriptStruct));
+            putP(obj[nMyActor], Grimoire::OFF_UOBJECT_CLASS, O(nClass));
+            for (int e : { nEKind, nStale }) putP(obj[e], Grimoire::OFF_UOBJECT_CLASS, O(nEnum));
+            // EKind's Names: {A = 0, B = 2}.
+            memset(enumData, 0, sizeof enumData);
+            put32(enumData, 0, nEKindA);  put64(enumData, 8, 0);
+            put32(enumData, 16, nEKindB); put64(enumData, 24, 2);
+            putP(obj[nEKind], 0x40, reinterpret_cast<uintptr_t>(enumData));
+            put32(obj[nEKind], 0x48, 2);
+            put32(obj[nEKind], 0x4C, 2);
+
+            const int nextOff = L.fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT;
+            const int elemOff = L.fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE;
+            const int flagsOff = L.fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS;
+            const int offOff = L.fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET;
+            const int structSlot = L.fprop ? DynOff::FSTRUCTPROP_STRUCT : L.slot;
+            const int byteSlot = L.fprop ? DynOff::FBYTEPROP_ENUM : L.slot;
+            const int enumSlot = L.fprop ? DynOff::FENUMPROP_ENUM : L.slot + 8;
+            const int boolOff = L.fprop ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            auto write = [&](int pi, int name, int type, int32_t size, int32_t offset, uintptr_t next, uintptr_t slotObj) {
+                uint8_t* pr = prop[pi];
+                if (L.fprop) { putP(pr, DynOff::FFIELD_CLASS, reinterpret_cast<uintptr_t>(fcls[type])); put32(pr, DynOff::FFIELD_NAME, name); }
+                else         { putP(pr, Grimoire::OFF_UOBJECT_CLASS, O(type)); put32(pr, Grimoire::OFF_UOBJECT_NAME, name); }
+                put32(pr, elemOff - 4, 1);
+                put32(pr, elemOff, size);
+                put64(pr, flagsOff, 0x80);
+                put32(pr, offOff, offset);
+                if (type == nStructP) putP(pr, structSlot, slotObj);
+                if (type == nByteP) putP(pr, byteSlot, slotObj);
+                if (type == nEnumP) putP(pr, enumSlot, slotObj);
+                if (type == nBoolP) { pr[boolOff] = 1; pr[boolOff + 2] = 0x02; pr[boolOff + 3] = 0x02; }
+                putP(pr, nextOff, next);
+            };
+            const int chainOff = L.fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN;
+            // HitResult : BaseResult { Base } { X, Inner : InnerStruct { bOn } }; Loop { Next : Loop }.
+            write(mBase, nBase, nInt, 4, 0, 0, 0);
+            write(mX, nX, nFloatP, 4, 4, P(mInner), 0);
+            write(mInner, nInner, nStructP, 1, 8, 0, O(nInnerStruct));
+            write(mOn, nOn, nBoolP, 1, 0, 0, 0);
+            write(mNext, nNext, nStructP, 8, 0, 0, O(nLoop));
+            putP(obj[nBaseResult], chainOff, P(mBase));
+            putP(obj[nHitResult], chainOff, P(mX));
+            putP(obj[nHitResult], DynOff::USTRUCT_SUPER, O(nBaseResult));
+            putP(obj[nInnerStruct], chainOff, P(mOn));
+            putP(obj[nLoop], chainOff, P(mNext));
+            // DoIt(Hit, Kind, Level, Looped).
+            write(pHit, nHit, nStructP, 0x10, 0x00, P(pKind), O(nHitResult));
+            write(pKind, nKind, nEnumP, 1, 0x10, P(pLevel), O(nEKind));
+            write(pLevel, nLevel, nByteP, 1, 0x11, P(pLooped), O(nEKind));
+            write(pLooped, nLooped, nStructP, 8, 0x18, 0, O(nLoop));
+            if (!L.fprop) {   // what an FField reader would take on a UProperty engine: decoys
+                putP(prop[pLevel], DynOff::FBYTEPROP_ENUM, O(nStale));
+            }
+            putP(obj[nDoIt], Grimoire::OFF_UOBJECT_CLASS, O(nFunction));
+            put32(obj[nDoIt], Grimoire::OFF_UOBJECT_NAME, nDoIt);
+            putP(obj[nDoIt], DynOff::UOBJECT_OUTER, O(nMyActor));
+            putP(obj[nDoIt], chainOff, P(pHit));
+            {
+                // A stale table cached at EKind's address: another enum lived there once.
+                std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+                Ubel::s_enumCache[O(nEKind)] = { { 0, "Stale::A" } };
+            }
+
+            const std::string who = L.name;
+            Ubel::ParamLayout pl;
+            std::string why;
+            const bool ok = Ubel::CaptureParamLayout(O(nDoIt), pl, why) && pl.params.size() == 4;
+            check(("layout by value, " + who + ": the four parameters").c_str(), ok, why.c_str());
+            if (!ok) continue;
+            const auto& hit = pl.params[0];
+            check(("..." + who + ": a struct's members, its super's first").c_str(),
+                  hit.sub.size() == 3 && hit.sub[0].name == "Base" && hit.sub[1].name == "X" && hit.sub[1].offset == 4 &&
+                  hit.sub[2].name == "Inner", std::to_string(hit.sub.size()).c_str());
+            check(("..." + who + ": a nested struct's members, with its packed bool's bit").c_str(),
+                  hit.sub.size() == 3 && hit.sub[2].sub.size() == 1 && hit.sub[2].sub[0].name == "bOn" &&
+                  hit.sub[2].sub[0].boolMask == 0x02);
+            const auto& kind = pl.params[1];
+            check(("..." + who + ": an EnumProperty's enum and its table, read fresh -- not the stale cache").c_str(),
+                  kind.enumName == "EKind" && kind.enumEntries.size() == 2 && kind.enumEntries[0].second == "EKind::A" &&
+                  kind.enumEntries[1].first == 2 && kind.enumEntries[1].second == "EKind::B",
+                  (kind.enumName + " " + (kind.enumEntries.empty() ? std::string() : kind.enumEntries[0].second)).c_str());
+            check(("..." + who + ": a ByteProperty's enum, at its own slot").c_str(),
+                  pl.params[2].enumName == "EKind" && pl.params[2].enumEntries.size() == 2, pl.params[2].enumName.c_str());
+            int depth = 0;
+            for (const Ubel::ParamField* f = &pl.params[3]; !f->sub.empty(); f = &f->sub[0]) ++depth;
+            check(("..." + who + ": a struct that holds itself stops at kParamStructDepth").c_str(),
+                  depth == Ubel::kParamStructDepth, std::to_string(depth).c_str());
+
+            // By value: wipe every blob the capture read; what it captured does not change.
+            memset(obj, 0, sizeof obj); memset(prop, 0, sizeof prop); memset(enumData, 0, sizeof enumData);
+            check(("..." + who + ": the captured layout outlives the objects it was read from").c_str(),
+                  pl.params[0].sub.size() == 3 && pl.params[0].sub[2].sub[0].name == "bOn" &&
+                  pl.params[1].enumEntries.size() == 2 && pl.params[1].enumEntries[1].second == "EKind::B");
+        }
+        {
+            std::lock_guard<std::mutex> lk(Ubel::s_enumCacheMutex);
+            Ubel::s_enumCache.erase(reinterpret_cast<uintptr_t>(obj[nEKind]));
+        }
+        DynOff::bUseFProperty = savedFProp;
+        DynOff::bCasePreservingName = savedCpn;
+        DynOff::UPROPERTY_OFFSET = savedOff;
+        DynOff::UPROPERTY_SUBCLASS_START = savedStart;
+        g_cachedUEVersion = savedVer;
+        DynOff::UENUM_NAMES = savedNames;
+        DynOff::UENUM_VALUE_SIZE = savedWidth;
+        DynOff::UENUM_PAIR_STRIDE = savedStride;
+        DynOff::bEnumNamesNewContainer = savedNew;
+        DynOff::bUEnumNamesDetected = savedDet;
+        DynOff::bUEnumNamesFailed = savedFailed;
+        DynOff::bFNameAlignProbed = savedProbed;
+        DynOff::FNAME_ALIGN_MEASURED = savedAlign;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

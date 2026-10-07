@@ -455,7 +455,15 @@ struct ParamField {
     bool        boolNative = false;
     std::string structType;       // a StructProperty's UScriptStruct
     std::string objClass;         // an object-family property's PropertyClass
+    std::vector<ParamField> sub;  // a struct's members, its supers' first, kParamStructDepth deep at most
+    std::string enumName;         // an EnumProperty's UEnum, or a ByteProperty's with one
+    std::vector<std::pair<int64_t, std::string>> enumEntries;   // that enum's table, read fresh (never a cache's)
+    uint8_t     optLayout    = 0; // an OptionalProperty's OptionalLayout (UE 5.4+), its wrapped type and size
+    std::string optInnerType;
+    int32_t     optInnerSize = 0;
 };
+inline constexpr int kParamStructDepth = 4;     // struct members nest this deep at most (a struct may hold itself)
+inline constexpr int kParamLeaves      = 256;   // members captured per function at most
 // A chosen function's parameters, read once per arm while it is alive.
 struct ParamLayout {
     uintptr_t   func = 0;
