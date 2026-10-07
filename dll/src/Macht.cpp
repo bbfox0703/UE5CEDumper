@@ -882,11 +882,36 @@ __declspec(noinline) uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* ou
     return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
 }
 
-// [LIVEFUNCS-STEP3] S3-M2 (stubbed).
+// [LIVEFUNCS-STEP3] S3-M2. The module the way Genau's ModuleOfAddress / ModuleNameOf find it (file-static there).
+// `own` compares bases: in the game this module is UE5Dumper.dll or a proxy under a system DLL's name, and in
+// dll_core_test it is the test exe itself.
+extern "C" IMAGE_DOS_HEADER __ImageBase;
+
 bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
-    (void)retAddr;
     out = CodeSite{};
-    return false;
+    if (retAddr < 2) return false;
+    HMODULE h = nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(retAddr), &h) ||
+        h == nullptr)
+        return false;
+    out.moduleBase = reinterpret_cast<uintptr_t>(h);
+    out.own = out.moduleBase == reinterpret_cast<uintptr_t>(&__ImageBase);
+    wchar_t path[MAX_PATH] = {};
+    const DWORD len = GetModuleFileNameW(h, path, MAX_PATH);
+    if (len > 0 && len < MAX_PATH) {
+        const wchar_t* leaf = path;
+        for (DWORD i = 0; i < len; ++i)
+            if (path[i] == L'\\' || path[i] == L'/') leaf = path + i + 1;
+        out.moduleUtf8 = Utf8Helpers::EncodeUtf16(leaf, static_cast<size_t>(path + len - leaf));
+    }
+    // ret-1: a return address that follows a function's last call (a noreturn one) lies past that function's end.
+    uintptr_t begin = 0, end = 0;
+    if (GetFunctionExtent(retAddr - 1, begin, end)) {
+        out.fnBegin = begin;
+        out.unwind = true;
+    }
+    return true;
 }
 
 } // namespace Macht

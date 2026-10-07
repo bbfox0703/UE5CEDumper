@@ -15,7 +15,7 @@ Fern.cpp and Stark.cpp are compiled by no test target. Their items are proven by
   - M5 (M1): `noinline` on the capturers, and recursion that works after its call.
 - **The LOW items L1-L11** are notes on the items they name.
 
-**Status 2026-10-08 06:45: S3-M1's capture built (cases 1-7); everything else open.** The design workflow (three
+**Status 2026-10-08 06:55: S3-M1's capture (cases 1-7) and S3-M2 built; everything else open.** The design workflow (three
 code maps, two designs, a merge, a critic) took an hour of the unattended window. S3-M1 went first because it needs
 nothing else, it is the safety-critical part, and its bench gives T17 a number: **about 1.4 µs per 16-frame capture
 from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as one cycle (H1), then S3-M1's case 8.
@@ -27,7 +27,7 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-L1 | DLL | Linie: a stack choice armed by name (`stackRing` in ArmSpec / ArmHint, still 24 B / ArmSummary; the merge; ArmLocked before the parameters-only return); stack rings after the param rings in one allocation (own index space, same K); TraceConfig stack fields and constants; StackWrite through the injected capturer; TraceEnter's stack gate, lone and excluded for stack choices, flag 32; StackRings / CopyStacks; step-2 readers param rings only; TraceInfo.stack | — | open |
 | S3-L2 | DLL | Linie: the stack budget (own per-ring word, own total window), D10's drop rule, flag 64, skipped / dropped by kind, captures / spent / max ticks, the slot's ticks | S3-L1 | open |
 | S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | ◐ cases 1-7 + the capture bench (red 49dde439, green after it; 7 / 7 mutants killed); case 8 and the TraceEnter bench wait for S3-L1 |
-| S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | open |
+| S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | ✅ red 9463e34a, green after it; 3 / 3 mutants killed. FollowChain (the review's M4) owed |
 | S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | open |
 | S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | open |
 | S3-U1 | UI | Models and DumpService: `stacks` in the Start request (unchanged bytes without), TraceInfo.Stack and names.stacks parsed, PeStackGetAsync (`kind:"stack"`) with frames resolved to sites and CeModule by the UI's code page | §3 (wire frozen) | open |
@@ -171,6 +171,11 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
   - Drop the −1 (case 2 fails).
   - Compute `own` by the leaf name "UE5Dumper.dll" (case 1 fails: the test exe is `__ImageBase`).
 - **Files:** `dll/src/Macht.h`, `dll/src/Macht.cpp`, `dll/tests/dll_core_test.cpp`
+- **Done 2026-10-08:** cases 1-4 pass (1026 checks). Mutants, all killed: drop the −1; `own` by the leaf name; the
+  full path instead of the leaf (cases 1 and 3 then name `...\dll_core_test.exe` and `C:\WINDOWS\SYSTEM32\ntdll.dll`).
+  - ⚠ **Owed: FollowChain** (the review's M4). DescribeCode still reports a chained fragment's own start, so until it
+    lands, S3's `known: "process_event"` half is "recorded, not failed" on a build whose ProcessEvent call site sits in
+    a chained fragment.
 
 ## S3-F1 — Fern: stacks at Start; trace.stack; names.stacks; names[].stack
 
