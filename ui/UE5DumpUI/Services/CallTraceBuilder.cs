@@ -42,13 +42,22 @@ public static class CallTraceBuilder
         }
         ReadOnlySpan<TraceRecord> recs = sorted ?? records;
 
+        // The time base is the earliest clock reading, not the first record's: the DLL takes a sequence number and then
+        // reads the clock, so two threads can take numbers in one order and read the clock in the other, and an
+        // unsigned difference from a later origin wraps to about 1.8e15 ms (review F4).
         int calls = 0;
-        foreach (ref readonly var r in recs) if (!r.IsReturn) calls++;
+        ulong earliest = ulong.MaxValue, latest = 0;
+        foreach (ref readonly var r in recs)
+        {
+            if (!r.IsReturn) calls++;
+            if (r.Ticks < earliest) earliest = r.Ticks;
+            if (r.Ticks > latest) latest = r.Ticks;
+        }
 
         var t = new CallTrace(calls)
         {
-            OriginTicks = recs.Length > 0 ? recs[0].Ticks : 0,
-            LastTicks = recs.Length > 0 ? recs[^1].Ticks : 0,
+            OriginTicks = recs.Length > 0 ? earliest : 0,
+            LastTicks = recs.Length > 0 ? latest : 0,
             QpcFreq = info.QpcFreq == 0 ? 1 : info.QpcFreq,
             Info = info,
         };
