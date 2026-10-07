@@ -63,6 +63,7 @@ std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCa
     st->counts.assign(st->specs.size(), ArmState::Count{});
     st->capacity = logCapacity;
     st->log.reserve(logCapacity);
+    st->layouts.resize(logCapacity);
     return st;
 }
 // Monotonic call-stream position (1-based), reset per recording. A function's
@@ -89,9 +90,11 @@ static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
     s.arm.gen = g_arms->gen;
     if (it->tick) s.arm.flags |= kArmTick;
     if (it->ring < 0) return;
+    if (g_arms->stopped.load(std::memory_order_relaxed)) return;   // no call is traced any more: nothing to copy
     if (g_arms->log.size() >= g_arms->capacity) { ++count.armsFull; return; }
     ++count.arms;
     g_arms->log.push_back(ArmRecord{ ufunc, s.ident, static_cast<uint32_t>(si), it->ring, nowMs });
+    g_arms->logCount.store(g_arms->log.size(), std::memory_order_release);
     s.arm.ring = it->ring;
     s.arm.arm  = static_cast<uint32_t>(g_arms->log.size() - 1);
     s.arm.copy = static_cast<uint16_t>(ArmCopyBytes(s.ident.parmsSize, s.ident.functionFlags, it->ringCap));
@@ -192,12 +195,14 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
 }
 
 void StartRecording(FuncIdentityReader reader, FuncKeyReader keyReader, std::shared_ptr<ArmState> arms) {
+    std::shared_ptr<ArmState> drop;   // the last recording's, destroyed after the lock is left
     std::lock_guard<std::mutex> lk(g_mu);
     g_stats.clear();
     g_stats.reserve(4096);  // bound rehash churn over the recording window
     g_seq = 0;
     g_reader = reader;
     g_keyReader = keyReader;
+    drop = std::move(g_arms);
     g_arms = std::move(arms);
     // Flip on UNDER the lock so a concurrent RecordCall can never observe
     // recording==true against a half-cleared table.
@@ -213,6 +218,7 @@ bool IsActive() {
 }
 
 void Reset() {
+    std::shared_ptr<ArmState> drop;   // destroyed after the table's lock is left: hooks may be waiting on it
     {
         std::lock_guard<std::mutex> lk(g_mu);
         g_recording.store(false, std::memory_order_relaxed);
@@ -220,7 +226,7 @@ void Reset() {
         g_seq = 0;
         g_reader = nullptr;
         g_keyReader = nullptr;
-        g_arms.reset();
+        drop = std::move(g_arms);
     }
     // A client that left takes its trace with it: up to 512 MB of the game's memory, outside g_mu because the
     // trace has its own lock.
@@ -248,12 +254,53 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
     activityMs = (latest > earliest && earliest != UINT64_MAX) ? latest - earliest : 0;
 }
 
-std::vector<PendingArm> TakePendingArms(ArmState&, size_t) { return {}; }
-bool PublishArmLayout(ArmState&, uint32_t, ArmLayoutState, std::shared_ptr<const void>, std::string, uint64_t) {
-    return false;
+// The arms' handover to the background read. The log is the table's, under g_mu; the layouts are the reader's, under
+// layoutMu; no function here holds both, and the hook takes neither of the second.
+std::vector<PendingArm> TakePendingArms(ArmState& st, size_t max) {
+    std::lock_guard<std::mutex> lk(g_mu);
+    std::vector<PendingArm> out;
+    const size_t end = std::min(st.log.size(), st.taken + max);
+    for (size_t i = st.taken; i < end; ++i) out.push_back(PendingArm{ static_cast<uint32_t>(i), st.log[i] });
+    st.taken = end;
+    return out;
 }
-void SealArms(ArmState&) {}
-std::vector<ArmView> CopyArms(ArmState&) { return {}; }
+
+bool PublishArmLayout(ArmState& st, uint32_t index, ArmLayoutState state, std::shared_ptr<const void> layout,
+                      std::string why, uint64_t readMs) {
+    std::lock_guard<std::mutex> lk(st.layoutMu);
+    if (index >= st.logCount.load(std::memory_order_acquire) || index >= st.layouts.size()) return false;
+    ArmState::Layout& l = st.layouts[index];
+    if (l.state != static_cast<uint8_t>(ArmLayoutState::Pending)) return false;
+    l.state  = static_cast<uint8_t>(state);
+    l.layout = std::move(layout);
+    l.why    = std::move(why);
+    l.readMs = readMs;
+    return true;
+}
+
+void SealArms(ArmState& st) {
+    std::lock_guard<std::mutex> lk(st.layoutMu);
+    for (auto& l : st.layouts)   // every place, so an arm made after this is sealed too: a publish needs Pending
+        if (l.state == static_cast<uint8_t>(ArmLayoutState::Pending))
+            l.state = static_cast<uint8_t>(ArmLayoutState::NotReadBeforeStop);
+}
+
+std::vector<ArmView> CopyArms(ArmState& st) {
+    std::vector<ArmRecord> recs;
+    {
+        std::lock_guard<std::mutex> lk(g_mu);
+        recs = st.log;
+    }
+    std::vector<ArmView> out;
+    out.reserve(recs.size());
+    std::lock_guard<std::mutex> lk(st.layoutMu);
+    for (size_t i = 0; i < recs.size() && i < st.layouts.size(); ++i) {
+        const ArmState::Layout& l = st.layouts[i];
+        out.push_back(ArmView{ static_cast<uint32_t>(i), recs[i], static_cast<ArmLayoutState>(l.state), l.layout,
+                               l.why, l.readMs });
+    }
+    return out;
+}
 
 std::vector<ArmSummary> ArmsSummary() {
     std::lock_guard<std::mutex> lk(g_mu);
@@ -316,6 +363,7 @@ struct TraceState {
     std::vector<uintptr_t> distinctFuncs;
     std::vector<uintptr_t> distinctObjs;
     std::vector<FuncIdentity> distinctIdents;   // parallel to distinctFuncs (TRACE-UNLOADED-NAMES)
+    std::shared_ptr<ArmState> arms;             // [LIVEFUNCS-STEP2] the names its recording follows
 };
 
 TraceState            g_trace;
@@ -357,6 +405,7 @@ struct InflightGuard {
 // hook inside, nothing can touch the ring again.
 bool StopTraceLocked() {
     g_tracing.store(false, std::memory_order_seq_cst);
+    if (g_trace.arms) g_trace.arms->stopped.store(true, std::memory_order_relaxed);
     const uint64_t deadline = GetTickCount64() + kQuiesceTimeoutMs;
     while (g_inflight.load(std::memory_order_seq_cst) != 0) {
         if (GetTickCount64() > deadline) { g_trace.quiesced = false; return false; }
@@ -379,6 +428,13 @@ bool FreeTraceLocked() {
     std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
     std::vector<uintptr_t>().swap(g_trace.distinctObjs);
     std::vector<FuncIdentity>().swap(g_trace.distinctIdents);
+    // [LIVEFUNCS-STEP2] The names go with the trace: its own reference, and the recording's when it is the same one.
+    // Both are destroyed when this returns, outside the table's lock, which game threads may be waiting on.
+    std::shared_ptr<ArmState> dropTrace = std::move(g_trace.arms), dropRecording;
+    if (dropTrace) {
+        std::lock_guard<std::mutex> lk(g_mu);   // g_traceMu -> g_mu, the one nesting order
+        if (g_arms == dropTrace) dropRecording = std::move(g_arms);
+    }
     return true;
 }
 
@@ -442,6 +498,8 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
     g_trace.ticked.Build(cfg.ticked);
     g_trace.exclude.Build(cfg.exclude);
     g_trace.distinctReady = false;
+    g_trace.arms = cfg.arms;
+    if (g_trace.arms) g_trace.arms->gen = g_trace.gen;   // before any hook can read a hint of this recording
     // Publishes everything above to a hook that reads the flag inside its section (seq_cst is also a release).
     g_tracing.store(true, std::memory_order_seq_cst);
     return TraceStartStatus::Ok;

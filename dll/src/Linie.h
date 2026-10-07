@@ -356,10 +356,11 @@ struct ArmState {
     // StopTrace sets it: once the trace stopped, no call is traced, so nothing more is armed for snapshots.
     std::atomic<bool>      stopped{ false };
     size_t                 taken = 0;  // TakePendingArms' place in the log, under the table's lock
+    std::atomic<size_t>    logCount{ 0 };   // the log's size, published after each arm for readers outside that lock
     // Each arm's parameter layout, read in the background while its function is alive. Under layoutMu, which no
-    // hook takes; parallel to the log, sized to its capacity when built.
+    // hook takes; parallel to the log, sized to its capacity when built, so sealing reaches every place an arm can
+    // take, made or not.
     std::mutex             layoutMu;
-    bool                   sealed = false;   // SealArms: Stop has passed; nothing more is published
     struct Layout {
         uint8_t                     state  = 0;   // ArmLayoutState
         std::shared_ptr<const void> layout;       // the reader's (Ubel's), opaque here
