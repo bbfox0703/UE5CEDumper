@@ -7887,6 +7887,68 @@ int main() {
         Linie::FreeTrace();
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the copy after the call -- its own slot, the same entry, only when owed, only this recording");
+        // docs/live-funcs-step2-items.md, S3 (TR3: never a write-back).
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto memcpyCopier = [](uintptr_t src, void* dst, size_t n) -> bool {
+            memcpy(dst, reinterpret_cast<const void*>(src), n); return true;
+        };
+        auto start = [&] {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 64 * 1024;
+            c.copier = memcpyCopier;
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo().gen;
+        };
+        Linie::Reset();
+        Linie::FreeTrace();
+        uint8_t buf[16];
+        memset(buf, 0x11, sizeof buf);
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        uint64_t gen = start();
+        Linie::ArmHint h{};
+        h.gen = gen; h.ring = 0; h.arm = 2; h.copy = 16; h.flags = Linie::kArmAfter;
+        Linie::TraceToken t;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, t, params, h);
+        memset(buf, 0x22, sizeof buf);                     // the call writes its out parameters and its return
+        Linie::TraceReturn(t, 1, params);
+        Linie::ArmHint noAfter = h;
+        noAfter.flags = 0;
+        Linie::TraceToken t2;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, t2, params, noAfter);
+        Linie::TraceReturn(t2, 1, params);
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> s;
+        Linie::CopySnaps(0, 0, 10, s);
+        check("three slots: the call's two copies, then the second call's entry copy only",
+              s.size() == 3 && !s[0].after && s[1].after && !s[2].after, u(s.size()).c_str());
+        if (s.size() == 3) {
+            check("the entry copy holds the block as the call began, the after copy as it returned",
+                  s[0].bytes.size() == 16 && s[0].bytes[0] == 0x11 && s[1].bytes.size() == 16 && s[1].bytes[0] == 0x22);
+            check("...both carry the call's entry sequence number and its arm",
+                  s[0].entrySeq == 0 && s[1].entrySeq == 0 && s[1].arm == 2 && s[2].entrySeq == 2,
+                  u(s[1].entrySeq).c_str());
+        }
+
+        // A call that entered under the last recording returns under a new one: nothing lands in the new rings.
+        gen = start();
+        h.gen = gen;
+        Linie::TraceToken t3;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, t3, params, h);
+        Linie::StopTrace();
+        start();
+        Linie::TraceReturn(t3, 1, params);
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> s2;
+        Linie::CopySnaps(0, 0, 10, s2);
+        check("a return after Stop and a new Start writes no after copy into the new rings", s2.empty(),
+              u(s2.size()).c_str());
+        Linie::FreeTrace();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

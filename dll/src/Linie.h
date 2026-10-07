@@ -251,6 +251,9 @@ struct TraceToken {
     uint64_t gen      = 0;
     bool     traced   = false;   // an entry record was written: write a return record too
     bool     opened   = false;   // this call opened the thread's ticked scope: its return closes it
+    // [LIVEFUNCS-STEP2] The copy owed after the call (out parameters, the return value): integers only, nothing that
+    // points into the trace; ring -1 when none is owed.
+    ArmHint  after;
 };
 // `sp` is the hook frame's own stack address (_AddressOfReturnAddress): lower for a call nested inside another on
 // the same thread, which is how a ticked scope tells its calls from the ones after it, even when an exception
@@ -258,7 +261,8 @@ struct TraceToken {
 // this same call armed it for ([LIVEFUNCS-STEP2]) -- honoured only when it is this recording's.
 void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok, uintptr_t params = 0,
                 const ArmHint& hint = ArmHint{});
-void TraceReturn(const TraceToken& tok, uint32_t tid);
+// `params` is the same call's parameter block again, for the copy after it (Stark passes it; the token never holds it).
+void TraceReturn(const TraceToken& tok, uint32_t tid, uintptr_t params = 0);
 
 struct TraceInfo {
     bool     allocated  = false;

@@ -645,7 +645,8 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     tok.opened   = open;
 }
 
-void TraceReturn(const TraceToken& tok, uint32_t tid) {
+void TraceReturn(const TraceToken& tok, uint32_t tid, uintptr_t params) {
+    (void)params;
     // Close this thread's scope first: it is thread state, not ring state, and must close even when nothing more
     // is written (the trace stopped while the root ran).
     if (tok.opened && t_scopeGen == tok.gen) t_scopeSp = 0;
