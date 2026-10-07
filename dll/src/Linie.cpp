@@ -92,6 +92,7 @@ static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
 void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (hint) *hint = ArmHint{};
+    bool keyOk = true;   // this call's key check passed, or none ran
     uint64_t seq = ++g_seq;
     auto& s = g_stats[ufunc];       // default-constructs on first sight
     // [TRACE-UNLOADED-NAMES] The function is being dispatched, so it is alive: read what it is now, once. A later
@@ -111,15 +112,28 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         // function, and the entry says so from then on.
         int32_t idx = 0, num = 0;
         uint64_t outer = 0;
-        if (g_keyReader(ufunc, idx, num, outer)
-            && (idx != s.ident.nameIndex || num != s.ident.nameNumber || outer != s.ident.outer)) {
-            FuncIdentity id{};
-            if (g_reader(ufunc, id)) {
-                id.captured = true;
-                id.reused = s.ident.reused
-                    || id.nameIndex != s.ident.nameIndex || id.nameNumber != s.ident.nameNumber
-                    || id.classIndex != s.ident.classIndex || id.classNumber != s.ident.classNumber;
-                s.ident = id;
+        if (!g_keyReader(ufunc, idx, num, outer)) {
+            keyOk = false;   // [LIVEFUNCS-STEP2] unverified: this call is armed for nothing
+        } else {
+            bool changed = idx != s.ident.nameIndex || num != s.ident.nameNumber || outer != s.ident.outer;
+            // [LIVEFUNCS-STEP2] An armed address's class is checked by its FName too; an unarmed one pays nothing.
+            if (!changed && s.arm.gen != 0 && g_arms && g_arms->classNameReader) {
+                int32_t ci = 0, cn = 0;
+                if (!g_arms->classNameReader(outer, ci, cn)) keyOk = false;
+                else changed = ci != s.ident.classIndex || cn != s.ident.classNumber;
+            }
+            if (changed) {
+                FuncIdentity id{};
+                if (g_reader(ufunc, id)) {
+                    id.captured = true;
+                    id.reused = s.ident.reused
+                        || id.nameIndex != s.ident.nameIndex || id.nameNumber != s.ident.nameNumber
+                        || id.classIndex != s.ident.classIndex || id.classNumber != s.ident.classNumber;
+                    s.ident = id;
+                    ArmLocked(s, ufunc, nowMs);   // what it is now: another name disarms, a reload is a new arm
+                } else {
+                    s.arm = ArmHint{};            // changed and unreadable: armed for nothing until read again
+                }
             }
         }
     }
@@ -164,7 +178,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         s.lastMs = nowMs;
     }
     ++s.count;
-    if (hint) *hint = s.arm;
+    if (hint) *hint = keyOk ? s.arm : ArmHint{};
 }
 
 void StartRecording(FuncIdentityReader reader, FuncKeyReader keyReader, std::shared_ptr<ArmState> arms) {
