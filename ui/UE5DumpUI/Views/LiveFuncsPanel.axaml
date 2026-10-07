@@ -239,7 +239,8 @@
         </DataGridTemplateColumn>
         <!-- Order: call-stream position of the first fire (lower = earlier = more likely
              the causal entry point). Sort ascending to put openers on top. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Order}" Width="64" SortMemberPath="FirstSeq" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Order}" Width="64" SortMemberPath="FirstSeq" CanUserSort="True"
+                                ClipboardContentBinding="{Binding FirstSeq}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding FirstSeq}"
@@ -248,7 +249,8 @@
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Calls}" Width="80" SortMemberPath="Count" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Calls}" Width="80" SortMemberPath="Count" CanUserSort="True"
+                                ClipboardContentBinding="{Binding Count}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding Count}"
@@ -259,7 +261,8 @@
         </DataGridTemplateColumn>
         <!-- Δ vs baseline — "NEW" / "+N" (green) surfaces action-specific funcs.
              Blank outside Diff mode. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.DeltaVsBase}" Width="80" SortMemberPath="Delta" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.DeltaVsBase}" Width="80" SortMemberPath="Delta" CanUserSort="True"
+                                ClipboardContentBinding="{Binding DeltaLabel}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding DeltaLabel}"
@@ -269,7 +272,8 @@
           </DataGridTemplateColumn.CellTemplate>
         </DataGridTemplateColumn>
         <!-- Kind: "UI" marks a transient widget method (the created UI, not the opener). -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Kind}" Width="44" SortMemberPath="Kind" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Kind}" Width="44" SortMemberPath="Kind" CanUserSort="True"
+                                ClipboardContentBinding="{Binding Kind}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding Kind}"
@@ -280,7 +284,8 @@
         </DataGridTemplateColumn>
         <!-- Type: Event/Deleg (a reaction the engine fires) vs Call (an imperative
              function you can invoke) vs native. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Type}" Width="56" SortMemberPath="TypeLabel" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Type}" Width="56" SortMemberPath="TypeLabel" CanUserSort="True"
+                                ClipboardContentBinding="{Binding TypeLabel}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <TextBlock Text="{Binding TypeLabel}"
@@ -293,7 +298,8 @@
         <!-- [TRACE-UNLOADED-NAMES] A function the game unloaded since it fired: its name from its first call, and a grey
              marker beside it. The marker is its own TextBlock, never part of the name, so Name copies, the filter and
              the sort see the plain name. -->
-        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Function}" Width="240" SortMemberPath="FuncName" CanUserSort="True">
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Function}" Width="240" SortMemberPath="FuncName" CanUserSort="True"
+                                ClipboardContentBinding="{Binding FuncName}">
           <DataGridTemplateColumn.CellTemplate>
             <DataTemplate x:DataType="m:PeProfileEntry">
               <DockPanel VerticalAlignment="Center" Margin="6,0">
