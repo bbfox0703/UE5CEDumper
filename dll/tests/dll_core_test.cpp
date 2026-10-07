@@ -8028,6 +8028,84 @@ int main() {
         Linie::FreeTrace();
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the budget -- per ring and in all, per second, the first calls of each second kept");
+        // docs/live-funcs-step2-items.md, S5 (T9 item 3: the budget is the guarantee). A clock that is set, in
+        // QueryPerformanceCounter ticks: the budget's second is ticks / the frequency the trace reports.
+        static uint64_t s_now = 0;
+        Linie::SetTraceClockForTest([]() -> uint64_t { return s_now; });
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](uint32_t perRing, uint32_t total, bool scoped) {
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.scoped = scoped;
+            c.snapOnly = scoped;
+            c.snapRingCaps = { 8, 8 };
+            c.snapBytes = 64 * 1024;
+            c.snapPerRingPerSec = perRing;
+            c.snapTotalPerSec = total;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo();
+        };
+        auto hintFor = [](uint64_t gen, int32_t ring) { Linie::ArmHint h{}; h.gen = gen; h.ring = ring; h.copy = 8; return h; };
+        Linie::Reset();
+        Linie::FreeTrace();
+
+        Linie::TraceInfo info = start(3, 100, false);
+        const uint64_t f = info.qpcFreq;
+        s_now = 10 * f;                                    // second 10
+        for (int i = 0; i < 5; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 1000, 1, t, params, hintFor(info.gen, 0)); }
+        s_now = 11 * f + 5;                                // second 11
+        { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 1000, 1, t, params, hintFor(info.gen, 0)); }
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        Linie::CopyTrace(0, 256, recs);
+        int taken = 0, budget = 0;
+        for (const auto& r : recs) {
+            if (r.flags & Linie::kTraceSnapTaken) ++taken;
+            if (r.flags & Linie::kTraceSnapBudget) ++budget;
+        }
+        std::vector<Linie::SnapCopy> s;
+        Linie::CopySnaps(0, 0, 64, s);
+        check("a budget of 3 a second: five calls in one second, three taken, two recorded over the budget",
+              recs.size() == 6 && taken == 4 && budget == 2, (u(taken) + "/" + u(budget)).c_str());
+        check("...the next second admits again", s.size() == 4 && recs.size() == 6 &&
+              (recs[5].flags & Linie::kTraceSnapTaken), u(s.size()).c_str());
+        info = Linie::GetTraceInfo();
+        check("...and the info counts the two over the budget", info.snap.skippedBudget == 2 && info.snap.droppedBudget == 0 &&
+              info.snap.perRingPerSec == 3 && info.snap.totalPerSec == 100, u(info.snap.skippedBudget).c_str());
+
+        info = start(100, 4, false);
+        s_now = 20 * f;
+        for (int i = 0; i < 3; ++i) {
+            Linie::TraceToken t0, t1;
+            Linie::TraceEnter(0xA7, 0, 1000, 1, t0, params, hintFor(info.gen, 0));
+            Linie::TraceEnter(0xA8, 0, 1000, 1, t1, params, hintFor(info.gen, 1));
+        }
+        Linie::StopTrace();
+        std::vector<Linie::SnapCopy> r0, r1;
+        Linie::CopySnaps(0, 0, 64, r0);
+        Linie::CopySnaps(1, 0, 64, r1);
+        check("a total of 4 a second caps the two rings together", r0.size() + r1.size() == 4,
+              u(r0.size() + r1.size()).c_str());
+
+        info = start(1, 100, true);                        // snapshots-only: every chosen call is lone
+        s_now = 30 * f;
+        Linie::TraceToken l0, l1;
+        Linie::TraceEnter(0xA7, 0, 1000, 1, l0, params, hintFor(info.gen, 0));
+        Linie::TraceEnter(0xA7, 0, 1000, 1, l1, params, hintFor(info.gen, 0));
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("a lone call over the budget writes no record at all, and is counted",
+              l0.traced && !l1.traced && info.written == 1 && info.snap.droppedBudget == 1 && info.snap.skippedBudget == 0,
+              u(info.written).c_str());
+        Linie::FreeTrace();
+        Linie::SetTraceClockForTest(nullptr);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

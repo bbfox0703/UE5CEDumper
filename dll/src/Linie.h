@@ -178,6 +178,8 @@ inline constexpr uint32_t kTraceSnapLone     = 1u << 2;
 // A chosen call on the per-frame exclusion list, kept inside an open scope for its parameters; its callees are traced
 // as the scope's are.
 inline constexpr uint32_t kTraceSnapExcluded = 1u << 3;
+// A chosen call in the scope whose parameters the budget left out (T9 item 3: the first calls of each second kept).
+inline constexpr uint32_t kTraceSnapBudget   = 1u << 4;
 
 // [LIVEFUNCS-STEP2] One snapshot slot's header; the parameter copy follows it. Inside the DLL only: pe_snap_get sends
 // slots decoded, never these bytes.
@@ -234,6 +236,10 @@ struct TraceConfig {
     std::vector<uint32_t> snapRingCaps;
     uint64_t              snapBytes = 0;
     BytesCopier           copier = nullptr;   // nullptr: every copy is a fault
+    // The budget, the guarantee (T9 item 3): at most this many snapshots a second per ring and in all; the first calls
+    // of each second are kept. Provisional, to be measured live; the pipe clamps what the UI sends.
+    uint32_t              snapPerRingPerSec = 1000;
+    uint32_t              snapTotalPerSec   = 10000;
 };
 // Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
 // SnapTooSmall: the snapshot buffer keeps fewer than kSnapMinSlots calls per ring; SnapNoMemory: it could not be had.
@@ -291,6 +297,9 @@ struct TraceInfo {
         uint64_t bytes        = 0;   // committed
         uint64_t slotsPerRing = 0;   // K: the calls each ring keeps
         size_t   rings        = 0;
+        uint32_t perRingPerSec = 0, totalPerSec = 0;
+        uint64_t skippedBudget = 0;   // in-scope calls recorded without their parameters (kTraceSnapBudget)
+        uint64_t droppedBudget = 0;   // lone or excluded calls over the budget: no record at all
     } snap;
 };
 TraceInfo GetTraceInfo();
@@ -300,6 +309,8 @@ struct SnapRingInfo {
     uint32_t cap        = 0;   // slot payload
     uint64_t written    = 0;   // slots ever written; the ring keeps [firstValid, written)
     uint64_t firstValid = 0;
+    uint64_t skippedBudget = 0;
+    uint64_t droppedBudget = 0;
 };
 // One per ring, in order. False while a trace runs, when none is allocated, or when the last stop could not quiesce.
 bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen = nullptr);
