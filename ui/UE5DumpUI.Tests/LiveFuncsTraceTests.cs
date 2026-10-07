@@ -28,6 +28,10 @@ public class LiveFuncsTraceTests
         public bool LastStartHadTraceArgument { get; private set; }
         public TraceInfo? StopTrace { get; set; }
         public PeProfileResult NextGet { get; set; } = new();
+        /// <summary>A DLL that predates the trace: it ignores the `trace` key and answers no trace object.</summary>
+        public bool StartOmitsTrace { get; set; }
+        public bool StartThrows { get; set; }
+        public bool StopThrows { get; set; }
 
         public override Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
         {
@@ -42,12 +46,18 @@ public class LiveFuncsTraceTests
             StartCalls++;
             LastTrace = trace;
             LastStartHadTraceArgument = true;
-            return Task.FromResult(new PeProfileStartResult { HookActive = true });
+            if (StartThrows) throw new InvalidOperationException("The game process could not spare the buffer.");
+            return Task.FromResult(new PeProfileStartResult
+            {
+                HookActive = true,
+                Trace = trace == null || StartOmitsTrace ? null : new TraceInfo { Allocated = true, Tracing = true, Gen = 1 },
+            });
         }
 
         public override Task PeProfileStopAsync(CancellationToken ct = default) => Task.CompletedTask;
 
-        Task<TraceInfo?> IDumpService.PeProfileStopWithTraceAsync(CancellationToken ct) => Task.FromResult(StopTrace);
+        Task<TraceInfo?> IDumpService.PeProfileStopWithTraceAsync(CancellationToken ct)
+            => StopThrows ? throw new InvalidOperationException("pipe closed") : Task.FromResult(StopTrace);
 
         public override Task<PeProfileResult> PeProfileGetAsync(int limit = 200, CancellationToken ct = default)
             => Task.FromResult(NextGet);
@@ -332,6 +342,53 @@ public class LiveFuncsTraceTests
         Assert.Equal(vm.TraceExcludePerFrame, o.TraceExcludePerFrame);
         Assert.False(o.TraceEnabled);
         Assert.Equal(6, o.TraceBufferExponent);
+    }
+
+    [Fact]
+    public async Task A_DLL_that_armed_no_trace_is_not_reported_as_tracing()
+    {
+        // An older DLL ignores the `trace` key: the recording is plain, so Stop offers nothing to open.
+        var (vm, dump) = MakeVm();
+        vm.TraceEnabled = true;
+        dump.StartOmitsTrace = true;
+        dump.StopTrace = new TraceInfo { Allocated = true, Quiesced = true, Written = 50 };   // a stale one
+        await RecordOnce(vm);
+        Assert.False(vm.HasTraceToOpen);
+        Assert.Null(vm.LastTraceInfo);
+    }
+
+    [Fact]
+    public async Task A_refused_traced_Start_withdraws_the_offer_of_the_previous_trace()
+    {
+        // The DLL releases the previous trace before it tries the new buffer (review DLL-4).
+        var (vm, dump) = MakeVm();
+        vm.TraceEnabled = true;
+        dump.StopTrace = new TraceInfo { Allocated = true, Quiesced = true, Written = 50 };
+        await RecordOnce(vm);
+        Assert.True(vm.HasTraceToOpen);
+
+        dump.StartThrows = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.False(vm.IsRecording);
+        Assert.False(vm.HasTraceToOpen);
+        Assert.Null(vm.LastTraceInfo);
+    }
+
+    [Fact]
+    public async Task A_stop_that_fails_on_leaving_the_tab_reports_no_earlier_trace()
+    {
+        var (vm, dump) = MakeVm();
+        vm.TraceEnabled = true;
+        dump.StopTrace = new TraceInfo { Allocated = true, Quiesced = true, Written = 50 };
+        await RecordOnce(vm);
+        Assert.NotNull(vm.LastTraceInfo);
+
+        await vm.StartCommand.ExecuteAsync(null);
+        dump.StopThrows = true;
+        vm.OnLeavingTab();
+        await vm.PendingAutoStop;
+        Assert.Null(vm.LastTraceInfo);   // the earlier recording's trace is not this one's
+        Assert.False(vm.HasTraceToOpen);
     }
 
     [Fact]
