@@ -274,8 +274,9 @@ Open work only. **Read this when deciding what to do next.**
   name; the Call Trace tab shows each chosen call's parameters (view C), with the list's columns and pane resizable
   and the detail's addresses fixed. Checked live (the plan's "Step 2 built"): DumperTest58 33/33 and the UI
   walkthrough on the AOT build; **Avowed 7/7** -- 64 inventory functions chosen by name, 32 of them unloaded by the
-  time the trace was read, and all their copies decode. ⬜ Open, in the verification register
-  (`[LIVEFUNCS-STEP2]`): a reload as a second arm, the budget on a real game, the UI's memory while it loads
+  time the trace was read, and all their copies decode; a second run proved a reload as a second arm (34 names
+  armed twice, every arm decoding with its own layout) and the budget on a real game. ⬜ Open, in the verification
+  register (`[LIVEFUNCS-STEP2]`): calls/s and fps against a run without snapshots, the UI's memory while it loads
   snapshots. Step 3 not started.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is

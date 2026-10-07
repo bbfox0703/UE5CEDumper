@@ -206,12 +206,18 @@ build) and on Avowed (7/7: 64 inventory functions chosen by name, 32 of them unl
 all 369 of their copies decode) -- [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "Step 2 built". Not
 reached:
 
-1. **A reload at a new address is a new arm with its own layout.** On Avowed each name armed once: the inventory
-   opened once inside the traced window. Acceptance: open and close a widget twice inside one snapshots-only
+1. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP2-AVOWED2]`** (Avowed, dxgi proxy 3640, `livefuncs_snap_live.py --choose Inventory Item Equip --plain-s 25 --record-s 100 --per-ring 30`, 9/9; the inventory opened and closed twice inside the window, about a minute apart): **34 of the 64 chosen names were armed twice, at new addresses** (98 arms in all,
+   every layout read 2 / 17 / 48 ms after arming, min / median / max), and every second arm's slots decode with its
+   own layout; 68 functions were unloaded by the time the trace was read, and their 742 copies decode. *Was:* **A
+   reload at a new address is a new arm with its own layout.** On Avowed's first run each name armed once: the
+   inventory opened once inside the traced window. Acceptance: open and close a widget twice inside one snapshots-only
    recording (`livefuncs_snap_live.py --choose ...`); `pe_snap_layouts` lists two arms for one name, both `read`,
    and each arm's slots decode with its own layout. Unit-tested with fake readers (dll_core_test, "arm upkeep").
-2. **The budget on a real game.** Avowed's run kept every call (skipped 0, dropped 0): the 64-choice cap left out
-   its busiest per-frame function. Acceptance: choose one busy per-frame function with parameters; `dropped_budget`
+2. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP2-AVOWED2]`** (Avowed, dxgi proxy 3640, `livefuncs_snap_live.py --choose Inventory Item Equip --plain-s 25 --record-s 100 --per-ring 30`, 9/9; the inventory opened and closed twice inside the window, about a minute apart): `AlabamaLightingFixtureInterface::GetRadiusValue`, about 2,198 calls a second, kept
+   about 26 a second against a budget of 30 (5,220 slots, each call an entry and an after copy) and dropped 257,468
+   lone calls. ⬜ Still owed: calls/s and fps against a run without snapshots, and the defaults (1,000 / 10,000 a
+   second) re-measured. *Was:* **The budget on a real game.** Avowed's first run kept every call (skipped 0, dropped
+   0): the 64-choice cap left out its busiest per-frame function. Acceptance: choose one busy per-frame function with parameters; `dropped_budget`
    is near calls minus 1,000 a second, and calls/s and fps stay within noise of a run without snapshots (the plan
    asks to re-measure the defaults, 1,000 / 10,000 a second).
 3. **The UI's memory while it loads snapshots.** The D3 line counts the snapshot buffer in the game's figure only.

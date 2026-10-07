@@ -780,8 +780,12 @@ closed (`I`, held: an instant press is missed) during both recordings of
 - **The decode:** 844 slots, all of them decoded, none raw. **32 of the 64 functions were unloaded by the time the
   trace was read, and their 369 copies decode**. This is T10's case: the inventory closed, and its calls stay named
   and readable.
-- **Not exercised:**
-  - A reload as a second arm: each name armed once, since the inventory opened once in the traced window.
-  - The budget on a real game: skipped 0, dropped 0, because the 64-choice cap left out the busiest per-frame
-    function.
-  - Both are rows in the verification register.
+- **A second run** (`--plain-s 25 --record-s 100 --per-ring 30`, the inventory opened twice inside the window,
+  about a minute apart): **9 / 9.**
+  - **A reload is a second arm:** 34 of the 64 names were armed twice, at new addresses. All 98 layouts were read
+    2 / 17 / 48 ms after arming, and each arm's slots decode with its own layout.
+  - 6,830 copies decoded, none raw. 742 of them belong to the 68 functions unloaded by read time.
+  - **The budget:** `AlabamaLightingFixtureInterface::GetRadiusValue`, about 2,198 calls a second, kept about 26 a
+    second against a budget of 30 and dropped 257,468 lone calls.
+  - Still owed (verification register): calls/s and fps against a run without snapshots, and the UI's memory
+    while it loads snapshots.
