@@ -778,10 +778,15 @@ bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCo
     const uint64_t end = want < w ? want : w;
     if (end <= begin) return true;
     if (next) *next = end;
+    const uint64_t traceFirst = FirstValidLocked();
     for (uint64_t k = begin; k < end; ++k) {
         const uint8_t* slot = r.base + (k % g_trace.snapK) * r.slot;
         const auto* hdr = reinterpret_cast<const SnapSlotHeader*>(slot);
         if ((hdr->seqKind & ~kSnapAfterBit) != k) continue;   // written out of turn when the ring lapped mid-write
+        if (hdr->entrySeq < traceFirst) {                      // its call's entry record is gone from the trace
+            if (orphans) ++*orphans;
+            continue;
+        }
         SnapCopy c;
         c.index    = k;
         c.entrySeq = hdr->entrySeq;
