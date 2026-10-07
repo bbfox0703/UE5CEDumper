@@ -50,8 +50,8 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | U12 | UI | Call Trace: snapshot load before the release (bulk lane), CallTraceSnapshots stored on the CallTrace, join by entrySeq, per-arm layouts, Summary counters | U1, U2 | ✅ 9216925d |
 | U13 | UI | Call Trace: detail TabControl (Call \| Parameters), view C rows, reasons (Lone / Excluded / budget / overwritten / raw-only arm and why / null / fault / truncated), Changed, tree markers, 'Only calls with parameters' (works with no text) | U12, U11 | ✅ c104ecb2 |
 | U14 | UI | Export: JSONL snapshot keys, layout lines per arm, scoped / snapshots_only in the header; a separate params CSV | U13 | ✅ 3c69061d red |
-| X1 | docs | Plan 'Step 2 built' (decisions, TR6 / copy-size / after-copy deviations, name matching), dev-log entry, verification-register and todo rows (D1's tick refusal row rewritten; the Int8 preview quirk as its own row); comment pass | F5, U14, U8, U9, U10 | ⬜ |
-| X2 | docs | AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance; measurements and the machine recorded (UE4 not live: its headers are in the tests) | X1 | ⬜ |
+| X1 | docs | Plan 'Step 2 built' (decisions, TR6 / copy-size / after-copy deviations, name matching), dev-log entry, verification-register and todo rows (D1's tick refusal row rewritten; the Int8 preview quirk as its own row); comment pass | F5, U14, U8, U9, U10 | ✅ plan 'Step 2 built', dev-log 3639-3640, register and todo rows |
+| X2 | docs | AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance; measurements and the machine recorded (UE4 not live: its headers are in the tests) | X1 | ✅ AOT 3639 / 3640; DumperTest58 33/33 + UI walkthrough; Avowed 7/7 |
 
 -----
 

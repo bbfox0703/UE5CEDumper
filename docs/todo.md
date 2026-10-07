@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **10 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **11 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -269,8 +269,17 @@ Open work only. **Read this when deciding what to do next.**
   Folded into step 2 (maintainer, 2026-10-07): the Call Trace list's columns and detail pane resizable, the
   detail pane's addresses labelled as object addresses with the function's native entry as a CE address, and
   the Address setting honoured (the plan's "Also built with step 2").
-  ⬜ **Step 2 DESIGNED 2026-10-07** (T10-T14; the plan's "Step 2 design"): building item by item from the
-  ledger [live-funcs-step2-items.md](live-funcs-step2-items.md). Step 3 not started.
+  ✅ **Step 2 BUILT, builds 3639-3640, 2026-10-08** (T10-T14; every item of the ledger
+  [live-funcs-step2-items.md](live-funcs-step2-items.md) closed): ticks and parameter snapshots follow a function by
+  name; the Call Trace tab shows each chosen call's parameters (view C), with the list's columns and pane resizable
+  and the detail's addresses fixed. Checked live (the plan's "Step 2 built"): DumperTest58 33/33 and the UI
+  walkthrough on the AOT build; **Avowed 7/7** -- 64 inventory functions chosen by name, 32 of them unloaded by the
+  time the trace was read, and all their copies decode. ⬜ Open, in the verification register
+  (`[LIVEFUNCS-STEP2]`): a reload as a second arm, the budget on a real game, the UI's memory while it loads
+  snapshots. Step 3 not started.
+  ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
+  through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
+  not affected; the other callers are. Effort **S**.
   Steps 2 and 3, as decided before: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
   what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
   guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").

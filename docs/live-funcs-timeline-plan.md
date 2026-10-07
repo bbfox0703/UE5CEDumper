@@ -1,8 +1,8 @@
 # Live Funcs — call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
-**Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; step 2 (parameter snapshots) DESIGNED 2026-10-07
-(T10-T14, "Step 2 design", the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); step 3 (native
-stack) not started.** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
+**Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; STEP 2 (parameter snapshots, following functions by
+name) BUILT, builds 3639-3640, 2026-10-08 -- checked live on DumperTest58 and Avowed, see "Step 2 built" at the end
+(the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); step 3 (native stack) not started.** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
 built" at the end. **Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8
 — see "Decisions" — after a design review whose findings are TR1–TR7 below.
 Written 2026-10-04 from a reading of the code; the sizes and rates in the sections before "Step 1 built" are
@@ -671,3 +671,117 @@ Each item is red first, one per commit, with its test mutation-checked. Fern and
    - view C;
    - export.
 5. **Docs, then the AOT publish and the live checks.**
+
+## Step 2 built (build 3640, 2026-10-08)
+
+Every item of the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md) is closed, each with its red, its
+green and the mutations its tests had to kill. Built in one unattended run, 2026-10-07 22:40 to 2026-10-08; U10 / U11
+and U14 were built in separate worktrees and merged.
+
+### What changed from the design, found while building and live
+
+- **The copy after the call also covers a lone return value.** The design took it for out parameters only
+  (FUNC_HasOutParms) or flags never read. Measured on DumperTest58: `SnapProbe_RetOnly`, an `int32` return and
+  nothing else, has FunctionFlags `0x20401` -- no FUNC_HasOutParms -- so its return value was never copied. The
+  identity read at a function's first call now takes `UFunction::ReturnValueOffset` beside ParmsSize, and the copy
+  after the call is taken for out parameters, a return value, or flags never read (99647a1b). The UI's estimate cannot
+  tell a lone return from flags, so its MB figure counts two slots a call for every function (an upper bound) and its
+  "calls kept" half the slots (a lower bound).
+- **UHT's parameter flags, measured:** a `const TArray<int32>&` carries CPF_OutParm | CPF_ConstParm (kind
+  `const_ref`); a `const FString&` carries neither and is a plain input (`in`). A const-reference-only function
+  (`SnapProbe_ConstRefOnly`) takes no copy after the call.
+- **FName casing:** the name pool keeps the casing it saw first, so `SnapProbe_Call`'s `Round` renders `round`
+  on DumperTest58. Names are matched without case wherever they are compared to source names (the rig).
+- **A soft pointer to an actor** is its level's asset path plus a sub-path (`:PersistentLevel.<actor>`) held in an
+  FString whose text is on the heap, not in the copy. Decoded without it, the actor's pointer read as its level's;
+  the value now says the sub-path's length and that its text was not copied, marked Header (ce9e3c1d).
+- **A delegate's label in a copy** goes through the one label function `[R7-B-04]` (b94b7609): B7 had called the
+  ladder directly, and the C# pin that guards that rule had failed unnoticed until the suite was run.
+- **The arms' layouts are read by a worker thread** per traced Start with choices (F4), as the second critic asked,
+  not by MonitorLoop. Stop now stops the trace before the table, gives the worker 2 s, runs the last passes itself,
+  then seals. A worker past the deadline is joined at the next Start, a release, the last disconnect or shutdown.
+- **A DLL that predates names** answers a by-name Start without `trace.names`; the UI then stops that recording and
+  releases its trace rather than trace something other than what was asked.
+
+### Live, DumperTest58 Shipping (UE 5.8), 2026-10-07
+
+The fixture's probes (README, "DumperTest58", parameter snapshots) were packaged at 22:54. `livefuncs_snap_live.py`:
+
+| DLL | Checks | What it shows |
+|---|---|---|
+| 3638 (before step 2) | 7 / 11 | no `fname_key` on any row: the rest cannot run -- the rig's own red |
+| F1-F3 built, Stark unchanged | K1's 3 fail | a tick by name opens nothing (0 roots), no snapshot taken |
+| ce9e3c1d | **33 / 33** | below |
+
+- **K1:** 16 roots in an 8 s recording, every one `SnapNest_Outer`; one in-scope `SnapProbe_Call` per root and 16 lone
+  ones, every entry flagged taken.
+- **F5:** all 32 entries decode to their round's values (numbers, bool, the enum by name, the FName with its Number,
+  the string's and the array's headers with the right Num, the Anchor live, the vector and the struct's packed bits);
+  all 32 after copies give `OutTwice = 2R`, `InOut = 100 + R`, `ReturnValue = 3R`, the In parameters blank; no
+  orphans; no slot without its block.
+- **F4:** a function first called right before Stop (`SnapLate_Call`, invoked through the pipe) had its layout read
+  1 ms after its arm; Stop returned in 0.00-0.01 s. A choice never called is `not_called` in the Stop reply after its
+  empty trace was released.
+- **F3:** K computed by the rig with the UI's formula equals the DLL's (97,541 for 5 rings in 32 MB); 512 choices of
+  2,048 B into 8 MB are refused naming the count; a 4 MB buffer is refused; nothing stays allocated after a refusal.
+- **Budget:** at 30/s per ring the per-frame probe kept 270 lone calls and dropped 1,443 over the recording.
+- **F6:** `SnapNest_Outer`'s native entry lies inside the game's module. A script function's empty entry is not
+  checkable on a C++-only fixture.
+- Step 1's `livefuncs_trace_live.py` on the same DLL: 18 / 18.
+
+### Live, the UI (AOT build 3639, then 3640), DumperTest58 Shipping, 2026-10-08
+
+Driven through the UI, the rig not attached:
+
+- **Live Funcs:**
+  - "(per frame)" shows on the per-frame rows.
+  - The Params? box appears only on rows with parameters.
+  - Ticking `SnapNest_Outer` and choosing two functions turns the estimate line orange (T13: the busiest choice
+    keeps less time than the scoped trace).
+  - The game figure reads 96 MB (the 64 MB trace and the 32 MB snapshot buffer).
+  - The Stop note says "1634 copies kept; 0 calls over the budget had none".
+  - (One choice landed on `AnimInstance::BlueprintThreadSafeUpdateAnimation`, a per-frame Blueprint event with a
+    parameter, which only made the run wider.)
+- **Call Trace:**
+  - The summary reads "Traced inside 1 ticked function(s), followed by name … Parameters: 1600 calls with a copy,
+    from 2 load(s)".
+  - Calls with a copy carry the `(p)` marker.
+  - "Only calls with parameters" lists the 1,600 calls with the filter box empty.
+- **The Parameters tab:**
+  - A lone call says it was recorded for its parameters only.
+  - Every `SnapProbe_Call` input decodes, the struct's members nested.
+  - The after-call column shows `OutTwice -1 ≠ 480`, `InOut 100 ≠ 340`, `ReturnValue — ≠ 720`, with the raw
+    copies below.
+- **The Call tab:**
+  - It follows the Address setting, without and then with `0x`.
+  - It labels the UFunction object's address as data, not code.
+  - It gives the native entry as `"DumperTest58-Win64-Shipping.exe"+4804C50`.
+  - It marks the Blueprint event as a script function: the case the C++-only fixture cannot give the rig.
+- **Exports:**
+  - The parameters CSV has 2,076 rows, its cells armoured and its marks written as words.
+  - The JSONL header has `scoped`, `snapshots_only` and the budget counts, followed by one `snapshot_layout` line
+    per arm.
+- **Found and fixed (3640):** the column and pane drag handles had no template. Fluent 12.1.3 themes a Thumb only
+  inside a ScrollBar or a Slider, so a bare Thumb drew nothing. Styled in the panel, a column was dragged live on
+  3640, and its width came back after a restart. The drags tried on 3639 had missed the 5-pixel handles at the
+  screen's scale, so they say nothing either way about hit-testing.
+
+### Live, Avowed (UE 5.3 Shipping, the dxgi proxy refreshed to 3640), 2026-10-08
+
+Launched with `steam.exe -applaunch`, the save continued, and 272,472 objects scanned. The inventory was opened and
+closed (`I`, held: an instant press is missed) during both recordings of
+`livefuncs_snap_live.py --choose Inventory Item Equip --plain-s 25 --record-s 35`: **7 / 7.**
+
+- **The choice:** the plain recording found 64 inventory functions with parameters and a key (widgets such as
+  `WBP_InventoryViewerListButton_C`, `InventoryItemStatWidget`, `WBP_TooltipBreakdownEntry_C`). A snapshots-only
+  Start chose all 64 by name: none refused, Start 52 ms. K was 11,065 per ring in 32 MB.
+- **The layouts:** all 64 arms were read while their functions were alive, 13 / 40 / 50 ms after arming (min /
+  median / max). Stop took 0.01 s, and every followed name was called.
+- **The decode:** 844 slots, all of them decoded, none raw. **32 of the 64 functions were unloaded by the time the
+  trace was read, and their 369 copies decode**. This is T10's case: the inventory closed, and its calls stay named
+  and readable.
+- **Not exercised:**
+  - A reload as a second arm: each name armed once, since the inventory opened once in the traced window.
+  - The budget on a real game: skipped 0, dropped 0, because the 64-choice cap left out the busiest per-frame
+    function.
+  - Both are rows in the verification register.

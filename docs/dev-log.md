@@ -27,6 +27,35 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (builds 3639-3640) — Live Funcs follows functions by name and copies their parameters `[LIVEFUNCS-STEP2]`
+
+- **Ticks follow a function by name, not by address.** A function a closed menu unloaded can be ticked from its
+  "(unloaded)" row, and the trace scopes on it wherever it loads next. A name the recording never saw called is
+  listed after Stop.
+- **Parameter snapshots (experimental, with Trace).** A "Params?" column chooses functions. Each traced call of a
+  chosen function keeps a copy of its parameters, and functions with outputs keep a second copy after the call.
+  - The snapshots have their own buffer of 8 to 128 MB (default 32), remembered.
+  - An estimate line says how much a minute they take and how many calls each function keeps. It turns orange when
+    the busiest choice keeps less time than the trace; a grey note says what the per-function budget will skip.
+  - "Choose shown rows" chooses every row on screen.
+  - Choices with nothing ticked record only the chosen calls.
+- **Call Trace has a Parameters tab.** Each parameter's value at the call and after it is shown, struct members
+  nested, with a mark when a value names what is there now, is gone, or is a header only. "≠" flags bytes that
+  changed during the call, and the raw copies are shown too.
+  - The tree marks calls with a copy, and "Only calls with parameters" lists them, even with the filter box empty.
+  - A call without values says why: not chosen, over the budget, overwritten since, or recorded alone.
+- **The Call Trace list's columns and its detail pane can be dragged wider and are remembered.** The detail says that
+  the address it shows is the UFunction object's (data, not code) and follows the Address setting. A native
+  function's entry is given as a Cheat Engine address, `"Game.exe"+RVA`; a Blueprint function is marked as running
+  in the interpreter.
+- **Exports:** the JSONL carries each chosen call's parameters and one layout line per function load. A new
+  "Export parameters CSV" writes one row per parameter.
+- Checked live on Avowed: 64 inventory functions chosen by name, half of them unloaded by the time the trace was
+  read, and every copy still decodes.
+- 3640 makes the column handles visible: on 3639 they had no template and drew nothing.
+
+-----
+
 ## 2026-10-07 (build 3638) — The call trace names every function, and the slider says what it costs in memory `[TRACE-UNLOADED-NAMES]` `[TRACE-UI-LOAD-MEMORY]`
 
 - A function the game unloads during a recording (a closed inventory's widgets, content it streams out) keeps the

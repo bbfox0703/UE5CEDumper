@@ -199,6 +199,25 @@ Tags have always resolved across files, so the split changed nothing about the l
 > larger now. **Never read a count out of this block — derive it**:
 > `grep -c '^### ' docs/pending-verification_zh-TW.md` minus the two `###` under 「怎麼用這份清單」.
 
+### ⬜ Live Funcs step 2 — what its live checks did not reach `[LIVEFUNCS-STEP2]`
+
+Built in builds 3639-3640 (2026-10-08) and proven live on DumperTest58 (the rig 33/33, the UI walkthrough on the AOT
+build) and on Avowed (7/7: 64 inventory functions chosen by name, 32 of them unloaded before the trace was read, and
+all 369 of their copies decode) -- [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md), "Step 2 built". Not
+reached:
+
+1. **A reload at a new address is a new arm with its own layout.** On Avowed each name armed once: the inventory
+   opened once inside the traced window. Acceptance: open and close a widget twice inside one snapshots-only
+   recording (`livefuncs_snap_live.py --choose ...`); `pe_snap_layouts` lists two arms for one name, both `read`,
+   and each arm's slots decode with its own layout. Unit-tested with fake readers (dll_core_test, "arm upkeep").
+2. **The budget on a real game.** Avowed's run kept every call (skipped 0, dropped 0): the 64-choice cap left out
+   its busiest per-frame function. Acceptance: choose one busy per-frame function with parameters; `dropped_budget`
+   is near calls minus 1,000 a second, and calls/s and fps stay within noise of a run without snapshots (the plan
+   asks to re-measure the defaults, 1,000 / 10,000 a second).
+3. **The UI's memory while it loads snapshots.** The D3 line counts the snapshot buffer in the game's figure only.
+   Acceptance: a full 32 MB snapshot buffer loaded in the Call Trace tab, and the load's memory log line.
+4. **UE4's property model** is not checked live, by decision (2026-10-07); if ever needed, UE 4.27.
+
 ### ⛔ PRECONDITION FOR EVERY GAME ROW — as of 2026-08-19, ALL NINE deployed proxies are STALE
 
 Measured with `tools/verify/proxy_refresh.py report` (build 3263, `dist/proxy` = dinput8 2,875,904 /
@@ -250,7 +269,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`10` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:
