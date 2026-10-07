@@ -317,11 +317,6 @@ std::vector<ArmView> CopyArms(ArmState& st) {
     return out;
 }
 
-std::shared_ptr<ArmState> TraceArms(uint64_t* gen) {
-    (void)gen;
-    return nullptr;
-}
-
 std::vector<ArmSummary> ArmsSummary() {
     std::lock_guard<std::mutex> lk(g_mu);
     std::vector<ArmSummary> out;
@@ -781,6 +776,12 @@ TraceInfo InfoLocked() {
     return i;
 }
 }  // namespace
+
+std::shared_ptr<ArmState> TraceArms(uint64_t* gen) {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (gen) *gen = g_trace.gen;
+    return g_trace.arms;   // freeing the trace lets go of it, so a freed trace hands out none
+}
 
 TraceInfo GetTraceInfo() {
     std::lock_guard<std::mutex> lk(g_traceMu);

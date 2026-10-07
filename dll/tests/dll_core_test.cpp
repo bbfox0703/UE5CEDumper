@@ -7724,9 +7724,10 @@ int main() {
               v[2].rec.addr == 0xB3, u(v.size()).c_str());
 
         uint64_t armsGen = 0;
-        const auto held = Linie::TraceArms(&armsGen);
+        auto held = Linie::TraceArms(&armsGen);
         check("the stopped trace hands its readers the names it follows, with its gen",
               held.get() == st.get() && armsGen == Linie::GetTraceInfo().gen && armsGen != 0);
+        held.reset();   // a reader's copy, let go: the trace's own reference is what the next checks follow
         std::weak_ptr<Linie::ArmState> w = st;
         st.reset();
         tc.arms.reset();
