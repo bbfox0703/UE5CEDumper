@@ -392,6 +392,30 @@ public class LiveFuncsTraceTests
     }
 
     [Fact]
+    public async Task Rows_that_share_a_name_tick_together_and_send_every_address()
+    {
+        // pe_profile_get names a class by its short name, so two Blueprint classes in different folders can give two
+        // rows with the same Class::Func: a tick is by name, so both rows show it and both addresses are traced.
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("BP_Door_C", "Open", "0x100"), Row("BP_Door_C", "Open", "0x200"),
+                                Row("Pawn", "Tick", "0x300"));
+        await RecordOnce(vm);
+        var doors = vm.Results.Where(r => r.FuncName == "Open").ToList();
+        vm.ToggleTickCommand.Execute(doors[1]);
+        Assert.True(doors[0].IsTicked && doors[1].IsTicked);
+        Assert.Equal(new[] { "BP_Door_C::Open" }, vm.TickedFunctions);
+
+        vm.TraceEnabled = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "0x100", "0x200" }, dump.LastTrace!.Ticked.OrderBy(a => a).ToArray());
+        await vm.StopCommand.ExecuteAsync(null);
+
+        vm.ToggleTickCommand.Execute(vm.Results.First(r => r.FuncName == "Open"));
+        Assert.All(vm.Results, r => Assert.False(r.IsTicked));
+        Assert.Empty(vm.TickedFunctions);
+    }
+
+    [Fact]
     public async Task Rows_from_an_earlier_connection_lose_their_ticks_and_cannot_be_ticked()
     {
         // Their addresses belong to a process that is gone: a tick on one would send a dead address.
