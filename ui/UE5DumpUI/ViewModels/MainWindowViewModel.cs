@@ -2428,6 +2428,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Track(LiveFuncs, LiveFuncsPersist);
         Track(DumpExplorer, DumpExplorerPersist);
         Track(GameClassFilter, GameClassFilterPersist);
+        Track(CallTrace, CallTracePersist);
         if (Snapshot != null) Track(Snapshot, SnapshotPersist);
         if (Spc != null) Track(Spc, SpcPersist);
         if (Pivot != null) Track(Pivot, PivotPersist);
@@ -2542,6 +2543,13 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(GameClassFilterViewModel.GameClassesOnly),
         nameof(GameClassFilterViewModel.ClassListCap),   // [W3-CAP-NOSAVE] as PropertySearchPersist's Max cap
     };
+    // [LIVEFUNCS-STEP2] U10: a drag changes a width on every pointer move; the save is debounced like any other option.
+    private static readonly HashSet<string> CallTracePersist = new()
+    {
+        nameof(CallTraceViewModel.TimeColWidth), nameof(CallTraceViewModel.DurationColWidth),
+        nameof(CallTraceViewModel.ThreadColWidth), nameof(CallTraceViewModel.ObjectColWidth),
+        nameof(CallTraceViewModel.DetailPaneWidth),
+    };
     private static readonly HashSet<string> ProxyDeployPersist = new()
     {
         nameof(ProxyDeployViewModel.SelectedProxyType), nameof(ProxyDeployViewModel.ForceOverwrite),
@@ -2642,6 +2650,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         // hand-written 0 would make the Classes tab return nothing with no visible cause.
         GameClassFilter.ClassListCap = Math.Clamp(
             o.GameClassFilter.ClassListCap, Constants.MinSearchCap, Constants.MaxSearchCap);
+        CallTrace.TimeColWidth = o.CallTrace.TimeColWidth;   // the VM clamps a hand-edited width
+        CallTrace.DurationColWidth = o.CallTrace.DurationColWidth;
+        CallTrace.ThreadColWidth = o.CallTrace.ThreadColWidth;
+        CallTrace.ObjectColWidth = o.CallTrace.ObjectColWidth;
+        CallTrace.DetailPaneWidth = o.CallTrace.DetailPaneWidth;
 
         if (Snapshot != null)
         {
@@ -2803,6 +2816,11 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;
         o.GameClassFilter.ClassListCap = GameClassFilter.ClassListCap;
+        o.CallTrace.TimeColWidth = CallTrace.TimeColWidth;
+        o.CallTrace.DurationColWidth = CallTrace.DurationColWidth;
+        o.CallTrace.ThreadColWidth = CallTrace.ThreadColWidth;
+        o.CallTrace.ObjectColWidth = CallTrace.ObjectColWidth;
+        o.CallTrace.DetailPaneWidth = CallTrace.DetailPaneWidth;
 
         if (Snapshot != null)
         {

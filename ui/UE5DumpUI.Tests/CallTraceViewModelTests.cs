@@ -522,7 +522,7 @@ public class CallTraceViewModelTests
         Assert.Equal("—", rows[4].DurationText);   // never returned
     }
 
-    // ---- [LIVEFUNCS-STEP2 U10] the list's widths: dragged from the header, shared by every row, remembered ----
+    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by every row, remembered ----
 
     [Fact]
     public void The_widths_start_at_the_old_fixed_layout_and_the_saved_defaults_are_the_same()

@@ -92,12 +92,48 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
+    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by the header and every row ----
+
+    // Each width's floor keeps its header wide enough to grab and drag back: a column dragged, or hand-edited in
+    // ui-options.json, down to nothing would leave no edge to pull it out by.
+    internal const double MinTimeColWidth = 40, MinDurationColWidth = 40, MinThreadColWidth = 32,
+                          MinObjectColWidth = 80, MinDetailPaneWidth = 200;
+    /// <summary>The ceiling for every width: a hand-edited value of millions of pixels would lay the panel out far
+    /// past any screen.</summary>
     internal const double MaxWidth = 4096;
-    public double TimeColWidth { get; set; }
-    public double DurationColWidth { get; set; }
-    public double ThreadColWidth { get; set; }
-    public double ObjectColWidth { get; set; }
-    public double DetailPaneWidth { get; set; }
+
+    private double _timeColWidth = 96, _durationColWidth = 88, _threadColWidth = 64, _objectColWidth = 260,
+                   _detailPaneWidth = 380;
+    public double TimeColWidth
+    {
+        get => _timeColWidth;
+        set => SetProperty(ref _timeColWidth, ClampWidth(value, MinTimeColWidth));
+    }
+    public double DurationColWidth
+    {
+        get => _durationColWidth;
+        set => SetProperty(ref _durationColWidth, ClampWidth(value, MinDurationColWidth));
+    }
+    public double ThreadColWidth
+    {
+        get => _threadColWidth;
+        set => SetProperty(ref _threadColWidth, ClampWidth(value, MinThreadColWidth));
+    }
+    /// <summary>Docked at the right of each row: Function takes what the fixed columns leave.</summary>
+    public double ObjectColWidth
+    {
+        get => _objectColWidth;
+        set => SetProperty(ref _objectColWidth, ClampWidth(value, MinObjectColWidth));
+    }
+    public double DetailPaneWidth
+    {
+        get => _detailPaneWidth;
+        set => SetProperty(ref _detailPaneWidth, ClampWidth(value, MinDetailPaneWidth));
+    }
+
+    /// <summary>NaN goes to the floor, not through: a Width of NaN is "auto" to Avalonia, and the column would size to
+    /// its text row by row.</summary>
+    private static double ClampWidth(double value, double min) => double.IsNaN(value) ? min : Math.Clamp(value, min, MaxWidth);
 
     internal CallTrace? Trace => _trace;
     internal CallTraceTree? Tree => _tree;
@@ -563,6 +599,9 @@ public sealed class CallTraceRow
     /// <summary>Its address held another function during the recording (review DLL-3): marked too.</summary>
     public bool FuncReused { get; init; }
     public string ObjectText { get; init; } = "";
+    /// <summary>[LIVEFUNCS-STEP2] U10: the Object cell's tooltip: its whole text, which a narrow column cuts; none for a
+    /// call with no object, where an empty tooltip would still pop up.</summary>
+    public string? ObjectTip => ObjectText.Length > 0 ? ObjectText : null;
     public bool ObjectStale { get; init; }
     /// <summary>A stale object shows its address dimmed: what is there now may not be what was called.</summary>
     public double ObjectOpacity => ObjectStale ? 0.5 : 1.0;
