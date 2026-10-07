@@ -191,16 +191,21 @@ public:
 
 	// ---- [LIVEFUNCS-TIMELINE-2026-10-04] a nested ProcessEvent chain for the Live Funcs call trace -------------
 	// The stock template's ProcessEvent traffic is flat: every call is a root, so a ticked scope has nothing under it
-	// to show. Every TraceNest_PeriodSeconds this actor calls TraceNest_Outer; Outer calls TraceNest_Inner; Inner
-	// broadcasts OnTraceNestLeaf, bound to TraceNest_Leaf. A BlueprintNativeEvent called from C++ dispatches through
-	// ProcessEvent, and so does a dynamic broadcast to each binding, so every round is three NESTED ProcessEvent
-	// calls on the game thread, with known counts: Outer, Inner and Leaf once per round, Leaf under Inner under Outer.
-	// Tick Outer in Live Funcs and the trace holds exactly those rounds.
+	// to show. Every TraceNest_PeriodSeconds this actor runs TraceNest_Outer; Outer runs TraceNest_Inner; Inner
+	// broadcasts OnTraceNestLeaf, bound to TraceNest_Leaf. Outer and Inner are dispatched by name through ProcessEvent
+	// (TraceNest_Dispatch), the way native code calls a reflected function, and a dynamic broadcast reaches each
+	// binding through ProcessEvent, so every round is three NESTED ProcessEvent calls on the game thread, with known
+	// counts: Outer, Inner and Leaf once per round, Leaf under Inner under Outer. Tick Outer in Live Funcs and the
+	// trace holds exactly those rounds.
+	//
+	// ⚠ NOT BlueprintNativeEvents. Measured on the first package (2026-10-07): only Leaf reached the hook. UHT's thunk
+	// for a BlueprintNativeEvent calls _Implementation DIRECTLY when the owning class is native (nothing overrides it in
+	// a Blueprint), so a C++ call to one never touches ProcessEvent.
 
-	UFUNCTION(BlueprintNativeEvent, Category = "DumperTest58|Trace")
+	UFUNCTION(BlueprintCallable, Category = "DumperTest58|Trace")
 	void TraceNest_Outer(int32 Round);
 
-	UFUNCTION(BlueprintNativeEvent, Category = "DumperTest58|Trace")
+	UFUNCTION(BlueprintCallable, Category = "DumperTest58|Trace")
 	void TraceNest_Inner(int32 Round);
 
 	/// Bound to OnTraceNestLeaf in BeginPlay; a UFUNCTION because a dynamic delegate binds by name.
@@ -221,4 +226,6 @@ public:
 private:
 	FTimerHandle TraceNestTimer;
 	void TraceNest_Fire();
+	/// Run this actor's UFUNCTION `Func(int32 Round)` through ProcessEvent.
+	void TraceNest_Dispatch(FName Func, int32 Round);
 };

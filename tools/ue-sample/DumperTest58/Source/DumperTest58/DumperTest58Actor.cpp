@@ -80,7 +80,7 @@ void ADumperTest58Actor::BeginPlay()
 	}
 
 	// [LIVEFUNCS-TIMELINE-2026-10-04] The trace chain. The timer calls a plain C++ method (no ProcessEvent), which
-	// starts the chain with a BlueprintNativeEvent call (ProcessEvent): the trace sees Outer as a root.
+	// dispatches Outer through ProcessEvent: the trace sees Outer as a root.
 	OnTraceNestLeaf.AddDynamic(this, &ADumperTest58Actor::TraceNest_Leaf);
 	if (UWorld* W = GetWorld())
 	{
@@ -89,17 +89,28 @@ void ADumperTest58Actor::BeginPlay()
 	}
 }
 
+void ADumperTest58Actor::TraceNest_Dispatch(FName Func, int32 Round)
+{
+	if (UFunction* F = FindFunction(Func))
+	{
+		// The parameter block of a function whose only parameter is an int32.
+		struct { int32 Round; } Parms{ Round };
+		ProcessEvent(F, &Parms);
+	}
+}
+
 void ADumperTest58Actor::TraceNest_Fire()
 {
-	TraceNest_Outer(++TraceNest_Rounds);
+	TraceNest_Dispatch(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, TraceNest_Outer), ++TraceNest_Rounds);
 }
 
-void ADumperTest58Actor::TraceNest_Outer_Implementation(int32 Round)
+void ADumperTest58Actor::TraceNest_Outer(int32 Round)
 {
-	TraceNest_Inner(Round);   // a BlueprintNativeEvent: through ProcessEvent, nested under Outer
+	// Through ProcessEvent, nested under Outer.
+	TraceNest_Dispatch(GET_FUNCTION_NAME_CHECKED(ADumperTest58Actor, TraceNest_Inner), Round);
 }
 
-void ADumperTest58Actor::TraceNest_Inner_Implementation(int32 Round)
+void ADumperTest58Actor::TraceNest_Inner(int32 Round)
 {
 	OnTraceNestLeaf.Broadcast(Round);   // each binding through ProcessEvent, nested under Inner
 }
