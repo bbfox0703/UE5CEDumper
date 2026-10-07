@@ -7,6 +7,7 @@
 
 #include "Engine/World.h"
 #include "HAL/PlatformMemory.h"
+#include "TimerManager.h"
 
 #include "Windows/AllowWindowsPlatformTypes.h"
 #include <Windows.h>
@@ -77,6 +78,35 @@ void ADumperTest58Actor::BeginPlay()
 			Opt_Obj = TObjectPtr<AActor>(Anchor);
 		}
 	}
+
+	// [LIVEFUNCS-TIMELINE-2026-10-04] The trace chain. The timer calls a plain C++ method (no ProcessEvent), which
+	// starts the chain with a BlueprintNativeEvent call (ProcessEvent): the trace sees Outer as a root.
+	OnTraceNestLeaf.AddDynamic(this, &ADumperTest58Actor::TraceNest_Leaf);
+	if (UWorld* W = GetWorld())
+	{
+		W->GetTimerManager().SetTimer(TraceNestTimer, this, &ADumperTest58Actor::TraceNest_Fire,
+									  FMath::Max(0.05f, TraceNest_PeriodSeconds), /*bLoop=*/true);
+	}
+}
+
+void ADumperTest58Actor::TraceNest_Fire()
+{
+	TraceNest_Outer(++TraceNest_Rounds);
+}
+
+void ADumperTest58Actor::TraceNest_Outer_Implementation(int32 Round)
+{
+	TraceNest_Inner(Round);   // a BlueprintNativeEvent: through ProcessEvent, nested under Outer
+}
+
+void ADumperTest58Actor::TraceNest_Inner_Implementation(int32 Round)
+{
+	OnTraceNestLeaf.Broadcast(Round);   // each binding through ProcessEvent, nested under Inner
+}
+
+void ADumperTest58Actor::TraceNest_Leaf(int32 Round)
+{
+	++TraceNest_Leaves;
 }
 
 void ADumperTest58Actor::Tick(float DeltaSeconds)

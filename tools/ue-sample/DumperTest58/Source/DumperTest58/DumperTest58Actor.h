@@ -31,7 +31,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/Actor.h"
+#include "TimerManager.h"
 #include "DumperTest58Actor.generated.h"
+
+/// [LIVEFUNCS-TIMELINE-2026-10-04] The trace chain's last link: a dynamic delegate's broadcast reaches each binding
+/// through ProcessEvent, which is one of the ways a game nests calls the trace has to show.
+DECLARE_DYNAMIC_MULTICAST_DELEGATE_OneParam(FDumperTest58TraceLeaf, int32, Round);
 
 /// The struct optional's inner. Deliberately holds a bare object pointer AND a container of
 /// them: `[A2-TOPTIONAL-STRUCT-DESCENT]`'s reset case is a struct optional whose descent
@@ -183,4 +188,37 @@ public:
 	/// offset of Opt_Tail. The host is only valid while offset + 8 == size.
 	UPROPERTY() int32 OptTail_ObjectSize = 0;
 	UPROPERTY() int32 OptTail_FieldOffset = 0;
+
+	// ---- [LIVEFUNCS-TIMELINE-2026-10-04] a nested ProcessEvent chain for the Live Funcs call trace -------------
+	// The stock template's ProcessEvent traffic is flat: every call is a root, so a ticked scope has nothing under it
+	// to show. Every TraceNest_PeriodSeconds this actor calls TraceNest_Outer; Outer calls TraceNest_Inner; Inner
+	// broadcasts OnTraceNestLeaf, bound to TraceNest_Leaf. A BlueprintNativeEvent called from C++ dispatches through
+	// ProcessEvent, and so does a dynamic broadcast to each binding, so every round is three NESTED ProcessEvent
+	// calls on the game thread, with known counts: Outer, Inner and Leaf once per round, Leaf under Inner under Outer.
+	// Tick Outer in Live Funcs and the trace holds exactly those rounds.
+
+	UFUNCTION(BlueprintNativeEvent, Category = "DumperTest58|Trace")
+	void TraceNest_Outer(int32 Round);
+
+	UFUNCTION(BlueprintNativeEvent, Category = "DumperTest58|Trace")
+	void TraceNest_Inner(int32 Round);
+
+	/// Bound to OnTraceNestLeaf in BeginPlay; a UFUNCTION because a dynamic delegate binds by name.
+	UFUNCTION()
+	void TraceNest_Leaf(int32 Round);
+
+	UPROPERTY(BlueprintAssignable, Category = "DumperTest58|Trace")
+	FDumperTest58TraceLeaf OnTraceNestLeaf;
+
+	/// Rounds started, and leaves reached: equal unless a link of the chain is broken.
+	UPROPERTY() int32 TraceNest_Rounds = 0;
+	UPROPERTY() int32 TraceNest_Leaves = 0;
+
+	/// Seconds between rounds. Slower than any frame, so the chain is never mistaken for per-frame work and is not
+	/// left out by Leave out per-frame.
+	UPROPERTY() float TraceNest_PeriodSeconds = 0.5f;
+
+private:
+	FTimerHandle TraceNestTimer;
+	void TraceNest_Fire();
 };

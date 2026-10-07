@@ -641,6 +641,18 @@ name, and two `DumperTestActor`s on two engines is how a run reports the wrong f
 | `OptTail_Total` · `OptTail_Edges` | counts | How many were made, and how many ended at an unreadable page. Zero edges after the cap means the row is still unreachable on this run — say so, do not close it |
 | `OptTail_ObjectSize` · `OptTail_FieldOffset` | the compiled layout, measured from the first instance | The host is valid only while `OptTail_FieldOffset` + 8 == `OptTail_ObjectSize` |
 
+#### The call-trace chain (2026-10-07) — `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+⚠ **Not a 5.5+ property, the one exception to "only what 5.4 cannot host".** It is here because 5.8 is the last
+engine version, so its share of games will grow, and the maintainer asked for the trace's scenarios on 5.8
+(2026-10-07). The stock templates' ProcessEvent traffic is flat — every call a root — so a ticked scope had
+nothing under it to show.
+
+| field | value | check |
+|---|---|---|
+| `TraceNest_Outer` → `TraceNest_Inner` → `OnTraceNestLeaf` → `TraceNest_Leaf` | one round every `TraceNest_PeriodSeconds` (`0.5` s), from a timer | Three **nested** ProcessEvent calls per round on the game thread: a BlueprintNativeEvent called from C++ dispatches through ProcessEvent, and so does a dynamic broadcast to each binding. Live Funcs with Trace on and `TraceNest_Outer` ticked: every root of the trace is `TraceNest_Outer` (flagged the scope root), with `TraceNest_Inner` under it and `TraceNest_Leaf` under that, about two rounds per second of recording. `tools/verify/livefuncs_trace_live.py` ticks the function with the most nested calls, which is one of these |
+| `TraceNest_Rounds` · `TraceNest_Leaves` | counts | Equal unless a link of the chain is broken; a trace's round count can be checked against them |
+
 ### DumperTest51 (2026-09-24) — the first UE 5.0-5.2 sample, stock template
 
 The maintainer's **stock UE 5.1.1 Third Person template** (`D:\Unreal Projects\DumperTest51`, packaged
