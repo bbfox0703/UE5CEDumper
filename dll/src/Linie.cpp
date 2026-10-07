@@ -381,6 +381,7 @@ struct TraceState {
     uint64_t snapK     = 0;                     // slots per ring
     uint32_t snapCount = 0;
     std::unique_ptr<SnapRing[]> snapRings;
+    BytesCopier copier = nullptr;
 };
 
 TraceState            g_trace;
@@ -460,6 +461,28 @@ bool FreeTraceLocked() {
         if (g_arms == dropTrace) dropRecording = std::move(g_arms);
     }
     return true;
+}
+
+// [LIVEFUNCS-STEP2] One slot of ring `ring`, inside the hook's in-flight section: the header, the copy, the slot's
+// number last -- a reader keeps a slot only when its number is the one it expects. Never a write-back: the copy after
+// the call takes a slot of its own (TR3).
+void SnapWrite(int32_t ring, uint64_t entrySeq, bool after, uintptr_t params, const ArmHint& hint) {
+    SnapRing& r = g_trace.snapRings[ring];
+    const uint64_t k = r.next.fetch_add(1, std::memory_order_relaxed);
+    uint8_t* slot = r.base + (k % g_trace.snapK) * r.slot;
+    auto* hdr = reinterpret_cast<SnapSlotHeader*>(slot);
+    hdr->entrySeq = entrySeq;
+    hdr->arm = hint.arm;
+    uint32_t n = hint.copy < r.cap ? hint.copy : r.cap;
+    uint16_t flags = (hint.flags & kArmTruncated) ? kSnapTruncated : 0;
+    if (params == 0) { flags |= kSnapNullParams; n = 0; }
+    else if (n != 0 && !(g_trace.copier && g_trace.copier(params, slot + sizeof(SnapSlotHeader), n))) {
+        flags |= kSnapCopyFault;
+        n = 0;
+    }
+    hdr->len = static_cast<uint16_t>(n);
+    hdr->flags = flags;
+    hdr->seqKind = k | (after ? kSnapAfterBit : 0);
 }
 
 uint64_t FirstValidLocked() {
@@ -552,6 +575,7 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
     g_trace.snapK     = snapK;
     g_trace.snapCount = static_cast<uint32_t>(nRings);
     g_trace.snapRings = std::move(snapRings);
+    g_trace.copier    = cfg.copier;
 
     g_trace.buf   = static_cast<TraceRecord*>(p);
     g_trace.bytes = size;
@@ -583,14 +607,14 @@ void FreeTrace() {
 
 void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok, uintptr_t params,
                 const ArmHint& hint) {
-    (void)params;
     tok = TraceToken{};
     InflightGuard inflight;
     if (!g_tracing.load(std::memory_order_seq_cst)) return;
     const uint64_t gen = g_trace.gen;
     // [LIVEFUNCS-STEP2] The table's read of this same call armed it, when the hint is this recording's (gens start at
-    // 1, so a default hint never is).
+    // 1, so a default hint never is); its ring only when this trace has it.
     const bool named = hint.gen == gen;
+    const int32_t ring = (named && hint.ring >= 0 && static_cast<uint32_t>(hint.ring) < g_trace.snapCount) ? hint.ring : -1;
     bool open = false;
     if (g_trace.scoped) {
         if (t_scopeGen != gen) {
@@ -613,7 +637,8 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     r.a       = ufunc;
     r.b       = obj;
     r.tid     = tid;
-    r.flags   = open ? kTraceScopeRoot : 0;
+    if (ring >= 0) SnapWrite(ring, seq, false, params, hint);
+    r.flags   = (open ? kTraceScopeRoot : 0) | (ring >= 0 ? kTraceSnapTaken : 0);
     tok.entrySeq = seq;
     tok.gen      = gen;
     tok.traced   = true;
@@ -668,8 +693,36 @@ TraceInfo GetTraceInfo() {
 }
 
 bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next) {
-    (void)ring; (void)from; (void)maxSlots; (void)out; (void)next;
-    return false;
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (!g_trace.snapBlock || ring >= g_trace.snapCount || g_tracing.load(std::memory_order_seq_cst) ||
+        !g_trace.quiesced)
+        return false;
+    const SnapRing& r = g_trace.snapRings[ring];
+    const uint64_t w = r.next.load(std::memory_order_relaxed);
+    const uint64_t first = w > g_trace.snapK ? w - g_trace.snapK : 0;
+    const uint64_t begin = from > first ? from : first;
+    if (next) *next = begin;
+    if (begin >= w) return true;
+    const uint64_t want = (static_cast<uint64_t>(maxSlots) > UINT64_MAX - from) ? UINT64_MAX : from + maxSlots;
+    const uint64_t end = want < w ? want : w;
+    if (end <= begin) return true;
+    if (next) *next = end;
+    for (uint64_t k = begin; k < end; ++k) {
+        const uint8_t* slot = r.base + (k % g_trace.snapK) * r.slot;
+        const auto* hdr = reinterpret_cast<const SnapSlotHeader*>(slot);
+        if ((hdr->seqKind & ~kSnapAfterBit) != k) continue;   // written out of turn when the ring lapped mid-write
+        SnapCopy c;
+        c.index    = k;
+        c.entrySeq = hdr->entrySeq;
+        c.after    = (hdr->seqKind & kSnapAfterBit) != 0;
+        c.len      = hdr->len;
+        c.flags    = hdr->flags;
+        c.arm      = hdr->arm;
+        const uint16_t n = hdr->len <= r.cap ? hdr->len : static_cast<uint16_t>(r.cap);
+        c.bytes.assign(slot + sizeof(SnapSlotHeader), slot + sizeof(SnapSlotHeader) + n);
+        out.push_back(std::move(c));
+    }
+    return true;
 }
 
 bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
