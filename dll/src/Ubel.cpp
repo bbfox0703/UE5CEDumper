@@ -2101,6 +2101,13 @@ bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, ui
     return true;
 }
 
+bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
+    (void)func;
+    out = ParamLayout{};
+    why = "not built";
+    return false;
+}
+
 // [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:
 // +4 standard, +4 or +8 case-preserving). Loads only.
 bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber) {

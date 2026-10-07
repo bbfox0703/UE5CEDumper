@@ -8624,6 +8624,153 @@ int main() {
         DynOff::bCasePreservingName = savedCpn;
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: a chosen function's parameter layout -- its own chain, CPF_Parm only, both property models");
+        // docs/live-funcs-step2-items.md, B3. ⛔ POOL-FAKING: own pool, first. The layouts the project supports (the
+        // maintainer, 2026-10-07: UE4 in the tests): FField on UE5 / 4.25+, standard and case-preserving headers;
+        // UProperty on 4.15 (4.11-4.17: the first subclass field at +0x28) and 4.22 (4.18-4.24: +0x2C).
+        static uint8_t plEntry[22][0x40] = {};
+        static uintptr_t plChunk[23] = {};
+        const char* plNames[22] = { "", "Function", "IntProperty", "ObjectProperty", "StructProperty", "BoolProperty",
+                                    "Count", "Who", "Hit", "Flag", "ReturnValue", "Temp_Local", "DoIt", "MyActor_C",
+                                    "Class", "ScriptStruct", "Actor", "HitResult", "Parent", "Inherited", "NoParms",
+                                    "Decoy" };
+        for (int i = 1; i < 22; ++i) {
+            memcpy(plEntry[i] + 0x10, plNames[i], strlen(plNames[i]) + 1);
+            plChunk[i] = reinterpret_cast<uintptr_t>(plEntry[i]);
+        }
+        static uintptr_t plChunks[2] = { reinterpret_cast<uintptr_t>(plChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(plChunks), 0x10);
+        check("setup: the pool resolves Function", Serie::GetString(1) == "Function");
+
+        const bool savedFProp = DynOff::bUseFProperty, savedCpn = DynOff::bCasePreservingName;
+        const int savedOuter = DynOff::UOBJECT_OUTER, savedNum = DynOff::FNAME_NUMBER, savedOff = DynOff::UPROPERTY_OFFSET;
+        const int savedStart = DynOff::UPROPERTY_SUBCLASS_START;
+        const uint32_t savedVer = g_cachedUEVersion;
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put64 = [](uint8_t* b, int off, uint64_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        static uint8_t named[22][0x100];
+        static uint8_t fclassBlob[22][0x20];
+        auto obj = [&](int idx) { return reinterpret_cast<uintptr_t>(named[idx]); };
+        auto fclass = [&](int idx) { return reinterpret_cast<uintptr_t>(fclassBlob[idx]); };
+
+        struct Layout { const char* name; bool fprop, cpn; unsigned ver; int offsetInternal, slot; };
+        const Layout layouts[] = {
+            { "FField (UE5, 4.25+), standard header", true, false, 504, 0, 0 },
+            { "FField, case-preserving header", true, true, 427, 0, 0 },
+            { "UProperty 4.15", false, false, 415, 0x50, 0x78 },
+            { "UProperty 4.22", false, false, 422, 0x44, 0x70 },
+        };
+        constexpr uint64_t kParm = 0x80, kOut = 0x100, kRet = 0x400, kPod = 0x0008001040000200ull;
+        struct Entry { int name, type; int32_t size, offset, arrayDim; uint64_t flags; int slotObj; };
+        // Count[2] (in), Who (an object -> Actor), Hit (an out struct -> HitResult), Flag (a packed bool), the return,
+        // then a Blueprint local past them.
+        const Entry chain[6] = { { 6, 2, 4, 0x00, 2, kParm | kPod, 0 },  { 7, 3, 8, 0x08, 1, kParm, 16 },
+                                 { 8, 4, 0x88, 0x10, 1, kParm | kOut, 17 }, { 9, 5, 1, 0x98, 1, kParm, 0 },
+                                 { 10, 2, 4, 0xA0, 1, kParm | kOut | kRet | kPod, 0 }, { 11, 2, 4, 0xA4, 1, kPod, 0 } };
+        static uint8_t fnBlob[0x200], parentBlob[0x200], notFn[0x200], bareFn[0x200];
+        static uint8_t props[6][0x100], parentProp[0x100], bareProp[0x100];
+
+        for (const Layout& L : layouts) {
+            memset(named, 0, sizeof named);
+            memset(fclassBlob, 0, sizeof fclassBlob);
+            memset(fnBlob, 0, sizeof fnBlob); memset(parentBlob, 0, sizeof parentBlob);
+            memset(notFn, 0, sizeof notFn); memset(bareFn, 0, sizeof bareFn);
+            memset(props, 0, sizeof props); memset(parentProp, 0, sizeof parentProp); memset(bareProp, 0, sizeof bareProp);
+            DynOff::bUseFProperty = L.fprop;
+            DynOff::bCasePreservingName = L.cpn;
+            DynOff::UOBJECT_OUTER = L.cpn ? 0x28 : 0x20;
+            DynOff::FNAME_NUMBER = 4;
+            g_cachedUEVersion = L.ver;
+            if (!L.fprop) { DynOff::UPROPERTY_OFFSET = L.offsetInternal; DynOff::UPROPERTY_SUBCLASS_START = 0; }
+            for (int i = 1; i < 22; ++i) {
+                put32(named[i], Grimoire::OFF_UOBJECT_NAME, i);
+                put32(fclassBlob[i], DynOff::FFIELDCLASS_NAME, i);
+            }
+            putP(named[16], Grimoire::OFF_UOBJECT_CLASS, obj(14));   // Actor : Class
+            putP(named[13], Grimoire::OFF_UOBJECT_CLASS, obj(14));   // MyActor_C : Class
+            putP(named[21], Grimoire::OFF_UOBJECT_CLASS, obj(14));   // Decoy : Class
+            putP(named[17], Grimoire::OFF_UOBJECT_CLASS, obj(15));   // HitResult : ScriptStruct
+
+            const int nextOff  = L.fprop ? DynOff::FFIELD_NEXT : DynOff::UFIELD_NEXT;
+            const int elemOff  = L.fprop ? DynOff::FPROPERTY_ELEMSIZE : DynOff::UPROPERTY_ELEMSIZE;
+            const int flagsOff = L.fprop ? DynOff::FPROPERTY_FLAGS : DynOff::UPROPERTY_FLAGS;
+            const int offOff   = L.fprop ? DynOff::FPROPERTY_OFFSET : DynOff::UPROPERTY_OFFSET;
+            const int slotOff  = L.fprop ? DynOff::FSTRUCTPROP_STRUCT : L.slot;
+            const int boolOff  = L.fprop ? DynOff::FBOOLPROP_FIELDSIZE : DynOff::UBOOLPROP_FIELDSIZE;
+            auto writeProp = [&](uint8_t* pr, const Entry& e, uintptr_t next) {
+                if (L.fprop) { putP(pr, DynOff::FFIELD_CLASS, fclass(e.type)); put32(pr, DynOff::FFIELD_NAME, e.name); }
+                else         { putP(pr, Grimoire::OFF_UOBJECT_CLASS, obj(e.type)); put32(pr, Grimoire::OFF_UOBJECT_NAME, e.name); }
+                put32(pr, elemOff - 4, e.arrayDim);
+                put32(pr, elemOff, e.size);
+                put64(pr, flagsOff, e.flags);
+                put32(pr, offOff, e.offset);
+                if (e.slotObj) putP(pr, slotOff, obj(e.slotObj));
+                if (!L.fprop && slotOff != DynOff::FSTRUCTPROP_STRUCT && e.slotObj)
+                    putP(pr, DynOff::FSTRUCTPROP_STRUCT, obj(21));   // a class where an FField would keep it: a decoy
+                if (e.type == 5) { pr[boolOff] = 1; pr[boolOff + 1] = 0; pr[boolOff + 2] = 0x04; pr[boolOff + 3] = 0x04; }
+                putP(pr, nextOff, next);
+            };
+            for (int i = 0; i < 6; ++i)
+                writeProp(props[i], chain[i], i < 5 ? reinterpret_cast<uintptr_t>(props[i + 1]) : 0);
+            auto writeFn = [&](uint8_t* fb, int name, uintptr_t first) {
+                putP(fb, Grimoire::OFF_UOBJECT_CLASS, obj(1));
+                put32(fb, Grimoire::OFF_UOBJECT_NAME, name);
+                putP(fb, DynOff::UOBJECT_OUTER, obj(13));
+                putP(fb, L.fprop ? DynOff::USTRUCT_CHILDPROPS : DynOff::USTRUCT_CHILDREN, first);
+            };
+            writeFn(fnBlob, 12, reinterpret_cast<uintptr_t>(props[0]));
+            // The parent this function overrides, with a parameter of its own: never this function's.
+            writeProp(parentProp, Entry{ 19, 2, 4, 0, 1, kParm, 0 }, 0);
+            writeFn(parentBlob, 18, reinterpret_cast<uintptr_t>(parentProp));
+            putP(fnBlob, DynOff::USTRUCT_SUPER, reinterpret_cast<uintptr_t>(parentBlob));
+
+            const std::string who = L.name;
+            Ubel::ParamLayout pl;
+            std::string why;
+            const bool ok = Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(fnBlob), pl, why);
+            check(("CaptureParamLayout, " + who + ": the five parameters, not the local, not the parent's").c_str(),
+                  ok && pl.params.size() == 5 && pl.params[0].name == "Count" && pl.params[4].name == "ReturnValue",
+                  (why + " " + std::to_string(pl.params.size())).c_str());
+            if (!ok || pl.params.size() != 5) continue;
+            check(("..." + who + ": the function and its class").c_str(), pl.funcName == "DoIt" && pl.className == "MyActor_C",
+                  pl.className.c_str());
+            using PK = Ubel::ParamKind;
+            check(("..." + who + ": each parameter's way").c_str(),
+                  pl.params[0].kind == PK::In && pl.params[2].kind == PK::Out && pl.params[4].kind == PK::Return);
+            check(("..." + who + ": types, offsets, sizes, the static array").c_str(),
+                  pl.params[0].typeName == "IntProperty" && pl.params[0].arrayDim == 2 && pl.params[1].offset == 8 &&
+                  pl.params[2].size == 0x88 && pl.layoutEnd == 0xA4, std::to_string(pl.layoutEnd).c_str());
+            check(("..." + who + ": the packed bool's bit").c_str(), pl.params[3].boolMask == 0x04);
+            check(("..." + who + ": the object's class and the struct's type, from this model's slot").c_str(),
+                  pl.params[1].objClass == "Actor" && pl.params[2].structType == "HitResult",
+                  (pl.params[1].objClass + "/" + pl.params[2].structType).c_str());
+
+            putP(notFn, Grimoire::OFF_UOBJECT_CLASS, obj(14));     // a Class, not a Function
+            put32(notFn, Grimoire::OFF_UOBJECT_NAME, 21);
+            check(("..." + who + ": not a UFunction is refused").c_str(),
+                  !Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(notFn), pl, why) &&
+                  why.find("not a UFunction") != std::string::npos, why.c_str());
+            writeProp(bareProp, chain[5], 0);                      // only a local
+            writeFn(bareFn, 20, reinterpret_cast<uintptr_t>(bareProp));
+            check(("..." + who + ": a function without parameters is refused").c_str(),
+                  !Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(bareFn), pl, why) &&
+                  why.find("no parameters") != std::string::npos, why.c_str());
+            put32(props[1], offOff, 0x20000);                      // an offset no parameter block has
+            check(("..." + who + ": an implausible layout is refused").c_str(),
+                  !Ubel::CaptureParamLayout(reinterpret_cast<uintptr_t>(fnBlob), pl, why) &&
+                  why.find("implausible") != std::string::npos, why.c_str());
+        }
+        DynOff::bUseFProperty = savedFProp;
+        DynOff::bCasePreservingName = savedCpn;
+        DynOff::UOBJECT_OUTER = savedOuter;
+        DynOff::FNAME_NUMBER = savedNum;
+        DynOff::UPROPERTY_OFFSET = savedOff;
+        DynOff::UPROPERTY_SUBCLASS_START = savedStart;
+        g_cachedUEVersion = savedVer;
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

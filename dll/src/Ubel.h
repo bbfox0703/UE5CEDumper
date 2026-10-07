@@ -441,6 +441,37 @@ bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber);
 // Number included ("Fire_2"). The Start's check of every tick and choice by name (T10).
 bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName);
 
+// One parameter of a chosen function, by value: nothing in it points into the engine, so it stays true after the
+// function unloads (T10, the D1 lesson).
+struct ParamField {
+    std::string name;
+    std::string typeName;
+    int32_t     offset   = 0;
+    int32_t     size     = 0;   // one element
+    int32_t     arrayDim = 1;
+    uint64_t    flags    = 0;
+    ParamKind   kind     = ParamKind::In;
+    uint8_t     boolMask   = 0;   // a packed bool's bit
+    bool        boolNative = false;
+    std::string structType;       // a StructProperty's UScriptStruct
+    std::string objClass;         // an object-family property's PropertyClass
+};
+// A chosen function's parameters, read once per arm while it is alive.
+struct ParamLayout {
+    uintptr_t   func = 0;
+    std::string funcName;
+    std::string className;
+    uint32_t    functionFlags = 0;
+    uint16_t    parmsSize     = 0;
+    uint8_t     numParms      = 0;
+    uint32_t    layoutEnd     = 0;   // past the last parameter: its offset + size * arrayDim
+    std::vector<ParamField> params;
+};
+// The function's OWN chain -- never its SuperStruct's (an override's parent) -- in this engine's property model, kept
+// to its CPF_Parm entries (a Blueprint function's locals follow them). False with `why` when `func` is not a
+// UFunction, has no parameter, or reads as an implausible layout.
+bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why);
+
 inline ParamKind ParamKindOf(uint64_t propertyFlags) {
     constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;
     if (propertyFlags & kReturn) return ParamKind::Return;
