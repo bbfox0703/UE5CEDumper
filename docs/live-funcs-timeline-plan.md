@@ -787,5 +787,11 @@ closed (`I`, held: an instant press is missed) during both recordings of
   - 6,830 copies decoded, none raw. 742 of them belong to the 68 functions unloaded by read time.
   - **The budget:** `AlabamaLightingFixtureInterface::GetRadiusValue`, about 2,198 calls a second, kept about 26 a
     second against a budget of 30 and dropped 257,468 lone calls.
-  - Still owed (verification register): calls/s and fps against a run without snapshots, and the UI's memory
-    while it loads snapshots.
+- **A third run, the cost** (`--choose "" --plain-s 20 --record-s 30`: the 60 busiest functions with parameters,
+  the default budgets): **7 / 7.**
+  - The game ran 9,224 calls/s with the snapshots against 9,260 without (-0.4%), and the fps overlay read 136-140
+    against 136.
+  - 148,210 copies in 30 s, all decoded.
+  - The busiest choice (3,150 calls/s) kept about 1,021 a second against its budget of 1,000 and dropped 63,366.
+  - Still owed (verification register): the UI's memory while it loads snapshots, and the default budgets re-weighed
+    on a game busier than this one (the total of 10,000 a second was not reached).

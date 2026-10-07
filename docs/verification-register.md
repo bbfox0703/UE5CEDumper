@@ -215,8 +215,7 @@ reached:
    and each arm's slots decode with its own layout. Unit-tested with fake readers (dll_core_test, "arm upkeep").
 2. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP2-AVOWED2]`** (Avowed, dxgi proxy 3640, `livefuncs_snap_live.py --choose Inventory Item Equip --plain-s 25 --record-s 100 --per-ring 30`, 9/9; the inventory opened and closed twice inside the window, about a minute apart): `AlabamaLightingFixtureInterface::GetRadiusValue`, about 2,198 calls a second, kept
    about 26 a second against a budget of 30 (5,220 slots, each call an entry and an after copy) and dropped 257,468
-   lone calls. ⬜ Still owed: calls/s and fps against a run without snapshots, and the defaults (1,000 / 10,000 a
-   second) re-measured. *Was:* **The budget on a real game.** Avowed's first run kept every call (skipped 0, dropped
+   lone calls. ✅ And the cost, measured the same night `[LIVEFUNCS-STEP2-COST]` (`--choose "" --plain-s 20 --record-s 30`: the 60 busiest functions with parameters, the default budgets): the game ran 9,224 calls/s with the snapshots against 9,260 without (-0.4%), the fps overlay 136-140 against 136; 148,210 copies in 30 s, all decoded; the busiest choice (3,150 calls/s) kept about 1,021 a second against 1,000 and dropped 63,366. ⬜ Still owed: the defaults re-weighed against a game busier than this one (the total, 10,000 a second, was not reached here). *Was:* **The budget on a real game.** Avowed's first run kept every call (skipped 0, dropped
    0): the 64-choice cap left out its busiest per-frame function. Acceptance: choose one busy per-frame function with parameters; `dropped_budget`
    is near calls minus 1,000 a second, and calls/s and fps stay within noise of a run without snapshots (the plan
    asks to re-measure the defaults, 1,000 / 10,000 a second).

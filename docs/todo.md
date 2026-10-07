@@ -276,8 +276,8 @@ Open work only. **Read this when deciding what to do next.**
   walkthrough on the AOT build; **Avowed 7/7** -- 64 inventory functions chosen by name, 32 of them unloaded by the
   time the trace was read, and all their copies decode; a second run proved a reload as a second arm (34 names
   armed twice, every arm decoding with its own layout) and the budget on a real game. ⬜ Open, in the verification
-  register (`[LIVEFUNCS-STEP2]`): calls/s and fps against a run without snapshots, the UI's memory while it loads
-  snapshots. Step 3 not started.
+  register (`[LIVEFUNCS-STEP2]`): the UI's memory while it loads snapshots, the default budgets on a busier game
+  (the cost measured on Avowed: -0.4% calls/s, fps unchanged). Step 3 not started.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
