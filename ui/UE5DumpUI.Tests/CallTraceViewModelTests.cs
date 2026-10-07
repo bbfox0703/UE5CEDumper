@@ -127,10 +127,11 @@ public class CallTraceViewModelTests
         return d;
     }
 
-    private static (CallTraceViewModel vm, LiveFuncsViewModel lf) MakeVm(FakeDumpService dump)
+    private static (CallTraceViewModel vm, LiveFuncsViewModel lf) MakeVm(FakeDumpService dump,
+                                                                          IPlatformService? platform = null)
     {
         var lf = new LiveFuncsViewModel(dump, new NoopLogger());
-        return (new CallTraceViewModel(dump, new NoopLogger(), lf), lf);
+        return (new CallTraceViewModel(dump, new NoopLogger(), lf, platform), lf);
     }
 
     [Fact]
@@ -196,6 +197,53 @@ public class CallTraceViewModelTests
 
         Assert.Equal(pages, vm.Trace!.Count);
         Assert.True(vm.CollectionsDuringLastLoad >= 4, $"{vm.CollectionsDuringLastLoad} collections over {pages} pages");
+    }
+
+    // [TRACE-UI-LOAD-MEMORY] The maintainer, 2026-10-07: how often a load collects depends on the memory free now. The
+    // pages' garbage between two collections may take 1/32 of it, at about 5 MB a page; never more than
+    // CollectEveryPages pages, which the slider's estimate was calibrated on, and never less than one.
+    [Theory]
+    [InlineData(long.MaxValue, 16)]   // unknown: the calibrated period
+    [InlineData(64L << 30, 16)]       // plenty: still the calibrated period, so the estimate stays an upper bound
+    [InlineData(2560L << 20, 16)]     // 80 MB of garbage = 16 pages
+    [InlineData(1L << 30, 6)]         // 32 MB = 6 pages
+    [InlineData(512L << 20, 3)]
+    [InlineData(256L << 20, 1)]
+    [InlineData(0, 1)]
+    [InlineData(-1, 1)]
+    public void The_pages_between_collections_follow_the_free_memory(long available, int pages)
+        => Assert.Equal(pages, CallTraceViewModel.PagesBetweenCollections(available));
+
+    [Fact]
+    public async Task A_read_collects_more_often_as_the_free_memory_runs_low()
+    {
+        const int pages = 64;
+        FakeDumpService Ring()
+        {
+            var d = new FakeDumpService
+            {
+                Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = pages, FirstValid = 0, QpcFreq = 1_000_000 },
+                PageMax = 1,   // a record a page
+            };
+            for (ulong k = 0; k < pages; k++) d.Ring.Add(new TraceRecord(k, 1000 + k, 0xA, 0, 1, 0));
+            return d;
+        }
+
+        // Plenty free throughout: the calibrated period, four collections and the one before the build.
+        var plenty = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 64L << 30 };
+        var (vm, _) = MakeVm(Ring(), plenty);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(pages, vm.Trace!.Count);
+        Assert.InRange(vm.CollectionsDuringLastLoad, 4, 5);
+
+        // Half way through, the free memory falls to 256 MB (the load itself, or the game, took it): from there a
+        // collection after every page. Read again as the load goes, not once at its start.
+        var falling = new MockPlatformService(Path.GetTempPath()) { AvailableByRead = r => r < pages / 2 ? 64L << 30 : 256L << 20 };
+        var (vm2, _) = MakeVm(Ring(), falling);
+        await vm2.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(pages, vm2.Trace!.Count);
+        Assert.True(falling.AvailableMemoryReads >= pages, $"{falling.AvailableMemoryReads} reads over {pages} pages");
+        Assert.True(vm2.CollectionsDuringLastLoad >= pages / 2, $"{vm2.CollectionsDuringLastLoad} collections over {pages} pages");
     }
 
     [Fact]

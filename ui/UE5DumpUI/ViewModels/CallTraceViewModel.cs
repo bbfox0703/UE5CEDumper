@@ -36,6 +36,7 @@ public partial class CallTraceViewModel : ViewModelBase
     /// peaked at 1.27 GB working set. A collection every this many pages -- about 21 MB of records -- keeps them to
     /// ~85 MB; it takes milliseconds, the heap being a few large arrays of plain values.</summary>
     internal const int CollectEveryPages = 16;
+    internal static int PagesBetweenCollections(long availableBytes) => CollectEveryPages;
     /// <summary>The collections the last load ran while it read.</summary>
     internal int CollectionsDuringLastLoad { get; private set; }
     // The last load's memory, for its log line: at its start, and the largest working set seen after a page.

@@ -22,10 +22,12 @@ public sealed class MockPlatformService : IPlatformService
     /// <summary>[TRACE-UI-LOAD-MEMORY] What GetAvailablePhysicalMemoryBytes answers, and how often it was asked.</summary>
     public long AvailablePhysicalMemory { get; set; } = long.MaxValue;
     public int AvailableMemoryReads { get; private set; }
+    /// <summary>When set, the answer to the read with this index (0 = the first): memory that moves during a load.</summary>
+    public Func<int, long>? AvailableByRead { get; set; }
     public long GetAvailablePhysicalMemoryBytes()
     {
-        AvailableMemoryReads++;
-        return AvailablePhysicalMemory;
+        int read = AvailableMemoryReads++;
+        return AvailableByRead?.Invoke(read) ?? AvailablePhysicalMemory;
     }
 
     public bool TryAcquireSingleInstance() => true;
