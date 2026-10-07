@@ -5,8 +5,8 @@
              x:DataType="vm:CallTraceViewModel">
 
   <!-- [LIVEFUNCS-STEP2] U10: the drag handles. Avalonia.Themes.Fluent 12 themes a Thumb only inside a ScrollBar or a
-       Slider; a bare Thumb has no template, renders nothing and is never hit (measured on build 3639). A Border that
-       carries the Thumb's own background and edge is all a handle needs. -->
+       Slider, so a bare Thumb has no template and draws nothing: no edge to find it by. A Border that carries the
+       Thumb's own background and edge is all a handle needs (dragged live on build 3640). -->
   <UserControl.Styles>
     <Style Selector="Thumb">
       <Setter Property="Template">
