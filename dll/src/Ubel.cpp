@@ -2392,6 +2392,108 @@ static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32
         v.text = text + "}";
         return v;
     }
+    // The pointer family names what is at the address NOW: the object at the call may have gone since (Now / Gone).
+    auto objectAt = [&](uintptr_t ptr, SnapValue& out) {
+        if (!ptr) { out.text = "null"; out.mark = SnapMark::Exact; return; }
+        std::string name, cls;
+        if (ctx.object && ctx.object(ptr, name, cls)) { out.text = name + " (" + cls + ")"; out.mark = SnapMark::Now; return; }
+        char buf[40];
+        snprintf(buf, sizeof buf, "0x%llX", static_cast<unsigned long long>(ptr));
+        out.text = std::string(buf) + " (no longer a live object)";
+        out.mark = SnapMark::Gone;
+    };
+    auto load32 = [&](int off) { int32_t x = 0; if (off >= 0 && off + 4 <= f.size) memcpy(&x, p + off, 4); return x; };
+    auto load64 = [&](int off) { uint64_t x = 0; if (off >= 0 && off + 8 <= f.size) memcpy(&x, p + off, 8); return x; };
+    auto fnameAt = [&](int off, int fsz) {
+        const int32_t idx = load32(off);
+        const int32_t num = fsz >= DynOff::FNAME_NUMBER + 4 ? load32(off + DynOff::FNAME_NUMBER) : 0;
+        return ctx.fname ? ctx.fname(idx, num) : std::to_string(idx);
+    };
+    auto header = [&](int64_t num, uint64_t data) {
+        char buf[64];
+        snprintf(buf, sizeof buf, "Num=%lld (Data 0x%llX)", static_cast<long long>(num), static_cast<unsigned long long>(data));
+        v.text = buf;
+        v.mark = SnapMark::Header;
+    };
+    const int fsz = ctx.fnameSize > 0 ? ctx.fnameSize : DynOff::SizeofFName();
+    if (t == "ObjectProperty" || t == "ClassProperty" || t == "InterfaceProperty") {   // an interface: its object half
+        objectAt(static_cast<uintptr_t>(load64(0)), v);
+        return v;
+    }
+    if (t == "WeakObjectProperty") {
+        const int32_t idx = load32(0), serial = load32(4);
+        const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
+        if (target) { objectAt(target, v); return v; }
+        v.text = UnresolvedWeakLabel(idx, serial);
+        v.mark = v.text == "null" ? SnapMark::Exact : SnapMark::Gone;
+        return v;
+    }
+    if (t == "SoftObjectProperty" || t == "SoftClassProperty") {   // the path: FNames, stable for the process
+        const int off = ctx.softPathOffset >= 0 ? ctx.softPathOffset : SoftPathOffset(f.size);
+        const bool top = ctx.softTopLevel >= 0 ? ctx.softTopLevel == 1 : SoftPathIsTopLevel();
+        const std::string pkg = fnameAt(off, fsz);
+        const std::string asset = top ? fnameAt(off + fsz, fsz) : std::string();
+        v.text = (pkg.empty() || pkg == "None") ? "null" : (asset.empty() || asset == "None") ? pkg : pkg + "." + asset;
+        return v;
+    }
+    if (t == "LazyObjectProperty") {
+        const int off = ctx.lazyGuidOffset >= 0 ? ctx.lazyGuidOffset : LazyGuidOffset(f.size);
+        char buf[48];
+        snprintf(buf, sizeof buf, "{%08X-%08X-%08X-%08X}", static_cast<uint32_t>(load32(off)), static_cast<uint32_t>(load32(off + 4)),
+                 static_cast<uint32_t>(load32(off + 8)), static_cast<uint32_t>(load32(off + 12)));
+        v.text = buf;
+        return v;
+    }
+    if (t == "StrProperty" || t == "Utf8StrProperty" || t == "AnsiStrProperty" || t == "ArrayProperty" ||
+        t == "MulticastInlineDelegateProperty") {   // a TArray header {Data, Num, Max}; the data was not copied
+        header(load32(8), load64(0));
+        return v;
+    }
+    if (t == "SetProperty" || t == "MapProperty") {
+        // Compact (5.7+ opt-in): {Elements, NumElements, MaxElements}. Sparse: a TSparseArray -- its TArray of slots,
+        // the allocation bits (32 bytes), FirstFreeIndex and NumFreeIndices at +0x34 -- so the count is slots - free.
+        header(DynOff::bCompactSets ? load32(8) : static_cast<int64_t>(load32(8)) - load32(0x34), load64(0));
+        return v;
+    }
+    if (t == "TextProperty") {
+        const uint64_t data = load64(0);
+        char buf[48];
+        snprintf(buf, sizeof buf, "TextData 0x%llX", static_cast<unsigned long long>(data));
+        v.text = data ? buf : "(empty)";
+        v.mark = SnapMark::Header;
+        return v;
+    }
+    if (t == "DelegateProperty") {   // FScriptDelegate: a weak object, then the function's FName (after any pad)
+        const int32_t idx = load32(0), serial = load32(4);
+        const int32_t pad = DynOff::DelegatePadFromElementSize(f.size, 8 + fsz);
+        const std::string fn = fnameAt(8 + (pad > 0 ? pad : 0), fsz);
+        const uintptr_t target = ctx.weak ? ctx.weak(idx, serial) : 0;
+        std::string name, cls;
+        const bool live = target && ctx.object && ctx.object(target, name, cls);
+        v.text = DescribeScriptDelegate(live, name, idx, serial, fn) + (ctx.garbageTag ? ctx.garbageTag(target, idx) : "");
+        v.mark = live ? SnapMark::Now : (serial == 0 ? SnapMark::Exact : SnapMark::Gone);
+        return v;
+    }
+    if (t == "MulticastSparseDelegateProperty") {
+        v.text = "sparse (" + std::to_string(p[0]) + ")";
+        return v;
+    }
+    if (t == "OptionalProperty") {
+        int32_t flagOff = -1;
+        OptionalUnsetSentinel sentinel = OptionalUnsetSentinel::None;
+        if (V1cOptionalGate(static_cast<OptionalLayout>(f.optLayout), f.optInnerType, f.optInnerSize, flagOff, sentinel)) {
+            bool unset = false;
+            if (flagOff >= 0) unset = flagOff < f.size && p[flagOff] == 0;
+            else if (sentinel == OptionalUnsetSentinel::FStringMaxNone) unset = load32(12) == -1;
+            else if (sentinel == OptionalUnsetSentinel::FNameIndexNone) unset = static_cast<uint32_t>(load32(0)) == ~0u;
+            else if (sentinel == OptionalUnsetSentinel::FTextNull) unset = load64(0) == 0;
+            if (unset) { v.text = "unset"; return v; }
+            ParamField inner;
+            inner.typeName = f.optInnerType;
+            inner.size = f.optInnerSize;
+            return DecodeSnapElement(inner, p, avail, ctx);
+        }
+    }
     std::string s = PreviewScalarValue(t, p, f.size, f.boolMask);
     if (!s.empty()) { v.text = std::move(s); return v; }
     v.text = SnapHex(p, static_cast<size_t>(f.size));

@@ -8788,6 +8788,18 @@ int main() {
             check("...an unset one", is(16, "unset", SM::Exact), v[16].text.c_str());
             check("...an intrusive one, unset by its type's sentinel", is(17, "unset", SM::Exact), v[17].text.c_str());
         }
+        // A case-preserving build: sizeof(FName) is 12, so the asset's FName starts 12 bytes after the package's.
+        Ubel::ParamLayout cpn;
+        cpn.params = { field("Soft", "SoftObjectProperty", 0, 0x38) };
+        alignas(8) uint8_t c[0x40] = {};
+        const int32_t pk = 31, as = 32;
+        memcpy(c + 0x10, &pk, 4);
+        memcpy(c + 0x10 + 12, &as, 4);
+        Ubel::SnapDecodeCtx ctx12 = ctx;
+        ctx12.fnameSize = 12;
+        const auto vc = Ubel::DecodeParamSnapshot(cpn, c, sizeof c, false, ctx12);
+        check("a soft path on a case-preserving build: the asset's FName after a 12-byte one",
+              vc.size() == 1 && vc[0].text == "/Game/Maps/Arena.Arena", vc.empty() ? "" : vc[0].text.c_str());
     }
 
     {
