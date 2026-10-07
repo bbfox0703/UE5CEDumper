@@ -139,7 +139,8 @@ struct TraceConfig {
     std::vector<uintptr_t> ticked;    // T5 (a): not empty = record only the calls of these and what they call
     std::vector<uintptr_t> exclude;   // T5 (b): never record these, unless the call opens a ticked scope
 };
-enum class TraceStartStatus { Ok, TooSmall, NoMemory };
+// Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
+enum class TraceStartStatus { Ok, TooSmall, NoMemory, Busy };
 
 // Stops and frees any earlier trace, allocates the ring and touches every page on the calling thread (so the game
 // thread never takes the first lap's page faults), then arms the hook.

@@ -6915,11 +6915,41 @@ int main() {
         std::vector<Linie::TraceRecord> unread;
         check("a hook that never leaves its write: Stop gives up and the ring is not read",
               !info.quiesced && !Linie::CopyTrace(0, 10, unread));
-        Linie::FreeTrace();   // leaves the ring mapped rather than freeing it under the hook
+        // Review DLL-2: everything the hook reads stays as it was while it may still be inside -- the ring, its
+        // capacity, the sets -- so a Free leaves it all, and a Start is refused instead of re-arming under it.
+        Linie::FreeTrace();
+        info = Linie::GetTraceInfo();
+        check("...a Free while it may still be inside leaves the ring and its capacity as they were",
+              info.allocated && info.capacity == 8, sz(info.capacity).c_str());
+        check("...and a Start is refused as busy", Linie::StartTrace(cfg(8)) == Linie::TraceStartStatus::Busy);
         SetEvent(s_release);
-        stuck.join();         // the hook finishes into the ring it held: a freed ring would fault here
-        check("...and is not freed under the hook, which finishes its write without a fault",
-              !Linie::GetTraceInfo().allocated);
+        stuck.join();         // the hook finishes its write into the ring it was given: no fault
+        // Review DLL-3: once the hook has left, the next wait reaches zero and the ring is readable again.
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("once the hook has left, Stop finds it quiesced and the ring is read again",
+              info.quiesced && info.written == 1 && Linie::CopyTrace(0, 10, unread) && unread.size() == 1,
+              sz(unread.size()).c_str());
+        Linie::FreeTrace();
+        check("...and a Free then releases it", !Linie::GetTraceInfo().allocated);
+
+        // Review DLL-2: a fault inside the section (here a C++ throw from the clock; under the DLL's /EHa an SEH
+        // fault unwinds the same way) must not leave the in-flight count up, or every later Stop waits it out.
+        static std::atomic<int> s_throwNext{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_throwNext.exchange(0) == 1) throw std::runtime_error("clock fault");
+            return 42;
+        });
+        Linie::StartTrace(cfg(8));
+        s_throwNext = 1;
+        bool threw = false;
+        try { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); } catch (const std::exception&) { threw = true; }
+        const ULONGLONG stopAt = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stopMs = GetTickCount64() - stopAt;
+        check("a fault inside the hook's write does not leave Stop waiting: it quiesces at once",
+              threw && Linie::GetTraceInfo().quiesced && stopMs < 1000, std::to_string(stopMs).c_str());
+        Linie::FreeTrace();
 
         // Four threads trace while Stop runs: once Stop returns nothing changes, and every kept slot holds the
         // record its sequence number says.
