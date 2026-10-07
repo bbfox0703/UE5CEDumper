@@ -536,14 +536,20 @@ Behaviour-based UFunction discovery: record which UFunctions the game dispatches
 { "id": 71, "cmd": "pe_profile_stop" }
 
 // Get — snapshot + rank by fire count desc, cap to `limit` (default 200), resolve
-// each UFunction* to its name/class at query time (stale/recycled pointers dropped
-// via a "Function" meta-class guard). Safe to call while recording (live peek).
+// each UFunction* to its name/class at query time. Safe to call while recording
+// (live peek). A function no longer at its address -- unloaded, or its address
+// taken by another function -- is left out unless include_unloaded (below) asks
+// for it; one with no name at all is always left out. Both are counted.
 // skip_per_frame (optional, default false; build 3629+) leaves out the functions that
 // fire every frame through the recording (Linie::IsPerFrame: a mean gap <= 40 ms over
 // 3+ gaps, kept up -- gaps of 100 ms or less -- for at least half the time the table was
 // recorded over, its earliest fire to its latest) BEFORE the cap, so `limit` rows go to
 // the rest. [LIVEFUNCS-HIDE-PERFRAME]
-{ "id": 72, "cmd": "pe_profile_get", "limit": 200, "skip_per_frame": true }
+// include_unloaded (optional, default false; build 3634+): also send the functions
+// unloaded since they fired, named from what the recording read at each one's first
+// call and marked "unloaded": true. Opt-in so an older UI never gets a row whose
+// func_addr is dead. [TRACE-UNLOADED-NAMES]
+{ "id": 72, "cmd": "pe_profile_get", "limit": 200, "skip_per_frame": true, "include_unloaded": true }
 ```
 
 Response for `pe_profile_get`:
@@ -568,11 +574,20 @@ Response for `pe_profile_get`:
                          // so sorting NEW rows by first_seq asc floats the true opener up.
       "function_flags": 67108864,  // UFunction::FunctionFlags — UI tags Event/Delegate
                                    // (a reaction) vs Call (an imperative entry point).
-      "is_widget": false }   // owning class derives from UUserWidget/UWidget — the
+      "is_widget": false,    // owning class derives from UUserWidget/UWidget — the
                              // transient UI created BY the action, not its opener; the
                              // UI can hide these so the persistent opener surfaces.
+      "unloaded": true,      // build 3634+, only when include_unloaded and only when true:
+                             // the address no longer holds this function. Every field above
+                             // is what was read at its FIRST call (is_widget too: a dead
+                             // class cannot be asked); func_addr is dead -- never send it
+                             // back (a trace tick, a disassembly).
+      "recycled": true }     // with unloaded: another function took the address since
     // ... ranked by count desc, capped at `limit`
-  ] }
+  ],
+  // build 3634+, always sent; absent = an older DLL. Over the whole table, not the page.
+  "unloaded_funcs": 125, "unloaded_calls": 5387,   // no longer at their address (recycled included)
+  "unnamed_funcs": 0,    "unnamed_calls": 0 }      // gone and never read: no name to send
 ```
 
 `window_ms` (build 3633+): the window the counts cover, the table's earliest fire to its latest. With `total_calls`
@@ -608,6 +623,10 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 // no longer leads back to it is live:false and not read. funcs items: addr, live, class_name, func_name,
 // function_flags, num_parms, parms_size. objs items: addr, live, name, class_name. Reply: kind, total, offset,
 // count, items, truncated (only when cut by a cancel).
+// A function is live while its address still holds it under the name the recording read at its first call. One
+// that does not (build 3634+) is live:false with "unloaded": true ("recycled": true as well when another function
+// took the address) and the names and flags read at that first call. live:false with no names: never read (traced
+// before the table started or after it stopped) and gone. [TRACE-UNLOADED-NAMES]
 { "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
 // Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves. gen

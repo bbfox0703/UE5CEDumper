@@ -4189,6 +4189,12 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // vtable-offset detection failed on this game → counts will stay 0.
             bool hookActive = UE5_EnsureGameThreadHook();
 
+            // [TRACE-UNLOADED-NAMES] Each function's identity is read at its first call, so one the game unloads before
+            // Stop keeps its name. What the reader needs -- the flags offset, whose first decision can run a GObjects
+            // vote, and UMG's widget classes -- is decided here on the pipe thread, before the ring starts, so the
+            // calls traced before the table starts stay as few as before.
+            const Ubel::FunctionCaptureSetup captureSetup = Ubel::PrepareFunctionCapture();
+
             // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording (T2). Asked for: the ring is
             // allocated BEFORE the table starts, and a failed allocation refuses the whole Start, so the user picks
             // a smaller buffer instead of getting a recording without the trace they asked for (T1).
@@ -4231,7 +4237,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 Linie::FreeTrace();
             }
 
-            Linie::StartRecording();
+            Ubel::SetFunctionCapture(captureSetup);
+            Linie::StartRecording(&Ubel::CaptureFunctionIdentity);
             Sein::Info("PIPE:profile", "pe_profile_start: recording begun (hook_active=%d, trace=%llu MB, ticked=%llu, excluded=%llu)",
                        hookActive ? 1 : 0,
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["bytes"].get<uint64_t>() >> 20),
@@ -4411,10 +4418,31 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [LIVEFUNCS-HIDE-PERFRAME] Opt-in: leave out the functions that fire every frame through the recording,
             // BEFORE the limit, so their rows go to the low-count functions instead of being cut after them.
             bool skipPerFrame = request.value("skip_per_frame", false);
+            // [TRACE-UNLOADED-NAMES] Opt-in, like skip_per_frame: a function unloaded since it fired comes back named
+            // from its first call and marked `unloaded`. An older UI never asks, so it never gets a row whose address
+            // is dead -- it would offer to tick it or disassemble it.
+            const bool includeUnloaded = request.value("include_unloaded", false);
 
             std::vector<Linie::FuncStat> snap;
             uint64_t windowMs = 0;
             Linie::Snapshot(snap, windowMs);
+
+            // Over the whole table, not the page: how many functions (and their calls) are no longer what fired --
+            // unloaded or their address taken by another function -- and how many of those have no name at all.
+            // The cheap test (a slot and a name read), not DescribeFunction: name resolution is what the cap below
+            // exists to bound.
+            int unloadedFuncs = 0, unnamedFuncs = 0;
+            uint64_t unloadedCalls = 0, unnamedCalls = 0;
+            for (const auto& s : snap) {
+                const Ubel::FuncState st = Ubel::ClassifyFunction(s.func, s.ident);
+                if (st == Ubel::FuncState::Unloaded || st == Ubel::FuncState::Recycled) {
+                    ++unloadedFuncs;
+                    unloadedCalls += s.count;
+                } else if (st == Ubel::FuncState::Unnamed) {
+                    ++unnamedFuncs;
+                    unnamedCalls += s.count;
+                }
+            }
 
             uint64_t totalCalls = 0;
             int perFrameHidden = 0;
@@ -4456,20 +4484,26 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 // the wrong conclusion to hand a profiler.
                 if ((i & 0xFFF) == 0 && Tot::Requested()) { profileTruncated = true; break; }
                 if (skipPerFrame && Linie::IsPerFrame(snap[i], windowMs)) continue;   // counted above, never emitted
-                FunctionInfo fi{};
-                if (!Ubel::ResolveFunctionInfo(snap[i].func, fi)) continue;  // drop stale/recycled
-                uintptr_t classAddr = Ubel::GetOuter(snap[i].func);  // UFunction's Outer == its UClass
-                std::string cls = Ubel::GetName(classAddr);
+                // [TRACE-UNLOADED-NAMES] What the address is now, against what was read at the function's first call.
+                const Ubel::FunctionDescription fd = Ubel::DescribeFunction(snap[i].func, snap[i].ident);
+                const bool gone = fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled;
+                if (fd.state == Ubel::FuncState::Unnamed) continue;   // nothing says what it was: counted, not emitted
+                if (gone && !includeUnloaded) continue;              // an older UI: no row with a dead address
+                const std::string& cls = fd.className;
                 json item;
                 item["class_name"] = cls;
-                item["func_name"]  = fi.name;
+                item["func_name"]  = fd.name;
                 item["func_addr"]  = Renge::AddrToStr(snap[i].func);
-                item["num_parms"]  = fi.numParms;
-                item["parms_size"] = fi.parmsSize;
+                item["num_parms"]  = fd.numParms;
+                item["parms_size"] = fd.parmsSize;
                 item["count"]      = snap[i].count;
                 item["first_seq"]  = snap[i].firstSeq;        // call-stream position of first fire
-                item["function_flags"] = fi.functionFlags;   // let the UI tag Event/Delegate/Callable
-                item["is_widget"]  = Aura::ClassDerivesFromAny(classAddr, kWidgetBases);
+                item["function_flags"] = fd.functionFlags;   // let the UI tag Event/Delegate/Callable
+                // A dead class cannot be asked: the capture made the widget test at the first call.
+                item["is_widget"]  = fd.widgetKnown ? fd.isWidget
+                                                    : Aura::ClassDerivesFromAny(Ubel::GetOuter(snap[i].func), kWidgetBases);
+                if (gone) item["unloaded"] = true;
+                if (fd.state == Ubel::FuncState::Recycled) item["recycled"] = true;
                 item["mean_period_ms"] = snap[i].meanPeriodMs;   // cadence (Phase E): inter-arrival mean
                 item["cv"]             = snap[i].cv;             //   + coefficient of variation (regularity)
                 item["gap_samples"]    = snap[i].gapSamples;     //   + how many gaps measured
@@ -4483,7 +4517,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (periodicLogged < 12) {
                         char buf[192];
                         snprintf(buf, sizeof(buf), "%s%s::%s ~%.0fms cv=%.2f x%llu",
-                                 periodicLogged ? ", " : "", cls.c_str(), fi.name.c_str(),
+                                 periodicLogged ? ", " : "", cls.c_str(), fd.name.c_str(),
                                  snap[i].meanPeriodMs, snap[i].cv,
                                  (unsigned long long)snap[i].gapSamples);
                         periodicSummary += buf;
@@ -4507,6 +4541,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // call rate: the trace slider's estimate of how many seconds a buffer keeps (T1).
             data["window_ms"]      = windowMs;
             data["functions"]      = functions;
+            // [TRACE-UNLOADED-NAMES] Always sent: an absent key tells the UI this DLL predates them.
+            data["unloaded_funcs"] = unloadedFuncs;
+            data["unloaded_calls"] = unloadedCalls;
+            data["unnamed_funcs"]  = unnamedFuncs;
+            data["unnamed_calls"]  = unnamedCalls;
             // Only when asked: an absent key tells the UI this DLL predates the option, so nothing was left out.
             if (skipPerFrame) {
                 data["per_frame_hidden"] = perFrameHidden;
@@ -4562,10 +4601,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (limit > 20000) limit = 20000;
 
             std::vector<uintptr_t> funcs, objs;
+            std::vector<Linie::FuncIdentity> idents;   // parallel to funcs: what the table read at each first call
             uint64_t gen = 0;
             json data;
             data["kind"] = kind;
-            const bool have = Linie::TraceDistinct(funcs, objs, &gen);
+            const bool have = Linie::TraceDistinct(funcs, objs, &gen, &idents);
             data["gen"] = gen;
             // Asked for one recording's names while the DLL holds another: answer nothing and say so (review DLL-1).
             if (have && request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
@@ -4602,16 +4642,22 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         it["class_name"] = cls ? Ubel::GetName(cls) : std::string();
                     }
                 } else {
-                    FunctionInfo fi{};
-                    const bool ok = Ubel::ResolveFunctionInfo(a, fi);
-                    it["live"] = ok;
-                    if (ok) {
-                        it["func_name"]      = fi.name;
-                        it["class_name"]     = Ubel::GetName(Ubel::GetOuter(a));
-                        it["function_flags"] = fi.functionFlags;
-                        it["num_parms"]      = fi.numParms;
-                        it["parms_size"]     = fi.parmsSize;
+                    // [TRACE-UNLOADED-NAMES] `live` keeps its meaning -- the address still holds the function that
+                    // fired -- so an older UI, which names only what is live, shows the address as before. An unloaded
+                    // or recycled one carries the name read at its first call, marked.
+                    const Ubel::FunctionDescription fd =
+                        Ubel::DescribeFunction(a, i < idents.size() ? idents[i] : Linie::FuncIdentity{});
+                    it["live"] = fd.state == Ubel::FuncState::Live;
+                    if (fd.state != Ubel::FuncState::Unnamed) {
+                        it["func_name"]      = fd.name;
+                        it["class_name"]     = fd.className;
+                        it["function_flags"] = fd.functionFlags;
+                        it["num_parms"]      = fd.numParms;
+                        it["parms_size"]     = fd.parmsSize;
                     }
+                    if (fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled)
+                        it["unloaded"] = true;
+                    if (fd.state == Ubel::FuncState::Recycled) it["recycled"] = true;
                 }
                 items.push_back(std::move(it));
             }

@@ -179,8 +179,10 @@ static void HookedProcessEventBody(void* ufunc, uint64_t nowMs) {
     // not-recording path pays exactly one relaxed atomic load + a
     // predicted-not-taken branch; the mutex + map touch happen ONLY inside a
     // Start/Stop window. Mirrors the s_queueDepth "skip work unless armed" gate
-    // below. `ufunc` is the UFunction* for this dispatch — stored raw and
-    // resolved to a name at pe_profile_get time, off the hot path.
+    // below. `ufunc` is the UFunction* for this dispatch — stored raw; on its
+    // first call of a recording Linie also reads its FName ints (loads only, no
+    // string), and the names are decoded at read time, off the hot path.
+    // [TRACE-UNLOADED-NAMES]
     if (Linie::IsRecording()) {
         Linie::RecordCall(reinterpret_cast<uintptr_t>(ufunc), nowMs);
     }
