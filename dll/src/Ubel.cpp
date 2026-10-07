@@ -2332,10 +2332,104 @@ size_t RunArmCapturePass(Linie::ArmState& st, size_t maxArms, const ArmCaptureOp
     return arms.size();
 }
 
+// [LIVEFUNCS-STEP2] The decoder. Pure: the copy's bytes, the arm's layout, and what the ctx answers; nothing here reads
+// the game, so it runs after Stop, on the pipe thread, from a layout read while the function was alive.
+static std::string SnapHex(const uint8_t* p, size_t n) {
+    static const char kHex[] = "0123456789ABCDEF";
+    std::string s;
+    const size_t shown = n < 32 ? n : 32;
+    for (size_t i = 0; i < shown; ++i) {
+        if (i) s += ' ';
+        s += kHex[p[i] >> 4];
+        s += kHex[p[i] & 15];
+    }
+    if (shown < n) s += " ...";
+    return s;
+}
+
+static SnapValue DecodeSnapField(const ParamField& f, const uint8_t* p, uint32_t avail, const SnapDecodeCtx& ctx);
+
+static SnapValue DecodeSnapElement(const ParamField& f, const uint8_t* p, uint32_t avail, const SnapDecodeCtx& ctx) {
+    SnapValue v;
+    if (f.size <= 0 || avail < static_cast<uint32_t>(f.size)) { v.mark = SnapMark::Missing; return v; }
+    const std::string& t = f.typeName;
+    if (t == "Int8Property") {   // signed: PreviewScalarValue reads it through uint8_t
+        int8_t x = 0;
+        memcpy(&x, p, 1);
+        v.text = std::to_string(x);
+        return v;
+    }
+    if (t == "BoolProperty") {
+        if (f.boolMask) v.text = (p[0] & f.boolMask) ? "true" : "false";
+        else if (f.boolNative) v.text = p[0] ? "true" : "false";
+        else v.text = std::string(p[0] ? "true" : "false") + " (layout unresolved)";
+        return v;
+    }
+    if ((t == "EnumProperty" || t == "ByteProperty") && !f.enumName.empty()) {
+        const int64_t raw = ReadEnumRawValue(p, f.size);
+        for (const auto& [value, name] : f.enumEntries)
+            if (value == raw) { v.text = name + " (" + std::to_string(raw) + ")"; return v; }
+        v.text = std::to_string(raw) + " (not in " + f.enumName + ")";
+        return v;
+    }
+    if (t == "NameProperty") {
+        int32_t idx = 0, num = 0;
+        memcpy(&idx, p, 4);
+        if (f.size >= DynOff::FNAME_NUMBER + 4) memcpy(&num, p + DynOff::FNAME_NUMBER, 4);
+        v.text = ctx.fname ? ctx.fname(idx, num) : std::to_string(idx) + "_" + std::to_string(num);
+        return v;
+    }
+    if (t == "StructProperty" && !f.sub.empty()) {
+        std::string text = "{";
+        for (const ParamField& m : f.sub) {
+            SnapValue mv = (m.offset >= 0 && static_cast<uint32_t>(m.offset) < avail)
+                ? DecodeSnapField(m, p + m.offset, avail - static_cast<uint32_t>(m.offset), ctx)
+                : SnapValue{ "", SnapMark::Missing, {} };
+            if (text.size() > 1) text += ", ";
+            text += m.name + "=" + (mv.text.empty() ? "?" : mv.text);
+            v.sub.push_back(std::move(mv));
+        }
+        v.text = text + "}";
+        return v;
+    }
+    std::string s = PreviewScalarValue(t, p, f.size, f.boolMask);
+    if (!s.empty()) { v.text = std::move(s); return v; }
+    v.text = SnapHex(p, static_cast<size_t>(f.size));
+    v.mark = SnapMark::Raw;
+    return v;
+}
+
+static SnapValue DecodeSnapField(const ParamField& f, const uint8_t* p, uint32_t avail, const SnapDecodeCtx& ctx) {
+    if (f.arrayDim <= 1) return DecodeSnapElement(f, p, avail, ctx);
+    const uint64_t whole = static_cast<uint64_t>(f.size) * static_cast<uint64_t>(f.arrayDim);
+    if (f.size <= 0 || whole > avail) return SnapValue{ "", SnapMark::Missing, {} };
+    SnapValue v;
+    v.text = "[";
+    const int shown = f.arrayDim < 8 ? f.arrayDim : 8;
+    for (int i = 0; i < shown; ++i) {
+        SnapValue e = DecodeSnapElement(f, p + static_cast<size_t>(i) * f.size, avail - static_cast<uint32_t>(i * f.size), ctx);
+        if (i) v.text += ", ";
+        v.text += e.text;
+        v.sub.push_back(std::move(e));
+    }
+    if (shown < f.arrayDim) v.text += ", ...";
+    v.text += "]";
+    return v;
+}
+
 std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
                                            const SnapDecodeCtx& ctx) {
-    (void)layout; (void)bytes; (void)len; (void)after; (void)ctx;
-    return {};
+    std::vector<SnapValue> out;
+    out.reserve(layout.params.size());
+    for (const ParamField& f : layout.params) {
+        const bool carriedAfter = f.kind == ParamKind::Out || f.kind == ParamKind::InOut || f.kind == ParamKind::Return;
+        if (after && !carriedAfter) { out.push_back({ "", SnapMark::Missing, {} }); continue; }
+        if (!after && f.kind == ParamKind::Return) { out.push_back({ "\xE2\x80\x94", SnapMark::Missing, {} }); continue; }
+        // It must start inside the copy; one that runs past its end is Missing one level down (an element, an array).
+        if (!bytes || f.offset < 0 || static_cast<uint32_t>(f.offset) >= len) { out.push_back({ "", SnapMark::Missing, {} }); continue; }
+        out.push_back(DecodeSnapField(f, bytes + f.offset, len - static_cast<uint32_t>(f.offset), ctx));
+    }
+    return out;
 }
 
 // [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:

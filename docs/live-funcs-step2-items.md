@@ -24,7 +24,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | B3 | DLL | Ubel: CaptureParamLayout over the function's own chain (FField and UProperty), CPF_Parm filter, refusals; object/class/struct read at the mode's subclass start | B1 | ✅ 95560c48 red |
 | B4 | DLL | Ubel: layout enrichment by value (struct sub-layouts, enum tables, object class, soft-path / lazy / delegate / optional facts) | B3 | ✅ d681b688 red |
 | B5 | DLL | Ubel: the checked arm capture and RunArmCapturePass (injected live/key/capture checks; reuse by the 5-field key; states; latency) | N4, B2, B4 | ✅ ff583b96 red |
-| B6 | DLL | Ubel: DecodeParamSnapshot, value types | B4 | ⬜ |
+| B6 | DLL | Ubel: DecodeParamSnapshot, value types | B4 | ✅ 6a5216ab red |
 | B7 | DLL | Ubel: DecodeParamSnapshot, pointer family and containers (soft-path facts in ctx, shared delegate/weak helpers, FText header) | B6 | ⬜ |
 | P0 | pipe | Rig skeleton tools/verify/livefuncs_snap_live.py with --fixture-check (paths as arguments; committed before it runs) | — | ⬜ |
 | P1 | pipe | Fixture: DumperTest58 probes (SnapProbe_Call, SnapProbe_RetOnly, SnapNest_Outer host, SnapProbe_PerFrame through ProcessEvent, SnapLate_Begin / SnapLate_Call); README rows; scripted Shipping repackage | P0 | ⬜ |

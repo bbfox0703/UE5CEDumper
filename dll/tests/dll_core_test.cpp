@@ -8702,6 +8702,10 @@ int main() {
         const auto cut = Ubel::DecodeParamSnapshot(L, b, 12, false, ctx);
         check("a copy cut short: what lies past it is missing, what fits is read",
               cut.size() == L.params.size() && cut[0].text == "1.5" && cut[1].mark == SM::Missing);
+        const auto cutArr = Ubel::DecodeParamSnapshot(L, b, 64, false, ctx);   // ends inside A[3] (56..68)
+        check("...an array the copy ends inside is missing whole, not shown in part",
+              cutArr.size() == L.params.size() && cutArr[10].mark == SM::Missing && cutArr[9].text == "{X=1.5, Y=2, Z=3}",
+              cutArr.size() == L.params.size() ? cutArr[10].text.c_str() : "");
     }
 
     {
