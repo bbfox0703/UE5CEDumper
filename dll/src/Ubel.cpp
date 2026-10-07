@@ -2060,6 +2060,7 @@ bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out) {
 
     uintptr_t cls = 0;
     if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) && cls) {   // a UFunction's Outer is its UClass
+        out.outer = cls;
         Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, out.classIndex);
         Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME + DynOff::FNAME_NUMBER, out.classNumber);
         uintptr_t bases[kMaxWidgetBases];
@@ -2086,6 +2087,17 @@ bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out) {
         Macht::ReadSafe<uint8_t>(func + tail + 0x04, out.numParms);
         Macht::ReadSafe<uint16_t>(func + tail + 0x06, out.parmsSize);
     }
+    return true;
+}
+
+bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, uint64_t& outer) {
+    if (!func) return false;
+    const uintptr_t fname = func + Grimoire::OFF_UOBJECT_NAME;
+    if (!Macht::ReadSafe(fname, nameIndex)) return false;
+    nameNumber = 0;
+    Macht::ReadSafe(fname + DynOff::FNAME_NUMBER, nameNumber);
+    uintptr_t cls = 0;
+    outer = Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) ? cls : 0;
     return true;
 }
 

@@ -390,6 +390,9 @@ void SetFunctionCapture(const FunctionCaptureSetup& setup);
 // only -- no allocation, no lock, no string, never the flags vote. False when the function's own FName cannot be
 // read; a class that cannot be read leaves the class fields 0.
 bool CaptureFunctionIdentity(uintptr_t func, Linie::FuncIdentity& out);
+// Linie's key check on every later call: the function's FName ints and its Outer, three loads. False when the FName
+// cannot be read.
+bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, uint64_t& outer);
 
 // What a recorded function address is at read time, against what the table read at its first call.
 //   Live     -- still in its GUObjectArray slot, under the name it was read with, in the class it was read with

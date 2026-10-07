@@ -33,10 +33,16 @@ struct FuncIdentity {
     uint8_t  numParms      = 0;
     bool     isWidget      = false;
     bool     captured      = false;   // false: never read (a reader that failed, or none installed)
+    uint64_t outer         = 0;       // its Outer (its UClass) when read: a reloaded class is a new object
+    // Another function took this address during the recording (review DLL-3): read again when its key changed, so
+    // the fields above are the latest occupant's, and the address's count and calls are more than one function's.
+    bool     reused        = false;
 };
 // Reads `ufunc`'s identity on the hook, under the table's lock: loads only -- no allocation, no lock, no string.
 // Linie knows nothing of UObjects, so the pipe installs Ubel's reader at Start and a test installs a stub.
 using FuncIdentityReader = bool (*)(uintptr_t ufunc, FuncIdentity& out);
+// The key checked on every later call, which is a dispatch and so alive: the FName ints and the Outer. Loads only.
+using FuncKeyReader = bool (*)(uintptr_t ufunc, int32_t& nameIndex, int32_t& nameNumber, uint64_t& outer);
 // A read that fails is tried again on the function's next calls, this many times in all.
 inline constexpr int kIdentityTries = 3;
 
@@ -95,8 +101,10 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs);
 
 // Clear the table (reserve to bound rehash churn), then flip recording on
 // under the lock so there is never a half-cleared window. `reader`, when given, reads each function's identity at
-// its first call; it is installed under the same lock, so no call of this recording runs without it.
-void StartRecording(FuncIdentityReader reader = nullptr);
+// its first call; `keyReader`, when given with it, checks on every later call that the address still holds that
+// function, and reads it again when not. Both are installed under the same lock, so no call of this recording runs
+// without them.
+void StartRecording(FuncIdentityReader reader = nullptr, FuncKeyReader keyReader = nullptr);
 
 // Flip recording off; the accumulated counts are retained for a later Snapshot.
 void StopRecording();

@@ -4238,7 +4238,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             }
 
             Ubel::SetFunctionCapture(captureSetup);
-            Linie::StartRecording(&Ubel::CaptureFunctionIdentity);
+            Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey);
             Sein::Info("PIPE:profile", "pe_profile_start: recording begun (hook_active=%d, trace=%llu MB, ticked=%llu, excluded=%llu)",
                        hookActive ? 1 : 0,
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["bytes"].get<uint64_t>() >> 20),
@@ -4504,6 +4504,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                                     : Aura::ClassDerivesFromAny(Ubel::GetOuter(snap[i].func), kWidgetBases);
                 if (gone) item["unloaded"] = true;
                 if (fd.state == Ubel::FuncState::Recycled) item["recycled"] = true;
+                // Review DLL-3: another function took this address during the recording; the count is both.
+                if (snap[i].ident.reused) item["reused"] = true;
                 item["mean_period_ms"] = snap[i].meanPeriodMs;   // cadence (Phase E): inter-arrival mean
                 item["cv"]             = snap[i].cv;             //   + coefficient of variation (regularity)
                 item["gap_samples"]    = snap[i].gapSamples;     //   + how many gaps measured
@@ -4658,6 +4660,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     if (fd.state == Ubel::FuncState::Unloaded || fd.state == Ubel::FuncState::Recycled)
                         it["unloaded"] = true;
                     if (fd.state == Ubel::FuncState::Recycled) it["recycled"] = true;
+                    // Review DLL-3: the address held another function during the recording; its calls are mixed.
+                    if (i < idents.size() && idents[i].reused) it["reused"] = true;
                 }
                 items.push_back(std::move(it));
             }

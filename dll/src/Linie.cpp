@@ -40,8 +40,9 @@ struct Stat {
 };
 static std::mutex g_mu;
 static std::unordered_map<uintptr_t, Stat> g_stats;
-// The identity reader of the running recording; nullptr reads nothing. Set and cleared under g_mu.
+// The identity reader of the running recording, and its key check; nullptr reads nothing. Set and cleared under g_mu.
 static FuncIdentityReader g_reader = nullptr;
+static FuncKeyReader      g_keyReader = nullptr;
 // Monotonic call-stream position (1-based), reset per recording. A function's
 // firstSeq is g_seq at the moment it was first seen — the causal ordering.
 static uint64_t g_seq = 0;
@@ -58,6 +59,24 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
         if (g_reader(ufunc, id)) {
             id.captured = true;
             s.ident = id;
+        }
+    } else if (g_reader && g_keyReader && s.ident.captured) {
+        // Review DLL-3: the table is keyed by address, and a freed function's address can be taken by another that
+        // fires in the same recording. Its key read now against the one read: a change is read again in full; the
+        // same names under a new class object are the same function, its class reloaded; other names are another
+        // function, and the entry says so from then on.
+        int32_t idx = 0, num = 0;
+        uint64_t outer = 0;
+        if (g_keyReader(ufunc, idx, num, outer)
+            && (idx != s.ident.nameIndex || num != s.ident.nameNumber || outer != s.ident.outer)) {
+            FuncIdentity id{};
+            if (g_reader(ufunc, id)) {
+                id.captured = true;
+                id.reused = s.ident.reused
+                    || id.nameIndex != s.ident.nameIndex || id.nameNumber != s.ident.nameNumber
+                    || id.classIndex != s.ident.classIndex || id.classNumber != s.ident.classNumber;
+                s.ident = id;
+            }
         }
     }
     if (s.count == 0) {
@@ -103,12 +122,13 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs) {
     ++s.count;
 }
 
-void StartRecording(FuncIdentityReader reader) {
+void StartRecording(FuncIdentityReader reader, FuncKeyReader keyReader) {
     std::lock_guard<std::mutex> lk(g_mu);
     g_stats.clear();
     g_stats.reserve(4096);  // bound rehash churn over the recording window
     g_seq = 0;
     g_reader = reader;
+    g_keyReader = keyReader;
     // Flip on UNDER the lock so a concurrent RecordCall can never observe
     // recording==true against a half-cleared table.
     g_recording.store(true, std::memory_order_relaxed);
@@ -129,6 +149,7 @@ void Reset() {
         g_stats.clear();
         g_seq = 0;
         g_reader = nullptr;
+        g_keyReader = nullptr;
     }
     // A client that left takes its trace with it: up to 512 MB of the game's memory, outside g_mu because the
     // trace has its own lock.
