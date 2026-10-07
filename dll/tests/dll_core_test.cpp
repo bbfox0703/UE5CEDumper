@@ -6868,6 +6868,33 @@ int main() {
               Linie::TraceDistinct(dfuncs, dobjs) && dfuncs == std::vector<uintptr_t>{ 0xF1, 0xF2 } &&
               dobjs == std::vector<uintptr_t>{ 0xB1, 0xB2 }, sz(dfuncs.size()).c_str());
 
+        // Review DLL-1: what the UI reads and releases belongs to one recording. The copy reports the state it copied
+        // under the same lock, the names say which recording they are, and a release names its recording.
+        {
+            const uint64_t gen = Linie::GetTraceInfo().gen;
+            Linie::TraceInfo seen;
+            recs.clear();
+            check("a copy reports the trace it copied from, under the same lock",
+                  Linie::CopyTrace(0, 10, recs, nullptr, &seen) && seen.gen == gen && seen.written == 5 &&
+                  seen.firstValid == 1 && seen.allocated && !seen.tracing, sz(seen.written).c_str());
+            uint64_t ngen = 0;
+            check("the distinct names say which recording they are",
+                  Linie::TraceDistinct(dfuncs, dobjs, &ngen) && ngen == gen, sz(ngen).c_str());
+            check("a release that names another recording frees nothing",
+                  !Linie::FreeTraceIfGen(gen + 1) && Linie::GetTraceInfo().allocated);
+            check("a release that names this one frees it",
+                  Linie::FreeTraceIfGen(gen) && !Linie::GetTraceInfo().allocated);
+            Linie::StartTrace(cfg(8));
+            const uint64_t running = Linie::GetTraceInfo().gen;
+            Linie::TraceInfo during;
+            std::vector<Linie::TraceRecord> none;
+            check("a copy refused while recording still reports the trace it saw",
+                  !Linie::CopyTrace(0, 10, none, nullptr, &during) && during.tracing && during.gen == running);
+            check("a release never frees a recording that is still running",
+                  !Linie::FreeTraceIfGen(running) && Linie::IsTracing());
+            Linie::StopTrace();
+        }
+
         Linie::FreeTrace();
         info = Linie::GetTraceInfo();
         check("FreeTrace releases the ring", !info.allocated && !Linie::CopyTrace(0, 10, recs));

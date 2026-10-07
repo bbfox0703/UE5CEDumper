@@ -184,9 +184,16 @@ TraceInfo GetTraceInfo();
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
 // none is allocated, or when the last stop could not quiesce. `next`, when given, is where the following page
 // starts: past this page, never before the window, and at or past `written` once there is nothing more.
-bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next = nullptr);
-// The distinct functions and calling objects of the kept window, sorted; computed once per stopped trace.
-bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs);
+// `seen`, when given, is the trace's state under the same lock as the copy, filled even when the copy is refused:
+// a reader pages one recording, and a Start between a separate info read and the copy would be another.
+bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next = nullptr,
+               TraceInfo* seen = nullptr);
+// The distinct functions and calling objects of the kept window, sorted; computed once per stopped trace. `gen`,
+// when given, is the recording they belong to.
+bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen = nullptr);
+// Free the trace only when it is recording `gen` and that recording has stopped: a reader's release never frees a
+// newer recording. True when it freed it.
+bool FreeTraceIfGen(uint64_t gen);
 
 // The trace's wire encoding for the slots (RFC 4648, with padding).
 std::string Base64Encode(const uint8_t* data, size_t len);

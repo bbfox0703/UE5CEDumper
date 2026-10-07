@@ -384,7 +384,8 @@ TraceInfo GetTraceInfo() {
     return i;
 }
 
-bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next) {
+bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next, TraceInfo* seen) {
+    (void)seen;
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
@@ -406,7 +407,8 @@ bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, 
     return true;
 }
 
-bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs) {
+bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen) {
+    (void)gen;
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     if (!g_trace.distinctReady) {
@@ -430,6 +432,8 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs) 
     objs  = g_trace.distinctObjs;
     return true;
 }
+
+bool FreeTraceIfGen(uint64_t) { return false; }   // red: not built yet
 
 std::string Base64Encode(const uint8_t* data, size_t len) {
     static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
