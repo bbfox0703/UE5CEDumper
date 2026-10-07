@@ -4211,12 +4211,18 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
                 const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
                 if (st != Linie::TraceStartStatus::Ok) {
+                    const char* why = st == Linie::TraceStartStatus::NoMemory ? "no memory"
+                                    : st == Linie::TraceStartStatus::Busy     ? "busy" : "too small";
                     Sein::Warn("PIPE:profile", "pe_profile_start: trace of %llu MB refused (%s)",
-                               (unsigned long long)(bytes >> 20), st == Linie::TraceStartStatus::NoMemory ? "no memory" : "too small");
-                    return Renge::MakeError(id, st == Linie::TraceStartStatus::NoMemory
-                        ? "The game process could not spare " + std::to_string(bytes >> 20) +
-                          " MB for the trace buffer. Pick a smaller buffer and Start again."
-                        : std::string("The trace buffer is too small.")).dump();
+                               (unsigned long long)(bytes >> 20), why);
+                    return Renge::MakeError(id,
+                        st == Linie::TraceStartStatus::NoMemory
+                            ? "The game process could not spare " + std::to_string(bytes >> 20) +
+                              " MB for the trace buffer. Pick a smaller buffer and Start again."
+                        : st == Linie::TraceStartStatus::Busy
+                            ? std::string("A game thread is still inside the previous trace's buffer, so it cannot be "
+                                          "replaced yet. Wait a moment and Start again.")
+                            : std::string("The trace buffer is too small.")).dump();
                 }
                 traceReply = TraceInfoToJson(Linie::GetTraceInfo());
             } else {

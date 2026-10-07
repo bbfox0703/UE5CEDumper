@@ -154,8 +154,11 @@ std::vector<uintptr_t> PerFrameFuncs() {
 // inside a short section bracketed by g_inflight, and checks g_tracing INSIDE it. StopTrace clears g_tracing, then
 // waits for g_inflight to reach 0. Both sides use seq_cst on the counter and the flag, so either the hook sees the
 // flag cleared and touches nothing, or Stop sees the hook inside and waits for it -- after Stop returns no write
-// lands in the ring, which is what lets Copy read it and Free release it. g_traceMu orders the pipe threads'
-// Start / Stop / Free / Copy among themselves; the hook never takes it.
+// lands in the ring, which is what lets Copy read it and Free release it. Every entry point a pipe thread calls takes
+// g_traceMu; the hook never does.
+//
+// When a wait gives up (a hook stayed inside past kQuiesceTimeoutMs), nothing the hook reads may change until a later
+// wait reaches zero: the ring, its capacity, the sets. A Free then leaves it all, and a Start is refused as Busy.
 
 std::atomic<bool> g_tracing{false};
 
@@ -200,27 +203,42 @@ uint64_t QpcFreq() {
 // was suspended mid-write, and the ring is then neither read nor freed (a leak beats a use-after-free in the game).
 constexpr uint64_t kQuiesceTimeoutMs = 2000;
 
-void StopTraceLocked() {
+// The in-flight count around one hook write. A destructor, so a fault inside the write (a C++ exception, or an SEH
+// fault unwound under the DLL's /EHa) still takes the count down: a count left up would make every later Stop give
+// up and every later ring unreadable.
+struct InflightGuard {
+    InflightGuard()  { g_inflight.fetch_add(1, std::memory_order_seq_cst); }
+    ~InflightGuard() { g_inflight.fetch_sub(1, std::memory_order_release); }
+    InflightGuard(const InflightGuard&) = delete;
+    InflightGuard& operator=(const InflightGuard&) = delete;
+};
+
+// True when no hook is inside a write. A wait that reaches zero clears an earlier give-up: with the flag off and no
+// hook inside, nothing can touch the ring again.
+bool StopTraceLocked() {
     g_tracing.store(false, std::memory_order_seq_cst);
     const uint64_t deadline = GetTickCount64() + kQuiesceTimeoutMs;
     while (g_inflight.load(std::memory_order_seq_cst) != 0) {
-        if (GetTickCount64() > deadline) { g_trace.quiesced = false; return; }
+        if (GetTickCount64() > deadline) { g_trace.quiesced = false; return false; }
         std::this_thread::yield();
     }
+    g_trace.quiesced = true;
+    return true;
 }
 
-void FreeTraceLocked() {
-    StopTraceLocked();
-    if (g_trace.buf && g_trace.quiesced) VirtualFree(g_trace.buf, 0, MEM_RELEASE);
+// False, changing nothing, while a hook may still be inside (see the lifetime note above).
+bool FreeTraceLocked() {
+    if (!StopTraceLocked()) return false;
+    if (g_trace.buf) VirtualFree(g_trace.buf, 0, MEM_RELEASE);
     g_trace.buf = nullptr;
     g_trace.bytes = g_trace.cap = 0;
-    g_trace.quiesced = true;
     g_trace.next.store(0, std::memory_order_relaxed);
     g_trace.ticked.Build({});
     g_trace.exclude.Build({});
     g_trace.distinctReady = false;
     std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
     std::vector<uintptr_t>().swap(g_trace.distinctObjs);
+    return true;
 }
 
 uint64_t FirstValidLocked() {
@@ -262,7 +280,7 @@ bool AddrSet::Contains(uintptr_t addr) const {
 
 TraceStartStatus StartTrace(const TraceConfig& cfg) {
     std::lock_guard<std::mutex> lk(g_traceMu);
-    FreeTraceLocked();
+    if (!FreeTraceLocked()) return TraceStartStatus::Busy;
     const uint64_t cap = cfg.bytes / sizeof(TraceRecord);
     if (cap < 2) return TraceStartStatus::TooSmall;
     const SIZE_T size = static_cast<SIZE_T>(cap * sizeof(TraceRecord));
@@ -300,11 +318,8 @@ void FreeTrace() {
 
 void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok) {
     tok = TraceToken{};
-    g_inflight.fetch_add(1, std::memory_order_seq_cst);
-    if (!g_tracing.load(std::memory_order_seq_cst)) {
-        g_inflight.fetch_sub(1, std::memory_order_release);
-        return;
-    }
+    InflightGuard inflight;
+    if (!g_tracing.load(std::memory_order_seq_cst)) return;
     const uint64_t gen = g_trace.gen;
     bool open = false;
     if (!g_trace.ticked.Empty()) {
@@ -315,18 +330,12 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
             t_scopeSp = 0;          // called from at or above the root's frame: the root is gone (unwound)
         }
         if (t_scopeSp == 0) {
-            if (!g_trace.ticked.Contains(ufunc)) {
-                g_inflight.fetch_sub(1, std::memory_order_release);
-                return;
-            }
+            if (!g_trace.ticked.Contains(ufunc)) return;
             t_scopeSp = sp;
             open = true;
         }
     }
-    if (!open && g_trace.exclude.Contains(ufunc)) {
-        g_inflight.fetch_sub(1, std::memory_order_release);
-        return;
-    }
+    if (!open && g_trace.exclude.Contains(ufunc)) return;
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
     r.seqKind = seq;
@@ -335,7 +344,6 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     r.b       = obj;
     r.tid     = tid;
     r.flags   = open ? kTraceScopeRoot : 0;
-    g_inflight.fetch_sub(1, std::memory_order_release);
     tok.entrySeq = seq;
     tok.gen      = gen;
     tok.traced   = true;
@@ -347,11 +355,8 @@ void TraceReturn(const TraceToken& tok, uint32_t tid) {
     // is written (the trace stopped while the root ran).
     if (tok.opened && t_scopeGen == tok.gen) t_scopeSp = 0;
     if (!tok.traced) return;
-    g_inflight.fetch_add(1, std::memory_order_seq_cst);
-    if (!g_tracing.load(std::memory_order_seq_cst) || g_trace.gen != tok.gen) {
-        g_inflight.fetch_sub(1, std::memory_order_release);
-        return;
-    }
+    InflightGuard inflight;
+    if (!g_tracing.load(std::memory_order_seq_cst) || g_trace.gen != tok.gen) return;
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
     r.seqKind = seq | kTraceReturnBit;
@@ -360,7 +365,6 @@ void TraceReturn(const TraceToken& tok, uint32_t tid) {
     r.b       = 0;
     r.tid     = tid;
     r.flags   = 0;
-    g_inflight.fetch_sub(1, std::memory_order_release);
 }
 
 TraceInfo GetTraceInfo() {
