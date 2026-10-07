@@ -1,6 +1,7 @@
 r"""Live check of the Live Funcs call trace: the ring on a running game, through the pipe.
 
     py tools/verify/livefuncs_trace_live.py --label <game> [--record-s 10] [--mb 32] [--skip-scope]
+    py tools/verify/livefuncs_trace_live.py --label <game>-full --mb 128 --record-s 200 --plain-s 10 --traced-only
 
 `[LIVEFUNCS-TIMELINE-2026-10-04]` On the game whose DLL is serving the pipe (one game at a time, never while the UI
 holds the pipe), this records with and without the trace and checks what only a running game can show:
@@ -20,6 +21,9 @@ holds the pipe), this records with and without the trace and checks what only a 
      of the entries;
   8. refusal: a buffer that is not a power of two in 32..512 MB is refused and starts nothing;
   9. Start cost: how long a traced Start takes to allocate and touch the ring, for the sizes asked.
+
+--traced-only stops after 5: it is for one long recording that fills the ring (seconds = bytes / (rate x 80)), to
+measure what a full ring costs to read and name; --plain-s keeps the rate recording short meanwhile.
 
 Every recording is stopped in a `finally`, and the trace released. Output: out/livefuncs-trace/<label>.json and a
 summary. Exit 0 when every check holds; 1 otherwise; 2 when the pipe or the game is not usable.
@@ -143,10 +147,12 @@ def main() -> int:
     ap.add_argument("--mb", type=int, default=32, help="trace buffer for the traced recordings")
     ap.add_argument("--start-cost-mb", type=int, nargs="*", default=[32, 128, 512])
     ap.add_argument("--skip-scope", action="store_true")
+    ap.add_argument("--plain-s", type=float, default=None, help="the rate recording's length (default: --record-s)")
+    ap.add_argument("--traced-only", action="store_true", help="stop after the traced recording (checks 1-5)")
     args = ap.parse_args()
 
     checks: list[tuple[str, bool, str]] = []
-    out: dict = {"label": args.label, "record_s": args.record_s, "mb": args.mb}
+    out: dict = {"label": args.label, "record_s": args.record_s, "mb": args.mb, "traced_only": args.traced_only}
 
     def check(name: str, cond: bool, got: str = "") -> None:
         checks.append((name, bool(cond), got))
@@ -159,7 +165,7 @@ def main() -> int:
         return 2
     try:
         # 1. the plain rate
-        _, _ = record(c, args.record_s)
+        _, _ = record(c, args.plain_s if args.plain_s is not None else args.record_s)
         plain = data_of(c.request("pe_profile_get", limit=32768, skip_per_frame=True))
         total, window_ms = plain.get("total_calls", 0), plain.get("window_ms", 0)
         if total == 0 or not window_ms:
@@ -238,7 +244,7 @@ def main() -> int:
         check("release frees the ring; a read finds nothing", not after.get("allocated") and after.get("count") == 0)
 
         # 6. the ticked scope: tick the function that calls the most other UFunctions
-        if not args.skip_scope:
+        if not (args.skip_scope or args.traced_only):
             if nested:
                 root_func, _n = nested.most_common(1)[0]
                 say(f"scope: ticking 0x{root_func:X} ({_n} nested calls in the unscoped trace)")
@@ -260,32 +266,33 @@ def main() -> int:
             else:
                 check("scope: a function with nested calls exists to tick", False, "none in the unscoped trace")
 
-        # 7. per-frame exclusion: the previous table (the scope recording, or the traced one) decides
-        prev = data_of(c.request("pe_profile_get", limit=1, skip_per_frame=True))
-        excl = {addr(a) for a in prev.get("per_frame_funcs", [])}
-        start3, stop3 = record(c, args.record_s, {"bytes": mb, "exclude_per_frame": True})
-        _, erecs, _, _ = read_ring(c)
-        efuncs = {r[2] for r in erecs if not r[0] & RET_BIT}
-        check("exclude: the trace says how many it left out", start3.get("trace", {}).get("excluded") == len(excl),
-              f"{start3.get('trace', {}).get('excluded')} vs {len(excl)}")
-        check("exclude: none of the previous table's per-frame functions is an entry",
-              excl and not (efuncs & excl), f"{len(excl)} excluded, {len(efuncs & excl)} still present")
-        c.request("pe_trace_release")
-
-        # 8. refusal
-        bad = c.request("pe_profile_start", trace={"bytes": 3 << 20})
-        check("a buffer outside 32..512 MB / not a power of two is refused", not ok_of(bad), str(bad)[:120])
-        recording = data_of(c.request("pe_profile_get", limit=1)).get("recording")
-        check("...and starts nothing", recording is False)
-
-        # 9. Start cost per size
-        cost = {}
-        for m in args.start_cost_mb:
-            s, _ = record(c, 0.2, {"bytes": m << 20})
-            cost[m] = s["_start_s"]
+        if not args.traced_only:
+            # 7. per-frame exclusion: the previous table (the scope recording, or the traced one) decides
+            prev = data_of(c.request("pe_profile_get", limit=1, skip_per_frame=True))
+            excl = {addr(a) for a in prev.get("per_frame_funcs", [])}
+            start3, stop3 = record(c, args.record_s, {"bytes": mb, "exclude_per_frame": True})
+            _, erecs, _, _ = read_ring(c)
+            efuncs = {r[2] for r in erecs if not r[0] & RET_BIT}
+            check("exclude: the trace says how many it left out", start3.get("trace", {}).get("excluded") == len(excl),
+                  f"{start3.get('trace', {}).get('excluded')} vs {len(excl)}")
+            check("exclude: none of the previous table's per-frame functions is an entry",
+                  excl and not (efuncs & excl), f"{len(excl)} excluded, {len(efuncs & excl)} still present")
             c.request("pe_trace_release")
-        out["start_cost_s"] = cost
-        say("traced Start: " + ", ".join(f"{m} MB {s * 1000:.0f} ms" for m, s in cost.items()))
+
+            # 8. refusal
+            bad = c.request("pe_profile_start", trace={"bytes": 3 << 20})
+            check("a buffer outside 32..512 MB / not a power of two is refused", not ok_of(bad), str(bad)[:120])
+            recording = data_of(c.request("pe_profile_get", limit=1)).get("recording")
+            check("...and starts nothing", recording is False)
+
+            # 9. Start cost per size
+            cost = {}
+            for m in args.start_cost_mb:
+                s, _ = record(c, 0.2, {"bytes": m << 20})
+                cost[m] = s["_start_s"]
+                c.request("pe_trace_release")
+            out["start_cost_s"] = cost
+            say("traced Start: " + ", ".join(f"{m} MB {s * 1000:.0f} ms" for m, s in cost.items()))
     finally:
         try:
             c.request("pe_profile_stop")
