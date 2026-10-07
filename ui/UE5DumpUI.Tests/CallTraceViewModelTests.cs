@@ -250,6 +250,103 @@ public class CallTraceViewModelTests
         Assert.Null(vm.Trace!.Snapshots);
     }
 
+    // ---- [LIVEFUNCS-STEP2] U13: the Parameters tab ----
+
+    // A(0) unchosen; B(1) taken, copies at and after the call; C(2) over the budget; D(5) taken, its arm never read;
+    // E(8) lone and taken, but its slot overwritten since.
+    private static FakeDumpService DumpForParams()
+    {
+        var d = DumpWithSnapshots();
+        d.Ring.Clear();
+        d.Ring.AddRange(new[]
+        {
+            new TraceRecord(0, 1000, 0xA, 0x10, 1, 0), new TraceRecord(1, 1010, 0xB, 0x20, 1, 2),
+            new TraceRecord(2, 1020, 0xC, 0, 1, 16), new TraceRecord(3 | R, 1030, 2, 0, 1, 0),
+            new TraceRecord(4 | R, 1040, 1, 0, 1, 0), new TraceRecord(5, 1050, 0xD, 0x10, 1, 2),
+            new TraceRecord(6 | R, 1060, 5, 0, 1, 0), new TraceRecord(7 | R, 2000, 0, 0, 1, 0),
+            new TraceRecord(8, 3000, 0xE, 0, 1, TraceRecord.ScopeRootFlag | 4 | 2),
+        });
+        var lay = new SnapLayout
+        {
+            FuncName = "Jump",
+            Params = new[]
+            {
+                new SnapParam { Name = "X", Type = "IntProperty", Offset = 0, Size = 4, Kind = "in" },
+                new SnapParam { Name = "Out", Type = "IntProperty", Offset = 4, Size = 4, Kind = "out" },
+                new SnapParam { Name = "ReturnValue", Type = "IntProperty", Offset = 8, Size = 4, Kind = "return" },
+            },
+        };
+        d.SnapArms.Clear();
+        d.SnapArms.Add(new SnapArm { Index = 0, Ring = 0, FuncName = "Jump", State = "read", Layout = lay });
+        d.SnapArms.Add(new SnapArm { Index = 1, Ring = 0, FuncName = "OnJumped", State = "not_read_before_stop" });
+        d.SnapSlots.Clear();
+        d.SnapSlots.Add(new SnapSlot
+        {
+            Index = 0, EntrySeq = 1, Arm = 0, Data = new byte[] { 7, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0 },
+            Values = new[] { new SnapValue { Text = "7" }, new SnapValue { Text = "1" },
+                             new SnapValue { Text = "\u2014", Mark = SnapMark.Missing } },
+        });
+        d.SnapSlots.Add(new SnapSlot
+        {
+            Index = 1, EntrySeq = 1, Arm = 0, IsAfter = true, Data = new byte[] { 7, 0, 0, 0, 2, 0, 0, 0, 9, 0, 0, 0 },
+            Values = new[] { new SnapValue { Text = "", Mark = SnapMark.Missing }, new SnapValue { Text = "2" },
+                             new SnapValue { Text = "9" } },
+        });
+        d.SnapSlots.Add(new SnapSlot { Index = 2, EntrySeq = 5, Arm = 1, Data = new byte[] { 1, 2 } });
+        return d;
+    }
+
+    [Fact]
+    public async Task The_Parameters_tab_gives_values_and_a_reason_for_every_kind_of_call()
+    {
+        var dump = DumpForParams();
+        var (vm, _) = MakeVm(dump);
+        vm.StringLookup = k => k;   // the reasons by their keys
+        await vm.LoadCommand.ExecuteAsync(null);
+        var t = vm.Trace!;
+
+        var b = vm.Params(t.FindBySeq(1));
+        Assert.Equal(new[] { "X", "Out", "ReturnValue" }, b.Rows.Select(r => r.Name));
+        Assert.Equal("7", b.Rows[0].AtCall);
+        Assert.Equal("", b.Rows[0].After);                      // an In after the call: blank
+        Assert.Equal("\u2014", b.Rows[2].AtCall);                // the return value at the call: not yet
+        Assert.Equal("9", b.Rows[2].After);
+        Assert.False(b.Rows[0].Changed);                         // the same bytes
+        Assert.True(b.Rows[1].Changed && b.Rows[2].Changed);     // bytes that differ, nothing else
+        Assert.Empty(b.Notes);
+        Assert.Contains("str.CT.Param.HexAfter", b.Hex, StringComparison.Ordinal);
+
+        Assert.Equal(new[] { "str.CT.Param.Budget" }, vm.Params(t.FindBySeq(2)).Notes);
+        var d = vm.Params(t.FindBySeq(5));
+        Assert.Empty(d.Rows);
+        Assert.Equal(new[] { "str.CT.Param.RawOnly" }, d.Notes);
+        Assert.NotEqual("", d.Hex);
+        Assert.Equal(new[] { "str.CT.Param.Lone", "str.CT.Param.Overwritten" }, vm.Params(t.FindBySeq(8)).Notes);
+        Assert.Equal(new[] { "str.CT.Param.NotChosen" }, vm.Params(t.FindBySeq(0)).Notes);
+    }
+
+    [Fact]
+    public async Task Only_calls_with_parameters_works_with_the_filter_box_empty()
+    {
+        var dump = DumpForParams();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(2, vm.Rows.Count);   // the tree's two roots
+
+        vm.OnlyWithParams = true;
+        Assert.True(vm.IsFiltered);
+        Assert.Equal(2, vm.Rows.Count);   // B and D carry copies; E's was overwritten
+        var calls = Enumerable.Range(0, vm.Rows.Count).Select(k => ((CallTraceRowList)vm.Rows).CallAt(k)).ToArray();
+        Assert.Equal(new[] { vm.Trace!.FindBySeq(1), vm.Trace.FindBySeq(5) }, calls);
+        Assert.True(((CallTraceRowList)vm.Rows)[0].HasParams);
+
+        vm.FilterText = "OnJumped";
+        Assert.Single(Enumerable.Range(0, vm.Rows.Count));
+        vm.FilterText = "";
+        vm.OnlyWithParams = false;
+        Assert.False(vm.IsFiltered);
+    }
+
     [Fact]
     public async Task A_new_load_lets_go_of_the_trace_on_screen_before_it_reads()
     {
@@ -717,8 +814,10 @@ public class CallTraceViewModelTests
             Assert.True(cells.Count == 1, $"{cells.Count} header cell(s) bind {width}");
             Assert.Contains(cells[0].Descendants(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
         }
-        var pane = outside.Single(e => e.Name == Av + "TextBox" && (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
-        Assert.Equal("{Binding DetailPaneWidth}", (string?)pane.Attribute("Width"));
+        // [LIVEFUNCS-STEP2] U13: the pane is a TabControl now (Call | Parameters); the width and its thumb are its.
+        var pane = outside.Single(e => (string?)e.Attribute("Width") == "{Binding DetailPaneWidth}");
+        Assert.Contains(pane.Descendants(Av + "TextBox"),
+                        e => (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
         Assert.Contains(pane.Parent!.Elements(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
     }
 

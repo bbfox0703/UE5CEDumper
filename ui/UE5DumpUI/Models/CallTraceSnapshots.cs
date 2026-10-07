@@ -30,6 +30,10 @@ public sealed class CallTraceSnapshots
     public int CallsWithParams => _entry.Keys.Union(_after.Keys).Count();
 
     public bool Has(int call) => _entry.ContainsKey(call) || _after.ContainsKey(call);
+
+    private int[]? _calls;
+    /// <summary>The calls with a copy, in call order: the list "Only calls with parameters" shows.</summary>
+    public IReadOnlyList<int> Calls => _calls ??= _entry.Keys.Union(_after.Keys).OrderBy(c => c).ToArray();
     public SnapSlot? EntryOf(int call) => _entry.TryGetValue(call, out var s) ? s : null;
     public SnapSlot? AfterOf(int call) => _after.TryGetValue(call, out var s) ? s : null;
     /// <summary>The arm that wrote <paramref name="slot"/>: its layout decodes it, whatever another load's says.</summary>

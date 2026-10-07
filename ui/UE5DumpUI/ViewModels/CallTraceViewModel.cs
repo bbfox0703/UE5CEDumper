@@ -483,18 +483,40 @@ public partial class CallTraceViewModel : ViewModelBase
         return -1;
     }
 
-    partial void OnFilterTextChanged(string value)
+    partial void OnFilterTextChanged(string value) => ApplyCallFilter(value);
+
+    /// <summary>[LIVEFUNCS-STEP2] U13: list only the calls that carry a parameter copy -- with the filter's text, or alone
+    /// with none (an empty box would otherwise mean "the tree").</summary>
+    [ObservableProperty] private bool _onlyWithParams;
+    partial void OnOnlyWithParamsChanged(bool value) => ApplyCallFilter(FilterText);
+
+    private void ApplyCallFilter(string value)
     {
         if (_trace == null || _tree == null) return;
         var terms = ObjectTreeFilter.SplitTerms(value);
-        if (terms.Length == 0)
+        if (terms.Length == 0 && !OnlyWithParams)
         {
             _matches = Array.Empty<int>();
             ShowTree(-1);
             if (_trace != null) StatusText = Summary(_trace);
             return;
         }
-        _matches = CallTraceTree.Match(_trace, value, Constants.DefaultMaxQueryRows, out bool capped);
+        bool capped = false;
+        if (terms.Length > 0)
+        {
+            _matches = CallTraceTree.Match(_trace, value, OnlyWithParams ? int.MaxValue : Constants.DefaultMaxQueryRows,
+                                           out capped);
+            if (OnlyWithParams) _matches = _matches.Where(c => _trace.Snapshots?.Has(c) == true).ToArray();
+        }
+        else
+        {
+            _matches = (_trace.Snapshots?.Calls ?? Array.Empty<int>()).ToArray();
+        }
+        if (_matches.Length > Constants.DefaultMaxQueryRows)
+        {
+            _matches = _matches[..Constants.DefaultMaxQueryRows];
+            capped = true;
+        }
         IsFiltered = true;
         Rows = new CallTraceRowList(_trace, _matches, null, indented: false);
         SelectedIndex = -1;
@@ -502,10 +524,121 @@ public partial class CallTraceViewModel : ViewModelBase
             ? Res.Format("str.CT.Status.MatchesCapped", _matches.Length)
             : _matches.Length == 1 ? Res.Get("str.CT.Status.MatchesOne")
             : Res.Format("str.CT.Status.Matches", _matches.Length);
-        _filterMemory.Schedule(value);
+        if (terms.Length > 0) _filterMemory.Schedule(value);
     }
 
-    partial void OnSelectedIndexChanged(int value) => DetailText = Detail(SelectedCall());
+    partial void OnSelectedIndexChanged(int value)
+    {
+        int call = SelectedCall();
+        DetailText = Detail(call);
+        var p = Params(call);
+        ParamRows = p.Rows;
+        ParamsNote = string.Join(Environment.NewLine, p.Notes);
+        ParamsHex = p.Hex;
+    }
+
+    // ---- [LIVEFUNCS-STEP2] U13: the selected call's parameters (view C) ----
+
+    [ObservableProperty] private IReadOnlyList<ParamRow> _paramRows = Array.Empty<ParamRow>();
+    [ObservableProperty] private string _paramsNote = "";
+    [ObservableProperty] private string _paramsHex = "";
+
+    /// <summary>What the Parameters tab shows for call <paramref name="i"/>: a row per parameter (a struct's members
+    /// under it), the reasons that qualify them or say why there are none, and the raw copies. Nothing at all for a
+    /// call that was not chosen: the tab then says so itself.</summary>
+    internal (IReadOnlyList<ParamRow> Rows, IReadOnlyList<string> Notes, string Hex) Params(int i)
+    {
+        var t = _trace;
+        var none = ((IReadOnlyList<ParamRow>)Array.Empty<ParamRow>(), (IReadOnlyList<string>)Array.Empty<string>(), "");
+        if (t == null || i < 0 || i >= t.Count) return none;
+        uint f = t.Flags[i];
+        var s = t.Snapshots;
+        var entry = s?.EntryOf(i);
+        var after = s?.AfterOf(i);
+        const uint Taken = 2, Lone = 4, Excluded = 8, Budget = 16;
+        if ((f & (Taken | Lone | Excluded | Budget)) == 0 && entry == null && after == null)
+            return (Array.Empty<ParamRow>(), new[] { StringLookup("str.CT.Param.NotChosen") }, "");
+        var notes = new List<string>();
+        if ((f & Lone) != 0) notes.Add(StringLookup("str.CT.Param.Lone"));
+        if ((f & Excluded) != 0) notes.Add(StringLookup("str.CT.Param.Excluded"));
+        if ((f & Budget) != 0)
+        {
+            notes.Add(StringLookup("str.CT.Param.Budget"));
+            return (Array.Empty<ParamRow>(), notes, "");
+        }
+        if (entry == null && after == null)
+        {
+            notes.Add(StringLookup("str.CT.Param.Overwritten"));
+            return (Array.Empty<ParamRow>(), notes, "");
+        }
+        var hex = new StringBuilder();
+        foreach (var slot in new[] { entry, after })
+        {
+            if (slot == null) continue;
+            if ((slot.Flags & SnapSlot.NullParamsFlag) != 0) notes.Add(StringLookup("str.CT.Param.NullParams"));
+            if ((slot.Flags & SnapSlot.CopyFaultFlag) != 0) notes.Add(StringLookup("str.CT.Param.CopyFault"));
+            if ((slot.Flags & SnapSlot.TruncatedFlag) != 0) notes.Add(StringLookup("str.CT.Param.Truncated"));
+            hex.AppendLine(Say(slot.IsAfter ? "str.CT.Param.HexAfter" : "str.CT.Param.HexAt", Convert.ToHexString(slot.Data)));
+        }
+        var arm = s!.ArmOf(entry ?? after!);
+        var layout = arm?.Layout;
+        if (layout == null)
+        {
+            notes.Add(Say("str.CT.Param.RawOnly", arm?.State ?? "", arm?.Why ?? ""));
+            return (Array.Empty<ParamRow>(), notes.Distinct().ToList(), hex.ToString());
+        }
+        bool hasOutputs = layout.Fields.Any(p => p.Kind is "out" or "in_out" or "return");
+        if (after == null && hasOutputs && t.Returned[i]) notes.Add(StringLookup("str.CT.Param.NoAfter"));
+        var rows = new List<ParamRow>();
+        for (int k = 0; k < layout.Fields.Count; k++)
+            AddParamRows(rows, layout.Fields[k], "", entry, after, entry?.Values, after?.Values, k, 0);
+        return (rows, notes.Distinct().ToList(), hex.ToString());
+    }
+
+    private static void AddParamRows(List<ParamRow> rows, SnapParam p, string prefix, SnapSlot? entry, SnapSlot? after,
+                                     IReadOnlyList<SnapValue>? at, IReadOnlyList<SnapValue>? af, int k, int depth)
+    {
+        var a = at != null && k < at.Count ? at[k] : null;
+        var b = af != null && k < af.Count ? af[k] : null;
+        int len = p.Size * Math.Max(1, p.ArrayDim);
+        rows.Add(new ParamRow
+        {
+            Name = prefix + p.Name,
+            Kind = p.Kind,
+            Type = p.Type,
+            AtCall = a == null ? "" : a.Text,
+            AtCallMark = MarkText(a),
+            After = b == null || b.Mark == SnapMark.Missing && b.Text.Length == 0 ? "" : b.Text,
+            AfterMark = MarkText(b),
+            // Only where both copies hold the bytes, and they differ: never from the decoded text.
+            Changed = entry != null && after != null && BytesDiffer(entry.Data, after.Data, p.Offset, len),
+            Depth = depth,
+        });
+        if (depth >= 4) return;
+        for (int j = 0; j < p.Sub.Count; j++)
+        {
+            // A member's offset is its struct's plus its own.
+            var sub = p.Sub[j];
+            var shifted = new SnapParam { Name = sub.Name, Kind = p.Kind, Type = sub.Type, Offset = p.Offset + sub.Offset,
+                                          Size = sub.Size, ArrayDim = sub.ArrayDim, Sub = sub.Sub };
+            AddParamRows(rows, shifted, prefix + "  ", entry, after, a?.Sub, b?.Sub, j, depth + 1);
+        }
+    }
+
+    private static bool BytesDiffer(byte[] x, byte[] y, int off, int len)
+    {
+        if (len <= 0 || off < 0 || off + len > x.Length || off + len > y.Length) return false;
+        return !x.AsSpan(off, len).SequenceEqual(y.AsSpan(off, len));
+    }
+
+    private static string MarkText(SnapValue? v) => v?.Mark switch
+    {
+        SnapMark.Now => "now",
+        SnapMark.Gone => "gone",
+        SnapMark.Header => "header",
+        SnapMark.Raw => "hex",
+        _ => "",
+    };
 
     private int SelectedCall()
         => Rows is CallTraceRowList l && SelectedIndex >= 0 && SelectedIndex < l.Count ? l.CallAt(SelectedIndex) : -1;
@@ -727,6 +860,25 @@ public sealed class CallTraceRow
     /// <summary>A stale object shows its address dimmed: what is there now may not be what was called.</summary>
     public double ObjectOpacity => ObjectStale ? 0.5 : 1.0;
     public bool IsScopeRoot { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] The call carries a parameter copy: marked in the tree.</summary>
+    public bool HasParams { get; init; }
+}
+
+/// <summary>[LIVEFUNCS-STEP2] One row of the Parameters tab: a parameter, or a struct member under it.</summary>
+public sealed class ParamRow
+{
+    public string Name { get; init; } = "";
+    /// <summary>"in", "const_ref", "out", "in_out" or "return".</summary>
+    public string Kind { get; init; } = "";
+    public string Type { get; init; } = "";
+    public string AtCall { get; init; } = "";
+    /// <summary>How far to trust it: "now" (named as it is now), "gone", "header" (data not copied), "hex"; "" exact.</summary>
+    public string AtCallMark { get; init; } = "";
+    public string After { get; init; } = "";
+    public string AfterMark { get; init; } = "";
+    /// <summary>The raw bytes differ between the copy at the call and the one after it.</summary>
+    public bool Changed { get; init; }
+    public int Depth { get; init; }
 }
 
 /// <summary>
@@ -772,6 +924,7 @@ public sealed class CallTraceRowList : IList, IReadOnlyList<CallTraceRow>
                 ObjectText = _t.ObjName(i),
                 ObjectStale = _t.ObjStale(i),
                 IsScopeRoot = (_t.Flags[i] & TraceRecord.ScopeRootFlag) != 0,
+                HasParams = _t.Snapshots?.Has(i) == true,
             };
             _cache[index] = row;
             return row;

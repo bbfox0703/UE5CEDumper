@@ -92,6 +92,12 @@
               Command="{Binding ShowInTreeCommand}"
               IsVisible="{Binding IsFiltered}"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <!-- [LIVEFUNCS-STEP2] U13: only the calls with a parameter copy; works with the box empty. -->
+      <CheckBox Content="{StaticResource str.CT.OnlyWithParams}"
+                IsChecked="{Binding OnlyWithParams}"
+                IsEnabled="{Binding HasTrace}"
+                ToolTip.Tip="{StaticResource str.Tip.CT.OnlyWithParams}"
+                Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
       <Button Content="{StaticResource str.CT.ExportJsonl}"
               Command="{Binding ExportJsonlCommand}"
               IsEnabled="{Binding CanExport}"
@@ -120,11 +126,61 @@
 
     <!-- The selected call: what ran, on what, when, and its callers. Its width is dragged by the thumb on its left
          edge and remembered (U10). -->
-    <TextBox DockPanel.Dock="Right" Width="{Binding DetailPaneWidth}"
-             Text="{Binding DetailText, Mode=OneWay}"
-             IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
-             FontFamily="Consolas, Menlo, monospace" FontSize="12"
-             Background="#1E1E1E" Foreground="#D4D4D4"/>
+    <!-- [LIVEFUNCS-STEP2] U13: the call, and its parameters (view C) in a tab of their own. -->
+    <TabControl DockPanel.Dock="Right" Width="{Binding DetailPaneWidth}" Padding="0">
+      <TabItem Header="{StaticResource str.CT.Tab.Call}" FontSize="12">
+        <TextBox Text="{Binding DetailText, Mode=OneWay}"
+                 IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
+                 FontFamily="Consolas, Menlo, monospace" FontSize="12"
+                 Background="#1E1E1E" Foreground="#D4D4D4"/>
+      </TabItem>
+      <TabItem Header="{StaticResource str.CT.Tab.Params}" FontSize="12">
+        <DockPanel Background="#1E1E1E">
+          <TextBlock DockPanel.Dock="Top" Text="{Binding ParamsNote}" TextWrapping="Wrap"
+                     Foreground="#E5A050" FontSize="12" Margin="4,4,4,2"
+                     IsVisible="{Binding ParamsNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <!-- Fixed cells in a DockPanel, as the list's own header is laid out; the last one takes what is left. -->
+          <DockPanel DockPanel.Dock="Top" Margin="4,2">
+            <TextBlock DockPanel.Dock="Left" Width="110" Text="{StaticResource str.CT.Param.Col.Name}" Foreground="#888" FontSize="11"/>
+            <TextBlock DockPanel.Dock="Left" Width="64" Text="{StaticResource str.CT.Param.Col.Kind}" Foreground="#888" FontSize="11"/>
+            <TextBlock DockPanel.Dock="Left" Width="120" Text="{StaticResource str.CT.Param.Col.AtCall}" Foreground="#888" FontSize="11"/>
+            <TextBlock Text="{StaticResource str.CT.Param.Col.After}" Foreground="#888" FontSize="11"/>
+          </DockPanel>
+          <TextBox DockPanel.Dock="Bottom" Text="{Binding ParamsHex, Mode=OneWay}" IsReadOnly="True"
+                   TextWrapping="Wrap" MaxHeight="120" FontFamily="Consolas, Menlo, monospace" FontSize="11"
+                   Background="#252526" Foreground="#9CA3AF"
+                   IsVisible="{Binding ParamsHex, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
+                   ToolTip.Tip="{StaticResource str.Tip.CT.Param.Hex}"/>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding ParamRows}">
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:ParamRow">
+                  <DockPanel Margin="4,1">
+                    <TextBlock DockPanel.Dock="Left" Width="110" Text="{Binding Name}" Foreground="#9CDCFE" FontSize="12"
+                               FontFamily="Consolas, Menlo, monospace" TextTrimming="CharacterEllipsis"
+                               ToolTip.Tip="{Binding Type}"/>
+                    <TextBlock DockPanel.Dock="Left" Width="64" Text="{Binding Kind}" Foreground="#808080" FontSize="11"
+                               VerticalAlignment="Center"/>
+                    <StackPanel DockPanel.Dock="Left" Width="120" Orientation="Horizontal" Spacing="4">
+                      <TextBlock Text="{Binding AtCall}" Foreground="#D4D4D4" FontSize="12" TextWrapping="Wrap"
+                                 FontFamily="Consolas, Menlo, monospace" ToolTip.Tip="{Binding AtCall}"/>
+                      <TextBlock Text="{Binding AtCallMark}" Foreground="#808080" FontSize="10" VerticalAlignment="Center"/>
+                    </StackPanel>
+                    <StackPanel Orientation="Horizontal" Spacing="4">
+                      <TextBlock Text="{StaticResource str.CT.Param.Changed}" IsVisible="{Binding Changed}"
+                                 Foreground="#E5A050" FontSize="12" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Changed}"/>
+                      <TextBlock Text="{Binding After}" Foreground="#DCDCAA" FontSize="12" TextWrapping="Wrap"
+                                 FontFamily="Consolas, Menlo, monospace"/>
+                      <TextBlock Text="{Binding AfterMark}" Foreground="#808080" FontSize="10" VerticalAlignment="Center"/>
+                    </StackPanel>
+                  </DockPanel>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+        </DockPanel>
+      </TabItem>
+    </TabControl>
     <Thumb DockPanel.Dock="Right" Width="8" Cursor="SizeWestEast"
            Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
            DragDelta="OnDetailPaneThumbDragDelta"/>
@@ -208,6 +264,10 @@
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
                          IsVisible="{Binding FuncUnloaded}" ToolTip.Tip="{StaticResource str.Tip.CT.Unloaded}"
                          Foreground="#808080" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
+              <!-- [LIVEFUNCS-STEP2] The call carries a parameter copy: its Parameters tab has values. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Param.Marker}"
+                         IsVisible="{Binding HasParams}" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Marker}"
+                         Foreground="#C586C0" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
               <!-- Review DLL-3: the address held another function during the recording. -->
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"
                          IsVisible="{Binding FuncReused}" ToolTip.Tip="{StaticResource str.Tip.LF.Reused}"

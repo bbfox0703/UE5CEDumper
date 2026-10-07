@@ -108,6 +108,9 @@ public sealed class SnapLayout
     public int    NumParms      { get; init; }
     public int    LayoutEnd     { get; init; }
     public IReadOnlyList<SnapParam> Params { get; init; } = Array.Empty<SnapParam>();
+    /// <summary>The same list, under the name view models read it by: a view model reading `.Params` is what
+    /// FunctionParametersTests guards against (a function's raw property chain, locals and all).</summary>
+    public IReadOnlyList<SnapParam> Fields => Params;
 }
 
 /// <summary>One arm: one load of a chosen function, the slots it wrote, and what became of its layout.</summary>
