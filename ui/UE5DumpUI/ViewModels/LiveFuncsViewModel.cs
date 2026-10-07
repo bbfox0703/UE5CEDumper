@@ -303,7 +303,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     // UI already held before the load is not the trace's cost (that 512 MB run was 1,206 MB above a fresh UI).
     internal const double TraceUiPeakFactor = 2.25;
     internal const int    TraceUiPageMb     = 45;
-    public int TraceGameMb   => TraceBufferMb;
+    public int TraceGameMb   => TraceBufferMb + (_snapChosen.Count > 0 ? SnapshotBufferMb : 0);
     public int TraceUiPeakMb => (int)(TraceBufferMb * TraceUiPeakFactor) + TraceUiPageMb;
     public int TraceUiHeldMb => TraceBufferMb;
     /// <summary>Physical memory free when last asked (MB); long.MaxValue when unknown.</summary>
@@ -328,7 +328,237 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(TraceMemoryEstimate));
     }
 
-    partial void OnTraceEnabledChanged(bool value) => RefreshAvailableMemory();
+    partial void OnTraceEnabledChanged(bool value)
+    {
+        RefreshAvailableMemory();
+        OnPropertyChanged(nameof(CanSnapshot));
+    }
+
+    // ---- [LIVEFUNCS-STEP2] Parameter snapshots: chosen by name (T10), taken by the trace (T11-T14). The design is
+    // docs/live-funcs-timeline-plan.md, "Step 2 design".
+
+    /// <summary>The functions whose parameters the next traced Start copies, by name (FunctionTickSet's rules).</summary>
+    private readonly FunctionTickSet _snapChosen = new();
+    /// <summary>The chosen functions as Class::Func, for this panel and the Call Trace tab's read-only copy.</summary>
+    public ObservableCollection<string> SnapshotFunctions { get; } = new();
+    public bool HasSnapshotChoices => SnapshotFunctions.Count > 0;
+    public string SnapshotCountText => Res.Format("str.LF.Snap.Count", SnapshotFunctions.Count);
+    /// <summary>Parameters can be chosen: the rows can be ticked, and the trace is on (snapshots ride on it).</summary>
+    public bool CanSnapshot => CanTick && TraceEnabled;
+
+    /// <summary>The snapshot buffer as a power of two in MB (T12): 8 to 128, default 32.</summary>
+    internal const int SnapshotBufferMinExponent = 3;
+    internal const int SnapshotBufferMaxExponent = 7;
+    [ObservableProperty] private int _snapshotBufferExponent = 5;
+    public int SnapshotBufferMb => 1 << SnapshotBufferExponent;
+    public string SnapshotBufferText => Res.Format("str.LF.Trace.BufferMb", SnapshotBufferMb);
+
+    /// <summary>The budget a Start sends (the DLL's defaults, provisional until measured live).</summary>
+    internal const int SnapshotPerFuncPerSec = 1000;
+    internal const int SnapshotTotalPerSec = 10000;
+
+    partial void OnSnapshotBufferExponentChanged(int value)
+    {
+        int clamped = Math.Clamp(value, SnapshotBufferMinExponent, SnapshotBufferMaxExponent);
+        if (clamped != value)
+        {
+            SnapshotBufferExponent = clamped;   // re-enters with the clamped value
+            return;
+        }
+        OnPropertyChanged(nameof(SnapshotBufferMb));
+        OnPropertyChanged(nameof(SnapshotBufferText));
+        RaiseSnapshotEstimate();
+    }
+
+    [RelayCommand]
+    private void ToggleSnapshot(PeProfileEntry? row)
+    {
+        if (row == null || !CanSnapshot || !row.CanChooseSnapshot) return;
+        bool chosen = _snapChosen.Toggle(row, _allEntries);
+        string key = Key(row);
+        foreach (var e in _allEntries.Where(e => Key(e) == key)) e.IsSnapChosen = chosen && e.CanChooseSnapshot;
+        row.IsSnapChosen = chosen;
+        RefreshSnapshotList();
+    }
+
+    [RelayCommand]
+    private void ClearSnapshots()
+    {
+        if (IsRecording) return;
+        _snapChosen.Clear();
+        foreach (var e in _allEntries) e.IsSnapChosen = false;
+        RefreshSnapshotList();
+    }
+
+    /// <summary>T9 item 2 (S14): choose every shown row that can be chosen -- what the filter and check boxes leave,
+    /// per-frame rows included; the status says what was left out.</summary>
+    [RelayCommand]
+    private void SnapshotShownRows()
+    {
+        if (!CanSnapshot) return;
+        int added = 0, skipped = 0;
+        foreach (var row in Results.ToList())
+        {
+            if (!row.CanChooseSnapshot) { skipped++; continue; }
+            if (_snapChosen.Contains(row)) continue;
+            _snapChosen.Add(row, _allEntries);
+            added++;
+        }
+        foreach (var e in _allEntries) e.IsSnapChosen = _snapChosen.Contains(e) && e.CanChooseSnapshot;
+        RefreshSnapshotList();
+        LastSnapshotBulkSkipped = skipped;
+        StatusText = Res.Format("str.LF.Snap.BulkDone", added, skipped);
+    }
+
+    /// <summary>The shown rows the last bulk choice left out (no key, or no parameters).</summary>
+    internal int LastSnapshotBulkSkipped { get; private set; }
+
+    private void RefreshSnapshotList()
+    {
+        SnapshotFunctions.Clear();
+        foreach (var k in _snapChosen.Names) SnapshotFunctions.Add(k);
+        OnPropertyChanged(nameof(HasSnapshotChoices));
+        OnPropertyChanged(nameof(SnapshotCountText));
+        OnPropertyChanged(nameof(TraceGameMb));
+        OnPropertyChanged(nameof(TraceMemoryOverAvailable));
+        OnPropertyChanged(nameof(TraceMemoryEstimate));
+        RaiseSnapshotEstimate();
+    }
+
+    // ---- T9 item 1: the estimate, from the last fetch's rates. Pure, like EstimateSeconds, so a test pins it.
+
+    /// <summary>The window the last fetch's counts cover (ms); 0 before any.</summary>
+    private long _lastWindowMs;
+
+    /// <summary>One chosen function as the estimate sees it.</summary>
+    internal readonly record struct SnapRate(string Name, double CallsPerSec, int ParmsSize, uint FunctionFlags);
+
+    internal readonly record struct SnapEstimate(double CallsPerSec, double AdmittedPerSec, double SkippedPerSec,
+                                                 double MbPerMinute, long SlotsPerRing, long CallsKept,
+                                                 string Busiest, double BusiestSeconds)
+    {
+        /// <summary>The DLL refuses a Start whose rings keep fewer than this many slots.</summary>
+        public bool TooSmall => SlotsPerRing < SnapMinSlots;
+    }
+
+    // The DLL's numbers (Linie.h); a test reads that header and pins these to it.
+    internal const int SnapMaxCopy = 2048;
+    internal const int SnapUnknownCopy = 256;
+    internal const int SnapMinSlots = 8;
+    internal const int SnapHeaderBytes = 24;
+    internal const uint FuncHasOutParms = 0x00400000;
+
+    /// <summary>A ring's slot payload for a parameter block of <paramref name="parmsSize"/> (Linie::RingCapFor).</summary>
+    internal static int RingCapFor(int parmsSize)
+        => parmsSize <= 0 ? SnapUnknownCopy : (Math.Min(parmsSize, SnapMaxCopy) + 7) & ~7;
+
+    /// <summary>Slots one call takes: its entry copy, and a copy after it when the function may have outputs. Flags
+    /// cannot tell a lone return value (no FUNC_HasOutParms, measured), so they count it as one: the MB figure below
+    /// takes two for every call, an upper bound.</summary>
+    internal static int SlotsPerCall(uint functionFlags)
+        => functionFlags == 0 || (functionFlags & FuncHasOutParms) != 0 ? 2 : 1;
+
+    internal static SnapEstimate EstimateSnapshots(IReadOnlyList<SnapRate> chosen, long snapBytes, int perFunc, int total)
+    {
+        if (chosen.Count == 0) return default;
+        double rate = 0, admitted = 0, bytesPerSec = 0;
+        long perRound = 0;
+        var admit = new double[chosen.Count];
+        for (int k = 0; k < chosen.Count; k++)
+        {
+            admit[k] = Math.Min(chosen[k].CallsPerSec, perFunc);
+            rate += chosen[k].CallsPerSec;
+            admitted += admit[k];
+            perRound += SnapHeaderBytes + RingCapFor(chosen[k].ParmsSize);
+        }
+        double scale = admitted > total && admitted > 0 ? total / admitted : 1.0;
+        string busiest = "";
+        double busiestRate = 0;
+        for (int k = 0; k < chosen.Count; k++)
+        {
+            admit[k] *= scale;
+            bytesPerSec += admit[k] * 2 * (SnapHeaderBytes + RingCapFor(chosen[k].ParmsSize));
+            if (admit[k] > busiestRate) { busiestRate = admit[k]; busiest = chosen[k].Name; }
+        }
+        admitted *= scale;
+        long slots = snapBytes > 64L * chosen.Count ? (snapBytes - 64L * chosen.Count) / perRound : 0;
+        long kept = slots / 2;   // at least: a call with a copy after it takes two slots
+        return new SnapEstimate(rate, admitted, Math.Max(0, rate - admitted), bytesPerSec * 60 / (1 << 20), slots, kept,
+                                busiest, busiestRate > 0 ? kept / busiestRate : double.PositiveInfinity);
+    }
+
+    private List<SnapRate> ChosenRates()
+    {
+        double seconds = _lastWindowMs / 1000.0;
+        var list = new List<SnapRate>();
+        foreach (var name in _snapChosen.Names)
+        {
+            var rows = _allEntries.Where(e => Key(e) == name).ToList();
+            double rate = seconds > 0 ? rows.Sum(e => e.Count) / seconds : 0;
+            uint flags = rows.Select(e => e.FunctionFlags).FirstOrDefault(f => f != 0);
+            list.Add(new SnapRate(name, rate, _snapChosen.ParmsSizeOf(name), flags));
+        }
+        return list;
+    }
+
+    /// <summary>The trace's own estimate for T13's comparison: of every call when nothing is ticked or chosen, else of
+    /// the ticked and chosen rows (a lone record is 80 bytes a call too) -- what a scoped trace mostly holds.</summary>
+    private double TraceSecondsForComparison()
+    {
+        double rate = _lastCallsPerSecond;
+        if (_ticked.Count > 0 || _snapChosen.Count > 0)
+        {
+            double seconds = _lastWindowMs / 1000.0;
+            rate = seconds <= 0 ? 0 : _allEntries.Where(e => _ticked.Contains(e) || _snapChosen.Contains(e))
+                                                 .Sum(e => e.Count) / seconds;
+        }
+        return rate <= 0 ? double.PositiveInfinity : EstimateSeconds((long)TraceBufferMb << 20, rate);
+    }
+
+    public string SnapshotEstimate
+    {
+        get
+        {
+            if (_snapChosen.Count == 0) return "";
+            if (_lastWindowMs <= 0) return Res.Get("str.LF.Snap.EstimateNone");
+            var e = EstimateSnapshots(ChosenRates(), (long)SnapshotBufferMb << 20, SnapshotPerFuncPerSec, SnapshotTotalPerSec);
+            if (e.TooSmall) return Res.Format("str.LF.Snap.TooSmall", e.SlotsPerRing);
+            return Res.Format("str.LF.Snap.Estimate", Math.Round(e.CallsPerSec), Math.Round(e.AdmittedPerSec),
+                              Math.Round(e.MbPerMinute, 1), e.CallsKept, e.Busiest,
+                              double.IsInfinity(e.BusiestSeconds) ? "-" : Math.Round(e.BusiestSeconds).ToString(CultureInfo.InvariantCulture));
+        }
+    }
+
+    /// <summary>T13: orange when the busiest choice keeps less time than the trace does, or the buffer is too small.</summary>
+    public bool SnapshotEstimateWarn
+    {
+        get
+        {
+            if (_snapChosen.Count == 0 || _lastWindowMs <= 0) return false;
+            var e = EstimateSnapshots(ChosenRates(), (long)SnapshotBufferMb << 20, SnapshotPerFuncPerSec, SnapshotTotalPerSec);
+            return e.TooSmall || e.BusiestSeconds < TraceSecondsForComparison();
+        }
+    }
+
+    /// <summary>The grey note: what the budget would skip.</summary>
+    public string SnapshotBudgetNote
+    {
+        get
+        {
+            if (_snapChosen.Count == 0 || _lastWindowMs <= 0) return "";
+            var e = EstimateSnapshots(ChosenRates(), (long)SnapshotBufferMb << 20, SnapshotPerFuncPerSec, SnapshotTotalPerSec);
+            return e.SkippedPerSec >= 1
+                ? Res.Format("str.LF.Snap.BudgetNote", Math.Round(e.SkippedPerSec), SnapshotPerFuncPerSec, SnapshotTotalPerSec)
+                : "";
+        }
+    }
+
+    private void RaiseSnapshotEstimate()
+    {
+        OnPropertyChanged(nameof(SnapshotEstimate));
+        OnPropertyChanged(nameof(SnapshotEstimateWarn));
+        OnPropertyChanged(nameof(SnapshotBudgetNote));
+    }
 
     /// <summary>The ticked functions, followed by name (Class::Func) with their name keys and the live addresses the
     /// last fetch saw ([LIVEFUNCS-STEP2] T10; the rules are FunctionTickSet's). A key is good only within the connection
@@ -343,7 +573,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>Whether the rows on screen can be ticked: not while recording (a recording traces the ticks it started
     /// with), and not when they came from an earlier connection.</summary>
     public bool CanTick => !IsRecording && !_rowsFromEarlierConnection;
-    partial void OnIsRecordingChanged(bool value) => OnPropertyChanged(nameof(CanTick));
+    partial void OnIsRecordingChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CanTick));
+        OnPropertyChanged(nameof(CanSnapshot));
+    }
     public bool HasTickedFunctions => TickedFunctions.Count > 0;
     public string TickedCountText => Res.Format("str.LF.Trace.TickedCount", TickedFunctions.Count);
 
@@ -455,7 +689,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
         // T7: only when there is something to tick. The first recording, or any Start with no row that can be ticked
         // (none, or only unloaded ones without a key), records every call without asking.
-        if (_ticked.Count == 0 && _allEntries.Any(Tickable) && !_rowsFromEarlierConnection
+        if (_ticked.Count == 0 && _snapChosen.Count == 0 && _allEntries.Any(Tickable) && !_rowsFromEarlierConnection
             && !_traceAllConfirmed)
         {
             var confirm = ConfirmTraceAllCalls;
@@ -472,6 +706,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
             Ticked = ticked,
             TickedNames = named,
             ExcludePerFrame = TraceExcludePerFrame,
+            Snapshots = _snapChosen.Count == 0 ? null : new SnapshotStartOptions
+            {
+                Funcs = _snapChosen.Named(),
+                Bytes = (long)SnapshotBufferMb << 20,
+                PerRingPerSec = SnapshotPerFuncPerSec,
+                TotalPerSec = SnapshotTotalPerSec,
+            },
         };
     }
 
@@ -582,6 +823,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 return;
             }
             if (trace != null) RefreshAvailableMemory();
+            // Chosen, but the trace is off: a plain recording, and it says nothing was taken.
+            string snapNote = _snapChosen.Count > 0 && (trace == null) && TraceAvailable ? Res.Get("str.LF.Snap.NeedsTrace") : "";
             // Any Start gives up the previous trace: the DLL frees it before it tries a new buffer, so even a refused
             // Start leaves nothing to open (review DLL-4).
             HasTraceToOpen = false;
@@ -616,6 +859,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
                         ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb,
                                      trace.TickedNames.Count > 0 ? trace.TickedNames.Count : trace.Ticked.Count)
                         : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
+                if (trace.Snapshots != null)
+                {
+                    StatusText += " " + (start.Trace?.Snap == null ? Res.Get("str.LF.Snap.NotArmed")
+                        : Res.Format("str.LF.Snap.Recording", trace.Snapshots.Funcs.Count, SnapshotBufferMb));
+                }
+                if (start.Trace?.Names is { Refused.Count: > 0 } names)
+                    StatusText += " " + Res.Format("str.LF.Snap.Refused", names.Refused.Count);
                 LastTickedDropped = start.Trace?.TickedDropped ?? 0;
                 if (LastTickedDropped > 0)
                     StatusText += " " + Res.Format("str.LF.Trace.TickedDropped", LastTickedDropped);
@@ -623,7 +873,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 if (start.Trace != null && TraceMemoryOverAvailable)
                     StatusText += " " + Res.Format("str.LF.Trace.MemoryWarnStart", MemText(_availableMb));
             }
-            _log.Info($"LivePEProfiler: start (hook_active={start.HookActive}, trace={(trace == null ? "off" : $"{TraceBufferMb} MB, {trace.Ticked.Count} ticked, exclude_per_frame={trace.ExcludePerFrame}")})");
+            if (snapNote.Length > 0) StatusText += " " + snapNote;
+            _log.Info($"LivePEProfiler: start (hook_active={start.HookActive}, trace={(trace == null ? "off" : $"{TraceBufferMb} MB, {trace.Ticked.Count} ticked, {trace.TickedNames.Count} by name, {trace.Snapshots?.Funcs.Count ?? 0} chosen, exclude_per_frame={trace.ExcludePerFrame}")})");
         }
         catch (Exception ex)
         {
@@ -679,9 +930,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
         if (i.Written == 0) return Res.Get("str.LF.Trace.Empty");
         if (!i.Quiesced) return Res.Get("str.LF.Trace.NotQuiesced");
         if (!i.Allocated) return Res.Get("str.LF.Trace.NoneKept");
-        return i.FirstValid > 0
+        string kept = i.FirstValid > 0
             ? Res.Format("str.LF.Trace.KeptLast", i.Kept, i.Written)
             : Res.Format("str.LF.Trace.KeptAll", i.Kept);
+        if (i.Snap != null)
+            kept += " " + Res.Format("str.LF.Snap.StopNote", i.SnapRings.Sum(r => (long)(r.Written - r.FirstValid)),
+                                     (long)(i.Snap.SkippedBudget + i.Snap.DroppedBudget));
+        return kept;
     }
 
     /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter, the check boxes and Min calls
@@ -766,16 +1021,21 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             _rowsFromEarlierConnection = false;
             OnPropertyChanged(nameof(CanTick));
+            OnPropertyChanged(nameof(CanSnapshot));
         }
         // The ticks are kept by name (FunctionTickSet): the new rows carry them, a shown name takes their keys and
         // live addresses, and one this page does not show keeps what it had.
         _ticked.Refresh(_allEntries);
         foreach (var e in _allEntries) e.IsTicked = _ticked.Contains(e) && Tickable(e);
+        _snapChosen.Refresh(_allEntries);
+        foreach (var e in _allEntries) e.IsSnapChosen = _snapChosen.Contains(e) && e.CanChooseSnapshot;
+        if (result.WindowMs is > 0) _lastWindowMs = result.WindowMs.Value;
         if (result.WindowMs is > 0 && result.TotalCalls > 0)
         {
             _lastCallsPerSecond = result.TotalCalls / (result.WindowMs.Value / 1000.0);
             OnPropertyChanged(nameof(TraceEstimate));
         }
+        RefreshSnapshotList();
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
         _lastTotalCalls = result.TotalCalls;
@@ -1010,7 +1270,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
         foreach (var e in _allEntries) e.IsTicked = false;
         _rowsFromEarlierConnection = _allEntries.Count > 0;
         OnPropertyChanged(nameof(CanTick));
+        OnPropertyChanged(nameof(CanSnapshot));
         RefreshTickedList();
+        _snapChosen.Clear();
+        foreach (var e in _allEntries) e.IsSnapChosen = false;
+        _lastWindowMs = 0;
+        RefreshSnapshotList();
         _lastCallsPerSecond = 0;
         OnPropertyChanged(nameof(TraceEstimate));
     }

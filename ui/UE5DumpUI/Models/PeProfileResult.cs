@@ -18,6 +18,10 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// copies them onto its new rows.</summary>
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isTicked;
 
+    /// <summary>[LIVEFUNCS-STEP2] Chosen for parameter snapshots: the next traced Start copies its parameter block on
+    /// each call. Kept by name in LiveFuncsViewModel, like the ticks.</summary>
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isSnapChosen;
+
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";
     public string FuncAddr  { get; init; } = "";
@@ -45,6 +49,14 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     public NameKey? FnameKey { get; init; }
     /// <summary>[LIVEFUNCS-STEP2] The function fired every frame through the recording (the DLL's IsPerFrame).</summary>
     public bool   IsPerFrame { get; init; }
+
+    /// <summary>[LIVEFUNCS-STEP2] A row the trace can tick: by name when it has a key, else by a live address (D1).</summary>
+    public bool IsTickable => FnameKey != null || (!IsUnloaded && !string.IsNullOrEmpty(FuncAddr));
+
+    /// <summary>[LIVEFUNCS-STEP2] A row whose parameters can be chosen: chosen by name, so it needs a key, unloaded or
+    /// not; left out when the DLL read it as having no parameters. Flags of 0 are an offset never decided, not
+    /// "none": such a row stays choosable and the DLL decides.</summary>
+    public bool CanChooseSnapshot => FnameKey != null && !(NumParms == 0 && FunctionFlags != 0);
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,

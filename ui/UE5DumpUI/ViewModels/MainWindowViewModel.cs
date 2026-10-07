@@ -2531,6 +2531,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(LiveFuncsViewModel.FetchLimitExponent), nameof(LiveFuncsViewModel.MinCallsExponent),
         nameof(LiveFuncsViewModel.HidePerFrame),
         nameof(LiveFuncsViewModel.TraceEnabled), nameof(LiveFuncsViewModel.TraceBufferExponent),
+        nameof(LiveFuncsViewModel.SnapshotBufferExponent),
         nameof(LiveFuncsViewModel.TraceExcludePerFrame),
     };
     private static readonly HashSet<string> DumpExplorerPersist = new()
@@ -2634,6 +2635,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LiveFuncs.HidePerFrame = o.LiveFuncs.HidePerFrame;
         LiveFuncs.TraceEnabled = o.LiveFuncs.TraceEnabled;
         LiveFuncs.TraceBufferExponent = o.LiveFuncs.TraceBufferExponent;   // the VM clamps a hand-edited value
+        LiveFuncs.SnapshotBufferExponent = o.LiveFuncs.SnapshotBufferExponent;
         LiveFuncs.TraceExcludePerFrame = o.LiveFuncs.TraceExcludePerFrame;
         DumpExplorer.DiffIncludeEngine = o.DumpExplorer.DiffIncludeEngine;
         DumpExplorer.DiffBreakingOnly = o.DumpExplorer.DiffBreakingOnly;
@@ -2798,6 +2800,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.LiveFuncs.HidePerFrame = LiveFuncs.HidePerFrame;
         o.LiveFuncs.TraceEnabled = LiveFuncs.TraceEnabled;
         o.LiveFuncs.TraceBufferExponent = LiveFuncs.TraceBufferExponent;
+        o.LiveFuncs.SnapshotBufferExponent = LiveFuncs.SnapshotBufferExponent;
         o.LiveFuncs.TraceExcludePerFrame = LiveFuncs.TraceExcludePerFrame;
         o.DumpExplorer.DiffIncludeEngine = DumpExplorer.DiffIncludeEngine;
         o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;

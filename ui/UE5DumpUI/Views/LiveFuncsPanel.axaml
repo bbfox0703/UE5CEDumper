@@ -128,6 +128,48 @@
               BorderThickness="1" BorderBrush="#4EC9B0"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
+    <!-- [LIVEFUNCS-STEP2] Parameter snapshots (T9, T12, T13): the choices, the buffer and what it would keep. Disabled
+         while recording; the slider's bounds are the view model's. -->
+    <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
+                IsVisible="{Binding TraceAvailable}">
+      <TextBlock Text="{StaticResource str.LF.Snap.Label}"
+                 Foreground="#4EC9B0" FontSize="12" VerticalAlignment="Center"/>
+      <TextBlock Text="{Binding SnapshotCountText}"
+                 Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"/>
+      <Button Content="{StaticResource str.LF.Snap.ShownRows}"
+              Command="{Binding SnapshotShownRowsCommand}"
+              IsEnabled="{Binding CanSnapshot}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Snap.ShownRows}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.LF.Snap.Clear}"
+              Command="{Binding ClearSnapshotsCommand}"
+              IsEnabled="{Binding !IsRecording}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <TextBlock Text="{StaticResource str.LF.Trace.Buffer}"
+                 Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
+      <Slider Value="{Binding SnapshotBufferExponent}"
+              Minimum="3" Maximum="7"
+              TickFrequency="1" IsSnapToTickEnabled="True"
+              Width="80" VerticalAlignment="Center"
+              IsEnabled="{Binding !IsRecording}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Buffer}"/>
+      <TextBlock Text="{Binding SnapshotBufferText}"
+                 Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
+                 VerticalAlignment="Center" MinWidth="44"/>
+    </StackPanel>
+    <!-- The estimate, orange per T13; the budget's cut in grey. Two TextBlocks toggled by a bool, the D3 pattern. -->
+    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4" IsVisible="{Binding HasSnapshotChoices}">
+      <Panel IsVisible="{Binding TraceAvailable}">
+        <TextBlock Text="{Binding SnapshotEstimate}" IsVisible="{Binding !SnapshotEstimateWarn}"
+                   Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
+                   ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Estimate}"/>
+        <TextBlock Text="{Binding SnapshotEstimate}" IsVisible="{Binding SnapshotEstimateWarn}"
+                   Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
+                   ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Estimate}"/>
+      </Panel>
+      <TextBlock Text="{Binding SnapshotBudgetNote}" IsVisible="{Binding TraceAvailable}"
+                 Foreground="#808080" FontSize="12" TextWrapping="Wrap"/>
+    </StackPanel>
     <!-- [TRACE-UI-LOAD-MEMORY] D3: what a buffer that fills costs, from the buffer alone; above the memory free now the
          same line turns orange: a warning, never a refusal. Two TextBlocks, so no converter. -->
     <Panel DockPanel.Dock="Top" Margin="0,0,0,4" IsVisible="{Binding TraceAvailable}">
@@ -231,8 +273,23 @@
                         Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleTickCommand}"
                         CommandParameter="{Binding}"
                         IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanTick}"
-                        IsVisible="{Binding !IsUnloaded}"
+                        IsVisible="{Binding IsTickable}"
                         ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Tick}"
+                        HorizontalAlignment="Center" Margin="6,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <!-- [LIVEFUNCS-STEP2] Choose for parameter snapshots (T10, T11): by name, so an unloaded row with a key can be
+             chosen. Hidden with the experimental tabs off like Trace; never sorted (no SortMemberPath). -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Snapshot}" Width="52" CanUserSort="False" IsVisible="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <CheckBox IsChecked="{Binding IsSnapChosen, Mode=OneWay}"
+                        Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleSnapshotCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanSnapshot}"
+                        IsVisible="{Binding CanChooseSnapshot}"
+                        ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Choose}"
                         HorizontalAlignment="Center" Margin="6,0"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
@@ -306,6 +363,11 @@
                 <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
                            IsVisible="{Binding IsUnloaded}"
                            ToolTip.Tip="{StaticResource str.Tip.LF.Unloaded}"
+                           Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
+                <!-- [LIVEFUNCS-STEP2] Fired every frame: a chosen one takes the budget's share. -->
+                <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.PerFrame.Marker}"
+                           IsVisible="{Binding IsPerFrame}"
+                           ToolTip.Tip="{StaticResource str.Tip.LF.PerFrame.Marker}"
                            Foreground="#808080" FontSize="11" Margin="6,0,0,0" VerticalAlignment="Center"/>
                 <!-- Review DLL-3: the address held another function during the recording; the count is both. -->
                 <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Reused.Marker}"

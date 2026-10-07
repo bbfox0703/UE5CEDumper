@@ -81,9 +81,10 @@ public partial class LiveFuncsPanel : UserControl
     {
         var grid = this.FindControl<DataGrid>("ResultsGrid");
         if (grid == null || _wired == null) return;
-        string header = Core.Res.Get("str.LF.Col.Trace");
+        // [LIVEFUNCS-STEP2] The Snapshot column with it: both ride on the experimental trace.
+        string header = Core.Res.Get("str.LF.Col.Trace"), snapHeader = Core.Res.Get("str.LF.Col.Snapshot");
         foreach (var col in grid.Columns)
-            if (col.Header as string == header) col.IsVisible = _wired.TraceAvailable;
+            if (col.Header as string == header || col.Header as string == snapHeader) col.IsVisible = _wired.TraceAvailable;
     }
 
     private void InitializeComponent()
