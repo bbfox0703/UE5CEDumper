@@ -144,6 +144,55 @@ static std::string DecodeFNameBytes(const uint8_t* bytes, int32_t size) {
 }
 
 // ============================================================
+// ParseEnumTable — read a UEnum's Names from game memory, no cache involved. The container is either the legacy
+// TArray<TPair<FName,int64>> or the UE5.7+ FNameData struct-of-arrays; the format is a per-game constant established
+// by DetectUEnumNames, so the layout is built for that KNOWN format (Neu::BuildLayout -- no per-enum guessing). The
+// caller has checked that detection succeeded. False only when a mid-table read broke the loop (a truncated table).
+// ============================================================
+static bool ParseEnumTable(uintptr_t enumAddr, std::vector<std::pair<int64_t, std::string>>& entries) {
+    entries.clear();
+    auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
+        return Macht::ReadBytesSafe(a, o, n);
+    };
+    const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
+        ? Neu::EnumNamesFormat::FNameData57
+        : Neu::EnumNamesFormat::Legacy;
+    const int fnameSize = DynOff::SizeofFName();
+
+    Neu::EnumNamesLayout layout;
+    // False ONLY when a mid-table read broke the loop below. BuildLayout returning
+    // false is a COMPLETE answer, not a truncated one: Neu rejects count == 0 /
+    // num <= 0 (Neu.h), so a legitimately member-less UEnum — and any address that
+    // is not a UEnum — lands there, and caching "" for it is correct and must stay
+    // cached, or every lookup re-probes. A half-read table is the opposite case.
+    bool tableComplete = true;
+    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
+        if (fmt == Neu::EnumNamesFormat::Legacy) {   // [VND583-04] uint8 values on 4.9-4.14
+            layout.valueSize    = DynOff::UENUM_VALUE_SIZE;
+            layout.legacyStride = DynOff::UENUM_PAIR_STRIDE;
+        }
+        entries.reserve(layout.count);
+        for (int32_t i = 0; i < layout.count; ++i) {
+            int32_t nameIdx = 0;
+            int64_t val = 0;
+            if (!Neu::ReadEntry(readMem, layout, i, nameIdx, val)) break;
+            std::string name = Serie::GetString(nameIdx);
+            entries.push_back({val, std::move(name)});
+        }
+        tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
+        // Report what was STORED, not what was intended. This used to print
+        // layout.count unconditionally, so a truncated table logged as a full one —
+        // the report and the reality computed by different code paths (audit #4's
+        // own root cause), which is what hid this defect.
+        LOG_DEBUG("ParseEnumTable: UEnum 0x%llX — read %zu of %d entries (%s)%s",
+            static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
+            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
+            tableComplete ? "" : " — TRUNCATED");
+    }
+    return tableComplete;
+}
+
+// ============================================================
 // ResolveEnumValue — resolve an enum integer value to its name string.
 // Uses a per-UEnum cache (static unordered_map) for performance.
 // Triggers lazy DetectUEnumNames() on first call.
@@ -176,49 +225,9 @@ static std::string ResolveEnumValue(uintptr_t enumAddr, int64_t value) {
     }
 
     // Slow path: parse UEnum::Names WITHOUT the lock (game-memory reads are the
-    // expensive part), then insert. The container is either the legacy
-    // TArray<TPair<FName,int64>> or the UE5.7+ FNameData struct-of-arrays; the
-    // format is a per-game constant established by DetectUEnumNames, so we build
-    // the layout for that KNOWN format (Neu::BuildLayout — no per-enum guessing).
-    auto readMem = [](uintptr_t a, void* o, size_t n) -> bool {
-        return Macht::ReadBytesSafe(a, o, n);
-    };
-    const Neu::EnumNamesFormat fmt = DynOff::bEnumNamesNewContainer
-        ? Neu::EnumNamesFormat::FNameData57
-        : Neu::EnumNamesFormat::Legacy;
-    const int fnameSize = DynOff::SizeofFName();
-
+    // expensive part), then insert.
     std::vector<std::pair<int64_t, std::string>> entries;
-    Neu::EnumNamesLayout layout;
-    // False ONLY when a mid-table read broke the loop below. BuildLayout returning
-    // false is a COMPLETE answer, not a truncated one: Neu rejects count == 0 /
-    // num <= 0 (Neu.h), so a legitimately member-less UEnum — and any address that
-    // is not a UEnum — lands there, and caching "" for it is correct and must stay
-    // cached, or every lookup re-probes. A half-read table is the opposite case.
-    bool tableComplete = true;
-    if (Neu::BuildLayout(readMem, enumAddr + DynOff::UENUM_NAMES, fmt, fnameSize, 16384, layout)) {
-        if (fmt == Neu::EnumNamesFormat::Legacy) {   // [VND583-04] uint8 values on 4.9-4.14
-            layout.valueSize    = DynOff::UENUM_VALUE_SIZE;
-            layout.legacyStride = DynOff::UENUM_PAIR_STRIDE;
-        }
-        entries.reserve(layout.count);
-        for (int32_t i = 0; i < layout.count; ++i) {
-            int32_t nameIdx = 0;
-            int64_t val = 0;
-            if (!Neu::ReadEntry(readMem, layout, i, nameIdx, val)) break;
-            std::string name = Serie::GetString(nameIdx);
-            entries.push_back({val, std::move(name)});
-        }
-        tableComplete = ShouldPublishEnumTable(true, layout.count, entries.size());
-        // Report what was STORED, not what was intended. This used to print
-        // layout.count unconditionally, so a truncated table logged as a full one —
-        // the report and the reality computed by different code paths (audit #4's
-        // own root cause), which is what hid this defect.
-        LOG_DEBUG("ResolveEnumValue: UEnum 0x%llX — read %zu of %d entries (%s)%s",
-            static_cast<unsigned long long>(enumAddr), entries.size(), layout.count,
-            fmt == Neu::EnumNamesFormat::FNameData57 ? "FNameData" : "legacy",
-            tableComplete ? "" : " — TRUNCATED, not cached");
-    }
+    const bool tableComplete = ParseEnumTable(enumAddr, entries);
 
     // Insert (another thread may have built the same enum meanwhile — emplace
     // is a no-op then, and we read the existing entry while holding the lock).
@@ -2105,20 +2114,107 @@ bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, ui
 // this engine's property model: an FField's at FSTRUCTPROP_STRUCT; a UProperty's at the measured subclass start
 // (UPropertySubclassStart), as WalkFunctions reads it -- FSTRUCTPROP_STRUCT is an FField offset, and on a UProperty
 // engine it can land on another field. The slot is taken only when it holds that kind of object.
-static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
-    const bool isStruct = p.typeName == "StructProperty";
-    const bool isObject = p.typeName == "ObjectProperty" || p.typeName == "ClassProperty" ||
-                          p.typeName == "WeakObjectProperty" || p.typeName == "SoftObjectProperty" ||
-                          p.typeName == "SoftClassProperty" || p.typeName == "InterfaceProperty" ||
-                          p.typeName == "LazyObjectProperty";
-    if (!isStruct && !isObject) return;
+static uintptr_t ParamSlotObject(uintptr_t prop, const std::string& typeName) {
+    const bool isStruct = typeName == "StructProperty";
+    const bool isObject = typeName == "ObjectProperty" || typeName == "ClassProperty" ||
+                          typeName == "WeakObjectProperty" || typeName == "SoftObjectProperty" ||
+                          typeName == "SoftClassProperty" || typeName == "InterfaceProperty" ||
+                          typeName == "LazyObjectProperty";
+    if (!isStruct && !isObject) return 0;
     const int slot = DynOff::bUseFProperty ? DynOff::FSTRUCTPROP_STRUCT : DynOff::UPropertySubclassStart(g_cachedUEVersion);
     uintptr_t ptr = 0;
-    if (!Macht::ReadSafe(prop + slot, ptr) || !ptr) return;
-    if (isStruct ? !IsScriptStructObject(ptr) : !IsClassObject(ptr)) return;
+    if (!Macht::ReadSafe(prop + slot, ptr) || !ptr) return 0;
+    if (isStruct ? !IsScriptStructObject(ptr) : !IsClassObject(ptr)) return 0;
+    return ptr;
+}
+
+static void ReadParamSlotNames(uintptr_t prop, ParamField& p) {
+    const uintptr_t ptr = ParamSlotObject(prop, p.typeName);
+    if (!ptr) return;
     std::string name = GetName(ptr);
     if (name.empty() || name[0] < 0x20 || name[0] >= 0x7F) return;
-    (isStruct ? p.structType : p.objClass) = std::move(name);
+    (p.typeName == "StructProperty" ? p.structType : p.objClass) = std::move(name);
+}
+
+// The UEnum of an EnumProperty or a ByteProperty, in this engine's property model: FField mode at FBYTEPROP_ENUM /
+// FENUMPROP_ENUM (ReadPropertyEnum); UProperty mode at the measured subclass start, an EnumProperty's one pointer later
+// (its UnderlyingProp comes first) -- the FField slots name another field there.
+static uintptr_t ParamEnumObject(uintptr_t prop, const std::string& typeName) {
+    if (DynOff::bUseFProperty) return ReadPropertyEnum(prop, typeName);
+    const int start = DynOff::UPropertySubclassStart(g_cachedUEVersion);
+    const int slot = typeName == "ByteProperty" ? start : typeName == "EnumProperty" ? start + 8 : -1;
+    uintptr_t e = 0;
+    if (slot < 0 || !prop || !Macht::ReadSafe(prop + slot, e) || !IsUEnumObject(e)) return 0;
+    return e;
+}
+
+static std::vector<ParamField> CaptureStructMembers(uintptr_t structAddr, int depth, int& leaves);
+
+static ParamField ParamFieldOf(const FieldInfo& f) {
+    ParamField p;
+    p.name       = f.Name;
+    p.typeName   = f.TypeName;
+    p.offset     = f.Offset;
+    p.size       = f.Size;
+    p.arrayDim   = f.ArrayDim;
+    p.flags      = f.PropertyFlags;
+    p.kind       = ParamKindOf(f.PropertyFlags);
+    p.boolMask   = f.boolFieldMask;
+    p.boolNative = f.boolNative;
+    return p;
+}
+
+// What a parameter's decode needs beyond its own entry, read now -- the function is alive -- and kept by value. No
+// cache is consulted: WalkClassEx's memo and s_enumCache are keyed by address and never erased, and under widget
+// reload churn a freed struct's or enum's address can hold another (the second design critic).
+static void EnrichParam(uintptr_t prop, ParamField& p, int depth, int& leaves) {
+    ReadParamSlotNames(prop, p);
+    if (p.typeName == "StructProperty") {
+        if (depth < kParamStructDepth)
+            if (const uintptr_t s = ParamSlotObject(prop, p.typeName)) p.sub = CaptureStructMembers(s, depth + 1, leaves);
+    } else if (p.typeName == "EnumProperty" || p.typeName == "ByteProperty") {
+        if (const uintptr_t e = ParamEnumObject(prop, p.typeName)) {
+            p.enumName = GetName(e);
+            if (DynOff::bUEnumNamesDetected.load(std::memory_order_acquire) &&
+                !DynOff::bUEnumNamesFailed.load(std::memory_order_acquire))
+                ParseEnumTable(e, p.enumEntries);
+        }
+    } else if (p.typeName == "OptionalProperty") {
+        const OptionalLayoutInfo ol = ResolveOptionalLayout(prop, p.size, "");
+        p.optLayout    = static_cast<uint8_t>(ol.layout);
+        p.optInnerType = ol.innerType;
+        p.optInnerSize = ol.innerSize;
+    }
+}
+
+// A struct's members by value: its supers' first (a struct inherits its parent struct's members), each enriched in
+// turn; at most kParamLeaves for the whole function.
+static std::vector<ParamField> CaptureStructMembers(uintptr_t structAddr, int depth, int& leaves) {
+    std::vector<uintptr_t> chain;
+    for (uintptr_t cur = structAddr; cur && chain.size() < 8 && IsScriptStructObject(cur);) {
+        chain.push_back(cur);
+        uintptr_t super = 0;
+        if (!Macht::ReadSafe(cur + DynOff::USTRUCT_SUPER, super) || super == cur) break;
+        cur = super;
+    }
+    std::vector<ParamField> out;
+    for (auto it = chain.rbegin(); it != chain.rend(); ++it) {
+        std::vector<FieldInfo> fields;
+        uintptr_t first = 0;
+        if (DynOff::bUseFProperty) {
+            if (Macht::ReadSafe(*it + DynOff::USTRUCT_CHILDPROPS, first) && first) WalkFFieldChain(first, fields);
+        } else {
+            if (Macht::ReadSafe(*it + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
+        }
+        for (const FieldInfo& f : fields) {
+            if (leaves >= kParamLeaves) return out;
+            ++leaves;
+            ParamField m = ParamFieldOf(f);
+            EnrichParam(f.Address, m, depth, leaves);
+            out.push_back(std::move(m));
+        }
+    }
+    return out;
 }
 
 bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
@@ -2144,6 +2240,7 @@ bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
         if (Macht::ReadSafe(func + DynOff::USTRUCT_CHILDREN, first) && first) WalkUPropertyChain(first, fields);
     }
     constexpr uint64_t kCpfParm = 0x80;
+    int leaves = 0;
     for (const FieldInfo& f : fields) {
         if (!(f.PropertyFlags & kCpfParm)) continue;   // a Blueprint function's locals follow its parameters
         if (f.Offset < 0 || f.Offset > 0x10000 || f.Size <= 0 || f.Size > 0x10000) {
@@ -2151,17 +2248,8 @@ bool CaptureParamLayout(uintptr_t func, ParamLayout& out, std::string& why) {
             out.params.clear();
             return false;
         }
-        ParamField p;
-        p.name       = f.Name;
-        p.typeName   = f.TypeName;
-        p.offset     = f.Offset;
-        p.size       = f.Size;
-        p.arrayDim   = f.ArrayDim;
-        p.flags      = f.PropertyFlags;
-        p.kind       = ParamKindOf(f.PropertyFlags);
-        p.boolMask   = f.boolFieldMask;
-        p.boolNative = f.boolNative;
-        ReadParamSlotNames(f.Address, p);
+        ParamField p = ParamFieldOf(f);
+        EnrichParam(f.Address, p, 0, leaves);
         const uint64_t end = static_cast<uint64_t>(p.offset) + static_cast<uint64_t>(p.size) * p.arrayDim;
         if (end > out.layoutEnd) out.layoutEnd = static_cast<uint32_t>(end);
         out.params.push_back(std::move(p));

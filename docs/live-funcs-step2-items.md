@@ -22,7 +22,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | B1 | DLL | Ubel: the pure ParamKindOf | — | ✅ ec33e46f red |
 | B2 | DLL | Ubel: ReadNameKey (the function's and its Outer's FName ints), ReadObjectNameKey, NameKeyMatches through Serie::GetString | N0 | ✅ 0f65cfbe, 9043f73a red |
 | B3 | DLL | Ubel: CaptureParamLayout over the function's own chain (FField and UProperty), CPF_Parm filter, refusals; object/class/struct read at the mode's subclass start | B1 | ✅ 95560c48 red |
-| B4 | DLL | Ubel: layout enrichment by value (struct sub-layouts, enum tables, object class, soft-path / lazy / delegate / optional facts) | B3 | ⬜ |
+| B4 | DLL | Ubel: layout enrichment by value (struct sub-layouts, enum tables, object class, soft-path / lazy / delegate / optional facts) | B3 | ✅ d681b688 red |
 | B5 | DLL | Ubel: the checked arm capture and RunArmCapturePass (injected live/key/capture checks; reuse by the 5-field key; states; latency) | N4, B2, B4 | ⬜ |
 | B6 | DLL | Ubel: DecodeParamSnapshot, value types | B4 | ⬜ |
 | B7 | DLL | Ubel: DecodeParamSnapshot, pointer family and containers (soft-path facts in ctx, shared delegate/weak helpers, FText header) | B6 | ⬜ |
