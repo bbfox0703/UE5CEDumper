@@ -25,14 +25,17 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>The panel the trace's settings and ticks belong to; this tab shows a read-only copy of them (T8).</summary>
     public LiveFuncsViewModel LiveFuncs { get; }
 
-    /// <summary>Records per pe_trace_get page: the DLL's maximum, 10 MB of records.</summary>
-    internal const int PageRecords = 262144;
+    /// <summary>[TRACE-UI-LOAD-MEMORY] Records a page asks for. A page arrives as ONE pipe line, and StreamReader keeps
+    /// its pooled line buffers per thread: on lines of 14 million chars (262,144 records as base64) it kept 205 MB after
+    /// a full collection, on lines of 1.75 million chars nothing (measured 2026-10-07). 32,768 records is 1.3 MB of
+    /// records, 1.75 million chars; a 512 MB ring is about 410 pages.</summary>
+    internal const int PageRecords = 32768;
     internal const int NamesPage = 20000;
-    /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~40 MB for a full
-    /// page), and nothing collects them during a load of dozens of pages: live on build 3634 a full 128 MB load still
-    /// peaked at 1.27 GB working set. A collection every this many pages keeps them to a couple of pages' worth; it
-    /// takes milliseconds, the heap being a few large arrays of plain values.</summary>
-    internal const int CollectEveryPages = 2;
+    /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
+    /// page), and nothing collects them during a load of hundreds of pages: live on build 3634 a full 128 MB load still
+    /// peaked at 1.27 GB working set. A collection every this many pages -- about 21 MB of records -- keeps them to
+    /// ~85 MB; it takes milliseconds, the heap being a few large arrays of plain values.</summary>
+    internal const int CollectEveryPages = 16;
     /// <summary>The collections the last load ran while it read.</summary>
     internal int CollectionsDuringLastLoad { get; private set; }
     // The last load's memory, for its log line: at its start, and the largest working set seen after a page.
