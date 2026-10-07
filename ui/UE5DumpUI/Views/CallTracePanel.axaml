@@ -100,6 +100,12 @@
               Command="{Binding ExportCsvCommand}"
               IsEnabled="{Binding CanExport}"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <Button Content="{StaticResource str.CT.Export.ParamsCsv}"
+              Command="{Binding ExportParamsCsvCommand}"
+              IsEnabled="{Binding CanExportParams}"
+              ToolTip.Tip="{StaticResource str.Tip.CT.ExportParamsCsv}"
+              ToolTip.ShowOnDisabled="True"
+              Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
 
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="True">
