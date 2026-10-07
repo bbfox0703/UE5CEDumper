@@ -239,6 +239,15 @@ public class CallTraceBuilderTests
         Assert.Throws<InvalidDataException>(() =>
             CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes(three), new TraceRecord[2]));
         Assert.Throws<InvalidDataException>(() => CallTraceBuilder.DecodeInto("not base64!".AsSpan(), new TraceRecord[2]));
+        // Six records into room for three: 120 bytes is a whole number of base64 blocks AND of records, so a decoder
+        // that stopped there would hand back three records that look whole. Too small is refused, not truncated.
+        var six = Three().Concat(Three()).ToArray();
+        string sixB64 = Convert.ToBase64String(System.Runtime.InteropServices.MemoryMarshal.AsBytes(six.AsSpan()));
+        Assert.Throws<InvalidDataException>(() => CallTraceBuilder.DecodeInto(sixB64.AsSpan(), new TraceRecord[3]));
+        Assert.Throws<InvalidDataException>(() =>
+            CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes(sixB64), new TraceRecord[3]));
+        Assert.Throws<InvalidDataException>(() =>
+            CallTraceBuilder.DecodeInto(System.Text.Encoding.ASCII.GetBytes("not base64!"), new TraceRecord[2]));
     }
 
     // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded before Stop keeps the name read at its first call.
