@@ -80,13 +80,20 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>Rows the DLL actually sent for the last fetch, and the distinct count it
     /// recorded BEFORE the cap. The DLL sorts the whole table by count desc and emits only
     /// the first <see cref="FetchLimit"/> rows, while <c>distinct_funcs</c> stays pre-cap
-    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> — less the per-frame functions left out on request — is a
-    /// conservative, correct test for "not everything is on screen" — it is also true when stale UFunction pointers were
-    /// dropped or a cooperative abort cut the emit loop short, and all three mean the same
-    /// thing to the user.</summary>
+    /// (pipe-protocol.md), so <c>shown &lt; distinct</c> — less the per-frame functions left out on request and the
+    /// ones the DLL had no name for — is a conservative, correct test for "not everything is on screen" — it is also
+    /// true when an older DLL dropped the functions unloaded since they fired (build 3634 sends them, named) or a
+    /// cooperative abort cut the emit loop short, and all of these mean the same thing to the user.</summary>
     private int _lastShown;
     private int _lastDistinct;
     private long _lastTotalCalls;
+    /// <summary>[TRACE-UNLOADED-NAMES] The last fetch's whole-table counts: functions unloaded since they fired (sent,
+    /// named from their first call) and functions with no name at all (never sent, so not "cut" by the limit). 0 from
+    /// a DLL older than the counts.</summary>
+    private int _lastUnloaded;
+    private int _lastUnnamed;
+    internal int LastUnloadedFuncs => _lastUnloaded;
+    internal int LastUnnamedFuncs => _lastUnnamed;
     /// <summary>Whether the DLL was still recording when the rows on screen were fetched (a peek).</summary>
     private bool _lastRecordingAtFetch;
 
@@ -103,16 +110,17 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private int  _baselineDistinct;
 
     /// <summary>The limit the last fetch asked for, and whether the baseline's page was cut by ITS limit and at
-    /// which value. An incomplete page is not always the cap's doing: the DLL also drops UFunctions it can no
-    /// longer read (still counted in distinct_funcs), and an abort can cut the emit loop. Only a page that came
-    /// back as long as the limit was cut by it, and only then does a higher limit bring rows back.</summary>
+    /// which value. An incomplete page is not always the cap's doing: the DLL leaves out functions it has no name
+    /// for (and, before build 3634, every one unloaded since it fired; all still counted in distinct_funcs), and an
+    /// abort can cut the emit loop. Only a page that came back as long as the limit was cut by it, and only then
+    /// does a higher limit bring rows back.</summary>
     private int  _lastLimit;
     private bool _baselineCapHit;
     private int  _baselineLimit;
 
     /// <summary>True when the last fetch did not show every recorded function it was asked for: the per-frame ones
-    /// the DLL left out on request are not missing.</summary>
-    private bool LastTruncated => _lastShown < _lastDistinct - _lastPerFrameHidden;
+    /// the DLL left out on request are not missing, and neither are the ones it had no name to send for.</summary>
+    private bool LastTruncated => _lastShown < _lastDistinct - _lastPerFrameHidden - _lastUnnamed;
 
     /// <summary>The last page was cut by the fetch limit itself (see <see cref="_lastLimit"/>).</summary>
     private bool LastCapHit => LastTruncated && _lastShown >= _lastLimit;
@@ -202,6 +210,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         PerFrameUnsupported ? Res.Get("str.LF.PerFrame.Unsupported")
         : _lastPerFrameEffective ? Res.Format("str.LF.PerFrame.Hidden", _lastPerFrameHidden)
         : "";
+
+    /// <summary>[TRACE-UNLOADED-NAMES] What the status line adds about functions no longer at their address.</summary>
+    private string UnloadedNote() =>
+        (_lastUnloaded > 0 ? Res.Format("str.LF.Unloaded.Note", _lastUnloaded) : "")
+        + (_lastUnnamed > 0 ? Res.Format("str.LF.Unnamed.Note", _lastUnnamed) : "");
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
@@ -345,9 +358,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     [RelayCommand]
     private void ToggleTick(PeProfileEntry? row)
     {
-        if (row == null || !CanTick || string.IsNullOrEmpty(row.FuncAddr)) return;
+        // [TRACE-UNLOADED-NAMES] An unloaded row's address is dead: it never ticks, and a live row of the same name
+        // sends only the live addresses.
+        if (row == null || !CanTick || row.IsUnloaded || string.IsNullOrEmpty(row.FuncAddr)) return;
         string key = Key(row);
-        var same = _allEntries.Where(e => Key(e) == key && !string.IsNullOrEmpty(e.FuncAddr)).ToList();
+        var same = _allEntries.Where(e => Key(e) == key && !e.IsUnloaded && !string.IsNullOrEmpty(e.FuncAddr)).ToList();
         if (!same.Contains(row)) same.Add(row);
         bool tick = !_ticked.Remove(key);
         if (tick) _ticked[key] = new HashSet<string>(same.Select(e => e.FuncAddr), StringComparer.OrdinalIgnoreCase);
@@ -375,20 +390,28 @@ public partial class LiveFuncsViewModel : ViewModelBase
     [RelayCommand]
     private void OpenCallTrace() => NavigateToCallTrace?.Invoke();
 
-    /// <summary>What a Start asks of the trace, or null for a Start without one. Null too when T7's question is
-    /// declined, with <paramref name="cancelled"/> set.</summary>
-    private async Task<TraceStartOptions?> TraceOptionsForStartAsync(Ref<bool> cancelled)
+    /// <summary>What a Start asks of the trace, or null for a Start without one. Null too when the Start must not
+    /// run, with <paramref name="refusal"/> set to the status string that says why.</summary>
+    private async Task<TraceStartOptions?> TraceOptionsForStartAsync(Ref<string?> refusal)
     {
         if (!TraceAvailable || !TraceEnabled) return null;
         var ticked = _ticked.Values.SelectMany(a => a).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
-        // T7: only when there is something to tick. The first recording, or any Start with the table empty, has no
-        // rows to tick from, and records every call without asking.
-        if (ticked.Count == 0 && _allEntries.Count > 0 && !_rowsFromEarlierConnection && !_traceAllConfirmed)
+        // [TRACE-UNLOADED-NAMES] Ticked, but every ticked function was unloaded since it fired: no address to scope
+        // on. Not T7's case -- the user did tick -- and never a trace of every call, the opposite of what was asked.
+        if (ticked.Count == 0 && _ticked.Count > 0)
+        {
+            refusal.Value = "str.LF.Trace.TickedAllUnloaded";
+            return null;
+        }
+        // T7: only when there is something to tick. The first recording, or any Start with no row that can be ticked
+        // (none, or only unloaded ones), records every call without asking.
+        if (ticked.Count == 0 && _allEntries.Any(e => !e.IsUnloaded) && !_rowsFromEarlierConnection
+            && !_traceAllConfirmed)
         {
             var confirm = ConfirmTraceAllCalls;
             if (confirm == null || !await confirm())
             {
-                cancelled.Value = true;
+                refusal.Value = "str.LF.Trace.StartCancelled";
                 return null;
             }
             _traceAllConfirmed = true;
@@ -500,11 +523,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             ClearError();
             IsBusy = true;
-            var cancelled = new Ref<bool>();
-            var trace = await TraceOptionsForStartAsync(cancelled);
-            if (cancelled.Value)
+            var refusal = new Ref<string?>();
+            var trace = await TraceOptionsForStartAsync(refusal);
+            if (refusal.Value != null)
             {
-                StatusText = Res.Get("str.LF.Trace.StartCancelled");
+                StatusText = Res.Get(refusal.Value);
                 return;
             }
             // Any Start gives up the previous trace: the DLL frees it before it tries a new buffer, so even a refused
@@ -675,12 +698,18 @@ public partial class LiveFuncsViewModel : ViewModelBase
             OnPropertyChanged(nameof(CanTick));
         }
         // The ticks are kept by name; the new rows carry them, and their addresses are the ones the DLL matches on. A
-        // name this page does not show keeps the addresses it had.
+        // name this page does not show keeps the addresses it had. A name whose rows here are all unloaded keeps its
+        // tick with no address: theirs are dead, and the tick follows the function if a later fetch finds it loaded.
         var refreshed = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var e in _allEntries)
         {
             string k = Key(e);
             if (!_ticked.ContainsKey(k)) continue;
+            if (e.IsUnloaded)
+            {
+                if (!refreshed.ContainsKey(k)) refreshed[k] = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+                continue;
+            }
             e.IsTicked = true;
             if (string.IsNullOrEmpty(e.FuncAddr)) continue;
             if (!refreshed.TryGetValue(k, out var addrs))
@@ -696,6 +725,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
         _lastTotalCalls = result.TotalCalls;
+        _lastUnloaded = result.UnloadedFuncs ?? 0;
+        _lastUnnamed  = result.UnnamedFuncs ?? 0;
         _lastRecordingAtFetch = result.Recording;
         _lastPageMinCount = result.Entries.Count > 0 ? result.Entries.Min(e => e.Count) : 0;
         _shownMinCalls = _captureMinCalls;   // before the filter runs over the new rows
@@ -727,7 +758,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             // against the pre-cap table size — "3 NEW of 900" invited reading 900 as the
             // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
-              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}). "
+              + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}{UnloadedNote()}). "
               + (BaselinePerFrameMismatch ? Res.Get("str.LF.PerFrame.BaselineMismatch") + " " : "")
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
@@ -741,6 +772,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             StatusText = $"{result.DistinctFuncs:N0} distinct functions, {result.TotalCalls:N0} total calls"
               + PerFrameNote()
+              + UnloadedNote()
               + trunc
               + (result.Recording ? " (still recording)" : "")
               + ". Tip: Set Baseline on an idle window, then re-record to isolate the action.";
@@ -869,7 +901,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     [RelayCommand]
     private async Task AsmFuncAsync(PeProfileEntry? row)
     {
-        if (row == null || string.IsNullOrEmpty(row.FuncAddr)) return;
+        // [TRACE-UNLOADED-NAMES] An unloaded row's address is dead: nothing to disassemble, nothing to push to CE.
+        if (row == null || row.IsUnloaded || string.IsNullOrEmpty(row.FuncAddr)) return;
         StatusText = await Helpers.AobMakerActions.DisassembleFunctionAsync(AobMaker, _dump, row.FuncAddr, row.FuncName, _log);
     }
 
