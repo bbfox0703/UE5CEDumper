@@ -605,6 +605,11 @@ TraceInfo GetTraceInfo() {
     return InfoLocked();
 }
 
+bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
+    (void)out; (void)gen;
+    return false;
+}
+
 bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next, TraceInfo* seen) {
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (seen) *seen = InfoLocked();

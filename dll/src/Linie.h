@@ -204,9 +204,15 @@ struct TraceConfig {
     bool   scoped      = false;
     size_t tickedNames = 0;   // ticks by name, for the trace's info
     bool   snapOnly    = false;   // chosen functions and no ticks: only the chosen calls are recorded (T11)
+    // The snapshot rings, one per chosen function in one allocation of at most `snapBytes`: each ring's slot payload
+    // (RingCapFor of its choice). Every ring keeps the same number of calls, so a busy choice laps only its own ring.
+    std::vector<uint32_t> snapRingCaps;
+    uint64_t              snapBytes = 0;
 };
 // Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
-enum class TraceStartStatus { Ok, TooSmall, NoMemory, Busy };
+// SnapTooSmall: the snapshot buffer keeps fewer than kSnapMinSlots calls per ring; SnapNoMemory: it could not be had.
+// Either refuses the whole Start, the trace's ring freed too.
+enum class TraceStartStatus { Ok, TooSmall, NoMemory, Busy, SnapTooSmall, SnapNoMemory };
 
 // Stops and frees any earlier trace, allocates the ring and touches every page on the calling thread (so the game
 // thread never takes the first lap's page faults), then arms the hook.
@@ -250,8 +256,23 @@ struct TraceInfo {
     bool     scoped     = false;   // [LIVEFUNCS-STEP2] see TraceConfig
     size_t   tickedNames = 0;
     bool     snapOnly   = false;
+    struct Snap {
+        bool     allocated    = false;
+        uint64_t bytes        = 0;   // committed
+        uint64_t slotsPerRing = 0;   // K: the calls each ring keeps
+        size_t   rings        = 0;
+    } snap;
 };
 TraceInfo GetTraceInfo();
+// One snapshot ring's window, as the trace's readers see it.
+struct SnapRingInfo {
+    uint32_t index      = 0;
+    uint32_t cap        = 0;   // slot payload
+    uint64_t written    = 0;   // slots ever written; the ring keeps [firstValid, written)
+    uint64_t firstValid = 0;
+};
+// One per ring, in order. False while a trace runs, when none is allocated, or when the last stop could not quiesce.
+bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen = nullptr);
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
 // none is allocated, or when the last stop could not quiesce. `next`, when given, is where the following page
 // starts: past this page, never before the window, and at or past `written` once there is nothing more.

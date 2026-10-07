@@ -7758,6 +7758,75 @@ int main() {
         Linie::FreeTrace();
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the snapshot rings -- one per choice in one allocation, the same K, freed with the trace");
+        // docs/live-funcs-step2-items.md, S1 (T12). Two rings of 16 and 40 bytes: slots of 24 + 16 and 24 + 40, each
+        // ring 64-aligned. K = (bytes - 64 * rings) / (40 + 64).
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto cfg = [](uint64_t snapBytes) {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.snapRingCaps = { 16, 40 };
+            c.snapBytes = snapBytes;
+            return c;
+        };
+        Linie::Reset();
+        Linie::FreeTrace();
+        check("bytes for K = 8 exactly: the trace starts", Linie::StartTrace(cfg(128 + 8 * 104)) == Linie::TraceStartStatus::Ok);
+        Linie::TraceInfo info = Linie::GetTraceInfo();
+        check("...the rings are there, keeping 8 calls each",
+              info.snap.allocated && info.snap.rings == 2 && info.snap.slotsPerRing == 8 && info.snap.bytes > 0,
+              u(info.snap.slotsPerRing).c_str());
+        std::vector<Linie::SnapRingInfo> rings;
+        check("SnapRings is refused while the trace runs", !Linie::SnapRings(rings));
+        Linie::StopTrace();
+        uint64_t rgen = 0;
+        check("...and after Stop gives each ring, in order, with nothing written yet",
+              Linie::SnapRings(rings, &rgen) && rings.size() == 2 && rings[0].index == 0 && rings[0].cap == 16 &&
+              rings[1].cap == 40 && rings[0].written == 0 && rgen == info.gen, u(rings.size()).c_str());
+
+        check("one byte short of K = 8: refused as a snapshot buffer too small",
+              Linie::StartTrace(cfg(128 + 8 * 104 - 1)) == Linie::TraceStartStatus::SnapTooSmall);
+        check("...and the trace's own ring is freed too", !Linie::GetTraceInfo().allocated && !Linie::IsTracing());
+        check("a buffer smaller than the rings' alignment: refused, not a wrapped-around K",
+              Linie::StartTrace(cfg(100)) == Linie::TraceStartStatus::SnapTooSmall && !Linie::GetTraceInfo().allocated);
+        Linie::TraceConfig none = cfg(0);
+        none.snapRingCaps.clear();
+        Linie::StartTrace(none);
+        check("no choices: no snapshot rings", Linie::GetTraceInfo().allocated && !Linie::GetTraceInfo().snap.allocated);
+
+        auto startStop = [&] { Linie::StartTrace(cfg(4096)); Linie::StopTrace(); return Linie::GetTraceInfo().snap.allocated; };
+        check("FreeTrace frees the rings", startStop() && (Linie::FreeTrace(), !Linie::GetTraceInfo().snap.allocated));
+        check("FreeTraceIfGen frees them", startStop() &&
+              Linie::FreeTraceIfGen(Linie::GetTraceInfo().gen) && !Linie::GetTraceInfo().snap.allocated);
+        check("ReleaseIfEmpty frees them", startStop() && Linie::ReleaseIfEmpty() && !Linie::GetTraceInfo().snap.allocated);
+        check("Reset frees them", startStop() && (Linie::Reset(), !Linie::GetTraceInfo().snap.allocated));
+
+        // TR2: while a hook may still be inside, a Free changes nothing, the rings included.
+        static HANDLE s_in3  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE s_out3 = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static std::atomic<int> s_block3{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_block3.exchange(0) == 1) { SetEvent(s_in3); WaitForSingleObject(s_out3, INFINITE); }
+            return 42;
+        });
+        Linie::StartTrace(cfg(4096));
+        s_block3 = 1;
+        std::thread stuck([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_in3, 5000);
+        Linie::StopTrace();
+        Linie::FreeTrace();
+        check("a hook that may still be inside: the rings stay, SnapRings is refused, a Start is busy",
+              Linie::GetTraceInfo().snap.allocated && !Linie::SnapRings(rings) &&
+              Linie::StartTrace(cfg(4096)) == Linie::TraceStartStatus::Busy);
+        SetEvent(s_out3);
+        stuck.join();
+        Linie::StopTrace();
+        Linie::FreeTrace();
+        check("...and go once it has left", !Linie::GetTraceInfo().snap.allocated);
+        Linie::SetTraceClockForTest(nullptr);
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
