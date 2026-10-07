@@ -236,7 +236,9 @@ public partial class CallTraceViewModel : ViewModelBase
         var sb = new StringBuilder(Res.Format("str.CT.Status.Loaded", t.Count, t.WindowSeconds));
         if (t.Info.FirstValid > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Lapped", t.Info.FirstValid));
         if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
-        sb.Append(' ').Append(t.Info.Ticked > 0 ? Res.Format("str.CT.Status.Scoped", t.Info.Ticked) : Res.Get("str.CT.Status.Unscoped"));
+        // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
+        if (t.Info.Ticked > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Scoped", t.Info.Ticked));
+        else if (t.Info.Excluded == 0) sb.Append(' ').Append(Res.Get("str.CT.Status.Unscoped"));
         if (t.Info.Excluded > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Excluded", t.Info.Excluded));
         return sb.ToString();
     }

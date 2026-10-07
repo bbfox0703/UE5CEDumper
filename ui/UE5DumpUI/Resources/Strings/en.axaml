@@ -1118,7 +1118,7 @@
     <sys:String x:Key="str.CT.Note">This tab works with Live Funcs and cannot record on its own. Tick Trace in Live Funcs, then Start and Stop there; this tab shows what the last recording traced.</sys:String>
     <sys:String x:Key="str.CT.CopyHint">Set in Live Funcs (read-only here):</sys:String>
     <sys:String x:Key="str.CT.Ticked">Ticked functions:</sys:String>
-    <sys:String x:Key="str.CT.TickedNone">none (every call is traced)</sys:String>
+    <sys:String x:Key="str.CT.TickedNone">none</sys:String>
     <sys:String x:Key="str.CT.Load">Load trace</sys:String>
     <sys:String x:Key="str.CT.Cancel">Cancel</sys:String>
     <sys:String x:Key="str.CT.ExpandAll">Expand all</sys:String>
@@ -1156,7 +1156,7 @@
     <sys:String x:Key="str.CT.Status.BeforeWindow">{0:N0} calls began before the kept part; what they called shows without them.</sys:String>
     <sys:String x:Key="str.CT.Status.Scoped">Traced inside {0} ticked function(s).</sys:String>
     <sys:String x:Key="str.CT.Status.Unscoped">Every call traced.</sys:String>
-    <sys:String x:Key="str.CT.Status.Excluded">{0} per-frame functions left out.</sys:String>
+    <sys:String x:Key="str.CT.Status.Excluded">{0} per-frame functions left out; a call they made shows under their caller.</sys:String>
     <sys:String x:Key="str.CT.Status.Matches">{0:N0} matching calls. Select one and Show in tree to see what called it.</sys:String>
     <sys:String x:Key="str.CT.Status.MatchesCapped">{0:N0} matching calls (capped): narrow the filter.</sys:String>
     <sys:String x:Key="str.CT.Detail.Function">Function: {0}</sys:String>

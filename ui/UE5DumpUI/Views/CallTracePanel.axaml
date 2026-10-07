@@ -31,10 +31,11 @@
                     IsChecked="{Binding LiveFuncs.TraceExcludePerFrame, Mode=OneWay}"
                     Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Center"/>
         </StackPanel>
-        <StackPanel Orientation="Horizontal" Spacing="6" IsEnabled="False" Opacity="0.6">
-          <TextBlock Text="{StaticResource str.CT.Ticked}"
+        <!-- A DockPanel, not a horizontal StackPanel: the list gets the width that is left, so it wraps. -->
+        <DockPanel IsEnabled="False" Opacity="0.6">
+          <TextBlock DockPanel.Dock="Left" Text="{StaticResource str.CT.Ticked}" Margin="0,0,6,0"
                      Foreground="#CCCCCC" FontSize="12" VerticalAlignment="Top"/>
-          <TextBlock Text="{StaticResource str.CT.TickedNone}"
+          <TextBlock DockPanel.Dock="Left" Text="{StaticResource str.CT.TickedNone}"
                      IsVisible="{Binding !LiveFuncs.HasTickedFunctions}"
                      Foreground="#D4D4D4" FontSize="12"/>
           <ItemsControl ItemsSource="{Binding LiveFuncs.TickedFunctions}">
@@ -50,7 +51,7 @@
               </DataTemplate>
             </ItemsControl.ItemTemplate>
           </ItemsControl>
-        </StackPanel>
+        </DockPanel>
       </StackPanel>
     </Border>
 
@@ -139,20 +140,24 @@
             <TextBlock Grid.Column="0" Text="{Binding TimeText}" Foreground="#7FB6E8" VerticalAlignment="Center"/>
             <TextBlock Grid.Column="1" Text="{Binding DurationText}" Foreground="#DCDCAA" VerticalAlignment="Center"/>
             <TextBlock Grid.Column="2" Text="{Binding ThreadText}" Foreground="#808080" VerticalAlignment="Center"/>
-            <StackPanel Grid.Column="3" Orientation="Horizontal">
-              <Border Width="{Binding Indent}"/>
-              <Button Content="{Binding Glyph}"
+            <!-- A DockPanel that clips, not a horizontal StackPanel: a long name is cut with an ellipsis at the Object
+                 column instead of running into it; the tooltip has it whole. -->
+            <DockPanel Grid.Column="3" ClipToBounds="True" ToolTip.Tip="{Binding FunctionText}">
+              <Border DockPanel.Dock="Left" Width="{Binding Indent}"/>
+              <Button DockPanel.Dock="Left" Content="{Binding Glyph}"
                       Command="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ToggleCommand}"
                       CommandParameter="{Binding}"
                       IsVisible="{Binding Glyph, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"
                       Background="Transparent" BorderThickness="0" Padding="2,0" MinWidth="16"
                       Foreground="#CCCCCC" Cursor="Hand"/>
               <!-- A ticked function's call (the root of its scope) stands out; the rest are plain. -->
-              <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center"
-                         IsVisible="{Binding IsScopeRoot}" Foreground="#4EC9B0" FontWeight="Bold"/>
-              <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center"
-                         IsVisible="{Binding !IsScopeRoot}" Foreground="#D4D4D4"/>
-            </StackPanel>
+              <Panel>
+                <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding IsScopeRoot}" Foreground="#4EC9B0" FontWeight="Bold"/>
+                <TextBlock Text="{Binding FunctionText}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"
+                           IsVisible="{Binding !IsScopeRoot}" Foreground="#D4D4D4"/>
+              </Panel>
+            </DockPanel>
             <TextBlock Grid.Column="4" Text="{Binding ObjectText}" VerticalAlignment="Center"
                        Foreground="#B0B0B0" Opacity="{Binding ObjectOpacity}"
                        TextTrimming="CharacterEllipsis"/>

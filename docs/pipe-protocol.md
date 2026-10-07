@@ -643,6 +643,11 @@ A record, 40 bytes, little-endian (`Linie::TraceRecord`):
 A return whose entry is older than `first_valid` belongs to a call that began before the kept window. An entry with
 no return either still ran at Stop or was unwound by an exception.
 
+What the trace does not hold: the tool's own invokes (`invoke_function`, the CE mailbox) call the original
+`ProcessEvent` through the hook's trampoline, so the invoked call has no records of its own; the calls it makes come
+back through the hook and are recorded. A per-frame function left out by `exclude_per_frame` writes no records
+either, and the calls it makes nest under the nearest traced caller, as if that caller had made them.
+
 -----
 
 ### Force-field hold + stealth meter (Solide — build 2168)

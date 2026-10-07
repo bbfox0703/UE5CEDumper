@@ -35,7 +35,8 @@ internal enum MainTabIndex
     DumpExplorer = 11,   // offline "Dump All" .jsonl browser
     LiveFuncs = 12,      // Live ProcessEvent Call Profiler (behaviour-based discovery)
     CallTrace = 13,      // [LIVEFUNCS-TIMELINE-2026-10-04] experimental; beside Live Funcs, which records for it
-    // Fixed tail order: the experimental tabs (hidden unless opted in), then
+    // Fixed tail order: the experimental tabs that sit at the end (hidden unless opted in; an experimental tab
+    // that belongs beside another, like Call Trace beside Live Funcs, sits above this block), then
     // Proxy Deploy (always 2nd-to-last), then System/Pointers (always last) —
     // regardless of any future tab additions. When experimental is off these
     // tabs collapse, so the visible last two are Proxy Deploy + System.
@@ -279,8 +280,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     public int DeepScanElemCap => 1 << DeepScanElemCapExponent;
 
     /// <summary>
-    /// Experimental analysis tabs (Snapshot / SPC Query / Class Pivot) stay
-    /// hidden unless the user opts in via the System-tab credit checkbox.
+    /// The experimental tabs stay hidden unless the user opts in via the
+    /// System-tab credit checkbox.
     /// Backed by the shared <see cref="IExperimentalGate"/> so the toggle
     /// (owned by <see cref="PointerPanelViewModel"/>) and this tab-visibility
     /// flag stay in sync. See docs/experimental-snapshot-spc-pivot.md Phase 0.
@@ -298,8 +299,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Lock the experimental opt-in for the rest of this session. Called the
-    /// first time the user opens one of the experimental tabs (Snapshot /
-    /// SPC Query / Class Pivot) while enabled — from that point the System-tab
+    /// first time the user opens an experimental tab that locks it (the list is
+    /// MainWindow.axaml.cs's tab switch) while enabled — from that point the System-tab
     /// opt-in checkbox can no longer be unticked. Session-only (a restart clears
     /// the lock). Idempotent and a no-op when the gate isn't enabled.
     /// </summary>

@@ -239,9 +239,11 @@ static void __fastcall HookedProcessEvent(void* thisObj, void* ufunc, void* para
     uint64_t nowMs = NowMs();
     s_lastHookFireMs.store(nowMs, std::memory_order_relaxed);
 
-    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's entry record is written after the body, so the invokes the
-    // body drained (they run first) are in the trace before this call, as they ran. The token stays in this frame
-    // across the game's call; this frame's stack address is how a ticked scope tells a nested call from a later one.
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's entry record is written after the body. The invokes the body
+    // drained call the original ProcessEvent through the trampoline, not this hook, so they are not in the trace
+    // themselves; the calls they make come back through the hook and are, ahead of this call, as they ran (review
+    // DLL-7). The token stays in this frame across the game's call; this frame's stack address is how a ticked scope
+    // tells a nested call from a later one.
     Linie::TraceToken traceTok;
     const uintptr_t traceSp = reinterpret_cast<uintptr_t>(_AddressOfReturnAddress());
 
