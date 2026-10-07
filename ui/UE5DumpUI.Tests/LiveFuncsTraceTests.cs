@@ -415,6 +415,81 @@ public class LiveFuncsTraceTests
         Assert.Empty(vm.TickedFunctions);
     }
 
+    // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded since it fired keeps its row, named from its first call,
+    // but its address is dead: never ticked, never sent.
+    private static PeProfileEntry Unloaded(string cls, string func, string addr, long count = 10)
+        => new() { ClassName = cls, FuncName = func, FuncAddr = addr, Count = count, IsUnloaded = true };
+
+    [Fact]
+    public async Task An_unloaded_row_cannot_be_ticked_and_its_address_is_never_sent()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Unloaded("WBP_Inventory_C", "OnOpen", "0x100"),
+                                Row("WBP_Inventory_C", "OnOpen", "0x180"));
+        await RecordOnce(vm);
+        var dead = vm.Results.Single(r => r.IsUnloaded);
+        var live = vm.Results.Single(r => !r.IsUnloaded);
+
+        vm.ToggleTickCommand.Execute(dead);
+        Assert.Empty(vm.TickedFunctions);
+        Assert.False(dead.IsTicked);
+
+        // Ticking the live row of the same name ticks the name, but only the live address goes to the DLL.
+        vm.ToggleTickCommand.Execute(live);
+        Assert.True(live.IsTicked);
+        Assert.False(dead.IsTicked);
+        vm.TraceEnabled = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "0x180" }, dump.LastTrace!.Ticked.ToArray());
+    }
+
+    [Fact]
+    public async Task A_ticked_function_that_unloaded_sends_no_dead_address_and_is_not_traced_as_every_call()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("WBP_Inventory_C", "OnOpen", "0x100"), Row("Character", "Jump", "0x200"));
+        await RecordOnce(vm);
+        vm.ToggleTickCommand.Execute(vm.Results.Single(r => r.FuncName == "OnOpen"));
+        // The next recording finds it unloaded: the inventory closed before Stop.
+        dump.NextGet = ResultOf(10_000, Unloaded("WBP_Inventory_C", "OnOpen", "0x100"), Row("Character", "Jump", "0x200"));
+        await RecordOnce(vm);
+        Assert.Equal(new[] { "WBP_Inventory_C::OnOpen" }, vm.TickedFunctions);   // the tick stays, by name
+        Assert.False(vm.Results.Single(r => r.FuncName == "OnOpen").IsTicked);
+        int asked = 0;
+        vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(true); };
+        vm.TraceEnabled = true;
+        int startsBefore = dump.StartCalls;
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(0, asked);                        // not T7's question: something IS ticked
+        Assert.Equal(startsBefore, dump.StartCalls);   // and not a trace of every call either: refused
+        Assert.False(vm.IsRecording);
+
+        // Loaded again, at a new address: the tick follows it.
+        vm.TraceEnabled = false;
+        dump.NextGet = ResultOf(10_000, Row("WBP_Inventory_C", "OnOpen", "0x900"));
+        await RecordOnce(vm);
+        vm.TraceEnabled = true;
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "0x900" }, dump.LastTrace!.Ticked.ToArray());
+    }
+
+    [Fact]
+    public async Task With_only_unloaded_rows_there_is_nothing_to_tick_and_nothing_is_asked()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Unloaded("WBP_Inventory_C", "OnOpen", "0x100"));
+        await RecordOnce(vm);
+        int asked = 0;
+        vm.ConfirmTraceAllCalls = () => { asked++; return Task.FromResult(false); };
+        vm.TraceEnabled = true;
+
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.Equal(0, asked);
+        Assert.True(vm.IsRecording);
+        Assert.Empty(dump.LastTrace!.Ticked);
+    }
+
     [Fact]
     public async Task Rows_from_an_earlier_connection_lose_their_ticks_and_cannot_be_ticked()
     {

@@ -292,6 +292,22 @@ public class AobMakerRowButtonsTests : IDisposable
         Assert.Equal("Pawn:Jump: CE disassembler @ 0x7FF601230000", vm.StatusText);
     }
 
+    [Fact]
+    public async Task LiveFuncs_ASM_on_an_unloaded_row_asks_nothing()
+    {
+        // [TRACE-UNLOADED-NAMES] Its address is dead: no pipe call, no record pushed to CE.
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = new LiveFuncsViewModel(new CodeAddrDump(), _log, aobMaker: Up(bridge));
+
+        await vm.AsmFuncCommand.ExecuteAsync(new PeProfileEntry
+        {
+            FuncAddr = "0x7FF600006000", FuncName = "WBP_Inventory_C:OnOpen", IsUnloaded = true,
+        });
+
+        Assert.Null(bridge.LastAsm);
+        Assert.Empty(bridge.Records);
+    }
+
     // ---- [AOBM-LIVEWALKER-HEX-SILENT] Live Walker's four HEX buttons dropped the bridge's answer ----
 
     private LiveWalkerViewModel Walker(ScriptedAobMakerBridge bridge)
