@@ -266,6 +266,9 @@ Open work only. **Read this when deciding what to do next.**
   - ⬜ Live, still open: 3638's load log line (its collections' time and shortest period) on the next trace load, and
     a load with little memory free. `[TRACE-UI-READ-SPEED]`: about 19 MB/s against the rig's 31–36.
 
+  Folded into step 2 (maintainer, 2026-10-07): the Call Trace list's columns and detail pane resizable, the
+  detail pane's addresses labelled as object addresses with the function's native entry as a CE address, and
+  the Address setting honoured (the plan's "Also built with step 2").
   Steps 2 and 3 not started: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
   what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
   guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").

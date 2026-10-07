@@ -84,6 +84,24 @@ dump is mostly noise. What is worth keeping is the **parameter block**:
 - Doing this for every call would fill the buffer many times faster. **Only for functions the user ticks** in the
   Live Funcs table. Snapshots go to a buffer of their own, and the call's entry record holds their index (TR6).
 
+### Also built with step 2: the Call Trace list and detail pane (maintainer, 2026-10-07)
+
+Found by the maintainer on build 3638, and folded into step 2 rather than fixed on their own:
+
+- **The list's columns cannot be resized.** The list is a virtualized ListBox (rows are made only for the ones on
+  screen), and its header and every row share fixed widths: Time 96, Duration 88 and Thread 64 px, Function the rest,
+  Object 260 px. A long object name is cut with an ellipsis and has no tooltip. Not sorting is right (the list is a
+  timeline), but the widths should be draggable from the header, shared by every row and remembered. The detail
+  pane (fixed at 380 px) should be draggable too, and the Object column gets a tooltip.
+- **"UFunction: 0x…" reads like a call address.** It is the UFunction object's address (data on the heap), and the
+  Object line's is the object's. Both are absolute addresses in that run of the game, not RVAs; pasted into CE's
+  disassembler they show garbage. The detail pane will say that they are object addresses, and gain the function's
+  native entry (`UFunction->Func`): a native function's `execXxx` thunk as a CE address,
+  `"Game-Win64-Shipping.exe"+1A2B3C`; a Blueprint function marked as running as script, whose `Func` is the shared
+  `ProcessInternal`. This is the first piece of view D (step 3), brought forward.
+- **The detail pane always prints a `0x` prefix**, ignoring the UI's Address setting ("Hex (no prefix)"). It will
+  follow the setting.
+
 ## 3. Native stack snapshots — feasible, chosen functions only
 
 `RtlCaptureStackBackTrace` (or `RtlVirtualUnwind` over `.pdata`) gives the native return addresses above the
