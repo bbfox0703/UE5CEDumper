@@ -2398,6 +2398,23 @@ stack layout and timing, so unrelated edits (27 new assertions) can surface a la
 **The fix is `shared_ptr` captured BY VALUE**, not `static`: the worker owns a share, so no lifetime
 dependency is left to get wrong, and the test stays re-entrant.
 
+### 3.7c A test helper that must keep its stack frame: a store after the call, never arithmetic
+
+A test of a stack walk needs helpers whose frames really are on the stack: `Outer` calls `Inner`, and the walk must
+show `Outer`'s return address. `__declspec(noinline)` is not enough. **A call in return position is a tail call**,
+which `/O2` compiles to a `jmp`, and `Outer`'s frame is then never there. The S3-M1 red (2026-10-08) tried to prevent
+that with "use the result after the call": `return n + 0 * x;` and `return n + (x & 0);`. Both fold to `return n;`,
+both became tail calls, and the green's first run saw `main`'s caller where `Outer`'s return address belonged. It
+read as a bug in the capture, not in the test.
+- **Do:** store the callee's result to a `static volatile` after the call (`g_sink = n; return n;`), or make
+  another call after it. The compiler must keep a volatile store, so the call cannot be the last thing the function
+  does.
+- **Check it the cheap way:** a test that expects a chain of N known frames should assert each one by address
+  (`out[1] == Outer's _ReturnAddress()`), not only a count. The count was right here (4 frames); only the
+  addresses showed which frame was missing.
+- The product side has the same trap in reverse: the capturer itself is `noinline`, so `_AddressOfReturnAddress()`
+  inside it is its own slot, always below the hook's (the design review's M5).
+
 ### 3.7 NuGet cannot express "and not a different major"
 
 `Avalonia.Skia 12.1.1` depends on `SkiaSharp >= 3.119.4` — an **open-ended minimum**, which is the
