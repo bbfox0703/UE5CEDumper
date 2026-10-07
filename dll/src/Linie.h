@@ -261,7 +261,12 @@ struct NameKey {
 inline bool operator==(const NameKey& a, const NameKey& b) {
     return a.fnIdx == b.fnIdx && a.fnNum == b.fnNum && a.clsIdx == b.clsIdx && a.clsNum == b.clsNum;
 }
-inline bool operator<(const NameKey& a, const NameKey& b) { return false; }
+inline bool operator<(const NameKey& a, const NameKey& b) {
+    if (a.fnIdx != b.fnIdx) return a.fnIdx < b.fnIdx;
+    if (a.fnNum != b.fnNum) return a.fnNum < b.fnNum;
+    if (a.clsIdx != b.clsIdx) return a.clsIdx < b.clsIdx;
+    return a.clsNum < b.clsNum;
+}
 
 // What the table's read of one call hands the trace for the same call: integers only, in the hook's own frame.
 // `gen` is the trace recording the arm belongs to (1 and up), so a default hint never matches a running trace.
@@ -287,15 +292,24 @@ inline constexpr uint32_t kFuncHasOutParms = 0x00400000;     // UFunction::Funct
 
 // A ring's slot payload for a choice whose parameter block is `parmsSize` bytes: the block, rounded to 8 and capped;
 // kSnapUnknownCopy when the size could not be read (0).
-inline uint32_t RingCapFor(uint32_t parmsSize) { return 0; }
+inline uint32_t RingCapFor(uint32_t parmsSize) {
+    if (parmsSize == 0) return kSnapUnknownCopy;
+    const uint32_t n = parmsSize < kSnapMaxCopy ? parmsSize : kSnapMaxCopy;
+    return (n + 7u) & ~7u;
+}
 // What one arm copies: its function's own parameter size, at most its ring's slot. A size of 0 with flags that were
 // read is a function without parameters; with nothing read, the slot is copied whole and the decoder marks what lies
 // past the parameters.
-inline uint32_t ArmCopyBytes(uint32_t parmsSize, uint32_t functionFlags, uint32_t ringCap) { return 0; }
-inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return false; }
+inline uint32_t ArmCopyBytes(uint32_t parmsSize, uint32_t functionFlags, uint32_t ringCap) {
+    if (parmsSize == 0) return functionFlags != 0 ? 0 : ringCap;
+    return parmsSize < ringCap ? parmsSize : ringCap;
+}
+inline bool ArmTruncated(uint32_t parmsSize, uint32_t ringCap) { return parmsSize > ringCap; }
 // The after-return copy: for out parameters and the return value (FUNC_HasOutParms), and whenever the flags could not
 // be read -- a copy too many beats a return value lost.
-inline bool ArmTakesAfter(uint32_t functionFlags) { return false; }
+inline bool ArmTakesAfter(uint32_t functionFlags) {
+    return functionFlags == 0 || (functionFlags & kFuncHasOutParms) != 0;
+}
 
 // Tests replace the clock; nullptr restores QueryPerformanceCounter.
 void SetTraceClockForTest(uint64_t (*clock)());
