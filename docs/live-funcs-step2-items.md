@@ -9,7 +9,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | N0 | DLL | Linie: NameKey, ArmHint and the pure arm rules (copy bytes, after copy, truncation, ring cap) with the shared snapshot constants | — |✅ c7dcb18f red |
 | N1 | DLL | Linie: ArmState (sorted keys, preallocated arm log) installed by StartRecording; RecordCall arms at first sight and returns the hint | N0 | ✅ 11db9c55 red |
 | N2 | DLL | Linie: arm upkeep on a key change (disarm, reload = new arm), the class FName checked for armed addresses only, a failed key read | N1 | ✅ 388b7ee5 red |
-| N3 | DLL | Linie: arm-log capacity and per-key counts (arms_full, distinct addresses, never called) via ArmsSummary | N2 | ⬜ |
+| N3 | DLL | Linie: arm-log capacity and per-key counts (arms_full, distinct addresses, never called) via ArmsSummary | N2 | ✅ 18669e41 red |
 | N4 | DLL | Linie: TakePendingArms / PublishArmLayout / SealArms / CopyArms; StartTrace stamps the gen; the arm state is freed with the trace | N3 | ⬜ |
 | T1 | DLL | Linie: the trace's scope by name (TraceEnter takes the hint; TraceConfig.scoped; TraceInfo.scoped / tickedNames / snapOnly) | N1 | ⬜ |
 | S1 | DLL | Linie: snapshot rings per choice in one allocation (same K, cap per ring), TraceInfo.snap, SnapTooSmall (with the 64n guard), SnapNoMemory, freed with the trace; SnapRings() introduced here | T1 | ⬜ |

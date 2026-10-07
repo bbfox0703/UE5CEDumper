@@ -38,6 +38,7 @@ struct Stat {
     FuncIdentity ident;      // read at the first call (TRACE-UNLOADED-NAMES)
     uint8_t  identTries = 0; // reads tried so far, up to kIdentityTries
     ArmHint  arm;            // what this address is armed for ([LIVEFUNCS-STEP2]); default: nothing
+    int32_t  armSpec = -1;   // the followed name it last matched, so an address counts once per name
 };
 static std::mutex g_mu;
 static std::unordered_map<uintptr_t, Stat> g_stats;
@@ -59,6 +60,7 @@ std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCa
         }
         st->specs.push_back(sp);
     }
+    st->counts.assign(st->specs.size(), ArmState::Count{});
     st->capacity = logCapacity;
     st->log.reserve(logCapacity);
     return st;
@@ -78,10 +80,18 @@ static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
     const auto it = std::lower_bound(specs.begin(), specs.end(), key,
                                      [](const ArmSpec& a, const NameKey& k) { return a.key < k; });
     if (it == specs.end() || !(it->key == key)) return;
+    const size_t si = static_cast<size_t>(it - specs.begin());
+    ArmState::Count& count = g_arms->counts[si];
+    if (s.armSpec != static_cast<int32_t>(si)) {   // a new address for this name, not a reload at the same one
+        ++count.addresses;
+        s.armSpec = static_cast<int32_t>(si);
+    }
     s.arm.gen = g_arms->gen;
     if (it->tick) s.arm.flags |= kArmTick;
-    if (it->ring < 0 || g_arms->log.size() >= g_arms->capacity) return;
-    g_arms->log.push_back(ArmRecord{ ufunc, s.ident, static_cast<uint32_t>(it - specs.begin()), it->ring, nowMs });
+    if (it->ring < 0) return;
+    if (g_arms->log.size() >= g_arms->capacity) { ++count.armsFull; return; }
+    ++count.arms;
+    g_arms->log.push_back(ArmRecord{ ufunc, s.ident, static_cast<uint32_t>(si), it->ring, nowMs });
     s.arm.ring = it->ring;
     s.arm.arm  = static_cast<uint32_t>(g_arms->log.size() - 1);
     s.arm.copy = static_cast<uint16_t>(ArmCopyBytes(s.ident.parmsSize, s.ident.functionFlags, it->ringCap));
@@ -239,7 +249,16 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
 }
 
 std::vector<ArmSummary> ArmsSummary() {
-    return {};
+    std::lock_guard<std::mutex> lk(g_mu);
+    std::vector<ArmSummary> out;
+    if (!g_arms) return out;
+    out.reserve(g_arms->specs.size());
+    for (size_t i = 0; i < g_arms->specs.size(); ++i) {
+        const ArmSpec& sp = g_arms->specs[i];
+        const ArmState::Count& c = g_arms->counts[i];
+        out.push_back(ArmSummary{ sp.key, sp.tick, sp.ring, c.addresses, c.arms, c.armsFull });
+    }
+    return out;
 }
 
 void IdentitiesOf(const std::vector<uintptr_t>& addrs, std::vector<FuncIdentity>& out) {

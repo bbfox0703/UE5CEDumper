@@ -345,6 +345,8 @@ struct ArmState {
     // for a name it no longer has. nullptr checks the address only.
     ObjectNameReader classNameReader = nullptr;
     std::vector<ArmSpec>   specs;      // sorted by key, one per key
+    struct Count { uint64_t addresses = 0, arms = 0, armsFull = 0; };
+    std::vector<Count>     counts;     // parallel to specs: what ArmsSummary reports
     std::vector<ArmRecord> log;        // reserved when built: the hook never allocates for it
     size_t                 capacity = 0;
 };

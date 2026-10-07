@@ -7546,21 +7546,30 @@ int main() {
     {
         blk("LIVEFUNCS-STEP2: the arm log's capacity and what became of each followed name");
         // docs/live-funcs-step2-items.md, N3. Every address 0xBx is the same function by name (a class reloaded at
-        // each new address); 0xC is nobody's. A log with room for one arm.
+        // each new address); 0xC is nobody's. A log with room for one arm. s_reload moves 0xB1's class: a reload at
+        // the same address, which is the same address for the count.
+        static uint64_t s_reload = 0;
         auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
             out.nameIndex = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
             out.classIndex = 7;
-            out.outer = 0x7000 + f;
+            out.outer = 0x7000 + f + (f == 0xB1 ? s_reload : 0);
             out.functionFlags = 0x400;
             out.parmsSize = 16;
+            return true;
+        };
+        auto keyReader = [](uintptr_t f, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            idx = ((f & 0xF0) == 0xB0) ? 0x77 : static_cast<int32_t>(f & 0xFFFF);
+            n = 0;
+            outer = 0x7000 + f + (f == 0xB1 ? s_reload : 0);
             return true;
         };
         auto u = [](uint64_t n) { return std::to_string(n); };
         auto st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0x77, 0, 7, 0 }, true, 0, 64 },
                                          Linie::ArmSpec{ Linie::NameKey{ 0x88, 0, 7, 0 }, false, 1, 64 } }, 1);
         st->gen = 3;
+        s_reload = 0;
         Linie::Reset();
-        Linie::StartRecording(reader, nullptr, st);
+        Linie::StartRecording(reader, keyReader, st);
         Linie::ArmHint h;
         Linie::RecordCall(0xB1, 1000, &h);
         check("setup: the first address takes the log's one place", h.ring == 0 && h.arm == 0 && st->log.size() == 1);
@@ -7568,15 +7577,17 @@ int main() {
         check("a full log: no snapshots for the next address, but its tick still opens",
               h.gen == 3 && h.ring == -1 && (h.flags & Linie::kArmTick) && st->log.size() == 1, u(st->log.size()).c_str());
         Linie::RecordCall(0xB2, 1002, &h);
-        Linie::RecordCall(0xC, 1003, &h);
+        s_reload = 0x100;
+        Linie::RecordCall(0xB1, 1003, &h);   // read again under a new class: the log is full, the address the same
+        Linie::RecordCall(0xC, 1004, &h);
         Linie::StopRecording();
         const auto sum = Linie::ArmsSummary();
         check("ArmsSummary: one per followed name, in the specs' order", sum.size() == 2 &&
               sum[0].key == Linie::NameKey{ 0x77, 0, 7, 0 } && sum[1].key == Linie::NameKey{ 0x88, 0, 7, 0 },
               u(sum.size()).c_str());
-        check("...the followed name: two distinct addresses (not three calls), one arm, one match the log could not take",
-              sum.size() == 2 && sum[0].addresses == 2 && sum[0].arms == 1 && sum[0].armsFull == 1 && sum[0].tick &&
-              sum[0].ring == 0, sum.empty() ? "" : u(sum[0].addresses).c_str());
+        check("...the followed name: two distinct addresses (not four calls, not three readings), one arm, two matches "
+              "the log could not take", sum.size() == 2 && sum[0].addresses == 2 && sum[0].arms == 1 &&
+              sum[0].armsFull == 2 && sum[0].tick && sum[0].ring == 0, sum.empty() ? "" : u(sum[0].addresses).c_str());
         check("...a name never called: no address", sum.size() == 2 && sum[1].addresses == 0 && sum[1].arms == 0);
         Linie::Reset();
         check("...and none once the recording is gone", Linie::ArmsSummary().empty());
