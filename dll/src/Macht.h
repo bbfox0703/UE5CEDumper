@@ -7,6 +7,7 @@
 
 #include <Windows.h>
 #include <cstdint>
+#include <string>
 #include <vector>
 #include "Grimoire.h"   // SANITY_MAX_CONTAINER_NUM -- the container-header plausibility ceiling
 
@@ -475,5 +476,17 @@ using StackWalker = WORD (NTAPI*)(DWORD framesToSkip, DWORD framesToCapture, PVO
 uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
                               StackWalker walk);
 uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);
+
+// [LIVEFUNCS-STEP3] What a captured return address is (design section 2.5; ledger S3-M2). It asks the loader, so it
+// runs on the pipe thread over addresses already copied out of a ring, never in the hook.
+struct CodeSite {
+    uintptr_t moduleBase = 0;   // 0 when the address is in no module
+    std::string moduleUtf8;     // the module file's leaf name; "" when in no module
+    uintptr_t fnBegin = 0;      // the start of the function holding ret-1, from .pdata; 0 without unwind data
+    bool unwind = false;        // .pdata covers ret-1
+    bool own = false;           // the module is this one: by base address, never by name (the proxies are renamed)
+};
+// False, with `out` reset, when the address is in no module.
+bool DescribeCode(uintptr_t retAddr, CodeSite& out);
 
 } // namespace Macht

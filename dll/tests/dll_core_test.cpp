@@ -8634,6 +8634,43 @@ int main() {
                                         &S3WalkerFaults);
         check("a walk that faults: Fault, nothing kept, and the process goes on", n == 0 && fl == Macht::kStackFault);
 
+        // S3-M2: what a return address is. myRet still holds a return address into S3Outer (its last call above).
+        {
+            Macht::CodeSite site;
+            const bool ok = Macht::DescribeCode(static_cast<uintptr_t>(myRet), site);
+            uintptr_t outerStart = reinterpret_cast<uintptr_t>(&S3Outer);
+            const auto* op = reinterpret_cast<const uint8_t*>(outerStart);
+            if (op[0] == 0xE9) {   // an incremental link's jump thunk: the function is where it jumps
+                int32_t rel = 0;
+                std::memcpy(&rel, op + 1, sizeof(rel));
+                outerStart += 5 + static_cast<intptr_t>(rel);
+            }
+            check("a return address into S3Outer: this exe, its leaf, own, unwind data, S3Outer's start",
+                  ok && site.moduleBase == reinterpret_cast<uintptr_t>(GetModuleHandleW(nullptr)) &&
+                      _stricmp(site.moduleUtf8.c_str(), "dll_core_test.exe") == 0 && site.own && site.unwind &&
+                      site.fnBegin == outerStart,
+                  (site.moduleUtf8 + " own " + std::to_string(site.own) + " unwind " + std::to_string(site.unwind) +
+                   (site.fnBegin == outerStart ? " start ok" : " start differs")).c_str());
+            Macht::CodeSite atStart;
+            Macht::DescribeCode(outerStart, atStart);
+            check("...and a function's first byte is described by the byte before it (ret-1)",
+                  atStart.fnBegin != outerStart);
+            const auto rtl = reinterpret_cast<uintptr_t>(
+                GetProcAddress(GetModuleHandleW(L"ntdll.dll"), "RtlCaptureStackBackTrace"));
+            Macht::CodeSite nt;
+            const bool ntOk = rtl != 0 && Macht::DescribeCode(rtl + 1, nt);
+            check("an address inside ntdll: its leaf, and not own",
+                  ntOk && _stricmp(nt.moduleUtf8.c_str(), "ntdll.dll") == 0 && !nt.own, nt.moduleUtf8.c_str());
+            std::vector<uint64_t> heap(4, 0);
+            Macht::CodeSite none;
+            none.moduleBase = 1;
+            const bool h1 = Macht::DescribeCode(reinterpret_cast<uintptr_t>(heap.data()), none);
+            check("a heap address is in no module, and the site is reset",
+                  !h1 && none.moduleBase == 0 && none.moduleUtf8.empty() && !none.unwind);
+            const bool h2 = Macht::DescribeCode(0x1000, none);
+            check("...nor is 0x1000", !h2 && none.moduleBase == 0 && none.moduleUtf8.empty() && !none.unwind);
+        }
+
         // The cost of one capture, printed (Release), for the budget's defaults (T17).
         {
             constexpr int kRuns = 65536;

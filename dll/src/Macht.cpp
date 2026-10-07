@@ -882,4 +882,11 @@ __declspec(noinline) uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* ou
     return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
 }
 
+// [LIVEFUNCS-STEP3] S3-M2 (stubbed).
+bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
+    (void)retAddr;
+    out = CodeSite{};
+    return false;
+}
+
 } // namespace Macht
