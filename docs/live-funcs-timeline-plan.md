@@ -174,12 +174,13 @@ T5); the others are requirements for building.
 |---|---|---|
 | T1 | **Buffer** (maintainer, 2026-10-04; changed 2026-10-06 and **2026-10-07**) | A **ring** that keeps the calls just before Stop (TR1), not fill-then-stop. A **power-of-two slider: 32 / 64 / 128 / 256 / 512 MB, default 64**; whether the game can spare the memory is the user's call. Beside it, an **estimate of the seconds it keeps**, from the last Live Funcs recording's calls per second and the bytes per call; no estimate before a recording. The maintainer offered a time-first choice (pick seconds, the UI works out the memory) and a memory-first slider; built as the slider with the time shown beside it, because the call rate changes with what the game is doing and a time target could ask for any amount of memory. The size is never computed from a seconds target. How many seconds it kept is reported after Stop. A failed allocation refuses the Start. Persisted across UI sessions, and disabled while recording, like the Live Funcs sliders. Was: 64 / 128 MB (2026-10-06); fill-then-stop, 32 / 64 / 128 MB, default 32 (2026-10-04). |
 | T2 | **Recording** (maintainer's direction 2026-10-04; details ⚠ to confirm) | **The trace rides on the Live Funcs recording; it has no Start / Stop of its own.** Live Funcs' toolbar gains a "Trace" checkbox and the buffer slider; ticked, the one Start records the count table and the trace over the same window. With Live Funcs not recording, the trace cannot record either. Replaces the first proposal of a separate tab with its own Start. |
-| T3 | **Viewing and choosing functions** (proposal 2026-10-04; **decided 2026-10-07**) | The trace is **viewed** in its own top-level tab (working name "Call Trace"). Functions are **ticked in the Live Funcs table** from an earlier recording; the next Start traces only inside them (T5 (a)) and, from step 2 on, snapshots them (sections 2 and 3). **With nothing ticked, the trace records every call** — the first proposal — after a confirmation (T7). |
+| T3 | **Viewing and choosing functions** (proposal 2026-10-04; **decided 2026-10-07**) | The trace is **viewed** in its own top-level tab (working name "Call Trace"). Functions are **ticked in the Live Funcs table** from an earlier recording; the next Start traces only inside them (T5 (a)). The snapshots of steps 2 and 3 are chosen in a column of their
+own (T9; was "the same tick snapshots them", changed 2026-10-07). **With nothing ticked, the trace records every call** — the first proposal — after a confirmation (T7). |
 | T4 | **Registers** (maintainer, 2026-10-06) | **Kept as planned: no register capture.** The maintainer first asked for GPR / XMM / YMM snapshots. At the hook only rcx, rdx and r8 (object, UFunction, parameter block) mean anything: the rest of the register file is the dispatcher's, and `ProcessEvent` takes no float arguments, so XMM / YMM hold leftovers. A UFunction's float and vector arguments are in the parameter block, decoded by name in view C. Registers matter inside the native implementation, which is Cheat Engine's debugger; view D hands the entry point over. A faithful capture would also need a MASM entry stub, because the C++ detour can change volatile registers before it reads them. |
-| T5 | **Recording scope** (maintainer, 2026-10-06) | Two opt-in filters applied at record time (TR4), **(a) built first**. **(a) Ticked-function scope:** applies whenever functions are ticked (T3) — record only the ticked functions' calls and everything nested inside them on the same thread; tick OnJump, get the call tree under OnJump. **(b) Leave out per-frame functions:** a checkbox; the previous recording's per-frame list (`per_frame_funcs`, build 3630 on), passed at Start. Nothing ticked and (b) off records everything. One tick column serves (a) and the snapshots (maintainer, 2026-10-07). |
+| T5 | **Recording scope** (maintainer, 2026-10-06) | Two opt-in filters applied at record time (TR4), **(a) built first**. **(a) Ticked-function scope:** applies whenever functions are ticked (T3) — record only the ticked functions' calls and everything nested inside them on the same thread; tick OnJump, get the call tree under OnJump. **(b) Leave out per-frame functions:** a checkbox; the previous recording's per-frame list (`per_frame_funcs`, build 3630 on), passed at Start. Nothing ticked and (b) off records everything. The tick column is (a)'s alone: the snapshots have their own (T9, 2026-10-07; was one column for both). |
 | T6 | **Experimental only** (maintainer, 2026-10-06) | The Trace checkbox, the buffer slider, the scope options, the tick column and the Call Trace tab show only while the experimental tabs are enabled (the System tab's checkbox, `ExperimentalGate`). The DLL never sees that flag: it allocates the buffer and records only when Start asks for the trace, so with the trace off its hot path is exactly today's. |
 | T7 | **Nothing ticked** (maintainer, 2026-10-07) | A Start with Trace on and no function ticked asks first: nothing is ticked, so the trace records every call — a wide range, and more load on the game. Confirmed once, it does not ask again in the same UI session; a second Start with nothing ticked runs at once. Cancel leaves everything as it was and starts nothing, and does not count as asked. **It asks only when there is something to tick**: the first recording, or any Start while the Live Funcs table is empty, has no rows to tick from, so it records every call without asking (maintainer, 2026-10-07). |
-| T9 | **Snapshots only for chosen functions** (maintainer, 2026-10-07) | Steps 2 (parameter snapshots) and 3 (native stack) capture **only for the functions the user chooses**, never for every call -- unlike the trace, there is no "nothing chosen = everything" (T3, T7). **Open, to decide before step 2:** how many may be chosen, whether a cap or a warning guards it, what a "select all" would do, and whether the snapshot choice is the trace's tick or a column of its own -- see "Open before step 2: how much may be chosen" below. |
+| T9 | **Snapshots only for chosen functions** (maintainer, 2026-10-07) | Steps 2 (parameter snapshots) and 3 (native stack) capture **only for the functions the user chooses**, never for every call -- unlike the trace, there is no "nothing chosen = everything" (T3, T7). **Decided the same day:** what is limited is the **call rate**, not how many functions are chosen; the proposal in "How much may be chosen" below is taken as written (an estimate with a warning, per-frame functions marked and asked for stacks, the DLL's budget as the guarantee, a bulk tick through the same estimate); and the snapshot choice is **a column of its own**, apart from the trace's scope tick. |
 | T8 | **The ticks seen from the Call Trace tab** (maintainer, 2026-10-07) | One tick state, set in the Live Funcs table. The Call Trace tab shows a copy of the trace settings and of the ticked functions, grayed out and read-only, with a hint that they are changed in Live Funcs. The top of the tab says it works with Live Funcs and cannot record on its own: Start, Stop and the settings are in Live Funcs, and the tab shows what the last recording traced (maintainer, 2026-10-07). |
 
 ### Why the trace rides on Live Funcs (T2, T3)
@@ -192,11 +193,11 @@ in order. A trace started on its own would have nothing to point at.
 - **One recording, one lock.** One Start / Stop means one "recording" state: the fetch limit, Min calls, Save
   .jsonl, the Trace checkbox, the buffer slider and the ticks are all disabled together while it runs. Two
   Start buttons would each need their own rules.
-### Open before step 2: how much may be chosen (T9, raised 2026-10-07)
+### How much may be chosen (T9, raised and decided 2026-10-07)
 
 The maintainer's question: can the number of chosen functions be capped, or warned about -- a user may select
-all -- and the choosing itself needs designing. What follows is the analysis and a proposal; **nothing here is
-decided.**
+all -- and the choosing itself needs designing. Below: the analysis, and the proposal the maintainer took as
+written ("limit the call rate; do the proposal; two separate tick columns", 2026-10-07).
 
 **The count is the wrong thing to cap; the call rate is the right one.** What a snapshot costs is paid per CALL,
 not per chosen function. Ticking all 500 functions that fired once each costs 500 captures; ticking one Tick that
@@ -211,7 +212,7 @@ runs on 80 actors at 60 fps costs 4,800 captures a second. Arithmetic, not measu
 So a cap of "N functions" both blocks harmless choices (many rare functions -- exactly the action recording's
 target) and lets through the harmful one (a single per-frame function).
 
-**Proposal (to decide):**
+**Decided -- the proposal:**
 1. **No cap on the count. An estimate from the previous recording, like D3's memory line.** The Live Funcs table
    already has each function's calls over a known window, and whether it is per-frame. Beside the choice: "chosen:
    N functions, about X calls/s last time -> about Y ms of the game's time a second for stacks, Z MB a minute of
@@ -226,11 +227,11 @@ target) and lets through the harmful one (a single per-frame function).
 4. **"Select all"** -- there is none today (one row at a time). If a bulk tick is added (tick the filtered rows),
    it goes through the same estimate, and per-frame rows are left out of a bulk tick for stacks unless asked.
 
-**Also open: one tick or two.** T5 (a) uses the tick as the trace's scope root; T3 says the same tick snapshots
-from step 2 on. One column is simpler, but couples them: ticking the opener to see its call tree would also
-snapshot it, and snapshotting a function nested under the opener would make it a scope root too. Two columns
-(Trace scope / Snapshot), or one tick with a per-row snapshot kind (none / parameters / parameters + stack), keep
-the choices apart. To decide with the above.
+**Decided: two columns.** One column would couple the trace's scope and the snapshots: ticking the opener to see
+its call tree would also snapshot it, and snapshotting a function nested under the opener would make it a scope
+root too. So the Live Funcs table keeps its Trace tick (T5 (a)) and gains a Snapshot column for steps 2 and 3. Still
+to settle when step 2 is built: whether that column is one tick or a per-row kind (none / parameters / parameters +
+stack), and the threshold and budget defaults, measured in step 3.
 
 - **Same window, so the two views can point at each other.** A row in the count table can jump to its calls in
   the trace, and a call in the trace back to its row, because both cover exactly the same calls.
