@@ -36,19 +36,19 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | F4 | pipe | Fern: the layout-capture worker (a thread per traced Start with snapshot keys, polling every 50 ms, first enum detection kicked at Start); Stop = StopTrace, StopRecording, final pass with a 2 s deadline, seal; names summary before ReleaseIfEmpty | B5, K1 | ✅ 6043683d |
 | F5 | pipe | Fern/Renge: pe_snap_layouts (paged by arms, ~1 MB, layouts de-duplicated per page) and pe_snap_get (copy under the lock, decode outside); pipe count 102 -> 104; pipe-protocol.md flags table and 'does not hold' | F4, B7, S7 | ✅ d3114c55 red, 50f51651, 53a28683; lone return 99647a1b; soft sub-path ce9e3c1d |
 | F6 | pipe | Fern: code_addr on pe_trace_names funcs (Live, native) | F2 | ✅ 53a28683 |
-| U1 | UI | Models and DumpService: NameKey (fname_key), per_frame, TraceStartOptions.TickedNames / Snapshots, trace.names / scoped / snap parsed, pe_snap_layouts / pe_snap_get, code_addr | F1, F2, F3, F5, F6 | ⬜ |
-| U2 | UI | LaneRoutingPipeClient: pe_snap_layouts and pe_snap_get on the bulk lane | U1 | ⬜ |
-| U3 | UI | Helpers/FunctionTickSet extracted from _ticked, holding per Class::Func the live addresses, a set of NameKeys and the largest ParmsSize | U1 | ⬜ |
-| U4 | UI | Live Funcs ticks by name: unloaded rows with a key tick; the Start sends ticked_names; T7 split; keyless rows keep D1's rule; status by name count; the old-DLL guard | U3 | ⬜ |
-| U5 | UI | Live Funcs: snapshot choice (needs a key, Trace on, parameters), Start options (snapshots-only skips T7), refusals and status notes, disconnect | U4 | ⬜ |
-| U6 | UI | Live Funcs: stored WindowMs, IsPerFrame, the pure snapshot estimate (2-slot rule, K, K<8 warning, OD5 orange, grey budget note), D3 game figure | U5, N0 | ⬜ |
-| U7 | UI | Live Funcs: 'Snapshot shown rows' bulk choice and Clear, through the estimate | U6 | ⬜ |
-| U8 | UI | Live Funcs view: Snapshot column, visibility loop, per-frame marker, Snapshot row (OD4 slider 8-128 MB default 32, estimate, memory), strings, persistence | U7 | ⬜ |
-| U9 | UI | Call Trace and Live Funcs say what was traced: scoped by name, snapshots-only, unscoped; the T8 copy marks names as waiting or never called | U4 | ⬜ |
+| U1 | UI | Models and DumpService: NameKey (fname_key), per_frame, TraceStartOptions.TickedNames / Snapshots, trace.names / scoped / snap parsed, pe_snap_layouts / pe_snap_get, code_addr | F1, F2, F3, F5, F6 | ✅ e671af8c (with U2; mutations killed) |
+| U2 | UI | LaneRoutingPipeClient: pe_snap_layouts and pe_snap_get on the bulk lane | U1 | ✅ e671af8c |
+| U3 | UI | Helpers/FunctionTickSet extracted from _ticked, holding per Class::Func the live addresses, a set of NameKeys and the largest ParmsSize | U1 | ✅ 819d4c8f (with U4) |
+| U4 | UI | Live Funcs ticks by name: unloaded rows with a key tick; the Start sends ticked_names; T7 split; keyless rows keep D1's rule; status by name count; the old-DLL guard | U3 | ✅ 819d4c8f |
+| U5 | UI | Live Funcs: snapshot choice (needs a key, Trace on, parameters), Start options (snapshots-only skips T7), refusals and status notes, disconnect | U4 | ✅ 568b3d87 (U5-U8) |
+| U6 | UI | Live Funcs: stored WindowMs, IsPerFrame, the pure snapshot estimate (2-slot rule, K, K<8 warning, OD5 orange, grey budget note), D3 game figure | U5, N0 | ✅ 568b3d87 |
+| U7 | UI | Live Funcs: 'Snapshot shown rows' bulk choice and Clear, through the estimate | U6 | ✅ 568b3d87 |
+| U8 | UI | Live Funcs view: Snapshot column, visibility loop, per-frame marker, Snapshot row (OD4 slider 8-128 MB default 32, estimate, memory), strings, persistence | U7 | ✅ 568b3d87 |
+| U9 | UI | Call Trace and Live Funcs say what was traced: scoped by name, snapshots-only, unscoped; the T8 copy marks names as waiting or never called | U4 | ✅ ef7eeefa |
 | U10 | UI | Call Trace list: resizable, remembered column widths and detail-pane width; Object tooltip; CallTraceUiOptions on the settings root | — | ✅ 09aa8bb7 red |
 | U11 | UI | Call Trace detail: object-address wording, the Address setting, native entry as a CE address, script / not found / unknown lines | U1 | ✅ c6b7b1ba red |
-| U12 | UI | Call Trace: snapshot load before the release (bulk lane), CallTraceSnapshots stored on the CallTrace, join by entrySeq, per-arm layouts, Summary counters | U1, U2 | ⬜ |
-| U13 | UI | Call Trace: detail TabControl (Call \| Parameters), view C rows, reasons (Lone / Excluded / budget / overwritten / raw-only arm and why / null / fault / truncated), Changed, tree markers, 'Only calls with parameters' (works with no text) | U12, U11 | ⬜ |
+| U12 | UI | Call Trace: snapshot load before the release (bulk lane), CallTraceSnapshots stored on the CallTrace, join by entrySeq, per-arm layouts, Summary counters | U1, U2 | ✅ 9216925d |
+| U13 | UI | Call Trace: detail TabControl (Call \| Parameters), view C rows, reasons (Lone / Excluded / budget / overwritten / raw-only arm and why / null / fault / truncated), Changed, tree markers, 'Only calls with parameters' (works with no text) | U12, U11 | ✅ c104ecb2 |
 | U14 | UI | Export: JSONL snapshot keys, layout lines per arm, scoped / snapshots_only in the header; a separate params CSV | U13 | ⬜ |
 | X1 | docs | Plan 'Step 2 built' (decisions, TR6 / copy-size / after-copy deviations, name matching), dev-log entry, verification-register and todo rows (D1's tick refusal row rewritten; the Int8 preview quirk as its own row); comment pass | F5, U14, U8, U9, U10 | ⬜ |
 | X2 | docs | AOT publish and live checks: DumperTest58 rig and UI walkthrough, livefuncs_trace_live.py re-run, Avowed reload acceptance; measurements and the machine recorded (UE4 not live: its headers are in the tests) | X1 | ⬜ |
