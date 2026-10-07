@@ -503,6 +503,21 @@ public class LiveFuncsTraceTests
         Assert.False(vm2.TraceMemoryOverAvailable);
     }
 
+    [Fact]
+    public void The_UI_figures_say_they_are_a_reference_from_the_developers_PC()
+    {
+        // The maintainer, 2026-10-07: the game's N MB is the buffer itself, but the UI's peak and what it keeps were
+        // measured on one machine; another PC, game or trace can differ, and every place that shows them says so.
+        var strings = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        foreach (var key in new[] { "str.LF.Trace.Memory", "str.LF.Trace.MemoryOver", "str.LF.Trace.MemoryWarnStart",
+                                    "str.Tip.LF.Trace.Memory" })
+        {
+            var m = System.Text.RegularExpressions.Regex.Match(strings, $"x:Key=\"{key.Replace(".", "\\.")}\">([^<]*)<");
+            Assert.True(m.Success, key);
+            Assert.Contains("measured on the developer's PC", m.Groups[1].Value, StringComparison.Ordinal);
+        }
+    }
+
     // [TRACE-UNLOADED-NAMES] D1: a function the game unloaded since it fired keeps its row, named from its first call,
     // but its address is dead: never ticked, never sent.
     private static PeProfileEntry Unloaded(string cls, string func, string addr, long count = 10)
