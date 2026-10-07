@@ -246,8 +246,9 @@ hook only at the delegate's binding. The fixture now dispatches by name through 
 
 ### Avowed (UE 5.3 Shipping, the dxgi proxy at 3633), 2026-10-07
 
-The maintainer launched the game (our own Steam launch had not started it, and Steam could not be inspected); the
-rig and the UI ran in gameplay. Evidence: `out/livefuncs-trace/avowed-*.json`, the UI's `pipe-0.log` / `view-0.log`.
+The maintainer launched the game (our own Steam launch had not started it, and Steam could not be inspected) and
+loaded a save; the rig and the UI ran in gameplay, and during the recordings the maintainer opened the inventory
+(`I`) and closed it again. Evidence: `out/livefuncs-trace/avowed-*.json`, the UI's `pipe-0.log` / `view-0.log`.
 
 | Run | Calls / s | Kept | After Stop | Checks |
 |---|---|---|---|---|
@@ -269,8 +270,10 @@ The slider's estimate, bytes / (rate × 80), matched the windows the rings kept:
    resolve). On Avowed a 12-minute recording saw 568 distinct functions, where every other window saw 70–71, and
    79 of 567 (rig) and 125 of 570 (UI) no longer resolved at Stop. A second 512 MB run counted them: 184 of 796
    functions, but only 5,387 of 6,710,886 calls (0.08%), each last firing at its own moment between 162 s and 524 s
-   of a 548 s window — content streamed out all through the recording, not one unload. Rare calls are what an action
-   recording is after, so the share of calls understates the loss. The plan named the risk for objects only. A way
+   of a 548 s window. A last call says the function was alive then, not when it was unloaded, so the spread does
+   not count unloads: the inventory opened and closed during the recordings (above) fits it — its functions fire
+   while it is open, each last at its own moment, and go when it closes. Rare calls are what an action recording
+   is after, so the share of calls understates the loss. The plan named the risk for objects only. A way
    out: resolve a function's name when Linie first sees it — once per distinct function, on the calling thread,
    while it is certainly alive — and fall back to that name, flagged as unloaded.
 2. **The UI's load holds about six times the ring** `[TRACE-UI-LOAD-MEMORY]`. What the trace keeps is about
@@ -297,3 +300,7 @@ The slider's estimate, bytes / (rate × 80), matched the windows the rings kept:
   the user decides).
 - **D4:** **512 MB stays** on the slider.
 - (3) is measured again after D2; (4) is fixed with them.
+- **D1's live check (the maintainer's recipe):** launch with `steam.exe -applaunch <appid>` and **load a save**; record
+  with Trace ticked, open the inventory (`I`) and close it, then Stop. Red (3633): its functions are bare addresses
+  in the Call Trace tab and missing from the Live Funcs table. Green: named, marked unloaded, and the share still
+  without a name shown.

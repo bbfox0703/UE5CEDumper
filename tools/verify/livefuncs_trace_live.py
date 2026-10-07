@@ -233,9 +233,9 @@ def main() -> int:
               f"{out['names']['funcs_live']} of {len(fn)}")
         say(f"names: {len(fn)} functions in {fn_s:.2f} s, {len(ob)} objects in {ob_s:.2f} s "
             f"({out['names']['objs_live']} live)")
-        # A function that no longer resolves was unloaded before Stop (a map change frees its Blueprint classes): its
-        # calls show as a bare address. How many calls that is, and when each last fired -- one moment for all of them
-        # reads as one unload.
+        # A function that no longer resolves was unloaded before Stop (a closed UI or a map change frees its Blueprint
+        # classes): its calls show as a bare address. How many calls that is, and when each last fired -- alive then;
+        # it went at some point after, which a last call cannot date.
         dead = {addr(x["addr"]) for x in fn if not x.get("live")}
         if dead:
             freq = info.get("qpc_freq") or 1
