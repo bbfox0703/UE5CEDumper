@@ -2911,6 +2911,8 @@ public sealed class DumpService : IDumpService
                 {
                     Addr = ParseAddr(i["addr"]?.GetValue<string>()),
                     Live = i["live"]?.GetValue<bool>() ?? false,
+                    Unloaded = i["unloaded"]?.GetValue<bool>() ?? false,
+                    Recycled = i["recycled"]?.GetValue<bool>() ?? false,
                     ClassName = i["class_name"]?.GetValue<string>() ?? "",
                     FuncName = i["func_name"]?.GetValue<string>() ?? "",
                     FunctionFlags = (uint)(i["function_flags"]?.GetValue<long>() ?? 0L),
@@ -2992,7 +2994,10 @@ public sealed class DumpService : IDumpService
     /// it always sent.</summary>
     public async Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
     {
-        var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit };
+        // [TRACE-UNLOADED-NAMES] Always asked: the rows of a function unloaded since it fired come back named and
+        // marked, and LiveFuncsViewModel must keep their dead address out of every request. A DLL older than the option
+        // ignores it and drops them, as it always did.
+        var req = new JsonObject { ["cmd"] = "pe_profile_get", ["limit"] = limit, ["include_unloaded"] = true };
         if (skipPerFrame) req["skip_per_frame"] = true;
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
@@ -3017,6 +3022,8 @@ public sealed class DumpService : IDumpService
                     MeanPeriodMs = obj["mean_period_ms"]?.GetValue<double>() ?? 0.0,
                     Cv           = obj["cv"]?.GetValue<double>() ?? 0.0,
                     GapSamples   = obj["gap_samples"]?.GetValue<long>() ?? 0L,
+                    IsUnloaded   = obj["unloaded"]?.GetValue<bool>() ?? false,
+                    IsRecycled   = obj["recycled"]?.GetValue<bool>() ?? false,
                 });
             }
         }
@@ -3028,6 +3035,10 @@ public sealed class DumpService : IDumpService
             TotalCalls    = res["total_calls"]?.GetValue<long>() ?? 0L,
             WindowMs      = res["window_ms"]?.GetValue<long>(),
             PerFrameHidden = res["per_frame_hidden"]?.GetValue<int>(),
+            UnloadedFuncs = res["unloaded_funcs"]?.GetValue<int>(),
+            UnloadedCalls = res["unloaded_calls"]?.GetValue<long>(),
+            UnnamedFuncs  = res["unnamed_funcs"]?.GetValue<int>(),
+            UnnamedCalls  = res["unnamed_calls"]?.GetValue<long>(),
             PerFrameFuncs  = res["per_frame_funcs"] is JsonArray pf
                 ? pf.Select(a => a?.GetValue<string>() ?? "").Where(a => a.Length > 0).ToList()
                 : Array.Empty<string>(),

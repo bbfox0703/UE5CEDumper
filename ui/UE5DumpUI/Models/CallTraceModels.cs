@@ -77,10 +77,17 @@ public sealed class TracePage
 public sealed class TraceFuncName
 {
     public ulong  Addr          { get; init; }
+    /// <summary>The address still holds the function that fired.</summary>
     public bool   Live          { get; init; }
+    /// <summary>[TRACE-UNLOADED-NAMES] Not live, and named from what the recording read at its first call.</summary>
+    public bool   Unloaded      { get; init; }
+    /// <summary>With <see cref="Unloaded"/>: another function has taken the address since.</summary>
+    public bool   Recycled      { get; init; }
     public string ClassName     { get; init; } = "";
     public string FuncName      { get; init; } = "";
     public uint   FunctionFlags { get; init; }
+    /// <summary>A name to show: live, or unloaded and named from its first call.</summary>
+    public bool   Named => (Live || Unloaded) && FuncName.Length > 0;
 }
 
 public sealed class TraceObjName

@@ -31,6 +31,13 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     public long   FirstSeq  { get; init; }
     public uint   FunctionFlags { get; init; }
 
+    /// <summary>[TRACE-UNLOADED-NAMES] The game unloaded this function after it fired (a closed UI, content streamed
+    /// out): every field is what the recording read at its first call, and <see cref="FuncAddr"/> is dead -- never
+    /// sent back to the DLL (a trace tick, a disassembly).</summary>
+    public bool   IsUnloaded { get; init; }
+    /// <summary>With <see cref="IsUnloaded"/>: another function has taken the address since.</summary>
+    public bool   IsRecycled { get; init; }
+
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,
     // not entry points — the flood you see when profiling an interaction.
@@ -153,5 +160,12 @@ public sealed class PeProfileResult
     /// latest; null from a DLL older than the field. With <see cref="TotalCalls"/> it is the call rate the trace
     /// slider estimates its seconds from.</summary>
     public long? WindowMs     { get; init; }
+    /// <summary>[TRACE-UNLOADED-NAMES] Over the whole table, not the page: the functions no longer at their address
+    /// (sent as rows marked <see cref="PeProfileEntry.IsUnloaded"/>, named from their first call) and the ones with no
+    /// name at all (never sent), with their calls. Null from a DLL older than the fields.</summary>
+    public int?  UnloadedFuncs { get; init; }
+    public long? UnloadedCalls { get; init; }
+    public int?  UnnamedFuncs  { get; init; }
+    public long? UnnamedCalls  { get; init; }
     public List<PeProfileEntry> Entries { get; init; } = new();
 }
