@@ -498,6 +498,7 @@ void SnapWrite(int32_t ring, uint64_t entrySeq, bool after, uintptr_t params, co
     const uint64_t k = r.next.fetch_add(1, std::memory_order_relaxed);
     uint8_t* slot = r.base + (k % g_trace.snapK) * r.slot;
     auto* hdr = reinterpret_cast<SnapSlotHeader*>(slot);
+    hdr->seqKind = UINT64_MAX;   // no slot number at all until the write is whole -- the first lap's 0 included
     hdr->entrySeq = entrySeq;
     hdr->arm = hint.arm;
     uint32_t n = hint.copy < r.cap ? hint.copy : r.cap;
@@ -690,16 +691,21 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     r.a       = ufunc;
     r.b       = obj;
     r.tid     = tid;
-    if (taken) SnapWrite(ring, seq, false, params, hint);
-    r.flags   = (open ? kTraceScopeRoot : 0) | (taken ? kTraceSnapTaken : 0) | (lone ? kTraceSnapLone : 0) |
-                (excluded ? kTraceSnapExcluded : 0) | ((ring >= 0 && !taken) ? kTraceSnapBudget : 0);
+    r.flags   = (open ? kTraceScopeRoot : 0) | (lone ? kTraceSnapLone : 0) | (excluded ? kTraceSnapExcluded : 0) |
+                ((ring >= 0 && !taken) ? kTraceSnapBudget : 0);
+    // The record and the token are whole before the copy: a copy that faults out of here (the copier is game memory)
+    // still leaves a call that returns and closes its scope, and a record that does not claim a copy.
     tok.entrySeq = seq;
     tok.gen      = gen;
     tok.traced   = true;
     tok.opened   = open;
-    if (taken && (hint.flags & kArmAfter)) {
-        tok.after = hint;
-        tok.after.ring = ring;
+    if (taken) {
+        SnapWrite(ring, seq, false, params, hint);
+        r.flags |= kTraceSnapTaken;
+        if (hint.flags & kArmAfter) {
+            tok.after = hint;
+            tok.after.ring = ring;
+        }
     }
 }
 
