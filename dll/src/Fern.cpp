@@ -1750,6 +1750,23 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
     t["record_size"] = sizeof(Linie::TraceRecord);
     t["ticked"]      = i.ticked;
     t["excluded"]    = i.excluded;
+    // [LIVEFUNCS-STEP2] What the trace follows: a scope by address or by name, or only the chosen calls (T11).
+    t["scoped"]       = i.scoped;
+    t["ticked_names"] = i.tickedNames;
+    t["snap_only"]    = i.snapOnly;
+    // Only when parameters were chosen: an absent key tells the UI no snapshot buffer exists (or the DLL predates it).
+    if (i.snap.allocated) {
+        json s;
+        s["allocated"]      = true;
+        s["bytes"]          = i.snap.bytes;
+        s["slots_per_ring"] = i.snap.slotsPerRing;
+        s["rings"]          = i.snap.rings;
+        s["per_ring_per_s"] = i.snap.perRingPerSec;
+        s["total_per_s"]    = i.snap.totalPerSec;
+        s["skipped_budget"] = i.snap.skippedBudget;
+        s["dropped_budget"] = i.snap.droppedBudget;
+        t["snap"] = s;
+    }
     return t;
 }
 
@@ -4199,6 +4216,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // allocated BEFORE the table starts, and a failed allocation refuses the whole Start, so the user picks
             // a smaller buffer instead of getting a recording without the trace they asked for (T1).
             json traceReply;
+            json namesReply;                          // [LIVEFUNCS-STEP2] what became of the names asked for
+            std::shared_ptr<Linie::ArmState> arms;    // the names this recording follows, installed with it
+            const auto startT0 = std::chrono::steady_clock::now();
             if (request.contains("trace") && request["trace"].is_object()) {
                 const json& t = request["trace"];
                 const uint64_t bytes = t.value("bytes", uint64_t(0));
@@ -4207,7 +4227,114 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
                 Linie::TraceConfig cfg;
                 cfg.bytes = bytes;
-                if (t.contains("ticked") && t["ticked"].is_array()) {
+                // [LIVEFUNCS-STEP2] Ticks and snapshot choices by NAME (T10). The previous trace goes first, whatever
+                // follows: every refusal below then leaves the game as the UI assumes, any Start having given it up.
+                // Nothing is classified and no layout is read here -- each key costs two GetString -- because every
+                // address is first-sight in the new recording and is armed on the hook when its call matches.
+                const bool namesTicked = t.contains("ticked_names") && t["ticked_names"].is_array();
+                const bool snapsAsked  = t.contains("snapshots") && t["snapshots"].is_object();
+                if (namesTicked || snapsAsked) {
+                    Linie::FreeTrace();
+                    std::vector<Linie::ArmSpec> specs;
+                    json refused = json::array();
+                    size_t tickAsked = 0, tickOk = 0, snapAsked = 0, snapOk = 0;
+                    // The keys of one item that still name what the UI showed: both halves rendered and compared.
+                    auto goodKeys = [](const json& item, std::string& cls, std::string& fn) {
+                        std::vector<Linie::NameKey> keys;
+                        cls = item.value("class", std::string());
+                        fn  = item.value("func", std::string());
+                        if (fn.empty() || !item.contains("keys") || !item["keys"].is_array()) return keys;
+                        for (const auto& k : item["keys"]) {
+                            if (!k.is_array() || k.size() != 4) continue;
+                            bool ints = true;
+                            for (const auto& v : k) ints = ints && v.is_number_integer();
+                            if (!ints) continue;
+                            const Linie::NameKey nk{ k[0].get<int32_t>(), k[1].get<int32_t>(),
+                                                     k[2].get<int32_t>(), k[3].get<int32_t>() };
+                            if (Ubel::NameKeyMatches(nk, cls, fn)) keys.push_back(nk);
+                        }
+                        return keys;
+                    };
+                    auto refuse = [&](const std::string& cls, const std::string& fn) {
+                        refused.push_back({ { "class", cls }, { "func", fn },
+                                            { "why", "no key names it in this process" } });
+                    };
+                    if (namesTicked) {
+                        for (const auto& item : t["ticked_names"]) {
+                            if (!item.is_object()) continue;
+                            ++tickAsked;
+                            std::string cls, fn;
+                            const auto keys = goodKeys(item, cls, fn);
+                            if (keys.empty()) { refuse(cls, fn); continue; }
+                            ++tickOk;
+                            for (const auto& k : keys) {
+                                Linie::ArmSpec sp;
+                                sp.key  = k;
+                                sp.tick = true;
+                                specs.push_back(sp);
+                            }
+                        }
+                    }
+                    if (snapsAsked) {
+                        const json& s = t["snapshots"];
+                        const uint64_t sb = s.value("bytes", uint64_t(0));
+                        if (sb < Linie::kSnapMinBytes || sb > Linie::kSnapMaxBytes || (sb & (sb - 1)) != 0) {
+                            return Renge::MakeError(id,
+                                "trace.snapshots.bytes must be a power of two from 8 MB to 128 MB").dump();
+                        }
+                        cfg.snapBytes = sb;
+                        // The budget words hold a count in 24 bits; Linie clamps too, the reply says what was used.
+                        auto budget = [&s](const char* key, uint32_t def) {
+                            const int64_t v = s.contains(key) && s[key].is_number_integer() ? s[key].get<int64_t>()
+                                                                                             : int64_t(def);
+                            return static_cast<uint32_t>(std::clamp<int64_t>(v, 1, 0xFFFFFF));
+                        };
+                        cfg.snapPerRingPerSec = budget("per_ring_per_s", cfg.snapPerRingPerSec);
+                        cfg.snapTotalPerSec   = budget("total_per_s", cfg.snapTotalPerSec);
+                        cfg.copier = &Macht::ReadBytesSafe;
+                        if (s.contains("funcs") && s["funcs"].is_array()) {
+                            for (const auto& item : s["funcs"]) {
+                                if (!item.is_object()) continue;
+                                ++snapAsked;
+                                std::string cls, fn;
+                                const auto keys = goodKeys(item, cls, fn);
+                                if (keys.empty()) { refuse(cls, fn); continue; }
+                                ++snapOk;
+                                const int32_t ring = static_cast<int32_t>(cfg.snapRingCaps.size());
+                                const int64_t ps = item.value("parms_size", int64_t(0));
+                                const uint32_t cap = Linie::RingCapFor(
+                                    static_cast<uint32_t>(std::clamp<int64_t>(ps, 0, 0xFFFF)));
+                                cfg.snapRingCaps.push_back(cap);
+                                for (const auto& k : keys) {
+                                    Linie::ArmSpec sp;
+                                    sp.key     = k;
+                                    sp.ring    = ring;
+                                    sp.ringCap = cap;
+                                    specs.push_back(sp);
+                                }
+                            }
+                        }
+                    }
+                    // Nothing left is a refusal, never a trace of every call; and ticks that all failed never quietly
+                    // become a snapshots-only trace -- the user asked for a scope.
+                    if (tickOk + snapOk == 0 || (tickAsked != 0 && tickOk == 0)) {
+                        Sein::Warn("PIPE:profile", "pe_profile_start: refused by name (%llu/%llu ticks, %llu/%llu "
+                                   "choices still named)", (unsigned long long)tickOk, (unsigned long long)tickAsked,
+                                   (unsigned long long)snapOk, (unsigned long long)snapAsked);
+                        return Renge::MakeError(id, tickAsked != 0 && tickOk == 0
+                            ? "None of the ticked functions is known by that name in this game any more, so the trace "
+                              "would follow none of them. Record once without the trace so the table names them again."
+                            : "None of the chosen functions is known by that name in this game any more. Record once "
+                              "without the trace so the table names them again.").dump();
+                    }
+                    cfg.arms = Linie::BuildArmState(std::move(specs), snapOk ? Linie::kArmLogCapacity : 0);
+                    cfg.arms->classNameReader = &Ubel::ReadObjectNameKey;
+                    cfg.scoped      = true;
+                    cfg.tickedNames = tickOk;
+                    namesReply = { { "ticks", tickOk }, { "chosen", snapOk }, { "refused", refused } };
+                }
+                // `ticked` addresses are for a DLL that predates names; one that reads ticked_names ignores them.
+                if (!namesTicked && t.contains("ticked") && t["ticked"].is_array()) {
                     for (const auto& v : t["ticked"]) {
                         uintptr_t a = 0;
                         if (v.is_string() && Renge::TryStrToAddr(v.get<std::string>(), a) && a) cfg.ticked.push_back(a);
@@ -4238,7 +4365,22 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
                 // T5 (b): the previous recording's per-frame functions, read before StartRecording clears its table.
                 if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
+                // Chosen functions and nothing ticked records only the chosen calls (T11).
+                cfg.snapOnly = !cfg.snapRingCaps.empty() && cfg.tickedNames == 0 && cfg.ticked.empty();
                 const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
+                if (st == Linie::TraceStartStatus::SnapTooSmall || st == Linie::TraceStartStatus::SnapNoMemory) {
+                    Sein::Warn("PIPE:profile", "pe_profile_start: snapshot buffer of %llu MB for %llu functions "
+                               "refused (%s)", (unsigned long long)(cfg.snapBytes >> 20),
+                               (unsigned long long)cfg.snapRingCaps.size(),
+                               st == Linie::TraceStartStatus::SnapNoMemory ? "no memory" : "too small");
+                    return Renge::MakeError(id, st == Linie::TraceStartStatus::SnapNoMemory
+                        ? "The game process could not spare " + std::to_string(cfg.snapBytes >> 20) +
+                          " MB for the snapshot buffer. Pick a smaller one and Start again."
+                        : "The snapshot buffer of " + std::to_string(cfg.snapBytes >> 20) + " MB cannot keep " +
+                          std::to_string(Linie::kSnapMinSlots) + " calls for each of the " +
+                          std::to_string(cfg.snapRingCaps.size()) +
+                          " chosen functions. Choose fewer functions, or a larger snapshot buffer.").dump();
+                }
                 if (st != Linie::TraceStartStatus::Ok) {
                     const char* why = st == Linie::TraceStartStatus::NoMemory ? "no memory"
                                     : st == Linie::TraceStartStatus::Busy     ? "busy" : "too small";
@@ -4256,17 +4398,26 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
                 traceReply = TraceInfoToJson(Linie::GetTraceInfo());
                 if (tickedDropped) traceReply["ticked_dropped"] = tickedDropped;
+                if (!namesReply.is_null()) traceReply["names"] = namesReply;
+                arms = cfg.arms;
             } else {
                 // A recording without the trace leaves no earlier trace's buffer behind in the game.
                 Linie::FreeTrace();
             }
 
             Ubel::SetFunctionCapture(captureSetup);
-            Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey);
-            Sein::Info("PIPE:profile", "pe_profile_start: recording begun (hook_active=%d, trace=%llu MB, ticked=%llu, excluded=%llu)",
-                       hookActive ? 1 : 0,
+            Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey, arms);
+            const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                std::chrono::steady_clock::now() - startT0).count();
+            Sein::Info("PIPE:profile", "pe_profile_start: recording begun in %lld ms (hook_active=%d, trace=%llu MB, "
+                       "ticked=%llu, by name=%llu, chosen=%llu, snapshot buffer=%llu MB, excluded=%llu)",
+                       startMs, hookActive ? 1 : 0,
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["bytes"].get<uint64_t>() >> 20),
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["ticked"].get<uint64_t>()),
+                       (unsigned long long)(namesReply.is_null() ? 0 : namesReply["ticks"].get<uint64_t>()),
+                       (unsigned long long)(namesReply.is_null() ? 0 : namesReply["chosen"].get<uint64_t>()),
+                       (unsigned long long)(traceReply.is_null() || !traceReply.contains("snap") ? 0
+                                            : traceReply["snap"]["bytes"].get<uint64_t>() >> 20),
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["excluded"].get<uint64_t>()));
             json data;
             data["recording"]   = true;
