@@ -8709,6 +8709,88 @@ int main() {
     }
 
     {
+        blk("LIVEFUNCS-STEP2: a parameter copy decoded -- objects, weak and soft pointers, strings and containers");
+        // docs/live-funcs-step2-items.md, B7. Pointers name what is there NOW (marked so); string and container data
+        // was not copied, only their headers. 0x1000 is a live Pawn_0; weak {5, 7} resolves to it.
+        using SM = Ubel::SnapMark;
+        auto field = [](const char* name, const char* type, int32_t off, int32_t size) {
+            Ubel::ParamField f; f.name = name; f.typeName = type; f.offset = off; f.size = size; return f;
+        };
+        Ubel::ParamLayout L;
+        L.params = { field("Who", "ObjectProperty", 0x00, 8), field("Gone", "ObjectProperty", 0x08, 8),
+                     field("Null", "ObjectProperty", 0x10, 8), field("Weak", "WeakObjectProperty", 0x18, 8),
+                     field("WeakStale", "WeakObjectProperty", 0x20, 8), field("Soft", "SoftObjectProperty", 0x28, 0x30),
+                     field("Lazy", "LazyObjectProperty", 0x58, 0x1C), field("S", "StrProperty", 0x78, 16),
+                     field("Arr", "ArrayProperty", 0x88, 16), field("Map", "MapProperty", 0x98, 0x50),
+                     field("T", "TextProperty", 0xE8, 0x18), field("Dg", "DelegateProperty", 0x100, 16),
+                     field("SD", "MulticastSparseDelegateProperty", 0x110, 1),
+                     field("MD", "MulticastInlineDelegateProperty", 0x118, 16), field("Iface", "InterfaceProperty", 0x128, 16) };
+        auto opt = field("OptT", "OptionalProperty", 0x138, 8);
+        opt.optLayout = static_cast<uint8_t>(Ubel::OptionalLayout::TrailingFlag); opt.optInnerType = "IntProperty"; opt.optInnerSize = 4;
+        L.params.push_back(opt);
+        auto optU = opt; optU.name = "OptU"; optU.offset = 0x140; L.params.push_back(optU);
+        auto optN = field("OptN", "OptionalProperty", 0x148, 8);
+        optN.optLayout = static_cast<uint8_t>(Ubel::OptionalLayout::Intrusive); optN.optInnerType = "NameProperty"; optN.optInnerSize = 8;
+        L.params.push_back(optN);
+
+        alignas(8) uint8_t b[0x150] = {};
+        auto put64 = [&](int off, uint64_t v) { memcpy(b + off, &v, 8); };
+        auto put32 = [&](int off, int32_t v) { memcpy(b + off, &v, 4); };
+        put64(0x00, 0x1000); put64(0x08, 0x2000);                               // live, gone; Null stays 0
+        put32(0x18, 5); put32(0x1C, 7); put32(0x20, 6); put32(0x24, 9);         // weak: resolves; stale
+        put32(0x28 + 0x10, 31); put32(0x28 + 0x18, 32);                         // soft: package and asset FNames
+        put32(0x58 + 0x0C, 1); put32(0x58 + 0x10, 2); put32(0x58 + 0x14, 3); put32(0x58 + 0x18, 4);   // lazy GUID
+        put64(0x78, 0xABC0); put32(0x80, 5);                                    // FString header: Num 5
+        put64(0x88, 0xDEF0); put32(0x90, 3);                                    // TArray: Num 3
+        put64(0x98, 0x5550); put32(0xA0, 4); put32(0x98 + 0x34, 1);             // TMap: 4 slots, 1 free
+        put32(0x100, 5); put32(0x104, 7); put32(0x108, 33);                     // delegate: weak to Pawn_0, OnHit
+        b[0x110] = 1;
+        put64(0x118, 0x7770); put32(0x120, 2);
+        put64(0x128, 0x1000);                                                   // interface: its object half
+        put32(0x138, 42); b[0x13C] = 1;                                         // TOptional<int32>: set
+        put32(0x140, 9);  b[0x144] = 0;                                         //   ...unset
+        put32(0x148, -1);                                                       // TOptional<FName>: index ~0u, unset
+
+        Ubel::SnapDecodeCtx ctx;
+        ctx.fname = [](int32_t i, int32_t) -> std::string {
+            return i == 31 ? "/Game/Maps/Arena" : i == 32 ? "Arena" : i == 33 ? "OnHit" : "None";
+        };
+        ctx.object = [](uintptr_t p, std::string& name, std::string& cls) -> bool {
+            if (p != 0x1000) return false;
+            name = "Pawn_0"; cls = "Pawn_C"; return true;
+        };
+        ctx.weak = [](int32_t idx, int32_t serial) -> uintptr_t { return (idx == 5 && serial == 7) ? 0x1000 : 0; };
+        ctx.softPathOffset = 0x10; ctx.softTopLevel = 1; ctx.fnameSize = 8; ctx.lazyGuidOffset = 0x0C;
+
+        const auto v = Ubel::DecodeParamSnapshot(L, b, sizeof b, false, ctx);
+        const bool shaped = v.size() == L.params.size();
+        check("one value per parameter", shaped, std::to_string(v.size()).c_str());
+        if (shaped) {
+            auto is = [&](size_t i, const std::string& text, SM mark) { return v[i].text == text && v[i].mark == mark; };
+            check("an object: its name and class now", is(0, "Pawn_0 (Pawn_C)", SM::Now), v[0].text.c_str());
+            check("an address with no live object now", is(1, "0x2000 (no longer a live object)", SM::Gone), v[1].text.c_str());
+            check("a null object", is(2, "null", SM::Exact), v[2].text.c_str());
+            check("a weak pointer that resolves", is(3, "Pawn_0 (Pawn_C)", SM::Now), v[3].text.c_str());
+            check("...and one that no longer does", is(4, "null (stale)", SM::Gone), v[4].text.c_str());
+            check("a soft pointer: its path, from FNames, which never go stale", is(5, "/Game/Maps/Arena.Arena", SM::Exact),
+                  v[5].text.c_str());
+            check("a lazy pointer: its GUID", is(6, "{00000001-00000002-00000003-00000004}", SM::Exact), v[6].text.c_str());
+            check("a string: its header only", is(7, "Num=5 (Data 0xABC0)", SM::Header), v[7].text.c_str());
+            check("an array: its header only", is(8, "Num=3 (Data 0xDEF0)", SM::Header), v[8].text.c_str());
+            check("a map: its element count, the free slots taken off", is(9, "Num=3 (Data 0x5550)", SM::Header),
+                  v[9].text.c_str());
+            check("an empty text", is(10, "(empty)", SM::Header), v[10].text.c_str());
+            check("a delegate: through the shared binding text", is(11, "Pawn_0::OnHit", SM::Now), v[11].text.c_str());
+            check("a sparse delegate's byte", is(12, "sparse (1)", SM::Exact), v[12].text.c_str());
+            check("a multicast delegate: its list's header", is(13, "Num=2 (Data 0x7770)", SM::Header), v[13].text.c_str());
+            check("an interface: its object half", is(14, "Pawn_0 (Pawn_C)", SM::Now), v[14].text.c_str());
+            check("a set TOptional: its value", is(15, "42", SM::Exact), v[15].text.c_str());
+            check("...an unset one", is(16, "unset", SM::Exact), v[16].text.c_str());
+            check("...an intrusive one, unset by its type's sentinel", is(17, "unset", SM::Exact), v[17].text.c_str());
+        }
+    }
+
+    {
         blk("LIVEFUNCS-STEP2: a function's name key -- read with loads only, checked against the names the UI shows");
         // docs/live-funcs-step2-items.md, B2 (T10). ⛔ POOL-FAKING: its own UE4-style pool, first (the TMAPGEOM header).
         static uint8_t nkEntry[24][0x40] = {};

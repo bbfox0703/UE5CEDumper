@@ -529,6 +529,14 @@ struct SnapValue {
 struct SnapDecodeCtx {
     std::string (*fname)(int32_t index, int32_t number) = nullptr;
     bool (*object)(uintptr_t ptr, std::string& name, std::string& className) = nullptr;
+    uintptr_t (*weak)(int32_t objectIndex, int32_t serial) = nullptr;            // ResolveWeakObjectPtr
+    const char* (*garbageTag)(uintptr_t target, int32_t objectIndex) = nullptr;  // WeakTargetGarbageTag
+    // The soft and lazy pointers' shapes; -1 / 0 ask the engine (SoftPathOffset, SoftPathIsTopLevel, SizeofFName,
+    // LazyGuidOffset), a test sets them.
+    int softPathOffset = -1;
+    int softTopLevel   = -1;
+    int fnameSize      = 0;
+    int lazyGuidOffset = -1;
 };
 // One value per parameter of `layout`, in order. `after`: the copy taken when the call returned, which carries the
 // out parameters and the return value -- the rest read Missing; an entry copy reads the return value Missing.
