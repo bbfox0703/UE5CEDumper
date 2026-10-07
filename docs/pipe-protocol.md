@@ -582,7 +582,9 @@ Response for `pe_profile_get`:
                              // is what was read at its FIRST call (is_widget too: a dead
                              // class cannot be asked); func_addr is dead -- never send it
                              // back (a trace tick, a disassembly).
-      "recycled": true }     // with unloaded: another function took the address since
+      "recycled": true,      // with unloaded: another function took the address since
+      "reused": true }       // build 3634+, only when true: another function took this address DURING the
+                             // recording -- the count is both functions', the names the latest one's
     // ... ranked by count desc, capped at `limit`
   ],
   // build 3634+, always sent; absent = an older DLL. Over the whole table, not the page.
@@ -626,7 +628,9 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 // A function is live while its address still holds it under the name the recording read at its first call. One
 // that does not (build 3634+) is live:false with "unloaded": true ("recycled": true as well when another function
 // took the address) and the names and flags read at that first call. live:false with no names: never read (traced
-// before the table started or after it stopped) and gone. [TRACE-UNLOADED-NAMES]
+// before the table started or after it stopped) and gone. "reused": true (either state): another function used the
+// address during the recording, so the calls at it are both functions', named after the one read last.
+// [TRACE-UNLOADED-NAMES]
 { "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
 // Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves. gen
