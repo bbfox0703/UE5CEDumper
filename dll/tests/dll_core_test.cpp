@@ -7199,21 +7199,29 @@ int main() {
         cap.captured = true;
         cap.nameIndex = 21;
         cap.nameNumber = 3;
-        const Ubel::NameWitness same{ 21, 3 }, other{ 40, 0 };
+        cap.classIndex = 22;
+        const Ubel::NameWitness same{ 21, 3 }, other{ 40, 0 }, sameCls{ 22, 0 }, otherCls{ 45, 0 }, noCls{};
         using FS = Ubel::FuncState;
-        check("classify: still in its slot, its name unchanged -> live",
-              Ubel::ClassifyFunctionState(true, true, same, cap) == FS::Live);
+        check("classify: still in its slot, its name and its class's unchanged -> live",
+              Ubel::ClassifyFunctionState(true, true, same, sameCls, cap) == FS::Live);
         check("...still in its slot under another name -> recycled: another function took the address",
-              Ubel::ClassifyFunctionState(true, true, other, cap) == FS::Recycled);
+              Ubel::ClassifyFunctionState(true, true, other, sameCls, cap) == FS::Recycled);
+        // Review DLL-1: every Blueprint class has its own Construct, ReceiveBeginPlay..., all one FName.
+        check("...the same name in ANOTHER class -> recycled too",
+              Ubel::ClassifyFunctionState(true, true, same, otherCls, cap) == FS::Recycled);
+        check("...a class that cannot be read now, or was not read then, is not a difference",
+              Ubel::ClassifyFunctionState(true, true, same, noCls, cap) == FS::Live &&
+              Ubel::ClassifyFunctionState(true, true, same, otherCls,
+                                          [&] { auto c = cap; c.classIndex = 0; return c; }()) == FS::Live);
         check("...gone from its slot -> unloaded, named from what was read",
-              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, cap) == FS::Unloaded);
+              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, noCls, cap) == FS::Unloaded);
         check("...gone and never read -> unnamed",
-              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, Linie::FuncIdentity{}) == FS::Unnamed);
+              Ubel::ClassifyFunctionState(false, false, Ubel::NameWitness{}, noCls, Linie::FuncIdentity{}) == FS::Unnamed);
         check("...never read but still there -> live, named now as before",
-              Ubel::ClassifyFunctionState(true, true, other, Linie::FuncIdentity{}) == FS::Live);
+              Ubel::ClassifyFunctionState(true, true, other, otherCls, Linie::FuncIdentity{}) == FS::Live);
         check("...in its slot but its name unreadable -> unloaded when it was read, unnamed when not",
-              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, cap) == FS::Unloaded &&
-              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, Linie::FuncIdentity{}) == FS::Unnamed);
+              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, noCls, cap) == FS::Unloaded &&
+              Ubel::ClassifyFunctionState(true, false, Ubel::NameWitness{}, noCls, Linie::FuncIdentity{}) == FS::Unnamed);
 
         // What the read costs, printed and not checked: the steady state with a reader installed against none, and
         // one first sight through Ubel's reader.
