@@ -837,6 +837,16 @@ properties), so count distinct addresses; and the expected answer came from `Rea
 should answer. (2) A probe around a slot is bounded by position (the object's own bytes, aligned) and stops once the
 slot is proven; a validator on the result is not a bound. (3) A verification tally counts each object once.
 
+### 1.al A timing names its machine -- the CPU first, and whether it is a laptop
+
+A nanosecond or millisecond figure is that CPU's: its single-core speed and its cache decide a hot path's cost, and
+this project is measured on two PCs that differ. "On this PC" does not say which. Write the CPU model beside the
+figure (the maintainer asked for it on 2026-10-07, for the call trace's per-call costs); add the memory when the
+figure is a bulk copy or a load, and the GPU only for a game's frame rate. A laptop part also moves with its power
+plan and boost: the same benchmark read 31.8 and 33.8 ns in two runs on the same machine, so a difference of a few
+percent between runs is not a finding. dll_core_test's benchmarks print the CPU brand (`__cpuid`) before their
+first line, so a pasted result carries it.
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an

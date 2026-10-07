@@ -123,12 +123,18 @@ UFunction-level stack.
   cost per call does not depend on the buffer size; what grows is the memory held in the game process and
   everything that happens after Stop.
 - **Measured 2026-10-07, with step 1** (details under "Step 1 built"): the cost per call (129 ns traced, 21 ns
-  outside a ticked scope, this PC), a fixture's call rate (121 calls/s on DumperTest 5.4 at 15 fps; 1,040–1,670 on
+  outside a ticked scope, on the machine below), a fixture's call rate (121 calls/s on DumperTest 5.4 at 15 fps; 1,040–1,670 on
   DumperTest58 uncapped), and a traced Start's cost (5–7 ms at 32 MB, 17–26 at 128, 67–150 at 512).
   **Avowed, the same day** (a busy UE 5.3 game; "Step 1 built", "Avowed"): 9,755–14,454 calls/s, so 128 MB keeps
   about 2 minutes and 512 MB about 8. After Stop, a full 128 MB ring (1.68 million calls) loads in the UI in 11.5 s
   and a full 512 MB one (6.71 million) in 44 s, almost all of it the read; the UI's memory peaks at 1.3 and 3.25 GB.
   **Not measured:** what one stack capture costs (step 3).
+- **The machine every figure here was measured on** (the maintainer's CPU-Z / GPU-Z, 2026-10-07): **AMD Ryzen 9
+  9955HX3D** (Fire Range, 16 cores / 32 threads, a laptop part at 55 W, L3 96 + 32 MB), **DDR5-5600 64 GB** (CL46),
+  NVIDIA RTX 5090 Laptop 24 GB. The per-call costs are CPU and cache figures; the GPU sets only the games' frame
+  rate (Avowed ran at about 48-53 fps). A laptop's power plan and boost move them by a few percent from run to run
+  (the table's bare cost read 31.8 and 33.8 ns in two runs). The project's other PC differs, so a figure without its
+  machine is not comparable; dll_core_test's benchmarks print the CPU since 2026-10-07.
 
 ## Design review, 2026-10-06 (TR1–TR7)
 
