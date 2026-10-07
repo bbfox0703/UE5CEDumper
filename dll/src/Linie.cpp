@@ -364,6 +364,9 @@ struct TraceState {
     std::vector<uintptr_t> distinctObjs;
     std::vector<FuncIdentity> distinctIdents;   // parallel to distinctFuncs (TRACE-UNLOADED-NAMES)
     std::shared_ptr<ArmState> arms;             // [LIVEFUNCS-STEP2] the names its recording follows
+    bool   scoped      = false;                 // fixed at Start from what was asked (TraceConfig::scoped)
+    size_t tickedNames = 0;
+    bool   snapOnly    = false;
 };
 
 TraceState            g_trace;
@@ -424,6 +427,8 @@ bool FreeTraceLocked() {
     g_trace.next.store(0, std::memory_order_relaxed);
     g_trace.ticked.Build({});
     g_trace.exclude.Build({});
+    g_trace.scoped = g_trace.snapOnly = false;
+    g_trace.tickedNames = 0;
     g_trace.distinctReady = false;
     std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
     std::vector<uintptr_t>().swap(g_trace.distinctObjs);
@@ -500,6 +505,9 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
     g_trace.distinctReady = false;
     g_trace.arms = cfg.arms;
     if (g_trace.arms) g_trace.arms->gen = g_trace.gen;   // before any hook can read a hint of this recording
+    g_trace.scoped      = cfg.scoped || !cfg.ticked.empty();
+    g_trace.tickedNames = cfg.tickedNames;
+    g_trace.snapOnly    = cfg.snapOnly;
     // Publishes everything above to a hook that reads the flag inside its section (seq_cst is also a release).
     g_tracing.store(true, std::memory_order_seq_cst);
     return TraceStartStatus::Ok;
@@ -517,13 +525,16 @@ void FreeTrace() {
 
 void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok, uintptr_t params,
                 const ArmHint& hint) {
-    (void)params; (void)hint;
+    (void)params;
     tok = TraceToken{};
     InflightGuard inflight;
     if (!g_tracing.load(std::memory_order_seq_cst)) return;
     const uint64_t gen = g_trace.gen;
+    // [LIVEFUNCS-STEP2] The table's read of this same call armed it, when the hint is this recording's (gens start at
+    // 1, so a default hint never is).
+    const bool named = hint.gen == gen;
     bool open = false;
-    if (!g_trace.ticked.Empty()) {
+    if (g_trace.scoped) {
         if (t_scopeGen != gen) {
             t_scopeSp = 0;          // a scope left open by an earlier recording is not this one's
             t_scopeGen = gen;
@@ -531,7 +542,7 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
             t_scopeSp = 0;          // called from at or above the root's frame: the root is gone (unwound)
         }
         if (t_scopeSp == 0) {
-            if (!g_trace.ticked.Contains(ufunc)) return;
+            if (!(named && (hint.flags & kArmTick)) && !g_trace.ticked.Contains(ufunc)) return;
             t_scopeSp = sp;
             open = true;
         }
@@ -582,6 +593,9 @@ TraceInfo InfoLocked() {
     i.qpcFreq    = QpcFreq();
     i.ticked     = g_trace.ticked.Size();
     i.excluded   = g_trace.exclude.Size();
+    i.scoped     = g_trace.scoped;
+    i.tickedNames = g_trace.tickedNames;
+    i.snapOnly   = g_trace.snapOnly;
     return i;
 }
 }  // namespace

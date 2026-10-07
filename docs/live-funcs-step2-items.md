@@ -11,7 +11,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | N2 | DLL | Linie: arm upkeep on a key change (disarm, reload = new arm), the class FName checked for armed addresses only, a failed key read | N1 | ✅ 388b7ee5 red |
 | N3 | DLL | Linie: arm-log capacity and per-key counts (arms_full, distinct addresses, never called) via ArmsSummary | N2 | ✅ 18669e41 red |
 | N4 | DLL | Linie: TakePendingArms / PublishArmLayout / SealArms / CopyArms; StartTrace stamps the gen; the arm state is freed with the trace | N3 | ✅ 659ea1e7 red |
-| T1 | DLL | Linie: the trace's scope by name (TraceEnter takes the hint; TraceConfig.scoped; TraceInfo.scoped / tickedNames / snapOnly) | N1 | ⬜ |
+| T1 | DLL | Linie: the trace's scope by name (TraceEnter takes the hint; TraceConfig.scoped; TraceInfo.scoped / tickedNames / snapOnly) | N1 | ✅ d3c11335 red |
 | S1 | DLL | Linie: snapshot rings per choice in one allocation (same K, cap per ring), TraceInfo.snap, SnapTooSmall (with the 64n guard), SnapNoMemory, freed with the trace; SnapRings() introduced here | T1 | ⬜ |
 | S2 | DLL | Linie: the entry slot (header {seqKind, entrySeq, len, flags, arm}), kTraceSnapTaken, CopySnaps; ring bound; copy clamped; step-1 equivalence | S1 | ⬜ |
 | S3 | DLL | Linie: the after-return slot in TraceReturn(params) when the hint has kArmAfter, under the gen check | S2 | ⬜ |
