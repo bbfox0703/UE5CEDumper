@@ -562,9 +562,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private string TraceStopNote()
     {
         var i = LastTraceInfo;
-        if (i == null || !i.Allocated) return Res.Get("str.LF.Trace.NoneKept");
-        if (!i.Quiesced) return Res.Get("str.LF.Trace.NotQuiesced");
+        // No trace object at all is a DLL without the trace. One that wrote nothing is reported empty, and the DLL has
+        // already given its ring back (review DLL-5), so it reads as not allocated.
+        if (i == null) return Res.Get("str.LF.Trace.NoneKept");
         if (i.Written == 0) return Res.Get("str.LF.Trace.Empty");
+        if (!i.Quiesced) return Res.Get("str.LF.Trace.NotQuiesced");
+        if (!i.Allocated) return Res.Get("str.LF.Trace.NoneKept");
         return i.FirstValid > 0
             ? Res.Format("str.LF.Trace.KeptLast", i.Kept, i.Written)
             : Res.Format("str.LF.Trace.KeptAll", i.Kept);

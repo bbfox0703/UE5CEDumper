@@ -4286,13 +4286,17 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             Linie::StopRecording();   // idempotent; counts retained for pe_profile_get
             // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
             Linie::StopTrace();
-            const Linie::TraceInfo ti = Linie::GetTraceInfo();
+            Linie::TraceInfo ti = Linie::GetTraceInfo();
+            // A trace that wrote nothing has nothing to read: give its ring back now instead of leaving it in the game
+            // until the next Start (review DLL-5). The reply still reports it, empty, so the UI can say so.
+            const bool hadTrace = ti.allocated;
+            if (hadTrace && Linie::ReleaseIfEmpty()) ti.allocated = false;
             Sein::Info("PIPE:profile", "pe_profile_stop: recording frozen (trace: %llu records written, %llu kept%s)",
                        (unsigned long long)ti.written, (unsigned long long)(ti.written - ti.firstValid),
                        ti.quiesced ? "" : ", NOT quiesced: the ring will not be read");
             json data;
             data["recording"] = false;
-            if (ti.allocated) data["trace"] = TraceInfoToJson(ti);
+            if (hadTrace) data["trace"] = TraceInfoToJson(ti);
             return Renge::MakeResponse(id, data).dump();
         }
 
