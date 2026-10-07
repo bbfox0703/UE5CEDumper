@@ -7207,6 +7207,22 @@ int main() {
         check("...and when the first one comes back", statOf(0xF0).ident.reused);
         Linie::Reset();
 
+        // Review UI-1: a tick is an address from an earlier fetch, and the function there may have been unloaded since
+        // without the UI learning it (its row cut by the fetch limit). pe_profile_start checks the ticks against the
+        // previous recording's table -- still there, since StartRecording has not cleared it yet.
+        Linie::StartRecording(stub);
+        Linie::RecordCall(0xA, 7000);
+        Linie::RecordCall(0xB, 7001);
+        Linie::StopRecording();
+        std::vector<Linie::FuncIdentity> tids;
+        Linie::IdentitiesOf({ 0xA, 0xC, 0xB }, tids);
+        check("IdentitiesOf: the table's identity for each address asked, in order; none for one it never saw",
+              tids.size() == 3 && tids[0].captured && tids[0].nameIndex == 0xA && !tids[1].captured &&
+              tids[2].captured && tids[2].nameIndex == 0xB, num(tids.size()).c_str());
+        Linie::Reset();
+        Linie::IdentitiesOf({ 0xA }, tids);
+        check("...and none from an empty table", tids.size() == 1 && !tids[0].captured);
+
         // Ubel's reader: loads only, from what Fern installs at Start. A fake UFunction whose Outer is a class two
         // steps below a widget base, and one whose class derives from nothing.
         static uint8_t fFn[0x100] = {}, fFn2[0x100] = {}, fCls[0x100] = {}, fMid[0x100] = {}, fBase[0x100] = {},
