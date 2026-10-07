@@ -128,6 +128,16 @@
               BorderThickness="1" BorderBrush="#4EC9B0"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
+    <!-- [TRACE-UI-LOAD-MEMORY] D3: what a buffer that fills costs, from the buffer alone; above the memory free now the
+         same line turns orange: a warning, never a refusal. Two TextBlocks, so no converter. -->
+    <Panel DockPanel.Dock="Top" Margin="0,0,0,4" IsVisible="{Binding TraceAvailable}">
+      <TextBlock Text="{Binding TraceMemoryEstimate}" IsVisible="{Binding !TraceMemoryOverAvailable}"
+                 Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Memory}"/>
+      <TextBlock Text="{Binding TraceMemoryEstimate}" IsVisible="{Binding TraceMemoryOverAvailable}"
+                 Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
+                 ToolTip.Tip="{StaticResource str.Tip.LF.Trace.Memory}"/>
+    </Panel>
 
     <!-- Baseline diff row: isolate the action's function from per-frame Tick noise. -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,2"

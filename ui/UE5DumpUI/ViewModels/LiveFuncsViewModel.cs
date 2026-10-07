@@ -294,6 +294,39 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
     }
 
+    // [TRACE-UI-LOAD-MEMORY] D3: what a buffer that fills costs, from the buffer alone, so it shows before any
+    // recording. The game commits the whole ring at Start and holds it until this UI has read it. While this UI loads
+    // it holds the window (the ring's own size), the trace's columns (73 of every 80 bytes a call takes in the ring)
+    // and the tree's state, plus one page's reply in flight; after the load, only the columns and the tree. The
+    // factors are the load's structure after D2; the live check of 2026-10-07 is what they are measured against.
+    internal const double TraceUiPeakFactor = 2.0;
+    internal const int    TraceUiPageMb     = 45;
+    public int TraceGameMb   => TraceBufferMb;
+    public int TraceUiPeakMb => (int)(TraceBufferMb * TraceUiPeakFactor) + TraceUiPageMb;
+    public int TraceUiHeldMb => TraceBufferMb;
+    /// <summary>Physical memory free when last asked (MB); long.MaxValue when unknown.</summary>
+    private long _availableMb = long.MaxValue;
+    /// <summary>D3: above the memory free now, the estimate is a warning; Start still runs.</summary>
+    public bool TraceMemoryOverAvailable => _availableMb != long.MaxValue && TraceGameMb + TraceUiPeakMb > _availableMb;
+    public string TraceMemoryEstimate => Res.Format(
+        TraceMemoryOverAvailable ? "str.LF.Trace.MemoryOver" : "str.LF.Trace.Memory",
+        MemText(TraceGameMb), MemText(TraceUiPeakMb), MemText(TraceUiHeldMb), MemText(_availableMb));
+
+    private static string MemText(long mb) => mb < 1024 ? Res.Format("str.LF.Trace.BufferMb", mb)
+                                                        : Res.Format("str.LF.Trace.Gb", mb / 1024.0);
+
+    /// <summary>Read the free memory again: when the slider moves, when Trace is ticked, and at Start -- memory moves
+    /// while the slider waits.</summary>
+    private void RefreshAvailableMemory()
+    {
+        long bytes = _platform?.GetAvailablePhysicalMemoryBytes() ?? long.MaxValue;
+        _availableMb = bytes == long.MaxValue ? long.MaxValue : bytes >> 20;
+        OnPropertyChanged(nameof(TraceMemoryOverAvailable));
+        OnPropertyChanged(nameof(TraceMemoryEstimate));
+    }
+
+    partial void OnTraceEnabledChanged(bool value) => RefreshAvailableMemory();
+
     /// <summary>The ticked functions, keyed by Class::Func (stable across fetches) with every address the last fetch
     /// saw under that name, which is what the DLL matches on: a class is named by its short name, so two classes in
     /// different folders can share a key, and a tick by name traces both. An address is good only within the
@@ -338,6 +371,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
         _experimentalGate = experimentalGate;
         if (_experimentalGate != null) _experimentalGate.Changed += (_, _) => OnPropertyChanged(nameof(TraceAvailable));
+        RefreshAvailableMemory();
     }
 
     partial void OnTraceBufferExponentChanged(int value)
@@ -351,6 +385,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(TraceBufferMb));
         OnPropertyChanged(nameof(TraceBufferText));
         OnPropertyChanged(nameof(TraceEstimate));
+        OnPropertyChanged(nameof(TraceGameMb));
+        OnPropertyChanged(nameof(TraceUiPeakMb));
+        OnPropertyChanged(nameof(TraceUiHeldMb));
+        RefreshAvailableMemory();
     }
 
     /// <summary>Tick or untick a row for the trace. Not while recording: the ticks a recording traces are the ones
@@ -530,6 +568,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 StatusText = Res.Get(refusal.Value);
                 return;
             }
+            if (trace != null) RefreshAvailableMemory();
             // Any Start gives up the previous trace: the DLL frees it before it tries a new buffer, so even a refused
             // Start leaves nothing to open (review DLL-4).
             HasTraceToOpen = false;
@@ -552,6 +591,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     : trace.Ticked.Count > 0
                         ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb, trace.Ticked.Count)
                         : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
+                // D3: a warning, never a refusal -- the memory is the user's call (T1).
+                if (start.Trace != null && TraceMemoryOverAvailable)
+                    StatusText += " " + Res.Format("str.LF.Trace.MemoryWarnStart", MemText(_availableMb));
             }
             _log.Info($"LivePEProfiler: start (hook_active={start.HookActive}, trace={(trace == null ? "off" : $"{TraceBufferMb} MB, {trace.Ticked.Count} ticked, exclude_per_frame={trace.ExcludePerFrame}")})");
         }
