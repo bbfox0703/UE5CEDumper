@@ -155,9 +155,14 @@ public partial class CallTraceViewModel : ViewModelBase
 
             ulong kept = info.Written - info.FirstValid;
             reclaim = true;   // a window is about to be made: whatever happens next, collect it afterwards
+            // Let go of the trace on screen first, and collect it: held beside the new window and columns it cost
+            // ~0.4 GB of a 3.77 GB peak (a 512 MB load after a 128 MB one, build 3634). A read dropped after this
+            // leaves no trace on screen; its status says why.
+            DropShownTrace();
+            CollectPageGarbage();
             _loadStartWs = _loadPeakWs = Environment.WorkingSet;
             _loadStartHeap = GC.GetTotalMemory(false);
-            CollectionsDuringLastLoad = 0;
+            CollectionsDuringLastLoad = 0;   // the read's own, from here
             var read = await ReadAndBuildAsync(info, kept, ct);
             if (read.Trace == null)
             {
@@ -273,6 +278,21 @@ public partial class CallTraceViewModel : ViewModelBase
     }
 
     private void NoteLoadPeak() => _loadPeakWs = Math.Max(_loadPeakWs, Environment.WorkingSet);
+
+    /// <summary>Nothing on screen holds the shown trace any more: its rows, the filter's matches, the detail.</summary>
+    private void DropShownTrace()
+    {
+        if (_trace == null) return;
+        _trace = null;
+        _tree = null;
+        _matches = Array.Empty<int>();
+        IsFiltered = false;
+        SelectedIndex = -1;
+        Rows = Array.Empty<CallTraceRow>();
+        DetailText = "";
+        HasTrace = false;
+        ShownIsOlder = false;
+    }
 
     /// <summary>[TRACE-UI-LOAD-MEMORY] A load leaves its window and every page's reply behind, and nothing makes the GC
     /// run after it: on Avowed a 512 MB load held the working set at 3.25 GB a minute later (2026-10-07). One blocking,
