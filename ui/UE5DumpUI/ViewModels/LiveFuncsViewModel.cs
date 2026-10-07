@@ -494,12 +494,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 StatusText = Res.Get("str.LF.Trace.StartCancelled");
                 return;
             }
+            // Any Start gives up the previous trace: the DLL frees it before it tries a new buffer, so even a refused
+            // Start leaves nothing to open (review DLL-4).
+            HasTraceToOpen = false;
+            LastTraceInfo = null;
             var start = trace == null ? await _dump.PeProfileStartAsync() : await _dump.PeProfileStartAsync(trace);
             _recordingFetchLimit = FetchLimit;
             _recordingHidePerFrame = HidePerFrame;
             _captureMinCalls = MinCalls;
-            _recordingTrace = trace != null;
-            HasTraceToOpen = false;
+            // Traced only when the DLL says it armed the trace: an older one ignores the request and records plain.
+            _recordingTrace = trace != null && start.Trace != null;
             IsRecording = true;
             StatusText = start.HookActive
                 ? "Recording… ALT-TAB to the game, perform the action (open shop / dash), then click Stop."
@@ -508,9 +512,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     : start.Detail;   // self-contained reason from the DLL
             if (trace != null && start.HookActive)
             {
-                StatusText += " " + (trace.Ticked.Count > 0
-                    ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb, trace.Ticked.Count)
-                    : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
+                StatusText += " " + (start.Trace == null ? Res.Get("str.LF.Trace.NotArmed")
+                    : trace.Ticked.Count > 0
+                        ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb, trace.Ticked.Count)
+                        : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
             }
             _log.Info($"LivePEProfiler: start (hook_active={start.HookActive}, trace={(trace == null ? "off" : $"{TraceBufferMb} MB, {trace.Ticked.Count} ticked, exclude_per_frame={trace.ExcludePerFrame}")})");
         }
@@ -863,10 +868,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
         IsRecording = false;
         bool traced = _recordingTrace;
         _recordingTrace = false;
-        try { NoteStoppedTrace(traced, await _dump.PeProfileStopWithTraceAsync()); }
+        bool stopped = false;
+        try
+        {
+            NoteStoppedTrace(traced, await _dump.PeProfileStopWithTraceAsync());
+            stopped = true;
+        }
         catch (Exception ex) { _log.Error("LivePEProfiler auto-stop failed", ex); }
         StatusText = "Recording auto-stopped (left the tab). Re-open and Refresh to see counts.";
-        if (traced) StatusText += " " + TraceStopNote();
+        // Only a stop that went through says anything about this recording's trace.
+        if (traced && stopped) StatusText += " " + TraceStopNote();
     }
 
     /// <summary>Reset the recording UI state on pipe disconnect. The DLL (Linie) already

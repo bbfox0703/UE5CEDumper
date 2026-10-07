@@ -1173,6 +1173,7 @@
     <sys:String x:Key="str.LF.Trace.StartCancelled">Start cancelled. Tick the functions to trace in the table, or Start again and confirm to trace every call.</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingTicked">Tracing ({0} MB) inside {1} ticked function(s).</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingAll">Tracing every call ({0} MB).</sys:String>
+    <sys:String x:Key="str.LF.Trace.NotArmed">This UE5Dumper.dll did not arm the call trace (an older one?), so this recording is not traced.</sys:String>
     <sys:String x:Key="str.LF.Trace.NoneKept">The trace kept nothing: this UE5Dumper.dll has no call trace (an older one?).</sys:String>
     <sys:String x:Key="str.LF.Trace.NotQuiesced">⚠ The trace could not be stopped cleanly and will not be read. Start again.</sys:String>
     <sys:String x:Key="str.LF.Trace.Empty">The trace recorded no calls.</sys:String>
