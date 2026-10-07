@@ -493,25 +493,25 @@ public partial class CallTraceViewModel : ViewModelBase
         var t = _trace;
         if (t == null || i < 0 || i >= t.Count) return "";
         var sb = new StringBuilder();
-        sb.AppendLine(Res.Format("str.CT.Detail.Function", Label(t, i)));
-        if (t.FuncUnloaded(i)) sb.AppendLine(Res.Get("str.CT.Detail.Unloaded"));
-        if (t.FuncRecycled(i)) sb.AppendLine(Res.Get("str.CT.Detail.Recycled"));
-        if (t.FuncReused(i)) sb.AppendLine(Res.Get("str.CT.Detail.Reused"));
-        sb.AppendLine(Res.Format("str.CT.Detail.FuncAddr", "0x" + t.Func[i].ToString("X", CultureInfo.InvariantCulture)));
+        sb.AppendLine(Say("str.CT.Detail.Function", Label(t, i)));
+        if (t.FuncUnloaded(i)) sb.AppendLine(StringLookup("str.CT.Detail.Unloaded"));
+        if (t.FuncRecycled(i)) sb.AppendLine(StringLookup("str.CT.Detail.Recycled"));
+        if (t.FuncReused(i)) sb.AppendLine(StringLookup("str.CT.Detail.Reused"));
+        sb.AppendLine(Say("str.CT.Detail.FuncAddr", "0x" + t.Func[i].ToString("X", CultureInfo.InvariantCulture)));
         if (t.Obj[i] != 0)
         {
             sb.AppendLine(t.ObjStale(i)
-                ? Res.Format("str.CT.Detail.ObjectStale", "0x" + t.Obj[i].ToString("X", CultureInfo.InvariantCulture))
-                : Res.Format("str.CT.Detail.Object", t.ObjName(i), t.ObjClass(i),
-                             "0x" + t.Obj[i].ToString("X", CultureInfo.InvariantCulture)));
+                ? Say("str.CT.Detail.ObjectStale", "0x" + t.Obj[i].ToString("X", CultureInfo.InvariantCulture))
+                : Say("str.CT.Detail.Object", t.ObjName(i), t.ObjClass(i),
+                      "0x" + t.Obj[i].ToString("X", CultureInfo.InvariantCulture)));
         }
-        sb.AppendLine(Res.Format("str.CT.Detail.Thread", t.Tid[i]));
-        sb.AppendLine(Res.Format("str.CT.Detail.Start", t.StartMs(i)));
-        sb.AppendLine(t.DurationUs(i) is { } us ? Res.Format("str.CT.Detail.Duration", us) : Res.Get("str.CT.Detail.NoReturn"));
-        sb.AppendLine(Res.Format("str.CT.Detail.Children", t.ChildCount[i]));
-        if ((t.Flags[i] & TraceRecord.ScopeRootFlag) != 0) sb.AppendLine(Res.Get("str.CT.Detail.ScopeRoot"));
+        sb.AppendLine(Say("str.CT.Detail.Thread", t.Tid[i]));
+        sb.AppendLine(Say("str.CT.Detail.Start", t.StartMs(i)));
+        sb.AppendLine(t.DurationUs(i) is { } us ? Say("str.CT.Detail.Duration", us) : StringLookup("str.CT.Detail.NoReturn"));
+        sb.AppendLine(Say("str.CT.Detail.Children", t.ChildCount[i]));
+        if ((t.Flags[i] & TraceRecord.ScopeRootFlag) != 0) sb.AppendLine(StringLookup("str.CT.Detail.ScopeRoot"));
         sb.AppendLine();
-        sb.AppendLine(Res.Get("str.CT.Detail.Callers"));
+        sb.AppendLine(StringLookup("str.CT.Detail.Callers"));
         var chain = new List<int>();
         for (int p = i; p >= 0; p = t.Parent[p]) chain.Add(p);
         chain.Reverse();
@@ -519,6 +519,20 @@ public partial class CallTraceViewModel : ViewModelBase
             sb.Append(new string(' ', k * 2)).AppendLine(Label(t, chain[k]));
         return sb.ToString();
     }
+
+    /// <summary>Where the detail pane's sentences come from: en.axaml, through Res. A unit test has no Avalonia
+    /// application for Res to ask, so it reads en.axaml itself and hands it in here.</summary>
+    internal Func<string, string> StringLookup { get; set; } = Res.Get;
+
+    private string Say(string key, params object[] args)
+    {
+        string template = StringLookup(key);
+        return template.Length == 0 ? "" : string.Format(template, args);
+    }
+
+    [ObservableProperty] private int _selectedAddressFormatIndex;
+
+    public void SetEngineState(EngineState state) { }
 
     internal static string Label(CallTrace t, int i)
     {
