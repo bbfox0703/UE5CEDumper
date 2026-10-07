@@ -297,9 +297,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
     // [TRACE-UI-LOAD-MEMORY] D3: what a buffer that fills costs, from the buffer alone, so it shows before any
     // recording. The game commits the whole ring at Start and holds it until this UI has read it. While this UI loads
     // it holds the window (the ring's own size), the trace's columns (73 of every 80 bytes a call takes in the ring)
-    // and the tree's state, plus one page's reply in flight; after the load, only the columns and the tree. The
-    // factors are the load's structure after D2; the live check of 2026-10-07 is what they are measured against.
-    internal const double TraceUiPeakFactor = 2.0;
+    // and the tree's state, plus one page's reply in flight; after the load, only the columns and the tree. 2 x N is
+    // that structure; the extra quarter is what the live check of 2026-10-07 (build 3636, Avowed) needed for "up to"
+    // to hold: a full 128 MB load peaked 303 MB over its start, a full 512 MB one 1,206 MB over a freshly started UI.
+    internal const double TraceUiPeakFactor = 2.25;
     internal const int    TraceUiPageMb     = 45;
     public int TraceGameMb   => TraceBufferMb;
     public int TraceUiPeakMb => (int)(TraceBufferMb * TraceUiPeakFactor) + TraceUiPageMb;
