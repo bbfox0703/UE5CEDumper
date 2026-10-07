@@ -26,10 +26,19 @@ public class CallTraceViewModelTests
         public List<TraceFuncName> Funcs { get; } = new();
         public List<TraceObjName> Objs { get; } = new();
         public int NamesLimitSeen { get; private set; }
+        /// <summary>Holds the activation's probe (the first, one-record page) until released.</summary>
+        public TaskCompletionSource? ProbeGate { get; set; }
+        /// <summary>Runs inside the objects' names call: a user action that lands while the names are read.</summary>
+        public Action? DuringObjNames { get; set; }
+        /// <summary>After this many pages the ring is gone (another reader released it): pages come back empty.</summary>
+        public int FreedAfterPages { get; set; } = int.MaxValue;
 
-        Task<TracePage> IDumpService.PeTraceGetAsync(ulong from, int max, CancellationToken ct)
+        async Task<TracePage> IDumpService.PeTraceGetAsync(ulong from, int max, CancellationToken ct)
         {
+            if (max == 1 && ProbeGate != null) { var g = ProbeGate; ProbeGate = null; await g.Task; }
             PageCalls.Add((from, max));
+            if (PageCalls.Count(p => p.max != 1) > FreedAfterPages && max != 1)
+                return new TracePage { Info = new TraceInfo { Gen = Info.Gen, Allocated = false }, Count = 0, Next = from };
             int k = PageCalls.Count;
             ulong begin = Math.Max(from, Info.FirstValid);
             ulong end = Math.Min(Info.Written, begin + (ulong)Math.Min(max, PageMax));
@@ -39,13 +48,13 @@ public class CallTraceViewModelTests
                 Allocated = Info.Allocated, Tracing = Info.Tracing, Quiesced = Info.Quiesced, Gen = GenOnPage(k),
                 Written = Info.Written, FirstValid = Info.FirstValid, QpcFreq = Info.QpcFreq,
             };
-            return Task.FromResult(new TracePage
+            return new TracePage
             {
                 Info = info,
                 Count = recs.Length,
                 Next = Stall ? from : (recs.Length > 0 ? end : begin),
                 Data = MemoryMarshal.AsBytes(recs.AsSpan()).ToArray(),
-            });
+            };
         }
 
         /// <summary>The recording the DLL holds when names are asked; another one answers Stale.</summary>
@@ -62,6 +71,7 @@ public class CallTraceViewModelTests
 
         Task<TraceNamesPage<TraceObjName>> IDumpService.PeTraceObjNamesAsync(ulong gen, int offset, int limit, CancellationToken ct)
         {
+            DuringObjNames?.Invoke();
             if (gen != NamesGen) return Task.FromResult(new TraceNamesPage<TraceObjName> { Gen = NamesGen, Stale = true });
             return Task.FromResult(new TraceNamesPage<TraceObjName>
                 { Gen = gen, Total = Objs.Count, Offset = offset, Items = Objs.Skip(offset).Take(limit).ToList() });
@@ -245,6 +255,44 @@ public class CallTraceViewModelTests
         vm.ClearOnDisconnect();
         await vm.OnActivatedAsync();
         Assert.Equal(2, dump.ReleaseCalls);   // read again, not taken for the one already shown
+    }
+
+    [Fact]
+    public async Task Leaving_the_tab_while_activation_waits_reads_nothing()
+    {
+        var dump = Dump();
+        var gate = new TaskCompletionSource();
+        dump.ProbeGate = gate;
+        var (vm, _) = MakeVm(dump);
+        var activation = vm.OnActivatedAsync();
+        vm.OnLeavingTab();   // the user moved on before the probe came back
+        gate.SetResult();
+        await activation;
+        Assert.False(vm.HasTrace);
+        Assert.DoesNotContain(dump.PageCalls, p => p.max != 1);
+    }
+
+    [Fact]
+    public async Task Once_read_the_release_is_sent_even_when_the_load_is_cancelled_while_building()
+    {
+        var dump = Dump();
+        var (vm, _) = MakeVm(dump);
+        dump.DuringObjNames = () => vm.CancelLoadCommand.Execute(null);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(1, dump.ReleaseCalls);   // the DLL is not left holding the ring
+    }
+
+    [Fact]
+    public async Task A_ring_freed_mid_read_is_not_built_as_a_whole_trace()
+    {
+        var dump = Dump();
+        dump.PageMax = 4;
+        dump.FreedAfterPages = 1;   // another reader released it after the first page
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.False(vm.HasTrace);
+        Assert.Null(vm.Trace);
+        Assert.Equal(0, dump.ReleaseCalls);
     }
 
     [Fact]
