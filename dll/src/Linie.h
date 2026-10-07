@@ -171,6 +171,24 @@ static_assert(sizeof(TraceRecord) == 40, "TraceRecord is the wire format: the UI
 inline constexpr uint64_t kTraceReturnBit = 1ull << 63;
 inline constexpr uint64_t kTraceSeqMask   = kTraceReturnBit - 1;
 inline constexpr uint32_t kTraceScopeRoot = 1;
+inline constexpr uint32_t kTraceSnapTaken = 1u << 1;   // [LIVEFUNCS-STEP2] a snapshot ring holds this call's parameters
+
+// [LIVEFUNCS-STEP2] One snapshot slot's header; the parameter copy follows it. Inside the DLL only: pe_snap_get sends
+// slots decoded, never these bytes.
+struct SnapSlotHeader {
+    uint64_t seqKind;    // the slot's number in its ring; kSnapAfterBit on the copy after the call. Written last.
+    uint64_t entrySeq;   // the trace sequence number of the call's ENTRY record: the link a return record uses too
+    uint16_t len;        // bytes copied
+    uint16_t flags;      // kSnapNullParams / kSnapCopyFault / kSnapTruncated
+    uint32_t arm;        // the arm whose layout decodes it
+};
+static_assert(sizeof(SnapSlotHeader) == 24, "kSnapHeaderBytes is the header's size");
+inline constexpr uint64_t kSnapAfterBit    = 1ull << 63;
+inline constexpr uint16_t kSnapNullParams  = 1;   // the call had no parameter block
+inline constexpr uint16_t kSnapCopyFault   = 2;   // the block could not be read: nothing copied
+inline constexpr uint16_t kSnapTruncated   = 4;   // the block is larger than the slot: its end is missing
+// Copies `n` bytes of game memory, false when it faults. Linie knows nothing of SEH helpers: the pipe installs Macht's.
+using BytesCopier = bool (*)(uintptr_t src, void* dst, size_t n);
 
 // The slider's range (T1): powers of two from 32 to 512 MB. Linie itself takes any size of two records or more,
 // so a test can wrap a small ring; the pipe handler holds the user to this range.
@@ -208,6 +226,7 @@ struct TraceConfig {
     // (RingCapFor of its choice). Every ring keeps the same number of calls, so a busy choice laps only its own ring.
     std::vector<uint32_t> snapRingCaps;
     uint64_t              snapBytes = 0;
+    BytesCopier           copier = nullptr;   // nullptr: every copy is a fault
 };
 // Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
 // SnapTooSmall: the snapshot buffer keeps fewer than kSnapMinSlots calls per ring; SnapNoMemory: it could not be had.
@@ -273,6 +292,19 @@ struct SnapRingInfo {
 };
 // One per ring, in order. False while a trace runs, when none is allocated, or when the last stop could not quiesce.
 bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen = nullptr);
+// One snapshot slot as a reader gets it.
+struct SnapCopy {
+    uint64_t             index    = 0;   // its number in its ring
+    uint64_t             entrySeq = 0;
+    bool                 after    = false;
+    uint16_t             len      = 0;
+    uint16_t             flags    = 0;
+    uint32_t             arm      = 0;
+    std::vector<uint8_t> bytes;
+};
+// Ring `ring`'s slots [from, from + maxSlots), clipped to what it kept, in order; the same refusals as CopyTrace.
+// `next`, when given, is where the following page starts.
+bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next = nullptr);
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
 // none is allocated, or when the last stop could not quiesce. `next`, when given, is where the following page
 // starts: past this page, never before the window, and at or past `written` once there is nothing more.

@@ -7827,6 +7827,66 @@ int main() {
         Linie::SetTraceClockForTest(nullptr);
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the entry copy -- a chosen call's parameters into its ring, the entry record flagged");
+        // docs/live-funcs-step2-items.md, S2. A copier that is plain memcpy stands in for Macht's.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        Linie::Reset();
+        Linie::FreeTrace();
+        Linie::TraceConfig c;
+        c.bytes = 64 * sizeof(Linie::TraceRecord);
+        c.snapRingCaps = { 64, 16 };
+        c.snapBytes = 64 * 1024;
+        c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+        Linie::StartTrace(c);
+        const uint64_t gen = Linie::GetTraceInfo().gen;
+        uint8_t buf[128];
+        for (int i = 0; i < 128; ++i) buf[i] = static_cast<uint8_t>(i * 3 + 1);
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        Linie::ArmHint h{};
+        h.gen = gen; h.ring = 0; h.arm = 3; h.copy = 16;
+        Linie::TraceToken t0, t1, t2, t3;
+        Linie::TraceEnter(0xF0, 0xB0, 1000, 1, t0);                 // not chosen
+        Linie::TraceEnter(0xF1, 0xB1, 1000, 1, t1, params, h);       // chosen: ring 0, arm 3, 16 bytes
+        Linie::ArmHint bad = h;
+        bad.ring = 5;                                                 // a ring the trace does not have
+        Linie::TraceEnter(0xF2, 0xB2, 1000, 1, t2, params, bad);
+        Linie::ArmHint big = h;
+        big.ring = 1; big.copy = 100;                                 // more than ring 1's 16-byte slot
+        Linie::TraceEnter(0xF3, 0xB3, 1000, 1, t3, params, big);
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        Linie::CopyTrace(0, 64, recs);
+        check("the chosen call's entry record says its parameters were taken; the others do not",
+              recs.size() == 4 && recs[0].flags == 0 && (recs[1].flags & Linie::kTraceSnapTaken) &&
+              !(recs[2].flags & Linie::kTraceSnapTaken) && (recs[3].flags & Linie::kTraceSnapTaken), u(recs.size()).c_str());
+        std::vector<Linie::SnapCopy> s0, s1;
+        uint64_t next = 0;
+        check("ring 0 holds one slot: the call's entry sequence number, its arm, the 16 bytes of its block",
+              Linie::CopySnaps(0, 0, 10, s0, &next) && s0.size() == 1 && s0[0].index == 0 && s0[0].entrySeq == 1 &&
+              s0[0].arm == 3 && !s0[0].after && s0[0].len == 16 && s0[0].flags == 0 && s0[0].bytes.size() == 16 &&
+              memcmp(s0[0].bytes.data(), buf, 16) == 0 && next == 1, u(s0.size()).c_str());
+        check("a ring the trace does not have takes nothing", recs.size() == 4 && t2.traced);
+        check("a copy larger than its ring's slot is cut to the slot",
+              Linie::CopySnaps(1, 0, 10, s1) && s1.size() == 1 && s1[0].len == 16 && s1[0].entrySeq == 3 &&
+              memcmp(s1[0].bytes.data(), buf, 16) == 0, s1.empty() ? "" : u(s1[0].len).c_str());
+        Linie::FreeTrace();
+
+        Linie::TraceConfig plain;
+        plain.bytes = 64 * sizeof(Linie::TraceRecord);
+        Linie::StartTrace(plain);
+        Linie::ArmHint h2 = h;
+        h2.gen = Linie::GetTraceInfo().gen;
+        Linie::TraceToken t4;
+        Linie::TraceEnter(0xF1, 0xB1, 1000, 1, t4, params, h2);
+        Linie::StopTrace();
+        recs.clear();
+        std::vector<Linie::SnapCopy> none;
+        check("a trace without snapshot rings: the record is step 1's, and there is nothing to copy",
+              Linie::CopyTrace(0, 64, recs) && recs.size() == 1 && recs[0].flags == 0 && !Linie::CopySnaps(0, 0, 10, none));
+        Linie::FreeTrace();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
