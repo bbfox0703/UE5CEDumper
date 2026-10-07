@@ -515,7 +515,9 @@ void FreeTrace() {
     FreeTraceLocked();
 }
 
-void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok) {
+void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok, uintptr_t params,
+                const ArmHint& hint) {
+    (void)params; (void)hint;
     tok = TraceToken{};
     InflightGuard inflight;
     if (!g_tracing.load(std::memory_order_seq_cst)) return;

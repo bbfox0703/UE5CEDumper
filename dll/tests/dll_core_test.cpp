@@ -7699,6 +7699,65 @@ int main() {
         check("Reset lets go of the recording's names", w3.expired());
     }
 
+    {
+        blk("LIVEFUNCS-STEP2: the trace's scope by name -- a ticked name opens it, a waiting tick records nothing");
+        // docs/live-funcs-step2-items.md, T1 (T10). The scope is the Start's: fixed from what was ASKED.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        Linie::Reset();
+        Linie::FreeTrace();
+        Linie::TraceConfig c;
+        c.bytes = 64 * sizeof(Linie::TraceRecord);
+        c.scoped = true;
+        c.tickedNames = 1;
+        check("setup: a trace scoped by one ticked name, no ticked address",
+              Linie::StartTrace(c) == Linie::TraceStartStatus::Ok);
+        const uint64_t gen = Linie::GetTraceInfo().gen;
+        Linie::ArmHint tick{};
+        tick.gen = gen;
+        tick.flags = Linie::kArmTick;
+        Linie::TraceToken a, b, d, e, f;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, e);            // nothing armed yet: the tick waits
+        Linie::TraceEnter(0xF0, 0, 900, 1, a, 0, tick);    // its first call: armed by name
+        Linie::TraceEnter(0xF2, 0, 800, 1, b);             // called inside it
+        Linie::TraceReturn(b, 1);
+        Linie::TraceReturn(a, 1);
+        Linie::TraceEnter(0xF3, 0, 1000, 1, d);            // after it
+        Linie::ArmHint old = tick;
+        old.gen = gen - 1;
+        Linie::TraceEnter(0xF0, 0, 900, 1, f, 0, old);     // armed, but by another recording's hint
+        check("a call before its ticked name is called: nothing (not every call -- the tick waits)", !e.traced);
+        check("the ticked name's call opens the scope", a.traced && a.opened);
+        check("...the call inside it is traced", b.traced && !b.opened);
+        check("...the one after it is not", !d.traced);
+        check("a hint of another recording opens nothing", !f.traced);
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        check("the records: the root with its flag, then the nested call, then the two returns",
+              Linie::CopyTrace(0, 64, recs) && recs.size() == 4 && recs[0].a == 0xF0 &&
+              recs[0].flags == Linie::kTraceScopeRoot && recs[1].a == 0xF2, u(recs.size()).c_str());
+        const Linie::TraceInfo info = Linie::GetTraceInfo();
+        check("the info says what was asked: scoped, one ticked name, not snapshots-only",
+              info.scoped && info.tickedNames == 1 && !info.snapOnly && info.ticked == 0);
+        Linie::FreeTrace();
+
+        Linie::TraceConfig legacy;
+        legacy.bytes = 64 * sizeof(Linie::TraceRecord);
+        legacy.ticked = { 0xA7 };
+        Linie::StartTrace(legacy);
+        check("ticked addresses scope a trace whatever `scoped` says", Linie::GetTraceInfo().scoped);
+        Linie::TraceToken g;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, g);
+        check("...so a call outside them is not traced", !g.traced);
+        Linie::FreeTrace();
+        Linie::TraceConfig every;
+        every.bytes = 64 * sizeof(Linie::TraceRecord);
+        Linie::StartTrace(every);
+        Linie::TraceToken k;
+        Linie::TraceEnter(0xF1, 0, 1000, 1, k);
+        check("nothing asked: every call, as before", !Linie::GetTraceInfo().scoped && k.traced);
+        Linie::FreeTrace();
+    }
+
     printf("\n%d checks, %d failure(s)\n", g_pass + g_fail, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

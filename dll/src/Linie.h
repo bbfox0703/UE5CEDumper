@@ -95,7 +95,19 @@ inline bool IsPerFrame(const FuncStat& s, uint64_t windowMs) {
 extern std::atomic<bool> g_recording;
 inline bool IsRecording() { return g_recording.load(std::memory_order_relaxed); }
 
-struct ArmHint;    // [LIVEFUNCS-STEP2], below
+// [LIVEFUNCS-STEP2] What the table's read of one call hands the trace for the same call: integers only, in the hook's
+// own frame. `gen` is the trace recording the arm belongs to (1 and up), so a default hint never matches a running
+// trace. The names a recording follows are below (ArmState).
+struct ArmHint {
+    uint64_t gen   = 0;
+    int32_t  ring  = -1;   // the snapshot ring of the choice this address is armed for; -1: no snapshot
+    uint32_t arm   = 0;    // which arming of the name: a reload at a new address, or a new class, is a new arm
+    uint16_t copy  = 0;    // bytes to copy from the parameter block
+    uint8_t  flags = 0;
+};
+inline constexpr uint8_t kArmTick      = 1;   // the address is a ticked function's: its call opens a scope
+inline constexpr uint8_t kArmAfter     = 2;   // take a copy after the call returns too (out parameters, the return)
+inline constexpr uint8_t kArmTruncated = 4;   // the parameter block is larger than its ring's slot
 struct ArmState;
 
 // Record one PE fire for `ufunc` at wall-clock `nowMs` (Stark passes the same
@@ -186,6 +198,12 @@ struct TraceConfig {
     // [LIVEFUNCS-STEP2] The names this recording follows. StartTrace stamps them with its gen and keeps them for the
     // trace's readers; they go when the trace is freed.
     std::shared_ptr<ArmState> arms;
+    // Scoped: record only inside ticked calls (and, with step 2, the chosen calls alone). Fixed from what the Start
+    // ASKED -- ticks by address or by name, or choices -- never from what is armed so far: a tick waiting for its
+    // function to load must not turn the trace into one of every call. Ticked addresses scope it whatever this says.
+    bool   scoped      = false;
+    size_t tickedNames = 0;   // ticks by name, for the trace's info
+    bool   snapOnly    = false;   // chosen functions and no ticks: only the chosen calls are recorded (T11)
 };
 // Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
 enum class TraceStartStatus { Ok, TooSmall, NoMemory, Busy };
@@ -211,8 +229,10 @@ struct TraceToken {
 };
 // `sp` is the hook frame's own stack address (_AddressOfReturnAddress): lower for a call nested inside another on
 // the same thread, which is how a ticked scope tells its calls from the ones after it, even when an exception
-// unwound the scope's root without a return.
-void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok);
+// unwound the scope's root without a return. `params` is the call's parameter block; `hint` what the table's read of
+// this same call armed it for ([LIVEFUNCS-STEP2]) -- honoured only when it is this recording's.
+void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, TraceToken& tok, uintptr_t params = 0,
+                const ArmHint& hint = ArmHint{});
 void TraceReturn(const TraceToken& tok, uint32_t tid);
 
 struct TraceInfo {
@@ -227,6 +247,9 @@ struct TraceInfo {
     uint64_t qpcFreq    = 0;       // ticks per second
     size_t   ticked     = 0;
     size_t   excluded   = 0;
+    bool     scoped     = false;   // [LIVEFUNCS-STEP2] see TraceConfig
+    size_t   tickedNames = 0;
+    bool     snapOnly   = false;
 };
 TraceInfo GetTraceInfo();
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
@@ -278,19 +301,6 @@ inline bool operator<(const NameKey& a, const NameKey& b) {
     if (a.clsIdx != b.clsIdx) return a.clsIdx < b.clsIdx;
     return a.clsNum < b.clsNum;
 }
-
-// What the table's read of one call hands the trace for the same call: integers only, in the hook's own frame.
-// `gen` is the trace recording the arm belongs to (1 and up), so a default hint never matches a running trace.
-struct ArmHint {
-    uint64_t gen   = 0;
-    int32_t  ring  = -1;   // the snapshot ring of the choice this address is armed for; -1: no snapshot
-    uint32_t arm   = 0;    // which arming of the name: a reload at a new address, or a new class, is a new arm
-    uint16_t copy  = 0;    // bytes to copy from the parameter block
-    uint8_t  flags = 0;
-};
-inline constexpr uint8_t kArmTick      = 1;   // the address is a ticked function's: its call opens a scope
-inline constexpr uint8_t kArmAfter     = 2;   // take a copy after the call returns too (out parameters, the return)
-inline constexpr uint8_t kArmTruncated = 4;   // the parameter block is larger than its ring's slot
 
 // The snapshot limits. The UI's estimate works with the same numbers.
 inline constexpr uint32_t kSnapMaxCopy     = 2048;   // bytes copied per call at most
