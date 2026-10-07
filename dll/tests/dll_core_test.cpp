@@ -6760,14 +6760,21 @@ int main() {
               sz(info.firstValid).c_str());
         check("...and copies them in order", copyAll() && recs.size() == 4 && recs[0].seqKind == 2 &&
                                             recs[0].a == 0x102 && recs[3].seqKind == 5 && recs[3].a == 0x105);
+        uint64_t nextSeq = 0;
         recs.clear();
-        check("a copy from inside the window starts there",
-              Linie::CopyTrace(4, 10, recs) && recs.size() == 2 && recs[0].seqKind == 4);
+        check("a copy from inside the window starts there, and the next page starts at the end",
+              Linie::CopyTrace(4, 10, recs, &nextSeq) && recs.size() == 2 && recs[0].seqKind == 4 && nextSeq == 6,
+              sz(nextSeq).c_str());
         recs.clear();
-        check("a copy that begins before the window is clipped to it",
-              Linie::CopyTrace(0, 3, recs) && recs.size() == 1 && recs[0].seqKind == 2, sz(recs.size()).c_str());
+        check("a copy that begins before the window is clipped to it, and the next page follows it",
+              Linie::CopyTrace(0, 3, recs, &nextSeq) && recs.size() == 1 && recs[0].seqKind == 2 && nextSeq == 3,
+              sz(nextSeq).c_str());
         recs.clear();
-        check("a copy past the end is empty, not a failure", Linie::CopyTrace(6, 10, recs) && recs.empty());
+        check("a page wholly before the window moves the next page to the window",
+              Linie::CopyTrace(0, 1, recs, &nextSeq) && recs.empty() && nextSeq == 2, sz(nextSeq).c_str());
+        recs.clear();
+        check("a copy past the end is empty, not a failure, and does not go back",
+              Linie::CopyTrace(6, 10, recs, &nextSeq) && recs.empty() && nextSeq == 6);
 
         // T5 (a): with a function ticked, only its calls and what they call are traced, on its own thread.
         Linie::StartTrace(cfg(64, { 0xA7 }));
@@ -6844,10 +6851,17 @@ int main() {
         info = Linie::GetTraceInfo();
         check("info counts the two sets", info.ticked == 1 && info.excluded == 1);
 
-        // The distinct functions and objects of the KEPT window: the overwritten first record is not among them.
+        // The distinct functions and objects of the KEPT window: the overwritten first record is not among them, and
+        // a return record (its `a` is a sequence number, not a function) is not either.
         Linie::StartTrace(cfg(4));
-        const uintptr_t calls[5][2] = { { 0xF9, 0xB9 }, { 0xF2, 0xB2 }, { 0xF1, 0xB1 }, { 0xF2, 0 }, { 0xF1, 0xB1 } };
-        for (const auto& c : calls) { Linie::TraceToken t; Linie::TraceEnter(c[0], c[1], 1000, 1, t); }
+        {
+            Linie::TraceToken d0, d1, d2, d3;
+            Linie::TraceEnter(0xF9, 0xB9, 1000, 1, d0);   // seq 0, overwritten
+            Linie::TraceEnter(0xF2, 0xB2, 1000, 1, d1);   // seq 1
+            Linie::TraceEnter(0xF1, 0xB1, 900, 1, d2);    // seq 2
+            Linie::TraceReturn(d2, 1);                    // seq 3, a = 2
+            Linie::TraceEnter(0xF2, 0, 900, 1, d3);       // seq 4
+        }
         Linie::StopTrace();
         std::vector<uintptr_t> dfuncs, dobjs;
         check("distinct: the functions and objects of the kept window, sorted, no 0",
@@ -6862,6 +6876,50 @@ int main() {
         Linie::Reset();
         check("Linie::Reset (the last client left) stops and frees the trace too",
               !Linie::IsTracing() && !Linie::GetTraceInfo().allocated);
+
+        // TR2, made deterministic: the clock is read inside a hook's write, so a clock that blocks holds a writer
+        // inside its section. Stop must wait for it; and when it never leaves, the ring is neither read nor freed.
+        static HANDLE s_inside  = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static HANDLE s_release = CreateEventW(nullptr, TRUE, FALSE, nullptr);
+        static std::atomic<int> s_blockNext{ 0 };
+        Linie::SetTraceClockForTest([]() -> uint64_t {
+            if (s_blockNext.exchange(0) == 1) {
+                SetEvent(s_inside);
+                WaitForSingleObject(s_release, INFINITE);
+            }
+            return 42;
+        });
+        Linie::StartTrace(cfg(8));
+        s_blockNext = 1;
+        std::thread writer([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_inside, 5000);
+        std::atomic<bool> stopped{ false };
+        std::thread stopper([&stopped] { Linie::StopTrace(); stopped = true; });
+        Sleep(100);
+        const bool waited = !stopped.load();
+        SetEvent(s_release);
+        writer.join();
+        stopper.join();
+        check("Stop waits while a hook is inside its write", waited && stopped.load());
+        info = Linie::GetTraceInfo();
+        check("...and keeps the write it waited for", info.written == 1 && info.quiesced, sz(info.written).c_str());
+
+        ResetEvent(s_inside);
+        ResetEvent(s_release);
+        Linie::StartTrace(cfg(8));
+        s_blockNext = 1;
+        std::thread stuck([] { Linie::TraceToken t; Linie::TraceEnter(0xF1, 0, 1000, 1, t); });
+        WaitForSingleObject(s_inside, 5000);
+        Linie::StopTrace();   // gives up after its wait
+        info = Linie::GetTraceInfo();
+        std::vector<Linie::TraceRecord> unread;
+        check("a hook that never leaves its write: Stop gives up and the ring is not read",
+              !info.quiesced && !Linie::CopyTrace(0, 10, unread));
+        Linie::FreeTrace();   // leaves the ring mapped rather than freeing it under the hook
+        SetEvent(s_release);
+        stuck.join();         // the hook finishes into the ring it held: a freed ring would fault here
+        check("...and is not freed under the hook, which finishes its write without a fault",
+              !Linie::GetTraceInfo().allocated);
 
         // Four threads trace while Stop runs: once Stop returns nothing changes, and every kept slot holds the
         // record its sequence number says.

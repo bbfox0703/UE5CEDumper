@@ -181,8 +181,9 @@ struct TraceInfo {
 };
 TraceInfo GetTraceInfo();
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
-// none is allocated, or when the last stop could not quiesce.
-bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out);
+// none is allocated, or when the last stop could not quiesce. `next`, when given, is where the following page
+// starts: past this page, never before the window, and at or past `written` once there is nothing more.
+bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next = nullptr);
 // The distinct functions and calling objects of the kept window, sorted; computed once per stopped trace.
 bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs);
 

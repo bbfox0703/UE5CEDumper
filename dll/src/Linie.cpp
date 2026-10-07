@@ -380,16 +380,18 @@ TraceInfo GetTraceInfo() {
     return i;
 }
 
-bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out) {
+bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next) {
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
     const uint64_t begin = from > FirstValidLocked() ? from : FirstValidLocked();
+    if (next) *next = begin;
     if (begin >= w) return true;
     // [from, from + maxRecords), then clipped: a page asked from before the window does not reach further into it.
     const uint64_t want = (static_cast<uint64_t>(maxRecords) > UINT64_MAX - from) ? UINT64_MAX : from + maxRecords;
     const uint64_t end  = want < w ? want : w;
     if (end <= begin) return true;
+    if (next) *next = end;
     out.reserve(out.size() + static_cast<size_t>(end - begin));
     for (uint64_t seq = begin; seq < end; ++seq) {
         const TraceRecord& r = g_trace.buf[seq % g_trace.cap];
