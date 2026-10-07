@@ -1112,8 +1112,8 @@
     <!-- [LIVEFUNCS-HIDE-PERFRAME] -->
     <sys:String x:Key="str.LF.HidePerFrame">Hide per-frame</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Hidden">; {0:N0} per-frame functions left out</sys:String>
-    <sys:String x:Key="str.LF.Unloaded.Note">; {0:N0} of them unloaded since firing (named from their first call)</sys:String>
-    <sys:String x:Key="str.LF.Unnamed.Note">; {0:N0} of them with no name (unloaded before the recording could read them)</sys:String>
+    <sys:String x:Key="str.LF.Unloaded.Note">; unloaded since firing: {0:N0} (named from their first call)</sys:String>
+    <sys:String x:Key="str.LF.Unnamed.Note">; without a name: {0:N0} (gone, and unreadable at their first calls)</sys:String>
     <sys:String x:Key="str.LF.Unloaded.Marker">(unloaded)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Unsupported">; Hide per-frame needs a newer UE5Dumper.dll (this one left nothing out)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.BaselineMismatch">⚠ The baseline was fetched with Hide per-frame the other way, so the per-frame functions read as NEW or are missing: set it the same way and record the baseline again.</sys:String>
