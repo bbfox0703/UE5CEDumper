@@ -183,19 +183,31 @@ public class CallTraceViewModelTests
         // [TRACE-UI-LOAD-MEMORY] Live, build 3634, Avowed: a full 128 MB load still peaked at 1.27 GB working set. Each
         // page leaves the pipe's line and its parsed document behind (~40 MB for a full page), and nothing collected
         // them during a load of dozens of pages. A collection every CollectEveryPages pages, and one before the build.
+        int pages = 4 * CallTraceViewModel.CollectEveryPages;   // four collection periods, whatever the period
         var dump = new FakeDumpService
         {
-            Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = 40, FirstValid = 0, QpcFreq = 1_000_000 },
-            PageMax = 4,   // ten pages
+            Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = (ulong)pages, FirstValid = 0, QpcFreq = 1_000_000 },
+            PageMax = 1,   // a record a page
         };
-        for (ulong k = 0; k < 40; k++) dump.Ring.Add(new TraceRecord(k, 1000 + k, 0xA, 0, 1, 0));
+        for (ulong k = 0; k < (ulong)pages; k++) dump.Ring.Add(new TraceRecord(k, 1000 + k, 0xA, 0, 1, 0));
         var (vm, _) = MakeVm(dump);
 
         await vm.LoadCommand.ExecuteAsync(null);
 
-        Assert.Equal(40, vm.Trace!.Count);   // forty calls, ten pages read
-        Assert.True(vm.CollectionsDuringLastLoad >= 10 / CallTraceViewModel.CollectEveryPages,
-                    $"{vm.CollectionsDuringLastLoad} collections over ten pages");
+        Assert.Equal(pages, vm.Trace!.Count);
+        Assert.True(vm.CollectionsDuringLastLoad >= 4, $"{vm.CollectionsDuringLastLoad} collections over {pages} pages");
+    }
+
+    [Fact]
+    public void A_page_reply_stays_short_enough_for_the_pipe_to_read_it_without_keeping_big_buffers()
+    {
+        // [TRACE-UI-LOAD-MEMORY] Measured 2026-10-07: StreamReader.ReadLineAsync on 13 lines of 14 million chars -- a
+        // page of 262,144 records as base64 -- read from rotating pool threads, as PipeClient's loop is, kept 205 MB of
+        // pooled line buffers after a full collection; on 104 lines of 1.75 million chars, nothing. Live, the same
+        // retention held a full 128 MB load's working set ~0.3 GB above what the trace keeps. A page is read as one
+        // line: its base64 stays near 1.75 million chars.
+        long base64Chars = (long)CallTraceViewModel.PageRecords * 40 * 4 / 3;
+        Assert.True(base64Chars <= 2_000_000, $"a page is {base64Chars:N0} chars of base64");
     }
 
     [Fact]
