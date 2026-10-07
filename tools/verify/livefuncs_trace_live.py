@@ -170,6 +170,11 @@ def main() -> int:
         out["plain"] = {"total_calls": total, "window_ms": window_ms, "calls_per_s": rate,
                         "distinct": plain.get("distinct_funcs"), "per_frame": len(per_frame)}
         say(f"rate: {rate:,.0f} calls/s ({total:,} calls over {window_ms:,} ms; {len(per_frame)} per-frame)")
+        # What fired besides the per-frame functions: the first thing to read when a later check finds nothing.
+        rest = [(f.get("count", 0), f"{f.get('class_name')}::{f.get('func_name')}") for f in plain.get("functions", [])]
+        out["plain"]["not_per_frame"] = [{"count": n, "func": f} for n, f in rest]
+        for n, f in rest[:15]:
+            say(f"    {n:>8,}  {f}")
         check("window_ms is sent and the rate is positive", window_ms > 0 and rate > 0, f"{rate:,.0f}/s")
 
         # 2-5. every call, traced
