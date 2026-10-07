@@ -81,6 +81,8 @@ public partial class CallTraceViewModel : ViewModelBase
     /// load, which re-enabled Load and started a second reader on the same ring.</summary>
     [ObservableProperty] private bool _isExporting;
     public bool CanExport => HasTrace && !IsLoading && !IsExporting;
+    // [LIVEFUNCS-STEP2] U14 red: not offered yet.
+    public bool CanExportParams => false;
     public bool CanLoad => !IsLoading && !IsExporting;
     /// <summary>The DLL has a newer recording than the trace on screen, which could not be read (it kept no calls, or
     /// its stop did not quiesce): what is shown is not what the last recording traced.</summary>

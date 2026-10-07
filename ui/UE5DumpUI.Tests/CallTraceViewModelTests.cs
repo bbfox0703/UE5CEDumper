@@ -534,6 +534,29 @@ public class CallTraceViewModelTests
     }
 
     [Fact]
+    public async Task The_parameters_csv_is_offered_only_for_a_trace_with_snapshots()
+    {
+        // [LIVEFUNCS-STEP2] U14: a trace that took no copies has no rows for it.
+        var dump = DumpWithSnapshots();
+        var (vm, _) = MakeVm(dump);
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        Assert.False(vm.CanExportParams);
+
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.True(vm.CanExportParams);
+        Assert.Contains(nameof(vm.CanExportParams), raised);   // the button's binding hears it
+
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 9, FirstValid = 0, QpcFreq = 1_000_000 };
+        dump.NamesGen = 8;
+        raised.Clear();
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.True(vm.CanExport);
+        Assert.False(vm.CanExportParams);
+        Assert.Contains(nameof(vm.CanExportParams), raised);
+    }
+
+    [Fact]
     public async Task A_newer_recording_that_cannot_be_read_marks_the_trace_on_screen_as_older()
     {
         var dump = Dump();

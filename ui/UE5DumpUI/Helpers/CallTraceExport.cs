@@ -100,6 +100,11 @@ internal static class CallTraceExport
         }
     }
 
+    // [LIVEFUNCS-STEP2] U14 red: the parameters CSV, not written yet.
+    internal static readonly string[] ParamsCsvColumns = Array.Empty<string>();
+
+    internal static void WriteParamsCsv(CallTrace t, TextWriter w) { }
+
     // A name comes from the game: quote it when it needs it, and keep a spreadsheet from reading it as a formula.
     private static string Cell(string s) => CoordCsvCodec.Field(CoordCsvCodec.Armour(s));
 
