@@ -432,7 +432,13 @@ FunctionDescription DescribeFunction(uintptr_t func, const Linie::FuncIdentity& 
 // Which way a parameter goes, from its property flags. A `const T&` carries CPF_OutParm as well as CPF_ConstParm and
 // CPF_ReferenceParm (UHT's own flags), so "out" alone over-reports; the return value is CPF_ReturnParm | CPF_OutParm.
 enum class ParamKind : uint8_t { In, ConstRef, Out, InOut, Return };
-inline ParamKind ParamKindOf(uint64_t propertyFlags) { (void)propertyFlags; return ParamKind::In; }
+inline ParamKind ParamKindOf(uint64_t propertyFlags) {
+    constexpr uint64_t kOut = 0x100, kReturn = 0x400, kConst = 0x2, kReference = 0x08000000;
+    if (propertyFlags & kReturn) return ParamKind::Return;
+    if (!(propertyFlags & kOut)) return ParamKind::In;
+    if (propertyFlags & kConst) return ParamKind::ConstRef;
+    return (propertyFlags & kReference) ? ParamKind::InOut : ParamKind::Out;
+}
 
 // [VND583-01] UFunction::FunctionFlags' offset as decided by the one-shot vote
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe

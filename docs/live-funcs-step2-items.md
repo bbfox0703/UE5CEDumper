@@ -19,7 +19,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | S5 | DLL | Linie: the per-ring and total budgets (one CAS word each; the first calls of each second kept) | S4 | ✅ 921e08b8 red |
 | S6 | DLL | Linie: null params, copy faults, the truncated flag, and TR2 with snapshots | S3 | ✅ tests only (built in S2) |
 | S7 | DLL | Linie: SnapRings / CopySnaps windows, ring isolation, out-of-turn and orphan filtering; benchmark lines | S5, S6 | ✅ a572ff64 red |
-| B1 | DLL | Ubel: the pure ParamKindOf | — | ⬜ |
+| B1 | DLL | Ubel: the pure ParamKindOf | — | ✅ ec33e46f red |
 | B2 | DLL | Ubel: ReadNameKey (the function's and its Outer's FName ints), ReadObjectNameKey, NameKeyMatches through Serie::GetString | N0 | ⬜ |
 | B3 | DLL | Ubel: CaptureParamLayout over the function's own chain (FField and UProperty), CPF_Parm filter, refusals; object/class/struct read at the mode's subclass start | B1 | ⬜ |
 | B4 | DLL | Ubel: layout enrichment by value (struct sub-layouts, enum tables, object class, soft-path / lazy / delegate / optional facts) | B3 | ⬜ |
