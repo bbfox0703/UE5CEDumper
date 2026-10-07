@@ -233,6 +233,27 @@ def main() -> int:
               f"{out['names']['funcs_live']} of {len(fn)}")
         say(f"names: {len(fn)} functions in {fn_s:.2f} s, {len(ob)} objects in {ob_s:.2f} s "
             f"({out['names']['objs_live']} live)")
+        # A function that no longer resolves was unloaded before Stop (a map change frees its Blueprint classes): its
+        # calls show as a bare address. How many calls that is, and when each last fired -- one moment for all of them
+        # reads as one unload.
+        dead = {addr(x["addr"]) for x in fn if not x.get("live")}
+        if dead:
+            freq = info.get("qpc_freq") or 1
+            t0 = min((r[1] for r in recs), default=0)
+            n_dead, last = 0, {}
+            for seq_kind, ticks, a, _b, _tid, _f in recs:
+                if not seq_kind & RET_BIT and a in dead:
+                    n_dead += 1
+                    last[a] = max(last.get(a, 0), ticks)
+            n_all = sum(1 for r in recs if not r[0] & RET_BIT)
+            lasts = sorted((t - t0) / freq for t in last.values())
+            window = (max((r[1] for r in recs), default=0) - t0) / freq
+            out["names"]["unresolved"] = {"funcs": len(dead), "calls": n_dead, "of_calls": n_all,
+                                          "last_fired_s": [lasts[0], lasts[-1]] if lasts else None,
+                                          "window_s": window}
+            say(f"unresolved: {len(dead)} functions, {n_dead:,} of {n_all:,} calls ({n_dead / max(1, n_all):.2%}); "
+                + (f"each last fired between {lasts[0]:.1f} s and {lasts[-1]:.1f} s of a {window:.1f} s window"
+                   if lasts else "none of them in the kept window"))
 
         func_of, parent_of = tree_children(recs)
         nested = collections.Counter(func_of[p] for s, p in parent_of.items() if p is not None)
