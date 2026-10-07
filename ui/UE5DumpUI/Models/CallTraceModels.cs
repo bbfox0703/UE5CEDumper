@@ -95,6 +95,10 @@ public sealed class TraceObjName
 
 public sealed class TraceNamesPage<T>
 {
+    /// <summary>The recording the names belong to.</summary>
+    public ulong Gen { get; init; }
+    /// <summary>The DLL holds another recording than the one asked for, so nothing was named.</summary>
+    public bool Stale { get; init; }
     public int Total { get; init; }
     public int Offset { get; init; }
     public List<T> Items { get; init; } = new();

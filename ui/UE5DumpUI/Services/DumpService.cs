@@ -2896,11 +2896,13 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct functions, resolved now.</summary>
-    public async Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(int offset, int limit, CancellationToken ct = default)
+    public async Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
     {
-        var res = await PeTraceNamesAsync("funcs", offset, limit, ct);
+        var res = await PeTraceNamesAsync("funcs", gen, offset, limit, ct);
         return new TraceNamesPage<TraceFuncName>
         {
+            Gen = res["gen"]?.GetValue<ulong>() ?? 0,
+            Stale = res["stale"]?.GetValue<bool>() ?? false,
             Total = res["total"]?.GetValue<int>() ?? 0,
             Offset = res["offset"]?.GetValue<int>() ?? offset,
             Truncated = res["truncated"]?.GetValue<bool>() ?? false,
@@ -2919,11 +2921,13 @@ public sealed class DumpService : IDumpService
 
     /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct calling objects, resolved now: an
     /// address that no longer holds its object comes back not live and unnamed.</summary>
-    public async Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(int offset, int limit, CancellationToken ct = default)
+    public async Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
     {
-        var res = await PeTraceNamesAsync("objs", offset, limit, ct);
+        var res = await PeTraceNamesAsync("objs", gen, offset, limit, ct);
         return new TraceNamesPage<TraceObjName>
         {
+            Gen = res["gen"]?.GetValue<ulong>() ?? 0,
+            Stale = res["stale"]?.GetValue<bool>() ?? false,
             Total = res["total"]?.GetValue<int>() ?? 0,
             Offset = res["offset"]?.GetValue<int>() ?? offset,
             Truncated = res["truncated"]?.GetValue<bool>() ?? false,
@@ -2940,16 +2944,18 @@ public sealed class DumpService : IDumpService
     }
 
     /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Give the game its memory back once the trace is read.</summary>
-    public async Task PeTraceReleaseAsync(CancellationToken ct = default)
+    public async Task PeTraceReleaseAsync(ulong gen, CancellationToken ct = default)
     {
-        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_release" }, ct);
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_release", ["gen"] = gen }, ct);
         CheckResponse(res);
     }
 
-    private async Task<JsonNode> PeTraceNamesAsync(string kind, int offset, int limit, CancellationToken ct)
+    private async Task<JsonNode> PeTraceNamesAsync(string kind, ulong gen, int offset, int limit, CancellationToken ct)
     {
-        var res = await _pipe.SendAsync(
-            new JsonObject { ["cmd"] = "pe_trace_names", ["kind"] = kind, ["offset"] = offset, ["limit"] = limit }, ct);
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "pe_trace_names", ["kind"] = kind, ["gen"] = gen, ["offset"] = offset, ["limit"] = limit,
+        }, ct);
         CheckResponse(res);
         return res;
     }

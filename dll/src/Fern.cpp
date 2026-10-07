@@ -4523,11 +4523,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (maxRecs < 1) maxRecs = 1;
             if (maxRecs > kPageMax) maxRecs = kPageMax;
 
-            const Linie::TraceInfo ti = Linie::GetTraceInfo();
-            json data = TraceInfoToJson(ti);
+            // The state reported is the one the copy saw, under the same lock: a Start between a separate read and
+            // the copy would hand back another recording's state with this one's records (review DLL-1).
+            Linie::TraceInfo ti;
             std::vector<Linie::TraceRecord> recs;
             uint64_t next = from;
-            if (!ti.allocated || !Linie::CopyTrace(from, static_cast<size_t>(maxRecs), recs, &next)) {
+            const bool copied = Linie::CopyTrace(from, static_cast<size_t>(maxRecs), recs, &next, &ti);
+            json data = TraceInfoToJson(ti);
+            if (!copied) {
                 // Nothing to read: no trace, one still recording, or a stop that never quiesced.
                 data["count"] = 0;
                 data["next"]  = from;
@@ -4554,9 +4557,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             if (limit > 20000) limit = 20000;
 
             std::vector<uintptr_t> funcs, objs;
+            uint64_t gen = 0;
             json data;
             data["kind"] = kind;
-            if (!Linie::TraceDistinct(funcs, objs)) {
+            const bool have = Linie::TraceDistinct(funcs, objs, &gen);
+            data["gen"] = gen;
+            // Asked for one recording's names while the DLL holds another: answer nothing and say so (review DLL-1).
+            if (have && request.contains("gen") && request.value("gen", uint64_t(0)) != gen) {
+                data["stale"] = true;
+                data["total"] = 0;
+                data["offset"] = offset;
+                data["count"] = 0;
+                data["items"] = json::array();
+                return Renge::MakeResponse(id, data).dump();
+            }
+            if (!have) {
                 data["total"] = 0;
                 data["offset"] = offset;
                 data["count"] = 0;
@@ -4604,12 +4619,19 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         // pe_trace_release: the UI has read the trace; give the game its memory back now rather than at the next
-        // Start or when the client leaves.
+        // Start or when the client leaves. With `gen`, only that recording, and only once it has stopped: the release
+        // a reader sends for what it read never frees a newer recording (review DLL-1).
         if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
-            Linie::FreeTrace();
-            Sein::Info("PIPE:profile", "pe_trace_release: trace buffer released");
+            bool released;
+            if (request.contains("gen")) {
+                released = Linie::FreeTraceIfGen(request.value("gen", uint64_t(0)));
+            } else {
+                Linie::FreeTrace();
+                released = !Linie::GetTraceInfo().allocated;
+            }
+            Sein::Info("PIPE:profile", "pe_trace_release: %s", released ? "trace buffer released" : "nothing released");
             json data;
-            data["released"] = true;
+            data["released"] = released;
             return Renge::MakeResponse(id, data).dump();
         }
 

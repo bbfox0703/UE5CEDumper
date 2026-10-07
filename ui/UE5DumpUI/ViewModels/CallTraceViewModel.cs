@@ -134,7 +134,8 @@ public partial class CallTraceViewModel : ViewModelBase
             var funcs = new List<TraceFuncName>();
             for (int off = 0; ; off += NamesPage)
             {
-                var p = await _dump.PeTraceFuncNamesAsync(off, NamesPage, ct);
+                var p = await _dump.PeTraceFuncNamesAsync(info.Gen, off, NamesPage, ct);
+                if (p.Stale) { StatusText = Res.Get("str.CT.Status.Changed"); return; }
                 funcs.AddRange(p.Items);
                 if (p.Items.Count == 0 || off + p.Items.Count >= p.Total || p.Truncated) break;
             }
@@ -142,7 +143,8 @@ public partial class CallTraceViewModel : ViewModelBase
             var objs = new List<TraceObjName>();
             for (int off = 0; ; off += NamesPage)
             {
-                var p = await _dump.PeTraceObjNamesAsync(off, NamesPage, ct);
+                var p = await _dump.PeTraceObjNamesAsync(info.Gen, off, NamesPage, ct);
+                if (p.Stale) { StatusText = Res.Get("str.CT.Status.Changed"); return; }
                 objs.AddRange(p.Items);
                 if (p.Items.Count == 0 || off + p.Items.Count >= p.Total || p.Truncated) break;
                 Progress = 0.85 + 0.1 * Math.Min(1.0, (off + p.Items.Count) / Math.Max(1.0, p.Total));
@@ -153,7 +155,7 @@ public partial class CallTraceViewModel : ViewModelBase
             var trace = await Task.Run(() => CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs), ct);
 
             // Read: give the game its memory back now, not at the next Start or when the UI disconnects.
-            try { await _dump.PeTraceReleaseAsync(ct); }
+            try { await _dump.PeTraceReleaseAsync(info.Gen, ct); }
             catch (Exception ex) { _log.Warn($"CallTrace: release failed ({ex.Message})"); }
 
             _trace = trace;

@@ -598,17 +598,22 @@ the three `pe_trace_*` commands read it afterwards. The plan and its decisions: 
 // One page of the stopped ring. from: a sequence number (start at first_valid); max: records, 1..262144, default
 // 65536. Reply: the trace object, plus count, next (where the following page starts; paging ends at written) and
 // data, the records base64 (RFC 4648). count 0 with data "" while recording, with no trace, or when quiesced is false.
+// The trace object is the state the copy saw, under the same lock: check its gen on every page (a Start between two
+// pages is a different recording).
 { "id": 74, "cmd": "pe_trace_get", "from": 0, "max": 65536 }
 
 // Names of the kept window's distinct functions (kind "funcs") or calling objects (kind "objs"), paged
-// (limit 1..20000, default 2000). Resolved now, so a name is what is at that address NOW: an object whose own index
+// (limit 1..20000, default 2000). gen (optional): the recording the names are for; when the DLL holds another one the
+// reply is "stale": true with no items. The reply always carries the gen it answered for. Resolved now, so a name is what is at that address NOW: an object whose own index
 // no longer leads back to it is live:false and not read. funcs items: addr, live, class_name, func_name,
 // function_flags, num_parms, parms_size. objs items: addr, live, name, class_name. Reply: kind, total, offset,
 // count, items, truncated (only when cut by a cancel).
-{ "id": 75, "cmd": "pe_trace_names", "kind": "objs", "offset": 0, "limit": 2000 }
+{ "id": 75, "cmd": "pe_trace_names", "kind": "objs", "gen": 3, "offset": 0, "limit": 2000 }
 
-// Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves.
-{ "id": 76, "cmd": "pe_trace_release" }
+// Release the ring now (the UI has read it) instead of at the next Start or when the last client leaves. gen
+// (optional): free only that recording, and only once it has stopped, so a reader never frees a newer recording.
+// Reply: released (bool).
+{ "id": 76, "cmd": "pe_trace_release", "gen": 3 }
 ```
 
 The trace object:

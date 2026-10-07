@@ -431,11 +431,13 @@ public interface IDumpService
     }
     Task<TracePage> PeTraceGetAsync(ulong from, int max, CancellationToken ct = default)
         => throw new NotSupportedException("This service has no call trace.");
-    Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(int offset, int limit, CancellationToken ct = default)
+    /// <summary>Names for recording <paramref name="gen"/>; a page for another recording comes back Stale and empty.</summary>
+    Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
         => throw new NotSupportedException("This service has no call trace.");
-    Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(int offset, int limit, CancellationToken ct = default)
+    Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(ulong gen, int offset, int limit, CancellationToken ct = default)
         => throw new NotSupportedException("This service has no call trace.");
-    Task PeTraceReleaseAsync(CancellationToken ct = default) => Task.CompletedTask;
+    /// <summary>Free recording <paramref name="gen"/> once it has stopped; never a newer one.</summary>
+    Task PeTraceReleaseAsync(ulong gen, CancellationToken ct = default) => Task.CompletedTask;
 
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has

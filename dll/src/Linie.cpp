@@ -367,8 +367,8 @@ void TraceReturn(const TraceToken& tok, uint32_t tid) {
     r.flags   = 0;
 }
 
-TraceInfo GetTraceInfo() {
-    std::lock_guard<std::mutex> lk(g_traceMu);
+namespace {
+TraceInfo InfoLocked() {
     TraceInfo i;
     i.allocated  = g_trace.buf != nullptr;
     i.tracing    = g_tracing.load(std::memory_order_seq_cst);
@@ -383,10 +383,16 @@ TraceInfo GetTraceInfo() {
     i.excluded   = g_trace.exclude.Size();
     return i;
 }
+}  // namespace
+
+TraceInfo GetTraceInfo() {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    return InfoLocked();
+}
 
 bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next, TraceInfo* seen) {
-    (void)seen;
     std::lock_guard<std::mutex> lk(g_traceMu);
+    if (seen) *seen = InfoLocked();
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     const uint64_t w = g_trace.next.load(std::memory_order_relaxed);
     const uint64_t begin = from > FirstValidLocked() ? from : FirstValidLocked();
@@ -408,8 +414,8 @@ bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, 
 }
 
 bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, uint64_t* gen) {
-    (void)gen;
     std::lock_guard<std::mutex> lk(g_traceMu);
+    if (gen) *gen = g_trace.gen;
     if (!g_trace.buf || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
     if (!g_trace.distinctReady) {
         std::vector<uintptr_t> f, o;
@@ -433,7 +439,11 @@ bool TraceDistinct(std::vector<uintptr_t>& funcs, std::vector<uintptr_t>& objs, 
     return true;
 }
 
-bool FreeTraceIfGen(uint64_t) { return false; }   // red: not built yet
+bool FreeTraceIfGen(uint64_t gen) {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (!g_trace.buf || g_trace.gen != gen || g_tracing.load(std::memory_order_seq_cst)) return false;
+    return FreeTraceLocked();
+}
 
 std::string Base64Encode(const uint8_t* data, size_t len) {
     static const char kAlphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";

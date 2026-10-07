@@ -48,20 +48,29 @@ public class CallTraceViewModelTests
             });
         }
 
-        Task<TraceNamesPage<TraceFuncName>> IDumpService.PeTraceFuncNamesAsync(int offset, int limit, CancellationToken ct)
+        /// <summary>The recording the DLL holds when names are asked; another one answers Stale.</summary>
+        public ulong NamesGen { get; set; } = 7;
+        public List<ulong> ReleasedGens { get; } = new();
+
+        Task<TraceNamesPage<TraceFuncName>> IDumpService.PeTraceFuncNamesAsync(ulong gen, int offset, int limit, CancellationToken ct)
         {
             NamesLimitSeen = limit;
+            if (gen != NamesGen) return Task.FromResult(new TraceNamesPage<TraceFuncName> { Gen = NamesGen, Stale = true });
             return Task.FromResult(new TraceNamesPage<TraceFuncName>
-                { Total = Funcs.Count, Offset = offset, Items = Funcs.Skip(offset).Take(limit).ToList() });
+                { Gen = gen, Total = Funcs.Count, Offset = offset, Items = Funcs.Skip(offset).Take(limit).ToList() });
         }
 
-        Task<TraceNamesPage<TraceObjName>> IDumpService.PeTraceObjNamesAsync(int offset, int limit, CancellationToken ct)
-            => Task.FromResult(new TraceNamesPage<TraceObjName>
-                { Total = Objs.Count, Offset = offset, Items = Objs.Skip(offset).Take(limit).ToList() });
+        Task<TraceNamesPage<TraceObjName>> IDumpService.PeTraceObjNamesAsync(ulong gen, int offset, int limit, CancellationToken ct)
+        {
+            if (gen != NamesGen) return Task.FromResult(new TraceNamesPage<TraceObjName> { Gen = NamesGen, Stale = true });
+            return Task.FromResult(new TraceNamesPage<TraceObjName>
+                { Gen = gen, Total = Objs.Count, Offset = offset, Items = Objs.Skip(offset).Take(limit).ToList() });
+        }
 
-        Task IDumpService.PeTraceReleaseAsync(CancellationToken ct)
+        Task IDumpService.PeTraceReleaseAsync(ulong gen, CancellationToken ct)
         {
             ReleaseCalls++;
+            ReleasedGens.Add(gen);
             return Task.CompletedTask;
         }
     }
@@ -133,6 +142,27 @@ public class CallTraceViewModelTests
         Assert.Equal("Jump", vm.Trace.FuncName(1));
         Assert.True(vm.Trace.ObjStale(1));
         Assert.Equal(2, vm.Rows.Count);   // collapsed: the two roots
+    }
+
+    [Fact]
+    public async Task The_release_names_the_recording_that_was_read()
+    {
+        var dump = Dump();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { 7UL }, dump.ReleasedGens);
+    }
+
+    [Fact]
+    public async Task Names_for_another_recording_drop_the_load_and_release_nothing()
+    {
+        var dump = Dump();
+        dump.NamesGen = 8;   // a new Start replaced the trace between the paging and the names
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.False(vm.HasTrace);
+        Assert.Null(vm.Trace);
+        Assert.Equal(0, dump.ReleaseCalls);
     }
 
     [Fact]
