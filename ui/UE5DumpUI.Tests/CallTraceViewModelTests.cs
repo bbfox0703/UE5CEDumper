@@ -182,8 +182,9 @@ public class CallTraceViewModelTests
     public async Task A_long_read_collects_the_pages_garbage_as_it_goes()
     {
         // [TRACE-UI-LOAD-MEMORY] Live, build 3634, Avowed: a full 128 MB load still peaked at 1.27 GB working set. Each
-        // page leaves the pipe's line and its parsed document behind (~40 MB for a full page), and nothing collected
-        // them during a load of dozens of pages. A collection every CollectEveryPages pages, and one before the build.
+        // page leaves the pipe's line and its parsed document behind (~5 MB for a full page), and nothing collected
+        // them during a load of hundreds of pages. A collection at least every CollectEveryPages pages (no platform
+        // service: free memory unknown, so exactly that), and one before the build.
         int pages = 4 * CallTraceViewModel.CollectEveryPages;   // four collection periods, whatever the period
         var dump = new FakeDumpService
         {

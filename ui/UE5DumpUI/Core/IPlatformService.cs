@@ -175,8 +175,9 @@ public interface IPlatformService
 
     /// <summary>
     /// [TRACE-UI-LOAD-MEMORY] Physical memory the system can hand out now without paging. Powers the call trace
-    /// slider's warning, which is advice, never a refusal. Default <see cref="long.MaxValue"/>: unknown, so a test
-    /// double or another platform warns about nothing. Never throws.
+    /// slider's warning, which is advice, never a refusal, and how often a trace load collects. Default
+    /// <see cref="long.MaxValue"/>: unknown, so a test double or another platform warns about nothing and a load
+    /// keeps its calibrated period. Never throws.
     /// </summary>
     long GetAvailablePhysicalMemoryBytes() => long.MaxValue;
 

@@ -33,14 +33,31 @@ public partial class CallTraceViewModel : ViewModelBase
     internal const int NamesPage = 20000;
     /// <summary>[TRACE-UI-LOAD-MEMORY] Each page leaves the pipe's line and its parsed document behind (~5 MB for a full
     /// page), and nothing collects them during a load of hundreds of pages: live on build 3634 a full 128 MB load still
-    /// peaked at 1.27 GB working set. A collection every this many pages -- about 21 MB of records -- keeps them to
-    /// ~85 MB; it takes milliseconds, the heap being a few large arrays of plain values.</summary>
+    /// peaked at 1.27 GB working set. A collection at least every this many pages -- about 21 MB of records -- keeps
+    /// them to ~85 MB; it takes milliseconds, the heap being a few large arrays of plain values. The slider's estimate
+    /// was calibrated on this period (build 3636): with less memory free a load collects more often, never less.</summary>
     internal const int CollectEveryPages = 16;
-    internal static int PagesBetweenCollections(long availableBytes) => CollectEveryPages;
+    /// <summary>What a full page leaves behind until a collection (MB): its pipe line, 1.75 million chars as UTF-16,
+    /// and its parsed document.</summary>
+    internal const int PageGarbageMb = 5;
+    /// <summary>The pages' garbage between two collections may take this share of the free physical memory.</summary>
+    internal const int FreeMemoryShare = 32;
+
+    /// <summary>[TRACE-UI-LOAD-MEMORY] The pages a load reads before it collects, from the physical memory free now (the
+    /// maintainer, 2026-10-07): 1/FreeMemoryShare of it for the pages' garbage, between one page and CollectEveryPages.
+    /// Free memory that cannot be read comes as long.MaxValue, so it keeps the calibrated period.</summary>
+    internal static int PagesBetweenCollections(long availableBytes)
+    {
+        long budgetMb = Math.Max(0L, availableBytes >> 20) / FreeMemoryShare;
+        return (int)Math.Clamp(budgetMb / PageGarbageMb, 1L, CollectEveryPages);
+    }
+
     /// <summary>The collections the last load ran while it read.</summary>
     internal int CollectionsDuringLastLoad { get; private set; }
-    // The last load's memory, for its log line: at its start, and the largest working set seen after a page.
-    private long _loadStartWs, _loadStartHeap, _loadPeakWs;
+    // The last load's memory, for its log line: at its start, and the largest working set seen after a page; the time
+    // its collections took and the shortest period the free memory asked for -- what the next live check weighs.
+    private long _loadStartWs, _loadStartHeap, _loadPeakWs, _collectTicks;
+    private int _loadMinEvery = CollectEveryPages;
 
     [ObservableProperty] private bool _isLoading;
     [ObservableProperty] private double _progress;
@@ -167,6 +184,8 @@ public partial class CallTraceViewModel : ViewModelBase
             _loadStartWs = _loadPeakWs = Environment.WorkingSet;
             _loadStartHeap = GC.GetTotalMemory(false);
             CollectionsDuringLastLoad = 0;   // the read's own, from here
+            _collectTicks = 0;
+            _loadMinEvery = CollectEveryPages;
             var read = await ReadAndBuildAsync(info, kept, ct);
             if (read.Trace == null)
             {
@@ -234,7 +253,11 @@ public partial class CallTraceViewModel : ViewModelBase
             n += page.Count;
             from = page.Next;
             NoteLoadPeak();
-            if (++pagesSinceCollect >= CollectEveryPages)
+            // Read after every page: the load's own window, or the game, takes the free memory as the read goes. One
+            // call into the OS a page, against a page of 1.3 MB from the pipe.
+            int every = PagesBetweenCollections(_platform?.GetAvailablePhysicalMemoryBytes() ?? long.MaxValue);
+            _loadMinEvery = Math.Min(_loadMinEvery, every);
+            if (++pagesSinceCollect >= every)
             {
                 CollectPageGarbage();
                 pagesSinceCollect = 0;
@@ -277,7 +300,9 @@ public partial class CallTraceViewModel : ViewModelBase
     /// list, and the next pages reuse them instead of growing the heap.</summary>
     private void CollectPageGarbage()
     {
+        long t0 = System.Diagnostics.Stopwatch.GetTimestamp();
         GC.Collect(2, GCCollectionMode.Forced, blocking: true, compacting: false);
+        _collectTicks += System.Diagnostics.Stopwatch.GetTimestamp() - t0;
         CollectionsDuringLastLoad++;
     }
 
@@ -308,7 +333,8 @@ public partial class CallTraceViewModel : ViewModelBase
         GC.Collect(2, GCCollectionMode.Aggressive, blocking: true, compacting: true);
         _log.Info($"CallTrace: memory -- at the load's start heap {_loadStartHeap >> 20:N0} MB, working set " +
                   $"{_loadStartWs >> 20:N0} MB; working set at its peak (sampled per page) {_loadPeakWs >> 20:N0} MB, " +
-                  $"{CollectionsDuringLastLoad} collections while it read; after it heap {heap:N0}->" +
+                  $"{CollectionsDuringLastLoad} collections while it read ({_collectTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency:N0} ms " +
+                  $"in all, as often as every {_loadMinEvery} page(s) by the free memory); after it heap {heap:N0}->" +
                   $"{GC.GetTotalMemory(false) >> 20:N0} MB, working set {ws:N0}->{Environment.WorkingSet >> 20:N0} MB " +
                   "(after the compacting collection)");
     }
