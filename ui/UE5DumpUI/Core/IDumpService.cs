@@ -417,6 +417,26 @@ public interface IDumpService
     Task<PeProfileResult> PeProfileGetAsync(int limit, bool skipPerFrame, CancellationToken ct = default)
         => PeProfileGetAsync(limit, ct);
 
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace. The defaults serve fakes that know nothing of it: a Start
+    // without a trace is the plain Start, and one with a trace is refused rather than silently dropped.
+
+    /// <summary>Start, arming the call trace when <paramref name="trace"/> is given.</summary>
+    Task<PeProfileStartResult> PeProfileStartAsync(TraceStartOptions? trace, CancellationToken ct = default)
+        => trace == null ? PeProfileStartAsync(ct) : throw new NotSupportedException("This service has no call trace.");
+    /// <summary>Stop, and the trace's state after it; null when no trace ran.</summary>
+    async Task<TraceInfo?> PeProfileStopWithTraceAsync(CancellationToken ct = default)
+    {
+        await PeProfileStopAsync(ct);
+        return null;
+    }
+    Task<TracePage> PeTraceGetAsync(ulong from, int max, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no call trace.");
+    Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(int offset, int limit, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no call trace.");
+    Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(int offset, int limit, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no call trace.");
+    Task PeTraceReleaseAsync(CancellationToken ct = default) => Task.CompletedTask;
+
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has
     /// occupied the DLL's dispatcher, plus Win32 process facts and game-thread

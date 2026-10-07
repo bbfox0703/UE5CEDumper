@@ -52,6 +52,8 @@ public sealed class LaneRoutingPipeClient : IPipeClient
         "walk_datatable_rows",
         "invoke_function",
         "rescan", "trigger_scan", "apply_rescan",
+        // [LIVEFUNCS-TIMELINE-2026-10-04] Paging out a trace of up to 512 MB, and naming everything in it.
+        "pe_trace_get", "pe_trace_names",
     };
 
     private bool _lastReported;          // last combined IsConnected we raised

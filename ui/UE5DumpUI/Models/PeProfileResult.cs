@@ -7,12 +7,17 @@ namespace UE5DumpUI.Models;
 /// Interesting Functions finder: the function the game ACTUALLY called when the
 /// user performed an in-game action.
 ///
-/// Plain init-only POCO (hand-parsed from the pipe JsonObject like
-/// <see cref="AllFunctionEntry"/>): the Start → Stop → Get flow produces an
-/// immutable snapshot per fetch, so no ObservableObject is needed.
+/// Init-only (hand-parsed from the pipe JsonObject like <see cref="AllFunctionEntry"/>): the Start → Stop → Get
+/// flow produces an immutable snapshot per fetch. The one exception is <see cref="IsTicked"/>, which the call
+/// trace's tick column changes on a row already on screen, so the row notifies.
 /// </summary>
-public sealed class PeProfileEntry
+public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Ticked for the call trace: the next traced Start records only this
+    /// function's calls and what they call. The ticks live in LiveFuncsViewModel, keyed by Class::Func; a fetch
+    /// copies them onto its new rows.</summary>
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isTicked;
+
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";
     public string FuncAddr  { get; init; } = "";
@@ -124,6 +129,8 @@ public sealed class PeProfileStartResult
 {
     public bool   HookActive { get; init; }
     public string Detail     { get; init; } = "";
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The armed trace, when the Start asked for one.</summary>
+    public TraceInfo? Trace  { get; init; }
 }
 
 /// <summary>
@@ -142,5 +149,9 @@ public sealed class PeProfileResult
     public bool Recording     { get; init; }
     public int  DistinctFuncs { get; init; }
     public long TotalCalls    { get; init; }
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The window the counts cover (ms), from the table's earliest fire to its
+    /// latest; null from a DLL older than the field. With <see cref="TotalCalls"/> it is the call rate the trace
+    /// slider estimates its seconds from.</summary>
+    public long? WindowMs     { get; init; }
     public List<PeProfileEntry> Entries { get; init; } = new();
 }

@@ -2836,22 +2836,143 @@ public sealed class DumpService : IDumpService
 
     /// <summary>Start recording per-UFunction fire counts. Forces the game-thread
     /// PE hook to install; returns its <c>hook_active</c> (false ⇒ counts stay 0).</summary>
-    public async Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
+    public Task<PeProfileStartResult> PeProfileStartAsync(CancellationToken ct = default)
+        => PeProfileStartAsync(null, ct);
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] The same Start, arming the call trace when <paramref name="trace"/> is
+    /// given. The DLL refuses the whole Start (an error reply) when it cannot allocate the buffer.</summary>
+    public async Task<PeProfileStartResult> PeProfileStartAsync(TraceStartOptions? trace, CancellationToken ct = default)
     {
-        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_profile_start" }, ct);
+        var req = new JsonObject { ["cmd"] = "pe_profile_start" };
+        if (trace != null)
+        {
+            var ticked = new JsonArray();
+            foreach (var a in trace.Ticked) ticked.Add(a);
+            req["trace"] = new JsonObject
+            {
+                ["bytes"] = trace.Bytes,
+                ["ticked"] = ticked,
+                ["exclude_per_frame"] = trace.ExcludePerFrame,
+            };
+        }
+        var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
         return new PeProfileStartResult
         {
             HookActive = res["hook_active"]?.GetValue<bool>() ?? false,
             Detail     = res["hook_detail"]?.GetValue<string>() ?? "",
+            Trace      = res["trace"] is JsonObject t ? ParseTraceInfo(t) : null,
         };
     }
 
     /// <summary>Stop recording (idempotent). Counts are retained for a later get.</summary>
-    public async Task PeProfileStopAsync(CancellationToken ct = default)
+    public async Task PeProfileStopAsync(CancellationToken ct = default) => await PeProfileStopWithTraceAsync(ct);
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Stop, and the trace's state after it (null when no trace ran).</summary>
+    public async Task<TraceInfo?> PeProfileStopWithTraceAsync(CancellationToken ct = default)
     {
         var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_profile_stop" }, ct);
         CheckResponse(res);
+        return res["trace"] is JsonObject t ? ParseTraceInfo(t) : null;
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] One page of the stopped ring, from sequence number
+    /// <paramref name="from"/>.</summary>
+    public async Task<TracePage> PeTraceGetAsync(ulong from, int max, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_get", ["from"] = from, ["max"] = max }, ct);
+        CheckResponse(res);
+        var data = res["data"]?.GetValue<string>() ?? "";
+        return new TracePage
+        {
+            Info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Count = res["count"]?.GetValue<int>() ?? 0,
+            Next  = res["next"]?.GetValue<ulong>() ?? from,
+            Data  = data.Length == 0 ? Array.Empty<byte>() : Convert.FromBase64String(data),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct functions, resolved now.</summary>
+    public async Task<TraceNamesPage<TraceFuncName>> PeTraceFuncNamesAsync(int offset, int limit, CancellationToken ct = default)
+    {
+        var res = await PeTraceNamesAsync("funcs", offset, limit, ct);
+        return new TraceNamesPage<TraceFuncName>
+        {
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            Offset = res["offset"]?.GetValue<int>() ?? offset,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            Items = res["items"] is JsonArray arr
+                ? arr.OfType<JsonObject>().Select(i => new TraceFuncName
+                {
+                    Addr = ParseAddr(i["addr"]?.GetValue<string>()),
+                    Live = i["live"]?.GetValue<bool>() ?? false,
+                    ClassName = i["class_name"]?.GetValue<string>() ?? "",
+                    FuncName = i["func_name"]?.GetValue<string>() ?? "",
+                    FunctionFlags = (uint)(i["function_flags"]?.GetValue<long>() ?? 0L),
+                }).ToList()
+                : new List<TraceFuncName>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Names of the kept window's distinct calling objects, resolved now: an
+    /// address that no longer holds its object comes back not live and unnamed.</summary>
+    public async Task<TraceNamesPage<TraceObjName>> PeTraceObjNamesAsync(int offset, int limit, CancellationToken ct = default)
+    {
+        var res = await PeTraceNamesAsync("objs", offset, limit, ct);
+        return new TraceNamesPage<TraceObjName>
+        {
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            Offset = res["offset"]?.GetValue<int>() ?? offset,
+            Truncated = res["truncated"]?.GetValue<bool>() ?? false,
+            Items = res["items"] is JsonArray arr
+                ? arr.OfType<JsonObject>().Select(i => new TraceObjName
+                {
+                    Addr = ParseAddr(i["addr"]?.GetValue<string>()),
+                    Live = i["live"]?.GetValue<bool>() ?? false,
+                    Name = i["name"]?.GetValue<string>() ?? "",
+                    ClassName = i["class_name"]?.GetValue<string>() ?? "",
+                }).ToList()
+                : new List<TraceObjName>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] Give the game its memory back once the trace is read.</summary>
+    public async Task PeTraceReleaseAsync(CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_trace_release" }, ct);
+        CheckResponse(res);
+    }
+
+    private async Task<JsonNode> PeTraceNamesAsync(string kind, int offset, int limit, CancellationToken ct)
+    {
+        var res = await _pipe.SendAsync(
+            new JsonObject { ["cmd"] = "pe_trace_names", ["kind"] = kind, ["offset"] = offset, ["limit"] = limit }, ct);
+        CheckResponse(res);
+        return res;
+    }
+
+    private static TraceInfo ParseTraceInfo(JsonObject t) => new()
+    {
+        Allocated  = t["allocated"]?.GetValue<bool>() ?? false,
+        Tracing    = t["tracing"]?.GetValue<bool>() ?? false,
+        Quiesced   = t["quiesced"]?.GetValue<bool>() ?? true,
+        Gen        = t["gen"]?.GetValue<ulong>() ?? 0,
+        Bytes      = t["bytes"]?.GetValue<long>() ?? 0,
+        Capacity   = t["capacity"]?.GetValue<ulong>() ?? 0,
+        Written    = t["written"]?.GetValue<ulong>() ?? 0,
+        FirstValid = t["first_valid"]?.GetValue<ulong>() ?? 0,
+        QpcFreq    = t["qpc_freq"]?.GetValue<ulong>() ?? 0,
+        RecordSize = t["record_size"]?.GetValue<int>() ?? 0,
+        Ticked     = t["ticked"]?.GetValue<int>() ?? 0,
+        Excluded   = t["excluded"]?.GetValue<int>() ?? 0,
+    };
+
+    private static ulong ParseAddr(string? s)
+    {
+        if (string.IsNullOrEmpty(s)) return 0;
+        var hex = s.StartsWith("0x", StringComparison.OrdinalIgnoreCase) ? s[2..] : s;
+        return ulong.TryParse(hex, System.Globalization.NumberStyles.HexNumber,
+            System.Globalization.CultureInfo.InvariantCulture, out var v) ? v : 0;
     }
 
     /// <summary>Fetch the ranked fire-count table (top <paramref name="limit"/> by count).</summary>
@@ -2896,6 +3017,7 @@ public sealed class DumpService : IDumpService
             Recording     = res["recording"]?.GetValue<bool>() ?? false,
             DistinctFuncs = res["distinct_funcs"]?.GetValue<int>() ?? 0,
             TotalCalls    = res["total_calls"]?.GetValue<long>() ?? 0L,
+            WindowMs      = res["window_ms"]?.GetValue<long>(),
             PerFrameHidden = res["per_frame_hidden"]?.GetValue<int>(),
             PerFrameFuncs  = res["per_frame_funcs"] is JsonArray pf
                 ? pf.Select(a => a?.GetValue<string>() ?? "").Where(a => a.Length > 0).ToList()

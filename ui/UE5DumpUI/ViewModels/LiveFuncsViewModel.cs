@@ -240,15 +240,150 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// without a bridge it simply stays unavailable.</summary>
     public Helpers.AobMakerStatus AobMaker { get; }
 
+    // ---- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace: armed by this panel's Start, read in the Call Trace tab.
+    // Experimental (T6): the controls show, and a Start asks for a trace, only while the experimental tabs are on.
+    // The plan and its decisions: docs/live-funcs-timeline-plan.md.
+
+    private readonly IExperimentalGate? _experimentalGate;
+    public bool TraceAvailable => _experimentalGate?.IsEnabled ?? false;
+
+    /// <summary>The trace buffer as a power of two in MB (T1): 32 to 512. How much the game can spare is the user's
+    /// call; the estimate beside the slider says how long it would last.</summary>
+    internal const int TraceBufferMinExponent = 5;
+    internal const int TraceBufferMaxExponent = 9;
+    [ObservableProperty] private bool _traceEnabled;
+    [ObservableProperty] private int _traceBufferExponent = 6;
+    /// <summary>T5 (b): leave out the functions the previous recording found firing every frame.</summary>
+    [ObservableProperty] private bool _traceExcludePerFrame;
+    public int TraceBufferMb => 1 << TraceBufferExponent;
+
+    /// <summary>Two 40-byte records per call: its entry and its return.</summary>
+    internal const int TraceBytesPerCall = 80;
+    /// <summary>The last fetch's calls per second over the window its table covers; 0 before any.</summary>
+    private double _lastCallsPerSecond;
+    internal double LastCallsPerSecond => _lastCallsPerSecond;
+
+    /// <summary>Seconds a buffer of <paramref name="bytes"/> keeps when every call is traced at
+    /// <paramref name="callsPerSecond"/>; ticked functions and the per-frame exclusion make it last longer.</summary>
+    internal static double EstimateSeconds(long bytes, double callsPerSecond)
+        => callsPerSecond <= 0 ? 0 : bytes / (callsPerSecond * TraceBytesPerCall);
+
+    public string TraceEstimate
+    {
+        get
+        {
+            if (_lastCallsPerSecond <= 0) return Res.Get("str.LF.Trace.EstimateNone");
+            double s = EstimateSeconds((long)TraceBufferMb << 20, _lastCallsPerSecond);
+            string span = s < 120 ? Res.Format("str.LF.Trace.Seconds", Math.Round(s))
+                                  : Res.Format("str.LF.Trace.Minutes", Math.Round(s / 60, 1));
+            return Res.Format("str.LF.Trace.Estimate", span, Math.Round(_lastCallsPerSecond));
+        }
+    }
+
+    /// <summary>The ticked functions, keyed by Class::Func (stable across fetches) with the address the last fetch
+    /// saw them at, which is what the DLL matches on. A tick from an earlier game session has no address here.</summary>
+    private readonly Dictionary<string, string> _ticked = new(StringComparer.Ordinal);
+    /// <summary>The ticked functions as Class::Func, for this panel and the Call Trace tab's read-only copy (T8).</summary>
+    public ObservableCollection<string> TickedFunctions { get; } = new();
+
+    /// <summary>T7: asked before a traced Start with nothing ticked while there are rows to tick from. The view sets
+    /// it; without one a Start that needs the question does not start.</summary>
+    public Func<Task<bool>>? ConfirmTraceAllCalls { get; set; }
+    /// <summary>T7: answered yes once in this session, so a later Start with nothing ticked runs at once. Cancel
+    /// does not count as asked.</summary>
+    private bool _traceAllConfirmed;
+
+    /// <summary>The running recording asked for a trace (fixed at Start).</summary>
+    private bool _recordingTrace;
+    /// <summary>The trace's state after the last traced recording stopped; null before one.</summary>
+    public TraceInfo? LastTraceInfo { get; private set; }
+    /// <summary>A traced recording stopped and its trace waits in the DLL: offer the Call Trace tab.</summary>
+    [ObservableProperty] private bool _hasTraceToOpen;
+    /// <summary>Raised by "Open in Call Trace"; the main window switches tabs and loads the trace.</summary>
+    public event Action? NavigateToCallTrace;
+
     public LiveFuncsViewModel(IDumpService dump, ILoggingService log, IPlatformService? platform = null,
-                              Helpers.AobMakerStatus? aobMaker = null)
+                              Helpers.AobMakerStatus? aobMaker = null, IExperimentalGate? experimentalGate = null)
     {
         _dump = dump;
         _log = log;
         _platform = platform;
         AobMaker = aobMaker ?? new Helpers.AobMakerStatus(null);
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
+        _experimentalGate = experimentalGate;
+        if (_experimentalGate != null) _experimentalGate.Changed += (_, _) => OnPropertyChanged(nameof(TraceAvailable));
     }
+
+    partial void OnTraceBufferExponentChanged(int value)
+    {
+        int clamped = Math.Clamp(value, TraceBufferMinExponent, TraceBufferMaxExponent);
+        if (clamped != value)
+        {
+            TraceBufferExponent = clamped;   // re-enters with the clamped value
+            return;
+        }
+        OnPropertyChanged(nameof(TraceBufferMb));
+        OnPropertyChanged(nameof(TraceEstimate));
+    }
+
+    /// <summary>Tick or untick a row for the trace. Not while recording: the ticks a recording traces are the ones
+    /// it started with.</summary>
+    [RelayCommand]
+    private void ToggleTick(PeProfileEntry? row)
+    {
+        if (row == null || IsRecording || string.IsNullOrEmpty(row.FuncAddr)) return;
+        string key = Key(row);
+        if (_ticked.Remove(key)) row.IsTicked = false;
+        else { _ticked[key] = row.FuncAddr; row.IsTicked = true; }
+        RefreshTickedList();
+    }
+
+    [RelayCommand]
+    private void ClearTicks()
+    {
+        if (IsRecording) return;
+        _ticked.Clear();
+        foreach (var e in _allEntries) e.IsTicked = false;
+        RefreshTickedList();
+    }
+
+    private void RefreshTickedList()
+    {
+        TickedFunctions.Clear();
+        foreach (var k in _ticked.Keys.OrderBy(k => k, StringComparer.Ordinal)) TickedFunctions.Add(k);
+    }
+
+    [RelayCommand]
+    private void OpenCallTrace() => NavigateToCallTrace?.Invoke();
+
+    /// <summary>What a Start asks of the trace, or null for a Start without one. Null too when T7's question is
+    /// declined, with <paramref name="cancelled"/> set.</summary>
+    private async Task<TraceStartOptions?> TraceOptionsForStartAsync(Ref<bool> cancelled)
+    {
+        if (!TraceAvailable || !TraceEnabled) return null;
+        var ticked = _ticked.Values.Where(a => a.Length > 0).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        // T7: only when there is something to tick. The first recording, or any Start with the table empty, has no
+        // rows to tick from, and records every call without asking.
+        if (ticked.Count == 0 && _allEntries.Count > 0 && !_traceAllConfirmed)
+        {
+            var confirm = ConfirmTraceAllCalls;
+            if (confirm == null || !await confirm())
+            {
+                cancelled.Value = true;
+                return null;
+            }
+            _traceAllConfirmed = true;
+        }
+        return new TraceStartOptions
+        {
+            Bytes = (long)TraceBufferMb << 20,
+            Ticked = ticked,
+            ExcludePerFrame = TraceExcludePerFrame,
+        };
+    }
+
+    /// <summary>A box for an out-value an async method can set.</summary>
+    private sealed class Ref<T> { public T Value = default!; }
 
     partial void OnFilterTextChanged(string value)
     {
@@ -346,17 +481,32 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             ClearError();
             IsBusy = true;
-            var start = await _dump.PeProfileStartAsync();
+            var cancelled = new Ref<bool>();
+            var trace = await TraceOptionsForStartAsync(cancelled);
+            if (cancelled.Value)
+            {
+                StatusText = Res.Get("str.LF.Trace.StartCancelled");
+                return;
+            }
+            var start = trace == null ? await _dump.PeProfileStartAsync() : await _dump.PeProfileStartAsync(trace);
             _recordingFetchLimit = FetchLimit;
             _recordingHidePerFrame = HidePerFrame;
             _captureMinCalls = MinCalls;
+            _recordingTrace = trace != null;
+            HasTraceToOpen = false;
             IsRecording = true;
             StatusText = start.HookActive
                 ? "Recording… ALT-TAB to the game, perform the action (open shop / dash), then click Stop."
                 : string.IsNullOrEmpty(start.Detail)
                     ? "No PE hook — counts stay 0. Change to another map/scene and Start again."
                     : start.Detail;   // self-contained reason from the DLL
-            _log.Info($"LivePEProfiler: start (hook_active={start.HookActive})");
+            if (trace != null && start.HookActive)
+            {
+                StatusText += " " + (trace.Ticked.Count > 0
+                    ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb, trace.Ticked.Count)
+                    : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
+            }
+            _log.Info($"LivePEProfiler: start (hook_active={start.HookActive}, trace={(trace == null ? "off" : $"{TraceBufferMb} MB, {trace.Ticked.Count} ticked, exclude_per_frame={trace.ExcludePerFrame}")})");
         }
         catch (Exception ex)
         {
@@ -372,12 +522,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task StopAsync()
     {
         if (!IsRecording) return;
+        bool traced = _recordingTrace;
         try
         {
             ClearError();
             IsBusy = true;
-            await _dump.PeProfileStopAsync();
+            var traceInfo = await _dump.PeProfileStopWithTraceAsync();
+            _recordingTrace = false;
+            NoteStoppedTrace(traced, traceInfo);
             await FetchAndPopulateAsync();
+            if (traced) StatusText += " " + TraceStopNote();
         }
         catch (Exception ex)
         {
@@ -387,7 +541,27 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
         // Clear the recording UI state even if the stop round-trip threw, so a failed
         // Stop doesn't leave the tab stuck "recording" (which would swallow Start). (L16)
-        finally { IsBusy = false; IsRecording = false; }
+        finally { IsBusy = false; IsRecording = false; _recordingTrace = false; }
+    }
+
+    /// <summary>What a stopped traced recording left in the DLL; offers the Call Trace tab when there is something
+    /// to read.</summary>
+    private void NoteStoppedTrace(bool traced, TraceInfo? info)
+    {
+        if (!traced) return;
+        LastTraceInfo = info;
+        HasTraceToOpen = info is { Allocated: true, Quiesced: true } && info.Written > 0;
+    }
+
+    private string TraceStopNote()
+    {
+        var i = LastTraceInfo;
+        if (i == null || !i.Allocated) return Res.Get("str.LF.Trace.NoneKept");
+        if (!i.Quiesced) return Res.Get("str.LF.Trace.NotQuiesced");
+        if (i.Written == 0) return Res.Get("str.LF.Trace.Empty");
+        return i.FirstValid > 0
+            ? Res.Format("str.LF.Trace.KeptLast", i.Kept, i.Written)
+            : Res.Format("str.LF.Trace.KeptAll", i.Kept);
     }
 
     /// <summary>[EXTPR-539-540-2026-10-02] L2: save the rows on screen (what the filter, the check boxes and Min calls
@@ -468,6 +642,18 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastPerFrameAddrs     = new(_lastPerFrameEffective ? result.PerFrameFuncs : Array.Empty<string>(),
                                      StringComparer.OrdinalIgnoreCase);
         _allEntries   = result.Entries;
+        // The ticks are kept by name; the new rows carry them, and their addresses are the ones the DLL matches on.
+        foreach (var e in _allEntries)
+        {
+            if (!_ticked.ContainsKey(Key(e))) continue;
+            e.IsTicked = true;
+            if (!string.IsNullOrEmpty(e.FuncAddr)) _ticked[Key(e)] = e.FuncAddr;
+        }
+        if (result.WindowMs is > 0 && result.TotalCalls > 0)
+        {
+            _lastCallsPerSecond = result.TotalCalls / (result.WindowMs.Value / 1000.0);
+            OnPropertyChanged(nameof(TraceEstimate));
+        }
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
         _lastTotalCalls = result.TotalCalls;
@@ -662,9 +848,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // Clear the UI state up-front (before the round-trip) so returning to the tab and
         // clicking Start inside the stop window isn't swallowed by StartAsync's guard. (L16)
         IsRecording = false;
-        try { await _dump.PeProfileStopAsync(); }
+        bool traced = _recordingTrace;
+        _recordingTrace = false;
+        try { NoteStoppedTrace(traced, await _dump.PeProfileStopWithTraceAsync()); }
         catch (Exception ex) { _log.Error("LivePEProfiler auto-stop failed", ex); }
         StatusText = "Recording auto-stopped (left the tab). Re-open and Refresh to see counts.";
+        if (traced) StatusText += " " + TraceStopNote();
     }
 
     /// <summary>Reset the recording UI state on pipe disconnect. The DLL (Linie) already
@@ -673,5 +862,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public void ResetOnDisconnect()
     {
         if (IsRecording) IsRecording = false;
+        // [LIVEFUNCS-TIMELINE-2026-10-04] The DLL dropped the trace with the client, and the ticks' addresses belong
+        // to the process that is gone; so does the call rate the estimate came from.
+        _recordingTrace = false;
+        HasTraceToOpen = false;
+        LastTraceInfo = null;
+        _ticked.Clear();
+        RefreshTickedList();
+        _lastCallsPerSecond = 0;
+        OnPropertyChanged(nameof(TraceEstimate));
     }
 }

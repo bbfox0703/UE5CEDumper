@@ -1113,6 +1113,19 @@
     <sys:String x:Key="str.LF.PerFrame.Hidden">; {0:N0} per-frame functions left out</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Unsupported">; Hide per-frame needs a newer UE5Dumper.dll (this one left nothing out)</sys:String>
     <sys:String x:Key="str.LF.PerFrame.BaselineMismatch">⚠ The baseline was fetched with Hide per-frame the other way, so the per-frame functions read as NEW or are missing: set it the same way and record the baseline again.</sys:String>
+    <!-- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace (experimental) -->
+    <sys:String x:Key="str.LF.Trace.EstimateNone">Record once to see how long it lasts.</sys:String>
+    <sys:String x:Key="str.LF.Trace.Seconds">{0:N0} s</sys:String>
+    <sys:String x:Key="str.LF.Trace.Minutes">{0:N1} min</sys:String>
+    <sys:String x:Key="str.LF.Trace.Estimate">≈ {0} if every call is traced, at the last recording's {1:N0} calls/s</sys:String>
+    <sys:String x:Key="str.LF.Trace.StartCancelled">Start cancelled. Tick the functions to trace in the table, or Start again and confirm to trace every call.</sys:String>
+    <sys:String x:Key="str.LF.Trace.RecordingTicked">Tracing ({0} MB) inside {1} ticked function(s).</sys:String>
+    <sys:String x:Key="str.LF.Trace.RecordingAll">Tracing every call ({0} MB).</sys:String>
+    <sys:String x:Key="str.LF.Trace.NoneKept">The trace kept nothing: this UE5Dumper.dll has no call trace (an older one?).</sys:String>
+    <sys:String x:Key="str.LF.Trace.NotQuiesced">⚠ The trace could not be stopped cleanly and will not be read. Start again.</sys:String>
+    <sys:String x:Key="str.LF.Trace.Empty">The trace recorded no calls.</sys:String>
+    <sys:String x:Key="str.LF.Trace.KeptLast">Trace: kept the last {0:N0} of {1:N0} records. Open it in the Call Trace tab.</sys:String>
+    <sys:String x:Key="str.LF.Trace.KeptAll">Trace: {0:N0} records. Open it in the Call Trace tab.</sys:String>
     <sys:String x:Key="str.LF.Save.FileType">JSON Lines (*.jsonl)</sys:String>
     <sys:String x:Key="str.LF.Save.Empty">Nothing to save: the table is empty.</sys:String>
     <sys:String x:Key="str.LF.Save.Done">Saved {0} row(s) to {1}</sys:String>
