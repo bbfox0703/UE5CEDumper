@@ -246,6 +246,9 @@ def module_range(pid: int) -> tuple[int, int] | None:
         _fields_ = [("lpBaseOfDll", ctypes.c_void_p), ("SizeOfImage", w.DWORD), ("EntryPoint", ctypes.c_void_p)]
 
     k32.OpenProcess.restype = w.HANDLE
+    psapi.EnumProcessModulesEx.argtypes = [w.HANDLE, ctypes.POINTER(w.HMODULE), w.DWORD, ctypes.POINTER(w.DWORD),
+                                           w.DWORD]
+    psapi.GetModuleInformation.argtypes = [w.HANDLE, w.HMODULE, ctypes.c_void_p, w.DWORD]   # 64-bit handles
     h = k32.OpenProcess(0x0410, False, pid)   # QUERY_INFORMATION | VM_READ
     if not h:
         return None
