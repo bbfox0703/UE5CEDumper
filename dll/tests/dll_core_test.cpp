@@ -7147,6 +7147,47 @@ int main() {
               di2.size() == 2 && di2[0].captured && di2[0].nameIndex == 0xA);
         Linie::Reset();
 
+        // Review DLL-3: a freed function's address taken by another that fires in the same recording. Each call checks
+        // the function's key -- its FName and its Outer -- against what was read; another function is read again and
+        // the entry marked reused: its count is both functions', and its name the one now there.
+        static int32_t  s_occName  = 0x50;     // the function now at 0xF0
+        static int32_t  s_occClass = 0x90;     // its class's FName
+        static uint64_t s_occOuter = 0x9000;   // its class
+        static int      s_keyReads = 0;
+        auto occReader = [](uintptr_t, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex = s_occName;
+            out.classIndex = s_occClass;
+            out.outer = s_occOuter;
+            return true;
+        };
+        auto occKey = [](uintptr_t, int32_t& idx, int32_t& n, uint64_t& outer) -> bool {
+            ++s_keyReads;
+            idx = s_occName;
+            n = 0;
+            outer = s_occOuter;
+            return true;
+        };
+        Linie::StartRecording(occReader, occKey);
+        s_keyReads = 0;
+        Linie::RecordCall(0xF0, 6000); Linie::RecordCall(0xF0, 6001);
+        check("the same function at its address: not reused",
+              !statOf(0xF0).ident.reused && statOf(0xF0).ident.nameIndex == 0x50);
+        check("...the key is checked on the calls after the first sight", s_keyReads == 1, num(s_keyReads).c_str());
+        s_occOuter = 0x9100;   // its class reloaded: a new UClass object, the same names
+        Linie::RecordCall(0xF0, 6002);
+        check("...its class reloaded under the same names: not reused, the new class kept",
+              !statOf(0xF0).ident.reused && statOf(0xF0).ident.outer == 0x9100);
+        s_occName = 0x60; s_occClass = 0xA0; s_occOuter = 0xA000;   // another function took the address
+        Linie::RecordCall(0xF0, 6003); Linie::RecordCall(0xF0, 6004);
+        const auto ru = statOf(0xF0);
+        check("another function at the address: read again and marked reused",
+              ru.ident.reused && ru.ident.nameIndex == 0x60 && ru.ident.classIndex == 0xA0 && ru.count == 5,
+              num(ru.ident.nameIndex).c_str());
+        s_occName = 0x50; s_occClass = 0x90; s_occOuter = 0x9000;
+        Linie::RecordCall(0xF0, 6005);
+        check("...and stays marked when the first one comes back", statOf(0xF0).ident.reused);
+        Linie::Reset();
+
         // Ubel's reader: loads only, from what Fern installs at Start. A fake UFunction whose Outer is a class two
         // steps below a widget base, and one whose class derives from nothing.
         static uint8_t fFn[0x100] = {}, fFn2[0x100] = {}, fCls[0x100] = {}, fMid[0x100] = {}, fBase[0x100] = {},
@@ -7176,7 +7217,12 @@ int main() {
         Linie::FuncIdentity id{};
         const bool okA = Ubel::CaptureFunctionIdentity(at(fFn), id);
         check("Ubel's reader: the function's FName and its class's", okA && id.nameIndex == 21 && id.nameNumber == 3 &&
-              id.classIndex == 22, num(id.nameIndex).c_str());
+              id.classIndex == 22 && id.outer == at(fCls), num(id.nameIndex).c_str());
+        int32_t kIdx = 0, kNum = 0;
+        uint64_t kOuter = 0;
+        check("Ubel's key reader: the FName and the Outer, for the check on every call",
+              Ubel::ReadFunctionKey(at(fFn), kIdx, kNum, kOuter) && kIdx == 21 && kNum == 3 && kOuter == at(fCls));
+        check("...an address that cannot be read is refused", !Ubel::ReadFunctionKey(0x1000, kIdx, kNum, kOuter));
         check("...its flags and parameters at the offsets set up at Start",
               id.functionFlags == 0x00080401 && id.numParms == 2 && id.parmsSize == 24, num(id.parmsSize).c_str());
         check("...a class two steps below a widget base is a widget's", id.isWidget);
@@ -7242,6 +7288,12 @@ int main() {
             for (int i = 0; i < N; ++i) Linie::RecordCall(0x1000 + (i & 63), 1000 + i);
             QueryPerformanceCounter(&t1);
             const double withReader = nsPer(t0, t1, N);
+            // Review DLL-3's check on every call, through Ubel's readers on the fake function.
+            Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey);
+            QueryPerformanceCounter(&t0);
+            for (int i = 0; i < N; ++i) Linie::RecordCall(at(fFn), 1000 + i);
+            QueryPerformanceCounter(&t1);
+            const double withKey = nsPer(t0, t1, N);
             Linie::Reset();
             cs.flagsOffset = kFlagsOff;
             Ubel::SetFunctionCapture(cs);
@@ -7251,8 +7303,9 @@ int main() {
             QueryPerformanceCounter(&t1);
             const double firstSight = nsPer(t0, t1, M);
             Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
-            printf("  info  table cost: %.1f ns per call with no reader, %.1f ns with one (after the first sight); "
-                   "%.1f ns per first sight through Ubel's reader\n", bare, withReader, firstSight);
+            printf("  info  table cost: %.1f ns per call with no reader, %.1f ns with one (after the first sight), "
+                   "%.1f ns with Ubel's key check on every call; %.1f ns per first sight through Ubel's reader\n",
+                   bare, withReader, withKey, firstSight);
         }
     }
 
