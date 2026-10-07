@@ -299,7 +299,7 @@ def entry_expect(vals: list, names: list[str]) -> list[str]:
     who = v.get("Who", ["", -1])
     want("Who", who[1] == MARK_NOW and "DumperTest58Anchor" in who[0])
     soft = v.get("Soft", ["", -1])
-    want("Soft", "DumperTest58Anchor" in soft[0])
+    want("Soft", soft[1] == MARK_HEADER and ":<sub-path, " in soft[0])   # the actor's sub-path: its text not copied
     vec = v.get("V", ["", -1, []])
     sub = vec[2] if len(vec) > 2 else []
     want("V", [num(x) for x in sub] == [r, -r, 0.5])
