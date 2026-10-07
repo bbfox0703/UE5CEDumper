@@ -259,7 +259,8 @@ void Snapshot(std::vector<FuncStat>& out, uint64_t& activityMs) {
 std::vector<PendingArm> TakePendingArms(ArmState& st, size_t max) {
     std::lock_guard<std::mutex> lk(g_mu);
     std::vector<PendingArm> out;
-    const size_t end = std::min(st.log.size(), st.taken + max);
+    const size_t avail = st.log.size() > st.taken ? st.log.size() - st.taken : 0;
+    const size_t end = st.taken + std::min(max, avail);   // never taken + max: "all" is SIZE_MAX
     for (size_t i = st.taken; i < end; ++i) out.push_back(PendingArm{ static_cast<uint32_t>(i), st.log[i] });
     st.taken = end;
     return out;
