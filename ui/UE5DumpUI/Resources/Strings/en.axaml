@@ -1135,6 +1135,9 @@
     <sys:String x:Key="str.CT.Export.CsvType">CSV</sys:String>
     <sys:String x:Key="str.CT.Export.Done">Exported {0:N0} calls to {1}</sys:String>
     <sys:String x:Key="str.CT.Export.Failed">Export failed: {0}</sys:String>
+    <sys:String x:Key="str.CT.Export.ParamsCsv">Export parameters CSV</sys:String>
+    <sys:String x:Key="str.CT.Export.ParamsCsvType">CSV (parameters)</sys:String>
+    <sys:String x:Key="str.CT.Export.ParamsDone">Exported the parameters of {0:N0} calls to {1}</sys:String>
     <sys:String x:Key="str.CT.Col.Time">Time (ms)</sys:String>
     <sys:String x:Key="str.CT.Col.Duration">Duration (µs)</sys:String>
     <sys:String x:Key="str.CT.Col.Thread">Thread</sys:String>
@@ -1304,6 +1307,7 @@
     <sys:String x:Key="str.Tip.LF.Trace.Tick">Trace only this function's calls and what they call.</sys:String>
     <sys:String x:Key="str.Tip.CT.Load">Read the trace the last traced Live Funcs recording kept. Opening this tab does it by itself.</sys:String>
     <sys:String x:Key="str.Tip.CT.Filter">Find calls by function, class or object. Words separated by spaces must all match.</sys:String>
+    <sys:String x:Key="str.Tip.CT.ExportParamsCsv">Save the copied parameters to a CSV file: one row per parameter of every call whose parameters were copied, with its value at the call and, for out and return values, after it. The seq column joins the rows to the calls CSV. Offered when the trace took parameter snapshots.</sys:String>
     <sys:String x:Key="str.Tip.LF.SaveJsonl">Save the rows on screen to a JSON Lines file: a summary line, then one line per function, in the order the game first called it. The filter, the check boxes and Min calls decide which rows are saved, and the summary line records them. Not available while recording.</sys:String>
     <sys:String x:Key="str.Tip.LF.Refresh">Re-fetch the current fire-count table without stopping — a live peek while recording, or a re-pull after Stop.</sys:String>
     <sys:String x:Key="str.Tip.LF.Filter">Substring match against function name OR class name (space = AND, case-insensitive). e.g. "shop" or "open".</sys:String>

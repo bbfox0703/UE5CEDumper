@@ -81,13 +81,22 @@ public partial class CallTraceViewModel : ViewModelBase
     /// load, which re-enabled Load and started a second reader on the same ring.</summary>
     [ObservableProperty] private bool _isExporting;
     public bool CanExport => HasTrace && !IsLoading && !IsExporting;
+    /// <summary>[LIVEFUNCS-STEP2] The parameters CSV has rows only when the trace took copies. A trace replaces the one
+    /// on screen through HasTrace false (a load drops the shown trace first), so HasTrace's change announces this.</summary>
+    public bool CanExportParams => CanExport && _trace?.Snapshots != null;
     public bool CanLoad => !IsLoading && !IsExporting;
     /// <summary>The DLL has a newer recording than the trace on screen, which could not be read (it kept no calls, or
     /// its stop did not quiesce): what is shown is not what the last recording traced.</summary>
     [ObservableProperty] private bool _shownIsOlder;
-    partial void OnIsLoadingChanged(bool value) { OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(CanLoad)); }
-    partial void OnIsExportingChanged(bool value) { OnPropertyChanged(nameof(CanExport)); OnPropertyChanged(nameof(CanLoad)); }
-    partial void OnHasTraceChanged(bool value) => OnPropertyChanged(nameof(CanExport));
+    partial void OnIsLoadingChanged(bool value) => OnExportStateChanged();
+    partial void OnIsExportingChanged(bool value) => OnExportStateChanged();
+    partial void OnHasTraceChanged(bool value) => OnExportStateChanged();
+    private void OnExportStateChanged()
+    {
+        OnPropertyChanged(nameof(CanExport));
+        OnPropertyChanged(nameof(CanExportParams));
+        OnPropertyChanged(nameof(CanLoad));
+    }
     /// <summary>An activation waiting on Live Funcs' stop and the probe: leaving the tab cancels it before a load starts.</summary>
     private CancellationTokenSource? _activationCts;
 
@@ -782,20 +791,31 @@ public partial class CallTraceViewModel : ViewModelBase
 
     // ---- export ----
 
-    [RelayCommand]
-    private Task ExportJsonlAsync() => ExportAsync(".jsonl", "str.CT.Export.JsonlType", jsonl: true);
+    private enum ExportKind { Jsonl, Csv, ParamsCsv }
 
     [RelayCommand]
-    private Task ExportCsvAsync() => ExportAsync(".csv", "str.CT.Export.CsvType", jsonl: false);
+    private Task ExportJsonlAsync() => ExportAsync(".jsonl", "str.CT.Export.JsonlType", ExportKind.Jsonl);
 
-    private async Task ExportAsync(string ext, string typeKey, bool jsonl)
+    [RelayCommand]
+    private Task ExportCsvAsync() => ExportAsync(".csv", "str.CT.Export.CsvType", ExportKind.Csv);
+
+    /// <summary>[LIVEFUNCS-STEP2] The parameter copies, a row per parameter, in a file of their own
+    /// (<see cref="CallTraceExport"/> says why).</summary>
+    [RelayCommand]
+    private Task ExportParamsCsvAsync() => ExportAsync(".csv", "str.CT.Export.ParamsCsvType", ExportKind.ParamsCsv);
+
+    private async Task ExportAsync(string ext, string typeKey, ExportKind kind)
     {
         var t = _trace;
         if (t == null || _platform == null || !CanExport) return;
+        var snaps = t.Snapshots;
+        if (kind == ExportKind.ParamsCsv && snaps == null) return;
+        bool jsonl = kind == ExportKind.Jsonl;
         try
         {
             ClearError();
-            string name = "call-trace-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ext;
+            string stem = kind == ExportKind.ParamsCsv ? "call-trace-params-" : "call-trace-";
+            string name = stem + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ext;
             string? path = await _platform.ShowSaveFileDialogAsync(name, Res.Get(typeKey), ext);
             if (string.IsNullOrEmpty(path)) return;
             IsExporting = true;
@@ -804,11 +824,23 @@ public partial class CallTraceViewModel : ViewModelBase
                 // CSV carries a BOM so a spreadsheet reads non-ASCII names, as the coordinate CSV does; JSONL does
                 // not, like Live Funcs' Save .jsonl.
                 using var w = new StreamWriter(path, false, new UTF8Encoding(encoderShouldEmitUTF8Identifier: !jsonl), 1 << 20);
-                if (jsonl) CallTraceExport.WriteJsonl(t, w, DateTime.UtcNow);
-                else CallTraceExport.WriteCsv(t, w);
+                switch (kind)
+                {
+                    case ExportKind.Jsonl: CallTraceExport.WriteJsonl(t, w, DateTime.UtcNow); break;
+                    case ExportKind.Csv:   CallTraceExport.WriteCsv(t, w); break;
+                    default:               CallTraceExport.WriteParamsCsv(t, w); break;
+                }
             });
-            StatusText = Res.Format("str.CT.Export.Done", t.Count, path);
-            _log.Info($"CallTrace: exported {t.Count} calls to {path}");
+            if (kind == ExportKind.ParamsCsv)
+            {
+                StatusText = Res.Format("str.CT.Export.ParamsDone", snaps!.CallsWithParams, path);
+                _log.Info($"CallTrace: exported the parameters of {snaps.CallsWithParams} calls to {path}");
+            }
+            else
+            {
+                StatusText = Res.Format("str.CT.Export.Done", t.Count, path);
+                _log.Info($"CallTrace: exported {t.Count} calls to {path}");
+            }
         }
         catch (Exception ex)
         {
