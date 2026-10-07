@@ -744,6 +744,11 @@ public class CallTraceViewModelTests
         Assert.Contains(Line("str.CT.Detail.NativeEntry", "\"Game.exe\"+123456"), d);
         foreach (var k in KindKeys) Assert.DoesNotContain(Line(k), d);
 
+        // The module is the one the trace was loaded from: a trace outlives its connection, and the next game's base
+        // would give an RVA into another image.
+        vm.SetEngineState(new EngineState { ModuleName = "Other.exe", ModuleBase = "0x7FF600000000" });
+        Assert.Contains(Line("str.CT.Detail.NativeEntry", "\"Game.exe\"+123456"), vm.Detail(0));
+
         // Below the module's base it is no RVA: the absolute address, written as the Address setting says.
         var other = await DetailVm(AddressFormat.HexWithPrefix, moduleBase: "0x7FF600000000");
         Assert.Contains(Line("str.CT.Detail.NativeEntryOutside", "0x140123456"), other.Detail(0));

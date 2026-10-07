@@ -453,6 +453,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         ObjectTree.SelectedAddressFormatIndex = value;
         LiveWalker.SelectedAddressFormatIndex = value;
         InstanceFinder.SelectedAddressFormatIndex = value;
+        CallTrace.SelectedAddressFormatIndex = value;
     }
 
     partial void OnCollapsePointerNodesChanged(bool value)
@@ -816,6 +817,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 Spc?.SetEngineState(state);
                 Pivot?.SetEngineState(state);
                 Teleport.SetEngineState(state);
+                CallTrace.SetEngineState(state);
                 // Load this game's coordinate library. Keyed by MODULE NAME (not PE
                 // hash) so it survives a game patch. Idempotent -- clears in-memory
                 // first -- so calling it from both fan-out sites is safe.
@@ -2940,6 +2942,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         Snapshot?.SetEngineState(state);
         Spc?.SetEngineState(state);
         Pivot?.SetEngineState(state);
+        CallTrace.SetEngineState(state);
 
         // Fire-and-forget: check AOBMaker availability for Live Walker + Teleport
         _ = LiveWalker.CheckAobMakerAsync();

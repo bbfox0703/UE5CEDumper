@@ -46,7 +46,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | U8 | UI | Live Funcs view: Snapshot column, visibility loop, per-frame marker, Snapshot row (OD4 slider 8-128 MB default 32, estimate, memory), strings, persistence | U7 | ⬜ |
 | U9 | UI | Call Trace and Live Funcs say what was traced: scoped by name, snapshots-only, unscoped; the T8 copy marks names as waiting or never called | U4 | ⬜ |
 | U10 | UI | Call Trace list: resizable, remembered column widths and detail-pane width; Object tooltip; CallTraceUiOptions on the settings root | — | ✅ 09aa8bb7 red |
-| U11 | UI | Call Trace detail: object-address wording, the Address setting, native entry as a CE address, script / not found / unknown lines | U1 | ⬜ |
+| U11 | UI | Call Trace detail: object-address wording, the Address setting, native entry as a CE address, script / not found / unknown lines | U1 | ✅ c6b7b1ba red |
 | U12 | UI | Call Trace: snapshot load before the release (bulk lane), CallTraceSnapshots stored on the CallTrace, join by entrySeq, per-arm layouts, Summary counters | U1, U2 | ⬜ |
 | U13 | UI | Call Trace: detail TabControl (Call \| Parameters), view C rows, reasons (Lone / Excluded / budget / overwritten / raw-only arm and why / null / fault / truncated), Changed, tree markers, 'Only calls with parameters' (works with no text) | U12, U11 | ⬜ |
 | U14 | UI | Export: JSONL snapshot keys, layout lines per arm, scoped / snapshots_only in the header; a separate params CSV | U13 | ⬜ |
