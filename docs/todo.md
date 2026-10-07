@@ -252,9 +252,14 @@ Open work only. **Read this when deciding what to do next.**
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 - ✅ **Step 1 (the timeline) BUILT, build 3633, 2026-10-07** — reviewed (36 findings, all fixed) and checked live on
-  DumperTest 5.4 and DumperTest58 (18/18); details in the plan's "Step 1 built". ⬜ **Open:** a busy commercial game's
-  call rate and a full 128 / 512 MB ring's after-Stop cost (the Avowed attempt did not start); steps 2 and 3.
-  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+  DumperTest 5.4 and DumperTest58 (18/18); details in the plan's "Step 1 built". ✅ **Avowed 2026-10-07:** 9.8–14.5k
+  calls/s; a full 128 MB ring loads in the UI in 11.5 s (1.3 GB), a full 512 MB one in 44 s (3.25 GB peak) — the
+  plan's "Avowed". ⬜ **Decided 2026-10-07, to build (D1–D4 in the plan):** `[TRACE-UNLOADED-NAMES]` name a
+  function when Linie first sees it, and show what still has no name (184 of 796 functions lost theirs in a 9-minute
+  recording; the Live Funcs table dropped them); `[TRACE-UI-LOAD-MEMORY]` the load peaks at about six times the ring:
+  fix it, then show the memory cost beside the slider, warning (never refusing) above the available memory;
+  `[TRACE-UI-READ-SPEED]` the UI reads at half the rig's speed, re-measured after; the "1 calls began" wording;
+  512 MB stays. Steps 2 and 3 not started. [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
   A ring buffer (a power-of-two slider, 32–512 MB, default 64, with the seconds it keeps estimated beside it) that
   keeps the calls just before Stop, two small records per call (entry and return), the call tree computed after
   Stop; then parameter and native-stack snapshots for ticked functions only.

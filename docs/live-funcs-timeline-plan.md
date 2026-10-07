@@ -125,8 +125,10 @@ UFunction-level stack.
 - **Measured 2026-10-07, with step 1** (details under "Step 1 built"): the cost per call (129 ns traced, 21 ns
   outside a ticked scope, this PC), a fixture's call rate (121 calls/s on DumperTest 5.4 at 15 fps; 1,040–1,670 on
   DumperTest58 uncapped), and a traced Start's cost (5–7 ms at 32 MB, 17–26 at 128, 67–150 at 512).
-  **Still open:** a busy commercial game's rate, and what a full 128 / 512 MB ring costs after Stop (reading,
-  naming and building ~2 / ~7 million calls). The Avowed attempt did not start — see "Step 1 built".
+  **Avowed, the same day** (a busy UE 5.3 game; "Step 1 built", "Avowed"): 9,755–14,454 calls/s, so 128 MB keeps
+  about 2 minutes and 512 MB about 8. After Stop, a full 128 MB ring (1.68 million calls) loads in the UI in 11.5 s
+  and a full 512 MB one (6.71 million) in 44 s, almost all of it the read; the UI's memory peaks at 1.3 and 3.25 GB.
+  **Not measured:** what one stack capture costs (step 3).
 
 ## Design review, 2026-10-06 (TR1–TR7)
 
@@ -242,5 +244,56 @@ CT-RELEASE-CANCELLED); export with its own flag; an older trace on screen marked
 the owning class is native — UHT's thunk calls `_Implementation` directly. The first package's chain reached the
 hook only at the delegate's binding. The fixture now dispatches by name through ProcessEvent.
 
-**Not done.** A commercial game: the Avowed launch through Steam did not start, and Steam itself could not be
-inspected (access declined), so the busy-game rate and the full-ring costs stay open.
+### Avowed (UE 5.3 Shipping, the dxgi proxy at 3633), 2026-10-07
+
+The maintainer launched the game (our own Steam launch had not started it, and Steam could not be inspected); the
+rig and the UI ran in gameplay. Evidence: `out/livefuncs-trace/avowed-*.json`, the UI's `pipe-0.log` / `view-0.log`.
+
+| Run | Calls / s | Kept | After Stop | Checks |
+|---|---|---|---|---|
+| Rig, 32 MB, 10 s | 9,755 | 225,522 records (not lapped) | read 0.36 s (12.0 MB on the pipe); 125 functions, 280 objects | 18 / 18; ticked scope 517 roots, 1,034 entries against 112,761 unscoped; per-frame exclusion 61 / 61; a traced Start 7 / 30 / 129 ms at 32 / 128 / 512 MB |
+| Rig, 128 MB, 200 s | 14,454 | 3,355,443 records = 1,677,721 calls, about 116 s (lapped: 5,769,056 written) | read 5.0 s (179 MB, 36 MB/s); names 0.04 s (71 functions, 230 objects) | 11 / 11 (`--traced-only`) |
+| Rig, 512 MB, 720 s | 14,450 | 13,421,772 records = 6,710,886 calls (lapped: 20,406,536 written) | read 22.8 s (716 MB, 31 MB/s); names 0.55 s (567 functions, 2,937 objects) | 10 / 11: **79 of the 567 functions no longer resolved** (below) |
+| Rig, 512 MB, 600 s, again | 14,001 | 13,421,772 records = 6,710,886 calls over 548 s | read 37.8 s (716 MB, 19 MB/s: the same pipe, a busier game); names 1.0 s (796 functions, 5,891 objects) | 10 / 11: 184 of 796 functions no longer resolved, 5,387 of their calls |
+| UI, 128 MB | 14,003 | 1,677,721 calls over 119.8 s | **11.5 s** from opening the tab to the tree: read 10.9 s, then names and the build 0.5 s; working set 328 MB → 1,286 MB | a two-term filter (18,957 matches) and Expand all at once |
+| UI, 512 MB | 13,869 | 6,710,886 calls over 484.2 s | **44.3 s**: read 42.5 s, then names and the build 1.6 s; working set 313 MB → **3,249 MB**, still there a minute later | a two-term filter in under 3 s (capped at 50,000 matches) |
+
+The slider's estimate, bytes / (rate × 80), matched the windows the rings kept: 120 s against 119.8 s at 128 MB,
+8.1 min against 484.2 s at 512 MB (each estimate from that same recording's rate, read after its Stop).
+
+**Found** — and the maintainer's decisions the same day (below the list):
+
+1. **A function unloaded before Stop has no name** `[TRACE-UNLOADED-NAMES]`. Names are resolved after Stop (above,
+   "Names are resolved after Stop"), and a UFunction freed by then no longer resolves: the Call Trace shows its calls
+   as a bare address, and the Live Funcs table leaves the function out (`pe_profile_get` drops what does not
+   resolve). On Avowed a 12-minute recording saw 568 distinct functions, where every other window saw 70–71, and
+   79 of 567 (rig) and 125 of 570 (UI) no longer resolved at Stop. A second 512 MB run counted them: 184 of 796
+   functions, but only 5,387 of 6,710,886 calls (0.08%), each last firing at its own moment between 162 s and 524 s
+   of a 548 s window — content streamed out all through the recording, not one unload. Rare calls are what an action
+   recording is after, so the share of calls understates the loss. The plan named the risk for objects only. A way
+   out: resolve a function's name when Linie first sees it — once per distinct function, on the calling thread,
+   while it is certainly alive — and fall back to that name, flagged as unloaded.
+2. **The UI's load holds about six times the ring** `[TRACE-UI-LOAD-MEMORY]`. What the trace keeps is about
+   73 bytes per call (about 490 MB for 6.7 million calls); the rest of the 3.25 GB is the load's garbage — the
+   whole window as `TraceRecord[]` (40 bytes per record) and, per page, a JSON reply of about 14 MB, its base64
+   bytes and a decoded array — and nothing makes the GC run after it. Decoding each page into the window array
+   and one compacting collection after the build would cut the peak and give the rest back.
+3. **The UI reads at about half the rig's speed** `[TRACE-UI-READ-SPEED]`: 16–17 MB/s against the rig's 31–36 MB/s
+   on the same pipe and game (19 MB/s in the rig's second 512 MB run, the game busier), and the read is 95% of the
+   UI's 44 s. The page's JSON parse and base64 decode are the suspects, not measured.
+4. Wording: a lapped ring nearly always has one call that began before the kept part, and the status then says
+   "1 calls began" (`str.CT.Status.BeforeWindow`).
+
+**Decided 2026-10-07 (the maintainer), to build next:**
+
+- **D1 (1):** name a function **when Linie first sees it** — once per distinct function, while it is certainly
+  alive — and use that name when it no longer resolves, marked as unloaded, in both the Call Trace tab and the Live
+  Funcs table (which stops dropping such functions silently). What still has no name is shown as a share of the calls
+  and functions after the load.
+- **D2 (2):** fix the load first — each page decoded straight into the window, one compacting collection after the
+  build — then measure the factor, and only then show beside the slider what the recording costs: the game's N MB
+  from Start, and the UI's peak while it loads.
+- **D3:** an estimate above the computer's available physical memory is a **warning, never a refusal** to Start (T1:
+  the user decides).
+- **D4:** **512 MB stays** on the slider.
+- (3) is measured again after D2; (4) is fixed with them.

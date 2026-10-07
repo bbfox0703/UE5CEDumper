@@ -27,6 +27,19 @@ builds ≤696 in
 
 -----
 
+## 2026-10-07 (no build change) — The call trace on Avowed: full 128 and 512 MB rings `[LIVEFUNCS-TIMELINE-2026-10-04]`
+
+- Build 3633's call trace checked on Avowed (UE 5.3), a busy game: 9,800–14,500 ProcessEvent calls a second, so
+  the 128 MB buffer keeps about 2 minutes and 512 MB about 8, as the slider's estimate said.
+- A full 128 MB trace (1.7 million calls) opens in the Call Trace tab in about 11 seconds; a full 512 MB one
+  (6.7 million calls) in about 44 seconds, and the UI then uses about 3.2 GB of memory. The filter and the tree
+  stay responsive at that size.
+- Known limits found there, to be fixed next: a function the game unloads during a long recording (content it
+  streams out as you play) shows as a bare address in the Call Trace tab and is left out of the Live Funcs table;
+  and loading a full trace briefly takes about six times the buffer's size in the UI.
+- `tools/verify/livefuncs_trace_live.py` gained `--traced-only` / `--plain-s` for one long recording that fills
+  the ring, and reports what the functions that no longer resolve account for.
+
 ## 2026-10-07 (build 3633) — Live Funcs records a call trace, read in the new Call Trace tab (experimental) `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 - With the experimental tabs on, Live Funcs has a **Trace** row: tick it and the same Start also records every call
