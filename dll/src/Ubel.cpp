@@ -2101,12 +2101,29 @@ bool ReadFunctionKey(uintptr_t func, int32_t& nameIndex, int32_t& nameNumber, ui
     return true;
 }
 
-bool ReadNameKey(uintptr_t func, Linie::NameKey& out) { (void)func; (void)out; return false; }
+// [LIVEFUNCS-STEP2] The FName at an object's NamePrivate, wherever this header keeps its Number (DynOff::FNAME_NUMBER:
+// +4 standard, +4 or +8 case-preserving). Loads only.
 bool ReadObjectNameKey(uint64_t obj, int32_t& nameIndex, int32_t& nameNumber) {
-    (void)obj; (void)nameIndex; (void)nameNumber; return false;
+    if (!obj) return false;
+    const uintptr_t fname = static_cast<uintptr_t>(obj) + Grimoire::OFF_UOBJECT_NAME;
+    if (!Macht::ReadSafe(fname, nameIndex)) return false;
+    nameNumber = 0;
+    Macht::ReadSafe(fname + DynOff::FNAME_NUMBER, nameNumber);
+    return true;
 }
+
+bool ReadNameKey(uintptr_t func, Linie::NameKey& out) {
+    out = Linie::NameKey{};
+    if (!ReadObjectNameKey(func, out.fnIdx, out.fnNum)) return false;
+    uintptr_t cls = 0;
+    if (Macht::ReadSafe(func + DynOff::UOBJECT_OUTER, cls) && cls && !ReadObjectNameKey(cls, out.clsIdx, out.clsNum)) {
+        out.clsIdx = out.clsNum = 0;
+    }
+    return true;
+}
+
 bool NameKeyMatches(const Linie::NameKey& key, const std::string& className, const std::string& funcName) {
-    (void)key; (void)className; (void)funcName; return false;
+    return Serie::GetString(key.fnIdx, key.fnNum) == funcName && Serie::GetString(key.clsIdx, key.clsNum) == className;
 }
 
 FuncState ClassifyFunctionState(bool slotLive, bool witnessRead, const NameWitness& now, const NameWitness& nowClass,
