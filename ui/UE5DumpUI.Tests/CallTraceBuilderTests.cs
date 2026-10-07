@@ -144,6 +144,22 @@ public class CallTraceBuilderTests
     }
 
     [Fact]
+    public void Time_counts_from_the_earliest_clock_reading_not_the_first_record()
+    {
+        // The DLL takes a sequence number, then reads the clock: two threads can take 0 and 1 and read 105 and 100.
+        // Counted from record 0, call 1 would start at (100 - 105) as unsigned -- about 1.8e15 ms.
+        var t = CallTraceBuilder.Build(new[]
+        {
+            Entry(0, 105, 0xA, tid: 1), Entry(1, 100, 0xB, tid: 2), Return(2, 300, 1, tid: 2), Return(3, 200, 0, tid: 1),
+        }, Info);
+
+        Assert.Equal(100UL, t.OriginTicks);
+        Assert.Equal(0.005, t.StartMs(0), 9);
+        Assert.Equal(0.0, t.StartMs(1), 9);
+        Assert.Equal(200e-6, t.WindowSeconds, 9);   // the earliest reading (100) to the latest (300)
+    }
+
+    [Fact]
     public void Records_out_of_order_are_put_back_in_sequence_first()
     {
         var t = CallTraceBuilder.Build(new[]
