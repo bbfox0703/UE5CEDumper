@@ -457,6 +457,12 @@ public interface IDumpService
         => throw new NotSupportedException("This service has no call trace.");
     /// <summary>Free recording <paramref name="gen"/> once it has stopped; never a newer one.</summary>
     Task PeTraceReleaseAsync(ulong gen, CancellationToken ct = default) => Task.CompletedTask;
+    /// <summary>[LIVEFUNCS-STEP2] The stopped trace's arms with their layouts, from <paramref name="offset"/>.</summary>
+    Task<SnapLayoutsPage> PeSnapLayoutsAsync(ulong gen, int offset, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no parameter snapshots.");
+    /// <summary>[LIVEFUNCS-STEP2] One page of snapshot ring <paramref name="ring"/>, decoded.</summary>
+    Task<SnapPage> PeSnapGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no parameter snapshots.");
 
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has

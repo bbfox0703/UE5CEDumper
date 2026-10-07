@@ -2851,12 +2851,26 @@ public sealed class DumpService : IDumpService
             // trim/AOT-unsafe (IL2026/IL3050) and fails only the trimmed publish. Passing a JsonValue is not enough
             // -- the identity conversion to T still wins -- which is the same trap as the string params below.
             foreach (var a in trace.Ticked) ticked.Add((JsonNode?)a);
-            req["trace"] = new JsonObject
+            var traceReq = new JsonObject
             {
                 ["bytes"] = trace.Bytes,
                 ["ticked"] = ticked,
                 ["exclude_per_frame"] = trace.ExcludePerFrame,
             };
+            // [LIVEFUNCS-STEP2] By name (T10). Sent only when there are names, so a Start without them is the step-1
+            // request byte for byte.
+            if (trace.TickedNames.Count > 0) traceReq["ticked_names"] = NamedFunctionsJson(trace.TickedNames, withSize: false);
+            if (trace.Snapshots is { } s)
+            {
+                traceReq["snapshots"] = new JsonObject
+                {
+                    ["funcs"] = NamedFunctionsJson(s.Funcs, withSize: true),
+                    ["bytes"] = s.Bytes,
+                    ["per_ring_per_s"] = s.PerRingPerSec,
+                    ["total_per_s"] = s.TotalPerSec,
+                };
+            }
+            req["trace"] = traceReq;
         }
         var res = await _pipe.SendAsync(req, ct);
         CheckResponse(res);
@@ -2868,6 +2882,30 @@ public sealed class DumpService : IDumpService
         };
     }
 
+    /// <summary>[LIVEFUNCS-STEP2] Each function as the DLL takes it by name: the strings shown and every key, the keys
+    /// as 4-int arrays. Every node goes through the (JsonNode?) cast: the generic JsonArray.Add is not trim-safe.</summary>
+    private static JsonArray NamedFunctionsJson(IReadOnlyList<NamedFunction> funcs, bool withSize)
+    {
+        var arr = new JsonArray();
+        foreach (var f in funcs)
+        {
+            var keys = new JsonArray();
+            foreach (var k in f.Keys)
+            {
+                var ints = new JsonArray();
+                ints.Add((JsonNode?)k.FnIdx);
+                ints.Add((JsonNode?)k.FnNum);
+                ints.Add((JsonNode?)k.ClsIdx);
+                ints.Add((JsonNode?)k.ClsNum);
+                keys.Add((JsonNode?)ints);
+            }
+            var o = new JsonObject { ["class"] = f.ClassName, ["func"] = f.FuncName, ["keys"] = keys };
+            if (withSize) o["parms_size"] = f.ParmsSize;
+            arr.Add((JsonNode?)o);
+        }
+        return arr;
+    }
+
     /// <summary>Stop recording (idempotent). Counts are retained for a later get.</summary>
     public async Task PeProfileStopAsync(CancellationToken ct = default) => await PeProfileStopWithTraceAsync(ct);
 
@@ -2876,7 +2914,8 @@ public sealed class DumpService : IDumpService
     {
         var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_profile_stop" }, ct);
         CheckResponse(res);
-        return res["trace"] is JsonObject t ? ParseTraceInfo(t) : null;
+        // [LIVEFUNCS-STEP2] The followed names sit beside the trace: an empty trace released at Stop still names them.
+        return res["trace"] is JsonObject t ? ParseTraceInfo(t, res["names"] as JsonArray) : null;
     }
 
     /// <summary>[LIVEFUNCS-TIMELINE-2026-10-04] One page of the stopped ring, from sequence number
@@ -2995,7 +3034,7 @@ public sealed class DumpService : IDumpService
         return res;
     }
 
-    private static TraceInfo ParseTraceInfo(JsonObject t) => new()
+    private static TraceInfo ParseTraceInfo(JsonObject t, JsonArray? followed = null) => new()
     {
         Allocated  = t["allocated"]?.GetValue<bool>() ?? false,
         Tracing    = t["tracing"]?.GetValue<bool>() ?? false,
@@ -3010,7 +3049,171 @@ public sealed class DumpService : IDumpService
         Ticked     = t["ticked"]?.GetValue<int>() ?? 0,
         Excluded   = t["excluded"]?.GetValue<int>() ?? 0,
         TickedDropped = t["ticked_dropped"]?.GetValue<int>() ?? 0,
+        Scoped      = t["scoped"]?.GetValue<bool>(),
+        TickedNames = t["ticked_names"]?.GetValue<int>() ?? 0,
+        SnapOnly    = t["snap_only"]?.GetValue<bool>() ?? false,
+        Snap        = t["snap"] is JsonObject s ? new SnapInfo
+        {
+            Allocated     = s["allocated"]?.GetValue<bool>() ?? false,
+            Bytes         = s["bytes"]?.GetValue<long>() ?? 0,
+            SlotsPerRing  = s["slots_per_ring"]?.GetValue<ulong>() ?? 0,
+            Rings         = s["rings"]?.GetValue<int>() ?? 0,
+            PerRingPerSec = s["per_ring_per_s"]?.GetValue<int>() ?? 0,
+            TotalPerSec   = s["total_per_s"]?.GetValue<int>() ?? 0,
+            SkippedBudget = s["skipped_budget"]?.GetValue<ulong>() ?? 0,
+            DroppedBudget = s["dropped_budget"]?.GetValue<ulong>() ?? 0,
+        } : null,
+        Names = t["names"] is JsonObject n ? new StartNames
+        {
+            Ticks  = n["ticks"]?.GetValue<int>() ?? 0,
+            Chosen = n["chosen"]?.GetValue<int>() ?? 0,
+            Refused = n["refused"] is JsonArray r
+                ? r.OfType<JsonObject>().Select(x => (x["class"]?.GetValue<string>() ?? "",
+                                                      x["func"]?.GetValue<string>() ?? "",
+                                                      x["why"]?.GetValue<string>() ?? "")).ToList()
+                : new List<(string, string, string)>(),
+        } : null,
+        Followed = followed?.OfType<JsonObject>().Select(x => new FollowedName
+        {
+            ClassName = x["class"]?.GetValue<string>() ?? "",
+            FuncName  = x["func"]?.GetValue<string>() ?? "",
+            Key       = ParseNameKey(x["key"]) ?? default,
+            Tick      = x["tick"]?.GetValue<bool>() ?? false,
+            Chosen    = x["chosen"]?.GetValue<bool>() ?? false,
+            Addresses = x["addresses"]?.GetValue<long>() ?? 0,
+            Arms      = x["arms"]?.GetValue<long>() ?? 0,
+            ArmsFull  = x["arms_full"]?.GetValue<long>() ?? 0,
+        }).ToList() ?? new List<FollowedName>(),
+        SnapRings = t["snap_rings"] is JsonArray rings ? ParseSnapRings(rings) : new List<SnapRingInfo>(),
     };
+
+    /// <summary>[LIVEFUNCS-STEP2] A 4-int name key; null when absent or malformed (an older DLL sends none).</summary>
+    internal static NameKey? ParseNameKey(JsonNode? n)
+    {
+        if (n is not JsonArray a || a.Count != 4) return null;
+        try
+        {
+            return new NameKey(a[0]!.GetValue<int>(), a[1]!.GetValue<int>(), a[2]!.GetValue<int>(), a[3]!.GetValue<int>());
+        }
+        catch (Exception) { return null; }
+    }
+
+    private static List<SnapRingInfo> ParseSnapRings(JsonArray rings) => rings.OfType<JsonObject>().Select(r => new SnapRingInfo
+    {
+        Ring          = r["ring"]?.GetValue<int>() ?? 0,
+        Cap           = r["cap"]?.GetValue<int>() ?? 0,
+        Written       = r["written"]?.GetValue<ulong>() ?? 0,
+        FirstValid    = r["first_valid"]?.GetValue<ulong>() ?? 0,
+        SkippedBudget = r["skipped_budget"]?.GetValue<ulong>() ?? 0,
+        DroppedBudget = r["dropped_budget"]?.GetValue<ulong>() ?? 0,
+    }).ToList();
+
+    private static uint ParseHex32(string? s) => (uint)ParseAddr(s);
+
+    private static SnapParam ParseSnapParam(JsonObject p) => new()
+    {
+        Name     = p["name"]?.GetValue<string>() ?? "",
+        Type     = p["type"]?.GetValue<string>() ?? "",
+        Offset   = p["offset"]?.GetValue<int>() ?? 0,
+        Size     = p["size"]?.GetValue<int>() ?? 0,
+        ArrayDim = p["array_dim"]?.GetValue<int>() ?? 1,
+        Flags    = ParseAddr(p["flags"]?.GetValue<string>()),
+        Kind     = p["kind"]?.GetValue<string>() ?? "in",
+        Struct   = p["struct"]?.GetValue<string>() ?? "",
+        ObjClass = p["obj_class"]?.GetValue<string>() ?? "",
+        Enum     = p["enum"]?.GetValue<string>() ?? "",
+        Sub      = p["sub"] is JsonArray sub ? sub.OfType<JsonObject>().Select(ParseSnapParam).ToList() : new List<SnapParam>(),
+    };
+
+    private static SnapValue ParseSnapValue(JsonNode? n)
+    {
+        if (n is not JsonArray a || a.Count < 2) return new SnapValue { Mark = SnapMark.Raw };
+        return new SnapValue
+        {
+            Text = a[0]?.GetValue<string>() ?? "",
+            Mark = (SnapMark)(a[1]?.GetValue<int>() ?? (int)SnapMark.Raw),
+            Sub  = a.Count > 2 && a[2] is JsonArray sub ? sub.Select(ParseSnapValue).ToList() : new List<SnapValue>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-STEP2] One page of the stopped trace's arms, each with its layout.</summary>
+    public async Task<SnapLayoutsPage> PeSnapLayoutsAsync(ulong gen, int offset, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject { ["cmd"] = "pe_snap_layouts", ["gen"] = gen, ["offset"] = offset }, ct);
+        CheckResponse(res);
+        var layouts = res["layouts"] is JsonArray la
+            ? la.OfType<JsonObject>().Select(l => new SnapLayout
+            {
+                ClassName     = l["class_name"]?.GetValue<string>() ?? "",
+                FuncName      = l["func_name"]?.GetValue<string>() ?? "",
+                FunctionFlags = ParseHex32(l["function_flags"]?.GetValue<string>()),
+                ParmsSize     = l["parms_size"]?.GetValue<int>() ?? 0,
+                NumParms      = l["num_parms"]?.GetValue<int>() ?? 0,
+                LayoutEnd     = l["layout_end"]?.GetValue<int>() ?? 0,
+                Params        = l["params"] is JsonArray ps ? ps.OfType<JsonObject>().Select(ParseSnapParam).ToList()
+                                                            : new List<SnapParam>(),
+            }).ToList()
+            : new List<SnapLayout>();
+        return new SnapLayoutsPage
+        {
+            Info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Stale = res["stale"]?.GetValue<bool>() ?? false,
+            Total = res["total"]?.GetValue<int>() ?? 0,
+            Next  = res["next"]?.GetValue<int>() ?? offset,
+            Rings = res["rings"] is JsonArray rings ? ParseSnapRings(rings) : new List<SnapRingInfo>(),
+            Arms  = res["arms"] is JsonArray arms
+                ? arms.OfType<JsonObject>().Select(a => new SnapArm
+                {
+                    Index         = a["index"]?.GetValue<int>() ?? 0,
+                    Ring          = a["ring"]?.GetValue<int>() ?? -1,
+                    Addr          = ParseAddr(a["addr"]?.GetValue<string>()),
+                    ClassName     = a["class_name"]?.GetValue<string>() ?? "",
+                    FuncName      = a["func_name"]?.GetValue<string>() ?? "",
+                    FunctionFlags = ParseHex32(a["function_flags"]?.GetValue<string>()),
+                    ParmsSize     = a["parms_size"]?.GetValue<int>() ?? 0,
+                    NumParms      = a["num_parms"]?.GetValue<int>() ?? 0,
+                    State         = a["state"]?.GetValue<string>() ?? "",
+                    Why           = a["why"]?.GetValue<string>() ?? "",
+                    ReadMs        = a["read_ms"]?.GetValue<long>(),
+                    Layout        = a["layout"]?.GetValue<int>() is int li && li >= 0 && li < layouts.Count ? layouts[li] : null,
+                }).ToList()
+                : new List<SnapArm>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-STEP2] One page of one snapshot ring, each slot decoded with its own arm's layout.</summary>
+    public async Task<SnapPage> PeSnapGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "pe_snap_get", ["gen"] = gen, ["ring"] = ring, ["from"] = from, ["max"] = max,
+        }, ct);
+        CheckResponse(res);
+        return new SnapPage
+        {
+            Info    = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo(),
+            Stale   = res["stale"]?.GetValue<bool>() ?? false,
+            Ring    = res["ring"]?.GetValue<int>() ?? ring,
+            Count   = res["count"]?.GetValue<int>() ?? 0,
+            Next    = res["next"]?.GetValue<ulong>() ?? from,
+            Orphans = res["orphans"]?.GetValue<ulong>() ?? 0,
+            Items   = res["items"] is JsonArray items
+                ? items.OfType<JsonObject>().Select(i => new SnapSlot
+                {
+                    Index    = i["index"]?.GetValue<ulong>() ?? 0,
+                    EntrySeq = i["entry_seq"]?.GetValue<ulong>() ?? 0,
+                    IsAfter  = (i["phase"]?.GetValue<string>() ?? "") == "return",
+                    Len      = i["len"]?.GetValue<int>() ?? 0,
+                    Flags    = i["flags"]?.GetValue<int>() ?? 0,
+                    Arm      = i["arm"]?.GetValue<int>() ?? 0,
+                    Data     = i["data"]?.GetValue<string>() is { Length: > 0 } b64 ? Convert.FromBase64String(b64)
+                                                                                      : Array.Empty<byte>(),
+                    Values   = i["values"] is JsonArray vals ? vals.Select(ParseSnapValue).ToList() : null,
+                    RawOnly  = i["raw_only"]?.GetValue<string>() ?? "",
+                }).ToList()
+                : new List<SnapSlot>(),
+        };
+    }
 
     private static ulong ParseAddr(string? s)
     {
@@ -3059,6 +3262,8 @@ public sealed class DumpService : IDumpService
                     IsUnloaded   = obj["unloaded"]?.GetValue<bool>() ?? false,
                     IsRecycled   = obj["recycled"]?.GetValue<bool>() ?? false,
                     IsReused     = obj["reused"]?.GetValue<bool>() ?? false,
+                    FnameKey     = ParseNameKey(obj["fname_key"]),
+                    IsPerFrame   = obj["per_frame"]?.GetValue<bool>() ?? false,
                 });
             }
         }

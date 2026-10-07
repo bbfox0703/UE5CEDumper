@@ -54,6 +54,20 @@ public sealed class TraceInfo
     /// <summary>[TRACE-UNLOADED-NAMES] Ticks the DLL left out at Start: their function was unloaded since the fetch
     /// that showed it (review UI-1). Only in a traced Start's reply.</summary>
     public int   TickedDropped { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] The trace records only inside ticked calls (by address or by name) and, with
+    /// snapshots, the chosen calls alone. Null from a DLL that predates names: then <see cref="Ticked"/> &gt; 0 says it.</summary>
+    public bool? Scoped    { get; init; }
+    public int   TickedNames { get; init; }
+    /// <summary>Chosen functions and nothing ticked: only the chosen calls are recorded (T11).</summary>
+    public bool  SnapOnly  { get; init; }
+    /// <summary>The snapshot buffer; null when none was armed (or the DLL predates snapshots).</summary>
+    public SnapInfo? Snap  { get; init; }
+    /// <summary>The Start reply's account of the names it was sent; null otherwise.</summary>
+    public StartNames? Names { get; init; }
+    /// <summary>The Stop reply's: what became of every followed name. Empty when it followed none.</summary>
+    public IReadOnlyList<FollowedName> Followed { get; init; } = Array.Empty<FollowedName>();
+    /// <summary>The Stop reply's snapshot rings.</summary>
+    public IReadOnlyList<SnapRingInfo> SnapRings { get; init; } = Array.Empty<SnapRingInfo>();
 
     public ulong Kept => Written - FirstValid;
 }
@@ -62,8 +76,13 @@ public sealed class TraceInfo
 public sealed class TraceStartOptions
 {
     public long Bytes { get; init; }
-    /// <summary>UFunction addresses (func_addr strings); empty = trace every call.</summary>
+    /// <summary>UFunction addresses (func_addr strings), for a DLL that predates ticks by name; one that reads
+    /// <see cref="TickedNames"/> ignores them. Empty, with no names and no snapshots, traces every call.</summary>
     public IReadOnlyList<string> Ticked { get; init; } = Array.Empty<string>();
+    /// <summary>[LIVEFUNCS-STEP2] The ticks by name (T10): followed through unloads and reloads.</summary>
+    public IReadOnlyList<NamedFunction> TickedNames { get; init; } = Array.Empty<NamedFunction>();
+    /// <summary>[LIVEFUNCS-STEP2] The parameter snapshots, or null for none.</summary>
+    public SnapshotStartOptions? Snapshots { get; init; }
     public bool ExcludePerFrame { get; init; }
 }
 

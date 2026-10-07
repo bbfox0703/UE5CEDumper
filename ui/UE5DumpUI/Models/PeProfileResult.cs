@@ -40,6 +40,11 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// <summary>Another function took this address DURING the recording (review DLL-3): the count is both functions',
     /// and the name the latest one's.</summary>
     public bool   IsReused   { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] The name key the row's names are rendered from (T10): what a tick or a snapshot
+    /// choice by name sends back. Null from a DLL that predates it.</summary>
+    public NameKey? FnameKey { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] The function fired every frame through the recording (the DLL's IsPerFrame).</summary>
+    public bool   IsPerFrame { get; init; }
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,

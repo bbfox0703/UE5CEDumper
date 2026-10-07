@@ -54,7 +54,12 @@ public sealed class LaneRoutingPipeClient : IPipeClient
         "rescan", "trigger_scan", "apply_rescan",
         // [LIVEFUNCS-TIMELINE-2026-10-04] Paging out a trace of up to 512 MB, and naming everything in it.
         "pe_trace_get", "pe_trace_names",
+        // [LIVEFUNCS-STEP2] The snapshots of the same trace: thousands of decoded slots a page, read before the release.
+        "pe_snap_layouts", "pe_snap_get",
     };
+
+    /// <summary>Whether <paramref name="cmd"/> runs on the bulk lane (a test pins the trace's readers there).</summary>
+    internal static bool IsBulk(string cmd) => BulkCommands.Contains(cmd);
 
     private bool _lastReported;          // last combined IsConnected we raised
     private bool _tearingDown;           // guards the reconnect-both teardown
