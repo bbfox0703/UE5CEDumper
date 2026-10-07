@@ -46,6 +46,7 @@
 #include <json.hpp>
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>   // [LIVEFUNCS-STEP2] the arm-capture worker
 #include <cstdlib>   // malloc/free for by-value FString INPUT-param buffers
 #include <cstring>
 #include <sstream>
@@ -53,6 +54,10 @@
 #include <vector>
 
 using json = nlohmann::json;
+
+namespace {
+void JoinArmWorker();   // [LIVEFUNCS-STEP2] defined with the worker, beside TraceInfoToJson
+}
 
 // This DLL's own module handle (defined in Heiter.cpp DllMain). Used to self-report
 // the load path in the init response: for a proxy build g_hDllModule IS the proxy
@@ -781,6 +786,7 @@ void Fern::Stop(bool graceful) {
     // No handler thread is running now — free every remaining value-scan session.
     Radar::SessionManager::Instance().DropAll();
     Radar::GroupSessionManager::Instance().DropAll();
+    JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
     Linie::Reset();   // drop any live PE-profile recording + free the table
     Ubel::ClearNameCache();   // same reason as the last-connection teardown (D5/F3)
 
@@ -1231,6 +1237,7 @@ void Fern::HandleConnection(std::shared_ptr<Connection> conn) {
     if (last) {
         Radar::SessionManager::Instance().DropAll();
         Radar::GroupSessionManager::Instance().DropAll();
+        JoinArmWorker();  // [LIVEFUNCS-STEP2] before the table and the trace it reads go
         Linie::Reset();   // last client gone — drop any live PE-profile recording
         Sense::Reset();   // ...and restart diagnostics so the next session's numbers are its own
         // Un-hide any see-through occluders + stop its worker — the header contract is
@@ -1769,6 +1776,141 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
     }
     return t;
 }
+
+// ============================================================
+// [LIVEFUNCS-STEP2] The arms' layouts, read in the background (F4). A chosen function is armed on the hook at its
+// first call; its parameters are read here, on a thread of its own, while it is alive -- never on the hook, never on
+// the interactive lane (the first enum detection can walk GObjects for seconds), and not in MonitorLoop, whose job is
+// the disconnect and the cancel (the second design critic). One worker per traced Start with snapshot choices; Stop
+// gives it a deadline, runs the last pass itself, then seals what is left raw-only.
+// ============================================================
+namespace {
+
+constexpr int    kArmPollMs    = 50;     // a widget's functions live for as long as it is open: far longer than this
+constexpr size_t kArmsPerPass  = 64;
+constexpr int    kArmStopMs    = 2000;   // Stop's wait for the worker and its own last passes, together
+
+struct ArmCaptureWorker {
+    std::shared_ptr<Linie::ArmState> arms;
+    std::mutex                       mu;
+    std::condition_variable          cv;
+    bool                             stop = false;
+    bool                             done = false;   // the thread has left its loop
+    Ubel::ArmLayoutMemo              memo;           // the worker's, then Stop's once the worker is gone
+    Routine::SafeThread              th;   // detaches at process exit, where nothing joins it
+};
+std::mutex                        g_armWorkerMu;   // the pointer; pipe threads only
+std::unique_ptr<ArmCaptureWorker> g_armWorker;
+
+size_t RunArmPass(ArmCaptureWorker& w, const Ubel::ArmCaptureOps& ops, const char* who) {
+    const auto t0 = std::chrono::steady_clock::now();
+    const size_t n = Ubel::RunArmCapturePass(*w.arms, kArmsPerPass, ops, w.memo);
+    if (n) {
+        Sein::Info("PIPE:profile", "arm capture (%s): %zu arm(s) read in %lld ms", who, n,
+                   (long long)std::chrono::duration_cast<std::chrono::milliseconds>(
+                       std::chrono::steady_clock::now() - t0).count());
+    }
+    return n;
+}
+
+// Whatever worker is left -- one that outlived Stop's deadline, or a Start's predecessor -- told to stop and joined.
+void JoinArmWorker() {
+    std::unique_ptr<ArmCaptureWorker> w;
+    {
+        std::lock_guard<std::mutex> lk(g_armWorkerMu);
+        w = std::move(g_armWorker);
+    }
+    if (!w) return;
+    {
+        std::lock_guard<std::mutex> lk(w->mu);
+        w->stop = true;
+    }
+    w->cv.notify_all();
+    if (w->th.joinable()) w->th.join();
+}
+
+void StartArmWorker(std::shared_ptr<Linie::ArmState> arms) {
+    JoinArmWorker();
+    auto w = std::make_unique<ArmCaptureWorker>();
+    w->arms = std::move(arms);
+    ArmCaptureWorker* wp = w.get();
+    w->th = std::thread([wp] {
+        Routine::RunThreadGuarded("LiveFuncs: arm capture", [wp] {
+            // Immune to a client's per-command cancel: a pass cut short leaves an arm raw for no reason.
+            Tot::CancelContextScope scope(Tot::CancelContext{ nullptr, true });
+            Genau::DetectUEnumNames();   // its first run, here rather than inside the first layout read's latency
+            const Ubel::ArmCaptureOps ops = Ubel::DefaultArmCaptureOps();
+            std::unique_lock<std::mutex> lk(wp->mu);
+            while (!wp->stop) {
+                lk.unlock();
+                RunArmPass(*wp, ops, "worker");
+                lk.lock();
+                wp->cv.wait_for(lk, std::chrono::milliseconds(kArmPollMs), [wp] { return wp->stop; });
+            }
+        });
+        {
+            std::lock_guard<std::mutex> lk(wp->mu);
+            wp->done = true;
+        }
+        wp->cv.notify_all();
+    });
+    std::lock_guard<std::mutex> lk(g_armWorkerMu);
+    g_armWorker = std::move(w);
+}
+
+// Stop's half, after the trace and the table stopped: the worker gets the deadline, the last passes run here, then
+// every arm still unread is sealed raw-only. A worker past the deadline (inside the first enum detection) keeps
+// running with its arms sealed and is joined at the next Start, a release, or the last disconnect.
+void FinishArms() {
+    std::lock_guard<std::mutex> lk(g_armWorkerMu);
+    ArmCaptureWorker* w = g_armWorker.get();
+    if (!w) return;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(kArmStopMs);
+    bool exited = false;
+    {
+        std::unique_lock<std::mutex> wl(w->mu);
+        w->stop = true;
+        w->cv.notify_all();
+        exited = w->cv.wait_until(wl, deadline, [w] { return w->done; });
+    }
+    size_t last = 0;
+    if (exited) {
+        if (w->th.joinable()) w->th.join();
+        Tot::CancelContextScope scope(Tot::CancelContext{ nullptr, true });
+        const Ubel::ArmCaptureOps ops = Ubel::DefaultArmCaptureOps();
+        while (std::chrono::steady_clock::now() < deadline) {
+            const size_t n = RunArmPass(*w, ops, "stop");
+            last += n;
+            if (n == 0) break;
+        }
+    }
+    Linie::SealArms(*w->arms);
+    Sein::Info("PIPE:profile", "pe_profile_stop: arm capture finished (%zu read by the last pass%s)", last,
+               exited ? "" : "; the worker missed the deadline, its arms are sealed raw-only");
+    if (exited) g_armWorker.reset();
+}
+
+// What became of every name the recording followed: the Stop reply's `names`.
+json ArmsSummaryToJson() {
+    json out = json::array();
+    for (const Linie::ArmSummary& s : Linie::ArmsSummary()) {
+        json n;
+        n["class"]     = Serie::GetString(s.key.clsIdx, s.key.clsNum);
+        n["func"]      = Serie::GetString(s.key.fnIdx, s.key.fnNum);
+        n["key"]       = json::array({ s.key.fnIdx, s.key.fnNum, s.key.clsIdx, s.key.clsNum });
+        n["tick"]      = s.tick;
+        n["chosen"]    = s.ring >= 0;
+        n["addresses"] = s.addresses;
+        n["arms"]      = s.arms;
+        n["arms_full"] = s.armsFull;
+        // "Not called", never "not loaded": the DLL sees calls, not loads.
+        if (s.addresses == 0) n["not_called"] = true;
+        out.push_back(n);
+    }
+    return out;
+}
+
+}  // namespace
 
 std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const std::string& jsonLine) {
     json request;
@@ -4215,6 +4357,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace rides on this recording (T2). Asked for: the ring is
             // allocated BEFORE the table starts, and a failed allocation refuses the whole Start, so the user picks
             // a smaller buffer instead of getting a recording without the trace they asked for (T1).
+            // [LIVEFUNCS-STEP2] A worker the last Stop left past its deadline belongs to the trace this Start replaces.
+            JoinArmWorker();
             json traceReply;
             json namesReply;                          // [LIVEFUNCS-STEP2] what became of the names asked for
             std::shared_ptr<Linie::ArmState> arms;    // the names this recording follows, installed with it
@@ -4407,6 +4551,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
             Ubel::SetFunctionCapture(captureSetup);
             Linie::StartRecording(&Ubel::CaptureFunctionIdentity, &Ubel::ReadFunctionKey, arms);
+            // Snapshot choices need their layouts read while their functions are alive (F4); ticks alone need none.
+            if (arms && arms->capacity != 0) StartArmWorker(arms);
             const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - startT0).count();
             Sein::Info("PIPE:profile", "pe_profile_start: recording begun in %lld ms (hook_active=%d, trace=%llu MB, "
@@ -4466,10 +4612,28 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         }
 
         if (cmd == Renge::CMD_PE_PROFILE_STOP) {
-            Linie::StopRecording();   // idempotent; counts retained for pe_profile_get
+            // [LIVEFUNCS-STEP2] The trace before the table: a name arms its address on the table's read, so arms keep
+            // applying until the trace itself has stopped -- no call between the two loses its hint.
             // Waits until no hook is inside a trace write (TR2): after this the ring is fixed and pe_trace_get reads it.
             Linie::StopTrace();
+            Linie::StopRecording();   // idempotent; counts retained for pe_profile_get
+            FinishArms();             // the last layout reads, then the seal
             Linie::TraceInfo ti = Linie::GetTraceInfo();
+            // Read before the release below: a trace of name ticks that never ran is empty and released there, and
+            // its reply must still say which names were never called.
+            const json names = ArmsSummaryToJson();
+            json snapRings = json::array();
+            {
+                std::vector<Linie::SnapRingInfo> rings;
+                if (Linie::SnapRings(rings)) {
+                    for (const auto& r : rings) {
+                        snapRings.push_back({ { "ring", r.index }, { "cap", r.cap }, { "written", r.written },
+                                              { "first_valid", r.firstValid },
+                                              { "skipped_budget", r.skippedBudget },
+                                              { "dropped_budget", r.droppedBudget } });
+                    }
+                }
+            }
             // A trace that wrote nothing has nothing to read: give its ring back now instead of leaving it in the game
             // until the next Start (review DLL-5). The reply still reports it, empty, so the UI can say so.
             const bool hadTrace = ti.allocated;
@@ -4479,7 +4643,11 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                        ti.quiesced ? "" : ", NOT quiesced: the ring will not be read");
             json data;
             data["recording"] = false;
-            if (hadTrace) data["trace"] = TraceInfoToJson(ti);
+            if (hadTrace) {
+                data["trace"] = TraceInfoToJson(ti);
+                if (!snapRings.empty()) data["trace"]["snap_rings"] = snapRings;
+            }
+            if (!names.empty()) data["names"] = names;
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -4871,6 +5039,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // Start or when the client leaves. With `gen`, only that recording, and only once it has stopped: the release
         // a reader sends for what it read never frees a newer recording (review DLL-1).
         if (cmd == Renge::CMD_PE_TRACE_RELEASE) {
+            JoinArmWorker();   // [LIVEFUNCS-STEP2] its arms go with the trace
             bool released;
             if (request.contains("gen")) {
                 released = Linie::FreeTraceIfGen(request.value("gen", uint64_t(0)));
