@@ -1,4 +1,6 @@
 using System.Runtime.InteropServices;
+using System.Text.Json;
+using System.Xml.Linq;
 using UE5DumpUI.Core;
 using UE5DumpUI.Models;
 using UE5DumpUI.ViewModels;
@@ -518,5 +520,272 @@ public class CallTraceViewModelTests
         Assert.True(rows[1].ObjectStale);
         Assert.True(rows[4].IsScopeRoot);
         Assert.Equal("—", rows[4].DurationText);   // never returned
+    }
+
+    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by every row, remembered ----
+
+    [Fact]
+    public void The_widths_start_at_the_old_fixed_layout_and_the_saved_defaults_are_the_same()
+    {
+        // A file from before the widths were saved hydrates to the options' defaults, which must be what the tab
+        // showed before them: Time 96, Duration 88, Thread 64, Object 260, the detail pane 380.
+        var (vm, _) = MakeVm(Dump());
+        var o = new CallTraceUiOptions();
+        Assert.Equal((96.0, 88.0, 64.0, 260.0, 380.0),
+                     (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth, vm.DetailPaneWidth));
+        Assert.Equal((96.0, 88.0, 64.0, 260.0, 380.0),
+                     (o.TimeColWidth, o.DurationColWidth, o.ThreadColWidth, o.ObjectColWidth, o.DetailPaneWidth));
+    }
+
+    [Fact]
+    public void A_width_dragged_or_loaded_below_its_minimum_stops_there()
+    {
+        // A drag past the edge, or a hand-edited ui-options.json, must not make a column vanish: a column of 0 has no
+        // header left to drag it back by.
+        var (vm, _) = MakeVm(Dump());
+        vm.TimeColWidth = 0;
+        vm.DurationColWidth = -50;
+        vm.ThreadColWidth = 1;
+        vm.ObjectColWidth = 10;
+        vm.DetailPaneWidth = 0;
+        Assert.Equal((40.0, 40.0, 32.0, 80.0, 200.0),
+                     (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth, vm.DetailPaneWidth));
+
+        vm.TimeColWidth = double.NaN;   // Width NaN is "auto" to Avalonia: the column would size to its text
+        Assert.Equal(40.0, vm.TimeColWidth);
+        vm.ObjectColWidth = 1e9;
+        Assert.Equal(CallTraceViewModel.MaxWidth, vm.ObjectColWidth);
+        vm.ObjectColWidth = 333.5;      // inside the range: kept as dragged
+        Assert.Equal(333.5, vm.ObjectColWidth);
+    }
+
+    [Fact]
+    public void The_widths_round_trip_through_the_settings_root_with_the_source_generated_context()
+    {
+        // The JSON context reaches only what the root reaches: a CallTraceUiOptions held anywhere else is never written.
+        var o = new UiOptionsSettings();
+        o.CallTrace.TimeColWidth = 120;
+        o.CallTrace.DurationColWidth = 70;
+        o.CallTrace.ThreadColWidth = 50;
+        o.CallTrace.ObjectColWidth = 333;
+        o.CallTrace.DetailPaneWidth = 512;
+        string json = JsonSerializer.Serialize(o, UiOptionsJsonContext.Default.UiOptionsSettings);
+        var back = JsonSerializer.Deserialize(json, UiOptionsJsonContext.Default.UiOptionsSettings)!;
+        Assert.Equal((120.0, 70.0, 50.0, 333.0, 512.0),
+                     (back.CallTrace.TimeColWidth, back.CallTrace.DurationColWidth, back.CallTrace.ThreadColWidth,
+                      back.CallTrace.ObjectColWidth, back.CallTrace.DetailPaneWidth));
+
+        // A file from before the widths were saved has no callTrace object: the defaults, not zero widths.
+        var older = JsonSerializer.Deserialize("{\"schemaVersion\":1}", UiOptionsJsonContext.Default.UiOptionsSettings)!;
+        Assert.Equal(380.0, older.CallTrace.DetailPaneWidth);
+        Assert.Equal(260.0, older.CallTrace.ObjectColWidth);
+    }
+
+    private static readonly XNamespace Av = "https://github.com/avaloniaui";
+    private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
+    /// <summary>A row cell's width binding: a row's DataContext is its CallTraceRow, so the width comes from the
+    /// panel's view model, by the compiled route the row's ToggleCommand already takes.</summary>
+    private const string RowWidth = "{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).";
+
+    private static XDocument PanelAxaml()
+        => XDocument.Load(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Views/CallTracePanel.axaml"));
+
+    private static XElement RowTemplate(XDocument doc)
+        => doc.Descendants(Av + "DataTemplate").Single(e => (string?)e.Attribute(Xaml + "DataType") == "vm:CallTraceRow");
+
+    [Fact]
+    public void Every_row_cell_binds_the_view_models_width_and_the_Object_cell_has_a_tooltip()
+    {
+        var row = RowTemplate(PanelAxaml());
+        // A ColumnDefinition is not a Visual, so a $parent binding on it never resolves: fixed columns cannot follow a drag.
+        Assert.DoesNotContain(row.DescendantsAndSelf(), e => e.Attribute("ColumnDefinitions") != null);
+        foreach (var (width, text) in new[] { ("TimeColWidth", "TimeText"), ("DurationColWidth", "DurationText"),
+                                              ("ThreadColWidth", "ThreadText"), ("ObjectColWidth", "ObjectText") })
+        {
+            var cells = row.Descendants().Where(e => (string?)e.Attribute("Width") == RowWidth + width + "}").ToList();
+            Assert.True(cells.Count == 1, $"{cells.Count} row cell(s) bind {width}");
+            Assert.Contains(cells[0].DescendantsAndSelf(), e => (string?)e.Attribute("Text") == "{Binding " + text + "}");
+        }
+        var obj = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ObjectColWidth}");
+        Assert.Contains(obj.DescendantsAndSelf(),
+                        e => ((string?)e.Attribute("ToolTip.Tip") ?? "").StartsWith("{Binding Object", StringComparison.Ordinal));
+    }
+
+    [Fact]
+    public void Every_header_cell_has_the_rows_width_and_a_thumb_that_drags_it_and_so_has_the_detail_pane()
+    {
+        var doc = PanelAxaml();
+        var row = RowTemplate(doc);
+        var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
+        Assert.DoesNotContain(outside, e => e.Attribute("ColumnDefinitions") != null);
+        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        {
+            var cells = outside.Where(e => (string?)e.Attribute("Width") == "{Binding " + width + "}").ToList();
+            Assert.True(cells.Count == 1, $"{cells.Count} header cell(s) bind {width}");
+            Assert.Contains(cells[0].Descendants(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
+        }
+        var pane = outside.Single(e => e.Name == Av + "TextBox" && (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
+        Assert.Equal("{Binding DetailPaneWidth}", (string?)pane.Attribute("Width"));
+        Assert.Contains(pane.Parent!.Elements(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
+    }
+
+    // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----
+
+    /// <summary>en.axaml's strings, read as the app shows them: Res has no Avalonia application in a unit test, so
+    /// the view model is handed these and the tests read the sentences a user reads.</summary>
+    private static readonly Lazy<Dictionary<string, string>> EnStrings = new(() =>
+    {
+        var text = File.ReadAllText(NumericInputCoercionTests.RepoFile("ui/UE5DumpUI/Resources/Strings/en.axaml"));
+        var map = new Dictionary<string, string>(StringComparer.Ordinal);
+        foreach (System.Text.RegularExpressions.Match m in System.Text.RegularExpressions.Regex.Matches(
+                     text, "x:Key=\"(str\\.[^\"]+)\">([^<]*)</sys:String>"))
+            map[m.Groups[1].Value] = System.Net.WebUtility.HtmlDecode(m.Groups[2].Value);
+        return map;
+    });
+
+    private static string En(string key) => EnStrings.Value.TryGetValue(key, out var s) ? s : "";
+
+    /// <summary>The line a key makes; a key missing from en.axaml fails here rather than matching as "".</summary>
+    private static string Line(string key, params object[] args)
+    {
+        string template = En(key);
+        Assert.True(template.Length > 0, $"{key} is not in en.axaml");
+        return string.Format(template, args);
+    }
+
+    private const uint FuncNative = 0x400;
+    /// <summary>Where the game's module is loaded in DetailDump: the first function's code lies 0x123456 into it.</summary>
+    private const ulong GameBase = 0x140000000;
+    /// <summary>The five functions' UFunction objects, on the heap as a game's are.</summary>
+    private static readonly ulong[] DetailFuncs = { 0x1E5F0A000, 0x1E5F0A100, 0x1E5F0A200, 0x1E5F0A300, 0x1E5F0A400 };
+
+    // Five calls in a row, one per kind of native-entry line: 0 native with its entry in the module, 1 native with no
+    // entry found, 2 script, 3 flags unread, 4 a native function unloaded before the trace was read. Calls 0 and 1
+    // are on a named and a stale object; 2 on none.
+    private static FakeDumpService DetailDump()
+    {
+        var d = new FakeDumpService();
+        for (ulong k = 0; k < 5; k++)
+        {
+            ulong obj = k == 2 ? 0UL : 0x2B4C0010UL + k * 0x100;
+            d.Ring.Add(new TraceRecord(2 * k, 1000 + 10 * k, DetailFuncs[k], obj, 1, 0));
+            d.Ring.Add(new TraceRecord((2 * k + 1) | R, 1005 + 10 * k, 2 * k, 0, 1, 0));
+        }
+        d.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 7, Written = 10, FirstValid = 0, QpcFreq = 1_000_000 };
+        d.Funcs.AddRange(new[]
+        {
+            new TraceFuncName { Addr = DetailFuncs[0], Live = true, ClassName = "Character", FuncName = "Jump",
+                                FunctionFlags = FuncNative, CodeAddr = GameBase + 0x123456 },
+            new TraceFuncName { Addr = DetailFuncs[1], Live = true, ClassName = "Character", FuncName = "Crouch",
+                                FunctionFlags = FuncNative },
+            new TraceFuncName { Addr = DetailFuncs[2], Live = true, ClassName = "WBP_Inventory_C", FuncName = "OnOpen",
+                                FunctionFlags = 0x04020000 },   // BlueprintCallable | Public: no FUNC_Native
+            new TraceFuncName { Addr = DetailFuncs[3], Live = true, ClassName = "Pawn", FuncName = "Restart" },
+            new TraceFuncName { Addr = DetailFuncs[4], Unloaded = true, ClassName = "WBP_Map_C", FuncName = "OnTile",
+                                FunctionFlags = FuncNative },
+        });
+        d.Objs.Add(new TraceObjName { Addr = 0x2B4C0010, Live = true, Name = "BP_Hero_C_0", ClassName = "BP_Hero_C" });
+        d.Objs.Add(new TraceObjName { Addr = 0x2B4C0110, Live = false });
+        return d;
+    }
+
+    private static async Task<CallTraceViewModel> DetailVm(AddressFormat format, string moduleBase = "0x140000000")
+    {
+        var (vm, _) = MakeVm(DetailDump());
+        vm.StringLookup = En;
+        vm.SetEngineState(new EngineState { ModuleName = "Game.exe", ModuleBase = moduleBase });
+        vm.SelectedAddressFormatIndex = (int)format;
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(5, vm.Trace!.Count);
+        return vm;
+    }
+
+    [Fact]
+    public void The_address_lines_say_whose_address_they_are()
+    {
+        // Maintainer, build 3638: "UFunction: 0x..." reads as a call address, and pasted into CE's disassembler it shows
+        // garbage. It is the UFunction object's address (data), and the Object line's is the calling object's.
+        Assert.Contains("UFunction object's address", En("str.CT.Detail.FuncAddr"), StringComparison.Ordinal);
+        Assert.Contains("calling object", En("str.CT.Detail.Object"), StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("calling object's address", En("str.CT.Detail.ObjectStale"), StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public async Task Under_hex_without_prefix_the_function_object_and_object_lines_carry_no_0x()
+    {
+        var vm = await DetailVm(AddressFormat.HexNoPrefix);
+        string named = vm.Detail(0), stale = vm.Detail(1);
+        Assert.Contains(Line("str.CT.Detail.FuncAddr", "1E5F0A000"), named);
+        Assert.Contains(Line("str.CT.Detail.Object", "BP_Hero_C_0", "BP_Hero_C", "2B4C0010"), named);
+        Assert.Contains(Line("str.CT.Detail.ObjectStale", "2B4C0110"), stale);
+        Assert.DoesNotContain("0x", named, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("0x", stale, StringComparison.OrdinalIgnoreCase);
+
+        // The setting changed with a call selected: the pane follows it at once.
+        vm.SelectedIndex = 0;
+        vm.SelectedAddressFormatIndex = (int)AddressFormat.HexWithPrefix;
+        Assert.Contains(Line("str.CT.Detail.FuncAddr", "0x1E5F0A000"), vm.DetailText);
+        Assert.Contains(Line("str.CT.Detail.Object", "BP_Hero_C_0", "BP_Hero_C", "0x2B4C0010"), vm.DetailText);
+    }
+
+    private static readonly string[] KindKeys =
+        { "str.CT.Detail.NativeNotFound", "str.CT.Detail.Script", "str.CT.Detail.KindUnknown", "str.CT.Detail.NativeNotRead" };
+
+    /// <summary>What a shown entry's line starts with, inside the module or outside it.</summary>
+    private static IEnumerable<string> EntryPrefixes()
+        => new[] { "str.CT.Detail.NativeEntry", "str.CT.Detail.NativeEntryOutside" }
+           .Select(k => En(k)).Select(s => s[..s.IndexOf("{0}", StringComparison.Ordinal)]);
+
+    [Fact]
+    public async Task A_live_native_functions_entry_shows_as_a_CE_address_inside_the_module()
+    {
+        var vm = await DetailVm(AddressFormat.HexNoPrefix);
+        string d = vm.Detail(0);
+        Assert.Contains(Line("str.CT.Detail.NativeEntry", "\"Game.exe\"+123456"), d);
+        foreach (var k in KindKeys) Assert.DoesNotContain(Line(k), d);
+
+        // The module is the one the trace was loaded from: a trace outlives its connection, and the next game's base
+        // would give an RVA into another image.
+        vm.SetEngineState(new EngineState { ModuleName = "Other.exe", ModuleBase = "0x7FF600000000" });
+        Assert.Contains(Line("str.CT.Detail.NativeEntry", "\"Game.exe\"+123456"), vm.Detail(0));
+
+        // Below the module's base it is no RVA: the absolute address, written as the Address setting says.
+        var other = await DetailVm(AddressFormat.HexWithPrefix, moduleBase: "0x7FF600000000");
+        Assert.Contains(Line("str.CT.Detail.NativeEntryOutside", "0x140123456"), other.Detail(0));
+    }
+
+    [Theory]
+    [InlineData(1, "str.CT.Detail.NativeNotFound", "native entry not found")]
+    [InlineData(2, "str.CT.Detail.Script", "script function (runs in the interpreter)")]
+    [InlineData(3, "str.CT.Detail.KindUnknown", "kind unknown")]
+    [InlineData(4, "str.CT.Detail.NativeNotRead", "native entry not read (unloaded)")]
+    public async Task A_function_with_no_entry_to_show_says_why(int call, string key, string says)
+    {
+        Assert.Contains(says, En(key), StringComparison.OrdinalIgnoreCase);
+        var vm = await DetailVm(AddressFormat.HexNoPrefix);
+        string d = vm.Detail(call);
+        Assert.Contains(Line(key), d);
+        // One kind line a call: flags of 0 are not a script function's, an unloaded native is not "not found".
+        foreach (var other in KindKeys.Where(k => k != key)) Assert.DoesNotContain(Line(other), d);
+        foreach (var prefix in EntryPrefixes()) Assert.DoesNotContain(prefix, d);
+    }
+
+    [Fact]
+    public async Task The_names_reply_carries_a_live_native_functions_entry()
+    {
+        var pipe = new MockPipeClient();
+        pipe.SetHandler(_ => new System.Text.Json.Nodes.JsonObject
+        {
+            ["ok"] = true, ["gen"] = 4UL, ["total"] = 3, ["offset"] = 0,
+            ["items"] = new System.Text.Json.Nodes.JsonArray
+            {
+                new System.Text.Json.Nodes.JsonObject { ["addr"] = "0x100", ["live"] = true, ["code_addr"] = "0x7FF6A0123456" },
+                new System.Text.Json.Nodes.JsonObject { ["addr"] = "0x200", ["live"] = true, ["code_addr"] = "" },   // script, or not found
+                new System.Text.Json.Nodes.JsonObject { ["addr"] = "0x300", ["live"] = false, ["unloaded"] = true },  // not live: none sent
+            },
+        });
+        IDumpService svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService(), IdentityCodePage.Instance);
+        var page = await svc.PeTraceFuncNamesAsync(4, 0, 100, TestContext.Current.CancellationToken);
+        Assert.Equal(new ulong[] { 0x7FF6A0123456, 0, 0 }, page.Items.Select(f => f.CodeAddr).ToArray());
     }
 }

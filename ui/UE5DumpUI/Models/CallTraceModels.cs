@@ -111,6 +111,10 @@ public sealed class TraceFuncName
     public string ClassName     { get; init; } = "";
     public string FuncName      { get; init; } = "";
     public uint   FunctionFlags { get; init; }
+    /// <summary>[LIVEFUNCS-STEP2] A live native function's code entry (<c>UFunction::Func</c>), for a Cheat Engine
+    /// address. 0 when the DLL sent "" (a script function, whose Func is the interpreter, or an entry not found) or
+    /// nothing (a function not live, or a DLL from before code_addr).</summary>
+    public ulong  CodeAddr      { get; init; }
     /// <summary>A name to show: live, or unloaded and named from its first call.</summary>
     public bool   Named => (Live || Unloaded) && FuncName.Length > 0;
 }

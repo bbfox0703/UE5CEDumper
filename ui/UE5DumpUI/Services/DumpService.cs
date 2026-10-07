@@ -2988,6 +2988,7 @@ public sealed class DumpService : IDumpService
                     ClassName = i["class_name"]?.GetValue<string>() ?? "",
                     FuncName = i["func_name"]?.GetValue<string>() ?? "",
                     FunctionFlags = (uint)(i["function_flags"]?.GetValue<long>() ?? 0L),
+                    CodeAddr = ParseAddr(i["code_addr"]?.GetValue<string>()),
                 }).ToList()
                 : new List<TraceFuncName>(),
         };

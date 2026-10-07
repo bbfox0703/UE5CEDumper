@@ -113,21 +113,53 @@
                Foreground="#F44747" Margin="0,0,0,4"
                IsVisible="{Binding ErrorMessage, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
 
-    <!-- The selected call: what ran, on what, when, and its callers. -->
-    <TextBox DockPanel.Dock="Right" Width="380" Margin="8,0,0,0"
+    <!-- The selected call: what ran, on what, when, and its callers. Its width is dragged by the thumb on its left
+         edge and remembered (U10). -->
+    <TextBox DockPanel.Dock="Right" Width="{Binding DetailPaneWidth}"
              Text="{Binding DetailText, Mode=OneWay}"
              IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap"
              FontFamily="Consolas, Menlo, monospace" FontSize="12"
              Background="#1E1E1E" Foreground="#D4D4D4"/>
+    <Thumb DockPanel.Dock="Right" Width="8" Cursor="SizeWestEast"
+           Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+           DragDelta="OnDetailPaneThumbDragDelta"/>
 
-    <!-- Column header for the rows below (a ListBox: a flat, virtualized tree; see CallTraceTree). -->
-    <Grid DockPanel.Dock="Top" ColumnDefinitions="96,88,64,*,260" Margin="4,0,0,2">
-      <TextBlock Grid.Column="0" Text="{StaticResource str.CT.Col.Time}" Foreground="#888" FontSize="11"/>
-      <TextBlock Grid.Column="1" Text="{StaticResource str.CT.Col.Duration}" Foreground="#888" FontSize="11"/>
-      <TextBlock Grid.Column="2" Text="{StaticResource str.CT.Col.Thread}" Foreground="#888" FontSize="11"/>
-      <TextBlock Grid.Column="3" Text="{StaticResource str.CT.Col.Function}" Foreground="#888" FontSize="11"/>
-      <TextBlock Grid.Column="4" Text="{StaticResource str.CT.Col.Object}" Foreground="#888" FontSize="11"/>
-    </Grid>
+    <!-- Column header for the rows below (a ListBox: a flat, virtualized tree; see CallTraceTree). The cells are laid
+         out as each row's are and take the same widths from the view model, so header and rows move together; a
+         thumb on each fixed column's inner edge drags its width (U10). Function takes what is left. -->
+    <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2">
+      <Panel DockPanel.Dock="Left" Width="{Binding TimeColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Time}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+        <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+               DragDelta="OnTimeThumbDragDelta"/>
+      </Panel>
+      <Panel DockPanel.Dock="Left" Width="{Binding DurationColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Duration}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+        <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+               DragDelta="OnDurationThumbDragDelta"/>
+      </Panel>
+      <Panel DockPanel.Dock="Left" Width="{Binding ThreadColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Thread}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
+        <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
+               DragDelta="OnThreadThumbDragDelta"/>
+      </Panel>
+      <!-- Docked at the right, as in the rows: its handle is its LEFT edge, the one it shares with Function. -->
+      <Panel DockPanel.Dock="Right" Width="{Binding ObjectColWidth}">
+        <TextBlock Text="{StaticResource str.CT.Col.Object}" Foreground="#888" FontSize="11"
+                   TextTrimming="CharacterEllipsis" Margin="6,0,0,0"/>
+        <Thumb HorizontalAlignment="Left" Width="5" Cursor="SizeWestEast"
+               Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="1,0,0,0"
+               DragDelta="OnObjectThumbDragDelta"/>
+      </Panel>
+      <TextBlock Text="{StaticResource str.CT.Col.Function}" Foreground="#888" FontSize="11"
+                 TextTrimming="CharacterEllipsis"/>
+    </DockPanel>
 
     <ListBox ItemsSource="{Binding Rows}"
              SelectedIndex="{Binding SelectedIndex}"
@@ -136,13 +168,30 @@
              FontFamily="Consolas, Menlo, monospace" FontSize="12">
       <ListBox.ItemTemplate>
         <DataTemplate x:DataType="vm:CallTraceRow">
-          <Grid ColumnDefinitions="96,88,64,*,260">
-            <TextBlock Grid.Column="0" Text="{Binding TimeText}" Foreground="#7FB6E8" VerticalAlignment="Center"/>
-            <TextBlock Grid.Column="1" Text="{Binding DurationText}" Foreground="#DCDCAA" VerticalAlignment="Center"/>
-            <TextBlock Grid.Column="2" Text="{Binding ThreadText}" Foreground="#808080" VerticalAlignment="Center"/>
+          <!-- U10: a DockPanel, not a Grid. Its cells take the widths the header drags, from the panel's view model by
+               the compiled $parent route the Toggle button takes; a ColumnDefinition is not a Visual, so the same
+               binding on one never resolves. -->
+          <DockPanel>
+            <TextBlock DockPanel.Dock="Left"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).TimeColWidth}"
+                       Text="{Binding TimeText}" Foreground="#7FB6E8" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Left"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).DurationColWidth}"
+                       Text="{Binding DurationText}" Foreground="#DCDCAA" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Left"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ThreadColWidth}"
+                       Text="{Binding ThreadText}" Foreground="#808080" VerticalAlignment="Center"
+                       TextTrimming="CharacterEllipsis"/>
+            <TextBlock DockPanel.Dock="Right"
+                       Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ObjectColWidth}"
+                       Text="{Binding ObjectText}" ToolTip.Tip="{Binding ObjectTip}" VerticalAlignment="Center"
+                       Foreground="#B0B0B0" Opacity="{Binding ObjectOpacity}"
+                       TextTrimming="CharacterEllipsis"/>
             <!-- A DockPanel that clips, not a horizontal StackPanel: a long name is cut with an ellipsis at the Object
                  column instead of running into it; the tooltip has it whole. -->
-            <DockPanel Grid.Column="3" ClipToBounds="True" ToolTip.Tip="{Binding FunctionText}">
+            <DockPanel ClipToBounds="True" ToolTip.Tip="{Binding FunctionText}">
               <Border DockPanel.Dock="Left" Width="{Binding Indent}"/>
               <Button DockPanel.Dock="Left" Content="{Binding Glyph}"
                       Command="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ToggleCommand}"
@@ -166,10 +215,7 @@
                            IsVisible="{Binding !IsScopeRoot}" Foreground="#D4D4D4"/>
               </Panel>
             </DockPanel>
-            <TextBlock Grid.Column="4" Text="{Binding ObjectText}" VerticalAlignment="Center"
-                       Foreground="#B0B0B0" Opacity="{Binding ObjectOpacity}"
-                       TextTrimming="CharacterEllipsis"/>
-          </Grid>
+          </DockPanel>
         </DataTemplate>
       </ListBox.ItemTemplate>
     </ListBox>

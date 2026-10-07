@@ -46,6 +46,7 @@ public sealed class UiOptionsSettings
     public SystemUiOptions System { get; set; } = new();
     public LiveFuncsUiOptions LiveFuncs { get; set; } = new();
     public DumpExplorerUiOptions DumpExplorer { get; set; } = new();
+    public CallTraceUiOptions CallTrace { get; set; } = new();
 }
 
 /// <summary>[DUMPDIFF-UI] Dump Explorer's Compare options (D8). Both OFF by default: a default report is the
@@ -218,6 +219,18 @@ public sealed class InterestingPropsUiOptions
 public sealed class ConsoleUiOptions
 {
     public bool GameOnly { get; set; }
+}
+
+/// <summary>[LIVEFUNCS-STEP2] U10: the Call Trace list's column widths and its detail pane's width, in pixels, as the
+/// user dragged them. The defaults are the fixed layout the tab had before they could be dragged; the view model
+/// clamps a hand-edited value.</summary>
+public sealed class CallTraceUiOptions
+{
+    public double TimeColWidth { get; set; } = 96;
+    public double DurationColWidth { get; set; } = 88;
+    public double ThreadColWidth { get; set; } = 64;
+    public double ObjectColWidth { get; set; } = 260;
+    public double DetailPaneWidth { get; set; } = 380;
 }
 
 /// <summary>Live Funcs capture settings. Each is stored as its slider's exponent, like the toolbar's power-of-two

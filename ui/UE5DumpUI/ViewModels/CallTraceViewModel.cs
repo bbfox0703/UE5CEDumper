@@ -92,6 +92,49 @@ public partial class CallTraceViewModel : ViewModelBase
     private readonly KeywordSearchMemory _filterMemory;
     public ObservableCollection<string> FilterHistory => _filterMemory.History;
 
+    // ---- the list's widths ([LIVEFUNCS-STEP2] U10): dragged from the header, shared by the header and every row ----
+
+    // Each width's floor keeps its header wide enough to grab and drag back: a column dragged, or hand-edited in
+    // ui-options.json, down to nothing would leave no edge to pull it out by.
+    internal const double MinTimeColWidth = 40, MinDurationColWidth = 40, MinThreadColWidth = 32,
+                          MinObjectColWidth = 80, MinDetailPaneWidth = 200;
+    /// <summary>The ceiling for every width: a hand-edited value of millions of pixels would lay the panel out far
+    /// past any screen.</summary>
+    internal const double MaxWidth = 4096;
+
+    private double _timeColWidth = 96, _durationColWidth = 88, _threadColWidth = 64, _objectColWidth = 260,
+                   _detailPaneWidth = 380;
+    public double TimeColWidth
+    {
+        get => _timeColWidth;
+        set => SetProperty(ref _timeColWidth, ClampWidth(value, MinTimeColWidth));
+    }
+    public double DurationColWidth
+    {
+        get => _durationColWidth;
+        set => SetProperty(ref _durationColWidth, ClampWidth(value, MinDurationColWidth));
+    }
+    public double ThreadColWidth
+    {
+        get => _threadColWidth;
+        set => SetProperty(ref _threadColWidth, ClampWidth(value, MinThreadColWidth));
+    }
+    /// <summary>Docked at the right of each row: Function takes what the fixed columns leave.</summary>
+    public double ObjectColWidth
+    {
+        get => _objectColWidth;
+        set => SetProperty(ref _objectColWidth, ClampWidth(value, MinObjectColWidth));
+    }
+    public double DetailPaneWidth
+    {
+        get => _detailPaneWidth;
+        set => SetProperty(ref _detailPaneWidth, ClampWidth(value, MinDetailPaneWidth));
+    }
+
+    /// <summary>NaN goes to the floor, not through: a Width of NaN is "auto" to Avalonia, and the column would size to
+    /// its text row by row.</summary>
+    private static double ClampWidth(double value, double min) => double.IsNaN(value) ? min : Math.Clamp(value, min, MaxWidth);
+
     internal CallTrace? Trace => _trace;
     internal CallTraceTree? Tree => _tree;
 
@@ -199,6 +242,7 @@ public partial class CallTraceViewModel : ViewModelBase
             catch (Exception ex) { _log.Warn($"CallTrace: release failed ({ex.Message})"); }
 
             _trace = trace;
+            _traceModule = _engineState;
             _tree = new CallTraceTree(trace);
             _loadedGen = info.Gen;
             HasTrace = true;
@@ -443,38 +487,97 @@ public partial class CallTraceViewModel : ViewModelBase
         ShowTree(call);
     }
 
-    /// <summary>What the detail pane says about one call: what ran, on what, when and for how long, and the chain of
-    /// callers above it -- the call stack at the UFunction level.</summary>
+    /// <summary>What the detail pane says about one call: what ran and where its code is, on what, when and for how
+    /// long, and the chain of callers above it -- the call stack at the UFunction level.</summary>
     internal string Detail(int i)
     {
         var t = _trace;
         if (t == null || i < 0 || i >= t.Count) return "";
         var sb = new StringBuilder();
-        sb.AppendLine(Res.Format("str.CT.Detail.Function", Label(t, i)));
-        if (t.FuncUnloaded(i)) sb.AppendLine(Res.Get("str.CT.Detail.Unloaded"));
-        if (t.FuncRecycled(i)) sb.AppendLine(Res.Get("str.CT.Detail.Recycled"));
-        if (t.FuncReused(i)) sb.AppendLine(Res.Get("str.CT.Detail.Reused"));
-        sb.AppendLine(Res.Format("str.CT.Detail.FuncAddr", "0x" + t.Func[i].ToString("X", CultureInfo.InvariantCulture)));
+        sb.AppendLine(Say("str.CT.Detail.Function", Label(t, i)));
+        if (t.FuncUnloaded(i)) sb.AppendLine(StringLookup("str.CT.Detail.Unloaded"));
+        if (t.FuncRecycled(i)) sb.AppendLine(StringLookup("str.CT.Detail.Recycled"));
+        if (t.FuncReused(i)) sb.AppendLine(StringLookup("str.CT.Detail.Reused"));
+        sb.AppendLine(Say("str.CT.Detail.FuncAddr", Addr(t.Func[i])));
+        sb.AppendLine(NativeEntryLine(t.Funcs.TryGetValue(t.Func[i], out var f) ? f : null));
         if (t.Obj[i] != 0)
         {
             sb.AppendLine(t.ObjStale(i)
-                ? Res.Format("str.CT.Detail.ObjectStale", "0x" + t.Obj[i].ToString("X", CultureInfo.InvariantCulture))
-                : Res.Format("str.CT.Detail.Object", t.ObjName(i), t.ObjClass(i),
-                             "0x" + t.Obj[i].ToString("X", CultureInfo.InvariantCulture)));
+                ? Say("str.CT.Detail.ObjectStale", Addr(t.Obj[i]))
+                : Say("str.CT.Detail.Object", t.ObjName(i), t.ObjClass(i), Addr(t.Obj[i])));
         }
-        sb.AppendLine(Res.Format("str.CT.Detail.Thread", t.Tid[i]));
-        sb.AppendLine(Res.Format("str.CT.Detail.Start", t.StartMs(i)));
-        sb.AppendLine(t.DurationUs(i) is { } us ? Res.Format("str.CT.Detail.Duration", us) : Res.Get("str.CT.Detail.NoReturn"));
-        sb.AppendLine(Res.Format("str.CT.Detail.Children", t.ChildCount[i]));
-        if ((t.Flags[i] & TraceRecord.ScopeRootFlag) != 0) sb.AppendLine(Res.Get("str.CT.Detail.ScopeRoot"));
+        sb.AppendLine(Say("str.CT.Detail.Thread", t.Tid[i]));
+        sb.AppendLine(Say("str.CT.Detail.Start", t.StartMs(i)));
+        sb.AppendLine(t.DurationUs(i) is { } us ? Say("str.CT.Detail.Duration", us) : StringLookup("str.CT.Detail.NoReturn"));
+        sb.AppendLine(Say("str.CT.Detail.Children", t.ChildCount[i]));
+        if ((t.Flags[i] & TraceRecord.ScopeRootFlag) != 0) sb.AppendLine(StringLookup("str.CT.Detail.ScopeRoot"));
         sb.AppendLine();
-        sb.AppendLine(Res.Get("str.CT.Detail.Callers"));
+        sb.AppendLine(StringLookup("str.CT.Detail.Callers"));
         var chain = new List<int>();
         for (int p = i; p >= 0; p = t.Parent[p]) chain.Add(p);
         chain.Reverse();
         for (int k = 0; k < chain.Count; k++)
             sb.Append(new string(' ', k * 2)).AppendLine(Label(t, chain[k]));
         return sb.ToString();
+    }
+
+    /// <summary>Where the detail pane's sentences come from: en.axaml, through Res. A unit test has no Avalonia
+    /// application for Res to ask, so it reads en.axaml itself and hands it in here.</summary>
+    internal Func<string, string> StringLookup { get; set; } = Res.Get;
+
+    private string Say(string key, params object[] args)
+    {
+        string template = StringLookup(key);
+        return template.Length == 0 ? "" : string.Format(template, args);
+    }
+
+    // ---- the detail's addresses ([LIVEFUNCS-STEP2] U11) ----
+
+    /// <summary>The toolbar's Address setting (an <see cref="AddressFormat"/>), fanned out by the main window as to the
+    /// other tabs that show addresses.</summary>
+    [ObservableProperty] private int _selectedAddressFormatIndex;
+    partial void OnSelectedAddressFormatIndexChanged(int value) => DetailText = Detail(SelectedCall());
+
+    private EngineState? _engineState;
+    /// <summary>The game the trace was loaded from: its module turns a native entry into a CE address. Taken at the
+    /// load, not read at display: a trace outlives its connection, and another game's module base would give an RVA
+    /// into the wrong image.</summary>
+    private EngineState? _traceModule;
+
+    public void SetEngineState(EngineState state) => _engineState = state;
+
+    /// <summary>An address as the Address setting writes it. Under "module+RVA" an address outside the module (the
+    /// UFunction and the object are on the heap) falls back to plain hex: AddressHelper.FormatAddress's rule.</summary>
+    private string Addr(ulong a)
+        => AddressHelper.FormatAddress(a.ToString("X", CultureInfo.InvariantCulture), _traceModule?.CeModuleName,
+                                       _traceModule?.ModuleBase, (AddressFormat)SelectedAddressFormatIndex);
+
+    /// <summary>EFunctionFlags::FUNC_Native.</summary>
+    private const uint FuncNative = 0x0000_0400;
+
+    /// <summary>Where the function's own code is: a native function's entry (its execXxx thunk) as the address CE
+    /// takes, or why no entry is shown. The DLL reads the entry only for a function still live, so an unloaded one's
+    /// was never read.</summary>
+    private string NativeEntryLine(TraceFuncName? f)
+    {
+        uint flags = f?.FunctionFlags ?? 0;
+        // A script function's Func is the interpreter every Blueprint function shares. Its flags, read at its first
+        // call, say so even after it was unloaded.
+        if (flags != 0 && (flags & FuncNative) == 0) return StringLookup("str.CT.Detail.Script");
+        if (f is { Live: false, Unloaded: true }) return StringLookup("str.CT.Detail.NativeNotRead");
+        // Flags that could not be read cannot tell native from script, and a script function's Func would pass for
+        // a native entry while pointing into the interpreter: no address rather than a misleading one.
+        if (flags == 0 || f is not { Live: true }) return StringLookup("str.CT.Detail.KindUnknown");
+        if (f.CodeAddr == 0) return StringLookup("str.CT.Detail.NativeNotFound");
+        // In the module, the RVA CE resolves after a relaunch; anywhere else, the absolute address of this run. "In"
+        // is AddressHelper.TryGetModuleRva's test: the module's size is not on the wire, so it means within 4 GiB above
+        // the base.
+        string hex = f.CodeAddr.ToString("X", CultureInfo.InvariantCulture);
+        var m = _traceModule;
+        return m != null && m.CeModuleName.Length > 0 && AddressHelper.TryGetModuleRva(hex, m.ModuleBase, out _)
+            ? Say("str.CT.Detail.NativeEntry",
+                  AddressHelper.FormatAddress(hex, m.CeModuleName, m.ModuleBase, AddressFormat.ModuleOffset))
+            : Say("str.CT.Detail.NativeEntryOutside", Addr(f.CodeAddr));
     }
 
     internal static string Label(CallTrace t, int i)
@@ -556,6 +659,9 @@ public sealed class CallTraceRow
     /// <summary>Its address held another function during the recording (review DLL-3): marked too.</summary>
     public bool FuncReused { get; init; }
     public string ObjectText { get; init; } = "";
+    /// <summary>[LIVEFUNCS-STEP2] U10: the Object cell's tooltip: its whole text, which a narrow column cuts; none for a
+    /// call with no object, where an empty tooltip would still pop up.</summary>
+    public string? ObjectTip => ObjectText.Length > 0 ? ObjectText : null;
     public bool ObjectStale { get; init; }
     /// <summary>A stale object shows its address dimmed: what is there now may not be what was called.</summary>
     public double ObjectOpacity => ObjectStale ? 0.5 : 1.0;
