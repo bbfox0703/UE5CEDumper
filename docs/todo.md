@@ -259,7 +259,9 @@ Open work only. **Read this when deciding what to do next.**
   recording; the Live Funcs table dropped them); `[TRACE-UI-LOAD-MEMORY]` the load peaks at about six times the ring:
   fix it, then show the memory cost beside the slider, warning (never refusing) above the available memory;
   `[TRACE-UI-READ-SPEED]` the UI reads at half the rig's speed, re-measured after; the "1 calls began" wording;
-  512 MB stays. Steps 2 and 3 not started. [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
+  512 MB stays. Steps 2 and 3 not started: **decided (T9) only for chosen functions; open: how many may be chosen,
+  a cap or a warning, "select all", one tick or two** (the plan's "Open before step 2").
+  [live-funcs-timeline-plan.md](live-funcs-timeline-plan.md).
   A ring buffer (a power-of-two slider, 32–512 MB, default 64, with the seconds it keeps estimated beside it) that
   keeps the calls just before Stop, two small records per call (entry and return), the call tree computed after
   Stop; then parameter and native-stack snapshots for ticked functions only.

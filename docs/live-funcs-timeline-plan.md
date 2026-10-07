@@ -179,6 +179,7 @@ T5); the others are requirements for building.
 | T5 | **Recording scope** (maintainer, 2026-10-06) | Two opt-in filters applied at record time (TR4), **(a) built first**. **(a) Ticked-function scope:** applies whenever functions are ticked (T3) — record only the ticked functions' calls and everything nested inside them on the same thread; tick OnJump, get the call tree under OnJump. **(b) Leave out per-frame functions:** a checkbox; the previous recording's per-frame list (`per_frame_funcs`, build 3630 on), passed at Start. Nothing ticked and (b) off records everything. One tick column serves (a) and the snapshots (maintainer, 2026-10-07). |
 | T6 | **Experimental only** (maintainer, 2026-10-06) | The Trace checkbox, the buffer slider, the scope options, the tick column and the Call Trace tab show only while the experimental tabs are enabled (the System tab's checkbox, `ExperimentalGate`). The DLL never sees that flag: it allocates the buffer and records only when Start asks for the trace, so with the trace off its hot path is exactly today's. |
 | T7 | **Nothing ticked** (maintainer, 2026-10-07) | A Start with Trace on and no function ticked asks first: nothing is ticked, so the trace records every call — a wide range, and more load on the game. Confirmed once, it does not ask again in the same UI session; a second Start with nothing ticked runs at once. Cancel leaves everything as it was and starts nothing, and does not count as asked. **It asks only when there is something to tick**: the first recording, or any Start while the Live Funcs table is empty, has no rows to tick from, so it records every call without asking (maintainer, 2026-10-07). |
+| T9 | **Snapshots only for chosen functions** (maintainer, 2026-10-07) | Steps 2 (parameter snapshots) and 3 (native stack) capture **only for the functions the user chooses**, never for every call -- unlike the trace, there is no "nothing chosen = everything" (T3, T7). **Open, to decide before step 2:** how many may be chosen, whether a cap or a warning guards it, what a "select all" would do, and whether the snapshot choice is the trace's tick or a column of its own -- see "Open before step 2: how much may be chosen" below. |
 | T8 | **The ticks seen from the Call Trace tab** (maintainer, 2026-10-07) | One tick state, set in the Live Funcs table. The Call Trace tab shows a copy of the trace settings and of the ticked functions, grayed out and read-only, with a hint that they are changed in Live Funcs. The top of the tab says it works with Live Funcs and cannot record on its own: Start, Stop and the settings are in Live Funcs, and the tab shows what the last recording traced (maintainer, 2026-10-07). |
 
 ### Why the trace rides on Live Funcs (T2, T3)
@@ -191,6 +192,46 @@ in order. A trace started on its own would have nothing to point at.
 - **One recording, one lock.** One Start / Stop means one "recording" state: the fetch limit, Min calls, Save
   .jsonl, the Trace checkbox, the buffer slider and the ticks are all disabled together while it runs. Two
   Start buttons would each need their own rules.
+### Open before step 2: how much may be chosen (T9, raised 2026-10-07)
+
+The maintainer's question: can the number of chosen functions be capped, or warned about -- a user may select
+all -- and the choosing itself needs designing. What follows is the analysis and a proposal; **nothing here is
+decided.**
+
+**The count is the wrong thing to cap; the call rate is the right one.** What a snapshot costs is paid per CALL,
+not per chosen function. Ticking all 500 functions that fired once each costs 500 captures; ticking one Tick that
+runs on 80 actors at 60 fps costs 4,800 captures a second. Arithmetic, not measured:
+
+| Choice | Captures / s | Parameter snapshots (two copies, tens of ns; bytes = 2 x ParmsSize + a header) | Native stack (1-10 µs each, TR7) |
+|---|---|---|---|
+| 500 functions, each fired a few times | a few hundred | negligible | well under 1 ms a second |
+| one per-frame function on 80 actors, 60 fps | 4,800 | about 0.1 ms a second; fills a 64 MB buffer of 64-byte blocks in minutes | **5-48 ms a second: frames drop** |
+| "all" on Avowed (9.8-14.5k calls/s measured) | ~14,000 | under 1 ms a second; a 64 MB buffer in about a minute | **14-140 ms a second: unusable** |
+
+So a cap of "N functions" both blocks harmless choices (many rare functions -- exactly the action recording's
+target) and lets through the harmful one (a single per-frame function).
+
+**Proposal (to decide):**
+1. **No cap on the count. An estimate from the previous recording, like D3's memory line.** The Live Funcs table
+   already has each function's calls over a known window, and whether it is per-frame. Beside the choice: "chosen:
+   N functions, about X calls/s last time -> about Y ms of the game's time a second for stacks, Z MB a minute of
+   snapshots". Above a threshold (stacks: say 2 ms a second -- an eighth of one 60 fps frame, if it all landed in one) the line turns orange;
+   like D3, a warning, not a refusal.
+2. **A per-frame function is marked**, and choosing one for a native-stack snapshot asks once (T7's pattern): it is
+   the one choice that drops frames by itself.
+3. **The DLL enforces a budget regardless (TR7)**, because the last recording's rates do not bind the next one: at
+   most N captures per function per second and a total per second, the first calls of each second kept, the rest
+   counted as skipped and reported with the trace ("1,234 stack captures skipped: over the budget"). The budget is
+   the guarantee; the UI's estimate is the advice. Defaults to measure in step 3.
+4. **"Select all"** -- there is none today (one row at a time). If a bulk tick is added (tick the filtered rows),
+   it goes through the same estimate, and per-frame rows are left out of a bulk tick for stacks unless asked.
+
+**Also open: one tick or two.** T5 (a) uses the tick as the trace's scope root; T3 says the same tick snapshots
+from step 2 on. One column is simpler, but couples them: ticking the opener to see its call tree would also
+snapshot it, and snapshotting a function nested under the opener would make it a scope root too. Two columns
+(Trace scope / Snapshot), or one tick with a per-row snapshot kind (none / parameters / parameters + stack), keep
+the choices apart. To decide with the above.
+
 - **Same window, so the two views can point at each other.** A row in the count table can jump to its calls in
   the trace, and a call in the trace back to its row, because both cover exactly the same calls.
 - **This settles the earlier open question:** the count table and the trace do record at the same time,
