@@ -281,10 +281,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
     }
 
-    /// <summary>The ticked functions, keyed by Class::Func (stable across fetches) with the address the last fetch
-    /// saw them at, which is what the DLL matches on. An address is good only within the connection that fetched it:
-    /// a disconnect clears the ticks, and the rows left on screen cannot be ticked until a fetch replaces them.</summary>
-    private readonly Dictionary<string, string> _ticked = new(StringComparer.Ordinal);
+    /// <summary>The ticked functions, keyed by Class::Func (stable across fetches) with every address the last fetch
+    /// saw under that name, which is what the DLL matches on: a class is named by its short name, so two classes in
+    /// different folders can share a key, and a tick by name traces both. An address is good only within the
+    /// connection that fetched it: a disconnect clears the ticks, and the rows left on screen cannot be ticked until a
+    /// fetch replaces them.</summary>
+    private readonly Dictionary<string, HashSet<string>> _ticked = new(StringComparer.Ordinal);
     /// <summary>The rows on screen came from a connection that has since dropped: their addresses belong to a process
     /// that may be gone, so they cannot be ticked and are nothing to tick for T7.</summary>
     private bool _rowsFromEarlierConnection;
@@ -345,8 +347,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         if (row == null || !CanTick || string.IsNullOrEmpty(row.FuncAddr)) return;
         string key = Key(row);
-        if (_ticked.Remove(key)) row.IsTicked = false;
-        else { _ticked[key] = row.FuncAddr; row.IsTicked = true; }
+        var same = _allEntries.Where(e => Key(e) == key && !string.IsNullOrEmpty(e.FuncAddr)).ToList();
+        if (!same.Contains(row)) same.Add(row);
+        bool tick = !_ticked.Remove(key);
+        if (tick) _ticked[key] = new HashSet<string>(same.Select(e => e.FuncAddr), StringComparer.OrdinalIgnoreCase);
+        foreach (var e in same) e.IsTicked = tick;
         RefreshTickedList();
     }
 
@@ -375,7 +380,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private async Task<TraceStartOptions?> TraceOptionsForStartAsync(Ref<bool> cancelled)
     {
         if (!TraceAvailable || !TraceEnabled) return null;
-        var ticked = _ticked.Values.Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+        var ticked = _ticked.Values.SelectMany(a => a).Distinct(StringComparer.OrdinalIgnoreCase).ToList();
         // T7: only when there is something to tick. The first recording, or any Start with the table empty, has no
         // rows to tick from, and records every call without asking.
         if (ticked.Count == 0 && _allEntries.Count > 0 && !_rowsFromEarlierConnection && !_traceAllConfirmed)
@@ -669,13 +674,20 @@ public partial class LiveFuncsViewModel : ViewModelBase
             _rowsFromEarlierConnection = false;
             OnPropertyChanged(nameof(CanTick));
         }
-        // The ticks are kept by name; the new rows carry them, and their addresses are the ones the DLL matches on.
+        // The ticks are kept by name; the new rows carry them, and their addresses are the ones the DLL matches on. A
+        // name this page does not show keeps the addresses it had.
+        var refreshed = new Dictionary<string, HashSet<string>>(StringComparer.Ordinal);
         foreach (var e in _allEntries)
         {
-            if (!_ticked.ContainsKey(Key(e))) continue;
+            string k = Key(e);
+            if (!_ticked.ContainsKey(k)) continue;
             e.IsTicked = true;
-            if (!string.IsNullOrEmpty(e.FuncAddr)) _ticked[Key(e)] = e.FuncAddr;
+            if (string.IsNullOrEmpty(e.FuncAddr)) continue;
+            if (!refreshed.TryGetValue(k, out var addrs))
+                refreshed[k] = addrs = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            addrs.Add(e.FuncAddr);
         }
+        foreach (var kv in refreshed) _ticked[kv.Key] = kv.Value;
         if (result.WindowMs is > 0 && result.TotalCalls > 0)
         {
             _lastCallsPerSecond = result.TotalCalls / (result.WindowMs.Value / 1000.0);
