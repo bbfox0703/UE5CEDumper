@@ -2521,8 +2521,25 @@ static SnapValue DecodeSnapField(const ParamField& f, const uint8_t* p, uint32_t
 
 SlotDecode DecodeSlot(const std::vector<Linie::ArmView>& arms, uint32_t arm, const uint8_t* bytes, uint32_t len,
                       bool after, const SnapDecodeCtx& ctx) {
-    (void)arms; (void)arm; (void)bytes; (void)len; (void)after; (void)ctx;
-    return SlotDecode{};
+    SlotDecode d;
+    const Linie::ArmView* v = nullptr;
+    if (arm < arms.size() && arms[arm].index == arm) {
+        v = &arms[arm];   // CopyArms hands them over in log order
+    } else {
+        for (const auto& a : arms) if (a.index == arm) { v = &a; break; }
+    }
+    if (!v) {
+        d.why = "no such arm";
+        return d;
+    }
+    d.state = v->state;
+    d.why   = v->why;
+    // Only a Read or Doubtful arm is ever published with a layout (RunArmCapturePass), so the layout is the test.
+    if (v->layout) {
+        d.layout = static_cast<const ParamLayout*>(v->layout.get());   // RunArmCapturePass publishes ParamLayouts
+        d.values = DecodeParamSnapshot(*d.layout, bytes, len, after, ctx);
+    }
+    return d;
 }
 
 std::vector<SnapValue> DecodeParamSnapshot(const ParamLayout& layout, const uint8_t* bytes, uint32_t len, bool after,
