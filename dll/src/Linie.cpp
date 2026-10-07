@@ -67,6 +67,28 @@ std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCa
 // firstSeq is g_seq at the moment it was first seen — the causal ordering.
 static uint64_t g_seq = 0;
 
+// [LIVEFUNCS-STEP2] What `s`'s address is armed for, from the identity just read: a name the recording follows arms
+// it -- to open a scope when ticked, with a new arm and its ring when chosen. Under g_mu; the log never grows past
+// what BuildArmState reserved, so the hook never allocates for it.
+static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
+    s.arm = ArmHint{};
+    if (!g_arms || !s.ident.captured) return;
+    const NameKey key{ s.ident.nameIndex, s.ident.nameNumber, s.ident.classIndex, s.ident.classNumber };
+    const auto& specs = g_arms->specs;
+    const auto it = std::lower_bound(specs.begin(), specs.end(), key,
+                                     [](const ArmSpec& a, const NameKey& k) { return a.key < k; });
+    if (it == specs.end() || !(it->key == key)) return;
+    s.arm.gen = g_arms->gen;
+    if (it->tick) s.arm.flags |= kArmTick;
+    if (it->ring < 0 || g_arms->log.size() >= g_arms->capacity) return;
+    g_arms->log.push_back(ArmRecord{ ufunc, s.ident, static_cast<uint32_t>(it - specs.begin()), it->ring, nowMs });
+    s.arm.ring = it->ring;
+    s.arm.arm  = static_cast<uint32_t>(g_arms->log.size() - 1);
+    s.arm.copy = static_cast<uint16_t>(ArmCopyBytes(s.ident.parmsSize, s.ident.functionFlags, it->ringCap));
+    if (ArmTakesAfter(s.ident.functionFlags)) s.arm.flags |= kArmAfter;
+    if (ArmTruncated(s.ident.parmsSize, it->ringCap)) s.arm.flags |= kArmTruncated;
+}
+
 void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
     std::lock_guard<std::mutex> lk(g_mu);
     if (hint) *hint = ArmHint{};
@@ -80,6 +102,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         if (g_reader(ufunc, id)) {
             id.captured = true;
             s.ident = id;
+            ArmLocked(s, ufunc, nowMs);
         }
     } else if (g_reader && g_keyReader && s.ident.captured) {
         // Review DLL-3: the table is keyed by address, and a freed function's address can be taken by another that
@@ -141,6 +164,7 @@ void RecordCall(uintptr_t ufunc, uint64_t nowMs, ArmHint* hint) {
         s.lastMs = nowMs;
     }
     ++s.count;
+    if (hint) *hint = s.arm;
 }
 
 void StartRecording(FuncIdentityReader reader, FuncKeyReader keyReader, std::shared_ptr<ArmState> arms) {

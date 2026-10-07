@@ -7388,7 +7388,7 @@ int main() {
             ++s_armReads;
             out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
             out.nameNumber    = (f == 0xC1) ? 1 : 0;
-            out.classIndex    = (f == 0xC2) ? 8 : 7;
+            out.classIndex    = (f == 0xC2) ? 8 : (f == 0xC3) ? 6 : 7;
             out.functionFlags = 0x400;
             out.numParms      = 2;
             out.parmsSize     = 16;
@@ -7401,6 +7401,7 @@ int main() {
                 Linie::ArmSpec{ Linie::NameKey{ 0xA, 0, 7, 0 }, true, -1, 0 },
                 Linie::ArmSpec{ Linie::NameKey{ 0xC1, 0, 7, 0 }, false, 1, 64 },
                 Linie::ArmSpec{ Linie::NameKey{ 0xC2, 0, 7, 0 }, false, 2, 64 },
+                Linie::ArmSpec{ Linie::NameKey{ 0xC3, 0, 7, 0 }, false, 4, 64 },
                 Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, true, -1, 0 },
                 Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, false, 3, 32 },
             }, 8);
@@ -7413,7 +7414,7 @@ int main() {
         const Linie::ArmSpec* dSpec = nullptr;
         for (const auto& sp : st->specs) if (sp.key == Linie::NameKey{ 0xD, 0, 7, 0 }) dSpec = &sp;
         check("BuildArmState sorts the names and merges one ticked and chosen into one spec",
-              st->specs.size() == 5 && sorted && dSpec && dSpec->tick && dSpec->ring == 3 && dSpec->ringCap == 32 &&
+              st->specs.size() == 6 && sorted && dSpec && dSpec->tick && dSpec->ring == 3 && dSpec->ringCap == 32 &&
               st->log.capacity() >= 8, u(st->specs.size()).c_str());
 
         Linie::Reset();
@@ -7440,6 +7441,8 @@ int main() {
         check("the same FName index with another Number is another name: not armed", h.gen == 0 && h.ring == -1);
         Linie::RecordCall(0xC2, 1005, &h);
         check("the same function name in another class is another name: not armed", h.gen == 0 && h.ring == -1);
+        Linie::RecordCall(0xC3, 1005, &h);   // its class sorts just below the followed one: the search lands on it
+        check("...whichever side of the followed class it sorts on", h.gen == 0 && h.ring == -1);
         Linie::RecordCall(0xE, 1006, &h);
         check("a name nobody follows: a default hint", h.gen == 0 && h.ring == -1 && h.flags == 0);
         check("...and the log holds the two arms only", st->log.size() == 2, u(st->log.size()).c_str());
