@@ -643,10 +643,13 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     tok.gen      = gen;
     tok.traced   = true;
     tok.opened   = open;
+    if (ring >= 0 && (hint.flags & kArmAfter)) {
+        tok.after = hint;
+        tok.after.ring = ring;
+    }
 }
 
 void TraceReturn(const TraceToken& tok, uint32_t tid, uintptr_t params) {
-    (void)params;
     // Close this thread's scope first: it is thread state, not ring state, and must close even when nothing more
     // is written (the trace stopped while the root ran).
     if (tok.opened && t_scopeGen == tok.gen) t_scopeSp = 0;
@@ -661,6 +664,9 @@ void TraceReturn(const TraceToken& tok, uint32_t tid, uintptr_t params) {
     r.b       = 0;
     r.tid     = tid;
     r.flags   = 0;
+    // [LIVEFUNCS-STEP2] The out parameters and the return value: a slot of its own, under the same gen check -- the
+    // token's ring index means nothing to another recording.
+    if (tok.after.ring >= 0) SnapWrite(tok.after.ring, tok.entrySeq, true, params, tok.after);
 }
 
 namespace {

@@ -14,7 +14,7 @@ Fern.cpp and Stark.cpp are compiled by no test target: their items are proven by
 | T1 | DLL | Linie: the trace's scope by name (TraceEnter takes the hint; TraceConfig.scoped; TraceInfo.scoped / tickedNames / snapOnly) | N1 | ✅ d3c11335 red |
 | S1 | DLL | Linie: snapshot rings per choice in one allocation (same K, cap per ring), TraceInfo.snap, SnapTooSmall (with the 64n guard), SnapNoMemory, freed with the trace; SnapRings() introduced here | T1 | ✅ 00ca79f9 red |
 | S2 | DLL | Linie: the entry slot (header {seqKind, entrySeq, len, flags, arm}), kTraceSnapTaken, CopySnaps; ring bound; copy clamped; step-1 equivalence | S1 | ✅ e8ddce3b red |
-| S3 | DLL | Linie: the after-return slot in TraceReturn(params) when the hint has kArmAfter, under the gen check | S2 | ⬜ |
+| S3 | DLL | Linie: the after-return slot in TraceReturn(params) when the hint has kArmAfter, under the gen check | S2 | ✅ 46d9624f red |
 | S4 | DLL | Linie: lone calls outside every scope, snapshots-only (scoped with no ticks), kTraceSnapExcluded inside an open scope | S2 | ⬜ |
 | S5 | DLL | Linie: the per-ring and total budgets (one CAS word each; the first calls of each second kept) | S4 | ⬜ |
 | S6 | DLL | Linie: null params, copy faults, the truncated flag, and TR2 with snapshots | S3 | ⬜ |
