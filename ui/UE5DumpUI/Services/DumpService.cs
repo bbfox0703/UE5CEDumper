@@ -3009,6 +3009,7 @@ public sealed class DumpService : IDumpService
         RecordSize = t["record_size"]?.GetValue<int>() ?? 0,
         Ticked     = t["ticked"]?.GetValue<int>() ?? 0,
         Excluded   = t["excluded"]?.GetValue<int>() ?? 0,
+        TickedDropped = t["ticked_dropped"]?.GetValue<int>() ?? 0,
     };
 
     private static ulong ParseAddr(string? s)

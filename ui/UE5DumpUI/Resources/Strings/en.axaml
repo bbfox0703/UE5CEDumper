@@ -1185,6 +1185,7 @@
     <sys:String x:Key="str.LF.Trace.Seconds">{0:N0} s</sys:String>
     <sys:String x:Key="str.LF.Trace.Minutes">{0:N1} min</sys:String>
     <sys:String x:Key="str.LF.Trace.Estimate">≈ {0} if every call is traced, at the last recording's {1:N0} calls/s</sys:String>
+    <sys:String x:Key="str.LF.Trace.TickedDropped">Ticked but unloaded since this table was fetched, so left out of the trace: {0:N0}.</sys:String>
     <sys:String x:Key="str.LF.Trace.TickedAllUnloaded">Every ticked function was unloaded since it fired, so a traced Start would trace none of them. Clear ticks, or record once without Trace so the table finds them again.</sys:String>
     <sys:String x:Key="str.LF.Trace.StartCancelled">Start cancelled. Tick the functions to trace in the table, or Start again and confirm to trace every call.</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingTicked">Tracing ({0} MB) inside {1} ticked function(s).</sys:String>

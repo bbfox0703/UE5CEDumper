@@ -353,6 +353,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// does not count as asked.</summary>
     private bool _traceAllConfirmed;
 
+    /// <summary>[TRACE-UNLOADED-NAMES] Ticks the DLL left out at the last traced Start: unloaded since the fetch that
+    /// showed them (review UI-1).</summary>
+    internal int LastTickedDropped { get; private set; }
+
     /// <summary>The running recording asked for a trace (fixed at Start).</summary>
     private bool _recordingTrace;
     /// <summary>The trace's state after the last traced recording stopped; null before one.</summary>
@@ -593,6 +597,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     : trace.Ticked.Count > 0
                         ? Res.Format("str.LF.Trace.RecordingTicked", TraceBufferMb, trace.Ticked.Count)
                         : Res.Format("str.LF.Trace.RecordingAll", TraceBufferMb));
+                LastTickedDropped = start.Trace?.TickedDropped ?? 0;
+                if (LastTickedDropped > 0)
+                    StatusText += " " + Res.Format("str.LF.Trace.TickedDropped", LastTickedDropped);
                 // D3: a warning, never a refusal -- the memory is the user's call (T1).
                 if (start.Trace != null && TraceMemoryOverAvailable)
                     StatusText += " " + Res.Format("str.LF.Trace.MemoryWarnStart", MemText(_availableMb));

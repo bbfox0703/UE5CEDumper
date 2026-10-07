@@ -51,6 +51,9 @@ public sealed class TraceInfo
     public int   RecordSize { get; init; }
     public int   Ticked     { get; init; }
     public int   Excluded   { get; init; }
+    /// <summary>[TRACE-UNLOADED-NAMES] Ticks the DLL left out at Start: their function was unloaded since the fetch
+    /// that showed it (review UI-1). Only in a traced Start's reply.</summary>
+    public int   TickedDropped { get; init; }
 
     public ulong Kept => Written - FirstValid;
 }
