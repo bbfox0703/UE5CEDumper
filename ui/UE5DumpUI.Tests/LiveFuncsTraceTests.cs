@@ -422,10 +422,12 @@ public class LiveFuncsTraceTests
     // [TRACE-UI-LOAD-MEMORY] D3: what a full buffer costs, beside the slider, from the buffer alone -- before any
     // recording, at any call rate: the game holds N MB from Start; the UI holds the window and the trace's columns
     // while it loads (about twice N, plus a page in flight) and the columns after (about N).
+    // Calibrated live on build 3636 (Avowed, 2026-10-07): a full 128 MB load peaked 303 MB over its start; a full
+    // 512 MB one 1,054 MB over its start and 1,206 MB over a freshly started UI. "Up to" holds at 2.25 x N + 45.
     [Theory]
-    [InlineData(5, 32, 109, 32)]
-    [InlineData(6, 64, 173, 64)]
-    [InlineData(9, 512, 1069, 512)]
+    [InlineData(5, 32, 117, 32)]
+    [InlineData(6, 64, 189, 64)]
+    [InlineData(9, 512, 1197, 512)]
     public void The_memory_estimate_comes_from_the_buffer_alone(int exponent, int gameMb, int uiPeakMb, int uiHeldMb)
     {
         var (vm, _) = MakeVm();
