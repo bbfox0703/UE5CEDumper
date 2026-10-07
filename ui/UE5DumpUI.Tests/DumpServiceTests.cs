@@ -1680,6 +1680,87 @@ public class DumpServiceTests
         Assert.Empty(plain.PerFrameFuncs);
     }
 
+    // [TRACE-UNLOADED-NAMES] D1: a function unloaded since it fired comes back named from its first call, marked.
+    [Fact]
+    public async Task PeProfileGetAsync_AsksForUnloadedRows_AndReadsTheirMarksAndTheCounts()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            return new JsonObject
+            {
+                ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 3, ["total_calls"] = 60L,
+                ["functions"] = new JsonArray
+                {
+                    new JsonObject { ["class_name"] = "PlayerController", ["func_name"] = "Jump", ["func_addr"] = "0x100",
+                                     ["count"] = 50L },
+                    new JsonObject { ["class_name"] = "WBP_Inventory_C", ["func_name"] = "OnOpen", ["func_addr"] = "0x200",
+                                     ["count"] = 7L, ["unloaded"] = true },
+                    new JsonObject { ["class_name"] = "WBP_Tip_C", ["func_name"] = "Show", ["func_addr"] = "0x300",
+                                     ["count"] = 3L, ["unloaded"] = true, ["recycled"] = true },
+                },
+                ["unloaded_funcs"] = 2, ["unloaded_calls"] = 10L, ["unnamed_funcs"] = 1, ["unnamed_calls"] = 4L,
+            };
+        });
+        IDumpService svc = CreateService();
+
+        var r = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.True(sent!["include_unloaded"]!.GetValue<bool>());
+        Assert.False(r.Entries[0].IsUnloaded);
+        Assert.True(r.Entries[1].IsUnloaded);
+        Assert.False(r.Entries[1].IsRecycled);
+        Assert.True(r.Entries[2].IsUnloaded && r.Entries[2].IsRecycled);
+        Assert.Equal(2, r.UnloadedFuncs);
+        Assert.Equal(10L, r.UnloadedCalls);
+        Assert.Equal(1, r.UnnamedFuncs);
+        Assert.Equal(4L, r.UnnamedCalls);
+    }
+
+    [Fact]
+    public async Task PeProfileGetAsync_FromAnOlderDll_HasNoUnloadedCounts()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["recording"] = false, ["distinct_funcs"] = 1, ["total_calls"] = 5L,
+            ["functions"] = new JsonArray { new JsonObject { ["class_name"] = "A", ["func_name"] = "B", ["func_addr"] = "0x1" } },
+        });
+        IDumpService svc = CreateService();
+
+        var r = await svc.PeProfileGetAsync(64, skipPerFrame: false, TestContext.Current.CancellationToken);
+        Assert.False(r.Entries[0].IsUnloaded);
+        Assert.Null(r.UnloadedFuncs);
+        Assert.Null(r.UnloadedCalls);
+        Assert.Null(r.UnnamedFuncs);
+        Assert.Null(r.UnnamedCalls);
+    }
+
+    [Fact]
+    public async Task PeTraceFuncNamesAsync_ReadsTheUnloadedMarkAndItsFirstCallName()
+    {
+        _pipe.SetHandler(_ => new JsonObject
+        {
+            ["ok"] = true, ["gen"] = 4UL, ["total"] = 3, ["offset"] = 0,
+            ["items"] = new JsonArray
+            {
+                new JsonObject { ["addr"] = "0x100", ["live"] = true, ["class_name"] = "PlayerController", ["func_name"] = "Jump" },
+                new JsonObject { ["addr"] = "0x200", ["live"] = false, ["unloaded"] = true,
+                                 ["class_name"] = "WBP_Inventory_C", ["func_name"] = "OnOpen" },
+                new JsonObject { ["addr"] = "0x300", ["live"] = false },
+            },
+        });
+        IDumpService svc = CreateService();
+
+        var page = await svc.PeTraceFuncNamesAsync(4, 0, 100, TestContext.Current.CancellationToken);
+        Assert.True(page.Items[0].Live);
+        Assert.False(page.Items[0].Unloaded);
+        Assert.True(page.Items[1].Unloaded);
+        Assert.False(page.Items[1].Recycled);
+        Assert.Equal("OnOpen", page.Items[1].FuncName);
+        Assert.Equal("WBP_Inventory_C", page.Items[1].ClassName);
+        Assert.False(page.Items[2].Live || page.Items[2].Unloaded);
+    }
+
     // --- WalkFunctionsAsync: struct_fields parsing ---
 
     [Fact]
