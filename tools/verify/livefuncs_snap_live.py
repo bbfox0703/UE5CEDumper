@@ -2141,6 +2141,9 @@ class ScriptedDll:
     # UFunction::Func in the scripted UFunctions: past 0x100, where the DLL's window (up to +0x158) still finds it, so
     # a run that searched less of the window would miss it.
     FUNC_AT = 0x148
+    # names_func_low's: where UE5 keeps Func in a UFunction of about 0xE0 bytes, so a read retried at 0xE0 still
+    # reaches it -- the path a read at the end of a block takes on a real game.
+    FUNC_LOW = 0xD8
     INTERP = 0x2A000             # the script function whose names the interpreter's frames carry
     NAMES_MANY = 70              # names_many's extra entries: more than the run asks about
     # The UFunctions a stack's names point at, as get_object and read_mem answer them: ufunc -> (class, func, the
@@ -2242,6 +2245,18 @@ class ScriptedDll:
         "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
         "names_empty": "SnapNest_Outer's UFunction named \"\": its frames carry class and func \"\", and get_object "
                        "answers \"\" for its name and outer (the DLL's name reads gave nothing)",
+        "names_empty_class": "only the outer's name read gave nothing: SnapNest_Outer's frames carry class \"\", and "
+                             "get_object answers \"\" for its outer, its own name kept",
+        "names_empty_func": "only the function's name read gave nothing: SnapNest_Outer's frames carry func \"\", and "
+                            "get_object answers \"\" for its name, its outer kept",
+        "names_no_fn": "the interpreter's named frame has no unwind data, so no fn (and no fn_rva)",
+        "names_no_fn_all": "no named frame has unwind data, so none has fn",
+        "names_short_only": "the interpreter's UFunction cannot be read at any size, and SnapNest_Outer's fails past "
+                            "0xE0 and holds its fn only at FUNC_AT, with no decoy",
+        "names_func_low": "both UFunctions keep Func at 0xD8 (FUNC_LOW), where UE5's UFunction of about 0xE0 bytes "
+                          "keeps it",
+        "names_read_edge_all": "every UFunction ends 0xE0 bytes in, before a page that cannot be read: read_mem of "
+                               "more fails for each",
         # The step-2 run's parameter budget on SnapProbe_PerFrame (a DLL made with late=True).
         "param_dropped0": "SnapProbe_PerFrame's parameter ring counts no budget drop though it dropped calls",
         "param_overkept": "SnapProbe_PerFrame's parameter ring keeps 25 a second whatever its budget, the rest dropped",
@@ -2287,8 +2302,11 @@ class ScriptedDll:
         if "names_none" in self.f:
             return {}
         cls, func, _, _, _, shared = self._ufuncs()[ufunc]
-        if "names_empty" in self.f and ufunc == self.FUNCS["SnapNest_Outer"][0]:
-            cls = func = ""
+        if ufunc == self.FUNCS["SnapNest_Outer"][0]:
+            if self.f & {"names_empty", "names_empty_class"}:
+                cls = ""
+            if self.f & {"names_empty", "names_empty_func"}:
+                func = ""
         return {"ufunc": f"0x{ufunc:X}", "class": cls, "func": func, **({"shared": shared} if shared else {})}
 
     def _object(self, addr: str) -> dict:
@@ -2303,6 +2321,10 @@ class ScriptedDll:
             return {"ok": False, "error": "the scripted get_object failed (names_object_error)"}
         if "names_empty" in self.f and first:
             return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": kind, "outer": ""}
+        if "names_empty_class" in self.f and first:
+            cls = ""
+        if "names_empty_func" in self.f and first:
+            func = ""
         if "names_wrong_func" in self.f and first:
             func = "SnapNest_Fire"
         if "names_wrong_outer" in self.f and first:
@@ -2319,11 +2341,17 @@ class ScriptedDll:
         u = int(str(addr), 16)
         row = self._ufuncs().get(u)
         f = self.f
+        outer = u == self.FUNCS["SnapNest_Outer"][0]
         if row is None or "names_unreadable" in f or (u == self.INTERP and (
-                "names_read_failed" in f or ("names_read_edge" in f and size > 0xE0))):
+                f & {"names_read_failed", "names_short_only"} or ("names_read_edge" in f and size > 0xE0))) or \
+                ("names_read_edge_all" in f and size > 0xE0) or ("names_short_only" in f and outer and size > 0xE0):
             return {"ok": False, "error": "Read failed"}
         offsets = row[4]
-        if "names_fn_absent" in self.f and u == self.FUNCS["SnapNest_Outer"][0]:
+        if "names_func_low" in f:
+            offsets = tuple(self.FUNC_LOW if o == self.FUNC_AT else o for o in offsets)
+        if "names_short_only" in f and outer:
+            offsets = (self.FUNC_AT,)
+        if "names_fn_absent" in self.f and outer:
             offsets = ()
         if "names_offset_split" in self.f and u == self.INTERP:
             offsets = (self.FUNC_AT + 8, 0x140)
@@ -2413,7 +2441,10 @@ class ScriptedDll:
         if first and "names_many" in self.f:
             frames = [self._site(row[3] + 0x11, row[3], **self._named(u)) for u, row in self._ufuncs().items()
                       if u not in self.UFUNCS] + frames
-        return frames
+        interp = f"0x{self.INTERP:X}"
+        return [{k: v for k, v in s.items() if k not in ("fn", "fn_rva")} | {"unwind": False}
+                if "ufunc" in s and ("names_no_fn_all" in self.f or ("names_no_fn" in self.f and s["ufunc"] == interp))
+                else s for s in frames]
 
     def _start(self, t: dict | None) -> dict:
         if t is None:
@@ -3234,6 +3265,36 @@ def self_test() -> int:
                     [n for n, why in r[0].skipped if "could be read" in why] == [NAMES_AT])(
                names_run("names_unreadable")))
     exercised.update(("names_read_edge", "names_read_failed", "names_unreadable"))
+    # [SNAPRIG-NAMES] The second review's MED-B: a real UE5 game's layout, Func at 0xD8 in a UFunction of about 0xE0
+    # bytes, where a read retried at 0xE0 after the window failed still reaches the slot. Such an entry holds fn: it
+    # is never read short, nor left out of the offset, and asks for nothing past its own reads.
+    exercised.update(("names_func_low", "names_read_edge_all"))
+
+    def low_layout(r) -> bool:
+        return failing(r[0]) == [] and NAMES_AT in ran(r[0]) and \
+            (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["short"]) == (ScriptedDll.FUNC_LOW, 2, 0) \
+            and {p["addr"] for cmd, p in r[2] if cmd == "read_mem"} == {"1000", "2A000"}
+    expect("dry run --names: Func at 0xD8 and the interpreter's next page unreadable: its read retried down to 0xE0 "
+           "reaches Func, and both entries hold it there",
+           lambda: (lambda r: low_layout(r) and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] and
+                    read_sizes(r[2], "1000") == [0x160])(names_run("names_func_low", "names_read_edge")))
+    expect("dry run --names: Func at 0xD8 and every UFunction's next page unreadable: no read covers the window, the "
+           "offset is still found from the reads retried at 0xE0, and both entries hold it there",
+           lambda: (lambda r: low_layout(r) and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] ==
+                    read_sizes(r[2], "1000"))(names_run("names_func_low", "names_read_edge_all")))
+    # The defensive branch: no offset common to the reads, and the one entry read short of its slot with no copy of
+    # fn in what it read, says nothing either way (the second review's U4).
+    exercised.add("names_short_only")
+    expect("dry run --names: with no offset common to the reads and the only readable entry read short of its slot, "
+           "holding no copy of fn, the offset check is not run ('no read reached'), and nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and NAMES_IS in ran(r[0]) and
+                    [n for n, why in r[0].skipped if "no read reached" in why] == [NAMES_AT])(
+               names_run("names_short_only")))
+    # A named frame without fn has nothing to look for, and the DLL names a frame by its fn: it is wrong, never
+    # skipped (the second review's U2 / U3); with no named frame carrying fn, the check fails, it is not stood down
+    # as if nothing could be read (U8).
+    caught(("names_no_fn",), NAMES_AT, game=True, argv=names_argv)
+    caught(("names_no_fn_all",), NAMES_AT, game=True, argv=names_argv)
     caught(("names_object_error",), NAMES_IS, game=True, argv=names_argv)
     expect("dry run --names: a get_object that answers an error lists the entry as wrong, the DLL's error the reason",
            lambda: any(n == NAMES_IS and not ok and "get_object failed" in g and "names_object_error" in g
@@ -3244,6 +3305,13 @@ def self_test() -> int:
            "the reason",
            lambda: any(n == NAMES_IS and not ok and "named empty" in g
                        for n, ok, g in names_run("names_empty")[0].items))
+    # Either half read empty is enough (the second review's E1 / E2): '' == '' must not pass for the other half.
+    caught(("names_empty_class",), NAMES_IS, game=True, argv=names_argv)
+    caught(("names_empty_func",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: an entry with only its class, or only its func, named \"\" is wrong, 'named empty' the "
+           "reason",
+           lambda: all(any(n == NAMES_IS and not ok and "named empty" in g for n, ok, g in names_run(fault)[0].items)
+                       for fault in ("names_empty_class", "names_empty_func")))
     many = ScriptedDll.NAMES_MANY + 2
     expect(f"dry run --names: of {many} entries the {NAMES_MAX} most frequent are asked, the frequent two among them, "
            f"and the {many - NAMES_MAX} left are counted, never silently",
