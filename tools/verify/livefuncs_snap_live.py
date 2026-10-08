@@ -3266,6 +3266,11 @@ def self_test() -> int:
            lambda: (lambda r: failing(r[0]) == [] and not any(n.startswith("A1") for n in ran(r[0])) and
                     [n for n, why in r[0].skipped if why.startswith("no frame was named")] == [NAMES_IS, NAMES_AT] and
                     r[2] == [])(names_run("names_none")))
+    expect("dry run --names: with no stack kept at all, A1's two checks are not run and say so ('no stack was "
+           "kept'), nothing is asked, and nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and not any(n.startswith("A1") for n in ran(r[0])) and
+                    [n for n, why in r[0].skipped if "no stack was kept" in why] == [NAMES_IS, NAMES_AT] and
+                    r[2] == [])(names_run("only_empty")))
 
     def refuses_unknown_fault() -> bool:
         try:
