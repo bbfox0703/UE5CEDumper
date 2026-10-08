@@ -42,8 +42,9 @@ SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --sta
       no orphans; no slot Partial / Fault / BadSp / LowStack / NoCapturer; 3 frames or more
   S2  frame 0 is in the game's exe: by name ignoring case (the review's L11), inside the image psapi reads, and through
       the CE text `"module"+RVA` added back on psapi's base; every site's module_base + rva and fn add up
-  S3  in-scope stacks hold an `own` frame (the outer hook) and lone ones none. known:"process_event" before it is
-      RECORDED, NOT FAILED until S3-M3's chained unwind is confirmed live (the review's M4)
+  S3  in-scope stacks hold known:"process_event" and after it an `own` frame (the outer hook); lone ones neither;
+      every known frame names one function, and no stack holds two. The known halves fail since S3-M3 follows a
+      chained fragment to ProcessEvent's start (the review's M4)
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
   S5  SnapProbe_PerFrame's stack ring keeps about --stack-per-ring a second and drops the rest; the parameter
@@ -1257,13 +1258,18 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
           f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}")
     check("S3 no lone stack holds an own frame", lone != [] and all(o is None for _, o in ns_lone),
           f"{sum(1 for _, o in ns_lone if o is not None)} of {len(lone)} do")
+    # The known halves are checks since S3-M3: DescribeCode follows a chained fragment to its primary function, so a
+    # ProcessEvent call site in a hot/cold or shrink-wrapped fragment is still labelled (the review's M4).
     with_known = sum(1 for n in ns_in if known_before_own(n))
-    check.record("S3 in-scope stacks with known:\"process_event\" before their own frame (until S3-M3's chained "
-                 "unwind is confirmed live: the review's M4)", f"{with_known} of {len(in_scope)}",
-                 as_expected=in_scope != [] and with_known == len(in_scope))
+    check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope), f"{with_known} of {len(in_scope)}")
     lone_known = sum(1 for kn, _ in ns_lone if kn is not None)
-    check.record("S3 lone stacks with known:\"process_event\" (none expected)", f"{lone_known} of {len(lone)}",
-                 as_expected=lone_known == 0)
+    check(S3_KNOWN_LONE, lone != [] and lone_known == 0, f"{lone_known} of {len(lone)} do")
+    # The DLL labels a frame by comparing its function start with one address, so every label names one function;
+    # and the fixture's paths cross at most one ProcessEvent below the hook, so no stack holds two.
+    known_fns = {f["fn"] for sl in all_slots for f in sl["frames"] if f["known"] == KNOWN_PE}
+    twice = [sl["index"] for sl in all_slots if sum(1 for f in sl["frames"] if f["known"] == KNOWN_PE) > 1]
+    check(S3_KNOWN_ONE, len(known_fns) <= 1 and None not in known_fns and not twice,
+          f"{len(known_fns)} function(s) {sorted(fmt(a, '#x') for a in known_fns)[:3]}; slots with two {twice[:3]}")
     miss = next(((sl, n) for sl, n in zip(in_scope, ns_in) if not known_before_own(n) and n[1]), None)
     if miss:
         f = miss[0]["frames"][miss[1][1] - 1]   # where ProcessEvent's frame should be: right before the hook's
