@@ -100,7 +100,8 @@ NAMES_MAX asked and the rest counted:
   A1  every named entry's ufunc is a Function (or a delegate's) of that name, in that class (get_object); an entry
       named "" (a name read that gave nothing) is wrong, never a match of two empty names
   A1  every named entry's fn is stored inside its UFunction, at one offset common to all (read_mem): the DLL reads one
-      slot for every name. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB.
+      slot for every name, at an offset inside the window it searches Func in (+0x80..+0x158), so a copy of fn outside
+      it is never a candidate. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB.
       read_mem is all or nothing, so a read of the DLL's Func window (0x160 bytes) that fails is retried smaller. The
       DLL named each frame by reading that slot, so an entry read short of the offset, or not read at all, has its slot
       there read alone (8 bytes): fn holds, another value fails (and rules out a candidate offset first, a decoy copy
@@ -947,6 +948,9 @@ NAME_FUNC_CLASSES = ("Function", "DelegateFunction", "SparseDelegateFunction")
 # EnsureUFunctionFuncOffset reads 8 bytes at +0x80..+0x158), so every offset the DLL can have read the name through lies
 # inside, and no more is asked.
 NAMES_READ = 0x160
+# The offsets the DLL can have read a name through, every 8 bytes of that window: the only candidates for the offset
+# common to the entries, as a copy of fn outside them is a decoy by construction.
+FUNC_OFFSETS = range(0x80, NAMES_READ - 8 + 1, 8)
 # read_mem is one copy under SEH, all or nothing, and a UFunction (0xC8 bytes on UE 4.18, about 0xE0 on UE5) is smaller
 # than the window: where it ends a block whose next page cannot be read, the whole read fails. These smaller reads are
 # tried in turn, down to the smallest UFunction, so the bytes the object does have are still searched; they jump past
@@ -1881,12 +1885,13 @@ def fn_offsets(blob: bytes, fn: int) -> list[int]:
 
 
 def common_offsets(per_entry: list[list[int]], reach: list[int] | None = None) -> list[int]:
-    """Every offset every entry holds its fn at, the lowest first; none when there is no entry, or one without its fn.
-    `reach` is how many bytes of each entry were read (all of NAMES_READ when None): an offset whose 8 bytes lie past
-    an entry's read is not contradicted by that entry, which says nothing there, but must be held by some entry."""
+    """Every offset every entry holds its fn at, the lowest first, among the ones the DLL can have read a name through
+    (FUNC_OFFSETS); none when there is no entry, or one without its fn. `reach` is how many bytes of each entry were
+    read (all of NAMES_READ when None): an offset whose 8 bytes lie past an entry's read is not contradicted by that
+    entry, which says nothing there, but must be held by some entry."""
     reach = [NAMES_READ] * len(per_entry) if reach is None else reach
     return [o for o in sorted({o for offs in per_entry for o in offs})
-            if all(o in offs or o + 8 > n for offs, n in zip(per_entry, reach))]
+            if o in FUNC_OFFSETS and all(o in offs or o + 8 > n for offs, n in zip(per_entry, reach))]
 
 
 def common_offset(per_entry: list[list[int]], reach: list[int] | None = None) -> int | None:
@@ -2380,7 +2385,7 @@ class ScriptedDll:
     # interpreter's is shared by every script function, and named after the lowest-addressed function entering it, as
     # the DLL names it -- here a delegate's signature, a DelegateFunction, which the DLL indexes beside Function and
     # SparseDelegateFunction. Each holds a decoy copy of its fn at an offset the other lacks, so only the offset common
-    # to both is Func.
+    # to both is Func; SnapNest_Outer's lies below the window the DLL searches Func in, so it is never a candidate.
     UFUNCS = {FUNCS["SnapNest_Outer"][0]: (FIXTURE_CLASS, "SnapNest_Outer", "Function", OUTER_FN, (0x30, FUNC_AT), None),
               INTERP: ("BP_ScriptedActor_C", "OnScripted__DelegateSignature", "DelegateFunction", INTERP_FN,
                        (FUNC_AT, 0x140), 37)}
@@ -3600,8 +3605,8 @@ def self_test() -> int:
                     r[1]["names"]["per_entry"][1]["verdict"] == "absent" and
                     any(n == NAMES_AT and not ok and "unreadable, though get_object still names it" in g and
                         "OnScripted" in g for n, ok, g in r[0].items))(names_run("names_fn_nowhere_edge")))
-    # With one entry read, every copy of fn in it is a candidate; a slot that cannot be read contradicts none, so the
-    # lowest stands, read alone once.
+    # With one entry read, every copy of fn in it inside the DLL's window is a candidate; a slot that cannot be read
+    # contradicts none, so the lowest stands, read alone once.
     expect("dry run --names: a UFunction no read reaches (every size down to 0xC8 tried) whose slot cannot be read "
            "alone either, and which get_object, asked again, no longer names, is listed as gone since it was named, "
            "kept out of N, and fails nothing",
