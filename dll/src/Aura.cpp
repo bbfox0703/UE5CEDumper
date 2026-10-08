@@ -10306,6 +10306,12 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 }
 
 
+// [LIVEFUNCS-STEP3] S3-A1 follow-up (stubbed: a query every time).
+bool CodeRangeCache::IsCode(uintptr_t p) {
+    ++queries;
+    return Macht::LooksLikeCodePointer(p);
+}
+
 // [LIVEFUNCS-STEP3] S3-A1.
 void SortCodeEntries(std::vector<CodeEntry>& entries) {
     std::sort(entries.begin(), entries.end(), [](const CodeEntry& a, const CodeEntry& b) {
@@ -10327,11 +10333,14 @@ size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uin
     return static_cast<size_t>(hi - lo);
 }
 
-bool CollectCodeEntries(std::vector<CodeEntry>& out) {
+bool CollectCodeEntries(std::vector<CodeEntry>& out, CodeIndexStats* stats) {
     out.clear();
+    CodeIndexStats s;
+    const auto t0 = std::chrono::steady_clock::now();
     // A class pointer's verdict, read once: a pool of hundreds of thousands holds a few thousand classes.
     std::unordered_map<uintptr_t, bool> isFunctionClass;
     const bool whole = ForEach([&](int32_t, uintptr_t obj) {
+        ++s.objects;
         uintptr_t cls = 0;
         if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
         auto it = isFunctionClass.find(cls);
@@ -10345,11 +10354,18 @@ bool CollectCodeEntries(std::vector<CodeEntry>& out) {
             it = isFunctionClass.emplace(cls, fn).first;
         }
         if (!it->second) return true;
+        ++s.functions;
+        const auto c0 = std::chrono::steady_clock::now();
         const uintptr_t code = GetFunctionCodeAddr(obj);
+        s.codeMicros += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count());
         if (code) out.push_back(CodeEntry{ code, obj });
         return true;
     });
     SortCodeEntries(out);
+    s.totalMicros = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+    if (stats) *stats = s;
     return whole;
 }
 

@@ -5339,7 +5339,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 std::lock_guard<std::mutex> indexLock(g_codeIndexMu);   // pipe threads only; the hook never takes it
                 if (g_codeIndexGen != gen || gen == 0) {
                     std::vector<Aura::CodeEntry> fresh;
-                    const bool whole = Aura::CollectCodeEntries(fresh);
+                    Aura::CodeIndexStats cost;
+                    const bool whole = Aura::CollectCodeEntries(fresh, &cost);
+                    Sein::Info("PIPE:profile", "native-entry index: %zu entries from %llu functions of %llu objects in "
+                               "%llu ms (%llu ms reading the entries)%s", fresh.size(),
+                               (unsigned long long)cost.functions, (unsigned long long)cost.objects,
+                               (unsigned long long)(cost.totalMicros / 1000), (unsigned long long)(cost.codeMicros / 1000),
+                               whole ? "" : "; cut short by a cancel");
                     g_codeIndex.swap(fresh);
                     g_codeIndexGen = whole ? gen : 0;
                 }

@@ -1957,6 +1957,18 @@ void SortCodeEntries(std::vector<CodeEntry>& entries);
 size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc);
 // One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction with a native entry,
 // sorted. False when a cancel cut the pass short (the index is then partial).
-bool CollectCodeEntries(std::vector<CodeEntry>& out);
+// Is `p` in executable image memory -- Macht::LooksLikeCodePointer's test -- asked of the kernel once per memory region,
+// not once per address. Measured 2026-10-08: a VirtualQuery cost about 300 µs while the game ran uncapped, so one per
+// function made the index take 3.9 s for 13,179 functions; native entries cluster in a few modules' code, so the
+// regions seen are few. `queries` counts the kernel calls.
+struct CodeRangeCache {
+    struct Range { uintptr_t lo = 0, hi = 0; bool code = false; };
+    std::vector<Range> ranges;
+    size_t queries = 0;
+    bool IsCode(uintptr_t p);
+};
+// `stats`, when given, says what the pass cost: objects seen, functions among them, and the time in the code reads.
+struct CodeIndexStats { uint64_t objects = 0, functions = 0, codeMicros = 0, totalMicros = 0; };
+bool CollectCodeEntries(std::vector<CodeEntry>& out, CodeIndexStats* stats = nullptr);
 
 } // namespace Aura

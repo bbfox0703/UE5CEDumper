@@ -9096,6 +9096,19 @@ int main() {
             std::vector<Aura::CodeEntry> collected;
             check("collecting with no object array: an empty index, whole", Aura::CollectCodeEntries(collected) &&
                   collected.empty());
+
+            // The code test asked of the kernel once per region: a thousand addresses in this exe's code, a few queries.
+            Aura::CodeRangeCache cache;
+            const uintptr_t codeA = reinterpret_cast<uintptr_t>(&S3Outer);
+            const uintptr_t codeB = reinterpret_cast<uintptr_t>(&S3Deep);
+            bool allCode = true;
+            for (int i = 0; i < 1000; ++i) allCode = allCode && cache.IsCode((i & 1) ? codeA : codeB);
+            check("a thousand code addresses in one module: all code, and a few kernel queries", allCode &&
+                  cache.queries <= 4, std::to_string(cache.queries).c_str());
+            std::vector<uint64_t> heapBlock(8, 0);
+            const bool heapCode = cache.IsCode(reinterpret_cast<uintptr_t>(heapBlock.data()));
+            check("...a heap address is not code, cached or not", !heapCode && !cache.IsCode(0x1000) &&
+                  !cache.IsCode(reinterpret_cast<uintptr_t>(heapBlock.data())));
         }
 
         // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's
