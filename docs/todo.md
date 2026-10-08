@@ -318,6 +318,11 @@ Open work only. **Read this when deciding what to do next.**
   short of the slot, is listed and kept out of the offset and the count, and with none read the check is not run; a
   `get_object` error is the wrong entry's reason (MED-1). An entry named "" -- a name read that gave nothing, on the
   frame and from `get_object` alike -- is wrong, not a match (LOW-3).
+  ⬜ `[SNAPRIG-STEP2-RATE]` (LOW, found by the review of `[SNAPRIG-S5-RATE]` 2026-10-08): the step-2 run (`run_full`,
+  no `--stacks`) sends a fixed parameter budget of 30 a second and checks that SnapProbe_PerFrame's lone calls over it
+  are dropped -- on a fixture at about 30 fps it fails a correct DLL exactly as S5 did, and its `written <= 31 x
+  (record_s + 3)` bound is the 30 written out. Choose the budget from the plain recording's rates by S5's rule, or
+  report the check not run with the rate; bound what is written by the budget sent. Effort **S**.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,

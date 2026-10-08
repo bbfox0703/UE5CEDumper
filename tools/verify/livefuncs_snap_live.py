@@ -2089,11 +2089,15 @@ class ScriptedDll:
     SnapNest_Outer -> SnapProbe_Call in scope beside a lone SnapProbe_Call, and SnapProbe_PerFrame over its budget.
     Its stacks carry S3-A1's names, and get_object / read_mem answer for the UFunctions they name. Each fault named in
     FAULTS makes it answer as one broken DLL would, so a control can show the check that must catch that DLL failing.
+    Step 2 (run_full) it scripts only as far as the parameter budget on SnapProbe_PerFrame: no snapshot's values, no
+    layout, no refusal by K, so that run's other checks fail against it and only its budget line is read.
     It proves the rig's glue, never the DLL."""
     QPC, BASE, OWN = 10_000_000, 0x7FF6A0000000, 0x7FFC12300000
     FUNCS = {"SnapNest_Outer": (0x1000, [1, 0, 9, 0], 4), "SnapProbe_Call": (0x1100, [2, 0, 9, 0], 96),
              "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4), "SnapProbe_RetOnly": (0x1300, [4, 0, 9, 0], 8),
              "SnapProbe_ConstRefOnly": (0x1400, [5, 0, 9, 0], 16)}
+    # The step-2 run's late choice, kept apart: a --choose run chooses every keyed function, and its counts are FUNCS'.
+    LATE = {"SnapLate_Call": (0x1500, [6, 0, 9, 0], 4)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
     INTERP_FN = 0xA000           # the interpreter's start, as an RVA: a script function's native entry
     FUNC_AT = 0xD8               # UFunction::Func in the scripted UFunctions
@@ -2193,6 +2197,9 @@ class ScriptedDll:
         "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
         "names_empty": "SnapNest_Outer's UFunction named \"\": its frames carry class and func \"\", and get_object "
                        "answers \"\" for its name and outer (the DLL's name reads gave nothing)",
+        # The step-2 run's parameter budget on SnapProbe_PerFrame (a DLL made with late=True).
+        "param_dropped0": "SnapProbe_PerFrame's parameter ring counts no budget drop though it dropped calls",
+        "param_overkept": "SnapProbe_PerFrame's parameter ring keeps 25 a second whatever its budget, the rest dropped",
     }
     # The scripted game's PDB: a name for each function start its stacks hold, by RVA.
     PDB_NAMES = {0x480440: "ADumperTest58Actor::SnapProbe_Dispatch", OUTER_FN: "ADumperTest58Actor::execSnapNest_Outer",
@@ -2201,15 +2208,16 @@ class ScriptedDll:
                  0x1000: "FTimerManager::Tick", 0x0800: "UWorld::Tick"}
 
     def __init__(self, *faults: str, per_frame: int | None = None, pf_rate: float = PF_RATE,
-                 main_pf_rate: float | None = None) -> None:
+                 main_pf_rate: float | None = None, late: bool = False) -> None:
         """`pf_rate` is SnapProbe_PerFrame's calls a second (a fixture at 30 fps calls it about 30 times) in the plain
         recordings, `main_pf_rate` in every recording a trace is started for (pf_rate unless given: a game slowed by
         the trace, or one whose frame rate moved); `per_frame`, when given, is the count of its slots a DLL that keeps
-        the wrong count writes, whatever the budget."""
+        the wrong count writes, whatever the budget. `late` adds SnapLate_Call (LATE), which the step-2 run needs."""
         unknown = set(faults) - set(self.FAULTS)
         if unknown:   # a misspelt fault would script the good DLL, and its control would test nothing
             raise ValueError(f"the scripted DLL has no fault {sorted(unknown)}")
         self.f = set(faults)
+        self.funcs = dict(self.FUNCS, **(self.LATE if late else {}))
         self.per_frame = per_frame
         self.pf_rate = pf_rate
         self.main_pf_rate = pf_rate if main_pf_rate is None else main_pf_rate
@@ -2305,7 +2313,7 @@ class ScriptedDll:
                     "parms_size": ps, "num_parms": 1,
                     "count": round(pf * self.WINDOW_S) if n == "SnapProbe_PerFrame" else 6,
                     "per_frame": n == "SnapProbe_PerFrame"}
-                for n, (_, k, ps) in self.FUNCS.items()}
+                for n, (_, k, ps) in self.funcs.items()}
 
     def _site(self, rva: int, fn_rva: int, **extra) -> dict:
         return dict({"addr": f"0x{self.BASE + rva:X}", "module": FIXTURE_EXE, "module_base": f"0x{self.BASE:X}",
@@ -2360,7 +2368,7 @@ class ScriptedDll:
     def _start(self, t: dict | None) -> dict:
         if t is None:
             return {"data": {"recording": True, "hook_active": True}}
-        by_key = {tuple(k): n for n, (_, k, _) in self.FUNCS.items()}
+        by_key = {tuple(k): n for n, (_, k, _) in self.funcs.items()}
         f = self.f
 
         def good(it: dict, lax: bool = False) -> bool:
@@ -2396,9 +2404,13 @@ class ScriptedDll:
         per = min(max(int((st or {}).get("per_ring_per_s", 100)), 1), 0xFFFFFF)
         total = min(max(int((st or {}).get("total_per_s", 200)), 1), 0xFFFFFF)
         starved = bool(ticks) and "SnapProbe_PerFrame" in ring_of and min(self.main_pf_rate, per) >= total
+        p_kept = {n: 0 for n in params}       # each parameter choice's calls copied, and those its budget dropped
+        p_dropped = {n: 0 for n in params}
 
         def call(func: str, flags: int, frames: list[dict], inner=None, flag32: bool = True, slot: bool = True) -> None:
             seq = len(recs)
+            if func in params:
+                p_kept[func] += 1
             spent = starved and func in ring_of and func != "SnapProbe_PerFrame"
             over = func in ring_of and ("nothing_taken" in f or spent)
             if spent:
@@ -2406,7 +2418,7 @@ class ScriptedDll:
             taken = func in ring_of and flag32 and not over
             flags |= (F_TAKEN if func in params else 0) | (F_STACK_TAKEN if taken else 0) | \
                 (F_STACK_BUDGET if over else 0)
-            recs.append(REC.pack(seq, seq * 10, self.FUNCS[func][0], 0x5000, 1, flags))
+            recs.append(REC.pack(seq, seq * 10, self.funcs[func][0], 0x5000, 1, flags))
             if taken and slot:
                 ring = slots[ring_of[func]]
                 first = ring_of[func] == 0 and not ring
@@ -2436,6 +2448,14 @@ class ScriptedDll:
                 for k in range(kept):
                     call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3])
                 dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, rate - cap) * DRY_RECORD_S)
+            elif "SnapProbe_PerFrame" in params:
+                # Step 2: chosen for its parameters, it is held to the parameter budget by the same rule.
+                rate = self.main_pf_rate
+                cap = 25 if "param_overkept" in f else min(max(int(s.get("per_ring_per_s", 1000)), 1), 0xFFFFFF)
+                for _ in range(round(min(rate, cap) * DRY_RECORD_S)):
+                    call("SnapProbe_PerFrame", F_LONE, [])
+                if "param_dropped0" not in f:
+                    p_dropped["SnapProbe_PerFrame"] = round(max(0.0, rate - cap) * DRY_RECORD_S)
         else:          # stacks only: every chosen call is lone
             game, game_first = self._game_stack(False), self._game_stack(True)
             for n in [] if "only_empty" in f else stacks:
@@ -2444,7 +2464,7 @@ class ScriptedDll:
             if "only_other" in f:   # flagged as a kept stack would be, so only the function tells it apart
                 call("SnapProbe_PerFrame", F_LONE | F_STACK_TAKEN, [])
         depth = min(max(int((st or {}).get("depth", 16)), 1), 62)
-        caps = [ring_cap(self.FUNCS[n][2]) for n in params]
+        caps = [ring_cap(self.funcs[n][2]) for n in params]
         stack_terms = 0 if "k_no_stacks" in f else len(stacks)
         per_round = sum(24 + c for c in caps) + stack_terms * (24 + 8 * depth)
         sb = s.get("bytes", 0)
@@ -2457,6 +2477,8 @@ class ScriptedDll:
         captures = sum(len(x) for x in slots)
         self.t = {"gen": self.gen, "recs": recs, "slots": slots, "depth": depth, "dropped": dropped,
                   "tracing": True, "ticks": len(ticks),
+                  "snap_rings": [{"ring": k, "written": p_kept[n], "skipped_budget": 0, "dropped_budget": p_dropped[n]}
+                                 for k, n in enumerate(params)],
                   "snap_only": not ticks and (bool(params) or "not_snap_only" not in f),
                   "snap": {"allocated": "snap_unallocated" not in f, "bytes": sb,
                            "rings": len(params) + (len(stacks) if "snap_rings_off" in f else 0),
@@ -2474,7 +2496,7 @@ class ScriptedDll:
                              "chosen": n in params, "addresses": 1, "arms": 1,
                              **({} if f & {"old", "names_no_stack"} else
                                 {"stack": "names_all_stack" in f or (n in ring_of and "names_stack_false" not in f)})}
-                            for n in self.FUNCS if n in params or n in ring_of or n in [i["func"] for i in ticks]]}
+                            for n in self.funcs if n in params or n in ring_of or n in [i["func"] for i in ticks]]}
         accepted = [id(i) for i in stack_items if i not in turned_away]
         refused = [i for i in asked if id(i) not in accepted and (i in turned_away or not good(i))]
         if "refused_phantom" in f:
@@ -2497,6 +2519,8 @@ class ScriptedDll:
         d = {"allocated": True, "tracing": t["tracing"], "quiesced": not t["tracing"], "gen": t["gen"],
              "qpc_freq": self.QPC, "written": len(t["recs"]), "first_valid": 0, "scoped": True,
              "ticked_names": t["ticks"], "snap_only": t["snap_only"], "snap": t["snap"]}
+        if t.get("snap_rings"):
+            d["snap_rings"] = t["snap_rings"]
         if t["stack"] and "no_trace_stack" not in self.f:
             d["stack"] = t["stack"]
         return d
@@ -2562,7 +2586,7 @@ class ScriptedDll:
             items = [{"addr": f"0x{a:X}", "class_name": FIXTURE_CLASS, "func_name": n,
                       "code_addr": "" if "no_code_addr" in self.f and n == "SnapNest_Outer" else
                       f"0x{self.BASE + (self.OUTER_FN if n == 'SnapNest_Outer' else 0x8000):X}"}
-                     for n, (a, _, _) in self.FUNCS.items()
+                     for n, (a, _, _) in self.funcs.items()
                      if not ("names_missing" in self.f and n == "SnapProbe_PerFrame")]
             off = p.get("offset", 0)
             return {"data": {"items": items[off: off + p.get("limit", 20000)], "total": len(items)}}
@@ -2577,6 +2601,11 @@ class ScriptedDll:
         if cmd == "read_mem":
             self.asked.append((cmd, dict(p)))
             return self._memory(p.get("addr", "0"), int(p.get("size", 256)))
+        # Step 2's commands, answered as far as its budget line needs (the class docstring).
+        if cmd == "invoke_function":
+            return {"ok": True, "data": {}}
+        if cmd == "pe_snap_layouts":
+            return {"data": {"arms": [], "layouts": [], "total": 0, "next": 0}}
         raise PipeError(f"the scripted DLL has no {cmd}")
 
 
@@ -2594,13 +2623,15 @@ class ScriptedPdb:
         self.closed = True
 
 
-def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
+def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = (), stacks: bool = True) -> \
+        tuple[Checks, dict]:
     """main()'s --stacks run (run_selected) against a scripted DLL, its printing captured: no pipe, no game, and no
     wait, on a FakeClock; --pdb reads the scripted game's PDB. `argv` adds options to the command line the run parses,
     after (so over) the ones it sets, parsed as main() parses it: a combination main() refuses raises SystemExit here
-    before the DLL is asked anything. out["exit"] is what run_selected returned."""
+    before the DLL is asked anything. `stacks` False runs the step-2 checks instead (run_full), on a DLL made with
+    late=True. out["exit"] is what run_selected returned."""
     check, out = Checks(), {"label": "dry"}
-    args = parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
+    args = parse_args((["--stacks"] if stacks else []) + ["--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
                       (["--choose", ""] if game else []) + list(argv))
     fake = FakeClock()
     with contextlib.redirect_stdout(io.StringIO()):
@@ -3198,16 +3229,6 @@ def self_test() -> int:
                     [n for n, why in r[0].skipped if why.startswith("no frame was named")] == [NAMES_IS, NAMES_AT] and
                     r[2] == [])(names_run("names_none")))
 
-    expect("every scripted fault has a control", lambda: exercised == set(ScriptedDll.FAULTS))
-    expect("every check the good runs make has a fault that fails it",
-           lambda: (lambda names: names != [] and [n for n in names if not any(n.startswith(p) for p in caught_by)]
-                    == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0]) +
-                           ran(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
-    expect("every check the --names run makes has a fault that fails it, A1's two among them",
-           lambda: (lambda names: NAMES_IS in names and NAMES_AT in names and
-                    [n for n in names if not any(n.startswith(p) for p in caught_by)] == [])(
-               ran(dry_run(ScriptedDll(), game=True, argv=names_argv)[0])))
-
     def refuses_unknown_fault() -> bool:
         try:
             ScriptedDll("no_such_fault")
@@ -3339,6 +3360,55 @@ def self_test() -> int:
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 12 and r[1]["stack_budget"]["given"] is True and
                     len(s5_ran(r[0])) == 1 and f"({lo12:.0f}..{hi12:.0f})" in s5_ran(r[0])[0])(
                s5_run(argv=("--stack-per-ring", "12"))))
+
+    # [SNAPRIG-STEP2-RATE] The step-2 run (run_full) holds SnapProbe_PerFrame's parameter ring to a budget and checks
+    # it dropped calls over it: the same precondition as S5's, which a fixture at about 30 fps does not meet at 30.
+    step2_budget = "the budget: the per-frame probe's lone calls over"
+
+    def step2_run(pf_rate: float = ScriptedDll.PF_RATE, main_pf_rate: float | None = None,
+                  faults: tuple[str, ...] = ()) -> tuple[Checks, dict, int | None]:
+        """The step-2 run at a probe rate: its checks, its out, and the parameter budget its main Start sent."""
+        dll = ScriptedDll(*faults, pf_rate=pf_rate, main_pf_rate=main_pf_rate, late=True)
+        ch, out = dry_run(dll, stacks=False)
+        main = next((t for t in dll.starts if t and t.get("ticked_names") and (t.get("snapshots") or {}).get("funcs")),
+                    {})
+        return ch, out, (main.get("snapshots") or {}).get("per_ring_per_s")
+
+    def step2_line(ch: Checks) -> tuple[list[bool], list[str]]:
+        """The budget check's verdicts where it ran, and its reasons where it was not run."""
+        return ([ok for n, ok, _ in ch.items if n.startswith(step2_budget)],
+                [why for n, why in ch.skipped if n.startswith(step2_budget)])
+    expect("dry run step 2: the probe at 60 a second, the old 30 sent, and the budget check holds",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0]) == ([True], []))(step2_run()))
+    expect("dry run step 2: the probe at 30 a second (the fixture at 30 fps): the budget is lowered to 7 so it bites, "
+           "and the check holds",
+           lambda: (lambda r: r[2] == 7 and step2_line(r[0]) == ([True], []))(step2_run(30)))
+    expect("dry run step 2: no budget fits (the probe at 4 a second): the old 30 sent, the check not run with the "
+           "measured rates, never failed",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
+                    "4.0/s" in step2_line(r[0])[1][0] and "2.0/s" in step2_line(r[0])[1][0])(step2_run(4)))
+    expect("dry run step 2: the plain recording at 60 a second, the main one at 30: the check not run, both rates in "
+           "the reason",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
+                    "60.0/s" in step2_line(r[0])[1][0] and "30.0/s" in step2_line(r[0])[1][0])(
+               step2_run(60, main_pf_rate=30)))
+    exercised.update(("param_dropped0", "param_overkept"))
+    expect("dry run step 2: a parameter ring that counts no drop fails the budget check",
+           lambda: step2_line(step2_run(faults=("param_dropped0",))[0]) == ([False], []))
+    expect("dry run step 2: at 7 a second, a ring that keeps 25 a second fails the check (what it keeps is bounded by "
+           "the budget sent, not by 30)",
+           lambda: step2_line(step2_run(30, faults=("param_overkept",))[0]) == ([False], []))
+
+    # The bookkeeping last, so it counts every control above.
+    expect("every scripted fault has a control", lambda: exercised == set(ScriptedDll.FAULTS))
+    expect("every check the good runs make has a fault that fails it",
+           lambda: (lambda names: names != [] and [n for n in names if not any(n.startswith(p) for p in caught_by)]
+                    == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0]) +
+                           ran(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
+    expect("every check the --names run makes has a fault that fails it, A1's two among them",
+           lambda: (lambda names: NAMES_IS in names and NAMES_AT in names and
+                    [n for n in names if not any(n.startswith(p) for p in caught_by)] == [])(
+               ran(dry_run(ScriptedDll(), game=True, argv=names_argv)[0])))
 
     failed = [r for r in results if not r[1]]
     for name, _, why in failed:
