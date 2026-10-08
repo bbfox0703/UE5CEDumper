@@ -475,7 +475,7 @@ stated facts are false here**. Each cost, or would have cost, a launch.*
 3. `build.ps1 -Target DLL`, then **`build.ps1 -Mode Publish`** — hand-over rule. Verify `dist\UE5DumpUI.exe` is ~54.7 MiB (57,398,784 B), **not** ~107 MB, and record the sha.
 4. `py tools/check_all.py` — 12 gates green, including `check_derived_counts` at its new number.
 5. **Census the fixtures on THIS machine** — the Steam layout may differ from the primary PC. Parse `libraryfolders.vdf` and check for: Lushfoil, Satisfactory, EVERSPACE 2, OCTOPATH, Solarpunk, and **Star Wars Jedi: Fallen Order** (the A3 gate — on the primary PC it is a ghost, only `steam_appid.txt`). Record what is present before planning further.
-6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover-2026-08-22.md:75-99`); the plan doc's §3 claim that they do not is refuted and is being corrected. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
+6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover.md` §2); the plan doc's §3 claim that they do not is refuted and is being corrected. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
 
 #### Step 1 — EVERSPACE 2 (Row 2, A2) — ~20 min, highest information per minute
 

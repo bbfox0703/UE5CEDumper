@@ -660,7 +660,7 @@ done — worth checking, never sufficient on its own.
 Added 2026-09-06, after a fixture-coverage audit found the rot had spread from the register into
 the two documents a session is *told to read first*:
 
-* **`docs/handover-2026-08-22.md` — its "rows that are cheaper than their bucket suggests" list was
+* **`docs/handover.md` (then `handover-2026-08-22.md`) — its "rows that are cheaper than their bucket suggests" list was
   four-fifths stale.** Four of the five bullets had closed, **three of them within two days of the
   file being written**. The register had even carried a ⛔ SUPERSEDED banner for one of them
   (`AF16`) since 08-23; the correction existed and simply never propagated to the pointer.

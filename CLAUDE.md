@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   a patch that matched nothing.
 - ⛔ **No new PowerShell: every helper is Python** (`build.ps1` is the one exception). Bitdefender
   quarantined six files when a new `.ps1` ran. **Commit before executing anything newly written.**
-  The rest of the session rules: [handover §4](docs/handover-2026-08-22.md).
+  The rest of the session rules: [handover §4](docs/handover.md).
 
 -----
 
@@ -240,7 +240,7 @@ line, trim a row, do not grow.
 
 | Document | Contents |
 |----------|----------|
-| [docs/handover-2026-08-22.md](docs/handover-2026-08-22.md) | 🤝 **START HERE — the single entry point.** A fresh session's first ten minutes: tree state, computer-use grants, launching a fixture, the hard rules, gates/tests/builds, driving CE, what is open, traps, closing a row. |
+| [docs/handover.md](docs/handover.md) | 🤝 **START HERE — the single entry point.** A fresh session's first ten minutes: tree state, computer-use grants, launching a fixture, the hard rules, gates/tests/builds, driving CE, what is open, traps, closing a row. |
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
