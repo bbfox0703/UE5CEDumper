@@ -302,7 +302,8 @@ public class LiveFuncsSnapshotTests
 
     /// <summary>T13's orange compares the busiest choice with what the trace keeps, and the trace keeps less with a
     /// smaller buffer or more ticked calls: either change can flip it, and a flip nobody raises leaves the line its old
-    /// colour, and the folded summary disagreeing with it.</summary>
+    /// colour, and the folded summary disagreeing with it. Clearing the ticks is such a change too, and so is the buffer
+    /// with Trace unticked: the estimate weighs them either way.</summary>
     [Fact]
     public async Task The_parameter_estimates_orange_is_raised_when_the_trace_buffer_or_a_tick_flips_it()
     {
@@ -324,6 +325,24 @@ public class LiveFuncsSnapshotTests
         Assert.False(vm.SnapshotEstimateWarn);
         Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
 
+        raised.Clear();
+        vm.TraceBufferExponent = 6;
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        // Back to 32 MB with A::Busy ticked (~14 s): not orange. Clear ticks leaves the trace A::Hot's calls alone
+        // again (~4,194 s): orange.
+        vm.TraceBufferExponent = 5;
+        Assert.False(vm.SnapshotEstimateWarn);
+        raised.Clear();
+        vm.ClearTicksCommand.Execute(null);
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        // Trace unticked, the choices stay, and so does the estimate the line shows for them.
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "Busy"));
+        vm.TraceEnabled = false;
+        Assert.False(vm.SnapshotEstimateWarn);
         raised.Clear();
         vm.TraceBufferExponent = 6;
         Assert.True(vm.SnapshotEstimateWarn);
