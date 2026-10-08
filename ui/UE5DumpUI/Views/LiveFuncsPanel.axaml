@@ -185,7 +185,9 @@
          warning orange above T9's threshold and stay calm under it, so the warning stands out when the estimate says
          it applies. Lines of their own, because a TextBlock in a horizontal StackPanel never wraps; each twice, toggled
          by a bool (the D3 pattern). Hidden with the row above when Trace is unavailable, as a Start then takes no
-         stacks. -->
+         stacks. [LF-COMPACT-TOP] The warning shows one line of its essentials and the whole text only under Details:
+         four lines of it were the biggest block above the table. A WrapPanel keeps Details beside the line while it
+         fits and lets the line wrap rather than clip in a narrow window. -->
     <Panel DockPanel.Dock="Top" IsVisible="{Binding TraceAvailable}">
       <StackPanel IsVisible="{Binding HasStackChoices}" Margin="0,0,0,4">
         <Panel>
@@ -196,7 +198,18 @@
                      Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
                      ToolTip.Tip="{Binding StackEstimateTip}"/>
         </Panel>
-        <Panel>
+        <WrapPanel Orientation="Horizontal">
+          <Panel VerticalAlignment="Center">
+            <TextBlock Text="{StaticResource str.LF.Stack.WarningShort}" IsVisible="{Binding !StackEstimateWarn}"
+                       Foreground="#808080" FontSize="12" TextWrapping="Wrap"/>
+            <TextBlock Text="{StaticResource str.LF.Stack.WarningShort}" IsVisible="{Binding StackEstimateWarn}"
+                       Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"/>
+          </Panel>
+          <ToggleButton x:Name="StackWarningDetails" Content="{StaticResource str.LF.Stack.WarningDetails}"
+                        ToolTip.Tip="{StaticResource str.Tip.LF.Stack.WarningDetails}"
+                        Padding="6,0" FontSize="11" Margin="8,0,0,0" VerticalAlignment="Center" Cursor="Hand"/>
+        </WrapPanel>
+        <Panel IsVisible="{Binding #StackWarningDetails.IsChecked}">
           <TextBlock Text="{StaticResource str.LF.Stack.Warning}" IsVisible="{Binding !StackEstimateWarn}"
                      Foreground="#808080" FontSize="12" TextWrapping="Wrap"/>
           <TextBlock Text="{StaticResource str.LF.Stack.Warning}" IsVisible="{Binding StackEstimateWarn}"
