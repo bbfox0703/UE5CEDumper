@@ -1436,6 +1436,54 @@ public class LiveFuncsSnapshotTests
         Assert.Contains("10", vm.StackEstimateTip, StringComparison.Ordinal);
     }
 
+    // ---- [LF-COMPACT-TOP] the controls above the table, made smaller ----
+
+    /// <summary>(1) The warning shows one line of its essentials and keeps the whole text one click away: the four-line
+    /// text was the biggest block above the table. The one line is still the warning, so it keeps the D3 pair (grey,
+    /// orange with the estimate) and wraps rather than clip in a narrow window; the whole text keeps every point the
+    /// maintainer asked the step-3 warning to make, and shows only while its Details toggle is down.</summary>
+    [Fact]
+    public void The_stack_warning_is_one_line_of_essentials_and_Details_shows_the_whole_text()
+    {
+        string shortLine = Line("str.LF.Stack.WarningShort");
+        foreach (var essential in new[] { "soft capture", "game's own thread", "frame", "save first", "few functions" })
+            Assert.Contains(essential, shortLine, StringComparison.OrdinalIgnoreCase);
+        string whole = Line("str.LF.Stack.Warning");
+        foreach (var point in new[] { "not a debugger capture like Cheat Engine's", "in software", "added to the game's frame",
+                                      "stopping mid-capture", "stall or crash the game", "save first", "few functions" })
+            Assert.Contains(point, whole, StringComparison.Ordinal);
+        Assert.True(shortLine.Length * 4 < whole.Length, $"the one line is {shortLine.Length} characters of {whole.Length}");
+        Assert.True(Line("str.LF.Stack.WarningDetails").Length > 0);
+        Assert.True(Line("str.Tip.LF.Stack.WarningDetails").Length > 0);
+
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var blocks = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value).ToList();
+        var pair = blocks.Where(b => b.Contains("Text=\"{StaticResource str.LF.Stack.WarningShort}\"", StringComparison.Ordinal))
+                         .ToList();
+        Assert.True(pair.Count == 2, "the one line is not shown by two TextBlocks");
+        var full = blocks.Single(b => b.Contains("Text=\"{StaticResource str.LF.Stack.Warning}\"", StringComparison.Ordinal)
+                                      && b.Contains("IsVisible=\"{Binding StackEstimateWarn}\"", StringComparison.Ordinal));
+        string orange = Regex.Match(full, @"Foreground=""(?<c>[^""]+)""").Groups["c"].Value;
+        string hot = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding StackEstimateWarn}\"", StringComparison.Ordinal));
+        string calm = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding !StackEstimateWarn}\"", StringComparison.Ordinal));
+        Assert.Contains($"Foreground=\"{orange}\"", hot, StringComparison.Ordinal);
+        Assert.DoesNotContain($"Foreground=\"{orange}\"", calm, StringComparison.Ordinal);
+        foreach (var b in pair) Assert.Contains("TextWrapping=\"Wrap\"", b, StringComparison.Ordinal);
+
+        // The toggle, by its name, and the whole text inside the one panel that follows it.
+        var toggle = Regex.Matches(axaml, @"<ToggleButton\b[^>]*/>").Select(m => m.Value)
+                          .Single(t => t.Contains("Content=\"{StaticResource str.LF.Stack.WarningDetails}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Stack.WarningDetails}\"", toggle, StringComparison.Ordinal);
+        string name = Regex.Match(toggle, @"x:Name=""(?<n>\w+)""").Groups["n"].Value;
+        Assert.True(name.Length > 0, "the Details toggle has no name to bind to");
+        int shortAt = axaml.IndexOf("Text=\"{StaticResource str.LF.Stack.WarningShort}\"", StringComparison.Ordinal);
+        int toggleAt = axaml.IndexOf(toggle, StringComparison.Ordinal);
+        int wholeAt = axaml.IndexOf("Text=\"{StaticResource str.LF.Stack.Warning}\"", StringComparison.Ordinal);
+        Assert.True(shortAt < toggleAt && toggleAt < wholeAt, "the one line, its toggle and the whole text are out of order");
+        var opens = Regex.Matches(axaml[..wholeAt], @"<Panel\b[^>]*>");
+        Assert.Contains($"IsVisible=\"{{Binding #{name}.IsChecked}}\"", opens[^1].Value, StringComparison.Ordinal);
+    }
+
     // ---- Clear choices: one clear for the three choice columns ----
 
     /// <summary>A view model with every kind of choice, Trace on: A::F ticked and chosen for parameters and for a stack,
