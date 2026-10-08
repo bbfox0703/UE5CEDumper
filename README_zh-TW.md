@@ -57,7 +57,7 @@ UE5CEDumper 是一款 UE Dumper（Unreal Engine dumper），適用於以 Unreal 
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1 滿意工廠), Colossal, Avowed, 艾恩葛朗特 迴盪新聲 Demo (Echoes of Aincrad), 冒險家艾略特的千年奇譚 (The Adventures of Elliot), MindsEye, DragonSword Awakening, 天外世界 2 (The Outer Worlds 2) |
 | **5.5 – 5.7** | ✅ | ✅ | ✅ | 泰坦任務 2, EverSpace 2, Lushfoil Photography Sim, 莊園領主 (Manor Lords), Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk (太陽龐克), Pionero Capital Demo, Satisfactory (滿意工廠 v1.2.3.1), Star Trek Voyager – Across the Unknown |
-| **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo |
+| **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo, Unknown Operations: The Habitus Demo |
 
 *UE 4.11 是支援下限；4.10 以下會直接顯示為不支援。*
 
