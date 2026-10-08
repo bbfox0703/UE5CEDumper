@@ -26,6 +26,10 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// of its calls. Kept by name in LiveFuncsViewModel, like the parameter choice.</summary>
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isStackChosen;
 
+    /// <summary>[LIVEFUNCS-STEP3] Read <see cref="IsStackChosen"/> back into the views bound to it, unchanged: a click
+    /// the view model refuses has already flipped its box, and an unchanged value raises nothing by itself.</summary>
+    public void RaiseIsStackChosen() { }
+
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";
     public string FuncAddr  { get; init; } = "";

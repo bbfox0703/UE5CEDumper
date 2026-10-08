@@ -422,17 +422,22 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>A Start allocates the snapshot buffer for any choice that fills it (D4).</summary>
     private bool AnySnapshotChoice => _snapChosen.Count > 0 || _stackChosen.Count > 0;
 
+    /// <summary>T9.2: asked before a per-frame function is chosen for a native stack, with the question to show. The view
+    /// sets it; without one, a per-frame function is not chosen.</summary>
+    public Func<string, Task<bool>>? ConfirmStackPerFrame { get; set; }
+
     /// <summary>Choose or drop a row's native stack. Refused whenever a parameter choice is (<see cref="CanSnapshot"/>),
     /// and on a keyless row, as a stack is chosen by name; a function with no parameters still has a stack.</summary>
     [RelayCommand]
-    private void ToggleStack(PeProfileEntry? row)
+    private Task ToggleStack(PeProfileEntry? row)
     {
-        if (row == null || !CanSnapshot || !row.CanChooseStack) return;
+        if (row == null || !CanSnapshot || !row.CanChooseStack) return Task.CompletedTask;
         bool chosen = _stackChosen.Toggle(row, _allEntries);
         string key = Key(row);
         foreach (var e in _allEntries.Where(e => Key(e) == key)) e.IsStackChosen = chosen && e.CanChooseStack;
         row.IsStackChosen = chosen;
         RefreshSnapshotList();
+        return Task.CompletedTask;
     }
 
     partial void OnSnapshotBufferExponentChanged(int value)

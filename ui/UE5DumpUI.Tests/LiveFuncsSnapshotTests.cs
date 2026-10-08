@@ -900,6 +900,158 @@ public class LiveFuncsSnapshotTests
         Assert.True(Line("str.LF.Stack.Warning").Length > 0);
     }
 
+    // ---- [LIVEFUNCS-STEP3] S3-U6: choosing a per-frame function's stack asks once (T9.2) ----
+
+    /// <summary>A view model showing two per-frame functions and a plain one, Trace on, whose question records what it
+    /// was asked and answers <paramref name="answer"/>.</summary>
+    private static async Task<(LiveFuncsViewModel vm, FakeDumpService dump, List<string> asked)> WithPerFrameRows(bool answer)
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000,
+            Row("A", "Tick", "0x1", new NameKey(1, 0, 9, 0), count: 600, perFrame: true),
+            Row("A", "Open", "0x2", new NameKey(2, 0, 9, 0)),
+            Row("B", "Tick", "0x3", new NameKey(3, 0, 9, 0), count: 600, perFrame: true));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        var asked = new List<string>();
+        vm.ConfirmStackPerFrame = q => { asked.Add(q); return Task.FromResult(answer); };
+        return (vm, dump, asked);
+    }
+
+    private static PeProfileEntry Shown(LiveFuncsViewModel vm, string cls, string func)
+        => vm.Results.Single(r => r.ClassName == cls && r.FuncName == func);
+
+    /// <summary>Counts the row's IsStackChosen notifications: what a box bound to it reads back.</summary>
+    private static Func<int> CountStackChosenRaised(PeProfileEntry row)
+    {
+        int raised = 0;
+        row.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(PeProfileEntry.IsStackChosen)) raised++; };
+        return () => raised;
+    }
+
+    [Fact]
+    public async Task Choosing_a_per_frame_stack_asks_once_and_a_yes_holds_for_the_connection()
+    {
+        var (vm, _, asked) = await WithPerFrameRows(answer: true);
+        var tick = Shown(vm, "A", "Tick");
+
+        await vm.ToggleStackCommand.ExecuteAsync(tick);
+        Assert.Single(asked);
+        Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
+        Assert.True(tick.IsStackChosen);
+
+        await vm.ToggleStackCommand.ExecuteAsync(tick);                     // dropping a choice never asks
+        Assert.Empty(vm.StackFunctions);
+        await vm.ToggleStackCommand.ExecuteAsync(tick);                     // choosing it again: answered already
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "B", "Tick"));   // another per-frame function: the same
+        Assert.Single(asked);
+        Assert.Equal(new[] { "A::Tick", "B::Tick" }, vm.StackFunctions);
+
+        // The question names the function clicked and the budget a Start would send.
+        Assert.Equal(Line("str.LF.Stack.PerFrame.Message", "A::Tick", LiveFuncsViewModel.StackPerFuncPerSec,
+                          LiveFuncsViewModel.StackTotalPerSec), asked[0]);
+    }
+
+    [Fact]
+    public async Task A_no_leaves_the_per_frame_stack_unchosen_reads_its_box_back_and_asks_again()
+    {
+        var (vm, _, asked) = await WithPerFrameRows(answer: false);
+        var tick = Shown(vm, "A", "Tick");
+        var raised = CountStackChosenRaised(tick);
+
+        await vm.ToggleStackCommand.ExecuteAsync(tick);
+        Assert.Single(asked);
+        Assert.Empty(vm.StackFunctions);
+        Assert.False(vm.HasStackChoices);
+        Assert.False(tick.IsStackChosen);
+        // The view's box flipped on the click, before the question: the unchanged value is raised so it reads it back.
+        Assert.Equal(1, raised());
+
+        vm.StackBudgetLow = true;
+        await vm.ToggleStackCommand.ExecuteAsync(tick);                     // a no is not an answer to keep
+        Assert.Equal(2, asked.Count);
+        Assert.Empty(vm.StackFunctions);
+        Assert.Equal(2, raised());
+        Assert.Equal(Line("str.LF.Stack.PerFrame.Message", "A::Tick", LiveFuncsViewModel.StackLowPerFuncPerSec,
+                          LiveFuncsViewModel.StackLowTotalPerSec), asked[1]);
+
+        vm.ConfirmStackPerFrame = null;                                     // no view to ask in: not chosen either
+        await vm.ToggleStackCommand.ExecuteAsync(tick);
+        Assert.Empty(vm.StackFunctions);
+        Assert.Equal(3, raised());
+    }
+
+    /// <summary>A guard: no step-3 build has ever asked, so this holds before S3-U6 too.</summary>
+    [Fact]
+    public async Task A_plain_row_never_asks()
+    {
+        var (vm, _, asked) = await WithPerFrameRows(answer: false);
+        var open = Shown(vm, "A", "Open");
+
+        await vm.ToggleStackCommand.ExecuteAsync(open);
+        Assert.Equal(new[] { "A::Open" }, vm.StackFunctions);
+        Assert.True(open.IsStackChosen);
+        await vm.ToggleStackCommand.ExecuteAsync(open);
+        Assert.Empty(vm.StackFunctions);
+        Assert.Empty(asked);
+    }
+
+    [Fact]
+    public async Task A_disconnect_forgets_the_yes_so_the_next_connection_asks_again()
+    {
+        var (vm, _, asked) = await WithPerFrameRows(answer: true);
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "Tick"));
+        Assert.Single(asked);
+
+        vm.ResetOnDisconnect();
+        await Fetch(vm);                                                    // the next connection's rows
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "Tick"));
+        Assert.Equal(2, asked.Count);
+        Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
+    }
+
+    [Fact]
+    public async Task A_yes_that_arrives_after_the_connection_dropped_chooses_nothing_and_is_not_kept()
+    {
+        var (vm, _, asked) = await WithPerFrameRows(answer: true);
+        var tick = Shown(vm, "A", "Tick");
+        var raised = CountStackChosenRaised(tick);
+        vm.ConfirmStackPerFrame = q => { asked.Add(q); vm.ResetOnDisconnect(); return Task.FromResult(true); };
+
+        await vm.ToggleStackCommand.ExecuteAsync(tick);
+        Assert.Single(asked);
+        Assert.Empty(vm.StackFunctions);                                    // the row is the old process's
+        Assert.False(tick.IsStackChosen);
+        Assert.Equal(1, raised());
+
+        vm.ConfirmStackPerFrame = q => { asked.Add(q); return Task.FromResult(true); };
+        await Fetch(vm);
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "Tick"));
+        Assert.Equal(2, asked.Count);                                       // that yes was given for no connection
+        Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
+    }
+
+    [Fact]
+    public void The_view_asks_the_per_frame_question_in_a_dialog_and_the_question_says_why()
+    {
+        var codeBehind = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml.cs"));
+        // The view model's text is the message: it names the function and the budget.
+        var wiring = Regex.Match(codeBehind,
+            @"_wired\.ConfirmStackPerFrame\s*=\s*(?<q>\w+)\s*=>\s*ConfirmDialog\.ShowAsync\(\s*" +
+            @"Core\.Res\.Get\(""str\.LF\.Stack\.PerFrame\.Title""\)\s*,\s*\k<q>\s*,(?<rest>[^;]*);");
+        Assert.True(wiring.Success, "LiveFuncsPanel does not ask ConfirmStackPerFrame in a ConfirmDialog");
+        Assert.Contains("Core.Res.Get(\"str.LF.Stack.PerFrame.Run\")", wiring.Groups["rest"].Value, StringComparison.Ordinal);
+        Assert.Contains("Core.Res.Get(\"str.LF.Stack.PerFrame.Cancel\")", wiring.Groups["rest"].Value, StringComparison.Ordinal);
+
+        // Why it asks: a per-frame function is called every frame, so its stacks are taken every frame up to the budget.
+        string question = Line("str.LF.Stack.PerFrame.Message", "A::Tick", 25, 50);
+        Assert.Contains("A::Tick", question, StringComparison.Ordinal);
+        Assert.Contains("every frame", question, StringComparison.Ordinal);
+        Assert.Contains("25", question, StringComparison.Ordinal);
+        Assert.Contains("50", question, StringComparison.Ordinal);
+        Assert.True(Line("str.LF.Stack.PerFrame.Title").Length > 0);
+    }
+
     /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>
     private static (int Start, int At) FindEnclosingStackPanel(string axaml, string marker)
     {
