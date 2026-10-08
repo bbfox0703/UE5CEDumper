@@ -8,8 +8,8 @@ namespace UE5DumpUI.Models;
 /// user performed an in-game action.
 ///
 /// Init-only (hand-parsed from the pipe JsonObject like <see cref="AllFunctionEntry"/>): the Start → Stop → Get
-/// flow produces an immutable snapshot per fetch. The one exception is <see cref="IsTicked"/>, which the call
-/// trace's tick column changes on a row already on screen, so the row notifies.
+/// flow produces an immutable snapshot per fetch. The exceptions are the observable choice flags (<see cref="IsTicked"/>
+/// and its kind), which the panel's columns change on a row already on screen, so the row notifies.
 /// </summary>
 public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {

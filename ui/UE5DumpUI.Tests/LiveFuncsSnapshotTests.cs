@@ -492,10 +492,11 @@ public class LiveFuncsSnapshotTests
         vm.ToggleStackCommand.Execute(vm.Results.Single(r => r.FuncName == "Call"));
         vm.ToggleSnapshotCommand.Execute(vm.Results.Single(r => r.FuncName == "Busy"));
 
+        int stops = dump.StopCalls;                      // the fetch's own Stop
         dump.StacksUnknown = true;
         await vm.StartCommand.ExecuteAsync(null);
         Assert.False(vm.IsRecording);
-        Assert.Equal(1, dump.StopCalls);
+        Assert.Equal(stops + 1, dump.StopCalls);
         Assert.Equal(new ulong[] { 1 }, dump.Released);
         Assert.Equal(Line("str.LF.Stack.NotArmed"), vm.StatusText);
 
@@ -504,7 +505,7 @@ public class LiveFuncsSnapshotTests
         dump.StacksRefused = true;
         await vm.StartCommand.ExecuteAsync(null);
         Assert.True(vm.IsRecording);
-        Assert.Equal(1, dump.StopCalls);
+        Assert.Equal(stops + 1, dump.StopCalls);
         Assert.Contains(Line("str.LF.Snap.Refused", 1), vm.StatusText);
         Assert.DoesNotContain(Line("str.LF.Stack.NotArmed"), vm.StatusText);
         Assert.DoesNotContain(Line("str.LF.Stack.Recording", 0, 16), vm.StatusText);
@@ -600,6 +601,11 @@ public class LiveFuncsSnapshotTests
         Assert.Equal((33_554_432L - 64) / 152, alone.SlotsPerRing);
         Assert.False(alone.TooSmall);
         Assert.True(LiveFuncsViewModel.EstimateSnapshots(none, 8L << 20, 1000, 10000, stackRings: 7000).TooSmall);   // K = 7
+
+        // A stack ring is 64-aligned too: its 64 bytes come off the top, one byte short of 8 slots is 7.
+        Assert.Equal(8, LiveFuncsViewModel.EstimateSnapshots(none, 64 + 8 * 152, 1000, 10000, stackRings: 1).SlotsPerRing);
+        Assert.Equal(7, LiveFuncsViewModel.EstimateSnapshots(none, 64 + 8 * 152 - 1, 1000, 10000, stackRings: 1).SlotsPerRing);
+        Assert.Equal(7, LiveFuncsViewModel.EstimateSnapshots(one, 2 * 64 + 8 * 240 - 1, 1000, 10000, stackRings: 1).SlotsPerRing);
     }
 
     [Fact]

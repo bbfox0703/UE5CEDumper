@@ -1241,6 +1241,12 @@
     <sys:String x:Key="str.LF.Snap.NeedsTrace">Parameters are taken only with Trace on: none were taken.</sys:String>
     <sys:String x:Key="str.LF.Snap.StopNote">Parameters: {0} copies kept; {1} calls over the budget had none.</sys:String>
     <sys:String x:Key="str.LF.Snap.BulkDone">{0} shown function(s) chosen for parameters; {1} left out (no name key, or no parameters).</sys:String>
+    <sys:String x:Key="str.LF.Stack.Count">Stacks: {0}</sys:String>
+    <sys:String x:Key="str.LF.Stack.Recording">Native stacks of {0} function(s), up to {1} frames each.</sys:String>
+    <sys:String x:Key="str.LF.Stack.NotArmed">This UE5Dumper.dll takes no native stacks (an older one?), so the recording was stopped and its trace released. Update the DLL, or clear the stack choices and Start again.</sys:String>
+    <sys:String x:Key="str.LF.Stack.NeedsTrace">Native stacks are taken only with Trace on: none were taken.</sys:String>
+    <sys:String x:Key="str.LF.Stack.StopNote">Stacks: {0:N0} taken; {1:N0} calls over the budget had none ({2:N0} of them not recorded at all).</sys:String>
+    <sys:String x:Key="str.LF.Stack.Cost">About {0:0.0} µs a capture, at most {1:0.0} µs.</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Marker">(per frame)</sys:String>
     <sys:String x:Key="str.Tip.LF.Snap.Choose">Copy this function's parameters on each traced call (by name: it is followed through unloads). Shown in the Call Trace tab's Parameters view.</sys:String>
     <sys:String x:Key="str.Tip.LF.Snap.ShownRows">Choose every row the filter and check boxes leave on screen. Rows without a name key or without parameters are left out.</sys:String>
@@ -1250,7 +1256,7 @@
     <sys:String x:Key="str.LF.Trace.StartCancelled">Start cancelled. Tick the functions to trace in the table, or Start again and confirm to trace every call.</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingTicked">Tracing ({0} MB) inside {1} ticked function(s).</sys:String>
     <sys:String x:Key="str.LF.Trace.RecordingAll">Tracing every call ({0} MB).</sys:String>
-    <sys:String x:Key="str.LF.Trace.RecordingSnapOnly">Tracing ({0} MB) only the calls of the {1} function(s) chosen for parameters.</sys:String>
+    <sys:String x:Key="str.LF.Trace.RecordingSnapOnly">Tracing ({0} MB) only the calls of the {1} function(s) chosen for parameters or a stack.</sys:String>
     <sys:String x:Key="str.LF.Trace.NotCalled">Followed but never called while recording: {0}.</sys:String>
     <sys:String x:Key="str.LF.Trace.NotArmed">This UE5Dumper.dll did not arm the call trace (an older one?), so this recording is not traced.</sys:String>
     <sys:String x:Key="str.LF.Trace.NoneKept">The trace kept nothing: this UE5Dumper.dll has no call trace (an older one?).</sys:String>

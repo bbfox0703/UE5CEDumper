@@ -3,8 +3,8 @@ using UE5DumpUI.Models;
 namespace UE5DumpUI.Helpers;
 
 /// <summary>
-/// [LIVEFUNCS-STEP2] Functions followed by name across fetches: Live Funcs' trace ticks, and its parameter-snapshot
-/// choices. One store for both because the refresh rules are subtle and must not be written twice.
+/// [LIVEFUNCS-STEP2] Functions followed by name across fetches: Live Funcs' trace ticks, and what it chooses for the
+/// snapshot buffer. One store for every such list because the refresh rules are subtle and must not be written twice.
 ///
 /// <para>A name is Class::Func, the row's two strings: a class is named by its short name, so two classes in different
 /// folders share one name and are followed together -- what the DLL matches by name does too. Under each name the store

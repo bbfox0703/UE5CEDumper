@@ -83,7 +83,7 @@ public sealed class TraceStartOptions
     public IReadOnlyList<string> Ticked { get; init; } = Array.Empty<string>();
     /// <summary>[LIVEFUNCS-STEP2] The ticks by name (T10): followed through unloads and reloads.</summary>
     public IReadOnlyList<NamedFunction> TickedNames { get; init; } = Array.Empty<NamedFunction>();
-    /// <summary>[LIVEFUNCS-STEP2] The parameter snapshots, or null for none.</summary>
+    /// <summary>[LIVEFUNCS-STEP2] What the snapshot buffer takes, or null when nothing is chosen for it.</summary>
     public SnapshotStartOptions? Snapshots { get; init; }
     public bool ExcludePerFrame { get; init; }
 }
