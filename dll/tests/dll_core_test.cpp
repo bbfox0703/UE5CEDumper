@@ -241,6 +241,43 @@ int main() {
         // ⚠ Without this, every assertion below would pass against a pool of zero objects.
     }
 
+    // [VER-410-GATE] What the resource readings decide before any memory scan. Tier 1 below the floor is a refusal of
+    // the whole scan, so each way to reach it is pinned, and so is each way that must NOT reach it.
+    {   blk("VER-410-GATE - a reading below the floor is taken at tier 1 only when the resources corroborate it");
+        using Genau::DecideResourceVersion;
+        const char* isDefense = "4.10.2-0+++depot+UE4-Releases+4.10";
+
+        auto v = DecideResourceVersion(410, true, isDefense, 0);
+        check("VER-410-GATE ⭐: IS Defense (fixed 4.10.2, its engine build string) is tier 1",
+              v.version == 410 && v.tier == 1 && v.byBuildString && !v.byCrc);
+        v = DecideResourceVersion(410, true, "", 410);
+        check("VER-410-GATE ⭐: 410 with a CrashReportClient agreeing is tier 1",
+              v.version == 410 && v.tier == 1 && v.byCrc && !v.byBuildString);
+        v = DecideResourceVersion(410, true, isDefense, 410);
+        check("VER-410-GATE: both signals at once say so", v.tier == 1 && v.byBuildString && v.byCrc);
+
+        v = DecideResourceVersion(0, false, "", 410);
+        check("VER-410-GATE: a CrashReportClient alone (the exe carries no engine version) stays tier 3",
+              v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(427, true, "++UE4+Release-4.27-CL-0", 410);
+        check("VER-410-GATE: a CrashReportClient saying 410 against an exe saying 427 stays tier 3",
+              v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(410, false, "++UE4+Release-4.10-CL-0", 0);
+        check("VER-410-GATE: a code read out of the string cannot corroborate itself -- tier 3", v.tier == 3);
+        v = DecideResourceVersion(410, true, "4.10.3", 0);
+        check("VER-410-GATE: a bare 4.10.3 beside a fixed 4.10 stays tier 3", v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(405, true, "4.5.0.0", 0);
+        check("VER-410-GATE: the b25a marker (4.5.0.0) stays tier 3", v.version == 405 && v.tier == 3);
+
+        v = DecideResourceVersion(411, true, "4.11.0-0+UE4", 0);
+        check("VER-410-GATE: the floor itself is tier 1, with nothing to corroborate",
+              v.version == 411 && v.tier == 1 && !v.byBuildString && !v.byCrc);
+        v = DecideResourceVersion(504, true, "", 0);
+        check("VER-410-GATE: a supported reading needs no second signal", v.version == 504 && v.tier == 1);
+        v = DecideResourceVersion(0, false, "", 0);
+        check("VER-410-GATE: no reading at all is tier 0", v.version == 0 && v.tier == 0);
+    }
+
     {   blk("A7 — ForEach honours Tot::Requested() and stops");
         ResetCancel();
         Tot::g_perCommand.store(true);          // cancel BEFORE the walk starts

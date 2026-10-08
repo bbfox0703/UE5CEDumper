@@ -2868,14 +2868,29 @@ static void LogResourceVersion(const char* label, uint32_t major, uint32_t minor
 // the game exe. The alternative — a second reader with its own copy of the parse and its own
 // bounds — is the defect shape working-lessons.md 1.12 catalogues, and the version arithmetic had
 // already been written out four times in this one function before the split.
+//
+// What a file's VERSIONINFO said besides the code: a reading below the floor needs a second signal
+// from the same resource before it may refuse the scan, and that signal has to be independent of the
+// reading itself. [VER-410-GATE]
+struct ResourceReading {
+    std::string productVersion;          // StringFileInfo ProductVersion, empty when absent
+    bool        fromFixedField = false;  // the code came from VS_FIXEDFILEINFO, not from a string
+};
+
 static uint32_t ReadUeVersionFromFile(const wchar_t* path,
-                                      const char* productLabel, const char* fileLabel) {
+                                      const char* productLabel, const char* fileLabel,
+                                      ResourceReading* reading = nullptr) {
     DWORD handle = 0;
     DWORD infoSize = GetFileVersionInfoSizeW(path, &handle);
     if (!infoSize) return 0;
 
     std::vector<uint8_t> buf(infoSize);
     if (!GetFileVersionInfoW(path, handle, infoSize, buf.data())) return 0;
+
+    // Read once: the string fallback below wants it, and so does the corroboration of a reading
+    // below the floor, which needs it whatever the fixed fields say.
+    const std::string productVersion = ReadVersionInfoString(buf.data(), L"ProductVersion");
+    if (reading) reading->productVersion = productVersion;
 
     VS_FIXEDFILEINFO* fi = nullptr;
     UINT len = 0;
@@ -2887,6 +2902,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     uint32_t minor = LOWORD(fi->dwProductVersionMS);
     if (uint32_t code = Grimoire::UeVersionCode(major, minor)) {
         LogResourceVersion(productLabel, major, minor, code);
+        if (reading) reading->fromFixedField = true;
         return code;
     }
 
@@ -2895,6 +2911,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     uint32_t fminor = LOWORD(fi->dwFileVersionMS);
     if (uint32_t code = Grimoire::UeVersionCode(fmajor, fminor)) {
         LogResourceVersion(fileLabel, fmajor, fminor, code);
+        if (reading) reading->fromFixedField = true;
         return code;
     }
 
@@ -2905,8 +2922,10 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     // for, available here as an O(1) resource lookup. ReadVersionInfoString already walks
     // every (lang, codepage) pair, which matters: .NET's FileVersionInfo returns empty
     // for this file because the strings are not under the default translation.
-    for (const wchar_t* key : { L"ProductVersion", L"FileVersion" }) {
-        std::string s = ReadVersionInfoString(buf.data(), key);
+    const wchar_t* const kStringKeys[] = { L"ProductVersion", L"FileVersion" };
+    for (const wchar_t* key : kStringKeys) {
+        const std::string s = key == kStringKeys[0] ? productVersion
+                                                    : ReadVersionInfoString(buf.data(), key);
         if (s.empty()) continue;
         for (const char* prefix : { "++UE5+Release-", "++UE4+Release-" }) {
             size_t p = s.find(prefix);
@@ -2930,10 +2949,10 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     return 0;
 }
 
-static uint32_t DetectVersionFromPEResource() {
+static uint32_t DetectVersionFromPEResource(ResourceReading* reading = nullptr) {
     wchar_t exePath[MAX_PATH] = {};
     if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
-    return ReadUeVersionFromFile(exePath, "PE VERSIONINFO", "PE FileVersion");
+    return ReadUeVersionFromFile(exePath, "PE VERSIONINFO", "PE FileVersion", reading);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3146,6 +3165,27 @@ struct VersionScanResult {
     bool     preUE4  = false;
 };
 
+// What the two resource readings decide on their own, before any memory scan. [VER-410-GATE]
+//   tier 1 = take `version` and stop; tier 3 = a reading below the floor that nothing in the resources
+//   corroborates, so the memory scan gets its say; tier 0 = no reading at all.
+// Pure, so dll_core_test pins it: the refusal it can arm is the most destructive verdict detection reaches.
+struct ResourceVersionVerdict {
+    uint32_t version       = 0;
+    int      tier          = 0;
+    bool     byBuildString = false;  // corroborated by the exe's own engine build string
+    bool     byCrc         = false;  // corroborated by a CrashReportClient agreeing with the exe
+};
+
+static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFromFixedField,
+                                                    std::string_view exeProductVersion, uint32_t crcVer) {
+    (void)exeFromFixedField; (void)exeProductVersion;
+    ResourceVersionVerdict v;
+    v.version = crcVer ? crcVer : exeVer;
+    if (!v.version) return v;
+    v.tier = v.version >= Grimoire::MIN_SUPPORTED_UE_VERSION ? 1 : 3;
+    return v;
+}
+
 static VersionScanResult DetectVersionDetailed() {
     VersionScanResult r;
     Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
@@ -3158,7 +3198,8 @@ static VersionScanResult DetectVersionDetailed() {
     // has found — Avowed and DragonSword, each holding a persisted runtime raise of 504 — would
     // have been caught here, because CrashReportClient reports 503 for both.
     const uint32_t crcVer = DetectVersionFromCrashReportClient();
-    uint32_t ver = DetectVersionFromPEResource();
+    ResourceReading exeReading;
+    const uint32_t ver = DetectVersionFromPEResource(&exeReading);
 
     if (crcVer && ver && crcVer != ver) {
         // CrashReportClient wins: it is shipped BY the engine, while the game exe's VERSIONINFO is
@@ -3171,9 +3212,10 @@ static VersionScanResult DetectVersionDetailed() {
         Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient and the game exe AGREE on %u",
                    ver);
     }
-    if (crcVer) ver = crcVer;
+    const ResourceVersionVerdict rv = DecideResourceVersion(ver, exeReading.fromFixedField,
+                                                            exeReading.productVersion, crcVer);
 
-    if (ver) {
+    if (rv.version) {
         // ...with ONE exception: a result BELOW the support floor arms a total scan refusal, and
         // that is the most destructive verdict this detector can reach. A single uncorroborated
         // VS_FIXEDFILEINFO field is not enough evidence for it, and every other version signal in
@@ -3184,12 +3226,12 @@ static VersionScanResult DetectVersionDetailed() {
         // sweep (~0.35 s since the G2 gate, was ~29 s); the cost of being wrong the other way is refusing to scan a game that
         // works. (Audit #4 B25. Note the memory needle table floors at "4.18.", so a GENUINE
         // 4.0-4.10 title will not be corroborated and will pay that sweep — accepted.)
-        if (ver >= Grimoire::MIN_SUPPORTED_UE_VERSION) { r.version = ver; r.tier = 1; return r; }
+        if (rv.tier == 1) { r.version = rv.version; r.tier = 1; return r; }
         Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
                    "NOT accepting that on its own (it would refuse the whole scan). "
                    "Corroborating against the memory string scan.",
-                   ver, Grimoire::MIN_SUPPORTED_UE_VERSION);
-        r.version = ver;
+                   rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+        r.version = rv.version;
         r.tier    = 3;   // downgraded unless the memory scan below agrees
     }
 

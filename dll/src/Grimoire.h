@@ -9,6 +9,7 @@
 #include <atomic>
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
+#include <string_view>  // EngineBuildStringCode: a VERSIONINFO string is parsed without copying it
 
 namespace Grimoire {
 
@@ -1165,6 +1166,45 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
     if (major == 5 && minor <= UE_MAX_UE5_MINOR) return 500u + minor;
     if (major == 4 && minor <= UE_MAX_UE4_MINOR) return 400u + minor;
     return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The engine's own build string, as a second opinion on a reading below the floor [VER-410-GATE]
+//
+// A reading below MIN_SUPPORTED_UE_VERSION refuses the whole scan, so one VS_FIXEDFILEINFO field is
+// not enough evidence for it (audit #4 B25): a game's own version can read as 4.x. The same
+// VERSIONINFO carries a second signal that a game team does not write. UBT stamps the ProductVersion
+// STRING from the engine's Version.h as `Major.Minor.Patch-Changelist+Branch`, the branch either full,
+// naming the release a second time (`++depot+UE4-Releases+4.10`, later `++UE4+Release-4.18`), or
+// simplified (`UE4`); by 4.15 a game exe's string can also be branch first, `++UE4+Release-4.15-CL-0`.
+// Measured:
+//     IS Defense         4.10.2-0+++depot+UE4-Releases+4.10          (fixed version 4.10.2.0)
+//     launcher 4.10.4    4.10.4-2872498+++depot+UE4-Releases+4.10    (UE4Game and CrashReportClient)
+//     NEKOPALIVE         4.11.0-0+UE4                                (its CrashReportClient says the same)
+//     Extinction         ++UE4+Release-4.15-CL-0
+//     launcher 4.18.3    ++UE4+Release-4.18-CL-3832480               (UE4Game)
+//                        4.18.3-3832480+++UE4+Release-4.18           (its CrashReportClient)
+// The memory needle table cannot stand in for this: it floors at 4.18, so before this a genuine
+// 4.0-4.10 title could never be corroborated, and IS Defense was scanned instead of refused.
+
+/// The engine version a UBT build string names, as our version code; 0 when the string has none of
+/// the shapes above, its branch names another engine major, or a full branch repeats a different
+/// major.minor. A bare `4.10.3`, a four-part `4.10.2.0` or a game's `1.0.10897.0` is 0 by design.
+inline uint32_t EngineBuildStringCode(std::string_view s) {
+    (void)s;
+    return 0;
+}
+
+/// Whether a reading below the support floor is corroborated enough to refuse the scan.
+/// `code` is the GAME EXE's reading. `productVersion` is that exe's ProductVersion string, passed
+/// only when `code` came from a fixed field -- a code read out of that string cannot corroborate
+/// itself. `crcCode` is CrashReportClient's reading: it counts as agreement with the exe, never on
+/// its own, so a CrashReportClient beside an exe carrying a game version decides nothing here.
+/// At or above the floor the answer is false: nothing there needs corroborating.
+inline bool SubFloorReadingCorroborated(uint32_t code, std::string_view productVersion,
+                                        uint32_t crcCode) {
+    (void)code; (void)productVersion; (void)crcCode;
+    return false;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -4711,6 +4711,87 @@ static void Test_UeVersionCodeBounds() {
         EXPECT("UeVersionCode: oracle entry maps", Grimoire::UeVersionCode(o.maj, o.min) == o.want);
 }
 
+// [VER-410-GATE] The engine's build string in a VERSIONINFO. Every positive below is a ProductVersion read
+// off a real exe on this machine, except the 4.9 one, which is the 4.10 shape at the next version down.
+static void Test_EngineBuildStringCode() {
+    using Grimoire::EngineBuildStringCode;
+    // Version first, full branch -- the branch names the release again.
+    EXPECT("EngineBuildString: IS Defense (4.10.2) -> 410",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.10") == 410);
+    EXPECT("EngineBuildString: the launcher's 4.10.4 UE4Game -> 410",
+           EngineBuildStringCode("4.10.4-2872498+++depot+UE4-Releases+4.10") == 410);
+    EXPECT("EngineBuildString: the same shape at 4.9 -> 409",
+           EngineBuildStringCode("4.9.2-0+++depot+UE4-Releases+4.9") == 409);
+    EXPECT("EngineBuildString: the launcher's 4.18.3 CrashReportClient, the later full branch -> 418",
+           EngineBuildStringCode("4.18.3-3832480+++UE4+Release-4.18") == 418);
+    // Version first, simplified branch.
+    EXPECT("EngineBuildString: NEKOPALIVE and its CrashReportClient (4.11) -> 411",
+           EngineBuildStringCode("4.11.0-0+UE4") == 411);
+    // Branch first.
+    EXPECT("EngineBuildString: Extinction (4.15) -> 415", EngineBuildStringCode("++UE4+Release-4.15-CL-0") == 415);
+    EXPECT("EngineBuildString: the 4.15.3 corpus build -> 415",
+           EngineBuildStringCode("++UE4+Release-4.15-CL-3450819") == 415);
+    EXPECT("EngineBuildString: UE4Game 4.18 -> 418", EngineBuildStringCode("++UE4+Release-4.18-CL-3832480") == 418);
+    EXPECT("EngineBuildString: DropIn 4.27.2 -> 427", EngineBuildStringCode("++UE4+Release-4.27-CL-18319896") == 427);
+
+    // Not a build string: a version the game team could have typed.
+    EXPECT("EngineBuildString: a bare 4.10.1 is 0", EngineBuildStringCode("4.10.1") == 0);
+    EXPECT("EngineBuildString: a bare 4.10.3 is 0", EngineBuildStringCode("4.10.3") == 0);
+    EXPECT("EngineBuildString: the four-part 4.10.2.0 is 0", EngineBuildStringCode("4.10.2.0") == 0);
+    EXPECT("EngineBuildString: Gal*Gun's 1.0.10897.0 is 0", EngineBuildStringCode("1.0.10897.0") == 0);
+    EXPECT("EngineBuildString: the b25a marker's 4.5.0.0 is 0", EngineBuildStringCode("4.5.0.0") == 0);
+    EXPECT("EngineBuildString: the empty string is 0", EngineBuildStringCode("") == 0);
+    // The right shape, the wrong branch.
+    EXPECT("EngineBuildString: a full branch naming another release (4.9 after 4.10.2) is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.9") == 0);
+    EXPECT("EngineBuildString: the later full branch naming another release (4.11 after 4.10.2) is 0",
+           EngineBuildStringCode("4.10.2-0+++UE4+Release-4.11") == 0);
+    EXPECT("EngineBuildString: a branch the game named (no UE4) is 0", EngineBuildStringCode("4.10.2-0+MyGame") == 0);
+    EXPECT("EngineBuildString: a full branch naming another major is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE5-Releases+4.10") == 0);
+    EXPECT("EngineBuildString: a simplified branch naming another major is 0",
+           EngineBuildStringCode("4.11.0-0+UE5") == 0);
+    EXPECT("EngineBuildString: a branch-first string naming another major is 0",
+           EngineBuildStringCode("++UE4+Release-5.4-CL-0") == 0);
+    // The digit boundary on a minor: `+4.1` is not 4.10, and 4.100 is not 4.10 either.
+    EXPECT("EngineBuildString: a full branch `+4.1` after 4.10.2 is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.1") == 0);
+    EXPECT("EngineBuildString: a leading 4.1 against a branch 4.10 is 0",
+           EngineBuildStringCode("4.1.0-0+++depot+UE4-Releases+4.10") == 0);
+    EXPECT("EngineBuildString: 4.100 is 0", EngineBuildStringCode("4.100.0-0+UE4") == 0);
+    // Truncated or trailing text.
+    EXPECT("EngineBuildString: no changelist is 0", EngineBuildStringCode("4.10.2-+UE4") == 0);
+    EXPECT("EngineBuildString: a branch-first string without -CL- is 0",
+           EngineBuildStringCode("++UE4+Release-4.15") == 0);
+    EXPECT("EngineBuildString: trailing text after a full branch is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.10x") == 0);
+    EXPECT("EngineBuildString: a trailing space after a simplified branch is 0",
+           EngineBuildStringCode("4.11.0-0+UE4 ") == 0);
+}
+
+// [VER-410-GATE] What may refuse the scan: a reading below the floor, and a second signal naming the same version.
+static void Test_SubFloorReadingCorroborated() {
+    using Grimoire::SubFloorReadingCorroborated;
+    const char* isDefense = "4.10.2-0+++depot+UE4-Releases+4.10";
+    EXPECT("SubFloor: IS Defense's 410 with its own build string is corroborated",
+           SubFloorReadingCorroborated(410, isDefense, 0));
+    EXPECT("SubFloor: 410 with a CrashReportClient agreeing is corroborated", SubFloorReadingCorroborated(410, "", 410));
+    EXPECT("SubFloor: 409 with its own build string is corroborated",
+           SubFloorReadingCorroborated(409, "4.9.2-0+++depot+UE4-Releases+4.9", 0));
+
+    EXPECT("SubFloor: 410 with a bare 4.10.3 string is not", !SubFloorReadingCorroborated(410, "4.10.3", 0));
+    EXPECT("SubFloor: the b25a marker (405, 4.5.0.0) is not", !SubFloorReadingCorroborated(405, "4.5.0.0", 0));
+    EXPECT("SubFloor: 410 with a build string naming 4.11 is not",
+           !SubFloorReadingCorroborated(410, "4.11.0-0+UE4", 0));
+    EXPECT("SubFloor: 410 with a CrashReportClient saying 411 is not", !SubFloorReadingCorroborated(410, "", 411));
+    EXPECT("SubFloor: no reading at all is not", !SubFloorReadingCorroborated(0, "", 0));
+    // At or above the floor nothing needs corroborating, however strong the second signal is.
+    EXPECT("SubFloor: 427 with a matching build string is not a sub-floor reading",
+           !SubFloorReadingCorroborated(427, "++UE4+Release-4.27-CL-18319896", 0));
+    EXPECT("SubFloor: the floor itself (411, both signals) is not a sub-floor reading",
+           !SubFloorReadingCorroborated(411, "4.11.0-0+UE4", 411));
+}
+
 static void Test_CrashReportCandidates() {
     // The standard packaged layout: <root>/<Project>/Binaries/Win64/Game.exe, engine binaries at
     // <root>/Engine/Binaries/Win64/. The correct answer is three levels up.
@@ -9252,6 +9333,8 @@ int main() {
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);
     RUN(Test_UeVersionCodeBounds);
+    RUN(Test_EngineBuildStringCode);
+    RUN(Test_SubFloorReadingCorroborated);
     RUN(Test_CrashReportCandidates);
     RUN(Test_DynOff_FNameSlotVsSizeof);
     RUN(Test_Neu_Legacy_CasePreserving);
