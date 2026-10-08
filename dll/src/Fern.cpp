@@ -5023,7 +5023,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 item["class_name"] = cls;
                 item["func_name"]  = fname;
                 if (haveKey) item["fname_key"] = json::array({ key.fnIdx, key.fnNum, key.clsIdx, key.clsNum });
-                // Always, not only behind skip_per_frame: the UI marks the row, and its snapshot estimate counts it.
+                // Always, not only behind skip_per_frame: the flag describes the row, and the UI needs it on every row it
+                // shows.
                 if (Linie::IsPerFrame(snap[i], windowMs)) item["per_frame"] = true;
                 item["func_addr"]  = Renge::AddrToStr(snap[i].func);
                 item["num_parms"]  = fd.numParms;

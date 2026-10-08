@@ -283,7 +283,8 @@ Open work only. **Read this when deciding what to do next.**
   ⬜ **Open:** the budget re-weigh (a capture measured 20-28 µs, so D3's rule gives 50 a second; the maintainer
   decides), the register's "Live Funcs step 3" batch (Avowed's cost first), and the ledger's next items S3-U6 / U7 /
   A1 / R2 (deferred: B1 / E1 / P1 / O1).
-  ⬜ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08): with the Call Trace detail pane dragged
+  ✅ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08; fixed the same day, the list now cuts
+  its columns -- a visual check rides with the next walkthrough): with the Call Trace detail pane dragged
   wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
