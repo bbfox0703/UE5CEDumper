@@ -3000,7 +3000,7 @@ static uint32_t DetectVersionFromCrashReportClient() {
 // Pre-UE4 (Unreal Engine 3) positive identification
 //
 // The too-old gate can only be reached by a version NUMBER below 4.11, and the only path
-// that produces one is DetectVersionFromPEResource's major==4 branch — so a UE3 title, whose
+// that produces one is a VERSIONINFO reading's major==4 branch — so a UE3 title, whose
 // PE resource carries a game version like 1.0.x, slipped straight through it and consumed a
 // full 150-pattern AOB sweep to arrive at "no winner" plus a misleading "set an override"
 // nudge. These markers give the DLL a way to say "this is not Unreal 4/5 at all".
@@ -3178,11 +3178,18 @@ struct ResourceVersionVerdict {
 
 static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFromFixedField,
                                                     std::string_view exeProductVersion, uint32_t crcVer) {
-    (void)exeFromFixedField; (void)exeProductVersion;
     ResourceVersionVerdict v;
-    v.version = crcVer ? crcVer : exeVer;
+    v.version = crcVer ? crcVer : exeVer;   // engine-shipped beats game-authored
     if (!v.version) return v;
-    v.tier = v.version >= Grimoire::MIN_SUPPORTED_UE_VERSION ? 1 : 3;
+    if (v.version >= Grimoire::MIN_SUPPORTED_UE_VERSION) { v.tier = 1; return v; }
+    // Below the floor only the exe's own reading can be corroborated: a CrashReportClient that
+    // overrode a different exe reading, or stands alone, is one signal however it was read.
+    if (v.version == exeVer) {
+        v.byBuildString = exeFromFixedField
+                       && Grimoire::SubFloorReadingCorroborated(exeVer, exeProductVersion, 0);
+        v.byCrc         = Grimoire::SubFloorReadingCorroborated(exeVer, {}, crcVer);
+    }
+    v.tier = (v.byBuildString || v.byCrc) ? 1 : 3;
     return v;
 }
 
@@ -3217,16 +3224,33 @@ static VersionScanResult DetectVersionDetailed() {
 
     if (rv.version) {
         // ...with ONE exception: a result BELOW the support floor arms a total scan refusal, and
-        // that is the most destructive verdict this detector can reach. A single uncorroborated
-        // VS_FIXEDFILEINFO field is not enough evidence for it, and every other version signal in
-        // this file demands context. So a sub-4.11 PE reading does NOT short-circuit as tier 1 —
-        // fall through to the memory scan and let it agree or not. If it cannot corroborate, the
-        // terminal branch keeps the PE value but marks it tier 3, which sets bLowConfidence, which
-        // the refusal gate requires to be false. The cost of being wrong that way is a wasted
-        // sweep (~0.35 s since the G2 gate, was ~29 s); the cost of being wrong the other way is refusing to scan a game that
-        // works. (Audit #4 B25. Note the memory needle table floors at "4.18.", so a GENUINE
-        // 4.0-4.10 title will not be corroborated and will pay that sweep — accepted.)
-        if (rv.tier == 1) { r.version = rv.version; r.tier = 1; return r; }
+        // that is the most destructive verdict this detector can reach. A single VS_FIXEDFILEINFO
+        // field is not enough evidence for it, because a game's own version can read as 4.x
+        // (audit #4 B25). So a sub-4.11 reading short-circuits as tier 1 only when the resources
+        // corroborate it with a signal no game team authors: the exe's ProductVersion is the
+        // engine's own build string naming the same version, or a CrashReportClient agrees with
+        // the exe. The memory scan cannot do that job -- its needle table floors at "4.18.", so a
+        // genuine 4.0-4.10 title was never corroborated, stayed tier 3 and was scanned instead of
+        // refused, which is what IS Defense (4.10.2) hit [VER-410-GATE]. An uncorroborated reading
+        // still falls through to the memory scan; if that cannot agree, the terminal branch keeps
+        // the value at tier 3, which sets bLowConfidence, which the refusal gate requires to be
+        // false. The cost of being wrong that way is a wasted sweep (~0.35 s since the G2 gate,
+        // was ~29 s); the cost of being wrong the other way is refusing to scan a game that works.
+        if (rv.tier == 1) {
+            if (rv.version < Grimoire::MIN_SUPPORTED_UE_VERSION) {
+                std::string by;
+                if (rv.byBuildString)
+                    by = "the exe's own engine build string '" + exeReading.productVersion + "'";
+                if (rv.byCrc)
+                    by += std::string(by.empty() ? "" : " and ")
+                        + "a CrashReportClient agreeing with the exe";
+                Sein::Info("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u "
+                           "floor, CORROBORATED by %s — accepting it at tier 1, so the scan will be "
+                           "refused as too old.",
+                           rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION, by.c_str());
+            }
+            r.version = rv.version; r.tier = 1; return r;
+        }
         Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
                    "NOT accepting that on its own (it would refuse the whole scan). "
                    "Corroborating against the memory string scan.",
@@ -3236,6 +3260,13 @@ static VersionScanResult DetectVersionDetailed() {
     }
 
     Sein::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
+    // The line above is kept word for word (sweep_title.py times the fallback from it), but below the
+    // floor it is misleading: the resource was read, and only its corroboration is missing.
+    if (r.tier == 3)
+        Sein::Info("SCAN:Ver", "DetectVersion: (the PE resource did not fail: it read UE %u, below the "
+                   "%u floor, and neither an engine build string nor an agreeing CrashReportClient "
+                   "corroborates it — the memory scan decides)",
+                   r.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
 
     uintptr_t base = Macht::GetModuleBase(nullptr);
     size_t    size = Macht::GetModuleSize(nullptr);
@@ -5438,11 +5469,11 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     //      oracle, no pattern, so that half is reasoned, not measured. Verified against Epic's
     //      source: 4.7 is the flat TArray, 4.8 introduces the indirect array;
     //      4.10.2 has no FUObjectItem; 4.11.0 introduces
-    //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY via DetectVersionFromPEResource's
-    //      major==4 branch — the memory needle table floors at "4.18." and can never go below it,
-    //      which is worth knowing before assuming this path is exercised often. (It is not: no
-    //      title in the local 35-game corpus reports a 4.0-4.10 PE version. The 4.10 evidence is
-    //      the two reference builds in the AOB corpus, see Himmel.h's provenance block.)
+    //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY through a VERSIONINFO reading —
+    //      the memory needle table floors at "4.18." and can never go below it — and it is rare:
+    //      IS Defense (4.10.2, 2016) is the first installed title seen to report a 4.0-4.10 version.
+    //      The other 4.10 evidence is the two reference builds in the AOB corpus, see Himmel.h's
+    //      provenance block.
     //
     //  (b) UEVersion == PRE_UE4_SENTINEL_VERSION — positively identified as pre-UE4 (UE3) by
     //      CountPreUE4Markers. A different object model, not an older version of this one: no
@@ -5459,10 +5490,13 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // That gate is only as good as what counts as confident, and case (a) used to slip through:
     // DetectVersionFromPEResource's `major == 4` branch returned tier 1 off a single
     // uncorroborated VS_FIXEDFILEINFO field, so bLowConfidence was false and this refusal armed
-    // on one PE value. It no longer short-circuits below the floor — see the note in
-    // DetectVersionDetailed — so reaching here with case (a) now means the memory scan agreed, or
-    // at least did not contradict it with a tier 1/2 hit. Case (b) is unchanged: the pre-UE4
-    // sentinel is a POSITIVE 2-of-4 marker identification and is deliberately tier 1. (B25)
+    // on one PE value (B25). Then for a while nothing below the floor could be confident at all,
+    // since the memory scan that was to corroborate it cannot read a version under 4.18, and a
+    // genuine 4.10 title was scanned instead of refused. Reaching here with case (a) now means the
+    // resources corroborated the reading — the exe's ProductVersion is the engine's own build
+    // string naming the same version, or a CrashReportClient agrees with the exe — see
+    // DetectVersionDetailed [VER-410-GATE]. Case (b) is unchanged: the pre-UE4 sentinel is a
+    // POSITIVE 2-of-4 marker identification and is deliberately tier 1.
     if (out.UEVersion < Grimoire::MIN_SUPPORTED_UE_VERSION
         && out.bVersionDetected && !out.bLowConfidence && !out.bUserOverride) {
         out.bVersionTooOld = true;

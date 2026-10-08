@@ -1187,11 +1187,73 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
 // The memory needle table cannot stand in for this: it floors at 4.18, so before this a genuine
 // 4.0-4.10 title could never be corroborated, and IS Defense was scanned instead of refused.
 
+namespace BuildStringParse {
+// A greedy run of decimal digits, so a number ends at the first non-digit: that boundary is what keeps
+// a branch's `+4.1` from reading as 4.10, and lets `4.100` read as 100 for UeVersionCode to reject.
+inline bool ReadDecimal(std::string_view s, size_t& pos, uint32_t& out) {
+    const size_t start = pos;
+    uint64_t v = 0;
+    while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') {
+        v = v * 10 + static_cast<uint64_t>(s[pos] - '0');
+        if (v > 0xFFFFFFFFull) return false;
+        ++pos;
+    }
+    if (pos == start) return false;
+    out = static_cast<uint32_t>(v);
+    return true;
+}
+inline bool Consume(std::string_view s, size_t& pos, std::string_view lit) {
+    if (pos > s.size() || s.substr(pos, lit.size()) != lit) return false;
+    pos += lit.size();
+    return true;
+}
+// `<major>.<minor>` ending exactly at the end of `s`.
+inline bool ReadMajorMinorToEnd(std::string_view s, size_t pos, uint32_t& major, uint32_t& minor) {
+    return ReadDecimal(s, pos, major) && Consume(s, pos, ".") && ReadDecimal(s, pos, minor)
+        && pos == s.size();
+}
+}  // namespace BuildStringParse
+
 /// The engine version a UBT build string names, as our version code; 0 when the string has none of
 /// the shapes above, its branch names another engine major, or a full branch repeats a different
 /// major.minor. A bare `4.10.3`, a four-part `4.10.2.0` or a game's `1.0.10897.0` is 0 by design.
 inline uint32_t EngineBuildStringCode(std::string_view s) {
-    (void)s;
+    using namespace BuildStringParse;
+    size_t pos = 0;
+    uint32_t major = 0, minor = 0, branchMajor = 0, unused = 0;
+
+    // Branch first: ++UE<M>+Release-<M>.<m>-CL-<changelist>
+    if (Consume(s, pos, "++UE")) {
+        if (!ReadDecimal(s, pos, branchMajor) || !Consume(s, pos, "+Release-")
+            || !ReadDecimal(s, pos, major) || !Consume(s, pos, ".") || !ReadDecimal(s, pos, minor)
+            || !Consume(s, pos, "-CL-") || !ReadDecimal(s, pos, unused) || pos != s.size()
+            || branchMajor != major)
+            return 0;
+        return UeVersionCode(major, minor);
+    }
+
+    // Version first: <M>.<m>.<patch>-<changelist>+<branch>
+    if (!ReadDecimal(s, pos, major) || !Consume(s, pos, ".") || !ReadDecimal(s, pos, minor)
+        || !Consume(s, pos, ".") || !ReadDecimal(s, pos, unused) || !Consume(s, pos, "-")
+        || !ReadDecimal(s, pos, unused) || !Consume(s, pos, "+"))
+        return 0;
+    const uint32_t code = UeVersionCode(major, minor);
+    if (!code) return 0;
+    const size_t branch = pos;
+
+    // Simplified branch: UE<M>
+    if (Consume(s, pos, "UE") && ReadDecimal(s, pos, branchMajor) && pos == s.size())
+        return branchMajor == major ? code : 0;
+
+    // Full branch, which names the release again: ++depot+UE<M>-Releases+<M>.<m> or ++UE<M>+Release-<M>.<m>
+    for (const auto& [head, tail] : { std::pair<std::string_view, std::string_view>{ "++depot+UE", "-Releases+" },
+                                      std::pair<std::string_view, std::string_view>{ "++UE", "+Release-" } }) {
+        pos = branch;
+        uint32_t relMajor = 0, relMinor = 0;
+        if (Consume(s, pos, head) && ReadDecimal(s, pos, branchMajor) && Consume(s, pos, tail)
+            && ReadMajorMinorToEnd(s, pos, relMajor, relMinor))
+            return branchMajor == major && relMajor == major && relMinor == minor ? code : 0;
+    }
     return 0;
 }
 
@@ -1203,8 +1265,8 @@ inline uint32_t EngineBuildStringCode(std::string_view s) {
 /// At or above the floor the answer is false: nothing there needs corroborating.
 inline bool SubFloorReadingCorroborated(uint32_t code, std::string_view productVersion,
                                         uint32_t crcCode) {
-    (void)code; (void)productVersion; (void)crcCode;
-    return false;
+    if (code == 0 || code >= MIN_SUPPORTED_UE_VERSION) return false;
+    return EngineBuildStringCode(productVersion) == code || crcCode == code;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

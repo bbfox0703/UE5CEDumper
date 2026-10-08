@@ -129,14 +129,22 @@
 // collision rate of a 100-200 MB shipped game by several-fold.
 //
 // THE CORPUS NOW REACHES BELOW THE SUPPORTED FLOOR ON PURPOSE. UE 4.10.4 joined 2026-07-29 (two
-// rows, Shipping + Development, both full-PDB), and it is the ONLY place the regression matrix
-// carries a ❌: GObjects is unresolvable on both. That is the expected result — LEAVE IT ❌ — and
-// it converts "below 4.11 is gated as UNSUPPORTED" (Genau's MIN_SUPPORTED_UE_VERSION) from an
-// assertion into a measurement with two independent causes:
-//   (1) it cannot be FOUND — at 4.10 the array is a function-local static behind a magic-static
-//       guard in GetUObjectArray(), so consumers reach it by CALL and the address is never
-//       materialised inline; every GOBJ_* pattern is `lea reg,[rip+GUObjectArray]`-shaped. 4.11
-//       promoted it to a plain global, which is why 4.11 Nekopara resolves one row below.
+// rows, Shipping + Development: Epic's prebuilt UE4Game, whose PDBs hold PUBLIC SYMBOLS ONLY —
+// their type stream has 0 records, measured 2026-10-08 — so they name globals but are no type
+// oracle; for 4.10 types, IS Defense's own 4.10.2 PDB holds 1.32 M type records), and it is the ONLY
+// place the regression matrix carries a ❌: GObjects is unresolvable on both. That is the expected
+// result — LEAVE IT ❌ — and it converts "below 4.11 is gated as UNSUPPORTED" (Genau's
+// MIN_SUPPORTED_UE_VERSION) from an assertion into a measurement with two independent causes:
+//   (1) it cannot be FOUND in these builds — at 4.10 the array is a function-local static behind a
+//       magic-static guard in GetUObjectArray(), and in these binaries (linker 14.0, VS2015)
+//       consumers reach it by CALL, so the address is never materialised inline; every GOBJ_*
+//       pattern is `lea reg,[rip+GUObjectArray]`-shaped. That is the compiler's choice, not the
+//       engine's: IS Defense (4.10.2, linker 12.0 = VS2013) INLINES GetUObjectArray, so its address
+//       does appear — `lea rcx,[rip+GlobalUObjectArray+0x10]` at RVA 0x4461C2 and three
+//       `cmp reg,[rip+GlobalUObjectArray+0x1010]` (NumElements), checked against its PDB
+//       2026-10-08 [VER-410-GATE]. So cause (1) is a property of how a 4.10 title was built, and
+//       cause (2) of 4.10 itself. 4.11 promoted the array to a plain global, which is why 4.11
+//       Nekopara resolves one row below.
 //   (2) it could not be READ if it were — 4.10 has no FUObjectItem at all (TUObjectArray is
 //       TStaticIndirectArrayThreadSafeRead, elements are bare UObjectBase*), and ArrayLayout
 //       structurally cannot express its inline chunk table.

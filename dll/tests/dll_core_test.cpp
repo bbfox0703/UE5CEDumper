@@ -262,6 +262,9 @@ int main() {
         v = DecideResourceVersion(427, true, "++UE4+Release-4.27-CL-0", 410);
         check("VER-410-GATE: a CrashReportClient saying 410 against an exe saying 427 stays tier 3",
               v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(410, true, isDefense, 409);
+        check("VER-410-GATE: the exe's corroboration does not carry over to a CrashReportClient overriding it (409)",
+              v.version == 409 && v.tier == 3 && !v.byBuildString);
         v = DecideResourceVersion(410, false, "++UE4+Release-4.10-CL-0", 0);
         check("VER-410-GATE: a code read out of the string cannot corroborate itself -- tier 3", v.tier == 3);
         v = DecideResourceVersion(410, true, "4.10.3", 0);

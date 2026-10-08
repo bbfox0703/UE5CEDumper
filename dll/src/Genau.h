@@ -94,7 +94,18 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // rebuilt per game, so at one version there are three distinct binaries (4.27.2.0 = Editor
 // 19,469,792 B / DQ I&II 19,496,448 B / P3R 19,487,232 B). tools/ue-crc-oracle.json therefore pins
 // the ProductVersion -> code ARITHMETIC against 8 real Epic binaries, and is not an allow-list.
-constexpr uint32_t kVersionDetectLogicRev = 7;
+// rev 8 (2026-10-08, [VER-410-GATE]): a reading below the 4.11 floor is accepted at tier 1 when the
+// resources corroborate it -- the exe's ProductVersion string is the engine's own build string naming
+// the same version, or a CrashReportClient agrees with the exe -- so a genuine 4.0-4.10 title is
+// refused cleanly instead of scanned. Rev 7 could not do that: its only corroboration was the memory
+// string scan, whose table floors at 4.18. The bump is MANDATORY for the very title that found it:
+// the maintainer's machine holds IS Defense (4.10.2) as {ueVersion 410, lowConfidence true, rev 7},
+// and the cache-reuse branch would restore that low confidence forever, keeping the gate off. A
+// refused title is not re-saved (the gate returns before SaveResults), so IS Defense re-detects on
+// every launch. That is cheap: a corroborated reading returns before the memory sweep, so a launch
+// pays the two resource reads (3 ms in IS Defense's rev-7 log) and not the 0.25 s sweep that log
+// also shows.
+constexpr uint32_t kVersionDetectLogicRev = 8;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)
@@ -200,8 +211,9 @@ struct EnginePointers {
     ///
     /// Covers TWO cases, distinguished downstream by UEVersion alone (no extra field):
     ///   * UEVersion 400..410 — a CONFIDENTLY detected UE 4.0-4.10, i.e. "the right family,
-    ///     a version too old". Only reachable via DetectVersionFromPEResource's major==4
-    ///     branch; the memory needle table floors at 4.18 and can never go below it.
+    ///     a version too old". Only reachable through a VERSIONINFO reading that the resources
+    ///     corroborate (the exe's engine build string, or an agreeing CrashReportClient); the
+    ///     memory needle table floors at 4.18 and can never go below it. [VER-410-GATE]
     ///   * UEVersion == Grimoire::PRE_UE4_SENTINEL_VERSION (300) — positively identified as
     ///     pre-UE4 (UE3) by CountPreUE4Markers, i.e. "not this engine family at all". Set only
     ///     in DetectVersionDetailed's terminal branch, so it requires that the PE resource and
