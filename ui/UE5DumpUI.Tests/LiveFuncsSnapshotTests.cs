@@ -297,6 +297,36 @@ public class LiveFuncsSnapshotTests
         Assert.True(vm.SnapshotEstimateWarn);
     }
 
+    /// <summary>T13's orange compares the busiest choice with what the trace keeps, and the trace keeps less with a
+    /// smaller buffer or more ticked calls: either change can flip it, and a flip nobody raises leaves the line its old
+    /// colour, and the folded summary disagreeing with it.</summary>
+    [Fact]
+    public async Task The_parameter_estimates_orange_is_raised_when_the_trace_buffer_or_a_tick_flips_it()
+    {
+        var (vm, dump) = MakeVm();
+        // A::Hot, chosen: 100 calls a second, and 8 MB of 2,072-byte slots keeps 2,024 of them, ~20 s. The trace keeps
+        // 32 MB / (100 x 80 B) = ~4,194 s of the chosen calls alone, but with A::Busy ticked (30,000 a second) ~14 s, and
+        // ~28 s once the trace has 64 MB.
+        dump.NextGet = ResultOf(10_000, Row("A", "Hot", "0x1", KeyF, count: 1_000, size: 2048),
+                                Row("A", "Busy", "0x2", KeyG, count: 300_000));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.SnapshotBufferExponent = 3;
+        vm.TraceBufferExponent = 5;
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "Hot"));
+        Assert.True(vm.SnapshotEstimateWarn);
+        var raised = Raised(vm);
+
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "Busy"));
+        Assert.False(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        raised.Clear();
+        vm.TraceBufferExponent = 6;
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+    }
+
     // ---- U7 ----
 
     [Fact]
