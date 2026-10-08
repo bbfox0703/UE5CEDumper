@@ -309,7 +309,8 @@ int main() {
         dir.resize(dir.find_last_of(L"\\/") + 1);
         auto res = [&](const wchar_t* stem) { return dir + L"verres_" + stem + L".dll"; };
         const std::wstring b25c = res(L"b25c_corroborated"), b25d = res(L"b25d_bare"), gameOnly = res(L"game_only");
-        for (const std::wstring* f : { &b25c, &b25d, &gameOnly })
+        const std::wstring gameBuild410 = res(L"game_buildstring_410"), gameBuild411 = res(L"game_buildstring_411");
+        for (const std::wstring* f : { &b25c, &b25d, &gameOnly, &gameBuild410, &gameBuild411 })
             check("VER-410-GATE glue setup: the resource fixture was built beside the test",
                   GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
                   Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
@@ -344,6 +345,32 @@ int main() {
               && d.exeVersion == 410, gb);
         auto none = phase(dir + L"verres_absent.dll", L"");
         check("VER-410-GATE glue: a file that is not there reads nothing", !none.done && none.result.version == 0, gb);
+
+        // [VER-410-GATE] review (rev 9): an exe whose fixed fields carry the GAME's version, but whose ProductVersion
+        // string is the engine's own build string, used to read nothing -- the string fallback knew only the
+        // branch-first shape -- so a 4.10 title beside an agreeing CrashReportClient was scanned at tier 3, and a
+        // 4.11-4.17 title fell to the memory scan, whose needles floor at 4.18. The string is now read, as a code
+        // that cannot corroborate itself: below the floor only an agreeing CrashReportClient makes it tier 1.
+        auto s10 = phase(gameBuild410, L"");
+        check("VER-410-GATE rev 9 ⭐: game fixed fields + a 4.10 engine build string read 410, from the string",
+              s10.exeVersion == 410 && !s10.exeReading.fromFixedField, gb);
+        check("VER-410-GATE rev 9 ⭐: ...which alone stays tier 3 -- the string does not corroborate itself",
+              !s10.done && s10.result.version == 410 && s10.result.tier == 3 && !s10.verdict.byBuildString, gb);
+        auto s10c = phase(gameBuild410, b25c.c_str());
+        check("VER-410-GATE rev 9 ⭐: ...and beside a CrashReportClient agreeing on 410 it stops at tier 1, the exe's",
+              s10c.done && s10c.result.version == 410 && s10c.result.tier == 1 && s10c.verdict.byCrc
+              && !s10c.verdict.byBuildString && s10c.verdict.source == Genau::VersionSource::Exe, gb);
+        auto s11 = phase(gameBuild411, L"");
+        check("VER-410-GATE rev 9 ⭐: game fixed fields + a simplified 4.11 build string read 411 at tier 1",
+              s11.done && s11.result.version == 411 && s11.result.tier == 1 && s11.exeVersion == 411
+              && !s11.exeReading.fromFixedField, gb);
+        auto g0 = phase(gameOnly, L"");
+        check("VER-410-GATE rev 9 control: a game version with no engine build string still reads nothing",
+              !g0.done && g0.result.version == 0 && g0.exeVersion == 0, gb);
+        // The new readings change the verdict a cached title holds, and the cache-reuse branch would restore the old
+        // one for ever: the string fallback's widening is a logic change, rev 8 -> 9.
+        check("VER-410-GATE rev 9: the detection logic rev was bumped for the string fallback",
+              Genau::kVersionDetectLogicRev >= 9);
     }
 
     {   blk("A7 — ForEach honours Tot::Requested() and stops");
