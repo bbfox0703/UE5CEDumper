@@ -668,4 +668,21 @@ if(BUILD_DLL_TESTS)
     endif()
 
     target_link_libraries(dll_core_test PRIVATE Zydis version)
+
+    # ---- dll_core_test's VERSIONINFO fixtures: resource-only DLLs ([VER-410-GATE] review) ----------
+    #
+    # Genau reads a UE version out of a FILE (GetFileVersionInfoW), and one file carries one
+    # VERSIONINFO, so every resource shape the version gate must judge is a file of its own: a DLL
+    # holding nothing but that resource, linked /NOENTRY. dll_core_test finds them beside itself.
+    # The b25c / b25d scripts are the very resources tools/verify/b25_marker_exes.py stamps into its
+    # live marker exes -- it reads them from tests/res -- so the offline test and the live one judge
+    # the same bytes.
+    foreach(_vr b25c_corroborated b25d_bare game_buildstring_410 game_buildstring_411 game_only)
+        add_library(verres_${_vr} MODULE ${CMAKE_CURRENT_SOURCE_DIR}/tests/res/${_vr}.rc)
+        set_target_properties(verres_${_vr} PROPERTIES LINKER_LANGUAGE CXX)
+        if(MSVC)
+            target_link_options(verres_${_vr} PRIVATE /NOENTRY)
+        endif()
+        add_dependencies(dll_core_test verres_${_vr})
+    endforeach()
 endif()

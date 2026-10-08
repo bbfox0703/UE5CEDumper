@@ -281,6 +281,49 @@ int main() {
         check("VER-410-GATE: no reading at all is tier 0", v.version == 0 && v.tier == 0);
     }
 
+    // [VER-410-GATE] review: the same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed
+    // on, and the tier-1 short-circuit -- on real files. dll/CMakeLists.txt builds each dll/tests/res/*.rc into a
+    // resource-only DLL beside this exe; b25c / b25d are the resources the b25 rig's live marker exes carry. Only the
+    // pure helpers were pinned before, and a refactor that dropped the string or the short-circuit stayed green.
+    {   blk("VER-410-GATE glue - the resource half of detection, run on built VERSIONINFO files");
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring dir(self);
+        dir.resize(dir.find_last_of(L"\\/") + 1);
+        auto res = [&](const wchar_t* stem) { return dir + L"verres_" + stem + L".dll"; };
+        const std::wstring b25c = res(L"b25c_corroborated"), b25d = res(L"b25d_bare"), gameOnly = res(L"game_only");
+        for (const std::wstring* f : { &b25c, &b25d, &gameOnly })
+            check("VER-410-GATE glue setup: the resource fixture was built beside the test",
+                  GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
+                  Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
+        const char* isDefense = "4.10.2-0+++depot+UE4-Releases+4.10";
+        char gb[160];
+        auto phase = [&](const std::wstring& exe, const wchar_t* crc) {
+            const auto p = Genau::DetectVersionFromResources(exe.c_str(), crc);
+            snprintf(gb, sizeof(gb), "done %d version %u tier %d build %d crc %d fixed %d pv '%s'", p.done ? 1 : 0,
+                     p.result.version, p.result.tier, p.verdict.byBuildString ? 1 : 0, p.verdict.byCrc ? 1 : 0,
+                     p.exeReading.fromFixedField ? 1 : 0, p.exeReading.productVersion.c_str());
+            return p;
+        };
+
+        auto c = phase(b25c, L"");
+        check("VER-410-GATE glue: b25c reads fixed 4.10.2 and hands its ProductVersion string on",
+              c.exeReading.fromFixedField && c.exeReading.productVersion == isDefense, gb);
+        check("VER-410-GATE glue ⭐: b25c (IS Defense's resource) stops at tier 1 on its engine build string",
+              c.done && c.result.version == 410 && c.result.tier == 1 && c.verdict.byBuildString, gb);
+        auto d = phase(b25d, L"");
+        check("VER-410-GATE glue ⭐: b25d (a bare 4.10.3) goes on to the memory scan at tier 3",
+              !d.done && d.result.version == 410 && d.result.tier == 3, gb);
+        auto dc = phase(b25d, b25c.c_str());
+        check("VER-410-GATE glue ⭐: b25d beside a CrashReportClient agreeing on 410 stops at tier 1",
+              dc.done && dc.result.version == 410 && dc.result.tier == 1 && dc.verdict.byCrc, gb);
+        auto gc = phase(gameOnly, b25c.c_str());
+        check("VER-410-GATE glue: a CrashReportClient's 410 beside an exe carrying only a game version stays tier 3",
+              !gc.done && gc.result.version == 410 && gc.result.tier == 3, gb);
+        auto none = phase(dir + L"verres_absent.dll", L"");
+        check("VER-410-GATE glue: a file that is not there reads nothing", !none.done && none.result.version == 0, gb);
+    }
+
     {   blk("A7 — ForEach honours Tot::Requested() and stops");
         ResetCancel();
         Tot::g_perCommand.store(true);          // cancel BEFORE the walk starts

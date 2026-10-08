@@ -2949,9 +2949,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     return 0;
 }
 
-static uint32_t DetectVersionFromPEResource(ResourceReading* reading = nullptr) {
-    wchar_t exePath[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
+static uint32_t DetectVersionFromPEResource(const wchar_t* exePath, ResourceReading* reading = nullptr) {
     return ReadUeVersionFromFile(exePath, "PE VERSIONINFO", "PE FileVersion", reading);
 }
 
@@ -2973,10 +2971,7 @@ static uint32_t DetectVersionFromPEResource(ResourceReading* reading = nullptr) 
 //
 // ⚠ Absence is the COMMON case, not an error: 8 of 66 folders on the maintainer's machine ship
 // one, and Avowed / DQ XI S / OCTOPATH / DumperTest ship none.
-static uint32_t DetectVersionFromCrashReportClient() {
-    wchar_t exePath[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
-
+static uint32_t DetectVersionFromCrashReportClient(const wchar_t* exePath) {
     for (const std::wstring& cand : Grimoire::CrashReportCandidates(exePath)) {
         if (GetFileAttributesW(cand.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
         uint32_t v = ReadUeVersionFromFile(cand.c_str(),
@@ -3193,9 +3188,24 @@ static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFro
     return v;
 }
 
-static VersionScanResult DetectVersionDetailed() {
-    VersionScanResult r;
-    Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
+// The resource half of DetectVersionDetailed: the game exe's VERSIONINFO and a CrashReportClient's, and what they
+// decide before any memory scan. `done` = the verdict stands at tier 1; otherwise `result` carries a sub-floor
+// reading at tier 3 (or nothing) for the memory scan to decide.
+// It takes the paths, rather than asking the process for its own, so dll_core_test runs it -- the readings, the
+// decision and the short-circuit together -- on resource-only DLLs built from dll/tests/res: the glue between the
+// pinned helpers had no test, and a refactor that dropped it would have reverted IS Defense to "scanned"
+// [VER-410-GATE] review. `crcPath`: the CrashReportClient to read; nullptr looks beside `exePath` the way the DLL
+// does, "" reads none.
+struct ResourcePhase {
+    VersionScanResult      result;
+    ResourceVersionVerdict verdict;
+    ResourceReading        exeReading;
+    bool                   done = false;
+};
+
+static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wchar_t* crcPath) {
+    ResourcePhase p;
+    VersionScanResult& r = p.result;
 
     // Fast path: two INDEPENDENT resource reads (both treated as Tier 1 — high confidence).
     //
@@ -3204,9 +3214,12 @@ static VersionScanResult DetectVersionDetailed() {
     // disagree the disagreement is itself the finding: both poisoned hint-cache entries this repo
     // has found — Avowed and DragonSword, each holding a persisted runtime raise of 504 — would
     // have been caught here, because CrashReportClient reports 503 for both.
-    const uint32_t crcVer = DetectVersionFromCrashReportClient();
-    ResourceReading exeReading;
-    const uint32_t ver = DetectVersionFromPEResource(&exeReading);
+    const uint32_t crcVer = !crcPath ? DetectVersionFromCrashReportClient(exePath)
+                          : *crcPath ? ReadUeVersionFromFile(crcPath, "CrashReportClient ProductVersion",
+                                                             "CrashReportClient FileVersion")
+                                     : 0;
+    ResourceReading& exeReading = p.exeReading;
+    const uint32_t ver = DetectVersionFromPEResource(exePath, &exeReading);
 
     if (crcVer && ver && crcVer != ver) {
         // CrashReportClient wins: it is shipped BY the engine, while the game exe's VERSIONINFO is
@@ -3219,8 +3232,8 @@ static VersionScanResult DetectVersionDetailed() {
         Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient and the game exe AGREE on %u",
                    ver);
     }
-    const ResourceVersionVerdict rv = DecideResourceVersion(ver, exeReading.fromFixedField,
-                                                            exeReading.productVersion, crcVer);
+    p.verdict = DecideResourceVersion(ver, exeReading.fromFixedField, exeReading.productVersion, crcVer);
+    const ResourceVersionVerdict& rv = p.verdict;
 
     if (rv.version) {
         // ...with ONE exception: a result BELOW the support floor arms a total scan refusal, and
@@ -3249,7 +3262,7 @@ static VersionScanResult DetectVersionDetailed() {
                            "refused as too old.",
                            rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION, by.c_str());
             }
-            r.version = rv.version; r.tier = 1; return r;
+            r.version = rv.version; r.tier = 1; p.done = true; return p;
         }
         Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
                    "NOT accepting that on its own (it would refuse the whole scan). "
@@ -3258,6 +3271,18 @@ static VersionScanResult DetectVersionDetailed() {
         r.version = rv.version;
         r.tier    = 3;   // downgraded unless the memory scan below agrees
     }
+    return p;
+}
+
+static VersionScanResult DetectVersionDetailed() {
+    Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
+
+    // An empty path (GetModuleFileNameW failed) reads nothing from either source, as the readers always did.
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    const ResourcePhase rp = DetectVersionFromResources(exePath, nullptr);
+    if (rp.done) return rp.result;
+    VersionScanResult r = rp.result;
 
     Sein::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
     // The line above is kept word for word (sweep_title.py times the fallback from it), but below the
