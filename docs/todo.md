@@ -433,6 +433,17 @@ source and editor are installed for when they are needed.
   **The second review's findings, fixed 2026-10-08:** the main recording's `pe_profile_get` was never checked: an
   error, no window or no row for the probe read as 0.0/s and stood the budget check down. It is now a check of its
   own (ok, a window, the row with a count), and a broken reply fails there while the budget check still runs.
+  **Round 4 (2026-10-09):** the main rate is the table's, or the parameter ring's (written + dropped over the trace's
+  span) where that is higher, so a plausible but wrong table cannot stand the check down (807b0de9 / adac8c4c in the
+  worktree, cherry-picked; R1c killed).
+  ⬜ `[SNAPRIG-ROUND5]` (LOW, the round-4 review of the rig, 2026-10-09; left for after the live checks): (1) the
+  ring rate's span is not pinned -- `FakeClock` moves only on sleep, so a span shortened to `span_lo` (run_stacks) or
+  `--record-s` (run_full) overstates the rate and survives (R1g, R1h); give the scripted DLL the clock so Start and
+  Stop take time and its rings count only while the trace is open, add a control just under 1.5x, and take the
+  clock after the Stop's reply in run_stacks. (2) `unexplained_refusals` weighs SnapProbe_PerFrame's take of the total
+  at min(per, its average) with no margin, while Linie's StackAdmit lets it take every call of a second the ring
+  allows: give it the same 1.5x the others get, or count refusals unexplained only where per caps the probe; helper
+  control: per 100, total 40, pf 30 is explained. Effort **S**.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
