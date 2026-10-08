@@ -564,28 +564,52 @@ public class CallTraceViewModelTests
         Assert.DoesNotContain(Lead("str.CT.Status.Stacks"), plain.StatusText);
     }
 
-    [Fact]
-    public async Task A_new_load_lets_go_of_the_trace_on_screen_before_it_reads()
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task A_new_load_lets_go_of_the_trace_on_screen_before_it_reads(bool stackShown)
     {
         // [TRACE-UI-LOAD-MEMORY] Live, build 3634: a 512 MB load after a 128 MB one peaked at 3.77 GB, the earlier
-        // trace still held beside the new window and columns. The new read starts without it.
-        var dump = Dump();
+        // trace still held beside the new window and columns. The new read starts without it: off the screen, and
+        // reachable from nothing the view model keeps -- a stack shown from it too, whose frames were named against
+        // that trace's functions (review U5-CODEINDEX-PINS-OLD-TRACE).
+        var dump = stackShown ? StackDump() : Dump();
         var (vm, _) = MakeVm(dump);
         await vm.LoadCommand.ExecuteAsync(null);
         Assert.NotNull(vm.Trace);
+        if (stackShown)
+        {
+            vm.SelectedIndex = 0;
+            Assert.NotEmpty(vm.StackRows);
+        }
+        var first = Weakly(vm);
 
-        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 9, FirstValid = 0, QpcFreq = 1_000_000 };
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = dump.Info.Written, FirstValid = 0,
+                                    QpcFreq = 1_000_000 };
         dump.NamesGen = 8;
-        CallTrace? heldDuringRead = vm.Trace;
-        bool wasShown = true;
-        dump.DuringObjNames = () => { heldDuringRead = vm.Trace; wasShown = vm.HasTrace; };
+        bool heldDuringRead = true, wasShown = true, firstAlive = true;
+        dump.DuringObjNames = () =>
+        {
+            heldDuringRead = vm.Trace != null;
+            wasShown = vm.HasTrace;
+            GC.Collect();
+            GC.WaitForPendingFinalizers();
+            GC.Collect();
+            firstAlive = first.IsAlive;
+        };
         await vm.LoadCommand.ExecuteAsync(null);
 
-        Assert.Null(heldDuringRead);   // let go before the read
+        Assert.False(heldDuringRead);   // let go before the read
         Assert.False(wasShown);
-        Assert.NotNull(vm.Trace);      // and the new one shown after it
+        Assert.False(firstAlive);       // and nothing else keeps it while the read runs
+        Assert.NotNull(vm.Trace);       // and the new one shown after it
         Assert.True(vm.HasTrace);
     }
+
+    /// <summary>A weak reference to the trace on screen, made in a frame of its own: a local of the async test would
+    /// keep the trace alive itself.</summary>
+    [System.Runtime.CompilerServices.MethodImpl(System.Runtime.CompilerServices.MethodImplOptions.NoInlining)]
+    private static WeakReference Weakly(CallTraceViewModel vm) => new(vm.Trace);
 
     [Fact]
     public async Task A_long_read_collects_the_pages_garbage_as_it_goes()
