@@ -158,7 +158,8 @@
            module form) and ASM (CE's disassembler) for view D. The grid never sorts: a stack's order is what it says,
            and the DataGrid's reflection sort fails in the trimmed build. Where takes what the fixed columns leave of a
            wide pane, so a long name is not cut beside empty space; its 420 floor makes a narrow pane scroll sideways
-           instead of squeezing the Where text. -->
+           instead of squeezing the Where text. A star column makes the grid take a narrow pane's shortfall out of the
+           other columns down to their floors, so Address's floor is its width. -->
       <TabItem Header="{StaticResource str.CT.Tab.Stack}" FontSize="12">
         <DockPanel Background="#1E1E1E">
           <TextBlock DockPanel.Dock="Top" Text="{Binding StackNote}" TextWrapping="Wrap"
@@ -178,7 +179,7 @@
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Address}" Width="170" MinWidth="60">
+              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Address}" Width="170" MinWidth="170">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="vm:StackFrameRow">
                     <TextBlock Text="{Binding Address}" ToolTip.Tip="{Binding Address}" Foreground="#7FB6E8"
