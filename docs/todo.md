@@ -477,8 +477,8 @@ source and editor are installed for when they are needed.
   on what a clean analyzer result proves (a0952263, 022d19f0). Effort **S**. The second review's LOWs (an unfold-path
   test, two more estimate-raise cases, one settled post, two counting comments, the headless width note) were fixed
   2026-10-09, in round 4 (under [LF-COMPACT-TOP] and [LF-SNAP-WARN-RAISE]).
-  ⬜ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08; built and review-fixed, a live look
-  owed): with a stack chosen the controls above the Live Funcs table took 13-16 lines, over 40 % of the panel; the
+  ✅ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08; built and review-fixed; **live
+  2026-10-09**, the last sentence): with a stack chosen the controls above the Live Funcs table took 13-16 lines, over 40 % of the panel; the
   4-line stack warning was the biggest block. Built: (1) the warning is one line of essentials with a Details toggle
   for the unchanged whole text, the orange variant kept (7e0bb92a / 5f799482); (3) the "No baseline" hint is in Set
   Baseline's tooltip and the baseline line shows only with a baseline or Diff on (8c0638c7 / b6132dfc); (2) the
@@ -503,7 +503,13 @@ source and editor are installed for when they are needed.
   pinned and each raise case settles its own post (8d93d359; M1, M4 killed), the raise's comments stop counting
   inputs and bindings (178ecd96), and the one-line check's 0.7 is stated against the harness's row, the panel alone
   at 1,373 px, about 0.95 of the app's 1,011-px row beside the object tree -- the 1,308 px above did not reproduce
-  (935d3c37, working-lessons 3.xd).
+  (935d3c37, working-lessons 3.xd). **Live 2026-10-09**, build 3645 on DumperTest58 Shipping, the app maximized on
+  the laptop panel: the stack warning is the one line, and Details opens the whole text and closes it again; no
+  baseline line shows without a baseline; folded, the settings are the header and a summary that wraps once ("Fetch
+  limit 512, min calls 1 · Trace on, 64 MB · ticked 1, parameters 1, stacks 1 · stack budget Standard · snapshot
+  buffer 32 MB · ⚠ the busiest parameter choice keeps less time than the trace · ⚠ stacks: save first, choose
+  few"), orange; a tick under the fold changed it at once (ticked 0); Open in Call Trace joined the header once a
+  trace existed; and the fold was in ui-options.json (`captureSettingsCollapsed: true`) the moment it was clicked.
   ✅ `[LF-SNAP-WARN-RAISE]` (LOW, found by the [LF-COMPACT-TOP] review 2026-10-08, older than it; fixed the same day,
   offline by a unit test, seen live with [LF-COMPACT-TOP]'s look): `SnapshotEstimateWarn`, T13's orange on the
   parameter estimate, weighs the busiest choice against what the trace keeps (`TraceSecondsForComparison`), which
