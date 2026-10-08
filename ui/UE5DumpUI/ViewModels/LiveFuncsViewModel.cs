@@ -377,8 +377,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public bool HasStackChoices => StackFunctions.Count > 0;
     public string StackCountText => Say("str.LF.Stack.Count", StackFunctions.Count);
 
-    /// <summary>What a Start sends for every stack: the DLL's defaults, provisional until measured live (D3). No control
-    /// sets them; a test reads Linie.h and pins these to it.</summary>
+    /// <summary>What a Start sends for every stack, the budget under Standard: the DLL's defaults, provisional until
+    /// measured live (D3). The depth has no control; a test reads Linie.h and pins these to it.</summary>
     internal const int StackDepth = 16;
     internal const int StackPerFuncPerSec = 100;
     internal const int StackTotalPerSec = 200;
@@ -387,10 +387,37 @@ public partial class LiveFuncsViewModel : ViewModelBase
     internal const int StackLowPerFuncPerSec = 50;
     internal const int StackLowTotalPerSec = 100;
 
-    public bool StackBudgetLow { get; set; }
-    public bool StackBudgetStandard { get => !StackBudgetLow; set { if (value) StackBudgetLow = false; } }
-    public string StackStandardTip => "";
-    public string StackLowTip => "";
+    private bool _stackBudgetLow;
+    /// <summary>The Low budget for the next Start's stacks; false is Standard. Not saved in ui-options.json with the
+    /// panel's other options: every app run starts at Standard. Refused while recording, as the radios are disabled
+    /// then: the recording runs on the budget it started with, and the radios go on showing it.</summary>
+    public bool StackBudgetLow
+    {
+        get => _stackBudgetLow;
+        set
+        {
+            if (value == _stackBudgetLow) return;
+            if (!IsRecording) _stackBudgetLow = value;
+            // Raised for a refused write too, so a control that sent it reads the kept value back.
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(StackBudgetStandard));
+        }
+    }
+
+    /// <summary>The Standard radio's side of <see cref="StackBudgetLow"/>. Only a check writes: when the Low radio is
+    /// checked, the group's uncheck of this one arrives as false, and the Low radio has written its own true.</summary>
+    public bool StackBudgetStandard
+    {
+        get => !StackBudgetLow;
+        set { if (value) StackBudgetLow = false; }
+    }
+
+    /// <summary>What a Start sends for every stack ring, and for all of them together, under the budget chosen.</summary>
+    private int StackBudgetPerFunc => StackBudgetLow ? StackLowPerFuncPerSec : StackPerFuncPerSec;
+    private int StackBudgetTotal => StackBudgetLow ? StackLowTotalPerSec : StackTotalPerSec;
+
+    public string StackStandardTip => Say("str.Tip.LF.Stack.Standard", StackPerFuncPerSec, StackTotalPerSec);
+    public string StackLowTip => Say("str.Tip.LF.Stack.Low", StackLowPerFuncPerSec, StackLowTotalPerSec);
 
     /// <summary>A Start allocates the snapshot buffer for any choice that fills it (D4).</summary>
     private bool AnySnapshotChoice => _snapChosen.Count > 0 || _stackChosen.Count > 0;
@@ -799,8 +826,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 {
                     Funcs = _stackChosen.Named(),
                     Depth = StackDepth,
-                    PerRingPerSec = StackPerFuncPerSec,
-                    TotalPerSec = StackTotalPerSec,
+                    PerRingPerSec = StackBudgetPerFunc,
+                    TotalPerSec = StackBudgetTotal,
                 },
             },
         };

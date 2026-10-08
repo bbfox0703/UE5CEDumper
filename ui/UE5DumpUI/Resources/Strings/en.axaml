@@ -1281,9 +1281,15 @@
     <sys:String x:Key="str.LF.Stack.NeedsTrace">Native stacks are taken only with Trace on: none were taken.</sys:String>
     <sys:String x:Key="str.LF.Stack.StopNote">Stacks: {0:N0} taken; {1:N0} calls over the budget had none ({2:N0} of them not recorded at all).</sys:String>
     <sys:String x:Key="str.LF.Stack.Cost">About {0:0.0} µs a capture, at most {1:0.0} µs.</sys:String>
+    <sys:String x:Key="str.LF.Stack.Budget">Stack budget:</sys:String>
+    <sys:String x:Key="str.LF.Stack.Standard">Standard</sys:String>
+    <sys:String x:Key="str.LF.Stack.Low">Low</sys:String>
+    <sys:String x:Key="str.LF.Stack.Warning">Native stacks are not a debugger capture like Cheat Engine's: the dumper reads the stack in software, inside the hooked call, on the game's own thread. That is far slower than a parameter copy (microseconds a capture: a few on a fast PC, more on a slower one), and the time is added to the game's frame. Many captures in one frame make that frame longer, which shows as stutter. The budget caps how many are taken each second; it keeps the first calls of each second, so they can bunch up at its start. Low halves it. The walk is guarded against the cases foreseen (the stack's bounds and the room left on it, faults, stopping mid-capture), but an unforeseen case could still stall or crash the game: save first, and choose few functions.</sys:String>
     <sys:String x:Key="str.LF.PerFrame.Marker">(per frame)</sys:String>
     <sys:String x:Key="str.Tip.LF.Snap.Choose">Copy this function's parameters on each traced call (by name: it is followed through unloads). Shown in the Call Trace tab's Parameters view.</sys:String>
-    <sys:String x:Key="str.Tip.LF.Stack.Choose">Take this function's native call stack on each traced call (by name: it is followed through unloads). A stack costs more than a parameter copy, so a per-second budget caps how many are taken. Shown in Call Trace's Call stack tab.</sys:String>
+    <sys:String x:Key="str.Tip.LF.Stack.Choose">Take this function's native call stack on each traced call (by name: it is followed through unloads). A stack costs more than a parameter copy, so a per-second budget caps how many are taken. Shown in Call Trace's Call stack tab. Each capture adds to the game's frame time: read the warning that appears once a stack is chosen.</sys:String>
+    <sys:String x:Key="str.Tip.LF.Stack.Standard">Standard: at most {0} stacks a second for each chosen function, {1} a second in all. The DLL's defaults.</sys:String>
+    <sys:String x:Key="str.Tip.LF.Stack.Low">Low: at most {0} stacks a second for each chosen function, {1} a second in all: half of Standard, for a slower PC or a game where a capture costs more.</sys:String>
     <sys:String x:Key="str.Tip.LF.Snap.ShownRows">Choose every row the filter and check boxes leave on screen. Rows without a name key or without parameters are left out.</sys:String>
     <sys:String x:Key="str.Tip.LF.Snap.Buffer">The snapshot buffer: 8 to 128 MB, held by the game until the Call Trace tab has read it. Every chosen function keeps the same number of calls.</sys:String>
     <sys:String x:Key="str.Tip.LF.Snap.Estimate">From the last recording's call counts. Orange: the busiest chosen function keeps less time than the trace does, so its oldest calls lose their parameters first.</sys:String>
