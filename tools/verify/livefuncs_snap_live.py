@@ -80,7 +80,8 @@ is sent instead); it reports their cost. --stack-depth N (1..62, 16 unless given
 at; the fixture run refuses it, its checks being written for 16. --names (S3-A1 on a real game, only with --stacks
 --choose) then checks the names the DLL puts on those stacks' frames, grouped by entry (ufunc, fn), the most frequent
 NAMES_MAX asked and the rest counted:
-  A1  every named entry's ufunc is a Function (or a delegate's) of that name, in that class (get_object)
+  A1  every named entry's ufunc is a Function (or a delegate's) of that name, in that class (get_object); an entry
+      named "" (a name read that gave nothing) is wrong, never a match of two empty names
   A1  every named entry's fn is stored inside its UFunction, at one offset common to all (read_mem): the DLL reads one
       slot for every name. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB.
       read_mem is all or nothing, so a read of the DLL's Func window (0x160 bytes) that fails is retried smaller; an
@@ -1756,6 +1757,9 @@ def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
             d = data_of(o)
             if not ok_of(o):
                 wrong.append(f"{e['class']}::{e['func']} at {addr}: get_object failed: {o.get('error')!r}")
+            elif not e["func"] or not e["class"]:
+                # A name read that gave nothing gives "" on the frame and "" from get_object alike: no name to check.
+                wrong.append(f"{e['class']!r}::{e['func']!r} at {addr}: named empty")
             elif not (d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and
                       d.get("outer") == e["class"]):
                 wrong.append(f"{e['class']}::{e['func']} at {addr} is {d.get('class')!r} "
