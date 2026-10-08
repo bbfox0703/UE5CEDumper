@@ -521,6 +521,18 @@ source and editor are installed for when they are needed.
   2026-10-09**, build 3645 on DumperTest58 Shipping: SnapProbe_PerFrame's parameters chosen, the estimate was orange
   (its 3,027 s against a trace scoped to the chosen rows); Trace ticked on all 14 rows turned it grey (the trace then
   about 48.8 min), and Clear ticks turned it orange again.
+  ⬜ `[LF-EXPOFF-TRACE]` (LOW, found 2026-10-09 by the maintainer's ask to check the layout with the experimental
+  features off, build 3645 on DumperTest58 Shipping): off, the layout is as designed -- the five experimental tabs go,
+  the Live Funcs header keeps the fold button, Fetch limit, Min calls and Hide per-frame (no Clear T/P/S), the Trace,
+  Parameters, estimate and memory lines and the T / P / S columns are gone, a recording made while off offers no trace,
+  and the folded summary reads "Fetch limit 512, min calls 1", not orange. **The defect:** a trace recorded while the
+  features were on survives turning them off (System tab, possible until an experimental tab is opened in the
+  session): the header keeps "Open in Call Trace" and the status line "Trace: N records. Open it in the Call Trace
+  tab.", and the button shows the hidden Call Trace panel's content with no tab selected, Load trace and the exports
+  working -- the opt-out bypassed. `HasTraceToOpen` is set at a Stop and cleared by a Start, a disconnect or Call
+  Trace's load of it; the gate's `Changed` handler raises `TraceAvailable` but leaves it. Fix: the button, the status
+  line's trace clause and `OpenCallTrace` all follow `TraceAvailable` as well (red test first). INFO, the
+  maintainer's call: off, the fold saves no line (the header already holds the only row it folds). Effort **S**.
   ⬜ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08): the next release -- the first with the Call Trace tab
   (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
   draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
