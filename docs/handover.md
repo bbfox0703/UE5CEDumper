@@ -6,8 +6,8 @@
 >
 > **What it holds: procedures only** — no open work, no counts, no current state. What is open lives
 > in [`todo.md`](todo.md) (its current-programme line is at the top); what shipped in
-> [`dev-log.md`](dev-log.md); what is shipped but not yet
-> proven live in [`verification-register.md`](verification-register.md); how to work, and why, in
+> [`dev-log.md`](dev-log.md); what is shipped but not yet proven live in
+> [`verification-register.md`](verification-register.md); how to work, and why, in
 > [`working-lessons.md`](working-lessons.md).
 >
 > **How to update it.** Edit in place whenever a procedure changes. Never write a count, a build
@@ -92,8 +92,8 @@ Two measurements, hours apart on the same machine, and they point opposite ways:
   here.
 * **2026-08-22 18:20, same boot** — the list came back **empty**, and all 20 had to be re-requested
   (batches of 7 · 7 · 6; every one granted, same names, same tiers). `GetTickCount64` puts the
-  last boot at **2026-08-21 14:31**, *before* the
-  morning reading — so **no reboot happened between the two**.
+  last boot at **2026-08-21 14:31**, *before* the morning reading — so **no reboot happened
+  between the two**.
 
 ⛔ **"A reboot is the real invalidation event" is therefore REFUTED** — do not re-assert it. What
 actually clears them is unidentified; an MCP-server or app restart is the obvious suspect and is
@@ -422,7 +422,8 @@ py tools/check_all.py
 `check_all.py --list` prints before the build (derive the count from the `N gate(s) run` line),
 plus `check_proxy_exports --artifacts` over the built proxies; `check_ci_gate_parity` keeps the two
 lists equal. On 2026-08-22 a session ran four of them all day, and the first full run **failed** on
-`check_no_local_paths` over a test fixture committed hours earlier. Order matters — `aob_specificity` reads the TSV `extract_patterns` writes.
+`check_no_local_paths` over a test fixture committed hours earlier. Order matters — `aob_specificity`
+reads the TSV `extract_patterns` writes.
 
 ### Tests
 

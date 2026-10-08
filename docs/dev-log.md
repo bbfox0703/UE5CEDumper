@@ -27,6 +27,28 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (no build change) — `docs/handover-2026-08-22.md` is now `docs/handover.md`, the runbook: procedures only `[HANDOVER-RUNBOOK]`
+
+- **Renamed** (`ace59452`, a pure move). 29 commits had touched the file since it was created on 2026-08-22,
+  so the date in its name only said when it was born. Older entries that name `handover-2026-08-22.md` mean this
+  file; its `handover §N` sections keep their numbers.
+- **Pruned to procedures**: how to work in this repo on these machines, with no open work, no counts and no
+  current state. Each kind of information now has one home:
+  - what is open: one current-programme line at the top of `todo.md`, by tag (it was the handover's §7, and
+    `MEMORY.md`, which does not travel between the PCs);
+  - how to close a verification row: `verification-register.md`, "How to close a row" (was handover §9);
+  - a pending live check: its programme's `todo.md` ledger while the programme runs, then the register,
+    moved byte-identical, once it closes (`working-lessons.md` §7.1);
+  - grant mechanics: handover §2 (the spent auto-verification plan's "grants never survive a session" now
+    points there);
+  - rules CLAUDE.md or `working-lessons.md` own: one-line pointers. ProcessEvent's slot method is now
+    `working-lessons.md` §4.7, and the ES2 provenance caveat is in `corpus-preservation.md` §3a.
+- **Deleted as closed or stale**: §7's "where to start" table (every row closed), quoted counts and build
+  numbers (the 3315 sync point, "49 rigs", "11 ghosts", the gate counts), the wrong claim about which
+  `.cpp` files a test target compiles, and the ES2 follow-up that `[A2-ES2-506-2026-09-05]` closed.
+
+-----
+
 ## 2026-10-08 (no build change) — Live Funcs native stacks on a UE4 game: DQ XI S `[LIVEFUNCS-STEP3-DQ11S]`
 
 - Build 3643 was checked on DRAGON QUEST XI S (UE 4.18, a licensee fork), with a save loaded.
