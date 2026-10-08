@@ -865,8 +865,11 @@ Two traps from one night (2026-10-08), each of which read as a defect in the pro
 Measured 2026-10-08 while pricing a native stack capture. This PC is a hybrid laptop (a Radeon iGPU that drives the
 display, an RTX 5090 that renders when asked). The iGPU sat near 100 % with or without a game: with none running,
 `dwm.exe` took 54 % of its 3D engine and `claude.exe` -- the Claude desktop app, whose computer-use screen effect
-redraws the screen -- 45 % (the maintainer saw it stay up after the fixture closed). The CPU meanwhile ran at 85-94 %
-of nominal, not boosting. That looked like the explanation for a capture costing 20-28 µs on DumperTest58 against
+redraws the screen -- 45 % (the maintainer saw it stay up after the fixture closed). The maintainer then measured
+it by hand: about 50 % with computer control off, about 20 % with the Claude app minimized, about 80 % with its
+background-task list open. The iGPU is simply weak, and it uses system DDR5 as its memory, so a busy desktop takes
+memory bandwidth the CPU's own memory-bound work (a stack walk's .pdata searches) also needs. The CPU meanwhile ran at
+85-94 % of nominal, not boosting. That looked like the explanation for a capture costing 20-28 µs on DumperTest58 against
 3.25 µs on Avowed. It was not:
 the same probe gave 21-22 µs on the RTX and 31 µs capped at 30 fps (dearer: the game thread's caches go cold between
 frames). What to do:
