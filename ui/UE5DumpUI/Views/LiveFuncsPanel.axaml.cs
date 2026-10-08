@@ -55,10 +55,9 @@ public partial class LiveFuncsPanel : UserControl
         DataContextChanged += (_, _) => WireTrace();
     }
 
-    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's view-side pieces: T7's question needs a window to ask in, and
-    // the tick column and the choice columns beside it show only with the experimental tabs on (T6). A DataGrid
-    // column is not in the visual tree, so its visibility cannot be bound to the view model; it follows TraceAvailable
-    // from here.
+    // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's view-side pieces: every question the view model asks needs a
+    // window to ask in, and the trace's columns show only with the experimental tabs on (T6). A DataGrid column is not
+    // in the visual tree, so its visibility cannot be bound to the view model; it follows TraceAvailable from here.
     private LiveFuncsViewModel? _wired;
 
     private void WireTrace()
