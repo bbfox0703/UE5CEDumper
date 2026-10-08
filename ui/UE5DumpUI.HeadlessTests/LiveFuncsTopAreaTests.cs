@@ -106,6 +106,14 @@ public class LiveFuncsTopAreaTests
         Dispatcher.UIThread.RunJobs();
         Assert.True(vm.CaptureSettingsCollapsed);
         Assert.Equal(Res("str.LF.Settings.Expand"), fold.Content as string);
+        Assert.True(fold.IsEffectivelyVisible, "the button that unfolds the settings folded away with them");
+        // The Start row is not a capture setting: Start, Stop and the filter stay above the folded header.
+        foreach (var key in new[] { "str.LF.Start", "str.LF.Stop" })
+            Assert.True(panel.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == Res(key)).IsEffectivelyVisible,
+                        $"{Res(key)} folded away with the settings");
+        Assert.True(panel.GetVisualDescendants().OfType<AutoCompleteBox>()
+                         .Single(b => b.PlaceholderText == Res("str.LF.FilterHint")).IsEffectivelyVisible,
+                    "the filter box folded away with the settings");
         Assert.DoesNotContain(SectionControls(panel), c => c.IsEffectivelyVisible);
         Assert.DoesNotContain(TextBlocks(panel, vm.StackEstimate), t => t.IsEffectivelyVisible);
         var summary = Shown(panel, vm.CaptureSummary);

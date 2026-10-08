@@ -1650,18 +1650,27 @@ public class LiveFuncsSnapshotTests
                     $"the summary's stack warning is {risk.Length} characters, the section's {Line("str.LF.Stack.WarningShort").Length}");
 
         // A 128 MB snapshot buffer keeps G's one call a second longer than the 32 MB trace keeps the chosen calls, so
-        // nothing here warns and the summary is the settings alone.
+        // nothing here warns and the summary is the settings alone. Three different counts, so counts in the wrong
+        // places show: two ticked, one for parameters, one for a stack.
         vm.StackBudgetLow = true;
         vm.SnapshotBufferExponent = 7;
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "F"));
         vm.ToggleTickCommand.Execute(Shown(vm, "A", "G"));
         vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
         vm.TraceEnabled = false;
         Assert.False(vm.SnapshotEstimateWarn);
-        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
-                             Line("str.LF.Summary.Choices", 1, 1, 1),
-                             Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Low")),
-                             Line("str.LF.Summary.SnapBuffer", 128), Line("str.LF.Summary.StackRisk")), vm.CaptureSummary);
+        string expected = Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
+                                  Line("str.LF.Summary.Choices", 2, 1, 1),
+                                  Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Low")),
+                                  Line("str.LF.Summary.SnapBuffer", 128), Line("str.LF.Summary.StackRisk"));
+        Assert.Equal(expected, vm.CaptureSummary);
         Assert.False(vm.CaptureSummaryWarn);
+
+        // The counts are the choices, not the rows on screen: a filter that hides A::F (ticked, and chosen for a stack)
+        // leaves them as they are, as the next Start takes every choice.
+        vm.FilterText = "G";
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "F");
+        Assert.Equal(expected, vm.CaptureSummary);
     }
 
     /// <summary>(2) Folding never hides a warning: each orange line the section can show puts its own short warning in
@@ -1708,6 +1717,13 @@ public class LiveFuncsSnapshotTests
         memory.TraceEnabled = true;
         Assert.False(memory.CaptureSummaryWarn);
         memory.TraceBufferExponent = 9;                          // 512 MB in the game and about 1.2 GB in the UI
+        Assert.True(memory.TraceMemoryOverAvailable);
+        Assert.True(memory.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.MemoryOver", Line("str.LF.Trace.Gb", 1.0)), memory.CaptureSummary,
+                        StringComparison.Ordinal);
+        // The memory line shows with the experimental tabs, Trace ticked or not, and is orange either way: so is the
+        // summary that stands for it.
+        memory.TraceEnabled = false;
         Assert.True(memory.TraceMemoryOverAvailable);
         Assert.True(memory.CaptureSummaryWarn);
         Assert.Contains(Line("str.LF.Summary.MemoryOver", Line("str.LF.Trace.Gb", 1.0)), memory.CaptureSummary,
