@@ -275,6 +275,14 @@ public sealed class StackSite
     public bool   Own        { get; init; }
     /// <summary>A function the DLL recognised, as a token ("process_event"); "" otherwise. The UI owns the text.</summary>
     public string Known      { get; init; } = "";
+    /// <summary>[LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry <see cref="Fn"/> is, from the DLL's one pass
+    /// over the object array -- it names an exec thunk the trace never saw called through ProcessEvent. 0 and "" when
+    /// none enters there.</summary>
+    public ulong  UFunc      { get; init; }
+    public string ClassName  { get; init; } = "";
+    public string FuncName   { get; init; } = "";
+    /// <summary>How many functions enter at <see cref="Fn"/> when more than one (identical code folded); 0 otherwise.</summary>
+    public int    Shared     { get; init; }
     /// <summary>The module base in the form AddressHelper takes; "" with no module.</summary>
     public string ModuleBaseHex => ModuleBase == 0 ? "" : $"0x{ModuleBase:X}";
 }

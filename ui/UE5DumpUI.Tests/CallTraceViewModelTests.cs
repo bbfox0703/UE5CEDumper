@@ -1272,12 +1272,14 @@ public class CallTraceViewModelTests
     /// <summary>A return address as the DLL describes it: the RVAs from its own module's base, and CE's name for that
     /// module unless one is given.</summary>
     private static StackSite Site(ulong addr, string module = "", ulong moduleBase = 0, ulong fn = 0, bool unwind = true,
-                                  bool own = false, string known = "", string? ceModule = null)
+                                  bool own = false, string known = "", string? ceModule = null, string cls = "",
+                                  string func = "", int shared = 0)
         => new()
         {
             Addr = addr, Module = module, CeModule = ceModule ?? module, ModuleBase = moduleBase,
             Rva = module.Length == 0 ? 0 : (uint)(addr - moduleBase), Fn = fn,
             FnRva = fn == 0 || module.Length == 0 ? 0 : (uint)(fn - moduleBase), Unwind = unwind, Own = own, Known = known,
+            UFunc = func.Length == 0 ? 0 : 0x5000UL, ClassName = cls, FuncName = func, Shared = shared,
         };
 
     // Call 0's stack, nearest first: a frame of each kind the tab names.
@@ -1394,6 +1396,30 @@ public class CallTraceViewModelTests
                                    index));
         // Code outside every module that has unwind data (a table registered at run time): "into" an absolute start.
         Assert.Equal(Line("str.CT.Stack.Into", 0x8UL, "0x2A0000000"), vm.FrameWhere(Site(0x2A0000008, fn: 0x2A0000000), index));
+    }
+
+    [Fact]
+    public async Task A_frame_the_trace_never_named_is_named_from_the_DLLs_index()
+    {
+        // [LIVEFUNCS-STEP3] S3-A1: an exec thunk a Blueprint reached without ProcessEvent is in no traced function's
+        // code_addr, but the DLL's one pass over the object array names it.
+        var vm = await StackVm(StackDump());
+        var index = CallTraceViewModel.CodeIndex(vm.Trace!);
+        const ulong thunk = GameBase + 0x9000;
+        Assert.False(index.ContainsKey(thunk));
+        Assert.Equal(Line("str.CT.Stack.Native", "Weapon::Fire", 0x18UL),
+                     vm.FrameWhere(Site(thunk + 0x18, "Game.exe", GameBase, fn: thunk, cls: "Weapon", func: "Fire"), index));
+        // Several functions enter there: the frame is none of them in particular, and the line says how many.
+        Assert.Equal(Line("str.CT.Stack.NativeIndexShared", "Weapon::Fire", 0x18UL, 3),
+                     vm.FrameWhere(Site(thunk + 0x18, "Game.exe", GameBase, fn: thunk, cls: "Weapon", func: "Fire",
+                                        shared: 3), index));
+        // A traced native's own name comes first: the trace saw that very function called.
+        Assert.Equal(Line("str.CT.Stack.Native", "Character::Jump", 0x2AUL),
+                     vm.FrameWhere(Site(GameBase + 0x123456 + 0x2A, "Game.exe", GameBase, fn: GameBase + 0x123456, cls: "Other", func: "Name"),
+                                   index));
+        // A name without its class still reads.
+        Assert.Equal(Line("str.CT.Stack.Native", "Fire", 0x18UL),
+                     vm.FrameWhere(Site(thunk + 0x18, "Game.exe", GameBase, fn: thunk, func: "Fire"), index));
     }
 
     private static readonly string[] SlotFlagKeys =
