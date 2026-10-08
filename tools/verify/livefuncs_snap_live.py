@@ -528,19 +528,8 @@ def main() -> int:
     try:
         out["build"] = c.assert_build()
         say(f"DLL build {out['build']}")
-        if args.choose is not None:
-            (run_game_stacks if args.stacks else run_game)(c, check, out, args)
-        else:
-            say("fixture:")
-            out["fixture"] = fixture_check(c, check, args.plain_s)
-            if out["fixture"]["total_calls"] == 0:
-                say("no calls recorded: is the game running, scanned, and the hook up?")
-                return 2
-            if not args.fixture_check:
-                if args.stacks:
-                    run_stacks(c, check, out, args, out["fixture"]["probes"])
-                else:
-                    run_full(c, check, out, args)
+        if run_selected(c, check, out, args) == 2:
+            return 2
     except PipeError as e:
         check("the run reached its end", False, str(e))
     finally:
@@ -561,6 +550,31 @@ def main() -> int:
     rec = f", {len(check.records)} recorded (not failed)" if check.records else ""
     say(f"\n{len(check.items) - check.failed}/{len(check.items)} checks hold{rec}; written to {path}")
     return 1 if check.failed else 0
+
+
+def run_selected(c, check: Checks, out: dict, args, pid: int | None = None, sleep=time.sleep,
+                 clock=time.perf_counter) -> int | None:
+    """The run the options pick once the DLL answers: a game's (--choose), or the fixture check and then the step-2 or
+    the step-3 checks. Returns 2 when the fixture recorded no call (nothing to check), else None. --self-test drives
+    this same function, so the checks it counts are the ones a live run prints; `pid`, `sleep` and `clock` as
+    run_stacks takes them."""
+    if args.choose is not None:
+        if args.stacks:
+            run_game_stacks(c, check, out, args, sleep=sleep, clock=clock)
+        else:
+            run_game(c, check, out, args)
+        return None
+    say("fixture:")
+    out["fixture"] = fixture_check(c, check, args.plain_s)
+    if out["fixture"]["total_calls"] == 0:
+        say("no calls recorded: is the game running, scanned, and the hook up?")
+        return 2
+    if not args.fixture_check:
+        if args.stacks:
+            run_stacks(c, check, out, args, out["fixture"]["probes"], pid=pid, sleep=sleep, clock=clock)
+        else:
+            run_full(c, check, out, args)
+    return None
 
 
 def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
@@ -1816,17 +1830,15 @@ class ScriptedDll:
 
 
 def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
-    """run_stacks (or run_game_stacks) against a scripted DLL, its printing captured: no pipe, no game, and no wait,
-    on a FakeClock. `argv` adds options to the command line the run parses, after (so over) the ones it sets."""
-    check, out = Checks(), {"label": "dry", "fixture": {"total_calls": 9000, "window_ms": 3000}}
+    """main()'s --stacks run (run_selected) against a scripted DLL, its printing captured: no pipe, no game, and no
+    wait, on a FakeClock. `argv` adds options to the command line the run parses, after (so over) the ones it sets.
+    out["exit"] is what run_selected returned."""
+    check, out = Checks(), {"label": "dry"}
     args = build_parser().parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
                                      (["--choose", ""] if game else []) + list(argv))
     fake = FakeClock()
     with contextlib.redirect_stdout(io.StringIO()):
-        if game:
-            run_game_stacks(dll, check, out, args, sleep=fake.sleep, clock=fake.now)
-        else:
-            run_stacks(dll, check, out, args, dll.rows(), pid=0, sleep=fake.sleep, clock=fake.now)
+        out["exit"] = run_selected(dll, check, out, args, pid=0, sleep=fake.sleep, clock=fake.now)
     return check, out
 
 
@@ -2054,6 +2066,9 @@ def self_test() -> int:
                     {n.split()[0] for n in ran(ch)[len(fixture_names):]} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
                     recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and len(recorded(ch, "S6")) == 6 and
                     len(ch.records) == 7)(dry_run(ScriptedDll())[0]))
+    expect("dry run: --fixture-check stops after the fixture's checks",
+           lambda: (lambda r: ran(r[0]) == fixture_names and failing(r[0]) == [] and r[1].get("exit") is None)(
+               dry_run(ScriptedDll(), argv=("--fixture-check",))))
     expect("dry run: a plain recording with no call ends the run after the fixture check, exit 2",
            lambda: (lambda r: r[1].get("exit") == 2 and not any(n.startswith("S") for n in ran(r[0])))(
                dry_run(ScriptedDll("no_calls"))))
