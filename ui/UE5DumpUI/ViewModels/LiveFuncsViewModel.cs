@@ -377,15 +377,15 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public bool HasStackChoices => StackFunctions.Count > 0;
     public string StackCountText => Say("str.LF.Stack.Count", StackFunctions.Count);
 
-    /// <summary>What a Start sends for every stack, the budget under Standard: the DLL's defaults, provisional until
-    /// measured live (D3). The depth has no control; a test reads Linie.h and pins these to it.</summary>
+    /// <summary>What a Start sends for every stack, the budget under Standard: the DLL's defaults, the maintainer's (A)
+    /// after the live measurement (T17). The depth has no control; a test reads Linie.h and pins these to it.</summary>
     internal const int StackDepth = 16;
-    internal const int StackPerFuncPerSec = 100;
-    internal const int StackTotalPerSec = 200;
-    /// <summary>T20's Low budget: half of Standard, for a slower machine or a game where a capture costs more. A test
-    /// reads Linie.h and pins these to it.</summary>
-    internal const int StackLowPerFuncPerSec = 50;
-    internal const int StackLowTotalPerSec = 100;
+    internal const int StackPerFuncPerSec = 25;
+    internal const int StackTotalPerSec = 50;
+    /// <summary>T20's Low budget: half of Standard, rounded down, for a slower machine or a game where a capture costs
+    /// more. A test reads Linie.h and pins these to it.</summary>
+    internal const int StackLowPerFuncPerSec = 12;
+    internal const int StackLowTotalPerSec = 25;
 
     private bool _stackBudgetLow;
     /// <summary>The Low budget for the next Start's stacks; false is Standard. Not saved in ui-options.json with the

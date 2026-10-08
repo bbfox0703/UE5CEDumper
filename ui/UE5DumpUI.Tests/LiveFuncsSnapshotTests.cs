@@ -478,7 +478,7 @@ public class LiveFuncsSnapshotTests
         var f = Assert.Single(st!.Funcs);
         Assert.Equal(("A", "Call"), (f.ClassName, f.FuncName));
         Assert.Equal(new NameKey(5, 0, 9, 0), Assert.Single(f.Keys));
-        Assert.Equal((16, 100, 200), (st.Depth, st.PerRingPerSec, st.TotalPerSec));
+        Assert.Equal((16, 25, 50), (st.Depth, st.PerRingPerSec, st.TotalPerSec));
     }
 
     [Fact]
@@ -781,17 +781,17 @@ public class LiveFuncsSnapshotTests
         Assert.False(vm.StackBudgetLow);
         Assert.True(vm.StackBudgetStandard);
         var standard = await StacksSentByAStart(vm, dump);
-        Assert.Equal((16, 100, 200), (standard.Depth, standard.PerRingPerSec, standard.TotalPerSec));
+        Assert.Equal((16, 25, 50), (standard.Depth, standard.PerRingPerSec, standard.TotalPerSec));
 
         vm.StackBudgetLow = true;                        // the Low radio
         Assert.False(vm.StackBudgetStandard);
         var low = await StacksSentByAStart(vm, dump);
-        Assert.Equal((16, 50, 100), (low.Depth, low.PerRingPerSec, low.TotalPerSec));   // the depth is not the budget's
+        Assert.Equal((16, 12, 25), (low.Depth, low.PerRingPerSec, low.TotalPerSec));   // the depth is not the budget's
 
         vm.StackBudgetStandard = true;                   // the Standard radio
         Assert.False(vm.StackBudgetLow);
         var again = await StacksSentByAStart(vm, dump);
-        Assert.Equal((100, 200), (again.PerRingPerSec, again.TotalPerSec));
+        Assert.Equal((25, 50), (again.PerRingPerSec, again.TotalPerSec));
     }
 
     [Fact]
@@ -831,7 +831,7 @@ public class LiveFuncsSnapshotTests
         Assert.True(vm.IsRecording);
         vm.StackBudgetStandard = true;
         Assert.True(vm.StackBudgetLow);
-        Assert.Equal((50, 100), (dump.LastTrace!.Snapshots!.Stacks!.PerRingPerSec, dump.LastTrace.Snapshots.Stacks.TotalPerSec));
+        Assert.Equal((12, 25), (dump.LastTrace!.Snapshots!.Stacks!.PerRingPerSec, dump.LastTrace.Snapshots.Stacks.TotalPerSec));
     }
 
     [Fact]
@@ -843,10 +843,10 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(Line("str.Tip.LF.Stack.Low", LiveFuncsViewModel.StackLowPerFuncPerSec, LiveFuncsViewModel.StackLowTotalPerSec),
                      vm.StackLowTip);
         // A template without its placeholders would format to the same text and say no number at all.
-        Assert.Contains("100", vm.StackStandardTip, StringComparison.Ordinal);
-        Assert.Contains("200", vm.StackStandardTip, StringComparison.Ordinal);
-        Assert.Contains("50", vm.StackLowTip, StringComparison.Ordinal);
-        Assert.Contains("100", vm.StackLowTip, StringComparison.Ordinal);
+        Assert.Contains("25", vm.StackStandardTip, StringComparison.Ordinal);
+        Assert.Contains("50", vm.StackStandardTip, StringComparison.Ordinal);
+        Assert.Contains("12", vm.StackLowTip, StringComparison.Ordinal);
+        Assert.Contains("25", vm.StackLowTip, StringComparison.Ordinal);
     }
 
     [Fact]

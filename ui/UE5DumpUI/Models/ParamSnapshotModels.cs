@@ -223,8 +223,8 @@ public sealed class StackStartOptions
     public IReadOnlyList<NamedFunction> Funcs { get; init; } = Array.Empty<NamedFunction>();
     /// <summary>Return addresses kept per call; the DLL clamps what it is sent.</summary>
     public int Depth { get; init; } = 16;
-    public int PerRingPerSec { get; init; } = 100;
-    public int TotalPerSec { get; init; } = 200;
+    public int PerRingPerSec { get; init; } = 25;
+    public int TotalPerSec { get; init; } = 50;
 }
 
 /// <summary>The trace's stack rings as the DLL armed them (<c>trace.stack</c>).</summary>

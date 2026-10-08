@@ -767,7 +767,7 @@ The design: [live-funcs-step3-design.md](live-funcs-step3-design.md); the build:
 
 ```jsonc
 // Start: trace.snapshots gains "stacks" (funcs may then be []: stacks only). depth: frames, 1..62 (default 16);
-// per_ring_per_s / total_per_s: the stack budget, clamped to 1..16777215 (defaults 100 / 200). A function in both
+// per_ring_per_s / total_per_s: the stack budget, clamped to 1..16777215 (defaults 25 / 50). A function in both
 // lists gets a parameter ring and a stack ring. Refused as in step 2, stacks counted: nothing left of ticks, choices
 // and stacks together, or every tick refused when ticks were asked.
 { "id": 80, "cmd": "pe_profile_start",

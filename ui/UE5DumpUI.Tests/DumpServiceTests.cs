@@ -2051,7 +2051,7 @@ public class DumpServiceTests
         _pipe.SetHandler(req => { sent = req; return new JsonObject { ["ok"] = true, ["hook_active"] = true }; });
         IDumpService svc = CreateService();
         var defaults = new StackStartOptions();
-        Assert.Equal((16, 100, 200), (defaults.Depth, defaults.PerRingPerSec, defaults.TotalPerSec));
+        Assert.Equal((16, 25, 50), (defaults.Depth, defaults.PerRingPerSec, defaults.TotalPerSec));
 
         await svc.PeProfileStartAsync(new TraceStartOptions
         {
