@@ -3182,6 +3182,7 @@ static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFro
     ResourceVersionVerdict v;
     v.version = crcVer ? crcVer : exeVer;   // engine-shipped beats game-authored
     if (!v.version) return v;
+    v.source = v.version == exeVer ? VersionSource::Exe : VersionSource::Crc;
     if (v.version >= Grimoire::MIN_SUPPORTED_UE_VERSION) { v.tier = 1; return v; }
     // Below the floor only the exe's own reading can be corroborated: a CrashReportClient that
     // overrode a different exe reading, or stands alone, is one signal however it was read.
@@ -3272,10 +3273,20 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
             }
             r.version = rv.version; r.tier = 1; p.done = true; return p;
         }
-        Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
-                   "NOT accepting that on its own (it would refuse the whole scan). "
-                   "Corroborating against the memory string scan.",
-                   rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+        // The exe's own reading keeps its line word for word (b25_marker_exes.py judges it); a CrashReportClient's
+        // says so, rather than putting its number in the exe's mouth. Both still name "PE VERSIONINFO", which is
+        // what sweep_title.py collects version evidence by.
+        if (rv.source == VersionSource::Crc)
+            Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient says UE %u, below the %u floor, and the "
+                       "game exe's own PE VERSIONINFO %s — NOT accepting that on its own (it would refuse the "
+                       "whole scan). Corroborating against the memory string scan.",
+                       rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION,
+                       ver ? ("says UE " + std::to_string(ver)).c_str() : "read nothing usable");
+        else
+            Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
+                       "NOT accepting that on its own (it would refuse the whole scan). "
+                       "Corroborating against the memory string scan.",
+                       rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
         r.version = rv.version;
         r.tier    = 3;   // downgraded unless the memory scan below agrees
     }
@@ -3294,8 +3305,16 @@ static VersionScanResult DetectVersionDetailed() {
 
     Sein::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
     // The line above is kept word for word (sweep_title.py times the fallback from it), but below the
-    // floor it is misleading: the resource was read, and only its corroboration is missing.
-    if (r.tier == 3)
+    // floor it is misleading: a resource was read, and only its corroboration is missing. Which resource
+    // is the verdict's source -- the exe's, or a CrashReportClient's beside an exe that read nothing usable
+    // or another version. Neither line may carry a sweep_title.py keyword: its fallback window ends at the
+    // next line it collects.
+    if (r.tier == 3 && rp.verdict.source == VersionSource::Crc)
+        Sein::Info("SCAN:Ver", "DetectVersion: (the game exe's resource %s; CrashReportClient says UE %u, below "
+                   "the %u floor, which alone does not corroborate a reading below it — the memory scan decides)",
+                   rp.exeVersion ? ("says UE " + std::to_string(rp.exeVersion)).c_str() : "read nothing usable",
+                   r.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    else if (r.tier == 3)
         Sein::Info("SCAN:Ver", "DetectVersion: (the PE resource did not fail: it read UE %u, below the "
                    "%u floor, and neither an engine build string nor an agreeing CrashReportClient "
                    "corroborates it — the memory scan decides)",
