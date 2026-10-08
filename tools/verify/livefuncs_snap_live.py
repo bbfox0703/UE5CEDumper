@@ -529,9 +529,10 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main() -> int:
+def main(argv: list[str] | None = None, connect=None) -> int:
+    """`argv` and `connect` (returns a connected client) let the self-test drive main() itself, with no pipe."""
     ap = build_parser()
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     if args.self_test:
         return self_test()
     bad = pdb_option_problem(args)
@@ -541,7 +542,7 @@ def main() -> int:
     check = Checks()
     out: dict = {"label": args.label}
     try:
-        c = PipeClient().connect()
+        c = connect() if connect else PipeClient().connect()
     except PipeError as e:
         say(f"pipe not usable: {e}")
         return 2
@@ -2391,6 +2392,39 @@ def self_test() -> int:
            build_parser().parse_args(["--stacks", "--pdb"]).pdb == "" and
            build_parser().parse_args(["--stacks", "--pdb", "syms"]).pdb == "syms" and
            build_parser().parse_args([]).pdb is None)
+
+    # The refusal itself, through main() and through the dry run: a refusal neither reaches lets --pdb be ignored on a
+    # run that cannot use it, and the predicate's own control above still holds.
+    bad_pdb = (("--pdb",), ("--stacks", "--choose", "", "--pdb"), ("--stacks", "--fixture-check", "--pdb"))
+
+    def refused(run) -> int | None:
+        """The exit code a refusal ends `run` with, argparse's usage text captured; None when it ran on."""
+        try:
+            with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+                run()
+        except SystemExit as e:
+            return e.code
+        return None
+
+    def main_refuses(argv: tuple[str, ...]) -> tuple[int | None, int]:
+        opened: list[bool] = []
+
+        def connect():
+            opened.append(True)
+            raise PipeError("scripted: no pipe")
+        return refused(lambda: main(list(argv), connect=connect)), len(opened)
+    expect("PDB: main() refuses --pdb without --stacks, with --choose or with --fixture-check before the pipe opens, "
+           "and lets --stacks --pdb reach it",
+           lambda: [main_refuses(a) for a in bad_pdb] == [(2, 0)] * 3 and
+           main_refuses(("--stacks", "--pdb")) == (None, 1))
+
+    def dry_refused(game: bool, argv: tuple[str, ...]) -> tuple[int | None, list[str]]:
+        dll = ScriptedDll()
+        return refused(lambda: dry_run(dll, game=game, argv=argv)), dll.cmds
+    expect("PDB: the dry run refuses --pdb with --choose or --fixture-check as main() does, before the DLL is asked "
+           "anything",
+           lambda: dry_refused(True, ("--pdb",)) == (2, []) and
+           dry_refused(False, ("--fixture-check", "--pdb")) == (2, []))
 
     # The whole run against a scripted DLL: the glue between the helpers, which nothing else runs before a game does.
     def ran(check: Checks) -> list[str]:
