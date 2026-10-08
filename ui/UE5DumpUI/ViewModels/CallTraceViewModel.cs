@@ -436,13 +436,15 @@ public partial class CallTraceViewModel : ViewModelBase
 
     private void NoteLoadPeak() => _loadPeakWs = Math.Max(_loadPeakWs, Environment.WorkingSet);
 
-    /// <summary>Nothing on screen holds the shown trace any more: its rows, the filter's matches, the detail.</summary>
+    /// <summary>Nothing the view model keeps reaches the shown trace any more, a cache built from it included: whatever
+    /// still held it would keep it alive beside the next load's window and columns.</summary>
     private void DropShownTrace()
     {
         if (_trace == null) return;
         _trace = null;
         _tree = null;
         _matches = Array.Empty<int>();
+        _codeIndexCache = null;
         IsFiltered = false;
         SelectedIndex = -1;
         Rows = Array.Empty<CallTraceRow>();
@@ -762,17 +764,17 @@ public partial class CallTraceViewModel : ViewModelBase
         return (rows, notes);
     }
 
-    private CallTrace? _codeIndexTrace;
-    private Dictionary<ulong, string[]> _codeIndex = new();
+    // The index with the trace it was built from, so a redraw does not rebuild it. That is a strong reference to a whole
+    // trace: a load drops it with the shown trace, or the old trace outlives its screen ([TRACE-UI-LOAD-MEMORY]). One
+    // field, so the index cannot be dropped apart from its trace.
+    private (CallTrace Trace, Dictionary<ulong, string[]> Index)? _codeIndexCache;
 
     private Dictionary<ulong, string[]> CodeIndexOf(CallTrace t)
     {
-        if (!ReferenceEquals(_codeIndexTrace, t))
-        {
-            _codeIndex = CodeIndex(t);
-            _codeIndexTrace = t;
-        }
-        return _codeIndex;
+        if (_codeIndexCache is { } c && ReferenceEquals(c.Trace, t)) return c.Index;
+        var index = CodeIndex(t);
+        _codeIndexCache = (t, index);
+        return index;
     }
 
     /// <summary>The trace's own native entries (pe_trace_names' code_addr, read for a function still live), each with the
