@@ -6527,6 +6527,16 @@ uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr) {
     return exec && Macht::LooksLikeCodePointer(exec) ? exec : 0;
 }
 
+// A function's Func slot whatever its flags: 0 for an undetected offset or a failed read.
+static uintptr_t FuncSlot(uintptr_t funcAddr) {
+    if (!funcAddr) return 0;
+    EnsureUFunctionFuncOffset();
+    if (DynOff::UFUNCTION_FUNC == 0) return 0;
+    uintptr_t exec = 0;
+    if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec)) return 0;
+    return exec;
+}
+
 static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
     if (!funcAddr) return 0;
     EnsureUFunctionFuncOffset();
@@ -6541,14 +6551,16 @@ static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
     constexpr uint32_t FUNC_Native = 0x00000400;
     if ((ReadFunctionFlags(funcAddr) & FUNC_Native) == 0) return 0;
 
-    uintptr_t exec = 0;
-    if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec)) return 0;
-    return exec;
+    return FuncSlot(funcAddr);
 }
 
-// [A1-SCRIPT-FUNCS] The slot the native-entry index (S3-A1) reads.
+// [A1-SCRIPT-FUNCS] The slot the native-entry index (S3-A1) reads: every function's, the FUNC_Native gate above left
+// out. A stack frame inside the interpreter is the reason. The CE code address refuses a script function because the
+// interpreter is not that function's code; the index wants exactly that entry, so the frame names one of the functions
+// entering there and says how many share it. Measured 2026-10-08 on DQ XI S: with the gate, 12,482 of 19,162
+// functions entered the index and no frame in the interpreter could be named.
 static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
-    return NativeFuncSlot(funcAddr);
+    return FuncSlot(funcAddr);
 }
 
 // --- Path 2: disassemble a native UFunction and map [this+off] to props ---

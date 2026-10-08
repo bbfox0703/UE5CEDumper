@@ -1955,8 +1955,8 @@ void SortCodeEntries(std::vector<CodeEntry>& entries);
 // The functions whose native entry is `code` in a sorted index: how many (0 when none), and the first of them (the
 // lowest UFunction address) in `ufunc`. Pure.
 size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc);
-// One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction with a native entry,
-// sorted. False when a cancel cut the pass short (the index is then partial).
+// One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction whose Func is code --
+// a script function's too, the interpreter -- sorted. False when a cancel cut the pass short (the index is then partial).
 // Is `p` in executable image memory -- Macht::LooksLikeCodePointer's test -- asked of the kernel once per memory region,
 // not once per address. Measured 2026-10-08: a VirtualQuery cost about 300 µs while the game ran uncapped, so one per
 // function made the index take 3.9 s for 13,179 functions; native entries cluster in a few modules' code, so the
