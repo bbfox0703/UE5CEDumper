@@ -897,14 +897,10 @@ bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
         return false;
     out.moduleBase = reinterpret_cast<uintptr_t>(h);
     out.own = out.moduleBase == reinterpret_cast<uintptr_t>(&__ImageBase);
-    wchar_t path[MAX_PATH] = {};
-    const DWORD len = GetModuleFileNameW(h, path, MAX_PATH);
-    if (len > 0 && len < MAX_PATH) {
-        const wchar_t* leaf = path;
-        for (DWORD i = 0; i < len; ++i)
-            if (path[i] == L'\\' || path[i] == L'/') leaf = path + i + 1;
-        out.moduleUtf8 = Utf8Helpers::EncodeUtf16(leaf, static_cast<size_t>(path + len - leaf));
-    }
+    // A game under a long path is not cut at MAX_PATH: the loader keeps paths up to 32K characters.
+    std::vector<wchar_t> path(32768);
+    const DWORD len = GetModuleFileNameW(h, path.data(), static_cast<DWORD>(path.size()));
+    if (len > 0 && len < path.size()) out.moduleUtf8 = Utf8Helpers::LeafUtf8(path.data(), len);
     // ret-1: a return address that follows a function's last call (a noreturn one) lies past that function's end.
     uintptr_t begin = 0, end = 0;
     if (GetFunctionExtent(retAddr - 1, begin, end)) {

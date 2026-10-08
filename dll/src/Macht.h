@@ -186,9 +186,10 @@ inline bool ParsePattern(const char* patStr, ParsedPattern& out) {
 //
 // Recorded here because the absence has now been raised three times, and refuted
 // once for the WRONG reason. To be exact: it is not that the `__try`/`__except`
-// blocks are cancellation — there is no `__try` in any scan core at all. The four
-// SEH sites are ReadSafe / ReadBytesSafe / WriteBytes / GetFunctionExtent; the
-// scan cores dereference the image with no guard of any kind.
+// blocks are cancellation — there is no `__try` in any scan core at all. The SEH
+// sites are the guarded reads and writes, the .pdata lookup and the stack walk,
+// none of them a scan core; the scan cores dereference the image with no guard
+// of any kind.
 //
 // Cancellation lives one level up, at the PATTERN boundary in
 // Genau::ScanForTarget (its batch loop and its multi-module Pass 2). That is
