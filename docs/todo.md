@@ -254,11 +254,12 @@ source and editor are installed for when they are needed.
   carries the corroboration: ProductVersion `4.10.2-0+++depot+UE4-Releases+4.10` is the engine's build string, a
   second signal independent of FileVersion 4.10.2.0, which a game-authored version would not carry. UBT writes it as
   `Major.Minor.Patch-Changelist+Branch`, full (IS Defense: `+++depot+UE4-Releases+4.10`) or simplified (NEKOPALIVE's
-  `Nekopara.exe` and its CrashReportClient both say `4.11.0-0+UE4`). Fix: count as corroboration a ProductVersion in
-  that format, its branch naming UE4 and its major.minor equal to FileVersion's -- and a CrashReportClient.exe that
+  `Nekopara.exe` and its CrashReportClient both say `4.11.0-0+UE4`), and in a third, branch-first shape (Extinction:
+  `++UE4+Release-4.15-CL-0`, FileVersion 4.15.0). Fix: count as corroboration a ProductVersion in any of those
+  shapes, its branch naming UE4 and its major.minor equal to FileVersion's -- and a CrashReportClient.exe that
   agrees, when the game ships one (IS Defense does not: its `Engine/Binaries` holds only `ThirdParty`) -- so the
-  gate refuses it with the existing "older than the minimum supported" message. Red first, on a pure helper, with
-  both shapes and the counter-cases (a bare game version `4.10.1`, Gal*Gun's `1.0.10897.0`). The memory string
+  gate refuses it with the existing "older than the minimum supported" message (Extinction ships none either).
+  Red first, on a pure helper, with the three shapes and the counter-cases (a bare game version `4.10.1`, Gal*Gun's `1.0.10897.0`). The memory string
   table floors at `4.18.`; 4.11-4.17 never need it, as a PE reading at or above the floor is taken directly.
   Effort **S**.
 - ⬜ `[UE410-SUPPORT]` (decision, the maintainer): whether to support 4.10 at all. A feasibility study (UE 4.10
