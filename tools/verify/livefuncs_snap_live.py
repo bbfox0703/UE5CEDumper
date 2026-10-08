@@ -118,6 +118,7 @@ class Checks:
     def __init__(self) -> None:
         self.items: list[tuple[str, bool, str]] = []
         self.records: list[tuple[str, bool | None, str]] = []
+        self.skipped: list[tuple[str, str]] = []
 
     def __call__(self, name: str, cond: bool, got: str = "") -> bool:
         self.items.append((name, bool(cond), got))
@@ -125,6 +126,7 @@ class Checks:
         return bool(cond)
 
     def not_run(self, name: str, why: str) -> None:
+        self.skipped.append((name, why))
         say(f"  --    {name}   (not run: {why})")
 
     def record(self, name: str, got: str, as_expected: bool | None = None) -> None:
@@ -507,6 +509,10 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--stack-total", type=int, default=None,
                     help=f"--stacks: the stack budget a second, every stack choice together ({FIXTURE_STACK_TOTAL} on "
                          "the fixture; with --choose, the DLL's own default unless given)")
+    ap.add_argument("--pdb", nargs="?", const="", default=None, metavar="DIR",
+                    help="--stacks on the fixture: name the stacks' function starts against the game's PDB through "
+                         "dbghelp, the PDB looked for in DIR, else beside the exe the game runs from; without one the "
+                         "PDB checks are not run")
     ap.add_argument("--self-test", action="store_true",
                     help="run the --stacks helpers against hand-made replies and the --stacks runs against a "
                          "scripted DLL; needs no pipe and no game")
@@ -553,11 +559,11 @@ def main() -> int:
 
 
 def run_selected(c, check: Checks, out: dict, args, pid: int | None = None, sleep=time.sleep,
-                 clock=time.perf_counter) -> int | None:
+                 clock=time.perf_counter, symbols=None) -> int | None:
     """The run the options pick once the DLL answers: a game's (--choose), or the fixture check and then the step-2 or
     the step-3 checks. Returns 2 when the fixture recorded no call (nothing to check), else None. --self-test drives
-    this same function, so the checks it counts are the ones a live run prints; `pid`, `sleep` and `clock` as
-    run_stacks takes them."""
+    this same function, so the checks it counts are the ones a live run prints; `pid`, `sleep`, `clock` and `symbols`
+    as run_stacks takes them."""
     if args.choose is not None:
         if args.stacks:
             run_game_stacks(c, check, out, args, sleep=sleep, clock=clock)
@@ -571,7 +577,8 @@ def run_selected(c, check: Checks, out: dict, args, pid: int | None = None, slee
         return 2
     if not args.fixture_check:
         if args.stacks:
-            run_stacks(c, check, out, args, out["fixture"]["probes"], pid=pid, sleep=sleep, clock=clock)
+            run_stacks(c, check, out, args, out["fixture"]["probes"], pid=pid, sleep=sleep, clock=clock,
+                       symbols=symbols)
         else:
             run_full(c, check, out, args)
     return None
@@ -1135,10 +1142,11 @@ def read_stack_rings(c, gen: int, rings: int) -> dict[int, dict]:
 
 
 def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = None, sleep=time.sleep,
-               clock=time.perf_counter) -> None:
+               clock=time.perf_counter, symbols=None) -> None:
     """--stacks on DumperTest58: S0-S7 (the module docstring). `rows` are the fixture check's rows, by name. `pid`
     (out/host.pid when None) names the game process for frame 0's module; --self-test passes 0, a scripted DLL as
-    `c`, and a fake clock that only its sleep moves."""
+    `c`, and a fake clock that only its sleep moves. `symbols` opens --pdb's session as open_game_pdb does
+    (open_game_pdb when None); --self-test passes the scripted game's."""
     need = ("SnapNest_Outer",) + STACK_CHOICES
     missing = [n for n in need if not isinstance((rows.get(n) or {}).get("fname_key"), list)]
     if missing:
@@ -1480,7 +1488,42 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     c.request("pe_trace_release")
 
 
-DRY_RECORD_S = 2.0        # the dry run's --record-s: S5's window at 30/s is then 30..90, both ends above zero
+# ======================================================================================================================
+# [LIVEFUNCS-STEP3] --pdb (the ledger's S3-R2): the stacks' function starts named by the fixture's shipped PDB.
+# ======================================================================================================================
+
+PDB_DISP = "PDB every in-module site with unwind data names a symbol at displacement 0"
+PDB_PE = 'PDB every known:"process_event" site names ProcessEvent'
+PDB_OUTER = "PDB SnapNest_Outer's native entry (S4's frame) names SnapNest_Outer"
+PDB_NOT_RUN = "PDB the stacks' function starts named by the game's PDB"
+
+
+def pdb_option_problem(args) -> str | None:
+    return None
+
+
+def pdb_targets(slots: list[dict], game_module: str) -> dict[int, dict]:
+    return {}
+
+
+def pdb_misses(answers: dict, rvas, needle: str = "") -> list[str]:
+    return []
+
+
+def readable_stack(frames: list[dict], answers: dict, game_module: str) -> list[str]:
+    return []
+
+
+def open_game_pdb(pid: int, exe: tuple[int, int] | None, search: str | None):
+    return "not built"
+
+
+def run_pdb(check: Checks, out: dict, opened, slots: list[dict], in_scope: list[dict], game_module: str,
+            code: int | None) -> None:
+    pass
+
+
+DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at 30/s is then 30..90, both ends above zero
 
 
 class FakeClock:
@@ -1572,7 +1615,19 @@ class ScriptedDll:
         "accept_unknown": "accepts a Start whose stack keys all name nothing, keeps no call, releases it at Stop",
         "no_calls": "a plain recording that records no call (the game not running, or the hook down)",
         "no_probes": "a plain recording without the fixture's probes (a package without them)",
+        "no_code_addr": "pe_trace_names gives SnapNest_Outer no code_addr",
+        # The game's PDB, as --pdb's session reads it.
+        "pdb_none": "no PDB matches the exe",
+        "pdb_fragment": "the PDB names one function start at a displacement (a fragment's start)",
+        "pdb_unnamed": "the PDB names nothing at one function start",
+        "pdb_pe_other": "the known site's function is not ProcessEvent in the PDB",
+        "pdb_outer_other": "SnapNest_Outer's native entry is another function in the PDB",
     }
+    # The scripted game's PDB: a name for each function start its stacks hold, by RVA.
+    PDB_NAMES = {0x480440: "ADumperTest58Actor::SnapProbe_Dispatch", OUTER_FN: "ADumperTest58Actor::execSnapNest_Outer",
+                 0x7000: "UFunction::Invoke", 0x9000: "UObject::ProcessEvent",
+                 0x3000: "ADumperTest58Actor::TraceNest_Dispatch", 0x2000: "ADumperTest58Actor::SnapNest_Fire",
+                 0x1000: "FTimerManager::Tick", 0x0800: "UWorld::Tick"}
 
     def __init__(self, *faults: str, per_frame: int = PER_FRAME_KEPT) -> None:
         unknown = set(faults) - set(self.FAULTS)
@@ -1584,6 +1639,25 @@ class ScriptedDll:
         self.t: dict | None = None
         self.cmds: list[str] = []
         self.starts: list[dict | None] = []   # each Start's trace object, as the rig sent it
+        self.pdb_opens: list[str | None] = []   # each --pdb session's search folder, as the rig asked
+        self.pdb_sessions: list[ScriptedPdb] = []
+
+    def open_symbols(self, pid: int, exe: tuple[int, int] | None, search: str | None):
+        """--pdb's session over the scripted game, as open_game_pdb opens one: a session, or why there is none."""
+        self.pdb_opens.append(search)
+        if "pdb_none" in self.f:
+            return "no PDB matching the scripted exe"
+        names = {rva: (n, 0) for rva, n in self.PDB_NAMES.items()}
+        if "pdb_fragment" in self.f:
+            names[0x3000] = (self.PDB_NAMES[0x3000], 0x40)
+        if "pdb_unnamed" in self.f:
+            del names[0x2000]
+        if "pdb_pe_other" in self.f:
+            names[0x9000] = ("UObject::CallFunction", 0)
+        if "pdb_outer_other" in self.f:
+            names[self.OUTER_FN] = ("ADumperTest58Actor::execSnapNest_Fire", 0)
+        self.pdb_sessions.append(ScriptedPdb(names, self.BASE, 0x10000000))
+        return self.pdb_sessions[-1]
 
     def rows(self) -> dict[str, dict]:
         """The fixture rows a plain recording gives, by name."""
@@ -1816,7 +1890,8 @@ class ScriptedDll:
             return dict(self._info(), data=base64.b64encode(b"".join(part)).decode(), next=frm + len(part))
         if cmd == "pe_trace_names":
             items = [{"addr": f"0x{a:X}", "class_name": FIXTURE_CLASS, "func_name": n,
-                      "code_addr": f"0x{self.BASE + (self.OUTER_FN if n == 'SnapNest_Outer' else 0x8000):X}"}
+                      "code_addr": "" if "no_code_addr" in self.f and n == "SnapNest_Outer" else
+                      f"0x{self.BASE + (self.OUTER_FN if n == 'SnapNest_Outer' else 0x8000):X}"}
                      for n, (a, _, _) in self.FUNCS.items()
                      if not ("names_missing" in self.f and n == "SnapProbe_PerFrame")]
             off = p.get("offset", 0)
@@ -1829,16 +1904,31 @@ class ScriptedDll:
         raise PipeError(f"the scripted DLL has no {cmd}")
 
 
+class ScriptedPdb:
+    """--pdb's session as the scripted game answers it: (name, displacement) by RVA, as DbghelpPdb.sym answers."""
+    def __init__(self, names: dict[int, tuple[str, int]], base: int, size: int) -> None:
+        self.names, self.base, self.size = names, base, size
+        self.pdb = "scripted.pdb"
+        self.closed = False
+
+    def sym(self, rva: int) -> tuple[str, int] | None:
+        return self.names.get(rva)
+
+    def close(self) -> None:
+        self.closed = True
+
+
 def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
     """main()'s --stacks run (run_selected) against a scripted DLL, its printing captured: no pipe, no game, and no
-    wait, on a FakeClock. `argv` adds options to the command line the run parses, after (so over) the ones it sets.
-    out["exit"] is what run_selected returned."""
+    wait, on a FakeClock; --pdb reads the scripted game's PDB. `argv` adds options to the command line the run parses,
+    after (so over) the ones it sets. out["exit"] is what run_selected returned."""
     check, out = Checks(), {"label": "dry"}
     args = build_parser().parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
                                      (["--choose", ""] if game else []) + list(argv))
     fake = FakeClock()
     with contextlib.redirect_stdout(io.StringIO()):
-        out["exit"] = run_selected(dll, check, out, args, pid=0, sleep=fake.sleep, clock=fake.now)
+        out["exit"] = run_selected(dll, check, out, args, pid=0, sleep=fake.sleep, clock=fake.now,
+                                   symbols=dll.open_symbols)
     return check, out
 
 
@@ -2041,6 +2131,41 @@ def self_test() -> int:
                     a.stack_total is None and a.record_s == 8.0 and b.stacks and b.stack_per_ring == 7)(
                build_parser().parse_args([]), build_parser().parse_args(["--stacks", "--stack-per-ring", "7"])))
 
+    # --pdb (S3-R2): its predicates over scripted symbol answers. Nothing here loads dbghelp; the structs it would be
+    # handed are checked against dbghelp.h's layout.
+    expect("PDB: SYMBOL_INFOW is dbghelp.h's 88 bytes with Name at 84; IMAGEHLP_MODULEW64 its 3,264, SymType at 32",
+           lambda: ctypes.sizeof(SYMBOL_INFOW) == 88 and SYMBOL_INFOW.Name.offset == 84 and
+           SYMBOL_INFOW.Value.offset == 48 and ctypes.sizeof(IMAGEHLP_MODULEW64) == 3264 and
+           IMAGEHLP_MODULEW64.SymType.offset == 32 and IMAGEHLP_MODULEW64.LoadedPdbName.offset == 1124 and
+           IMAGEHLP_MODULEW64.PdbAge.offset == 3220)
+    no_unwind = dict(s0, addr=base + 0x10, rva=0x10, fn=None, fn_rva=None, unwind=False)
+    expect("PDB: the starts asked are the exe's unwound sites', each once, the module compared without case",
+           lambda: sorted(pdb_targets([{"frames": sites + [s0, no_unwind]}], game)) == [4719680, 15728640] and
+           sorted(pdb_targets([{"frames": sites}, {"frames": [s0]}], game.upper())) == [4719680, 15728640] and
+           pdb_targets([{"frames": sites}], "other.exe") == {})
+    answers = {1: ("A::F", 0), 2: ("B::G", 0x40), 4: ("UObject::ProcessEvent", 0)}
+    expect("PDB: a start named at displacement 0 holds; a displacement (a fragment's start) or no symbol is reported",
+           lambda: pdb_misses(answers, [1, 4]) == [] and len(pdb_misses(answers, [1, 2, 3])) == 2)
+    expect("PDB: the name must hold the function asked for",
+           lambda: pdb_misses(answers, [4], "ProcessEvent") == [] and
+           len(pdb_misses(answers, [1, 4], "ProcessEvent")) == 1)
+    named = {4719680: ("ADumperTest58Actor::SnapProbe_Dispatch", 0), 15728640: ("UObject::ProcessEvent", 0)}
+    expect("PDB: a readable stack names the exe's frames with the offset into them, the rest as CE's text or the address",
+           lambda: readable_stack(sites, named, game) == [
+               "#0 ADumperTest58Actor::SnapProbe_Dispatch +0x89", "#1 UObject::ProcessEvent +0x523 [process_event]",
+               "#2 \"dxgi.dll\"+45678 [the dumper's hook]", "#3 0x2a0000123"] and
+           readable_stack([s0], {4719680: ("F", 0x40)}, game) == ["#0 F +0xC9"])
+
+    def pdb_opt(*argv: str) -> str | None:
+        return pdb_option_problem(build_parser().parse_args(list(argv)))
+    expect("PDB: --pdb belongs to the --stacks fixture run, bare (beside the exe) or with a folder",
+           lambda: pdb_opt("--stacks", "--pdb") is None and pdb_opt("--stacks", "--pdb", "syms") is None and
+           pdb_opt("--pdb") is not None and pdb_opt("--stacks", "--pdb", "--choose", "x") is not None and
+           pdb_opt("--stacks", "--fixture-check", "--pdb") is not None and
+           build_parser().parse_args(["--stacks", "--pdb"]).pdb == "" and
+           build_parser().parse_args(["--stacks", "--pdb", "syms"]).pdb == "syms" and
+           build_parser().parse_args([]).pdb is None)
+
     # The whole run against a scripted DLL: the glue between the helpers, which nothing else runs before a game does.
     def ran(check: Checks) -> list[str]:
         return [n for n, _, _ in check.items]
@@ -2176,10 +2301,49 @@ def self_test() -> int:
     caught(("over_total",), "the total budget held", game=True)
     expect("dry run: a total over 24 bits is echoed clamped, and the run holds",
            lambda: failing(dry_run(ScriptedDll(), argv=("--stack-total", str(1 << 24)))[0]) == [])
+
+    # --pdb against the scripted game's PDB.
+    pdb_checks = [PDB_DISP, PDB_PE, PDB_OUTER]
+    expect(f"dry run --pdb: every check holds, {len(fixture_names) + 25} and the PDB's {len(pdb_checks)}, with 8 "
+           "recorded (the first in-scope stack named)",
+           lambda: (lambda ch: failing(ch) == [] and [n for n in ran(ch) if n.startswith("PDB")] == pdb_checks and
+                    len(ran(ch)) == len(fixture_names) + 25 + len(pdb_checks) and len(ch.records) == 8 and
+                    len(recorded(ch, "PDB")) == 1)(dry_run(ScriptedDll(), argv=("--pdb",))[0]))
+
+    def pdb_stack_record(ch: Checks) -> str:
+        return next((g for n, _, g in ch.records if n.startswith("PDB")), "")
+    expect("dry run --pdb: the first in-scope stack reads by name, ProcessEvent and the hook in their places",
+           lambda: (lambda g: g.startswith("#0 ADumperTest58Actor::SnapProbe_Dispatch +0x89 | ") and
+                    "| #1 ADumperTest58Actor::execSnapNest_Outer +0x31 | #2 UFunction::Invoke +0x10 | " in g and
+                    "| #3 UObject::ProcessEvent +0x123 [process_event] | #4 \"dxgi.dll\"+45678 [the dumper's hook] |"
+                    in g)(pdb_stack_record(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
+
+    def pdb_opens(argv: tuple[str, ...]) -> tuple[list, bool]:
+        dll = ScriptedDll()
+        dry_run(dll, argv=argv)
+        return dll.pdb_opens, all(s.closed for s in dll.pdb_sessions)
+    expect("dry run: the PDB is opened only with --pdb, once, beside the exe unless a folder is given, then closed",
+           lambda: pdb_opens(()) == ([], True) and pdb_opens(("--pdb",)) == ([None], True) and
+           pdb_opens(("--pdb", "syms")) == (["syms"], True))
+    exercised.add("pdb_none")
+    expect("dry run --pdb: no PDB reports the PDB checks not run, makes none, and fails nothing",
+           lambda: (lambda ch: failing(ch) == [] and not any(n.startswith("PDB") for n in ran(ch)) and
+                    any(n == PDB_NOT_RUN and why.startswith("no PDB") for n, why in ch.skipped))(
+               dry_run(ScriptedDll("pdb_none"), argv=("--pdb",))[0]))
+    caught(("pdb_fragment",), PDB_DISP, argv=("--pdb",))
+    caught(("pdb_unnamed",), PDB_DISP, argv=("--pdb",))
+    caught(("pdb_pe_other",), PDB_PE, argv=("--pdb",))
+    caught(("pdb_outer_other",), PDB_OUTER, argv=("--pdb",))
+    caught(("no_code_addr",), PDB_OUTER, argv=("--pdb",))
+    # With nothing to ask, the PDB checks fail: a run whose stacks hold no site is not a pass.
+    caught(("no_known",), S3_KNOWN_IN, PDB_PE, argv=("--pdb",))
+    caught(("nothing_taken",), PDB_DISP, PDB_PE, argv=("--pdb",), exact=False)
+
     expect("every scripted fault has a control", lambda: exercised == set(ScriptedDll.FAULTS))
     expect("every check the good runs make has a fault that fails it",
            lambda: (lambda names: names != [] and [n for n in names if not any(n.startswith(p) for p in caught_by)]
-                    == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0])))
+                    == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0]) +
+                           ran(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
 
     def refuses_unknown_fault() -> bool:
         try:
