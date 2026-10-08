@@ -290,6 +290,9 @@ Open work only. **Read this when deciding what to do next.**
   **Fixed:** without `--stack-per-ring` the fixture run picks the budget from the plain rates (30 when it sits 1.5x
   under SnapProbe_PerFrame and over SnapProbe_Call, else between them), printed and in the output; a given budget that
   cannot bite, or no fit, reports S5's window not run with the rates instead of failing.
+  **The review's findings, fixed 2026-10-08:** with the window not run, S5's parameter-counter check is not run
+  either, for the same reason -- a budget that refuses nothing leaves nothing to miscount, so 0 there proved nothing
+  (MED-2).
   ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
