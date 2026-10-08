@@ -217,7 +217,10 @@ using StackCapturer = uint32_t (*)(uintptr_t retSlot, uint64_t* out, uint32_t ma
 inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 bytes a slot (plan section 3)
 inline constexpr uint32_t kStackMaxDepth             = 62;
 // The budget, the maintainer's (A) of 2026-10-08 (T17): D3's rule on the fixture's measured 28 us a capture gave 50 a
-// second in all, about 1.4 ms of the game thread a second; a function may take half of it.
+// second in all, about 1.4 ms of the game thread a second; a function may take half of it. That figure is the
+// conservative one: Avowed measured 3.25 us a capture on the same PC. The fixture's cost is not this laptop's hybrid
+// GPU nor its frame rate -- 20-22 us rendering on the integrated GPU or the RTX, uncapped, and 31 us capped at 30 fps
+// (docs/live-funcs-step3-items.md, "8.0 Results") -- so re-weigh against a real game before raising it.
 inline constexpr uint32_t kStackDefaultPerRingPerSec = 25;
 inline constexpr uint32_t kStackDefaultTotalPerSec   = 50;
 // The UI's Low budget (T20): half the defaults, rounded down, for a slower machine or a game where a capture costs more.

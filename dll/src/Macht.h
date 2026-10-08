@@ -474,6 +474,9 @@ using StackWalker = WORD (NTAPI*)(DWORD framesToSkip, DWORD framesToCapture, PVO
 // The return addresses above the hooked call, the game's caller first: `retSlot` is the hook's own return-address slot
 // (_AddressOfReturnAddress in the hook). At most `max` (clamped to kStackMaxFrames) go to `out`; `flags` says what
 // happened. `headroom` and `walk` are parameters for the tests; the hook goes through CaptureCallerStack.
+// The cost is per walked frame -- a .pdata search and an unwind in each frame's image -- and the walk always takes our
+// own frames too: measured 2026-10-08 at about 0.75 us a frame on DumperTest58 Shipping (14 us at depth 4, 22 us at
+// 16) and about a seventh of that on Avowed, on the same PC (docs/live-funcs-step3-items.md, "8.0 Results").
 uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
                               StackWalker walk);
 uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);

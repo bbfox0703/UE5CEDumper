@@ -27,6 +27,22 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (no build change) — What a native stack capture costs, and what it does not depend on `[LIVEFUNCS-STEP3]`
+
+- **Measured on the maintainer's PC (Ryzen 9 9955HX3D laptop, Radeon iGPU + RTX 5090):** a 16-frame capture costs
+  about 3.25 µs on Avowed (6,200 captures, the 64 busiest functions) and 20-31 µs on the DumperTest58 fixture. The
+  fixture's cost is per walked frame (about 0.75 µs), and it is not the hybrid GPU or the frame rate:
+  - on the integrated Radeon, uncapped: median 20-22 µs (the iGPU at 98 %, 90 °C);
+  - on the RTX (`-preferNvidia`), uncapped: 21-22.5 µs -- the iGPU still at 100 % copying frames to the display, the
+    CPU at 85-94 % of nominal, not boosting;
+  - on the RTX at 30 fps: 31 µs -- dearer, the game thread's caches cold between frames.
+- The budget the maintainer chose (50 a second in all) rests on the fixture's figure, so it is the conservative one;
+  on a game like Avowed it costs about a seventh of what it allows for.
+- The native-entry index (build 3643's S3-A1) first took 3.9 s on the fixture, one VirtualQuery per function at about
+  300 µs each while the game churned its address space; a per-region cache brought it to 11 ms.
+
+-----
+
 ## 2026-10-08 (build 3642) — A smaller stack budget; the Object Tree stays collapsed `[LIVEFUNCS-STEP3]` `[OT-COLLAPSE-PERSIST]`
 
 - **The native-stack budget is smaller:** Standard takes at most 25 stacks a second per function and 50 in all; Low

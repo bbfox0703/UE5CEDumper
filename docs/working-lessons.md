@@ -860,6 +860,24 @@ Two traps from one night (2026-10-08), each of which read as a defect in the pro
 - **A game polls input per frame: an instant key press is missed.** Avowed's inventory ignored `key i` and opened
   for `hold_key i 0.2`. The game's window must be in front and focused first (`front_window.py`, then a click).
 
+### 1.an A CPU timing on this laptop: say what the GPUs and the clock were doing, and suspect the subject first
+
+Measured 2026-10-08 while pricing a native stack capture. This PC is a hybrid laptop (a Radeon iGPU that drives the
+display, an RTX 5090 that renders when asked). An uncapped fixture, wherever it renders, keeps the iGPU near 100 %
+(rendering, or copying the RTX's frames to the display), and the CPU then runs at 85-94 % of nominal, not boosting.
+That looked like the explanation for a capture costing 20-28 µs on DumperTest58 against 3.25 µs on Avowed. It was not:
+the same probe gave 21-22 µs on the RTX and 31 µs capped at 30 fps (dearer: the game thread's caches go cold between
+frames). What to do:
+- Record the rendering GPU (`-preferNvidia` picks the RTX for a UE game; Task Manager or `nvidia-smi`'s utilization
+  shows which works), the frame rate, and `typeperf "\Processor Information(_Total)\% Processor Performance"` with
+  any CPU timing.
+- Vary one condition at a time before blaming the machine; a timing that moves the wrong way (the cap) says the cause
+  is elsewhere.
+- A Shipping UE build ignores `-ExecCmds`; cap it through the pipe: `invoke_function` GameUserSettings
+  `SetFrameRateLimit` (a float) then `ApplySettings` (false).
+- A per-call kernel query (VirtualQuery) cost about 300 µs in the same uncapped game: anything that asks the kernel per
+  item in a pass over the object array needs a cache (Aura::CodeRangeCache).
+
 ### 1.12 ⭐ THE DOMINANT DEFECT SHAPE HERE: the report and the reported thing are computed by different code paths
 
 *Four independent instances in one 2026-09-05/06 verification session — a logging change, an
