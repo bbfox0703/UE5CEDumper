@@ -88,7 +88,8 @@ Two measurements, hours apart on the same machine, and they point opposite ways:
 
 * **2026-08-22 morning** — `list_granted_applications` returned **20 grants made on 2026-08-19
   19:31–19:36**, still valid three days and many sessions later. So a new session does **not** clear
-  them: the plan doc's "grants do not survive a session" is FALSE here.
+  them: the plan doc's "grants do not survive a session" (removed from it on 2026-10-08) is FALSE
+  here.
 * **2026-08-22 18:20, same boot** — the list came back **empty**, and all 20 had to be re-requested
   (batches of 7 · 7 · 6; every one granted, same names, same tiers). `GetTickCount64` puts the
   last boot at **2026-08-21 14:31**, *before* the

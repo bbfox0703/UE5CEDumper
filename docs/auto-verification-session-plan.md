@@ -142,8 +142,9 @@ title reaches is decided by its version RESOURCE, not by the engine that built i
 
 ⛔ **A single `request_access` listing many apps CANNOT BE ACCEPTED**: the dialog grows taller than
 the screen and the **Accept button is unreachable**, so it comes back `user_denied` for the whole
-set — which is *not* a refusal, just an unclickable dialog. **Grants also never survive a session**,
-so this is the first action of every new session, not a fallback for when something fails.
+set — which is *not* a refusal, just an unclickable dialog. Whether grants survive a session is **not**
+predictable (measured both ways on 2026-08-22): [handover §2](handover.md) owns grant mechanics. Call
+`list_granted_applications` first, every session, and request only what is missing.
 
 **One batch of 7 covers everything the next two rows need:**
 
@@ -542,8 +543,9 @@ are always `uint8`).
 > Either way, **write the answer into §1** — that section currently states an open question, and it
 > should not stay open once one call has settled it.
 
-⚠ **Grants do not survive a session.** Every session re-requests the whole list; nothing carries
-over. Budget the three calls below into the start of every run.
+⚠ **Do not assume grants either way** — they have outlived sessions and vanished without a reboot
+([handover §2](handover.md), which owns grant mechanics). Call `list_granted_applications` first and
+request only what is missing, in batches like the ones below.
 
 ⛔ **At most ~7 apps per `request_access` call.** Measured 2026-08-17: an 18-app request rendered a
 dialog **taller than the display**, so the Allow button could not be reached — and it came back
