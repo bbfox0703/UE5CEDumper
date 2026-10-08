@@ -227,13 +227,15 @@ public class CallTraceColumnsTests
                     $"Where is {where.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#} whose other columns take {others:0.#}");
     });
 
-    /// <summary>The guard the fixed width was there for: in a narrow pane Where keeps 420 and the grid scrolls sideways,
-    /// instead of squeezing the name to a few letters.</summary>
+    /// <summary>The guard the fixed widths were there for: in a narrow pane Where keeps 420 and Address its 170, and the
+    /// grid scrolls sideways instead of squeezing either. With Where a star column, the DataGrid takes a narrow pane's
+    /// shortfall out of the other columns down to their floors: build 3644 showed Address cut to "Dump...".</summary>
     [Fact]
-    public Task A_narrow_stack_pane_keeps_Where_420_wide() => Headless.Run(() =>
+    public Task A_narrow_stack_pane_keeps_Where_420_and_Address_170_wide() => Headless.Run(() =>
     {
         var (grid, where) = StackLaid(300);
-        Assert.True(where.ActualWidth >= 419.5,
-                    $"Where is {where.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#}");
+        var address = grid.Columns.Single(c => Equals(c.Header, Header("str.CT.Stack.Col.Address")));
+        Assert.True(where.ActualWidth >= 419.5 && address.ActualWidth >= 169.5,
+                    $"Where is {where.ActualWidth:0.#} and Address {address.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#}");
     });
 }
