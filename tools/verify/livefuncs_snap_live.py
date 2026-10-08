@@ -2401,6 +2401,9 @@ class ScriptedDll:
         "nothing_taken": "every stack choice over its budget: entries flagged 64, no slot written",
         "call_refused": "every SnapProbe_Call stack of the main recording refused as over the budget (flagged 64, "
                         "skipped) though the total has room for it",
+        "call_refused_some": "the first round's in-scope SnapProbe_Call stack of the main recording refused as over "
+                             "the budget (flagged 64, skipped) though both budgets have room for it; the others "
+                             "kept",
         "known_no_fn": "a known frame without unwind data, so without fn",
         "snap_skipped": "the stack budget's refusals counted as skips in the parameter counters",
         "snap_phantom": "the parameter counters count one skip though no budget refused anything",
@@ -2701,11 +2704,12 @@ class ScriptedDll:
             return True
 
         def call(func: str, flags: int, frames: list[dict], at: float = 0.0, inner=None, flag32: bool = True,
-                 slot: bool = True, forced: bool = False) -> None:
+                 slot: bool = True, forced: bool = False, refused: bool = False) -> None:
             """One call at `at` seconds into the recording. `forced` keeps its stack whatever the budget, as a DLL that
-            keeps the wrong count does."""
+            keeps the wrong count does; `refused` refuses it whatever the budget, as a DLL that refuses wrongly does."""
             stacked = func in ring_of and flag32
-            refuse = "nothing_taken" in f or ("call_refused" in f and func == "SnapProbe_Call" and bool(ticks))
+            refuse = "nothing_taken" in f or ("call_refused" in f and func == "SnapProbe_Call" and bool(ticks)) or \
+                refused
             taken = stacked and not refuse and (forced or admit(func, at))
             over = stacked and not taken
             if over and flags & F_LONE and func not in params:
@@ -2747,7 +2751,8 @@ class ScriptedDll:
                     continue
                 in_scope = self._stacks(k)[0]
                 call("SnapNest_Outer", F_ROOT, [], at, lambda fr=in_scope, r=k, a=at: call(
-                    "SnapProbe_Call", 0, fr, a, slot=not ("slot_lost" in f and r == 0)))
+                    "SnapProbe_Call", 0, fr, a, slot=not ("slot_lost" in f and r == 0),
+                    refused="call_refused_some" in f and r == 0))
                 call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and k == 0 else lone, at,
                      flag32=not ("call_noflag" in f and k == 0))
             if "SnapProbe_PerFrame" in ring_of and not pf_events:
@@ -3874,6 +3879,10 @@ def self_test() -> int:
                       main_pf_rate=60)))
     # Refusals no total explains are the DLL's: the checks run, and fail on the stacks it did not keep.
     caught(("call_refused",), *s3_in_scope)
+    # The round-3 review's LOW: where some in-scope stacks were kept, the checks ran over those alone, and a stack
+    # refused with both budgets' room left -- the per-function budget 1.5x above SnapProbe_Call's rate, a total that
+    # starves nothing -- passed unjudged.
+    caught(("call_refused_some",), *s3_in_scope)
     expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
            lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],
                                               r[1]["stack_budget"]["runs"]) == (30, False, True))(s5_run()))
