@@ -2385,6 +2385,10 @@ class ScriptedDll:
         "main_get_error": "pe_profile_get answers an error once a trace was started",
         "main_window0": "pe_profile_get reports window_ms 0 once a trace was started",
         "main_rows_lost": "pe_profile_get loses SnapProbe_PerFrame's row once a trace was started",
+        "main_pf_under": "pe_profile_get counts a third of SnapProbe_PerFrame's calls once a trace was started: a "
+                         "plausible count, and wrong",
+        "main_window_long": "pe_profile_get reports three times the traced window once a trace was started: a "
+                            "plausible window, and wrong",
         # The game's PDB, as --pdb's session reads it.
         "pdb_none": "no PDB matches the exe",
         "pdb_fragment": "the PDB names one function start at a displacement (a fragment's start)",
@@ -2858,7 +2862,11 @@ class ScriptedDll:
                 rows = [{"class_name": "OtherActor", "func_name": "Tick", "fname_key": None, "count": 100}]
             if traced and "main_rows_lost" in self.f:
                 rows = [r for r in rows if r.get("func_name") != "SnapProbe_PerFrame"]
-            window_ms = 0 if traced and "main_window0" in self.f else int(self.window_s() * 1000)
+            if traced and "main_pf_under" in self.f:
+                rows = [dict(r, count=r["count"] // 3) if r.get("func_name") == "SnapProbe_PerFrame" else r
+                        for r in rows]
+            window_ms = 0 if traced and "main_window0" in self.f else \
+                int(self.window_s() * 1000) * (3 if traced and "main_window_long" in self.f else 1)
             return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": window_ms,
                              "functions": rows[: p.get("limit", len(rows))]}}
         if cmd == "pe_trace_get":
@@ -3776,6 +3784,17 @@ def self_test() -> int:
            "and holds, never stood down",
            lambda: all((lambda r: fail_set(r[0], s5_main) and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [])(
                s5_run(faults=(fault,))) for fault in main_faults))
+    # The round-3 review's LOW: a main table can give a rate that is plausible and wrong -- a count too low, a window
+    # too long -- and a third of the probe's 60 a second is under 1.5x the 30 sent. The probe's own ring counts every
+    # lone call it wrote or dropped, so its rate is never above the truth, and it shows the budget bit.
+    under_faults = ("main_pf_under", "main_window_long")
+    exercised.update(under_faults)
+    expect("dry run: a main table whose SnapProbe_PerFrame rate is a third of the truth (its count, or its window three "
+           "times too long): the probe's own ring shows the rate, so S5's window still runs and holds, nothing stood "
+           "down and nothing failed",
+           lambda: all((lambda r: failing(r[0]) == [] and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [] and
+                        r[1]["stack_budget"]["main_rate"] == 20.0)(s5_run(faults=(fault,)))
+                       for fault in under_faults))
     s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
 
     def s3_starved(ch: Checks, *words: str) -> bool:
@@ -3863,6 +3882,9 @@ def self_test() -> int:
            "still runs and holds",
            lambda: all((lambda ch: step2_main in failing(ch) and step2_line(ch) == ([True], []))(
                step2_run(faults=(fault,))[0]) for fault in main_faults))
+    expect("dry run step 2: a main table whose SnapProbe_PerFrame rate is a third of the truth: the parameter ring "
+           "shows the rate, so the budget check still runs and holds",
+           lambda: all(step2_line(step2_run(faults=(fault,))[0]) == ([True], []) for fault in under_faults))
     exercised.update(("param_dropped0", "param_overkept"))
     expect("dry run step 2: a parameter ring that counts no drop fails the budget check",
            lambda: step2_line(step2_run(faults=("param_dropped0",))[0]) == ([False], []))
