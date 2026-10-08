@@ -77,7 +77,10 @@ at; the fixture run refuses it, its checks being written for 16. --names (S3-A1 
 NAMES_MAX asked and the rest counted:
   A1  every named entry's ufunc is a Function (or a delegate's) of that name, in that class (get_object)
   A1  every named entry's fn is stored inside its UFunction, at one offset common to all (read_mem): the DLL reads one
-      slot for every name. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB
+      slot for every name. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB.
+      read_mem is all or nothing, so a read of the DLL's Func window (0x160 bytes) that fails is retried smaller; an
+      entry no read reaches, or read short of the slot, is listed and left out of the offset and the count; with no
+      entry read the check is reported not run
   recorded, not failed: the frames named, the entries, the shared ones (the interpreter is one, shared by every
       script function), and how many frames lie between a named frame and the next known:"process_event" toward
       the root (a native entry entered through ProcessEvent sits one below it, UFunction::Invoke between; a thunk
@@ -870,9 +873,14 @@ NAMES_AT = "A1 every named entry's fn is stored inside its UFunction, at one off
 NAMES_MAX = 64            # entries asked about, two requests each, the most frequent first; the rest are counted
 # The object classes a ufunc may have: a delegate's signature is a UFunction subclass that ProcessEvent can enter too.
 NAME_FUNC_CLASSES = ("Function", "DelegateFunction", "SparseDelegateFunction")
-# The bytes of a UFunction searched for its fn: past the end of the window the DLL searches for UFunction::Func in
-# (Aura's EnsureUFunctionFuncOffset), so every offset the DLL can have read the name through lies inside.
-NAMES_READ = 0x180
+# The bytes of a UFunction searched for its fn: the window the DLL searches for UFunction::Func in (Aura's
+# EnsureUFunctionFuncOffset reads 8 bytes at +0x80..+0x158), so every offset the DLL can have read the name through lies
+# inside, and no more is asked.
+NAMES_READ = 0x160
+# read_mem is one copy under SEH, all or nothing, and a UFunction (0xC8 bytes on UE 4.18, about 0xE0 on UE5) is smaller
+# than the window: where it ends a block whose next page cannot be read, the whole read fails. These smaller reads are
+# tried in turn, down to the smallest UFunction, so the bytes the object does have are still searched.
+NAMES_READ_RETRY = (0x100, 0xE0, 0xC8)
 
 
 def stack_item(row: dict) -> dict:
@@ -1645,12 +1653,29 @@ def fn_offsets(blob: bytes, fn: int) -> list[int]:
     return [o for o in range(0, len(blob) - 7, 8) if struct.unpack_from("<Q", blob, o)[0] == fn]
 
 
-def common_offset(per_entry: list[list[int]]) -> int | None:
-    """The lowest offset every entry holds its fn at, or None when there is none (no entry, or one without its fn)."""
-    if not per_entry:
-        return None
-    common = set(per_entry[0]).intersection(*per_entry[1:])
-    return min(common) if common else None
+def common_offset(per_entry: list[list[int]], reach: list[int] | None = None) -> int | None:
+    """The lowest offset every entry holds its fn at, or None when there is none (no entry, or one without its fn).
+    `reach` is how many bytes of each entry were read (all of NAMES_READ when None): an offset whose 8 bytes lie past
+    an entry's read is not contradicted by that entry, which says nothing there, but must be held by some entry."""
+    reach = [NAMES_READ] * len(per_entry) if reach is None else reach
+    for o in sorted({o for offs in per_entry for o in offs}):
+        if all(o in offs or o + 8 > n for offs, n in zip(per_entry, reach)):
+            return o
+    return None
+
+
+def read_ufunc(c, addr: str) -> bytes | None:
+    """A named UFunction's bytes for --names: the whole window when read_mem gives it, else the most one of the smaller
+    reads gives; None when no read gives 8 bytes, the least that can hold a slot."""
+    for size in (NAMES_READ,) + NAMES_READ_RETRY:
+        m = c.request("read_mem", addr=addr, size=size)
+        if ok_of(m):
+            try:
+                blob = bytes.fromhex(str(data_of(m).get("bytes") or ""))
+            except ValueError:
+                return None
+            return blob if len(blob) >= 8 else None
+    return None
 
 
 def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
@@ -1672,7 +1697,8 @@ def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
                 for g, n in sorted(gaps.items(), key=lambda kv: (kv[0] is None, kv[0] or 0))}
     out["names"] = {"frames": named, "entries": len(entries), "asked": len(asked), "unchecked": left,
                     "shared_entries": len(shared), "shared_max": shared[0]["shared"] if shared else None,
-                    "pe_gap": gap_text, "func_offset": None, "wrong": [], "per_entry": []}
+                    "pe_gap": gap_text, "func_offset": None, "wrong": [], "held": 0, "short": 0, "unreadable": 0,
+                    "per_entry": []}
     say(f"     {named} frames named, {len(entries)} entries; {len(asked)} asked" +
         (f", {left} less frequent left unchecked" if left else ""))
     if not entries:
@@ -1681,36 +1707,59 @@ def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
         check.not_run(NAMES_AT, why)
     else:
         wrong: list[str] = []
-        offsets: list[list[int]] = []
+        reads: list[tuple[int, list[int]] | None] = []   # per entry: the bytes read and the offsets holding fn
         for e in asked:
             addr = f"{e['ufunc']:X}"
             o = c.request("get_object", addr=addr)
             d = data_of(o)
-            if not (ok_of(o) and d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and
-                    d.get("outer") == e["class"]):
+            if not ok_of(o):
+                wrong.append(f"{e['class']}::{e['func']} at {addr}: get_object failed: {o.get('error')!r}")
+            elif not (d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and
+                      d.get("outer") == e["class"]):
                 wrong.append(f"{e['class']}::{e['func']} at {addr} is {d.get('class')!r} "
                              f"{d.get('outer')!r}::{d.get('name')!r}")
-            m = c.request("read_mem", addr=addr, size=NAMES_READ)
-            try:
-                blob = bytes.fromhex(str(data_of(m).get("bytes") or "")) if ok_of(m) else b""
-            except ValueError:
-                blob = b""
-            offsets.append(fn_offsets(blob, e["fn"]) if e["fn"] is not None else [])
+            blob = read_ufunc(c, addr)
+            r = None if blob is None else (len(blob), fn_offsets(blob, e["fn"]) if e["fn"] is not None else [])
+            reads.append(r)
             out["names"]["per_entry"].append({"ufunc": addr, "class": e["class"], "func": e["func"],
-                                              "frames": e["frames"], "shared": e["shared"],
-                                              "fn": fmt(e["fn"], "#x"), "offsets": [hex(x) for x in offsets[-1]]})
-        off = common_offset(offsets)
-        out["names"].update(func_offset=off, wrong=wrong)
+                                              "frames": e["frames"], "shared": e["shared"], "fn": fmt(e["fn"], "#x"),
+                                              "read": None if r is None else r[0],
+                                              "offsets": [] if r is None else [hex(x) for x in r[1]]})
+        # An entry no read reached says nothing about the slot: it is kept out of the offset, and of N. So is a named
+        # frame without fn, which has nothing to look for; the DLL names a frame by its fn, so that one is wrong.
+        got = [(e, r) for e, r in zip(asked, reads) if r is not None]
+        looked = [r for e, r in got if e["fn"] is not None]
+        off = common_offset([r[1] for r in looked], [r[0] for r in looked])
+        held, short, absent = [], [], []
+        for e, (n, offs) in got:
+            label = f"{e['class']}::{e['func']}"
+            if e["fn"] is None:
+                absent.append(f"{label} (no fn)")
+            elif off is not None and off in offs:
+                held.append(label)
+            elif (off + 8 > n) if off is not None else (not offs and n < NAMES_READ):
+                short.append(f"{label} (read to +0x{n:X})")   # the slot may lie past what was read
+            else:
+                absent.append(label)
+        unread = [f"{e['class']}::{e['func']}" for e, r in zip(asked, reads) if r is None]
+        out["names"].update(func_offset=off, wrong=wrong, held=len(held), short=len(short), unreadable=len(unread))
         tail = f" ({left} less frequent left unchecked)" if left else ""
         check(NAMES_IS, not wrong, f"{len(asked) - len(wrong)} of {len(asked)} asked{tail}; first wrong {wrong[:2]}")
         # This shows the DLL reads one slot for every name, not on its own that the slot is UFunction::Func: the DLL
         # found each name by reading that very slot. The independent evidence is the frame order recorded below (a
         # native entry one frame, UFunction::Invoke, below ProcessEvent) and, where the game ships one, a PDB.
-        absent = [f"{e['class']}::{e['func']}" for e, o in zip(asked, offsets) if not o]
-        check(NAMES_AT, off is not None,
-              (f"Func at +0x{off:X} in all {len(asked)}" if off is not None else
-               f"no offset common to all {len(asked)}; without their fn {absent[:3]}; offsets "
-               f"{[[hex(x) for x in o] for o in offsets[:3]]}") + tail)
+        apart = (f"; {len(short)} read short of it {short[:3]}" if short else "") + \
+            (f"; {len(unread)} unreadable {unread[:3]}" if unread else "")
+        if not got:
+            check.not_run(NAMES_AT, f"no named UFunction could be read: read_mem failed at every size down to "
+                                    f"0x{NAMES_READ_RETRY[-1]:X} for all {len(asked)}{tail}")
+        elif off is None and not absent:
+            check.not_run(NAMES_AT, f"no read reached a slot holding fn{apart}{tail}")
+        else:
+            check(NAMES_AT, off is not None and not absent,
+                  (f"Func at +0x{off:X} in {len(held)} of {len(asked)}" if off is not None else
+                   f"no offset common to the {len(got)} read; without their fn {absent[:3]}; offsets "
+                   f"{[[hex(x) for x in r[1]] for _, r in got[:3]]}") + apart + tail)
     examples = ", ".join(f"{e['class']}::{e['func']} (shared by {e['shared']}, {e['frames']} frames)"
                          for e in shared[:5])
     check.record("A1 frames named, distinct entries, shared entries",

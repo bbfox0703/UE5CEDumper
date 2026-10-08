@@ -306,6 +306,11 @@ Open work only. **Read this when deciding what to do next.**
   **Built:** `--names` (and `--stack-depth N`, both only with `--stacks --choose`) checks the 64 most frequent (ufunc, fn)
   entries by `get_object` and by `read_mem` (fn at one offset common to all), records the shared entries and each
   named frame's distance to the next ProcessEvent frame, and reports both checks not run when nothing is named.
+  **The review's findings, fixed 2026-10-08:** `read_mem` is one copy, all or nothing, and a UFunction (0xC8-0xE0
+  bytes) is smaller than the 0x180 once read, so a read at the end of a block failed a correct DLL: the run now reads
+  the DLL's Func window (0x160) and retries a failed read at 0x100 / 0xE0 / 0xC8; an entry no read reaches, or read
+  short of the slot, is listed and kept out of the offset and the count, and with none read the check is not run; a
+  `get_object` error is the wrong entry's reason (MED-1).
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
