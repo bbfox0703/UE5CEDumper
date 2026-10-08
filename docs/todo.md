@@ -517,7 +517,10 @@ source and editor are installed for when they are needed.
   old colour and the folded summary could disagree with it. `OnTraceBufferExponentChanged` and `RefreshTickedList` now
   call `RaiseSnapshotEstimate` (red 2f0980a6 / green 883c177c, worktree ids; S1-S4 killed). Effort **S**. Two more
   cases (Clear ticks; the buffer with Trace off) are being added. **The round-4 LOWs, fixed 2026-10-09:** Clear ticks,
-  and the buffer with Trace unticked, flip the orange and raise it (06bafa08, worktree id; M2, M3 killed).
+  and the buffer with Trace unticked, flip the orange and raise it (06bafa08, worktree id; M2, M3 killed). **Live
+  2026-10-09**, build 3645 on DumperTest58 Shipping: SnapProbe_PerFrame's parameters chosen, the estimate was orange
+  (its 3,027 s against a trace scoped to the chosen rows); Trace ticked on all 14 rows turned it grey (the trace then
+  about 48.8 min), and Clear ticks turned it orange again.
   ⬜ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08): the next release -- the first with the Call Trace tab
   (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
   draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
