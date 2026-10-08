@@ -216,11 +216,13 @@ using StackCapturer = uint32_t (*)(uintptr_t retSlot, uint64_t* out, uint32_t ma
 // The stack choice's limits. The UI pins each.
 inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 bytes a slot (plan section 3)
 inline constexpr uint32_t kStackMaxDepth             = 62;
-inline constexpr uint32_t kStackDefaultPerRingPerSec = 100;      // provisional (T17), as step 2's were
-inline constexpr uint32_t kStackDefaultTotalPerSec   = 200;      // 200 captures at 10 us: T9's 2 ms a second
-// The UI's Low budget (T20): half the defaults, for a slower machine or a game where a capture costs more.
-inline constexpr uint32_t kStackLowPerRingPerSec     = 50;
-inline constexpr uint32_t kStackLowTotalPerSec       = 100;
+// The budget, the maintainer's (A) of 2026-10-08 (T17): D3's rule on the fixture's measured 28 us a capture gave 50 a
+// second in all, about 1.4 ms of the game thread a second; a function may take half of it.
+inline constexpr uint32_t kStackDefaultPerRingPerSec = 25;
+inline constexpr uint32_t kStackDefaultTotalPerSec   = 50;
+// The UI's Low budget (T20): half the defaults, rounded down, for a slower machine or a game where a capture costs more.
+inline constexpr uint32_t kStackLowPerRingPerSec     = 12;
+inline constexpr uint32_t kStackLowTotalPerSec       = 25;
 inline constexpr uint16_t kSnapNoCapturer            = 0x8000;   // Linie's one stack-slot bit; the rest are the capturer's
 // A stack ring's slot payload: 8 bytes a frame, the depth clamped to 1..kStackMaxDepth.
 inline uint32_t StackRingCap(uint32_t depth) {

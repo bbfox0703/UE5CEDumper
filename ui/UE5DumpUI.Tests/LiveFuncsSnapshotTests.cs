@@ -669,6 +669,11 @@ public class LiveFuncsSnapshotTests
         Assert.Equal((long)LiveFuncsViewModel.StackTotalPerSec, HeaderConst(linie, "kStackDefaultTotalPerSec"));
         Assert.Equal((long)LiveFuncsViewModel.StackLowPerFuncPerSec, HeaderConst(linie, "kStackLowPerRingPerSec"));
         Assert.Equal((long)LiveFuncsViewModel.StackLowTotalPerSec, HeaderConst(linie, "kStackLowTotalPerSec"));
+        // The request model's own defaults are the DLL's too: a Start built without the view model sends them.
+        var defaults = new StackStartOptions();
+        Assert.Equal(HeaderConst(linie, "kStackDefaultDepth"), defaults.Depth);
+        Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec"), defaults.PerRingPerSec);
+        Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec"), defaults.TotalPerSec);
         // Review L8: the entry flags and the slot flags the Call Trace tab decodes.
         Assert.Equal((long)StackInfo.TakenEntryFlag, HeaderConst(linie, "kTraceStackTaken"));
         Assert.Equal((long)StackInfo.BudgetEntryFlag, HeaderConst(linie, "kTraceStackBudget"));
@@ -804,8 +809,9 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(HeaderConst(linie, "kStackLowTotalPerSec"), low.TotalPerSec);
 
         // str.LF.Stack.Warning says Low halves the budget: a re-weigh (D3) that moves one pair alone makes it wrong.
-        Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec"), 2 * HeaderConst(linie, "kStackLowPerRingPerSec"));
-        Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec"), 2 * HeaderConst(linie, "kStackLowTotalPerSec"));
+        // Halved and rounded down: a budget is a whole number of captures.
+        Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec") / 2, HeaderConst(linie, "kStackLowPerRingPerSec"));
+        Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec") / 2, HeaderConst(linie, "kStackLowTotalPerSec"));
     }
 
     [Fact]
