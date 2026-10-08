@@ -1762,7 +1762,9 @@ public class LiveFuncsSnapshotTests
         Raises("the trace's switch", () => vm.TraceEnabled = false);
         Raises("the trace's buffer", () => vm.TraceBufferExponent = 8);
         Raises("a tick", () => vm.ToggleTickCommand.Execute(Shown(vm, "A", "F")));
-        vm.TraceEnabled = true;
+        // A case of its own, so its post is run and checked here: left waiting, it would raise the summary for the
+        // next case, which would then pass whether or not its own change raised anything.
+        Raises("the trace's switch back on", () => vm.TraceEnabled = true);
         Raises("a parameter choice", () => vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G")));
         Raises("a stack choice", () => vm.ToggleStackCommand.Execute(Shown(vm, "A", "H")));
         Raises("the stack budget", () => vm.StackBudgetLow = true);
@@ -1820,6 +1822,28 @@ public class LiveFuncsSnapshotTests
         builds = 0;
         Settle(posted);
         Assert.Equal(0, builds);
+    }
+
+    /// <summary>(2) A raise posted folded that runs after an unfold shows nothing, and it is still done: the next
+    /// change made folded posts a raise of its own. One left waiting would stand for every later change, and the
+    /// summary would never be raised again.</summary>
+    [Fact]
+    public void A_raise_run_unfolded_leaves_the_next_folded_change_a_raise_of_its_own()
+    {
+        var (vm, _) = MakeVm();
+        var posted = HoldPosts(vm);
+        vm.CaptureSettingsCollapsed = true;
+        vm.FetchLimitExponent = 12;
+        Assert.Single(posted);
+        vm.CaptureSettingsCollapsed = false;
+        Settle(posted);
+
+        vm.CaptureSettingsCollapsed = true;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.MinCallsExponent = 3;
+        Settle(posted);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummary), raised);
     }
 
     /// <summary>(2) The section's fold, its summary and the header's buttons, as the view binds them: compiled bindings
