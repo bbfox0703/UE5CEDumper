@@ -965,6 +965,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private static readonly PropertyChangedEventArgs CaptureSummaryChangedArgs = new(nameof(CaptureSummary));
     private static readonly PropertyChangedEventArgs CaptureSummaryWarnChangedArgs = new(nameof(CaptureSummaryWarn));
 
+    /// <summary>How the summary's raise is put off to the end of the burst that moved its inputs: onto the UI thread's
+    /// queue, behind the work in hand. A unit test has no UI thread to run it, so it hands in a queue it runs itself.</summary>
+    internal Action<Action> PostCaptureSummaryRaise { get; set; } = static a => Avalonia.Threading.Dispatcher.UIThread.Post(a);
+
     /// <summary>Raises the summary and its flag after any of their inputs, in one place rather than beside every raise
     /// of an input.</summary>
     protected override void OnPropertyChanged(PropertyChangedEventArgs e)

@@ -108,6 +108,9 @@ public class LiveFuncsSnapshotTests
         {
             StringLookup = En,
         };
+        // Folded, the summary's raise is posted to the UI thread, which a unit test does not run: held per view model
+        // rather than left on the process-wide dispatcher. A test that reads the raise takes the queue (HoldPosts).
+        HoldPosts(vm);
         return (vm, dump);
     }
 
@@ -1577,6 +1580,9 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(Line("str.LF.Settings.Expand"), vm.CaptureSettingsToggleText);
         Assert.Contains(nameof(LiveFuncsViewModel.CaptureSettingsCollapsed), raised);
         Assert.Contains(nameof(LiveFuncsViewModel.CaptureSettingsToggleText), raised);
+        // Unfolded, nothing raised the summary: the fold brings it up to date at once, not after a post.
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummary), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn), raised);
         Assert.NotEqual(vm.CaptureSettingsToggleText, Line("str.LF.Settings.Collapse"));
 
         vm.ToggleCaptureSettingsCommand.Execute(null);
@@ -1588,6 +1594,20 @@ public class LiveFuncsSnapshotTests
     }
 
     private static string Summary(params string[] parts) => string.Join(" · ", parts);
+
+    /// <summary>The summary's raise, posted where the app posts it to the UI thread, held here instead: a unit test has no
+    /// UI thread to run it. <see cref="Settle"/> runs what was posted, as the UI thread does once the burst is over.</summary>
+    private static Queue<Action> HoldPosts(LiveFuncsViewModel vm)
+    {
+        var posted = new Queue<Action>();
+        vm.PostCaptureSummaryRaise = posted.Enqueue;
+        return posted;
+    }
+
+    private static void Settle(Queue<Action> posted)
+    {
+        while (posted.TryDequeue(out var post)) post();
+    }
 
     /// <summary>(2) Folded, the header says what is set: the plain capture's settings always, and with the experimental
     /// trace its switch and buffer, the three choice counts, the stack budget once a stack is chosen, the snapshot buffer
@@ -1689,17 +1709,21 @@ public class LiveFuncsSnapshotTests
     }
 
     /// <summary>(2) A summary the screen keeps showing after a setting moved would be wrong while folded, which is the only
-    /// time it is read: so every change it names raises it, and its orange flag with it.</summary>
+    /// time it is read: so every change it names raises it, and its orange flag with it, once the change's work is
+    /// done.</summary>
     [Fact]
     public async Task The_summary_is_raised_by_every_change_it_names()
     {
         var (vm, dump) = await WithRatesToEstimate();
+        var posted = HoldPosts(vm);
+        vm.CaptureSettingsCollapsed = true;
         var raised = new List<string?>();
         vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
         void Raises(string what, Action change)
         {
             raised.Clear();
             change();
+            Settle(posted);
             Assert.True(raised.Contains(nameof(LiveFuncsViewModel.CaptureSummary)), $"{what} does not raise the summary");
             Assert.True(raised.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn)), $"{what} does not raise its flag");
         }
@@ -1716,8 +1740,57 @@ public class LiveFuncsSnapshotTests
         Raises("the snapshot buffer", () => vm.SnapshotBufferExponent = 6);
         raised.Clear();
         await RecordStacks(vm, dump, captures: 100, spentTicks: 100_000);
+        Settle(posted);
         Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn), raised);
         Raises("the free memory read again", () => vm.OnEnteringTab());
+    }
+
+    /// <summary>(2) What a choice click costs the summary. The click raises seven of the summary's inputs, and when each
+    /// raise had every binding build the summary again, its estimates with it, the panel's four bindings built it 28
+    /// times a click, folded or not. Unfolded nothing shows it, so a click builds it not at all; folded, once a binding,
+    /// after the click's work, from the one raise posted when the first input moved. A raise posted before an unfold has
+    /// nothing to show.</summary>
+    [Fact]
+    public async Task A_choice_click_builds_the_summary_once_folded_and_not_at_all_unfolded()
+    {
+        var (vm, _) = await WithRatesToEstimate();
+        var posted = HoldPosts(vm);
+        int builds = 0;
+        var lookup = vm.StringLookup;
+        // Every summary opens with the fetch limit's part, so its lookups count the summaries built.
+        vm.StringLookup = key =>
+        {
+            if (key == "str.LF.Summary.Fetch") builds++;
+            return lookup(key);
+        };
+        // As a binding does: read the value again on each raise of it.
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LiveFuncsViewModel.CaptureSummary)) _ = vm.CaptureSummary;
+            if (e.PropertyName == nameof(LiveFuncsViewModel.CaptureSummaryWarn)) _ = vm.CaptureSummaryWarn;
+        };
+
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        Settle(posted);
+        Assert.Equal(0, builds);
+
+        vm.CaptureSettingsCollapsed = true;
+        Assert.Equal(1, builds);
+        builds = 0;
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        Assert.Equal(0, builds);
+        Assert.Single(posted);
+        Settle(posted);
+        Assert.Equal(1, builds);
+        Assert.Contains(Line("str.LF.Summary.Choices", 0, 1, 2), vm.CaptureSummary, StringComparison.Ordinal);
+
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "F"));
+        Assert.Single(posted);
+        vm.CaptureSettingsCollapsed = false;
+        builds = 0;
+        Settle(posted);
+        Assert.Equal(0, builds);
     }
 
     /// <summary>(2) The section's fold, its summary and the header's buttons, as the view binds them: compiled bindings
@@ -1744,6 +1817,21 @@ public class LiveFuncsSnapshotTests
         Assert.Contains($"Foreground=\"{orange}\"", hot, StringComparison.Ordinal);
         Assert.DoesNotContain($"Foreground=\"{orange}\"", calm, StringComparison.Ordinal);
         foreach (var b in pair) Assert.Contains("TextWrapping=\"Wrap\"", b, StringComparison.Ordinal);
+
+        // Its tooltip is bound once, on the panel that holds the pair: a binding on each TextBlock built the summary once
+        // more per raise for each of them.
+        Assert.Single(Regex.Matches(axaml, Regex.Escape("ToolTip.Tip=\"{Binding CaptureSummary}\"")));
+        foreach (var b in pair) Assert.DoesNotContain("ToolTip.Tip", b, StringComparison.Ordinal);
+        string holder = Regex.Matches(axaml, @"<Panel\b[^>]*>").Select(m => m.Value)
+                             .Single(p => p.Contains("IsVisible=\"{Binding CaptureSettingsCollapsed}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{Binding CaptureSummary}\"", holder, StringComparison.Ordinal);
+        int open = axaml.IndexOf(holder, StringComparison.Ordinal);
+        int close = axaml.IndexOf("</Panel>", open, StringComparison.Ordinal);
+        foreach (var b in pair)
+        {
+            int at = axaml.IndexOf(b, StringComparison.Ordinal);
+            Assert.True(open < at && at < close, "the summary's pair is not inside the panel that holds its tooltip");
+        }
 
         // The summary shows folded, the section's own rows unfolded; one binding each way.
         Assert.Contains("IsVisible=\"{Binding CaptureSettingsCollapsed}\"", axaml, StringComparison.Ordinal);

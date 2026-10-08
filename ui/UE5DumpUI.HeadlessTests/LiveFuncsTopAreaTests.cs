@@ -155,6 +155,33 @@ public class LiveFuncsTopAreaTests
         Assert.Equal(orange, Shown(stackPanel, stackVm.CaptureSummary).Foreground?.ToString());
     });
 
+    /// <summary>(2) A choice made from the table, as the bound panel sees it. Unfolded, the summary is hidden and the
+    /// choice does not raise it, so no binding builds it again. Folded, one raise reaches the summary once the click's
+    /// work is done, however many of its inputs the click moved, and the line on screen, with its tooltip, says the
+    /// new counts.</summary>
+    [Fact]
+    public Task A_choice_raises_the_summary_once_folded_and_not_at_all_unfolded() => Headless.Run(() =>
+    {
+        var (panel, vm) = LaidWithAStackChosen();
+        int raises = 0;
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.CaptureSummary)) raises++; };
+        var g = vm.Results.Single(r => r.FuncName == "G");
+
+        vm.ToggleSnapshotCommand.Execute(g);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(0, raises);
+
+        vm.CaptureSettingsCollapsed = true;
+        Dispatcher.UIThread.RunJobs();
+        raises = 0;
+        vm.ToggleTickCommand.Execute(g);
+        Dispatcher.UIThread.RunJobs();
+        Assert.Equal(1, raises);
+        var summary = Shown(panel, vm.CaptureSummary);
+        Assert.Contains(string.Format(Res("str.LF.Summary.Choices"), 1, 1, 1), summary.Text, StringComparison.Ordinal);
+        Assert.Equal(vm.CaptureSummary, ToolTip.GetTip((Control)summary.Parent!) as string);
+    });
+
     /// <summary>(2) Open in Call Trace is an action after a traced Stop, not a setting: folding leaves it on screen.</summary>
     [Fact]
     public Task Open_in_Call_Trace_stays_on_screen_when_the_settings_are_folded() => Headless.Run(() =>
