@@ -382,6 +382,15 @@ public partial class LiveFuncsViewModel : ViewModelBase
     internal const int StackDepth = 16;
     internal const int StackPerFuncPerSec = 100;
     internal const int StackTotalPerSec = 200;
+    /// <summary>T20's Low budget: half of Standard, for a slower machine or a game where a capture costs more. A test
+    /// reads Linie.h and pins these to it.</summary>
+    internal const int StackLowPerFuncPerSec = 50;
+    internal const int StackLowTotalPerSec = 100;
+
+    public bool StackBudgetLow { get; set; }
+    public bool StackBudgetStandard { get => !StackBudgetLow; set { if (value) StackBudgetLow = false; } }
+    public string StackStandardTip => "";
+    public string StackLowTip => "";
 
     /// <summary>A Start allocates the snapshot buffer for any choice that fills it (D4).</summary>
     private bool AnySnapshotChoice => _snapChosen.Count > 0 || _stackChosen.Count > 0;

@@ -9,7 +9,7 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
 /// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them
-/// (S3-U2) and its view (S3-U3): docs/live-funcs-step3-items.md.
+/// (S3-U2), its view (S3-U3), and its budget and warning (S3-U8): docs/live-funcs-step3-items.md.
 /// </summary>
 public class LiveFuncsSnapshotTests
 {
@@ -667,6 +667,8 @@ public class LiveFuncsSnapshotTests
         Assert.Equal((long)LiveFuncsViewModel.StackDepth, HeaderConst(linie, "kStackDefaultDepth"));
         Assert.Equal((long)LiveFuncsViewModel.StackPerFuncPerSec, HeaderConst(linie, "kStackDefaultPerRingPerSec"));
         Assert.Equal((long)LiveFuncsViewModel.StackTotalPerSec, HeaderConst(linie, "kStackDefaultTotalPerSec"));
+        Assert.Equal((long)LiveFuncsViewModel.StackLowPerFuncPerSec, HeaderConst(linie, "kStackLowPerRingPerSec"));
+        Assert.Equal((long)LiveFuncsViewModel.StackLowTotalPerSec, HeaderConst(linie, "kStackLowTotalPerSec"));
         // Review L8: the entry flags and the slot flags the Call Trace tab decodes.
         Assert.Equal((long)StackInfo.TakenEntryFlag, HeaderConst(linie, "kTraceStackTaken"));
         Assert.Equal((long)StackInfo.BudgetEntryFlag, HeaderConst(linie, "kTraceStackBudget"));
@@ -739,6 +741,157 @@ public class LiveFuncsSnapshotTests
         Assert.Contains("BoolConverters.Or", estimateHead, StringComparison.Ordinal);
         Assert.Contains("HasSnapshotChoices", estimateHead, StringComparison.Ordinal);
         Assert.Contains("HasStackChoices", estimateHead, StringComparison.Ordinal);
+    }
+
+    // ---- [LIVEFUNCS-STEP3] S3-U8: the stack budget, Standard or Low, and the warning (T20) ----
+
+    /// <summary>A view model with one function chosen for a stack, Trace on.</summary>
+    private static async Task<(LiveFuncsViewModel vm, FakeDumpService dump)> WithAStackChosen()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", new NameKey(1, 0, 9, 0)));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.ToggleStackCommand.Execute(vm.Results.Single());
+        Assert.True(vm.HasStackChoices);
+        return (vm, dump);
+    }
+
+    /// <summary>One recording, started and stopped: what its Start asked of the stacks.</summary>
+    private static async Task<StackStartOptions> StacksSentByAStart(LiveFuncsViewModel vm, FakeDumpService dump)
+    {
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        var stacks = dump.LastTrace?.Snapshots?.Stacks;
+        Assert.NotNull(stacks);
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(vm.IsRecording);
+        return stacks!;
+    }
+
+    [Fact]
+    public async Task The_stack_budget_is_Standard_by_default_and_Low_sends_half_of_it()
+    {
+        var (vm, dump) = await WithAStackChosen();
+        Assert.False(vm.StackBudgetLow);
+        Assert.True(vm.StackBudgetStandard);
+        var standard = await StacksSentByAStart(vm, dump);
+        Assert.Equal((16, 100, 200), (standard.Depth, standard.PerRingPerSec, standard.TotalPerSec));
+
+        vm.StackBudgetLow = true;                        // the Low radio
+        Assert.False(vm.StackBudgetStandard);
+        var low = await StacksSentByAStart(vm, dump);
+        Assert.Equal((16, 50, 100), (low.Depth, low.PerRingPerSec, low.TotalPerSec));   // the depth is not the budget's
+
+        vm.StackBudgetStandard = true;                   // the Standard radio
+        Assert.False(vm.StackBudgetLow);
+        var again = await StacksSentByAStart(vm, dump);
+        Assert.Equal((100, 200), (again.PerRingPerSec, again.TotalPerSec));
+    }
+
+    [Fact]
+    public async Task Both_stack_budgets_sent_are_the_ones_Linie_h_declares()
+    {
+        var linie = File.ReadAllText(Path.Combine(RepoRoot(), "dll", "src", "Linie.h"));
+        var (vm, dump) = await WithAStackChosen();
+        var standard = await StacksSentByAStart(vm, dump);
+        Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec"), standard.PerRingPerSec);
+        Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec"), standard.TotalPerSec);
+
+        vm.StackBudgetLow = true;
+        var low = await StacksSentByAStart(vm, dump);
+        Assert.Equal(HeaderConst(linie, "kStackLowPerRingPerSec"), low.PerRingPerSec);
+        Assert.Equal(HeaderConst(linie, "kStackLowTotalPerSec"), low.TotalPerSec);
+
+        // str.LF.Stack.Warning says Low halves the budget: a re-weigh (D3) that moves one pair alone makes it wrong.
+        Assert.Equal(HeaderConst(linie, "kStackDefaultPerRingPerSec"), 2 * HeaderConst(linie, "kStackLowPerRingPerSec"));
+        Assert.Equal(HeaderConst(linie, "kStackDefaultTotalPerSec"), 2 * HeaderConst(linie, "kStackLowTotalPerSec"));
+    }
+
+    [Fact]
+    public async Task The_stack_budget_holds_still_while_recording()
+    {
+        var (vm, dump) = await WithAStackChosen();
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        vm.StackBudgetLow = true;                        // the radios are disabled; a write that arrives anyway is refused
+        Assert.False(vm.StackBudgetLow);
+        Assert.True(vm.StackBudgetStandard);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        vm.StackBudgetLow = true;
+        Assert.True(vm.StackBudgetLow);
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        vm.StackBudgetStandard = true;
+        Assert.True(vm.StackBudgetLow);
+        Assert.Equal((50, 100), (dump.LastTrace!.Snapshots!.Stacks!.PerRingPerSec, dump.LastTrace.Snapshots.Stacks.TotalPerSec));
+    }
+
+    [Fact]
+    public void Each_budget_radio_says_its_numbers()
+    {
+        var (vm, _) = MakeVm();
+        Assert.Equal(Line("str.Tip.LF.Stack.Standard", LiveFuncsViewModel.StackPerFuncPerSec, LiveFuncsViewModel.StackTotalPerSec),
+                     vm.StackStandardTip);
+        Assert.Equal(Line("str.Tip.LF.Stack.Low", LiveFuncsViewModel.StackLowPerFuncPerSec, LiveFuncsViewModel.StackLowTotalPerSec),
+                     vm.StackLowTip);
+        // A template without its placeholders would format to the same text and say no number at all.
+        Assert.Contains("100", vm.StackStandardTip, StringComparison.Ordinal);
+        Assert.Contains("200", vm.StackStandardTip, StringComparison.Ordinal);
+        Assert.Contains("50", vm.StackLowTip, StringComparison.Ordinal);
+        Assert.Contains("100", vm.StackLowTip, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_budget_radios_and_the_warning_show_with_a_stack_choice_and_the_radios_hold_still_while_recording()
+    {
+        string views = Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views");
+        var axaml = File.ReadAllText(Path.Combine(views, "LiveFuncsPanel.axaml"));
+        // Compiled bindings (trimmed AOT): the view's own data type, and the radios outside any row template.
+        Assert.Contains("x:DataType=\"vm:LiveFuncsViewModel\"", axaml[..axaml.IndexOf('>')], StringComparison.Ordinal);
+        string row = EnclosingStackPanel(axaml, "{Binding SnapshotCountText}");
+
+        var radios = Regex.Matches(axaml, @"<RadioButton\b[^>]*/>").Select(m => m.Value).ToList();
+        string standard = Assert.Single(radios, r => r.Contains("IsChecked=\"{Binding StackBudgetStandard, Mode=TwoWay}\"",
+                                                                StringComparison.Ordinal));
+        string low = Assert.Single(radios, r => r.Contains("IsChecked=\"{Binding StackBudgetLow, Mode=TwoWay}\"",
+                                                           StringComparison.Ordinal));
+        foreach (var r in new[] { standard, low })
+        {
+            Assert.Contains(r, row, StringComparison.Ordinal);   // beside the stack count, in the choices row
+            Assert.Contains("IsVisible=\"{Binding HasStackChoices}\"", r, StringComparison.Ordinal);
+            Assert.Contains("IsEnabled=\"{Binding !IsRecording}\"", r, StringComparison.Ordinal);
+        }
+        Assert.Contains("Content=\"{StaticResource str.LF.Stack.Standard}\"", standard, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{Binding StackStandardTip}\"", standard, StringComparison.Ordinal);
+        Assert.Contains("Content=\"{StaticResource str.LF.Stack.Low}\"", low, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{Binding StackLowTip}\"", low, StringComparison.Ordinal);
+
+        // One group, and no other view's: Avalonia groups radios by name across the window every panel shares.
+        static string Group(string radio)
+        {
+            var g = Regex.Match(radio, @"GroupName=""(?<g>[^""]+)""");
+            Assert.True(g.Success, "a budget radio has no GroupName");
+            return g.Groups["g"].Value;
+        }
+        string group = Group(standard);
+        Assert.Equal(group, Group(low));
+        foreach (var file in Directory.GetFiles(views, "*.axaml"))
+        {
+            int uses = Regex.Matches(File.ReadAllText(file), $@"GroupName=""{Regex.Escape(group)}""").Count;
+            Assert.Equal(Path.GetFileName(file) == "LiveFuncsPanel.axaml" ? 2 : 0, uses);
+        }
+
+        // The warning: wrapping, on a choice, in the colour the panel's own warnings use (the orange estimate line's).
+        var warning = Regex.Match(axaml, @"<TextBlock\b[^>]*Text=""\{StaticResource str\.LF\.Stack\.Warning\}""[^>]*/>");
+        Assert.True(warning.Success, "no TextBlock shows str.LF.Stack.Warning");
+        Assert.Contains("IsVisible=\"{Binding HasStackChoices}\"", warning.Value, StringComparison.Ordinal);
+        Assert.Contains("TextWrapping=\"Wrap\"", warning.Value, StringComparison.Ordinal);
+        var orange = Regex.Match(axaml, @"<TextBlock Text=""\{Binding SnapshotEstimate\}"" IsVisible=""\{Binding SnapshotEstimateWarn\}""\s+Foreground=""(?<c>[^""]+)""");
+        Assert.True(orange.Success, "the estimate's warning line moved");
+        Assert.Contains($"Foreground=\"{orange.Groups["c"].Value}\"", warning.Value, StringComparison.Ordinal);
+        Assert.True(Line("str.LF.Stack.Warning").Length > 0);
     }
 
     /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>
