@@ -3179,6 +3179,9 @@ def self_test() -> int:
     expect("dry run --names: --stacks --choose holds every check, A1's two after the run's 5, and records 2 more",
            lambda: (lambda r: failing(r[0]) == [] and ran(r[0])[5:] == [NAMES_IS, NAMES_AT] and len(ran(r[0])) == 7 and
                     len(r[0].records) == 8 and len(recorded(r[0], "A1")) == 2)(names_run()))
+    expect("dry run --names: under the cap every entry is asked and none is left unchecked, and no line says one was",
+           lambda: (lambda r: (r[1]["names"]["asked"], r[1]["names"]["unchecked"]) == (2, 0) and
+                    not any("left unchecked" in g for n, _, g in r[0].items if n.startswith("A1")))(names_run()))
     expect("dry run --names: Func at the one offset both entries share, never at a decoy",
            lambda: names_run()[1]["names"]["func_offset"] == ScriptedDll.FUNC_AT and
            any(f"+0x{ScriptedDll.FUNC_AT:X}" in g for n, _, g in names_run()[0].items if n == NAMES_AT))
