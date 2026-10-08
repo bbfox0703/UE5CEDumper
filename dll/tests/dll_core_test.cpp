@@ -9038,6 +9038,43 @@ int main() {
             check("...nor is 0x1000", !h2 && none.moduleBase == 0 && none.moduleUtf8.empty() && !none.unwind);
         }
 
+        // S3-M3: a chained fragment's primary function, on a synthetic image: offsets are RVAs into `img`.
+        {
+            alignas(8) static uint8_t img[0x800] = {};
+            auto putRf = [](uint32_t off, uint32_t b, uint32_t e, uint32_t u) {
+                RUNTIME_FUNCTION r{};
+                r.BeginAddress = b;
+                r.EndAddress = e;
+                r.UnwindData = u;
+                memcpy(img + off, &r, sizeof r);
+            };
+            auto putUi = [](uint32_t off, bool chained, uint8_t codes) {
+                img[off]     = static_cast<uint8_t>(1 | ((chained ? UNW_FLAG_CHAININFO : 0) << 3));   // version 1
+                img[off + 1] = 0;
+                img[off + 2] = codes;
+                img[off + 3] = 0;
+            };
+            const uintptr_t base = reinterpret_cast<uintptr_t>(img);
+            putUi(0x300, false, 0);                    // the primary's own unwind info
+            putUi(0x200, true, 3);                     // a fragment: 3 codes, padded to 4, then its parent's entry
+            putRf(0x200 + 4 + 8, 0x800, 0x900, 0x300);
+            putUi(0x400, true, 2);                     // a fragment of that fragment: 2 codes, no padding
+            putRf(0x400 + 4 + 4, 0x1000, 0x1100, 0x200);
+            putRf(0x500, 0x700, 0x780, 0x300);         // the entry an indirect one points at
+            putUi(0x600, true, 0);                     // a chain that names itself
+            putRf(0x600 + 4, 0x5000, 0x5100, 0x600);
+            auto hx = [](uint32_t v) { char b[16]; snprintf(b, sizeof b, "0x%X", v); return std::string(b); };
+            const uint32_t c1 = Macht::FollowChain(base, 0x1000, 0x200);
+            check("a chained fragment names its primary function (its 3 unwind codes padded to 4)", c1 == 0x800,
+                  hx(c1).c_str());
+            const uint32_t c2 = Macht::FollowChain(base, 0x2000, 0x400);
+            check("...through two links", c2 == 0x800, hx(c2).c_str());
+            const uint32_t c3 = Macht::FollowChain(base, 0x3000, 0x500 | 1);
+            check("an indirect entry (UnwindData bit 0) is followed to the entry it names", c3 == 0x700, hx(c3).c_str());
+            check("an entry that chains nowhere is its own primary", Macht::FollowChain(base, 0x4000, 0x300) == 0x4000);
+            check("a chain that loops ends after kChainMaxHops links", Macht::FollowChain(base, 0x5000, 0x600) == 0x5000);
+        }
+
         // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's
         // capturer installed, a call chosen for its stack alone in a scoped trace.
         {

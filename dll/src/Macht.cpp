@@ -882,6 +882,12 @@ __declspec(noinline) uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* ou
     return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
 }
 
+// [LIVEFUNCS-STEP3] S3-M3 (stubbed).
+uint32_t FollowChain(uintptr_t imageBase, uint32_t beginRva, uint32_t unwindData) {
+    (void)imageBase; (void)unwindData;
+    return beginRva;
+}
+
 // [LIVEFUNCS-STEP3] S3-M2. The module the way Genau's ModuleOfAddress / ModuleNameOf find it (file-static there).
 // `own` compares bases: in the game this module is UE5Dumper.dll or a proxy under a system DLL's name, and in
 // dll_core_test it is the test exe itself.

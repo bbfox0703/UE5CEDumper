@@ -490,4 +490,11 @@ struct CodeSite {
 // False, with `out` reset, when the address is in no module.
 bool DescribeCode(uintptr_t retAddr, CodeSite& out);
 
+// [LIVEFUNCS-STEP3] S3-M3. The primary function of a .pdata entry that may be a chained fragment (shrink-wrapped or
+// hot/cold code): follows UNW_FLAG_CHAININFO, and an entry whose UnwindData has bit 0 set (an indirect entry), to the
+// entry whose unwind info chains no further, and returns its BeginAddress (an RVA). Pure over memory the caller
+// knows is readable; at most kChainMaxHops links, so a corrupt chain still ends.
+inline constexpr uint32_t kChainMaxHops = 32;
+uint32_t FollowChain(uintptr_t imageBase, uint32_t beginRva, uint32_t unwindData);
+
 } // namespace Macht
