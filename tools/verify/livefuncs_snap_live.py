@@ -55,7 +55,8 @@ SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --sta
       separate invocation (cut 4, which the review's H1 took)
 No red run on a DLL without step 3 (H1): it sends no names.stacks, so S0 fails by construction and S1-S6 cannot run.
 --stacks --choose is the design's 8.3 on a real game: the busiest named functions whose class or name holds one of
-the substrings ("" for any), chosen for stacks alone; it reports their cost. --self-test runs the pure pieces
+the substrings ("" for any), chosen for stacks alone at the DLL's default budgets (a budget given on the command line
+is sent instead); it reports their cost. --self-test runs the pure pieces
 against hand-made replies, then both --stacks runs against a scripted DLL (ScriptedDll), each beside a control that
 must fail: no pipe, no game.
 
@@ -500,9 +501,12 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--stacks", action="store_true",
                     help="step 3: native stack snapshots (S0-S7) instead of the step-2 checks; with --choose, the "
                          "stack cost on a real game")
-    ap.add_argument("--stack-per-ring", type=int, default=30, help="--stacks: the per-function stack budget a second")
-    ap.add_argument("--stack-total", type=int, default=200,
-                    help="--stacks: the stack budget a second, every stack choice together")
+    ap.add_argument("--stack-per-ring", type=int, default=None,
+                    help=f"--stacks: the per-function stack budget a second ({FIXTURE_STACK_PER_RING} on the fixture; "
+                         "with --choose, the DLL's own default unless given)")
+    ap.add_argument("--stack-total", type=int, default=None,
+                    help=f"--stacks: the stack budget a second, every stack choice together ({FIXTURE_STACK_TOTAL} on "
+                         "the fixture; with --choose, the DLL's own default unless given)")
     ap.add_argument("--self-test", action="store_true",
                     help="run the --stacks helpers against hand-made replies and the --stacks runs against a "
                          "scripted DLL; needs no pipe and no game")
@@ -777,6 +781,9 @@ S3_KNOWN_ONE = "S3 every known frame names one function, and no stack holds two"
 # that every slot of ring s belongs to the s-th name.
 STACK_CHOICES = ("SnapProbe_Call", "SnapProbe_PerFrame")
 STACKS_ONLY_S = 3.0       # the stacks-only recording: SnapProbe_Call runs about four times a second
+# The fixture run's budgets when none is given (the ledger's 8.1): 30/s sits far below SnapProbe_PerFrame's rate, so
+# S5 sees the budget drop calls. A game run (8.3) sends none unless given: it measures the DLL's own defaults.
+FIXTURE_STACK_PER_RING, FIXTURE_STACK_TOTAL = 30, 200
 
 
 def stack_item(row: dict) -> dict:
@@ -1128,12 +1135,14 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     out["machine"] = machine()
     out["game_module"] = {"pid": pid, "name": game_module, "from_process": bool(named),
                           "image": [hex(x) for x in exe] if exe else None}
-    per, total = budget_echo(args.stack_per_ring), budget_echo(args.stack_total)
+    per_sent = FIXTURE_STACK_PER_RING if args.stack_per_ring is None else args.stack_per_ring
+    total_sent = FIXTURE_STACK_TOTAL if args.stack_total is None else args.stack_total
+    per, total = budget_echo(per_sent), budget_echo(total_sent)
     say(f"\ngame module {game_module} ({'pid %d' % pid if named else 'the fixture name: no usable out/host.pid'}); "
         f"CPU {out['machine']['cpu'] or '?'}; stack budgets {per}/s a function, {total}/s in all, depth {STACK_DEPTH}")
     snap_bytes = 32 << 20
     stacks = {"funcs": [stack_item(rows[n]) for n in STACK_CHOICES], "depth": STACK_DEPTH,
-              "per_ring_per_s": args.stack_per_ring, "total_per_s": args.stack_total}
+              "per_ring_per_s": per_sent, "total_per_s": total_sent}
 
     # ---- S0: the main Start. SnapProbe_Call's parameter budget is far above its four calls a second, so a nonzero
     # parameter counter at S5 can only be a stack refusal counted in the wrong place.
@@ -1400,10 +1409,12 @@ def run_game_stacks(c, check: Checks, out: dict, args) -> None:
     out["machine"] = mc = machine()
     if not check("functions to choose were found", chosen != [], ", ".join(out["chosen"][:12])):
         return
-    per, total = budget_echo(args.stack_per_ring), budget_echo(args.stack_total)
-    say(f"\nstacks-only recording ({args.record_s:.0f} s), {len(chosen)} chosen, {per}/s a function, {total}/s in all:")
-    stacks = {"funcs": [stack_item(f) for f in chosen], "depth": STACK_DEPTH, "per_ring_per_s": args.stack_per_ring,
-              "total_per_s": args.stack_total}
+    stacks = {"funcs": [stack_item(f) for f in chosen], "depth": STACK_DEPTH}
+    for key, given in (("per_ring_per_s", args.stack_per_ring), ("total_per_s", args.stack_total)):
+        if given is not None:   # left out, the DLL applies its own default, which is what 8.3 measures
+            stacks[key] = given
+    say(f"\nstacks-only recording ({args.record_s:.0f} s), {len(chosen)} chosen, budgets "
+        f"{json.dumps({k: v for k, v in stacks.items() if k != 'funcs'})} (the DLL's default for any left out):")
     t0 = time.perf_counter()
     start = c.request("pe_profile_start", trace={"bytes": 64 << 20, "snapshots": {"bytes": 32 << 20, "funcs": [],
                                                                                   "stacks": stacks}})
@@ -1416,6 +1427,9 @@ def run_game_stacks(c, check: Checks, out: dict, args) -> None:
                  state != "old" and isinstance(st.get("stack"), dict), state):
         return
     check("every stack choice is named", state == "ok", json.dumps(st.get("names"))[:160])
+    per, total = int_or(st["stack"].get("per_ring_per_s"), 0), int_or(st["stack"].get("total_per_s"), 0)
+    out["stack_budgets"] = {"per_ring_per_s": per, "total_per_s": total}
+    say(f"     the DLL uses {per}/s a function, {total}/s in all")
     time.sleep(args.record_s)
     t2 = time.perf_counter()
     stop = data_of(c.request("pe_profile_stop"))
