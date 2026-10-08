@@ -333,7 +333,8 @@ Open work only. **Read this when deciding what to do next.**
   (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
   draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
   line against the build being released -- the switch's and buttons' names, the budget names, what a stack names --
-  and drop this row once the notes carry it.
+  and drop this row once the notes carry it. ASM is the AOBMaker CE plugin's (the maintainer: well under 10 % of
+  users have it), so Copy leads and ASM is the aside.
 
   ```markdown
   ## Call Trace: when to use it, and its limits
@@ -343,7 +344,7 @@ Open work only. **Read this when deciding what to do next.**
   Use it to:
   - Find which UFunction runs when you do something in the game, on which object, and what called it.
   - See a function's parameters as the game passed them, decoded by type, at the call and after it returns.
-  - Get a chosen function's native call stack, and send a frame to Cheat Engine (**Copy** / **ASM**) to dig further there.
+  - Get a chosen function's native call stack, and **Copy** a frame's address in Cheat Engine's form to dig further there (**ASM** opens it in CE's disassembler, and needs the AOBMaker CE plugin).
 
   It does not:
   - See calls that skip `ProcessEvent`: native C++ calling native C++, or a Blueprint calling a native function directly.
