@@ -69,6 +69,10 @@ public partial class LiveFuncsPanel : UserControl
         _wired.ConfirmTraceAllCalls = () => ConfirmDialog.ShowAsync(
             Core.Res.Get("str.LF.Trace.Confirm.Title"), Core.Res.Get("str.LF.Trace.Confirm.Message"),
             Core.Res.Get("str.LF.Trace.Confirm.Run"), Core.Res.Get("str.LF.Trace.Confirm.Cancel"));
+        // [LIVEFUNCS-STEP3] T9.2's question; the view model writes it, as it names the function and the budget.
+        _wired.ConfirmStackPerFrame = question => ConfirmDialog.ShowAsync(
+            Core.Res.Get("str.LF.Stack.PerFrame.Title"), question,
+            Core.Res.Get("str.LF.Stack.PerFrame.Run"), Core.Res.Get("str.LF.Stack.PerFrame.Cancel"));
         _wired.PropertyChanged += OnVmPropertyChanged;
         ApplyTickColumnVisibility();
     }

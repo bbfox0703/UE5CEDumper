@@ -28,7 +28,7 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
 
     /// <summary>[LIVEFUNCS-STEP3] Read <see cref="IsStackChosen"/> back into the views bound to it, unchanged: a click
     /// the view model refuses has already flipped its box, and an unchanged value raises nothing by itself.</summary>
-    public void RaiseIsStackChosen() { }
+    public void RaiseIsStackChosen() => OnPropertyChanged(nameof(IsStackChosen));
 
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";

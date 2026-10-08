@@ -425,19 +425,36 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>T9.2: asked before a per-frame function is chosen for a native stack, with the question to show. The view
     /// sets it; without one, a per-frame function is not chosen.</summary>
     public Func<string, Task<bool>>? ConfirmStackPerFrame { get; set; }
+    /// <summary>T9.2: answered yes on this connection, so a later per-frame choice is made at once. A no does not count
+    /// as asked. A disconnect clears it: a capture's cost is the game's, and the next connection may be another game.</summary>
+    private bool _stackPerFrameConfirmed;
 
     /// <summary>Choose or drop a row's native stack. Refused whenever a parameter choice is (<see cref="CanSnapshot"/>),
-    /// and on a keyless row, as a stack is chosen by name; a function with no parameters still has a stack.</summary>
+    /// and on a keyless row, as a stack is chosen by name; a function with no parameters still has a stack. Choosing a
+    /// per-frame function asks first (T9.2): chosen alone, it takes a stack every frame, up to the budget.</summary>
     [RelayCommand]
-    private Task ToggleStack(PeProfileEntry? row)
+    private async Task ToggleStack(PeProfileEntry? row)
     {
-        if (row == null || !CanSnapshot || !row.CanChooseStack) return Task.CompletedTask;
-        bool chosen = _stackChosen.Toggle(row, _allEntries);
+        if (row == null || !CanSnapshot || !row.CanChooseStack) return;
         string key = Key(row);
+        if (row.IsPerFrame && !_stackChosen.Contains(row) && !_stackPerFrameConfirmed)
+        {
+            var confirm = ConfirmStackPerFrame;
+            bool yes = confirm != null
+                       && await confirm(Say("str.LF.Stack.PerFrame.Message", key, StackBudgetPerFunc, StackBudgetTotal));
+            // The question can outlive its connection: a yes given after a disconnect is for rows of the old process.
+            if (!yes || !CanSnapshot)
+            {
+                // The box flipped on the click, and the value it should read again has not changed.
+                row.RaiseIsStackChosen();
+                return;
+            }
+            _stackPerFrameConfirmed = true;
+        }
+        bool chosen = _stackChosen.Toggle(row, _allEntries);
         foreach (var e in _allEntries.Where(e => Key(e) == key)) e.IsStackChosen = chosen && e.CanChooseStack;
         row.IsStackChosen = chosen;
         RefreshSnapshotList();
-        return Task.CompletedTask;
     }
 
     partial void OnSnapshotBufferExponentChanged(int value)
@@ -1467,6 +1484,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _snapChosen.Clear();
         _stackChosen.Clear();
         foreach (var e in _allEntries) { e.IsSnapChosen = false; e.IsStackChosen = false; }
+        _stackPerFrameConfirmed = false;
         _lastWindowMs = 0;
         RefreshSnapshotList();
         _lastCallsPerSecond = 0;
