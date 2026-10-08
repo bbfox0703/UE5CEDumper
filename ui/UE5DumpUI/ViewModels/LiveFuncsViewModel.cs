@@ -731,19 +731,33 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private double? _stackUsMeasured;
     private double StackUsPerCapture => _stackUsMeasured ?? StackAssumedUsPerCapture;
 
-    private List<double> StackRates() => _stackChosen.Names.Select(LastRateOf).ToList();
+    /// <summary>A chosen name's calls a second for the stack estimate. One holding an address the DLL left out as per-frame
+    /// (Hide per-frame) ran every frame, more than any budget lets through, so EstimateStacks holds it to its own:
+    /// counted from the page alone, it would read as not called, the dearest choice as the cheapest.</summary>
+    private double StackRateOf(string name)
+        => _stackChosen.AddressesOf(name).Any(_lastPerFrameAddrs.Contains) ? double.PositiveInfinity : LastRateOf(name);
+
+    private List<double> StackRates() => _stackChosen.Names.Select(StackRateOf).ToList();
 
     private StackCost CurrentStackCost()
         => EstimateStacks(StackRates(), StackBudgetPerFunc, StackBudgetTotal, StackUsPerCapture);
 
+    /// <summary>A chosen name the last page has no row of while it left recorded functions out: the cut keeps the highest
+    /// counts, so the page cannot say such a function was not called.</summary>
+    private bool StackChoiceCutFromPage
+        => LastTruncated && _stackChosen.Names.Any(n => !_allEntries.Any(e => Key(e) == n));
+
     /// <summary>T9.1's line, under the budget chosen. With no chosen function called last time there is no rate to weigh,
-    /// so the line says so and gives the most the budget takes instead of an estimate of nothing.</summary>
+    /// so the line says so and gives the most the budget takes instead of an estimate of nothing; when the page left a
+    /// choice out, it says that instead of "not called".</summary>
     public string StackEstimate
     {
         get
         {
             if (_stackChosen.Count == 0) return "";
-            if (StackRates().All(r => r <= 0)) return Say("str.LF.Stack.EstimateNone", StackBudgetTotal, StackBudgetPerFunc);
+            if (StackRates().All(r => r <= 0))
+                return Say(StackChoiceCutFromPage ? "str.LF.Stack.EstimateNotShown" : "str.LF.Stack.EstimateNone",
+                           StackBudgetTotal, StackBudgetPerFunc);
             var c = CurrentStackCost();
             return Say("str.LF.Stack.Estimate", c.CapturesPerSec, c.MsPerSec, StackUsPerCapture,
                        StringLookup(_stackUsMeasured.HasValue ? "str.LF.Stack.EstimateMeasured" : "str.LF.Stack.EstimateAssumed"));
@@ -1316,7 +1330,6 @@ public partial class LiveFuncsViewModel : ViewModelBase
             _lastCallsPerSecond = result.TotalCalls / (result.WindowMs.Value / 1000.0);
             OnPropertyChanged(nameof(TraceEstimate));
         }
-        RefreshSnapshotList();
         _lastShown    = result.Entries.Count;
         _lastDistinct = result.DistinctFuncs;
         _lastTotalCalls = result.TotalCalls;
@@ -1324,6 +1337,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _lastUnnamed  = result.UnnamedFuncs ?? 0;
         _lastRecordingAtFetch = result.Recording;
         _lastPageMinCount = result.Entries.Count > 0 ? result.Entries.Min(e => e.Count) : 0;
+        // After the page's counts: the stack line reads whether this page was cut, and a binding reads it when told.
+        RefreshSnapshotList();
         _shownMinCalls = _captureMinCalls;   // before the filter runs over the new rows
         ApplyDiffAndFilter();
 
