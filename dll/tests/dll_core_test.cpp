@@ -4321,6 +4321,164 @@ int main() {
         g_cachedUEVersion           = svVerU;
     }
 
+    // -- [UE-OVERRIDE-411] review: an override is held to the UFunction tail the game has ------------------
+    //
+    // ⛔ POOL-FAKING, like UFIELDNEXT: the vote samples GObjects for objects whose class is NAMED "Function". Own
+    // pool and name pool; the main fixture goes back at the end.
+    //
+    // The override now reaches 4.11-4.17, whose UFunction tail sits 2 later (a uint16 RepOffset first). A wrong pick
+    // on a 4.18 title moved every NumParms / ParmsSize / ReturnValueOffset read, and nothing measured the tail itself:
+    // the vote adds only the version's own shift. Ten built UFunctions with one to three 4-byte parameters each, in
+    // UProperty mode, FunctionFlags at 0x88 -- the offset both sides of 4.18 share.
+    {
+        blk("OVERRIDETAIL - an override is held to where the sampled UFunctions keep their tail");
+        ResetCancel();
+
+        enum : int32_t { oClass = 1, oFunction, oNames };
+        const char* otNames[oNames] = { "", "Class", "Function" };
+        static uint8_t otEntry[oNames][0x40] = {};
+        static uintptr_t otChunk[oNames + 1] = {};
+        for (int i = 1; i < oNames; ++i) {
+            memcpy(otEntry[i] + 0x10, otNames[i], strlen(otNames[i]) + 1);
+            otChunk[i] = reinterpret_cast<uintptr_t>(otEntry[i]);
+        }
+        static uintptr_t otChunks[2] = { reinterpret_cast<uintptr_t>(otChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(otChunks), 0x10);
+        check("OVERRIDETAIL setup: the name pool resolves Function",
+              Serie::GetString(oFunction) == "Function", Serie::GetString(oFunction).c_str());
+
+        const bool     svCpnO   = DynOff::bCasePreservingName;
+        const bool     svFPropO = DynOff::bUseFProperty;
+        const uint32_t svVerO   = g_cachedUEVersion;
+        const bool     svRanO   = DynOff::bOffsetsProbeRan.load();
+        const bool     svValO   = DynOff::bOffsetsValidated.load();
+        const bool     svDetO   = DynOff::bUFunctionFlagsDetected.load();
+        const int      svFlagsO = DynOff::UFUNCTION_FLAGS;
+        const int      svExtraO = DynOff::UFUNCTION_TAIL_EXTRA;
+        const int      svMeasO  = DynOff::UFUNCTION_TAIL_MEASURED.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = false;    // UProperty mode: a function's parameters are its Children
+        DynOff::bOffsetsValidated.store(false); // the version table is the primary: 0x88 on both sides of 4.18
+
+        constexpr int kOtFns = 10;
+        enum { bMeta = 0, bFnCls = 1, bFn0 = 2, kOT = bFn0 + kOtFns };
+        alignas(16) static uint8_t otB[kOT][0x200] = {};
+        static uint8_t otP[kOtFns][3][0x100] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(otB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put16 = [](uint8_t* b, int off, uint16_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        // repOffset: a 4.11-4.17 tail (RepOffset at 0x8C, NumParms 0x8E), else 4.18's (NumParms 0x8C).
+        auto build = [&](bool repOffset) {
+            memset(otB, 0, sizeof(otB));
+            memset(otP, 0, sizeof(otP));
+            putP(otB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(otB[bMeta], Grimoire::OFF_UOBJECT_NAME, oClass);
+            putP(otB[bFnCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));  put32(otB[bFnCls], Grimoire::OFF_UOBJECT_NAME, oFunction);
+            for (int i = 0; i < kOtFns; ++i) {
+                uint8_t* f = otB[bFn0 + i];
+                const int count = i % 3 + 1, end = 4 * count;
+                const int tail = repOffset ? 0x8A : 0x88;
+                putP(f, Grimoire::OFF_UOBJECT_CLASS, A(bFnCls));
+                put32(f, 0x88, 0x00080401);                          // FunctionFlags
+                f[tail + 4] = static_cast<uint8_t>(count);           // NumParms
+                put16(f, tail + 6, static_cast<uint16_t>(end));      // ParmsSize
+                put16(f, tail + 8, 0xFFFF);                          // ReturnValueOffset: none
+                putP(f, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(otP[i][0]));
+                for (int j = 0; j < count; ++j) {
+                    const uint64_t parm = 0x0080;   // CPF_Parm
+                    memcpy(otP[i][j] + DynOff::UPROPERTY_FLAGS, &parm, sizeof(parm));
+                    put32(otP[i][j], DynOff::UPROPERTY_OFFSET, 4 * j);
+                    put32(otP[i][j], DynOff::UPROPERTY_ELEMSIZE, 4);
+                    if (j + 1 < count) putP(otP[i][j], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(otP[i][j + 1]));
+                }
+            }
+        };
+        FakePool otPool;
+        otPool.Build(kOT);
+        auto setItem = [&](int i, uintptr_t o) {
+            memcpy(otPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        for (int i = 0; i < kOT; ++i) setItem(i, A(i));
+        Aura::InitWithExtendedLayout(otPool.Addr(), FakePool::kItemSize);
+        auto resetVote = [&]() {
+            DynOff::bUFunctionFlagsDetected.store(false);
+            DynOff::UFUNCTION_FLAGS = 0;
+            DynOff::UFUNCTION_TAIL_EXTRA = 0;
+            DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+        };
+        using DynOff::TailCheck;
+        char ob[96];
+        auto verdictOf = [&](unsigned v) {
+            const Ubel::OverrideTailCheck c = Ubel::CheckVersionOverrideTail(v);
+            snprintf(ob, sizeof(ob), "verdict %d readers +0x%X measured +0x%X", static_cast<int>(c.verdict),
+                     c.readersBase, c.measuredBase);
+            return c;
+        };
+
+        // A 4.18 title (the OCTOPATH / DQ XI S tail), detected as 4.18.
+        build(false);
+        resetVote();
+        g_cachedUEVersion = 418;
+        DynOff::bOffsetsProbeRan.store(true);
+        const int votedA = Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: the vote decides FunctionFlags +0x88 on the 4.18 tail", votedA == 0x88,
+              std::to_string(votedA).c_str());
+        check("OVERRIDETAIL ⭐: the vote's samples measure the tail base at +0x88",
+              DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88, std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        auto c417 = verdictOf(417);
+        check("OVERRIDETAIL ⭐: 4.17 on a 4.18 title contradicts it -- the readers would move to +0x8A",
+              c417.verdict == TailCheck::Contradicts && c417.readersBase == 0x8A, ob);
+        check("OVERRIDETAIL ⭐: ...and so does the new floor, 4.11", verdictOf(411).verdict == TailCheck::Contradicts, ob);
+        check("OVERRIDETAIL control: 4.18 itself agrees", verdictOf(418).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDETAIL control: 4.21 keeps the same tail and agrees", verdictOf(421).verdict == TailCheck::Agrees, ob);
+
+        // The inverse, which the widening lets a user correct: a 4.15 title misdetected as 4.18. The vote adds only
+        // 4.18's shift, so it finds nothing; the measurement is not tied to the version and finds +0x8A.
+        build(true);
+        resetVote();
+        g_cachedUEVersion = 418;
+        const int votedB = Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: under 4.18 the vote cannot find a 4.15 tail (undecided)", votedB == 0,
+              std::to_string(votedB).c_str());
+        check("OVERRIDETAIL ⭐: ...but the measurement does, at +0x8A",
+              DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8A, std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        check("OVERRIDETAIL ⭐: 4.15 agrees -- the override can correct a 4.11-4.17 title read as 4.18",
+              verdictOf(415).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDETAIL: 4.18 contradicts that tail", verdictOf(418).verdict == TailCheck::Contradicts, ob);
+
+        // The vote ran while only three of the ten functions were loaded: it measured nothing, so the override check
+        // samples again.
+        build(false);
+        resetVote();
+        g_cachedUEVersion = 418;
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, 0);
+        Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: three samples measure nothing", DynOff::UFUNCTION_TAIL_MEASURED.load() == -1,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, A(i));
+        auto again = verdictOf(417);
+        check("OVERRIDETAIL ⭐: the override check samples again and 4.17 contradicts the 4.18 tail",
+              again.verdict == TailCheck::Contradicts && again.measuredBase == 0x88, ob);
+        check("OVERRIDETAIL: ...and that measurement is kept", DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88);
+
+        // Before any scan there is nothing to sample: never a refusal.
+        resetVote();
+        DynOff::bOffsetsProbeRan.store(false);
+        check("OVERRIDETAIL: before the offsets probe an override is Unmeasured, not refused",
+              verdictOf(417).verdict == TailCheck::Unmeasured, ob);
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnO;
+        DynOff::bUseFProperty       = svFPropO;
+        g_cachedUEVersion           = svVerO;
+        DynOff::bOffsetsProbeRan.store(svRanO);
+        DynOff::bOffsetsValidated.store(svValO);
+        DynOff::bUFunctionFlagsDetected.store(svDetO);
+        DynOff::UFUNCTION_FLAGS      = svFlagsO;
+        DynOff::UFUNCTION_TAIL_EXTRA = svExtraO;
+        DynOff::UFUNCTION_TAIL_MEASURED.store(svMeasO);
+    }
+
     // -- [VND583-03] a NameProperty's alignment follows the engine version -----------------
     // ResolveElementAlignment is what every TMap / TSet / TOptional geometry asks. On non-CPN
     // 4.11-4.21 FName is 8-aligned (a union with uint64), so a 4 there shortens the stride.

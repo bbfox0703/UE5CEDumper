@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Grimoire.h"   // DynOff::TailCheck: OverrideTailCheck's verdict
 #include "Linie.h"   // FuncIdentity: what the profiler's table read at a function's first call
 
 struct FieldInfo {
@@ -574,6 +575,18 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
 int FunctionFlagsOffset();
+
+// [UE-OVERRIDE-411] review: whether a UE version override fits the UFunction tail this game actually has. The readers
+// put NumParms / ParmsSize where the version's FunctionTailShiftFor says, and the sampled UFunctions say where they
+// are; set_ue_version_override refuses a version that would move the readers off it. Runs the FunctionFlags vote
+// first when nothing has asked for it yet, and measures again when that vote could not; Unmeasured when no scan
+// has run (there is nothing to sample) or the samples do not decide.
+struct OverrideTailCheck {
+    DynOff::TailCheck verdict = DynOff::TailCheck::Unmeasured;
+    int readersBase  = -1;   // where the readers would put the tail under the requested version
+    int measuredBase = -1;   // where the sampled UFunctions put it
+};
+OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion);
 
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);

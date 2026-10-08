@@ -6382,6 +6382,55 @@ static void Test_ProcessEventBufferBytes() {
     EXPECT("PEBuf: no ParmsSize and no chain is an empty buffer", ProcessEventBufferBytes(0, 0) == 0);
 }
 
+// [UE-OVERRIDE-411] review: an override must keep the readers on the tail the game's own UFunctions measure.
+static void Test_CheckTailForVersion() {
+    using DynOff::CheckTailForVersion;
+    using DynOff::TailCheck;
+    EXPECT("TailBase: 4.15 reads the tail 2 behind FunctionFlags", DynOff::FunctionTailBaseFor(415, 0x88, 0) == 0x8A);
+    EXPECT("TailBase: 4.18 reads it at FunctionFlags", DynOff::FunctionTailBaseFor(418, 0x88, 0) == 0x88);
+    EXPECT("TailBase: the vote's extra adds on top", DynOff::FunctionTailBaseFor(505, 0xB0, 4) == 0xB4);
+    // A 4.18 title (OCTOPATH / DQ XI S): FunctionFlags 0x88, NumParms 0x8C -- the tail base is 0x88.
+    EXPECT("TailCheck ⭐: 4.17 on a 4.18 tail contradicts it (ParmsSize would come from ReturnValueOffset)",
+           CheckTailForVersion(417, 0x88, 0, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: ...and so does the floor, 4.11", CheckTailForVersion(411, 0x88, 0, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck: 4.18 agrees", CheckTailForVersion(418, 0x88, 0, 0x88) == TailCheck::Agrees);
+    EXPECT("TailCheck: 4.21 keeps the same tail and agrees", CheckTailForVersion(421, 0x88, 0, 0x88) == TailCheck::Agrees);
+    // The inverse the widening lets a user correct: a 4.15 title (RepOffset first, base 0x8A) misdetected as 4.18+.
+    EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0, 0x8A) == TailCheck::Agrees);
+    EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0, 0x8A) == TailCheck::Contradicts);
+    // Split Fiction's tail sits +4 later on 5.x (the vote's extra).
+    EXPECT("TailCheck: a 5.x tail with the +4 extra agrees at 5.5", CheckTailForVersion(505, 0xB0, 4, 0xB4) == TailCheck::Agrees);
+    EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 4, 0xB4) == TailCheck::Contradicts);
+    // Nothing to judge is never a refusal.
+    EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, 0, -1) == TailCheck::Unmeasured);
+    EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
+}
+
+// [UE-OVERRIDE-411] review: the tail measurement's winner, at the FunctionFlags vote's own bar.
+static void Test_PickMeasuredTailBase() {
+    using DynOff::PickMeasuredTailBase;
+    const int bases[] = { 0x88, 0x8A, 0x8C, 0x8E };
+    { const int hits[] = { 0, 10, 0, 0 };
+      EXPECT("TailPick ⭐: 10 of 10 at one base wins", PickMeasuredTailBase(bases, hits, 4, 10) == 0x8A); }
+    { const int hits[] = { 6, 0, 0, 0 };
+      EXPECT("TailPick: 6 of 10 is the 60% the vote needs", PickMeasuredTailBase(bases, hits, 4, 10) == 0x88); }
+    { const int hits[] = { 5, 0, 0, 0 };
+      EXPECT("TailPick: 5 of 10 is not", PickMeasuredTailBase(bases, hits, 4, 10) == -1); }
+    { const int hits[] = { 7, 0, 0, 0 };
+      EXPECT("TailPick: 7 samples are too few, however unanimous", PickMeasuredTailBase(bases, hits, 4, 7) == -1); }
+    { const int hits[] = { 8, 0, 0, 0 };
+      EXPECT("TailPick: 8 of 8 is enough", PickMeasuredTailBase(bases, hits, 4, 8) == 0x88); }
+    { const int hits[] = { 0, 0, 0, 39 };
+      EXPECT("TailPick: 39 of 64 is 60%", PickMeasuredTailBase(bases, hits, 4, 64) == 0x8E); }
+    { const int hits[] = { 0, 0, 0, 38 };
+      EXPECT("TailPick: 38 of 64 is not", PickMeasuredTailBase(bases, hits, 4, 64) == -1); }
+    { const int hits[] = { 9, 9, 0, 0 };
+      EXPECT("TailPick: two bases tied at the top decide nothing", PickMeasuredTailBase(bases, hits, 4, 10) == -1); }
+    { const int hits[] = { 9, 2, 2, 0 };
+      EXPECT("TailPick: a tie below the top does not matter", PickMeasuredTailBase(bases, hits, 4, 10) == 0x88); }
+    EXPECT("TailPick: no candidates is -1", PickMeasuredTailBase(bases, bases, 0, 10) == -1);
+}
+
 // [VND583-02] UField::Next was never measured in FProperty mode (4.25+): DetectUPropertyMode
 // returned before touching it and the FProperty arm probed only FField::Next. On a 4.25+ title
 // whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30, SuperStruct 0x48)
@@ -9423,6 +9472,8 @@ int main() {
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventBufferBytes);
+    RUN(Test_CheckTailForVersion);
+    RUN(Test_PickMeasuredTailBase);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);

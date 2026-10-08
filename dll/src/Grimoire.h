@@ -540,6 +540,9 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 inline int UFUNCTION_FLAGS      = 0;
 inline int UFUNCTION_TAIL_EXTRA = 0;
 inline std::atomic<bool> bUFunctionFlagsDetected{false};
+// [UE-OVERRIDE-411] review: where the sampled UFunctions themselves keep NumParms / ParmsSize, as the base those two
+// sit +4 / +6 behind -- measured against every candidate, whatever the version says. -1 = not measured.
+inline std::atomic<int> UFUNCTION_TAIL_MEASURED{-1};
 
 // [VND583-03] alignof(FName), per engine version. On stock UE 4.x up to 4.21, in a NON
 // case-preserving build (every packaged game), FName sits in a union with
@@ -736,6 +739,30 @@ constexpr int FunctionTailShiftFor(unsigned ueVersion) {
 constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd) {
     return (chainEnd > static_cast<int64_t>(parmsSize) && chainEnd <= 0xFFFF)
         ? static_cast<uint32_t>(chainEnd) : parmsSize;
+}
+
+// === Does a UE version fit the UFunction tail the game actually has? [UE-OVERRIDE-411] review ===
+//
+// The base the readers put the tail at: NumParms / ParmsSize / ReturnValueOffset sit +4 / +6 / +8 behind it.
+constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtra) {
+    return flagsOff + FunctionTailShiftFor(ueVersion) + tailExtra;
+}
+
+enum class TailCheck { Agrees, Contradicts, Unmeasured };
+
+// `flagsOff` / `tailExtra` are what the readers would use under `ueVersion`; `measuredBase` is
+// UFUNCTION_TAIL_MEASURED.
+constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
+    (void)ueVersion; (void)flagsOff; (void)tailExtra; (void)measuredBase;
+    return TailCheck::Unmeasured;
+}
+
+// The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled
+// UFunctions; -1 when none wins. The vote's own bar (Ubel::EnsureFunctionFlagsOffset): at least 8 samples
+// and 60% of them.
+inline int PickMeasuredTailBase(const int* bases, const int* hits, int n, int samples) {
+    (void)bases; (void)hits; (void)n; (void)samples;
+    return -1;
 }
 
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
