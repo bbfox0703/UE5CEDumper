@@ -6679,18 +6679,21 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the two rather than replacing the caller's value: a caller asking for MORE
             // is harmless slack (the hex overlay is already clamped to the buffer), while a
             // caller asking for less — or for nothing — is the overflow above.
+            // ParmsSize itself is read where the version says the tail is, so a wrong version
+            // misreads it as well; Ubel::ParamBufferSize also reads the function's own parameter
+            // chain and never answers less than where that ends. [UE-OVERRIDE-411]
             size_t bufSize = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
             {
                 FunctionInfo fi{};
-                if (Ubel::ResolveFunctionInfo(ufuncAddr, fi) && fi.parmsSize > 0) {
-                    const size_t authoritative = static_cast<size_t>(fi.parmsSize);
+                if (Ubel::ResolveFunctionInfo(ufuncAddr, fi)) {
+                    const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, fi.parmsSize);
                     if (authoritative > bufSize) {
                         if (bufSize > 0) {
                             LOG_WARN("invoke_function: caller asked for parms_size=%zu but "
-                                     "%s::%s reports ParmsSize=%zu — using the larger; the "
+                                     "%s::%s needs %zu (ParmsSize=%u) — using the larger; the "
                                      "smaller would overflow the buffer ProcessEvent writes",
                                      bufSize, className.c_str(), funcName.c_str(),
-                                     authoritative);
+                                     authoritative, static_cast<unsigned>(fi.parmsSize));
                         }
                         bufSize = authoritative;
                     }

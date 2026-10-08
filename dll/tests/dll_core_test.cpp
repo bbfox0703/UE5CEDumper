@@ -1149,6 +1149,19 @@ int main() {
         shifted.params.push_back(local);
         snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(shifted));
         check("PEBUF: a local past the parameters does not grow the buffer", Ubel::ParamBufferSize(shifted) == 0x9A, buf);
+        // Both kinds of entry count on their own: a function with no return value (the reverse misread, a 4.15
+        // tail read as 4.18, takes NumParms 1 for ParmsSize), and a return entry whose CPF_Parm bit did not read.
+        FunctionInfo noReturn{};
+        noReturn.parmsSize = 1;
+        noReturn.params = { parm(0, 12, false) };
+        check("PEBUF ⭐: a function with no return value gets its whole chain (12), not NumParms (1)",
+              Ubel::ParamBufferSize(noReturn) == 12, std::to_string(Ubel::ParamBufferSize(noReturn)).c_str());
+        FunctionInfo onlyReturn{};
+        onlyReturn.parmsSize = 0;
+        onlyReturn.params = { parm(0, 12, true) };
+        onlyReturn.params[0].isParm = false;
+        check("PEBUF: a return entry counts even when its CPF_Parm bit did not read -- ProcessEvent writes it",
+              Ubel::ParamBufferSize(onlyReturn) == 12, std::to_string(Ubel::ParamBufferSize(onlyReturn)).c_str());
 
         // invoke_function holds only ResolveFunctionInfo's tail read, so its form reads the chain at the address.
         // UProperty mode, as on 4.18: Children -> UProperty entries with PropertyFlags / Offset_Internal / ElementSize.
@@ -1172,6 +1185,22 @@ int main() {
         check("PEBUF ⭐: read at the address, the chain gives 0x9A over the misread 0x99",
               Ubel::ParamBufferSize(fnAddr, wrong.parmsSize) == 0x9A, buf);
         check("PEBUF control: a correct ParmsSize is kept", Ubel::ParamBufferSize(fnAddr, 0x9A) == 0x9A);
+        // One implausible entry makes the shape read give up on the whole chain; the return slot still counts.
+        const int32_t bogus = 0x20000;
+        memcpy(tailProps[2] + DynOff::UPROPERTY_ELEMSIZE, &bogus, 4);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(fnAddr, wrong.parmsSize));
+        check("PEBUF ⭐: an unreadable chain still gives the return's end (0x9A)",
+              Ubel::ParamBufferSize(fnAddr, wrong.parmsSize) == 0x9A, buf);
+        memcpy(tailProps[2] + DynOff::UPROPERTY_ELEMSIZE, &pSize[2], 4);
+        // No return value at all: only the shape read can answer. One 12-byte parameter, NumParms 1 read as ParmsSize.
+        static uint8_t oneParmFn[0x100] = {};
+        putP(oneParmFn, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(tailProps[0]));
+        const uintptr_t savedNext0 = *reinterpret_cast<uintptr_t*>(tailProps[0] + DynOff::UFIELD_NEXT);
+        putP(tailProps[0], DynOff::UFIELD_NEXT, 0);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(oneParmFn), 1));
+        check("PEBUF ⭐: with no return value the chain's own end (12) answers, not NumParms (1)",
+              Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(oneParmFn), 1) == 12, buf);
+        putP(tailProps[0], DynOff::UFIELD_NEXT, savedNext0);
         static uint8_t noChain[0x100] = {};
         check("PEBUF control: a function with no chain keeps its ParmsSize",
               Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(noChain), 0x20) == 0x20);

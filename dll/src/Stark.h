@@ -41,7 +41,8 @@ bool IsHookActive();
 /// @param ufunc       UFunction pointer
 /// @param params      Parameter buffer pointer (already allocated/written by caller)
 /// @param paramsSize  Bytes to COPY into the request so it owns its buffer. Pass
-///                    the UFunction ParmsSize when the caller's buffer is
+///                    the buffer's own size (Ubel::ParamBufferSize, never less than
+///                    the UFunction's ParmsSize) when the caller's buffer is
 ///                    transient (the common case — prevents a use-after-free if
 ///                    the invoke times out but is later drained by the game
 ///                    thread). Pass 0 only when `params` is a persistent buffer

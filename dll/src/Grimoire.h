@@ -724,9 +724,18 @@ constexpr int FunctionTailShiftFor(unsigned ueVersion) {
 // `parmsSize` is UFunction::ParmsSize as read from the tail; `chainEnd` is where the function's own
 // parameter chain ends (the furthest Offset_Internal + ElementSize of a CPF_Parm entry, the return
 // value included), 0 when the chain was not read.
+//
+// ParmsSize alone cannot size a buffer the game writes into, because where it is read depends on the
+// version (the shift above): a wrong version reads the field next door. A 4.18 layout read with 4.11-4.17's
+// +2 -- an override of 4.17 on a 4.18 title -- takes ReturnValueOffset for ParmsSize, so the buffer ends
+// exactly where the return value starts and ProcessEvent writes it past the end, in the game's heap; the
+// reverse misread takes NumParms. The chain does not depend on the tail: every entry records its own
+// offset and size, and the engine computes ParmsSize from the same entries. So the buffer is never smaller
+// than the chain's end. An end above 0xFFFF is no parameter block (ParmsSize is a uint16), so it is ignored
+// rather than trusted with an allocation.
 constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd) {
-    (void)chainEnd;
-    return parmsSize;
+    return (chainEnd > static_cast<int64_t>(parmsSize) && chainEnd <= 0xFFFF)
+        ? static_cast<uint32_t>(chainEnd) : parmsSize;
 }
 
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===

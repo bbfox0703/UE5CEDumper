@@ -221,7 +221,7 @@ CollisionApply InvokeSetCollision(uintptr_t pawn, bool enable) {
                  "disable collision on this game (flight still works, walls still block)");
         return CollisionApply::Absent;
     }
-    std::vector<uint8_t> buf((std::max<size_t>)(static_cast<size_t>(fi.parmsSize), size_t{1}), 0);
+    std::vector<uint8_t> buf((std::max<size_t>)(static_cast<size_t>(Ubel::ParamBufferSize(fi)), size_t{1}), 0);
     for (const auto& p : fi.params)
         if (IEq(p.name, "bNewActorEnableCollision") && p.offset >= 0 && p.offset < (int)buf.size())
             buf[p.offset] = enable ? 1 : 0;
