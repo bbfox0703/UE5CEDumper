@@ -2861,11 +2861,24 @@ The headless test platform (`UseHeadlessDrawing = true`) draws every glyph as wi
 widths average about 5.6 px a character of English text at 12 px (read from the Inter fonts `Avalonia.Fonts.Inter`
 12.1.3 embeds). So a line the app shows on one line can wrap in a headless test, and push what follows it in a
 `WrapPanel` onto the next line. Measured 2026-10-08 ([LF-COMPACT-TOP]): the 137-character stack warning needs 1,644 px
-headless in a 1,308 px row, and 772 px in Inter; `Lines(line) == 1` and a Details-beside-it box check both failed on a
-wording that is one line in the app. **How to apply:** a headless pin on a line count, or on two controls sharing a
-line, pins the headless font. Hold "one line in the app" as `LiveFuncsLayout.AssertOneLineInTheAppsFont` does (the
-parts, unwrapped and side by side, under 1.5 times the room headless: under 0.7 of it in Inter), and measure a wording
-in Inter before shortening it to please a headless test.
+headless and 772 px in Inter; `Lines(line) == 1` and a Details-beside-it box check both failed on a wording that is one
+line in the app.
+
+**The room a headless test measures is the harness's, not the app's.** `LiveFuncsLayout.Laid` puts the Live Funcs
+panel alone in the maintainer's 1389-px window: the stack warning's row is 1,373 px there (measured 2026-10-09; the
+1,308 px first written here did not reproduce). The app puts the panel beside the object tree: laid out as
+`MainWindow.axaml` does it (the tree's 350-px column, the 4-px splitter, the tab's 4-px padding) the same row is
+1,011 px, and only with the tree folded away does the panel get about the harness's width. The stack warning with its
+Details toggle comes to about 826 px in Inter (the toggle's 15 px of chrome and margin, and its text by the average
+above): about 0.6 of the harness's row, about 0.82 of the app's. The harness keeps the panel alone all the same: the
+table's top it measures stays comparable with what [LF-COMPACT-TOP] recorded at that width, and 1.5 times the narrower
+row would refuse that line, which is one line in the app.
+
+**How to apply:** a headless pin on a line count, or on two controls sharing a line, pins the headless font. Hold "one
+line in the app" as `LiveFuncsLayout.AssertOneLineInTheAppsFont` does (the parts, unwrapped and side by side, under 1.5
+times the room headless: under 0.7 of it in Inter), and know what that bound is: 0.7 of the harness's row is about 0.95
+of the app's beside the tree, a guard against a wording that grows rather than a margin. Measure a wording in Inter
+before shortening it to please a headless test, and against the app's row, not the harness's.
 
 -----
 

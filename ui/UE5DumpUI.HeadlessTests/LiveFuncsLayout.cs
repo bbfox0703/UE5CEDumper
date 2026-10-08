@@ -204,7 +204,13 @@ internal static class LiveFuncsLayout
     /// 1,200 px), where the app's own font, Inter Regular, averages about 5.6 px a character of English text at 12 px
     /// (its advance widths, read from the font Avalonia.Fonts.Inter embeds, 2026-10-08): a line the app shows on one
     /// line can take two here, and push what follows it in a WrapPanel onto the next. So "on one line in the app" is held
-    /// as parts that need, unwrapped and side by side, less than 1.5 times the room here: under 0.7 of it in Inter.</summary>
+    /// as parts that need, unwrapped and side by side, less than 1.5 times the room here: under 0.7 of it in Inter.
+    /// That room is the harness's, the panel alone in the window (<see cref="Laid"/>), which the app gives the panel only
+    /// with the object tree folded away. Beside the tree at its default width the app's row is narrower, so 0.7 of the
+    /// room here is nearly the whole row there: the bound still keeps a growing wording to one line there, with little to
+    /// spare (the widths: working-lessons §3.xd). The panel is laid out alone all the same: the table's top these tests
+    /// measure stays comparable with what [LF-COMPACT-TOP] recorded, and 1.5 times the narrower row would refuse the
+    /// stack warning beside its Details, which is one line there in Inter.</summary>
     public static void AssertOneLineInTheAppsFont(double room, params Control[] parts)
     {
         double needed = parts.Sum(Unwrapped);
