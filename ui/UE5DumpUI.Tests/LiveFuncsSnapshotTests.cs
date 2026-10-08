@@ -1576,6 +1576,79 @@ public class LiveFuncsSnapshotTests
                         StringComparison.Ordinal);
     }
 
+    /// <summary>The user chose, then narrowed the table and switched the trace off: the filter hides A::G (chosen for
+    /// parameters) and A::H (chosen for a stack), and Trace off makes the rows unchoosable. Clear choices still clears
+    /// every row the table holds, not the rows on screen, and does not wait for the trace to be on: a choice made while
+    /// it was on is still a choice, and the next traced Start would take it.</summary>
+    [Fact]
+    public async Task Clear_choices_reaches_the_rows_the_filter_hides_and_works_with_the_trace_off()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        vm.FilterText = "F";
+        Assert.Equal(new[] { "F" }, vm.Results.Select(r => r.FuncName));
+        vm.TraceEnabled = false;
+        Assert.False(vm.CanSnapshot);
+
+        vm.ClearChoicesCommand.Execute(null);
+        vm.FilterText = "";
+
+        Assert.Equal(new[] { "F", "G", "H" }, vm.Results.Select(r => r.FuncName).Order());
+        foreach (var r in vm.Results)
+        {
+            Assert.False(r.IsTicked, $"{r.FuncName} is still ticked for the trace");
+            Assert.False(r.IsSnapChosen, $"{r.FuncName} is still chosen for parameters");
+            Assert.False(r.IsStackChosen, $"{r.FuncName} is still chosen for a stack");
+        }
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+    }
+
+    /// <summary>Stacks are the only choice: nothing ticked and no parameters, which a "nothing to clear" shortcut that
+    /// asks only the first two would take for an empty table.</summary>
+    [Fact]
+    public async Task Clear_choices_clears_a_stack_chosen_alone()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Equal(new[] { "A::F" }, vm.StackFunctions);
+
+        vm.ClearChoicesCommand.Execute(null);
+
+        Assert.Empty(vm.StackFunctions);
+        Assert.False(vm.HasStackChoices);
+        Assert.False(Shown(vm, "A", "F").IsStackChosen);
+        Assert.Equal("", vm.StackEstimate);
+    }
+
+    /// <summary>It clears choices and nothing else: the rows and the filter on screen, the trace's switch and the stack
+    /// budget are settings the user made, and the next Start uses them as they are. Each is set away from its default
+    /// first, so a clear that reset it would show.</summary>
+    [Fact]
+    public async Task Clear_choices_leaves_the_rows_the_filter_the_trace_switch_and_the_stack_budget_as_they_are()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        vm.StackBudgetLow = true;
+        vm.FilterText = "A";
+        var rows = vm.Results.ToList();
+        Assert.Equal(3, rows.Count);
+        Assert.True(vm.TraceEnabled);
+
+        vm.ClearChoicesCommand.Execute(null);
+
+        Assert.Empty(vm.StackFunctions);                 // it did clear
+        Assert.Equal("A", vm.FilterText);
+        Assert.Equal(rows.Count, vm.Results.Count);
+        for (int i = 0; i < rows.Count; i++) Assert.Same(rows[i], vm.Results[i]);
+        Assert.True(vm.TraceEnabled);
+        Assert.True(vm.StackBudgetLow);
+    }
+
     /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>
     private static (int Start, int At) FindEnclosingStackPanel(string axaml, string marker)
     {
