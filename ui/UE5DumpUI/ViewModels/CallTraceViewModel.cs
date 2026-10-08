@@ -814,6 +814,10 @@ public partial class CallTraceViewModel : ViewModelBase
             return names.Length == 1
                 ? Say("str.CT.Stack.Native", names[0], off)
                 : Say("str.CT.Stack.NativeShared", names[0], off, names.Length - 1);
+        // [A1-INTERP-LABEL] The script functions' entry is the interpreter: the function the DLL names there is only the
+        // lowest-addressed of them, so the line names the interpreter instead.
+        if (s.Fn != 0 && s.Script)
+            return s.Shared > 1 ? Say("str.CT.Stack.Interpreter", off, s.Shared) : Say("str.CT.Stack.InterpreterOne", off);
         if (s.Fn != 0 && s.FuncName.Length > 0)
         {
             string name = s.ClassName.Length > 0 ? s.ClassName + "::" + s.FuncName : s.FuncName;

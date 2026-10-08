@@ -1210,6 +1210,8 @@
     <sys:String x:Key="str.CT.Stack.Native">native entry of {0} +0x{1:X}</sys:String>
     <sys:String x:Key="str.CT.Stack.NativeShared">native entry of {0} +0x{1:X} (and {2:N0} other traced function(s) with the same code)</sys:String>
     <sys:String x:Key="str.CT.Stack.NativeIndexShared">native entry of {0} +0x{1:X} (one of {2:N0} functions that share this code)</sys:String>
+    <sys:String x:Key="str.CT.Stack.Interpreter">the Blueprint interpreter +0x{0:X} (UObject::ProcessInternal, the native entry of {1:N0} Blueprint functions)</sys:String>
+    <sys:String x:Key="str.CT.Stack.InterpreterOne">the Blueprint interpreter +0x{0:X} (UObject::ProcessInternal)</sys:String>
     <sys:String x:Key="str.CT.Stack.Into">+0x{0:X} into the function at {1}</sys:String>
     <sys:String x:Key="str.CT.Stack.NoUnwind">no unwind data here, so the walk took it for a leaf function</sys:String>
     <sys:String x:Key="str.CT.Stack.NoModule">outside every module (generated code, or an unloaded image)</sys:String>

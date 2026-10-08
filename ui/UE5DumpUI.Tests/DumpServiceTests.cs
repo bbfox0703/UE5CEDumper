@@ -2195,18 +2195,25 @@ public class DumpServiceTests
         _pipe.SetHandler(req => Reply("""
             {"ok":true,"allocated":true,"gen":5,"qpc_freq":10000000,"ring":0,"kind":"stack","rings":[],"count":1,"next":1,
              "orphans":0,
-             "items":[{"index":0,"entry_seq":1,"flags":0,"ticks":9,"len":16,"frames":[0,1]}],
+             "items":[{"index":0,"entry_seq":1,"flags":0,"ticks":9,"len":16,"frames":[0,1,2,3]}],
              "sites":[{"addr":"0x7FF6A0001525","module":"Game.exe","module_base":"0x7FF6A0000000","rva":5413,
                        "fn":"0x7FF6A0001000","fn_rva":4096,"unwind":true,"ufunc":"0x2C0001230","class":"x00_Snd_Common_C",
                        "func":"Game - CasinoNpcScheduleEnd","shared":6678,"script":true},
                       {"addr":"0x7FF6A0002010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":8208,
                        "fn":"0x7FF6A0002000","fn_rva":8192,"unwind":true,"ufunc":"0x2C0004560","class":"Weapon",
-                       "func":"Fire"}]}
+                       "func":"Fire"},
+                      {"addr":"0x7FF6A0003010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":12304,
+                       "fn":"0x7FF6A0003000","fn_rva":12288,"unwind":true,"ufunc":"0x2C0007890","class":"Gen",
+                       "func":"execStub","shared":300},
+                      {"addr":"0x7FF6A0004010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":16400,
+                       "fn":"0x7FF6A0004000","fn_rva":16384,"unwind":true,"ufunc":"0x2C000ABC0","class":"BP_A_C",
+                       "func":"Tick","script":true}]}
             """));
         IDumpService svc = CreateService();
         var page = await svc.PeStackGetAsync(5, 0, 0, 16, TestContext.Current.CancellationToken);
-        Assert.True(page.Items[0].Frames[0].Script);
-        Assert.False(page.Items[0].Frames[1].Script);
+        var f = page.Items[0].Frames;
+        // Read from its own key: many natives folded onto one thunk are not script, and a lone script entry is.
+        Assert.Equal(new[] { true, false, false, true }, f.Select(s => s.Script).ToArray());
     }
 
     [Fact]

@@ -3331,6 +3331,8 @@ public sealed class DumpService : IDumpService
             ClassName  = s["class"]?.GetValue<string>() ?? "",
             FuncName   = s["func"]?.GetValue<string>() ?? "",
             Shared     = s["shared"]?.GetValue<int>() ?? 0,
+            // [A1-INTERP-LABEL] Absent from an older DLL, and on native code.
+            Script     = s["script"]?.GetValue<bool>() ?? false,
         };
     }
 
