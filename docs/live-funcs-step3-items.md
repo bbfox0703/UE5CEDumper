@@ -40,11 +40,11 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-X2 | docs | `-Mode Publish` (AOT, size and SHA, the build bumped), proxy refresh, S3-R1 green on DumperTest58 Shipping, the step-2 rigs re-run, the UI walkthrough; µs per capture, max, calls/s and fps with and without stacks, the machine recorded | S3-X1, S3-R1 | ✅ build 3641 (AOT, 60,989,952 bytes); the rigs and the walkthrough 8.2 steps 1-6 on DumperTest58 Shipping (injected, no proxy); Avowed (8.3) is a register row |
 | S3-U8 | UI | The maintainer's T20 (2026-10-08): a Standard / Low stack budget (Low = `kStackLowPerRingPerSec` 50 and `kStackLowTotalPerSec` 100, pinned from Linie.h) sent in the Start's `stacks`, and the warning wherever stacks are chosen (a software walk, not a debugger capture; frame time; an unforeseen case could stall or crash the game, stopping mid-capture included) | S3-U2, S3-U3 | ✅ in a worktree from U3: red a90039e4, green 13776eb4 (8 / 8 mutants killed); the warning's cost corrected to the live measurement in a8da0830 |
 | S3-U9 | DLL / UI | The maintainer's budget (A), 2026-10-08: Linie's defaults 25 a second per function and 50 in all (Standard), Low 12 and 25; the UI's pins, tooltips and the warning follow | S3-U8 | ✅ red 1b7e32bb, green after it |
-| S3-U6 | UI | The per-frame ask-once for stacks (T9.2): `ConfirmStackPerFrame`, `_stackPerFrameConfirmed`, an async ToggleStack that re-raises `IsStackChosen` when refused | S3-U2 | ✅ built in a worktree, 9 / 9 mutants; review: the question decided by name (fixed, red/green); live check owed (8.4) |
-| S3-U7 | UI | The stack estimate line (T9.1): pure `EstimateStacks(rates, perFunc, total, usPerCapture)` → ms/s; orange above 2.0; µs measured from the last Stop, else 10 "assumed" | S3-U2, S3-X2 | ✅ built in a worktree, 14 / 14 mutants; review: a per-frame choice Hide per-frame left off the page counted at its budget (fixed, red/green); live check owed (8.4) |
+| S3-U6 | UI | The per-frame ask-once for stacks (T9.2): `ConfirmStackPerFrame`, `_stackPerFrameConfirmed`, an async ToggleStack that re-raises `IsStackChosen` when refused | S3-U2 | ✅ built in a worktree, 9 / 9 mutants; review: the question decided by name (fixed, red/green); live ✅ build 3643 (8.4 Results) |
+| S3-U7 | UI | The stack estimate line (T9.1): pure `EstimateStacks(rates, perFunc, total, usPerCapture)` → ms/s; orange above 2.0; µs measured from the last Stop, else 10 "assumed" | S3-U2, S3-X2 | ✅ built in a worktree, 14 / 14 mutants; review: a per-frame choice Hide per-frame left off the page counted at its budget (fixed, red/green); live ✅ build 3643 (8.4 Results) |
 | S3-A1 | DLL / UI | The native-entry index: one GObjects pass (class-pointer memo, Function / DelegateFunction / SparseDelegateFunction), `Func → ufunc` sorted, cached per gen; sites gain `ufunc` / `class` / `func` / `shared` | S3-F2 | ✅ DLL half (red 930da4c0, green 547cbca7, 4 / 4 mutants; the per-region VirtualQuery fix 9cd5b63d / 1103b1e1, 2 / 2), live on DumperTest58: frame 3 named `DumperTest58Actor::SnapNest_Outer`, the index in 11 ms. UI half ✅ (red 8bc9101c, green after it, 3 / 3 mutants): StackSite reads `ufunc` / `class` / `func` / `shared`; the Call stack tab names a frame from them after the trace's own names, a shared entry with its own sentence |
 | S3-M3 | DLL | Chained unwind: a pure `FollowChain(imageBase, begin, unwindData)` tested on a synthetic UNWIND_INFO; DescribeCode names a fragment's primary function | S3-M2 | ✅ red b8681485, green after it; 4 / 4 mutants killed (built before the live check: the review's M4) |
-| S3-R2 | pipe | Rig `--pdb`: dbghelp through ctypes names each `fn_rva` against the fixture's shipped PDB, checking displacement 0 | S3-R1 | ✅ built in a worktree, 19 / 19 mutants, `--self-test` 162 / 162; review: main()'s `--pdb` refusal moved into parse_args (fixed, red/green), two MED findings refuted by both skeptics; live run owed (8.4) |
+| S3-R2 | pipe | Rig `--pdb`: dbghelp through ctypes names each `fn_rva` against the fixture's shipped PDB, checking displacement 0 | S3-R1 | ✅ built in a worktree, 19 / 19 mutants, `--self-test` 162 / 162; review: main()'s `--pdb` refusal moved into parse_args (fixed, red/green), two MED findings refuted by both skeptics; live ✅ build 3643, 34 / 34 and 8 recorded (8.4 Results) |
 | S3-B1 / S3-E1 / S3-P1 / S3-O1 | DLL / UI | (deferred) View B; stack export; `.pdata` prewarm; own-frame calibration | S3-X2 | deferred |
 
 -----
@@ -472,10 +472,37 @@ Built by helpers in two worktrees, reviewed adversarially (two skeptics a findin
   without one. Owed live: a correct DLL prints 34 checks and 8 recorded; if PDB_DISP fails on a site only a public
   symbol answers, that is the PDB's public-only code, not a fragment (the review's refuted MED, kept as a watch).
 - **[CT-COLUMNS-OVERLAP]:** a Call Trace list narrower than its columns cuts them instead of overlapping, 7 / 7 mutants;
-  a visual check is owed (8.4).
+  checked live in build 3643 (8.4 Results).
 
 ### 8.4 Owed live, in the next walkthrough
 
 The U6 question (title, the function, the budget; Cancel unticks; a reconnect asks again), the U7 line (assumed, then
 measured after a Stop with stacks; orange above 2 ms), the columns cut when the detail pane is wide, S3-A1's names in
 the Call stack tab, and `livefuncs_snap_live.py --stacks --pdb` on DumperTest58 Shipping (34 + 8).
+
+### 8.4 Results (build 3643, 2026-10-08)
+
+All on DumperTest58 Shipping with the AOT build 3643 (`dist\UE5DumpUI.exe` 61,023,232 bytes), the DLL injected.
+- **The rig, `--stacks --pdb`:** 34 / 34 and 8 recorded with `--stack-per-ring 10`. The PDB named all 26 function
+  starts at displacement 0, ProcessEvent's site `UObject::ProcessEvent`, and S4's frame
+  `ADumperTest58Actor::execSnapNest_Outer`. The default run first gave 33 / 34: the fixture ran at about 30 fps that
+  time (SnapProbe_PerFrame about 30 calls a second, its period 33 ms; the morning's runs had about 178), so a
+  per-function budget of 30 never bit -- written 240, dropped 0. That is the DLL right and the rig's precondition
+  unmet (`[SNAPRIG-S5-RATE]`, todo.md). The same run recorded one capture of 6.5 ms among 272 (the mean 54 µs with
+  it, about 30 without); the second run's max was 49.8 µs over 122. Read as preemption, as the register's 8.1 ms one.
+- **S3-U6:** ticking SnapProbe_PerFrame's S asked "Take stacks of a per-frame function?", naming
+  `DumperTest58Actor::SnapProbe_PerFrame` and "up to 25 stacks a second for it, out of 50 a second". Cancel left the
+  box unticked and Stacks at 0; ticked again, it asked again. After "Take its stacks" a second per-frame function (a
+  CameraModifier one) was chosen without a question. After Disconnect / Connect it asked again (a new recording
+  first: the boxes are disabled on the previous connection's rows). A function not per-frame (SnapProbe_Call) asked
+  nothing.
+- **S3-U7:** "About 25 stacks a second within the budget, about 0.25 ms of the game's time a second (10.0 µs a
+  capture, assumed)"; after a Stop with stacks, "about 0.75 ms ... (29.9 µs a capture, measured at the last Stop)";
+  with two per-frame functions 50 (the total), and on Low 24 (12 + 12). Orange was out of reach: at 29.9 µs the
+  Standard total of 50 makes 1.5 ms, under 2 (the unit tests hold the colour).
+- **S3-A1 in the UI:** a SnapProbe_Call stack's frame 3 read "native entry of DumperTest58Actor::SnapNest_Outer...",
+  the frame the PDB names `execSnapNest_Outer +0x73`; SnapNest_Outer was not traced, so the name is the DLL index's.
+- **[CT-COLUMNS-OVERLAP]:** with the detail pane dragged wide the list cut its columns at the splitter (Duration cut
+  after Time), nothing drawn over anything.
+- **Found:** the Call stack tab's Where column keeps a fixed width when the pane is widened, so a long name stays cut
+  beside empty space (`[CT-STACK-WHERE-WIDTH]`, todo.md).

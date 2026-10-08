@@ -255,8 +255,10 @@ the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM thr
    1 ms trigger, so S3-P1 (prewarm) stays deferred. *Was:* **A worst-case capture of 8.1 ms**, seen once (the first run, the machine loaded by three `dotnet test` runs) and
    not again in ~3,500 captures (max 0.5 ms; a fresh game's first capture 112 µs). Read as preemption mid-walk.
    Acceptance: `max_ticks` on Avowed (item 1) under 1 ms; over it, S3-P1's `.pdata` prewarm.
-5. **T9.1 / T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The
-   budget is the guarantee meanwhile.
+5. ✅ **CLOSED 2026-10-08 (build 3643)**: S3-U6 and S3-U7 built and checked live on DumperTest58 (the ledger's
+   "8.4 Results": the question, Cancel, the ask after a reconnect; the line assumed, then measured). *Was:* **T9.1 /
+   T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The budget is
+   the guarantee meanwhile.
 6. **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
    decided to be covered by tests rather than live (2026-10-07); this is the exception the maintainer asked for. The
    maintainer first named Elliot, but Elliot is UE 5.4 (docs/test-games.md: its PE version is stripped, so the DLL

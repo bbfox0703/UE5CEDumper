@@ -280,12 +280,19 @@ Open work only. **Read this when deciding what to do next.**
   (the cost measured on Avowed: -0.4% calls/s, fps unchanged). ✅ **Step 3 (native stack snapshots) BUILT in build 3641
   (2026-10-08), proven live on DumperTest58** -- [live-funcs-step3-design.md](live-funcs-step3-design.md) and its
   ledger [live-funcs-step3-items.md](live-funcs-step3-items.md); T15-T19 confirmed, T20 (Low budget, warning) added.
-  ⬜ **Open:** the budget re-weigh (a capture measured 20-28 µs, so D3's rule gives 50 a second; the maintainer
-  decides), the register's "Live Funcs step 3" batch (Avowed's cost first), and the ledger's next items S3-U6 / U7 /
-  A1 / R2 (deferred: B1 / E1 / P1 / O1).
+  ✅ The budget decided as (A), Standard 50 a second in all and Low 25 (build 3642); the ledger's next items S3-U6 /
+  U7 / A1 / R2 built and checked live (build 3643). ⬜ **Open:** the register's "Live Funcs step 3" batch (the
+  hitch, the rig's real-DLL mutations, DQ XI S); deferred: B1 / E1 / P1 / O1.
   ✅ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08; fixed the same day, the list now cuts
-  its columns -- a visual check rides with the next walkthrough): with the Call Trace detail pane dragged
+  its columns -- checked live in build 3643): with the Call Trace detail pane dragged
   wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
+  ⬜ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08): the Call stack tab's Where column
+  has a fixed width (`CallTracePanel.axaml`), so with the detail pane dragged wide a long name ("native entry of
+  DumperTest58Actor::SnapNest_Outer +0x73") stays cut beside empty space. Give it the rest of the width. Effort **S**.
+  ⬜ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
+  called faster than `--stack-per-ring` (30 on the fixture). With the fixture at about 30 fps it reported a DLL
+  failure (written 240, dropped 0) for a precondition the run did not meet. Derive the budget from the plain
+  recording's rate, or report "not run: the probe ran at N a second, under the budget". Effort **S**.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,

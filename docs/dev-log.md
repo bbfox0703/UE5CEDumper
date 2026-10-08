@@ -27,6 +27,23 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (build 3643) — Live Funcs stacks: a question for per-frame functions, a cost estimate, native entries named `[LIVEFUNCS-STEP3]` `[CT-COLUMNS-OVERLAP]`
+
+- **Choosing a per-frame function's stack asks first.** A function called every frame in the last recording would
+  have its stack taken every frame until the budget is spent, so ticking its "S" box asks once per connection,
+  naming the function and the budget. Cancel leaves it unticked; a reconnect asks again.
+- **An estimate line under the stack budget:** about how many stacks a second the chosen functions will take within
+  the budget, and how much of the game's time a second that costs -- at the capture cost measured at the last Stop
+  with stacks, or an assumed 10 µs until there is one. It turns orange above 2 ms a second.
+- **The Call stack tab names more frames.** A frame in the native code of a UFunction reads "native entry of
+  Class::Function" even when that function was not traced; code several functions share says how many.
+- **The Call Trace list cuts its columns** when the detail pane is dragged wide, instead of drawing them over each
+  other.
+- Checked live on DumperTest58 Shipping: the stacks rig 34 / 34, the game's PDB naming every function start it was
+  asked; the UI walkthrough on this AOT build (`UE5DumpUI.exe` 61.0 MB).
+
+-----
+
 ## 2026-10-08 (no build change) — Correction to the entry below `[LIVEFUNCS-STEP3]`
 
 - The integrated GPU's ~100 % was the desktop's, not the fixture's: with no game running it stayed there, `dwm.exe`

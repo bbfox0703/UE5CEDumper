@@ -851,4 +851,7 @@ the per-item mutations, the builders' deviations and the live results ("8.0 Resu
   real-DLL mutations, the one 8.1 ms capture, T9.1 / T9.2).
 - **Next:** S3-U6 (the per-frame ask-once), S3-U7 (the estimate line), S3-A1 (the native-entry index), S3-R2 (the PDB
   check); deferred: view B, stack export, `.pdata` prewarm, own-frame calibration.
+- **Since:** the maintainer chose the budget (A), Standard 50 a second in all and Low 25 (build 3642); S3-U6, S3-U7,
+  S3-A1 and S3-R2 were built in build 3643 and checked live (the ledger's "8.4 Results"). Still open: the register's
+  batch (the once-a-second hitch, the rig's real-DLL mutations, DQ XI S with a save loaded).
 
