@@ -2184,6 +2184,8 @@ class ScriptedDll:
         "names_read_failed": "read_mem fails at every size for the interpreter's UFunction",
         "names_unreadable": "read_mem fails at every size for every UFunction",
         "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
+        "names_empty": "SnapNest_Outer's UFunction named \"\": its frames carry class and func \"\", and get_object "
+                       "answers \"\" for its name and outer (the DLL's name reads gave nothing)",
     }
     # The scripted game's PDB: a name for each function start its stacks hold, by RVA.
     PDB_NAMES = {0x480440: "ADumperTest58Actor::SnapProbe_Dispatch", OUTER_FN: "ADumperTest58Actor::execSnapNest_Outer",
@@ -2225,6 +2227,8 @@ class ScriptedDll:
         if "names_none" in self.f:
             return {}
         cls, func, _, _, _, shared = self._ufuncs()[ufunc]
+        if "names_empty" in self.f and ufunc == self.FUNCS["SnapNest_Outer"][0]:
+            cls = func = ""
         return {"ufunc": f"0x{ufunc:X}", "class": cls, "func": func, **({"shared": shared} if shared else {})}
 
     def _object(self, addr: str) -> dict:
@@ -2237,6 +2241,8 @@ class ScriptedDll:
         first = u == self.FUNCS["SnapNest_Outer"][0]
         if "names_object_error" in self.f and first:
             return {"ok": False, "error": "the scripted get_object failed (names_object_error)"}
+        if "names_empty" in self.f and first:
+            return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": kind, "outer": ""}
         if "names_wrong_func" in self.f and first:
             func = "SnapNest_Fire"
         if "names_wrong_outer" in self.f and first:
@@ -3136,6 +3142,12 @@ def self_test() -> int:
     expect("dry run --names: a get_object that answers an error lists the entry as wrong, the DLL's error the reason",
            lambda: any(n == NAMES_IS and not ok and "get_object failed" in g and "names_object_error" in g
                        for n, ok, g in names_run("names_object_error")[0].items))
+    # The review's LOW-3: a name read that gives nothing gives "" on the frame and "" from get_object, which agree.
+    caught(("names_empty",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: an entry named \"\" (class and func) is wrong whatever get_object answers, 'named empty' "
+           "the reason",
+           lambda: any(n == NAMES_IS and not ok and "named empty" in g
+                       for n, ok, g in names_run("names_empty")[0].items))
     many = ScriptedDll.NAMES_MANY + 2
     expect(f"dry run --names: of {many} entries the {NAMES_MAX} most frequent are asked, the frequent two among them, "
            f"and the {many - NAMES_MAX} left are counted, never silently",
