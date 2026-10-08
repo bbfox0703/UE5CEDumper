@@ -301,10 +301,14 @@ Open work only. **Read this when deciding what to do next.**
   into the function at ..." with no name. Fix: index a script function's Func too, as the design says, so the count
   names the interpreter -- or, if that is decided against, correct the four places. Red first: a test that a script
   function's Func enters the index. Effort **S-M** (CollectCodeEntries reads live memory: the gate may need a seam).
-  ⬜ `[SNAPRIG-NAMES]` (LOW, the same review): `livefuncs_snap_live.py --stacks --choose` checks no S3-A1 name; DQ XI
+  ✅ `[SNAPRIG-NAMES]` (LOW, the same review; built 2026-10-08, offline by `--self-test` -- its first live run is owed):
+  `livefuncs_snap_live.py --stacks --choose` checks no S3-A1 name; DQ XI
   S's were checked by scratch probes (`get_object` on each `ufunc`; the site's `fn` at one offset inside the
   UFunction; the named frame exactly one below a `known: "process_event"` frame, which sits directly below the hook).
   Add them as `--names`, so the check can be repeated from the repo. Effort **S**.
+  **Built:** `--names` (and `--stack-depth N`, both only with `--stacks --choose`) checks the 64 most frequent (ufunc, fn)
+  entries by `get_object` and by `read_mem` (fn at one offset common to all), records the shared entries and each
+  named frame's distance to the next ProcessEvent frame, and reports both checks not run when nothing is named.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,

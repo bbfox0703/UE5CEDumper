@@ -5,6 +5,7 @@ r"""Live check of Live Funcs steps 2 and 3 -- parameter snapshots, native stacks
     py tools/verify/livefuncs_snap_live.py --label avowed --choose Inventory --plain-s 20 --record-s 30
     py tools/verify/livefuncs_snap_live.py --stacks [--stack-per-ring 30] [--stack-total 200] [--pdb [DIR]]
     py tools/verify/livefuncs_snap_live.py --label avowed --stacks --choose "" --plain-s 20 --record-s 30
+    py tools/verify/livefuncs_snap_live.py --label dq11s --stacks --choose "" --names [--stack-depth 62]
     py tools/verify/livefuncs_snap_live.py --self-test
 
 `[LIVEFUNCS-STEP2]` Runs against the game whose DLL serves the pipe (one game at a time, never while the UI holds
@@ -66,9 +67,21 @@ Without a PDB that matches the exe, the PDB checks are reported not run, never f
 No red run on a DLL without step 3 (H1): it sends no names.stacks, so S0 fails by construction and S1-S6 cannot run.
 --stacks --choose is the design's 8.3 on a real game: the busiest named functions whose class or name holds one of
 the substrings ("" for any), chosen for stacks alone at the DLL's default budgets (a budget given on the command line
-is sent instead); it reports their cost. --self-test runs the pure pieces against hand-made replies, then both --stacks
-runs against a scripted DLL (ScriptedDll), whole and with each fault it scripts, every check of the runs failing on a
-fault it exists to catch: no pipe, no game.
+is sent instead); it reports their cost. --stack-depth N (1..62, 16 unless given) is the depth its stacks are taken
+at; the fixture run refuses it, its checks being written for 16. --names (S3-A1 on a real game, only with --stacks
+--choose) then checks the names the DLL puts on those stacks' frames, grouped by entry (ufunc, fn), the most frequent
+NAMES_MAX asked and the rest counted:
+  A1  every named entry's ufunc is a Function (or a delegate's) of that name, in that class (get_object)
+  A1  every named entry's fn is stored inside its UFunction, at one offset common to all (read_mem): the DLL reads one
+      slot for every name. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB
+  recorded, not failed: the frames named, the entries, the shared ones (the interpreter is one, shared by every
+      script function), and how many frames lie between a named frame and the next known:"process_event" toward
+      the root (a native entry entered through ProcessEvent sits one below it, UFunction::Invoke between; a thunk
+      reached from the interpreter has none)
+With no frame named, both A1 checks are reported not run, never passed.
+--self-test runs the pure pieces against hand-made replies, then both --stacks runs against a scripted DLL
+(ScriptedDll), whole and with each fault it scripts, every check of the runs failing on a fault it exists to catch: no
+pipe, no game.
 
 Against a DLL older than the item, its checks fail: that run is the item's red. Every recording is stopped in a
 `finally` and the trace released. Exit 0 when every check holds; 1 otherwise; 2 when the pipe or the game is not
@@ -523,6 +536,13 @@ def build_parser() -> argparse.ArgumentParser:
                     help="--stacks on the fixture: name the stacks' function starts against the game's PDB through "
                          "dbghelp, the PDB looked for in DIR, else beside the exe the game runs from; without one the "
                          "PDB checks are not run")
+    ap.add_argument("--names", action="store_true",
+                    help="--stacks --choose: check S3-A1's names on the stacks: each named entry's ufunc is a Function "
+                         "of that name in that class (get_object), and its fn is stored in it at one offset common to "
+                         f"all (read_mem); the {NAMES_MAX} most frequent entries are asked")
+    ap.add_argument("--stack-depth", type=int, default=None, metavar="N",
+                    help=f"--stacks --choose: the stacks' depth, 1..{STACK_MAX_DEPTH} ({STACK_DEPTH} unless given: the "
+                         "fixture run's checks are written for that depth)")
     ap.add_argument("--self-test", action="store_true",
                     help="run the --stacks helpers against hand-made replies and the --stacks runs against a "
                          "scripted DLL; needs no pipe and no game")
@@ -535,7 +555,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     --self-test reads no other option, so nothing is refused beside it."""
     ap = build_parser()
     args = ap.parse_args(argv)
-    bad = None if args.self_test else pdb_option_problem(args)
+    bad = None if args.self_test else pdb_option_problem(args) or game_option_problem(args)
     if bad:
         ap.error(bad)
     return args
@@ -837,6 +857,11 @@ FIXTURE_STACK_PER_RING, FIXTURE_STACK_TOTAL = 30, 200
 NAMES_IS = "A1 every named entry's ufunc is a Function of that name, in that class"
 NAMES_AT = "A1 every named entry's fn is stored inside its UFunction, at one offset common to all"
 NAMES_MAX = 64            # entries asked about, two requests each, the most frequent first; the rest are counted
+# The object classes a ufunc may have: a delegate's signature is a UFunction subclass that ProcessEvent can enter too.
+NAME_FUNC_CLASSES = ("Function", "DelegateFunction", "SparseDelegateFunction")
+# The bytes of a UFunction searched for its fn: past the end of the window the DLL searches for UFunction::Func in
+# (Aura's EnsureUFunctionFuncOffset), so every offset the DLL can have read the name through lies inside.
+NAMES_READ = 0x180
 
 
 def stack_item(row: dict) -> dict:
@@ -872,7 +897,9 @@ def stack_echo_state(trace: dict, asked: int) -> str:
 
 
 def parse_site(s: dict) -> dict:
-    """One `sites` entry with its hex strings as integers. An absent field is None; an absent module is ""."""
+    """One `sites` entry with its hex strings as integers. An absent field is None; an absent module, known, class or
+    func is "". ufunc / class / func / shared are S3-A1's: the UFunction whose native entry fn is, and how many
+    functions enter there when more than one."""
     def hx(k: str) -> int | None:
         v = s.get(k)
         try:
@@ -884,7 +911,8 @@ def parse_site(s: dict) -> dict:
         return s.get(k) if type(s.get(k)) is int else None
     return {"addr": hx("addr"), "module": s.get("module") or "", "module_base": hx("module_base"), "rva": num_("rva"),
             "fn": hx("fn"), "fn_rva": num_("fn_rva"), "unwind": s.get("unwind") is True, "own": s.get("own") is True,
-            "known": s.get("known") or ""}
+            "known": s.get("known") or "", "ufunc": hx("ufunc"), "class": str(s.get("class") or ""),
+            "func": str(s.get("func") or ""), "shared": num_("shared")}
 
 
 def resolve_stack_page(d: dict) -> tuple[list[dict], list[tuple]]:
@@ -1455,8 +1483,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
 
 def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=time.perf_counter) -> None:
     """--stacks --choose on a real game (the design's 8.3): the busiest named functions whose class or name holds one
-    of the substrings, chosen for stacks alone at the given budgets. What it reports is their cost. `sleep` and
-    `clock` as run_stacks takes them."""
+    of the substrings, chosen for stacks alone at the given budgets and depth. What it reports is their cost, and with
+    --names the names on their stacks (run_names). `sleep` and `clock` as run_stacks takes them."""
     say(f"\nplain recording ({args.plain_s:.0f} s) to find the functions to choose:")
     table = plain_table(c, args.plain_s)
     pats = [p.lower() for p in args.choose]
@@ -1471,7 +1499,8 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     out["machine"] = mc = machine()
     if not check("functions to choose were found", chosen != [], ", ".join(out["chosen"][:12])):
         return
-    stacks = {"funcs": [stack_item(f) for f in chosen], "depth": STACK_DEPTH}
+    stacks = {"funcs": [stack_item(f) for f in chosen],
+              "depth": STACK_DEPTH if args.stack_depth is None else args.stack_depth}
     for key, given in (("per_ring_per_s", args.stack_per_ring), ("total_per_s", args.stack_total)):
         if given is not None:   # left out, the DLL applies its own default, which is what 8.3 measures
             stacks[key] = given
@@ -1504,8 +1533,10 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     check(f"the total budget held: at most about {total}/s captured", cost["captures"] <= hi,
           f"{cost['captures']} captures, at most {hi:.0f}")
     census: dict[str, int] = {}
+    slots: list[dict] = []
     if st2.get("allocated"):
         for r in read_stack_rings(c, st2.get("gen", 0), len(chosen)).values():
+            slots.extend(r["slots"])
             for sl in r["slots"]:
                 for nm, bit in (("partial", STK_PARTIAL), ("fault", STK_FAULT), ("more", STK_MORE),
                                 ("bad_sp", STK_BADSP), ("low_stack", STK_LOWSTACK), ("no_capturer", STK_NOCAPTURER)):
@@ -1522,6 +1553,115 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     check.record("the machine", f"{mc['cpu'] or '?'}, battery {mc['battery']}, on AC {mc['on_ac']}")
     check.record("D3's re-weighed total", f"{cost['reweighed_total']} against {total} now")
     c.request("pe_trace_release")
+    # The stacks are in hand and the DLL holds no trace; the names' UFunctions are asked about as objects.
+    if args.names:
+        run_names(c, check, out, slots)
+
+
+def named_entries(slots: list[dict]) -> tuple[list[dict], int]:
+    """S3-A1's named frames of these stacks as entries, one per (ufunc, fn), the most frequent first (ties in the order
+    first seen), and how many frames were named. A ufunc reached at two starts is two entries: each start is a claim
+    of its own about that UFunction's Func."""
+    by: dict[tuple, dict] = {}
+    named = 0
+    for sl in slots:
+        for f in sl["frames"]:
+            if f["ufunc"] is None:
+                continue
+            named += 1
+            e = by.setdefault((f["ufunc"], f["fn"]), {"ufunc": f["ufunc"], "fn": f["fn"], "class": f["class"],
+                                                      "func": f["func"], "shared": f["shared"], "frames": 0})
+            e["frames"] += 1
+    return sorted(by.values(), key=lambda e: -e["frames"]), named
+
+
+def pe_gap(frames: list[dict], i: int) -> int | None:
+    """How many frames lie between frame i and the next known:"process_event" frame toward the root, or None when no
+    such frame follows it."""
+    j = next((k for k in range(i + 1, len(frames)) if frames[k]["known"] == KNOWN_PE), None)
+    return None if j is None else j - i - 1
+
+
+def fn_offsets(blob: bytes, fn: int) -> list[int]:
+    """Every 8-aligned offset of `blob` holding `fn` as a little-endian u64: a pointer member of a UFunction sits at a
+    multiple of 8, as x64 stores it."""
+    return [o for o in range(0, len(blob) - 7, 8) if struct.unpack_from("<Q", blob, o)[0] == fn]
+
+
+def common_offset(per_entry: list[list[int]]) -> int | None:
+    """The lowest offset every entry holds its fn at, or None when there is none (no entry, or one without its fn)."""
+    if not per_entry:
+        return None
+    common = set(per_entry[0]).intersection(*per_entry[1:])
+    return min(common) if common else None
+
+
+def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
+    """--names: S3-A1's names on the --choose run's stacks, the ledger's DQ XI S probes made repeatable. Each named
+    entry, the most frequent first and NAMES_MAX at most, is asked of the DLL as an object (get_object) and as
+    memory (read_mem); every named frame counts toward what is recorded."""
+    say("\nA1 -- the stacks' names:")
+    entries, named = named_entries(slots)
+    asked = entries[:NAMES_MAX]
+    left = len(entries) - len(asked)
+    shared = sorted((e for e in entries if e["shared"] is not None), key=lambda e: -e["shared"])
+    gaps: dict[int | None, int] = {}
+    for sl in slots:
+        for i, f in enumerate(sl["frames"]):
+            if f["ufunc"] is not None:
+                g = pe_gap(sl["frames"], i)
+                gaps[g] = gaps.get(g, 0) + 1
+    gap_text = {("none" if g is None else str(g)): n
+                for g, n in sorted(gaps.items(), key=lambda kv: (kv[0] is None, kv[0] or 0))}
+    out["names"] = {"frames": named, "entries": len(entries), "asked": len(asked), "unchecked": left,
+                    "shared_entries": len(shared), "shared_max": shared[0]["shared"] if shared else None,
+                    "pe_gap": gap_text, "func_offset": None, "wrong": [], "per_entry": []}
+    say(f"     {named} frames named, {len(entries)} entries; {len(asked)} asked" +
+        (f", {left} less frequent left unchecked" if left else ""))
+    if not entries:
+        why = "no frame was named" + ("" if slots else ": no stack was kept")
+        check.not_run(NAMES_IS, why)
+        check.not_run(NAMES_AT, why)
+    else:
+        wrong: list[str] = []
+        offsets: list[list[int]] = []
+        for e in asked:
+            addr = f"{e['ufunc']:X}"
+            o = c.request("get_object", addr=addr)
+            d = data_of(o)
+            if not (ok_of(o) and d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and
+                    d.get("outer") == e["class"]):
+                wrong.append(f"{e['class']}::{e['func']} at {addr} is {d.get('class')!r} "
+                             f"{d.get('outer')!r}::{d.get('name')!r}")
+            m = c.request("read_mem", addr=addr, size=NAMES_READ)
+            try:
+                blob = bytes.fromhex(str(data_of(m).get("bytes") or "")) if ok_of(m) else b""
+            except ValueError:
+                blob = b""
+            offsets.append(fn_offsets(blob, e["fn"]) if e["fn"] is not None else [])
+            out["names"]["per_entry"].append({"ufunc": addr, "class": e["class"], "func": e["func"],
+                                              "frames": e["frames"], "shared": e["shared"],
+                                              "fn": fmt(e["fn"], "#x"), "offsets": [hex(x) for x in offsets[-1]]})
+        off = common_offset(offsets)
+        out["names"].update(func_offset=off, wrong=wrong)
+        tail = f" ({left} less frequent left unchecked)" if left else ""
+        check(NAMES_IS, not wrong, f"{len(asked) - len(wrong)} of {len(asked)} asked{tail}; first wrong {wrong[:2]}")
+        # This shows the DLL reads one slot for every name, not on its own that the slot is UFunction::Func: the DLL
+        # found each name by reading that very slot. The independent evidence is the frame order recorded below (a
+        # native entry one frame, UFunction::Invoke, below ProcessEvent) and, where the game ships one, a PDB.
+        absent = [f"{e['class']}::{e['func']}" for e, o in zip(asked, offsets) if not o]
+        check(NAMES_AT, off is not None,
+              (f"Func at +0x{off:X} in all {len(asked)}" if off is not None else
+               f"no offset common to all {len(asked)}; without their fn {absent[:3]}; offsets "
+               f"{[[hex(x) for x in o] for o in offsets[:3]]}") + tail)
+    examples = ", ".join(f"{e['class']}::{e['func']} (shared by {e['shared']}, {e['frames']} frames)"
+                         for e in shared[:5])
+    check.record("A1 frames named, distinct entries, shared entries",
+                 f"{named} frames, {len(entries)} entries; {len(shared)} shared" +
+                 (f", the largest by {shared[0]['shared']}: {examples}" if shared else ""))
+    # A record, not a check: a thunk reached from the interpreter has no ProcessEvent beyond it, legitimately.
+    check.record('A1 frames between a named frame and the next known:"process_event" toward the root',
+                 json.dumps(gap_text))
 
 
 # ======================================================================================================================
@@ -1574,6 +1714,17 @@ def pdb_option_problem(args) -> str | None:
         return None
     if not args.stacks or args.choose is not None or args.fixture_check:
         return "--pdb names the stacks of the --stacks fixture run: not with --choose or --fixture-check"
+    return None
+
+
+def game_option_problem(args) -> str | None:
+    """Why --names or --stack-depth cannot go with the other options, or None. Both belong to the --stacks --choose run:
+    --names reads that run's stacks-only recording, and the fixture run's checks are written for its stacks at
+    STACK_DEPTH. A depth outside Linie's range would be clamped by the DLL, so the run would not get what it asked."""
+    if (args.names or args.stack_depth is not None) and not (args.stacks and args.choose is not None):
+        return "--names and --stack-depth belong to the --stacks --choose run"
+    if args.stack_depth is not None and not 1 <= args.stack_depth <= STACK_MAX_DEPTH:
+        return f"--stack-depth takes 1..{STACK_MAX_DEPTH}, the depths Linie keeps"
     return None
 
 
@@ -2706,11 +2857,13 @@ def self_test() -> int:
     caught(("nothing_taken",), PDB_DISP, PDB_PE, argv=("--pdb",), exact=False)
 
     # --names (S3-A1 on a real game): its pieces over hand-made sites, then the --choose run against the scripted DLL.
+    A1_KEYS = ("ufunc", "class", "func", "shared")
     expect("A1: a site keeps ufunc / class / func / shared; absent they are None / \"\" / \"\" / None, as is a shared "
            "that is not a count",
            lambda: (lambda s, t, u: (s["ufunc"], s["class"], s["func"], s["shared"]) == (0x2A000, "C", "F", 3) and
                     (t["ufunc"], t["class"], t["func"], t["shared"]) == (None, "", "", None) and u["shared"] is None and
-                    {k: s[k] for k in sites[0]} == sites[0])(
+                    {k: v for k, v in s.items() if k not in A1_KEYS} == {k: v for k, v in t.items() if k not in A1_KEYS}
+                    and len(s) == len(A1_KEYS) + 9)(
                parse_site(dict(raw_sites[0], ufunc="0x2A000", func="F", shared=3, **{"class": "C"})),
                parse_site(raw_sites[0]), parse_site(dict(raw_sites[0], shared="3"))))
     fn_a, fn_b, uf_a, uf_b = base + 0x5000, base + 0xA000, 0x2A000, 0x2B000
