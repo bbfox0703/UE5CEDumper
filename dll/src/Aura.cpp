@@ -6522,6 +6522,15 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
 // A native function's Func slot, before the code test: 0 for a script function, an undetected offset or a failed read.
 static uintptr_t NativeFuncSlot(uintptr_t funcAddr);
 
+bool IsScriptFunctionFlags(uint32_t flags) {
+    (void)flags;
+    return false;
+}
+
+bool IsScriptFunction(uintptr_t funcAddr) {
+    return funcAddr != 0 && IsScriptFunctionFlags(ReadFunctionFlags(funcAddr));
+}
+
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr) {
     const uintptr_t exec = NativeFuncSlot(funcAddr);
     return exec && Macht::LooksLikeCodePointer(exec) ? exec : 0;

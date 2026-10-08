@@ -9136,6 +9136,18 @@ int main() {
             DynOff::bUFunctionFuncDetected.store(savedDetected);
         }
 
+        // [A1-INTERP-LABEL] Which shared entry is the interpreter: the one script functions enter. Flags read as zero
+        // are "not found" (the CE code address's three-way rule), never "script".
+        {
+            constexpr uint32_t kNative = 0x00000400, kEvent = 0x00000800, kBlueprintEvent = 0x08000000,
+                               kPublic = 0x00020000;
+            check("[A1-INTERP-LABEL] a Blueprint event's flags (no FUNC_Native) say script",
+                  Aura::IsScriptFunctionFlags(kEvent | kBlueprintEvent | kPublic));
+            check("[A1-INTERP-LABEL] ...a native function's do not", !Aura::IsScriptFunctionFlags(kNative | kPublic));
+            check("[A1-INTERP-LABEL] ...and flags not found (zero) are no verdict", !Aura::IsScriptFunctionFlags(0));
+            check("[A1-INTERP-LABEL] ...nor is a null function", !Aura::IsScriptFunction(0));
+        }
+
         // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's
         // capturer installed, a call chosen for its stack alone in a scoped trace.
         {

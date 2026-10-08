@@ -1370,6 +1370,12 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
 // Func offset isn't detected yet or the slot isn't a code pointer. See Aura.cpp.
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr);
 
+// [A1-INTERP-LABEL] FunctionFlags that were read and say "script" (no FUNC_Native): such a function's Func is the
+// interpreter. A zero is flags not found, which is no verdict either way. Pure.
+bool IsScriptFunctionFlags(uint32_t flags);
+// The same verdict for a UFunction in memory, its flags read as the CE code address reads them.
+bool IsScriptFunction(uintptr_t funcAddr);
+
 // === Reverse edge: function -> properties it reads/writes ===
 //
 // Given ONE UFunction, parse its Kismet bytecode and list every FProperty it

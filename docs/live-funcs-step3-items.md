@@ -520,3 +520,19 @@ The register's item 6, closed. The numbers, the cross-checks and the limits are 
   - the index leaves every script function out, so the interpreter never shows as `shared: N` as the design's 4.3
     and pipe-protocol.md say it does (`[A1-SCRIPT-FUNCS]`);
   - the rig's `--choose` path checks no name (`[SNAPRIG-NAMES]`).
+
+## Follow-ups found after build 3643 (2026-10-08)
+
+The maintainer asked for them to be fixed in order; each has its row in todo.md.
+- **[A1-SCRIPT-FUNCS]** (MED): S3-A1's index read its slot through the CE code address's FUNC_Native gate, so no
+  script function entered it and the interpreter was never named. Fixed in build 3644; red 22465c0c, green a97da808,
+  3 / 3 mutants. Live:
+  - DumperTest58 Shipping: the index went from 12,445 to 13,176 entries of 13,179 functions;
+  - DQ XI S: 12,482 to 19,160 of 19,162, and a frame in the interpreter named with `shared: 6678`, exactly the
+    script functions added. The interpreter showed on the minimap widget's stacks, the canvas render target's and the
+    facial control's.
+- **[A1-INTERP-LABEL]** (LOW, found by that live check): such a frame reads "native entry of <the lowest-addressed
+  script function> (one of 6,678 ...)". On DQ XI S that was `x00_Snd_Common_C::Game - CasinoNpcScheduleEnd`, a
+  function that was not running. The pipe should say which shared entry is the interpreter (the script functions'),
+  and the Call stack tab should name it as the Blueprint interpreter.
+- **[CT-STACK-WHERE-WIDTH]**, **[SNAPRIG-NAMES]**, **[SNAPRIG-S5-RATE]**: in todo.md.
