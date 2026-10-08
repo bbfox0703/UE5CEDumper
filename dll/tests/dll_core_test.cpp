@@ -9075,6 +9075,29 @@ int main() {
             check("a chain that loops ends after kChainMaxHops links", Macht::FollowChain(base, 0x5000, 0x600) == 0x5000);
         }
 
+        // S3-A1: the native-entry index, pure: code to UFunction, a shared entry counted.
+        {
+            std::vector<Aura::CodeEntry> idx = { { 0x30, 0xC }, { 0x10, 0xB }, { 0x30, 0xA }, { 0x10, 0xB } };
+            Aura::SortCodeEntries(idx);
+            const bool sorted = idx.size() == 3 && idx[0].code == 0x10 && idx[0].ufunc == 0xB && idx[1].code == 0x30 &&
+                                idx[1].ufunc == 0xA && idx[2].code == 0x30 && idx[2].ufunc == 0xC;
+            check("the index sorts by code, then by function, and drops an exact duplicate", sorted,
+                  std::to_string(idx.size()).c_str());
+            uintptr_t uf = 99;
+            const size_t shared = Aura::LookupCodeEntry(idx, 0x30, uf);
+            check("an entry two functions share: both counted, the lowest named", shared == 2 && uf == 0xA,
+                  (std::to_string(shared) + " / " + std::to_string(uf)).c_str());
+            const size_t one = Aura::LookupCodeEntry(idx, 0x10, uf);
+            check("an entry of one function names it", one == 1 && uf == 0xB);
+            const size_t none = Aura::LookupCodeEntry(idx, 0x20, uf);
+            check("an address no function enters at: none, and no function named", none == 0 && uf == 0);
+            std::vector<Aura::CodeEntry> empty;
+            check("an empty index answers none", Aura::LookupCodeEntry(empty, 0x10, uf) == 0 && uf == 0);
+            std::vector<Aura::CodeEntry> collected;
+            check("collecting with no object array: an empty index, whole", Aura::CollectCodeEntries(collected) &&
+                  collected.empty());
+        }
+
         // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's
         // capturer installed, a call chosen for its stack alone in a scoped trace.
         {

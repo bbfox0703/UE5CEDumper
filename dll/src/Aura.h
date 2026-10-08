@@ -1938,4 +1938,25 @@ private:
     bool                           entered_;
 };
 
+
+// ============================================================
+// [LIVEFUNCS-STEP3] S3-A1: the native-entry index (docs/live-funcs-step3-items.md). A native stack's frame names a
+// function start; the trace's own functions name the starts it saw called through ProcessEvent, but an exec thunk a
+// Blueprint reached through ProcessInternal / CallFunction never passed the hook. One pass over the object array maps
+// every UFunction's native entry (UFunction::Func) back to it. A script function's Func is the interpreter, shared by
+// thousands: the index keeps every function at an address, so a caller can say how many share it.
+// ============================================================
+struct CodeEntry {
+    uintptr_t code  = 0;   // UFunction::Func
+    uintptr_t ufunc = 0;
+};
+// Sorts by code, then by UFunction, and drops exact duplicates. Pure.
+void SortCodeEntries(std::vector<CodeEntry>& entries);
+// The functions whose native entry is `code` in a sorted index: how many (0 when none), and the first of them (the
+// lowest UFunction address) in `ufunc`. Pure.
+size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc);
+// One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction with a native entry,
+// sorted. False when a cancel cut the pass short (the index is then partial).
+bool CollectCodeEntries(std::vector<CodeEntry>& out);
+
 } // namespace Aura

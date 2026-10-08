@@ -10305,4 +10305,19 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
     return result;
 }
 
+
+// [LIVEFUNCS-STEP3] S3-A1 (stubbed).
+void SortCodeEntries(std::vector<CodeEntry>& entries) { (void)entries; }
+
+size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc) {
+    (void)sorted; (void)code;
+    ufunc = 0;
+    return 0;
+}
+
+bool CollectCodeEntries(std::vector<CodeEntry>& out) {
+    out.clear();
+    return true;
+}
+
 } // namespace Aura
