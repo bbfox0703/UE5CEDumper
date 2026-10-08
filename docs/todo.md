@@ -350,7 +350,8 @@ source and editor are installed for when they are needed.
   pane dragged wide a long name stayed cut beside empty space. Where is now a star column with a 420 floor (red
   0a2a5a87 / green 9ec9fb8a, 3 / 3 mutants); live, a wide pane showed every name whole and a narrow one scrolled.
   The live look also found Address squeezed to its floor in a narrow pane; its floor is now its width (red 3c1ea493 /
-  green d7da0d04, for build 3645 -- a live look owed).
+  green d7da0d04, build 3645; **live 2026-10-09** on DumperTest58 Shipping: with the detail pane dragged to about
+  400 px, Address kept its 170 with Copy / ASM beside it, and Where kept its floor and scrolled).
   ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test`; **live 2026-10-09**:
   DumperTest58 Shipping at ~30 fps, DLL 3644, `--stacks --pdb` with no budget given chose 11/s ("between 6.1 and
   20.2 ... 30/s does not fit"), S5 kept 99 in its 77..99 window and dropped 141, the parameter counters were checked
