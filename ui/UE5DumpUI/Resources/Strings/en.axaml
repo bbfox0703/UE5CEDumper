@@ -386,7 +386,7 @@
     <sys:String x:Key="str.Pointers.NotConnected">Not connected — connect to view pointers</sys:String>
     <sys:String x:Key="str.Pointers.VersionTooOld">Unsupported engine — UE 4.11 is the oldest this tool can read. UE 4.10 and earlier have no FUObjectItem: the object array holds raw UObjectBase* pointers in an inline chunk table, a layout the dumper cannot express, so the scan was skipped rather than run and fail. If this version was detected wrongly, set a UE version override above and reconnect.</sys:String>
     <!-- Separate from VersionTooOld on purpose: that message's remedy line ("set a UE version
-         override") is actively WRONG here. The override list has no value below UE 4.18, and no
+         override") is actively WRONG here. The override list has no value below UE 4.11, and no
          value at any version would help, because the structures being looked for do not exist in
          a pre-UE4 binary at all. Keeping two strings also keeps the 4.10 explanation truthful —
          4.10 is still a live case, with two reference builds in the AOB corpus. -->

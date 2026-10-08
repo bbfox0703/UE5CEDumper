@@ -380,10 +380,14 @@ public partial class PointerPanelViewModel : ViewModelBase
         _ => PublisherThumbprint,
     };
 
-    /// <summary>List of override choices for the ComboBox (display strings).</summary>
+    /// <summary>List of override choices for the ComboBox (display strings). It starts at the DLL's
+    /// support floor (Grimoire::MIN_SUPPORTED_UE_VERSION), the lowest version set_ue_version_override
+    /// accepts: the too-old banner names the override as the way out of a wrong detection, so every
+    /// version the dumper reads has to be on it. [UE-OVERRIDE-411]</summary>
     public static System.Collections.Generic.IReadOnlyList<string> UeVersionOverrideOptions { get; } = new[]
     {
         "Auto",
+        "UE 4.11", "UE 4.12", "UE 4.13", "UE 4.14", "UE 4.15", "UE 4.16", "UE 4.17",
         "UE 4.18", "UE 4.19", "UE 4.20", "UE 4.21", "UE 4.22", "UE 4.23",
         "UE 4.24", "UE 4.25", "UE 4.26", "UE 4.27",
         "UE 5.0", "UE 5.1", "UE 5.2", "UE 5.3", "UE 5.4",

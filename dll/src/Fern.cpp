@@ -2110,7 +2110,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // Defensive bounds, plus 0 (clear) — Grimoire::UeVersionOverrideAccepted says why.
             if (!Grimoire::UeVersionOverrideAccepted(newVersion)) {
                 return Renge::MakeError(id,
-                    "version out of supported range (418..509 or 0 to clear)").dump();
+                    "version out of supported range ("
+                    + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MIN) + ".."
+                    + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MAX) + " or 0 to clear)").dump();
             }
 
             if (persist) {

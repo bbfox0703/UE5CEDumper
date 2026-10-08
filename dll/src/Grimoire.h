@@ -1278,9 +1278,12 @@ inline bool SubFloorReadingCorroborated(uint32_t code, std::string_view productV
 // above 5.9 there is no version-code band. It used to start at 4.18, so a 4.11-4.17 title could not be
 // set by hand at all.
 
+constexpr int UE_VERSION_OVERRIDE_MIN = static_cast<int>(MIN_SUPPORTED_UE_VERSION);
+constexpr int UE_VERSION_OVERRIDE_MAX = 500 + static_cast<int>(UE_MAX_UE5_MINOR);
+
 /// Whether set_ue_version_override accepts `version`; 0 clears an override and is always accepted.
 inline bool UeVersionOverrideAccepted(int version) {
-    return version == 0 || (version >= 418 && version <= 509);
+    return version == 0 || (version >= UE_VERSION_OVERRIDE_MIN && version <= UE_VERSION_OVERRIDE_MAX);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

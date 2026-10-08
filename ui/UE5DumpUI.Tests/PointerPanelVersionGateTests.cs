@@ -13,7 +13,7 @@ namespace UE5DumpUI.Tests;
 /// version number: 400-410 = "UE 4.0-4.10, the right family but too old", and the sentinel 300 =
 /// "positively identified as pre-UE4 (UE3), a different object model". They must never collapse
 /// into one message, because the 4.10 text's remedy line ("set a UE version override") is
-/// meaningless for UE3 — the override list has no value below 4.18 and no value at any version
+/// meaningless for UE3 — the override list has no value below 4.11 and no value at any version
 /// would make UE3's absent structures appear.
 ///
 /// Also pins the notification fix: <c>ShowVersionTooOldWarning</c> was missing from
