@@ -10,6 +10,7 @@ namespace UE5DumpUI.Tests;
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
 /// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them,
 /// with its view, budget, per-frame question and estimate: the S3-U items of docs/live-funcs-step3-items.md.
+/// Clear choices: the one clear that drops the trace's ticks with them.
 /// </summary>
 public class LiveFuncsSnapshotTests
 {
@@ -1433,6 +1434,146 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(Line("str.Tip.LF.Stack.Estimate", 2.0, 10.0), vm.StackEstimateTip);
         Assert.Contains("2.0", vm.StackEstimateTip, StringComparison.Ordinal);
         Assert.Contains("10", vm.StackEstimateTip, StringComparison.Ordinal);
+    }
+
+    // ---- Clear choices: one clear for the three choice columns ----
+
+    /// <summary>A view model with every kind of choice, Trace on: A::F ticked and chosen for parameters and for a stack,
+    /// A::G for parameters, A::H for a stack. F carries all three, so a clear that misses one kind leaves a box ticked
+    /// on a row whose other boxes it cleared.</summary>
+    private static async Task<(LiveFuncsViewModel vm, FakeDumpService dump)> WithEveryKindOfChoice()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG), Row("A", "H", "0x3", KeyH));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        var f = Shown(vm, "A", "F");
+        vm.ToggleTickCommand.Execute(f);
+        vm.ToggleSnapshotCommand.Execute(f);
+        await vm.ToggleStackCommand.ExecuteAsync(f);
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        Assert.Equal(new[] { "A::F" }, vm.TickedFunctions);
+        Assert.Equal(new[] { "A::F", "A::G" }, vm.SnapshotFunctions.Order());
+        Assert.Equal(new[] { "A::F", "A::H" }, vm.StackFunctions.Order());
+        return (vm, dump);
+    }
+
+    [Fact]
+    public async Task Clear_choices_unticks_all_three_columns_and_every_count_and_estimate_follows()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        Assert.True(vm.TraceGameMb > vm.TraceBufferMb, "the choices do not hold the snapshot buffer");
+
+        vm.ClearChoicesCommand.Execute(null);
+
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+        foreach (var r in vm.Results)
+        {
+            Assert.False(r.IsTicked, $"{r.FuncName} is still ticked for the trace");
+            Assert.False(r.IsSnapChosen, $"{r.FuncName} is still chosen for parameters");
+            Assert.False(r.IsStackChosen, $"{r.FuncName} is still chosen for a stack");
+        }
+        Assert.False(vm.HasTickedFunctions);
+        Assert.False(vm.HasSnapshotChoices);
+        Assert.False(vm.HasStackChoices);
+        Assert.Equal(Line("str.LF.Trace.TickedCount", 0), vm.TickedCountText);
+        Assert.Equal(Line("str.LF.Snap.Count", 0), vm.SnapshotCountText);
+        Assert.Equal(Line("str.LF.Stack.Count", 0), vm.StackCountText);
+        Assert.Equal(vm.TraceBufferMb, vm.TraceGameMb);   // nothing left to fill the snapshot buffer
+        Assert.Equal("", vm.SnapshotEstimate);
+        Assert.Equal("", vm.StackEstimate);
+        Assert.False(vm.StackEstimateWarn);
+    }
+
+    /// <summary>A count, a "has" flag or an estimate the clear changes but does not raise keeps its old figure on
+    /// screen beside an empty column, and the values above cannot show that: so whatever the two clears raise between
+    /// them, Clear choices raises too.</summary>
+    [Fact]
+    public async Task Clear_choices_raises_every_property_the_two_clears_raise()
+    {
+        var (separate, _) = await WithEveryKindOfChoice();
+        var bySeparate = Raised(separate);
+        separate.ClearTicksCommand.Execute(null);
+        separate.ClearSnapshotsCommand.Execute(null);
+
+        var (together, _) = await WithEveryKindOfChoice();
+        var byTogether = Raised(together);
+        together.ClearChoicesCommand.Execute(null);
+
+        Assert.Contains(nameof(LiveFuncsViewModel.TickedCountText), bySeparate);
+        Assert.Contains(nameof(LiveFuncsViewModel.StackCountText), bySeparate);
+        Assert.Empty(bySeparate.Except(byTogether).Order());
+    }
+
+    private static HashSet<string> Raised(LiveFuncsViewModel vm)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName != null) names.Add(e.PropertyName); };
+        return names;
+    }
+
+    [Fact]
+    public async Task Clear_choices_holds_still_while_recording()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        vm.ClearChoicesCommand.Execute(null);      // the button is disabled; a call that arrives anyway is refused
+        Assert.Equal(new[] { "A::F" }, vm.TickedFunctions);
+        Assert.Equal(2, vm.SnapshotFunctions.Count);
+        Assert.Equal(2, vm.StackFunctions.Count);
+        Assert.True(Shown(vm, "A", "F") is { IsTicked: true, IsSnapChosen: true, IsStackChosen: true });
+
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.ClearChoicesCommand.Execute(null);
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+    }
+
+    /// <summary>A guard: the two clears it joins keep their own scopes. Clear ticks drops the ticks alone; the
+    /// Parameters row's Clear drops the parameter and the stack choices, which fill the same buffer (D4).</summary>
+    [Fact]
+    public async Task Clear_ticks_and_the_Parameters_Clear_keep_their_own_scopes()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        vm.ClearTicksCommand.Execute(null);
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Equal(2, vm.SnapshotFunctions.Count);
+        Assert.Equal(2, vm.StackFunctions.Count);
+
+        (vm, _) = await WithEveryKindOfChoice();
+        vm.ClearSnapshotsCommand.Execute(null);
+        Assert.Equal(new[] { "A::F" }, vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+    }
+
+    /// <summary>What a layout cannot read: the button runs the command, is disabled while recording like the two clears
+    /// it joins, and shows only with the experimental trace, as the three columns do. Its tooltip names the columns,
+    /// and the two clears stay in their rows.</summary>
+    [Fact]
+    public void The_Clear_choices_button_runs_the_command_holds_still_while_recording_and_shows_with_the_columns()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var buttons = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value).ToList();
+        string clear = Assert.Single(buttons, b => b.Contains("Command=\"{Binding ClearChoicesCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("Content=\"{StaticResource str.LF.ClearChoices}\"", clear, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.ClearChoices}\"", clear, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"{Binding !IsRecording}\"", clear, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding TraceAvailable}\"", clear, StringComparison.Ordinal);
+        Assert.True(Line("str.LF.ClearChoices").Length > 0);
+        string tip = Line("str.Tip.LF.ClearChoices");
+        foreach (var column in new[] { "str.LF.Col.Trace", "str.LF.Col.Snapshot", "str.LF.Col.Stack" })
+            Assert.Contains(Line(column), tip, StringComparison.Ordinal);
+
+        Assert.Contains("Command=\"{Binding ClearTicksCommand}\"", EnclosingStackPanel(axaml, "{Binding TickedCountText}"),
+                        StringComparison.Ordinal);
+        Assert.Contains("Command=\"{Binding ClearSnapshotsCommand}\"", EnclosingStackPanel(axaml, "{Binding SnapshotCountText}"),
+                        StringComparison.Ordinal);
     }
 
     /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>

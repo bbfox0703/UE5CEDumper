@@ -879,6 +879,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshTickedList();
     }
 
+    [RelayCommand]
+    private void ClearChoices() { }
+
     private void RefreshTickedList()
     {
         TickedFunctions.Clear();
