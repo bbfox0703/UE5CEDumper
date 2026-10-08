@@ -61,7 +61,9 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
       keep can refuse in-scope stacks on a correct DLL. The plain rates predict it (printed, and S5's window is not
       run on it); the two in-scope checks are reported not run only where the main recording shows it -- no in-scope
       stack kept, every in-scope SnapProbe_Call entry flagged 64 -- and the total starves the others at
-      SnapProbe_PerFrame's plain or main rate. Otherwise they run, over the stacks kept
+      SnapProbe_PerFrame's plain or main rate. Otherwise they run over the stacks kept, and fail on any in-scope
+      SnapProbe_Call entry flagged 64 that neither budget explains: the per-function budget 1.5x above
+      SnapProbe_Call's plain rate, and a total that starves nothing at SnapProbe_PerFrame's plain or main rate
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
   S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
@@ -1273,8 +1275,9 @@ def starved_in_scope(in_entries: list[tuple], kept: int, rates: dict[str, float]
     """Why S3's in-scope checks cannot run, or None. `in_entries` are the main recording's in-scope SnapProbe_Call
     entries, `kept` the in-scope stacks it kept. They stand down only where the recording shows the stack budget
     refused them all -- none kept, every entry flagged 64 -- and a total explains it: one total, admitted in call order
-    each second, that starves the others at SnapProbe_PerFrame's plain rate or at the main recording's own. Refusals
-    no total explains are the DLL's, and the checks run on them; where some were kept, they run over those."""
+    each second, that starves the others at SnapProbe_PerFrame's plain rate or at the main recording's own
+    (main_rate). Otherwise the checks run over the stacks kept, which says nothing of the ones refused: those are
+    judged apart (unexplained_refusals)."""
     if kept or not in_entries or not all(e[5] & F_STACK_BUDGET for e in in_entries):
         return None
     at = [("the plain recording's", rates.get("SnapProbe_PerFrame", 0.0))] + \
@@ -1285,6 +1288,20 @@ def starved_in_scope(in_entries: list[tuple], kept: int, rates: dict[str, float]
                     f"64): one total of {budget_echo(total)}/s, admitted in call order each second, starves them at "
                     f"{which} {pf:.1f}/s SnapProbe_PerFrame")
     return None
+
+
+def unexplained_refusals(in_entries: list[tuple], rates: dict[str, float], main_pf: float | None, per: int,
+                         total: int) -> int:
+    """How many of the main recording's in-scope SnapProbe_Call entries the stack budget refused (flag 64) where
+    neither budget explains it, or 0. The per-function budget explains a refusal unless it sits BUDGET_MARGIN above
+    SnapProbe_Call's plain rate; the total, unless it starves nothing at SnapProbe_PerFrame's plain rate and at the
+    main recording's (`main_pf`, main_rate). Beyond both a correct DLL has no reason to refuse, so S3's in-scope
+    checks fail on what this counts, kept stacks or not."""
+    refused = sum(1 for e in in_entries if e[5] & F_STACK_BUDGET)
+    if not refused or budget_echo(per) < BUDGET_MARGIN * rates.get("SnapProbe_Call", 0.0):
+        return 0
+    pfs = [rates.get("SnapProbe_PerFrame", 0.0)] + ([] if main_pf is None else [main_pf])
+    return 0 if any(total_starves(dict(rates, SnapProbe_PerFrame=pf), per, total) for pf in pfs) else refused
 
 
 def main_table_rate(reply: dict) -> tuple[float | None, str]:
@@ -1578,16 +1595,21 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
                   not e[5] & F_LONE and outer is not None and (entries.get(parent.get(e[0])) or (0, 0, None))[2] == outer]
     n_refused = sum(1 for e in in_entries if e[5] & F_STACK_BUDGET)
     ring_pf = ring_rate(reads[1]["ring"], span_hi)
-    starved = starved_in_scope(in_entries, len(in_scope), budget["rates"], main_rate(main_pf, ring_pf), per_sent,
-                               total_sent)
+    main_seen = main_rate(main_pf, ring_pf)
+    starved = starved_in_scope(in_entries, len(in_scope), budget["rates"], main_seen, per_sent, total_sent)
+    n_unexplained = unexplained_refusals(in_entries, budget["rates"], main_seen, per_sent, total_sent)
     say(f"     in-scope SnapProbe_Call: {len(in_entries)} entries, {len(in_scope)} stacks kept, {n_refused} refused by "
         f"the stack budget (64)")
-    unexplained = f"; {n_refused} of {len(in_entries)} in-scope entries refused by the stack budget (64), which the " \
-                  f"total does not explain" if not in_scope and n_refused else ""
+    # The stacks kept say nothing of the ones refused, so a refusal neither budget explains fails both in-scope
+    # checks beside them, and the line says so.
+    unexplained = (f"; {n_unexplained} of {len(in_entries)} in-scope entries refused by the stack budget (64) though "
+                   f"neither budget explains it" if n_unexplained else
+                   f"; {n_refused} of {len(in_entries)} in-scope entries refused by the stack budget (64), which the "
+                   f"total does not explain" if not in_scope and n_refused else "")
     if starved:
         check.not_run(S3_OWN_IN, starved)
     else:
-        check(S3_OWN_IN, in_scope != [] and all(o is not None for _, o in ns_in),
+        check(S3_OWN_IN, in_scope != [] and all(o is not None for _, o in ns_in) and not n_unexplained,
               f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}{unexplained}")
     check("S3 no lone stack holds an own frame", lone != [] and all(o is None for _, o in ns_lone),
           f"{sum(1 for _, o in ns_lone if o is not None)} of {len(lone)} do")
@@ -1597,7 +1619,7 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     if starved:
         check.not_run(S3_KNOWN_IN, starved)
     else:
-        check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope),
+        check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope) and not n_unexplained,
               f"{with_known} of {len(in_scope)}{unexplained}")
     lone_known = sum(1 for kn, _ in ns_lone if kn is not None)
     check(S3_KNOWN_LONE, lone != [] and lone_known == 0, f"{lone_known} of {len(lone)} do")
@@ -3731,6 +3753,27 @@ def self_test() -> int:
            and starved_in_scope([], 0, plain_rates, 60.0, 30, 5) is None and
            starved_in_scope(refused_in, 0, plain_rates, 60.0, 30, 200) is None and
            starved_in_scope(refused_in, 0, dict(plain_rates, SnapProbe_PerFrame=4.0), None, 100, 10) is None)
+    # Refusals judged apart from the stacks kept (the round-3 review's LOW): counted only beyond both budgets.
+    slow_pf = dict(plain_rates, SnapProbe_PerFrame=4.0)
+    expect("S3 unexplained: in-scope refusals with the per-function budget 1.5x above SnapProbe_Call's 2 a second "
+           "(3 or more) and a total that starves nothing are counted; none refused counts none",
+           lambda: unexplained_refusals(refused_in, plain_rates, 60.0, 30, 200) == 4 and
+           unexplained_refusals(refused_in, plain_rates, 60.0, 3, 200) == 4 and
+           unexplained_refusals(refused_in[:1] + [(1, 0, CALL, 0, 1, F_STACK_TAKEN)], plain_rates, 60.0, 30, 200) == 1
+           and unexplained_refusals([(k, 0, CALL, 0, 1, F_STACK_TAKEN) for k in range(4)], plain_rates, 60.0, 30,
+                                    200) == 0)
+    expect("S3 unexplained: a per-function budget under 1.5x SnapProbe_Call's rate explains them (2 against 2 a "
+           "second)",
+           lambda: unexplained_refusals(refused_in, plain_rates, 60.0, 2, 200) == 0)
+    expect("S3 unexplained: a total that starves the others at SnapProbe_PerFrame's plain rate explains them, the main "
+           "rate unknown or not",
+           lambda: unexplained_refusals(refused_in, plain_rates, None, 30, 20) == 0 and
+           unexplained_refusals(refused_in, plain_rates, 4.0, 30, 20) == 0)
+    expect("S3 unexplained: a total that starves them at the main rate alone explains them; with no main rate, or a "
+           "main rate at which it starves nothing, it does not",
+           lambda: unexplained_refusals(refused_in, slow_pf, 60.0, 100, 40) == 0 and
+           unexplained_refusals(refused_in, slow_pf, None, 100, 40) == 4 and
+           unexplained_refusals(refused_in, slow_pf, 6.0, 100, 40) == 4)
 
     def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = (),
                main_pf_rate: float | None = None) -> tuple[Checks, dict, int | None]:
@@ -3877,6 +3920,19 @@ def self_test() -> int:
                     s3_starved(r[0], "starve", "the main recording's 60.0/s"))(
                s5_run(4, ("--stack-per-ring", "100", "--stack-total", "10"), faults=("main_pf_under",),
                       main_pf_rate=60)))
+    # Some kept and some refused: the probe at 4 a second in the plain recording and 60 in the main one, per 100, and
+    # a total of 40 that SnapProbe_PerFrame spends by mid-second, so each second's first round keeps its stacks and
+    # its second is refused. Only the main rate explains it; with a table that counts a tenth (6 a second, at which
+    # 40 starves nothing) the ring's 60 still does.
+    expect("dry run: --stack-per-ring 100 --stack-total 40, the probe at 4 a second in the plain recording and 60 in "
+           "the main one: half the in-scope stacks refused, which the main rate explains; S3's two in-scope checks "
+           "run over the 2 kept and hold, nothing failed -- the main table whole or counting a tenth",
+           lambda: all((lambda r: failing(r[0]) == [] and
+                        (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget")) == (4, 4)
+                        and all(any(n.startswith(p) and ok and g.startswith("2 of 2") for n, ok, g in r[0].items)
+                                for p in s3_in_scope))(
+               s5_run(4, ("--stack-per-ring", "100", "--stack-total", "40"), faults=faults, main_pf_rate=60))
+               for faults in ((), ("main_pf_under",))))
     # Refusals no total explains are the DLL's: the checks run, and fail on the stacks it did not keep.
     caught(("call_refused",), *s3_in_scope)
     # The round-3 review's LOW: where some in-scope stacks were kept, the checks ran over those alone, and a stack
