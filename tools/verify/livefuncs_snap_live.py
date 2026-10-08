@@ -104,9 +104,10 @@ NAMES_MAX asked and the rest counted:
       read_mem is all or nothing, so a read of the DLL's Func window (0x160 bytes) that fails is retried smaller. The
       DLL named each frame by reading that slot, so an entry read short of the offset, or not read at all, has its slot
       there read alone (8 bytes): fn holds, another value fails (and rules out a candidate offset first, a decoy copy
-      in the entries read whole), and a slot that cannot be read now is listed as gone since the frame was named. The
-      line counts the entries judged, the number asked beside it. With no common offset an entry read short is
-      listed; with no entry read the check is reported not run
+      in the entries read whole), and a slot that cannot be read now is listed as gone since the frame was named
+      where get_object, asked again, no longer names that function; where it still does, the slot never held fn,
+      and that fails. The line counts the entries judged, the number asked beside it. With no common offset an entry
+      read short is listed; with no entry read the check is reported not run
   recorded, not failed: the frames named, the entries, the shared ones (the interpreter is one, shared by every
       script function), and how many frames lie between a named frame and the next known:"process_event" toward
       the root (a native entry entered through ProcessEvent sits one below it, UFunction::Invoke between; a thunk
@@ -1920,6 +1921,19 @@ def read_slot(c, addr: int) -> int | None:
     return struct.unpack_from("<Q", blob)[0] if len(blob) >= 8 else None
 
 
+def names_entry(d: dict, e: dict) -> bool:
+    """Whether get_object's answer `d` is the named entry's UFunction: a Function (or a delegate's) of the entry's
+    name, in its class."""
+    return d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and d.get("outer") == e["class"]
+
+
+def still_named(c, e: dict) -> bool:
+    """Whether get_object, asked again, still names the entry's UFunction as its frames do. An entry named "" never
+    is: two empty names are no match."""
+    o = c.request("get_object", addr=f"{e['ufunc']:X}")
+    return ok_of(o) and bool(e["func"]) and bool(e["class"]) and names_entry(data_of(o), e)
+
+
 def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
     """--names: S3-A1's names on the --choose run's stacks, the ledger's DQ XI S probes made repeatable. Each named
     entry, the most frequent first and NAMES_MAX at most, is asked of the DLL as an object (get_object) and as
@@ -1959,8 +1973,7 @@ def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
             elif not e["func"] or not e["class"]:
                 # A name read that gave nothing gives "" on the frame and "" from get_object alike: no name to check.
                 wrong.append(f"{e['class']!r}::{e['func']!r} at {addr}: named empty")
-            elif not (d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and
-                      d.get("outer") == e["class"]):
+            elif not names_entry(d, e):
                 wrong.append(f"{e['class']}::{e['func']} at {addr} is {d.get('class')!r} "
                              f"{d.get('outer')!r}::{d.get('name')!r}")
             blob = read_ufunc(c, addr)
@@ -2010,7 +2023,13 @@ def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
                 assert (k, off) in slot_at, "common_offsets left an entry read past the offset without fn there"
                 slot = slot_at[(k, off)]
                 pe["slot"] = fmt(slot, "#x")
-                if slot is None:
+                if slot is None and still_named(c, e):
+                    # The DLL read this slot when it built its index and named the frame through it: an object
+                    # get_object still names, whose slot there cannot be read, is no object freed since, and its
+                    # slot never held fn.
+                    absent.append(f"{label} (+0x{off:X} unreadable, though get_object still names it)")
+                    pe["verdict"] = "absent"
+                elif slot is None:
                     gone.append(label)
                     pe["verdict"] = "gone"
                 elif slot == e["fn"]:
@@ -2035,7 +2054,8 @@ def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
         # This shows the DLL reads one slot for every name, not on its own that the slot is UFunction::Func: the DLL
         # found each name by reading that very slot. The independent evidence is the frame order recorded below (a
         # native entry one frame, UFunction::Invoke, below ProcessEvent) and, where the game ships one, a PDB.
-        apart = (f"; {len(gone)} gone since its frame was named (the slot unreadable now) {gone[:3]}"
+        apart = (f"; {len(gone)} gone since its frame was named (the slot unreadable now, get_object no longer naming "
+                 f"it) {gone[:3]}"
                  if gone else "") + \
             (f"; {len(short)} read short of it {short[:3]}" if short else "") + \
             (f"; {len(unread)} unreadable {unread[:3]}" if unread else "")
@@ -2475,6 +2495,10 @@ class ScriptedDll:
                              "get_object answers \"\" for its outer, its own name kept",
         "names_empty_func": "only the function's name read gave nothing: SnapNest_Outer's frames carry func \"\", and "
                             "get_object answers \"\" for its name, its outer kept",
+        "names_empty_edge": "SnapNest_Outer's UFunction named \"\" as names_empty names it, and ending 0xE0 bytes in, "
+                            "before a page that cannot be read, its fn only at FUNC_AT past that: its slot there "
+                            "cannot be read alone either, and get_object, asked again, answers \"\" for its names "
+                            "as before",
         "names_no_fn": "the interpreter's named frame has no unwind data, so no fn (and no fn_rva)",
         "names_no_fn_all": "no named frame has unwind data, so none has fn",
         "names_short_only": "the interpreter's UFunction cannot be read at any size, and SnapNest_Outer's fails past "
@@ -2530,9 +2554,9 @@ class ScriptedDll:
             return {}
         cls, func, _, _, _, shared = self._ufuncs()[ufunc]
         if ufunc == self.FUNCS["SnapNest_Outer"][0]:
-            if self.f & {"names_empty", "names_empty_class"}:
+            if self.f & {"names_empty", "names_empty_class", "names_empty_edge"}:
                 cls = ""
-            if self.f & {"names_empty", "names_empty_func"}:
+            if self.f & {"names_empty", "names_empty_func", "names_empty_edge"}:
                 func = ""
         return {"ufunc": f"0x{ufunc:X}", "class": cls, "func": func, **({"shared": shared} if shared else {})}
 
@@ -2548,7 +2572,7 @@ class ScriptedDll:
         first = u == self.FUNCS["SnapNest_Outer"][0]
         if "names_object_error" in self.f and first:
             return {"ok": False, "error": "the scripted get_object failed (names_object_error)"}
-        if "names_empty" in self.f and first:
+        if self.f & {"names_empty", "names_empty_edge"} and first:
             return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": kind, "outer": ""}
         if "names_empty_class" in self.f and first:
             cls = ""
@@ -2579,10 +2603,11 @@ class ScriptedDll:
                 f & {"names_read_failed", "names_short_only"} or ("names_read_edge" in f and end > func_at + 8) or
                 ("names_slot_only" in f and size > 8))) or \
                 ("names_read_edge_all" in f and end > 0xE0) or ("names_short_only" in f and outer and end > 0xE0) or \
-                ("names_fn_nowhere_edge" in f and u == self.INTERP and end > 0xE0):
+                ("names_fn_nowhere_edge" in f and u == self.INTERP and end > 0xE0) or \
+                ("names_empty_edge" in f and outer and end > 0xE0):
             return {"ok": False, "error": "Read failed"}
         offsets = tuple(func_at if o == self.FUNC_AT else o for o in row[4])
-        if "names_short_only" in f and outer:
+        if f & {"names_short_only", "names_empty_edge"} and outer:
             offsets = (self.FUNC_AT,)
         if "names_fn_absent" in self.f and outer:
             offsets = ()
@@ -3638,6 +3663,13 @@ def self_test() -> int:
            "reason",
            lambda: all(any(n == NAMES_IS and not ok and "named empty" in g for n, ok, g in names_run(fault)[0].items)
                        for fault in ("names_empty_class", "names_empty_func")))
+    # An entry named "" is never "still named": get_object answering "" again is no match of two empty names, so
+    # its unreadable slot leaves it gone, and only the name check fails.
+    caught(("names_empty_edge",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: an entry named \"\", its slot at the common offset unreadable and get_object asked again "
+           "answering \"\" again, is listed as gone, not absent",
+           lambda: (lambda r: [x["verdict"] for x in r[1]["names"]["per_entry"]] == ["gone", "held"] and
+                    object_asks(r[2]) == ["1000", "2A000", "1000"])(names_run("names_empty_edge")))
     many = ScriptedDll.NAMES_MANY + 2
     expect(f"dry run --names: of {many} entries the {NAMES_MAX} most frequent are asked, the frequent two among them, "
            f"and the {many - NAMES_MAX} left are counted, never silently",
