@@ -230,18 +230,28 @@ step-2 rig 33/33 and the trace rig 18/18 on the same DLL, and the UI walkthrough
 the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM through the AOBMaker plugin) --
 [live-funcs-step3-items.md](live-funcs-step3-items.md), "8.0 Results". Not reached:
 
-1. **The stack cost on a real game** (8.3). A capture cost 20-28 µs on the fixture's ~162 MB image, ten times the
+1. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP3-AVOWED]`** (Avowed, UE 5.3 Shipping, dxgi proxy refreshed to 3641, 272,494 objects; `livefuncs_snap_live.py --stacks --choose "" --plain-s 20 --record-s 30`, 5/5 and 6 recorded: the 64 busiest functions at the 3641 DLL's defaults, 100 / 200 a second): **3.25 µs a capture on average, 241 µs at
+   most**, over 6,200 captures (206.7 a second against the total of 200: the budget held, 269,282 calls dropped);
+   calls/s 9,206 without stacks and 9,218 with; the fps overlay read 135-141 in both phases, but it is DLSS'd (the
+   maintainer, 2026-10-08), so it says nothing about the game thread's own frames; 2,702 of 6,200 stacks deeper
+   than 16 frames. D3's rule on this mean gives 600 a second. A capture here costs a seventh of the fixture's 20-28 µs
+   (the fixture runs uncapped, so its game thread is never idle); the fixture's number stays the conservative one.
+   *Was:* **The stack cost on a real game** (8.3). A capture cost 20-28 µs on the fixture's ~162 MB image, ten times the
    test exe; a bigger game may pay more. Acceptance: Avowed (dxgi proxy, refreshed first),
    `livefuncs_snap_live.py --stacks --choose "" --plain-s 20 --record-s 30` -- the 60 busiest functions at Linie's
    default budget -- recording mean and max µs a capture, captures a second, calls/s and fps with and without stacks.
    Then D3's re-weigh with that mean, which the maintainer decides (the fixture's mean gives a total of 50 a second).
-2. **A once-a-second hitch (the review's M3).** The budget keeps the first calls of each second, so up to the total's
+2. **A once-a-second hitch (the review's M3)** -- still open. Avowed's run (item 1) bounds it on paper: a capture
+   never cost more than 241 µs, so the 200 a second bunched into one frame would add well under a millisecond on
+   average. Its fps overlay is no evidence: DLSS frame generation counts frames the game thread never made (the
+   maintainer, 2026-10-08). The budget keeps the first calls of each second, so up to the total's
    worth of captures can land in one frame. Acceptance: on Avowed with a busy function chosen, a frame-time trace
    (the fps overlay's graph, or PresentMon) shows no spike once a second; if it does, M3's 100 ms window.
 3. **The rig's own mutations against a real DLL.** S3-F1's stackOk left out of the refusal, S3-F2's ignored `kind`
    and the trampoline compared for `known` are scripted against the rig's dry run (`--self-test`), each failing its
    named check; a DLL built with each mutation and the rig run live is owed.
-4. **A worst-case capture of 8.1 ms**, seen once (the first run, the machine loaded by three `dotnet test` runs) and
+4. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP3-AVOWED]`**: Avowed's max over 6,200 captures was 241 µs, under the
+   1 ms trigger, so S3-P1 (prewarm) stays deferred. *Was:* **A worst-case capture of 8.1 ms**, seen once (the first run, the machine loaded by three `dotnet test` runs) and
    not again in ~3,500 captures (max 0.5 ms; a fresh game's first capture 112 µs). Read as preemption mid-walk.
    Acceptance: `max_ticks` on Avowed (item 1) under 1 ms; over it, S3-P1's `.pdata` prewarm.
 5. **T9.1 / T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The
