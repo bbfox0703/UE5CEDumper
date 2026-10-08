@@ -940,7 +940,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
         Assert.True(tick.IsStackChosen);
 
-        await vm.ToggleStackCommand.ExecuteAsync(tick);                     // dropping a choice never asks
+        await vm.ToggleStackCommand.ExecuteAsync(tick);                     // dropped
         Assert.Empty(vm.StackFunctions);
         await vm.ToggleStackCommand.ExecuteAsync(tick);                     // choosing it again: answered already
         await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "B", "Tick"));   // another per-frame function: the same
@@ -994,6 +994,36 @@ public class LiveFuncsSnapshotTests
         await vm.ToggleStackCommand.ExecuteAsync(open);
         Assert.Empty(vm.StackFunctions);
         Assert.Empty(asked);
+    }
+
+    /// <summary>A choice made while its function ran plain is followed by name onto the next fetch's rows, which can mark
+    /// it per-frame: dropping it there asks nothing, and no kept yes hides the question it would be.</summary>
+    [Fact]
+    public async Task Dropping_a_stack_choice_never_asks_though_the_next_fetch_marks_it_per_frame()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "Tick", "0x1", new NameKey(1, 0, 9, 0)));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        var asked = new List<string>();
+        vm.ConfirmStackPerFrame = q => { asked.Add(q); return Task.FromResult(false); };
+        await vm.ToggleStackCommand.ExecuteAsync(vm.Results.Single());      // plain: chosen without a question
+        Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
+
+        dump.NextGet = ResultOf(10_000, Row("A", "Tick", "0x1", new NameKey(1, 0, 9, 0), count: 600, perFrame: true));
+        await vm.RefreshCommand.ExecuteAsync(null);
+        var tick = vm.Results.Single();
+        Assert.True(tick.IsPerFrame);
+        Assert.True(tick.IsStackChosen);
+
+        await vm.ToggleStackCommand.ExecuteAsync(tick);
+        Assert.Empty(asked);
+        Assert.Empty(vm.StackFunctions);
+        Assert.False(tick.IsStackChosen);
+
+        await vm.ToggleStackCommand.ExecuteAsync(tick);                     // choosing it now does ask
+        Assert.Single(asked);
+        Assert.Empty(vm.StackFunctions);
     }
 
     [Fact]
