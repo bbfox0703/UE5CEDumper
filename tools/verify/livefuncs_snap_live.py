@@ -2062,8 +2062,8 @@ class ScriptedDll:
               INTERP: ("BP_ScriptedActor_C", "ReceiveTick", "Function", INTERP_FN, (FUNC_AT, 0x140), 37)}
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
     WINDOW_S = 3.0               # the plain recording's window, as pe_profile_get reports it
-    # SnapProbe_PerFrame's calls a second, in the plain recording and in the main one: a fixture far above 30 fps by
-    # default. The main recording keeps what a per-second budget keeps of them (see _start).
+    # SnapProbe_PerFrame's calls a second by default, in the plain recording and in the main one (each can be set):
+    # a fixture far above 30 fps. The main recording keeps what a per-second budget keeps of them (see _start).
     PF_RATE = 60.0
     FAULTS = {
         "old": "a DLL without step 3: no names.stacks, no trace.stack, no names[].stack",
@@ -2153,15 +2153,19 @@ class ScriptedDll:
                  0x3000: "ADumperTest58Actor::TraceNest_Dispatch", 0x2000: "ADumperTest58Actor::SnapNest_Fire",
                  0x1000: "FTimerManager::Tick", 0x0800: "UWorld::Tick"}
 
-    def __init__(self, *faults: str, per_frame: int | None = None, pf_rate: float = PF_RATE) -> None:
-        """`pf_rate` is SnapProbe_PerFrame's calls a second (a fixture at 30 fps calls it about 30 times); `per_frame`,
-        when given, is the count of its slots a DLL that keeps the wrong count writes, whatever the budget."""
+    def __init__(self, *faults: str, per_frame: int | None = None, pf_rate: float = PF_RATE,
+                 main_pf_rate: float | None = None) -> None:
+        """`pf_rate` is SnapProbe_PerFrame's calls a second (a fixture at 30 fps calls it about 30 times) in the plain
+        recordings, `main_pf_rate` in every recording a trace is started for (pf_rate unless given: a game slowed by
+        the trace, or one whose frame rate moved); `per_frame`, when given, is the count of its slots a DLL that keeps
+        the wrong count writes, whatever the budget."""
         unknown = set(faults) - set(self.FAULTS)
         if unknown:   # a misspelt fault would script the good DLL, and its control would test nothing
             raise ValueError(f"the scripted DLL has no fault {sorted(unknown)}")
         self.f = set(faults)
         self.per_frame = per_frame
         self.pf_rate = pf_rate
+        self.main_pf_rate = pf_rate if main_pf_rate is None else main_pf_rate
         self.gen = 0
         self.t: dict | None = None
         self.cmds: list[str] = []
@@ -2243,11 +2247,12 @@ class ScriptedDll:
         return self.pdb_sessions[-1]
 
     def rows(self) -> dict[str, dict]:
-        """The fixture rows a plain recording gives, by name."""
+        """The fixture rows a recording gives, by name: SnapProbe_PerFrame at the main rate once a trace was started."""
         unkeyed = "SnapProbe_PerFrame" if "unkeyed" in self.f else None
+        pf = self.main_pf_rate if any(self.starts) else self.pf_rate
         return {n: {"class_name": FIXTURE_CLASS, "func_name": n, "fname_key": None if n == unkeyed else k,
                     "parms_size": ps, "num_parms": 1,
-                    "count": round(self.pf_rate * self.WINDOW_S) if n == "SnapProbe_PerFrame" else 6,
+                    "count": round(pf * self.WINDOW_S) if n == "SnapProbe_PerFrame" else 6,
                     "per_frame": n == "SnapProbe_PerFrame"}
                 for n, (_, k, ps) in self.FUNCS.items()}
 
@@ -2363,13 +2368,15 @@ class ScriptedDll:
                 call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and rnd == 0 else lone,
                      flag32=not ("call_noflag" in f and rnd == 0))
             if "SnapProbe_PerFrame" in ring_of:
-                # The DLL admits the first `per` calls of each second, so a probe at pf_rate keeps min(pf_rate, per)
-                # a second and drops the rest, over the dry run's --record-s (the DLL is never told the span).
+                # The DLL admits the first `per` calls of each second, so a probe at main_pf_rate keeps
+                # min(main_pf_rate, per) a second and drops the rest, over the dry run's --record-s (the DLL is never
+                # told the span).
                 per = min(max(int((st or {}).get("per_ring_per_s", 100)), 1), 0xFFFFFF)
-                kept = round(min(self.pf_rate, per) * DRY_RECORD_S) if self.per_frame is None else self.per_frame
+                rate = self.main_pf_rate
+                kept = round(min(rate, per) * DRY_RECORD_S) if self.per_frame is None else self.per_frame
                 for k in range(kept):
                     call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3])
-                dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, self.pf_rate - per) * DRY_RECORD_S)
+                dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, rate - per) * DRY_RECORD_S)
         else:          # stacks only: every chosen call is lone
             game, game_first = self._game_stack(False), self._game_stack(True)
             for n in [] if "only_empty" in f else stacks:
@@ -3191,10 +3198,10 @@ def self_test() -> int:
            pick(30, 8, given=40, total=15) == (40, True) and stack_budget_for(
                {"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 20, FIXTURE_STACK_TOTAL)["given"] is True)
 
-    def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = ()) -> \
-            tuple[Checks, dict, int | None]:
+    def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = (),
+               main_pf_rate: float | None = None) -> tuple[Checks, dict, int | None]:
         """The fixture run at a probe rate: its checks, its out, and the per-function budget its Start sent."""
-        dll = ScriptedDll(*faults, pf_rate=pf_rate)
+        dll = ScriptedDll(*faults, pf_rate=pf_rate, main_pf_rate=main_pf_rate)
         ch, out = dry_run(dll, argv=argv)
         sent = next((t["snapshots"]["stacks"] for t in dll.starts if t and "stacks" in t.get("snapshots", {})), {})
         return ch, out, sent.get("per_ring_per_s")
@@ -3229,6 +3236,16 @@ def self_test() -> int:
            "shows nothing (it refused nothing): the counter check is not run, never passed",
            lambda: all(failing(r[0]) == [] and s5_both_skipped(r[0])
                        for r in (s5_run(4, faults=("snap_skipped",)), s5_run(4, faults=("snap_counted",)))))
+    # The plain recording chooses the budget; the main recording is the one S5 reads, and its own rate decides whether
+    # the budget bit there (the review's LOW-1).
+    expect("dry run: the plain recording at 60 a second, the main one at 30 (under 1.5x the 30 sent): S5's two checks "
+           "not run, both rates in the reason, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_both_skipped(r[0]) and
+                    "60.0/s" in s5_skipped(r[0])[0] and "30.0/s" in s5_skipped(r[0])[0])(
+               s5_run(60, main_pf_rate=30)))
+    expect("dry run: the main recording slower than the plain one but still 1.5x over the budget: S5 runs and holds",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and len(s5_ran(r[0])) == 1 and
+                    S5_PARAMS in ran(r[0]))(s5_run(60, main_pf_rate=46)))
     expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
            lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],
                                               r[1]["stack_budget"]["s5"]) == (30, False, True))(s5_run()))
