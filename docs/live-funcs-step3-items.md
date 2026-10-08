@@ -24,13 +24,13 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | # | Layer | Item | Depends on | Status |
 |---|---|---|---|---|
 | S3-X0 | docs | The plan's "Step 3 design" (decisions D1-D17; T15-T19 for the maintainer) and this ledger, with its docs/README.md row | — | ✅ this commit |
-| S3-R1 | pipe | Rig `tools/verify/livefuncs_snap_live.py --stacks` (paths as arguments; committed before it runs) | S3-X0 | open (red: 3640 has no `trace.stack`) |
+| S3-R1 | pipe | Rig `tools/verify/livefuncs_snap_live.py --stacks` (paths as arguments; committed before it runs) | S3-X0 | ✅ built in a worktree, reviewed (6 findings, 5 fixed, R5 refuted), `--self-test` 143 / 143 offline; live 31 / 31 + 7 recorded on DumperTest58 Shipping (2026-10-08) |
 | S3-L1 | DLL | Linie: a stack choice armed by name (`stackRing` in ArmSpec / ArmHint, still 24 B / ArmSummary; the merge; ArmLocked before the parameters-only return); stack rings after the param rings in one allocation (own index space, same K); TraceConfig stack fields and constants; StackWrite through the injected capturer; TraceEnter's stack gate, lone and excluded for stack choices, flag 32; StackRings / CopyStacks; step-2 readers param rings only; TraceInfo.stack | — | ✅ red 4f7644b0 (with L2 and M1 case 8), green after it; 8 / 8 mutants killed |
 | S3-L2 | DLL | Linie: the stack budget (own per-ring word, own total window), D10's drop rule, flag 64, skipped / dropped by kind, captures / spent / max ticks, the slot's ticks | S3-L1 | ✅ one cycle with S3-L1; 5 / 5 mutants killed |
 | S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | ✅ cases 1-7 + the capture bench (red 49dde439; 7 / 7 mutants killed); case 8 and the TraceEnter bench with S3-L1 (red 4f7644b0) |
 | S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | ✅ red 9463e34a, green after it; 3 / 3 mutants killed. FollowChain landed as S3-M3 |
-| S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | ◐ built (the DLL target builds; red by construction, H1); green is the rig's S0, live |
-| S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | ◐ built with S3-F1 (and L7: a 32K path, LeafUtf8, the sites counted in the page); green is the rig's S1-S6, live |
+| S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | ✅ 5f4dd21e; S0 green live (both halves). The rig's mutation of it is scripted offline (no_stack_ok); the real-DLL rig mutation is owed |
+| S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | ✅ with S3-F1 (and L7: a 32K path, LeafUtf8, the sites counted in the page); S1-S6 green live. Rig mutations scripted offline (ignore_kind, no_known); real-DLL runs owed |
 | S3-U1 | UI | Models and DumpService: `stacks` in the Start request (unchanged bytes without), TraceInfo.Stack and names.stacks parsed, PeStackGetAsync (`kind:"stack"`) with frames resolved to sites and CeModule by the UI's code page | §3 (wire frozen) | open |
 | S3-U2 | UI | Live Funcs: the stack choice (key and Trace on, no parameters rule), Start options, T7 with stacks, the old-DLL guard, status and Stop notes, TraceStartKey's count, TraceGameMb, the K estimate with stack rings, refresh and disconnect | S3-U1 | open |
 | S3-U3 | UI | Live Funcs view: Stack? column, the visibility loop, the snapshot row shown for either choice, the count, strings | S3-U2 | open |
@@ -327,6 +327,28 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 ---
 
 ## 8. Live checks
+
+### 8.0 Results, 2026-10-08 (DumperTest58 Shipping, the DLL of bef906b4, SHA-256 59677140…, injected)
+
+- **`--stacks`: 31 / 31 checks hold, 7 recorded** (the fixture's 6, then S0-S7's 25). The rig's count is pinned by its
+  dry run (review R4): a correct DLL prints 31 and 7. In-scope stacks hold our hook's frame and `known:"process_event"`
+  (16 of 16); lone ones hold neither (0 of 286); S4 matched SnapNest_Outer's native entry on 16 of 16 in-scope stacks
+  (frame 3); frame 0 of every slot is in the game's module and every site adds back; the per-frame probe kept 270 in
+  8 s against 30/s and dropped 1,155; the stacks-only Start records only lone `4|32` calls.
+- **The step-2 and step-1 rigs on the same DLL:** `livefuncs_snap_live.py` 33 / 33 (with the rig before and after
+  S3-R1's changes) and `livefuncs_trace_live.py` 18 / 18. Nothing regressed.
+- **S6, the cost -- the number T17 waited for.** A capture in the game costs **about 20-28 µs** (median 20-22 µs over
+  five probe runs of ~620 captures each; the rig's mean 28 µs, max 179 µs), about ten times the test exe's 1.4-2.6 µs:
+  the game's image is ~162 MB, and each walked frame is a `.pdata` search and an unwind in it. Depth barely matters
+  (median 14 µs at 4 frames, 17 at 8, 22 at 16). **D3's rule re-weighs the total to 50 a second** (2,000 µs / 28 µs,
+  rounded down to a multiple of 50) against the 200 of T17 and T20's Low of 100: at 200 a second a capture budget
+  costs ~5 ms a second of the game thread, Low ~2.5 ms. Put to the maintainer (2026-10-08), not changed yet.
+- **One 8.1 ms capture** in the first run (a machine loaded by three `dotnet test` runs) did not come back: a freshly
+  launched game's first capture took 112 µs, and ~3,500 captures since peaked at 0.5 ms. Read as the game thread
+  preempted mid-walk (max_ticks is wall time), not cold `.pdata`; S3-P1 (prewarm) stays deferred, and the register
+  row for Avowed's cost keeps watching max.
+- **Owed:** the rig mutations against a real DLL (scripted offline instead: no_stack_ok, ignore_kind, no_known, each
+  failing its named check in `--self-test`); the AOT UI walkthrough (8.2); Avowed (8.3).
 
 ### 8.1 DumperTest58 Shipping (UE 5.8): rig additions, no repackage
 
