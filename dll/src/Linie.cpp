@@ -843,6 +843,20 @@ bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
     return true;
 }
 
+// [LIVEFUNCS-STEP3] S3-L1 (stubbed).
+bool StackRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
+    if (gen) *gen = 0;
+    out.clear();
+    return false;
+}
+
+bool CopyStacks(uint32_t s, uint64_t from, size_t maxSlots, std::vector<StackCopy>& out, uint64_t* next,
+                uint64_t* orphans) {
+    (void)s; (void)from; (void)maxSlots; (void)out; (void)next;
+    if (orphans) *orphans = 0;
+    return false;
+}
+
 bool CopyTrace(uint64_t from, size_t maxRecords, std::vector<TraceRecord>& out, uint64_t* next, TraceInfo* seen) {
     std::lock_guard<std::mutex> lk(g_traceMu);
     if (seen) *seen = InfoLocked();

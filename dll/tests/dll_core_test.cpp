@@ -190,6 +190,34 @@ static WORD NTAPI S3WalkerFaults(DWORD, DWORD, PVOID*, PDWORD) {
     *p = 1;   // the walk itself faults: the capture must survive it
     return 0;
 }
+// [LIVEFUNCS-STEP3] S3-L1: a stand-in for Macht's capturer in Linie's stack slots. It writes the frames sp, sp + 1,
+// sp + 2 (at most `max`) and keeps the `max` it was handed, so a test sees what Linie asked for; mode 1 reads nothing
+// and says BadSp, mode 2 throws as a walk that faults would unwind under the DLL's /EHa.
+static uint32_t g_s3StubMax  = 0;
+static int      g_s3StubMode = 0;
+static uint32_t S3StubCap(uintptr_t sp, uint64_t* out, uint32_t max, uint16_t& fl) {
+    g_s3StubMax = max;
+    if (g_s3StubMode == 1) { fl = Macht::kStackBadSp; return 0; }
+    if (g_s3StubMode == 2) throw std::runtime_error("walk fault");
+    const uint32_t n = max < 3 ? max : 3;
+    for (uint32_t j = 0; j < n; ++j) out[j] = sp + j;
+    fl = 0;
+    return n;
+}
+// S3-M1 case 8: TraceEnter from a frame whose own return-address slot is the `sp` it passes, as Stark's hook does.
+static __declspec(noinline) void S3TraceAt(uint64_t hintGen, uint64_t& myRet, Linie::TraceToken& tok) {
+    myRet = reinterpret_cast<uint64_t>(_ReturnAddress());
+    Linie::ArmHint h{};
+    h.gen = hintGen;
+    h.stackRing = 0;
+    Linie::TraceEnter(0xF5, 0, reinterpret_cast<uintptr_t>(_AddressOfReturnAddress()), 1, tok, 0, h);
+    g_s3Sink = 1;   // a store after the call: never a tail call
+}
+static __declspec(noinline) void S3TraceDeep(int depth, uint64_t hintGen, uint64_t& myRet, Linie::TraceToken& tok) {
+    if (depth <= 0) S3TraceAt(hintGen, myRet, tok);
+    else S3TraceDeep(depth - 1, hintGen, myRet, tok);
+    g_s3Sink = static_cast<uint32_t>(depth);
+}
 
 int main() {
     setvbuf(stdout, nullptr, _IONBF, 0);
@@ -8577,6 +8605,345 @@ int main() {
     }
 
     {
+        blk("LIVEFUNCS-STEP3: a stack choice armed by name, its ring after the parameters', its slot at entry");
+        // docs/live-funcs-step3-items.md, S3-L1. The N1 block's stub reader: a function's FName is its address's low
+        // 16 bits, its class's FName 7. S3StubCap stands in for Macht's capturer.
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        auto reader = [](uintptr_t f, Linie::FuncIdentity& out) -> bool {
+            out.nameIndex     = static_cast<int32_t>(f & 0xFFFF);
+            out.classIndex    = 7;
+            out.functionFlags = 0x400;
+            out.numParms      = 2;
+            out.parmsSize     = 16;
+            return true;
+        };
+        // Case 1: a name chosen for its stack alone, with an arm log of no capacity.
+        auto st = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xC, 0, 7, 0 }, false, -1, 0, 0 } }, 0);
+        st->gen = 5;
+        Linie::Reset();
+        Linie::StartRecording(reader, nullptr, st);
+        Linie::ArmHint h;
+        Linie::RecordCall(0xC, 1000, &h);
+        auto sum = Linie::ArmsSummary();
+        check("a name chosen for its stack alone: the hint carries its stack ring, no parameter ring, and no arm",
+              h.gen == 5 && h.stackRing == 0 && h.ring == -1 && st->log.empty() && sum.size() == 1 &&
+                  sum[0].stackRing == 0 && sum[0].arms == 0,
+              (u(h.gen) + " / " + std::to_string(h.stackRing)).c_str());
+
+        // Case 2: one name ticked, chosen for its parameters and for its stack.
+        auto st2 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, true, -1, 0 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, false, 0, 64 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xD, 0, 7, 0 }, false, -1, 0, 0 } }, 8);
+        st2->gen = 6;
+        Linie::StartRecording(reader, nullptr, st2);
+        Linie::RecordCall(0xD, 1001, &h);
+        check("one name ticked, chosen for its parameters and for its stack: one spec, one hint with all three",
+              st2->specs.size() == 1 && (h.flags & Linie::kArmTick) && h.ring == 0 && h.stackRing == 0 &&
+                  st2->log.size() == 1,
+              std::to_string(h.stackRing).c_str());
+
+        // Case 3: the arm log is full when the name chosen for both is first called.
+        auto st3 = Linie::BuildArmState({ Linie::ArmSpec{ Linie::NameKey{ 0xA, 0, 7, 0 }, false, 0, 16 },
+                                          Linie::ArmSpec{ Linie::NameKey{ 0xB, 0, 7, 0 }, false, 1, 16, 0 } }, 1);
+        st3->gen = 7;
+        Linie::StartRecording(reader, nullptr, st3);
+        Linie::RecordCall(0xA, 1002, &h);
+        Linie::RecordCall(0xB, 1003, &h);
+        sum = Linie::ArmsSummary();
+        check("a full arm log: no parameter arm for the name chosen for both, but its stack is armed",
+              h.gen == 7 && h.ring == -1 && h.stackRing == 0 && sum.size() == 2 && sum[1].armsFull == 1 &&
+                  sum[1].stackRing == 0,
+              std::to_string(h.stackRing).c_str());
+        Linie::Reset();
+
+        // Case 4: sizes.
+        check("the hint is still 24 bytes", sizeof(Linie::ArmHint) == 24);
+        check("a stack ring's slot payload: 8 bytes a frame, the depth clamped to 1..62",
+              Linie::StackRingCap(0) == 8 && Linie::StackRingCap(16) == 128 && Linie::StackRingCap(100) == 496,
+              u(Linie::StackRingCap(16)).c_str());
+
+        // Case 5: one parameter ring (16) and one stack ring (depth 4, 32 bytes) in one allocation:
+        // K = (bytes - 64 * 2) / ((24 + 16) + (24 + 32)) = 768 / 96 = 8.
+        auto start = [](bool scoped, std::vector<uintptr_t> exclude, Linie::StackCapturer cap) {
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.scoped = scoped;
+            c.exclude = std::move(exclude);
+            c.snapRingCaps = { 16 };
+            c.snapBytes = 128 + 8 * 96;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            c.stackRings = 1;
+            c.stackDepth = 4;
+            c.stackCapturer = cap;
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo();
+        };
+        auto stackOnly = [](uint64_t gen, int32_t s) { Linie::ArmHint x{}; x.gen = gen; x.stackRing = s; return x; };
+        Linie::FreeTrace();
+        g_s3StubMode = 0;
+        Linie::TraceInfo info = start(false, {}, &S3StubCap);
+        check("one parameter ring and one stack ring share the buffer and its K",
+              info.snap.allocated && info.snap.rings == 1 && info.snap.slotsPerRing == 8 && info.stack.rings == 1 &&
+                  info.stack.depth == 4,
+              (u(info.snap.rings) + " / " + u(info.snap.slotsPerRing) + " / " + u(info.stack.rings)).c_str());
+
+        // Case 6: a call chosen for both, in a trace that records every call.
+        uint8_t buf[16];
+        for (int i = 0; i < 16; ++i) buf[i] = static_cast<uint8_t>(0x40 + i);
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        Linie::ArmHint both{};
+        both.gen = info.gen; both.ring = 0; both.copy = 16; both.stackRing = 0;
+        g_s3StubMax = 0;
+        Linie::TraceToken t6;
+        Linie::TraceEnter(0xF0, 0xB0, 900, 1, t6, params, both);
+        Linie::StopTrace();
+        std::vector<Linie::TraceRecord> recs;
+        Linie::CopyTrace(0, 64, recs);
+        std::vector<Linie::SnapCopy> ps;
+        std::vector<Linie::StackCopy> ss;
+        uint64_t next = 0;
+        check("chosen for both: the entry record says parameters taken and stack taken",
+              recs.size() == 1 && recs[0].flags == (Linie::kTraceSnapTaken | Linie::kTraceStackTaken),
+              recs.empty() ? "" : u(recs[0].flags).c_str());
+        check("...the parameter ring holds its copy", Linie::CopySnaps(0, 0, 10, ps) && ps.size() == 1 && ps[0].len == 16);
+        const bool gotStack = Linie::CopyStacks(0, 0, 10, ss, &next);
+        check("...the stack ring holds the frames: the call's entry, three frames, no flags",
+              gotStack && ss.size() == 1 && ss[0].index == 0 && ss[0].entrySeq == 0 && ss[0].len == 24 &&
+                  ss[0].flags == 0 && ss[0].frames.size() == 3 && ss[0].frames[0] == 900 && ss[0].frames[1] == 901 &&
+                  ss[0].frames[2] == 902 && next == 1,
+              ss.empty() ? "no slot" : (u(ss[0].len) + " bytes, flags " + u(ss[0].flags)).c_str());
+        check("...the capturer was asked for the depth in frames, never the slot's bytes", g_s3StubMax == 4,
+              u(g_s3StubMax).c_str());
+        std::vector<Linie::SnapRingInfo> pr, sr;
+        const bool gotPr = Linie::SnapRings(pr), gotSr = Linie::StackRings(sr);
+        check("the parameter readers see the parameter ring alone; the stack ring is the stack readers' ring 0",
+              gotPr && pr.size() == 1 && pr[0].cap == 16 && gotSr && sr.size() == 1 && sr[0].index == 0 &&
+                  sr[0].cap == 32 && sr[0].written == 1 && !Linie::CopySnaps(1, 0, 10, ps),
+              (u(pr.size()) + " / " + u(sr.size())).c_str());
+
+        // Case 7: scoped, nothing ticked, a call chosen for its stack alone.
+        info = start(true, {}, &S3StubCap);
+        Linie::TraceToken l7, n7;
+        Linie::TraceEnter(0xF0, 0, 900, 1, l7, 0, stackOnly(info.gen, 0));
+        Linie::TraceEnter(0xF2, 0, 800, 1, n7);
+        Linie::TraceReturn(n7, 1);
+        Linie::TraceReturn(l7, 1);
+        Linie::StopTrace();
+        recs.clear();
+        Linie::CopyTrace(0, 64, recs);
+        check("outside every scope, a call chosen for its stack alone is recorded alone, its stack taken",
+              l7.traced && !l7.opened && recs.size() == 2 &&
+                  recs[0].flags == (Linie::kTraceSnapLone | Linie::kTraceStackTaken),
+              recs.empty() ? "" : u(recs[0].flags).c_str());
+        check("...and opens no scope: the call it makes is not recorded", !n7.traced);
+
+        // Case 8: the per-frame exclusion, inside an open scope.
+        info = start(true, { 0xF0 }, &S3StubCap);
+        Linie::ArmHint tick{};
+        tick.gen = info.gen; tick.flags = Linie::kArmTick;
+        Linie::TraceToken root8, x8;
+        Linie::TraceEnter(0xA1, 0, 900, 1, root8, 0, tick);
+        Linie::TraceEnter(0xF0, 0, 800, 1, x8, 0, stackOnly(info.gen, 0));
+        Linie::StopTrace();
+        recs.clear();
+        Linie::CopyTrace(0, 64, recs);
+        check("an excluded function chosen for its stack is kept in the scope, excluded and stack taken",
+              x8.traced && recs.size() == 2 && recs[1].flags == (Linie::kTraceSnapExcluded | Linie::kTraceStackTaken),
+              recs.size() == 2 ? u(recs[1].flags).c_str() : u(recs.size()).c_str());
+
+        // Case 9: a stack ring the trace does not have.
+        info = start(false, {}, &S3StubCap);
+        Linie::TraceToken t9;
+        Linie::TraceEnter(0xF0, 0, 900, 1, t9, 0, stackOnly(info.gen, 5));
+        Linie::StopTrace();
+        recs.clear();
+        ss.clear();
+        Linie::CopyTrace(0, 64, recs);
+        const bool got9 = Linie::CopyStacks(0, 0, 10, ss);
+        check("a stack ring the trace does not have: an ordinary record, and no stack slot",
+              recs.size() == 1 && recs[0].flags == 0 && got9 && ss.empty(), u(ss.size()).c_str());
+        info = start(true, {}, &S3StubCap);
+        Linie::TraceToken t9b;
+        Linie::TraceEnter(0xF0, 0, 900, 1, t9b, 0, stackOnly(info.gen, 5));
+        Linie::StopTrace();
+        check("...and outside a scope it is not recorded at all", !t9b.traced);
+
+        // Case 10: no capturer, and a capturer that read nothing.
+        info = start(false, {}, nullptr);
+        Linie::TraceToken t10;
+        Linie::TraceEnter(0xF0, 0, 900, 1, t10, 0, stackOnly(info.gen, 0));
+        Linie::StopTrace();
+        ss.clear();
+        const bool got10 = Linie::CopyStacks(0, 0, 10, ss);
+        check("no capturer installed: a slot with no frames, flagged with Linie's own bit",
+              got10 && ss.size() == 1 && ss[0].len == 0 && ss[0].frames.empty() && ss[0].flags == Linie::kSnapNoCapturer,
+              ss.empty() ? "no slot" : u(ss[0].flags).c_str());
+        g_s3StubMode = 1;
+        info = start(false, {}, &S3StubCap);
+        Linie::TraceToken t10b;
+        Linie::TraceEnter(0xF0, 0, 900, 1, t10b, 0, stackOnly(info.gen, 0));
+        Linie::StopTrace();
+        ss.clear();
+        const bool got10b = Linie::CopyStacks(0, 0, 10, ss);
+        check("a capturer that read nothing: no frames, and its own flag kept",
+              got10b && ss.size() == 1 && ss[0].len == 0 && ss[0].flags == Macht::kStackBadSp,
+              ss.empty() ? "no slot" : u(ss[0].flags).c_str());
+
+        // Case 11: a capturer that throws (TR2 with the walk inside the hook's in-flight section).
+        g_s3StubMode = 2;
+        info = start(false, {}, &S3StubCap);
+        bool threw = false;
+        Linie::TraceToken t11;
+        try { Linie::TraceEnter(0xF0, 0, 900, 1, t11, 0, stackOnly(info.gen, 0)); }
+        catch (const std::exception&) { threw = true; }
+        const ULONGLONG s11 = GetTickCount64();
+        Linie::StopTrace();
+        const ULONGLONG stop11 = GetTickCount64() - s11;
+        recs.clear();
+        ss.clear();
+        Linie::CopyTrace(0, 64, recs);
+        const bool got11 = Linie::CopyStacks(0, 0, 10, ss);
+        check("a capturer that throws: Stop quiesces at once, the record claims no stack, no slot is handed out",
+              threw && t11.traced && Linie::GetTraceInfo().quiesced && stop11 < 1000 && recs.size() == 1 &&
+                  (recs[0].flags & Linie::kTraceStackTaken) == 0 && got11 && ss.empty(),
+              (u(stop11) + " ms, " + u(ss.size()) + " slots").c_str());
+        g_s3StubMode = 0;
+        // Case 12 is a guard: with no stack chosen, the step-1 and step-2 blocks above run unchanged.
+        Linie::FreeTrace();
+    }
+
+    {
+        blk("LIVEFUNCS-STEP3: the stack budget apart from the parameters', and what each capture cost");
+        // docs/live-funcs-step3-items.md, S3-L2. A clock that moves 7 ticks a read, all inside one second: a capture
+        // reads it twice, so each costs exactly 7. Stack budget 2 a ring and 3 in all.
+        static uint64_t s_now = 0;
+        Linie::SetTraceClockForTest([]() -> uint64_t { return s_now += 7; });
+        auto u = [](uint64_t n) { return std::to_string(n); };
+        uint8_t buf[8] = {};
+        const uintptr_t params = reinterpret_cast<uintptr_t>(buf);
+        auto start = [](bool scoped, uint32_t stackRings, uint32_t snapPerRing) {
+            Linie::TraceConfig c;
+            c.bytes = 256 * sizeof(Linie::TraceRecord);
+            c.scoped = scoped;
+            c.snapOnly = scoped;
+            c.snapRingCaps = { 8 };
+            c.snapBytes = 64 * 1024;
+            c.snapPerRingPerSec = snapPerRing;
+            c.snapTotalPerSec = 1000;
+            c.copier = [](uintptr_t src, void* dst, size_t n) -> bool { memcpy(dst, reinterpret_cast<const void*>(src), n); return true; };
+            c.stackRings = stackRings;
+            c.stackDepth = 4;
+            c.stackCapturer = &S3StubCap;
+            c.stackPerRingPerSec = 2;
+            c.stackTotalPerSec = 3;
+            Linie::StartTrace(c);
+            return Linie::GetTraceInfo();
+        };
+        auto stackOnly = [](uint64_t gen, int32_t s) { Linie::ArmHint x{}; x.gen = gen; x.stackRing = s; return x; };
+        auto both = [](uint64_t gen) { Linie::ArmHint x{}; x.gen = gen; x.ring = 0; x.copy = 8; x.stackRing = 0; return x; };
+        auto copyAll = [] { std::vector<Linie::TraceRecord> r; Linie::CopyTrace(0, 256, r); return r; };
+        Linie::Reset();
+        Linie::FreeTrace();
+        g_s3StubMode = 0;
+
+        // Cases 1, 6 and 7: five calls in second 10, one in second 11, every call recorded.
+        Linie::TraceInfo info = start(false, 1, 1000);
+        const uint64_t f = info.qpcFreq;
+        s_now = 10 * f;
+        for (int i = 0; i < 5; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 900, 1, t, 0, stackOnly(info.gen, 0)); }
+        s_now = 11 * f;
+        { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 900, 1, t, 0, stackOnly(info.gen, 0)); }
+        Linie::StopTrace();
+        auto recs = copyAll();
+        int taken = 0, over = 0, paramOver = 0;
+        for (size_t i = 0; i < recs.size() && i < 5; ++i) {
+            if (recs[i].flags & Linie::kTraceStackTaken) ++taken;
+            if (recs[i].flags & Linie::kTraceStackBudget) ++over;
+            if (recs[i].flags & Linie::kTraceSnapBudget) ++paramOver;
+        }
+        info = Linie::GetTraceInfo();
+        check("a stack budget of 2 a second: five calls, two stacks taken, three recorded over the budget",
+              recs.size() == 6 && taken == 2 && over == 3 && paramOver == 0, (u(taken) + "/" + u(over)).c_str());
+        check("...counted as the stack's skipped, not the parameters'",
+              info.stack.skippedBudget == 3 && info.stack.droppedBudget == 0 && info.snap.skippedBudget == 0 &&
+                  info.stack.perRingPerSec == 2 && info.stack.totalPerSec == 3,
+              (u(info.stack.skippedBudget) + " / " + u(info.snap.skippedBudget)).c_str());
+        check("the next second admits again", recs.size() == 6 && (recs[5].flags & Linie::kTraceStackTaken));
+        std::vector<Linie::StackCopy> ss;
+        std::vector<Linie::SnapRingInfo> sr;
+        const bool gotSs = Linie::CopyStacks(0, 0, 64, ss), gotSr = Linie::StackRings(sr);
+        bool eachSeven = gotSs && ss.size() == 3;
+        for (const auto& s : ss) eachSeven = eachSeven && s.ticks == 7;
+        check("each capture's cost is measured: three captures of 7 ticks, the dearest 7",
+              info.stack.captures == 3 && info.stack.spentTicks == 21 && info.stack.maxTicks == 7 && eachSeven &&
+                  gotSr && sr.size() == 1 && sr[0].spentTicks == 21,
+              (u(info.stack.captures) + " / " + u(info.stack.spentTicks) + " / " + u(info.stack.maxTicks)).c_str());
+
+        // Case 2: lone, chosen for its stack alone, over the budget.
+        info = start(true, 1, 1000);
+        s_now = 20 * f;
+        Linie::TraceToken l0, l1, l2;
+        Linie::TraceEnter(0xA7, 0, 900, 1, l0, 0, stackOnly(info.gen, 0));
+        Linie::TraceEnter(0xA7, 0, 900, 1, l1, 0, stackOnly(info.gen, 0));
+        Linie::TraceEnter(0xA7, 0, 900, 1, l2, 0, stackOnly(info.gen, 0));
+        Linie::StopTrace();
+        info = Linie::GetTraceInfo();
+        check("a lone call chosen for its stack alone, over the budget: no record at all, counted dropped",
+              l0.traced && l1.traced && !l2.traced && info.written == 2 && info.stack.droppedBudget == 1 &&
+                  info.stack.skippedBudget == 0,
+              (u(info.written) + " / " + u(info.stack.droppedBudget)).c_str());
+
+        // Case 3: lone, chosen for both; the parameters admitted, the stack over its budget.
+        info = start(true, 1, 1000);
+        s_now = 30 * f;
+        for (int i = 0; i < 2; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 900, 1, t, 0, stackOnly(info.gen, 0)); }
+        Linie::TraceToken b3;
+        Linie::TraceEnter(0xA8, 0, 900, 1, b3, params, both(info.gen));
+        Linie::StopTrace();
+        recs = copyAll();
+        info = Linie::GetTraceInfo();
+        std::vector<Linie::SnapCopy> ps;
+        const bool gotPs = Linie::CopySnaps(0, 0, 64, ps);
+        check("lone, chosen for both, the stack over its budget: recorded for its parameters, the stack skipped",
+              b3.traced && recs.size() == 3 &&
+                  recs[2].flags == (Linie::kTraceSnapLone | Linie::kTraceSnapTaken | Linie::kTraceStackBudget) &&
+                  gotPs && ps.size() == 1 && info.stack.skippedBudget == 1 && info.stack.droppedBudget == 0,
+              recs.size() == 3 ? u(recs[2].flags).c_str() : u(recs.size()).c_str());
+
+        // Case 4: lone, chosen for both; the parameter budget of 1 spent, the stack admitted.
+        info = start(true, 1, 1);
+        s_now = 40 * f;
+        Linie::TraceToken a4, b4;
+        Linie::TraceEnter(0xA8, 0, 900, 1, a4, params, both(info.gen));
+        Linie::TraceEnter(0xA8, 0, 900, 1, b4, params, both(info.gen));
+        Linie::StopTrace();
+        recs = copyAll();
+        info = Linie::GetTraceInfo();
+        ss.clear();
+        const bool got4 = Linie::CopyStacks(0, 0, 64, ss);
+        check("lone, chosen for both, the parameters over their budget: recorded for its stack, the parameters skipped",
+              b4.traced && recs.size() == 2 &&
+                  recs[1].flags == (Linie::kTraceSnapLone | Linie::kTraceSnapBudget | Linie::kTraceStackTaken) &&
+                  info.snap.skippedBudget == 1 && info.snap.droppedBudget == 0 && got4 && ss.size() == 2,
+              recs.size() == 2 ? u(recs[1].flags).c_str() : u(recs.size()).c_str());
+
+        // Case 5: a second stack ring with room of its own, refused by the total of 3.
+        info = start(false, 2, 1000);
+        s_now = 50 * f;
+        for (int i = 0; i < 2; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA7, 0, 900, 1, t, 0, stackOnly(info.gen, 0)); }
+        for (int i = 0; i < 2; ++i) { Linie::TraceToken t; Linie::TraceEnter(0xA9, 0, 900, 1, t, 0, stackOnly(info.gen, 1)); }
+        Linie::StopTrace();
+        recs = copyAll();
+        ss.clear();
+        const bool got5 = Linie::CopyStacks(1, 0, 64, ss);
+        check("the stack total of 3 caps the two rings together: the second ring's second call is over it",
+              got5 && ss.size() == 1 && recs.size() == 4 && recs[3].flags == Linie::kTraceStackBudget,
+              (u(ss.size()) + " / " + (recs.size() == 4 ? u(recs[3].flags) : u(recs.size()))).c_str());
+        Linie::FreeTrace();
+        Linie::SetTraceClockForTest(nullptr);
+    }
+
+    {
         blk("LIVEFUNCS-STEP3: a native stack from the hook's return slot -- bounds, headroom, the anchor, faults");
         // docs/live-funcs-step3-items.md, S3-M1. Case 8 (through TraceEnter) waits for S3-L1.
         static_assert(Macht::kStackRawFrames >= Macht::kStackOwnSlack + Macht::kStackMaxFrames + 1,
@@ -8671,6 +9038,35 @@ int main() {
             check("...nor is 0x1000", !h2 && none.moduleBase == 0 && none.moduleUtf8.empty() && !none.unwind);
         }
 
+        // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's
+        // capturer installed, a call chosen for its stack alone in a scoped trace.
+        {
+            static_assert(Linie::kStackMaxDepth + Macht::kStackOwnSlack + 1 <= Macht::kStackRawFrames,
+                          "the walk's buffer holds the deepest stack ring, our own frames, and one to tell More");
+            Linie::Reset();
+            Linie::FreeTrace();
+            Linie::TraceConfig c;
+            c.bytes = 64 * sizeof(Linie::TraceRecord);
+            c.scoped = true;
+            c.snapOnly = true;
+            c.snapBytes = 64 * 1024;
+            c.stackRings = 1;
+            c.stackDepth = 4;
+            c.stackCapturer = &Macht::CaptureCallerStack;
+            Linie::StartTrace(c);
+            uint64_t traceRet = 0;
+            Linie::TraceToken tk;
+            S3TraceDeep(20, Linie::GetTraceInfo().gen, traceRet, tk);
+            Linie::StopTrace();
+            std::vector<Linie::StackCopy> sc;
+            const bool okc = Linie::CopyStacks(0, 0, 4, sc);
+            check("through TraceEnter: the first frame is the hooked frame's caller, four kept, and More",
+                  okc && sc.size() == 1 && sc[0].len == 32 && sc[0].frames.size() == 4 && sc[0].frames[0] == traceRet &&
+                      (sc[0].flags & Macht::kStackMore) != 0,
+                  sc.empty() ? "no slot" : (std::to_string(sc[0].len) + " bytes, flags " + std::to_string(sc[0].flags)).c_str());
+            Linie::FreeTrace();
+        }
+
         // The cost of one capture, printed (Release), for the budget's defaults (T17).
         {
             constexpr int kRuns = 65536;
@@ -8683,6 +9079,34 @@ int main() {
             const double ns = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count();
             std::printf("  bench: one 16-frame capture from 20 deep: %.0f ns (%d runs, %llu frames)\n", ns / kRuns,
                         kRuns, static_cast<unsigned long long>(sink));
+        }
+        // ...and a hooked call with and without a stack chosen, through TraceEnter (budgets at the 24-bit max).
+        {
+            constexpr int kRuns = 65536;
+            Linie::TraceConfig c;
+            c.bytes = (kRuns + 16ull) * sizeof(Linie::TraceRecord);
+            c.snapBytes = 64ull << 20;
+            c.stackRings = 1;
+            c.stackDepth = 16;
+            c.stackCapturer = &Macht::CaptureCallerStack;
+            c.stackPerRingPerSec = 0xFFFFFF;
+            c.stackTotalPerSec = 0xFFFFFF;
+            double ns[2] = {};
+            for (int withStack = 0; withStack < 2; ++withStack) {
+                Linie::StartTrace(c);
+                const uint64_t g = withStack ? Linie::GetTraceInfo().gen : 0;   // gen 0: a hint of no recording
+                uint64_t r = 0;
+                const auto t0 = std::chrono::steady_clock::now();
+                for (int i = 0; i < kRuns; ++i) {
+                    Linie::TraceToken tk;
+                    S3TraceDeep(20, g, r, tk);
+                }
+                ns[withStack] = std::chrono::duration<double, std::nano>(std::chrono::steady_clock::now() - t0).count() / kRuns;
+            }
+            const uint64_t kept = Linie::GetTraceInfo().stack.captures;
+            Linie::FreeTrace();
+            std::printf("  bench: a hooked call from 20 deep: %.0f ns with a 16-frame stack (%llu kept), %.0f ns without\n",
+                        ns[1], static_cast<unsigned long long>(kept), ns[0]);
         }
     }
 
