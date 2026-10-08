@@ -2942,6 +2942,17 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
                 }
             }
         }
+        // The engine's own build string, version first (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`), which
+        // the prefixes above miss: UBT stamps it from Version.h whatever the game put in the fixed fields, and without
+        // it a 4.0-4.17 exe carrying a game version read nothing. EngineBuildStringCode demands a UE<M> branch that
+        // agrees with the leading M.m, so a game's own version string does not read as one. `fromFixedField` stays
+        // false: a code read out of this string cannot corroborate itself below the floor; only an agreeing
+        // CrashReportClient can. [VER-410-GATE] rev 9
+        if (uint32_t code = Grimoire::EngineBuildStringCode(s)) {
+            Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%s' = '%s' is the engine's build string -> %u",
+                       Utf8Helpers::EncodeUtf16(key, wcslen(key)).c_str(), s.c_str(), code);
+            return code;
+        }
     }
 
     Sein::Warn("SCAN:Ver", "DetectVersion: %s Product=%u.%u File=%u.%u — unrecognised",

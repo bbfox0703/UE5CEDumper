@@ -105,7 +105,22 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // every launch. That is cheap: a corroborated reading returns before the memory sweep, so a launch
 // pays the two resource reads (3 ms in IS Defense's rev-7 log) and not the 0.25 s sweep that log
 // also shows.
-constexpr uint32_t kVersionDetectLogicRev = 8;
+// rev 9 (2026-10-09, [VER-410-GATE] review): the VERSIONINFO string fallback also reads the engine's
+// own VERSION-FIRST build string (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`) through
+// Grimoire::EngineBuildStringCode; it knew only the branch-first `++UE4+Release-4.15-CL-0`. An exe
+// whose fixed fields carry the GAME's version read nothing from such a string, so a 4.10 title beside
+// an agreeing CrashReportClient was scanned at tier 3 (IS Defense's outcome, with two engine-shipped
+// signals agreeing), and a 4.11-4.17 title fell to the memory scan, whose needles floor at 4.18, and
+// landed on the 504 default with the wrong UFunction tail. The string reading keeps fromFixedField
+// false, so below the floor it cannot corroborate itself: only an agreeing CrashReportClient makes it
+// tier 1. Mandatory under the rule at the top: such a title cached under rev 8 holds a verdict reached
+// without the string, and the cache-reuse branch would restore it for ever.
+// MEASURED (2026-10-09, tools/verify/pe_version_probe.py, which mirrors this reader): of the 422 exes
+// under a Binaries\Win64 or \Win32 folder in the maintainer's two Steam libraries, the local analyze
+// corpus and the Epic Games folder, 373 read through the fixed fields, 1 through a `++UE5+Release-` string and 48 read
+// nothing; none of the 48 carries an engine build string, so no reading on this machine changes.
+// The bump costs one re-detect per cached title, as rev 8's did.
+constexpr uint32_t kVersionDetectLogicRev = 9;
 
 // ============================================================
 // Multi-module candidate admission (audit #5 AA38)
