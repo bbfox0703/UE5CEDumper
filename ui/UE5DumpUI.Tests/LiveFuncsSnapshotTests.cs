@@ -1481,7 +1481,9 @@ public class LiveFuncsSnapshotTests
     public void The_stack_warning_is_one_line_of_essentials_and_Details_shows_the_whole_text()
     {
         string shortLine = Line("str.LF.Stack.WarningShort");
-        foreach (var essential in new[] { "soft capture", "game's own thread", "frame", "save first", "few functions" })
+        // The risk too, not only the advice: "save first" says what to do, and the stall or crash is why.
+        foreach (var essential in new[] { "soft capture", "game's own thread", "frame", "stall or crash", "save first",
+                                          "few functions" })
             Assert.Contains(essential, shortLine, StringComparison.OrdinalIgnoreCase);
         string whole = Line("str.LF.Stack.Warning");
         foreach (var point in new[] { "not a debugger capture like Cheat Engine's", "in software", "added to the game's frame",
@@ -1611,7 +1613,7 @@ public class LiveFuncsSnapshotTests
 
     /// <summary>(2) Folded, the header says what is set: the plain capture's settings always, and with the experimental
     /// trace its switch and buffer, the three choice counts, the stack budget once a stack is chosen, the snapshot buffer
-    /// once anything fills it, and the stack warning's one line, which folding never hides.</summary>
+    /// once anything fills it, and, with a stack chosen, a short warning of the stack's risk, which folding never hides.</summary>
     [Fact]
     public async Task The_summary_says_what_is_set()
     {
@@ -1635,8 +1637,17 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOn", 32),
                              Line("str.LF.Summary.Choices", 0, 0, 1),
                              Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Standard")),
-                             Line("str.LF.Summary.SnapBuffer", 32), Line("str.LF.Stack.WarningShort")), vm.CaptureSummary);
+                             Line("str.LF.Summary.SnapBuffer", 32), Line("str.LF.Summary.StackRisk")), vm.CaptureSummary);
         Assert.False(vm.CaptureSummaryWarn);
+        // The section's own one line is too long for a line that sums up; the summary says the stack risk shortly, and
+        // still as a warning.
+        Assert.DoesNotContain(Line("str.LF.Stack.WarningShort"), vm.CaptureSummary, StringComparison.Ordinal);
+        string risk = Line("str.LF.Summary.StackRisk");
+        Assert.StartsWith("⚠", risk, StringComparison.Ordinal);
+        foreach (var essential in new[] { "stacks", "save first", "few" })
+            Assert.Contains(essential, risk, StringComparison.OrdinalIgnoreCase);
+        Assert.True(risk.Length * 3 < Line("str.LF.Stack.WarningShort").Length,
+                    $"the summary's stack warning is {risk.Length} characters, the section's {Line("str.LF.Stack.WarningShort").Length}");
 
         // A 128 MB snapshot buffer keeps G's one call a second longer than the 32 MB trace keeps the chosen calls, so
         // nothing here warns and the summary is the settings alone.
@@ -1649,7 +1660,7 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
                              Line("str.LF.Summary.Choices", 1, 1, 1),
                              Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Low")),
-                             Line("str.LF.Summary.SnapBuffer", 128), Line("str.LF.Stack.WarningShort")), vm.CaptureSummary);
+                             Line("str.LF.Summary.SnapBuffer", 128), Line("str.LF.Summary.StackRisk")), vm.CaptureSummary);
         Assert.False(vm.CaptureSummaryWarn);
     }
 
@@ -1666,6 +1677,8 @@ public class LiveFuncsSnapshotTests
         Assert.True(stacks.StackEstimateWarn);
         Assert.True(stacks.CaptureSummaryWarn);
         Assert.Contains(Line("str.LF.Summary.StackWarn", 2.5), stacks.CaptureSummary, StringComparison.Ordinal);
+        // The risk stays beside the cost: a summary that kept only the cost once it is orange would hide the risk.
+        Assert.Contains(Line("str.LF.Summary.StackRisk"), stacks.CaptureSummary, StringComparison.Ordinal);
 
         var (busy, busyDump) = MakeVm();
         busyDump.NextGet = ResultOf(10_000, Row("A", "Hot", "0x1", KeyF, count: 100_000, size: 2048));
@@ -1980,7 +1993,10 @@ public class LiveFuncsSnapshotTests
         Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.ClearChoices}\"", clear, StringComparison.Ordinal);
         Assert.Contains("IsEnabled=\"{Binding !IsRecording}\"", clear, StringComparison.Ordinal);
         Assert.Contains("IsVisible=\"{Binding TraceAvailable}\"", clear, StringComparison.Ordinal);
-        Assert.True(Line("str.LF.ClearChoices").Length > 0);
+        // On the capture settings' header it could read as resetting the settings beside it: its label names the three
+        // columns it clears, by their headers' first letters.
+        Assert.Equal($"Clear {Line("str.LF.Col.Trace")[0]}/{Line("str.LF.Col.Snapshot")[0]}/{Line("str.LF.Col.Stack")[0]}",
+                     Line("str.LF.ClearChoices"));
         string tip = Line("str.Tip.LF.ClearChoices");
         foreach (var column in new[] { "str.LF.Col.Trace", "str.LF.Col.Snapshot", "str.LF.Col.Stack" })
             Assert.Contains(Line(column), tip, StringComparison.Ordinal);

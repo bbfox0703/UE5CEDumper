@@ -109,7 +109,8 @@ public class LiveFuncsTopAreaTests
         Assert.DoesNotContain(SectionControls(panel), c => c.IsEffectivelyVisible);
         Assert.DoesNotContain(TextBlocks(panel, vm.StackEstimate), t => t.IsEffectivelyVisible);
         var summary = Shown(panel, vm.CaptureSummary);
-        Assert.Contains(Res("str.LF.Stack.WarningShort"), summary.Text, StringComparison.Ordinal);
+        Assert.Contains(Res("str.LF.Summary.StackRisk"), summary.Text, StringComparison.Ordinal);
+        Assert.DoesNotContain(Res("str.LF.Stack.WarningShort"), summary.Text, StringComparison.Ordinal);
         var foldBox = Box(fold, panel);
         Assert.True(Box(summary, panel).Top < foldBox.Bottom, "the summary is not on the header's line");
         Assert.True(panel.GetVisualDescendants().OfType<Button>()
@@ -152,7 +153,10 @@ public class LiveFuncsTopAreaTests
         stackVm.CaptureSettingsCollapsed = true;
         Dispatcher.UIThread.RunJobs();
         Assert.True(stackVm.StackEstimateWarn);
-        Assert.Equal(orange, Shown(stackPanel, stackVm.CaptureSummary).Foreground?.ToString());
+        var stackSummary = Shown(stackPanel, stackVm.CaptureSummary);
+        Assert.Equal(orange, stackSummary.Foreground?.ToString());
+        // The stack's risk stays on the orange line beside its cost.
+        Assert.Contains(Res("str.LF.Summary.StackRisk"), stackSummary.Text, StringComparison.Ordinal);
     });
 
     /// <summary>(2) A choice made from the table, as the bound panel sees it. Unfolded, the summary is hidden and the
