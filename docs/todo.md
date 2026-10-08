@@ -395,7 +395,9 @@ source and editor are installed for when they are needed.
   ✅ **Fixed in build 3644** (red 22465c0c / green a97da808, 3 / 3 mutants), live: the index grew from 12,445 to
   13,176 entries of 13,179 functions on DumperTest58 and from 12,482 to 19,160 of 19,162 on DQ XI S, where a frame
   in the interpreter was named with `shared: 6678` -- exactly the script functions added.
-  ⬜ `[A1-INTERP-LABEL]` (LOW, found by that live check; built for build 3645, a live look owed): the interpreter's
+  ✅ `[A1-INTERP-LABEL]` (LOW, found by that live check; built for build 3645; **live 2026-10-09** on DQ XI S, the
+  autosave loaded: JackUMGMiniMapWidget::OnDrawMapSymbolRenderTarget's 111 stacks show frames 5 and 7 as "the
+  Blueprint interpreter +0xBF (UObject::ProcessInternal, the native entry of 6,678 Blueprint functions)"): the interpreter's
   frame read "native entry of <the lowest-addressed script function> (one of 6,678 ...)" -- on DQ XI S a level
   script's function on the minimap widget's stack, which was not running. The pipe now says `script: true` on the
   script functions' entry (DLL red 6e63a7b1 / green 7a964f0e, 3 / 3 mutants) and the Call stack tab names "the
