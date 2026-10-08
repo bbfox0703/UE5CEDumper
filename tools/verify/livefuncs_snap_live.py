@@ -3357,11 +3357,15 @@ def self_test() -> int:
            f"so it bites, and S5 holds at {lo7:.0f}..{hi7:.0f}",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 7 and r[1]["stack_budget"]["per"] == 7 and
                     len(s5_ran(r[0])) == 1 and f"({lo7:.0f}..{hi7:.0f})" in s5_ran(r[0])[0])(s5_run(30)))
-    expect("dry run: --stack-per-ring 30 with the probe at 30 a second cannot bite: S5's window and its parameter "
-           "counters not run (the rate in the reason), neither failed nor passed, the budget still sent",
-           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_ran(r[0]) == [] and
+    # 25, not the 30 the run falls back to, so a run that sends its fallback in place of a given budget is seen; and the
+    # ring drops some calls at it, so a run that runs S5 whenever the ring dropped something is seen too (LOW-4).
+    expect("dry run: --stack-per-ring 25 with the probe at 30 a second cannot bite (25 x 1.5 > 30), though the ring "
+           "drops some: S5's window and its parameter counters not run (the rate in the reason), neither failed nor "
+           "passed, 25 still sent",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 25 and s5_ran(r[0]) == [] and
+                    int_or(r[1]["stack_rings"][1].get("dropped_budget"), 0) > 0 and
                     len(s5_skipped(r[0])) == 1 and "30.0/s" in s5_skipped(r[0])[0] and s5_both_skipped(r[0]))(
-               s5_run(30, ("--stack-per-ring", "30"))))
+               s5_run(30, ("--stack-per-ring", "25"))))
     expect("dry run: no budget fits (the probe at 4 a second): S5's two checks not run with the measured rates, every "
            "other check run at the old 30",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_ran(r[0]) == [] and
