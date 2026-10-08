@@ -198,12 +198,13 @@ public class CallTraceColumnsTests
         Where = "native entry of DumperTest58Actor::SnapNest_Outer +0x73 (one of 2 functions that share this code)",
     };
 
-    /// <summary>The panel as <see cref="Laid"/> lays it out, its Call stack tab chosen and showing <see cref="Frame"/>.</summary>
-    private static (DataGrid grid, DataGridColumn where) StackLaid(double detailPaneWidth)
+    /// <summary>The panel as <see cref="Laid"/> lays it out, its Call stack tab chosen and showing one frame: <see
+    /// cref="Frame"/>, or with <paramref name="shortWhere"/> the same frame with a Where of a few words.</summary>
+    private static (DataGrid grid, DataGridColumn where) StackLaid(double detailPaneWidth, bool shortWhere = false)
     {
         LoadDataGridTheme();
         var (panel, vm) = Laid(detailPaneWidth);
-        vm.StackRows = new[] { Frame };
+        vm.StackRows = new[] { shortWhere ? new StackFrameRow { Index = Frame.Index, Address = Frame.Address, Where = "+0x6F" } : Frame };
         panel.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1;
         Dispatcher.UIThread.RunJobs();
         var grid = panel.GetVisualDescendants().OfType<DataGrid>().Single();
@@ -212,11 +213,14 @@ public class CallTraceColumnsTests
     }
 
     /// <summary>Dragged wide, the pane gives Where everything the three fixed columns leave: a long name is not cut
-    /// beside empty space. "Everything" allows a vertical scroll bar's width.</summary>
-    [Fact]
-    public Task A_wide_stack_pane_gives_Where_the_rest_of_its_width() => Headless.Run(() =>
+    /// beside empty space. "Everything" allows a vertical scroll bar's width. The short name is what tells this from a
+    /// column sized to its text, which a long name alone would pass.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task A_wide_stack_pane_gives_Where_the_rest_of_its_width(bool shortWhere) => Headless.Run(() =>
     {
-        var (grid, where) = StackLaid(900);
+        var (grid, where) = StackLaid(900, shortWhere);
         double others = grid.Columns.Where(c => c != where).Sum(c => c.ActualWidth);
         double left = grid.Bounds.Width - others;
         Assert.True(where.ActualWidth > 420.5 && where.ActualWidth >= left - 20,

@@ -156,8 +156,9 @@
       </TabItem>
       <!-- [LIVEFUNCS-STEP3] View A: the call's native stack, nearest return address first, and per frame Copy (CE's
            module form) and ASM (CE's disassembler) for view D. The grid never sorts: a stack's order is what it says,
-           and the DataGrid's reflection sort fails in the trimmed build. Fixed widths, no star column, so a narrow
-           pane scrolls sideways instead of squeezing the Where text. -->
+           and the DataGrid's reflection sort fails in the trimmed build. Where takes what the fixed columns leave of a
+           wide pane, so a long name is not cut beside empty space; its 420 floor makes a narrow pane scroll sideways
+           instead of squeezing the Where text. -->
       <TabItem Header="{StaticResource str.CT.Tab.Stack}" FontSize="12">
         <DockPanel Background="#1E1E1E">
           <TextBlock DockPanel.Dock="Top" Text="{Binding StackNote}" TextWrapping="Wrap"
@@ -209,7 +210,7 @@
                   </DataTemplate>
                 </DataGridTemplateColumn.CellTemplate>
               </DataGridTemplateColumn>
-              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Where}" Width="420" MinWidth="80">
+              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Where}" Width="*" MinWidth="420">
                 <DataGridTemplateColumn.CellTemplate>
                   <DataTemplate x:DataType="vm:StackFrameRow">
                     <TextBlock Text="{Binding Where}" ToolTip.Tip="{Binding Where}" Foreground="#D4D4D4"
