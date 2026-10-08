@@ -373,6 +373,11 @@ source and editor are installed for when they are needed.
   not run only where the main recording shows every in-scope stack refused (none kept, each entry flagged 64) and the
   total starves the others at SnapProbe_PerFrame's plain or main rate; otherwise they run over the stacks kept. The
   scripted DLL admits in call order too, and books a refused call taken for its parameters as skipped (LOW).
+  **The third rig review's LOWs (round 4), fixed 2026-10-09** (worktree ids): S5's, S3's and the step-2 budget
+  check's stand-downs weigh the main rate as the table's, or the probe's own ring's where that is higher (red
+  807b0de9 / green adac8c4c; R1a-R1f killed), two comments no longer say a budget that cannot bite drops nothing
+  (24e1a358), and S3's in-scope checks fail on an in-scope refusal neither budget explains, stacks kept or not (red
+  060f4181 / green 0412afc4; R3a-R3g killed).
   ✅ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
@@ -411,6 +416,10 @@ source and editor are installed for when they are needed.
   fn in the one entry read whole is ruled out the same way. The line counts the entries judged and gives the number
   asked beside it ("in 40 of 40 read (64 asked)"), so entries gone are not read as failures. Controls were added for
   a frame without fn, a half-name read empty, and the branch where nothing reaches a slot.
+  **The third rig review's LOWs (round 4), fixed 2026-10-09** (worktree ids): an entry headed for 'gone' is asked
+  about again, and one `get_object` still names is absent, not gone (red 0d316ef2 / green 2078f9a6; R4a-R4e
+  killed), and candidate offsets lie only inside the DLL's Func window, +0x80..+0x158, so a decoy below it never
+  wins (red ed5b3aed / green a3813522; R5a-R5e killed).
   ✅ `[SNAPRIG-STEP2-RATE]` (LOW, found by the review of `[SNAPRIG-S5-RATE]` 2026-10-08; fixed the same day, offline by
   `--self-test` -- its first live run is owed): the step-2 run (`run_full`, no `--stacks`) sends a fixed parameter
   budget of 30 a second and checks that SnapProbe_PerFrame's lone calls over it are dropped -- on a fixture at about
@@ -468,14 +477,19 @@ source and editor are installed for when they are needed.
   item, 408 unfolded now (the new one line wraps in the headless font only; in Inter it is 772 px of the 1,308 px
   row), 142 folded (the summary 164 characters, 916 px in Inter). Effort **M**. The second review's LOWs (an
   unfold-path test, two more estimate-raise cases, one settled post, two counting comments, the headless width note)
-  are being fixed.
+  are being fixed. **The round-4 LOWs, fixed 2026-10-09** (worktree ids): the coalesced raise's unfold path is
+  pinned and each raise case settles its own post (8d93d359; M1, M4 killed), the raise's comments stop counting
+  inputs and bindings (178ecd96), and the one-line check's 0.7 is stated against the harness's row, the panel alone
+  at 1,373 px, about 0.95 of the app's 1,011-px row beside the object tree -- the 1,308 px above did not reproduce
+  (935d3c37, working-lessons 3.xd).
   ✅ `[LF-SNAP-WARN-RAISE]` (LOW, found by the [LF-COMPACT-TOP] review 2026-10-08, older than it; fixed the same day,
   offline by a unit test, seen live with [LF-COMPACT-TOP]'s look): `SnapshotEstimateWarn`, T13's orange on the
   parameter estimate, weighs the busiest choice against what the trace keeps (`TraceSecondsForComparison`), which
   reads the trace buffer and the ticked set -- but neither a buffer change nor a tick raised it, so the line kept its
   old colour and the folded summary could disagree with it. `OnTraceBufferExponentChanged` and `RefreshTickedList` now
   call `RaiseSnapshotEstimate` (red 2f0980a6 / green 883c177c, worktree ids; S1-S4 killed). Effort **S**. Two more
-  cases (Clear ticks; the buffer with Trace off) are being added.
+  cases (Clear ticks; the buffer with Trace off) are being added. **The round-4 LOWs, fixed 2026-10-09:** Clear ticks,
+  and the buffer with Trace unticked, flip the orange and raise it (06bafa08, worktree id; M2, M3 killed).
   ⬜ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08): the next release -- the first with the Call Trace tab
   (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
   draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
