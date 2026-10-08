@@ -77,15 +77,20 @@ of a programme's live-check backlog closes the same way, but its record goes in 
 in [`todo.md`](todo.md): while a programme runs, its backlog lives there; when the programme closes, the
 backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md) §7.1).
 
-1. **Record the evidence in a `✅` closure block carrying a dated `[TAG-YYYY-MM-DD]`** — the finding id,
-   what was measured and under which conditions, the controls, and what is still not covered. A ✅ with
-   no numbers evaporates. The block is the record and its tag is how it is found; do **not** rewrite the
-   original `⬜` / `🟡` heading into it (a heading here is not evidence, above).
+1. **Record the evidence in a `✅ CLOSED <YYYY-MM-DD> [TAG]` record** (the date in the text; the tag
+   need not carry it) — the finding id, what was measured and under which conditions, the controls, and
+   what is still not covered. A ✅ with no numbers evaporates. A numbered item inside a section closes in
+   place and keeps its original text after *Was:*. **In the same commit, update the row's heading**:
+   `⬜` → `🟡` for a partial close, `✅` for a full one ([`working-lessons.md`](working-lessons.md) §1.ab
+   rules 3–4) — the archive rule moves only a section whose heading announces its closure. A heading is
+   still not evidence when READING (above): before planning off one, grep its tag across `docs/`.
 2. **Update the live plan in the same commit.** When the row belongs to a `*-live-plan.md` (indexed in
    [`README.md`](README.md)), its status there changes in the same commit as the row's record.
 3. **Delete the item's section from [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md)**
-   — do not annotate it in place — and rebuild its bucket table with
-   `py tools/verify/zhtw_rebuild_buckets.py --apply`: the table is derived, never hand-edited. ⚠ A ✅ in
+   — do not annotate it in place — remove its key from `BUCKETS` in
+   `tools/verify/zhtw_rebuild_buckets.py`, dry-run it, then rebuild the bucket table with
+   `py tools/verify/zhtw_rebuild_buckets.py --apply`: the table is derived, never hand-edited, and the
+   script stops on a key that matches no section. ⚠ A ✅ in
    the audit register is **never** grounds to delete a section there: in the audit doc ✅ means *the fix
    shipped*, which is exactly when the live check becomes owed.
 4. ⚠ **If only SOME sub-steps closed, do not delete the section — retitle it.** The heading carries
@@ -515,7 +520,7 @@ stated facts are false here**. Each cost, or would have cost, a launch.*
 3. `build.ps1 -Target DLL`, then **`build.ps1 -Mode Publish`** — hand-over rule. Verify `dist\UE5DumpUI.exe` is ~54.7 MiB (57,398,784 B), **not** ~107 MB, and record the sha.
 4. `py tools/check_all.py` — 12 gates green, including `check_derived_counts` at its new number.
 5. **Census the fixtures on THIS machine** — the Steam layout may differ from the primary PC. Parse `libraryfolders.vdf` and check for: Lushfoil, Satisfactory, EVERSPACE 2, OCTOPATH, Solarpunk, and **Star Wars Jedi: Fallen Order** (the A3 gate — on the primary PC it is a ghost, only `steam_appid.txt`). Record what is present before planning further.
-6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover.md` §2); the plan doc's §3 claim that they do not is refuted and is being corrected. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
+6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover.md` §2); the plan doc's §3 claim that they do not is refuted, and was corrected on 2026-10-08. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
 
 #### Step 1 — EVERSPACE 2 (Row 2, A2) — ~20 min, highest information per minute
 
@@ -575,7 +580,7 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 8. **Do not grep `walk-0.log` for A1's DLL observable.** It lives in `Ubel.cpp` but its category is `DYNO:PersistPtr`, which routes to **offsets**. The natural grep returns nothing and reads as a failure.
 9. **Do not use DQ III or DQ I&II as A1's negative control** (§3, Row 1) — they cannot discriminate and would be scored as a regression against a title the register already records as version-misdetecting.
 10. **Do not "simplify" the ProcessEvent table into a `>=` ladder**, do not narrow Ubel's `{base, ±4, +8, −8}` bool probe spread now that the base is derived, and do not enable the `Bookmarks\` age sweep. All three are deliberate; the first two are the exact bugs A2 and A6 fixed.
-11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which `handover:75-99` measured false. Use it for §3 grant mechanics and §4 authorised writes only — and ⚠ **do NOT read §4.1 as spent on the verification PC**: Light Maze **IS** installed here, at exactly the path §4.1 names (`D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\`, holding `LightMaze-Win64-Shipping.exe`, UE **5.0.3** — which also makes it the sharpest available pre-5.3 UE5 control for A1). ⚠ And this machine has **two** Steam libraries, not four. (original text: its Light Maze target is not installed in any of this machine's four Steam libraries).
+11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which handover §2 measured false (the plan was corrected on 2026-10-08). Use it for §3 grant mechanics and §4 authorised writes only — and ⚠ **do NOT read §4.1 as spent on the verification PC**: Light Maze **IS** installed here, at exactly the path §4.1 names (`D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\`, holding `LightMaze-Win64-Shipping.exe`, UE **5.0.3** — which also makes it the sharpest available pre-5.3 UE5 control for A1). ⚠ And this machine has **two** Steam libraries, not four. (original text: its Light Maze target is not installed in any of this machine's four Steam libraries).
 
 -----
 
