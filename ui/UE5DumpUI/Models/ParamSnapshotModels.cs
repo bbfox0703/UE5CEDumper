@@ -43,9 +43,11 @@ public sealed class SnapInfo
     public int   Rings         { get; init; }
     public int   PerRingPerSec { get; init; }
     public int   TotalPerSec   { get; init; }
-    /// <summary>In-scope calls recorded without their parameters: over the budget.</summary>
+    /// <summary>Calls recorded without their parameters: over the budget. A lone call whose stack was taken counts here
+    /// too.</summary>
     public ulong SkippedBudget { get; init; }
-    /// <summary>Lone and excluded-but-chosen calls over the budget: not recorded at all.</summary>
+    /// <summary>Lone and excluded-but-chosen calls over the budget, with nothing else they were chosen for taken: not
+    /// recorded at all.</summary>
     public ulong DroppedBudget { get; init; }
 }
 
