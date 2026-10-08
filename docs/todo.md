@@ -2,16 +2,9 @@
 
 Open work only. **Read this when deciding what to do next.**
 
-> 🤝 **Coming back? Read [handover.md](handover.md) first.** It is the single
-> entry point: current state, the grants and how to launch each fixture, the traps, and a ranked
-> "start here". ⚠ **The build number and the gate count both drifted in this very paragraph**
-> (it said `3315` and *twelve*; on 2026-08-24 they are **3350** and **13**). Do not read either from
-> here — `cat dist/build_number.txt`, and take the gate count from `py tools/check_all.py`'s own
-> `N gate(s) run` line. `dist/` is republished AOT-trimmed.
-> ⚠ Its two predecessors are **archived**: [archive/handover-2026-08-20.md](archive/handover-2026-08-20.md)
-> and [archive/handover-2026-08-19.md](archive/handover-2026-08-19.md). Everything in them that is
-> still operationally true was carried forward; go back to them only for the *history* of the
-> 2026-08-19/20 verification programme.
+> 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
+>
+> ▶ **Current programme:** `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
 >

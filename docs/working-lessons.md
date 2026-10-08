@@ -3577,7 +3577,8 @@ being silently truncated past ~140 lines, so the section map went too).
 | How to operate this machine, the fixtures, Cheat Engine and the rigs; the session rules | `handover.md` — procedures only: no open work, no counts, no current state |
 | A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
 | In-flight project state that has no home in the repo yet | memory |
-| Which doc to read next, and where the current work is | `MEMORY.md`, as a **pointer**, not a copy |
+| Which doc to read next | `MEMORY.md`, as a **pointer**, not a copy |
+| Where the current work is | the **current-programme line** at the top of `todo.md`: one tag, no counts, changed in the commit that starts or ends a programme (`MEMORY.md` does not travel between the two PCs) |
 
 **Two corollaries, both learned by paying for them:**
 

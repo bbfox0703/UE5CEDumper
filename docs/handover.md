@@ -5,7 +5,8 @@
 > and pipe rigs, driving Cheat Engine, and what is true only on one machine.
 >
 > **What it holds: procedures only** — no open work, no counts, no current state. What is open lives
-> in [`todo.md`](todo.md); what shipped in [`dev-log.md`](dev-log.md); what is shipped but not yet
+> in [`todo.md`](todo.md) (its current-programme line is at the top); what shipped in
+> [`dev-log.md`](dev-log.md); what is shipped but not yet
 > proven live in [`verification-register.md`](verification-register.md); how to work, and why, in
 > [`working-lessons.md`](working-lessons.md).
 >
@@ -39,11 +40,10 @@ git status -sb && cat build_number.txt
 py tools/check_audit_register.py --list
 ```
 
-⚠ `--list` prints only the **HIGH/MED** tier, and there is none — so it reports "4 open" and names
-**no rows**. That is the expected output, not an empty register. §7's table names all four.
+⚠ `--list` names only the **HIGH/MED** rows; when there are none it prints the open count and names
+**no rows**. That is the expected output, not an empty register.
 
-Then read §7 for what is open. **Do not** re-plan a verification programme — the 2026-08-19 plan was
-run to completion on 2026-08-20/21/22 and its batches are spent (see §7's ⛔).
+Then read the current-programme line at the top of [`todo.md`](todo.md) for what is open (§7).
 
 ⚠ **Every ad-hoc Python one-liner in this repo needs this first line**, or it dies with
 `UnicodeEncodeError` before printing anything — the console codepage here is **cp950** and every doc
@@ -592,66 +592,33 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
 
 ```bash
 py tools/check_audit_register.py --list          # audit #5 register (manual since 2026-09-03; no longer a gate)
-grep -c '^> | `\[' docs/todo.md                  # OPEN FIXES INDEX rows  -> 4  (still todo.md)
-grep -c '^### ⬜ NEW DEFECT' docs/todo.md         # defect WRITE-UPS       -> 1 (not the queue!)
+grep -c '^> | `\[' docs/todo.md                  # OPEN FIXES INDEX rows -- the defect queue (still todo.md)
+grep -c '^### ⬜ NEW DEFECT' docs/todo.md         # defect WRITE-UPS (not the queue!)
 awk '/^## Pending live-game verification/,0' docs/verification-register.md \
   | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜
 ```
 
-⚠⚠ **The two defect greps answer different questions and the obvious one is wrong.**
-`^### ⬜ NEW DEFECT` finds the long write-**ups** and returns **1**; the actual queue is the
-OPEN FIXES INDEX **table** near the top of `todo.md`, whose heading and rows sit **inside a
-blockquote** (`> ###`, `> |`) and are therefore invisible to any `grep '^### '`. Using the write-up
-grep as "the number of open defects" silently drops three. (`todo.md` documents the blockquote
-convention at its own line ~1736.)
+⚠⚠ **The two defect greps answer different questions and the obvious one is wrong.** The
+OPEN FIXES INDEX table near the top of `todo.md` sits **inside a blockquote** (`> ###`, `> |`), so it
+is invisible to any `grep '^### '`; the `^### ⬜ NEW DEFECT` grep finds only the long write-ups.
 
 Run the commands above for the counts; numbers written into this file go stale.
 
-**Current work** is recorded in [`todo.md`](todo.md) under `[FIXPASS-2026-09-10]` (the fix-pass ledger
-and its live-check backlog) and in [`fixpass-low-live-plan.md`](fixpass-low-live-plan.md). The older
-verification queue below still exists underneath it.
+**Current work** is not written here: the current-programme line at the top of [`todo.md`](todo.md)
+names it by tag. Each programme's live-check order and per-row status is in its `*-live-plan.md`
+(indexed in [`README.md`](README.md)); what is shipped but not yet proven live is in
+[`verification-register.md`](verification-register.md).
 
-### Where to actually start
+### Before planning off any row
+
+Re-derive before planning — `grep` the row id across `docs/`, and read the ✅ block, not the ⬜
+heading: closures are written where the work happened ([`working-lessons.md`](working-lessons.md)
+§1.ab; §1.ab-2 for why a pointer file like this one rots fastest).
 
 The checklist is [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md). ⚠ **Two different
 things are both called "step N"** and they are easy to transpose: `第 N 步` is a **bucket** (what the
 row COSTS to run — 第 1 步 needs only the UI, 第 5 步 has no fixture anywhere), while "step 1 / step 2"
-inside a row is a **sub-step**. Every bullet below is written `row · 第N步 bucket · sub-step N`.
-
-⚠ **`第 1 步` is effectively empty of doable work.** Its only row is `AF16–AF23`, whose sub-step 1 is
-✅ and whose sub-step 3 was deleted — what remains needs a real game, i.e. **more** than its bucket
-implies, not less. Do not read the bucket名 as the cost of what is left in it.
-
-⛔⛔ **THIS LIST WAS FOUR-FIFTHS STALE AND IT IS THE FIRST THING A NEW SESSION READS.** Audited
-2026-09-06, each bullet checked against its closure tag: **four of the five original rows had
-already closed**, three of them within two days of this file being written, and nothing came back
-to update it. A session planned off the old text would have re-run finished work for an estimated
-4–6 sittings. ⭐ The lesson generalises and is the reason this banner stays: **a pointer file rots
-faster than the file it points at**, because closures are written where the work happened. Re-derive
-before planning — `grep` the row id across `docs/`, and read the ✅ block, not the ⬜ heading.
-
-| original bullet | actual state 2026-09-06 |
-|---|---|
-| `AC15` · sub-step 1 — "needs no game at all" | ✅ **CLOSED 2026-08-22** `[AC15-ORACLE-2026-08-22]` — *both* halves, each against an independent oracle. The Steam half had already passed on 08-21 (`[AE27-AC15-2026-08-21]`); the drive half landed the next day. |
-| `AF16–AF23` · sub-step 2 — "needs a game with Blueprint bytecode" | ✅ **CLOSED IN BOTH HALVES**, on the AOT binary the row insists on: Xref `[AF16-XREF-2026-08-23]` (58 candidates on DQ7R, two fixtures, all six headers sort), Props `[AF16-PROPSSORT-2026-08-22]`, numeric-vs-string residual `[AF16-BYCONSTRUCTION-2026-08-24]` as *unreachable*. ⚠ The register has carried a ⛔ SUPERSEDED banner saying exactly this since 08-23. ⚠ The premise was wrong too: DumperTest ships **5** `*_C` Blueprint classes (`ABP_Quinn_C`, 56 props, super `ABP_Manny_C`) — measured, register § W1/W7 step 4. |
-| `W1`/`W7` — third-party parser must read our `.usmap` | 🔲 **STILL OPEN, and still the genuinely cheap one.** The bullet below is unchanged and remains correct. |
-| `M1–M5` · sub-step 1, arms (a)+(b) — "need a human" | ✅ **CLOSED 2026-08-23** `[SEETHRU-ARMS-AB-2026-08-23]`; the register states **"M1–M5 is now complete: steps 1, 2, 3, 4 and 5 all closed."** ⚠ One residual, and it is NOT the arm this bullet meant: the 繁中 file's arm (a) was *"close the game **while** moving"*, a different question, still open — and **not human-gated**. It needs one rig concatenating two that already work (`seethrough_arm_a.py:97-99` movement loop + `seethrough_arm_b.py:147-148` posted close). |
-| `A6` · sub-step 5's spawn half | ✅ **CLOSED 2026-08-23 on DQ7R** `[A6-SPAWN-DQ7R-2026-08-23]`. So the "DumperTest has no repeatable object-recreation lever" note is moot for this row. ⚠ It is also no longer true of the fixture: `Spawn_Holders` / `Spawn_DestroyHolders` / `Spawn_RecycleChurn` / `Spawn_LateInstance` were added to `DumperTestActor.h` on 08-23, the day *after* this file was written. |
-
-⭐ The one row that is still cheaper than its bucket suggests:
-
-* **`W1`/`W7`** (a real third-party parser must read our `.usmap`) is unblocked. ⚠ Source for that:
-  the maintainer's instruction is recorded in the row itself in
-  [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md) (2026-08-22) — **CUE4Parse as a
-  NuGet package, in a throwaway verification project only**, never in `UE5DumpUI`'s deps, which are
-  AOT/trimming constrained. Read it there before acting; this file is a pointer, not the authority.
-  ⚠ Step 4 of that row is itself corrected in place: since `[W8-USMAP-2026-08-20]`, finding `*_C`
-  classes is the **expected** result, not a bonus — not finding them is the defect.
-
-⛔ **Do NOT plan a batch off `auto-verification-session-plan.md` §5 or §10.** Both are spent; CLAUDE.md
-marks §10 RETIRED. The plan doc is still the authority for **grant mechanics** (§3) and for the
-**authorised destructive steps** (§4) — nothing else.
-⛔ **Do not hunt for new audit findings.** The register is 0 HIGH / 0 MED; verification is the work.
+inside a row is a **sub-step**.
 
 -----
 
