@@ -3745,6 +3745,17 @@ def self_test() -> int:
                        for r in (s5_run(4, faults=("snap_skipped",)), s5_run(4, faults=("snap_counted",)))))
     expect("dry run: where the stack budget refuses nothing, a parameter counter that moves anyway fails the check",
            lambda: (lambda r: fail_set(r[0], S5_PARAMS) and s5_ran(r[0]) == [])(s5_run(4, faults=("snap_phantom",))))
+    # Whether anything was refused has two detectors beside the parameter counters, and each must see a refusal the
+    # other cannot: a trace.stack that counts no drop leaves the main table's count over the ring's written, and a
+    # main table without the probe's row leaves trace.stack's drops.
+    expect("dry run: --stack-per-ring 25 at 30 a second with trace.stack counting no drop: the main table still shows "
+           "the refusals, so the counters are checked, and hold",
+           lambda: (lambda r: failing(r[0]) == [] and s5_params(r[0]) == ([True], []))(
+               s5_run(30, ("--stack-per-ring", "25"), faults=("stack_dropped0",))))
+    expect("dry run: --stack-per-ring 25 at 30 a second with no SnapProbe_PerFrame row in the main table: trace.stack's "
+           "drops still show the refusals, so the counters are checked, and hold",
+           lambda: (lambda r: fail_set(r[0], f"S5 {MAIN_TABLE}") and s5_params(r[0]) == ([True], []))(
+               s5_run(30, ("--stack-per-ring", "25"), faults=("main_rows_lost",))))
     # The plain recording chooses the budget; the main recording is the one S5 reads, and its own rate decides whether
     # the budget bit there (the review's LOW-1).
     expect("dry run: the plain recording at 60 a second, the main one at 30 (under 1.5x the 30 sent): S5's window not "
