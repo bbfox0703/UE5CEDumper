@@ -199,4 +199,27 @@ internal static class LiveFuncsLayout
 
     /// <summary>The lines a TextBlock wraps its text to, as laid out.</summary>
     public static int Lines(TextBlock block) => block.TextLayout.TextLines.Count;
+
+    /// <summary>The headless platform draws every glyph as wide as the font size (a hundred 'x' at 12 px measure
+    /// 1,200 px), where the app's own font, Inter Regular, averages about 5.6 px a character of English text at 12 px
+    /// (its advance widths, read from the font Avalonia.Fonts.Inter embeds, 2026-10-08): a line the app shows on one
+    /// line can take two here, and push what follows it in a WrapPanel onto the next. So "on one line in the app" is held
+    /// as parts that need, unwrapped and side by side, less than 1.5 times the room here: under 0.7 of it in Inter.</summary>
+    public static void AssertOneLineInTheAppsFont(double room, params Control[] parts)
+    {
+        double needed = parts.Sum(Unwrapped);
+        Assert.True(needed < 1.5 * room,
+                    $"{string.Join(" + ", parts.Select(p => $"{p.GetType().Name} {Unwrapped(p):0.#}"))} = {needed:0.#} px here, "
+                    + $"{needed / room:0.##} of the {room:0.#} px room: more than one line in the app's font");
+    }
+
+    /// <summary>A part's width on one line: a TextBlock measured again without its room, anything else as laid out (a
+    /// button does not wrap).</summary>
+    private static double Unwrapped(Control part)
+    {
+        if (part is not TextBlock text) return part.DesiredSize.Width;
+        var unwrapped = new TextBlock { Text = text.Text, FontSize = text.FontSize, FontFamily = text.FontFamily, Margin = text.Margin };
+        unwrapped.Measure(Size.Infinity);
+        return unwrapped.DesiredSize.Width;
+    }
 }

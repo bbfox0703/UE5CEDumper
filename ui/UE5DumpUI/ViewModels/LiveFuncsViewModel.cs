@@ -954,7 +954,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
                 if (SnapshotWarns(snap))
                     parts.Add(StringLookup(snap.TooSmall ? "str.LF.Summary.SnapTooSmall" : "str.LF.Summary.SnapWarn"));
                 if (TraceMemoryOverAvailable) parts.Add(Say("str.LF.Summary.MemoryOver", MemText(_availableMb)));
-                if (HasStackChoices) parts.Add(StringLookup("str.LF.Stack.WarningShort"));
+                // The section's one line would make the summary several lines long; this keeps its warning, shortly.
+                if (HasStackChoices) parts.Add(StringLookup("str.LF.Summary.StackRisk"));
             }
             // A separator, not a sentence: punctuation stays in code, like the panel's other joins.
             return string.Join(" · ", parts.Where(p => p.Length > 0));

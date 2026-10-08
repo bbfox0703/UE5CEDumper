@@ -1293,7 +1293,7 @@
     <sys:String x:Key="str.LF.Stack.EstimateNone">No stack estimate: none of the functions chosen for a stack was called in the last recording. The budget takes at most {0:N0} stacks a second in all, {1:N0} for each function.</sys:String>
     <sys:String x:Key="str.LF.Stack.EstimateNotShown">No stack estimate: the last page did not show every function recorded, and none of the functions chosen for a stack is on it, so whether they were called is not known. The budget takes at most {0:N0} stacks a second in all, {1:N0} for each function.</sys:String>
     <sys:String x:Key="str.LF.Stack.Warning">Native stacks are not a debugger capture like Cheat Engine's: the dumper reads the stack in software, inside the hooked call, on the game's own thread. That is far slower than a parameter copy (tens of microseconds a capture in a large game, even on a fast PC, and more on a slower one: the larger the game's executable, the dearer each frame of the walk), and the time is added to the game's frame. Many captures in one frame make that frame longer, which shows as stutter. The budget caps how many are taken each second; it keeps the first calls of each second, so they can bunch up at its start. Low halves it. The walk is guarded against the cases foreseen (the stack's bounds and the room left on it, faults, stopping mid-capture), but an unforeseen case could still stall or crash the game: save first, and choose few functions.</sys:String>
-    <sys:String x:Key="str.LF.Stack.WarningShort">Stacks: a soft capture on the game's own thread, added to its frame. Save first; choose few functions.</sys:String>
+    <sys:String x:Key="str.LF.Stack.WarningShort">Stacks: a soft capture on the game's own thread, added to its frame — it could stall or crash the game. Save first; choose few functions.</sys:String>
     <sys:String x:Key="str.LF.Stack.WarningDetails">Details</sys:String>
     <sys:String x:Key="str.Tip.LF.Stack.WarningDetails">Show the whole warning: why a capture costs the game's frame time, what the budget does, and what could still go wrong.</sys:String>
     <sys:String x:Key="str.LF.Stack.PerFrame.Title">Take stacks of a per-frame function?</sys:String>
@@ -1331,7 +1331,7 @@
     <sys:String x:Key="str.LF.Trace.ExcludePerFrame">Leave out per-frame</sys:String>
     <sys:String x:Key="str.LF.Trace.TickedCount">Ticked: {0}</sys:String>
     <sys:String x:Key="str.LF.Trace.ClearTicks">Clear ticks</sys:String>
-    <sys:String x:Key="str.LF.ClearChoices">Clear choices</sys:String>
+    <sys:String x:Key="str.LF.ClearChoices">Clear T/P/S</sys:String>
     <sys:String x:Key="str.LF.Settings.Collapse">▾ Capture settings</sys:String>
     <sys:String x:Key="str.LF.Settings.Expand">▸ Capture settings</sys:String>
     <sys:String x:Key="str.Tip.LF.Settings.Toggle">Fold or unfold the capture settings: the fetch limit, the trace, the choices for parameters and stacks, and their estimates. Folded, this line sums them up, and any warning they raise still shows on it, in orange. The next start keeps them as you leave them.</sys:String>
@@ -1346,6 +1346,7 @@
     <sys:String x:Key="str.LF.Summary.SnapWarn">⚠ the busiest parameter choice keeps less time than the trace</sys:String>
     <sys:String x:Key="str.LF.Summary.SnapTooSmall">⚠ the snapshot buffer is too small: Start will be refused</sys:String>
     <sys:String x:Key="str.LF.Summary.MemoryOver">⚠ a full buffer may need more memory than the {0} free now</sys:String>
+    <sys:String x:Key="str.LF.Summary.StackRisk">⚠ stacks: save first, choose few</sys:String>
     <sys:String x:Key="str.LF.Trace.Open">Open in Call Trace</sys:String>
     <sys:String x:Key="str.LF.Trace.Confirm.Title">Trace every call?</sys:String>
     <sys:String x:Key="str.LF.Trace.Confirm.Message">No function is ticked, so the trace will record every call the game makes: a wide range to look through, and more load on the game while it records. To trace only inside some functions, tick them in the table. This is asked once per session.</sys:String>

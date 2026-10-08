@@ -31,16 +31,16 @@ public class LiveFuncsTopAreaTests
         var (panel, vm) = LaidWithAStackChosen();
         Assert.False(vm.StackEstimateWarn);
         var line = Shown(panel, Res("str.LF.Stack.WarningShort"));
-        Assert.Equal(1, Lines(line));
         Assert.DoesNotContain(TextBlocks(panel, Res("str.LF.Stack.Warning")), t => t.IsEffectivelyVisible);
 
         var toggle = DetailsToggle(panel);
         Assert.True(toggle.IsEffectivelyVisible, "Details is hidden with a stack chosen");
-        var lineBox = Box(line, panel);
-        var toggleBox = Box(toggle, panel);
-        Assert.True(toggleBox.Top < lineBox.Bottom && lineBox.Top < toggleBox.Bottom,
-                    $"Details is not on the warning's line (line {lineBox.Top:0.#}-{lineBox.Bottom:0.#}, "
-                    + $"toggle {toggleBox.Top:0.#}-{toggleBox.Bottom:0.#})");
+        // The line and its toggle share a row that wraps: in the app's font both fit on its first line, where the
+        // headless font, twice as wide, wraps the line and puts the toggle under it (AssertOneLineInTheAppsFont).
+        var row = line.FindAncestorOfType<WrapPanel>();
+        Assert.True(row != null && ReferenceEquals(row, toggle.FindAncestorOfType<WrapPanel>()),
+                    "Details is not in the warning's row");
+        AssertOneLineInTheAppsFont(row!.Bounds.Width, line, toggle);
 
         double closed = GridTop(panel);
         toggle.IsChecked = true;
@@ -212,6 +212,6 @@ public class LiveFuncsTopAreaTests
         Assert.NotEqual(calm, line.Foreground?.ToString());
         Assert.Equal(TextBlocks(panel, vm.StackEstimate).Single(t => t.IsEffectivelyVisible).Foreground?.ToString(),
                      line.Foreground?.ToString());
-        Assert.Equal(1, Lines(line));
+        AssertOneLineInTheAppsFont(line.FindAncestorOfType<WrapPanel>()!.Bounds.Width, line);
     });
 }

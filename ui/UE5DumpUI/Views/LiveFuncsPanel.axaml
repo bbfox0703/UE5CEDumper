@@ -54,7 +54,7 @@
          Call Trace, then the first row of settings or, folded, a summary of them all. Clear choices sits here because
          the section's choices are what it clears, and this line shows folded or not, taking no line of its own; so
          does Open in Call Trace, an action after a traced Stop rather than a setting. The summary wraps and is the D3
-         pair, so a warning folded away still shows in full, in orange. MainWindowViewModel remembers the fold. -->
+         pair, so a warning folded away still shows, shortly, in orange. MainWindowViewModel remembers the fold. -->
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="True">
       <Button DockPanel.Dock="Left" Content="{Binding CaptureSettingsToggleText}"
               Command="{Binding ToggleCaptureSettingsCommand}"
