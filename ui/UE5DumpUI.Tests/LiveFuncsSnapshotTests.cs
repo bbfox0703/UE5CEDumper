@@ -347,6 +347,14 @@ public class LiveFuncsSnapshotTests
         vm.TraceBufferExponent = 6;
         Assert.True(vm.SnapshotEstimateWarn);
         Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        // ...and Clear ticks with Trace still unticked: the ticks it clears still weigh in the estimate.
+        vm.TraceBufferExponent = 5;
+        Assert.False(vm.SnapshotEstimateWarn);
+        raised.Clear();
+        vm.ClearTicksCommand.Execute(null);
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
     }
 
     // ---- U7 ----
