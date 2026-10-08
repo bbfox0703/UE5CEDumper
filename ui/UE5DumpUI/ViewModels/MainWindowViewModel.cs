@@ -2419,6 +2419,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     private void WireOptionSaveTracking()
     {
         Track(this, MainPersist);
+        Track(ObjectTree, ObjectTreePersist);
         Track(LiveWalker, LiveWalkerPersist);
         Track(ValueSearch, ValueSearchPersist);
         Track(InstanceFinder, InstanceFinderPersist);
@@ -2441,6 +2442,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     // Persistable property-name sets — used both to filter PropertyChanged and as
     // the single source of truth for what each VM persists. nameof keeps them
     // compile-safe against renames.
+    // [OT-COLLAPSE-PERSIST] The left tree's collapse is a window layout choice the next start keeps.
+    private static readonly HashSet<string> ObjectTreePersist = new() { nameof(ObjectTreeViewModel.IsCollapsed) };
     private static readonly HashSet<string> MainPersist = new()
     {
         nameof(SelectedAddressFormatIndex), nameof(CollapsePointerNodes),
@@ -2572,6 +2575,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
     {
         // Main display controls first — their OnChanged fans out to child VMs.
         SelectedAddressFormatIndex = o.Main.SelectedAddressFormatIndex;
+        ObjectTree.IsCollapsed = o.Main.ObjectTreeCollapsed;
         CollapsePointerNodes = o.Main.CollapsePointerNodes;
         DumpAllObjectIndex = o.Main.DumpAllObjectIndex;
         ArrayLimitExponent = o.Main.ArrayLimitExponent;
@@ -2738,6 +2742,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         var o = new UiOptionsSettings();
 
         o.Main.SelectedAddressFormatIndex = SelectedAddressFormatIndex;
+        o.Main.ObjectTreeCollapsed = ObjectTree.IsCollapsed;
         o.Main.CollapsePointerNodes = CollapsePointerNodes;
         o.Main.DumpAllObjectIndex = DumpAllObjectIndex;
         o.Main.ArrayLimitExponent = ArrayLimitExponent;
