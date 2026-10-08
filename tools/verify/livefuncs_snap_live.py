@@ -68,10 +68,10 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
       starves the others), or the main recording itself ran SnapProbe_PerFrame under 1.5x the budget, the window is
       reported not run with those rates, never failed nor passed. The main recording's table must carry that rate (a
       check of its own): a reply without it fails there, and the window runs as it did before the rate was read,
-      never stood down on a rate nobody measured. The counters are checked wherever the stack budget
-      refused a call -- the main table counts more SnapProbe_PerFrame calls than its ring wrote, or trace.stack counts
-      a skip or a drop -- and a nonzero one fails whatever was refused; only where nothing was refused, and both are
-      0, are they reported not run, since 0 there proves nothing
+      never stood down on a rate nobody measured. The counters are checked wherever the stack budget refused a call
+      -- the main table counts more SnapProbe_PerFrame calls than its ring wrote, or trace.stack counts a skip or a
+      drop -- and a nonzero one fails whatever was refused; only where nothing was refused, and both are 0, are they
+      reported not run, since 0 there proves nothing
   S6  recorded: mean and max microseconds a capture, captures a second, calls/s with and without stacks, the CPU,
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
