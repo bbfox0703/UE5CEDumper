@@ -1117,10 +1117,14 @@ public class CallTraceViewModelTests
             Assert.True((string?)header.Attribute("HorizontalAlignment") == "Left", $"the header's {width} cell is not aligned left");
             Assert.True((string?)cell.Attribute("HorizontalAlignment") == "Left", $"the row's {width} cell is not aligned left");
         }
-        // A row's overflow is cut by the list's own viewport. The header is outside the list and is drawn after the
-        // detail pane, so without a clip of its own its overflow would cover that pane.
+        // The header is outside the list and is drawn after the detail pane: unclipped, its overflow covers that pane.
         var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding TimeColWidth}").Parent!;
         Assert.True((string?)headerRow.Attribute("ClipToBounds") == "True", "the header's row does not clip what overflows it");
+        // A row is narrower than the list's viewport by the item's padding: a column the row places at its own edge
+        // would show there, over the column cut at that edge (measured with the list narrower than Time, Duration and
+        // Thread together).
+        var rowPanel = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "TimeColWidth}").Parent!;
+        Assert.True((string?)rowPanel.Attribute("ClipToBounds") == "True", "a row does not clip what overflows it");
     }
 
     // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----

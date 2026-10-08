@@ -158,18 +158,22 @@ public class CallTraceColumnsTests
     });
 
     /// <summary>A guard for the wide layout, which a fix must leave as it was: with room to spare, Object stays docked at
-    /// the right of the header and of the row, and Function takes what the fixed columns leave between them.</summary>
+    /// the list's right edge in the header and in the row, and Function takes what the fixed columns leave between them.
+    /// The edge is the list's, not the row panel's own: a row panel aligned left shrinks to its text and takes Object
+    /// with it.</summary>
     [Fact]
     public Task A_wide_list_keeps_Object_at_its_right_edge() => Headless.Run(() =>
     {
         var (panel, vm) = Laid(200);
-        foreach (var (what, cells) in new[] { ("header", HeaderCells(panel, vm)), ("row", RowCells(panel, vm)) })
+        var tabs = panel.GetVisualDescendants().OfType<TabControl>().Single();
+        double listEdge = Span(((Panel)tabs.GetVisualParent()!).Children.OfType<Thumb>().Single(), panel).left;
+        var item = Text(panel, Row.ObjectText).FindAncestorOfType<ListBoxItem>()!;
+        double itemEdge = Span(item, panel).right - item.Padding.Right;
+        foreach (var (what, cells, end) in new[] { ("header", HeaderCells(panel, vm), listEdge), ("row", RowCells(panel, vm), itemEdge) })
         {
             AssertApart(what, panel, cells);
-            var obj = cells.Single(c => c.name == "Object").cell;
-            double end = Span(obj.GetVisualParent()!, panel).right;
-            Assert.True(Math.Abs(Span(obj, panel).right - end) < 0.5,
-                        $"the {what}'s Object column ends at {Span(obj, panel).right:0.#}, not at its row's edge {end:0.#}");
+            double right = Span(cells.Single(c => c.name == "Object").cell, panel).right;
+            Assert.True(Math.Abs(right - end) < 0.5, $"the {what}'s Object column ends at {right:0.#}, not at the list's edge {end:0.#}");
         }
     });
 }

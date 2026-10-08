@@ -275,22 +275,26 @@
     <!-- Column header for the rows below (a ListBox: a flat, virtualized tree; see CallTraceTree). The cells are laid
          out as each row's are and take the same widths from the view model, so header and rows move together; a
          thumb on each fixed column's inner edge drags its width (U10). Function takes what is left. -->
-    <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2">
-      <Panel DockPanel.Dock="Left" Width="{Binding TimeColWidth}">
+    <!-- [CT-COLUMNS-OVERLAP] When the list is narrower than its fixed columns, DockPanel gives a cell that no longer fits
+         only the width that is left, and Avalonia centres a fixed-width cell in a narrower slot: it drew over the column
+         on its left. Aligned left, each fixed cell keeps its start and its dragged width and runs past the list's edge.
+         The header cuts that overflow itself: it is drawn after the detail pane and would cover it. -->
+    <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2" ClipToBounds="True">
+      <Panel DockPanel.Dock="Left" Width="{Binding TimeColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Time}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
         <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
                Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
                DragDelta="OnTimeThumbDragDelta"/>
       </Panel>
-      <Panel DockPanel.Dock="Left" Width="{Binding DurationColWidth}">
+      <Panel DockPanel.Dock="Left" Width="{Binding DurationColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Duration}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
         <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
                Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
                DragDelta="OnDurationThumbDragDelta"/>
       </Panel>
-      <Panel DockPanel.Dock="Left" Width="{Binding ThreadColWidth}">
+      <Panel DockPanel.Dock="Left" Width="{Binding ThreadColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Thread}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
         <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
@@ -298,7 +302,7 @@
                DragDelta="OnThreadThumbDragDelta"/>
       </Panel>
       <!-- Docked at the right, as in the rows: its handle is its LEFT edge, the one it shares with Function. -->
-      <Panel DockPanel.Dock="Right" Width="{Binding ObjectColWidth}">
+      <Panel DockPanel.Dock="Right" Width="{Binding ObjectColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Object}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="6,0,0,0"/>
         <Thumb HorizontalAlignment="Left" Width="5" Cursor="SizeWestEast"
@@ -319,20 +323,23 @@
           <!-- U10: a DockPanel, not a Grid. Its cells take the widths the header drags, from the panel's view model by
                the compiled $parent route the Toggle button takes; a ColumnDefinition is not a Visual, so the same
                binding on one never resolves. -->
-          <DockPanel>
-            <TextBlock DockPanel.Dock="Left"
+          <!-- [CT-COLUMNS-OVERLAP] Each fixed cell is aligned left, as in the header, so a list narrower than its columns
+               cannot centre one over its neighbour. The row cuts its own overflow: the list's viewport reaches past the
+               row by the item's padding, and there a column placed at the row's edge would draw over the one cut. -->
+          <DockPanel ClipToBounds="True">
+            <TextBlock DockPanel.Dock="Left" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).TimeColWidth}"
                        Text="{Binding TimeText}" Foreground="#7FB6E8" VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock DockPanel.Dock="Left"
+            <TextBlock DockPanel.Dock="Left" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).DurationColWidth}"
                        Text="{Binding DurationText}" Foreground="#DCDCAA" VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock DockPanel.Dock="Left"
+            <TextBlock DockPanel.Dock="Left" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ThreadColWidth}"
                        Text="{Binding ThreadText}" Foreground="#808080" VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock DockPanel.Dock="Right"
+            <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ObjectColWidth}"
                        Text="{Binding ObjectText}" ToolTip.Tip="{Binding ObjectTip}" VerticalAlignment="Center"
                        Foreground="#B0B0B0" Opacity="{Binding ObjectOpacity}"
