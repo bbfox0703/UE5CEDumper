@@ -372,26 +372,32 @@ JUDGES = {"b25a_subfloor": judge_a, "b25b_ue3": judge_b,
 
 
 def check():
+    """0 only when every branch was judged and PASSed; 1 on any FAIL; 2 when none failed but a
+    branch was not judged -- a check that judged nothing is not a pass."""
     floor = support_floor()
     print(f"support floor (read from Grimoire.h): {floor}")
-    failed = False
+    verdicts = []
     for name, _, _, _ in BRANCHES:
         log = LOGS / name / "scan-0.log"
         exe = OUT / f"{name}.exe"
         if not log.is_file():
             print(f"  NOT RUN  {name}: no {log}")
+            verdicts.append("NOT RUN")
             continue
         if exe.is_file() and log.stat().st_mtime < exe.stat().st_mtime:
             print(f"  STALE    {name}: {log} predates this build of the exe")
+            verdicts.append("STALE")
             continue
         text = log.read_text(encoding="utf-8", errors="replace")
         head = next((l.strip() for l in text.splitlines() if "Logger started" in l), "?")
         verdict, why = JUDGES[name](text, floor)
-        failed |= verdict == "FAIL"
+        verdicts.append(verdict)
         print(f"  {verdict:<8} {name}: {len(text.splitlines()):,} log lines; {head[-90:]}")
         for w in why:
             print(f"           {w}")
-    return 1 if failed else 0
+    if "FAIL" in verdicts:
+        return 1
+    return 0 if all(v == "PASS" for v in verdicts) else 2
 
 
 def selftest():
