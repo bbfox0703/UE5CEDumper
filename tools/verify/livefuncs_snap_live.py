@@ -1476,6 +1476,7 @@ class ScriptedDll:
         self.gen = 0
         self.t: dict | None = None
         self.cmds: list[str] = []
+        self.starts: list[dict | None] = []   # each Start's trace object, as the rig sent it
 
     def rows(self) -> dict[str, dict]:
         """The fixture rows a plain recording gives, by name."""
@@ -1622,6 +1623,7 @@ class ScriptedDll:
         self.cmds.append(cmd)
         t = self.t
         if cmd == "pe_profile_start":
+            self.starts.append(p.get("trace"))
             return self._start(p.get("trace"))
         if cmd == "pe_profile_stop":
             if t is None:
@@ -1652,10 +1654,11 @@ class ScriptedDll:
         raise PipeError(f"the scripted DLL has no {cmd}")
 
 
-def dry_run(dll: ScriptedDll, game: bool = False) -> tuple[Checks, dict]:
-    """run_stacks (or run_game_stacks) against a scripted DLL, its printing captured: no pipe, no game, no sleep."""
+def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
+    """run_stacks (or run_game_stacks) against a scripted DLL, its printing captured: no pipe, no game, no sleep.
+    `argv` adds options to the command line the run parses."""
     check, out = Checks(), {"label": "dry", "fixture": {"total_calls": 9000, "window_ms": 3000}}
-    args = build_parser().parse_args(["--stacks", "--record-s", "0", "--plain-s", "0"] +
+    args = build_parser().parse_args(["--stacks", "--record-s", "0", "--plain-s", "0"] + list(argv) +
                                      (["--choose", ""] if game else []))
     with contextlib.redirect_stdout(io.StringIO()):
         if game:
@@ -1857,9 +1860,9 @@ def self_test() -> int:
            lambda: (F_STACK_TAKEN, F_STACK_BUDGET, STK_PARTIAL, STK_FAULT, STK_MORE, STK_BADSP, STK_LOWSTACK,
                     STK_NOCAPTURER) == (32, 64, 1, 2, 4, 8, 16, 0x8000) and STK_BAD & STK_MORE == 0 and
            STK_BAD == 0x801B)
-    expect("options: --stacks off by default; --stack-per-ring 30 and --stack-total 200",
-           lambda: (lambda a, b: not a.stacks and not a.self_test and a.stack_per_ring == 30 and
-                    a.stack_total == 200 and a.record_s == 8.0 and b.stacks and b.stack_per_ring == 7)(
+    expect("options: --stacks off by default; the stack budgets unset until given (each run picks its own default)",
+           lambda: (lambda a, b: not a.stacks and not a.self_test and a.stack_per_ring is None and
+                    a.stack_total is None and a.record_s == 8.0 and b.stacks and b.stack_per_ring == 7)(
                build_parser().parse_args([]), build_parser().parse_args(["--stacks", "--stack-per-ring", "7"])))
 
     # The whole run against a scripted DLL: the glue between the helpers, which nothing else runs before a game does.
@@ -1901,6 +1904,7 @@ def self_test() -> int:
     expect("dry run: a DLL that ignores kind fails S1",
            lambda: (lambda ch: any(n.startswith("S1") for n in failing(ch)))(
                dry_run(ScriptedDll("ignore_kind"))[0]))
+
     def refuses_unknown_fault() -> bool:
         try:
             ScriptedDll("no_such_fault")
@@ -1912,6 +1916,26 @@ def self_test() -> int:
            lambda: (lambda r: failing(r[0]) == [] and len(r[1]["chosen"]) == 3 and
                     r[1]["stack_cost"]["census"].get("slots") == 9 and len(r[0].records) == 6)(
                dry_run(ScriptedDll(), game=True)))
+
+    # The budgets each run sends: the fixture run its 8.1 values, a game run the DLL's own defaults (8.3 measures
+    # those) unless a budget is given on the command line.
+    def stack_budgets_sent(game: bool, argv: tuple[str, ...] = ()) -> dict:
+        dll = ScriptedDll()
+        dry_run(dll, game=game, argv=argv)
+        st = next(t["snapshots"]["stacks"] for t in dll.starts if t and "stacks" in t.get("snapshots", {}))
+        return {k: st[k] for k in ("per_ring_per_s", "total_per_s") if k in st}
+    expect("dry run: the fixture run sends 30/s a function and 200/s in all when no budget is given",
+           lambda: stack_budgets_sent(False) == {"per_ring_per_s": 30, "total_per_s": 200})
+    expect("dry run: the fixture run sends a budget that is given",
+           lambda: stack_budgets_sent(False, ("--stack-per-ring", "12", "--stack-total", "150")) ==
+           {"per_ring_per_s": 12, "total_per_s": 150})
+    expect("dry run (8.3): --stacks --choose leaves both budgets to the DLL's defaults when none is given",
+           lambda: stack_budgets_sent(True) == {})
+    expect("dry run: --stacks --choose sends the one budget that is given, and leaves the other to the DLL",
+           lambda: stack_budgets_sent(True, ("--stack-per-ring", "100")) == {"per_ring_per_s": 100})
+    expect("dry run: --stacks --choose checks the total the DLL echoes, its own default when none was given",
+           lambda: any(n.startswith("the total budget held: at most about 200/s")
+                       for n in ran(dry_run(ScriptedDll(), game=True, argv=("--stack-per-ring", "100"))[0])))
 
     failed = [r for r in results if not r[1]]
     for name, _, why in failed:
