@@ -5379,6 +5379,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                 if (inModule) sj["fn_rva"] = cs.fnBegin - cs.moduleBase;
                                 // [LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry this is, ProcessEvent or
                                 // not; `shared` when several enter there (the interpreter, identical code folded).
+                                // [A1-INTERP-LABEL] `script` when it is the script functions' entry, the interpreter:
+                                // the function named is then only the lowest-addressed of them, not the one running.
                                 uintptr_t uf = 0;
                                 const size_t n = Aura::LookupCodeEntry(g_codeIndex, cs.fnBegin, uf);
                                 if (n != 0) {
@@ -5386,6 +5388,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                     sj["func"]  = Ubel::GetName(uf);
                                     sj["class"] = Ubel::GetName(Ubel::GetOuter(uf));
                                     if (n > 1) sj["shared"] = n;
+                                    if (Aura::IsScriptFunction(uf)) sj["script"] = true;
                                 }
                             }
                             if (cs.own) sj["own"] = true;

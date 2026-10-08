@@ -6523,8 +6523,8 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
 static uintptr_t NativeFuncSlot(uintptr_t funcAddr);
 
 bool IsScriptFunctionFlags(uint32_t flags) {
-    (void)flags;
-    return false;
+    constexpr uint32_t FUNC_Native = 0x00000400;
+    return flags != 0 && (flags & FUNC_Native) == 0;
 }
 
 bool IsScriptFunction(uintptr_t funcAddr) {
