@@ -2257,6 +2257,8 @@ class ScriptedDll:
         "names_read_edge": "the interpreter's UFunction ends right after its Func slot, before a page that cannot be "
                            "read: read_mem of anything past Func + 8 fails",
         "names_read_failed": "read_mem fails at every size for the interpreter's UFunction",
+        "names_slot_only": "read_mem of the interpreter's UFunction fails at the window and every retry, yet a read of "
+                           "one of its slots alone (8 bytes) answers",
         "names_unreadable": "read_mem fails at every size for every UFunction",
         "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
         "names_empty": "SnapNest_Outer's UFunction named \"\": its frames carry class and func \"\", and get_object "
@@ -2363,7 +2365,8 @@ class ScriptedDll:
         outer = u == self.FUNCS["SnapNest_Outer"][0]
         func_at = self.FUNC_LOW if "names_func_low" in f else self.FUNC_AT
         if row is None or "names_unreadable" in f or (u == self.INTERP and (
-                f & {"names_read_failed", "names_short_only"} or ("names_read_edge" in f and end > func_at + 8))) or \
+                f & {"names_read_failed", "names_short_only"} or ("names_read_edge" in f and end > func_at + 8) or
+                ("names_slot_only" in f and size > 8))) or \
                 ("names_read_edge_all" in f and end > 0xE0) or ("names_short_only" in f and outer and end > 0xE0):
             return {"ok": False, "error": "Read failed"}
         offsets = tuple(func_at if o == self.FUNC_AT else o for o in row[4])
@@ -3287,14 +3290,29 @@ def self_test() -> int:
            "what the slot holds the reason",
            lambda: any(n == NAMES_AT and not ok and f"+0x{ScriptedDll.FUNC_AT:X} holds 0x" in g and "OnScripted" in g
                        for n, ok, g in names_run("names_read_edge", "names_offset_split")[0].items))
+    def slot_reads(asked: list) -> list[str]:
+        return [p["addr"] for cmd, p in asked if cmd == "read_mem" and p["size"] == 8]
+    # With one entry read, every copy of fn in it is a candidate; a slot that cannot be read contradicts none, so the
+    # lowest stands, read alone once.
     expect("dry run --names: a UFunction no read reaches (every size down to 0xC8 tried) whose slot cannot be read "
            "alone either is listed as gone since it was named, kept out of N, and fails nothing",
            lambda: (lambda r: failing(r[0]) == [] and
-                    read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and read_sizes(r[2], interp_slot) == [8] and
+                    read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and
+                    slot_reads(r[2]) == [f"{ScriptedDll.INTERP + (r[1]['names']['func_offset'] or 0):X}"] and
                     (r[1]["names"]["held"], r[1]["names"]["gone"]) == (1, 1) and
                     r[1]["names"]["per_entry"][1]["read"] is None and
                     any(n == NAMES_AT and ok and "in 1 of 1 read (2 asked)" in g and "1 gone since" in g and
                         "OnScripted" in g for n, ok, g in r[0].items))(names_run("names_read_failed")))
+    # SnapNest_Outer's UFunction, read whole, holds a decoy copy of fn below Func: read alone, the other entry's slot at
+    # the decoy holds something else, which only rules the decoy out; its slot at Func holds fn.
+    exercised.add("names_slot_only")
+    expect("dry run --names: one entry read whole (fn at a decoy and at Func), the other's window and retries all "
+           "failing but its slots answering alone: the decoy's slot contradicts, Func's holds, both held at Func",
+           lambda: (lambda r: failing(r[0]) == [] and slot_reads(r[2]) == ["2A030", interp_slot] and
+                    (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["gone"]) ==
+                    (ScriptedDll.FUNC_AT, 2, 0) and
+                    any(n == NAMES_AT and ok and f"+0x{ScriptedDll.FUNC_AT:X} in 2 of 2 read (2 asked)" in g
+                        for n, ok, g in r[0].items))(names_run("names_slot_only")))
     expect("dry run --names: when no named UFunction can be read, the offset check is not run (the reason given), the "
            "name check still runs, and nothing fails",
            lambda: (lambda r: failing(r[0]) == [] and NAMES_IS in ran(r[0]) and NAMES_AT not in ran(r[0]) and
