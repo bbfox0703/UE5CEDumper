@@ -661,7 +661,7 @@ Added 2026-09-06, after a fixture-coverage audit found the rot had spread from t
 the two documents a session is *told to read first*:
 
 * **`docs/handover.md` (then `handover-2026-08-22.md`) — its "rows that are cheaper than their bucket suggests" list was
-  four-fifths stale.** Four of the five bullets had closed, **three of them within two days of the
+  four-fifths stale** (the list was deleted on 2026-10-08: every row had closed). Four of the five bullets had closed, **three of them within two days of the
   file being written**. The register had even carried a ⛔ SUPERSEDED banner for one of them
   (`AF16`) since 08-23; the correction existed and simply never propagated to the pointer.
 * **`docs/log-verification-checklist.md` contained ZERO closure tags.** It is a *method* doc — it
@@ -3603,14 +3603,14 @@ being silently truncated past ~140 lines, so the section map went too).
 | A verification method, a trap in our stack, a UE/CE fact, a settled decision, a comment-style rule | **This file** (§1–§6, §8) |
 | What shipped, when, and why | `dev-log.md` (append-only) |
 | Open work, effort/risk | `todo.md` |
-| A pending live check | while its programme runs: that programme's ledger in `todo.md`; when the programme closes, the backlog moves to `verification-register.md` **byte-identical**. A check outside any programme goes to the register directly; closing a row: the register's "How to close a row" |
+| A pending live check | while its programme runs: that programme's ledger in `todo.md`; when the programme closes, the backlog moves to `verification-register.md` **byte-identical**. A check outside any programme goes to the register directly; closing a row: the register's "How to close a row" A programme started before 2026-10-08 keeps its backlog where it already is (Live Funcs keeps its register batches). |
 | What a *game* does differently | `lessons-learned.md` |
 | A standing instruction from the maintainer on how to work, whose loss costs something | **This file**, §7.3 |
 | How to operate this machine, the fixtures, Cheat Engine and the rigs; the session rules | `handover.md` — procedures only: no open work, no counts, no current state |
 | A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
 | In-flight project state that has no home in the repo yet | memory |
 | Which doc to read next | `MEMORY.md`, as a **pointer**, not a copy |
-| Where the current work is | the **current-programme line** at the top of `todo.md`: one tag, no counts, changed in the commit that starts or ends a programme (`MEMORY.md` does not travel between the two PCs) |
+| Where the current work is | the **current-programme line** at the top of `todo.md`: the current programme's tag, plus any idle programme whose backlog is still open; no counts; changed in the commit that starts or ends a programme (`MEMORY.md` does not travel between the two PCs) |
 
 **Two corollaries, both learned by paying for them:**
 
@@ -3707,6 +3707,15 @@ closes only in part is committed as a partial, with the untested half stated.
 
 *Why.* The machine can hang in the middle of a long, unattended session. A result that exists only
 in the working tree is lost when it does, and the evidence is what cost the time, not the edit.
+
+**4. A deployed proxy of an older build is refreshed without asking.** (2026-09-29)
+
+`py tools/verify/proxy_refresh.py refresh "<title>"` before the row that runs that title; its guards
+(the game not running, the backup with its SHA-256 first, ownership) still apply. A STALE whose sizes
+match exactly is a same-source rebuild, not an older build, and is left alone (§3.x).
+
+*Why.* An old proxy owns the pipe at game start, so the row measures the old binary; asking first only
+cost a round trip.
 
 ## 8. Writing code comments
 

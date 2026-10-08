@@ -15,8 +15,9 @@ This is the *operational* companion to [the verification register](verification-
 **why**; this file owns **how to run the batch unattended** — what is already staged, what may be
 launched without a human, and what must never be started without one.
 
-> **The register is canonical.** When an item closes, tick it in `todo.md` and delete its section in
-> the zh-TW checklist. Do not record results here.
+> **The register is canonical.** When an item closes, follow
+> [`verification-register.md`](verification-register.md), "How to close a row". Do not record results here.
+> ⛔ §5's batches and §10's per-item table are SPENT (2026-10-08): re-derive before planning off them.
 
 -----
 
