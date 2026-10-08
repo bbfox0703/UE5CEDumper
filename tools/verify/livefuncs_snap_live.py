@@ -1490,7 +1490,8 @@ class ScriptedDll:
     catch that DLL failing. It proves the rig's glue, never the DLL."""
     QPC, BASE, OWN = 10_000_000, 0x7FF6A0000000, 0x7FFC12300000
     FUNCS = {"SnapNest_Outer": (0x1000, [1, 0, 9, 0], 4), "SnapProbe_Call": (0x1100, [2, 0, 9, 0], 96),
-             "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4)}
+             "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4), "SnapProbe_RetOnly": (0x1300, [4, 0, 9, 0], 8),
+             "SnapProbe_ConstRefOnly": (0x1400, [5, 0, 9, 0], 16)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
     # SnapProbe_PerFrame's slots in the main recording: its budget kept over the dry run's span, the middle of S5's
@@ -1555,6 +1556,8 @@ class ScriptedDll:
         "leak_alloc": "a release leaves the trace allocated",
         "only_empty": "a stacks-only recording keeps no call",
         "accept_unknown": "accepts a Start whose stack keys all name nothing, keeps no call, releases it at Stop",
+        "no_calls": "a plain recording that records no call (the game not running, or the hook down)",
+        "no_probes": "a plain recording without the fixture's probes (a package without them)",
     }
 
     def __init__(self, *faults: str, per_frame: int = PER_FRAME_KEPT) -> None:
@@ -1786,7 +1789,9 @@ class ScriptedDll:
                 self.t = None
             return {"data": {"recording": False, "trace": self._info(), "names": t["names"]}}
         if cmd == "pe_profile_get":
-            rows = list(self.rows().values())
+            rows = [] if "no_calls" in self.f else list(self.rows().values())
+            if "no_probes" in self.f:   # a game without the fixture's probes still records its own calls
+                rows = [{"class_name": "OtherActor", "func_name": "Tick", "fname_key": None, "count": 100}]
             return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": 3000,
                              "functions": rows[: p.get("limit", len(rows))]}}
         if cmd == "pe_trace_get":
@@ -2040,11 +2045,18 @@ def self_test() -> int:
         bad = failing(check)
         return bad != [] and all(any(n.startswith(p) for p in prefixes) for n in bad) and \
             all(any(n.startswith(p) for n in bad) for p in prefixes)
-    expect("dry run: a DLL with step 3 passes every check, S0 to S7, 25 in all",
-           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == 25 and
-                    {n.split()[0] for n in ran(ch)} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
-                    recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and
-                    len(recorded(ch, "S6")) == 6)(dry_run(ScriptedDll())[0]))
+    # What a live --stacks run on a correct DLL prints: main() checks the fixture first, then S0-S7.
+    fixture_names = ["the table recorded calls"] + [f"{FIXTURE_CLASS}::{p} was called" for p in PROBES]
+    expect(f"dry run: --stacks on a DLL with step 3 holds every check, the fixture's {len(fixture_names)} then S0-S7's "
+           f"25, {len(fixture_names) + 25} in all, and records 7 facts",
+           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == len(fixture_names) + 25 and
+                    ran(ch)[:len(fixture_names)] == fixture_names and
+                    {n.split()[0] for n in ran(ch)[len(fixture_names):]} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
+                    recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and len(recorded(ch, "S6")) == 6 and
+                    len(ch.records) == 7)(dry_run(ScriptedDll())[0]))
+    expect("dry run: a plain recording with no call ends the run after the fixture check, exit 2",
+           lambda: (lambda r: r[1].get("exit") == 2 and not any(n.startswith("S") for n in ran(r[0])))(
+               dry_run(ScriptedDll("no_calls"))))
     win_lo, win_hi = budget_window(FIXTURE_STACK_PER_RING, DRY_RECORD_S, DRY_RECORD_S)
     expect(f"dry run: S5's window over {DRY_RECORD_S:g} s is {win_lo:.0f}..{win_hi:.0f}, read on the run's own clock",
            lambda: win_lo > 0 and any(n.startswith(S5_WINDOW) and f"({win_lo:.0f}..{win_hi:.0f})" in n
@@ -2078,6 +2090,8 @@ def self_test() -> int:
             return all(any(n.startswith(p) for n in failing(ch)) for p in prefixes)
         expect(f"dry run{' --choose' if game else ''}: {what} fails {' | '.join(p[:44] for p in prefixes)}", run)
     s7_main, s7_only = "S7 the release frees everything (the main", "S7 the release frees everything (the stacks-only"
+    caught(("no_calls",), "the table recorded calls", f"{FIXTURE_CLASS}::")
+    caught(("no_probes",), f"{FIXTURE_CLASS}::", "the rows the stack run needs carry keys")
     caught(("unkeyed",), "the rows the stack run needs carry keys")
     caught(("refuse_main",), "S0 the main Start is accepted")
     caught(("names_stacks_absent",), "S0 the reply carries names.stacks")
@@ -2160,9 +2174,9 @@ def self_test() -> int:
         return False
     expect("the scripted DLL refuses a fault it does not have", refuses_unknown_fault)
     expect("dry run: --stacks --choose on a scripted game chooses every keyed function and records the cost",
-           lambda: (lambda r: failing(r[0]) == [] and len(r[1]["chosen"]) == 3 and
-                    r[1]["stack_cost"]["census"].get("slots") == 9 and len(r[0].records) == 6)(
-               dry_run(ScriptedDll(), game=True)))
+           lambda: (lambda r: failing(r[0]) == [] and len(r[1]["chosen"]) == len(ScriptedDll.FUNCS) and
+                    r[1]["stack_cost"]["census"].get("slots") == 3 * len(ScriptedDll.FUNCS) and
+                    len(r[0].records) == 6)(dry_run(ScriptedDll(), game=True)))
 
     # The budgets each run sends: the fixture run its 8.1 values, a game run the DLL's own defaults (8.3 measures
     # those) unless a budget is given on the command line.
