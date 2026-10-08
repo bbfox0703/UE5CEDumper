@@ -529,15 +529,23 @@ def build_parser() -> argparse.ArgumentParser:
     return ap
 
 
-def main(argv: list[str] | None = None, connect=None) -> int:
-    """`argv` and `connect` (returns a connected client) let the self-test drive main() itself, with no pipe."""
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """The command line as main() reads it, an option that cannot go with the others refused (argparse's exit 2) before
+    anything runs. The dry run parses through here too, so the self-test meets the refusal where a live run does.
+    --self-test reads no other option, so nothing is refused beside it."""
     ap = build_parser()
     args = ap.parse_args(argv)
-    if args.self_test:
-        return self_test()
-    bad = pdb_option_problem(args)
+    bad = None if args.self_test else pdb_option_problem(args)
     if bad:
         ap.error(bad)
+    return args
+
+
+def main(argv: list[str] | None = None, connect=None) -> int:
+    """`argv` and `connect` (returns a connected client) let the self-test drive main() itself, with no pipe."""
+    args = parse_args(argv)
+    if args.self_test:
+        return self_test()
 
     check = Checks()
     out: dict = {"label": args.label}
@@ -2146,10 +2154,11 @@ class ScriptedPdb:
 def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
     """main()'s --stacks run (run_selected) against a scripted DLL, its printing captured: no pipe, no game, and no
     wait, on a FakeClock; --pdb reads the scripted game's PDB. `argv` adds options to the command line the run parses,
-    after (so over) the ones it sets. out["exit"] is what run_selected returned."""
+    after (so over) the ones it sets, parsed as main() parses it: a combination main() refuses raises SystemExit here
+    before the DLL is asked anything. out["exit"] is what run_selected returned."""
     check, out = Checks(), {"label": "dry"}
-    args = build_parser().parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
-                                     (["--choose", ""] if game else []) + list(argv))
+    args = parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
+                      (["--choose", ""] if game else []) + list(argv))
     fake = FakeClock()
     with contextlib.redirect_stdout(io.StringIO()):
         out["exit"] = run_selected(dll, check, out, args, pid=0, sleep=fake.sleep, clock=fake.now,
@@ -2168,7 +2177,9 @@ def self_test() -> int:
     def expect(name: str, fn) -> None:
         try:
             ok, why = bool(fn()), ""
-        except Exception as e:   # a helper that throws on a hand-made reply fails its control, it does not end the run
+        # A helper that throws on a hand-made reply, or a dry run whose command line parse_args refuses (SystemExit),
+        # fails its control: it does not end the run.
+        except (Exception, SystemExit) as e:
             ok, why = False, f"{type(e).__name__}: {e}"
         results.append((name, ok, why))
 
@@ -2393,8 +2404,8 @@ def self_test() -> int:
            build_parser().parse_args(["--stacks", "--pdb", "syms"]).pdb == "syms" and
            build_parser().parse_args([]).pdb is None)
 
-    # The refusal itself, through main() and through the dry run: a refusal neither reaches lets --pdb be ignored on a
-    # run that cannot use it, and the predicate's own control above still holds.
+    # The refusal itself, driven through main() and through the dry run: with it gone, --pdb is silently ignored on a
+    # run that cannot use it while the predicate's control above still holds.
     bad_pdb = (("--pdb",), ("--stacks", "--choose", "", "--pdb"), ("--stacks", "--fixture-check", "--pdb"))
 
     def refused(run) -> int | None:
