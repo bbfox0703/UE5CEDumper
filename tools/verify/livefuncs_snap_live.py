@@ -832,6 +832,11 @@ STACKS_ONLY_S = 3.0       # the stacks-only recording: SnapProbe_Call runs about
 # The fixture run's budgets when none is given (the ledger's 8.1): 30/s sits far below SnapProbe_PerFrame's rate, so
 # S5 sees the budget drop calls. A game run (8.3) sends none unless given: it measures the DLL's own defaults.
 FIXTURE_STACK_PER_RING, FIXTURE_STACK_TOTAL = 30, 200
+# --names (the ledger's S3-A1 on a real game): its checks by name, so --self-test's controls name the check each fault
+# must fail.
+NAMES_IS = "A1 every named entry's ufunc is a Function of that name, in that class"
+NAMES_AT = "A1 every named entry's fn is stored inside its UFunction, at one offset common to all"
+NAMES_MAX = 64            # entries asked about, two requests each, the most frequent first; the rest are counted
 
 
 def stack_item(row: dict) -> dict:
@@ -1776,13 +1781,24 @@ class ScriptedDll:
     """A DLL with step 3 answering as the design's section 3 says it does, so --self-test can drive run_stacks and
     run_game_stacks end to end with no pipe. Its calls are a fixed script shaped like DumperTest58's: four rounds of
     SnapNest_Outer -> SnapProbe_Call in scope beside a lone SnapProbe_Call, and SnapProbe_PerFrame over its budget.
-    Each fault named in FAULTS makes it answer as one broken DLL would, so a control can show the check that must
-    catch that DLL failing. It proves the rig's glue, never the DLL."""
+    Its stacks carry S3-A1's names, and get_object / read_mem answer for the UFunctions they name. Each fault named in
+    FAULTS makes it answer as one broken DLL would, so a control can show the check that must catch that DLL failing.
+    It proves the rig's glue, never the DLL."""
     QPC, BASE, OWN = 10_000_000, 0x7FF6A0000000, 0x7FFC12300000
     FUNCS = {"SnapNest_Outer": (0x1000, [1, 0, 9, 0], 4), "SnapProbe_Call": (0x1100, [2, 0, 9, 0], 96),
              "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4), "SnapProbe_RetOnly": (0x1300, [4, 0, 9, 0], 8),
              "SnapProbe_ConstRefOnly": (0x1400, [5, 0, 9, 0], 16)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
+    INTERP_FN = 0xA000           # the interpreter's start, as an RVA: a script function's native entry
+    FUNC_AT = 0xD8               # UFunction::Func in the scripted UFunctions
+    INTERP = 0x2A000             # the script function whose names the interpreter's frames carry
+    NAMES_MANY = 70              # names_many's extra entries: more than the run asks about
+    # The UFunctions a stack's names point at, as get_object and read_mem answer them: ufunc -> (class, func, the
+    # object's class, fn as an RVA, the offsets fn is stored at, shared). SnapNest_Outer's native entry is its own; the
+    # interpreter's is shared by every script function. Each holds a decoy copy of its fn at an offset the other lacks,
+    # so only the offset common to both is Func.
+    UFUNCS = {FUNCS["SnapNest_Outer"][0]: (FIXTURE_CLASS, "SnapNest_Outer", "Function", OUTER_FN, (0x30, FUNC_AT), None),
+              INTERP: ("BP_ScriptedActor_C", "ReceiveTick", "Function", INTERP_FN, (FUNC_AT, 0x140), 37)}
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
     # SnapProbe_PerFrame's slots in the main recording: its budget kept over the dry run's span, the middle of S5's
     # window, so a fault that keeps too few or too many falls outside it.
@@ -1855,6 +1871,14 @@ class ScriptedDll:
         "pdb_unnamed": "the PDB names nothing at one function start",
         "pdb_pe_other": "the known site's function is not ProcessEvent in the PDB",
         "pdb_outer_other": "SnapNest_Outer's native entry is another function in the PDB",
+        # S3-A1's names, as --names asks the DLL about them.
+        "names_none": "no site named (no ufunc on any frame)",
+        "names_wrong_func": "get_object names SnapNest_Outer's UFunction another function",
+        "names_wrong_outer": "get_object puts SnapNest_Outer's UFunction in another class",
+        "names_not_function": "get_object says the interpreter's UFunction is a Class, not a Function",
+        "names_fn_absent": "SnapNest_Outer's UFunction does not hold its fn",
+        "names_offset_split": "the interpreter's UFunction holds its fn at another offset than SnapNest_Outer's",
+        "names_many": "the first stack holds NAMES_MANY more named frames, each its own entry, before the others",
     }
     # The scripted game's PDB: a name for each function start its stacks hold, by RVA.
     PDB_NAMES = {0x480440: "ADumperTest58Actor::SnapProbe_Dispatch", OUTER_FN: "ADumperTest58Actor::execSnapNest_Outer",
@@ -1874,6 +1898,56 @@ class ScriptedDll:
         self.starts: list[dict | None] = []   # each Start's trace object, as the rig sent it
         self.pdb_opens: list[str | None] = []   # each --pdb session's search folder, as the rig asked
         self.pdb_sessions: list[ScriptedPdb] = []
+        self.asked: list[tuple[str, dict]] = []   # each get_object / read_mem, with what the rig sent
+
+    def _ufuncs(self) -> dict[int, tuple]:
+        """The UFunctions of the script (UFUNCS), names_many's extras with them."""
+        u = dict(self.UFUNCS)
+        if "names_many" in self.f:
+            u.update({0x40000 + 0x200 * k: ("ManyActor", f"Fn{k}", "Function", 0xB0000 + 0x40 * k, (self.FUNC_AT,), None)
+                      for k in range(self.NAMES_MANY)})
+        return u
+
+    def _named(self, ufunc: int) -> dict:
+        """A site's S3-A1 fields for the UFunction at `ufunc`, as the DLL sends them: `class` is its outer's name."""
+        if "names_none" in self.f:
+            return {}
+        cls, func, _, _, _, shared = self._ufuncs()[ufunc]
+        return {"ufunc": f"0x{ufunc:X}", "class": cls, "func": func, **({"shared": shared} if shared else {})}
+
+    def _object(self, addr: str) -> dict:
+        """get_object, as the DLL answers it: the object's own name, its class's and its outer's."""
+        u = int(str(addr), 16)   # with or without 0x, as Renge::StrToAddr reads it
+        row = self._ufuncs().get(u)
+        if row is None:   # not an object: the DLL's name reads give nothing
+            return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": "", "outer": ""}
+        cls, func, kind, _, _, _ = row
+        first = u == self.FUNCS["SnapNest_Outer"][0]
+        if "names_wrong_func" in self.f and first:
+            func = "SnapNest_Fire"
+        if "names_wrong_outer" in self.f and first:
+            cls = "OtherActor"
+        if "names_not_function" in self.f and u == self.INTERP:
+            kind = "Class"
+        return {"ok": True, "addr": addr, "name": func, "full_name": f"{kind} /Script/Scripted.{cls}:{func}",
+                "class": kind, "outer": cls}
+
+    def _memory(self, addr: str, size: int) -> dict:
+        """read_mem of a scripted UFunction: filler that never holds an address, fn wherever the UFunction stores it."""
+        u = int(str(addr), 16)
+        row = self._ufuncs().get(u)
+        if row is None:
+            return {"ok": False, "error": "Read failed"}
+        offsets = row[4]
+        if "names_fn_absent" in self.f and u == self.FUNCS["SnapNest_Outer"][0]:
+            offsets = ()
+        if "names_offset_split" in self.f and u == self.INTERP:
+            offsets = (self.FUNC_AT + 8, 0x140)
+        blob = bytearray((k * 37 + 11) & 0xFF for k in range(size))
+        for o in offsets:
+            if o + 8 <= size:
+                blob[o: o + 8] = struct.pack("<Q", self.BASE + row[3])
+        return {"ok": True, "bytes": bytes(blob).hex().upper()}   # Renge::BytesToHex: two digits a byte, no spaces
 
     def open_symbols(self, pid: int, exe: tuple[int, int] | None, search: str | None):
         """--pdb's session over the scripted game, as open_game_pdb opens one: a session, or why there is none."""
@@ -1918,8 +1992,9 @@ class ScriptedDll:
         own = {"addr": f"0x{self.OWN + 0x45678:X}", "module": "dxgi.dll", "module_base": f"0x{self.OWN:X}",
                "rva": 0x45678, "fn": f"0x{self.OWN + 0x45000:X}", "fn_rva": 0x45000, "unwind": True, "own": True}
         call = g(0x4804C9, 0x480440)
-        in_scope = [call, g(self.OUTER_FN + 0x31, self.OUTER_FN), invoke, pe, own, g(0x3010, 0x3000),
-                    g(0x2010, 0x2000), g(0x1010, 0x1000)]
+        # SnapNest_Outer's native entry carries its name, as S3-A1 sends it.
+        outer = g(self.OUTER_FN + 0x31, self.OUTER_FN, **self._named(self.FUNCS["SnapNest_Outer"][0]))
+        in_scope = [call, outer, invoke, pe, own, g(0x3010, 0x3000), g(0x2010, 0x2000), g(0x1010, 0x1000)]
         if "known_twice" in self.f:
             in_scope.insert(5, g(0x9456, 0x9000, **known))
         if "no_own" in self.f:
@@ -1935,6 +2010,19 @@ class ScriptedDll:
         if "known_everywhere" in self.f:
             in_scope, lone = ([dict(s, known=KNOWN_PE) if s.get("unwind") else s for s in x] for x in (in_scope, lone))
         return in_scope, lone
+
+    def _game_stack(self, first: bool) -> list[dict]:
+        """A stacks-only call's stack, standing for a real game's: SnapNest_Outer's native entry one frame
+        (UFunction::Invoke) below ProcessEvent, and past the hook the interpreter, the entry every script function
+        shares, with no ProcessEvent beyond it. names_many puts its extra named frames first in the first stack, so
+        only the run's ordering by frequency keeps the two entries above in the ones it asks about."""
+        frames = self._stacks()[0]
+        k = next((i + 1 for i, s in enumerate(frames) if s.get("own")), len(frames))
+        frames.insert(k, self._site(self.INTERP_FN + 0x51, self.INTERP_FN, **self._named(self.INTERP)))
+        if first and "names_many" in self.f:
+            frames = [self._site(row[3] + 0x11, row[3], **self._named(u)) for u, row in self._ufuncs().items()
+                      if u not in self.UFUNCS] + frames
+        return frames
 
     def _start(self, t: dict | None) -> dict:
         if t is None:
@@ -2002,9 +2090,10 @@ class ScriptedDll:
                     call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3])
                 dropped[ring_of["SnapProbe_PerFrame"]] = 25
         else:          # stacks only: every chosen call is lone
+            game, game_first = self._game_stack(False), self._game_stack(True)
             for n in [] if "only_empty" in f else stacks:
                 for k in range(1000 if "over_total" in f else 3):
-                    call(n, F_LONE | (F_TAKEN if "only_flags" in f and k == 0 else 0), lone)
+                    call(n, F_LONE | (F_TAKEN if "only_flags" in f and k == 0 else 0), game if recs else game_first)
             if "only_other" in f:   # flagged as a kept stack would be, so only the function tells it apart
                 call("SnapProbe_PerFrame", F_LONE | F_STACK_TAKEN, [])
         depth = min(max(int((st or {}).get("depth", 16)), 1), 62)
@@ -2134,6 +2223,12 @@ class ScriptedDll:
         if cmd == "pe_trace_release":
             self.t = None
             return {"data": {"released": True}}
+        if cmd == "get_object":
+            self.asked.append((cmd, dict(p)))
+            return self._object(p.get("addr", "0"))
+        if cmd == "read_mem":
+            self.asked.append((cmd, dict(p)))
+            return self._memory(p.get("addr", "0"), int(p.get("size", 256)))
         raise PipeError(f"the scripted DLL has no {cmd}")
 
 
@@ -2169,9 +2264,9 @@ def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) ->
 def self_test() -> int:
     """--self-test: the pure pieces of --stacks against hand-made replies, each rule holding on a good input AND failing
     on a bad one, so a helper that silently accepts everything cannot pass. Then run_stacks and run_game_stacks against
-    a scripted DLL, whole and with each fault it scripts. Two controls keep that side complete: every scripted fault
-    has its control, and every check the good runs make is named by a control whose fault fails it, so a check whose
-    condition is reduced to True fails the self-test."""
+    a scripted DLL, whole and with each fault it scripts. That side is kept complete by controls of two kinds: every
+    scripted fault has its control, and every check the good runs make (--names's included) is named by a control
+    whose fault fails it, so a check whose condition is reduced to True fails the self-test."""
     results: list[tuple[str, bool, str]] = []
 
     def expect(name: str, fn) -> None:
@@ -2610,11 +2705,119 @@ def self_test() -> int:
     caught(("no_known",), S3_KNOWN_IN, PDB_PE, argv=("--pdb",))
     caught(("nothing_taken",), PDB_DISP, PDB_PE, argv=("--pdb",), exact=False)
 
+    # --names (S3-A1 on a real game): its pieces over hand-made sites, then the --choose run against the scripted DLL.
+    expect("A1: a site keeps ufunc / class / func / shared; absent they are None / \"\" / \"\" / None, as is a shared "
+           "that is not a count",
+           lambda: (lambda s, t, u: (s["ufunc"], s["class"], s["func"], s["shared"]) == (0x2A000, "C", "F", 3) and
+                    (t["ufunc"], t["class"], t["func"], t["shared"]) == (None, "", "", None) and u["shared"] is None and
+                    {k: s[k] for k in sites[0]} == sites[0])(
+               parse_site(dict(raw_sites[0], ufunc="0x2A000", func="F", shared=3, **{"class": "C"})),
+               parse_site(raw_sites[0]), parse_site(dict(raw_sites[0], shared="3"))))
+    fn_a, fn_b, uf_a, uf_b = base + 0x5000, base + 0xA000, 0x2A000, 0x2B000
+
+    def nsite(ufunc: int | None, fn: int, known: str = "", **more) -> dict:
+        raw = {"addr": f"0x{fn + 0x10:X}", "fn": f"0x{fn:X}", "unwind": True, "known": known, **more}
+        if ufunc is not None:
+            raw.update({"ufunc": f"0x{ufunc:X}", "class": "C", "func": f"F{ufunc:X}"})
+        return parse_site(raw)
+    expect("A1: named frames group by (ufunc, fn), the most frequent first, every named frame counted",
+           lambda: (lambda r: r[1] == 5 and [(e["ufunc"], e["fn"], e["frames"]) for e in r[0]] ==
+                    [(uf_a, fn_a, 3), (uf_b, fn_b, 1), (uf_a, fn_b, 1)] and r[0][1]["shared"] == 5 and
+                    r[0][0]["shared"] is None and (r[0][0]["class"], r[0][0]["func"]) == ("C", "F2A000"))(
+               named_entries([{"frames": [nsite(uf_b, fn_b, shared=5), nsite(None, base + 0x7000), nsite(uf_a, fn_a)]},
+                              {"frames": [nsite(uf_a, fn_a), nsite(uf_a, fn_a), nsite(uf_a, fn_b)]}])))
+    pe_at = nsite(None, base + 0x9000, KNOWN_PE)
+    na, nb, plain = nsite(uf_a, fn_a), nsite(uf_b, fn_b), nsite(None, base + 0x7000)
+    expect("A1: the frames between a named frame and the next known:\"process_event\" toward the root; None past the "
+           "last one",
+           lambda: pe_gap([na, plain, pe_at, nb], 0) == 1 and pe_gap([na, pe_at], 0) == 0 and
+           pe_gap([pe_at, na, plain], 1) is None and pe_gap([na, plain, pe_at, nb, pe_at], 3) == 0)
+    blob = bytearray((k * 37 + 11) & 0xFF for k in range(0x180))
+    for o in (0x30, 0xD8):
+        blob[o: o + 8] = struct.pack("<Q", fn_a)
+    blob[0x101: 0x109] = struct.pack("<Q", fn_a)    # unaligned: no pointer member sits there
+    blob[0x140: 0x148] = struct.pack(">Q", fn_b)    # big-endian: not how x64 stores it
+    expect("A1: fn is found at every 8-aligned offset that holds it little-endian, and nowhere else",
+           lambda: fn_offsets(bytes(blob), fn_a) == [0x30, 0xD8] and fn_offsets(bytes(blob), fn_b) == [] and
+           fn_offsets(bytes(blob[:0xDC]), fn_a) == [0x30] and fn_offsets(b"", fn_a) == [])
+    expect("A1: the offset common to every entry, the lowest of several; none when one entry lacks it or none is shared",
+           lambda: common_offset([[0x30, 0xD8], [0xD8, 0x140]]) == 0xD8 and
+           common_offset([[0x30, 0xD8, 0x140], [0xD8, 0x140]]) == 0xD8 and common_offset([[0x30], [0xD8]]) is None and
+           common_offset([[0xD8], []]) is None and common_offset([]) is None)
+
+    names_argv = ("--names",)
+
+    def names_run(*faults: str, argv: tuple[str, ...] = names_argv) -> tuple[Checks, dict, list]:
+        dll = ScriptedDll(*faults)
+        ch, out = dry_run(dll, game=True, argv=argv)
+        return ch, out, dll.asked
+    expect("dry run --names: --stacks --choose holds every check, A1's two after the run's 5, and records 2 more",
+           lambda: (lambda r: failing(r[0]) == [] and ran(r[0])[5:] == [NAMES_IS, NAMES_AT] and len(ran(r[0])) == 7 and
+                    len(r[0].records) == 8 and len(recorded(r[0], "A1")) == 2)(names_run()))
+    expect("dry run --names: Func at the one offset both entries share, never at a decoy",
+           lambda: names_run()[1]["names"]["func_offset"] == ScriptedDll.FUNC_AT and
+           any(f"+0x{ScriptedDll.FUNC_AT:X}" in g for n, _, g in names_run()[0].items if n == NAMES_AT))
+    expect("dry run --names: 30 frames named in 2 entries, 1 shared (by 37); the native entry 1 frame below ProcessEvent, "
+           "the interpreter with none beyond it",
+           lambda: (lambda n: n["frames"] == 30 and n["entries"] == 2 and n["shared_entries"] == 1 and
+                    n["shared_max"] == 37 and n["pe_gap"] == {"1": 15, "none": 15})(names_run()[1]["names"]))
+    expect("dry run --names: each entry asked once, get_object by its ufunc in hex without 0x, then read_mem of 0x180 "
+           "bytes there; without --names nothing is asked",
+           lambda: names_run()[2] == [("get_object", {"addr": "1000"}), ("read_mem", {"addr": "1000", "size": 0x180}),
+                                      ("get_object", {"addr": "2A000"}), ("read_mem", {"addr": "2A000", "size": 0x180})]
+           and names_run(argv=())[2] == [])
+    many = ScriptedDll.NAMES_MANY + 2
+    expect(f"dry run --names: of {many} entries the {NAMES_MAX} most frequent are asked, the frequent two among them, "
+           f"and the {many - NAMES_MAX} left are counted, never silently",
+           lambda: (lambda r: failing(r[0]) == [] and
+                    (r[1]["names"]["entries"], r[1]["names"]["asked"], r[1]["names"]["unchecked"]) ==
+                    (many, NAMES_MAX, many - NAMES_MAX) and
+                    sum(1 for cmd, _ in r[2] if cmd == "get_object") == NAMES_MAX and
+                    {"1000", "2A000"} <= {p["addr"] for cmd, p in r[2] if cmd == "get_object"} and
+                    any(f"{many - NAMES_MAX} less frequent left unchecked" in g for n, _, g in r[0].items
+                        if n == NAMES_IS))(names_run("names_many")))
+
+    def depth_sent(argv: tuple[str, ...]) -> int | None:
+        dll = ScriptedDll()
+        dry_run(dll, game=True, argv=argv)
+        return next(t["snapshots"]["stacks"].get("depth") for t in dll.starts if t and "stacks" in t.get("snapshots", {}))
+    expect(f"dry run: --stacks --choose sends --stack-depth as the stacks' depth, {STACK_DEPTH} when none is given, and "
+           "--names holds at 62",
+           lambda: depth_sent(()) == STACK_DEPTH and depth_sent(("--stack-depth", "62")) == 62 and
+           depth_sent(("--names", "--stack-depth", "1")) == 1 and
+           failing(names_run(argv=("--names", "--stack-depth", "62"))[0]) == [])
+    bad_game = (("--names",), ("--stacks", "--names"), ("--choose", "x", "--names"), ("--stacks", "--stack-depth", "16"),
+                ("--stack-depth", "8"), ("--stacks", "--choose", "", "--stack-depth", "0"),
+                ("--stacks", "--choose", "", "--stack-depth", "63"))
+    expect("A1: main() refuses --names and --stack-depth outside --stacks --choose, and a depth outside 1..62, before the "
+           "pipe opens; --stacks --choose takes both",
+           lambda: [main_refuses(a) for a in bad_game] == [(2, 0)] * len(bad_game) and
+           main_refuses(("--stacks", "--choose", "", "--names", "--stack-depth", "62")) == (None, 1) and
+           main_refuses(("--stacks", "--choose", "x", "--stack-depth", "1")) == (None, 1))
+    expect("A1: the dry run refuses them as main() does, before the DLL is asked anything, and runs on with --choose",
+           lambda: dry_refused(False, ("--names",)) == (2, []) and dry_refused(False, ("--stack-depth", "16")) == (2, [])
+           and dry_refused(True, ("--stack-depth", "63")) == (2, []) and
+           dry_refused(True, ("--names", "--stack-depth", "62"))[0] is None)
+    for fault in ("names_wrong_func", "names_wrong_outer", "names_not_function"):
+        caught((fault,), NAMES_IS, game=True, argv=names_argv)
+    for fault in ("names_fn_absent", "names_offset_split"):
+        caught((fault,), NAMES_AT, game=True, argv=names_argv)
+    exercised.update(("names_none", "names_many"))
+    expect("dry run --names: with no frame named, A1's two checks are not run (the reason given), never passed, nothing "
+           "is asked, and the run fails nothing",
+           lambda: (lambda r: failing(r[0]) == [] and not any(n.startswith("A1") for n in ran(r[0])) and
+                    [n for n, why in r[0].skipped if why.startswith("no frame was named")] == [NAMES_IS, NAMES_AT] and
+                    r[2] == [])(names_run("names_none")))
+
     expect("every scripted fault has a control", lambda: exercised == set(ScriptedDll.FAULTS))
     expect("every check the good runs make has a fault that fails it",
            lambda: (lambda names: names != [] and [n for n in names if not any(n.startswith(p) for p in caught_by)]
                     == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0]) +
                            ran(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
+    expect("every check the --names run makes has a fault that fails it, A1's two among them",
+           lambda: (lambda names: NAMES_IS in names and NAMES_AT in names and
+                    [n for n in names if not any(n.startswith(p) for p in caught_by)] == [])(
+               ran(dry_run(ScriptedDll(), game=True, argv=names_argv)[0])))
 
     def refuses_unknown_fault() -> bool:
         try:
