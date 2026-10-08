@@ -3,7 +3,7 @@ r"""Live check of Live Funcs steps 2 and 3 -- parameter snapshots, native stacks
     py tools/verify/livefuncs_snap_live.py --fixture-check
     py tools/verify/livefuncs_snap_live.py --label <run> [--record-s 8]
     py tools/verify/livefuncs_snap_live.py --label avowed --choose Inventory --plain-s 20 --record-s 30
-    py tools/verify/livefuncs_snap_live.py --stacks [--stack-per-ring 30] [--stack-total 200]
+    py tools/verify/livefuncs_snap_live.py --stacks [--stack-per-ring 30] [--stack-total 200] [--pdb [DIR]]
     py tools/verify/livefuncs_snap_live.py --label avowed --stacks --choose "" --plain-s 20 --record-s 30
     py tools/verify/livefuncs_snap_live.py --self-test
 
@@ -53,6 +53,16 @@ SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --sta
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
       separate invocation (cut 4, which the review's H1 took)
+--stacks --pdb [DIR] (the ledger's S3-R2) then names the stacks' function starts against the game's PDB, once the main
+trace is released: dbghelp in a private session reads the exe whose path the game's process gives, at the base psapi
+reads, and the PDB that matches it in DIR, else beside the exe (the fixture ships it there). Never the game's memory.
+  PDB every distinct fn_rva of a site in the exe with unwind data names a symbol at displacement 0: the DLL's fn is a
+      .pdata function start, a chained fragment followed to its primary function (S3-M3), so a displacement is a
+      fragment's start
+  PDB every known:"process_event" site names ProcessEvent; SnapNest_Outer's native entry (pe_trace_names' code_addr,
+      S4's frame) names SnapNest_Outer
+  recorded, not failed: the first in-scope stack, frame by frame, by name
+Without a PDB that matches the exe, the PDB checks are reported not run, never failed.
 No red run on a DLL without step 3 (H1): it sends no names.stacks, so S0 fails by construction and S1-S6 cannot run.
 --stacks --choose is the design's 8.3 on a real game: the busiest named functions whose class or name holds one of
 the substrings ("" for any), chosen for stacks alone at the DLL's default budgets (a budget given on the command line
@@ -520,9 +530,13 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> int:
-    args = build_parser().parse_args()
+    ap = build_parser()
+    args = ap.parse_args()
     if args.self_test:
         return self_test()
+    bad = pdb_option_problem(args)
+    if bad:
+        ap.error(bad)
 
     check = Checks()
     out: dict = {"label": args.label}
@@ -549,11 +563,14 @@ def main() -> int:
     out["checks"] = [{"name": n, "ok": ok, "got": g} for n, ok, g in check.items]
     if check.records:
         out["recorded"] = [{"name": n, "as_expected": e, "got": g} for n, e, g in check.records]
+    if check.skipped:
+        out["not_run"] = [{"name": n, "why": y} for n, y in check.skipped]
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     suffix = "-fixture" if args.fixture_check else "-stacks" if args.stacks else ""
     path = OUT_DIR / f"{args.label}{suffix}.json"
     path.write_text(json.dumps(out, indent=1, default=str), encoding="utf-8")
     rec = f", {len(check.records)} recorded (not failed)" if check.records else ""
+    rec += f", {len(check.skipped)} not run" if check.skipped else ""
     say(f"\n{len(check.items) - check.failed}/{len(check.items)} checks hold{rec}; written to {path}")
     return 1 if check.failed else 0
 
@@ -1371,6 +1388,11 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     check("S7 the release frees everything (the main trace)",
           after.get("allocated") is False and "snap" not in after and "stack" not in after)
 
+    # ---- --pdb: the stacks are in hand and the DLL holds nothing, so dbghelp's load takes what time it takes.
+    if args.pdb is not None:
+        run_pdb(check, out, (symbols or open_game_pdb)(pid, exe, args.pdb or None), all_slots, in_scope, game_module,
+                code)
+
     # ---- S0, second half: an altered stack key, alone and beside a good one, in stacks-only Starts.
     say("\nS0 -- an altered stack key alone, then a stacks-only Start:")
     bad = stack_item(rows["SnapProbe_PerFrame"])
@@ -1492,35 +1514,237 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
 # [LIVEFUNCS-STEP3] --pdb (the ledger's S3-R2): the stacks' function starts named by the fixture's shipped PDB.
 # ======================================================================================================================
 
+# The DLL takes a site's `fn` from .pdata and follows a chained fragment to its primary function (S3-M3), so a PDB that
+# matches the exe names every such start at displacement 0: a displacement says the start is inside a function the PDB
+# knows, which is what a fragment's own start looks like.
+
 PDB_DISP = "PDB every in-module site with unwind data names a symbol at displacement 0"
 PDB_PE = 'PDB every known:"process_event" site names ProcessEvent'
 PDB_OUTER = "PDB SnapNest_Outer's native entry (S4's frame) names SnapNest_Outer"
 PDB_NOT_RUN = "PDB the stacks' function starts named by the game's PDB"
+SYMOPT_UNDNAME, SYMOPT_FAIL_CRITICAL_ERRORS, SYMOPT_EXACT_SYMBOLS, SYMOPT_NO_PROMPTS = 0x2, 0x200, 0x400, 0x80000
+# A PDB loaded: SymPdb, or SymDia, which a DIA-backed dbghelp may report for the same file. Anything else (SymNone,
+# SymExport) names no function the DLL's starts can be checked against.
+SYM_TYPE_PDB = (3, 7)
+MAX_SYM_NAME = 2000       # dbghelp.h's
+
+
+class SYMBOL_INFOW(ctypes.Structure):
+    """dbghelp.h's SYMBOL_INFOW. Name runs on past the struct, MaxNameLen characters in all."""
+    _fields_ = [("SizeOfStruct", w.ULONG), ("TypeIndex", w.ULONG), ("Reserved", ctypes.c_uint64 * 2),
+                ("Index", w.ULONG), ("Size", w.ULONG), ("ModBase", ctypes.c_uint64), ("Flags", w.ULONG),
+                ("Value", ctypes.c_uint64), ("Address", ctypes.c_uint64), ("Register", w.ULONG), ("Scope", w.ULONG),
+                ("Tag", w.ULONG), ("NameLen", w.ULONG), ("MaxNameLen", w.ULONG), ("Name", ctypes.c_wchar * 1)]
+
+
+class GUID(ctypes.Structure):
+    _fields_ = [("Data1", w.DWORD), ("Data2", w.WORD), ("Data3", w.WORD), ("Data4", ctypes.c_ubyte * 8)]
+
+
+class IMAGEHLP_MODULEW64(ctypes.Structure):
+    """dbghelp.h's IMAGEHLP_MODULEW64, whole: SymType says whether a PDB was loaded, LoadedPdbName which file."""
+    _fields_ = [("SizeOfStruct", w.DWORD), ("BaseOfImage", ctypes.c_uint64), ("ImageSize", w.DWORD),
+                ("TimeDateStamp", w.DWORD), ("CheckSum", w.DWORD), ("NumSyms", w.DWORD), ("SymType", w.DWORD),
+                ("ModuleName", ctypes.c_wchar * 32), ("ImageName", ctypes.c_wchar * 256),
+                ("LoadedImageName", ctypes.c_wchar * 256), ("LoadedPdbName", ctypes.c_wchar * 256),
+                ("CVSig", w.DWORD), ("CVData", ctypes.c_wchar * (260 * 3)), ("PdbSig", w.DWORD),
+                ("PdbSig70", GUID), ("PdbAge", w.DWORD), ("PdbUnmatched", w.BOOL), ("DbgUnmatched", w.BOOL),
+                ("LineNumbers", w.BOOL), ("GlobalSymbols", w.BOOL), ("TypeInfo", w.BOOL), ("SourceIndexed", w.BOOL),
+                ("Publics", w.BOOL), ("MachineType", w.DWORD), ("Reserved", w.DWORD)]
 
 
 def pdb_option_problem(args) -> str | None:
+    """Why --pdb cannot go with the other options, or None. Its checks are written for the fixture run's stacks (the
+    fixture's call paths, SnapNest_Outer's native entry), which a --choose run on a game does not have."""
+    if args.pdb is None:
+        return None
+    if not args.stacks or args.choose is not None or args.fixture_check:
+        return "--pdb names the stacks of the --stacks fixture run: not with --choose or --fixture-check"
     return None
 
 
-def pdb_targets(slots: list[dict], game_module: str) -> dict[int, dict]:
-    return {}
+def image_path(pid: int) -> str | None:
+    """The exe a process runs, as Windows names it: the file dbghelp reads, beside which the fixture ships its PDB."""
+    k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    k32.OpenProcess.restype = w.HANDLE
+    k32.QueryFullProcessImageNameW.argtypes = [w.HANDLE, w.DWORD, w.LPWSTR, ctypes.POINTER(w.DWORD)]
+    k32.CloseHandle.argtypes = [w.HANDLE]
+    h = k32.OpenProcess(0x1000, False, pid)   # PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return None
+    try:
+        buf = ctypes.create_unicode_buffer(32768)
+        n = w.DWORD(len(buf))
+        return buf.value if k32.QueryFullProcessImageNameW(h, 0, buf, ctypes.byref(n)) else None
+    finally:
+        k32.CloseHandle(h)
 
 
-def pdb_misses(answers: dict, rvas, needle: str = "") -> list[str]:
-    return []
+def load_dbghelp():
+    dbg = ctypes.WinDLL("dbghelp", use_last_error=True)
+    dbg.SymSetOptions.argtypes, dbg.SymSetOptions.restype = [w.DWORD], w.DWORD
+    dbg.SymInitializeW.argtypes, dbg.SymInitializeW.restype = [w.HANDLE, w.LPCWSTR, w.BOOL], w.BOOL
+    dbg.SymLoadModuleExW.argtypes = [w.HANDLE, w.HANDLE, w.LPCWSTR, w.LPCWSTR, ctypes.c_uint64, w.DWORD,
+                                     ctypes.c_void_p, w.DWORD]
+    dbg.SymLoadModuleExW.restype = ctypes.c_uint64
+    dbg.SymGetModuleInfoW64.argtypes = [w.HANDLE, ctypes.c_uint64, ctypes.POINTER(IMAGEHLP_MODULEW64)]
+    dbg.SymGetModuleInfoW64.restype = w.BOOL
+    dbg.SymFromAddrW.argtypes = [w.HANDLE, ctypes.c_uint64, ctypes.POINTER(ctypes.c_uint64),
+                                 ctypes.POINTER(SYMBOL_INFOW)]
+    dbg.SymFromAddrW.restype = w.BOOL
+    dbg.SymCleanup.argtypes, dbg.SymCleanup.restype = [w.HANDLE], w.BOOL
+    return dbg
 
 
-def readable_stack(frames: list[dict], answers: dict, game_module: str) -> list[str]:
-    return []
+class DbghelpPdb:
+    """One exe and its PDB in a private dbghelp session. The session's handle is the address of a value this object
+    owns, never a process handle: dbghelp reads the exe and the PDB from disk and never touches the game."""
+    def __init__(self, dbg, token, base: int, size: int, info: IMAGEHLP_MODULEW64) -> None:
+        self._dbg, self._token = dbg, token
+        self.base, self.size = base, size
+        self.pdb = info.LoadedPdbName
+        self.sym_type = info.SymType
+
+    def sym(self, rva: int) -> tuple[str, int] | None:
+        """The symbol holding base + rva and the address's displacement into it, or None when the PDB names none."""
+        buf = (ctypes.c_byte * (ctypes.sizeof(SYMBOL_INFOW) + 2 * MAX_SYM_NAME))()
+        info = SYMBOL_INFOW.from_buffer(buf)
+        info.SizeOfStruct = ctypes.sizeof(SYMBOL_INFOW)   # the struct's own size: the name's room is MaxNameLen
+        info.MaxNameLen = MAX_SYM_NAME
+        disp = ctypes.c_uint64()
+        if not self._dbg.SymFromAddrW(ctypes.addressof(self._token), self.base + rva, ctypes.byref(disp),
+                                      ctypes.byref(info)):
+            return None
+        name = ctypes.wstring_at(ctypes.addressof(info) + SYMBOL_INFOW.Name.offset, min(info.NameLen, MAX_SYM_NAME))
+        return name, disp.value
+
+    def close(self) -> None:
+        if self._token is not None:
+            self._dbg.SymCleanup(ctypes.addressof(self._token))
+            self._token = None
+
+
+def open_image_pdb(path: str, base: int, size: int, search: str):
+    """`path` loaded at `base` in a private dbghelp session with the PDB that matches it, looked for in `search`: a
+    DbghelpPdb, or why there is none, a string that starts "no PDB" when dbghelp found no matching one. Exact symbols
+    and no export fallback, so a PDB of another build, or the exe's exports, never answers for it."""
+    try:
+        dbg = load_dbghelp()
+    except (OSError, AttributeError) as e:
+        return f"dbghelp.dll did not load ({e})"
+    dbg.SymSetOptions(SYMOPT_UNDNAME | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_EXACT_SYMBOLS | SYMOPT_NO_PROMPTS)
+    token = ctypes.c_int()
+    h = ctypes.addressof(token)
+    if not dbg.SymInitializeW(h, search, False):
+        return f"SymInitializeW failed (error {ctypes.get_last_error()})"
+    session = None
+    try:
+        got = dbg.SymLoadModuleExW(h, None, path, None, base, size, None, 0)
+        if not got:
+            return f"no PDB: dbghelp would not load {path} (error {ctypes.get_last_error()})"
+        info = IMAGEHLP_MODULEW64()
+        info.SizeOfStruct = ctypes.sizeof(info)
+        if not dbg.SymGetModuleInfoW64(h, got, ctypes.byref(info)):
+            return f"SymGetModuleInfoW64 failed (error {ctypes.get_last_error()})"
+        if info.SymType not in SYM_TYPE_PDB:
+            return f"no PDB matching {pathlib.Path(path).name} in {search} (dbghelp's SymType {info.SymType})"
+        session = DbghelpPdb(dbg, token, got, size, info)
+        return session
+    finally:
+        if session is None:
+            dbg.SymCleanup(h)
 
 
 def open_game_pdb(pid: int, exe: tuple[int, int] | None, search: str | None):
-    return "not built"
+    """--pdb's session over the running game's exe: its path from the process, its base and size from psapi (`exe`),
+    the PDB looked for in `search`, else beside the exe. A DbghelpPdb, or why there is none."""
+    if not pid or not exe:
+        return "no game process to take the exe from (out/host.pid)"
+    path = image_path(pid)
+    if not path:
+        return f"pid {pid} would not give its exe's path"
+    return open_image_pdb(path, exe[0], exe[1] - exe[0], search or str(pathlib.Path(path).parent))
+
+
+def pdb_targets(slots: list[dict], game_module: str) -> dict[int, dict]:
+    """The function starts the PDB is asked to name, each once, by fn_rva: those of every site in the game's exe (by
+    name, ignoring case) with unwind data. The session loads the exe alone, so another module's sites are not asked."""
+    want = game_module.lower()
+    out: dict[int, dict] = {}
+    for sl in slots:
+        for s in sl["frames"]:
+            if s["unwind"] and s["fn_rva"] is not None and s["module"].lower() == want:
+                out.setdefault(s["fn_rva"], s)
+    return out
+
+
+def pdb_misses(answers: dict, rvas, needle: str = "") -> list[str]:
+    """The starts in `rvas` the PDB does not name at displacement 0 with a name holding `needle`, as text."""
+    bad: list[str] = []
+    for rva in rvas:
+        a = answers.get(rva)
+        if a is None:
+            bad.append(f"+{rva:X}: no symbol")
+        elif a[1] != 0 or needle not in a[0]:
+            bad.append(f"+{rva:X}: {a[0]} +0x{a[1]:X}")
+    return bad
+
+
+def readable_stack(frames: list[dict], answers: dict, game_module: str) -> list[str]:
+    """A stack as a reader names it, one line a frame: the PDB's function and the return address's offset into it for
+    a frame of the exe, else CE's `"module"+RVA`, else the bare address; the hook and a known frame marked."""
+    want = game_module.lower()
+    lines: list[str] = []
+    for i, f in enumerate(frames):
+        a = answers.get(f["fn_rva"]) if f["unwind"] and f["module"].lower() == want else None
+        if a and f["fn"] is not None and f["addr"] is not None:
+            text = f"{a[0]} +0x{f['addr'] - f['fn'] + a[1]:X}"
+        elif f["module"] and f["rva"] is not None:
+            text = ce_text(f)
+        else:
+            text = fmt(f["addr"], "#x")
+        lines.append(f"#{i} {text}" + (" [the dumper's hook]" if f["own"] else "") +
+                     (f" [{f['known']}]" if f["known"] else ""))
+    return lines
 
 
 def run_pdb(check: Checks, out: dict, opened, slots: list[dict], in_scope: list[dict], game_module: str,
             code: int | None) -> None:
-    pass
+    """--pdb's checks over the stacks already read. `opened` is what open_game_pdb returned: a session, closed here, or
+    why there is none, reported not run. `code` is SnapNest_Outer's native entry from pe_trace_names (S4's)."""
+    say("\nPDB -- the stacks' function starts named by the game's PDB:")
+    if isinstance(opened, str):
+        check.not_run(PDB_NOT_RUN, opened)
+        out["pdb"] = {"run": False, "why": opened}
+        return
+    try:
+        targets = pdb_targets(slots, game_module)
+        answers = {rva: opened.sym(rva) for rva in sorted(targets)}
+        code_rva = code - opened.base if code is not None and opened.base <= code < opened.base + opened.size else None
+        if code_rva is not None and code_rva not in answers:
+            answers[code_rva] = opened.sym(code_rva)
+    finally:
+        opened.close()
+    say(f"     {opened.pdb}: {len(targets)} function starts asked")
+    miss = pdb_misses(answers, sorted(targets))
+    check(PDB_DISP, targets != {} and not miss,
+          f"{len(targets) - len(miss)} of {len(targets)} named at their start; first wrong {miss[:3]}")
+    known = sorted(rva for rva, s in targets.items() if s["known"] == KNOWN_PE)
+    pe_miss = pdb_misses(answers, known, "ProcessEvent")
+    check(PDB_PE, known != [] and not pe_miss,
+          f"{[answers[r][0] if answers.get(r) else None for r in known][:3]}; wrong {pe_miss[:2]}")
+    outer = [code_rva] if code_rva is not None else []
+    s4 = sum(1 for sl in in_scope if code is not None and any(f["fn"] == code for f in sl["frames"]))
+    check(PDB_OUTER, outer != [] and not pdb_misses(answers, outer, "SnapNest_Outer"),
+          f"{answers.get(code_rva)} at {fmt(code, '#x')}; S4's frame on {s4} of {len(in_scope)} in-scope stacks"
+          if outer else f"code_addr {fmt(code, '#x')} is not in the exe: nothing to name")
+    first = readable_stack(in_scope[0]["frames"], answers, game_module) if in_scope else []
+    for line in first:
+        say(f"     {line}")
+    check.record("PDB the first in-scope stack, named", " | ".join(first) if first else "no in-scope stack",
+                 as_expected=first != [])
+    out["pdb"] = {"run": True, "pdb": opened.pdb, "asked": len(targets),
+                  "names": {f"{rva:#x}": answers.get(rva) for rva in sorted(answers)}, "first_in_scope": first}
 
 
 DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at 30/s is then 30..90, both ends above zero
@@ -2154,7 +2378,9 @@ def self_test() -> int:
            lambda: readable_stack(sites, named, game) == [
                "#0 ADumperTest58Actor::SnapProbe_Dispatch +0x89", "#1 UObject::ProcessEvent +0x523 [process_event]",
                "#2 \"dxgi.dll\"+45678 [the dumper's hook]", "#3 0x2a0000123"] and
-           readable_stack([s0], {4719680: ("F", 0x40)}, game) == ["#0 F +0xC9"])
+           readable_stack([s0], {4719680: ("F", 0x40)}, game) == ["#0 F +0xC9"] and
+           # another module's frame never takes the exe's name, though its fn_rva is one the exe's PDB names
+           readable_stack([dict(s0, module="other.dll")], named, game) == ['#0 "other.dll"+4804C9'])
 
     def pdb_opt(*argv: str) -> str | None:
         return pdb_option_problem(build_parser().parse_args(list(argv)))
