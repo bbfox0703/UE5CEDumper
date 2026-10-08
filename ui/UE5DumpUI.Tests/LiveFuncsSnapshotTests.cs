@@ -989,6 +989,38 @@ public class LiveFuncsSnapshotTests
         Assert.Empty(asked);
     }
 
+    /// <summary>Review S3U6-PERFRAME-BY-ROW: a stack is chosen by name, so a function that reloaded at a new address and
+    /// runs every frame there is asked about from either of its rows: the plain row's box chooses the per-frame one too.</summary>
+    [Fact]
+    public async Task A_plain_row_of_a_function_per_frame_at_another_address_asks_too()
+    {
+        var (vm, dump) = MakeVm();
+        var key = new NameKey(1, 0, 9, 0);
+        dump.NextGet = ResultOf(10_000, Row("A", "Tick", "0x1", key),
+                                Row("A", "Tick", "0x2", key, count: 600, perFrame: true));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        var asked = new List<string>();
+        bool answer = false;
+        vm.ConfirmStackPerFrame = q => { asked.Add(q); return Task.FromResult(answer); };
+        var plain = vm.Results.Single(r => r.FuncAddr == "0x1");
+        var perFrame = vm.Results.Single(r => r.FuncAddr == "0x2");
+        Assert.False(plain.IsPerFrame);
+
+        await vm.ToggleStackCommand.ExecuteAsync(plain);
+        Assert.Single(asked);
+        Assert.Empty(vm.StackFunctions);
+        Assert.False(plain.IsStackChosen);
+        Assert.False(perFrame.IsStackChosen);
+
+        answer = true;
+        await vm.ToggleStackCommand.ExecuteAsync(plain);
+        Assert.Equal(2, asked.Count);
+        Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
+        Assert.True(plain.IsStackChosen);
+        Assert.True(perFrame.IsStackChosen);
+    }
+
     /// <summary>A choice made while its function ran plain is followed by name onto the next fetch's rows, which can mark
     /// it per-frame: dropping it there asks nothing, and no kept yes hides the question it would be.</summary>
     [Fact]
