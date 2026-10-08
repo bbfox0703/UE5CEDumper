@@ -10306,18 +10306,51 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
 }
 
 
-// [LIVEFUNCS-STEP3] S3-A1 (stubbed).
-void SortCodeEntries(std::vector<CodeEntry>& entries) { (void)entries; }
+// [LIVEFUNCS-STEP3] S3-A1.
+void SortCodeEntries(std::vector<CodeEntry>& entries) {
+    std::sort(entries.begin(), entries.end(), [](const CodeEntry& a, const CodeEntry& b) {
+        return a.code != b.code ? a.code < b.code : a.ufunc < b.ufunc;
+    });
+    entries.erase(std::unique(entries.begin(), entries.end(),
+                              [](const CodeEntry& a, const CodeEntry& b) { return a.code == b.code && a.ufunc == b.ufunc; }),
+                  entries.end());
+}
 
 size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc) {
-    (void)sorted; (void)code;
     ufunc = 0;
-    return 0;
+    const auto lo = std::lower_bound(sorted.begin(), sorted.end(), code,
+                                     [](const CodeEntry& e, uintptr_t c) { return e.code < c; });
+    auto hi = lo;
+    while (hi != sorted.end() && hi->code == code) ++hi;
+    if (lo == hi) return 0;
+    ufunc = lo->ufunc;
+    return static_cast<size_t>(hi - lo);
 }
 
 bool CollectCodeEntries(std::vector<CodeEntry>& out) {
     out.clear();
-    return true;
+    // A class pointer's verdict, read once: a pool of hundreds of thousands holds a few thousand classes.
+    std::unordered_map<uintptr_t, bool> isFunctionClass;
+    const bool whole = ForEach([&](int32_t, uintptr_t obj) {
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        auto it = isFunctionClass.find(cls);
+        if (it == isFunctionClass.end()) {
+            uint32_t nameIdx = 0;
+            bool fn = false;
+            if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, nameIdx)) {
+                const std::string n = Serie::GetString(nameIdx);
+                fn = n == "Function" || n == "DelegateFunction" || n == "SparseDelegateFunction";
+            }
+            it = isFunctionClass.emplace(cls, fn).first;
+        }
+        if (!it->second) return true;
+        const uintptr_t code = GetFunctionCodeAddr(obj);
+        if (code) out.push_back(CodeEntry{ code, obj });
+        return true;
+    });
+    SortCodeEntries(out);
+    return whole;
 }
 
 } // namespace Aura

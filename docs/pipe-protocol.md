@@ -788,10 +788,14 @@ The design: [live-funcs-step3-design.md](live-funcs-step3-design.md); the build:
 // Reply: the trace object, ring, kind "stack", rings (always: [{ ring, cap, depth, written, first_valid,
 // skipped_budget, dropped_budget, spent_ticks }]), count, next, orphans,
 //   items: [{ index, entry_seq, flags, ticks (what the capture cost), len (bytes of frames), frames: [site index] }]
-//   sites: [{ addr, module ("" outside any), module_base, rva, unwind, fn, fn_rva, own, known }] -- once per distinct
+//   sites: [{ addr, module ("" outside any), module_base, rva, unwind, fn, fn_rva, own, known,
+//            ufunc, class, func, shared }] -- once per distinct
 //          address of the page. module_base / rva only inside a module; fn / fn_rva only with unwind data (fn: the
 //          start of the function holding ret-1, from .pdata); own only when true (this DLL, by base address);
 //          known "process_event" when fn is the hooked ProcessEvent. The UI owns the text for both.
+//          ufunc / class / func: the UFunction whose native entry (UFunction::Func) fn is, from one pass over the
+//          object array per stopped recording (S3-A1); shared: how many functions enter there, when more than one
+//          (a script function's Func is the interpreter, so every Blueprint function shares it).
 //   stack slot flags: 1 Partial (the game's return address was not among the walked frames: the caller only),
 //          2 Fault (the walk faulted: nothing), 4 More (deeper than the depth), 8 BadSp (the hook's return slot is not
 //          on this thread's stack: nothing read), 16 LowStack (under 32 KB of stack left: no walk), 0x8000 no capturer

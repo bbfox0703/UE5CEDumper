@@ -1741,6 +1741,13 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     return fj;
 }
 
+// [LIVEFUNCS-STEP3] S3-A1: the native-entry index of the stopped recording a stack page is read from -- one pass over
+// the object array, kept for that recording's other pages. Only a whole pass is kept: a cancel leaves a partial one,
+// which serves the page that asked and is built again for the next.
+static std::mutex g_codeIndexMu;
+static uint64_t g_codeIndexGen = 0;
+static std::vector<Aura::CodeEntry> g_codeIndex;
+
 // [LIVEFUNCS-TIMELINE-2026-10-04] The trace's state as the UI reads it: what it needs to page the ring
 // ([first_valid, written)), to turn ticks into time (qpc_freq), and to tell an unreadable ring from an empty one.
 static json TraceInfoToJson(const Linie::TraceInfo& i) {
@@ -5329,6 +5336,13 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     return Renge::MakeResponse(id, data).dump();
                 }
                 const uintptr_t processEvent = Stark::HookedAddress();
+                std::lock_guard<std::mutex> indexLock(g_codeIndexMu);   // pipe threads only; the hook never takes it
+                if (g_codeIndexGen != gen || gen == 0) {
+                    std::vector<Aura::CodeEntry> fresh;
+                    const bool whole = Aura::CollectCodeEntries(fresh);
+                    g_codeIndex.swap(fresh);
+                    g_codeIndexGen = whole ? gen : 0;
+                }
                 json items = json::array(), sites = json::array();
                 std::unordered_map<uint64_t, size_t> siteOf;
                 size_t bytes = 0;
@@ -5356,6 +5370,16 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                             if (cs.unwind) {
                                 sj["fn"] = Renge::AddrToStr(cs.fnBegin);
                                 if (inModule) sj["fn_rva"] = cs.fnBegin - cs.moduleBase;
+                                // [LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry this is, ProcessEvent or
+                                // not; `shared` when several enter there (the interpreter, identical code folded).
+                                uintptr_t uf = 0;
+                                const size_t n = Aura::LookupCodeEntry(g_codeIndex, cs.fnBegin, uf);
+                                if (n != 0) {
+                                    sj["ufunc"] = Renge::AddrToStr(uf);
+                                    sj["func"]  = Ubel::GetName(uf);
+                                    sj["class"] = Ubel::GetName(Ubel::GetOuter(uf));
+                                    if (n > 1) sj["shared"] = n;
+                                }
                             }
                             if (cs.own) sj["own"] = true;
                             if (cs.unwind && processEvent != 0 && cs.fnBegin == processEvent) sj["known"] = "process_event";
