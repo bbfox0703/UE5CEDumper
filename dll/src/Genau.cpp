@@ -3160,6 +3160,9 @@ struct VersionScanResult {
     bool     preUE4  = false;
 };
 
+// Which file a resource reading came from: the game exe, or its CrashReportClient.
+enum class VersionSource { None, Exe, Crc };
+
 // What the two resource readings decide on their own, before any memory scan. [VER-410-GATE]
 //   tier 1 = take `version` and stop; tier 3 = a reading below the floor that nothing in the resources
 //   corroborates, so the memory scan gets its say; tier 0 = no reading at all.
@@ -3169,6 +3172,9 @@ struct ResourceVersionVerdict {
     int      tier          = 0;
     bool     byBuildString = false;  // corroborated by the exe's own engine build string
     bool     byCrc         = false;  // corroborated by a CrashReportClient agreeing with the exe
+    // Whose reading `version` is: the game exe's own (a CrashReportClient may agree with it), or a
+    // CrashReportClient's standing against an exe that read nothing usable or another version.
+    VersionSource source   = VersionSource::None;
 };
 
 static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFromFixedField,
@@ -3200,6 +3206,7 @@ struct ResourcePhase {
     VersionScanResult      result;
     ResourceVersionVerdict verdict;
     ResourceReading        exeReading;
+    uint32_t               exeVersion = 0;   // the game exe's own reading, whatever the verdict took
     bool                   done = false;
 };
 
@@ -3220,6 +3227,7 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
                                      : 0;
     ResourceReading& exeReading = p.exeReading;
     const uint32_t ver = DetectVersionFromPEResource(exePath, &exeReading);
+    p.exeVersion = ver;
 
     if (crcVer && ver && crcVer != ver) {
         // CrashReportClient wins: it is shipped BY the engine, while the game exe's VERSIONINFO is

@@ -279,6 +279,23 @@ int main() {
         check("VER-410-GATE: a supported reading needs no second signal", v.version == 504 && v.tier == 1);
         v = DecideResourceVersion(0, false, "", 0);
         check("VER-410-GATE: no reading at all is tier 0", v.version == 0 && v.tier == 0);
+
+        // [VER-410-GATE] review: the tier-3 log lines said "PE VERSIONINFO says UE %u" of a CrashReportClient's reading
+        // too. The verdict now says whose reading it is.
+        using Genau::VersionSource;
+        check("VER-410-GATE source ⭐: a CrashReportClient's 410 beside an exe reading nothing is the CrashReportClient's",
+              DecideResourceVersion(0, false, "", 410).source == VersionSource::Crc);
+        check("VER-410-GATE source ⭐: ...and beside an exe reading 427 it is still the CrashReportClient's",
+              DecideResourceVersion(427, true, "++UE4+Release-4.27-CL-0", 410).source == VersionSource::Crc);
+        check("VER-410-GATE source: a CrashReportClient overriding the exe's 410 with 409 is the CrashReportClient's",
+              DecideResourceVersion(410, true, isDefense, 409).source == VersionSource::Crc);
+        check("VER-410-GATE source ⭐: the exe's own 410 is the exe's",
+              DecideResourceVersion(410, true, "4.10.3", 0).source == VersionSource::Exe);
+        check("VER-410-GATE source: an agreeing CrashReportClient leaves it the exe's",
+              DecideResourceVersion(410, true, "", 410).source == VersionSource::Exe);
+        check("VER-410-GATE source: a supported exe reading is the exe's",
+              DecideResourceVersion(504, true, "", 0).source == VersionSource::Exe);
+        check("VER-410-GATE source: no reading has no source", DecideResourceVersion(0, false, "", 0).source == VersionSource::None);
     }
 
     // [VER-410-GATE] review: the same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed
@@ -320,6 +337,11 @@ int main() {
         auto gc = phase(gameOnly, b25c.c_str());
         check("VER-410-GATE glue: a CrashReportClient's 410 beside an exe carrying only a game version stays tier 3",
               !gc.done && gc.result.version == 410 && gc.result.tier == 3, gb);
+        check("VER-410-GATE glue: ...and the verdict names the CrashReportClient as its source, the exe as reading nothing",
+              gc.verdict.source == Genau::VersionSource::Crc && gc.exeVersion == 0, gb);
+        phase(b25d, L"");
+        check("VER-410-GATE glue: b25d's tier-3 reading is the exe's own", d.verdict.source == Genau::VersionSource::Exe
+              && d.exeVersion == 410, gb);
         auto none = phase(dir + L"verres_absent.dll", L"");
         check("VER-410-GATE glue: a file that is not there reads nothing", !none.done && none.result.version == 0, gb);
     }
