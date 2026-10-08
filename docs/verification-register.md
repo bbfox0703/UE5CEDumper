@@ -223,6 +223,30 @@ reached:
    Acceptance: a full 32 MB snapshot buffer loaded in the Call Trace tab, and the load's memory log line.
 4. **UE4's property model** is not checked live, by decision (2026-10-07); if ever needed, UE 4.27.
 
+### ⬜ Live Funcs step 3 — what its live checks did not reach `[LIVEFUNCS-STEP3]`
+
+Built in build 3641 (2026-10-08) and proven live on DumperTest58 Shipping: the stacks rig 31/31 (7 recorded), the
+step-2 rig 33/33 and the trace rig 18/18 on the same DLL, and the UI walkthrough on the AOT build (the Stack? column,
+the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM through the AOBMaker plugin) --
+[live-funcs-step3-items.md](live-funcs-step3-items.md), "8.0 Results". Not reached:
+
+1. **The stack cost on a real game** (8.3). A capture cost 20-28 µs on the fixture's ~162 MB image, ten times the
+   test exe; a bigger game may pay more. Acceptance: Avowed (dxgi proxy, refreshed first),
+   `livefuncs_snap_live.py --stacks --choose "" --plain-s 20 --record-s 30` -- the 60 busiest functions at Linie's
+   default budget -- recording mean and max µs a capture, captures a second, calls/s and fps with and without stacks.
+   Then D3's re-weigh with that mean, which the maintainer decides (the fixture's mean gives a total of 50 a second).
+2. **A once-a-second hitch (the review's M3).** The budget keeps the first calls of each second, so up to the total's
+   worth of captures can land in one frame. Acceptance: on Avowed with a busy function chosen, a frame-time trace
+   (the fps overlay's graph, or PresentMon) shows no spike once a second; if it does, M3's 100 ms window.
+3. **The rig's own mutations against a real DLL.** S3-F1's stackOk left out of the refusal, S3-F2's ignored `kind`
+   and the trampoline compared for `known` are scripted against the rig's dry run (`--self-test`), each failing its
+   named check; a DLL built with each mutation and the rig run live is owed.
+4. **A worst-case capture of 8.1 ms**, seen once (the first run, the machine loaded by three `dotnet test` runs) and
+   not again in ~3,500 captures (max 0.5 ms; a fresh game's first capture 112 µs). Read as preemption mid-walk.
+   Acceptance: `max_ticks` on Avowed (item 1) under 1 ms; over it, S3-P1's `.pdata` prewarm.
+5. **T9.1 / T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The
+   budget is the guarantee meanwhile.
+
 ### ⛔ PRECONDITION FOR EVERY GAME ROW — as of 2026-08-19, ALL NINE deployed proxies are STALE
 
 Measured with `tools/verify/proxy_refresh.py report` (build 3263, `dist/proxy` = dinput8 2,875,904 /
@@ -274,7 +298,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

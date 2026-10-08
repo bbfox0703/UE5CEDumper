@@ -36,8 +36,8 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-U3 | UI | Live Funcs view: Stack? column, the visibility loop, the snapshot row shown for either choice, the count, strings | S3-U2 | ✅ red 39f25f04, green 1f6de090; 12 / 12 mutants killed |
 | S3-U4 | UI | Call Trace: the stack load before the release, CallTraceStacks joined by entrySeq, no params load when `snap.rings == 0`, the Params(i) and export NotChosen fixes, the `(s)` marker, the Summary sentence | S3-U1 | ✅ 88a0f5d1 (a refactor), red 2d168319, green 0b1ea384; with M1 and L6; 15 / 15 mutants killed |
 | S3-U5 | UI | Call Trace: the Call stack tab (view A rows and notes), Copy CE address and Open in CE disassembler (view D), ASM refused for an earlier connection | S3-U4 | ✅ red d2e66e5d, green 626320d2 (16 / 16 mutants killed, with M2 and L8); the review's two findings fixed (a8ee346e / 5f71198c) |
-| S3-X1 | docs | Plan "Step 3 built" (deviations, measured µs and max per capture, the defaults re-weighed by D3's rule), the dev-log entry, verification-register rows (Avowed stack cost; T9.1 / T9.2 owed per D2; M3), todo rows for §6's deferred items and for folding Genau's module helpers into Macht; comment pass (`comment_impact.py --staged`) | S3-F2, S3-U5 | open |
-| S3-X2 | docs | `-Mode Publish` (AOT, size and SHA, the build bumped), proxy refresh, S3-R1 green on DumperTest58 Shipping, the step-2 rigs re-run, the UI walkthrough; µs per capture, max, calls/s and fps with and without stacks, the machine recorded | S3-X1, S3-R1 | open |
+| S3-X1 | docs | Plan "Step 3 built" (deviations, measured µs and max per capture, the defaults re-weighed by D3's rule), the dev-log entry, verification-register rows (Avowed stack cost; T9.1 / T9.2 owed per D2; M3), todo rows for §6's deferred items and for folding Genau's module helpers into Macht; comment pass (`comment_impact.py --staged`) | S3-F2, S3-U5 | ✅ 2026-10-08 (the re-weigh is put to the maintainer, not applied) |
+| S3-X2 | docs | `-Mode Publish` (AOT, size and SHA, the build bumped), proxy refresh, S3-R1 green on DumperTest58 Shipping, the step-2 rigs re-run, the UI walkthrough; µs per capture, max, calls/s and fps with and without stacks, the machine recorded | S3-X1, S3-R1 | ✅ build 3641 (AOT, 60,989,952 bytes); the rigs and the walkthrough 8.2 steps 1-6 on DumperTest58 Shipping (injected, no proxy); Avowed (8.3) is a register row |
 | S3-U8 | UI | The maintainer's T20 (2026-10-08): a Standard / Low stack budget (Low = `kStackLowPerRingPerSec` 50 and `kStackLowTotalPerSec` 100, pinned from Linie.h) sent in the Start's `stacks`, and the warning wherever stacks are chosen (a software walk, not a debugger capture; frame time; an unforeseen case could stall or crash the game, stopping mid-capture included) | S3-U2, S3-U3 | ✅ in a worktree from U3: red a90039e4, green 13776eb4 (8 / 8 mutants killed); the warning's cost corrected to the live measurement in a8da0830 |
 | S3-U6 | UI | (next) The per-frame ask-once for stacks (T9.2): `ConfirmStackPerFrame`, `_stackPerFrameConfirmed`, an async ToggleStack that re-raises `IsStackChosen` when refused | S3-U2 | next |
 | S3-U7 | UI | (next) The stack estimate line (T9.1): pure `EstimateStacks(rates, perFunc, total, usPerCapture)` → ms/s; orange above 2.0; µs measured from the last Stop, else 10 "assumed" | S3-U2, S3-X2 | next |
@@ -348,7 +348,21 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
   preempted mid-walk (max_ticks is wall time), not cold `.pdata`; S3-P1 (prewarm) stays deferred, and the register
   row for Avowed's cost keeps watching max.
 - **Owed:** the rig mutations against a real DLL (scripted offline instead: no_stack_ok, ignore_kind, no_known, each
-  failing its named check in `--self-test`); the AOT UI walkthrough (8.2); Avowed (8.3).
+  failing its named check in `--self-test`); Avowed (8.3). Both are register rows.
+- **The UI walkthrough (8.2), on the AOT build 3641** (dist/UE5DumpUI.exe 60,989,952 bytes, SHA-256 6fdc95f1…; the
+  dist DLL injected): (1) the Stack? column ("S") beside T and P, the warning in orange and the Standard / Low radios
+  once a stack is chosen; (2) Low, Start, Stop: "Stacks: 621 taken; 1,332 calls over the budget had none … About
+  21.0 µs a capture, at most 153.4 µs", 621 being Low's 50 a second; (3) Call Trace's summary carries the stacks
+  sentence, rows carry `(s)`; (4) an in-scope SnapProbe_Call's Call stack tab: 16 frames, "native entry of
+  DumperTest58Actor::SnapNest_Outer" (frame 3), "UObject::ProcessEvent +0x33B (an enclosing call)" (frame 5), "the
+  dumper's ProcessEvent hook" (frame 6, `"UE5Dumper.dll"+…` under Module+Offset), the notes More and the cost; the
+  Address setting changes the address column only; (5) Copy gave `"DumperTest58-Win64-Shipping.exe"+2597E1F` under
+  Hex and `…+480727D` for frame 2 under Module+Offset (both add back to their absolute address); ASM, with CE attached
+  and the bridge connected, made the plugin log `NavigateDisassembler: navigating to 0x7FF6189D7E1F` (success, the
+  game's pid) -- CE's Memory Viewer opened off the visible screen, so the log is the evidence; (6) a lone stack-only
+  call's Parameters tab says "This function was not chosen for parameters".
+- **Seen in passing (not step 3):** with the Call Trace detail pane dragged wide, the list's Thread and Object columns
+  overlap (their remembered widths are not clipped to the narrower list). A todo row.
 
 ### 8.1 DumperTest58 Shipping (UE 5.8): rig additions, no repackage
 

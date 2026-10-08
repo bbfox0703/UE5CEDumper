@@ -2,8 +2,8 @@
 
 **Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; STEP 2 (parameter snapshots, following functions by
 name) BUILT, builds 3639-3640, 2026-10-08 -- checked live on DumperTest58 and Avowed, see "Step 2 built" at the end
-(the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); STEP 3 (native stack) DESIGNED 2026-10-08,
-not built -- see "Step 3 design" at the end ([live-funcs-step3-design.md](live-funcs-step3-design.md), the ledger
+(the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); STEP 3 (native stack) BUILT in build 3641 (2026-10-08),
+proven live on DumperTest58 -- see "Step 3 design" and "Step 3 built" at the end ([live-funcs-step3-design.md](live-funcs-step3-design.md), the ledger
 [live-funcs-step3-items.md](live-funcs-step3-items.md)).** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
 built" at the end. **Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8
 — see "Decisions" — after a design review whose findings are TR1–TR7 below.
@@ -832,4 +832,23 @@ In short:
 - **Decisions:** T15-T19 confirmed by the maintainer 2026-10-08 as recommended; T20 (a Low stack budget and the UI's warning) added the same day.
 - **The critic's HIGH:** the build does not fit one hour; the ledger's order and the mutations to keep are revised in
   its review.
+
+## Step 3 built (build 3641, 2026-10-08)
+
+**Status: built; proven live on DumperTest58 Shipping (the stacks rig 31/31 with 7 recorded, the step-2 and step-1
+rigs unchanged, the AOT walkthrough).** The ledger is [live-funcs-step3-items.md](live-funcs-step3-items.md), with
+the per-item mutations, the builders' deviations and the live results ("8.0 Results").
+
+- **Deviations from the design:**
+  - FollowChain (the review's M4) was built before the live check, as S3-M3, so S3's `known` half is a check.
+  - T20 (the maintainer): a Standard / Low budget and the warning in the UI (S3-U8).
+  - The UI's deviations are listed at the ledger's end ("The UI items as built").
+- **The cost (S6), the number T17 waited for:** about 20-28 µs a capture in the fixture's ~162 MB image on a Ryzen 9
+  9955HX3D (median 20-22 µs, the rig's mean 28, max 179 µs), against 1.4-2.6 µs in the test exe. Depth barely matters.
+  D3's rule gives a total of **50 a second**; the defaults stay at T17's 100 / 200 and T20's Low 50 / 100 until the
+  maintainer decides (put to them 2026-10-08), and Avowed's measurement is a register row.
+- **Not reached live:** the register's "Live Funcs step 3" batch (Avowed's cost, the once-a-second hitch, the rig's
+  real-DLL mutations, the one 8.1 ms capture, T9.1 / T9.2).
+- **Next:** S3-U6 (the per-frame ask-once), S3-U7 (the estimate line), S3-A1 (the native-entry index), S3-R2 (the PDB
+  check); deferred: view B, stack export, `.pdata` prewarm, own-frame calibration.
 

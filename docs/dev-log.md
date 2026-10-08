@@ -27,6 +27,31 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (build 3641) — Live Funcs takes a function's native call stack `[LIVEFUNCS-STEP3]`
+
+- **Native call stacks (experimental, with Trace).** A "Stack?" column (header "S") chooses functions. Each traced call
+  of a chosen function keeps the native return addresses above it, the game's caller first, 16 frames deep. Any
+  function can be chosen, with or without parameters, and a function can be chosen for both.
+  - A per-second budget caps how many stacks are taken: **Standard** (100 a second per function, 200 in all) or
+    **Low** (half of that). The first calls of each second are kept.
+  - **A warning shows while stacks are chosen.** A stack is read in software inside the hooked call, on the game's own
+    thread, not by a debugger as Cheat Engine does. A capture measured 20-28 µs in a 160 MB game on a fast PC, and
+    that time is added to the game's frame. The walk is guarded (the stack's bounds and reserve, faults), but an
+    unforeseen case could still stall or crash the game: save first, and choose few functions.
+  - Stop says how many stacks were kept, how many calls the budget left without one, and what a capture cost.
+- **Call Trace has a "Call stack" tab.** Each frame shows its address (following the Address setting) and where it
+  is: "+0x… into the function at "Game.exe"+RVA", "native entry of Class::Func" for a traced function, "UObject::
+  ProcessEvent", or "the dumper's ProcessEvent hook". Notes say when the stack was cut, recorded alone, over the
+  budget, or untrustworthy below a frame without unwind data.
+  - **Copy** puts the frame in Cheat Engine's own form, `"Game.exe"+RVA`, whatever the Address setting, so it
+    survives a relaunch. **ASM** moves Cheat Engine's disassembler there (with the AOBMaker plugin).
+  - Rows with a stack carry `(s)`, and the summary counts them.
+- A call chosen only for its stack no longer reads "overwritten" in the Parameters tab: it says it was not chosen.
+- Checked live on DumperTest58 (UE 5.8 Shipping): every stack taken inside a traced call shows ProcessEvent and the
+  hook above it, and none taken alone does; the budget kept 30 a second when asked for 30.
+
+-----
+
 ## 2026-10-08 (builds 3639-3640) — Live Funcs follows functions by name and copies their parameters `[LIVEFUNCS-STEP2]`
 
 - **Ticks follow a function by name, not by address.** A function a closed menu unloaded can be ticked from its

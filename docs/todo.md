@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **11 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **12 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -277,11 +277,16 @@ Open work only. **Read this when deciding what to do next.**
   time the trace was read, and all their copies decode; a second run proved a reload as a second arm (34 names
   armed twice, every arm decoding with its own layout) and the budget on a real game. ⬜ Open, in the verification
   register (`[LIVEFUNCS-STEP2]`): the UI's memory while it loads snapshots, the default budgets on a busier game
-  (the cost measured on Avowed: -0.4% calls/s, fps unchanged). ⬜ **Step 3 (native stack snapshots) DESIGNED
-  2026-10-08, not built** -- [live-funcs-step3-design.md](live-funcs-step3-design.md) and its ledger
-  [live-funcs-step3-items.md](live-funcs-step3-items.md); T15-T19 are decisions built as proposed and to be confirmed
-  by the maintainer. S3-M1's capture (about 1.4 µs per 16-frame capture) and S3-M2's DescribeCode are built. Next: S3-L1 + S3-L2 as one
-  cycle (the review's H1).
+  (the cost measured on Avowed: -0.4% calls/s, fps unchanged). ✅ **Step 3 (native stack snapshots) BUILT in build 3641
+  (2026-10-08), proven live on DumperTest58** -- [live-funcs-step3-design.md](live-funcs-step3-design.md) and its
+  ledger [live-funcs-step3-items.md](live-funcs-step3-items.md); T15-T19 confirmed, T20 (Low budget, warning) added.
+  ⬜ **Open:** the budget re-weigh (a capture measured 20-28 µs, so D3's rule gives 50 a second; the maintainer
+  decides), the register's "Live Funcs step 3" batch (Avowed's cost first), and the ledger's next items S3-U6 / U7 /
+  A1 / R2 (deferred: B1 / E1 / P1 / O1).
+  ⬜ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08): with the Call Trace detail pane dragged
+  wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
+  ⬜ `[MODULE-HELPERS-FOLD]` (LOW, step-3 design 2.5): Genau's file-static ModuleOfAddress / ModuleNameOf and Macht's
+  DescribeCode find a module the same way; fold Genau's into Macht.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
