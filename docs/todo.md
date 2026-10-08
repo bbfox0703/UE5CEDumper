@@ -285,6 +285,9 @@ Open work only. **Read this when deciding what to do next.**
   A1 / R2 (deferred: B1 / E1 / P1 / O1).
   ⬜ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08): with the Call Trace detail pane dragged
   wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
+  ⬜ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs): the left Object list collapses to a
+  strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
+  off by default so an older file opens the tree); tracked, applied and saved by MainWindowViewModel like every option.
   ⬜ `[MODULE-HELPERS-FOLD]` (LOW, step-3 design 2.5): Genau's file-static ModuleOfAddress / ModuleNameOf and Macht's
   DescribeCode find a module the same way; fold Genau's into Macht.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
