@@ -506,3 +506,17 @@ All on DumperTest58 Shipping with the AOT build 3643 (`dist\UE5DumpUI.exe` 61,02
   after Time), nothing drawn over anything.
 - **Found:** the Call stack tab's Where column keeps a fixed width when the pane is widened, so a long name stays cut
   beside empty space (`[CT-STACK-WHERE-WIDTH]`, todo.md).
+
+### A UE4 game: DQ XI S (UE 4.18), build 3643, 2026-10-08
+
+The register's item 6, closed. The numbers, the cross-checks and the limits are in that item.
+- **Cost:** 2.41 µs a capture at 25 / 50 a second, 1.99 µs at Avowed's 100 / 200; the maximum is under 0.1 ms.
+- **S3-A1:** 454 frames named on depth-62 stacks, with two entries: the nativized `BP_TimeChangePost_C` and
+  `BP_SkyBase_C` ReceiveTick thunks. Each name was checked against the UFunction (the `fn` at the fork's
+  `UFunction::Func` +0xC0), the exe's .pdata, the disassembly, and the frame's place, one below ProcessEvent.
+- **The UI on UE4:** the per-frame question, the estimate measured (6.4 µs), and the Call stack tab naming the
+  native entry.
+- **Found, both in todo.md:**
+  - the index leaves every script function out, so the interpreter never shows as `shared: N` as the design's 4.3
+    and pipe-protocol.md say it does (`[A1-SCRIPT-FUNCS]`);
+  - the rig's `--choose` path checks no name (`[SNAPRIG-NAMES]`).

@@ -259,7 +259,43 @@ the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM thr
    "8.4 Results": the question, Cancel, the ask after a reconnect; the line assumed, then measured). *Was:* **T9.1 /
    T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The budget is
    the guarantee meanwhile.
-6. **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
+6. ✅ **CLOSED 2026-10-08 (build 3643) `[LIVEFUNCS-STEP3-DQ11S]`** (DQ XI S, UE 4.18, `UE5Dumper.dll` injected, a
+   save loaded: the hero in Heliodor's church, 350,453 objects). Reviewed by three independent skeptics before closing;
+   none refuted it, and their limits are below.
+   - **The cost, item 1's run** (`--stacks --choose "" --plain-s 20 --record-s 30`, 49 functions chosen): at 3643's
+     defaults (25 / 50 a second) **2.41 µs a capture on average, 97.2 µs at most** over 1,550 captures; at Avowed's
+     3641 budgets (`--stack-per-ring 100 --stack-total 200`) **1.99 / 47.8 µs** over 6,200 (Avowed: 3.25 / 241 over
+     6,200). The budget held both times (1,550 against at most 1,551; 6,200 against 6,203). All the captures together
+     took 3.7 ms of the 30 s, and 12.3 ms at 200 a second (0.04 %). Calls a second 5,983 / 5,979 and 5,977 / 5,977 --
+     consistent with no cost, though that pair (a 20 s window, then a later 30 s one) cannot resolve a cost this small:
+     the summed capture time is the measure. The fps overlay read 60 in both phases of the 100 / 200 run (six
+     readings), but 60 is this game's cap here, so it says less than Avowed's uncapped 135-141. All 1,550 stacks, and
+     6,138 of the 6,200, were deeper than 16 frames. The scene is quiet: about 6,000 calls a second against Avowed's
+     9,200.
+   - **S3-A1's names:** the index was built in 19-23 ms (12,482 entries from 19,162 functions). On depth-62 stacks
+     (a scratch probe; every stack reached its thread's root) it named 454 frames with two entries,
+     `BP_TimeChangePost_C::ReceiveTick` (435) and `BP_SkyBase_C::ReceiveTick` (19).
+     - Each `ufunc` is that Function (`get_object`).
+     - Its `fn` is an exact, unchained .pdata start, which disassembles as a UE4 exec thunk taking one float
+       (ReceiveTick's DeltaSeconds). It is stored at the fork's `UFunction::Func`, +0xC0: stock 4.18's +0xB0 plus the
+       fork's +0x10.
+     - A third run had 326 stacks with a named frame. In every one, the named frame sits exactly one frame
+       (UFunction::Invoke) below a `known: "process_event"` frame, which sits directly below the dumper's hook. Its
+       return address is `fn+0xC1` each time.
+     - Both classes are `DynamicClass`: DQ XI S ships nativized Blueprints.
+     - The UI's Call stack tab showed the same in a `Get Time Float` stack: frame 5 "native entry of
+       BP_TimeChangePost_C::ReceiveTick", frame 7 `UObject::ProcessEvent +0x2B0`, frame 8 the hook. Its estimate line
+       measured 6.4 µs a capture.
+   - **Limits:**
+     - S3-A1 named both of the entries seen correctly. Both are nativized ReceiveTick thunks reached through
+       ProcessEvent. A thunk reached from the interpreter without ProcessEvent, the case S3-A1 was built for, did not
+       occur.
+     - No `shared` site appeared. The index leaves script functions out, against its contract (`[A1-SCRIPT-FUNCS]`,
+       todo.md).
+     - Step 2's parameter snapshots were not run here; the UProperty model stays step 2's item 4.
+     - The name checks came from scratch probes (`[SNAPRIG-NAMES]`).
+
+   *Was:* **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
    decided to be covered by tests rather than live (2026-10-07); this is the exception the maintainer asked for. The
    maintainer first named Elliot, but Elliot is UE 5.4 (docs/test-games.md: its PE version is stripped, so the DLL
    takes the publisher's 4.27 and reconciles to 5.4 at run time, which is why it can read as UE4). DQ XI S is UE 4.18

@@ -27,6 +27,18 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (no build change) — Live Funcs native stacks on a UE4 game: DQ XI S `[LIVEFUNCS-STEP3-DQ11S]`
+
+- Build 3643 was checked on DRAGON QUEST XI S (UE 4.18, a licensee fork), with a save loaded.
+  - A capture costs about 2 µs, under 0.1 ms at most, at either budget.
+  - The calls a second did not change.
+  - The Call stack tab names the native entry of the Blueprint event that dispatched the call (this game ships
+    nativized Blueprints).
+- Found by the review of that run: the native-entry index leaves script functions out, so a frame in the Blueprint
+  interpreter is not named. The design said it would be named as shared code (`[A1-SCRIPT-FUNCS]`, todo.md).
+
+-----
+
 ## 2026-10-08 (build 3643) — Live Funcs stacks: a question for per-frame functions, a cost estimate, native entries named `[LIVEFUNCS-STEP3]` `[CT-COLUMNS-OVERLAP]`
 
 - **Choosing a per-frame function's stack asks first.** A function called every frame in the last recording would
