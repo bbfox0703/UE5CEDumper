@@ -2138,15 +2138,20 @@ class ScriptedDll:
     LATE = {"SnapLate_Call": (0x1500, [6, 0, 9, 0], 4)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
     INTERP_FN = 0xA000           # the interpreter's start, as an RVA: a script function's native entry
-    FUNC_AT = 0xD8               # UFunction::Func in the scripted UFunctions
+    # UFunction::Func in the scripted UFunctions: past 0x100, where the DLL's window (up to +0x158) still finds it, so
+    # a run that searched less of the window would miss it.
+    FUNC_AT = 0x148
     INTERP = 0x2A000             # the script function whose names the interpreter's frames carry
     NAMES_MANY = 70              # names_many's extra entries: more than the run asks about
     # The UFunctions a stack's names point at, as get_object and read_mem answer them: ufunc -> (class, func, the
     # object's class, fn as an RVA, the offsets fn is stored at, shared). SnapNest_Outer's native entry is its own; the
-    # interpreter's is shared by every script function. Each holds a decoy copy of its fn at an offset the other lacks,
-    # so only the offset common to both is Func.
+    # interpreter's is shared by every script function, and named after the lowest-addressed function entering it, as
+    # the DLL names it -- here a delegate's signature, a DelegateFunction, which the DLL indexes beside Function and
+    # SparseDelegateFunction. Each holds a decoy copy of its fn at an offset the other lacks, so only the offset common
+    # to both is Func.
     UFUNCS = {FUNCS["SnapNest_Outer"][0]: (FIXTURE_CLASS, "SnapNest_Outer", "Function", OUTER_FN, (0x30, FUNC_AT), None),
-              INTERP: ("BP_ScriptedActor_C", "ReceiveTick", "Function", INTERP_FN, (FUNC_AT, 0x140), 37)}
+              INTERP: ("BP_ScriptedActor_C", "OnScripted__DelegateSignature", "DelegateFunction", INTERP_FN,
+                       (FUNC_AT, 0x140), 37)}
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
     WINDOW_S = 3.0               # the plain recording's window, as pe_profile_get reports it
     # SnapProbe_PerFrame's calls a second by default, in the plain recording and in the main one (each can be set):
@@ -3200,16 +3205,20 @@ def self_test() -> int:
     # [SNAPRIG-NAMES] MED-1: read_mem is one copy, all or nothing, and a UFunction (0xC8 to 0xE0 bytes) is smaller than
     # the window. An object that ends a block whose next page cannot be read fails a read of the whole window.
     expect("dry run --names: a UFunction whose next page cannot be read fails read_mem past 0xE0; the read is retried at "
-           "0x100 then 0xE0, and the run fails nothing",
+           "0x100 then 0xE0, short of Func, and the run fails nothing: that entry is listed read short, out of N",
            lambda: (lambda r: failing(r[0]) == [] and NAMES_AT in ran(r[0]) and
                     read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] and read_sizes(r[2], "1000") == [0x160] and
-                    [x["read"] for x in r[1]["names"]["per_entry"]] == [0x160, 0xE0])(names_run("names_read_edge")))
+                    [x["read"] for x in r[1]["names"]["per_entry"]] == [0x160, 0xE0] and
+                    (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["short"]) ==
+                    (ScriptedDll.FUNC_AT, 1, 1) and
+                    any(n == NAMES_AT and "in 1 of 2" in g and "1 read short" in g for n, _, g in r[0].items))(
+               names_run("names_read_edge")))
     expect("dry run --names: a UFunction no read reaches (every size down to 0xC8 tried) is reported unreadable, kept "
            "out of the offset and out of N, and fails nothing",
            lambda: (lambda r: failing(r[0]) == [] and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and
                     (r[1]["names"]["held"], r[1]["names"]["unreadable"]) == (1, 1) and
                     r[1]["names"]["per_entry"][1]["read"] is None and
-                    any(n == NAMES_AT and ok and "in 1 of 2" in g and "1 unreadable" in g and "ReceiveTick" in g
+                    any(n == NAMES_AT and ok and "in 1 of 2" in g and "1 unreadable" in g and "OnScripted" in g
                         for n, ok, g in r[0].items))(names_run("names_read_failed")))
     expect("dry run --names: when no named UFunction can be read, the offset check is not run (the reason given), the "
            "name check still runs, and nothing fails",
