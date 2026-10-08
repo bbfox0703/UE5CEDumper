@@ -240,7 +240,7 @@ line, trim a row, do not grow.
 
 | Document | Contents |
 |----------|----------|
-| [docs/handover.md](docs/handover.md) | 🤝 **START HERE — the single entry point.** A fresh session's first ten minutes: tree state, computer-use grants, launching a fixture, the hard rules, gates/tests/builds, driving CE, what is open, traps, closing a row. |
+| [docs/handover.md](docs/handover.md) | 🤝 **START HERE — the runbook.** Open it first in a fresh session, and again whenever you grant an app, launch a fixture or a game, run a rig, drive CE or need a session rule. Procedures only; what is open is in `docs/todo.md`. |
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |

@@ -1,10 +1,22 @@
-# Handover — 2026-08-22
+# Handover — how to work on this repo, on these machines
 
-> 🤝 **START HERE. This is the single entry point.** It supersedes
-> [`archive/handover-2026-08-20.md`](archive/handover-2026-08-20.md) and
-> [`archive/handover-2026-08-19.md`](archive/handover-2026-08-19.md), both of which were archived
-> when this file was written. Everything in them that is still operationally true has been carried
-> forward here — go back to them only for the *history* of the 2026-08-19/20 verification programme.
+> 🤝 **START HERE.** This is the runbook: how to work in this repo on these machines — the first ten
+> minutes, computer-use grants, launching fixtures and games, the session rules, gates, tests, builds
+> and pipe rigs, driving Cheat Engine, and what is true only on one machine.
+>
+> **What it holds: procedures only** — no open work, no counts, no current state. What is open lives
+> in [`todo.md`](todo.md); what shipped in [`dev-log.md`](dev-log.md); what is shipped but not yet
+> proven live in [`verification-register.md`](verification-register.md); how to work, and why, in
+> [`working-lessons.md`](working-lessons.md).
+>
+> **How to update it.** Edit in place whenever a procedure changes. Never write a count, a build
+> number or a list of open items here; write the command that derives it. A measurement keeps its own
+> date inline. A trap whose story `working-lessons.md` owns gets a one-line pointer here, not a copy.
+> Cite this file by section (`handover §N`), never by line, and keep the §0–§10 numbering: an emptied
+> section keeps its heading and says where its content went.
+>
+> Its two predecessors, and this file's own former name, are recorded in
+> [`archive/README.md`](archive/README.md).
 >
 > ⚠ **`out/` is gitignored and does NOT travel.** Two of the most useful records of what was
 > actually done (`out/NIGHT-RUN-2026-08-19.md`, `out/KILLED-2026-08-21.md`) exist only on this
@@ -707,9 +719,10 @@ marks §10 RETIRED. The plan doc is still the authority for **grant mechanics** 
     `D:\UE_Analyze_Data\Game archive\ES2\` are both **5.5.4** (505). So the version is NOT
     unknown, and `test-games.md:12`'s `UE5.5 (PE: 505)` row is now **stale** — its findings
     belong to the 5.5 build.
-    ⛔ **This makes the `0x278` figure a CONFIRMED 5.5 measurement, not an ambiguous one.** The
-    handover is dated 2026-08-22 and the grant in `auto-verification-session-plan.md:119` is
-    2026-08-18 — both before the 09-01 patch — so it was taken on a 5.5.4 binary, and it agrees
+    ⛔ **This makes the `0x278` figure a CONFIRMED 5.5 measurement, not an ambiguous one.** This
+    file's first version (`9545239c`, 2026-08-22) already carried it, and the grant in
+    `auto-verification-session-plan.md:119` is 2026-08-18 — both before the 09-01 patch — so it
+    was taken on a 5.5.4 binary, and it agrees
     with the A2 table's 5.5 row (`0x278`), which is the one row the audit's own first draft got
     wrong. ⚠ Also note the provenance row `UE5.5-Everspace2` in
     `tools/ghidra/corpus-provenance.tsv` still points at the LIVE path while recording the old

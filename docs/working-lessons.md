@@ -3574,6 +3574,7 @@ being silently truncated past ~140 lines, so the section map went too).
 | Open work, effort/risk, pending live verification | `todo.md` |
 | What a *game* does differently | `lessons-learned.md` |
 | A standing instruction from the maintainer on how to work, whose loss costs something | **This file**, §7.3 |
+| How to operate this machine, the fixtures, Cheat Engine and the rigs; the session rules | `handover.md` — procedures only: no open work, no counts, no current state |
 | A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
 | In-flight project state that has no home in the repo yet | memory |
 | Which doc to read next, and where the current work is | `MEMORY.md`, as a **pointer**, not a copy |
