@@ -32,7 +32,9 @@ The full run (docs/live-funcs-step2-items.md, P2), each check named after its it
   the budget: SnapProbe_PerFrame's parameter ring drops its lone calls over the per-function budget and keeps no more
       than about the budget a second. The budget is chosen from F1's plain rates by S5's rule (30 while it fits:
       `[SNAPRIG-STEP2-RATE]`), and the check is reported not run where none bites, or where the main recording ran
-      the probe under 1.5x the budget
+      the probe under 1.5x the budget. That rate is read from the main recording's table, which must carry the
+      probe's row over a window (a check of its own): a reply that cannot give it fails there, never stands the
+      budget check down
 
 --stacks (`[LIVEFUNCS-STEP3]`, docs/live-funcs-step3-items.md, "8. Live checks") runs step 3's checks instead, on
 the same fixture: SnapNest_Outer ticked by name, SnapProbe_Call chosen for its parameters, SnapProbe_Call and
@@ -61,7 +63,9 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
   S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
       counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits, or a total that
       starves the others), or the main recording itself ran SnapProbe_PerFrame under 1.5x the budget, the window is
-      reported not run with those rates, never failed nor passed. The counters are checked wherever the stack budget
+      reported not run with those rates, never failed nor passed. The main recording's table must carry that rate (a
+      check of its own): a reply without it fails there, and the window runs as it did before the rate was read,
+      never stood down on a rate nobody measured. The counters are checked wherever the stack budget
       refused a call -- the main table counts more SnapProbe_PerFrame calls than its ring wrote, or trace.stack counts
       a skip or a drop -- and a nonzero one fails whatever was refused; only where nothing was refused, and both are
       0, are they reported not run, since 0 there proves nothing
@@ -759,7 +763,7 @@ def run_full(c, check: Checks, out: dict, args, pid: int | None = None, sleep=ti
     out["stop"] = stop
     check("F4 Stop returns within about 2.5 s", stop_s < 2.5, f"{stop_s:.2f} s")
     gen = stop.get("trace", {}).get("gen", 0)
-    main = data_of(c.request("pe_profile_get", limit=32768, include_unloaded=True))   # the main recording's own rates
+    main_reply = c.request("pe_profile_get", limit=32768, include_unloaded=True)   # the main recording's own rates
 
     # ---- K1: roots and the in-scope calls' snapshots.
     say("\nK1 -- the hint and the parameter block reach the trace:")
@@ -846,10 +850,12 @@ def run_full(c, check: Checks, out: dict, args, pid: int | None = None, sleep=ti
     pf_ring = next((x for x in pf if x.get("ring") == ring_of["SnapProbe_PerFrame"]), {})
     out["per_frame_ring"] = pf_ring
     per = budget_echo(budget["per"])
-    main_win = main.get("window_ms", 0) / 1000.0
-    main_pf = fixture_rows(main).get("SnapProbe_PerFrame", {}).get("count", 0) / main_win if main_win else 0.0
+    main_pf, main_what = main_table_rate(main_reply)
     out["param_budget"]["main_rate"] = main_pf
-    why = budget["why"] if not budget["runs"] else \
+    check(f"the budget: {MAIN_TABLE}", main_pf is not None, main_what)
+    # A reply that cannot give the rate fails just above, and the budget check then runs as it did before the main
+    # rate was read: standing it down on a rate nobody measured would hide that reply's defect.
+    why = budget["why"] if not budget["runs"] else None if main_pf is None else \
         main_rate_problem(main_pf, per, budget["rates"].get("SnapProbe_PerFrame", 0.0))
     if why is None:
         # The first `per` calls of each second are kept. The bound is the one the run always had, now on the budget
@@ -901,8 +907,8 @@ S3_KNOWN_LONE = 'S3 no lone stack holds known:"process_event"'
 S3_KNOWN_ONE = "S3 every known frame names one function, and no stack holds two"
 S5_WINDOW = "S5 SnapProbe_PerFrame's stack ring keeps about"
 S5_PARAMS = "S5 the parameter counters are untouched by the stack budget (snap skipped and dropped 0)"
-# Both runs read the main recording's own SnapProbe_PerFrame rate from the table fetched after its Stop; the check that
-# the reply carries it, by name, prefixed "S5 " in the --stacks run and "the budget: " in the step-2 run.
+# The main recording's own SnapProbe_PerFrame rate is read from the table fetched after its Stop. The check that the
+# reply carries it, by name: each run puts its own prefix before it.
 MAIN_TABLE = "the main recording's table carries SnapProbe_PerFrame over a window"
 # The Start's stack list, in order: the DLL numbers stack rings by the accepted items' order, and S1's join checks
 # that every slot of ring s belongs to the s-th name.
@@ -1236,6 +1242,22 @@ def main_rate_problem(main_pf: float, held_to: int, plain_pf: float) -> str | No
             f"it is held to, so the budget may not bite (chosen on the plain recording's {plain_pf:.1f}/s)")
 
 
+def main_table_rate(reply: dict) -> tuple[float | None, str]:
+    """SnapProbe_PerFrame's calls a second in the main recording's table (the pe_profile_get reply after its Stop),
+    with what it was measured from; or None with what is wrong with the reply: an error, no window, or no row for the
+    probe. A reply that cannot give the rate is not a slow probe, so it never stands a check down."""
+    if not ok_of(reply):
+        return None, f"pe_profile_get failed: {str(reply.get('error', ''))[:90]}"
+    d = data_of(reply)
+    win = d.get("window_ms")
+    if type(win) not in (int, float) or win <= 0:
+        return None, f"window_ms {win!r}"
+    row = fixture_rows(d).get("SnapProbe_PerFrame")
+    if row is None or type(row.get("count")) is not int:
+        return None, f"no SnapProbe_PerFrame row with a count over its {win} ms"
+    return row["count"] / (win / 1000.0), f"{row['count']} calls over {win} ms"
+
+
 def budget_window(per_s: int, span_lo: float, span_hi: float) -> tuple[float, float]:
     """The slots a ring keeps when its function is called more often than its budget. The DLL admits the first per_s
     calls of each second, so a recording of L seconds keeps per_s x L, give or take one second's worth: the windows
@@ -1415,7 +1437,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     if not st2.get("allocated"):
         check("the trace kept calls", False, "empty, and released at Stop")
         return
-    table = data_of(c.request("pe_profile_get", limit=32768, include_unloaded=True))
+    main_reply = c.request("pe_profile_get", limit=32768, include_unloaded=True)   # the main recording's own rates
+    table = data_of(main_reply)
 
     # ---- S1: the slots, joined to the entries by entry_seq.
     say("\nS1 -- the slots and their join:")
@@ -1537,13 +1560,15 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     per_s = min(per, total)
     lo, hi = budget_window(per_s, span_lo, span_hi)
     pf_row = fixture_rows(table).get("SnapProbe_PerFrame", {})
-    win = table.get("window_ms", 0) / 1000.0
-    main_pf = pf_row.get("count", 0) / win if win else 0.0
+    main_pf, main_what = main_table_rate(main_reply)
     out["stack_budget"]["main_rate"] = main_pf
     stack2, snap2 = st2.get("stack", {}), st2.get("snap", {})
-    say(f"     SnapProbe_PerFrame: about {main_pf:.0f} calls/s; its stack ring wrote "
+    say(f"     SnapProbe_PerFrame: about {fmt(main_pf, '.0f')} calls/s; its stack ring wrote "
         f"{pf_ring.get('written')}, skipped {pf_ring.get('skipped_budget')}, dropped {pf_ring.get('dropped_budget')}")
-    s5_why = budget["why"] if not budget["runs"] else \
+    check(f"S5 {MAIN_TABLE}", main_pf is not None, main_what)
+    # A reply that cannot give the rate fails just above, and the window then runs from the trace ring as it did
+    # before the main rate was read: standing it down on a rate nobody measured would hide that reply's defect.
+    s5_why = budget["why"] if not budget["runs"] else None if main_pf is None else \
         main_rate_problem(main_pf, per_s, budget["rates"].get("SnapProbe_PerFrame", 0.0))
     if s5_why is None:
         check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
@@ -2311,7 +2336,7 @@ class ScriptedDll:
         "no_calls": "a plain recording that records no call (the game not running, or the hook down)",
         "no_probes": "a plain recording without the fixture's probes (a package without them)",
         "no_code_addr": "pe_trace_names gives SnapNest_Outer no code_addr",
-        # The table fetched after a traced recording, which both runs read the main recording's own rate from.
+        # The table fetched after a traced recording, which the main recording's own rate is read from.
         "main_get_error": "pe_profile_get answers an error once a trace was started",
         "main_window0": "pe_profile_get reports window_ms 0 once a trace was started",
         "main_rows_lost": "pe_profile_get loses SnapProbe_PerFrame's row once a trace was started",
@@ -3705,7 +3730,8 @@ def self_test() -> int:
            lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
                     "60.0/s" in step2_line(r[0])[1][0] and "30.0/s" in step2_line(r[0])[1][0])(
                step2_run(60, main_pf_rate=30)))
-    # The same for the step-2 run, whose other checks fail on the scripted DLL: only these two lines are read.
+    # The same for the step-2 run. Its other checks fail on the scripted DLL (the class docstring), so these controls
+    # name the lines they read.
     step2_main = f"the budget: {MAIN_TABLE}"
     expect("dry run step 2: a whole main table passes its own check",
            lambda: (lambda ch: step2_main in ran(ch) and step2_main not in failing(ch))(step2_run()[0]))

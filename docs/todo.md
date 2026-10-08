@@ -323,7 +323,9 @@ source and editor are installed for when they are needed.
   budget may still refuse calls, and a DLL counting them as parameter skips passed. The counters are now checked
   wherever a call was refused (measured beside the DLL's counters: the main table's SnapProbe_PerFrame count over
   its ring's written, or trace.stack's skips and drops), a nonzero one always fails, and only where nothing was
-  refused are they reported not run (MED-A).
+  refused are they reported not run (MED-A). A main table that cannot give SnapProbe_PerFrame's rate (an error, no
+  window, no row) was read as 0.0/s and stood S5 down; it now fails a check of its own, and S5's window runs from the
+  trace ring as before (LOW).
   ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
@@ -363,6 +365,9 @@ source and editor are installed for when they are needed.
   from F1's plain rates (30 while it fits), bounds what is written by the budget sent, and reports the check not run
   with the rates where none bites or the main recording ran the probe under 1.5x it. The scripted DLL now scripts
   step 2 as far as that budget, so `--self-test` drives `run_full` too.
+  **The second review's findings, fixed 2026-10-08:** the main recording's `pe_profile_get` was never checked: an
+  error, no window or no row for the probe read as 0.0/s and stood the budget check down. It is now a check of its
+  own (ok, a window, the row with a count), and a broken reply fails there while the budget check still runs.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
