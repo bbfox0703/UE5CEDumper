@@ -3,6 +3,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Markup.Xaml;
+using Avalonia.Markup.Xaml.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
 using UE5DumpUI.Core;
@@ -29,6 +30,19 @@ public class CallTraceColumnsTests
     }
 
     private static bool _stringsLoaded;
+    private static bool _dataGridThemeLoaded;
+
+    /// <summary>The DataGrid's own theme, which App.axaml includes and the headless app does not: without it the
+    /// Call stack grid has no template and lays out no column.</summary>
+    private static void LoadDataGridTheme()
+    {
+        if (_dataGridThemeLoaded) return;
+        Application.Current!.Styles.Add(new StyleInclude(new Uri("avares://UE5DumpUI"))
+        {
+            Source = new Uri("avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml"),
+        });
+        _dataGridThemeLoaded = true;
+    }
 
     /// <summary>The panel's StaticResource strings: the headless app carries the theme and nothing of the app's own.
     /// Every test body runs on the one dispatcher thread, so the flag needs no lock.</summary>
@@ -175,5 +189,47 @@ public class CallTraceColumnsTests
             double right = Span(cells.Single(c => c.name == "Object").cell, panel).right;
             Assert.True(Math.Abs(right - end) < 0.5, $"the {what}'s Object column ends at {right:0.#}, not at the list's edge {end:0.#}");
         }
+    });
+
+    // [CT-STACK-WHERE-WIDTH] The Call stack tab, one frame whose Where is longer than 420 pixels of Consolas.
+    private static readonly StackFrameRow Frame = new()
+    {
+        Index = 3, Address = "\"DumperTest58-Win64-Shipping.exe\"+4C4BC0",
+        Where = "native entry of DumperTest58Actor::SnapNest_Outer +0x73 (one of 2 functions that share this code)",
+    };
+
+    /// <summary>The panel as <see cref="Laid"/> lays it out, its Call stack tab chosen and showing <see cref="Frame"/>.</summary>
+    private static (DataGrid grid, DataGridColumn where) StackLaid(double detailPaneWidth)
+    {
+        LoadDataGridTheme();
+        var (panel, vm) = Laid(detailPaneWidth);
+        vm.StackRows = new[] { Frame };
+        panel.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1;
+        Dispatcher.UIThread.RunJobs();
+        var grid = panel.GetVisualDescendants().OfType<DataGrid>().Single();
+        var where = grid.Columns.Single(c => Equals(c.Header, Header("str.CT.Stack.Col.Where")));
+        return (grid, where);
+    }
+
+    /// <summary>Dragged wide, the pane gives Where everything the three fixed columns leave: a long name is not cut
+    /// beside empty space. "Everything" allows a vertical scroll bar's width.</summary>
+    [Fact]
+    public Task A_wide_stack_pane_gives_Where_the_rest_of_its_width() => Headless.Run(() =>
+    {
+        var (grid, where) = StackLaid(900);
+        double others = grid.Columns.Where(c => c != where).Sum(c => c.ActualWidth);
+        double left = grid.Bounds.Width - others;
+        Assert.True(where.ActualWidth > 420.5 && where.ActualWidth >= left - 20,
+                    $"Where is {where.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#} whose other columns take {others:0.#}");
+    });
+
+    /// <summary>The guard the fixed width was there for: in a narrow pane Where keeps 420 and the grid scrolls sideways,
+    /// instead of squeezing the name to a few letters.</summary>
+    [Fact]
+    public Task A_narrow_stack_pane_keeps_Where_420_wide() => Headless.Run(() =>
+    {
+        var (grid, where) = StackLaid(300);
+        Assert.True(where.ActualWidth >= 419.5,
+                    $"Where is {where.ActualWidth:0.#} wide in a grid of {grid.Bounds.Width:0.#}");
     });
 }
