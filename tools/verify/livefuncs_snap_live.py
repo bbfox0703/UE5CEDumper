@@ -3256,9 +3256,10 @@ def self_test() -> int:
            lambda: depth_sent(()) == STACK_DEPTH and depth_sent(("--stack-depth", "62")) == 62 and
            depth_sent(("--names", "--stack-depth", "1")) == 1 and
            failing(names_run(argv=("--names", "--stack-depth", "62"))[0]) == [])
+    # --choose without --stacks with each option alone: the step-2 game run takes neither (LOW-9).
     bad_game = (("--names",), ("--stacks", "--names"), ("--choose", "x", "--names"), ("--stacks", "--stack-depth", "16"),
-                ("--stack-depth", "8"), ("--stacks", "--choose", "", "--stack-depth", "0"),
-                ("--stacks", "--choose", "", "--stack-depth", "63"))
+                ("--stack-depth", "8"), ("--choose", "x", "--stack-depth", "8"),
+                ("--stacks", "--choose", "", "--stack-depth", "0"), ("--stacks", "--choose", "", "--stack-depth", "63"))
     expect("A1: main() refuses --names and --stack-depth outside --stacks --choose, and a depth outside 1..62, before the "
            "pipe opens; --stacks --choose takes both",
            lambda: [main_refuses(a) for a in bad_game] == [(2, 0)] * len(bad_game) and
