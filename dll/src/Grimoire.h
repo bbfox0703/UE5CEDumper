@@ -1270,6 +1270,20 @@ inline bool SubFloorReadingCorroborated(uint32_t code, std::string_view productV
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// What set_ue_version_override may set [UE-OVERRIDE-411]
+//
+// The too-old refusal names the override as the way out of a wrong detection, so the override has to
+// reach every version this dumper reads: its floor is the support floor. Below it, an override would
+// force a scan of an object model nothing here can read (an override is never refused as too old);
+// above 5.9 there is no version-code band. It used to start at 4.18, so a 4.11-4.17 title could not be
+// set by hand at all.
+
+/// Whether set_ue_version_override accepts `version`; 0 clears an override and is always accepted.
+inline bool UeVersionOverrideAccepted(int version) {
+    return version == 0 || (version >= 418 && version <= 509);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // CrashReportClient.exe as a version source (maintainer proposal, 2026-09-06)
 //
 // ⭐ WHY IT IS WORTH READING: it ships WITH THE ENGINE and is not written by the game team, so

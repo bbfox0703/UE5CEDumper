@@ -945,7 +945,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     /// <summary>"UE 4.27" → 427, "UE 5.4" → 504, "Auto" → 0.</summary>
-    private static int LabelToVersion(string label)
+    internal static int LabelToVersion(string label)
     {
         if (string.IsNullOrEmpty(label) || label == "Auto") return 0;
         // Format: "UE M.N"  (M = 4 or 5, N = 0..27)
@@ -959,7 +959,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     /// <summary>504 → "UE 5.4", 427 → "UE 4.27", 0 → "Auto".</summary>
-    private static string VersionToLabel(int version)
+    internal static string VersionToLabel(int version)
     {
         if (version <= 0) return "Auto";
         int major = version / 100;

@@ -222,4 +222,74 @@ public class PointerPanelVersionGateTests
         // canary — the two are compared only by this number, there is no shared header.
         Assert.Equal(300, PointerPanelViewModel.PreUE4SentinelVersion);
     }
+
+    // ══ [UE-OVERRIDE-411] The override reaches the support floor ══════════════════════════════
+    //
+    // The too-old banner tells the user to set an override when the detection is wrong, and the
+    // DLL accepts every version from its support floor up. The list stopped at 4.18, so a 4.11-4.17
+    // title had nothing to pick. The floor is read from the DLL's own header, never typed here.
+
+    private static int DllSupportFloor()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "build.ps1"))) d = d.Parent;
+        string grimoire = File.ReadAllText(Path.Combine(
+            d?.FullName ?? throw new DirectoryNotFoundException("repo root"), "dll", "src", "Grimoire.h"));
+        var m = System.Text.RegularExpressions.Regex.Match(grimoire,
+            @"constexpr\s+uint32_t\s+MIN_SUPPORTED_UE_VERSION\s*=\s*(\d+)\s*;");
+        Assert.True(m.Success, "MIN_SUPPORTED_UE_VERSION not found in Grimoire.h");
+        return int.Parse(m.Groups[1].Value);
+    }
+
+    private static List<int> OverrideVersions()
+        => PointerPanelViewModel.UeVersionOverrideOptions.Where(o => o != "Auto")
+            .Select(PointerPanelViewModel.LabelToVersion).ToList();
+
+    [Fact]
+    public void OverrideList_StartsAtTheDllSupportFloor()
+    {
+        int floor = DllSupportFloor();
+        Assert.Equal(floor, OverrideVersions().Min());
+    }
+
+    [Fact]
+    public void OverrideList_OffersEveryUe4MinorFromTheFloor_InOrder()
+    {
+        int floor = DllSupportFloor();
+        var ue4 = OverrideVersions().Where(v => v < 500).ToList();
+        Assert.Equal(Enumerable.Range(floor, 427 - floor + 1), ue4);
+    }
+
+    [Fact]
+    public void OverrideList_KeepsAutoFirstAndEveryLabelRoundTrips()
+    {
+        Assert.Equal("Auto", PointerPanelViewModel.UeVersionOverrideOptions[0]);
+        foreach (string label in PointerPanelViewModel.UeVersionOverrideOptions.Skip(1))
+            Assert.Equal(label, PointerPanelViewModel.VersionToLabel(PointerPanelViewModel.LabelToVersion(label)));
+    }
+
+    private sealed class OverrideRecorder : StubDumpService
+    {
+        public readonly List<int> Sent = new();
+        public override Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true,
+                                                                    CancellationToken ct = default)
+        {
+            Sent.Add(version);
+            return Task.FromResult(new EngineState { UEVersion = version, IsUserOverride = true, ObjectCount = 1 });
+        }
+    }
+
+    [Fact]
+    public void ChoosingUe411_SendsItAndShowsItBack()
+    {
+        var dump = new OverrideRecorder();
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(new EngineState { UEVersion = 504, ObjectCount = 1 });
+
+        vm.SelectedUeVersionOverride = "UE 4.11";
+
+        Assert.Equal(new[] { 411 }, dump.Sent);
+        Assert.Equal("UE 4.11", vm.SelectedUeVersionOverride);
+        Assert.Contains(vm.SelectedUeVersionOverride, PointerPanelViewModel.UeVersionOverrideOptions);
+    }
 }

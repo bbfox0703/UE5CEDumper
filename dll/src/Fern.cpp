@@ -2107,8 +2107,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             int     newVersion = request.value("version", 0);
             bool    persist    = request.value("persist", true);
 
-            // Defensive bounds — UE 4.18 .. 5.9 plus 0 (clear).
-            if (newVersion != 0 && (newVersion < 418 || newVersion > 509)) {
+            // Defensive bounds, plus 0 (clear) — Grimoire::UeVersionOverrideAccepted says why.
+            if (!Grimoire::UeVersionOverrideAccepted(newVersion)) {
                 return Renge::MakeError(id,
                     "version out of supported range (418..509 or 0 to clear)").dump();
             }

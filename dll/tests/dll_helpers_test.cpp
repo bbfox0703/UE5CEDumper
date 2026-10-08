@@ -4792,6 +4792,26 @@ static void Test_SubFloorReadingCorroborated() {
            !SubFloorReadingCorroborated(411, "4.11.0-0+UE4", 411));
 }
 
+// [UE-OVERRIDE-411] The too-old refusal names the override as the way out, so it must reach the support floor.
+static void Test_UeVersionOverrideAccepted() {
+    using Grimoire::UeVersionOverrideAccepted;
+    const int floor = static_cast<int>(Grimoire::MIN_SUPPORTED_UE_VERSION);
+    EXPECT("Override: 0 clears an override", UeVersionOverrideAccepted(0));
+    EXPECT("Override: the support floor itself is accepted", UeVersionOverrideAccepted(floor));
+    EXPECT("Override: one below the support floor is not", !UeVersionOverrideAccepted(floor - 1));
+    for (int v = 411; v <= 417; ++v)
+        EXPECT("Override: 4.11-4.17 (NEKOPALIVE, Fantasynth, Extinction) can be set by hand",
+               UeVersionOverrideAccepted(v));
+    EXPECT("Override: 4.18 still is", UeVersionOverrideAccepted(418));
+    EXPECT("Override: 4.27 still is", UeVersionOverrideAccepted(427));
+    EXPECT("Override: 5.9 (the top of the UE5 band) still is", UeVersionOverrideAccepted(509));
+    EXPECT("Override: 4.10 is not", !UeVersionOverrideAccepted(410));
+    EXPECT("Override: the pre-UE4 sentinel is not", !UeVersionOverrideAccepted(
+        static_cast<int>(Grimoire::PRE_UE4_SENTINEL_VERSION)));
+    EXPECT("Override: past the UE5 band is not", !UeVersionOverrideAccepted(510));
+    EXPECT("Override: a negative version is not", !UeVersionOverrideAccepted(-1));
+}
+
 static void Test_CrashReportCandidates() {
     // The standard packaged layout: <root>/<Project>/Binaries/Win64/Game.exe, engine binaries at
     // <root>/Engine/Binaries/Win64/. The correct answer is three levels up.
@@ -9335,6 +9355,7 @@ int main() {
     RUN(Test_UeVersionCodeBounds);
     RUN(Test_EngineBuildStringCode);
     RUN(Test_SubFloorReadingCorroborated);
+    RUN(Test_UeVersionOverrideAccepted);
     RUN(Test_CrashReportCandidates);
     RUN(Test_DynOff_FNameSlotVsSizeof);
     RUN(Test_Neu_Legacy_CasePreserving);
