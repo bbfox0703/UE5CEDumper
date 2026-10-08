@@ -1640,8 +1640,8 @@ def open_image_pdb(path: str, base: int, size: int, search: str):
     session = None
     try:
         got = dbg.SymLoadModuleExW(h, None, path, None, base, size, None, 0)
-        if not got:
-            return f"no PDB: dbghelp would not load {path} (error {ctypes.get_last_error()})"
+        if not got:   # the exe itself: without a PDB the load still succeeds, and SymType says so below
+            return f"dbghelp would not load {path} (error {ctypes.get_last_error()})"
         info = IMAGEHLP_MODULEW64()
         info.SizeOfStruct = ctypes.sizeof(info)
         if not dbg.SymGetModuleInfoW64(h, got, ctypes.byref(info)):
