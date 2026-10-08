@@ -2460,7 +2460,11 @@ class ScriptedDll:
         "names_many": "the first stack holds NAMES_MANY more named frames, each its own entry, before the others",
         "names_read_edge": "the interpreter's UFunction ends right after its Func slot, before a page that cannot be "
                            "read: read_mem of anything past Func + 8 fails",
-        "names_read_failed": "read_mem fails at every size for the interpreter's UFunction",
+        "names_read_failed": "read_mem fails at every size for the interpreter's UFunction, freed after the run first "
+                             "asked about it: get_object, asked again, names nothing there",
+        "names_fn_nowhere_edge": "the interpreter's UFunction holds its fn nowhere and ends 0xE0 bytes in, before a "
+                                 "page that cannot be read: read_mem past it fails, its slot at the common offset "
+                                 "read alone too, while get_object, asked again, still names it",
         "names_slot_only": "read_mem of the interpreter's UFunction fails at the window and every retry, yet a read of "
                            "one of its slots alone (8 bytes) answers",
         "names_unreadable": "read_mem fails at every size for every UFunction",
@@ -2510,6 +2514,7 @@ class ScriptedDll:
         self.pdb_opens: list[str | None] = []   # each --pdb session's search folder, as the rig asked
         self.pdb_sessions: list[ScriptedPdb] = []
         self.asked: list[tuple[str, dict]] = []   # each get_object / read_mem, with what the rig sent
+        self.object_asks: dict[int, int] = {}     # get_object's answers so far, by address
 
     def _ufuncs(self) -> dict[int, tuple]:
         """The UFunctions of the script (UFUNCS), names_many's extras with them."""
@@ -2535,7 +2540,9 @@ class ScriptedDll:
         """get_object, as the DLL answers it: the object's own name, its class's and its outer's."""
         u = int(str(addr), 16)   # with or without 0x, as Renge::StrToAddr reads it
         row = self._ufuncs().get(u)
-        if row is None:   # not an object: the DLL's name reads give nothing
+        asks = self.object_asks[u] = self.object_asks.get(u, 0) + 1
+        freed = "names_read_failed" in self.f and u == self.INTERP and asks > 1
+        if row is None or freed:   # not an object (or no longer one): the DLL's name reads give nothing
             return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": "", "outer": ""}
         cls, func, kind, _, _, _ = row
         first = u == self.FUNCS["SnapNest_Outer"][0]
@@ -2571,7 +2578,8 @@ class ScriptedDll:
         if row is None or "names_unreadable" in f or (u == self.INTERP and (
                 f & {"names_read_failed", "names_short_only"} or ("names_read_edge" in f and end > func_at + 8) or
                 ("names_slot_only" in f and size > 8))) or \
-                ("names_read_edge_all" in f and end > 0xE0) or ("names_short_only" in f and outer and end > 0xE0):
+                ("names_read_edge_all" in f and end > 0xE0) or ("names_short_only" in f and outer and end > 0xE0) or \
+                ("names_fn_nowhere_edge" in f and u == self.INTERP and end > 0xE0):
             return {"ok": False, "error": "Read failed"}
         offsets = tuple(func_at if o == self.FUNC_AT else o for o in row[4])
         if "names_short_only" in f and outer:
@@ -2580,6 +2588,8 @@ class ScriptedDll:
             offsets = ()
         if "names_offset_split" in self.f and u == self.INTERP:
             offsets = (self.FUNC_AT + 8, 0x140)
+        if "names_fn_nowhere_edge" in self.f and u == self.INTERP:
+            offsets = ()
         blob = bytearray((k * 37 + 11) & 0xFF for k in range(rel, end))
         for o in offsets:
             if rel <= o and o + 8 <= end:
@@ -3539,11 +3549,26 @@ def self_test() -> int:
                        for n, ok, g in names_run("names_read_edge", "names_offset_split")[0].items))
     def slot_reads(asked: list) -> list[str]:
         return [p["addr"] for cmd, p in asked if cmd == "read_mem" and p["size"] == 8]
+
+    def object_asks(asked: list) -> list[str]:
+        return [p["addr"] for cmd, p in asked if cmd == "get_object"]
+    # [SNAPRIG-NAMES] The round-3 review's LOW: the DLL read each UFunction's slot when it built its index, and named
+    # the frame from it, so a slot that cannot be read now is an object freed since -- unless get_object, asked
+    # again, still names the same function there. Then the slot never held fn: the entry is absent, not gone.
+    caught(("names_fn_nowhere_edge",), NAMES_AT, game=True, argv=names_argv)
+    expect("dry run --names: an entry read to 0xE0 holding fn nowhere, its slot at the common offset unreadable and "
+           "get_object asked again still naming it, fails the offset check as absent, never gone, the reason said",
+           lambda: (lambda r: object_asks(r[2]) == ["1000", "2A000", "2A000"] and r[1]["names"]["gone"] == 0 and
+                    r[1]["names"]["per_entry"][1]["verdict"] == "absent" and
+                    any(n == NAMES_AT and not ok and "unreadable, though get_object still names it" in g and
+                        "OnScripted" in g for n, ok, g in r[0].items))(names_run("names_fn_nowhere_edge")))
     # With one entry read, every copy of fn in it is a candidate; a slot that cannot be read contradicts none, so the
     # lowest stands, read alone once.
     expect("dry run --names: a UFunction no read reaches (every size down to 0xC8 tried) whose slot cannot be read "
-           "alone either is listed as gone since it was named, kept out of N, and fails nothing",
-           lambda: (lambda r: failing(r[0]) == [] and
+           "alone either, and which get_object, asked again, no longer names, is listed as gone since it was named, "
+           "kept out of N, and fails nothing",
+           lambda: (lambda r: failing(r[0]) == [] and object_asks(r[2]) == ["1000", "2A000", "2A000"] and
+                    r[1]["names"]["per_entry"][1]["verdict"] == "gone" and
                     read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and
                     slot_reads(r[2]) == [f"{ScriptedDll.INTERP + (r[1]['names']['func_offset'] or 0):X}"] and
                     (r[1]["names"]["held"], r[1]["names"]["gone"]) == (1, 1) and
