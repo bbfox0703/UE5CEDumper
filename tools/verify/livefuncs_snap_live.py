@@ -2217,6 +2217,7 @@ class ScriptedDll:
         "nothing_taken": "every stack choice over its budget: entries flagged 64, no slot written",
         "known_no_fn": "a known frame without unwind data, so without fn",
         "snap_skipped": "the stack budget's refusals counted as skips in the parameter counters",
+        "snap_phantom": "the parameter counters count one skip though no budget refused anything",
         "leak_snap": "a release leaves snap in the reply",
         "leak_alloc": "a release leaves the trace allocated",
         "only_empty": "a stacks-only recording keeps no call",
@@ -2564,8 +2565,9 @@ class ScriptedDll:
                   "snap": {"allocated": "snap_unallocated" not in f, "bytes": sb,
                            "rings": len(params) + (len(stacks) if "snap_rings_off" in f else 0),
                            "per_ring_per_s": 1000, "total_per_s": 10000,
-                           # A fault shows only as far as the stack budget refused calls, as on the DLL it stands for.
-                           "skipped_budget": sum(dropped) if "snap_skipped" in f else 0,
+                           # A refusal counted in the wrong place shows only as far as the stack budget refused calls,
+                           # as on the DLL it stands for; a phantom count shows whatever was refused.
+                           "skipped_budget": (sum(dropped) if "snap_skipped" in f else 0) + ("snap_phantom" in f),
                            "dropped_budget": sum(dropped) if "snap_counted" in f else 0,
                            "slots_per_ring": (sb - 64 * (len(params) + stack_terms)) // per_round if per_round else 0},
                   "stack": {"rings": len(stacks) + ("stack_rings_off" in f), "depth": depth * (1 + ("depth_off" in f)),
@@ -3109,6 +3111,7 @@ def self_test() -> int:
     caught(("ring_dropped0",), S5_WINDOW)
     caught(("snap_counted",), "S5 the parameter counters")
     caught(("snap_skipped",), "S5 the parameter counters")
+    caught(("snap_phantom",), "S5 the parameter counters")
     caught(("leak",), s7_main, s7_only)
     caught(("leak_snap",), s7_main, s7_only)
     caught(("leak_alloc",), s7_main, "S0 an altered stack key alone refuses", s7_only)
@@ -3453,11 +3456,16 @@ def self_test() -> int:
     def s5_skipped(ch: Checks) -> list[str]:
         return [why for n, why in ch.skipped if n.startswith(S5_WINDOW)]
 
-    def s5_both_skipped(ch: Checks) -> bool:
-        """S5's two lines, the window and the parameter counters, both reported not run and for one reason: where the
-        budget refuses nothing, a DLL that counts its refusals in the wrong place shows nothing to catch."""
-        whys = [why for n, why in ch.skipped if n.startswith("S5 ")]
-        return len(whys) == 2 and whys[0] == whys[1] and not any(n.startswith("S5 ") for n in ran(ch))
+    def s5_params(ch: Checks) -> tuple[list[bool], list[str]]:
+        """S5's parameter-counter check: its verdicts where it ran, its reasons where it was not run."""
+        return [ok for n, ok, _ in ch.items if n == S5_PARAMS], [why for n, why in ch.skipped if n == S5_PARAMS]
+
+    def s5_vacuous(ch: Checks) -> bool:
+        """S5's two lines both reported not run, the counters' because the stack budget refused nothing: there a DLL
+        that counts its refusals in the wrong place has nothing to count, and 0 proves nothing."""
+        oks, whys = s5_params(ch)
+        return s5_ran(ch) == [] and len(s5_skipped(ch)) == 1 and oks == [] and len(whys) == 1 and \
+            "refused nothing" in whys[0]
     lo7, hi7 = budget_window(7, DRY_RECORD_S, DRY_RECORD_S)
     expect(f"dry run: a probe at 30 a second (the fixture at 30 fps), no --stack-per-ring: the budget is lowered to 7 "
            f"so it bites, and S5 holds at {lo7:.0f}..{hi7:.0f}",
@@ -3466,26 +3474,35 @@ def self_test() -> int:
     # 25, not the 30 the run falls back to, so a run that sends its fallback in place of a given budget is seen; and the
     # ring drops some calls at it, so a run that runs S5 whenever the ring dropped something is seen too (LOW-4).
     expect("dry run: --stack-per-ring 25 with the probe at 30 a second cannot bite (25 x 1.5 > 30), though the ring "
-           "drops some: S5's window and its parameter counters not run (the rate in the reason), neither failed nor "
-           "passed, 25 still sent",
+           "drops some: S5's window not run (the rate in the reason), neither failed nor passed, 25 still sent; the "
+           "budget refused calls, so the parameter counters are checked, and hold",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 25 and s5_ran(r[0]) == [] and
                     int_or(r[1]["stack_rings"][1].get("dropped_budget"), 0) > 0 and
-                    len(s5_skipped(r[0])) == 1 and "30.0/s" in s5_skipped(r[0])[0] and s5_both_skipped(r[0]))(
-               s5_run(30, ("--stack-per-ring", "25"))))
-    expect("dry run: no budget fits (the probe at 4 a second): S5's two checks not run with the measured rates, every "
-           "other check run at the old 30",
+                    len(s5_skipped(r[0])) == 1 and "30.0/s" in s5_skipped(r[0])[0] and
+                    s5_params(r[0]) == ([True], []))(s5_run(30, ("--stack-per-ring", "25"))))
+    # [SNAPRIG-S5-RATE] The second review's MED-A: a nonzero parameter counter is a defect whether or not the window
+    # runs, and the stack budget refuses calls on paths where the window cannot: those refusals are what a DLL counts
+    # in the wrong place.
+    expect("dry run: the same with a DLL that counts the ring's refusals as parameter skips: the counter check fails, "
+           "and nothing else does",
+           lambda: (lambda r: fail_set(r[0], S5_PARAMS) and s5_ran(r[0]) == [])(
+               s5_run(30, ("--stack-per-ring", "25"), faults=("snap_skipped",))))
+    expect("dry run: no budget fits (the probe at 4 a second): S5's window not run with the measured rates, the "
+           "counters not run as the budget refused nothing, every other check run at the old 30",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_ran(r[0]) == [] and
                     len(s5_skipped(r[0])) == 1 and "4.0/s" in s5_skipped(r[0])[0] and "2.0/s" in s5_skipped(r[0])[0]
-                    and s5_both_skipped(r[0]) and len(ran(r[0])) == len(fixture_names) + 23)(s5_run(4)))
-    expect("dry run: where no budget bites, a DLL that counts the stack budget's refusals in the parameter counters "
-           "shows nothing (it refused nothing): the counter check is not run, never passed",
-           lambda: all(failing(r[0]) == [] and s5_both_skipped(r[0])
+                    and s5_vacuous(r[0]) and len(ran(r[0])) == len(fixture_names) + 23)(s5_run(4)))
+    expect("dry run: where the stack budget refuses nothing, a DLL that would count its refusals in the parameter "
+           "counters shows nothing: the counter check is not run, never passed",
+           lambda: all(failing(r[0]) == [] and s5_vacuous(r[0])
                        for r in (s5_run(4, faults=("snap_skipped",)), s5_run(4, faults=("snap_counted",)))))
+    expect("dry run: where the stack budget refuses nothing, a parameter counter that moves anyway fails the check",
+           lambda: (lambda r: fail_set(r[0], S5_PARAMS) and s5_ran(r[0]) == [])(s5_run(4, faults=("snap_phantom",))))
     # The plain recording chooses the budget; the main recording is the one S5 reads, and its own rate decides whether
     # the budget bit there (the review's LOW-1).
-    expect("dry run: the plain recording at 60 a second, the main one at 30 (under 1.5x the 30 sent): S5's two checks "
-           "not run, both rates in the reason, nothing failed",
-           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_both_skipped(r[0]) and
+    expect("dry run: the plain recording at 60 a second, the main one at 30 (under 1.5x the 30 sent): S5's window not "
+           "run, both rates in the reason, the counters not run as nothing was refused, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_vacuous(r[0]) and
                     "60.0/s" in s5_skipped(r[0])[0] and "30.0/s" in s5_skipped(r[0])[0])(
                s5_run(60, main_pf_rate=30)))
     expect("dry run: the main recording slower than the plain one but still 1.5x over the budget: S5 runs and holds",
@@ -3493,10 +3510,10 @@ def self_test() -> int:
                     S5_PARAMS in ran(r[0]))(s5_run(60, main_pf_rate=46)))
     s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
     expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: SnapProbe_PerFrame spends the "
-           "total and SnapProbe_Call's stacks are refused; S3's two in-scope checks and S5's two not run, the starving "
-           "total the reason, nothing failed, the budget sent as given",
+           "total and SnapProbe_Call's stacks are refused; S3's two in-scope checks and S5's window not run, the "
+           "starving total the reason, the counters checked, nothing failed, the budget sent as given",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 40 and r[1]["stack_rings"][0].get("written") == 0 and
-                    s5_both_skipped(r[0]) and
+                    s5_ran(r[0]) == [] and "starve" in s5_skipped(r[0])[0] and s5_params(r[0]) == ([True], []) and
                     [p for p in s3_in_scope if any(n.startswith(p) and "starve" in why for n, why in r[0].skipped)] ==
                     list(s3_in_scope) and not any(n.startswith(s3_in_scope) for n in ran(r[0])))(
                s5_run(30, ("--stack-per-ring", "40", "--stack-total", "15"))))
