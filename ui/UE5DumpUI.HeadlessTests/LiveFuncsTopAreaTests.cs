@@ -57,6 +57,26 @@ public class LiveFuncsTopAreaTests
         Assert.Equal(closed, GridTop(panel));
     });
 
+    /// <summary>(3) No line for the baseline until there is one or Diff is on, and the table takes the room; the hint the
+    /// line gave is on Set Baseline's tooltip.</summary>
+    [Fact]
+    public Task The_baseline_line_takes_no_room_until_there_is_a_baseline_or_Diff_is_on() => Headless.Run(() =>
+    {
+        var (panel, vm) = Laid();
+        var line = TextBlocks(panel, vm.BaselineStatus).Single();
+        Assert.False(line.IsEffectivelyVisible, "the baseline line shows with no baseline and Diff off");
+        double without = GridTop(panel);
+
+        vm.DiffMode = true;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(line.IsEffectivelyVisible, "the baseline line is hidden with Diff on");
+        Assert.True(GridTop(panel) - without >= line.Bounds.Height - 0.5,
+                    $"the table's top is {without:0.#} without the line and {GridTop(panel):0.#} with it");
+
+        var setBaseline = panel.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == Res("str.LF.SetBaseline"));
+        Assert.Contains("record idle, then Set Baseline", ToolTip.GetTip(setBaseline) as string ?? "", StringComparison.Ordinal);
+    });
+
     /// <summary>(1) The warning's one line turns orange with the estimate, as the four lines did: a capture measured at 100
     /// µs makes A::F's 25 a second cost 2.5 ms of the game's time, above the 2 ms line.</summary>
     [Fact]

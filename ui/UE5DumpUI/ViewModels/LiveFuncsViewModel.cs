@@ -216,6 +216,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         (_lastUnloaded > 0 ? Say("str.LF.Unloaded.Note", _lastUnloaded) : "")
         + (_lastUnnamed > 0 ? Say("str.LF.Unnamed.Note", _lastUnnamed) : "");
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
+    public bool BaselineStatusVisible => true;
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
     /// box's AutoCompleteBox suggestions — see <see cref="KeywordSearchMemory"/>.

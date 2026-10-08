@@ -10,7 +10,8 @@ namespace UE5DumpUI.Tests;
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
 /// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them,
 /// with its view, budget, per-frame question and estimate: the S3-U items of docs/live-funcs-step3-items.md.
-/// Clear choices: the one clear that drops the trace's ticks with them.
+/// Clear choices: the one clear that drops the trace's ticks with them. [LF-COMPACT-TOP] The controls above the table,
+/// made smaller: what each still says and when.
 /// </summary>
 public class LiveFuncsSnapshotTests
 {
@@ -1482,6 +1483,51 @@ public class LiveFuncsSnapshotTests
         Assert.True(shortAt < toggleAt && toggleAt < wholeAt, "the one line, its toggle and the whole text are out of order");
         var opens = Regex.Matches(axaml[..wholeAt], @"<Panel\b[^>]*>");
         Assert.Contains($"IsVisible=\"{{Binding #{name}.IsChecked}}\"", opens[^1].Value, StringComparison.Ordinal);
+    }
+
+    /// <summary>(3) The baseline's line speaks only when there is a baseline, or Diff is on and there is none: it said "No
+    /// baseline" to every user who never asked for one, a line of the panel spent on a hint. Each way it can change is
+    /// raised, the last one when Diff was already off and nothing else would be.</summary>
+    [Fact]
+    public async Task The_baseline_line_shows_only_with_a_baseline_or_with_Diff_on()
+    {
+        var (vm, dump) = MakeVm();
+        var raised = Raised(vm);
+        Assert.False(vm.BaselineStatusVisible);
+
+        vm.DiffMode = true;                                   // Diff without a baseline: the line says there is none
+        Assert.True(vm.BaselineStatusVisible);
+        Assert.Contains(nameof(LiveFuncsViewModel.BaselineStatusVisible), raised);
+        vm.DiffMode = false;
+        Assert.False(vm.BaselineStatusVisible);
+
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF));
+        await Fetch(vm);
+        raised.Clear();
+        vm.SetBaselineCommand.Execute(null);
+        Assert.True(vm.BaselineStatusVisible);
+        Assert.Contains(nameof(LiveFuncsViewModel.BaselineStatusVisible), raised);
+        vm.DiffMode = false;                                  // a baseline kept with Diff off is still worth its line
+        Assert.True(vm.BaselineStatusVisible);
+
+        raised.Clear();
+        vm.ClearBaselineCommand.Execute(null);
+        Assert.False(vm.BaselineStatusVisible);
+        Assert.Contains(nameof(LiveFuncsViewModel.BaselineStatusVisible), raised);
+    }
+
+    /// <summary>(3) The hint the line gave moves into Set Baseline's tooltip, and the line binds its visibility.</summary>
+    [Fact]
+    public void The_no_baseline_hint_is_in_Set_Baselines_tooltip_and_the_line_binds_its_visibility()
+    {
+        Assert.Contains("record idle, then Set Baseline", Line("str.Tip.LF.SetBaseline"), StringComparison.Ordinal);
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var line = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value)
+                        .Single(b => b.Contains("Text=\"{Binding BaselineStatus}\"", StringComparison.Ordinal));
+        Assert.Contains("IsVisible=\"{Binding BaselineStatusVisible}\"", line, StringComparison.Ordinal);
+        var button = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value)
+                          .Single(b => b.Contains("Command=\"{Binding SetBaselineCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.SetBaseline}\"", button, StringComparison.Ordinal);
     }
 
     // ---- Clear choices: one clear for the three choice columns ----
