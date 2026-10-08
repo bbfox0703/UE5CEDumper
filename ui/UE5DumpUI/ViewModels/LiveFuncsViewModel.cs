@@ -367,6 +367,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     internal const int SnapshotPerFuncPerSec = 1000;
     internal const int SnapshotTotalPerSec = 10000;
 
+    // [LIVEFUNCS-STEP3] red: declared for S3-U2's tests; its green chooses, sends and reports the stacks.
+    public ObservableCollection<string> StackFunctions { get; } = new();
+    public bool HasStackChoices => StackFunctions.Count > 0;
+    internal const int StackDepth = 16;
+    internal const int StackPerFuncPerSec = 100;
+    internal const int StackTotalPerSec = 200;
+
+    [RelayCommand]
+    private void ToggleStack(PeProfileEntry? row) => _ = row;
+
     partial void OnSnapshotBufferExponentChanged(int value)
     {
         int clamped = Math.Clamp(value, SnapshotBufferMinExponent, SnapshotBufferMaxExponent);
@@ -468,7 +478,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     internal static int SlotsPerCall(uint functionFlags)
         => functionFlags == 0 || (functionFlags & FuncHasOutParms) != 0 ? 2 : 1;
 
-    internal static SnapEstimate EstimateSnapshots(IReadOnlyList<SnapRate> chosen, long snapBytes, int perFunc, int total)
+    internal static SnapEstimate EstimateSnapshots(IReadOnlyList<SnapRate> chosen, long snapBytes, int perFunc, int total,
+                                                   int stackRings = 0)
     {
         if (chosen.Count == 0) return default;
         double rate = 0, admitted = 0, bytesPerSec = 0;
@@ -732,6 +743,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         => trace.Ticked.Count > 0 || trace.TickedNames.Count > 0 ? "str.LF.Trace.RecordingTicked"
          : trace.Snapshots != null ? "str.LF.Trace.RecordingSnapOnly"
          : "str.LF.Trace.RecordingAll";
+
+    internal static int TraceStartCount(TraceStartOptions trace)
+        => trace.TickedNames.Count > 0 ? trace.TickedNames.Count
+         : trace.Ticked.Count > 0 ? trace.Ticked.Count
+         : trace.Snapshots?.Funcs.Count ?? 0;
 
     /// <summary>[LIVEFUNCS-STEP2] The followed names the last Stop found never called: "not called", never "not loaded"
     /// -- the DLL sees calls, not loads. Shown here and in the Call Trace tab's copy (T8).</summary>

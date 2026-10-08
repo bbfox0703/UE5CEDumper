@@ -230,6 +230,11 @@ public sealed class StackStartOptions
 /// <summary>The trace's stack rings as the DLL armed them (<c>trace.stack</c>).</summary>
 public sealed class StackInfo
 {
+    /// <summary>A trace entry record's flag: a stack ring holds this call's return addresses (Linie's kTraceStackTaken).</summary>
+    public const uint TakenEntryFlag = 32;
+    /// <summary>A trace entry record's flag: chosen for a stack, and the stack budget left it out (kTraceStackBudget).</summary>
+    public const uint BudgetEntryFlag = 64;
+
     public int   Rings         { get; init; }
     public int   Depth         { get; init; }
     public int   PerRingPerSec { get; init; }

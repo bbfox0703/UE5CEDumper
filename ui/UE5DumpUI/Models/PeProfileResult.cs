@@ -22,6 +22,10 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// each call. Kept by name in LiveFuncsViewModel, like the ticks.</summary>
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isSnapChosen;
 
+    /// <summary>[LIVEFUNCS-STEP3] Chosen for a native stack: the next traced Start takes the return addresses above each
+    /// of its calls. Kept by name in LiveFuncsViewModel, like the parameter choice.</summary>
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isStackChosen;
+
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";
     public string FuncAddr  { get; init; } = "";
@@ -57,6 +61,10 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// not; left out when the DLL read it as having no parameters. Flags of 0 are an offset never decided, not
     /// "none": such a row stays choosable and the DLL decides.</summary>
     public bool CanChooseSnapshot => FnameKey != null && !(NumParms == 0 && FunctionFlags != 0);
+
+    /// <summary>[LIVEFUNCS-STEP3] A row whose native stack can be chosen: by name, so it needs a key. Every call has a
+    /// stack, so <see cref="CanChooseSnapshot"/>'s parameters rule does not apply (D1).</summary>
+    public bool CanChooseStack => FnameKey != null;
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,
