@@ -373,6 +373,13 @@ bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 // or the chain cannot be read.
 bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
 
+// [UE-OVERRIDE-411] review: how many bytes a ProcessEvent buffer for a function gets -- never fewer than its
+// own parameter chain ends at, whatever ParmsSize the tail read gave (DynOff::ProcessEventBufferBytes says why).
+// The first form uses the chain WalkFunctions read into fi.params; a FunctionInfo without it (ResolveFunctionInfo's)
+// takes the second, which reads the chain at funcAddr.
+uint32_t ParamBufferSize(const FunctionInfo& fi);
+uint32_t ParamBufferSize(uintptr_t funcAddr, uint16_t parmsSize);
+
 // [TRACE-UNLOADED-NAMES] D1: a function the game unloads before Stop keeps the name it had when it fired.
 //
 // What CaptureFunctionIdentity reads beyond the FNames, decided on the pipe thread before a recording starts: the

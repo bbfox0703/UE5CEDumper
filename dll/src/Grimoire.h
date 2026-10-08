@@ -719,6 +719,16 @@ constexpr int FunctionTailShiftFor(unsigned ueVersion) {
     return (ueVersion >= 411 && ueVersion < 418) ? 2 : 0;
 }
 
+// === The bytes a ProcessEvent parameter buffer gets [UE-OVERRIDE-411] ===
+//
+// `parmsSize` is UFunction::ParmsSize as read from the tail; `chainEnd` is where the function's own
+// parameter chain ends (the furthest Offset_Internal + ElementSize of a CPF_Parm entry, the return
+// value included), 0 when the chain was not read.
+constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd) {
+    (void)chainEnd;
+    return parmsSize;
+}
+
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
 //
 // ⛔ This was the ONE UProperty-mode offset nothing calibrated. UBOOLPROP_FIELDSIZE had

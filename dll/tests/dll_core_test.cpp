@@ -1119,6 +1119,64 @@ int main() {
         check("UFUNCTAIL control: UE 5.5 reads as before",
               f505.numParms == 4 && f505.parmsSize == 0x40 && f505.returnValueOffset == 0x38);
 
+        // [UE-OVERRIDE-411] review. The version decides where ParmsSize is read, so a wrong one -- an override of 4.17
+        // on a 4.18 title, which the override now reaches -- reads the field next door. A K2_SetActorLocation-shaped
+        // 4.18 tail: NumParms 5, ParmsSize 0x9A, ReturnValueOffset 0x99 (bTeleport +0x98, the bool return +0x99).
+        memset(fn, 0, sizeof(fn));
+        memcpy(fn + 0x88, &flags, 4);
+        fn[0x8C] = 5;
+        put16(fn + 0x8E, 0x9A);
+        put16(fn + 0x90, 0x99);
+        const auto wrong = readAt(417);
+        snprintf(buf, sizeof(buf), "parmsSize 0x%X", wrong.parmsSize);
+        check("PEBUF the hazard: a 4.18 tail read as 4.17 takes ReturnValueOffset for ParmsSize",
+              wrong.parmsSize == 0x99, buf);
+
+        // The chain WalkFunctions reads does not depend on the tail: each entry carries its own offset and size.
+        auto parm = [](int32_t off, int32_t size, bool isReturn) {
+            FunctionParam p{};
+            p.name = "p"; p.offset = off; p.size = size; p.isParm = true; p.isReturn = isReturn;
+            return p;
+        };
+        FunctionInfo shifted = wrong;
+        shifted.params = { parm(0, 12, false), parm(0xC, 1, false), parm(0x10, 0x88, false),
+                           parm(0x98, 1, false), parm(0x99, 1, true) };
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(shifted));
+        check("PEBUF ⭐: the buffer still covers the return value ProcessEvent writes at +0x99",
+              Ubel::ParamBufferSize(shifted) == 0x9A, buf);
+        FunctionParam local = parm(0x200, 8, false);   // a Blueprint function's local: in the chain, not CPF_Parm
+        local.isParm = false;
+        shifted.params.push_back(local);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(shifted));
+        check("PEBUF: a local past the parameters does not grow the buffer", Ubel::ParamBufferSize(shifted) == 0x9A, buf);
+
+        // invoke_function holds only ResolveFunctionInfo's tail read, so its form reads the chain at the address.
+        // UProperty mode, as on 4.18: Children -> UProperty entries with PropertyFlags / Offset_Internal / ElementSize.
+        const bool savedFPropT = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = false;
+        static uint8_t tailProps[5][0x100];
+        memset(tailProps, 0, sizeof(tailProps));
+        const int32_t pOff[5]  = { 0, 0xC, 0x10, 0x98, 0x99 };
+        const int32_t pSize[5] = { 12, 1, 0x88, 1, 1 };
+        auto putP = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        putP(fn, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(tailProps[0]));
+        for (int i = 0; i < 5; ++i) {
+            const uint64_t pf = 0x0080 | (i == 4 ? 0x0400 : 0);   // CPF_Parm, and CPF_ReturnParm on the last
+            memcpy(tailProps[i] + DynOff::UPROPERTY_FLAGS, &pf, sizeof(pf));
+            memcpy(tailProps[i] + DynOff::UPROPERTY_OFFSET, &pOff[i], 4);
+            memcpy(tailProps[i] + DynOff::UPROPERTY_ELEMSIZE, &pSize[i], 4);
+            if (i < 4) putP(tailProps[i], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(tailProps[i + 1]));
+        }
+        const uintptr_t fnAddr = reinterpret_cast<uintptr_t>(fn);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(fnAddr, wrong.parmsSize));
+        check("PEBUF ⭐: read at the address, the chain gives 0x9A over the misread 0x99",
+              Ubel::ParamBufferSize(fnAddr, wrong.parmsSize) == 0x9A, buf);
+        check("PEBUF control: a correct ParmsSize is kept", Ubel::ParamBufferSize(fnAddr, 0x9A) == 0x9A);
+        static uint8_t noChain[0x100] = {};
+        check("PEBUF control: a function with no chain keeps its ParmsSize",
+              Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(noChain), 0x20) == 0x20);
+        DynOff::bUseFProperty = savedFPropT;
+
         g_cachedUEVersion           = savedVer;
         DynOff::bCasePreservingName = savedCpn;
     }

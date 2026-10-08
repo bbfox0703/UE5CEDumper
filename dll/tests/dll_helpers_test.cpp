@@ -6358,6 +6358,30 @@ static void Test_FunctionFlagsOffset() {
            !DynOff::FunctionTailMatches(2, 0x4000, 2, 8));
 }
 
+// [UE-OVERRIDE-411] review: a ProcessEvent buffer is never smaller than the function's own parameter chain, whatever
+// ParmsSize the version's tail read gave. The block is K2_SetActorLocation-shaped on a 4.18 layout: NewLocation +0x0
+// (12), bSweep +0xC, SweepHitResult +0x10 (0x88), bTeleport +0x98, the bool return +0x99 -- ParmsSize 0x9A,
+// ReturnValueOffset 0x99.
+static void Test_ProcessEventBufferBytes() {
+    using DynOff::ProcessEventBufferBytes;
+    EXPECT("PEBuf: a correct ParmsSize stands", ProcessEventBufferBytes(0x9A, 0x9A) == 0x9A);
+    // Read with 4.11-4.17's +2 (a 4.17 override on that title): ParmsSize comes from ReturnValueOffset.
+    EXPECT("PEBuf ⭐: ParmsSize read from ReturnValueOffset (0x99) still gets the whole block",
+           ProcessEventBufferBytes(0x99, 0x9A) == 0x9A);
+    // The reverse: a 4.11-4.17 layout read without the shift takes NumParms for ParmsSize.
+    EXPECT("PEBuf ⭐: ParmsSize read from NumParms (5) still gets the whole block",
+           ProcessEventBufferBytes(5, 0x9A) == 0x9A);
+    EXPECT("PEBuf ⭐: a ReturnValueOffset of 0 read as ParmsSize (an FVector getter) still gets the FVector",
+           ProcessEventBufferBytes(0, 12) == 12);
+    EXPECT("PEBuf: a ParmsSize past the chain's end is kept", ProcessEventBufferBytes(0x10, 0xC) == 0x10);
+    EXPECT("PEBuf: no chain read keeps ParmsSize", ProcessEventBufferBytes(0x18, 0) == 0x18);
+    EXPECT("PEBuf: a chain end past 0xFFFF is no parameter block (ParmsSize is a uint16)",
+           ProcessEventBufferBytes(0x18, 0x10000) == 0x18);
+    EXPECT("PEBuf: ...and 0xFFFF itself can be one", ProcessEventBufferBytes(0x18, 0xFFFF) == 0xFFFF);
+    EXPECT("PEBuf: a negative end is no chain", ProcessEventBufferBytes(0x18, -4) == 0x18);
+    EXPECT("PEBuf: no ParmsSize and no chain is an empty buffer", ProcessEventBufferBytes(0, 0) == 0);
+}
+
 // [VND583-02] UField::Next was never measured in FProperty mode (4.25+): DetectUPropertyMode
 // returned before touching it and the FProperty arm probed only FField::Next. On a 4.25+ title
 // whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30, SuperStruct 0x48)
@@ -9398,6 +9422,7 @@ int main() {
     RUN(Test_VersionTier2_BareNeedle_G11);
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
+    RUN(Test_ProcessEventBufferBytes);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);

@@ -2000,6 +2000,26 @@ bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size) {
     return false;
 }
 
+uint32_t ParamBufferSize(const FunctionInfo& fi) {
+    int64_t end = 0;
+    for (const FunctionParam& p : fi.params)
+        if ((p.isParm || p.isReturn) && p.offset >= 0 && p.size > 0)
+            end = (std::max)(end, static_cast<int64_t>(p.offset) + p.size);
+    return DynOff::ProcessEventBufferBytes(fi.parmsSize, end);
+}
+
+uint32_t ParamBufferSize(uintptr_t funcAddr, uint16_t parmsSize) {
+    int64_t end = 0;
+    int count = 0, shapeEnd = 0;
+    if (ReadParamShape(funcAddr, count, shapeEnd)) end = shapeEnd;
+    // The return value carries CPF_Parm as well, but ReadParamShape gives up on the whole chain at one implausible
+    // entry; the return's own end still counts then, because ProcessEvent writes it.
+    int32_t retOff = -1, retSize = 0;
+    if (ReadReturnSlot(funcAddr, retOff, retSize))
+        end = (std::max)(end, static_cast<int64_t>(retOff) + retSize);
+    return DynOff::ProcessEventBufferBytes(parmsSize, end);
+}
+
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out) {
     if (!funcAddr) return false;
     uintptr_t metaClass = 0;
