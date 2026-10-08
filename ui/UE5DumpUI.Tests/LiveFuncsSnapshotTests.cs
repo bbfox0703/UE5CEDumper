@@ -100,10 +100,11 @@ public class LiveFuncsSnapshotTests
         public void StopProcessMirror() { }
     }
 
-    private static (LiveFuncsViewModel vm, FakeDumpService dump) MakeVm(bool experimental = true)
+    private static (LiveFuncsViewModel vm, FakeDumpService dump) MakeVm(bool experimental = true,
+                                                                         IPlatformService? platform = null)
     {
         var dump = new FakeDumpService();
-        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), null, experimentalGate: new Gate(experimental))
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), platform, experimentalGate: new Gate(experimental))
         {
             StringLookup = En,
         };
@@ -1528,6 +1529,208 @@ public class LiveFuncsSnapshotTests
         var button = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value)
                           .Single(b => b.Contains("Command=\"{Binding SetBaselineCommand}\"", StringComparison.Ordinal));
         Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.SetBaseline}\"", button, StringComparison.Ordinal);
+    }
+
+    /// <summary>(2) The capture settings start unfolded, so a user who never folds them sees what they always saw, and the
+    /// header's button folds and unfolds them, saying which it will do. Folding is a view choice that changes no setting,
+    /// so it is not refused while recording.</summary>
+    [Fact]
+    public async Task The_capture_settings_start_unfolded_and_the_header_button_folds_and_unfolds_them()
+    {
+        var (vm, _) = MakeVm();
+        var raised = Raised(vm);
+        Assert.False(vm.CaptureSettingsCollapsed);
+        Assert.Equal(Line("str.LF.Settings.Collapse"), vm.CaptureSettingsToggleText);
+
+        vm.ToggleCaptureSettingsCommand.Execute(null);
+        Assert.True(vm.CaptureSettingsCollapsed);
+        Assert.Equal(Line("str.LF.Settings.Expand"), vm.CaptureSettingsToggleText);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSettingsCollapsed), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSettingsToggleText), raised);
+        Assert.NotEqual(vm.CaptureSettingsToggleText, Line("str.LF.Settings.Collapse"));
+
+        vm.ToggleCaptureSettingsCommand.Execute(null);
+        Assert.False(vm.CaptureSettingsCollapsed);
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        vm.ToggleCaptureSettingsCommand.Execute(null);
+        Assert.True(vm.CaptureSettingsCollapsed);
+    }
+
+    private static string Summary(params string[] parts) => string.Join(" · ", parts);
+
+    /// <summary>(2) Folded, the header says what is set: the plain capture's settings always, and with the experimental
+    /// trace its switch and buffer, the three choice counts, the stack budget once a stack is chosen, the snapshot buffer
+    /// once anything fills it, and the stack warning's one line, which folding never hides.</summary>
+    [Fact]
+    public async Task The_summary_says_what_is_set()
+    {
+        var (plain, _) = MakeVm(experimental: false);
+        Assert.Equal(Line("str.LF.Summary.Fetch", 512, 1), plain.CaptureSummary);
+        plain.FetchLimitExponent = 10;
+        plain.MinCallsExponent = 2;
+        plain.HidePerFrame = true;
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 1024, 4), Line("str.LF.Summary.HidePerFrame")), plain.CaptureSummary);
+        plain.TraceEnabled = true;                               // no trace without the experimental tabs: nothing to say
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 1024, 4), Line("str.LF.Summary.HidePerFrame")), plain.CaptureSummary);
+
+        var (vm, dump) = MakeVm();
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
+                             Line("str.LF.Summary.Choices", 0, 0, 0)), vm.CaptureSummary);
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.TraceBufferExponent = 5;
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOn", 32),
+                             Line("str.LF.Summary.Choices", 0, 0, 1),
+                             Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Standard")),
+                             Line("str.LF.Summary.SnapBuffer", 32), Line("str.LF.Stack.WarningShort")), vm.CaptureSummary);
+        Assert.False(vm.CaptureSummaryWarn);
+
+        // A 128 MB snapshot buffer keeps G's one call a second longer than the 32 MB trace keeps the chosen calls, so
+        // nothing here warns and the summary is the settings alone.
+        vm.StackBudgetLow = true;
+        vm.SnapshotBufferExponent = 7;
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "G"));
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        vm.TraceEnabled = false;
+        Assert.False(vm.SnapshotEstimateWarn);
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
+                             Line("str.LF.Summary.Choices", 1, 1, 1),
+                             Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Low")),
+                             Line("str.LF.Summary.SnapBuffer", 128), Line("str.LF.Stack.WarningShort")), vm.CaptureSummary);
+        Assert.False(vm.CaptureSummaryWarn);
+    }
+
+    /// <summary>(2) Folding never hides a warning: each orange line the section can show puts its own short warning in
+    /// the summary and turns it orange -- the stack estimate over 2 ms a second, the parameter estimate (a choice that
+    /// keeps less time than the trace, or a buffer the DLL refuses), and memory over what is free.</summary>
+    [Fact]
+    public async Task Every_orange_line_of_the_section_turns_the_summary_orange_with_its_warning()
+    {
+        var (stacks, stacksDump) = await WithRatesToEstimate();
+        await stacks.ToggleStackCommand.ExecuteAsync(Shown(stacks, "A", "F"));
+        Assert.False(stacks.CaptureSummaryWarn);
+        await RecordStacks(stacks, stacksDump, captures: 100, spentTicks: 100_000);   // 100 us: 25 a second is 2.5 ms
+        Assert.True(stacks.StackEstimateWarn);
+        Assert.True(stacks.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.StackWarn", 2.5), stacks.CaptureSummary, StringComparison.Ordinal);
+
+        var (busy, busyDump) = MakeVm();
+        busyDump.NextGet = ResultOf(10_000, Row("A", "Hot", "0x1", KeyF, count: 100_000, size: 2048));
+        await Fetch(busy);
+        busy.TraceEnabled = true;
+        busy.SnapshotBufferExponent = 3;
+        busy.ToggleSnapshotCommand.Execute(busy.Results.Single());
+        Assert.True(busy.SnapshotEstimateWarn);
+        Assert.True(busy.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.SnapWarn"), busy.CaptureSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain(Line("str.LF.Summary.SnapTooSmall"), busy.CaptureSummary, StringComparison.Ordinal);
+
+        // 510 functions of a 2 KB block in 8 MB: fewer than 8 slots a ring, so the DLL would refuse the Start.
+        var (many, manyDump) = MakeVm();
+        manyDump.NextGet = ResultOf(10_000, Enumerable.Range(1, 510)
+            .Select(i => Row("A", $"F{i}", $"0x{i:X}", new NameKey(i, 0, 9, 0), size: 2048)).ToArray());
+        await Fetch(many);
+        many.TraceEnabled = true;
+        many.SnapshotBufferExponent = 3;
+        many.SnapshotShownRowsCommand.Execute(null);
+        Assert.Contains(Line("str.LF.Snap.TooSmall", 7).Split(':')[0], many.SnapshotEstimate, StringComparison.Ordinal);
+        Assert.True(many.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.SnapTooSmall"), many.CaptureSummary, StringComparison.Ordinal);
+
+        var platform = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 1L << 30 };   // 1 GB
+        var (memory, _) = MakeVm(platform: platform);
+        memory.TraceEnabled = true;
+        Assert.False(memory.CaptureSummaryWarn);
+        memory.TraceBufferExponent = 9;                          // 512 MB in the game and about 1.2 GB in the UI
+        Assert.True(memory.TraceMemoryOverAvailable);
+        Assert.True(memory.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.MemoryOver", Line("str.LF.Trace.Gb", 1.0)), memory.CaptureSummary,
+                        StringComparison.Ordinal);
+
+        // Without the experimental tabs the section shows none of these lines, so the summary has none to carry.
+        var (plain, _) = MakeVm(experimental: false, platform: platform);
+        plain.TraceBufferExponent = 9;
+        Assert.True(plain.TraceMemoryOverAvailable);
+        Assert.False(plain.CaptureSummaryWarn);
+        Assert.DoesNotContain("⚠", plain.CaptureSummary, StringComparison.Ordinal);
+    }
+
+    /// <summary>(2) A summary the screen keeps showing after a setting moved would be wrong while folded, which is the only
+    /// time it is read: so every change it names raises it, and its orange flag with it.</summary>
+    [Fact]
+    public async Task The_summary_is_raised_by_every_change_it_names()
+    {
+        var (vm, dump) = await WithRatesToEstimate();
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        void Raises(string what, Action change)
+        {
+            raised.Clear();
+            change();
+            Assert.True(raised.Contains(nameof(LiveFuncsViewModel.CaptureSummary)), $"{what} does not raise the summary");
+            Assert.True(raised.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn)), $"{what} does not raise its flag");
+        }
+        Raises("the fetch limit", () => vm.FetchLimitExponent = 12);
+        Raises("min calls", () => vm.MinCallsExponent = 3);
+        Raises("hide per-frame", () => vm.HidePerFrame = true);
+        Raises("the trace's switch", () => vm.TraceEnabled = false);
+        Raises("the trace's buffer", () => vm.TraceBufferExponent = 8);
+        Raises("a tick", () => vm.ToggleTickCommand.Execute(Shown(vm, "A", "F")));
+        vm.TraceEnabled = true;
+        Raises("a parameter choice", () => vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G")));
+        Raises("a stack choice", () => vm.ToggleStackCommand.Execute(Shown(vm, "A", "H")));
+        Raises("the stack budget", () => vm.StackBudgetLow = true);
+        Raises("the snapshot buffer", () => vm.SnapshotBufferExponent = 6);
+        raised.Clear();
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 100_000);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn), raised);
+        Raises("the free memory read again", () => vm.OnEnteringTab());
+    }
+
+    /// <summary>(2) The section's fold, its summary and the header's buttons, as the view binds them: compiled bindings
+    /// only, the summary the D3 pair (calm, and the panel's orange when it warns), wrapping so a warning is never cut.</summary>
+    [Fact]
+    public void The_header_binds_the_fold_and_the_summary_and_the_section_folds_under_it()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var buttons = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value).ToList();
+        string toggle = Assert.Single(buttons, b => b.Contains("Command=\"{Binding ToggleCaptureSettingsCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("Content=\"{Binding CaptureSettingsToggleText}\"", toggle, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Settings.Toggle}\"", toggle, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsEnabled", toggle, StringComparison.Ordinal);   // folding is not refused while recording
+        Assert.True(Line("str.Tip.LF.Settings.Toggle").Length > 0);
+
+        var blocks = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value).ToList();
+        var pair = blocks.Where(b => b.Contains("Text=\"{Binding CaptureSummary}\"", StringComparison.Ordinal)).ToList();
+        Assert.True(pair.Count == 2, "the summary is not shown by two TextBlocks");
+        string orange = Regex.Match(blocks.Single(b => b.Contains("IsVisible=\"{Binding TraceMemoryOverAvailable}\"",
+                                                                  StringComparison.Ordinal)),
+                                    @"Foreground=""(?<c>[^""]+)""").Groups["c"].Value;
+        string hot = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding CaptureSummaryWarn}\"", StringComparison.Ordinal));
+        string calm = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding !CaptureSummaryWarn}\"", StringComparison.Ordinal));
+        Assert.Contains($"Foreground=\"{orange}\"", hot, StringComparison.Ordinal);
+        Assert.DoesNotContain($"Foreground=\"{orange}\"", calm, StringComparison.Ordinal);
+        foreach (var b in pair) Assert.Contains("TextWrapping=\"Wrap\"", b, StringComparison.Ordinal);
+
+        // The summary shows folded, the section's own rows unfolded; one binding each way.
+        Assert.Contains("IsVisible=\"{Binding CaptureSettingsCollapsed}\"", axaml, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding !CaptureSettingsCollapsed}\"", axaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_fold_is_remembered_through_the_main_window()
+    {
+        // MainWindowViewModel cannot be built in a unit test; pin its three persistence sites by source, as
+        // LiveFuncsViewModelTests.HidePerFrame_PersistsThroughTheMainWindow does.
+        var main = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "ViewModels", "MainWindowViewModel.cs"));
+        Assert.Contains("nameof(LiveFuncsViewModel.CaptureSettingsCollapsed)", main, StringComparison.Ordinal);
+        Assert.Contains("LiveFuncs.CaptureSettingsCollapsed = o.LiveFuncs.CaptureSettingsCollapsed;", main, StringComparison.Ordinal);
+        Assert.Contains("o.LiveFuncs.CaptureSettingsCollapsed = LiveFuncs.CaptureSettingsCollapsed;", main, StringComparison.Ordinal);
+        // Unfolded by default on both sides, so a file from before the option shows every setting.
+        Assert.False(new UiOptionsSettings().LiveFuncs.CaptureSettingsCollapsed);
     }
 
     // ---- Clear choices: one clear for the three choice columns ----

@@ -253,6 +253,7 @@ public sealed class LiveFuncsUiOptions
     /// <summary>[LIVEFUNCS-STEP2] The snapshot buffer, 2^N MB: 3..7 is 8..128 MB, default 32 (T12). The choices
     /// themselves are never kept: they are name keys of one game process.</summary>
     public int SnapshotBufferExponent { get; set; } = 5;
+    public bool CaptureSettingsCollapsed { get; set; }
 }
 
 public sealed class GameClassFilterUiOptions

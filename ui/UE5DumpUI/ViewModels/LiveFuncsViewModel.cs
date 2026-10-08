@@ -883,6 +883,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshTickedList();
     }
 
+    [ObservableProperty] private bool _captureSettingsCollapsed;
+    public string CaptureSettingsToggleText => "";
+    [RelayCommand] private void ToggleCaptureSettings() { }
+    public string CaptureSummary => "";
+    public bool CaptureSummaryWarn => false;
+
     /// <summary>Empties the table's three choice columns at once. It runs the two clears rather than a loop of its own,
     /// so whatever they bring up to date follows here too, and it is refused while recording because they are.</summary>
     [RelayCommand]

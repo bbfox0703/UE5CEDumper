@@ -184,6 +184,23 @@ public class UiOptionsStoreTests : IDisposable
     }
 
     [Fact]
+    public void Live_Funcs_folded_capture_settings_round_trip_and_an_older_file_unfolds_them()
+    {
+        // [LF-COMPACT-TOP] The fold is kept like the Object Tree's collapse, through the same source-generated context.
+        var store = new UiOptionsStore(_platform);
+        var o = new UiOptionsSettings();
+        o.LiveFuncs.CaptureSettingsCollapsed = true;
+        store.Save(o);
+        Assert.True(new UiOptionsStore(_platform).Load().LiveFuncs.CaptureSettingsCollapsed);
+
+        // A file from before the option has no such key: every setting shows, as it always did.
+        File.WriteAllText(store.FilePath, "{\"schemaVersion\":1,\"liveFuncs\":{\"fetchLimitExponent\":11}}");
+        var older = new UiOptionsStore(_platform).Load();
+        Assert.False(older.LiveFuncs.CaptureSettingsCollapsed);
+        Assert.Equal(11, older.LiveFuncs.FetchLimitExponent);
+    }
+
+    [Fact]
     public void The_object_trees_collapsed_state_is_tracked_applied_and_saved_by_the_main_window()
     {
         // MainWindowViewModel cannot be built in a unit test; pin its three persistence sites by source, as

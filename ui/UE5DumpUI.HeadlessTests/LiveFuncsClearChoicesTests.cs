@@ -1,70 +1,21 @@
-using System.Reflection;
 using Avalonia;
 using Avalonia.Controls;
-using Avalonia.Markup.Xaml;
-using Avalonia.Styling;
 using Avalonia.Threading;
 using Avalonia.VisualTree;
-using UE5DumpUI.Core;
 using UE5DumpUI.ViewModels;
-using UE5DumpUI.Views;
 using Xunit;
+using static UE5DumpUI.HeadlessTests.LiveFuncsLayout;
 
 namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
-/// Where Live Funcs' Clear choices lands, as Avalonia 12.1.3 lays the panel out: on the line just
-/// above the table and over its three choice columns (Trace, Params?, Stack?), so it reads as clearing those, and on a
-/// line the panel already had, so the controls above the table grow no taller. The file names the panel the button is
-/// in; only a layout shows where that panel ends up and how tall it gets.
+/// Where Live Funcs' Clear choices lands, as Avalonia 12.1.3 lays the panel out: on the capture settings' header line
+/// ([LF-COMPACT-TOP]), beside the button that folds them, so it reads as clearing the section's choices and shows whether
+/// the section is folded or not; and on a line the panel already has, so the controls above the table grow no taller.
+/// The file names the panel the button is in; only a layout shows where that panel ends up and how tall it gets.
 /// </summary>
 public class LiveFuncsClearChoicesTests
 {
-    private sealed class Gate(bool enabled) : IExperimentalGate
-    {
-        public bool IsEnabled { get; set; } = enabled;
-        public int SnapshotQuotaMb { get; set; }
-        public bool IsLocked => false;
-        public void Lock() { }
-        public event EventHandler? Changed { add { } remove { } }
-    }
-
-    private static bool _loaded;
-
-    /// <summary>The panel's strings and the DataGrid's theme, which the app's own App.axaml adds: without the theme the
-    /// grid has no template, so no column headers to measure against. Every test body runs on the one dispatcher
-    /// thread, so the flag needs no lock.</summary>
-    private static void LoadAppResources()
-    {
-        if (_loaded) return;
-        var strings = (ResourceDictionary)AvaloniaXamlLoader.Load(new Uri("avares://UE5DumpUI/Resources/Strings/en.axaml"));
-        Application.Current!.Resources.MergedDictionaries.Add(strings);
-        Application.Current.Styles.Add((IStyle)AvaloniaXamlLoader.Load(
-            new Uri("avares://Avalonia.Controls.DataGrid/Themes/Fluent.xaml")));
-        _loaded = true;
-    }
-
-    private static string Res(string key)
-    {
-        Assert.True(Application.Current!.TryFindResource(key, out var value) && value is string,
-                    $"{key} is not in en.axaml");
-        return (string)value!;
-    }
-
-    /// <summary>The panel in the maintainer's 1389x868 window, nothing fetched, the experimental trace on or off.</summary>
-    private static (LiveFuncsPanel panel, LiveFuncsViewModel vm) Laid(bool experimental = true)
-    {
-        LoadAppResources();
-        var dump = DispatchProxy.Create<IDumpService, CallTraceColumnsTests.Inert>();
-        var log = DispatchProxy.Create<ILoggingService, CallTraceColumnsTests.Inert>();
-        var vm = new LiveFuncsViewModel(dump, log, null, experimentalGate: new Gate(experimental));
-        var panel = new LiveFuncsPanel { DataContext = vm };
-        var window = new Window { Content = panel, Width = 1389, Height = 868 };
-        window.Show();
-        Dispatcher.UIThread.RunJobs();
-        return (panel, vm);
-    }
-
     private static Button ClearChoices(Visual panel)
     {
         string label = Res("str.LF.ClearChoices");
@@ -73,49 +24,48 @@ public class LiveFuncsClearChoicesTests
         return button!;
     }
 
-    private static DataGridColumnHeader ColumnHeader(Visual panel, string key)
+    private static Button FoldButton(Visual panel, LiveFuncsViewModel vm)
     {
-        string header = Res(key);
-        return panel.GetVisualDescendants().OfType<DataGridColumnHeader>().Single(h => h.Content as string == header);
+        var button = panel.GetVisualDescendants().OfType<Button>()
+                          .SingleOrDefault(b => ReferenceEquals(b.Command, vm.ToggleCaptureSettingsCommand));
+        Assert.True(button != null, "the panel has no button that folds the capture settings");
+        return button!;
     }
 
-    /// <summary>A visual's box in the panel's coordinates.</summary>
-    private static Rect Box(Visual v, Visual panel) => new(v.TranslatePoint(default, panel)!.Value, v.Bounds.Size);
-
-    private static double GridTop(Visual panel)
-        => Box(panel.GetVisualDescendants().OfType<DataGrid>().Single(), panel).Top;
-
-    [Fact]
-    public Task Clear_choices_sits_on_the_line_above_the_table_over_its_three_choice_columns() => Headless.Run(() =>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Clear_choices_sits_on_the_capture_settings_header_folded_or_not(bool folded) => Headless.Run(() =>
     {
         var (panel, vm) = Laid();
+        vm.CaptureSettingsCollapsed = folded;
+        Dispatcher.UIThread.RunJobs();
         var button = ClearChoices(panel);
         Assert.True(button.IsEffectivelyVisible, "Clear choices is hidden with the trace available");
         Assert.True(button.IsEffectivelyEnabled, "Clear choices is disabled with nothing recording");
         Assert.Same(vm.ClearChoicesCommand, button.Command);
 
         var box = Box(button, panel);
+        var fold = Box(FoldButton(panel, vm), panel);
         double gridTop = GridTop(panel);
-        var trace = Box(ColumnHeader(panel, "str.LF.Col.Trace"), panel);
-        var stack = Box(ColumnHeader(panel, "str.LF.Col.Stack"), panel);
-        string layout = $"button {box.Left:0.#}-{box.Right:0.#} x {box.Top:0.#}-{box.Bottom:0.#}, table top {gridTop:0.#}, "
-                      + $"choice columns {trace.Left:0.#}-{stack.Right:0.#}";
-
-        // Above the table, with no line of controls between: less than its own height of room under it.
-        Assert.True(box.Bottom <= gridTop + 0.5, $"Clear choices is not above the table ({layout})");
-        Assert.True(gridTop - box.Bottom < box.Height, $"something sits between Clear choices and the table ({layout})");
-        // Over the three choice columns: it starts above the first and its middle is above them. Its right edge is the
-        // font's, and the headless platform's glyphs are far wider than the app's, so that edge is not pinned.
-        Assert.True(box.Left >= trace.Left - 0.5 && box.Left < trace.Right && box.Center.X < stack.Right,
-                    $"Clear choices is not over the choice columns ({layout})");
+        string layout = $"button {box.Left:0.#}-{box.Right:0.#} x {box.Top:0.#}-{box.Bottom:0.#}, "
+                      + $"fold {fold.Left:0.#}-{fold.Right:0.#} x {fold.Top:0.#}-{fold.Bottom:0.#}, table top {gridTop:0.#}";
+        // On the fold button's line, just after it.
+        Assert.True(box.Top < fold.Bottom && fold.Top < box.Bottom, $"Clear choices is not on the header's line ({layout})");
+        Assert.True(box.Left >= fold.Right - 0.5 && box.Left - fold.Right < box.Width, $"Clear choices does not follow the fold ({layout})");
+        Assert.True(box.Bottom <= gridTop, $"Clear choices is not above the table ({layout})");
     });
 
     /// <summary>The line the button shares was there before it: taking the button out moves the table up by less than
-    /// the button's height, where a line of its own would move it by at least that.</summary>
-    [Fact]
-    public Task Clear_choices_adds_no_line_above_the_table() => Headless.Run(() =>
+    /// the button's height, where a line of its own would move it by at least that. Folded and unfolded alike.</summary>
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public Task Clear_choices_adds_no_line_above_the_table(bool folded) => Headless.Run(() =>
     {
-        var (panel, _) = Laid();
+        var (panel, vm) = Laid();
+        vm.CaptureSettingsCollapsed = folded;
+        Dispatcher.UIThread.RunJobs();
         var button = ClearChoices(panel);
         double withIt = GridTop(panel);
         button.IsVisible = false;
