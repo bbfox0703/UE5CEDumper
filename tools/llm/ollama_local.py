@@ -175,8 +175,8 @@ COMPUTE_PER_TOKEN_KIB = 4              # ...together within ~40 MiB of every mea
 VRAM_BUFFER_MIB = 512                  # on top of the estimate
 FALLBACK_KV_KIB_PER_TOKEN = 160        # no usable metadata: assume a dense model this heavy per token
 HOOK_TIMEOUT_S = 15
-# The tools that can START a game: shells, and the computer-use actions that click / type / open an app (the
-# handover launches Steam titles through the library UI). Screenshots and reads are left out: they cannot
+# The tools that can START a game: shells, and the computer-use actions that click / type / open an app (a click
+# on the Steam library's Play starts one as surely as `steam.exe -applaunch`). Screenshots and reads are left out: they cannot
 # launch anything, and each hook costs a Python spawn.
 HOOK_MATCHER = ("Bash|PowerShell|mcp__computer-use__(?:left_click|double_click|triple_click|left_mouse_up|key|"
                 "type|open_application|computer_batch)")

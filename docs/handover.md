@@ -21,8 +21,9 @@
 >
 > ⚠ **`out/` is gitignored and does NOT travel.** Two of the most useful records of what was
 > actually done (`out/NIGHT-RUN-2026-08-19.md`, `out/KILLED-2026-08-21.md`) exist only on this
-> machine. This file, [`todo.md`](todo.md), [`dev-log.md`](dev-log.md) and
-> [`working-lessons.md`](working-lessons.md) are the whole travelling record.
+> machine. This file, [`todo.md`](todo.md), [`dev-log.md`](dev-log.md),
+> [`verification-register.md`](verification-register.md) and [`working-lessons.md`](working-lessons.md)
+> are the whole travelling record.
 
 -----
 
@@ -159,8 +160,8 @@ installed with `fixture_census.py` (§3) before planning around one.
 
 | request name | appid / kind | notes |
 |---|---|---|
-| `DumperTest Shipping` | fixture (UE 5.4) | ⭐ the default fixture (§3); self-built, so every PC can have it |
-| `DumperTest Development` | fixture (UE 5.4) | the other-direction check |
+| `DumperTest Shipping` | fixture (UE 5.4) | ⭐ the default fixture (§3); self-built, so every PC can have it; its shortcut targets the inner exe, not the shim |
+| `DumperTest Development` | fixture (UE 5.4) | the other-direction check; the inner exe, not the shim |
 | `DumperTest58 Shipping` / `DumperTest58 Development` | fixture (UE 5.8) | |
 | DumperTest51 | fixture (UE 5.1) | packaged; not in the 2026-09-27 list — request its exe while it runs |
 | `冒險家艾略特的千年奇譚` | 3483510 | Elliot; clicking in-game also needs `Elliot-win64-shipping` |
@@ -191,6 +192,11 @@ dialog **taller than the display**, the Accept button could not be reached, and 
 * **`notInstalled` is not a refusal** — the request short-circuits at name resolution and the dialog
   is never shown. The resolver's index is the **all-users** Start Menu
   (`C:\ProgramData\Microsoft\Windows\Start Menu\Programs`); the per-user one is not enumerated here.
+  **To make an app grantable that is not there** (`UE5DumpUI`, a DumperTest package): the maintainer
+  creates a shortcut in that all-users folder through Explorer (it needs elevation, which computer use
+  cannot answer), named **exactly** as `request_access` will ask, targeting the **inner** exe; then
+  request it — in the same session, no restart (verified 2026-08-17, with the probes that found the
+  folder: [`auto-verification-session-plan.md`](auto-verification-session-plan.md) §1, "SOLVED").
 * **Resolver lag is real.** `DumperTest Development` / `Shipping` returned `notInstalled` minutes
   after their shortcuts existed and `Get-StartApps` already listed them; **retried ~10 minutes later
   with nothing changed, both granted**. Wait and retry — do not start editing names or paths on the
@@ -357,9 +363,10 @@ py tools/verify/proxy_refresh.py refresh "<title substring>"
 It refuses to refresh while a game is running and backs up with a SHA-256 first. ⚠ This does **not**
 apply to DumperTest (no proxy — it is injected directly) and does not apply to a title you inject by
 hand with `inject.py`, which loads `dist/UE5Dumper.dll` as it is on disk.
-⚠ A republish of identical source also reads STALE (the comparison is byte-for-byte): before
-2026-08-22 that was a **false alarm**, and on 2026-08-22 it was real because `dll/src` had changed.
-The verdict cannot tell the two apart, so refresh either way.
+⚠ A republish of identical source also reads STALE (the comparison is byte-for-byte, and the build is
+not reproducible). **The tell is that the sizes match exactly**: that one is a false alarm and is NOT
+refreshed (working-lessons §3.x). A proxy of a different build — on 2026-08-22 it was real because
+`dll/src` had changed — is refreshed without asking (the maintainer, 2026-09-29; working-lessons §7.3).
 
 ### Is it even installed?
 
@@ -371,8 +378,9 @@ py tools/verify/fixture_census.py
 of folders holding no executable at all** (read the tool; the list moves as titles come and go). On
 2026-08-22 two of the ghosts were **FINAL FANTASY VII REBIRTH** and **Tower of Mask**, both cited in
 `docs/` as the fixture an open row was waiting for. Run this before planning a session around a title.
-⭐ And do **not** predict pool size from install size: OCTOPATH is 2 GB with 273,956 objects; Avowed
-is 64 GB with 92,036.
+⭐ And do **not** predict pool size from install size: OCTOPATH is 2 GB with 273,956 objects
+(2026-08-18); Avowed is 64 GB with 92,036 at its main menu (2026-08-22) and 272,494 in the 2026-10-08
+Live Funcs run.
 
 -----
 
@@ -501,6 +509,10 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
 
 ## 6. Driving Cheat Engine
 
+* ⛔ **`open_application` starts a NEW Cheat Engine every call** — CE does not single-instance itself.
+  Use it once to start CE; front it afterwards with `py tools/verify/front_window.py front
+  cheatengine-x86_64-SSE4-AVX2` (the measurement: `verification-register.md`, "open_application
+  LAUNCHES A NEW CHEAT ENGINE EVERY CALL").
 * The real process is **`cheatengine-x86_64-SSE4-AVX2.exe`** (`Cheat Engine.exe` is a shim). The
   AOBMaker plugin auto-loads from `plugins\AOBMaker_CEPlugin.dll` and writes `PipeServer: listening on
   \\.\pipe\AOBMakerCEBridge` to `%LOCALAPPDATA%\AOBMaker\CEPlugin.log`. ⚠ **The toolbar's "AOBMaker DLL" dot
@@ -568,8 +580,8 @@ is invisible to any `grep '^### '`; the `^### ⬜ NEW DEFECT` grep finds only th
 Run the commands above for the counts; numbers written into this file go stale.
 
 **Current work** is not written here: the current-programme line at the top of [`todo.md`](todo.md)
-names it by tag. Each programme's live-check order and per-row status is in its `*-live-plan.md`
-(indexed in [`README.md`](README.md)); what is shipped but not yet proven live is in
+names it by tag. Each programme's live-check order and per-row status is in its live plan or build
+ledger (indexed in [`README.md`](README.md)); what is shipped but not yet proven live is in
 [`verification-register.md`](verification-register.md).
 
 ### Before planning off any row
@@ -604,8 +616,8 @@ inside a row is a **sub-step**.
 * ⚠ **`find_instances` without `exact_match` is a NAME SUBSTRING match** (working-lessons §1.y).
 * ⚠ **An old proxy reproduces a FIXED defect** — §3's proxy precondition: `proxy_refresh.py report`
   before every proxy-mode game row.
-* ⚠ **Log-window measurement: use before/after COUNTS**, not line slices, timestamp watermarks or byte
-  offsets (working-lessons §1.x).
+* ⚠ **Log-window measurement: use before/after COUNTS**, not line slices, byte offsets, or a timestamp
+  watermark finer than its 1 s resolution allows (working-lessons §1.x).
 * ⚠ **ProcessEvent vtable slots: the PATTERN SCAN is primary, the version table only the fallback** —
   how to read which one answered, and how to re-check a slot offline: working-lessons §4.7.
 * ⚠ **Invoke order is `init → trigger_scan → invoke → pe_profile_start`.** Profiler-first used to
