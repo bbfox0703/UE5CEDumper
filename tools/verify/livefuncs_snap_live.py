@@ -2088,6 +2088,11 @@ class ScriptedDll:
         "names_fn_absent": "SnapNest_Outer's UFunction does not hold its fn",
         "names_offset_split": "the interpreter's UFunction holds its fn at another offset than SnapNest_Outer's",
         "names_many": "the first stack holds NAMES_MANY more named frames, each its own entry, before the others",
+        "names_read_edge": "the interpreter's UFunction ends 0xE0 bytes in, before a page that cannot be read: read_mem "
+                           "of more fails",
+        "names_read_failed": "read_mem fails at every size for the interpreter's UFunction",
+        "names_unreadable": "read_mem fails at every size for every UFunction",
+        "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
     }
     # The scripted game's PDB: a name for each function start its stacks hold, by RVA.
     PDB_NAMES = {0x480440: "ADumperTest58Actor::SnapProbe_Dispatch", OUTER_FN: "ADumperTest58Actor::execSnapNest_Outer",
@@ -2135,6 +2140,8 @@ class ScriptedDll:
             return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": "", "outer": ""}
         cls, func, kind, _, _, _ = row
         first = u == self.FUNCS["SnapNest_Outer"][0]
+        if "names_object_error" in self.f and first:
+            return {"ok": False, "error": "the scripted get_object failed (names_object_error)"}
         if "names_wrong_func" in self.f and first:
             func = "SnapNest_Fire"
         if "names_wrong_outer" in self.f and first:
@@ -2145,10 +2152,14 @@ class ScriptedDll:
                 "class": kind, "outer": cls}
 
     def _memory(self, addr: str, size: int) -> dict:
-        """read_mem of a scripted UFunction: filler that never holds an address, fn wherever the UFunction stores it."""
+        """read_mem of a scripted UFunction: filler that never holds an address, fn wherever the UFunction stores it.
+        Like Macht::ReadBytesSafe it is one copy, all or nothing: a read that runs into memory it cannot read fails
+        whole."""
         u = int(str(addr), 16)
         row = self._ufuncs().get(u)
-        if row is None:
+        f = self.f
+        if row is None or "names_unreadable" in f or (u == self.INTERP and (
+                "names_read_failed" in f or ("names_read_edge" in f and size > 0xE0))):
             return {"ok": False, "error": "Read failed"}
         offsets = row[4]
         if "names_fn_absent" in self.f and u == self.FUNCS["SnapNest_Outer"][0]:
@@ -2963,6 +2974,12 @@ def self_test() -> int:
            lambda: common_offset([[0x30, 0xD8], [0xD8, 0x140]]) == 0xD8 and
            common_offset([[0x30, 0xD8, 0x140], [0xD8, 0x140]]) == 0xD8 and common_offset([[0x30], [0xD8]]) is None and
            common_offset([[0xD8], []]) is None and common_offset([]) is None)
+    expect("A1: an offset past where an entry's read stopped is not contradicted by it; one inside its read is",
+           lambda: common_offset([[0x30, 0x148], []], [0x160, 0xE0]) == 0x148 and
+           common_offset([[0x30, 0x148], [0x30]], [0x160, 0xE0]) == 0x30 and
+           common_offset([[0x148], []], [0x160, 0x160]) is None and
+           common_offset([[0x148], []], [0x160, 0x14C]) == 0x148 and common_offset([[0x148], []], [0x160, 0x150]) is None
+           and common_offset([[], []], [0xE0, 0xC8]) is None)
 
     names_argv = ("--names",)
 
@@ -2980,11 +2997,38 @@ def self_test() -> int:
            "the interpreter with none beyond it",
            lambda: (lambda n: n["frames"] == 30 and n["entries"] == 2 and n["shared_entries"] == 1 and
                     n["shared_max"] == 37 and n["pe_gap"] == {"1": 15, "none": 15})(names_run()[1]["names"]))
-    expect("dry run --names: each entry asked once, get_object by its ufunc in hex without 0x, then read_mem of 0x180 "
-           "bytes there; without --names nothing is asked",
-           lambda: names_run()[2] == [("get_object", {"addr": "1000"}), ("read_mem", {"addr": "1000", "size": 0x180}),
-                                      ("get_object", {"addr": "2A000"}), ("read_mem", {"addr": "2A000", "size": 0x180})]
+    expect("dry run --names: each entry asked once, get_object by its ufunc in hex without 0x, then read_mem of 0x160 "
+           "bytes there (0x158 + 8, the end of the window the DLL looks for Func in); without --names nothing is asked",
+           lambda: names_run()[2] == [("get_object", {"addr": "1000"}), ("read_mem", {"addr": "1000", "size": 0x160}),
+                                      ("get_object", {"addr": "2A000"}), ("read_mem", {"addr": "2A000", "size": 0x160})]
            and names_run(argv=())[2] == [])
+
+    def read_sizes(asked: list, addr: str) -> list[int]:
+        return [p["size"] for cmd, p in asked if cmd == "read_mem" and p["addr"] == addr]
+    # [SNAPRIG-NAMES] MED-1: read_mem is one copy, all or nothing, and a UFunction (0xC8 to 0xE0 bytes) is smaller than
+    # the window. An object that ends a block whose next page cannot be read fails a read of the whole window.
+    expect("dry run --names: a UFunction whose next page cannot be read fails read_mem past 0xE0; the read is retried at "
+           "0x100 then 0xE0, and the run fails nothing",
+           lambda: (lambda r: failing(r[0]) == [] and NAMES_AT in ran(r[0]) and
+                    read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] and read_sizes(r[2], "1000") == [0x160] and
+                    [x["read"] for x in r[1]["names"]["per_entry"]] == [0x160, 0xE0])(names_run("names_read_edge")))
+    expect("dry run --names: a UFunction no read reaches (every size down to 0xC8 tried) is reported unreadable, kept "
+           "out of the offset and out of N, and fails nothing",
+           lambda: (lambda r: failing(r[0]) == [] and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and
+                    (r[1]["names"]["held"], r[1]["names"]["unreadable"]) == (1, 1) and
+                    r[1]["names"]["per_entry"][1]["read"] is None and
+                    any(n == NAMES_AT and ok and "in 1 of 2" in g and "1 unreadable" in g and "ReceiveTick" in g
+                        for n, ok, g in r[0].items))(names_run("names_read_failed")))
+    expect("dry run --names: when no named UFunction can be read, the offset check is not run (the reason given), the "
+           "name check still runs, and nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and NAMES_IS in ran(r[0]) and NAMES_AT not in ran(r[0]) and
+                    [n for n, why in r[0].skipped if "could be read" in why] == [NAMES_AT])(
+               names_run("names_unreadable")))
+    exercised.update(("names_read_edge", "names_read_failed", "names_unreadable"))
+    caught(("names_object_error",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: a get_object that answers an error lists the entry as wrong, the DLL's error the reason",
+           lambda: any(n == NAMES_IS and not ok and "get_object failed" in g and "names_object_error" in g
+                       for n, ok, g in names_run("names_object_error")[0].items))
     many = ScriptedDll.NAMES_MANY + 2
     expect(f"dry run --names: of {many} entries the {NAMES_MAX} most frequent are asked, the frequent two among them, "
            f"and the {many - NAMES_MAX} left are counted, never silently",
