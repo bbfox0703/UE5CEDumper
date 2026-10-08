@@ -3602,7 +3602,8 @@ being silently truncated past ~140 lines, so the section map went too).
 |---|---|
 | A verification method, a trap in our stack, a UE/CE fact, a settled decision, a comment-style rule | **This file** (§1–§6, §8) |
 | What shipped, when, and why | `dev-log.md` (append-only) |
-| Open work, effort/risk, pending live verification | `todo.md` |
+| Open work, effort/risk | `todo.md` |
+| A pending live check | while its programme runs: that programme's ledger in `todo.md`; when the programme closes, the backlog moves to `verification-register.md` **byte-identical**. A check outside any programme goes to the register directly; closing a row: the register's "How to close a row" |
 | What a *game* does differently | `lessons-learned.md` |
 | A standing instruction from the maintainer on how to work, whose loss costs something | **This file**, §7.3 |
 | How to operate this machine, the fixtures, Cheat Engine and the rigs; the session rules | `handover.md` — procedures only: no open work, no counts, no current state |

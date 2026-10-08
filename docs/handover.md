@@ -625,27 +625,8 @@ inside a row is a **sub-step**.
 
 ## 9. How to close a verification row
 
-1. **Record the evidence in [`todo.md`](todo.md)** — the finding id, what was measured, the controls,
-   and what is still not covered. A ✅ with no numbers evaporates.
-2. **Delete the item's section from [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md)**
-   — do not annotate it in place — and **recount the table with a script**. The count is
-   `grep -c '^### '` minus **however many `###` currently sit under 「怎麼用這份清單」** (3 today, 2
-   before 2026-08-22 — count them, do not assume). ⚠ A ✅ in the audit register is **never** grounds
-   to delete a section there: in the audit doc ✅ means *the fix shipped*, which is exactly when the
-   live check becomes owed.
-3. **Tick every individual row** in the audit doc, not just the grouped one, and run
-   `py tools/check_audit_register.py`. ⚠ **Many rows are already ✅ there** — in the audit doc ✅ means
-   *the fix shipped*, which is usually years-old news by the time the live check runs. Check before
-   editing; a live PASS adds nothing to a ticked row.
-4. ⚠ **If only SOME sub-steps closed, do not delete the section — retitle it.** The heading carries
-   the remainder (`（**只剩步驟 5**）`) and it **goes stale silently**: `A6`'s heading still said
-   「只剩步驟 3、5」 after step 3 had been marked ✅ in its own table. When you tick a sub-step, fix the
-   heading in the same edit.
-5. **New method lessons go in [`working-lessons.md`](working-lessons.md)** — single copy, travels with
-   git. Not into memory files, which do not.
-6. **`dev-log.md` is append-only, newest first** — never edit a past entry, even to fix a stale
-   number. Add a new `(later)` entry for the same day instead; the file already does this.
-7. `py tools/check_all.py`, then commit.
+Moved on 2026-10-08 to [`verification-register.md`](verification-register.md), "How to close a row",
+which owns it. A programme's backlog row closes the same way, with its record in that programme's ledger.
 
 -----
 

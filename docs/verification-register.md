@@ -70,6 +70,46 @@ Tags have always resolved across files, so the split changed nothing about the l
 
 -----
 
+## How to close a row
+
+Moved here from [`handover.md`](handover.md) §9 on 2026-10-08 and corrected to current practice. A row
+of a programme's live-check backlog closes the same way, but its record goes in that programme's ledger
+in [`todo.md`](todo.md): while a programme runs, its backlog lives there; when the programme closes, the
+backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md) §7.1).
+
+1. **Record the evidence in a `✅` closure block carrying a dated `[TAG-YYYY-MM-DD]`** — the finding id,
+   what was measured and under which conditions, the controls, and what is still not covered. A ✅ with
+   no numbers evaporates. The block is the record and its tag is how it is found; do **not** rewrite the
+   original `⬜` / `🟡` heading into it (a heading here is not evidence, above).
+2. **Update the live plan in the same commit.** When the row belongs to a `*-live-plan.md` (indexed in
+   [`README.md`](README.md)), its status there changes in the same commit as the row's record.
+3. **Delete the item's section from [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md)**
+   — do not annotate it in place — and rebuild its bucket table with
+   `py tools/verify/zhtw_rebuild_buckets.py --apply`: the table is derived, never hand-edited. ⚠ A ✅ in
+   the audit register is **never** grounds to delete a section there: in the audit doc ✅ means *the fix
+   shipped*, which is exactly when the live check becomes owed.
+4. ⚠ **If only SOME sub-steps closed, do not delete the section — retitle it.** The heading carries
+   the remainder (`（**只剩步驟 5**）`) and it **goes stale silently**: `A6`'s heading still said
+   「只剩步驟 3、5」 after step 3 had been marked ✅ in its own table. When you tick a sub-step, fix the
+   heading in the same edit.
+5. **If the row came from the audit #5 register, tick every individual row** in the audit doc
+   ([`audit-2026-08-13-early-code-findings.md`](audit-2026-08-13-early-code-findings.md)), not just
+   the grouped one, and run `py tools/check_audit_register.py`. ⚠ **Many rows are already ✅ there** — in the audit doc ✅ means
+   *the fix shipped*, which is usually years-old news by the time the live check runs. Check before
+   editing; a live PASS adds nothing to a ticked row.
+6. **Archive closed sections only byte-identical.** Closed sections lifted out of "Pending live-game
+   verification" move verbatim to a new `archive/verification-register-closed-*.md` with a row in
+   [`archive/README.md`](archive/README.md), and a 📦 note at the head of that section says what moved
+   (the two there now are the pattern). A `✅` section whose body still owes anything stays here; the
+   archive file's header gives the full selection rule.
+7. **New method lessons go in [`working-lessons.md`](working-lessons.md)** — single copy, travels with
+   git. Not into memory files, which do not.
+8. **`dev-log.md` is append-only, newest first** — never edit a past entry, even to fix a stale
+   number. Add a new `(later)` entry for the same day instead; the file already does this.
+9. `py tools/check_all.py`, then commit — one commit per closed item (working-lessons §7.3).
+
+-----
+
 ## Pending live-game verification (verify only — no code)
 
 > 📦 **84 closed sections (6,247 lines) were archived 2026-08-23** to
