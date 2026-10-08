@@ -243,7 +243,7 @@ public partial class CallTraceViewModel : ViewModelBase
             var read = await ReadAndBuildAsync(info, kept, ct);
             if (read.Trace == null)
             {
-                StatusText = Res.Get(read.StatusKey ?? "str.CT.Status.Changed");
+                StatusText = StringLookup(read.StatusKey ?? "str.CT.Status.Changed");
                 return;
             }
             var trace = read.Trace;
@@ -437,31 +437,33 @@ public partial class CallTraceViewModel : ViewModelBase
     [RelayCommand]
     private void CancelLoad() => _loadCts?.Cancel();
 
-    internal static string Summary(CallTrace t)
+    /// <summary>The status line under a loaded trace. Its sentences come through <see cref="StringLookup"/>, so a test
+    /// reads the ones a user reads.</summary>
+    internal string Summary(CallTrace t)
     {
-        var sb = new StringBuilder(Res.Format("str.CT.Status.Loaded", t.Count, t.WindowSeconds));
-        if (t.Info.FirstValid > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Lapped", t.Info.FirstValid));
-        if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(Res.Get("str.CT.Status.BeforeWindowOne"));
-        else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
+        var sb = new StringBuilder(Say("str.CT.Status.Loaded", t.Count, t.WindowSeconds));
+        if (t.Info.FirstValid > 0) sb.Append(' ').Append(Say("str.CT.Status.Lapped", t.Info.FirstValid));
+        if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(StringLookup("str.CT.Status.BeforeWindowOne"));
+        else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Say("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
         // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
         switch (ScopeKey(t.Info))
         {
-            case "str.CT.Status.Scoped": sb.Append(' ').Append(Res.Format("str.CT.Status.Scoped", t.Info.Ticked)); break;
+            case "str.CT.Status.Scoped": sb.Append(' ').Append(Say("str.CT.Status.Scoped", t.Info.Ticked)); break;
             case "str.CT.Status.ScopedNames":
-                sb.Append(' ').Append(Res.Format("str.CT.Status.ScopedNames", t.Info.TickedNames)); break;
-            case { } key: sb.Append(' ').Append(Res.Get(key)); break;
+                sb.Append(' ').Append(Say("str.CT.Status.ScopedNames", t.Info.TickedNames)); break;
+            case { } key: sb.Append(' ').Append(StringLookup(key)); break;
         }
-        if (t.Info.Excluded > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Excluded", t.Info.Excluded));
+        if (t.Info.Excluded > 0) sb.Append(' ').Append(Say("str.CT.Status.Excluded", t.Info.Excluded));
         // [TRACE-UNLOADED-NAMES] Always, whatever the buffer: how much is named only from a first call, and how much
         // has no name at all -- 0% included, so a clean trace says so.
         if (t.UnloadedFuncs > 0)
-            sb.Append(' ').Append(Res.Format("str.CT.Status.Unloaded", t.UnloadedFuncs, t.DistinctFuncs,
-                                             CallTrace.ShareText(t.UnloadedCalls, t.Count)));
-        sb.Append(' ').Append(Res.Format("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
-                                         t.UnnamedFuncs, t.DistinctFuncs));
+            sb.Append(' ').Append(Say("str.CT.Status.Unloaded", t.UnloadedFuncs, t.DistinctFuncs,
+                                      CallTrace.ShareText(t.UnloadedCalls, t.Count)));
+        sb.Append(' ').Append(Say("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
+                                  t.UnnamedFuncs, t.DistinctFuncs));
         if (t.Snapshots is { } s)
-            sb.Append(' ').Append(Res.Format("str.CT.Status.Snapshots", s.CallsWithParams, s.Arms.Count,
-                                             (long)(t.Info.Snap?.SkippedBudget ?? 0)));
+            sb.Append(' ').Append(Say("str.CT.Status.Snapshots", s.CallsWithParams, s.Arms.Count,
+                                      (long)(t.Info.Snap?.SkippedBudget ?? 0)));
         return sb.ToString();
     }
 
@@ -724,7 +726,7 @@ public partial class CallTraceViewModel : ViewModelBase
         return sb.ToString();
     }
 
-    /// <summary>Where the detail pane's sentences come from: en.axaml, through Res. A unit test has no Avalonia
+    /// <summary>Where the sentences a test checks come from: en.axaml, through Res. A unit test has no Avalonia
     /// application for Res to ask, so it reads en.axaml itself and hands it in here.</summary>
     internal Func<string, string> StringLookup { get; set; } = Res.Get;
 
