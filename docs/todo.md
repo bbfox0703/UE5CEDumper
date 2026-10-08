@@ -425,19 +425,48 @@ source and editor are installed for when they are needed.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
-  ⬜ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08): the table's three choice columns (Trace, Params?, Stack?)
-  had no clear-all -- Clear ticks empties the first and the Parameters row's Clear the other two. A "Clear choices"
-  button empties all three at once (both clears run, so every count and estimate follows; disabled while recording).
-  Built: red 452abbb6 / green 176445d8 (cherry-picked onto dev), 6 / 6 mutants. Its review asks for tests that pin
-  what it leaves alone (results, filter, trace on/off, the stack budget) and a filtered / stack-only start, and its
-  placement (it docks in the status line, which can then wrap one line sooner). Effort **S**.
-  ⬜ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08): with a stack chosen the controls
-  above the Live Funcs table take 13-16 lines, over 40 % of the panel; the 4-line stack warning is the biggest block.
-  (1) the warning becomes one line of essentials and a Details toggle for the full text (the orange variant kept);
-  (2) the capture settings rows and their estimate / memory lines go into a collapsible section whose header shows a
-  one-line summary, remembered in ui-options like Main.ObjectTreeCollapsed (default expanded) -- collapsing never
-  hides a warning; (3) the "No baseline" hint moves into Set Baseline's tooltip and the baseline status line shows
-  only with a baseline or Diff on. Effort **M**.
+  ⬜ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08; built and review-fixed, a live look owed): the table's
+  three choice columns (Trace, Params?, Stack?) had no clear-all -- Clear ticks empties the first and the Parameters
+  row's Clear the other two. A "Clear T/P/S" button empties all three at once (both clears run, so every count and
+  estimate follows; disabled while recording). Built: red ef95e913 / green b8963e8b, 6 / 6 mutants. Review fixes:
+  tests that pin what it leaves alone (the rows on screen, the filter, Trace on/off, the stack budget) and a filtered,
+  Trace-off and stack-only start (886e8454; R1-R7 killed); it moved off the status line, which wrapped one line sooner
+  for it, onto the capture settings' header beside the fold button, shown folded or not and adding no line (8616cf31 /
+  5ae8cc8b); its label, "Clear choices" until then, names the columns it clears, "Clear T/P/S", the tooltip unchanged
+  (5b0f4957 / 822b5851, worktree ids; the orchestrator's wording, the maintainer may change it); working-lessons 3.xc
+  on what a clean analyzer result proves (a0952263, 022d19f0). Effort **S**. The second review's LOWs (an unfold-path
+  test, two more estimate-raise cases, one settled post, two counting comments, the headless width note) are being
+  fixed.
+  ⬜ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08; built and review-fixed, a live look
+  owed): with a stack chosen the controls above the Live Funcs table took 13-16 lines, over 40 % of the panel; the
+  4-line stack warning was the biggest block. Built: (1) the warning is one line of essentials with a Details toggle
+  for the unchanged whole text, the orange variant kept (7e0bb92a / 5f799482); (3) the "No baseline" hint is in Set
+  Baseline's tooltip and the baseline line shows only with a baseline or Diff on (8c0638c7 / b6132dfc); (2) the
+  capture settings fold under a header line (the fold button, Clear T/P/S, Open in Call Trace, then the Fetch limit
+  row); folded, it sums up what is set and carries a short warning for every orange line it folds away plus a short
+  stack warning, orange when any warns; remembered as LiveFuncs.CaptureSettingsCollapsed in ui-options.json, unfolded
+  by default (8616cf31 / 5ae8cc8b). **The review's findings, fixed 2026-10-08** (worktree ids, renumbered when
+  cherry-picked): the summary is raised only while folded, once a burst through one dispatcher post, its estimates
+  made once a getter and its tooltip bound once -- a choice click built it 28 times folded or not, now not at all
+  unfolded and once a binding folded (ea03527e / 5c7b859a; P1-P6 killed, P1b near-equivalent); the one line says the
+  risk ("Stacks: a soft capture on the game's own thread, added to its frame — it could stall or crash the game. Save
+  first; choose few functions.") and the folded summary carries "⚠ stacks: save first, choose few" in its place, also
+  while the estimate is orange (5b0f4957 / 822b5851; W1-W6 killed; the orchestrator's wording, the maintainer may
+  change it); tests for the memory warning with Trace unticked, the summary's counts by the choices under a filter,
+  and Start / Stop / the filter / the fold button on screen folded (afc24900; L1-L6 killed); working-lessons 3.xc (the
+  analyzer check sees C# only, read the editorconfig at once; 022d19f0) and 3.xd (headless text is about twice as wide
+  as the app's Inter; db242747). Measured headless (1389x868), the table's top with a stack chosen: 490 px before the
+  item, 408 unfolded now (the new one line wraps in the headless font only; in Inter it is 772 px of the 1,308 px
+  row), 142 folded (the summary 164 characters, 916 px in Inter). Effort **M**. The second review's LOWs (an
+  unfold-path test, two more estimate-raise cases, one settled post, two counting comments, the headless width note)
+  are being fixed.
+  ✅ `[LF-SNAP-WARN-RAISE]` (LOW, found by the [LF-COMPACT-TOP] review 2026-10-08, older than it; fixed the same day,
+  offline by a unit test, seen live with [LF-COMPACT-TOP]'s look): `SnapshotEstimateWarn`, T13's orange on the
+  parameter estimate, weighs the busiest choice against what the trace keeps (`TraceSecondsForComparison`), which
+  reads the trace buffer and the ticked set -- but neither a buffer change nor a tick raised it, so the line kept its
+  old colour and the folded summary could disagree with it. `OnTraceBufferExponentChanged` and `RefreshTickedList` now
+  call `RaiseSnapshotEstimate` (red 2f0980a6 / green 883c177c, worktree ids; S1-S4 killed). Effort **S**. Two more
+  cases (Clear ticks; the buffer with Trace off) are being added.
   ⬜ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08): the next release -- the first with the Call Trace tab
   (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
   draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
