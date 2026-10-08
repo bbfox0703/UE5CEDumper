@@ -432,13 +432,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>Choose or drop a row's native stack. Refused whenever a parameter choice is (<see cref="CanSnapshot"/>),
     /// and on a keyless row, as a stack is chosen by name; a function with no parameters still has a stack. Choosing a
-    /// per-frame function asks first (T9.2): chosen alone, it takes a stack every frame, up to the budget.</summary>
+    /// per-frame function asks first (T9.2): chosen alone, it takes a stack every frame, up to the budget. Per-frame is
+    /// decided by name, as the choice takes every row of the name: a function reloaded at a new address can run every
+    /// frame there while the row clicked, at its old one, is plain.</summary>
     [RelayCommand]
     private async Task ToggleStack(PeProfileEntry? row)
     {
         if (row == null || !CanSnapshot || !row.CanChooseStack) return;
         string key = Key(row);
-        if (row.IsPerFrame && !_stackChosen.Contains(row) && !_stackPerFrameConfirmed)
+        bool perFrame = row.IsPerFrame || _allEntries.Any(e => e.IsPerFrame && Key(e) == key);
+        if (perFrame && !_stackChosen.Contains(row) && !_stackPerFrameConfirmed)
         {
             var confirm = ConfirmStackPerFrame;
             bool yes = confirm != null
