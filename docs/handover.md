@@ -441,9 +441,14 @@ global UI Dispatcher the view-model tests must not share. `build.ps1` runs both.
 ```bash
 dotnet test --project ui/UE5DumpUI.HeadlessTests/UE5DumpUI.HeadlessTests.csproj -c Release
 ```
-⛔ **Never `build.ps1 -Target Test`** — it republishes `dist/` with the 106.8 MB **non-trimmed** exe.
+⛔ **Never `build.ps1 -Target Test`** to run tests — it republishes `dist/` non-trimmed (CLAUDE.md
+`## Build & Deploy`).
 
 ### Builds
+
+What to build, which binary to hand over, the build-number bump, and why a plain `build.ps1` or
+`-Target Test` is not read-only: CLAUDE.md `## Build & Deploy` and its build commands, the single copy.
+What this machine adds:
 
 ```bash
 py tools/verify/build_dll.py --targets UE5Dumper dll_helpers_test dll_core_test
@@ -452,9 +457,6 @@ py tools/verify/build_dll.py --targets UE5Dumper dll_helpers_test dll_core_test
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Mode Publish
 ```
 
-* ⚠ **Every `build.ps1` run bumps `build_number.txt`**, and that is intended: the build number is the
-  release number. For a verification-only build use `build_dll.py` above, which neither bumps it nor
-  touches `dist\`.
 * ⚠ **A publish takes several minutes** (Native AOT links with MSVC). The Bash tool's default timeout
   is 120 s — **run it with `run_in_background: true`** or it is killed mid-link and reads as a build
   failure.
@@ -462,8 +464,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
   Kill both first. Since `[DISTCOPY-2026-08-22]` the failure is loud (per-file `copy failed`, a
   hash-mismatch verdict, exit 1, and `dist/publish/` **left in place** so the good binary survives) —
   but it is still a wasted build.
-* ⚠ Native AOT is **not byte-reproducible**: four publishes of one source gave four hashes. A hash
-  confirms *this copy landed*; it can never confirm two builds are the same build.
+* ⚠ A hash confirms *this copy landed*, never that two builds are the same build: Native AOT is not
+  byte-reproducible (working-lessons §2.5c).
 * ⚠ Fresh clone only: `git submodule update --init vendor/minhook vendor/zydis`.
 * ⚠ **Which `.cpp` files a test target compiles, and so what `-Target Test` cannot catch:** CLAUDE.md's
   "Run tests only" block, whose counts `check_derived_counts` pins. Build the DLL target
@@ -583,81 +585,27 @@ inside a row is a **sub-step**.
 
 ## 8. Things that will mislead you
 
-* ⭐⭐ **The rule that found eight defects on 2026-08-22, every one of them while *running a
-  verification row* rather than hunting: demand a second, independent witness for any claim the
-  system makes about itself.** Six of the eight were one shape — *the report and the reality computed
-  by different code paths*. The extreme case: See-through was a **total no-op** on UE 5.4 while its
-  count, the UI card and the log all said it worked, because the reality path did not exist at all.
-* ⭐ **A detector must be shown able to FIRE before its silence means anything** — and it must be
-  right about the **format** of what it reads, not just the location. `walk_instance` renders a
-  bit-field bool as `true (bit 7, mask 0x80)`, so `== "true"` reads a hidden actor as not hidden.
-* ⚠ **A computer-use coordinate is a measurement and it expires.** The Live Walker toolbar reflows
-  (`Find Refs` / `Related` appear once an object loads); two "press ▼" clicks landed on the
-  **"2 matches" label** and nearly produced a false defect report. Re-read the control's position
-  from a fresh screenshot before any click an assertion depends on, and prove the click **landed**.
-  Same for toggles: read their state back off the screen, do not track it in your head.
+* ⭐⭐ **Demand a second, independent witness for any claim the system makes about itself** — the
+  dominant defect shape here is the report and the reality computed by different code paths
+  ([`working-lessons.md`](working-lessons.md) §1.4, §1.12).
+* ⭐ **A detector must be shown able to FIRE before its silence means anything** (working-lessons
+  §1.1) — and it must be right about the **format** of what it reads, not just the location.
+  `walk_instance` renders a bit-field bool as `true (bit 7, mask 0x80)`, so `== "true"` reads a hidden
+  actor as not hidden.
+* ⚠ **A computer-use coordinate is a measurement and it expires** — re-read the control's position
+  from a fresh screenshot before any click an assertion depends on, prove the click **landed**, and
+  read a toggle's state back off the screen (working-lessons §2.5d).
 * ⚠ **computer-use `type " "` — a lone space — is silently swallowed** (measured 2026-09-15, L10: a
   "space refused" test fired an EMPTY box and looked like a gate failure). Use `key space`, then
   prove the content before asserting on it: `shift+Home` must show a one-character selection, or
   type a visible character after it and check its indent.
-* ⚠ **`find_instances` without `exact_match` is a NAME SUBSTRING match.** "The first live instance of
-  `Actor`" came back as a `UActorSequence`.
+* ⚠ **`find_instances` without `exact_match` is a NAME SUBSTRING match** (working-lessons §1.y).
 * ⚠ **An old proxy reproduces a FIXED defect** — §3's proxy precondition: `proxy_refresh.py report`
   before every proxy-mode game row.
-* ⚠ **Log-window measurement.** Four variants of one mistake were hit in a single day: line-count
-  slicing across several growing files; a one-second timestamp watermark between events milliseconds
-  apart; a counter read outside the timed window; and a byte offset recorded before a process start
-  that **rotates** the log. Use before/after **counts**.
-* ⚠ **ProcessEvent vtable slots: the PATTERN SCAN is primary and is what has to work. There is now
-  also a version table, and it is only the fallback.** Values measured in past sessions, every one
-  of them *by the pattern scan*: `0x268` DumperTest 5.4 · `0x260` Lushfoil 5.6 · `0x278` EVERSPACE 2.
-  The ES2 figure was taken TWICE and both records name the engine version explicitly:
-  **2026-05-11** (`docs/lessons-learned.md:140` — "Live test 2026-05-11 on ES2 (UE 5.5) with the
-  build-648 pattern scanner picking `vtable+0x278`", alongside a working `Add_IntInt(3,4)=7`) and
-  **2026-08-20** (`[PEHOOK-6-2026-08-20]`, `docs/verification-register.md:3504`). Both predate the
-  2026-09-01 patch, so both ran on the **5.5.4** build — see the ES2 sub-bullet below.
-  ⛔ **This bullet used to end "these are session measurements, not a table in the tree … there is
-  nothing to 'fix' if a new title differs; that is the design". THAT HALF IS NOW FALSE** — audit A2
-  (`1d647a08`, 2026-09-05) put a real per-version table in the tree:
-  `DynOff::ProcessEventVTableSlotFor`, [`dll/src/Grimoire.h:321`](../dll/src/Grimoire.h), measured
-  4.11–5.8 from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`. All three values above **agree**
-  with it (5.4 `0x268` · 5.5 `0x278` · 5.6 `0x260`), which is the strongest corroboration it has.
-  * **Still true, do not re-derive it:** the pattern scan runs first, the fire-count validator is
-    still the backstop, and a per-BUILD difference is still not a bug. Build configuration does not
-    move the slot (5.8 Shipping/Development/DebugGame all `0x250`; 5.4 Shipping and Development both
-    `0x268`).
-  * **What changed:** a *pattern-scanned* slot that disagrees with the table for that title's
-    detected version is now worth reporting rather than shrugging at — it means one of the two is
-    wrong. And the fallback no longer lies quietly: an unmeasured version prints
-    `<-- EXTRAPOLATED, no measurement for this version` (the whole line is
-    `DetectProcessEvent (fallback): pattern scan missed, falling back to UE=%u version-table
-    primary=0x%X` — grep the `DetectProcessEvent (fallback)` prefix, not the whole sentence;
-    `Frieren.cpp:1623`, **`init-0.log`**). Its absence is the healthy case.
-  * ⛔ The table is **not monotonic** (4.20 `0x208` → 4.21 `0x200`; 5.5 `0x278` → 5.6 `0x260`), so
-    do not "simplify" it back into a `>=` ladder — that is exactly the bug A2 fixed. And the oracle
-    is a **non-editor** dump: do not extend it to an editor process.
-  * ⚠⚠ **ES2 HAS PATCHED, and it walked across a table boundary. MEASURED 2026-09-05.** The
-    installed exe was replaced on **2026-09-01** (168,169,472 B) and its `VS_FIXEDFILEINFO`
-    `dwProductVersionMS` — the exact field `Genau.cpp`'s `DetectVersionFromPEResource` reads —
-    is **5.6.1**, i.e. detector code **506**. The two archived builds under
-    `D:\UE_Analyze_Data\Game archive\ES2\` are both **5.5.4** (505). So the version is NOT
-    unknown, and `test-games.md:12`'s `UE5.5 (PE: 505)` row is now **stale** — its findings
-    belong to the 5.5 build.
-    ⛔ **This makes the `0x278` figure a CONFIRMED 5.5 measurement, not an ambiguous one.** This
-    file's first version (`9545239c`, 2026-08-22) already carried it, and the grant in
-    `auto-verification-session-plan.md:119` is 2026-08-18 — both before the 09-01 patch — so it
-    was taken on a 5.5.4 binary, and it agrees
-    with the A2 table's 5.5 row (`0x278`), which is the one row the audit's own first draft got
-    wrong. ⚠ Also note the provenance row `UE5.5-Everspace2` in
-    `tools/ghidra/corpus-provenance.tsv` still points at the LIVE path while recording the old
-    169,063,424 B — it describes the archive copy, not what is installed.
-    Two ways to re-check, and the cheap one is **offline**: a full **1.98 GB**
-    `ES2-Win64-Shipping.pdb` sits beside the exe carrying the exe's own mtime, so this title is
-    its own symbol oracle — vet it with `py tools/pe/pdb_match.py <exe>`, then mine it the way
-    `reference-builds.md:124-126` mines a packaged sample. No game need be running. The live route is
-    inject, read the version out of the `[SUMMARY]` lines in `init-0.log` and the slot out of
-    `DetectProcessEvent (pattern): match at vtable+0x…`. ⚠ **If you take the live route, refresh
-    the proxy first** (§3).
+* ⚠ **Log-window measurement: use before/after COUNTS**, not line slices, timestamp watermarks or byte
+  offsets (working-lessons §1.x).
+* ⚠ **ProcessEvent vtable slots: the PATTERN SCAN is primary, the version table only the fallback** —
+  how to read which one answered, and how to re-check a slot offline: working-lessons §4.7.
 * ⚠ **Invoke order is `init → trigger_scan → invoke → pe_profile_start`.** Profiler-first used to
   poison the PE hook permanently.
 * ⚠ **Elliot's PE hook is intermittent by title** ("sometimes yes, sometimes no"). Switch host to

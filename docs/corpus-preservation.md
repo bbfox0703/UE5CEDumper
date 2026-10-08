@@ -474,6 +474,13 @@ Measured 2026-07-29. **21 sweep rows resolve to a PDB, but only 20 distinct PDB 
 > single largest fragility in the corpus. `UE5.6-Satisfactory` needs the whole
 > `Engine/Binaries/Win64` PDB set, not just the anchor.
 
+> ⚠ **EVERSPACE 2 already patched past these rows.** Measured 2026-09-05: the installed exe was replaced
+> on 2026-09-01 and is UE 5.6.1 (detector code 506), with a 1.98 GB `ES2-Win64-Shipping.pdb` carrying the
+> new exe's mtime beside it; the two archived builds are both 5.5.4. `UE5.5-Everspace2` in
+> `tools/ghidra/corpus-provenance.tsv` still names the live Steam location while recording the old
+> 169,063,424 B, so it describes the archive copy, not what is installed. (Moved from the handover,
+> 2026-10-08.)
+
 ### 3b. Archive-held — safe, already yours
 
 6 files, 1.39 GB, under `D:\tmp\Game archive` (mirrored to `X:\UE_Analyze_Data\Game archive`):

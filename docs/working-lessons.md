@@ -3324,6 +3324,37 @@ every pasted ID is checked against the whole list, and **silence**: any exceptio
 non-numeric `<ID>` / `<Length>`, is swallowed (`don't complain`) and leaves whatever was pasted before it.
 Size a guard on what the generator's memory can hold, and say in the message that the guard is ours.
 
+### 4.7 ProcessEvent's vtable slot: the pattern scan answers, the version table is only the fallback
+
+Moved here from the handover on 2026-10-08. How the table was built and checked is history: `dev-log.md`
+and the verification register (`[PEHOOK-6-2026-08-20]`, `[A2-ES2-506-2026-09-05]`).
+
+- **The pattern scan runs first and is what has to work.** The slot it found is in `init-0.log`, on the
+  line `DetectProcessEvent (pattern): match at vtable+0x…`. The per-version table
+  (`DynOff::ProcessEventVTableSlotFor` in `dll/src/Grimoire.h`; audit A2, `1d647a08`, measured 4.11–5.8
+  from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`) is only the fallback, and the fire-count
+  validator is still the backstop.
+- **A fallback says so.** Its line starts `DetectProcessEvent (fallback): pattern scan missed, falling
+  back to UE=… version-table primary=0x…`, and an unmeasured version adds
+  `<-- EXTRAPOLATED, no measurement for this version`. Grep the `DetectProcessEvent (fallback)` prefix, not
+  the whole sentence. Its absence is the healthy case.
+- **A per-BUILD difference is not a bug, and build configuration does not move the slot** (5.8
+  Shipping / Development / DebugGame all `0x250`; 5.4 Shipping and Development both `0x268`). But a
+  *pattern-scanned* slot that disagrees with the table for that title's detected version is worth
+  reporting: one of the two is wrong.
+- ⛔ **The table is not monotonic** (4.20 `0x208` → 4.21 `0x200`; 5.5 `0x278` → 5.6 `0x260`): do not
+  "simplify" it back into a `>=` ladder, which is the bug A2 fixed. Its oracle is a **non-editor** dump:
+  do not extend it to an editor process.
+- **Slots measured by the pattern scan, all agreeing with the table:** `0x268` DumperTest 5.4 · `0x260`
+  Lushfoil 5.6 · `0x278` EVERSPACE 2 on UE 5.5.4 (2026-05-11 and 2026-08-20) and `0x260` on the same title
+  after its 2026-09-01 patch to UE 5.6.1 (2026-09-05). A title's engine version can move under you: read
+  it from the `[SUMMARY]` lines in `init-0.log`, never from an older record.
+- **Re-checking a slot, and the cheap route is offline.** A title that ships its PDB is its own symbol
+  oracle: vet the PDB against the exe with `py tools/pe/pdb_match.py <exe>`, then mine it the way
+  `reference-builds.md` ("Making another one") mines a packaged sample; no game need be running. The live
+  route: inject, then read the version from the `[SUMMARY]` lines and the slot from the
+  `DetectProcessEvent (pattern)` line, after refreshing any deployed proxy (handover §3).
+
 -----
 
 ## 5. Triage recipes
