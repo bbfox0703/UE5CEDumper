@@ -27,6 +27,21 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (build 3644) — Live Funcs stacks name the Blueprint interpreter; the Call stack tab's Where fills the pane `[A1-SCRIPT-FUNCS]` `[CT-STACK-WHERE-WIDTH]`
+
+Published before the handover entry below, written after it.
+- **A frame inside the Blueprint interpreter is named.** The native-entry index now holds every UFunction's
+  native entry, Blueprint functions' too, so a frame in the interpreter reads "native entry of ... (one of N
+  functions that share this code)" instead of an offset into an unnamed function. Checked live: the index grew
+  from 12,445 to 13,176 entries on DumperTest58 and from 12,482 to 19,160 on DQ XI S, where the interpreter
+  showed on the minimap widget's stacks. (The name it shows there is only the lowest-addressed of those
+  functions; build 3645 names the interpreter itself, `[A1-INTERP-LABEL]`.)
+- **The Call stack tab's Where column takes the rest of a wide pane**, so a long name is no longer cut beside
+  empty space; in a narrow pane it keeps 420 pixels and the grid scrolls sideways. Checked live on DumperTest58.
+  (In a narrow pane Address was squeezed to its floor; fixed for build 3645.)
+
+-----
+
 ## 2026-10-08 (no build change) — `docs/handover-2026-08-22.md` is now `docs/handover.md`, the runbook: procedures only `[HANDOVER-RUNBOOK]`
 
 - **Renamed** (`ace59452`, a pure move). 29 commits had touched the file since it was created on 2026-08-22,
