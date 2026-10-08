@@ -73,10 +73,10 @@ Derive the state; values written into this file go stale.
 The convention is commit to `dev` → `gh pr create --base main --head dev` →
 `gh pr merge N --merge`, never `--admin`.
 
-⚠ **`dist/` is gitignored**, so `git status` says nothing about which binary is sitting there. As of
-build 3315 `build.ps1` verifies the publish copy **by SHA256** and fails loudly
-(`[DISTCOPY-2026-08-22]`) — it used to print `[OK] (54.7 MB)` and exit 0 over a copy that never
-happened, because a **stale** AOT exe is 54.7 MB too. Checking the size is no longer the test.
+⚠ **`dist/` is gitignored**, so `git status` says nothing about which binary is sitting there. Since
+`[DISTCOPY-2026-08-22]` `build.ps1` verifies the publish copy **by SHA256** and fails loudly — it
+used to print `[OK] (54.7 MB)` and exit 0 over a copy that never happened, because a **stale** AOT
+exe is 54.7 MB too. Checking the size is no longer the test.
 
 -----
 
@@ -90,8 +90,8 @@ Two measurements, hours apart on the same machine, and they point opposite ways:
   19:31–19:36**, still valid three days and many sessions later. So a new session does **not** clear
   them: the plan doc's "grants do not survive a session" is FALSE here.
 * **2026-08-22 18:20, same boot** — the list came back **empty**, and all 20 had to be re-requested
-  (batches of 7 · 7 · 6; every one granted, same names, same tiers, so the table below is
-  re-verified verbatim). `GetTickCount64` puts the last boot at **2026-08-21 14:31**, *before* the
+  (batches of 7 · 7 · 6; every one granted, same names, same tiers). `GetTickCount64` puts the
+  last boot at **2026-08-21 14:31**, *before* the
   morning reading — so **no reboot happened between the two**.
 
 ⛔ **"A reboot is the real invalidation event" is therefore REFUTED** — do not re-assert it. What
@@ -108,41 +108,7 @@ A blanket re-request costs three or four dialogs and, if the maintainer is away,
 nothing. An *assumed* grant is worse: it fails at the first click, mid-row. The check is one call
 with no side effects — make it the first one, every time.
 
-### The 26 currently granted
-
-⚠ **This table is a SNAPSHOT and has already been wrong once.** It said "the 20" while the live list
-held 24; six were added on 2026-08-22/23 (TQ2, the DQ7R / GalGun / Elliot exes, and both Glimmith
-entries). **`list_granted_applications` is the authority — read it, do not read this.** The table is
-kept for the *names that worked*, which the live list does not tell you.
-
-| # | `request_access` name | what it is | tier |
-|---|---|---|---|
-| 1 | `UE5DumpUI` | the UI under test (`dist\UE5DumpUI.exe`) | full |
-| 2 | `Cheat Engine (64-bit)` | `cheatengine-x86_64.exe` | full |
-| 3 | **`Cheat Engine (64-bit SSE4-AVX2)`** | ⭐ **the CE the maintainer actually launches** — prefer this one | full |
-| 4 | `Cheat Engine tutorial (64-bit)` | | full |
-| 5 | `Steam` | `steam.exe` — the bootstrapper only, see §3 | full |
-| 6 | **`steamwebhelper.exe`** | ⭐ owns the Steam **library window**; without it the whole Steam UI is a masked black rectangle. **Request it with the `.exe` suffix** — a bare `steamwebhelper` resolves back to `Steam`. ⚠ It is *listed* as `Steamwebhelper`, so matching the listing string literally will not re-request it correctly | full |
-| 7 | `DumperTest Development` | the inner exe, not the shim (§3) | full |
-| 8 | `DumperTest Shipping` | | full |
-| 9 | `冒險家艾略特的千年奇譚` | Elliot · appid **3483510** | full |
-| 10 | `Lushfoil Photography Sim` | **1749860** | full |
-| 11 | `Solarpunk` | **1805110** | full |
-| 12 | `EVERSPACE 2` | ES2 · **1128920** | full |
-| 13 | `勇者鬥惡龍 VII Reimagined` | DQ7R · **2499860** | full |
-| 14 | `OCTOPATH TRAVELER` | **921570** | full |
-| 15 | `莊園領主 Manor Lords` | **1363080** | full |
-| 16 | `Star Trek Voyager - Across the Unknown` | **2643390** | full |
-| 17 | `Notepad++` | | full |
-| 18 | `記事本` | Notepad | full |
-| 19 | `Everything` | | full |
-| 20 | `檔案總管` | Explorer | **click only** |
-| 21 | `Titan Quest II` | **1154030** — the note below calling it "NOT granted" is stale | full |
-| 22 | `Dq7r-win64-shipping` | DQ7R's shipping **exe** (added when a row needed to click in-game) | full |
-| 23 | `Gg2game` | GalGun Double Peace's exe | full |
-| 24 | `Elliot-win64-shipping` | Elliot's exe | full |
-| 25 | `The Artisan of Glimmith` | Geri · **4160210** — the LAUNCH grant only | full |
-| 26 | **`Geri-Win64-Shipping.exe`** | ⭐ Geri's exe. **Request it WITH the `.exe` suffix** — see below | full |
+### System key combos are not granted
 
 ⚠ **`systemKeyCombos` is NOT granted.** `alt+F4`, `ctrl+alt+del` and friends are refused with
 *"is a system-level shortcut"*. To close a window, post `WM_CLOSE` yourself:
@@ -167,13 +133,14 @@ Names are the Start-menu names of a **zh-TW Windows**; an English Windows says `
 | `UE5DumpUI` | UE5DumpUI | the UI under test, `dist\UE5DumpUI.exe` (a copy elsewhere, e.g. under `out\pathshape\`, is a separate grant: request its exe while it runs) |
 | `Cheat Engine (64-bit SSE4-AVX2)` | same | ⭐ the CE the maintainer launches |
 | `Cheat Engine (64-bit)` | same | the plain CE build, for rows that name it |
+| `Cheat Engine tutorial (64-bit)` | same | CE's bundled tutorial; granted in August 2026, absent from the 2026-09-27 list, so in neither batch below: request it only when a row names it |
 | `Notepad++` | same | reading logs and `.CT` files on screen |
-| `記事本` | 記事本 | Notepad (not granted at the moment; it was in earlier sessions) |
+| `記事本` | 記事本 | Notepad (not in the 2026-09-27 list; it was in earlier sessions) |
 | `Everything` | same | file search |
 | `檔案總管` | 檔案總管 | Explorer — **click tier only**; typing into it is refused |
 | `textinputhost.exe` | Textinputhost | the Windows text-input host (IME candidate window, emoji panel). When it pops over the app, an ungranted host blocks the next call |
 | `nvidia overlay.exe` | Nvidia overlay | the NVIDIA App overlay: after a SendInput key it takes the foreground, and every later call is refused as *"The user doesn't want to take this action right now"* (2026-09-27) |
-| `Steam` | Steam | `steam.exe`, the bootstrapper (not granted at the moment) |
+| `Steam` | Steam | `steam.exe`, the bootstrapper (not in the 2026-09-27 list) |
 | `steamwebhelper.exe` | Steamwebhelper | the Steam library window — **with `.exe`** (a bare name resolves back to `Steam`); only grantable while Steam runs |
 
 - **Batch 1:** `UE5DumpUI`, `Cheat Engine (64-bit SSE4-AVX2)`, `Cheat Engine (64-bit)`, `Notepad++`,
@@ -194,7 +161,7 @@ installed with `fixture_census.py` (§3) before planning around one.
 | `DumperTest Shipping` | fixture (UE 5.4) | ⭐ the default fixture (§3); self-built, so every PC can have it |
 | `DumperTest Development` | fixture (UE 5.4) | the other-direction check |
 | `DumperTest58 Shipping` / `DumperTest58 Development` | fixture (UE 5.8) | |
-| DumperTest51 | fixture (UE 5.1) | packaged, not yet granted anywhere; request its exe while it runs |
+| DumperTest51 | fixture (UE 5.1) | packaged; not in the 2026-09-27 list — request its exe while it runs |
 | `冒險家艾略特的千年奇譚` | 3483510 | Elliot; clicking in-game also needs `Elliot-win64-shipping` |
 | `勇者鬥惡龍 VII Reimagined` | 2499860 | DQ7R; in-game clicks need `Dq7r-win64-shipping` |
 | `OCTOPATH TRAVELER` | 921570 | relaunches itself unless started with `-applaunch` (§3) |
@@ -208,7 +175,7 @@ installed with `fixture_census.py` (§3) before planning around one.
 | `Gg2game` | exe | GalGun Double Peace |
 
 The Steam titles are granted by name (a `steam://rungameid/<appid>` grant) and their shipping exe
-separately, only while it runs; the full list of what has been granted is the table under "The 26 currently granted" above.
+separately, only while it runs; `list_granted_applications` says what is granted now.
 
 ### The ≤7 rule, and what breaking it looks like
 
@@ -217,8 +184,6 @@ dialog **taller than the display**, the Accept button could not be reached, and 
 **`user_denied` for all eighteen**. That reads exactly like a deliberate refusal and **is not one**.
 
 > **Never diagnose a blanket `user_denied` as a decision without checking the batch size first.**
-
-The five batches that actually produced today's 20 grants were **7 · 7 · 4 · 1 · 1**.
 
 ### Other grant facts worth knowing before you need them
 
@@ -252,8 +217,6 @@ The five batches that actually produced today's 20 grants were **7 · 7 · 4 · 
   (made the same day) removes the block.
 * **Avowed is installed but ungrantable** — absent from the Start menu, so `request_access` cannot
   resolve it. Perfectly usable for headless pipe/log rows.
-* ⚠ **STALE:** "`Titan Quest II` … is NOT granted" was true when written; it has been granted
-  since 2026-08-22 (row 21). Its `appmanifest_1154030.acf` `StateFlags 6` note may still hold.
 * Not needed: browsers (read-only tier anyway), terminals/IDEs (all shell work goes through Bash),
   `python.exe`.
 * ⚠ `tools/verify/register_apps.py` is a **refuted hypothesis** (per-user registry registration made
@@ -341,8 +304,7 @@ Then click **Connect** (top-left) to attach to an injected game; the header goes
 `Disconnected` → `Connected — UE504 (25,189 objects)`. ⚠ **The moment it connects it takes 2 of the
 3 pipe slots**, so no `pipe_client.py` rig can run until you press **Disconnect** or close it.
 ⚠ It is a **single-instance** app (Mutex) — a second launch silently does nothing.
-⚠ The UI is the fixture for the whole `第 1 步` bucket and for several `第 2 步` rows, so this is
-usually step one, not an afterthought.
+⚠ Many rows use the UI as their fixture, so this is usually step one, not an afterthought.
 
 ### DumperTest — the default fixture, never launched by hand
 
@@ -383,10 +345,9 @@ back. **Displace with `TP facing direction` (100 uu), never with absolute coordi
 py tools/verify/proxy_refresh.py report
 ```
 
-**Measured 2026-08-22: 9 deployed proxies, 9 STALE — all of them.** `dll/src` changed today, so every
-proxy planted in a game before 2026-08-21 predates the See-through fixes. Launch such a title and the
-game loads the **old** DLL: you will reproduce a defect that is already fixed, and nothing in the
-logs will say which build answered.
+A proxy planted in a game before the last `dll/src` change loads the **old** DLL when the title
+launches: you will reproduce a defect that is already fixed, and nothing in the logs will say which
+build answered. (Measured 2026-08-22: 9 deployed proxies, all 9 STALE.)
 
 ```bash
 py tools/verify/proxy_refresh.py refresh "<title substring>"
@@ -395,8 +356,9 @@ py tools/verify/proxy_refresh.py refresh "<title substring>"
 It refuses to refresh while a game is running and backs up with a SHA-256 first. ⚠ This does **not**
 apply to DumperTest (no proxy — it is injected directly) and does not apply to a title you inject by
 hand with `inject.py`, which loads `dist/UE5Dumper.dll` as it is on disk.
-⚠ Historically `proxy_refresh.py` cried STALE after a mere republish of identical source and that was
-a **false alarm**. It is not one now — the DLL genuinely changed.
+⚠ A republish of identical source also reads STALE (the comparison is byte-for-byte): before
+2026-08-22 that was a **false alarm**, and on 2026-08-22 it was real because `dll/src` had changed.
+The verdict cannot tell the two apart, so refresh either way.
 
 ### Is it even installed?
 
@@ -405,10 +367,9 @@ py tools/verify/fixture_census.py
 ```
 
 ⛔ **A folder under `steamapps/common` is not an installed game — the census prints a `GHOSTS` list
-of folders holding no executable at all** (11 of them when last run; the denominator moves as titles
-come and go, so read the tool, do not quote a ratio). Two of the ghosts are **FINAL FANTASY VII
-REBIRTH** and **Tower of Mask**, both cited in `docs/` as the fixture an open row is waiting for. Run
-this before planning a session around a title.
+of folders holding no executable at all** (read the tool; the list moves as titles come and go). On
+2026-08-22 two of the ghosts were **FINAL FANTASY VII REBIRTH** and **Tower of Mask**, both cited in
+`docs/` as the fixture an open row was waiting for. Run this before planning a session around a title.
 ⭐ And do **not** predict pool size from install size: OCTOPATH is 2 GB with 273,956 objects; Avowed
 is 64 GB with 92,036.
 
@@ -457,11 +418,10 @@ py tools/check_all.py
 ```
 
 ⚠ **All of them, not the few you remember.** `.github/workflows/ci.yml` runs every gate
-`check_all.py --list` prints before the build (derive the count from the `N gate(s) run` line; it
-was twelve when this was written and 27 on 2026-09-26), plus `check_proxy_exports --artifacts` over
-the built proxies; `check_ci_gate_parity` keeps the two lists equal. This session ran four of them
-all day and the first full run **failed** on `check_no_local_paths` over a test fixture committed
-hours earlier. Order matters — `aob_specificity` reads the TSV `extract_patterns` writes.
+`check_all.py --list` prints before the build (derive the count from the `N gate(s) run` line),
+plus `check_proxy_exports --artifacts` over the built proxies; `check_ci_gate_parity` keeps the two
+lists equal. On 2026-08-22 a session ran four of them all day, and the first full run **failed** on
+`check_no_local_paths` over a test fixture committed hours earlier. Order matters — `aob_specificity` reads the TSV `extract_patterns` writes.
 
 ### Tests
 
@@ -643,10 +603,8 @@ inside a row is a **sub-step**.
   type a visible character after it and check its indent.
 * ⚠ **`find_instances` without `exact_match` is a NAME SUBSTRING match.** "The first live instance of
   `Actor`" came back as a `UActorSequence`.
-* ⚠ **Proxy staleness is now REAL, not the old false alarm.** `dll/src` changed on 2026-08-22 and
-  `dist/proxy` was rebuilt, so any proxy deployed into a game before 2026-08-21 predates the
-  See-through fixes. A See-through or invoke row run through an old proxy will reproduce a **fixed**
-  defect. `py tools/verify/proxy_refresh.py report` (it refuses to refresh while a game runs).
+* ⚠ **An old proxy reproduces a FIXED defect** — §3's proxy precondition: `proxy_refresh.py report`
+  before every proxy-mode game row.
 * ⚠ **Log-window measurement.** Four variants of one mistake were hit in a single day: line-count
   slicing across several growing files; a one-second timestamp watermark between events milliseconds
   apart; a counter read outside the timed window; and a byte offset recorded before a process start
@@ -712,14 +670,14 @@ inside a row is a **sub-step**.
   Lushfoil rather than retrying. Elliot also *detects* as UE 427 while really being 5.04 — honestly
   flagged `detected=no, lowConfidence=yes`, not a bug.
 * ⚠ **OCTOPATH's `version.dll` proxy is silently bypassed** (only System32's VERSION.dll maps). Use
-  `winmm.dll` or `dxgi.dll` there (dxgi crashed it until build 3366 —
+  `winmm.dll` or `dxgi.dll` there (dxgi crashed it until the fix in
   `docs/audit-2026-08-26-dxgi-appcompat-crash.md`). The honest check after launching any proxy title is
   whether `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\` was created at all.
-* ⚠ **`Serie::GetString` drops the FName `Number`** — 40 of 42 objects are named differently by two
-  pipe commands and 6 of 6 are unfindable by the name the DLL itself reports. **Only 4 call sites
-  pass a Number**; derive the total with `grep -rc "GetString" dll/src/` rather than quoting one (a
-  figure of 71 was carried in the docs and does not reproduce). ⛔ **Do not sed it** — display and
-  identity are different jobs.
+* ⚠ **`Serie::GetString` drops the FName `Number`** unless its caller passes one. Measured 2026-08-20:
+  40 of 42 objects were named differently by two pipe commands and 6 of 6 were unfindable by the name
+  the DLL itself reports. Derive which call sites pass a Number with `grep -rn "GetString" dll/src/`
+  rather than quoting a count (the 2026-08-20 figures, 71 sites and 4 passing a Number, no longer
+  reproduce). ⛔ **Do not sed it** — display and identity are different jobs.
 
 -----
 
@@ -771,10 +729,12 @@ This is one of the two PCs — `%COMPUTERNAME%` says which. Things that are true
   `~/.claude/settings.json` (every repo's sessions), never in the repo. Installing, and how any other
   repo joins or leaves: [tools/llm/README.md](../tools/llm/README.md).
 
-**Two-machine sync point: 3315.** The other PC last took **3262 — which is BURNED** (it came to name
-three different binaries) and must not be re-used as a version. When the other machine syncs, it
-needs `git submodule update --init vendor/minhook vendor/zydis` and a fresh `-Mode Publish`; none of
-the `dist/` artifacts travel.
+**Two-machine sync point: derive it, never quote it.** `git fetch`, compare with `origin/dev`, then
+read [`dev-log.md`](dev-log.md) newest-first: a build number either PC has consumed is gone, never
+reuse one. ⛔ **Build 3262 is BURNED** (it came to name three different binaries) and must not be
+re-used as a version. When the other machine syncs, it needs
+`git submodule update --init vendor/minhook vendor/zydis` and a fresh `-Mode Publish`; none of the
+`dist/` artifacts travel.
 
 ⚠ **Skia/HarfBuzz are pinned to what Avalonia was built against** (3.119.4 / 8.3.1.3) and two guards
 enforce it. **Do not "update all packages" past them** — that is what crashed the UI.
