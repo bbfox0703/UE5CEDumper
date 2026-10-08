@@ -247,7 +247,13 @@ Open work only. **Read this when deciding what to do next.**
 The maintainer added IS Defense's logs as an unsupported UE game (docs/test-games.md has its row) and said the UE 4.10
 source and editor are installed for when they are needed.
 
-- ⬜ `[VER-410-GATE]` (MED): a genuine UE 4.10 title is scanned instead of refused, and the UI shows garbage
+- ✅ `[VER-410-GATE]` **BUILT 2026-10-08, in source** (red `3b4e5e4d`, green `d0260b4f`, rig `5af81317` /
+  `9ade3939`; 6 / 6 mutants killed) -- live check owed: `py tools/verify/b25_marker_exes.py build`, run each exe,
+  inject, trigger the scan, then `check` (C refused, D scanned, A and B as before); then IS Defense through a
+  refreshed proxy (the corroboration line, "SKIPPING the scan", no GObjects batch, `is_version_too_old: true`,
+  the Pointers notice) and NEKOPALIVE / Extinction still scanning. A CrashReportClient counts only when it agrees
+  with the exe; the 4.18.3 CrashReportClient's `4.18.3-3832480+++UE4+Release-4.18` is a fourth measured shape, also
+  parsed. Was: (MED) a genuine UE 4.10 title is scanned instead of refused, and the UI shows garbage
   (`is_version_too_old: false`, 308 "objects", names 0/10). Audit #4 B25 made a sub-4.11 PE reading count only
   when the memory string scan corroborates it, and that table floors at 4.18, so a real 4.0-4.10 title can never be
   corroborated -- the code's own note accepted that, and IS Defense is the first title to meet it. The PE already
@@ -276,7 +282,10 @@ source and editor are installed for when they are needed.
   `GetUObjectArray`: `lea rcx,[rip+GUOA+0x10]`), not VS2015 ones like Epic's 4.10.4. If it is ever taken up: first a
   live CE measurement on IS Defense, then the rows and the shape behind the gate, the floor moved last. Its PDB (310 MB,
   full types) is the only 4.10 type oracle on disk; the 4.10.4 corpus PDBs hold public symbols only.
-- ⬜ `[UE-OVERRIDE-411]` (LOW, the maintainer chose it 2026-10-08): the UE version override accepts only 418..509
+- ✅ `[UE-OVERRIDE-411]` **BUILT 2026-10-08, in source** (red `a9be4339`, green `7be3b6c6`; 4 / 4 DLL and 3 / 3 C#
+  mutants killed): the override's floor is `MIN_SUPPORTED_UE_VERSION` (411..509), and the Pointers list offers
+  UE 4.11-4.17 -- AOT publish and live check owed (set 4.15 on a 4.11-4.17 title, then Auto). Was: (LOW, the
+  maintainer chose it 2026-10-08) the UE version override accepts only 418..509
   (`Fern.cpp`'s set-override range), so a 4.11-4.17 title cannot be set by hand, although the too-old message names
   the override as the escape hatch. Widen it to 411 (the UI's range with it). Effort **S**.
 - ⬜ `[DUMPERTEST410-FIXTURE]` (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
