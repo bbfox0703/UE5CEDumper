@@ -293,6 +293,9 @@ source and editor are installed for when they are needed.
   installed: `tools/ue-sample/repackage.py` needs a content-only mode (no `Build.bat <Project>Editor`, `-nocompile
   -nocompileeditor` instead of `-build`). It serves the gate's refusal now and a 4.10 port if one is ever made (the
   VS2015, not-inlined shape). Unproven: that BuildCookRun completes without VS2015. Effort **S-M**.
+  **Not attempted (the maintainer, 2026-10-08):** "先別試" -- a pre-4.18 project needs a C++ toolchain this PC does
+  not have (4.18 itself is shaky here), and the night goes to Live Funcs and the 4.11 floor's version strings. The
+  gate's refusal is checked on IS Defense instead. Reopen only on the maintainer's word.
 
 **Found by the 4.10 study, worth doing whatever 4.10's fate** (they help titles already supported):
 - ⬜ `[UE4-ASSETPTR-PROPS]` (LOW): AssetObjectProperty / AssetClassProperty (4.11-4.17's soft pointers) do not go
