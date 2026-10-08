@@ -882,10 +882,42 @@ __declspec(noinline) uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* ou
     return CaptureCallerStackEx(retSlot, out, max, flags, kStackHeadroom, &RtlCaptureStackBackTrace);
 }
 
-// [LIVEFUNCS-STEP3] S3-M3 (stubbed).
+// [LIVEFUNCS-STEP3] S3-M3. The x64 unwind format: UNWIND_INFO is 4 bytes (version and flags, prolog size, the code
+// count, the frame register), then the unwind codes, 2 bytes each and padded to an even count; with
+// UNW_FLAG_CHAININFO the parent's RUNTIME_FUNCTION follows them.
 uint32_t FollowChain(uintptr_t imageBase, uint32_t beginRva, uint32_t unwindData) {
-    (void)imageBase; (void)unwindData;
+    for (uint32_t hop = 0; hop < kChainMaxHops; ++hop) {
+        if (unwindData & 1u) {   // an indirect entry: its UnwindData is the RVA of another entry
+            const auto* p = reinterpret_cast<const RUNTIME_FUNCTION*>(imageBase + (unwindData & ~1u));
+            beginRva = p->BeginAddress;
+            unwindData = p->UnwindData;
+            continue;
+        }
+        const auto* ui = reinterpret_cast<const uint8_t*>(imageBase + unwindData);
+        if (((ui[0] >> 3) & UNW_FLAG_CHAININFO) == 0) return beginRva;
+        const uint32_t slots = (static_cast<uint32_t>(ui[2]) + 1u) & ~1u;
+        const auto* parent = reinterpret_cast<const RUNTIME_FUNCTION*>(ui + 4 + 2 * slots);
+        beginRva = parent->BeginAddress;
+        unwindData = parent->UnwindData;
+    }
     return beginRva;
+}
+
+// The start of the primary function holding `addr`: the .pdata lookup, then the chain. The image's own unwind data
+// is read under __try all the same -- a dynamic function table (JIT code) hands back memory nobody vouches for.
+static bool PrimaryFunctionStart(uintptr_t addr, uintptr_t& begin) {
+    begin = 0;
+    __try {
+        DWORD64 imageBase = 0;
+        const PRUNTIME_FUNCTION rf = RtlLookupFunctionEntry(static_cast<DWORD64>(addr), &imageBase, nullptr);
+        if (!rf || !imageBase) return false;   // a leaf function, or no exception directory
+        begin = static_cast<uintptr_t>(imageBase) + FollowChain(static_cast<uintptr_t>(imageBase), rf->BeginAddress,
+                                                                rf->UnwindData);
+    } __except (EXCEPTION_EXECUTE_HANDLER) {
+        begin = 0;
+        return false;
+    }
+    return true;
 }
 
 // [LIVEFUNCS-STEP3] S3-M2. The module the way Genau's ModuleOfAddress / ModuleNameOf find it (file-static there).
@@ -907,9 +939,10 @@ bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     std::vector<wchar_t> path(32768);
     const DWORD len = GetModuleFileNameW(h, path.data(), static_cast<DWORD>(path.size()));
     if (len > 0 && len < path.size()) out.moduleUtf8 = Utf8Helpers::LeafUtf8(path.data(), len);
-    // ret-1: a return address that follows a function's last call (a noreturn one) lies past that function's end.
-    uintptr_t begin = 0, end = 0;
-    if (GetFunctionExtent(retAddr - 1, begin, end)) {
+    // ret-1: a return address that follows a function's last call (a noreturn one) lies past that function's end. A
+    // chained fragment names its primary function (S3-M3), so a call in ProcessEvent's cold part is still ProcessEvent.
+    uintptr_t begin = 0;
+    if (PrimaryFunctionStart(retAddr - 1, begin)) {
         out.fnBegin = begin;
         out.unwind = true;
     }

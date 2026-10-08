@@ -28,7 +28,7 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-L1 | DLL | Linie: a stack choice armed by name (`stackRing` in ArmSpec / ArmHint, still 24 B / ArmSummary; the merge; ArmLocked before the parameters-only return); stack rings after the param rings in one allocation (own index space, same K); TraceConfig stack fields and constants; StackWrite through the injected capturer; TraceEnter's stack gate, lone and excluded for stack choices, flag 32; StackRings / CopyStacks; step-2 readers param rings only; TraceInfo.stack | — | ✅ red 4f7644b0 (with L2 and M1 case 8), green after it; 8 / 8 mutants killed |
 | S3-L2 | DLL | Linie: the stack budget (own per-ring word, own total window), D10's drop rule, flag 64, skipped / dropped by kind, captures / spent / max ticks, the slot's ticks | S3-L1 | ✅ one cycle with S3-L1; 5 / 5 mutants killed |
 | S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | ✅ cases 1-7 + the capture bench (red 49dde439; 7 / 7 mutants killed); case 8 and the TraceEnter bench with S3-L1 (red 4f7644b0) |
-| S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | ✅ red 9463e34a, green after it; 3 / 3 mutants killed. FollowChain (the review's M4) owed |
+| S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | ✅ red 9463e34a, green after it; 3 / 3 mutants killed. FollowChain landed as S3-M3 |
 | S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | ◐ built (the DLL target builds; red by construction, H1); green is the rig's S0, live |
 | S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | ◐ built with S3-F1 (and L7: a 32K path, LeafUtf8, the sites counted in the page); green is the rig's S1-S6, live |
 | S3-U1 | UI | Models and DumpService: `stacks` in the Start request (unchanged bytes without), TraceInfo.Stack and names.stacks parsed, PeStackGetAsync (`kind:"stack"`) with frames resolved to sites and CeModule by the UI's code page | §3 (wire frozen) | open |
@@ -41,7 +41,7 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-U6 | UI | (next) The per-frame ask-once for stacks (T9.2): `ConfirmStackPerFrame`, `_stackPerFrameConfirmed`, an async ToggleStack that re-raises `IsStackChosen` when refused | S3-U2 | next |
 | S3-U7 | UI | (next) The stack estimate line (T9.1): pure `EstimateStacks(rates, perFunc, total, usPerCapture)` → ms/s; orange above 2.0; µs measured from the last Stop, else 10 "assumed" | S3-U2, S3-X2 | next |
 | S3-A1 | DLL | (next) The native-entry index: one GObjects pass (class-pointer memo, Function / DelegateFunction / SparseDelegateFunction), `Func → ufunc` sorted, cached per gen; sites gain `ufunc` / `class` / `func` / `shared` | S3-F2 | next |
-| S3-M3 | DLL | (next) Chained unwind: a pure `FollowChain(imageBase, rf)` tested on a synthetic UNWIND_INFO | S3-M2 | next |
+| S3-M3 | DLL | Chained unwind: a pure `FollowChain(imageBase, begin, unwindData)` tested on a synthetic UNWIND_INFO; DescribeCode names a fragment's primary function | S3-M2 | ✅ red b8681485, green after it; 4 / 4 mutants killed (built before the live check: the review's M4) |
 | S3-R2 | pipe | (next) Rig `--pdb`: dbghelp through ctypes names each `fn_rva` against the fixture's shipped PDB, checking displacement 0 | S3-R1 | next |
 | S3-B1 / S3-E1 / S3-P1 / S3-O1 | DLL / UI | (deferred) View B; stack export; `.pdata` prewarm; own-frame calibration | S3-X2 | deferred |
 
@@ -188,9 +188,19 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 - **Files:** `dll/src/Macht.h`, `dll/src/Macht.cpp`, `dll/tests/dll_core_test.cpp`
 - **Done 2026-10-08:** cases 1-4 pass (1026 checks). Mutants, all killed: drop the −1; `own` by the leaf name; the
   full path instead of the leaf (cases 1 and 3 then name `...\dll_core_test.exe` and `C:\WINDOWS\SYSTEM32\ntdll.dll`).
-  - ⚠ **Owed: FollowChain** (the review's M4). DescribeCode still reports a chained fragment's own start, so until it
-    lands, S3's `known: "process_event"` half is "recorded, not failed" on a build whose ProcessEvent call site sits in
-    a chained fragment.
+  - ~~Owed: FollowChain~~ (the review's M4): built as S3-M3 before the live check, so DescribeCode names a chained
+    fragment's primary function and S3's `known: "process_event"` half is a real check.
+
+## S3-M3 — Macht: a chained fragment's primary function
+
+- **Red:** in S3-M1's block, on a synthetic image: a fragment whose 3 unwind codes are padded to 4 names its primary
+  (0x800); two links; an indirect entry (UnwindData bit 0); an entry that chains nowhere and a chain that loops are
+  guards (the loop ends after `kChainMaxHops`).
+- **Green:** `FollowChain`; DescribeCode takes its function start from `PrimaryFunctionStart` (the .pdata lookup, then
+  the chain, under `__try`: a dynamic function table hands back memory nobody vouches for).
+- **Mutation, all killed:** the codes not padded (the run dies on a wild read); UNW_FLAG_CHAININFO ignored; an
+  indirect entry read as unwind info; and S3-M2's ret−1 again, now through `PrimaryFunctionStart`.
+- **Files:** `dll/src/Macht.h`, `dll/src/Macht.cpp`, `dll/tests/dll_core_test.cpp`
 
 ## S3-F1 — Fern: stacks at Start; trace.stack; names.stacks; names[].stack
 
