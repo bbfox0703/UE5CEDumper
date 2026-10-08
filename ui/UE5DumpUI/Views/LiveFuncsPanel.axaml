@@ -75,13 +75,12 @@
               BorderThickness="1" BorderBrush="#4EC9B0"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Margin="8,0,0,0" Cursor="Hand"/>
       <Panel Margin="12,0,0,0" VerticalAlignment="Center">
-        <Panel IsVisible="{Binding CaptureSettingsCollapsed}">
+        <!-- The tooltip on the pair's panel: one binding, where one on each TextBlock built the summary once more each. -->
+        <Panel IsVisible="{Binding CaptureSettingsCollapsed}" ToolTip.Tip="{Binding CaptureSummary}">
           <TextBlock Text="{Binding CaptureSummary}" IsVisible="{Binding !CaptureSummaryWarn}"
-                     Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
-                     ToolTip.Tip="{Binding CaptureSummary}"/>
+                     Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"/>
           <TextBlock Text="{Binding CaptureSummary}" IsVisible="{Binding CaptureSummaryWarn}"
-                     Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
-                     ToolTip.Tip="{Binding CaptureSummary}"/>
+                     Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"/>
         </Panel>
         <!-- [EXTPR-539-540-2026-10-02] Capture settings. Disabled while a recording runs: the recording keeps the
              values it started with. Each slider's bounds are its view model's constants (WikiTooltipAccuracyTests). -->

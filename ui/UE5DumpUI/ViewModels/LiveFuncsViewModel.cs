@@ -673,16 +673,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>T13: orange when the busiest choice keeps less time than the trace does, or the buffer is too small.</summary>
-    public bool SnapshotEstimateWarn
+    public bool SnapshotEstimateWarn => AnySnapshotChoice && SnapshotWarns(CurrentEstimate());
+
+    /// <summary><see cref="SnapshotEstimateWarn"/> for an estimate already made, so a reader that shows the estimate too
+    /// makes it once.</summary>
+    private bool SnapshotWarns(SnapEstimate e)
     {
-        get
-        {
-            if (!AnySnapshotChoice) return false;
-            if (_snapChosen.Count == 0) return CurrentEstimate().TooSmall;
-            if (_lastWindowMs <= 0) return false;
-            var e = CurrentEstimate();
-            return e.TooSmall || e.BusiestSeconds < TraceSecondsForComparison();
-        }
+        if (!AnySnapshotChoice) return false;
+        if (_snapChosen.Count == 0) return e.TooSmall;
+        if (_lastWindowMs <= 0) return false;
+        return e.TooSmall || e.BusiestSeconds < TraceSecondsForComparison();
     }
 
     /// <summary>The grey note: what the budget would skip.</summary>
@@ -773,7 +773,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>Orange above <see cref="StackWarnMsPerSec"/>: the estimate line, and T20's warning with it.</summary>
-    public bool StackEstimateWarn => _stackChosen.Count > 0 && CurrentStackCost().MsPerSec > StackWarnMsPerSec;
+    public bool StackEstimateWarn => _stackChosen.Count > 0 && StackWarns(CurrentStackCost());
+
+    /// <summary><see cref="StackEstimateWarn"/> for a cost already weighed, so a reader that shows the cost too weighs it
+    /// once.</summary>
+    private bool StackWarns(StackCost c) => _stackChosen.Count > 0 && c.MsPerSec > StackWarnMsPerSec;
 
     public string StackEstimateTip => Say("str.Tip.LF.Stack.Estimate", StackWarnMsPerSec, StackAssumedUsPerCapture);
 
@@ -913,7 +917,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// is not refused while recording.</summary>
     [ObservableProperty] private bool _captureSettingsCollapsed;
 
-    partial void OnCaptureSettingsCollapsedChanged(bool value) => OnPropertyChanged(nameof(CaptureSettingsToggleText));
+    partial void OnCaptureSettingsCollapsedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CaptureSettingsToggleText));
+        // Nothing raises the summary while it is unfolded, so a change of the fold brings it up to date at once.
+        RaiseCaptureSummary();
+    }
 
     /// <summary>The header button's text, which says what pressing it does.</summary>
     public string CaptureSettingsToggleText
@@ -938,9 +947,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     parts.Add(Say("str.LF.Summary.StackBudget",
                                   StringLookup(StackBudgetLow ? "str.LF.Stack.Low" : "str.LF.Stack.Standard")));
                 if (AnySnapshotChoice) parts.Add(Say("str.LF.Summary.SnapBuffer", SnapshotBufferMb));
-                if (StackEstimateWarn) parts.Add(Say("str.LF.Summary.StackWarn", CurrentStackCost().MsPerSec));
-                if (SnapshotEstimateWarn)
-                    parts.Add(StringLookup(CurrentEstimate().TooSmall ? "str.LF.Summary.SnapTooSmall" : "str.LF.Summary.SnapWarn"));
+                // Each estimate once: each walks every chosen name over the table's rows.
+                var stack = CurrentStackCost();
+                if (StackWarns(stack)) parts.Add(Say("str.LF.Summary.StackWarn", stack.MsPerSec));
+                var snap = CurrentEstimate();
+                if (SnapshotWarns(snap))
+                    parts.Add(StringLookup(snap.TooSmall ? "str.LF.Summary.SnapTooSmall" : "str.LF.Summary.SnapWarn"));
                 if (TraceMemoryOverAvailable) parts.Add(Say("str.LF.Summary.MemoryOver", MemText(_availableMb)));
                 if (HasStackChoices) parts.Add(StringLookup("str.LF.Stack.WarningShort"));
             }
@@ -969,16 +981,35 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// queue, behind the work in hand. A unit test has no UI thread to run it, so it hands in a queue it runs itself.</summary>
     internal Action<Action> PostCaptureSummaryRaise { get; set; } = static a => Avalonia.Threading.Dispatcher.UIThread.Post(a);
 
+    /// <summary>A raise is posted and has not run yet: the rest of its burst needs no other.</summary>
+    private bool _captureSummaryPosted;
+
     /// <summary>Raises the summary and its flag after any of their inputs, in one place rather than beside every raise
-    /// of an input.</summary>
+    /// of an input. Only while folded, as nothing shows them unfolded and every binding of them, hidden or not, builds
+    /// them again on a raise; and once a burst: a choice click raises seven of the inputs, so the raise is posted when
+    /// the first one moves and runs after the click's work.</summary>
     protected override void OnPropertyChanged(PropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
+        if (!CaptureSettingsCollapsed || _captureSummaryPosted) return;
         if (e.PropertyName is { } name && CaptureSummaryInputs.Contains(name))
         {
-            base.OnPropertyChanged(CaptureSummaryChangedArgs);
-            base.OnPropertyChanged(CaptureSummaryWarnChangedArgs);
+            _captureSummaryPosted = true;
+            PostCaptureSummaryRaise(RaisePostedCaptureSummary);
         }
+    }
+
+    private void RaisePostedCaptureSummary()
+    {
+        _captureSummaryPosted = false;
+        // Unfolded since it was posted: nothing shows it now, and the next fold raises it.
+        if (CaptureSettingsCollapsed) RaiseCaptureSummary();
+    }
+
+    private void RaiseCaptureSummary()
+    {
+        base.OnPropertyChanged(CaptureSummaryChangedArgs);
+        base.OnPropertyChanged(CaptureSummaryWarnChangedArgs);
     }
 
     [RelayCommand]
