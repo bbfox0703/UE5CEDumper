@@ -1795,11 +1795,11 @@ public class LiveFuncsSnapshotTests
         Raises("the free memory read again", () => vm.OnEnteringTab());
     }
 
-    /// <summary>(2) What a choice click costs the summary. The click raises seven of the summary's inputs, and when each
-    /// raise had every binding build the summary again, its estimates with it, the panel's four bindings built it 28
-    /// times a click, folded or not. Unfolded nothing shows it, so a click builds it not at all; folded, once a binding,
-    /// after the click's work, from the one raise posted when the first input moved. A raise posted before an unfold has
-    /// nothing to show.</summary>
+    /// <summary>(2) What a choice click costs the summary. The click raises many of the summary's inputs, and when each
+    /// raise had every binding build the summary again, its estimates with it, a click built it once for every input it
+    /// raised and every binding, folded or not ([LF-COMPACT-TOP] keeps the count measured then). Unfolded nothing shows
+    /// it, so a click builds it not at all; folded, once a binding, after the click's work, from the one raise posted
+    /// when the first input moved. A raise posted before an unfold has nothing to show.</summary>
     [Fact]
     public async Task A_choice_click_builds_the_summary_once_folded_and_not_at_all_unfolded()
     {

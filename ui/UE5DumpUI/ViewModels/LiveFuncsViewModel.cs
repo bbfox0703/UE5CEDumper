@@ -987,8 +987,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>Raises the summary and its flag after any of their inputs, in one place rather than beside every raise
     /// of an input. Only while folded, as nothing shows them unfolded and every binding of them, hidden or not, builds
-    /// them again on a raise; and once a burst: a choice click raises seven of the inputs, so the raise is posted when
-    /// the first one moves and runs after the click's work.</summary>
+    /// them again on a raise; and once a burst: a choice click raises many of the inputs in turn, so the raise is posted
+    /// when the first one moves and runs after the click's work.</summary>
     protected override void OnPropertyChanged(PropertyChangedEventArgs e)
     {
         base.OnPropertyChanged(e);
