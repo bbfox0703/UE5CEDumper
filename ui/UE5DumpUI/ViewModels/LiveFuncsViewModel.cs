@@ -853,6 +853,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(TraceUiPeakMb));
         OnPropertyChanged(nameof(TraceUiHeldMb));
         RefreshAvailableMemory();
+        // T13's orange weighs the busiest choice against what the trace keeps, which the buffer sets.
+        RaiseSnapshotEstimate();
     }
 
     /// <summary>Tick or untick a row for the trace. Not while recording: the ticks a recording traces are the ones
@@ -899,6 +901,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         foreach (var k in _ticked.Names) TickedFunctions.Add(k);
         OnPropertyChanged(nameof(HasTickedFunctions));
         OnPropertyChanged(nameof(TickedCountText));
+        // A ticked call is one the trace keeps, so the ticks move what T13's orange compares the choices with.
+        RaiseSnapshotEstimate();
     }
 
     // ---- [LF-COMPACT-TOP] The capture settings fold under their header line, which then sums them up: with a stack
