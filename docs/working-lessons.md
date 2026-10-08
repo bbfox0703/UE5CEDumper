@@ -2835,6 +2835,14 @@ build showed none — the negative control, with the bad line put back, is what 
 **How to apply:** run it after any UI change that touches JSON nodes, reflection-shaped APIs or bindings, before
 `-Mode Publish`. ⚠ `JsonArray.Add(JsonValue.Create(x))` is **still** the generic `Add<T>` — the identity conversion
 to `T` beats the conversion to `JsonNode`, and the first fix for that publish was exactly this. Cast to `JsonNode?`.
+⚠ **A clean result printed without the analyzer engaged is no result.** "0 Warning(s)" says nothing about IL2026 /
+IL3050 unless the analyzer ran, and the properties reach the compiler only through what restore and the build wrote
+under `obj\`. After the build, read `obj\Release\net10.0-windows\win-x64\UE5DumpUI.GeneratedMSBuildEditorConfig.editorconfig`:
+it must carry `build_property.EnableTrimAnalyzer = true` (and `build_property.EnableAotAnalyzer = true`); a plain
+build's has neither line (checked 2026-10-08, [LF-CLEAR-CHOICES] review). When they are missing, run
+`dotnet restore ui/UE5DumpUI/UE5DumpUI.csproj -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true` and build again
+with the same two properties. The negative control above is the stronger proof: put a known-bad call back, see it
+fail, take it out.
 
 -----
 
