@@ -257,11 +257,13 @@ the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM thr
    Acceptance: `max_ticks` on Avowed (item 1) under 1 ms; over it, S3-P1's `.pdata` prewarm.
 5. **T9.1 / T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The
    budget is the guarantee meanwhile.
-6. **A second real game: Elliot** (the maintainer, 2026-10-08: "The Adventures of Elliot: The Millennium Tales", in
-   the D: Steam library; the maintainer expects UE4, to be checked from its own exe). **After step 3 is complete, not
-   before.** UE4 was decided to be covered by tests rather than live (2026-10-07); this is the exception the
-   maintainer asked for. Acceptance: the same run as item 1 (`--stacks --choose ""`), its cost recorded beside
-   Avowed's, and S3-A1's names on its stacks.
+6. **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
+   decided to be covered by tests rather than live (2026-10-07); this is the exception the maintainer asked for. The
+   maintainer first named Elliot, but Elliot is UE 5.4 (docs/test-games.md: its PE version is stripped, so the DLL
+   takes the publisher's 4.27 and reconciles to 5.4 at run time, which is why it can read as UE4). DQ XI S is UE 4.18
+   with a licensee fork's +0x10-shifted UObject layout and the UProperty model: the hardest UE4 shape installed
+   (exe `DRAGON QUEST XI S.exe`, in the D: Steam library). Acceptance: the same run as item 1 (`--stacks --choose ""`),
+   its cost recorded beside Avowed's, and S3-A1's names on its stacks.
 
 ### ⛔ PRECONDITION FOR EVERY GAME ROW — as of 2026-08-19, ALL NINE deployed proxies are STALE
 
