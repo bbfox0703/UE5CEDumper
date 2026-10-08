@@ -316,6 +316,19 @@ Open work only. **Read this when deciding what to do next.**
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
+  ⬜ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08): the table's three choice columns (Trace, Params?, Stack?)
+  had no clear-all -- Clear ticks empties the first and the Parameters row's Clear the other two. A "Clear choices"
+  button empties all three at once (both clears run, so every count and estimate follows; disabled while recording).
+  Built: red 452abbb6 / green 176445d8 (cherry-picked onto dev), 6 / 6 mutants. Its review asks for tests that pin
+  what it leaves alone (results, filter, trace on/off, the stack budget) and a filtered / stack-only start, and its
+  placement (it docks in the status line, which can then wrap one line sooner). Effort **S**.
+  ⬜ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08): with a stack chosen the controls
+  above the Live Funcs table take 13-16 lines, over 40 % of the panel; the 4-line stack warning is the biggest block.
+  (1) the warning becomes one line of essentials and a Details toggle for the full text (the orange variant kept);
+  (2) the capture settings rows and their estimate / memory lines go into a collapsible section whose header shows a
+  one-line summary, remembered in ui-options like Main.ObjectTreeCollapsed (default expanded) -- collapsing never
+  hides a warning; (3) the "No baseline" hint moves into Set Baseline's tooltip and the baseline status line shows
+  only with a baseline or Diff on. Effort **M**.
   Steps 2 and 3, as decided before: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
   what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
   guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").
