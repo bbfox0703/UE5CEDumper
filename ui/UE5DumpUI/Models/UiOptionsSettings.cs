@@ -76,6 +76,9 @@ public sealed class SystemUiOptions
 /// <summary>Top-bar display controls (master — fan out to child VMs on change).</summary>
 public sealed class MainUiOptions
 {
+    /// <summary>[OT-COLLAPSE-PERSIST] The left Object Tree collapsed to its strip (the maintainer, 2026-10-08). Off by
+    /// default, so a file from before it opens the tree as it always did.</summary>
+    public bool ObjectTreeCollapsed { get; set; }
     public int SelectedAddressFormatIndex { get; set; }
     public bool CollapsePointerNodes { get; set; }
     public int ArrayLimitExponent { get; set; } = 7;

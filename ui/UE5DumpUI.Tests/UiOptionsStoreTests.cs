@@ -167,6 +167,38 @@ public class UiOptionsStoreTests : IDisposable
     }
 
     [Fact]
+    public void The_object_trees_collapsed_state_round_trips_and_an_older_file_opens_it()
+    {
+        // [OT-COLLAPSE-PERSIST] The store writes what the settings root reaches, through the source-generated context.
+        var store = new UiOptionsStore(_platform);
+        var o = new UiOptionsSettings();
+        o.Main.ObjectTreeCollapsed = true;
+        store.Save(o);
+        Assert.True(new UiOptionsStore(_platform).Load().Main.ObjectTreeCollapsed);
+
+        // A file written before the option existed has no such key: the tree opens, as it always did.
+        File.WriteAllText(store.FilePath, "{\"schemaVersion\":1,\"main\":{\"selectedAddressFormatIndex\":1}}");
+        var older = new UiOptionsStore(_platform).Load();
+        Assert.False(older.Main.ObjectTreeCollapsed);
+        Assert.Equal(1, older.Main.SelectedAddressFormatIndex);
+    }
+
+    [Fact]
+    public void The_object_trees_collapsed_state_is_tracked_applied_and_saved_by_the_main_window()
+    {
+        // MainWindowViewModel cannot be built in a unit test; pin its three persistence sites by source, as
+        // LiveFuncsViewModelTests.HidePerFrame_PersistsThroughTheMainWindow does.
+        var root = new DirectoryInfo(AppContext.BaseDirectory);
+        while (root is not null && !File.Exists(Path.Combine(root.FullName, "build.ps1"))) root = root.Parent;
+        Assert.NotNull(root);
+        var src = File.ReadAllText(Path.Combine(root!.FullName, "ui", "UE5DumpUI", "ViewModels", "MainWindowViewModel.cs"));
+        Assert.Contains("nameof(ObjectTreeViewModel.IsCollapsed)", src);
+        Assert.Contains("Track(ObjectTree, ObjectTreePersist);", src);
+        Assert.Contains("ObjectTree.IsCollapsed = o.Main.ObjectTreeCollapsed;", src);
+        Assert.Contains("o.Main.ObjectTreeCollapsed = ObjectTree.IsCollapsed;", src);
+    }
+
+    [Fact]
     public void Load_DeletesStaleTempFile()
     {
         var store = new UiOptionsStore(_platform);
