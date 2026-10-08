@@ -641,11 +641,14 @@ def run_selected(c, check: Checks, out: dict, args, pid: int | None = None, slee
             run_stacks(c, check, out, args, out["fixture"]["probes"], pid=pid, sleep=sleep, clock=clock,
                        symbols=symbols)
         else:
-            run_full(c, check, out, args)
+            run_full(c, check, out, args, pid=pid, sleep=sleep, clock=clock)
     return None
 
 
-def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
+def run_full(c, check: Checks, out: dict, args, pid: int | None = None, sleep=time.sleep,
+             clock=time.perf_counter) -> None:
+    """The step-2 checks on DumperTest58 (the module docstring). `pid`, `sleep` and `clock` as run_stacks takes them,
+    so --self-test can drive it against a scripted DLL."""
     # ---- F1: the rows' name keys and per_frame. SnapLate_Begin is invoked once so SnapLate_Call has a row (a key).
     say("\nF1 -- name keys and per_frame:")
     t1 = plain_table(c, args.plain_s, before_stop=lambda: invoke_late(c, 1))
@@ -697,7 +700,7 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     say("\nF4 -- a choice never called:")
     r = c.request("pe_profile_start", trace={"bytes": 32 << 20, "snapshots": {"funcs": [item(rows["SnapLate_Call"])],
                                                                             "bytes": 8 << 20}})
-    time.sleep(1.0)
+    sleep(1.0)
     stop = data_of(c.request("pe_profile_stop"))
     names = {n.get("func"): n for n in stop.get("names", [])}
     check("F2 a name never called this recording is accepted", ok_of(r), str(r.get("error", ""))[:90])
@@ -726,11 +729,11 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     check("F3 the snapshot buffer: one ring per choice, K as the UI computes it",
           snap.get("allocated") is True and snap.get("rings") == len(chosen) and snap.get("slots_per_ring") == k,
           f"rings={snap.get('rings')} K={snap.get('slots_per_ring')} want {k}")
-    time.sleep(args.record_s)
+    sleep(args.record_s)
     invoke_late(c, 4242)
-    t0 = time.perf_counter()
+    t0 = clock()
     stop = data_of(c.request("pe_profile_stop"))
-    stop_s = time.perf_counter() - t0
+    stop_s = clock() - t0
     out["stop"] = stop
     check("F4 Stop returns within about 2.5 s", stop_s < 2.5, f"{stop_s:.2f} s")
     gen = stop.get("trace", {}).get("gen", 0)
@@ -825,7 +828,7 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
 
     # ---- F6: code_addr.
     say("\nF6 -- code_addr:")
-    pid = int(HOST_PID.read_text().strip()) if HOST_PID.exists() else 0
+    pid = host_pid() if pid is None else pid
     rng = module_range(pid) if pid else None
     ca = fnames.get(outer, {}).get("code_addr") if outer else None
     if rng and ca:
