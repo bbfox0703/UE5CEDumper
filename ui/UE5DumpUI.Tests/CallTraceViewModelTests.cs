@@ -190,9 +190,10 @@ public class CallTraceViewModelTests
     }
 
     private static (CallTraceViewModel vm, LiveFuncsViewModel lf) MakeVm(FakeDumpService dump,
-                                                                          IPlatformService? platform = null)
+                                                                          IPlatformService? platform = null,
+                                                                          UE5DumpUI.Helpers.AobMakerStatus? aobMaker = null)
     {
-        var lf = new LiveFuncsViewModel(dump, new NoopLogger());
+        var lf = new LiveFuncsViewModel(dump, new NoopLogger(), aobMaker: aobMaker);
         return (new CallTraceViewModel(dump, new NoopLogger(), lf, platform), lf);
     }
 
@@ -1232,5 +1233,301 @@ public class CallTraceViewModelTests
         IDumpService svc = new UE5DumpUI.Services.DumpService(pipe, new MockLoggingService(), IdentityCodePage.Instance);
         var page = await svc.PeTraceFuncNamesAsync(4, 0, 100, TestContext.Current.CancellationToken);
         Assert.Equal(new ulong[] { 0x7FF6A0123456, 0, 0 }, page.Items.Select(f => f.CodeAddr).ToArray());
+    }
+
+    // ---- [LIVEFUNCS-STEP3] S3-U5: the Call stack tab (view A), and a frame to Cheat Engine (view D) ----
+
+    private const uint StackBudget = StackInfo.BudgetEntryFlag;
+    private const uint Excluded = 8;
+    /// <summary>Two traced natives share this code (identical-code folding): a frame there is neither one's alone.</summary>
+    private const ulong SharedCode = GameBase + 0x200000;
+    private static readonly ulong[] FoldedFuncs = { 0x1E5F0A500, 0x1E5F0A600 };
+    /// <summary>A command or a value on the panel's view model, from inside a row template.</summary>
+    private const string PanelVm = "{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).";
+
+    /// <summary>A return address as the DLL describes it: the RVAs from its own module's base, and CE's name for that
+    /// module unless one is given.</summary>
+    private static StackSite Site(ulong addr, string module = "", ulong moduleBase = 0, ulong fn = 0, bool unwind = true,
+                                  bool own = false, string known = "", string? ceModule = null)
+        => new()
+        {
+            Addr = addr, Module = module, CeModule = ceModule ?? module, ModuleBase = moduleBase,
+            Rva = module.Length == 0 ? 0 : (uint)(addr - moduleBase), Fn = fn,
+            FnRva = fn == 0 || module.Length == 0 ? 0 : (uint)(fn - moduleBase), Unwind = unwind, Own = own, Known = known,
+        };
+
+    // Call 0's stack, nearest first: a frame of each kind the tab names.
+    private static readonly StackSite[] JumpStack =
+    {
+        Site(GameBase + 0x1234, "Game.exe", GameBase, fn: GameBase + 0x1200),             // #0 no traced native starts there
+        Site(GameBase + 0x123480, "Game.exe", GameBase, fn: GameBase + 0x123456),         // #1 Character::Jump's native entry
+        Site(SharedCode + 0x10, "Game.exe", GameBase, fn: SharedCode),                     // #2 two natives' folded code
+        Site(GameBase + 0x300100, "Game.exe", GameBase, fn: GameBase + 0x300000, known: "process_event"),
+        Site(0x7FFB10001000, "version.dll", 0x7FFB10000000, fn: 0x7FFB10000F00, own: true), // #4 the hook, in its proxy
+        Site(0x7FFC20000050, "ntdll.dll", 0x7FFC20000000, unwind: false),                  // #5 no unwind data
+        // #6 a name the UI machine's code page narrows: CE lists Café as Cafe (best fit, measured on ACP 950).
+        Site(0x7FFC30002000, "Café.dll", 0x7FFC30000000, fn: 0x7FFC30001F00, ceModule: "Cafe.dll"),
+        Site(0x2A0000010, unwind: false),                                                   // #7 outside every module
+    };
+
+    // DetailDump's five functions and two more that share their native entry, a call each. Each call shows one thing the
+    // tab says: 0 a whole stack (above); 1 lone, and over the stack budget; 2 taken, its slot written over since; 3 not
+    // chosen; 4 excluded, the walk partial, its one frame without unwind data; 5 lone, cut at the depth, its nearest
+    // frame without unwind data; 6 a slot whose flags a theory sets.
+    private static FakeDumpService StackDump(int lastSlotFlags = 0)
+    {
+        var d = DetailDump();
+        uint[] flags = { StackTaken, Lone | StackBudget, StackTaken, 0, Excluded | StackTaken, Lone | StackTaken, StackTaken };
+        var funcs = DetailFuncs.Concat(FoldedFuncs).ToArray();
+        d.Ring.Clear();
+        for (ulong k = 0; k < (ulong)funcs.Length; k++)
+        {
+            d.Ring.Add(new TraceRecord(2 * k, 1000 + 10 * k, funcs[k], 0, 1, flags[k]));
+            d.Ring.Add(new TraceRecord((2 * k + 1) | R, 1005 + 10 * k, 2 * k, 0, 1, 0));
+        }
+        d.Info = new TraceInfo
+        {
+            Allocated = true, Quiesced = true, Gen = 7, Written = 2 * (ulong)funcs.Length, FirstValid = 0, QpcFreq = 1_000_000,
+            Stack = new StackInfo { Rings = 1, Depth = 16, Captures = 4, SpentTicks = 21, MaxTicks = 12 },
+        };
+        // Run before Walk: the label takes the first name in order, not the first one read.
+        d.Funcs.Add(new TraceFuncName { Addr = FoldedFuncs[0], Live = true, ClassName = "Pawn", FuncName = "Run",
+                                        FunctionFlags = FuncNative, CodeAddr = SharedCode });
+        d.Funcs.Add(new TraceFuncName { Addr = FoldedFuncs[1], Live = true, ClassName = "Character", FuncName = "Walk",
+                                        FunctionFlags = FuncNative, CodeAddr = SharedCode });
+        d.StackRingList.Add(new SnapRingInfo { Ring = 0, Written = 4, FirstValid = 0 });
+        // At 1 MHz a tick is a microsecond.
+        d.StackSlots.Add((0, new StackSlot { Index = 0, EntrySeq = 0, Ticks = 12, Frames = JumpStack }));
+        d.StackSlots.Add((0, new StackSlot { Index = 1, EntrySeq = 8, Flags = StackSlot.Partial, Ticks = 3,
+                                             Frames = new[] { JumpStack[7] } }));
+        d.StackSlots.Add((0, new StackSlot { Index = 2, EntrySeq = 10, Flags = StackSlot.More, Ticks = 5,
+                                             Frames = new[] { JumpStack[5], JumpStack[0] } }));
+        bool walked = lastSlotFlags is 0 or StackSlot.Partial or StackSlot.More;
+        d.StackSlots.Add((0, new StackSlot { Index = 3, EntrySeq = 12, Flags = lastSlotFlags, Ticks = 1,
+                                             Frames = walked ? new[] { JumpStack[0] } : Array.Empty<StackSite>() }));
+        return d;
+    }
+
+    private static async Task<CallTraceViewModel> StackVm(FakeDumpService dump, IPlatformService? platform = null,
+                                                          UE5DumpUI.Helpers.AobMakerStatus? aobMaker = null)
+    {
+        var (vm, _) = MakeVm(dump, platform, aobMaker);
+        vm.StringLookup = En;
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Equal(7, vm.Trace!.Count);
+        Assert.Equal(4, vm.Trace.Stacks!.Calls.Count);
+        return vm;
+    }
+
+    [Theory]
+    [InlineData(AddressFormat.ModuleOffset, "\"Game.exe\"+1234", "\"ntdll.dll\"+50", "\"Cafe.dll\"+2000", "2A0000010")]
+    [InlineData(AddressFormat.HexNoPrefix, "140001234", "7FFC20000050", "7FFC30002000", "2A0000010")]
+    [InlineData(AddressFormat.HexWithPrefix, "0x140001234", "0x7FFC20000050", "0x7FFC30002000", "0x2A0000010")]
+    public async Task A_frames_address_follows_the_Address_setting_in_CEs_name_for_its_own_module(
+        AddressFormat format, string game, string ntdll, string cafe, string none)
+    {
+        // Each frame's own module and base, never the game module the trace was loaded from.
+        Assert.Equal(game, CallTraceViewModel.FrameAddress(JumpStack[0], format));
+        Assert.Equal(ntdll, CallTraceViewModel.FrameAddress(JumpStack[5], format));
+        Assert.Equal(cafe, CallTraceViewModel.FrameAddress(JumpStack[6], format));
+        Assert.Equal(none, CallTraceViewModel.FrameAddress(JumpStack[7], format));
+
+        // On the tab: the selected call's rows, drawn again when the setting changes.
+        var vm = await StackVm(StackDump());
+        vm.SelectedAddressFormatIndex = (int)(format == AddressFormat.HexNoPrefix ? AddressFormat.ModuleOffset
+                                                                                  : AddressFormat.HexNoPrefix);
+        vm.SelectedIndex = 0;
+        vm.SelectedAddressFormatIndex = (int)format;
+        Assert.Equal(new[] { game, ntdll, cafe, none }, new[] { 0, 5, 6, 7 }.Select(k => vm.StackRows[k].Address));
+    }
+
+    [Fact]
+    public async Task A_frame_is_named_by_the_first_rule_that_fits_it()
+    {
+        var vm = await StackVm(StackDump());
+        vm.SelectedIndex = 0;
+        Assert.Equal(new[]
+        {
+            Line("str.CT.Stack.Into", 0x34UL, "\"Game.exe\"+1200"),
+            Line("str.CT.Stack.Native", "Character::Jump", 0x2AUL),
+            Line("str.CT.Stack.NativeShared", "Character::Walk", 0x10UL, 1),
+            Line("str.CT.Stack.ProcessEvent", 0x100UL),
+            Line("str.CT.Stack.Hook"),
+            Line("str.CT.Stack.NoUnwind"),
+            Line("str.CT.Stack.Into", 0x100UL, "\"Cafe.dll\"+1F00"),
+            Line("str.CT.Stack.NoModule"),
+        }, vm.StackRows.Select(r => r.Where));
+        Assert.Equal(Enumerable.Range(0, JumpStack.Length), vm.StackRows.Select(r => r.Index));
+
+        // Where a frame fits more than one rule: the hook, then ProcessEvent, then a traced native's entry, then "into".
+        var index = CallTraceViewModel.CodeIndex(vm.Trace!);
+        Assert.Equal(new[] { "Character::Walk", "Pawn::Run" }, index[SharedCode]);
+        Assert.Equal(Line("str.CT.Stack.Hook"),
+                     vm.FrameWhere(Site(SharedCode + 0x10, "Game.exe", GameBase, fn: SharedCode, own: true,
+                                        known: "process_event"), index));
+        Assert.Equal(Line("str.CT.Stack.ProcessEvent", 0x10UL),
+                     vm.FrameWhere(Site(SharedCode + 0x10, "Game.exe", GameBase, fn: SharedCode, known: "process_event"),
+                                   index));
+        // Code outside every module that has unwind data (a table registered at run time): "into" an absolute start.
+        Assert.Equal(Line("str.CT.Stack.Into", 0x8UL, "0x2A0000000"), vm.FrameWhere(Site(0x2A0000008, fn: 0x2A0000000), index));
+    }
+
+    private static readonly string[] SlotFlagKeys =
+    {
+        "str.CT.Stack.Partial", "str.CT.Stack.Fault", "str.CT.Stack.More", "str.CT.Stack.BadSp", "str.CT.Stack.LowStack",
+        "str.CT.Stack.NoCapturer",
+    };
+
+    [Fact]
+    public async Task The_tab_says_why_a_call_has_no_stack_and_how_far_to_trust_the_one_it_has()
+    {
+        var vm = await StackVm(StackDump());
+        // 0: a whole stack. Its first frame without unwind data is #5; #7 has none either, but nothing lies below it.
+        Assert.Equal(new[] { Line("str.CT.Stack.MayBeWrong", 5), Line("str.CT.Stack.Cost", 12.0) }, vm.Stack(0).Notes);
+        // 1: lone, and the stack budget left it out.
+        var budget = vm.Stack(1);
+        Assert.Empty(budget.Rows);
+        Assert.Equal(new[] { Line("str.CT.Param.Lone"), Line("str.CT.Stack.Budget") }, budget.Notes);
+        // 2: taken, then written over.
+        Assert.Empty(vm.Stack(2).Rows);
+        Assert.Equal(new[] { Line("str.CT.Stack.Overwritten") }, vm.Stack(2).Notes);
+        // 3: never chosen.
+        Assert.Equal(new[] { Line("str.CT.Stack.NotChosen") }, vm.Stack(3).Notes);
+        // 4: excluded, and the walk stopped at the caller: one frame, and nothing below it to doubt.
+        var partial = vm.Stack(4);
+        Assert.Single(partial.Rows);
+        Assert.Equal(new[] { Line("str.CT.Param.Excluded"), Line("str.CT.Stack.Partial"), Line("str.CT.Stack.Cost", 3.0) },
+                     partial.Notes);
+        // 5: lone, cut at the depth, and its nearest frame without unwind data.
+        Assert.Equal(new[] { Line("str.CT.Param.Lone"), Line("str.CT.Stack.More"), Line("str.CT.Stack.MayBeWrong", 0),
+                             Line("str.CT.Stack.Cost", 5.0) }, vm.Stack(5).Notes);
+    }
+
+    [Theory]
+    [InlineData(StackSlot.Partial, "str.CT.Stack.Partial")]
+    [InlineData(StackSlot.Fault, "str.CT.Stack.Fault")]
+    [InlineData(StackSlot.More, "str.CT.Stack.More")]
+    [InlineData(StackSlot.BadSp, "str.CT.Stack.BadSp")]
+    [InlineData(StackSlot.LowStack, "str.CT.Stack.LowStack")]
+    [InlineData(StackSlot.NoCapturer, "str.CT.Stack.NoCapturer")]
+    public async Task Each_slot_flag_has_a_note_of_its_own(int flag, string key)
+    {
+        var vm = await StackVm(StackDump(lastSlotFlags: flag));
+        var notes = vm.Stack(6).Notes;
+        Assert.Contains(Line(key), notes);
+        foreach (var other in SlotFlagKeys.Where(k => k != key)) Assert.DoesNotContain(Line(other), notes);
+    }
+
+    [Fact]
+    public async Task Selecting_a_call_fills_the_tab_and_a_new_load_empties_it()
+    {
+        var dump = StackDump();
+        var vm = await StackVm(dump);
+        Assert.Empty(vm.StackRows);
+        vm.SelectedIndex = 0;
+        Assert.Equal(JumpStack.Select(s => s.Addr), vm.StackRows.Select(r => r.Abs));
+        Assert.Equal(string.Join(Environment.NewLine, vm.Stack(0).Notes), vm.StackNote);
+        vm.SelectedIndex = 3;
+        Assert.Empty(vm.StackRows);
+        Assert.Equal(Line("str.CT.Stack.NotChosen"), vm.StackNote);
+
+        vm.SelectedIndex = 0;
+        dump.Info = new TraceInfo { Allocated = true, Quiesced = true, Gen = 8, Written = 14, FirstValid = 0, QpcFreq = 1_000_000 };
+        dump.NamesGen = 8;
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Null(vm.Trace!.Stacks);
+        Assert.Empty(vm.StackRows);
+        Assert.Equal("", vm.StackNote);
+    }
+
+    [Fact]
+    public async Task Copy_gives_CEs_module_form_whatever_the_Address_setting_says()
+    {
+        Assert.Equal("\"Game.exe\"+1234", CallTraceViewModel.FrameCopyText(JumpStack[0]));
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = await StackVm(StackDump(), platform);
+        vm.SelectedIndex = 0;
+        foreach (var format in Enum.GetValues<AddressFormat>())
+        {
+            vm.SelectedAddressFormatIndex = (int)format;
+            await vm.CopyFrameCommand.ExecuteAsync(vm.StackRows[0]);
+            Assert.Equal("\"Game.exe\"+1234", platform.LastClipboard);
+            Assert.Equal(Line("str.CT.Stack.Copied", "\"Game.exe\"+1234"), vm.StatusText);
+            await vm.CopyFrameCommand.ExecuteAsync(vm.StackRows[6]);
+            Assert.Equal("\"Cafe.dll\"+2000", platform.LastClipboard);   // CE's name for the module
+            await vm.CopyFrameCommand.ExecuteAsync(vm.StackRows[7]);
+            Assert.Equal("0x2A0000010", platform.LastClipboard);         // no module: this run's address
+        }
+
+        // Nothing reached the clipboard: the status says so, not that it was copied.
+        var none = await StackVm(StackDump());
+        none.SelectedIndex = 0;
+        await none.CopyFrameCommand.ExecuteAsync(none.StackRows[0]);
+        Assert.Equal(Line("str.CT.Stack.CopyFailed", "\"Game.exe\"+1234"), none.StatusText);
+    }
+
+    /// <summary>Call 0's nearest frame as its row carries it; the rows themselves are pinned by the tests above.</summary>
+    private static StackFrameRow GameRow() => new() { Index = 0, Abs = 0x140001234, CopyText = "\"Game.exe\"+1234" };
+
+    [Fact]
+    public async Task Asm_moves_CEs_disassembler_to_the_frames_absolute_address()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var vm = await StackVm(StackDump(), aobMaker: new UE5DumpUI.Helpers.AobMakerStatus(bridge));
+        vm.SelectedAddressFormatIndex = (int)AddressFormat.ModuleOffset;   // the setting does not change what is sent
+        await vm.AsmFrameCommand.ExecuteAsync(GameRow());
+        Assert.Equal("140001234", bridge.LastAsm);   // the view sends 0x140001234; AobMakerActions strips the 0x (M2)
+        Assert.EndsWith("@ 0x140001234", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Asm_is_refused_for_a_trace_from_an_earlier_connection_and_Copy_still_works()
+    {
+        var bridge = new ScriptedAobMakerBridge { Available = true };
+        var platform = new MockPlatformService(Path.GetTempPath());
+        var vm = await StackVm(StackDump(), platform, new UE5DumpUI.Helpers.AobMakerStatus(bridge));
+        vm.ClearOnDisconnect();
+
+        await vm.AsmFrameCommand.ExecuteAsync(GameRow());
+        Assert.Null(bridge.LastAsm);
+        Assert.Equal(Line("str.CT.Stack.AsmOldTrace"), vm.StatusText);
+
+        // The module form names the same code in any run of the game.
+        await vm.CopyFrameCommand.ExecuteAsync(GameRow());
+        Assert.Equal("\"Game.exe\"+1234", platform.LastClipboard);
+    }
+
+    [Fact]
+    public void The_Call_stack_tab_sits_between_Call_and_Parameters_with_a_compiled_unsorted_grid()
+    {
+        var doc = PanelAxaml();
+        Assert.Equal(new[] { "{StaticResource str.CT.Tab.Call}", "{StaticResource str.CT.Tab.Stack}",
+                             "{StaticResource str.CT.Tab.Params}" },
+                     doc.Descendants(Av + "TabItem").Select(t => (string?)t.Attribute("Header")));
+        var tab = doc.Descendants(Av + "TabItem")
+                     .Single(t => (string?)t.Attribute("Header") == "{StaticResource str.CT.Tab.Stack}");
+        Assert.Contains(tab.Descendants(Av + "TextBlock"), e => (string?)e.Attribute("Text") == "{Binding StackNote}");
+
+        var grid = tab.Descendants(Av + "DataGrid").Single();
+        Assert.Equal("{Binding StackRows}", (string?)grid.Attribute("ItemsSource"));
+        // The reflection-based column sort is an AOT trap, and a stack's order is what it says.
+        Assert.Equal("False", (string?)grid.Attribute("CanUserSortColumns"));
+        Assert.Equal("True", (string?)grid.Attribute("IsReadOnly"));
+        var columns = grid.Elements(Av + "DataGrid.Columns").Elements().ToList();
+        Assert.NotEmpty(columns);
+        foreach (var c in columns)
+        {
+            Assert.Equal(Av + "DataGridTemplateColumn", c.Name);
+            Assert.Equal("vm:StackFrameRow", (string?)c.Descendants(Av + "DataTemplate").Single().Attribute(Xaml + "DataType"));
+            Assert.DoesNotContain("*", (string?)c.Attribute("Width") ?? "", StringComparison.Ordinal);   // no star column
+        }
+        foreach (var path in new[] { "Index", "Address", "Where" })
+            Assert.Contains(grid.Descendants(Av + "TextBlock"), e => (string?)e.Attribute("Text") == "{Binding " + path + "}");
+
+        var copy = grid.Descendants(Av + "Button").Single(b => (string?)b.Attribute("Command") == PanelVm + "CopyFrameCommand}");
+        Assert.Equal("{Binding}", (string?)copy.Attribute("CommandParameter"));
+        var asm = grid.Descendants(Av + "Button").Single(b => (string?)b.Attribute("Command") == PanelVm + "AsmFrameCommand}");
+        Assert.Equal("{Binding}", (string?)asm.Attribute("CommandParameter"));
+        Assert.Equal(PanelVm + "LiveFuncs.AobMaker.IsAvailable}", (string?)asm.Attribute("IsEnabled"));
     }
 }

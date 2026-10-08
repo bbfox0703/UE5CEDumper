@@ -695,6 +695,28 @@ public partial class CallTraceViewModel : ViewModelBase
         _ => "",
     };
 
+    // ---- [LIVEFUNCS-STEP3] S3-U5: the selected call's native stack (view A), and a frame to Cheat Engine (view D) ----
+
+    [ObservableProperty] private IReadOnlyList<StackFrameRow> _stackRows = Array.Empty<StackFrameRow>();
+    [ObservableProperty] private string _stackNote = "";
+
+    internal (IReadOnlyList<StackFrameRow> Rows, IReadOnlyList<string> Notes) Stack(int i)
+        => (Array.Empty<StackFrameRow>(), Array.Empty<string>());
+
+    internal static Dictionary<ulong, string[]> CodeIndex(CallTrace t) => new();
+
+    internal static string FrameAddress(StackSite s, AddressFormat f) => "";
+
+    internal static string FrameCopyText(StackSite s) => "";
+
+    internal string FrameWhere(StackSite s, IReadOnlyDictionary<ulong, string[]> codeIndex) => "";
+
+    [RelayCommand]
+    private Task CopyFrameAsync(StackFrameRow? r) => Task.CompletedTask;
+
+    [RelayCommand]
+    private Task AsmFrameAsync(StackFrameRow? r) => Task.CompletedTask;
+
     private int SelectedCall()
         => Rows is CallTraceRowList l && SelectedIndex >= 0 && SelectedIndex < l.Count ? l.CallAt(SelectedIndex) : -1;
 
@@ -959,6 +981,16 @@ public sealed class ParamRow
     /// <summary>The raw bytes differ between the copy at the call and the one after it.</summary>
     public bool Changed { get; init; }
     public int Depth { get; init; }
+}
+
+/// <summary>[LIVEFUNCS-STEP3] One row of the Call stack tab: a return address on the call's native stack.</summary>
+public sealed class StackFrameRow
+{
+    public int Index { get; init; }
+    public string Address { get; init; } = "";
+    public string Where { get; init; } = "";
+    public string CopyText { get; init; } = "";
+    public ulong Abs { get; init; }
 }
 
 /// <summary>
