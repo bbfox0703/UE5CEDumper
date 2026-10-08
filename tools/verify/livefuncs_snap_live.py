@@ -1193,7 +1193,7 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     fl_pf = stack_flag_problems(entries, ring_func[1], exact=F_LONE | F_STACK_TAKEN)
     check("S1 every SnapProbe_Call entry says what became of its stack (32 or 64), every SnapProbe_PerFrame one is 4|32",
           None not in ring_func.values() and not fl_call and not fl_pf,
-          f"functions {ring_func}; wrong {fl_call[:3]} {fl_pf[:3]}")
+          f"functions {[fmt(a, '#x') for a in ring_func.values()]}; wrong {fl_call[:3]} {fl_pf[:3]}")
     j = s1_join(entries, ring_func, slots_by_ring)
     check("S1 every entry flagged 32 has exactly one slot in its function's ring (by entry_seq), every slot one entry",
           j["taken"] > 0 and j["slots"] > 0 and not j["no_slot"] and not j["two_slots"] and not j["stray"],
@@ -1319,6 +1319,7 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
                  f"{cost['max_ticks']}; captures {cost['captures']} / written {written}",
                  as_expected=agree["agree"] and cost["captures"] == written)
 
+    say("\nS7 -- the release:")
     c.request("pe_trace_release")
     after = c.request("pe_trace_get", **{"from": 0, "max": 1})   # its own `data` is the records: not data_of
     check("S7 the release frees everything (the main trace)",
