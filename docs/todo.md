@@ -261,9 +261,40 @@ source and editor are installed for when they are needed.
   gate refuses it with the existing "older than the minimum supported" message (Extinction ships none either).
   Red first, on a pure helper, with the three shapes and the counter-cases (a bare game version `4.10.1`, Gal*Gun's `1.0.10897.0`). The memory string
   table floors at `4.18.`; 4.11-4.17 never need it, as a PE reading at or above the floor is taken directly.
+  The study adds: `kVersionDetectLogicRev` must go 7 -> 8, or this PC's cached record (IS Defense: 410, low
+  confidence, rev 7) keeps the gate off; a CrashReportClient counts only when it agrees with the exe's FileVersion;
+  the b25 marker-exe rig gains a refused branch (FileVersion 4.10.2 + the IS Defense string) and a still-scanned one
+  (4.10.3 + a bare `4.10.3`); and `Himmel.h`'s "the 4.10 array address is never materialised inline" is false for
+  VS2013 builds (IS Defense inlines it), which the same commit corrects. Effort **S**.
+- ⬜ `[UE410-SUPPORT]` (**decided 2026-10-08: not now** -- the maintainer; the gate above refuses 4.10 cleanly). The
+  feasibility study (UE 4.10 source, IS Defense's PDB, the DLL) found it doable but L (~700-900 lines, 4-6 sessions
+  plus 2-3 live): a third object-array shape (`FUObjectArray`+0x10 is an INLINE 512-slot chunk table, 16,384 objects
+  a chunk, bare stride-8 `UObjectBase*`, Num at +0x1010, NumChunks at +0x1014, no Max, no `FUObjectItem`), version
+  rows below 4.11 (one memory-safety-critical: UFunction's ParmsSize sits 2 bytes on, so invoke buffers would be
+  sized short; ProcessEvent at vtable 0x190; UProperty Offset_Internal 0x4C / subclass start 0x70), a no-item mode
+  for flags and serials, and a way to find the array -- an AOB reaches VS2013 builds like IS Defense (it inlines
+  `GetUObjectArray`: `lea rcx,[rip+GUOA+0x10]`), not VS2015 ones like Epic's 4.10.4. If it is ever taken up: first a
+  live CE measurement on IS Defense, then the rows and the shape behind the gate, the floor moved last. Its PDB (310 MB,
+  full types) is the only 4.10 type oracle on disk; the 4.10.4 corpus PDBs hold public symbols only.
+- ⬜ `[UE-OVERRIDE-411]` (LOW, the maintainer chose it 2026-10-08): the UE version override accepts only 418..509
+  (`Fern.cpp`'s set-override range), so a 4.11-4.17 title cannot be set by hand, although the too-old message names
+  the override as the escape hatch. Widen it to 411 (the UI's range with it). Effort **S**.
+- ⬜ `[DUMPERTEST410-FIXTURE]` (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
+  installed UE 4.10.4 (the TP_ThirdPersonBP template, the prebuilt UE4Game-Win64-Shipping) while the editor is still
+  installed: `tools/ue-sample/repackage.py` needs a content-only mode (no `Build.bat <Project>Editor`, `-nocompile
+  -nocompileeditor` instead of `-build`). It serves the gate's refusal now and a 4.10 port if one is ever made (the
+  VS2015, not-inlined shape). Unproven: that BuildCookRun completes without VS2015. Effort **S-M**.
+
+**Found by the 4.10 study, worth doing whatever 4.10's fate** (they help titles already supported):
+- ⬜ `[UE4-ASSETPTR-PROPS]` (LOW): AssetObjectProperty / AssetClassProperty (4.11-4.17's soft pointers) do not go
+  down the soft-pointer path in Ubel. Effort **S**.
+- ⬜ `[UE4-USTRUCT-GIVEUP]` (LOW): in UProperty mode, when no Guid / Vector struct validates the offsets, the fallback
+  gives FProperty-era UStruct offsets (0x40/0x48/0x58); UE4 below 4.25 is 0x30/0x38/0x40/0x48. Effort **S**.
+- ⬜ `[AOB-SKIP-OWN-DLL]` (LOW): `Macht::AOBScanAllModules` does not skip our own module -- on IS Defense GOBJ_V1
+  matched twice inside our `version.dll` proxy, so every multi-module scan has us as a false-candidate source.
   Effort **S**.
-- ⬜ `[UE410-SUPPORT]` (decision, the maintainer): whether to support 4.10 at all. A feasibility study (UE 4.10
-  source, the game's PDB, what the DLL would need, a fixture) is running; its result goes here.
+- ⬜ `[UE4-WIDE-FNAME]` (LOW): Serie's UE4 name path never tests the wide-character bit (Index & 1), so a non-ASCII
+  FName reads as garbage on 4.10-4.22. Effort **S**.
 
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
@@ -302,9 +333,12 @@ source and editor are installed for when they are needed.
   ✅ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08; fixed the same day, the list now cuts
   its columns -- checked live in build 3643): with the Call Trace detail pane dragged
   wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
-  ⬜ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08): the Call stack tab's Where column
-  has a fixed width (`CallTracePanel.axaml`), so with the detail pane dragged wide a long name ("native entry of
-  DumperTest58Actor::SnapNest_Outer +0x73") stays cut beside empty space. Give it the rest of the width. Effort **S**.
+  ✅ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08; fixed in build 3644, live on
+  DumperTest58): the Call stack tab's Where column had a fixed width (`CallTracePanel.axaml`), so with the detail
+  pane dragged wide a long name stayed cut beside empty space. Where is now a star column with a 420 floor (red
+  0a2a5a87 / green 9ec9fb8a, 3 / 3 mutants); live, a wide pane showed every name whole and a narrow one scrolled.
+  The live look also found Address squeezed to its floor in a narrow pane; its floor is now its width (red 3c1ea493 /
+  green d7da0d04, for build 3645 -- a live look owed).
   ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test` -- its first live run
   is owed): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
   called faster than `--stack-per-ring` (30 on the fixture). With the fixture at about 30 fps it reported a DLL
@@ -330,7 +364,7 @@ source and editor are installed for when they are needed.
   not run only where the main recording shows every in-scope stack refused (none kept, each entry flagged 64) and the
   total starves the others at SnapProbe_PerFrame's plain or main rate; otherwise they run over the stacks kept. The
   scripted DLL admits in call order too, and books a refused call taken for its parameters as skipped (LOW).
-  ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
+  ✅ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
   (Aura.h's S3-A1 header, Fern's `shared` comment, pipe-protocol.md's `shared`, the step-3 design's 4.3: "`shared: N`
@@ -338,6 +372,15 @@ source and editor are installed for when they are needed.
   into the function at ..." with no name. Fix: index a script function's Func too, as the design says, so the count
   names the interpreter -- or, if that is decided against, correct the four places. Red first: a test that a script
   function's Func enters the index. Effort **S-M** (CollectCodeEntries reads live memory: the gate may need a seam).
+  ✅ **Fixed in build 3644** (red 22465c0c / green a97da808, 3 / 3 mutants), live: the index grew from 12,445 to
+  13,176 entries of 13,179 functions on DumperTest58 and from 12,482 to 19,160 of 19,162 on DQ XI S, where a frame
+  in the interpreter was named with `shared: 6678` -- exactly the script functions added.
+  ⬜ `[A1-INTERP-LABEL]` (LOW, found by that live check; built for build 3645, a live look owed): the interpreter's
+  frame read "native entry of <the lowest-addressed script function> (one of 6,678 ...)" -- on DQ XI S a level
+  script's function on the minimap widget's stack, which was not running. The pipe now says `script: true` on the
+  script functions' entry (DLL red 6e63a7b1 / green 7a964f0e, 3 / 3 mutants) and the Call stack tab names "the
+  Blueprint interpreter +0x.. (UObject::ProcessInternal, the native entry of N Blueprint functions)" (UI red
+  e29ec156 / green 1996e3c6, 5 / 5 mutants). Live look: DQ XI S, OnDrawMapSymbolRenderTarget's stacks.
   ✅ `[SNAPRIG-NAMES]` (LOW, the same review; built 2026-10-08, offline by `--self-test` -- its first live run is owed):
   `livefuncs_snap_live.py --stacks --choose` checks no S3-A1 name; DQ XI
   S's were checked by scratch probes (`get_object` on each `ufunc`; the site's `fn` at one offset inside the
