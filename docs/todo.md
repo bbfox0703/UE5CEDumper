@@ -463,7 +463,9 @@ source and editor are installed for when they are needed.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
-  ⬜ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08; built and review-fixed, a live look owed): the table's
+  ✅ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08; built and review-fixed; **live 2026-10-09**, build 3645
+  on DumperTest58 Shipping: with T, P and S ticked and the settings folded, Clear T/P/S on the header emptied all three
+  columns and the summary went to "ticked 0, parameters 0, stacks 0", its orange gone): the table's
   three choice columns (Trace, Params?, Stack?) had no clear-all -- Clear ticks empties the first and the Parameters
   row's Clear the other two. A "Clear T/P/S" button empties all three at once (both clears run, so every count and
   estimate follows; disabled while recording). Built: red ef95e913 / green b8963e8b, 6 / 6 mutants. Review fixes:
@@ -473,8 +475,8 @@ source and editor are installed for when they are needed.
   5ae8cc8b); its label, "Clear choices" until then, names the columns it clears, "Clear T/P/S", the tooltip unchanged
   (5b0f4957 / 822b5851, worktree ids; the orchestrator's wording, the maintainer may change it); working-lessons 3.xc
   on what a clean analyzer result proves (a0952263, 022d19f0). Effort **S**. The second review's LOWs (an unfold-path
-  test, two more estimate-raise cases, one settled post, two counting comments, the headless width note) are being
-  fixed.
+  test, two more estimate-raise cases, one settled post, two counting comments, the headless width note) were fixed
+  2026-10-09, in round 4 (under [LF-COMPACT-TOP] and [LF-SNAP-WARN-RAISE]).
   ⬜ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08; built and review-fixed, a live look
   owed): with a stack chosen the controls above the Live Funcs table took 13-16 lines, over 40 % of the panel; the
   4-line stack warning was the biggest block. Built: (1) the warning is one line of essentials with a Details toggle
