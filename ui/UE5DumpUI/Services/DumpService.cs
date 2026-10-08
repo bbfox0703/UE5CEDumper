@@ -3326,6 +3326,11 @@ public sealed class DumpService : IDumpService
             Unwind     = s["unwind"]?.GetValue<bool>() ?? false,
             Own        = s["own"]?.GetValue<bool>() ?? false,
             Known      = s["known"]?.GetValue<string>() ?? "",
+            // [LIVEFUNCS-STEP3] S3-A1: absent from a DLL without the native-entry index, and on a site none enters at.
+            UFunc      = ParseAddr(s["ufunc"]?.GetValue<string>()),
+            ClassName  = s["class"]?.GetValue<string>() ?? "",
+            FuncName   = s["func"]?.GetValue<string>() ?? "",
+            Shared     = s["shared"]?.GetValue<int>() ?? 0,
         };
     }
 

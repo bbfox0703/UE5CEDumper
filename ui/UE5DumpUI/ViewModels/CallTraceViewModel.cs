@@ -802,8 +802,9 @@ public partial class CallTraceViewModel : ViewModelBase
     private static string CeForm(string ceModule, uint rva) => $"\"{ceModule}\"+{rva.ToString("X", CultureInfo.InvariantCulture)}";
 
     /// <summary>What a frame is, by the first rule that fits: the dumper's own image (the hook of an enclosing call), then
-    /// ProcessEvent, then a traced native's entry, then an offset into the function holding it, else why none is
-    /// known. The DLL tells own and ProcessEvent from addresses only it has.</summary>
+    /// ProcessEvent, then a traced native's entry, then the entry of any UFunction the DLL's index knows (an exec thunk
+    /// reached without ProcessEvent), then an offset into the function holding it, else why none is known. The DLL tells
+    /// own, ProcessEvent and the index's names from addresses only it has.</summary>
     internal string FrameWhere(StackSite s, IReadOnlyDictionary<ulong, string[]> codeIndex)
     {
         ulong off = s.Addr - s.Fn;
@@ -813,6 +814,12 @@ public partial class CallTraceViewModel : ViewModelBase
             return names.Length == 1
                 ? Say("str.CT.Stack.Native", names[0], off)
                 : Say("str.CT.Stack.NativeShared", names[0], off, names.Length - 1);
+        if (s.Fn != 0 && s.FuncName.Length > 0)
+        {
+            string name = s.ClassName.Length > 0 ? s.ClassName + "::" + s.FuncName : s.FuncName;
+            return s.Shared > 1 ? Say("str.CT.Stack.NativeIndexShared", name, off, s.Shared)
+                                : Say("str.CT.Stack.Native", name, off);
+        }
         if (s.Fn != 0)
             return Say("str.CT.Stack.Into", off,
                        s.CeModule.Length > 0 ? CeForm(s.CeModule, s.FnRva)
