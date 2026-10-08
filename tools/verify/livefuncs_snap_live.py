@@ -873,7 +873,9 @@ def run_full(c, check: Checks, out: dict, args, pid: int | None = None, sleep=ti
               int_or(pf_ring.get("dropped_budget"), 0) > 0 and
               0 < int_or(pf_ring.get("written"), 0) <= (per + 1) * (args.record_s + 3),
               f"written {pf_ring.get('written')}, dropped {pf_ring.get('dropped_budget')}")
-    else:   # a budget that cannot bite drops nothing on a correct DLL: a failure would blame the DLL for the run
+    else:
+        # A budget that cannot bite may still drop calls, but not steadily enough to hold the ring to it: a failure
+        # would blame the DLL for the run.
         check.not_run(f"{STEP2_BUDGET} the budget a second are dropped, the first ones kept", why)
 
     # ---- F6: code_addr.
@@ -1648,7 +1650,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
               f"written {pf_ring.get('written')}, ring dropped {pf_ring.get('dropped_budget')}, "
               f"stack.dropped_budget {stack2.get('dropped_budget')}")
     else:
-        # A budget that cannot bite drops nothing on a correct DLL: a failed window would blame the DLL for the run.
+        # A budget that cannot bite may still drop calls, but not steadily enough to hold the ring to a window: a
+        # failed window would blame the DLL for the run.
         check.not_run(f"{S5_WINDOW} the budget a second, and the budget drops the rest", s5_why)
     # The parameter counters, apart from the window: a stack budget that cannot hold SnapProbe_PerFrame to a window
     # still refuses calls, and a nonzero counter is always a defect here (S0's parameter budget is far above
