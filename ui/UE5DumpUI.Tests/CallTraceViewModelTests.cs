@@ -114,6 +114,37 @@ public class CallTraceViewModelTests
                 Next = items.Count > 0 ? items[0].Index + 1 : from, Items = items,
             });
         }
+
+        // [LIVEFUNCS-STEP3] The native stacks. Every reply carries every stack ring's window, and a page holds one
+        // index: a slot, or an orphan, whose page comes back empty yet moves on, as the DLL's does (review M1).
+        public List<SnapRingInfo> StackRingList { get; } = new();
+        public List<(int Ring, StackSlot Slot)> StackSlots { get; } = new();
+        public HashSet<(int Ring, ulong Index)> StackOrphans { get; } = new();
+        /// <summary>From this stack call on (1 = the first), the DLL answers Stale.</summary>
+        public int StackStaleAt { get; set; } = int.MaxValue;
+        /// <summary>From this stack call on, the DLL holds another recording: a new Start between the pages.</summary>
+        public int StackGenMovesAt { get; set; } = int.MaxValue;
+        private int _stackCalls;
+
+        Task<StackPage> IDumpService.PeStackGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct)
+        {
+            CallLog.Add($"stack{ring}@{from}");
+            int k = ++_stackCalls;
+            if (k >= StackStaleAt)
+                return Task.FromResult(new StackPage { Info = new TraceInfo { Gen = gen + 1 }, Stale = true, Ring = ring, Next = from });
+            var w = StackRingList.FirstOrDefault(r => r.Ring == ring);
+            ulong begin = Math.Max(from, w?.FirstValid ?? 0);   // the DLL starts a from below the window at it
+            bool inWindow = w != null && begin < w.Written;
+            var items = inWindow
+                ? StackSlots.Where(s => s.Ring == ring && s.Slot.Index == begin).Select(s => s.Slot).ToList()
+                : new List<StackSlot>();
+            return Task.FromResult(new StackPage
+            {
+                Info = new TraceInfo { Gen = k >= StackGenMovesAt ? gen + 1 : gen }, Ring = ring, Rings = StackRingList,
+                Count = items.Count, Orphans = inWindow && StackOrphans.Contains((ring, begin)) ? 1UL : 0,
+                Next = inWindow ? begin + 1 : begin, Items = items,
+            });
+        }
     }
 
     private sealed class NoopLogger : ILoggingService
@@ -345,6 +376,191 @@ public class CallTraceViewModelTests
         vm.FilterText = "";
         vm.OnlyWithParams = false;
         Assert.False(vm.IsFiltered);
+    }
+
+    // ---- [LIVEFUNCS-STEP3] S3-U4: the native stacks, read before the release and joined apart from the parameters ----
+
+    private const uint StackTaken = StackInfo.TakenEntryFlag;
+    private const uint Lone = 4;
+
+    // A(0) unchosen; B(1) chosen for both, its stack taken (and its parameters, with them); C(2) inside B, chosen for a
+    // stack alone; D(5) parameters alone, with them; E(8) chosen for a stack alone and called outside every scope, so
+    // recorded on its own. Stack ring 0 lost slot 0 to newer calls and its first kept slot is an orphan; ring 1 has E's.
+    // Without parameters it is a stacks-only Start: the buffer allocated with no parameter ring and no arm.
+    private static FakeDumpService DumpWithStacks(bool withParams = true, ulong captures = 5)
+    {
+        var d = withParams ? DumpWithSnapshots() : Dump();
+        uint p = withParams ? 2u : 0u;
+        d.Ring.Clear();
+        d.Ring.AddRange(new[]
+        {
+            new TraceRecord(0, 1000, 0xA, 0x10, 1, 0), new TraceRecord(1, 1010, 0xB, 0x20, 1, p | StackTaken),
+            new TraceRecord(2, 1020, 0xC, 0, 1, StackTaken), new TraceRecord(3 | R, 1030, 2, 0, 1, 0),
+            new TraceRecord(4 | R, 1040, 1, 0, 1, 0), new TraceRecord(5, 1050, 0xD, 0x10, 1, p),
+            new TraceRecord(6 | R, 1060, 5, 0, 1, 0), new TraceRecord(7 | R, 2000, 0, 0, 1, 0),
+            new TraceRecord(8, 3000, 0xE, 0, 1, Lone | StackTaken),
+        });
+        d.Info = new TraceInfo
+        {
+            Allocated = true, Quiesced = true, Gen = 7, Written = 9, FirstValid = 0, QpcFreq = 1_000_000,
+            Snap = new SnapInfo { Allocated = true, Rings = withParams ? 1 : 0 },
+            // 12 ticks a capture at 1 MHz: 12 us.
+            Stack = new StackInfo { Rings = 2, Depth = 16, Captures = captures, SkippedBudget = 1, DroppedBudget = 2,
+                                    SpentTicks = 12 * captures, MaxTicks = 30 },
+        };
+        var game = new StackSite { Addr = 0x140001234, Module = "Game.exe", CeModule = "Game.exe", ModuleBase = 0x140000000,
+                                   Rva = 0x1234, Unwind = true };
+        d.StackRingList.Add(new SnapRingInfo { Ring = 0, Written = 4, FirstValid = 1 });
+        d.StackRingList.Add(new SnapRingInfo { Ring = 1, Written = 1, FirstValid = 0 });
+        d.StackOrphans.Add((0, 1));
+        d.StackSlots.Add((0, new StackSlot { Index = 2, EntrySeq = 1, Frames = new[] { game } }));
+        d.StackSlots.Add((0, new StackSlot { Index = 3, EntrySeq = 2, Ticks = 12, Frames = new[] { game, game } }));
+        d.StackSlots.Add((1, new StackSlot { Index = 0, EntrySeq = 8, Frames = new[] { game } }));
+        return d;
+    }
+
+    [Fact]
+    public async Task A_stack_is_joined_to_its_call_apart_from_the_parameters_and_marks_its_row()
+    {
+        var dump = DumpWithStacks();
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var t = vm.Trace!;
+        int b = t.FindBySeq(1), c = t.FindBySeq(2), d = t.FindBySeq(5), e = t.FindBySeq(8);
+
+        Assert.NotNull(t.Stacks);
+        var st = t.Stacks!;
+        // Every ring paged to its end: a page of orphans alone is empty, and the slots after it are still read.
+        Assert.Equal(new[] { b, c, e }, st.Calls);
+        Assert.Equal(2, st.StackOf(c)!.Frames.Count);
+        Assert.Null(st.StackOf(d));
+        Assert.Equal(1UL, st.Orphans);
+        Assert.Equal(0, st.Unjoined);
+        Assert.Same(dump.Info.Stack, st.Info);
+        Assert.Equal("release", dump.CallLog[^1]);   // read before the release frees the rings
+
+        // Not parameters: a stack never makes a call one with a copy.
+        var s = t.Snapshots!;
+        Assert.Equal(2, s.CallsWithParams);
+        Assert.False(s.Has(c));
+        Assert.False(s.Has(e));
+
+        vm.ExpandAllCommand.Execute(null);
+        var rows = vm.Rows.Cast<CallTraceRow>().ToDictionary(r => r.Call);
+        Assert.True(rows[b].HasStack && rows[b].HasParams);
+        Assert.True(rows[c].HasStack);
+        Assert.False(rows[c].HasParams);
+        Assert.False(rows[d].HasStack);
+        Assert.True(rows[e].HasStack);
+
+        // The row marks it beside (p).
+        var marker = RowTemplate(PanelAxaml()).Descendants(Av + "TextBlock")
+            .SingleOrDefault(x => (string?)x.Attribute("Text") == "{StaticResource str.CT.Stack.Marker}");
+        Assert.NotNull(marker);
+        Assert.Equal("{Binding HasStack}", (string?)marker!.Attribute("IsVisible"));
+        Assert.Equal("{StaticResource str.Tip.CT.Stack.Marker}", (string?)marker.Attribute("ToolTip.Tip"));
+    }
+
+    [Fact]
+    public async Task A_stacks_only_trace_reads_its_stacks_and_asks_for_no_parameter_layouts()
+    {
+        var dump = DumpWithStacks(withParams: false);
+        var (vm, _) = MakeVm(dump);
+        await vm.LoadCommand.ExecuteAsync(null);
+        var t = vm.Trace!;
+        Assert.DoesNotContain(dump.CallLog, x => x == "layouts" || x.StartsWith("snap", StringComparison.Ordinal));
+        Assert.Null(t.Snapshots);
+        Assert.False(vm.CanExportParams);
+        Assert.NotNull(t.Stacks);
+        Assert.Equal(new[] { t.FindBySeq(1), t.FindBySeq(2), t.FindBySeq(8) }, t.Stacks!.Calls);
+        Assert.Equal("release", dump.CallLog[^1]);
+    }
+
+    [Theory]
+    [InlineData(1, int.MaxValue)]   // the first read, which brings the windows
+    [InlineData(2, int.MaxValue)]   // a later page
+    [InlineData(int.MaxValue, 3)]   // a new Start between the pages
+    public async Task A_stale_stack_page_or_a_new_recording_between_the_pages_drops_the_load(int staleAt, int genMovesAt)
+    {
+        var dump = DumpWithStacks();
+        dump.StackStaleAt = staleAt;
+        dump.StackGenMovesAt = genMovesAt;
+        var (vm, _) = MakeVm(dump);
+        vm.StringLookup = k => k;
+        await vm.LoadCommand.ExecuteAsync(null);
+        Assert.Null(vm.Trace);
+        Assert.False(vm.HasTrace);
+        Assert.Empty(dump.ReleasedGens);   // not ours to release
+        Assert.Equal("str.CT.Status.Changed", vm.StatusText);
+    }
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public async Task A_call_chosen_for_its_stack_alone_has_no_parameters_to_show_or_export(bool withParams)
+    {
+        var dump = DumpWithStacks(withParams);
+        var (vm, _) = MakeVm(dump);
+        vm.StringLookup = k => k;
+        await vm.LoadCommand.ExecuteAsync(null);
+        var t = vm.Trace!;
+        int c = t.FindBySeq(2), e = t.FindBySeq(8);
+
+        // Lone marks a call chosen for anything: alone it says nothing of parameters, so not "taken, then overwritten".
+        Assert.Equal(new[] { "str.CT.Param.NotChosen" }, vm.Params(e).Notes);
+        Assert.Equal(new[] { "str.CT.Param.NotChosen" }, vm.Params(c).Notes);
+        Assert.Empty(vm.Params(e).Rows);
+
+        var w = new StringWriter();
+        UE5DumpUI.Helpers.CallTraceExport.WriteJsonl(t, w, new DateTime(2026, 10, 8, 0, 0, 0, DateTimeKind.Utc));
+        var lines = w.ToString().Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        var calls = lines.Where(l => l.StartsWith("{\"kind\":\"call\"", StringComparison.Ordinal))
+                         .Select(l => JsonDocument.Parse(l).RootElement)
+                         .ToDictionary(x => x.GetProperty("seq").GetUInt64());
+        // No snapshot to report, but still recorded on its own.
+        Assert.False(calls[8].TryGetProperty("snapshot", out _));
+        Assert.True(calls[8].GetProperty("lone").GetBoolean());
+        Assert.False(calls[8].GetProperty("excluded").GetBoolean());
+        Assert.False(calls[2].TryGetProperty("snapshot", out _));
+        Assert.False(calls[2].TryGetProperty("lone", out _));
+        if (withParams)
+        {
+            Assert.Equal("taken", calls[1].GetProperty("snapshot").GetString());
+            Assert.Contains("\"snapshot_skipped_budget\":", lines[0], StringComparison.Ordinal);
+        }
+        else
+        {
+            // No parameter ring, so no parameter budget to account for in the header.
+            Assert.DoesNotContain("snapshot_skipped_budget", lines[0], StringComparison.Ordinal);
+            Assert.DoesNotContain("snapshot_dropped_budget", lines[0], StringComparison.Ordinal);
+        }
+    }
+
+    [Fact]
+    public async Task The_summary_says_how_many_calls_carry_a_stack_what_the_budget_left_out_and_what_a_capture_cost()
+    {
+        var (vm, _) = MakeVm(DumpWithStacks());
+        vm.StringLookup = En;
+        await vm.LoadCommand.ExecuteAsync(null);
+        string sum = vm.Summary(vm.Trace!);
+        // Three calls carry one; the budget skipped one and dropped two; 60 ticks over 5 captures at 1 MHz.
+        Assert.Contains(Line("str.CT.Status.Stacks", 3, 3L, 2L), sum);
+        Assert.Contains(Line("str.CT.Status.StackCost", 12.0), sum);
+        Assert.Contains(Line("str.CT.Status.Snapshots", 2, 2, 0L), sum);   // the parameters' sentence stands too
+        Assert.Equal(sum, vm.StatusText);
+
+        static string Lead(string key) => En(key)[..En(key).IndexOf('{')];
+        // Nothing taken: nothing to price.
+        var (none, _) = MakeVm(DumpWithStacks(withParams: false, captures: 0));
+        none.StringLookup = En;
+        await none.LoadCommand.ExecuteAsync(null);
+        Assert.Contains(Lead("str.CT.Status.Stacks"), none.StatusText);
+        Assert.DoesNotContain(Lead("str.CT.Status.StackCost"), none.StatusText);
+        // No stacks armed: no sentence.
+        var (plain, _) = MakeVm(DumpWithSnapshots());
+        plain.StringLookup = En;
+        await plain.LoadCommand.ExecuteAsync(null);
+        Assert.DoesNotContain(Lead("str.CT.Status.Stacks"), plain.StatusText);
     }
 
     [Fact]

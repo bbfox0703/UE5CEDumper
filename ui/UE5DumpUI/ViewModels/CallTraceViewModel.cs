@@ -896,6 +896,8 @@ public sealed class CallTraceRow
     public bool IsScopeRoot { get; init; }
     /// <summary>[LIVEFUNCS-STEP2] The call carries a parameter copy: marked in the tree.</summary>
     public bool HasParams { get; init; }
+    /// <summary>[LIVEFUNCS-STEP3] The call carries its native stack: marked in the tree too.</summary>
+    public bool HasStack { get; init; }
 }
 
 /// <summary>[LIVEFUNCS-STEP2] One row of the Parameters tab: a parameter, or a struct member under it.</summary>
