@@ -346,6 +346,13 @@ source and editor are installed for when they are needed.
   short of the slot, is listed and kept out of the offset and the count, and with none read the check is not run; a
   `get_object` error is the wrong entry's reason (MED-1). An entry named "" -- a name read that gave nothing, on the
   frame and from `get_object` alike -- is wrong, not a match (LOW-3).
+  **The second review's findings, fixed 2026-10-08:** a UE5 layout (Func at 0xD8, so a read retried down to 0xE0
+  still reaches it) has controls of its own beside the scripted 0x148 (MED-B). The DLL named each frame by reading
+  its slot, so an entry read short of the common offset, or not read at all, now has that slot read alone (8 bytes):
+  fn holds, another value fails, and an unreadable slot is listed as gone since the frame was named; a decoy copy of
+  fn in the one entry read whole is ruled out the same way. The line counts the entries judged and gives the number
+  asked beside it ("in 40 of 40 read (64 asked)"), so entries gone are not read as failures. Controls were added for
+  a frame without fn, a half-name read empty, and the branch where nothing reaches a slot.
   ✅ `[SNAPRIG-STEP2-RATE]` (LOW, found by the review of `[SNAPRIG-S5-RATE]` 2026-10-08; fixed the same day, offline by
   `--self-test` -- its first live run is owed): the step-2 run (`run_full`, no `--stacks`) sends a fixed parameter
   budget of 30 a second and checks that SnapProbe_PerFrame's lone calls over it are dropped -- on a fixture at about
