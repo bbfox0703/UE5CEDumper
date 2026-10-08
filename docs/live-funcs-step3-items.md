@@ -42,7 +42,7 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-U9 | DLL / UI | The maintainer's budget (A), 2026-10-08: Linie's defaults 25 a second per function and 50 in all (Standard), Low 12 and 25; the UI's pins, tooltips and the warning follow | S3-U8 | ✅ red 1b7e32bb, green after it |
 | S3-U6 | UI | (next) The per-frame ask-once for stacks (T9.2): `ConfirmStackPerFrame`, `_stackPerFrameConfirmed`, an async ToggleStack that re-raises `IsStackChosen` when refused | S3-U2 | next |
 | S3-U7 | UI | (next) The stack estimate line (T9.1): pure `EstimateStacks(rates, perFunc, total, usPerCapture)` → ms/s; orange above 2.0; µs measured from the last Stop, else 10 "assumed" | S3-U2, S3-X2 | next |
-| S3-A1 | DLL | (next) The native-entry index: one GObjects pass (class-pointer memo, Function / DelegateFunction / SparseDelegateFunction), `Func → ufunc` sorted, cached per gen; sites gain `ufunc` / `class` / `func` / `shared` | S3-F2 | next |
+| S3-A1 | DLL | The native-entry index: one GObjects pass (class-pointer memo, Function / DelegateFunction / SparseDelegateFunction), `Func → ufunc` sorted, cached per gen; sites gain `ufunc` / `class` / `func` / `shared` | S3-F2 | ◐ DLL half ✅ (red 930da4c0, green 547cbca7, 4 / 4 mutants; the per-region VirtualQuery fix 9cd5b63d / 1103b1e1, 2 / 2), live on DumperTest58: frame 3 named `DumperTest58Actor::SnapNest_Outer`, the index in 11 ms. **Owed: the UI half** (StackSite reads `ufunc` / `class` / `func` / `shared`; FrameWhere names a frame from them) |
 | S3-M3 | DLL | Chained unwind: a pure `FollowChain(imageBase, begin, unwindData)` tested on a synthetic UNWIND_INFO; DescribeCode names a fragment's primary function | S3-M2 | ✅ red b8681485, green after it; 4 / 4 mutants killed (built before the live check: the review's M4) |
 | S3-R2 | pipe | (next) Rig `--pdb`: dbghelp through ctypes names each `fn_rva` against the fixture's shipped PDB, checking displacement 0 | S3-R1 | next |
 | S3-B1 / S3-E1 / S3-P1 / S3-O1 | DLL / UI | (deferred) View B; stack export; `.pdata` prewarm; own-frame calibration | S3-X2 | deferred |
@@ -351,6 +351,17 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 - **Avowed (8.3), 2026-10-08** (Avowed, UE 5.3 Shipping, dxgi proxy refreshed to 3641, 272,494 objects; `livefuncs_snap_live.py --stacks --choose "" --plain-s 20 --record-s 30`, 5/5 and 6 recorded: the 64 busiest functions at the 3641 DLL's defaults, 100 / 200 a second): 3.25 µs a capture on average, 241 µs at most, over 6,200 captures; the
   total budget held (206.7 a second against 200); calls/s 9,206 / 9,218 without / with; fps 135-141 throughout (DLSS without frame generation: real frames). A
   seventh of the fixture's cost: the fixture's 20-28 µs is the conservative figure.
+- **Why the fixture costs more (2026-10-08), measured at the maintainer's prompting** (the cost probe: a stacks-only
+  recording of SnapProbe_PerFrame, depth 16, about 600 captures a run):
+  - rendering on the integrated Radeon, uncapped (the default; the GPU at 98 %, 90 °C): median 20-22 µs;
+  - on the RTX (`-preferNvidia`), uncapped: median 21-22.5 µs -- the display copy still kept the integrated GPU at
+    100 % (the maintainer), and the CPU ran at 85-94 % of nominal (2,434 MHz), never boosting;
+  - on the RTX capped at 30 fps (GameUserSettings::SetFrameRateLimit(30) + ApplySettings, invoked through the pipe):
+    median 31 µs -- dearer, not cheaper (the game thread sleeps between frames; its caches are cold when it walks).
+  So the hybrid GPU and the frame rate do not explain it; the cost is per walked frame (about 0.75 µs, depth 4 to 16
+  scaling with it), seven times Avowed's. The fixture's figure stays the conservative one the decision used.
+- **The native-entry index's first build took 3.9 s** (13,179 functions of 34,570 objects): one VirtualQuery per
+  function, about 300 µs each while the game churned its address space. Fixed by a per-region cache (S3-A1): 11 ms.
 - **The maintainer's decision on the budget (2026-10-08), from the fixture's figure:** (A), Standard 50 a second in all
   and Low 25 (per function 25 and 12, the 1:2 ratio kept). Built as S3-U9.
 - **Owed:** the rig mutations against a real DLL (scripted offline instead: no_stack_ok, ignore_kind, no_known, each
