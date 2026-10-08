@@ -2854,6 +2854,19 @@ the two properties, so no separate restore is needed — **unless you pass `--no
 editorconfig line) where the same build without `--no-restore` failed on it with IL2026 and IL3050 (2026-10-08). The
 negative control above is the stronger proof: put a known-bad call back, see it fail, take it out.
 
+### 3.xd A headless test's text is about twice as wide as the app's: a line count there is not the app's
+
+The headless test platform (`UseHeadlessDrawing = true`) draws every glyph as wide as the font size: a hundred `x` at
+12 px measure 1,200 px. The app draws Inter (`WithInterFont()` in `Program.cs`, not the system's Segoe UI), whose advance
+widths average about 5.6 px a character of English text at 12 px (read from the Inter fonts `Avalonia.Fonts.Inter`
+12.1.3 embeds). So a line the app shows on one line can wrap in a headless test, and push what follows it in a
+`WrapPanel` onto the next line. Measured 2026-10-08 ([LF-COMPACT-TOP]): the 137-character stack warning needs 1,644 px
+headless in a 1,308 px row, and 772 px in Inter; `Lines(line) == 1` and a Details-beside-it box check both failed on a
+wording that is one line in the app. **How to apply:** a headless pin on a line count, or on two controls sharing a
+line, pins the headless font. Hold "one line in the app" as `LiveFuncsLayout.AssertOneLineInTheAppsFont` does (the
+parts, unwrapped and side by side, under 1.5 times the room headless: under 0.7 of it in Inter), and measure a wording
+in Inter before shortening it to please a headless test.
+
 -----
 
 -----
