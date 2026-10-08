@@ -465,16 +465,15 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
 * ⚠ Native AOT is **not byte-reproducible**: four publishes of one source gave four hashes. A hash
   confirms *this copy landed*; it can never confirm two builds are the same build.
 * ⚠ Fresh clone only: `git submodule update --init vendor/minhook vendor/zydis`.
-* ⚠ **`-Target Test` does not compile the DLL** — it links headers, so a syntax error in a `.cpp`
-  passes it clean. Use `-Target DLL` before claiming a C++ change builds.
-* **Which `.cpp` any test target compiles** (CMakeLists is the authority): `dll_helpers_test` =
-  its own `.cpp` + **`Radar.cpp`** + `Denken.cpp`. **No target compiles `Aura` / `Solide` / `Ubel` /
-  `Genau` / `Macht` / `Fern` / `Schlacht` / `Mimic`.cpp.** It *does* include ~15 headers, so **moving
-  a rule into a header is how we pin it**. Grep the include list before saying a fix cannot be tested.
+* ⚠ **Which `.cpp` files a test target compiles, and so what `-Target Test` cannot catch:** CLAUDE.md's
+  "Run tests only" block, whose counts `check_derived_counts` pins. Build the DLL target
+  (`build_dll.py --targets UE5Dumper`, or `-Target DLL`) before claiming a C++ change builds. Moving a
+  rule into a header is how we pin it in a test; grep a target's include list before saying a fix
+  cannot be tested.
 
 ### The pipe (headless, no UI)
 
-`tools/verify/pipe_client.py` is the library 49 other rigs import. It enforces the two traps itself:
+`tools/verify/pipe_client.py` is the library the other pipe rigs import. It enforces the two traps itself:
 `assert_build()` (a stale deployed **proxy** answers the pipe happily while the fresh DLL sits inert)
 and `ensure_scanned()` (proxy mode starts the pipe **only**; `init` returns `ok:true` in ~0 ms having
 scanned nothing, after which every pointer reads `not_found` and looks like a broken AOB table).
@@ -652,18 +651,13 @@ inside a row is a **sub-step**.
     wrong. ⚠ Also note the provenance row `UE5.5-Everspace2` in
     `tools/ghidra/corpus-provenance.tsv` still points at the LIVE path while recording the old
     169,063,424 B — it describes the archive copy, not what is installed.
-    ⭐ **The follow-up is free and high-value:** the live build is 5.6, and the table says 5.6 =
-    `0x260`. Measuring it gives a SECOND independent live confirmation of that row (Lushfoil is
-    the first) — or falsifies it.
     Two ways to re-check, and the cheap one is **offline**: a full **1.98 GB**
     `ES2-Win64-Shipping.pdb` sits beside the exe carrying the exe's own mtime, so this title is
     its own symbol oracle — vet it with `py tools/pe/pdb_match.py <exe>`, then mine it the way
     `reference-builds.md:124-126` mines a packaged sample. No game need be running. The live route is
     inject, read the version out of the `[SUMMARY]` lines in `init-0.log` and the slot out of
     `DetectProcessEvent (pattern): match at vtable+0x…`. ⚠ **If you take the live route, refresh
-    the proxy first** — the `version.dll` sitting in that folder is ours and is dated
-    **2026-08-27**, so it predates A4's 508 marker rung and A5's stride-40 sweep, both of which
-    move the very version number you would be reading.
+    the proxy first** (§3).
 * ⚠ **Invoke order is `init → trigger_scan → invoke → pe_profile_start`.** Profiler-first used to
   poison the PE hook permanently.
 * ⚠ **Elliot's PE hook is intermittent by title** ("sometimes yes, sometimes no"). Switch host to

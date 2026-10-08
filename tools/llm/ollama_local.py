@@ -602,7 +602,7 @@ def _toolhelp_processes() -> list[tuple[int, str]]:
     """(pid, image) from a Toolhelp32 snapshot -- milliseconds, where `tasklist` took ~1.6 s.
 
     The hook runs before EVERY Bash call while the model is loaded, so the spawn cost was paid on each
-    one (measured 2026-09-25). ctypes, not PowerShell: see the AMSI note in handover section 10."""
+    one (measured 2026-09-25). ctypes, not PowerShell: see the AMSI note in working-lessons §2.2."""
     import ctypes
     from ctypes import wintypes
 
