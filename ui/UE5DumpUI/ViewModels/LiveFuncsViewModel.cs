@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -883,12 +884,6 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshTickedList();
     }
 
-    [ObservableProperty] private bool _captureSettingsCollapsed;
-    public string CaptureSettingsToggleText => "";
-    [RelayCommand] private void ToggleCaptureSettings() { }
-    public string CaptureSummary => "";
-    public bool CaptureSummaryWarn => false;
-
     /// <summary>Empties the table's three choice columns at once. It runs the two clears rather than a loop of its own,
     /// so whatever they bring up to date follows here too, and it is refused while recording because they are.</summary>
     [RelayCommand]
@@ -904,6 +899,78 @@ public partial class LiveFuncsViewModel : ViewModelBase
         foreach (var k in _ticked.Names) TickedFunctions.Add(k);
         OnPropertyChanged(nameof(HasTickedFunctions));
         OnPropertyChanged(nameof(TickedCountText));
+    }
+
+    // ---- [LF-COMPACT-TOP] The capture settings fold under their header line, which then sums them up: with a stack
+    // chosen they took most of the panel's height above the table.
+
+    /// <summary>The capture settings folded to their header line. MainWindowViewModel keeps it in ui-options.json, and
+    /// it starts unfolded, so a file from before it shows every setting. It hides controls and changes no setting, so it
+    /// is not refused while recording.</summary>
+    [ObservableProperty] private bool _captureSettingsCollapsed;
+
+    partial void OnCaptureSettingsCollapsedChanged(bool value) => OnPropertyChanged(nameof(CaptureSettingsToggleText));
+
+    /// <summary>The header button's text, which says what pressing it does.</summary>
+    public string CaptureSettingsToggleText
+        => StringLookup(CaptureSettingsCollapsed ? "str.LF.Settings.Expand" : "str.LF.Settings.Collapse");
+
+    [RelayCommand]
+    private void ToggleCaptureSettings() => CaptureSettingsCollapsed = !CaptureSettingsCollapsed;
+
+    /// <summary>What the folded header says is set, then the warnings of the lines folded away: folding hides no
+    /// warning. The trace's part only with the experimental tabs, as the section shows it only then.</summary>
+    public string CaptureSummary
+    {
+        get
+        {
+            var parts = new List<string> { Say("str.LF.Summary.Fetch", FetchLimit, MinCalls) };
+            if (HidePerFrame) parts.Add(StringLookup("str.LF.Summary.HidePerFrame"));
+            if (TraceAvailable)
+            {
+                parts.Add(TraceEnabled ? Say("str.LF.Summary.TraceOn", TraceBufferMb) : StringLookup("str.LF.Summary.TraceOff"));
+                parts.Add(Say("str.LF.Summary.Choices", TickedFunctions.Count, SnapshotFunctions.Count, StackFunctions.Count));
+                if (HasStackChoices)
+                    parts.Add(Say("str.LF.Summary.StackBudget",
+                                  StringLookup(StackBudgetLow ? "str.LF.Stack.Low" : "str.LF.Stack.Standard")));
+                if (AnySnapshotChoice) parts.Add(Say("str.LF.Summary.SnapBuffer", SnapshotBufferMb));
+                if (StackEstimateWarn) parts.Add(Say("str.LF.Summary.StackWarn", CurrentStackCost().MsPerSec));
+                if (SnapshotEstimateWarn)
+                    parts.Add(StringLookup(CurrentEstimate().TooSmall ? "str.LF.Summary.SnapTooSmall" : "str.LF.Summary.SnapWarn"));
+                if (TraceMemoryOverAvailable) parts.Add(Say("str.LF.Summary.MemoryOver", MemText(_availableMb)));
+                if (HasStackChoices) parts.Add(StringLookup("str.LF.Stack.WarningShort"));
+            }
+            // A separator, not a sentence: punctuation stays in code, like the panel's other joins.
+            return string.Join(" · ", parts.Where(p => p.Length > 0));
+        }
+    }
+
+    /// <summary>Orange whenever a line folded away would be, as the summary then carries its warning.</summary>
+    public bool CaptureSummaryWarn
+        => TraceAvailable && (StackEstimateWarn || SnapshotEstimateWarn || TraceMemoryOverAvailable);
+
+    /// <summary>The names the summary's inputs are raised under. A summary left stale is wrong exactly when it is read,
+    /// folded, so a setting added to the summary adds its name here.</summary>
+    private static readonly HashSet<string> CaptureSummaryInputs = new(StringComparer.Ordinal)
+    {
+        nameof(FetchLimit), nameof(MinCalls), nameof(HidePerFrame), nameof(TraceAvailable), nameof(TraceEnabled),
+        nameof(TraceBufferText), nameof(TickedCountText), nameof(SnapshotCountText), nameof(StackCountText),
+        nameof(StackBudgetLow), nameof(SnapshotBufferText), nameof(StackEstimate), nameof(StackEstimateWarn),
+        nameof(SnapshotEstimateWarn), nameof(TraceMemoryEstimate), nameof(TraceMemoryOverAvailable),
+    };
+    private static readonly PropertyChangedEventArgs CaptureSummaryChangedArgs = new(nameof(CaptureSummary));
+    private static readonly PropertyChangedEventArgs CaptureSummaryWarnChangedArgs = new(nameof(CaptureSummaryWarn));
+
+    /// <summary>Raises the summary and its flag after any of their inputs, in one place rather than beside every raise
+    /// of an input.</summary>
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (e.PropertyName is { } name && CaptureSummaryInputs.Contains(name))
+        {
+            base.OnPropertyChanged(CaptureSummaryChangedArgs);
+            base.OnPropertyChanged(CaptureSummaryWarnChangedArgs);
+        }
     }
 
     [RelayCommand]
