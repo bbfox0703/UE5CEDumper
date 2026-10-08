@@ -97,8 +97,8 @@ NAMES_MAX asked and the rest counted:
       reached from the interpreter has none)
 With no frame named, both A1 checks are reported not run, never passed.
 --self-test runs the pure pieces against hand-made replies, then both --stacks runs against a scripted DLL
-(ScriptedDll), whole and with each fault it scripts, every check of the runs failing on a fault it exists to catch: no
-pipe, no game.
+(ScriptedDll), whole and with each fault it scripts, every check of the runs failing on a fault it exists to catch, and
+the step-2 run as far as its parameter budget (the scripted DLL scripts no snapshot's values): no pipe, no game.
 
 Against a DLL older than the item, its checks fail: that run is the item's red. Every recording is stopped in a
 `finally` and the trace released. Exit 0 when every check holds; 1 otherwise; 2 when the pipe or the game is not
@@ -568,8 +568,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help=f"--stacks --choose: the stacks' depth, 1..{STACK_MAX_DEPTH} ({STACK_DEPTH} unless given: the "
                          "fixture run's checks are written for that depth)")
     ap.add_argument("--self-test", action="store_true",
-                    help="run the --stacks helpers against hand-made replies and the --stacks runs against a "
-                         "scripted DLL; needs no pipe and no game")
+                    help="run the --stacks helpers against hand-made replies and the --stacks runs (and the step-2 "
+                         "run's budget) against a scripted DLL; needs no pipe and no game")
     return ap
 
 
@@ -2686,9 +2686,10 @@ def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = (), st
 def self_test() -> int:
     """--self-test: the pure pieces of --stacks against hand-made replies, each rule holding on a good input AND failing
     on a bad one, so a helper that silently accepts everything cannot pass. Then run_stacks and run_game_stacks against
-    a scripted DLL, whole and with each fault it scripts. That side is kept complete by controls of two kinds: every
-    scripted fault has its control, and every check the good runs make (--names's included) is named by a control
-    whose fault fails it, so a check whose condition is reduced to True fails the self-test."""
+    a scripted DLL, whole and with each fault it scripts, and run_full as far as its parameter budget, whose line alone
+    is read. That side is kept complete by controls of two kinds: every scripted fault has its control, and every check
+    the good runs make (--names's included) is named by a control whose fault fails it, so a check whose condition is
+    reduced to True fails the self-test."""
     results: list[tuple[str, bool, str]] = []
 
     def expect(name: str, fn) -> None:
