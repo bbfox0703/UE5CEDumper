@@ -52,9 +52,10 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
   S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
-      counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits), both are reported
-      not run with those rates, never failed nor passed: on a correct DLL such a budget drops nothing, and so leaves
-      nothing a DLL could count in the wrong place
+      counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits), or the main
+      recording itself ran SnapProbe_PerFrame under 1.5x the budget, both are reported not run with those rates,
+      never failed nor passed: on a correct DLL such a budget drops nothing, and so leaves nothing a DLL could count
+      in the wrong place
   S6  recorded: mean and max microseconds a capture, captures a second, calls/s with and without stacks, the CPU,
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
@@ -1453,10 +1454,19 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     lo, hi = budget_window(per_s, span_lo, span_hi)
     pf_row = fixture_rows(table).get("SnapProbe_PerFrame", {})
     win = table.get("window_ms", 0) / 1000.0
+    main_pf = pf_row.get("count", 0) / win if win else 0.0
+    out["stack_budget"]["main_rate"] = main_pf
     stack2, snap2 = st2.get("stack", {}), st2.get("snap", {})
-    say(f"     SnapProbe_PerFrame: about {pf_row.get('count', 0) / win if win else 0:.0f} calls/s; its stack ring wrote "
+    say(f"     SnapProbe_PerFrame: about {main_pf:.0f} calls/s; its stack ring wrote "
         f"{pf_ring.get('written')}, skipped {pf_ring.get('skipped_budget')}, dropped {pf_ring.get('dropped_budget')}")
-    if budget["s5"]:
+    s5_why = None if budget["s5"] else budget["why"]
+    # The budget was chosen on the plain recording; whether it bit is the main recording's own rate, which the trace
+    # may have slowed or the frame rate moved.
+    if s5_why is None and main_pf < per_s * BUDGET_MARGIN:
+        s5_why = (f"the main recording ran SnapProbe_PerFrame at {main_pf:.1f}/s, under {BUDGET_MARGIN:g}x the {per_s}/s "
+                  f"it is held to, so the budget may not bite (chosen on the plain recording's "
+                  f"{budget['rates'].get('SnapProbe_PerFrame', 0.0):.1f}/s)")
+    if s5_why is None:
         check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
               f"({lo:.0f}..{hi:.0f}) and the budget drops the rest",
               lo <= int_or(pf_ring.get("written"), -1) <= hi and int_or(pf_ring.get("dropped_budget"), 0) > 0 and
@@ -1468,8 +1478,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     else:
         # A budget that cannot bite drops nothing on a correct DLL: a failed window would blame the DLL for the run.
         # Refusing nothing, it also leaves nothing to miscount, so the counters at 0 would pass on any DLL.
-        check.not_run(f"{S5_WINDOW} the budget a second, and the budget drops the rest", budget["why"])
-        check.not_run(S5_PARAMS, budget["why"])
+        check.not_run(f"{S5_WINDOW} the budget a second, and the budget drops the rest", s5_why)
+        check.not_run(S5_PARAMS, s5_why)
 
     # ---- S6: the cost, recorded.
     say("\nS6 -- the cost (recorded):")
