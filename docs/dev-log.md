@@ -27,6 +27,16 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (build 3642) — A smaller stack budget; the Object Tree stays collapsed `[LIVEFUNCS-STEP3]` `[OT-COLLAPSE-PERSIST]`
+
+- **The native-stack budget is smaller:** Standard takes at most 25 stacks a second per function and 50 in all; Low
+  12 and 25. A capture measured 20-28 µs on the test fixture, so 50 a second keeps it near 1.4 ms of the game's time a
+  second. (On Avowed a capture measured 3.25 µs.)
+- **The Object Tree remembers that it was collapsed.** Collapse it with its arrow and the next start opens it
+  collapsed; expand it and the next start opens it expanded.
+
+-----
+
 ## 2026-10-08 (build 3641) — Live Funcs takes a function's native call stack `[LIVEFUNCS-STEP3]`
 
 - **Native call stacks (experimental, with Trace).** A "Stack?" column (header "S") chooses functions. Each traced call
