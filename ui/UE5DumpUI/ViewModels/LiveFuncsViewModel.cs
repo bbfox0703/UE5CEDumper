@@ -690,6 +690,17 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(SnapshotBudgetNote));
     }
 
+    // ---- [LIVEFUNCS-STEP3] T9.1: the stack estimate line (S3-U7). Declarations only.
+
+    internal readonly record struct StackCost(double CapturesPerSec, double MsPerSec);
+
+    internal static StackCost EstimateStacks(IReadOnlyList<double> rates, int perFunc, int total, double usPerCapture)
+        => default;
+
+    public string StackEstimate => "";
+    public bool StackEstimateWarn => false;
+    public string StackEstimateTip => "";
+
     /// <summary>The ticked functions, followed by name (Class::Func) with their name keys and the live addresses the
     /// last fetch saw ([LIVEFUNCS-STEP2] T10; the rules are FunctionTickSet's). A key is good only within the connection
     /// that fetched it: a disconnect clears the ticks, and the rows left on screen cannot be ticked until a fetch

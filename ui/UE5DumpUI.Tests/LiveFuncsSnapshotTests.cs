@@ -8,8 +8,8 @@ namespace UE5DumpUI.Tests;
 
 /// <summary>
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
-/// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them
-/// (S3-U2), its view (S3-U3), and its budget and warning (S3-U8): docs/live-funcs-step3-items.md.
+/// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them,
+/// with its view, budget, per-frame question and estimate: the S3-U items of docs/live-funcs-step3-items.md.
 /// </summary>
 public class LiveFuncsSnapshotTests
 {
@@ -889,14 +889,7 @@ public class LiveFuncsSnapshotTests
             Assert.Equal(Path.GetFileName(file) == "LiveFuncsPanel.axaml" ? 2 : 0, uses);
         }
 
-        // The warning: wrapping, on a choice, in the colour the panel's own warnings use (the orange estimate line's).
-        var warning = Regex.Match(axaml, @"<TextBlock\b[^>]*Text=""\{StaticResource str\.LF\.Stack\.Warning\}""[^>]*/>");
-        Assert.True(warning.Success, "no TextBlock shows str.LF.Stack.Warning");
-        Assert.Contains("IsVisible=\"{Binding HasStackChoices}\"", warning.Value, StringComparison.Ordinal);
-        Assert.Contains("TextWrapping=\"Wrap\"", warning.Value, StringComparison.Ordinal);
-        var orange = Regex.Match(axaml, @"<TextBlock Text=""\{Binding SnapshotEstimate\}"" IsVisible=""\{Binding SnapshotEstimateWarn\}""\s+Foreground=""(?<c>[^""]+)""");
-        Assert.True(orange.Success, "the estimate's warning line moved");
-        Assert.Contains($"Foreground=\"{orange.Groups["c"].Value}\"", warning.Value, StringComparison.Ordinal);
+        // The warning's place, wrapping and colour moved with the estimate it now follows: S3-U7's view test.
         Assert.True(Line("str.LF.Stack.Warning").Length > 0);
     }
 
@@ -1080,6 +1073,260 @@ public class LiveFuncsSnapshotTests
         Assert.Contains("25", question, StringComparison.Ordinal);
         Assert.Contains("50", question, StringComparison.Ordinal);
         Assert.True(Line("str.LF.Stack.PerFrame.Title").Length > 0);
+    }
+
+    // ---- [LIVEFUNCS-STEP3] S3-U7: the stack estimate line (T9.1) ----
+
+    [Fact]
+    public void The_stack_estimate_holds_each_function_to_its_budget_and_all_of_them_to_the_total()
+    {
+        // One busy function and one rare one: the busy one is held to 25 a second, the total of 50 is not reached.
+        var perFunc = LiveFuncsViewModel.EstimateStacks(new[] { 100.0, 1.0 }, 25, 50, 10.0);
+        Assert.Equal(26.0, perFunc.CapturesPerSec, 9);
+        Assert.Equal(0.26, perFunc.MsPerSec, 9);             // 26 x 10 us
+
+        // Three at 30 a second each: 75 within their own budgets, held to 50 in all.
+        var total = LiveFuncsViewModel.EstimateStacks(new[] { 30.0, 30.0, 30.0 }, 25, 50, 28.0);
+        Assert.Equal(50.0, total.CapturesPerSec, 9);
+        Assert.Equal(1.4, total.MsPerSec, 9);                // 50 x 28 us
+
+        // A function not called last time counts nothing, and neither does a choice of nothing.
+        var mixed = LiveFuncsViewModel.EstimateStacks(new[] { 0.0, 4.0 }, 25, 50, 10.0);
+        Assert.Equal(4.0, mixed.CapturesPerSec, 9);
+        var zero = LiveFuncsViewModel.EstimateStacks(new[] { 0.0, 0.0 }, 25, 50, 10.0);
+        Assert.Equal(0.0, zero.CapturesPerSec);
+        Assert.Equal(0.0, zero.MsPerSec);
+        Assert.Equal(0.0, LiveFuncsViewModel.EstimateStacks(Array.Empty<double>(), 25, 50, 10.0).MsPerSec);
+    }
+
+    private static readonly NameKey KeyF = new(1, 0, 9, 0), KeyG = new(2, 0, 9, 0), KeyH = new(3, 0, 9, 0);
+
+    /// <summary>A view model whose last fetch saw A::F and A::G called 100 times a second and A::H 5 times, Trace on,
+    /// nothing chosen yet.</summary>
+    private static async Task<(LiveFuncsViewModel vm, FakeDumpService dump)> WithRatesToEstimate()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF, count: 1_000), Row("A", "G", "0x2", KeyG, count: 1_000),
+                                Row("A", "H", "0x3", KeyH, count: 50));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        return (vm, dump);
+    }
+
+    /// <summary>The stack estimate the view model shows now; an empty one is no line at all, which fails here before
+    /// any sentence is compared.</summary>
+    private static string StackLine(LiveFuncsViewModel vm)
+    {
+        string line = vm.StackEstimate;
+        Assert.False(string.IsNullOrEmpty(line), "no stack estimate line");
+        return line;
+    }
+
+    /// <summary>The line en.axaml makes for an estimate, with the cost of a capture measured or assumed.</summary>
+    private static string EstimateLine(double captures, double ms, double us, bool measured)
+        => Line("str.LF.Stack.Estimate", captures, ms, us,
+                Line(measured ? "str.LF.Stack.EstimateMeasured" : "str.LF.Stack.EstimateAssumed"));
+
+    /// <summary>The view model's stack line is the one en.axaml makes for this estimate. The line is read first, so its
+    /// absence fails as that.</summary>
+    private static void AssertStackLine(LiveFuncsViewModel vm, double captures, double ms, double us, bool measured)
+    {
+        string shown = StackLine(vm);
+        Assert.Equal(EstimateLine(captures, ms, us, measured), shown);
+    }
+
+    /// <summary>One traced recording whose Stop reports <paramref name="captures"/> stacks taken in
+    /// <paramref name="spentTicks"/> ticks of a 10 MHz clock, a tenth of a microsecond each.</summary>
+    private static async Task RecordStacks(LiveFuncsViewModel vm, FakeDumpService dump, ulong captures, ulong spentTicks)
+    {
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        Assert.NotNull(dump.LastTrace?.Snapshots?.Stacks);
+        dump.StopTrace = new TraceInfo
+        {
+            Allocated = true, Quiesced = true, Gen = 1, Written = 40, QpcFreq = 10_000_000,
+            Stack = new StackInfo { Rings = dump.LastTrace!.Snapshots!.Stacks!.Funcs.Count, Depth = 16, Captures = captures,
+                                    SpentTicks = spentTicks, MaxTicks = spentTicks },
+        };
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.False(vm.IsRecording);
+    }
+
+    [Fact]
+    public async Task The_stack_line_weighs_the_choices_under_Standard_and_Low_and_follows_the_radio_and_the_choices()
+    {
+        var (vm, _) = await WithRatesToEstimate();
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        Assert.Equal("", vm.StackEstimate);                  // nothing chosen, no line
+
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        string one = StackLine(vm);
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimate), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimateWarn), raised);
+        Assert.Equal(EstimateLine(25, 0.25, 10.0, measured: false), one);   // 100 a second, held to Standard's 25
+        Assert.Contains("25", one, StringComparison.Ordinal);
+        Assert.Contains("0.25", one, StringComparison.Ordinal);
+        Assert.Contains("10.0", one, StringComparison.Ordinal);
+
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "G"));
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        AssertStackLine(vm, 50, 0.5, 10.0, measured: false);   // 25 + 25 + 5, held to 50 in all
+
+        raised.Clear();
+        vm.StackBudgetLow = true;                            // the Low radio: 12 + 12 + 5, held to 25 in all
+        string low = StackLine(vm);
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimate), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimateWarn), raised);
+        Assert.Equal(EstimateLine(25, 0.25, 10.0, measured: false), low);
+
+        raised.Clear();
+        vm.StackBudgetStandard = true;
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimate), raised);
+        AssertStackLine(vm, 50, 0.5, 10.0, measured: false);
+
+        raised.Clear();
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "G"));      // dropped: 25 + 5
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimate), raised);
+        AssertStackLine(vm, 30, 0.3, 10.0, measured: false);
+
+        vm.ClearSnapshotsCommand.Execute(null);
+        Assert.Equal("", vm.StackEstimate);
+        Assert.False(vm.StackEstimateWarn);
+    }
+
+    [Fact]
+    public async Task A_function_not_called_last_time_counts_nothing_and_the_line_says_so_when_none_was()
+    {
+        var (vm, dump) = await WithRatesToEstimate();
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        AssertStackLine(vm, 30, 0.3, 10.0, measured: false);   // 25 + 5
+
+        // A fetch that never saw A::H: the choice is kept by name, and counts nothing.
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF, count: 1_000), Row("B", "Other", "0x9", new NameKey(9, 0, 9, 0)));
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "A::F", "A::H" }, vm.StackFunctions);
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);
+
+        // Neither called: no rate to weigh, and the line says so, with the most the budget takes.
+        dump.NextGet = ResultOf(10_000, Row("B", "Other", "0x9", new NameKey(9, 0, 9, 0)));
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "A::F", "A::H" }, vm.StackFunctions);
+        string none = StackLine(vm);
+        Assert.Equal(Line("str.LF.Stack.EstimateNone", LiveFuncsViewModel.StackTotalPerSec, LiveFuncsViewModel.StackPerFuncPerSec),
+                     none);
+        Assert.Contains("50", none, StringComparison.Ordinal);
+        Assert.False(vm.StackEstimateWarn);
+    }
+
+    [Fact]
+    public async Task A_capture_costs_what_the_last_Stop_measured_when_it_took_stacks_and_10_us_assumed_otherwise()
+    {
+        var (vm, dump) = await WithRatesToEstimate();
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);
+
+        // 28,000 ticks over 100 captures at 10 MHz: 28 us a capture; 25 a second of them is 0.7 ms a second.
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 28_000);
+        AssertStackLine(vm, 25, 0.7, 28.0, measured: true);
+        await vm.StartCommand.ExecuteAsync(null);                         // recording: still the last Stop's
+        AssertStackLine(vm, 25, 0.7, 28.0, measured: true);
+        await vm.StopCommand.ExecuteAsync(null);
+
+        await RecordStacks(vm, dump, captures: 0, spentTicks: 0);          // armed, but none taken: nothing measured
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);
+
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 28_000);
+        vm.TraceEnabled = false;                                           // a plain recording takes no stacks
+        await Fetch(vm);
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);
+
+        vm.TraceEnabled = true;
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 28_000);
+        AssertStackLine(vm, 25, 0.7, 28.0, measured: true);
+        vm.ResetOnDisconnect();                                            // the next connection may be another game
+        await vm.RefreshCommand.ExecuteAsync(null);
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);
+    }
+
+    [Fact]
+    public async Task The_line_turns_orange_only_above_2_ms_of_the_games_time_a_second()
+    {
+        var (vm, dump) = await WithRatesToEstimate();
+        foreach (var f in new[] { "F", "G", "H" }) await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", f));
+        AssertStackLine(vm, 50, 0.5, 10.0, measured: false);
+        Assert.False(vm.StackEstimateWarn);
+
+        // 40 us a capture: 50 a second is exactly 2.0 ms, which is not above it.
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 40_000);
+        AssertStackLine(vm, 50, 2.0, 40.0, measured: true);
+        Assert.False(vm.StackEstimateWarn);
+
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 50_000);   // 50 us: 2.5 ms
+        Assert.Contains(nameof(LiveFuncsViewModel.StackEstimateWarn), raised);
+        AssertStackLine(vm, 50, 2.5, 50.0, measured: true);
+        Assert.True(vm.StackEstimateWarn);
+
+        vm.StackBudgetLow = true;                                          // 25 a second: 1.25 ms
+        Assert.False(vm.StackEstimateWarn);
+        vm.StackBudgetStandard = true;
+        Assert.True(vm.StackEstimateWarn);
+        vm.ClearSnapshotsCommand.Execute(null);
+        Assert.False(vm.StackEstimateWarn);
+    }
+
+    [Fact]
+    public void The_estimate_sits_under_the_stack_budget_and_it_and_the_warning_turn_orange_together()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var estimate = Regex.Match(axaml, @"<TextBlock Text=""\{Binding SnapshotEstimate\}"" IsVisible=""\{Binding SnapshotEstimateWarn\}""\s+Foreground=""(?<c>[^""]+)""");
+        Assert.True(estimate.Success, "the parameter estimate's orange line moved");
+        string orange = estimate.Groups["c"].Value;
+        var note = Regex.Match(axaml, @"<TextBlock Text=""\{Binding SnapshotBudgetNote\}""[^>]*Foreground=""(?<c>[^""]+)""");
+        Assert.True(note.Success, "the panel's grey note moved");
+        string grey = note.Groups["c"].Value;
+
+        // Each line twice, one TextBlock a colour, toggled by the estimate's bool: the D3 pattern.
+        var blocks = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value).ToList();
+        foreach (var (text, calmColour) in new[] { ("{Binding StackEstimate}", (string?)null),
+                                                   ("{StaticResource str.LF.Stack.Warning}", grey) })
+        {
+            var pair = blocks.Where(b => b.Contains($"Text=\"{text}\"", StringComparison.Ordinal)).ToList();
+            Assert.True(pair.Count == 2, $"{text} is not shown by two TextBlocks");
+            string hot = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding StackEstimateWarn}\"", StringComparison.Ordinal));
+            string calm = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding !StackEstimateWarn}\"", StringComparison.Ordinal));
+            Assert.Contains($"Foreground=\"{orange}\"", hot, StringComparison.Ordinal);
+            Assert.DoesNotContain($"Foreground=\"{orange}\"", calm, StringComparison.Ordinal);
+            if (calmColour != null) Assert.Contains($"Foreground=\"{calmColour}\"", calm, StringComparison.Ordinal);
+            foreach (var b in pair) Assert.Contains("TextWrapping=\"Wrap\"", b, StringComparison.Ordinal);
+        }
+        foreach (var b in blocks.Where(b => b.Contains("Text=\"{Binding StackEstimate}\"", StringComparison.Ordinal)))
+            Assert.Contains("ToolTip.Tip=\"{Binding StackEstimateTip}\"", b, StringComparison.Ordinal);
+
+        // Under the choices row that holds the stack count and the budget radios, above the parameters' estimate, and
+        // shown only with a stack chosen and the trace available.
+        int count = axaml.IndexOf("{Binding StackCountText}", StringComparison.Ordinal);
+        int rowEnd = axaml.IndexOf("</StackPanel>", count, StringComparison.Ordinal);
+        int first = axaml.IndexOf("Text=\"{Binding StackEstimate}\"", StringComparison.Ordinal);
+        int warning = axaml.IndexOf("Text=\"{StaticResource str.LF.Stack.Warning}\"", StringComparison.Ordinal);
+        int parameters = axaml.IndexOf("Text=\"{Binding SnapshotEstimate}\"", StringComparison.Ordinal);
+        Assert.True(count >= 0 && rowEnd > count && first > rowEnd && warning > first && parameters > warning,
+                    "the stack estimate is not between the choices row and the parameters' estimate, before the warning");
+        string head = axaml[rowEnd..first];
+        Assert.Contains("IsVisible=\"{Binding TraceAvailable}\"", head, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding HasStackChoices}\"", head, StringComparison.Ordinal);
+        // Not inside the parameters' estimate row, which shows for a parameter choice alone too.
+        Assert.DoesNotContain("BoolConverters.Or", head, StringComparison.Ordinal);
+
+        // Its tooltip says the threshold and the assumed cost the view model uses.
+        var (vm, _) = MakeVm();
+        Assert.Equal(Line("str.Tip.LF.Stack.Estimate", 2.0, 10.0), vm.StackEstimateTip);
+        Assert.Contains("2.0", vm.StackEstimateTip, StringComparison.Ordinal);
+        Assert.Contains("10", vm.StackEstimateTip, StringComparison.Ordinal);
     }
 
     /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>
