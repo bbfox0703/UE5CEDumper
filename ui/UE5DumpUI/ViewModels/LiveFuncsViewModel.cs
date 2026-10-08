@@ -207,14 +207,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
 
     /// <summary>What the status line adds about the option: the count left out, or that this DLL cannot.</summary>
     private string PerFrameNote() =>
-        PerFrameUnsupported ? Res.Get("str.LF.PerFrame.Unsupported")
-        : _lastPerFrameEffective ? Res.Format("str.LF.PerFrame.Hidden", _lastPerFrameHidden)
+        PerFrameUnsupported ? StringLookup("str.LF.PerFrame.Unsupported")
+        : _lastPerFrameEffective ? Say("str.LF.PerFrame.Hidden", _lastPerFrameHidden)
         : "";
 
     /// <summary>[TRACE-UNLOADED-NAMES] What the status line adds about functions no longer at their address.</summary>
     private string UnloadedNote() =>
-        (_lastUnloaded > 0 ? Res.Format("str.LF.Unloaded.Note", _lastUnloaded) : "")
-        + (_lastUnnamed > 0 ? Res.Format("str.LF.Unnamed.Note", _lastUnnamed) : "");
+        (_lastUnloaded > 0 ? Say("str.LF.Unloaded.Note", _lastUnloaded) : "")
+        + (_lastUnnamed > 0 ? Say("str.LF.Unnamed.Note", _lastUnnamed) : "");
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
@@ -249,6 +249,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// </summary>
     public event Func<string, Task<bool>>? RequestCopyText;
 
+    /// <summary>Where the panel's sentences come from: en.axaml, through Res. A unit test has no Avalonia application
+    /// for Res to ask, so it reads en.axaml itself and hands it in here, and checks the sentences a user reads.</summary>
+    internal Func<string, string> StringLookup { get; set; } = Res.Get;
+
+    private string Say(string key, params object[] args)
+    {
+        string template = StringLookup(key);
+        return template.Length == 0 ? "" : string.Format(template, args);
+    }
+
     /// <summary>[AOBMAKER-EVAL-2026-09-29] The shared AOBMaker availability the ASM button reads. Never null:
     /// without a bridge it simply stays unavailable.</summary>
     public Helpers.AobMakerStatus AobMaker { get; }
@@ -269,7 +279,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>T5 (b): leave out the functions the previous recording found firing every frame.</summary>
     [ObservableProperty] private bool _traceExcludePerFrame;
     public int TraceBufferMb => 1 << TraceBufferExponent;
-    public string TraceBufferText => Res.Format("str.LF.Trace.BufferMb", TraceBufferMb);
+    public string TraceBufferText => Say("str.LF.Trace.BufferMb", TraceBufferMb);
 
     /// <summary>Two 40-byte records per call: its entry and its return.</summary>
     internal const int TraceBytesPerCall = 80;
@@ -286,11 +296,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     {
         get
         {
-            if (_lastCallsPerSecond <= 0) return Res.Get("str.LF.Trace.EstimateNone");
+            if (_lastCallsPerSecond <= 0) return StringLookup("str.LF.Trace.EstimateNone");
             double s = EstimateSeconds((long)TraceBufferMb << 20, _lastCallsPerSecond);
-            string span = s < 120 ? Res.Format("str.LF.Trace.Seconds", Math.Round(s))
-                                  : Res.Format("str.LF.Trace.Minutes", Math.Round(s / 60, 1));
-            return Res.Format("str.LF.Trace.Estimate", span, Math.Round(_lastCallsPerSecond));
+            string span = s < 120 ? Say("str.LF.Trace.Seconds", Math.Round(s))
+                                  : Say("str.LF.Trace.Minutes", Math.Round(s / 60, 1));
+            return Say("str.LF.Trace.Estimate", span, Math.Round(_lastCallsPerSecond));
         }
     }
 
@@ -310,12 +320,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private long _availableMb = long.MaxValue;
     /// <summary>D3: above the memory free now, the estimate is a warning; Start still runs.</summary>
     public bool TraceMemoryOverAvailable => _availableMb != long.MaxValue && TraceGameMb + TraceUiPeakMb > _availableMb;
-    public string TraceMemoryEstimate => Res.Format(
+    public string TraceMemoryEstimate => Say(
         TraceMemoryOverAvailable ? "str.LF.Trace.MemoryOver" : "str.LF.Trace.Memory",
         MemText(TraceGameMb), MemText(TraceUiPeakMb), MemText(TraceUiHeldMb), MemText(_availableMb));
 
-    private static string MemText(long mb) => mb < 1024 ? Res.Format("str.LF.Trace.BufferMb", mb)
-                                                        : Res.Format("str.LF.Trace.Gb", mb / 1024.0);
+    private string MemText(long mb) => mb < 1024 ? Say("str.LF.Trace.BufferMb", mb)
+                                                 : Say("str.LF.Trace.Gb", mb / 1024.0);
 
     /// <summary>Read the free memory again: when the slider moves, when Trace is ticked, when the tab is shown, when
     /// the experimental tabs change, and at Start -- memory moves while the slider waits (a game launched after the
@@ -342,7 +352,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>The chosen functions as Class::Func, for this panel and the Call Trace tab's read-only copy.</summary>
     public ObservableCollection<string> SnapshotFunctions { get; } = new();
     public bool HasSnapshotChoices => SnapshotFunctions.Count > 0;
-    public string SnapshotCountText => Res.Format("str.LF.Snap.Count", SnapshotFunctions.Count);
+    public string SnapshotCountText => Say("str.LF.Snap.Count", SnapshotFunctions.Count);
     /// <summary>Parameters can be chosen: the rows can be ticked, and the trace is on (snapshots ride on it).</summary>
     public bool CanSnapshot => CanTick && TraceEnabled;
 
@@ -351,7 +361,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     internal const int SnapshotBufferMaxExponent = 7;
     [ObservableProperty] private int _snapshotBufferExponent = 5;
     public int SnapshotBufferMb => 1 << SnapshotBufferExponent;
-    public string SnapshotBufferText => Res.Format("str.LF.Trace.BufferMb", SnapshotBufferMb);
+    public string SnapshotBufferText => Say("str.LF.Trace.BufferMb", SnapshotBufferMb);
 
     /// <summary>The budget a Start sends (the DLL's defaults, provisional until measured live).</summary>
     internal const int SnapshotPerFuncPerSec = 1000;
@@ -407,7 +417,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         foreach (var e in _allEntries) e.IsSnapChosen = _snapChosen.Contains(e) && e.CanChooseSnapshot;
         RefreshSnapshotList();
         LastSnapshotBulkSkipped = skipped;
-        StatusText = Res.Format("str.LF.Snap.BulkDone", added, skipped);
+        StatusText = Say("str.LF.Snap.BulkDone", added, skipped);
     }
 
     /// <summary>The shown rows the last bulk choice left out (no key, or no parameters).</summary>
@@ -520,10 +530,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         get
         {
             if (_snapChosen.Count == 0) return "";
-            if (_lastWindowMs <= 0) return Res.Get("str.LF.Snap.EstimateNone");
+            if (_lastWindowMs <= 0) return StringLookup("str.LF.Snap.EstimateNone");
             var e = EstimateSnapshots(ChosenRates(), (long)SnapshotBufferMb << 20, SnapshotPerFuncPerSec, SnapshotTotalPerSec);
-            if (e.TooSmall) return Res.Format("str.LF.Snap.TooSmall", e.SlotsPerRing);
-            return Res.Format("str.LF.Snap.Estimate", Math.Round(e.CallsPerSec), Math.Round(e.AdmittedPerSec),
+            if (e.TooSmall) return Say("str.LF.Snap.TooSmall", e.SlotsPerRing);
+            return Say("str.LF.Snap.Estimate", Math.Round(e.CallsPerSec), Math.Round(e.AdmittedPerSec),
                               Math.Round(e.MbPerMinute, 1), e.CallsKept, e.Busiest,
                               double.IsInfinity(e.BusiestSeconds) ? "-" : Math.Round(e.BusiestSeconds).ToString(CultureInfo.InvariantCulture));
         }
@@ -548,7 +558,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             if (_snapChosen.Count == 0 || _lastWindowMs <= 0) return "";
             var e = EstimateSnapshots(ChosenRates(), (long)SnapshotBufferMb << 20, SnapshotPerFuncPerSec, SnapshotTotalPerSec);
             return e.SkippedPerSec >= 1
-                ? Res.Format("str.LF.Snap.BudgetNote", Math.Round(e.SkippedPerSec), SnapshotPerFuncPerSec, SnapshotTotalPerSec)
+                ? Say("str.LF.Snap.BudgetNote", Math.Round(e.SkippedPerSec), SnapshotPerFuncPerSec, SnapshotTotalPerSec)
                 : "";
         }
     }
@@ -579,7 +589,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(CanSnapshot));
     }
     public bool HasTickedFunctions => TickedFunctions.Count > 0;
-    public string TickedCountText => Res.Format("str.LF.Trace.TickedCount", TickedFunctions.Count);
+    public string TickedCountText => Say("str.LF.Trace.TickedCount", TickedFunctions.Count);
 
     /// <summary>T7: asked before a traced Start with nothing ticked while there are rows to tick from. The view sets
     /// it; without one a Start that needs the question does not start.</summary>
@@ -727,7 +737,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// -- the DLL sees calls, not loads. Shown here and in the Call Trace tab's copy (T8).</summary>
     public ObservableCollection<string> NotCalledNames { get; } = new();
     public bool HasNotCalledNames => NotCalledNames.Count > 0;
-    public string NotCalledText => Res.Format("str.LF.Trace.NotCalled", string.Join(", ", NotCalledNames));
+    public string NotCalledText => Say("str.LF.Trace.NotCalled", string.Join(", ", NotCalledNames));
 
     private void NoteNotCalled(TraceInfo? info)
     {
@@ -808,7 +818,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             ? $"⚠ PARTIAL baseline: {_baseline.Count:N0} of {_baselineDistinct:N0} idle funcs "
               + "(the rest were not fetched). A row can show as NEW just for having "
               + "been below the cut — treat NEW as \"not in the idle top N\"."
-              + (_baselineCapHit && BelowMaximum(_baselineLimit) ? " " + Res.Get("str.LF.Cap.BaselineRemedy") : "")
+              + (_baselineCapHit && BelowMaximum(_baselineLimit) ? " " + StringLookup("str.LF.Cap.BaselineRemedy") : "")
             : $"Baseline: {_baseline.Count} funcs. Now record the ACTION — new/increased rows float to the top.";
         StatusText = "Baseline set. Start → perform the action (open shop) → Stop.";
     }
@@ -843,12 +853,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
             var trace = await TraceOptionsForStartAsync(refusal);
             if (refusal.Value != null)
             {
-                StatusText = Res.Get(refusal.Value);
+                StatusText = StringLookup(refusal.Value);
                 return;
             }
             if (trace != null) RefreshAvailableMemory();
             // Chosen, but the trace is off: a plain recording, and it says nothing was taken.
-            string snapNote = _snapChosen.Count > 0 && (trace == null) && TraceAvailable ? Res.Get("str.LF.Snap.NeedsTrace") : "";
+            string snapNote = _snapChosen.Count > 0 && (trace == null) && TraceAvailable ? StringLookup("str.LF.Snap.NeedsTrace") : "";
             // Any Start gives up the previous trace: the DLL frees it before it tries a new buffer, so even a refused
             // Start leaves nothing to open (review DLL-4).
             HasTraceToOpen = false;
@@ -861,7 +871,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             {
                 var stopped = await _dump.PeProfileStopWithTraceAsync();
                 await _dump.PeTraceReleaseAsync(stopped?.Gen ?? armed.Gen);
-                StatusText = Res.Get("str.LF.Trace.NamesNotSupported");
+                StatusText = StringLookup("str.LF.Trace.NamesNotSupported");
                 _log.Warn("LivePEProfiler: the DLL ignored ticks by name; the recording was stopped and released");
                 return;
             }
@@ -878,24 +888,24 @@ public partial class LiveFuncsViewModel : ViewModelBase
                     : start.Detail;   // self-contained reason from the DLL
             if (trace != null && start.HookActive)
             {
-                StatusText += " " + (start.Trace == null ? Res.Get("str.LF.Trace.NotArmed")
-                    : Res.Format(TraceStartKey(trace), TraceBufferMb,
+                StatusText += " " + (start.Trace == null ? StringLookup("str.LF.Trace.NotArmed")
+                    : Say(TraceStartKey(trace), TraceBufferMb,
                                  trace.TickedNames.Count > 0 ? trace.TickedNames.Count
                                  : trace.Ticked.Count > 0 ? trace.Ticked.Count
                                  : trace.Snapshots?.Funcs.Count ?? 0));
                 if (trace.Snapshots != null)
                 {
-                    StatusText += " " + (start.Trace?.Snap == null ? Res.Get("str.LF.Snap.NotArmed")
-                        : Res.Format("str.LF.Snap.Recording", trace.Snapshots.Funcs.Count, SnapshotBufferMb));
+                    StatusText += " " + (start.Trace?.Snap == null ? StringLookup("str.LF.Snap.NotArmed")
+                        : Say("str.LF.Snap.Recording", trace.Snapshots.Funcs.Count, SnapshotBufferMb));
                 }
                 if (start.Trace?.Names is { Refused.Count: > 0 } names)
-                    StatusText += " " + Res.Format("str.LF.Snap.Refused", names.Refused.Count);
+                    StatusText += " " + Say("str.LF.Snap.Refused", names.Refused.Count);
                 LastTickedDropped = start.Trace?.TickedDropped ?? 0;
                 if (LastTickedDropped > 0)
-                    StatusText += " " + Res.Format("str.LF.Trace.TickedDropped", LastTickedDropped);
+                    StatusText += " " + Say("str.LF.Trace.TickedDropped", LastTickedDropped);
                 // D3: a warning, never a refusal -- the memory is the user's call (T1).
                 if (start.Trace != null && TraceMemoryOverAvailable)
-                    StatusText += " " + Res.Format("str.LF.Trace.MemoryWarnStart", MemText(_availableMb));
+                    StatusText += " " + Say("str.LF.Trace.MemoryWarnStart", MemText(_availableMb));
             }
             if (snapNote.Length > 0) StatusText += " " + snapNote;
             _log.Info($"LivePEProfiler: start (hook_active={start.HookActive}, trace={(trace == null ? "off" : $"{TraceBufferMb} MB, {trace.Ticked.Count} ticked, {trace.TickedNames.Count} by name, {trace.Snapshots?.Funcs.Count ?? 0} chosen, exclude_per_frame={trace.ExcludePerFrame}")})");
@@ -951,15 +961,15 @@ public partial class LiveFuncsViewModel : ViewModelBase
         var i = LastTraceInfo;
         // No trace object at all is a DLL without the trace. One that wrote nothing is reported empty, and the DLL has
         // already given its ring back (review DLL-5), so it reads as not allocated.
-        if (i == null) return Res.Get("str.LF.Trace.NoneKept");
-        if (i.Written == 0) return Res.Get("str.LF.Trace.Empty") + (HasNotCalledNames ? " " + NotCalledText : "");
-        if (!i.Quiesced) return Res.Get("str.LF.Trace.NotQuiesced");
-        if (!i.Allocated) return Res.Get("str.LF.Trace.NoneKept");
+        if (i == null) return StringLookup("str.LF.Trace.NoneKept");
+        if (i.Written == 0) return StringLookup("str.LF.Trace.Empty") + (HasNotCalledNames ? " " + NotCalledText : "");
+        if (!i.Quiesced) return StringLookup("str.LF.Trace.NotQuiesced");
+        if (!i.Allocated) return StringLookup("str.LF.Trace.NoneKept");
         string kept = i.FirstValid > 0
-            ? Res.Format("str.LF.Trace.KeptLast", i.Kept, i.Written)
-            : Res.Format("str.LF.Trace.KeptAll", i.Kept);
+            ? Say("str.LF.Trace.KeptLast", i.Kept, i.Written)
+            : Say("str.LF.Trace.KeptAll", i.Kept);
         if (i.Snap != null)
-            kept += " " + Res.Format("str.LF.Snap.StopNote", i.SnapRings.Sum(r => (long)(r.Written - r.FirstValid)),
+            kept += " " + Say("str.LF.Snap.StopNote", i.SnapRings.Sum(r => (long)(r.Written - r.FirstValid)),
                                      (long)(i.Snap.SkippedBudget + i.Snap.DroppedBudget));
         if (HasNotCalledNames) kept += " " + NotCalledText;
         return kept;
@@ -980,7 +990,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         }
         if (Results.Count == 0)
         {
-            StatusText = Res.Get("str.LF.Save.Empty");
+            StatusText = StringLookup("str.LF.Save.Empty");
             return;
         }
         // Taken before the dialog: the rows saved are the rows on screen when Save was pressed.
@@ -996,17 +1006,17 @@ public partial class LiveFuncsViewModel : ViewModelBase
         {
             ClearError();
             string defaultName = "live-funcs-" + DateTime.Now.ToString("yyyyMMdd-HHmmss", CultureInfo.InvariantCulture) + ".jsonl";
-            string? path = await _platform.ShowSaveFileDialogAsync(defaultName, Res.Get("str.LF.Save.FileType"), ".jsonl");
+            string? path = await _platform.ShowSaveFileDialogAsync(defaultName, StringLookup("str.LF.Save.FileType"), ".jsonl");
             if (string.IsNullOrEmpty(path)) return;
             await File.WriteAllTextAsync(path, Helpers.LiveFuncsJsonl.Format(summary, rows),
                                          new UTF8Encoding(encoderShouldEmitUTF8Identifier: false));
-            StatusText = Res.Format("str.LF.Save.Done", rows.Count, path);
+            StatusText = Say("str.LF.Save.Done", rows.Count, path);
             _log.Info($"LivePEProfiler: saved {rows.Count} row(s) to {path}");
         }
         catch (Exception ex)
         {
             SetError(ex);
-            StatusText = Res.Format("str.LF.Save.Failed", ex.Message);
+            StatusText = Say("str.LF.Save.Failed", ex.Message);
             _log.Error("LivePEProfiler save failed", ex);
         }
     }
@@ -1078,7 +1088,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         // for has a low one.
         string trunc = LastTruncated
             ? $" (showing top {_lastShown:N0} of {_lastDistinct - _lastPerFrameHidden:N0} by count"
-              + (LastPageRaiseHelps ? Res.Get("str.LF.Cap.MoreRows") : "") + ")"
+              + (LastPageRaiseHelps ? StringLookup("str.LF.Cap.MoreRows") : "") + ")"
             : "";
 
         bool diff = DiffMode && _baseline.Count > 0;
@@ -1099,12 +1109,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
             // population those 3 were selected from, when only the fetched page was examined.
             StatusText = $"vs baseline: {newCount} NEW + {increased} increased "
               + $"(of {_lastShown:N0} shown; {_lastDistinct:N0} recorded{PerFrameNote()}{UnloadedNote()}). "
-              + (BaselinePerFrameMismatch ? Res.Get("str.LF.PerFrame.BaselineMismatch") + " " : "")
+              + (BaselinePerFrameMismatch ? StringLookup("str.LF.PerFrame.BaselineMismatch") + " " : "")
               + (_baselineTruncated || LastTruncated
                   ? "⚠ Capped fetch: NEW means \"not in the idle top N\", not \"did not fire while "
                     + "idle\" — a rare idle function below the cut also shows as NEW. "
-                    + (RaiseFetchLimitHelps ? Res.Get("str.LF.Cap.DiffRaise") + " "
-                       : LastCapHit || _baselineCapHit ? Res.Get("str.LF.Cap.DiffShorter") + " " : "")
+                    + (RaiseFetchLimitHelps ? StringLookup("str.LF.Cap.DiffRaise") + " "
+                       : LastCapHit || _baselineCapHit ? StringLookup("str.LF.Cap.DiffShorter") + " " : "")
                     + "The filter narrows only the rows already fetched."
                   : newRowHidden || BaselinePerFrameMismatch ? "" : "The action's function is almost certainly among the NEW rows at the top.");
         }
