@@ -284,6 +284,10 @@
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
                          IsVisible="{Binding FuncUnloaded}" ToolTip.Tip="{StaticResource str.Tip.CT.Unloaded}"
                          Foreground="#808080" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
+              <!-- [LIVEFUNCS-STEP3] The call carries its native stack. Docked before (p), so it reads after it. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Stack.Marker}"
+                         IsVisible="{Binding HasStack}" ToolTip.Tip="{StaticResource str.Tip.CT.Stack.Marker}"
+                         Foreground="#4FC1FF" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
               <!-- [LIVEFUNCS-STEP2] The call carries a parameter copy: its Parameters tab has values. -->
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Param.Marker}"
                          IsVisible="{Binding HasParams}" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Marker}"

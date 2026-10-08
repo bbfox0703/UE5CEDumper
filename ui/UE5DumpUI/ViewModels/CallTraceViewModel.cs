@@ -265,7 +265,9 @@ public partial class CallTraceViewModel : ViewModelBase
             Progress = 1;
             StatusText = Summary(trace);
             _log.Info($"CallTrace: loaded {trace.Count} calls ({kept} records, gen {info.Gen}), " +
-                      $"{read.Funcs} functions, {read.Objs} objects");
+                      $"{read.Funcs} functions, {read.Objs} objects" +
+                      (trace.Stacks is { } st
+                          ? $", {st.Calls.Count} stacks ({st.Orphans} orphaned, {st.Unjoined} unjoined)" : ""));
         }
         catch (OperationCanceledException)
         {
@@ -348,7 +350,9 @@ public partial class CallTraceViewModel : ViewModelBase
         var rings = new List<SnapRingInfo>();
         var slots = new List<SnapSlot>();
         ulong orphans = 0;
-        if (info.Snap is { Allocated: true })
+        // [LIVEFUNCS-STEP3] A Start that chose stacks alone allocates the buffer with no parameter ring and no arm:
+        // there is nothing to ask the layouts of.
+        if (info.Snap is { Allocated: true, Rings: > 0 })
         {
             StatusText = Res.Get("str.CT.Status.ReadingSnapshots");
             arms = new List<SnapArm>();
@@ -376,6 +380,34 @@ public partial class CallTraceViewModel : ViewModelBase
             }
         }
 
+        // [LIVEFUNCS-STEP3] The native stacks, before the release too, and whatever the parameters were: a stacks-only
+        // trace has none. Every reply carries every stack ring's window, so a first one-slot read fetches them, and each
+        // ring is then paged over its window as the parameter rings are (review M1). A page whose slots were all
+        // orphans -- the oldest ones, once the trace's ring lapped -- comes back empty yet moves on, so only a page
+        // that does not move ends a ring.
+        List<StackSlot>? stackSlots = null;
+        ulong stackOrphans = 0;
+        if (info.Stack is { Rings: > 0 })
+        {
+            StatusText = Res.Get("str.CT.Status.ReadingStacks");
+            stackSlots = new List<StackSlot>();
+            var head = await _dump.PeStackGetAsync(info.Gen, 0, 0, 1, ct);
+            if (head.Stale || head.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
+            foreach (var ring in head.Rings)
+            {
+                for (ulong slotFrom = ring.FirstValid; slotFrom < ring.Written;)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var sp = await _dump.PeStackGetAsync(info.Gen, ring.Ring, slotFrom, SnapPage, ct);
+                    if (sp.Stale || sp.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
+                    stackSlots.AddRange(sp.Items);
+                    stackOrphans += sp.Orphans;
+                    if (sp.Next <= slotFrom) break;   // refused or nothing more: what was read stands
+                    slotFrom = sp.Next;
+                }
+            }
+        }
+
         StatusText = Res.Get("str.CT.Status.Building");
         CollectPageGarbage();   // the build's columns take the room the pages left, not new memory
         long count = n;
@@ -385,6 +417,7 @@ public partial class CallTraceViewModel : ViewModelBase
         {
             var built = CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs);
             if (arms != null) built.Snapshots = CallTraceSnapshots.Join(built, arms, rings, slots, orphans);
+            if (stackSlots != null) built.Stacks = CallTraceStacks.Join(built, stackSlots, stackOrphans, info.Stack);
             return built;
         });
         NoteLoadPeak();   // the window and the columns at once: the load's structural peak
@@ -464,6 +497,15 @@ public partial class CallTraceViewModel : ViewModelBase
         if (t.Snapshots is { } s)
             sb.Append(' ').Append(Say("str.CT.Status.Snapshots", s.CallsWithParams, s.Arms.Count,
                                       (long)(t.Info.Snap?.SkippedBudget ?? 0)));
+        // [LIVEFUNCS-STEP3] The calls the budget left without a stack, recorded or not, and what the DLL measured a
+        // capture to cost: that time falls inside its call's duration, so the durations above carry it.
+        if (t.Stacks is { } st)
+        {
+            ulong skipped = st.Info?.SkippedBudget ?? 0, dropped = st.Info?.DroppedBudget ?? 0;
+            sb.Append(' ').Append(Say("str.CT.Status.Stacks", st.Calls.Count, (long)(skipped + dropped), (long)dropped));
+            if (st.Info is { Captures: > 0 } si && t.Info.QpcFreq > 0)
+                sb.Append(' ').Append(Say("str.CT.Status.StackCost", (double)si.SpentTicks / si.Captures * 1e6 / t.Info.QpcFreq));
+        }
         return sb.ToString();
     }
 
@@ -567,7 +609,9 @@ public partial class CallTraceViewModel : ViewModelBase
         var entry = s?.EntryOf(i);
         var after = s?.AfterOf(i);
         const uint Taken = 2, Lone = 4, Excluded = 8, Budget = 16;
-        if ((f & (Taken | Lone | Excluded | Budget)) == 0 && entry == null && after == null)
+        // [LIVEFUNCS-STEP3] Taken and Budget are the parameters' own flags; Lone and Excluded say a call was chosen
+        // for something, and a call chosen for its stack alone carries them without a parameter to show.
+        if ((f & (Taken | Budget)) == 0 && entry == null && after == null)
             return (Array.Empty<ParamRow>(), new[] { StringLookup("str.CT.Param.NotChosen") }, "");
         var notes = new List<string>();
         if ((f & Lone) != 0) notes.Add(StringLookup("str.CT.Param.Lone"));
@@ -961,6 +1005,7 @@ public sealed class CallTraceRowList : IList, IReadOnlyList<CallTraceRow>
                 ObjectStale = _t.ObjStale(i),
                 IsScopeRoot = (_t.Flags[i] & TraceRecord.ScopeRootFlag) != 0,
                 HasParams = _t.Snapshots?.Has(i) == true,
+                HasStack = _t.Stacks?.Has(i) == true,
             };
             _cache[index] = row;
             return row;

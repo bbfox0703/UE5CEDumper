@@ -86,5 +86,14 @@ public sealed class CallTraceStacks
 
     /// <summary>Joins each slot to its call in <paramref name="trace"/>.</summary>
     public static CallTraceStacks Join(CallTrace trace, IEnumerable<StackSlot> slots, ulong orphans, StackInfo? info)
-        => new(info, orphans);
+    {
+        var s = new CallTraceStacks(info, orphans);
+        foreach (var slot in slots)
+        {
+            int call = trace.FindBySeq(slot.EntrySeq);
+            if (call < 0) { s.Unjoined++; continue; }
+            s._slots[call] = slot;
+        }
+        return s;
+    }
 }
