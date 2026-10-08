@@ -2189,6 +2189,27 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task PeStackGetAsync_ReadsWhetherASitesEntryIsTheInterpreter()
+    {
+        // [A1-INTERP-LABEL] script: true on the script functions' entry; absent (an older DLL, or native code) is false.
+        _pipe.SetHandler(req => Reply("""
+            {"ok":true,"allocated":true,"gen":5,"qpc_freq":10000000,"ring":0,"kind":"stack","rings":[],"count":1,"next":1,
+             "orphans":0,
+             "items":[{"index":0,"entry_seq":1,"flags":0,"ticks":9,"len":16,"frames":[0,1]}],
+             "sites":[{"addr":"0x7FF6A0001525","module":"Game.exe","module_base":"0x7FF6A0000000","rva":5413,
+                       "fn":"0x7FF6A0001000","fn_rva":4096,"unwind":true,"ufunc":"0x2C0001230","class":"x00_Snd_Common_C",
+                       "func":"Game - CasinoNpcScheduleEnd","shared":6678,"script":true},
+                      {"addr":"0x7FF6A0002010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":8208,
+                       "fn":"0x7FF6A0002000","fn_rva":8192,"unwind":true,"ufunc":"0x2C0004560","class":"Weapon",
+                       "func":"Fire"}]}
+            """));
+        IDumpService svc = CreateService();
+        var page = await svc.PeStackGetAsync(5, 0, 0, 16, TestContext.Current.CancellationToken);
+        Assert.True(page.Items[0].Frames[0].Script);
+        Assert.False(page.Items[0].Frames[1].Script);
+    }
+
+    [Fact]
     public async Task PeStackGetAsync_SendsKindStack_AndResolvesFramesToTheirSites_WithTheCeModule()
     {
         JsonObject? sent = null;

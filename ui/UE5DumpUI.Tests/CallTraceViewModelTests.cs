@@ -1301,13 +1301,13 @@ public class CallTraceViewModelTests
     /// module unless one is given.</summary>
     private static StackSite Site(ulong addr, string module = "", ulong moduleBase = 0, ulong fn = 0, bool unwind = true,
                                   bool own = false, string known = "", string? ceModule = null, string cls = "",
-                                  string func = "", int shared = 0)
+                                  string func = "", int shared = 0, bool script = false)
         => new()
         {
             Addr = addr, Module = module, CeModule = ceModule ?? module, ModuleBase = moduleBase,
             Rva = module.Length == 0 ? 0 : (uint)(addr - moduleBase), Fn = fn,
             FnRva = fn == 0 || module.Length == 0 ? 0 : (uint)(fn - moduleBase), Unwind = unwind, Own = own, Known = known,
-            UFunc = func.Length == 0 ? 0 : 0x5000UL, ClassName = cls, FuncName = func, Shared = shared,
+            UFunc = func.Length == 0 ? 0 : 0x5000UL, ClassName = cls, FuncName = func, Shared = shared, Script = script,
         };
 
     // Call 0's stack, nearest first: a frame of each kind the tab names.
@@ -1448,6 +1448,17 @@ public class CallTraceViewModelTests
         // A name without its class still reads.
         Assert.Equal(Line("str.CT.Stack.Native", "Fire", 0x18UL),
                      vm.FrameWhere(Site(thunk + 0x18, "Game.exe", GameBase, fn: thunk, func: "Fire"), index));
+        // [A1-INTERP-LABEL] The script functions' entry is the Blueprint interpreter: the function the DLL names is only
+        // the lowest-addressed of them (live on DQ XI S, a level script's function on the minimap widget's stack), so
+        // the line names the interpreter and how many enter it, never that function.
+        string interp = vm.FrameWhere(Site(thunk + 0x525, "Game.exe", GameBase, fn: thunk, cls: "x00_Snd_Common_C",
+                                           func: "Game - CasinoNpcScheduleEnd", shared: 6678, script: true), index);
+        Assert.DoesNotContain("CasinoNpcScheduleEnd", interp, StringComparison.Ordinal);
+        Assert.Equal(Line("str.CT.Stack.Interpreter", 0x525UL, 6678), interp);
+        // A script entry no other function shares (one Blueprint function loaded) is still the interpreter.
+        Assert.Equal(Line("str.CT.Stack.InterpreterOne", 0x525UL),
+                     vm.FrameWhere(Site(thunk + 0x525, "Game.exe", GameBase, fn: thunk, cls: "BP_A_C", func: "Tick",
+                                        script: true), index));
     }
 
     private static readonly string[] SlotFlagKeys =
