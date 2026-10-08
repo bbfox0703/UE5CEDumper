@@ -2090,7 +2090,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
         // ─────────────────────────────────────────────────────────────────
         // set_ue_version_override { version: int, persist: bool }
         //   version == 0  → clear the override (revert to auto-detect on next launch)
-        //   version != 0  → record as the persistent override for this game
+        //   version != 0  → record as the persistent override for this game, unless the
+        //                   sampled UFunctions contradict its tail layout: then an error,
+        //                   and nothing is persisted or changed
         //   persist=false → only update the in-process cached version (no disk write)
         //
         // Updates g_cachedUEVersion immediately so version-dependent code paths
@@ -2113,6 +2115,29 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     "version out of supported range ("
                     + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MIN) + ".."
                     + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MAX) + " or 0 to clear)").dump();
+            }
+
+            // [UE-OVERRIDE-411] review: a version from the other side of 4.18 moves every UFunction tail read by 2
+            // (NumParms / ParmsSize / ReturnValueOffset), so one the sampled UFunctions contradict is refused here,
+            // before anything is persisted or changed. Clearing changes nothing in-process and is always accepted;
+            // with no scan to sample, the override is applied as asked -- DynOff::CheckTailForVersion says why.
+            if (newVersion != 0) {
+                const Ubel::OverrideTailCheck tc = Ubel::CheckVersionOverrideTail(static_cast<unsigned>(newVersion));
+                if (tc.verdict == DynOff::TailCheck::Contradicts) {
+                    char msg[384];
+                    snprintf(msg, sizeof(msg),
+                             "UE %d.%d does not fit this game: its UFunctions keep NumParms / ParmsSize behind +0x%X, "
+                             "where UE %d.%d would read them behind +0x%X (4.11-4.17 carry a RepOffset that 4.18 "
+                             "dropped). The override was not applied.",
+                             newVersion / 100, newVersion % 100, tc.measuredBase,
+                             newVersion / 100, newVersion % 100, tc.readersBase);
+                    Sein::Warn("PIPE:cmd", "set_ue_version_override: refused -- %s", msg);
+                    return Renge::MakeError(id, msg).dump();
+                }
+                if (tc.verdict == DynOff::TailCheck::Unmeasured)
+                    Sein::Info("PIPE:cmd", "set_ue_version_override: UE %d could not be checked against the "
+                                           "UFunction tail (no scan has sampled one) -- applying it as asked",
+                               newVersion);
             }
 
             if (persist) {

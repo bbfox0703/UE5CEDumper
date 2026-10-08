@@ -743,6 +743,11 @@ constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd)
 
 // === Does a UE version fit the UFunction tail the game actually has? [UE-OVERRIDE-411] review ===
 //
+// The override reaches 4.11-4.17 since [UE-OVERRIDE-411], so one pick can move every tail read by 2 in either
+// direction: 4.17 on a 4.18 title, or 4.18 on a 4.15 one. The version is the only thing the readers key the shift
+// on, and the FunctionFlags vote cannot catch a wrong one -- it adds only that version's shift. The sampled
+// UFunctions can: at the right base NumParms and ParmsSize match each function's own parameter chain
+// (FunctionTailMatches). So set_ue_version_override refuses a version whose base the measurement contradicts.
 // The base the readers put the tail at: NumParms / ParmsSize / ReturnValueOffset sit +4 / +6 / +8 behind it.
 constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtra) {
     return flagsOff + FunctionTailShiftFor(ueVersion) + tailExtra;
@@ -751,18 +756,28 @@ constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtr
 enum class TailCheck { Agrees, Contradicts, Unmeasured };
 
 // `flagsOff` / `tailExtra` are what the readers would use under `ueVersion`; `measuredBase` is
-// UFUNCTION_TAIL_MEASURED.
+// UFUNCTION_TAIL_MEASURED. Nothing measured (no scan yet, or samples that do not decide) is never a refusal:
+// the too-old refusal sends the user to the override precisely when no scan has run.
 constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
-    (void)ueVersion; (void)flagsOff; (void)tailExtra; (void)measuredBase;
-    return TailCheck::Unmeasured;
+    if (measuredBase < 0 || flagsOff <= 0) return TailCheck::Unmeasured;
+    return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra) == measuredBase ? TailCheck::Agrees
+                                                                               : TailCheck::Contradicts;
 }
 
 // The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled
 // UFunctions; -1 when none wins. The vote's own bar (Ubel::EnsureFunctionFlagsOffset): at least 8 samples
-// and 60% of them.
+// and 60% of them. Two bases tied at the top cannot both be the tail, so a tie decides nothing.
 inline int PickMeasuredTailBase(const int* bases, const int* hits, int n, int samples) {
-    (void)bases; (void)hits; (void)n; (void)samples;
-    return -1;
+    if (samples < 8) return -1;
+    const int sixty = (samples * 6 + 9) / 10;
+    const int need = sixty > 6 ? sixty : 6;
+    int best = -1, bestHits = -1;
+    bool tied = false;
+    for (int i = 0; i < n; ++i) {
+        if (hits[i] > bestHits)       { best = bases[i]; bestHits = hits[i]; tied = false; }
+        else if (hits[i] == bestHits) { tied = true; }
+    }
+    return (!tied && bestHits >= need) ? best : -1;
 }
 
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
