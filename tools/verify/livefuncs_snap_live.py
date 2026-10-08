@@ -768,6 +768,10 @@ STACK_MAX_DEPTH = 62      # Linie clamps a depth to 1..this
 BUDGET_MAX = 0xFFFFFF     # a budget word holds its count in 24 bits: the DLL clamps to 1..this and echoes what it used
 FIXTURE_EXE = "DumperTest58-Win64-Shipping.exe"   # frame 0's module when the process cannot be asked (no out/host.pid)
 KNOWN_PE = "process_event"
+# S3's known checks by name, so --self-test's controls name the check each fault must fail.
+S3_KNOWN_IN = 'S3 every in-scope stack holds known:"process_event" before its own frame'
+S3_KNOWN_LONE = 'S3 no lone stack holds known:"process_event"'
+S3_KNOWN_ONE = "S3 every known frame names one function, and no stack holds two"
 # The Start's stack list, in order: the DLL numbers stack rings by the accepted items' order, and S1's join checks
 # that every slot of ring s belongs to the s-th name.
 STACK_CHOICES = ("SnapProbe_Call", "SnapProbe_PerFrame")
@@ -1442,16 +1446,27 @@ class ScriptedDll:
     """A DLL with step 3 answering as the design's section 3 says it does, so --self-test can drive run_stacks and
     run_game_stacks end to end with no pipe. Its calls are a fixed script shaped like DumperTest58's: four rounds of
     SnapNest_Outer -> SnapProbe_Call in scope beside a lone SnapProbe_Call, and SnapProbe_PerFrame over its budget.
-    `old` answers as a DLL without step 3; `no_known` as a build whose ProcessEvent call sits in a chained fragment;
-    `ignore_kind` as a DLL that serves parameter items to kind:"stack". It proves the rig's glue, never the DLL."""
+    Each fault named in FAULTS makes it answer as one broken DLL would, so a control can show the check that must
+    catch that DLL failing. It proves the rig's glue, never the DLL."""
     QPC, BASE, OWN = 10_000_000, 0x7FF6A0000000, 0x7FFC12300000
     FUNCS = {"SnapNest_Outer": (0x1000, [1, 0, 9, 0], 4), "SnapProbe_Call": (0x1100, [2, 0, 9, 0], 96),
              "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
+    FAULTS = {
+        "old": "a DLL without step 3: no names.stacks, no trace.stack, no names[].stack",
+        "no_known": "no site labelled known (S3-F2's mutation: known compared with the trampoline)",
+        "ignore_kind": "parameter items served to kind:\"stack\" (S3-F2's mutation)",
+        "known_everywhere": "every unwound site labelled known (the compare with ProcessEvent's start dropped)",
+        "known_twice": "a second known frame, of the same function, in each in-scope stack",
+        "known_split": "every other in-scope stack labels a frame of another function known, not ProcessEvent's",
+    }
 
-    def __init__(self, old: bool = False, no_known: bool = False, ignore_kind: bool = False) -> None:
-        self.old, self.no_known, self.ignore_kind = old, no_known, ignore_kind
+    def __init__(self, *faults: str) -> None:
+        unknown = set(faults) - set(self.FAULTS)
+        if unknown:   # a misspelt fault would script the good DLL, and its control would test nothing
+            raise ValueError(f"the scripted DLL has no fault {sorted(unknown)}")
+        self.f = set(faults)
         self.gen = 0
         self.t: dict | None = None
         self.cmds: list[str] = []
@@ -1466,15 +1481,26 @@ class ScriptedDll:
         return dict({"addr": f"0x{self.BASE + rva:X}", "module": FIXTURE_EXE, "module_base": f"0x{self.BASE:X}",
                      "rva": rva, "fn": f"0x{self.BASE + fn_rva:X}", "fn_rva": fn_rva, "unwind": True}, **extra)
 
-    def _stacks(self) -> tuple[list[dict], list[dict]]:
+    def _stacks(self, rnd: int = 0) -> tuple[list[dict], list[dict]]:
+        """Round `rnd`'s in-scope and lone stacks. A DLL labels a site by its address, so a fault that labels some
+        stacks differently takes its other stacks through other call sites."""
         g = self._site
-        pe = g(0x9123, 0x9000, **({} if self.no_known else {"known": KNOWN_PE}))
+        known = {} if "no_known" in self.f else {"known": KNOWN_PE}
+        if "known_split" in self.f and rnd % 2:
+            invoke, pe = g(0x7020, 0x7000, **known), g(0x9133, 0x9000)
+        else:
+            invoke, pe = g(0x7010, 0x7000), g(0x9123, 0x9000, **known)
         own = {"addr": f"0x{self.OWN + 0x45678:X}", "module": "dxgi.dll", "module_base": f"0x{self.OWN:X}",
                "rva": 0x45678, "fn": f"0x{self.OWN + 0x45000:X}", "fn_rva": 0x45000, "unwind": True, "own": True}
         call = g(0x4804C9, 0x480440)
-        in_scope = [call, g(self.OUTER_FN + 0x31, self.OUTER_FN), g(0x7010, 0x7000), pe, own, g(0x3010, 0x3000),
+        in_scope = [call, g(self.OUTER_FN + 0x31, self.OUTER_FN), invoke, pe, own, g(0x3010, 0x3000),
                     g(0x2010, 0x2000), g(0x1010, 0x1000)]
-        return in_scope, [call, g(0x2020, 0x2000), g(0x1010, 0x1000), g(0x0810, 0x0800)]
+        if "known_twice" in self.f:
+            in_scope.insert(5, g(0x9456, 0x9000, **known))
+        lone = [call, g(0x2020, 0x2000), g(0x1010, 0x1000), g(0x0810, 0x0800)]
+        if "known_everywhere" in self.f:
+            in_scope, lone = ([dict(s, known=KNOWN_PE) if s.get("unwind") else s for s in x] for x in (in_scope, lone))
+        return in_scope, lone
 
     def _start(self, t: dict | None) -> dict:
         if t is None:
@@ -1485,7 +1511,7 @@ class ScriptedDll:
             keys = it.get("keys") or [[]]
             return it.get("class") == FIXTURE_CLASS and by_key.get(tuple(keys[0])) == it.get("func")
         s = t.get("snapshots") or {}
-        st = s.get("stacks") if isinstance(s.get("stacks"), dict) and not self.old else None
+        st = s.get("stacks") if isinstance(s.get("stacks"), dict) and "old" not in self.f else None
         asked = t.get("ticked_names", []) + s.get("funcs", []) + (st or {}).get("funcs", [])
         ticks = [i for i in t.get("ticked_names", []) if good(i)]
         params = [i["func"] for i in s.get("funcs", []) if good(i)]
@@ -1494,7 +1520,7 @@ class ScriptedDll:
             return {"error": "None of the chosen functions is known by that name in this game any more."}
         self.gen += 1
         ring_of = {n: k for k, n in enumerate(stacks)}
-        in_scope, lone = self._stacks()
+        lone = self._stacks()[1]
         recs: list[bytes] = []
         slots: list[list[dict]] = [[] for _ in stacks]
         dropped = [0] * len(stacks)
@@ -1510,8 +1536,9 @@ class ScriptedDll:
             r = len(recs)
             recs.append(REC.pack(r | RET_BIT, r * 10, seq, 0, 1, 0))
         if ticks:      # the main recording: scoped by SnapNest_Outer
-            for _ in range(4):
-                call("SnapNest_Outer", F_ROOT, [], lambda: call("SnapProbe_Call", 0, in_scope))
+            for rnd in range(4):
+                in_scope = self._stacks(rnd)[0]
+                call("SnapNest_Outer", F_ROOT, [], lambda fr=in_scope: call("SnapProbe_Call", 0, fr))
                 call("SnapProbe_Call", F_LONE, lone)
             if "SnapProbe_PerFrame" in ring_of:
                 for _ in range(20):
@@ -1539,12 +1566,12 @@ class ScriptedDll:
                             "max_ticks": 7} if stacks else None,
                   "names": [{"class": FIXTURE_CLASS, "func": n, "tick": n in [i["func"] for i in ticks],
                              "chosen": n in params, "addresses": 1, "arms": 1,
-                             **({} if self.old else {"stack": n in ring_of})}
+                             **({} if "old" in self.f else {"stack": n in ring_of})}
                             for n in self.FUNCS if n in params or n in ring_of or n in [i["func"] for i in ticks]]}
         names = {"ticks": len(ticks), "chosen": len(params),
                  "refused": [{"class": i.get("class"), "func": i.get("func"), "why": "no key names it in this process"}
                              for i in asked if not good(i)]}
-        if not self.old:
+        if "old" not in self.f:
             names["stacks"] = len(stacks)
         return {"data": {"recording": True, "hook_active": True, "trace": dict(self._info(), names=names)}}
 
@@ -1564,7 +1591,7 @@ class ScriptedDll:
         d = dict(self._info(), ring=ring)
         if t is None or t["tracing"]:
             return {"data": dict(d, count=0, next=frm, items=[])}
-        if self.old or self.ignore_kind:
+        if self.f & {"old", "ignore_kind"}:
             return {"data": dict(d, count=1, next=frm + 1, orphans=0, items=[
                 {"index": frm, "entry_seq": 1, "phase": "entry", "len": 0, "flags": 0, "arm": 0, "data": ""}])}
         d.update(kind="stack", rings=[{"ring": k, "cap": 8 * t["depth"], "depth": t["depth"], "written": len(x),
@@ -1838,24 +1865,43 @@ def self_test() -> int:
 
     def recorded(check: Checks, prefix: str) -> list:
         return [e for n, e, _ in check.records if n.startswith(prefix)]
-    expect("dry run: a DLL with step 3 passes every check, S0 to S7, 22 in all",
-           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == 22 and
+
+    def fail_set(check: Checks, *prefixes: str) -> bool:
+        """The run fails exactly the checks the prefixes name, each at least once, and nothing else: a fault caught
+        only by some other check would leave the named one unproven."""
+        bad = failing(check)
+        return bad != [] and all(any(n.startswith(p) for p in prefixes) for n in bad) and \
+            all(any(n.startswith(p) for n in bad) for p in prefixes)
+    expect("dry run: a DLL with step 3 passes every check, S0 to S7, 25 in all",
+           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == 25 and
                     {n.split()[0] for n in ran(ch)} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
-                    recorded(ch, "S3 in-scope") == [True] and recorded(ch, "S3 lone") == [True] and
-                    len(recorded(ch, "S4")) == 1 and len(recorded(ch, "S6")) == 6)(dry_run(ScriptedDll())[0]))
+                    recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and
+                    len(recorded(ch, "S6")) == 6)(dry_run(ScriptedDll())[0]))
     expect("dry run: S4 finds SnapNest_Outer's entry at frame 1 of every in-scope stack",
            lambda: any(n.startswith("S4") and g.startswith("4 of 4; at frames [1]")
                        for n, _, g in dry_run(ScriptedDll())[0].records))
     expect("dry run (H1): a DLL without step 3 fails S0 and runs no S1-S6",
            lambda: (lambda ch: failing(ch) == ["S0 the reply carries names.stacks and trace.stack (a DLL with step 3)"]
                     and not any(n[:2] in ("S1", "S2", "S3", "S5") for n in ran(ch)))(
-               dry_run(ScriptedDll(old=True))[0]))
-    expect("dry run (M4): no known frame is recorded, not failed",
-           lambda: (lambda ch: failing(ch) == [] and recorded(ch, "S3 in-scope") == [False])(
-               dry_run(ScriptedDll(no_known=True))[0]))
+               dry_run(ScriptedDll("old"))[0]))
+    expect("dry run (S3-F2's mutation): no known frame, known compared with the trampoline, fails S3's in-scope half",
+           lambda: fail_set(dry_run(ScriptedDll("no_known"))[0], S3_KNOWN_IN))
+    expect("dry run: every unwound frame labelled known fails S3's lone half and its one-function rule",
+           lambda: fail_set(dry_run(ScriptedDll("known_everywhere"))[0], S3_KNOWN_LONE, S3_KNOWN_ONE))
+    expect("dry run: two known frames in one stack fail S3's one-function rule",
+           lambda: fail_set(dry_run(ScriptedDll("known_twice"))[0], S3_KNOWN_ONE))
+    expect("dry run: known frames of two functions fail S3's one-function rule",
+           lambda: fail_set(dry_run(ScriptedDll("known_split"))[0], S3_KNOWN_ONE))
     expect("dry run: a DLL that ignores kind fails S1",
            lambda: (lambda ch: any(n.startswith("S1") for n in failing(ch)))(
-               dry_run(ScriptedDll(ignore_kind=True))[0]))
+               dry_run(ScriptedDll("ignore_kind"))[0]))
+    def refuses_unknown_fault() -> bool:
+        try:
+            ScriptedDll("no_such_fault")
+        except ValueError:
+            return True
+        return False
+    expect("the scripted DLL refuses a fault it does not have", refuses_unknown_fault)
     expect("dry run: --stacks --choose on a scripted game chooses every keyed function and records the cost",
            lambda: (lambda r: failing(r[0]) == [] and len(r[1]["chosen"]) == 3 and
                     r[1]["stack_cost"]["census"].get("slots") == 9 and len(r[0].records) == 6)(
