@@ -293,7 +293,9 @@ Open work only. **Read this when deciding what to do next.**
   **The review's findings, fixed 2026-10-08:** with the window not run, S5's parameter-counter check is not run
   either, for the same reason -- a budget that refuses nothing leaves nothing to miscount, so 0 there proved nothing
   (MED-2). The budget is still chosen on the plain recording, but S5 also stands down, with both rates, where the
-  main recording's own SnapProbe_PerFrame rate is under 1.5x the budget (LOW-1).
+  main recording's own SnapProbe_PerFrame rate is under 1.5x the budget (LOW-1). The total is one budget for every
+  stack choice, spent first by SnapProbe_PerFrame each second: a chosen budget leaves the others 1.5x their rates in
+  it, and a given total that does not is said in the output, with S3's two in-scope checks and S5 not run (LOW-2).
   ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
