@@ -354,8 +354,9 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 - **Why the fixture costs more (2026-10-08), measured at the maintainer's prompting** (the cost probe: a stacks-only
   recording of SnapProbe_PerFrame, depth 16, about 600 captures a run):
   - rendering on the integrated Radeon, uncapped (the default; the GPU at 98 %, 90 °C): median 20-22 µs;
-  - on the RTX (`-preferNvidia`), uncapped: median 21-22.5 µs -- the display copy still kept the integrated GPU at
-    100 % (the maintainer), and the CPU ran at 85-94 % of nominal (2,434 MHz), never boosting;
+  - on the RTX (`-preferNvidia`), uncapped: median 21-22.5 µs; the CPU ran at 85-94 % of nominal (2,434 MHz), never
+    boosting. The integrated GPU stayed near 100 % even with the fixture closed: `dwm.exe` 54 % and `claude.exe` (the
+    Claude desktop app's computer-use screen effect) 45 % of its 3D engine -- the desktop's load, not the fixture's;
   - on the RTX capped at 30 fps (GameUserSettings::SetFrameRateLimit(30) + ApplySettings, invoked through the pipe):
     median 31 µs -- dearer, not cheaper (the game thread sleeps between frames; its caches are cold when it walks).
   So the hybrid GPU and the frame rate do not explain it; the cost is per walked frame (about 0.75 µs, depth 4 to 16

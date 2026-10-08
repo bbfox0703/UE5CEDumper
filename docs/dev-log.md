@@ -27,6 +27,14 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (no build change) — Correction to the entry below `[LIVEFUNCS-STEP3]`
+
+- The integrated GPU's ~100 % was the desktop's, not the fixture's: with no game running it stayed there, `dwm.exe`
+  54 % and the Claude desktop app (computer use's screen effect) 45 % of its 3D engine. "Copying frames to the
+  display" below is wrong. The capture costs below stand.
+
+-----
+
 ## 2026-10-08 (no build change) — What a native stack capture costs, and what it does not depend on `[LIVEFUNCS-STEP3]`
 
 - **Measured on the maintainer's PC (Ryzen 9 9955HX3D laptop, Radeon iGPU + RTX 5090):** a 16-frame capture costs

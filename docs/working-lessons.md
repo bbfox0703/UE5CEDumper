@@ -863,14 +863,18 @@ Two traps from one night (2026-10-08), each of which read as a defect in the pro
 ### 1.an A CPU timing on this laptop: say what the GPUs and the clock were doing, and suspect the subject first
 
 Measured 2026-10-08 while pricing a native stack capture. This PC is a hybrid laptop (a Radeon iGPU that drives the
-display, an RTX 5090 that renders when asked). An uncapped fixture, wherever it renders, keeps the iGPU near 100 %
-(rendering, or copying the RTX's frames to the display), and the CPU then runs at 85-94 % of nominal, not boosting.
-That looked like the explanation for a capture costing 20-28 µs on DumperTest58 against 3.25 µs on Avowed. It was not:
+display, an RTX 5090 that renders when asked). The iGPU sat near 100 % with or without a game: with none running,
+`dwm.exe` took 54 % of its 3D engine and `claude.exe` -- the Claude desktop app, whose computer-use screen effect
+redraws the screen -- 45 % (the maintainer saw it stay up after the fixture closed). The CPU meanwhile ran at 85-94 %
+of nominal, not boosting. That looked like the explanation for a capture costing 20-28 µs on DumperTest58 against
+3.25 µs on Avowed. It was not:
 the same probe gave 21-22 µs on the RTX and 31 µs capped at 30 fps (dearer: the game thread's caches go cold between
 frames). What to do:
 - Record the rendering GPU (`-preferNvidia` picks the RTX for a UE game; Task Manager or `nvidia-smi`'s utilization
   shows which works), the frame rate, and `typeperf "\Processor Information(_Total)\% Processor Performance"` with
-  any CPU timing.
+  any CPU timing. Name what loads a GPU, per process, before blaming the subject:
+  `typeperf "\GPU Engine(*engtype_3D)\Utilization Percentage" -sc 2 -o <file> -y`, then group the columns by the
+  `pid_<n>` in their names (a computer-use session's own screen effect is one of the loads).
 - Vary one condition at a time before blaming the machine; a timing that moves the wrong way (the cap) says the cause
   is elsewhere.
 - A Shipping UE build ignores `-ExecCmds`; cap it through the pipe: `invoke_function` GameUserSettings
