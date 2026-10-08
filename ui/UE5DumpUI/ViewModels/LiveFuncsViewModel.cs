@@ -216,7 +216,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         (_lastUnloaded > 0 ? Say("str.LF.Unloaded.Note", _lastUnloaded) : "")
         + (_lastUnnamed > 0 ? Say("str.LF.Unnamed.Note", _lastUnnamed) : "");
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
-    public bool BaselineStatusVisible => true;
+    /// <summary>[LF-COMPACT-TOP] The baseline's line speaks only with a baseline, or with Diff on and none: the one time a
+    /// missing baseline is news. Shown always, it spent a line of the panel on a hint, which Set Baseline's tooltip
+    /// carries now.</summary>
+    public bool BaselineStatusVisible => _baseline.Count > 0 || DiffMode;
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
     /// box's AutoCompleteBox suggestions — see <see cref="KeywordSearchMemory"/>.
@@ -995,7 +998,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         ApplyFilter();
         _filterMemory.Schedule(value);
     }
-    partial void OnDiffModeChanged(bool value) => ApplyDiffAndFilter();
+    partial void OnDiffModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BaselineStatusVisible));
+        ApplyDiffAndFilter();
+    }
     partial void OnEarliestFirstChanged(bool value) => ApplyDiffAndFilter();
     partial void OnNewChangedOnlyChanged(bool value) => ApplyFilter();
     partial void OnHideWidgetsChanged(bool value) => ApplyFilter();
@@ -1071,6 +1078,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baselineLimit     = 0;
         _baselinePerFrameEffective = false;
         _baselinePerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
+        // With Diff already off, nothing else tells the line it has gone.
+        OnPropertyChanged(nameof(BaselineStatusVisible));
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }

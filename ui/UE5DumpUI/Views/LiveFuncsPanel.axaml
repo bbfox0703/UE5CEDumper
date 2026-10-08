@@ -288,9 +288,11 @@
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
     <!-- The baseline's status on a line of its own, full width and wrapping: beside the row's controls it got
-         only what they left, which is little once Diff shows its extra controls. -->
+         only what they left, which is little once Diff shows its extra controls. [LF-COMPACT-TOP] Only with a baseline
+         or with Diff on: the hint it gave everyone else is on Set Baseline's tooltip. -->
     <TextBlock DockPanel.Dock="Top" Margin="0,0,0,4"
                Text="{Binding BaselineStatus}"
+               IsVisible="{Binding BaselineStatusVisible}"
                Foreground="#8FA0B8" FontSize="12"
                TextWrapping="Wrap"
                ToolTip.Tip="{Binding BaselineStatus}"/>
