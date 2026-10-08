@@ -9,7 +9,7 @@ namespace UE5DumpUI.Tests;
 /// <summary>
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
 /// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them
-/// (S3-U2): docs/live-funcs-step3-items.md.
+/// (S3-U2) and its view (S3-U3): docs/live-funcs-step3-items.md.
 /// </summary>
 public class LiveFuncsSnapshotTests
 {
@@ -676,6 +676,99 @@ public class LiveFuncsSnapshotTests
         Assert.Equal((long)StackSlot.More, HeaderConst(macht, "kStackMore"));
         Assert.Equal((long)StackSlot.BadSp, HeaderConst(macht, "kStackBadSp"));
         Assert.Equal((long)StackSlot.LowStack, HeaderConst(macht, "kStackLowStack"));
+    }
+
+    // ---- [LIVEFUNCS-STEP3] S3-U3: the view ----
+
+    /// <summary>A DataGrid column is not in the visual tree, so the code-behind reveals the hidden ones by header. A
+    /// hidden column that the loop never compares stays hidden for good, with nothing failing: so every header the axaml
+    /// hides must be fetched in ApplyTickColumnVisibility AND compared in its loop.</summary>
+    [Fact]
+    public void Every_hidden_column_the_Stack_column_included_is_revealed_with_Trace()
+    {
+        string root = RepoRoot();
+        var axaml = File.ReadAllText(Path.Combine(root, "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var hidden = Regex.Matches(axaml,
+                @"<DataGridTemplateColumn Header=""\{StaticResource (?<key>[\w.]+)\}""[^>]*IsVisible=""False""[^>]*>")
+            .Select(m => m.Groups["key"].Value).ToList();
+        Assert.Contains("str.LF.Col.Stack", hidden);
+
+        var codeBehind = File.ReadAllText(Path.Combine(root, "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml.cs"));
+        var method = Regex.Match(codeBehind, @"void ApplyTickColumnVisibility\(\)\s*\{(?<body>.*?)\n    \}",
+                                 RegexOptions.Singleline);
+        Assert.True(method.Success, "ApplyTickColumnVisibility not found");
+        string body = method.Groups["body"].Value;
+        foreach (var key in hidden)
+        {
+            var fetched = Regex.Match(body, @"(?<var>\w+)\s*=\s*Core\.Res\.Get\(""" + Regex.Escape(key) + @"""\)");
+            Assert.True(fetched.Success, $"{key} is not fetched in ApplyTickColumnVisibility");
+            Assert.True(Regex.IsMatch(body, @"==\s*" + fetched.Groups["var"].Value + @"\b"),
+                        $"{key} is fetched but the loop never compares it");
+        }
+    }
+
+    [Fact]
+    public void The_Stack_column_copies_Params_and_the_snapshot_rows_show_for_either_choice()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var col = Regex.Match(axaml,
+            @"<DataGridTemplateColumn Header=""\{StaticResource str\.LF\.Col\.Stack\}""[^>]*>.*?</DataGridTemplateColumn>",
+            RegexOptions.Singleline);
+        Assert.True(col.Success, "no Stack? column");
+        string open = col.Value[..(col.Value.IndexOf('>') + 1)];
+        Assert.Contains("CanUserSort=\"False\"", open, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"False\"", open, StringComparison.Ordinal);
+        Assert.DoesNotContain("SortMemberPath", col.Value, StringComparison.Ordinal);
+        // The compiled-binding routes the Params? column already ships trimmed.
+        Assert.Contains("<DataTemplate x:DataType=\"m:PeProfileEntry\">", col.Value, StringComparison.Ordinal);
+        Assert.Contains("IsChecked=\"{Binding IsStackChosen, Mode=OneWay}\"", col.Value, StringComparison.Ordinal);
+        Assert.Contains("Command=\"{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleStackCommand}\"",
+                        col.Value, StringComparison.Ordinal);
+        Assert.Contains("CommandParameter=\"{Binding}\"", col.Value, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanSnapshot}\"",
+                        col.Value, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding CanChooseStack}\"", col.Value, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Stack.Choose}\"", col.Value, StringComparison.Ordinal);
+
+        // The choices row carries the stack count beside the parameters' count.
+        Assert.Contains("{Binding StackCountText}", EnclosingStackPanel(axaml, "{Binding SnapshotCountText}"),
+                        StringComparison.Ordinal);
+        // The estimate row: for stacks alone it still has the buffer's refusal to show (S3-U2), so it shows for
+        // either choice -- an OR, which an AND or a lone HasSnapshotChoices would silently hide.
+        string estimateHead = OpeningOfEnclosingStackPanel(axaml, "{Binding SnapshotEstimate}");
+        Assert.Contains("BoolConverters.Or", estimateHead, StringComparison.Ordinal);
+        Assert.Contains("HasSnapshotChoices", estimateHead, StringComparison.Ordinal);
+        Assert.Contains("HasStackChoices", estimateHead, StringComparison.Ordinal);
+    }
+
+    /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>
+    private static (int Start, int At) FindEnclosingStackPanel(string axaml, string marker)
+    {
+        int at = axaml.IndexOf(marker, StringComparison.Ordinal);
+        Assert.True(at >= 0, $"{marker} not found");
+        var opens = Regex.Matches(axaml[..at], @"<StackPanel[\s>]");
+        Assert.True(opens.Count > 0, $"no StackPanel encloses {marker}");
+        return (opens[^1].Index, at);
+    }
+
+    /// <summary>From the StackPanel <paramref name="marker"/> sits in to the marker: its attributes and property
+    /// elements.</summary>
+    private static string OpeningOfEnclosingStackPanel(string axaml, string marker)
+    {
+        var (start, at) = FindEnclosingStackPanel(axaml, marker);
+        return axaml[start..at];
+    }
+
+    /// <summary>The StackPanel <paramref name="marker"/> sits in, to its closing tag; a nested StackPanel would end it
+    /// early, so the test refuses one.</summary>
+    private static string EnclosingStackPanel(string axaml, string marker)
+    {
+        var (start, at) = FindEnclosingStackPanel(axaml, marker);
+        int end = axaml.IndexOf("</StackPanel>", at, StringComparison.Ordinal);
+        Assert.True(end > at, $"the StackPanel around {marker} is not closed");
+        string panel = axaml[start..end];
+        Assert.Single(Regex.Matches(panel, @"<StackPanel[\s>]"));
+        return panel;
     }
 
     private static string RepoRoot()
