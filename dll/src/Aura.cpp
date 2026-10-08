@@ -6546,6 +6546,11 @@ static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
     return exec;
 }
 
+// [A1-SCRIPT-FUNCS] The slot the native-entry index (S3-A1) reads.
+static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
+    return NativeFuncSlot(funcAddr);
+}
+
 // --- Path 2: disassemble a native UFunction and map [this+off] to props ---
 //
 // Returns the method tag ("disasm" when the decoder ran, "none" when the exec
@@ -10376,7 +10381,7 @@ bool CollectCodeEntries(std::vector<CodeEntry>& out, CodeIndexStats* stats) {
         if (!it->second) return true;
         ++s.functions;
         const auto c0 = std::chrono::steady_clock::now();
-        const uintptr_t slot = NativeFuncSlot(obj);
+        const uintptr_t slot = IndexFuncSlot(obj);
         const uintptr_t code = slot && codeRanges.IsCode(slot) ? slot : 0;
         s.codeMicros += static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count());

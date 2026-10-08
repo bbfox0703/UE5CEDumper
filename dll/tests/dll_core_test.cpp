@@ -9111,6 +9111,31 @@ int main() {
                   !cache.IsCode(reinterpret_cast<uintptr_t>(heapBlock.data())));
         }
 
+        // [A1-SCRIPT-FUNCS] A script function's Func is the interpreter, and the index reads it like any other: a frame
+        // in the interpreter then names one of the functions entering there, with how many share it. Its CE code
+        // address stays none, the "Blueprint-only" answer. A fake UFunction: FunctionFlags zero wherever they are read
+        // (no FUNC_Native), Func at an offset this block sets and puts back.
+        {
+            const int savedFunc = DynOff::UFUNCTION_FUNC;
+            const bool savedDetected = DynOff::bUFunctionFuncDetected.load();
+            DynOff::UFUNCTION_FUNC = 0x80;
+            DynOff::bUFunctionFuncDetected.store(true);
+            alignas(16) static uint8_t scriptFn[0x200];
+            memset(scriptFn, 0, sizeof scriptFn);
+            const uintptr_t interp = reinterpret_cast<uintptr_t>(&S3Outer);
+            memcpy(scriptFn + 0x80, &interp, sizeof interp);
+            const uintptr_t fn = reinterpret_cast<uintptr_t>(scriptFn);
+            const uintptr_t slot = Aura::IndexFuncSlot(fn);
+            check("[A1-SCRIPT-FUNCS] a script function's Func is the slot the native-entry index reads", slot == interp,
+                  (std::to_string(slot) + " vs " + std::to_string(interp)).c_str());
+            check("[A1-SCRIPT-FUNCS] ...while its CE code address stays none", Aura::GetFunctionCodeAddr(fn) == 0);
+            memset(scriptFn + 0x80, 0, sizeof interp);
+            check("[A1-SCRIPT-FUNCS] ...and an unbound one (Func null) gives the index nothing",
+                  Aura::IndexFuncSlot(fn) == 0);
+            DynOff::UFUNCTION_FUNC = savedFunc;
+            DynOff::bUFunctionFuncDetected.store(savedDetected);
+        }
+
         // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's
         // capturer installed, a call chosen for its stack alone in a scoped trace.
         {
