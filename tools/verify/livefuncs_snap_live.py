@@ -901,6 +901,9 @@ S3_KNOWN_LONE = 'S3 no lone stack holds known:"process_event"'
 S3_KNOWN_ONE = "S3 every known frame names one function, and no stack holds two"
 S5_WINDOW = "S5 SnapProbe_PerFrame's stack ring keeps about"
 S5_PARAMS = "S5 the parameter counters are untouched by the stack budget (snap skipped and dropped 0)"
+# Both runs read the main recording's own SnapProbe_PerFrame rate from the table fetched after its Stop; the check that
+# the reply carries it, by name, prefixed "S5 " in the --stacks run and "the budget: " in the step-2 run.
+MAIN_TABLE = "the main recording's table carries SnapProbe_PerFrame over a window"
 # The Start's stack list, in order: the DLL numbers stack rings by the accepted items' order, and S1's join checks
 # that every slot of ring s belongs to the s-th name.
 STACK_CHOICES = ("SnapProbe_Call", "SnapProbe_PerFrame")
@@ -2308,6 +2311,10 @@ class ScriptedDll:
         "no_calls": "a plain recording that records no call (the game not running, or the hook down)",
         "no_probes": "a plain recording without the fixture's probes (a package without them)",
         "no_code_addr": "pe_trace_names gives SnapNest_Outer no code_addr",
+        # The table fetched after a traced recording, which both runs read the main recording's own rate from.
+        "main_get_error": "pe_profile_get answers an error once a trace was started",
+        "main_window0": "pe_profile_get reports window_ms 0 once a trace was started",
+        "main_rows_lost": "pe_profile_get loses SnapProbe_PerFrame's row once a trace was started",
         # The game's PDB, as --pdb's session reads it.
         "pdb_none": "no PDB matches the exe",
         "pdb_fragment": "the PDB names one function start at a displacement (a fragment's start)",
@@ -2742,10 +2749,16 @@ class ScriptedDll:
                 self.t = None
             return {"data": {"recording": False, "trace": self._info(), "names": t["names"]}}
         if cmd == "pe_profile_get":
+            traced = any(self.starts)
+            if traced and "main_get_error" in self.f:
+                return {"error": "the scripted pe_profile_get failed (main_get_error)"}
             rows = [] if "no_calls" in self.f else list(self.rows().values())
             if "no_probes" in self.f:   # a game without the fixture's probes still records its own calls
                 rows = [{"class_name": "OtherActor", "func_name": "Tick", "fname_key": None, "count": 100}]
-            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": int(self.window_s() * 1000),
+            if traced and "main_rows_lost" in self.f:
+                rows = [r for r in rows if r.get("func_name") != "SnapProbe_PerFrame"]
+            window_ms = 0 if traced and "main_window0" in self.f else int(self.window_s() * 1000)
+            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": window_ms,
                              "functions": rows[: p.get("limit", len(rows))]}}
         if cmd == "pe_trace_get":
             if t is None:
@@ -3102,8 +3115,8 @@ def self_test() -> int:
     # What a live --stacks run on a correct DLL prints: main() checks the fixture first, then S0-S7.
     fixture_names = ["the table recorded calls"] + [f"{FIXTURE_CLASS}::{p} was called" for p in PROBES]
     expect(f"dry run: --stacks on a DLL with step 3 holds every check, the fixture's {len(fixture_names)} then S0-S7's "
-           f"25, {len(fixture_names) + 25} in all, and records 7 facts",
-           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == len(fixture_names) + 25 and
+           f"26, {len(fixture_names) + 26} in all, and records 7 facts",
+           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == len(fixture_names) + 26 and
                     ran(ch)[:len(fixture_names)] == fixture_names and
                     {n.split()[0] for n in ran(ch)[len(fixture_names):]} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
                     recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and len(recorded(ch, "S6")) == 6 and
@@ -3222,10 +3235,10 @@ def self_test() -> int:
 
     # --pdb against the scripted game's PDB.
     pdb_checks = [PDB_DISP, PDB_PE, PDB_OUTER]
-    expect(f"dry run --pdb: every check holds, {len(fixture_names) + 25} and the PDB's {len(pdb_checks)}, with 8 "
+    expect(f"dry run --pdb: every check holds, {len(fixture_names) + 26} and the PDB's {len(pdb_checks)}, with 8 "
            "recorded (the first in-scope stack named)",
            lambda: (lambda ch: failing(ch) == [] and [n for n in ran(ch) if n.startswith("PDB")] == pdb_checks and
-                    len(ran(ch)) == len(fixture_names) + 25 + len(pdb_checks) and len(ch.records) == 8 and
+                    len(ran(ch)) == len(fixture_names) + 26 + len(pdb_checks) and len(ch.records) == 8 and
                     len(recorded(ch, "PDB")) == 1)(dry_run(ScriptedDll(), argv=("--pdb",))[0]))
 
     def pdb_stack_record(ch: Checks) -> str:
@@ -3610,7 +3623,7 @@ def self_test() -> int:
            "counters not run as the budget refused nothing, every other check run at the old 30",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_ran(r[0]) == [] and
                     len(s5_skipped(r[0])) == 1 and "4.0/s" in s5_skipped(r[0])[0] and "2.0/s" in s5_skipped(r[0])[0]
-                    and s5_vacuous(r[0]) and len(ran(r[0])) == len(fixture_names) + 23)(s5_run(4)))
+                    and s5_vacuous(r[0]) and len(ran(r[0])) == len(fixture_names) + 24)(s5_run(4)))
     expect("dry run: where the stack budget refuses nothing, a DLL that would count its refusals in the parameter "
            "counters shows nothing: the counter check is not run, never passed",
            lambda: all(failing(r[0]) == [] and s5_vacuous(r[0])
@@ -3627,6 +3640,16 @@ def self_test() -> int:
     expect("dry run: the main recording slower than the plain one but still 1.5x over the budget: S5 runs and holds",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and len(s5_ran(r[0])) == 1 and
                     S5_PARAMS in ran(r[0]))(s5_run(60, main_pf_rate=46)))
+    # The second review's LOW: a reply that cannot give the main rate -- an error, no window, no row for the probe --
+    # is not a slow probe. Its own check fails, and S5's window runs from the trace ring, as it did before the main
+    # rate was read, rather than standing down at "0.0/s".
+    s5_main, main_faults = f"S5 {MAIN_TABLE}", ("main_get_error", "main_window0", "main_rows_lost")
+    for fault in main_faults:
+        caught((fault,), s5_main)
+    expect("dry run: a main table without SnapProbe_PerFrame's rate fails its own check, and S5's window still runs "
+           "and holds, never stood down",
+           lambda: all((lambda r: fail_set(r[0], s5_main) and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [])(
+               s5_run(faults=(fault,))) for fault in main_faults))
     s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
     expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: SnapProbe_PerFrame spends the "
            "total and SnapProbe_Call's stacks are refused; S3's two in-scope checks and S5's window not run, the "
@@ -3682,6 +3705,14 @@ def self_test() -> int:
            lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
                     "60.0/s" in step2_line(r[0])[1][0] and "30.0/s" in step2_line(r[0])[1][0])(
                step2_run(60, main_pf_rate=30)))
+    # The same for the step-2 run, whose other checks fail on the scripted DLL: only these two lines are read.
+    step2_main = f"the budget: {MAIN_TABLE}"
+    expect("dry run step 2: a whole main table passes its own check",
+           lambda: (lambda ch: step2_main in ran(ch) and step2_main not in failing(ch))(step2_run()[0]))
+    expect("dry run step 2: a main table without SnapProbe_PerFrame's rate fails its own check, and the budget check "
+           "still runs and holds",
+           lambda: all((lambda ch: step2_main in failing(ch) and step2_line(ch) == ([True], []))(
+               step2_run(faults=(fault,))[0]) for fault in main_faults))
     exercised.update(("param_dropped0", "param_overkept"))
     expect("dry run step 2: a parameter ring that counts no drop fails the budget check",
            lambda: step2_line(step2_run(faults=("param_dropped0",))[0]) == ([False], []))
