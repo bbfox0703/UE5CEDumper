@@ -405,7 +405,10 @@ source and editor are installed for when they are needed.
   e29ec156 / green 1996e3c6, 5 / 5 mutants). Live look: DQ XI S, OnDrawMapSymbolRenderTarget's stacks.
   ✅ `[SNAPRIG-NAMES]` (LOW, the same review; built 2026-10-08, offline by `--self-test`; live 2026-10-09 on
   DumperTest58 Shipping, `--stacks --choose "" --names --stack-depth 62`: the 14 functions chosen named no frame, so
-  both A1 checks were reported not run with that reason, as designed -- the first run with names is owed on DQ XI S):
+  both A1 checks were reported not run with that reason, as designed; **with names, live 2026-10-09** on DQ XI S,
+  DLL 3645, the autosave loaded: 48 per-frame functions chosen, 195 frames named over 2 distinct entries, both
+  entries' `ufunc` a Function of that name in that class and their `fn` at UFunction+0xC0, all 195 one frame from the
+  next `process_event` frame toward the root, 7 / 7 and 8 recorded):
   `livefuncs_snap_live.py --stacks --choose` checks no S3-A1 name; DQ XI
   S's were checked by scratch probes (`get_object` on each `ufunc`; the site's `fn` at one offset inside the
   UFunction; the named frame exactly one below a `known: "process_event"` frame, which sits directly below the hook).
