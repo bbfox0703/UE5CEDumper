@@ -319,6 +319,11 @@ source and editor are installed for when they are needed.
   main recording's own SnapProbe_PerFrame rate is under 1.5x the budget (LOW-1). The total is one budget for every
   stack choice, spent first by SnapProbe_PerFrame each second: a chosen budget leaves the others 1.5x their rates in
   it, and a given total that does not is said in the output, with S3's two in-scope checks and S5 not run (LOW-2).
+  **The second review's findings, fixed 2026-10-08:** MED-2 went too far -- where the window cannot run the stack
+  budget may still refuse calls, and a DLL counting them as parameter skips passed. The counters are now checked
+  wherever a call was refused (measured beside the DLL's counters: the main table's SnapProbe_PerFrame count over
+  its ring's written, or trace.stack's skips and drops), a nonzero one always fails, and only where nothing was
+  refused are they reported not run (MED-A).
   ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places

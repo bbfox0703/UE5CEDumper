@@ -59,10 +59,12 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
   S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
-      counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits), or the main
-      recording itself ran SnapProbe_PerFrame under 1.5x the budget, both are reported not run with those rates,
-      never failed nor passed: on a correct DLL such a budget drops nothing, and so leaves nothing a DLL could count
-      in the wrong place
+      counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits, or a total that
+      starves the others), or the main recording itself ran SnapProbe_PerFrame under 1.5x the budget, the window is
+      reported not run with those rates, never failed nor passed. The counters are checked wherever the stack budget
+      refused a call -- the main table counts more SnapProbe_PerFrame calls than its ring wrote, or trace.stack counts
+      a skip or a drop -- and a nonzero one fails whatever was refused; only where nothing was refused, and both are
+      0, are they reported not run, since 0 there proves nothing
   S6  recorded: mean and max microseconds a capture, captures a second, calls/s with and without stacks, the CPU,
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
@@ -1543,13 +1545,26 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
               int_or(stack2.get("dropped_budget"), 0) > 0,
               f"written {pf_ring.get('written')}, ring dropped {pf_ring.get('dropped_budget')}, "
               f"stack.dropped_budget {stack2.get('dropped_budget')}")
-        check(S5_PARAMS, snap2.get("skipped_budget") == 0 and snap2.get("dropped_budget") == 0,
-              f"skipped {snap2.get('skipped_budget')}, dropped {snap2.get('dropped_budget')}")
     else:
         # A budget that cannot bite drops nothing on a correct DLL: a failed window would blame the DLL for the run.
-        # Refusing nothing, it also leaves nothing to miscount, so the counters at 0 would pass on any DLL.
         check.not_run(f"{S5_WINDOW} the budget a second, and the budget drops the rest", s5_why)
-        check.not_run(S5_PARAMS, s5_why)
+    # The parameter counters, apart from the window: a stack budget that cannot hold SnapProbe_PerFrame to a window
+    # still refuses calls, and a nonzero counter is always a defect here (S0's parameter budget is far above
+    # SnapProbe_Call's calls). Whether anything was refused is measured beside the DLL's own counters, from the main
+    # table: SnapProbe_PerFrame called more often than its ring wrote. Where nothing was, 0 proves nothing.
+    sk_p, dr_p = snap2.get("skipped_budget"), snap2.get("dropped_budget")
+    pf_written = int_or(pf_ring.get("written"), 0)
+    refused = int_or(pf_row.get("count"), 0) > pf_written or \
+        int_or(stack2.get("skipped_budget"), 0) + int_or(stack2.get("dropped_budget"), 0) > 0
+    if refused or (sk_p, dr_p) != (0, 0):
+        check(S5_PARAMS, (sk_p, dr_p) == (0, 0), f"skipped {sk_p}, dropped {dr_p}; the stack budget "
+              f"{'refused calls' if refused else 'refused nothing'} (SnapProbe_PerFrame {pf_row.get('count')} calls, "
+              f"{pf_written} written; stack skipped {stack2.get('skipped_budget')}, dropped "
+              f"{stack2.get('dropped_budget')})")
+    else:
+        check.not_run(S5_PARAMS, f"the stack budget refused nothing (SnapProbe_PerFrame {pf_row.get('count')} calls, "
+                                 f"{pf_written} written; stack skipped and dropped 0), so the counters at 0 prove "
+                                 f"nothing")
 
     # ---- S6: the cost, recorded.
     say("\nS6 -- the cost (recorded):")
