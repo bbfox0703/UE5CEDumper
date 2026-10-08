@@ -65,8 +65,10 @@ from __future__ import annotations
 
 import argparse
 import base64
+import contextlib
 import ctypes
 import ctypes.wintypes as w
+import io
 import json
 import os
 import pathlib
@@ -1096,21 +1098,23 @@ def calls_per_s(table: dict) -> float:
     return table.get("total_calls", 0) / (table.get("window_ms", 0) / 1000.0) if table.get("window_ms") else 0.0
 
 
-def read_stack_rings(c: PipeClient, gen: int, rings: int) -> dict[int, dict]:
+def read_stack_rings(c, gen: int, rings: int) -> dict[int, dict]:
     def fetch(ring: int):
         return lambda frm: data_of(c.request("pe_snap_get", kind="stack", gen=gen, ring=ring,
                                              **{"from": frm, "max": 4096}))
     return {s: page_stack_ring(fetch(s), s) for s in range(rings)}
 
 
-def run_stacks(c: PipeClient, check: Checks, out: dict, args, rows: dict) -> None:
-    """--stacks on DumperTest58: S0-S7 (the module docstring). `rows` are the fixture check's rows, by name."""
+def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = None, sleep=time.sleep) -> None:
+    """--stacks on DumperTest58: S0-S7 (the module docstring). `rows` are the fixture check's rows, by name. `pid`
+    (out/host.pid when None) names the game process for frame 0's module; --self-test passes 0 and a sleep that
+    returns at once, with a scripted DLL as `c`."""
     need = ("SnapNest_Outer",) + STACK_CHOICES
     missing = [n for n in need if not isinstance((rows.get(n) or {}).get("fname_key"), list)]
     if missing:
         check("the rows the stack run needs carry keys", False, ", ".join(missing))
         return
-    pid = host_pid()
+    pid = host_pid() if pid is None else pid
     exe = module_range(pid) if pid else None
     named = exe_name(pid) if pid else None
     game_module = named or FIXTURE_EXE
@@ -1155,7 +1159,7 @@ def run_stacks(c: PipeClient, check: Checks, out: dict, args, rows: dict) -> Non
     check("S0 one parameter ring, and K with the stack terms",
           snap.get("allocated") is True and snap.get("rings") == 1 and snap.get("slots_per_ring") == k,
           f"rings={snap.get('rings')} K={snap.get('slots_per_ring')} want {k}")
-    time.sleep(args.record_s)
+    sleep(args.record_s)
     t2 = time.perf_counter()
     stop = data_of(c.request("pe_profile_stop"))
     span_lo, span_hi = t2 - t1, t2 - t0   # the trace starts inside the Start and stops when the Stop arrives
@@ -1346,7 +1350,7 @@ def run_stacks(c: PipeClient, check: Checks, out: dict, args, rows: dict) -> Non
     check("S0 ...its altered second key refused by name, the first kept",
           names3.get("stacks") == 1 and any(x.get("func") == "SnapProbe_PerFrame" for x in names3.get("refused", [])),
           json.dumps(names3)[:160])
-    time.sleep(STACKS_ONLY_S)
+    sleep(STACKS_ONLY_S)
     t3 = data_of(c.request("pe_profile_stop")).get("trace", {})
     ent3: list[tuple] = []
     wrong: list[int] = []
@@ -1366,7 +1370,7 @@ def run_stacks(c: PipeClient, check: Checks, out: dict, args, rows: dict) -> Non
                   "separate invocations: cut 4, which the review's H1 took")
 
 
-def run_game_stacks(c: PipeClient, check: Checks, out: dict, args) -> None:
+def run_game_stacks(c, check: Checks, out: dict, args) -> None:
     """--stacks --choose on a real game (the design's 8.3): the busiest named functions whose class or name holds one
     of the substrings, chosen for stacks alone at the given budgets. What it reports is their cost."""
     say(f"\nplain recording ({args.plain_s:.0f} s) to find the functions to choose:")
@@ -1431,9 +1435,204 @@ def run_game_stacks(c: PipeClient, check: Checks, out: dict, args) -> None:
     c.request("pe_trace_release")
 
 
+class ScriptedDll:
+    """A DLL with step 3 answering as the design's section 3 says it does, so --self-test can drive run_stacks and
+    run_game_stacks end to end with no pipe. Its calls are a fixed script shaped like DumperTest58's: four rounds of
+    SnapNest_Outer -> SnapProbe_Call in scope beside a lone SnapProbe_Call, and SnapProbe_PerFrame over its budget.
+    `old` answers as a DLL without step 3; `no_known` as a build whose ProcessEvent call sits in a chained fragment;
+    `ignore_kind` as a DLL that serves parameter items to kind:"stack". It proves the rig's glue, never the DLL."""
+    QPC, BASE, OWN = 10_000_000, 0x7FF6A0000000, 0x7FFC12300000
+    FUNCS = {"SnapNest_Outer": (0x1000, [1, 0, 9, 0], 4), "SnapProbe_Call": (0x1100, [2, 0, 9, 0], 96),
+             "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4)}
+    OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
+    PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
+
+    def __init__(self, old: bool = False, no_known: bool = False, ignore_kind: bool = False) -> None:
+        self.old, self.no_known, self.ignore_kind = old, no_known, ignore_kind
+        self.gen = 0
+        self.t: dict | None = None
+        self.cmds: list[str] = []
+
+    def rows(self) -> dict[str, dict]:
+        """The fixture rows a plain recording gives, by name."""
+        return {n: {"class_name": FIXTURE_CLASS, "func_name": n, "fname_key": k, "parms_size": ps, "num_parms": 1,
+                    "count": 180 if n == "SnapProbe_PerFrame" else 6, "per_frame": n == "SnapProbe_PerFrame"}
+                for n, (_, k, ps) in self.FUNCS.items()}
+
+    def _site(self, rva: int, fn_rva: int, **extra) -> dict:
+        return dict({"addr": f"0x{self.BASE + rva:X}", "module": FIXTURE_EXE, "module_base": f"0x{self.BASE:X}",
+                     "rva": rva, "fn": f"0x{self.BASE + fn_rva:X}", "fn_rva": fn_rva, "unwind": True}, **extra)
+
+    def _stacks(self) -> tuple[list[dict], list[dict]]:
+        g = self._site
+        pe = g(0x9123, 0x9000, **({} if self.no_known else {"known": KNOWN_PE}))
+        own = {"addr": f"0x{self.OWN + 0x45678:X}", "module": "dxgi.dll", "module_base": f"0x{self.OWN:X}",
+               "rva": 0x45678, "fn": f"0x{self.OWN + 0x45000:X}", "fn_rva": 0x45000, "unwind": True, "own": True}
+        call = g(0x4804C9, 0x480440)
+        in_scope = [call, g(self.OUTER_FN + 0x31, self.OUTER_FN), g(0x7010, 0x7000), pe, own, g(0x3010, 0x3000),
+                    g(0x2010, 0x2000), g(0x1010, 0x1000)]
+        return in_scope, [call, g(0x2020, 0x2000), g(0x1010, 0x1000), g(0x0810, 0x0800)]
+
+    def _start(self, t: dict | None) -> dict:
+        if t is None:
+            return {"data": {"recording": True, "hook_active": True}}
+        by_key = {tuple(k): n for n, (_, k, _) in self.FUNCS.items()}
+
+        def good(it: dict) -> bool:
+            keys = it.get("keys") or [[]]
+            return it.get("class") == FIXTURE_CLASS and by_key.get(tuple(keys[0])) == it.get("func")
+        s = t.get("snapshots") or {}
+        st = s.get("stacks") if isinstance(s.get("stacks"), dict) and not self.old else None
+        asked = t.get("ticked_names", []) + s.get("funcs", []) + (st or {}).get("funcs", [])
+        ticks = [i for i in t.get("ticked_names", []) if good(i)]
+        params = [i["func"] for i in s.get("funcs", []) if good(i)]
+        stacks = [i["func"] for i in (st or {}).get("funcs", []) if good(i)]
+        if (not ticks and not params and not stacks) or (t.get("ticked_names") and not ticks):
+            return {"error": "None of the chosen functions is known by that name in this game any more."}
+        self.gen += 1
+        ring_of = {n: k for k, n in enumerate(stacks)}
+        in_scope, lone = self._stacks()
+        recs: list[bytes] = []
+        slots: list[list[dict]] = [[] for _ in stacks]
+        dropped = [0] * len(stacks)
+
+        def call(func: str, flags: int, frames: list[dict], inner=None) -> None:
+            seq = len(recs)
+            flags |= (F_TAKEN if func in params else 0) | (F_STACK_TAKEN if func in ring_of else 0)
+            recs.append(REC.pack(seq, seq * 10, self.FUNCS[func][0], 0x5000, 1, flags))
+            if func in ring_of:
+                slots[ring_of[func]].append({"entry_seq": seq, "frames": frames})
+            if inner:
+                inner()
+            r = len(recs)
+            recs.append(REC.pack(r | RET_BIT, r * 10, seq, 0, 1, 0))
+        if ticks:      # the main recording: scoped by SnapNest_Outer
+            for _ in range(4):
+                call("SnapNest_Outer", F_ROOT, [], lambda: call("SnapProbe_Call", 0, in_scope))
+                call("SnapProbe_Call", F_LONE, lone)
+            if "SnapProbe_PerFrame" in ring_of:
+                for _ in range(20):
+                    call("SnapProbe_PerFrame", F_LONE, lone[:3])
+                dropped[ring_of["SnapProbe_PerFrame"]] = 25
+        else:          # stacks only: every chosen call is lone
+            for n in stacks:
+                for _ in range(3):
+                    call(n, F_LONE, lone)
+        depth = min(max(int((st or {}).get("depth", 16)), 1), 62)
+        caps = [ring_cap(self.FUNCS[n][2]) for n in params]
+        per_round = sum(24 + c for c in caps) + len(stacks) * (24 + 8 * depth)
+        sb = s.get("bytes", 0)
+        clamp = lambda v: min(max(int(v), 1), 0xFFFFFF)
+        captures = sum(len(x) for x in slots)
+        self.t = {"gen": self.gen, "recs": recs, "slots": slots, "depth": depth, "dropped": dropped,
+                  "tracing": True, "ticks": len(ticks), "snap_only": not ticks,
+                  "snap": {"allocated": True, "bytes": sb, "rings": len(params), "per_ring_per_s": 1000,
+                           "total_per_s": 10000, "skipped_budget": 0, "dropped_budget": 0,
+                           "slots_per_ring": (sb - 64 * (len(params) + len(stacks))) // per_round},
+                  "stack": {"rings": len(stacks), "depth": depth,
+                            "per_ring_per_s": clamp(st.get("per_ring_per_s", 100)),
+                            "total_per_s": clamp(st.get("total_per_s", 200)), "captures": captures,
+                            "skipped_budget": 0, "dropped_budget": sum(dropped), "spent_ticks": 7 * captures,
+                            "max_ticks": 7} if stacks else None,
+                  "names": [{"class": FIXTURE_CLASS, "func": n, "tick": n in [i["func"] for i in ticks],
+                             "chosen": n in params, "addresses": 1, "arms": 1,
+                             **({} if self.old else {"stack": n in ring_of})}
+                            for n in self.FUNCS if n in params or n in ring_of or n in [i["func"] for i in ticks]]}
+        names = {"ticks": len(ticks), "chosen": len(params),
+                 "refused": [{"class": i.get("class"), "func": i.get("func"), "why": "no key names it in this process"}
+                             for i in asked if not good(i)]}
+        if not self.old:
+            names["stacks"] = len(stacks)
+        return {"data": {"recording": True, "hook_active": True, "trace": dict(self._info(), names=names)}}
+
+    def _info(self) -> dict:
+        t = self.t
+        if t is None:
+            return {"allocated": False, "tracing": False, "gen": self.gen}
+        d = {"allocated": True, "tracing": t["tracing"], "quiesced": not t["tracing"], "gen": t["gen"],
+             "qpc_freq": self.QPC, "written": len(t["recs"]), "first_valid": 0, "scoped": True,
+             "ticked_names": t["ticks"], "snap_only": t["snap_only"], "snap": t["snap"]}
+        if t["stack"]:
+            d["stack"] = t["stack"]
+        return d
+
+    def _snap_get(self, p: dict) -> dict:
+        t, frm, ring = self.t, p.get("from", 0), p.get("ring", -1)
+        d = dict(self._info(), ring=ring)
+        if t is None or t["tracing"]:
+            return {"data": dict(d, count=0, next=frm, items=[])}
+        if self.old or self.ignore_kind:
+            return {"data": dict(d, count=1, next=frm + 1, orphans=0, items=[
+                {"index": frm, "entry_seq": 1, "phase": "entry", "len": 0, "flags": 0, "arm": 0, "data": ""}])}
+        d.update(kind="stack", rings=[{"ring": k, "cap": 8 * t["depth"], "depth": t["depth"], "written": len(x),
+                                       "first_valid": 0, "skipped_budget": 0, "dropped_budget": t["dropped"][k],
+                                       "spent_ticks": 7 * len(x)} for k, x in enumerate(t["slots"])])
+        if p.get("gen") != t["gen"] or not 0 <= ring < len(t["slots"]):
+            return {"data": dict(d, stale=p.get("gen") != t["gen"], count=0, next=frm, items=[])}
+        sites: list[dict] = []
+        index: dict[str, int] = {}
+        items = []
+        for k, s in enumerate(t["slots"][ring][frm: frm + min(p.get("max", 1024), self.PAGE)]):
+            fr = []
+            for site in s["frames"]:
+                if site["addr"] not in index:
+                    index[site["addr"]] = len(sites)
+                    sites.append(site)
+                fr.append(index[site["addr"]])
+            items.append({"index": frm + k, "entry_seq": s["entry_seq"], "flags": 0, "ticks": 7, "frames": fr})
+        return {"data": dict(d, count=len(items), next=frm + len(items), orphans=0, items=items, sites=sites)}
+
+    def request(self, cmd: str, **p) -> dict:
+        self.cmds.append(cmd)
+        t = self.t
+        if cmd == "pe_profile_start":
+            return self._start(p.get("trace"))
+        if cmd == "pe_profile_stop":
+            if t is None:
+                return {"data": {"recording": False}}
+            t["tracing"] = False
+            return {"data": {"recording": False, "trace": self._info(), "names": t["names"]}}
+        if cmd == "pe_profile_get":
+            rows = list(self.rows().values())
+            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": 3000,
+                             "functions": rows[: p.get("limit", len(rows))]}}
+        if cmd == "pe_trace_get":
+            if t is None:
+                return self._info()
+            frm, mx = p.get("from", 0), p.get("max", 1)
+            part = t["recs"][frm: frm + mx]
+            return dict(self._info(), data=base64.b64encode(b"".join(part)).decode(), next=frm + len(part))
+        if cmd == "pe_trace_names":
+            items = [{"addr": f"0x{a:X}", "class_name": FIXTURE_CLASS, "func_name": n,
+                      "code_addr": f"0x{self.BASE + (self.OUTER_FN if n == 'SnapNest_Outer' else 0x8000):X}"}
+                     for n, (a, _, _) in self.FUNCS.items()]
+            off = p.get("offset", 0)
+            return {"data": {"items": items[off: off + p.get("limit", 20000)], "total": len(items)}}
+        if cmd == "pe_snap_get":
+            return self._snap_get(p)
+        if cmd == "pe_trace_release":
+            self.t = None
+            return {"data": {"released": True}}
+        raise PipeError(f"the scripted DLL has no {cmd}")
+
+
+def dry_run(dll: ScriptedDll, game: bool = False) -> tuple[Checks, dict]:
+    """run_stacks (or run_game_stacks) against a scripted DLL, its printing captured: no pipe, no game, no sleep."""
+    check, out = Checks(), {"label": "dry", "fixture": {"total_calls": 9000, "window_ms": 3000}}
+    args = build_parser().parse_args(["--stacks", "--record-s", "0", "--plain-s", "0"] +
+                                     (["--choose", ""] if game else []))
+    with contextlib.redirect_stdout(io.StringIO()):
+        if game:
+            run_game_stacks(dll, check, out, args)
+        else:
+            run_stacks(dll, check, out, args, dll.rows(), pid=0, sleep=lambda s: None)
+    return check, out
+
+
 def self_test() -> int:
-    """--self-test: the pure pieces of --stacks against hand-made replies. Every rule is shown holding on a good input
-    AND failing on a bad one, so a helper that silently accepts everything cannot pass."""
+    """--self-test: the pure pieces of --stacks against hand-made replies, then run_stacks and run_game_stacks against a
+    scripted DLL. Every rule is shown holding on a good input AND failing on a bad one, so a helper that silently
+    accepts everything cannot pass."""
     results: list[tuple[str, bool, str]] = []
 
     def expect(name: str, fn) -> None:
@@ -1626,6 +1825,38 @@ def self_test() -> int:
            lambda: (lambda a, b: not a.stacks and not a.self_test and a.stack_per_ring == 30 and
                     a.stack_total == 200 and a.record_s == 8.0 and b.stacks and b.stack_per_ring == 7)(
                build_parser().parse_args([]), build_parser().parse_args(["--stacks", "--stack-per-ring", "7"])))
+
+    # The whole run against a scripted DLL: the glue between the helpers, which nothing else runs before a game does.
+    def ran(check: Checks) -> list[str]:
+        return [n for n, _, _ in check.items]
+
+    def failing(check: Checks) -> list[str]:
+        return [n for n, ok, _ in check.items if not ok]
+
+    def recorded(check: Checks, prefix: str) -> list:
+        return [e for n, e, _ in check.records if n.startswith(prefix)]
+    expect("dry run: a DLL with step 3 passes every check, S0 to S7, 22 in all",
+           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == 22 and
+                    {n.split()[0] for n in ran(ch)} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
+                    recorded(ch, "S3 in-scope") == [True] and recorded(ch, "S3 lone") == [True] and
+                    len(recorded(ch, "S4")) == 1 and len(recorded(ch, "S6")) == 6)(dry_run(ScriptedDll())[0]))
+    expect("dry run: S4 finds SnapNest_Outer's entry at frame 1 of every in-scope stack",
+           lambda: any(n.startswith("S4") and g.startswith("4 of 4; at frames [1]")
+                       for n, _, g in dry_run(ScriptedDll())[0].records))
+    expect("dry run (H1): a DLL without step 3 fails S0 and runs no S1-S6",
+           lambda: (lambda ch: failing(ch) == ["S0 the reply carries names.stacks and trace.stack (a DLL with step 3)"]
+                    and not any(n[:2] in ("S1", "S2", "S3", "S5") for n in ran(ch)))(
+               dry_run(ScriptedDll(old=True))[0]))
+    expect("dry run (M4): no known frame is recorded, not failed",
+           lambda: (lambda ch: failing(ch) == [] and recorded(ch, "S3 in-scope") == [False])(
+               dry_run(ScriptedDll(no_known=True))[0]))
+    expect("dry run: a DLL that ignores kind fails S1",
+           lambda: (lambda ch: any(n.startswith("S1") for n in failing(ch)))(
+               dry_run(ScriptedDll(ignore_kind=True))[0]))
+    expect("dry run: --stacks --choose on a scripted game chooses every keyed function and records the cost",
+           lambda: (lambda r: failing(r[0]) == [] and len(r[1]["chosen"]) == 3 and
+                    r[1]["stack_cost"]["census"].get("slots") == 9 and len(r[0].records) == 6)(
+               dry_run(ScriptedDll(), game=True)))
 
     failed = [r for r in results if not r[1]]
     for name, _, why in failed:
