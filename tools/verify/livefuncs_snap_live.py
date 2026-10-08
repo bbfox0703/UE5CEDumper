@@ -2349,10 +2349,19 @@ class ScriptedDll:
         recs: list[bytes] = []
         slots: list[list[dict]] = [[] for _ in stacks]
         dropped = [0] * len(stacks)
+        # The budgets as the DLL clamps them. The total is shared by every stack choice, and SnapProbe_PerFrame, called
+        # every frame, spends it first each second: when what it may keep a second reaches the total, every other
+        # choice's call in the main recording comes after the total is spent.
+        per = min(max(int((st or {}).get("per_ring_per_s", 100)), 1), 0xFFFFFF)
+        total = min(max(int((st or {}).get("total_per_s", 200)), 1), 0xFFFFFF)
+        starved = bool(ticks) and "SnapProbe_PerFrame" in ring_of and min(self.main_pf_rate, per) >= total
 
         def call(func: str, flags: int, frames: list[dict], inner=None, flag32: bool = True, slot: bool = True) -> None:
             seq = len(recs)
-            over = func in ring_of and "nothing_taken" in f
+            spent = starved and func in ring_of and func != "SnapProbe_PerFrame"
+            over = func in ring_of and ("nothing_taken" in f or spent)
+            if spent:
+                dropped[ring_of[func]] += 1
             taken = func in ring_of and flag32 and not over
             flags |= (F_TAKEN if func in params else 0) | (F_STACK_TAKEN if taken else 0) | \
                 (F_STACK_BUDGET if over else 0)
@@ -2378,15 +2387,14 @@ class ScriptedDll:
                 call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and rnd == 0 else lone,
                      flag32=not ("call_noflag" in f and rnd == 0))
             if "SnapProbe_PerFrame" in ring_of:
-                # The DLL admits the first `per` calls of each second, so a probe at main_pf_rate keeps
-                # min(main_pf_rate, per) a second and drops the rest, over the dry run's --record-s (the DLL is never
-                # told the span).
-                per = min(max(int((st or {}).get("per_ring_per_s", 100)), 1), 0xFFFFFF)
-                rate = self.main_pf_rate
-                kept = round(min(rate, per) * DRY_RECORD_S) if self.per_frame is None else self.per_frame
+                # The DLL admits the first `per` calls of each second, and no more than the total, so a probe at
+                # main_pf_rate keeps min(main_pf_rate, per, total) a second and drops the rest, over the dry run's
+                # --record-s (the DLL is never told the span).
+                rate, cap = self.main_pf_rate, min(per, total)
+                kept = round(min(rate, cap) * DRY_RECORD_S) if self.per_frame is None else self.per_frame
                 for k in range(kept):
                     call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3])
-                dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, rate - per) * DRY_RECORD_S)
+                dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, rate - cap) * DRY_RECORD_S)
         else:          # stacks only: every chosen call is lone
             game, game_first = self._game_stack(False), self._game_stack(True)
             for n in [] if "only_empty" in f else stacks:
@@ -3201,12 +3209,23 @@ def self_test() -> int:
                     "30.0/s" in c_["why"])(
                stack_budget_for({"SnapProbe_Call": 25, "SnapProbe_PerFrame": 30}, None, FIXTURE_STACK_TOTAL)) and
            pick(0, 0) == (30, False) and pick(7.875, 3.5) == (30, False))
-    expect("S5 rate: a given budget is sent as given; S5 runs only when SnapProbe_PerFrame is 1.5x above it, or above "
-           "a total under it",
+    expect("S5 rate: a given budget is sent as given; S5 runs only when SnapProbe_PerFrame is 1.5x above it",
            lambda: pick(30, 8, given=20) == (20, True) and pick(30, 8, given=21) == (21, False) and
-           pick(30, 8, given=30) == (30, False) and pick(178, 8, given=100) == (100, True) and
-           pick(30, 8, given=40, total=15) == (40, True) and stack_budget_for(
+           pick(30, 8, given=30) == (30, False) and pick(178, 8, given=100) == (100, True) and stack_budget_for(
                {"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 20, FIXTURE_STACK_TOTAL)["given"] is True)
+    # The review's LOW-2: the total is one budget for every stack choice, and SnapProbe_PerFrame spends it first each
+    # second, so a total that leaves the others no room starves SnapProbe_Call's in-scope calls on a correct DLL.
+    expect("S5 rate: a total under SnapProbe_PerFrame's share plus 1.5x the others' rates starves them: said in why, "
+           "and S5 not run (SnapProbe_PerFrame's share of a shared total is not the budget)",
+           lambda: (lambda c_: (c_["per"], c_["s5"], c_["starves"]) == (40, False, True) and "starve" in c_["why"])(
+               stack_budget_for({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 40, 15)) and
+           stack_budget_for({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, 30, 42)["starves"] is False and
+           stack_budget_for({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, 30, 41)["starves"] is True)
+    expect("S5 rate: a chosen budget leaves the others their room in the total (60/s against 8/s in 35: between 12 and "
+           "23, so 16, not 30), and none fits when the total has no room at all",
+           lambda: pick(60, 8, total=35) == (16, True) and pick(60, 2, total=40) == (30, True) and
+           pick(60, 8, total=20) == (30, False) and
+           stack_budget_for({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, None, 35)["starves"] is False)
 
     def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = (),
                main_pf_rate: float | None = None) -> tuple[Checks, dict, int | None]:
@@ -3256,6 +3275,15 @@ def self_test() -> int:
     expect("dry run: the main recording slower than the plain one but still 1.5x over the budget: S5 runs and holds",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and len(s5_ran(r[0])) == 1 and
                     S5_PARAMS in ran(r[0]))(s5_run(60, main_pf_rate=46)))
+    s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
+    expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: SnapProbe_PerFrame spends the "
+           "total and SnapProbe_Call's stacks are refused; S3's two in-scope checks and S5's two not run, the starving "
+           "total the reason, nothing failed, the budget sent as given",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 40 and r[1]["stack_rings"][0].get("written") == 0 and
+                    s5_both_skipped(r[0]) and
+                    [p for p in s3_in_scope if any(n.startswith(p) and "starve" in why for n, why in r[0].skipped)] ==
+                    list(s3_in_scope) and not any(n.startswith(s3_in_scope) for n in ran(r[0])))(
+               s5_run(30, ("--stack-per-ring", "40", "--stack-total", "15"))))
     expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
            lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],
                                               r[1]["stack_budget"]["s5"]) == (30, False, True))(s5_run()))
