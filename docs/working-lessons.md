@@ -3674,7 +3674,8 @@ other machine does not keep following the old one.
 build.
 
 *How.* Take the items from the dev-log entries and the product commits since the last tag
-(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`). The notes are all English. **One item is
+(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`), and any `[RELNOTES-*]` row in `todo.md`: a section the
+maintainer asked the next notes to carry, with its draft. The notes are all English. **One item is
 one line** (2026-10-02): what changed, with no sub-bullets, no how-it-works and no measurements; a
 reader who wants the detail has the compare link. A thing the user must do or must not do goes in a
 one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
