@@ -1099,6 +1099,30 @@ public class CallTraceViewModelTests
                         && s.Descendants(Av + "ControlTemplate").Any());
     }
 
+    [Fact]
+    public void A_list_narrower_than_its_columns_cuts_them_at_its_edge_instead_of_overlapping_them()
+    {
+        // [CT-COLUMNS-OVERLAP] A DockPanel gives a cell that no longer fits only the width that is left, and Avalonia
+        // centres a fixed-width cell in a narrower slot, so the cell reached back over the column on its left
+        // ("ThreaObject" in the step-3 walkthrough). Aligned left, a cell keeps where it starts and its dragged width,
+        // and runs past the list's edge to be cut there. The layout itself is measured on real controls by the
+        // headless project's CallTraceColumnsTests.
+        var doc = PanelAxaml();
+        var row = RowTemplate(doc);
+        var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
+        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        {
+            var header = outside.Single(e => (string?)e.Attribute("Width") == "{Binding " + width + "}");
+            var cell = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + width + "}");
+            Assert.True((string?)header.Attribute("HorizontalAlignment") == "Left", $"the header's {width} cell is not aligned left");
+            Assert.True((string?)cell.Attribute("HorizontalAlignment") == "Left", $"the row's {width} cell is not aligned left");
+        }
+        // A row's overflow is cut by the list's own viewport. The header is outside the list and is drawn after the
+        // detail pane, so without a clip of its own its overflow would cover that pane.
+        var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding TimeColWidth}").Parent!;
+        Assert.True((string?)headerRow.Attribute("ClipToBounds") == "True", "the header's row does not clip what overflows it");
+    }
+
     // ---- the detail pane's addresses and the function's native entry ([LIVEFUNCS-STEP2] U11) ----
 
     /// <summary>en.axaml's strings, read as the app shows them: Res has no Avalonia application in a unit test, so
