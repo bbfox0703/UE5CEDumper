@@ -55,9 +55,12 @@ design's section 3 (docs/live-funcs-step3-design.md). Each check is named after 
       the CE text `"module"+RVA` added back on psapi's base; every site's module_base + rva and fn add up
   S3  in-scope stacks hold known:"process_event" and after it an `own` frame (the outer hook); lone ones neither;
       every known frame names one function, and no stack holds two. The known halves fail since S3-M3 follows a
-      chained fragment to ProcessEvent's start (the review's M4). A --stack-total that leaves the other choices no room
-      beside what SnapProbe_PerFrame may keep (it spends the total first each second) refuses the in-scope stacks on a
-      correct DLL: the plain rates say so beforehand, and the two in-scope checks, and S5, are reported not run
+      chained fragment to ProcessEvent's start (the review's M4). The stack total is one total, admitted in call
+      order each second, so a --stack-total that leaves the other choices no room beside what SnapProbe_PerFrame may
+      keep can refuse in-scope stacks on a correct DLL. The plain rates predict it (printed, and S5's window is not
+      run on it); the two in-scope checks are reported not run only where the main recording shows it -- no in-scope
+      stack kept, every in-scope SnapProbe_Call entry flagged 64 -- and the total starves the others at
+      SnapProbe_PerFrame's plain or main rate. Otherwise they run, over the stacks kept
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
   S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
@@ -1178,6 +1181,18 @@ def outer_frame(frames: list[dict], code_addr: int, bound: int | None) -> int | 
     return None
 
 
+def others_room(rates: dict[str, float]) -> float:
+    """What a total must leave the choices other than SnapProbe_PerFrame: BUDGET_MARGIN times their rates, summed."""
+    return sum(r for n, r in rates.items() if n != "SnapProbe_PerFrame") * BUDGET_MARGIN
+
+
+def total_starves(rates: dict[str, float], per: int, total: int) -> bool:
+    """Whether one total, admitted in call order each second, can starve the other choices at these rates: beside
+    what SnapProbe_PerFrame may keep of it (its per-function budget, or its rate when lower) it does not leave them
+    their room. It says what may happen; whether it did is the main recording's to show."""
+    return budget_echo(total) < min(budget_echo(per), rates.get("SnapProbe_PerFrame", 0.0)) + others_room(rates)
+
+
 def per_frame_budget(rates: dict[str, float], given: int | None, total: int,
                      default: int = FIXTURE_STACK_PER_RING) -> dict:
     """A fixture run's per-function budget, and whether the check that SnapProbe_PerFrame is held to it can run
@@ -1185,14 +1200,15 @@ def per_frame_budget(rates: dict[str, float], given: int | None, total: int,
     choices for S5, the parameter choices for the step-2 run. The check needs the budget to bite on SnapProbe_PerFrame,
     so it sits BUDGET_MARGIN below that rate, and must not cut the other choices, so it sits BUDGET_MARGIN above theirs.
     What the ring is held to is the lower of the budget and the total, so that is what must bite. The total is one
-    budget for every choice, and SnapProbe_PerFrame, called every frame, spends it first each second: beside what
-    SnapProbe_PerFrame may keep it must leave the others BUDGET_MARGIN times their rates, or it starves them (`starves`:
-    their calls refused, so the checks that count them cannot run), and SnapProbe_PerFrame's share of the total is no
-    budget it can be held to. A given budget is sent as given. Else `default` when it fits; else the whole number
-    between the bounds as far from both as it can be (their geometric mean); else `default`, the check not run."""
+    total for every choice, admitted in call order each second, and SnapProbe_PerFrame, called every frame, may spend
+    it before the others are called: beside what SnapProbe_PerFrame may keep it must leave them BUDGET_MARGIN times
+    their rates, or it may starve them (`starves`, total_starves at the plain rates: a prediction, printed), and
+    SnapProbe_PerFrame's share of the total is then no budget it can be held to. A given budget is sent as given. Else
+    `default` when it fits; else the whole number between the bounds as far from both as it can be (their geometric
+    mean); else `default`, the check not run."""
     pf = rates.get("SnapProbe_PerFrame", 0.0)
     others = [r for n, r in rates.items() if n != "SnapProbe_PerFrame"]
-    top, room = max(others, default=0.0), sum(others) * BUDGET_MARGIN
+    top, room = max(others, default=0.0), others_room(rates)
     lo, hi = top * BUDGET_MARGIN, min(pf / BUDGET_MARGIN, budget_echo(total) - room)
     seen = ", ".join(f"{n} {r:.1f}/s" for n, r in rates.items())
     out: dict = {"rates": dict(rates), "given": given is not None, "bounds": [round(lo, 2), round(hi, 2)]}
@@ -1201,13 +1217,13 @@ def per_frame_budget(rates: dict[str, float], given: int | None, total: int,
         return min(budget_echo(per), budget_echo(total)) * BUDGET_MARGIN <= pf
 
     def starves(per: int) -> bool:
-        return budget_echo(total) < min(budget_echo(per), pf) + room
+        return total_starves(rates, per, total)
 
     def starving(per: int) -> str:
         return (f"; the total {budget_echo(total)}/s is under the {min(budget_echo(per), pf) + room:.1f}/s that "
-                f"SnapProbe_PerFrame may keep plus {BUDGET_MARGIN:g}x the other choices' rates: SnapProbe_PerFrame "
-                f"spends it first each second and starves the others, and its share of the total is no budget it "
-                f"can be held to")
+                f"SnapProbe_PerFrame may keep plus {BUDGET_MARGIN:g}x the other choices' rates: one total, admitted in "
+                f"call order each second, which SnapProbe_PerFrame may spend before the others are called and so "
+                f"starve them, and its share of the total is no budget it can be held to")
     if given is not None:
         why = f"{given}/s as given ({seen})"
         if not bites(given):
@@ -1240,6 +1256,25 @@ def main_rate_problem(main_pf: float, held_to: int, plain_pf: float) -> str | No
         return None
     return (f"the main recording ran SnapProbe_PerFrame at {main_pf:.1f}/s, under {BUDGET_MARGIN:g}x the {held_to}/s "
             f"it is held to, so the budget may not bite (chosen on the plain recording's {plain_pf:.1f}/s)")
+
+
+def starved_in_scope(in_entries: list[tuple], kept: int, rates: dict[str, float], main_pf: float | None, per: int,
+                     total: int) -> str | None:
+    """Why S3's in-scope checks cannot run, or None. `in_entries` are the main recording's in-scope SnapProbe_Call
+    entries, `kept` the in-scope stacks it kept. They stand down only where the recording shows the stack budget
+    refused them all -- none kept, every entry flagged 64 -- and a total explains it: one total, admitted in call order
+    each second, that starves the others at SnapProbe_PerFrame's plain rate or at the main recording's own. Refusals
+    no total explains are the DLL's, and the checks run on them; where some were kept, they run over those."""
+    if kept or not in_entries or not all(e[5] & F_STACK_BUDGET for e in in_entries):
+        return None
+    at = [("the plain recording's", rates.get("SnapProbe_PerFrame", 0.0))] + \
+        ([("the main recording's", main_pf)] if main_pf is not None else [])
+    for which, pf in at:
+        if total_starves(dict(rates, SnapProbe_PerFrame=pf), per, total):
+            return (f"the stack budget refused all {len(in_entries)} in-scope SnapProbe_Call stacks (each entry flagged "
+                    f"64): one total of {budget_echo(total)}/s, admitted in call order each second, starves them at "
+                    f"{which} {pf:.1f}/s SnapProbe_PerFrame")
+    return None
 
 
 def main_table_rate(reply: dict) -> tuple[float | None, str]:
@@ -1439,6 +1474,7 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
         return
     main_reply = c.request("pe_profile_get", limit=32768, include_unloaded=True)   # the main recording's own rates
     table = data_of(main_reply)
+    main_pf, main_what = main_table_rate(main_reply)
 
     # ---- S1: the slots, joined to the entries by entry_seq.
     say("\nS1 -- the slots and their join:")
@@ -1511,22 +1547,30 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
             in_scope.append(sl)
     ns_in = [nesting(sl["frames"]) for sl in in_scope]
     ns_lone = [nesting(sl["frames"]) for sl in lone]
-    # A total that starves the other choices refuses SnapProbe_Call's stacks on a correct DLL: with none in scope, the
-    # in-scope checks would blame the DLL for the run's budgets (per_frame_budget decides it from the plain rates).
-    if budget["starves"]:
-        check.not_run(S3_OWN_IN, budget["why"])
+    # The in-scope SnapProbe_Call entries, a stack kept or not: one refused has no slot, only its flag 64.
+    in_entries = [e for e in entries.values() if ring_func[0] is not None and e[2] == ring_func[0] and
+                  not e[5] & F_LONE and outer is not None and (entries.get(parent.get(e[0])) or (0, 0, None))[2] == outer]
+    n_refused = sum(1 for e in in_entries if e[5] & F_STACK_BUDGET)
+    starved = starved_in_scope(in_entries, len(in_scope), budget["rates"], main_pf, per_sent, total_sent)
+    say(f"     in-scope SnapProbe_Call: {len(in_entries)} entries, {len(in_scope)} stacks kept, {n_refused} refused by "
+        f"the stack budget (64)")
+    unexplained = f"; {n_refused} of {len(in_entries)} in-scope entries refused by the stack budget (64), which the " \
+                  f"total does not explain" if not in_scope and n_refused else ""
+    if starved:
+        check.not_run(S3_OWN_IN, starved)
     else:
         check(S3_OWN_IN, in_scope != [] and all(o is not None for _, o in ns_in),
-              f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}")
+              f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}{unexplained}")
     check("S3 no lone stack holds an own frame", lone != [] and all(o is None for _, o in ns_lone),
           f"{sum(1 for _, o in ns_lone if o is not None)} of {len(lone)} do")
     # The known halves are checks since S3-M3: DescribeCode follows a chained fragment to its primary function, so a
     # ProcessEvent call site in a hot/cold or shrink-wrapped fragment is still labelled (the review's M4).
     with_known = sum(1 for n in ns_in if known_before_own(n))
-    if budget["starves"]:
-        check.not_run(S3_KNOWN_IN, budget["why"])
+    if starved:
+        check.not_run(S3_KNOWN_IN, starved)
     else:
-        check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope), f"{with_known} of {len(in_scope)}")
+        check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope),
+              f"{with_known} of {len(in_scope)}{unexplained}")
     lone_known = sum(1 for kn, _ in ns_lone if kn is not None)
     check(S3_KNOWN_LONE, lone != [] and lone_known == 0, f"{lone_known} of {len(lone)} do")
     # The DLL labels a frame by comparing its function start with one address, so every label names one function;
@@ -1560,7 +1604,6 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     per_s = min(per, total)
     lo, hi = budget_window(per_s, span_lo, span_hi)
     pf_row = fixture_rows(table).get("SnapProbe_PerFrame", {})
-    main_pf, main_what = main_table_rate(main_reply)
     out["stack_budget"]["main_rate"] = main_pf
     stack2, snap2 = st2.get("stack", {}), st2.get("snap", {})
     say(f"     SnapProbe_PerFrame: about {fmt(main_pf, '.0f')} calls/s; its stack ring wrote "
@@ -3443,7 +3486,7 @@ def self_test() -> int:
                     any(n == NAMES_AT and ok and "in 1 of 1 read (2 asked)" in g and "1 gone since" in g and
                         "OnScripted" in g for n, ok, g in r[0].items))(names_run("names_read_failed")))
     # SnapNest_Outer's UFunction, read whole, holds a decoy copy of fn below Func: read alone, the other entry's slot at
-    # the decoy holds something else, which only rules the decoy out; its slot at Func holds fn.
+    # the decoy holds something else, which rules the decoy out rather than failing the DLL; its slot at Func holds fn.
     exercised.add("names_slot_only")
     expect("dry run --names: one entry read whole (fn at a decoy and at Func), the other's window and retries all "
            "failing but its slots answering alone: the decoy's slot contradicts, Func's holds, both held at Func",
@@ -3606,8 +3649,8 @@ def self_test() -> int:
            lambda: pick(30, 8, given=20) == (20, True) and pick(30, 8, given=21) == (21, False) and
            pick(30, 8, given=30) == (30, False) and pick(178, 8, given=100) == (100, True) and per_frame_budget(
                {"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 20, FIXTURE_STACK_TOTAL)["given"] is True)
-    # The review's LOW-2: the total is one budget for every stack choice, and SnapProbe_PerFrame spends it first each
-    # second, so a total that leaves the others no room starves SnapProbe_Call's in-scope calls on a correct DLL.
+    # The review's LOW-2: the total is one total for every stack choice, admitted in call order each second, so a total
+    # that leaves the others no room beside SnapProbe_PerFrame's share may starve SnapProbe_Call on a correct DLL.
     expect("S5 rate: a total under SnapProbe_PerFrame's share plus 1.5x the others' rates starves them: said in why, "
            "and S5 not run (SnapProbe_PerFrame's share of a shared total is not the budget)",
            lambda: (lambda c_: (c_["per"], c_["runs"], c_["starves"]) == (40, False, True) and "starve" in c_["why"])(
@@ -3631,6 +3674,20 @@ def self_test() -> int:
     # The main-rate rule holds at exactly 1.5x, as bites() does (the second review's P1).
     expect("S5 rate: the main recording at exactly 1.5x the budget lets the check run; just under it does not",
            lambda: main_rate_problem(45.0, 30, 60.0) is None and main_rate_problem(44.9, 30, 60.0) is not None)
+    # S3's stand-down from the main recording: measured refusals, every one, and a total that explains them.
+    refused_in = [(k, 0, CALL, 0, 1, F_STACK_BUDGET) for k in range(4)]
+    plain_rates = {"SnapProbe_Call": 2.0, "SnapProbe_PerFrame": 60.0}
+    expect("S3 starve: every in-scope entry refused (64), none kept, and a total that starves them stands the checks "
+           "down, naming the rate that explains it",
+           lambda: "the plain recording's 60.0/s" in (starved_in_scope(refused_in, 0, plain_rates, None, 30, 5) or "")
+           and "the main recording's 60.0/s" in (starved_in_scope(
+               refused_in, 0, dict(plain_rates, SnapProbe_PerFrame=4.0), 60.0, 100, 10) or ""))
+    expect("S3 starve: a stack kept, an entry not refused, no entry, or a total that explains nothing runs the checks",
+           lambda: starved_in_scope(refused_in, 1, plain_rates, 60.0, 30, 5) is None and
+           starved_in_scope(refused_in[:3] + [(3, 0, CALL, 0, 1, F_STACK_TAKEN)], 0, plain_rates, 60.0, 30, 5) is None
+           and starved_in_scope([], 0, plain_rates, 60.0, 30, 5) is None and
+           starved_in_scope(refused_in, 0, plain_rates, 60.0, 30, 200) is None and
+           starved_in_scope(refused_in, 0, dict(plain_rates, SnapProbe_PerFrame=4.0), None, 100, 10) is None)
 
     def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = (),
                main_pf_rate: float | None = None) -> tuple[Checks, dict, int | None]:
@@ -3715,13 +3772,13 @@ def self_test() -> int:
         return [p for p in s3_in_scope if any(n.startswith(p) and all(w in why for w in words)
                                               for n, why in ch.skipped)] == list(s3_in_scope) and \
             not any(n.startswith(s3_in_scope) for n in ran(ch))
-    # The second review's LOW: the total is one total, admitted in call order each second, so SnapProbe_PerFrame spends
-    # it only up to where it is called, and SnapProbe_Call called early in a second still keeps its stack. Whether
-    # the total starves the in-scope stacks is the main recording's to say, not the plain rates' prediction.
-    expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: the total, predicted to starve "
-           "(said, S5's window not run on it), is spent by mid-second, so each second's first round keeps its stacks "
-           "and the later one is refused, booked as skipped; S3's two in-scope checks run over the kept stacks and "
-           "hold, the counters are checked, nothing fails",
+    # The second review's LOW: the total is one total, admitted in call order each second, so what SnapProbe_PerFrame
+    # has spent of it grows through the second, and SnapProbe_Call called early in a second still keeps its stack.
+    # Whether the total starves the in-scope stacks is the main recording's to say, not the plain rates' prediction.
+    expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: the total, predicted to "
+           "starve (said, S5's window not run on it), is spent by mid-second, so each second's first round keeps its "
+           "stacks and the later one is refused, booked as skipped; S3's two in-scope checks run over the kept stacks "
+           "and hold, the counters are checked, nothing fails",
            lambda: (lambda r: failing(r[0]) == [] and r[2] == 40 and r[1]["stack_budget"]["starves"] is True and
                     (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget"),
                      r[1]["stack_rings"][0].get("dropped_budget")) == (4, 4, 0) and

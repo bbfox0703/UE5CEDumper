@@ -316,16 +316,20 @@ source and editor are installed for when they are needed.
   **The review's findings, fixed 2026-10-08:** with the window not run, S5's parameter-counter check is not run
   either, for the same reason -- a budget that refuses nothing leaves nothing to miscount, so 0 there proved nothing
   (MED-2). The budget is still chosen on the plain recording, but S5 also stands down, with both rates, where the
-  main recording's own SnapProbe_PerFrame rate is under 1.5x the budget (LOW-1). The total is one budget for every
-  stack choice, spent first by SnapProbe_PerFrame each second: a chosen budget leaves the others 1.5x their rates in
-  it, and a given total that does not is said in the output, with S3's two in-scope checks and S5 not run (LOW-2).
+  main recording's own SnapProbe_PerFrame rate is under 1.5x the budget (LOW-1). The total is one total for every
+  stack choice, admitted in call order each second: a chosen budget leaves the others 1.5x their rates beside
+  SnapProbe_PerFrame's share, and a given total that does not is said in the output, with S5's window not run (LOW-2).
   **The second review's findings, fixed 2026-10-08:** MED-2 went too far -- where the window cannot run the stack
   budget may still refuse calls, and a DLL counting them as parameter skips passed. The counters are now checked
   wherever a call was refused (measured beside the DLL's counters: the main table's SnapProbe_PerFrame count over
   its ring's written, or trace.stack's skips and drops), a nonzero one always fails, and only where nothing was
   refused are they reported not run (MED-A). A main table that cannot give SnapProbe_PerFrame's rate (an error, no
   window, no row) was read as 0.0/s and stood S5 down; it now fails a check of its own, and S5's window runs from the
-  trace ring as before (LOW).
+  trace ring as before (LOW). The starve prediction from the plain rates no longer stands S3's two in-scope checks
+  down by itself: Linie admits in call order, so a SnapProbe_Call early in a second keeps its stack. They are reported
+  not run only where the main recording shows every in-scope stack refused (none kept, each entry flagged 64) and the
+  total starves the others at SnapProbe_PerFrame's plain or main rate; otherwise they run over the stacks kept. The
+  scripted DLL admits in call order too, and books a refused call taken for its parameters as skipped (LOW).
   ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
