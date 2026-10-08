@@ -55,7 +55,8 @@ SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --sta
 No red run on a DLL without step 3 (H1): it sends no names.stacks, so S0 fails by construction and S1-S6 cannot run.
 --stacks --choose is the design's 8.3 on a real game: the busiest named functions whose class or name holds one of
 the substrings ("" for any), chosen for stacks alone; it reports their cost. --self-test runs the pure pieces
-against hand-made replies, each beside a control that must fail: no pipe, no game.
+against hand-made replies, then both --stacks runs against a scripted DLL (ScriptedDll), each beside a control that
+must fail: no pipe, no game.
 
 Against a DLL older than the item, its checks fail: that run is the item's red. Every recording is stopped in a
 `finally` and the trace released. Exit 0 when every check holds; 1 otherwise; 2 when the pipe or the game is not
@@ -502,7 +503,8 @@ def build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--stack-total", type=int, default=200,
                     help="--stacks: the stack budget a second, every stack choice together")
     ap.add_argument("--self-test", action="store_true",
-                    help="run the --stacks helpers against hand-made replies; needs no pipe and no game")
+                    help="run the --stacks helpers against hand-made replies and the --stacks runs against a "
+                         "scripted DLL; needs no pipe and no game")
     return ap
 
 
