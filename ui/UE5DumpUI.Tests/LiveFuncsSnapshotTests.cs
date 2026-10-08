@@ -1220,6 +1220,80 @@ public class LiveFuncsSnapshotTests
         Assert.False(vm.StackEstimateWarn);
     }
 
+    /// <summary>Review S3U7-HIDDEN-PERFRAME: Hide per-frame leaves a chosen per-frame function off the page, and the DLL
+    /// names its address among the ones it left out. It ran every frame, so it takes its whole budget: counted as not
+    /// called, the line said none was and stayed grey for the dearest choice there is.</summary>
+    [Fact]
+    public async Task A_chosen_per_frame_function_that_Hide_per_frame_left_out_takes_its_whole_budget()
+    {
+        var (vm, dump, _) = await WithPerFrameRows(answer: true);
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "Tick"));
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);   // 60 a second, held to 25
+
+        vm.HidePerFrame = true;
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 3, TotalCalls = 1_210, WindowMs = 10_000, PerFrameHidden = 2, PerFrameFuncs = new[] { "0x1", "0x3" },
+            Entries = new List<PeProfileEntry> { Row("A", "Open", "0x2", new NameKey(2, 0, 9, 0)) },
+        };
+        await Fetch(vm);
+        Assert.Equal(new[] { "A::Tick" }, vm.StackFunctions);
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "Tick");
+        Assert.NotEqual(Line("str.LF.Stack.EstimateNone", LiveFuncsViewModel.StackTotalPerSec,
+                             LiveFuncsViewModel.StackPerFuncPerSec), StackLine(vm));
+        AssertStackLine(vm, 25, 0.25, 10.0, measured: false);
+
+        // Beside a plain choice it adds its budget, not nothing: 25 + 1.
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "Open"));
+        AssertStackLine(vm, 26, 0.26, 10.0, measured: false);
+
+        // At 100 us a capture that is 2.6 ms of the game's time a second: orange, with the warning.
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 100_000);
+        AssertStackLine(vm, 26, 2.6, 100.0, measured: true);
+        Assert.True(vm.StackEstimateWarn);
+    }
+
+    /// <summary>Review S3U7-HIDDEN-PERFRAME: a page that did not show every function recorded cannot say a chosen
+    /// function missing from it was not called -- the cut keeps the highest counts, and a rare one is what this panel
+    /// is for. The line a binding reads when it is told of a change says the same.</summary>
+    [Fact]
+    public async Task A_page_that_did_not_show_every_function_never_calls_a_chosen_one_missing_from_it_not_called()
+    {
+        var (vm, dump) = await WithRatesToEstimate();
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        var told = new List<string>();
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LiveFuncsViewModel.StackEstimate)) told.Add(vm.StackEstimate);
+        };
+        string notCalled = Line("str.LF.Stack.EstimateNone", LiveFuncsViewModel.StackTotalPerSec,
+                                LiveFuncsViewModel.StackPerFuncPerSec);
+
+        // 40 functions recorded and one shown: both choices are below the cut.
+        dump.NextGet = new PeProfileResult
+        {
+            DistinctFuncs = 40, TotalCalls = 9_000, WindowMs = 10_000,
+            Entries = new List<PeProfileEntry> { Row("B", "Other", "0x9", new NameKey(9, 0, 9, 0), count: 5_000) },
+        };
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal(new[] { "A::F", "A::H" }, vm.StackFunctions);
+        string cut = StackLine(vm);
+        Assert.NotEqual(notCalled, cut);
+        Assert.NotEqual(notCalled, told.Last());
+        string notShown = Line("str.LF.Stack.EstimateNotShown", LiveFuncsViewModel.StackTotalPerSec,
+                               LiveFuncsViewModel.StackPerFuncPerSec);
+        Assert.Equal(notShown, cut);
+        Assert.Equal(notShown, told.Last());
+        Assert.False(vm.StackEstimateWarn);
+
+        // The same choices against a page that showed every function recorded: not called is then what they were.
+        dump.NextGet = ResultOf(10_000, Row("B", "Other", "0x9", new NameKey(9, 0, 9, 0), count: 5_000));
+        await vm.RefreshCommand.ExecuteAsync(null);
+        Assert.Equal(notCalled, StackLine(vm));
+        Assert.Equal(notCalled, told.Last());
+    }
+
     [Fact]
     public async Task A_capture_costs_what_the_last_Stop_measured_when_it_took_stacks_and_10_us_assumed_otherwise()
     {
