@@ -2370,6 +2370,9 @@ class ScriptedDll:
     # names_func_low's: where UE5 keeps Func in a UFunction of about 0xE0 bytes, so a read retried at 0xE0 still
     # reaches it -- the path a read at the end of a block takes on a real game.
     FUNC_LOW = 0xD8
+    # names_slot_only's second decoy in SnapNest_Outer's UFunction: inside the window the DLL searches for Func, so it
+    # is a candidate the other entry's slot, read alone, must rule out; the decoy below the window never is one.
+    DECOY_IN = 0x88
     INTERP = 0x2A000             # the script function whose names the interpreter's frames carry
     NAMES_MANY = 70              # names_many's extra entries: more than the run asks about
     # The UFunctions a stack's names point at, as get_object and read_mem answer them: ufunc -> (class, func, the
@@ -2486,7 +2489,8 @@ class ScriptedDll:
                                  "page that cannot be read: read_mem past it fails, its slot at the common offset "
                                  "read alone too, while get_object, asked again, still names it",
         "names_slot_only": "read_mem of the interpreter's UFunction fails at the window and every retry, yet a read of "
-                           "one of its slots alone (8 bytes) answers",
+                           "one of its slots alone (8 bytes) answers; SnapNest_Outer's holds a second decoy copy of "
+                           "its fn inside the DLL's window (DECOY_IN)",
         "names_unreadable": "read_mem fails at every size for every UFunction",
         "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
         "names_empty": "SnapNest_Outer's UFunction named \"\": its frames carry class and func \"\", and get_object "
@@ -2609,6 +2613,8 @@ class ScriptedDll:
         offsets = tuple(func_at if o == self.FUNC_AT else o for o in row[4])
         if f & {"names_short_only", "names_empty_edge"} and outer:
             offsets = (self.FUNC_AT,)
+        if "names_slot_only" in f and outer:
+            offsets += (self.DECOY_IN,)
         if "names_fn_absent" in self.f and outer:
             offsets = ()
         if "names_offset_split" in self.f and u == self.INTERP:
@@ -3514,10 +3520,17 @@ def self_test() -> int:
            common_offset([[0xD8], []]) is None and common_offset([]) is None)
     expect("A1: an offset past where an entry's read stopped is not contradicted by it; one inside its read is",
            lambda: common_offset([[0x30, 0x148], []], [0x160, 0xE0]) == 0x148 and
-           common_offset([[0x30, 0x148], [0x30]], [0x160, 0xE0]) == 0x30 and
+           common_offset([[0x88, 0x148], [0x88]], [0x160, 0xE0]) == 0x88 and
            common_offset([[0x148], []], [0x160, 0x160]) is None and
            common_offset([[0x148], []], [0x160, 0x14C]) == 0x148 and common_offset([[0x148], []], [0x160, 0x150]) is None
            and common_offset([[], []], [0xE0, 0xC8]) is None)
+    # [SNAPRIG-NAMES] The round-3 review's LOW: Aura's EnsureUFunctionFuncOffset tries Func at +0x80..+0x158 only, so
+    # a copy of fn outside that window is a decoy by construction, and NAMES_READ is the window's end.
+    expect("A1: only offsets inside the DLL's window (0x80..0x158) are candidates: a copy below or past it never is, "
+           "so with one entry read the decoy below the window loses to Func; NAMES_READ ends the window",
+           lambda: common_offsets([[0x78, 0x80, 0x158, 0x160]], [0x168]) == [0x80, 0x158] and
+           common_offsets([[0x30, 0x148]]) == [0x148] and common_offset([[0x30], []], [0x160, 0x20]) is None and
+           NAMES_READ == 0x158 + 8)
 
     names_argv = ("--names",)
 
@@ -3594,6 +3607,7 @@ def self_test() -> int:
            "kept out of N, and fails nothing",
            lambda: (lambda r: failing(r[0]) == [] and object_asks(r[2]) == ["1000", "2A000", "2A000"] and
                     r[1]["names"]["per_entry"][1]["verdict"] == "gone" and
+                    r[1]["names"]["func_offset"] == ScriptedDll.FUNC_AT and
                     read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and
                     slot_reads(r[2]) == [f"{ScriptedDll.INTERP + (r[1]['names']['func_offset'] or 0):X}"] and
                     (r[1]["names"]["held"], r[1]["names"]["gone"]) == (1, 1) and
@@ -3605,7 +3619,8 @@ def self_test() -> int:
     exercised.add("names_slot_only")
     expect("dry run --names: one entry read whole (fn at a decoy and at Func), the other's window and retries all "
            "failing but its slots answering alone: the decoy's slot contradicts, Func's holds, both held at Func",
-           lambda: (lambda r: failing(r[0]) == [] and slot_reads(r[2]) == ["2A030", interp_slot] and
+           lambda: (lambda r: failing(r[0]) == [] and
+                    slot_reads(r[2]) == [f"{ScriptedDll.INTERP + ScriptedDll.DECOY_IN:X}", interp_slot] and
                     (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["gone"]) ==
                     (ScriptedDll.FUNC_AT, 2, 0) and
                     any(n == NAMES_AT and ok and f"+0x{ScriptedDll.FUNC_AT:X} in 2 of 2 read (2 asked)" in g
