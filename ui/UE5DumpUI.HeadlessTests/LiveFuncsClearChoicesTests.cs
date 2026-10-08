@@ -104,8 +104,9 @@ public class LiveFuncsClearChoicesTests
         // Above the table, with no line of controls between: less than its own height of room under it.
         Assert.True(box.Bottom <= gridTop + 0.5, $"Clear choices is not above the table ({layout})");
         Assert.True(gridTop - box.Bottom < box.Height, $"something sits between Clear choices and the table ({layout})");
-        // Over the three choice columns, from the first one's left edge to no further than the last one's right.
-        Assert.True(box.Left >= trace.Left - 0.5 && box.Right <= stack.Right + 0.5,
+        // Over the three choice columns: it starts above the first and its middle is above them. Its right edge is the
+        // font's, and the headless platform's glyphs are far wider than the app's, so that edge is not pinned.
+        Assert.True(box.Left >= trace.Left - 0.5 && box.Left < trace.Right && box.Center.X < stack.Right,
                     $"Clear choices is not over the choice columns ({layout})");
     });
 

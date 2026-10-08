@@ -284,8 +284,16 @@
 
     <!-- Status + progress. DockPanel (not a horizontal StackPanel) so the status
          TextBlock gets a bounded width and WRAPS long messages instead of being
-         clipped at the window edge. -->
+         clipped at the window edge. Clear choices leads it, at its foot: this is the line just above the table, so the
+         button sits over the choice columns it empties, and it costs the controls above the table no line of their own.
+         Shown with those columns, and disabled while recording like the row clears it joins. -->
     <DockPanel DockPanel.Dock="Top" Margin="0,0,0,4" LastChildFill="True">
+      <Button DockPanel.Dock="Left" Content="{StaticResource str.LF.ClearChoices}"
+              Command="{Binding ClearChoicesCommand}"
+              IsEnabled="{Binding !IsRecording}"
+              IsVisible="{Binding TraceAvailable}"
+              ToolTip.Tip="{StaticResource str.Tip.LF.ClearChoices}"
+              Padding="6,2" FontSize="11" VerticalAlignment="Bottom" Margin="0,0,8,0" Cursor="Hand"/>
       <ProgressBar DockPanel.Dock="Left" IsIndeterminate="True"
                    IsVisible="{Binding IsBusy}"
                    Width="80" Height="4" VerticalAlignment="Center" Margin="0,0,8,0"/>

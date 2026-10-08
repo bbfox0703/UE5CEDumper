@@ -1328,6 +1328,7 @@
     <sys:String x:Key="str.LF.Trace.ExcludePerFrame">Leave out per-frame</sys:String>
     <sys:String x:Key="str.LF.Trace.TickedCount">Ticked: {0}</sys:String>
     <sys:String x:Key="str.LF.Trace.ClearTicks">Clear ticks</sys:String>
+    <sys:String x:Key="str.LF.ClearChoices">Clear choices</sys:String>
     <sys:String x:Key="str.LF.Trace.Open">Open in Call Trace</sys:String>
     <sys:String x:Key="str.LF.Trace.Confirm.Title">Trace every call?</sys:String>
     <sys:String x:Key="str.LF.Trace.Confirm.Message">No function is ticked, so the trace will record every call the game makes: a wide range to look through, and more load on the game while it records. To trace only inside some functions, tick them in the table. This is asked once per session.</sys:String>
@@ -1362,6 +1363,7 @@
     <sys:String x:Key="str.Tip.LF.Trace.Memory">What a buffer that fills costs. The game holds the whole buffer from Start until this UI has read the trace. While this UI loads it, it holds the buffer's records and the call tree, then only the tree. A recording that stops before the buffer fills costs this UI less. The game's figure is the buffer itself; the UI's figures were measured on the developer's PC and are only a reference: another PC, game or trace can use more or less. Compared with the memory free now: above it this is a warning, and Start still runs.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Estimate">How long the buffer would last with every call traced, at your last recording's call rate. Ticked functions and leaving out per-frame ones make it last longer.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.ExcludePerFrame">Leave out of the trace the functions the previous recording found firing every frame (Tick and the like). What they call is still traced.</sys:String>
+    <sys:String x:Key="str.Tip.LF.ClearChoices">Untick every box in the Trace, Params? and Stack? columns at once: the functions ticked for the trace, and those chosen for parameters or a stack. Clear ticks and the Parameters row's Clear each empty only their own. Not while recording: a recording keeps the choices it started with.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Ticked">Functions ticked in the table. A traced Start records only their calls and what they call; with none ticked, every call.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Open">Open the trace the last recording kept in the Call Trace tab.</sys:String>
     <sys:String x:Key="str.Tip.LF.Trace.Tick">Trace only this function's calls and what they call.</sys:String>

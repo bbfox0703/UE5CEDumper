@@ -879,8 +879,14 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshTickedList();
     }
 
+    /// <summary>Empties the table's three choice columns at once. It runs the two clears rather than a loop of its own,
+    /// so whatever they bring up to date follows here too, and it is refused while recording because they are.</summary>
     [RelayCommand]
-    private void ClearChoices() { }
+    private void ClearChoices()
+    {
+        ClearTicks();
+        ClearSnapshots();
+    }
 
     private void RefreshTickedList()
     {
