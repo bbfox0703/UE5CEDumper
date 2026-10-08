@@ -2326,6 +2326,8 @@ class ScriptedDll:
         "bad_ref": "a frame index past its page's sites",
         "short_slot": "a stack slot of two frames",
         "nothing_taken": "every stack choice over its budget: entries flagged 64, no slot written",
+        "call_refused": "every SnapProbe_Call stack of the main recording refused as over the budget (flagged 64, "
+                        "skipped) though the total has room for it",
         "known_no_fn": "a known frame without unwind data, so without fn",
         "snap_skipped": "the stack budget's refusals counted as skips in the parameter counters",
         "snap_phantom": "the parameter counters count one skip though no budget refused anything",
@@ -2599,25 +2601,45 @@ class ScriptedDll:
         lone = self._stacks()[1]
         recs: list[bytes] = []
         slots: list[list[dict]] = [[] for _ in stacks]
-        dropped = [0] * len(stacks)
-        # The budgets as the DLL clamps them. The total is shared by every stack choice, and SnapProbe_PerFrame, called
-        # every frame, spends it first each second: when what it may keep a second reaches the total, every other
-        # choice's call in the main recording comes after the total is spent.
+        dropped = [0] * len(stacks)           # each stack ring's lone calls refused, and so not recorded at all
+        skipped = [0] * len(stacks)           # its calls recorded for their parameters without their stack
+        # The budgets as the DLL clamps them, admitted as Linie's StackAdmit does: in call order within each second,
+        # the ring's word first, then the total's, which every stack choice shares. A call the total refuses has used
+        # one of its ring's places.
         per = min(max(int((st or {}).get("per_ring_per_s", 100)), 1), 0xFFFFFF)
         total = min(max(int((st or {}).get("total_per_s", 200)), 1), 0xFFFFFF)
-        starved = bool(ticks) and "SnapProbe_PerFrame" in ring_of and min(self.main_pf_rate, per) >= total
+        ring_word: dict[tuple[str, int], int] = {}
+        total_word: dict[int, int] = {}
         p_kept = {n: 0 for n in params}       # each parameter choice's calls copied, and those its budget dropped
         p_dropped = {n: 0 for n in params}
 
-        def call(func: str, flags: int, frames: list[dict], inner=None, flag32: bool = True, slot: bool = True) -> None:
+        def admit(func: str, at: float) -> bool:
+            sec = int(at)
+            if ring_word.get((func, sec), 0) >= per:
+                return False
+            ring_word[(func, sec)] = ring_word.get((func, sec), 0) + 1
+            if total_word.get(sec, 0) >= total:
+                return False
+            total_word[sec] = total_word.get(sec, 0) + 1
+            return True
+
+        def call(func: str, flags: int, frames: list[dict], at: float = 0.0, inner=None, flag32: bool = True,
+                 slot: bool = True, forced: bool = False) -> None:
+            """One call at `at` seconds into the recording. `forced` keeps its stack whatever the budget, as a DLL that
+            keeps the wrong count does."""
+            stacked = func in ring_of and flag32
+            refuse = "nothing_taken" in f or ("call_refused" in f and func == "SnapProbe_Call" and bool(ticks))
+            taken = stacked and not refuse and (forced or admit(func, at))
+            over = stacked and not taken
+            if over and flags & F_LONE and func not in params:
+                # Linie's TraceEnter: a lone call that took nothing it was chosen for is dropped -- no record at all.
+                dropped[ring_of[func]] += 1
+                return
+            if over:      # recorded for its parameters, flagged, its stack counted as skipped
+                skipped[ring_of[func]] += 1
             seq = len(recs)
             if func in params:
                 p_kept[func] += 1
-            spent = starved and func in ring_of and func != "SnapProbe_PerFrame"
-            over = func in ring_of and ("nothing_taken" in f or spent)
-            if spent:
-                dropped[ring_of[func]] += 1
-            taken = func in ring_of and flag32 and not over
             flags |= (F_TAKEN if func in params else 0) | (F_STACK_TAKEN if taken else 0) | \
                 (F_STACK_BUDGET if over else 0)
             recs.append(REC.pack(seq, seq * 10, self.funcs[func][0], 0x5000, 1, flags))
@@ -2635,20 +2657,29 @@ class ScriptedDll:
             r = len(recs)
             recs.append(REC.pack(r | RET_BIT, r * 10, seq, 0, 1, 0))
         if ticks:      # the main recording: scoped by SnapNest_Outer
-            for rnd in range(4):
-                in_scope = self._stacks(rnd)[0]
-                call("SnapNest_Outer", F_ROOT, [], lambda fr=in_scope, r=rnd: call(
-                    "SnapProbe_Call", 0, fr, slot=not ("slot_lost" in f and r == 0)))
-                call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and rnd == 0 else lone,
-                     flag32=not ("call_noflag" in f and rnd == 0))
-            if "SnapProbe_PerFrame" in ring_of:
-                # The DLL admits the first `per` calls of each second, and no more than the total, so a probe at
-                # main_pf_rate keeps min(main_pf_rate, per, total) a second and drops the rest, over the dry run's
-                # --record-s (the DLL is never told the span).
+            # The calls in time order over the dry run's --record-s (the DLL is never told the span): four rounds
+            # evenly spaced, each SnapNest_Outer -> SnapProbe_Call then a lone SnapProbe_Call, and SnapProbe_PerFrame
+            # every 1/main_pf_rate seconds from the start, a frame's call before a round's at the same instant.
+            pf_events = "SnapProbe_PerFrame" in ring_of and self.per_frame is None
+            events = [((rnd + 0.5) * DRY_RECORD_S / 4, 1, rnd) for rnd in range(4)]
+            if pf_events:
+                events += [(k / self.main_pf_rate, 0, k) for k in range(round(self.main_pf_rate * DRY_RECORD_S))]
+            for at, kind, k in sorted(events):
+                if kind == 0:
+                    call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3], at)
+                    continue
+                in_scope = self._stacks(k)[0]
+                call("SnapNest_Outer", F_ROOT, [], at, lambda fr=in_scope, r=k, a=at: call(
+                    "SnapProbe_Call", 0, fr, a, slot=not ("slot_lost" in f and r == 0)))
+                call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and k == 0 else lone, at,
+                     flag32=not ("call_noflag" in f and k == 0))
+            if "SnapProbe_PerFrame" in ring_of and not pf_events:
+                # A DLL that keeps the wrong count writes per_frame slots whatever the budget, and counts as dropped
+                # what a probe at main_pf_rate over min(per, total) a second would drop.
                 rate, cap = self.main_pf_rate, min(per, total)
-                kept = round(min(rate, cap) * DRY_RECORD_S) if self.per_frame is None else self.per_frame
-                for k in range(kept):
-                    call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3])
+                for k in range(self.per_frame):
+                    call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3],
+                         forced=True)
                 dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, rate - cap) * DRY_RECORD_S)
             elif "SnapProbe_PerFrame" in params:
                 # Step 2: chosen for its parameters, it is held to the parameter budget by the same rule.
@@ -2658,11 +2689,12 @@ class ScriptedDll:
                     call("SnapProbe_PerFrame", F_LONE, [])
                 if "param_dropped0" not in f:
                     p_dropped["SnapProbe_PerFrame"] = round(max(0.0, rate - cap) * DRY_RECORD_S)
-        else:          # stacks only: every chosen call is lone
+        else:          # stacks only: every chosen call is lone, a few of each, all kept (over_total: past the total)
             game, game_first = self._game_stack(False), self._game_stack(True)
             for n in [] if "only_empty" in f else stacks:
                 for k in range(1000 if "over_total" in f else 3):
-                    call(n, F_LONE | (F_TAKEN if "only_flags" in f and k == 0 else 0), game if recs else game_first)
+                    call(n, F_LONE | (F_TAKEN if "only_flags" in f and k == 0 else 0), game if recs else game_first,
+                         forced=True)
             if "only_other" in f:   # flagged as a kept stack would be, so only the function tells it apart
                 call("SnapProbe_PerFrame", F_LONE | F_STACK_TAKEN, [])
         depth = min(max(int((st or {}).get("depth", 16)), 1), 62)
@@ -2677,7 +2709,7 @@ class ScriptedDll:
         else:
             budget = lambda k, dflt: min(max(int(st.get(k, dflt)), 1), 0xFFFFFF)
         captures = sum(len(x) for x in slots)
-        self.t = {"gen": self.gen, "recs": recs, "slots": slots, "depth": depth, "dropped": dropped,
+        self.t = {"gen": self.gen, "recs": recs, "slots": slots, "depth": depth, "dropped": dropped, "skipped": skipped,
                   "tracing": True, "ticks": len(ticks),
                   "snap_rings": [{"ring": k, "written": p_kept[n], "skipped_budget": 0, "dropped_budget": p_dropped[n]}
                                  for k, n in enumerate(params)],
@@ -2687,13 +2719,14 @@ class ScriptedDll:
                            "per_ring_per_s": 1000, "total_per_s": 10000,
                            # A refusal counted in the wrong place shows only as far as the stack budget refused calls,
                            # as on the DLL it stands for; a phantom count shows whatever was refused.
-                           "skipped_budget": (sum(dropped) if "snap_skipped" in f else 0) + ("snap_phantom" in f),
+                           "skipped_budget": (sum(dropped) + sum(skipped) if "snap_skipped" in f else 0) +
+                                             ("snap_phantom" in f),
                            "dropped_budget": sum(dropped) if "snap_counted" in f else 0,
                            "slots_per_ring": (sb - 64 * (len(params) + stack_terms)) // per_round if per_round else 0},
                   "stack": {"rings": len(stacks) + ("stack_rings_off" in f), "depth": depth * (1 + ("depth_off" in f)),
                             "per_ring_per_s": budget("per_ring_per_s", 100),
                             "total_per_s": budget("total_per_s", 200), "captures": captures,
-                            "skipped_budget": 0, "dropped_budget": 0 if "stack_dropped0" in f else sum(dropped),
+                            "skipped_budget": sum(skipped), "dropped_budget": 0 if "stack_dropped0" in f else sum(dropped),
                             "spent_ticks": 7 * captures, "max_ticks": 7} if stacks else None,
                   "names": [{"class": FIXTURE_CLASS, "func": n, "tick": n in [i["func"] for i in ticks],
                              "chosen": n in params, "addresses": 1, "arms": 1,
@@ -2737,7 +2770,7 @@ class ScriptedDll:
             return {"data": dict(d, count=1, next=frm + 1, orphans=0, items=[
                 {"index": frm, "entry_seq": 1, "phase": "entry", "len": 0, "flags": 0, "arm": 0, "data": ""}])}
         d.update(kind="stack", rings=[{"ring": k, "cap": 8 * t["depth"], "depth": t["depth"], "written": len(x),
-                                       "first_valid": 0, "skipped_budget": 0,
+                                       "first_valid": 0, "skipped_budget": t.get("skipped", [0] * (k + 1))[k],
                                        "dropped_budget": 0 if "ring_dropped0" in self.f else t["dropped"][k],
                                        "spent_ticks": 7 * len(x)} for k, x in enumerate(t["slots"])])
         if p.get("gen") != t["gen"] or not 0 <= ring < len(t["slots"]):
@@ -3676,22 +3709,45 @@ def self_test() -> int:
            lambda: all((lambda r: fail_set(r[0], s5_main) and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [])(
                s5_run(faults=(fault,))) for fault in main_faults))
     s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
-    expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: SnapProbe_PerFrame spends the "
-           "total and SnapProbe_Call's stacks are refused; S3's two in-scope checks and S5's window not run, the "
-           "starving total the reason, the counters checked, nothing failed, the budget sent as given",
-           lambda: (lambda r: failing(r[0]) == [] and r[2] == 40 and r[1]["stack_rings"][0].get("written") == 0 and
+
+    def s3_starved(ch: Checks, *words: str) -> bool:
+        """S3's two in-scope checks both reported not run, never run, each reason holding every word."""
+        return [p for p in s3_in_scope if any(n.startswith(p) and all(w in why for w in words)
+                                              for n, why in ch.skipped)] == list(s3_in_scope) and \
+            not any(n.startswith(s3_in_scope) for n in ran(ch))
+    # The second review's LOW: the total is one total, admitted in call order each second, so SnapProbe_PerFrame spends
+    # it only up to where it is called, and SnapProbe_Call called early in a second still keeps its stack. Whether
+    # the total starves the in-scope stacks is the main recording's to say, not the plain rates' prediction.
+    expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: the total, predicted to starve "
+           "(said, S5's window not run on it), is spent by mid-second, so each second's first round keeps its stacks "
+           "and the later one is refused, booked as skipped; S3's two in-scope checks run over the kept stacks and "
+           "hold, the counters are checked, nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 40 and r[1]["stack_budget"]["starves"] is True and
+                    (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget"),
+                     r[1]["stack_rings"][0].get("dropped_budget")) == (4, 4, 0) and
                     s5_ran(r[0]) == [] and "starve" in s5_skipped(r[0])[0] and s5_params(r[0]) == ([True], []) and
-                    [p for p in s3_in_scope if any(n.startswith(p) and "starve" in why for n, why in r[0].skipped)] ==
-                    list(s3_in_scope) and not any(n.startswith(s3_in_scope) for n in ran(r[0])))(
+                    all(any(n.startswith(p) and ok and g.startswith("2 of 2") for n, ok, g in r[0].items)
+                        for p in s3_in_scope))(
                s5_run(30, ("--stack-per-ring", "40", "--stack-total", "15"))))
-    # The same without a given budget (the second review's T4 / T5): none fits, the fallback is sent, and the total
-    # still starves SnapProbe_Call, so the in-scope checks must stand down here too.
+    # Without a given budget (the second review's T4 / T5): none fits, the fallback is sent, and SnapProbe_PerFrame
+    # spends the total before every round, so every in-scope stack is refused and the checks stand down on that.
     expect("dry run: --stack-total 5 with no --stack-per-ring and the probe at 60 a second: no budget fits, the total "
-           "starves the others, said in the output, and S3's two in-scope checks not run, nothing failed",
+           "is predicted to starve the others and does, every in-scope SnapProbe_Call entry flagged 64; S3's two "
+           "in-scope checks not run with the refusals and the starving total the reason, nothing failed",
            lambda: (lambda r: failing(r[0]) == [] and r[1]["stack_budget"]["starves"] is True and
                     r[1]["stack_budget"]["given"] is False and
-                    [p for p in s3_in_scope if any(n.startswith(p) and "starve" in why for n, why in r[0].skipped)] ==
-                    list(s3_in_scope))(s5_run(60, ("--stack-total", "5"))))
+                    (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget")) == (0, 8) and
+                    s3_starved(r[0], "starve", "4 in-scope", "flagged 64"))(s5_run(60, ("--stack-total", "5"))))
+    # Refusals the plain rates did not predict, where the main recording ran SnapProbe_PerFrame fast enough to spend
+    # the total first: the main rate explains them.
+    expect("dry run: --stack-per-ring 100 --stack-total 10, the probe at 4 a second in the plain recording and 60 in "
+           "the main one: every in-scope stack refused, which only the main rate explains; S3's two in-scope checks "
+           "not run, that rate the reason, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[1]["stack_budget"]["starves"] is False and
+                    s3_starved(r[0], "starve", "the main recording's 60.0/s"))(
+               s5_run(4, ("--stack-per-ring", "100", "--stack-total", "10"), main_pf_rate=60)))
+    # Refusals no total explains are the DLL's: the checks run, and fail on the stacks it did not keep.
+    caught(("call_refused",), *s3_in_scope)
     expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
            lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],
                                               r[1]["stack_budget"]["runs"]) == (30, False, True))(s5_run()))
