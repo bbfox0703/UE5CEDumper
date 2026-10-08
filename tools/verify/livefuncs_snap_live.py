@@ -2153,7 +2153,9 @@ class ScriptedDll:
               INTERP: ("BP_ScriptedActor_C", "OnScripted__DelegateSignature", "DelegateFunction", INTERP_FN,
                        (FUNC_AT, 0x140), 37)}
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
-    WINDOW_S = 3.0               # the plain recording's window, as pe_profile_get reports it
+    # The plain recording's window, as pe_profile_get reports it. A traced recording reports its own, the dry run's
+    # --record-s: apart, a rig that divides one recording's count by another's window is seen.
+    WINDOW_S = 3.0
     # SnapProbe_PerFrame's calls a second by default, in the plain recording and in the main one (each can be set):
     # a fixture far above 30 fps. The main recording keeps what a per-second budget keeps of them (see _start).
     PF_RATE = 60.0
@@ -2348,13 +2350,18 @@ class ScriptedDll:
         self.pdb_sessions.append(ScriptedPdb(names, self.BASE, 0x10000000))
         return self.pdb_sessions[-1]
 
+    def window_s(self) -> float:
+        """The window pe_profile_get reports: the plain recording's, or once a trace was started the traced one's."""
+        return DRY_RECORD_S if any(self.starts) else self.WINDOW_S
+
     def rows(self) -> dict[str, dict]:
-        """The fixture rows a recording gives, by name: SnapProbe_PerFrame at the main rate once a trace was started."""
+        """The fixture rows a recording gives, by name: SnapProbe_PerFrame at the main rate, over the traced
+        recording's window, once a trace was started."""
         unkeyed = "SnapProbe_PerFrame" if "unkeyed" in self.f else None
         pf = self.main_pf_rate if any(self.starts) else self.pf_rate
         return {n: {"class_name": FIXTURE_CLASS, "func_name": n, "fname_key": None if n == unkeyed else k,
                     "parms_size": ps, "num_parms": 1,
-                    "count": round(pf * self.WINDOW_S) if n == "SnapProbe_PerFrame" else 6,
+                    "count": round(pf * self.window_s()) if n == "SnapProbe_PerFrame" else 6,
                     "per_frame": n == "SnapProbe_PerFrame"}
                 for n, (_, k, ps) in self.funcs.items()}
 
@@ -2617,7 +2624,7 @@ class ScriptedDll:
             rows = [] if "no_calls" in self.f else list(self.rows().values())
             if "no_probes" in self.f:   # a game without the fixture's probes still records its own calls
                 rows = [{"class_name": "OtherActor", "func_name": "Tick", "fname_key": None, "count": 100}]
-            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": int(self.WINDOW_S * 1000),
+            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": int(self.window_s() * 1000),
                              "functions": rows[: p.get("limit", len(rows))]}}
         if cmd == "pe_trace_get":
             if t is None:
