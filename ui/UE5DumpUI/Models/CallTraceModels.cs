@@ -62,6 +62,8 @@ public sealed class TraceInfo
     public bool  SnapOnly  { get; init; }
     /// <summary>The snapshot buffer; null when none was armed (or the DLL predates snapshots).</summary>
     public SnapInfo? Snap  { get; init; }
+    /// <summary>[LIVEFUNCS-STEP3] The native stack rings; null when none was armed (or the DLL predates stacks).</summary>
+    public StackInfo? Stack { get; init; }
     /// <summary>The Start reply's account of the names it was sent; null otherwise.</summary>
     public StartNames? Names { get; init; }
     /// <summary>The Stop reply's: what became of every followed name. Empty when it followed none.</summary>

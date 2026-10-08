@@ -20,14 +20,17 @@ public sealed class NamedFunction
     public int ParmsSize { get; init; }
 }
 
-/// <summary>What a Start asks of the parameter snapshots.</summary>
+/// <summary>What a Start asks of the snapshot buffer: the parameter snapshots, and the native stacks it also holds.</summary>
 public sealed class SnapshotStartOptions
 {
+    /// <summary>The functions chosen for their parameters; empty when only stacks were chosen.</summary>
     public IReadOnlyList<NamedFunction> Funcs { get; init; } = Array.Empty<NamedFunction>();
     /// <summary>The snapshot buffer: a power of two from 8 to 128 MB.</summary>
     public long Bytes { get; init; }
     public int PerRingPerSec { get; init; } = 1000;
     public int TotalPerSec { get; init; } = 10000;
+    /// <summary>[LIVEFUNCS-STEP3] The native stacks, or null for none: then the request is the step-2 one.</summary>
+    public StackStartOptions? Stacks { get; init; }
 }
 
 /// <summary>The trace's snapshot buffer as the DLL armed it (<c>trace.snap</c>).</summary>
@@ -53,6 +56,9 @@ public sealed class StartNames
     public int Chosen { get; init; }
     public IReadOnlyList<(string ClassName, string FuncName, string Why)> Refused { get; init; }
         = Array.Empty<(string, string, string)>();
+    /// <summary>[LIVEFUNCS-STEP3] Functions armed for a stack. Null when the reply carries none, as from a DLL that
+    /// predates stacks; 0 when every stack choice was refused. Kept apart so a refusal is not taken for an old DLL.</summary>
+    public int? Stacks { get; init; }
 }
 
 /// <summary>What became of one followed name in the recording (the Stop reply's <c>names</c>).</summary>
@@ -63,6 +69,8 @@ public sealed class FollowedName
     public NameKey Key       { get; init; }
     public bool    Tick      { get; init; }
     public bool    Chosen    { get; init; }
+    /// <summary>[LIVEFUNCS-STEP3] Chosen for a native stack.</summary>
+    public bool    Stack     { get; init; }
     /// <summary>Distinct addresses that matched the name; 0: never called in the recording.</summary>
     public long    Addresses { get; init; }
     public long    Arms      { get; init; }
@@ -200,4 +208,106 @@ public sealed class SnapPage
     public ulong Next { get; init; }
     public ulong Orphans { get; init; }
     public IReadOnlyList<SnapSlot> Items { get; init; } = Array.Empty<SnapSlot>();
+}
+
+// [LIVEFUNCS-STEP3] Native stack snapshots: what pe_profile_start asks of them inside trace.snapshots, and what
+// pe_snap_get with "kind":"stack" reads back after Stop. They share the snapshot buffer but not its readers: a stack
+// ring has its own index space, so no parameter reader ever pages one. The design: docs/live-funcs-step3-design.md.
+
+/// <summary>What a Start asks of the native stacks (<c>trace.snapshots.stacks</c>).</summary>
+public sealed class StackStartOptions
+{
+    /// <summary>The functions chosen for a stack. A stack needs no parameters, so no size goes with them.</summary>
+    public IReadOnlyList<NamedFunction> Funcs { get; init; } = Array.Empty<NamedFunction>();
+    /// <summary>Return addresses kept per call; the DLL clamps what it is sent.</summary>
+    public int Depth { get; init; } = 16;
+    public int PerRingPerSec { get; init; } = 100;
+    public int TotalPerSec { get; init; } = 200;
+}
+
+/// <summary>The trace's stack rings as the DLL armed them (<c>trace.stack</c>).</summary>
+public sealed class StackInfo
+{
+    public int   Rings         { get; init; }
+    public int   Depth         { get; init; }
+    public int   PerRingPerSec { get; init; }
+    public int   TotalPerSec   { get; init; }
+    /// <summary>Stacks taken.</summary>
+    public ulong Captures      { get; init; }
+    /// <summary>Calls recorded without their stack: over the budget.</summary>
+    public ulong SkippedBudget { get; init; }
+    /// <summary>Lone and excluded calls over the stack budget, with nothing else they were chosen for taken: not
+    /// recorded at all.</summary>
+    public ulong DroppedBudget { get; init; }
+    /// <summary>Trace-clock ticks spent taking every capture; <see cref="TraceInfo.QpcFreq"/> of them a second.</summary>
+    public ulong SpentTicks    { get; init; }
+    /// <summary>The longest single capture, in the same ticks.</summary>
+    public ulong MaxTicks      { get; init; }
+}
+
+/// <summary>One return address on a captured stack, as the DLL described it after Stop. A page names each distinct
+/// address once; every frame that holds it is the same object.</summary>
+public sealed class StackSite
+{
+    public ulong  Addr       { get; init; }
+    /// <summary>The module's file name; "" outside any module (JIT code, the heap, an unloaded image).</summary>
+    public string Module     { get; init; } = "";
+    /// <summary>[PATH-CE-MODULE-VIEW] Cheat Engine's name for <see cref="Module"/>: narrowed with THIS machine's code
+    /// page, as CE narrows it, never the game's. "" with no module.</summary>
+    public string CeModule   { get; init; } = "";
+    public ulong  ModuleBase { get; init; }
+    public uint   Rva        { get; init; }
+    /// <summary>The start of the function holding the address, looked up at the address minus one (a call can be a
+    /// function's last instruction, leaving its return address on the next function's first byte). 0 without unwind
+    /// data.</summary>
+    public ulong  Fn         { get; init; }
+    public uint   FnRva      { get; init; }
+    /// <summary>False: no unwind data, so the walk took the frame for a leaf and the frames below it may be wrong.</summary>
+    public bool   Unwind     { get; init; }
+    /// <summary>In the dumper's own image: the hook's frame, shown rather than hidden.</summary>
+    public bool   Own        { get; init; }
+    /// <summary>A function the DLL recognised, as a token ("process_event"); "" otherwise. The UI owns the text.</summary>
+    public string Known      { get; init; } = "";
+    /// <summary>The module base in the form AddressHelper takes; "" with no module.</summary>
+    public string ModuleBaseHex => ModuleBase == 0 ? "" : $"0x{ModuleBase:X}";
+}
+
+/// <summary>One captured stack: the call it belongs to, and its return addresses nearest first.</summary>
+public sealed class StackSlot
+{
+    /// <summary>The anchor was not found: only the caller's return address.</summary>
+    public const int Partial    = 1;
+    /// <summary>The walk faulted: no frames.</summary>
+    public const int Fault      = 2;
+    /// <summary>Deeper than the depth: the rest was not taken.</summary>
+    public const int More       = 4;
+    /// <summary>The return slot was not on the thread's current stack: no walk.</summary>
+    public const int BadSp      = 8;
+    /// <summary>Too little stack reserve left: no walk.</summary>
+    public const int LowStack   = 16;
+    /// <summary>No capturer was installed.</summary>
+    public const int NoCapturer = 0x8000;
+
+    public ulong Index    { get; init; }
+    public ulong EntrySeq { get; init; }
+    public int   Flags    { get; init; }
+    /// <summary>What taking it cost, in trace-clock ticks (saturated). The entry was timed before the walk, so this
+    /// falls inside the call's measured duration.</summary>
+    public uint  Ticks    { get; init; }
+    public IReadOnlyList<StackSite> Frames { get; init; } = Array.Empty<StackSite>();
+}
+
+/// <summary>A page of pe_snap_get with <c>"kind":"stack"</c>.</summary>
+public sealed class StackPage
+{
+    public TraceInfo Info { get; init; } = new();
+    public bool Stale { get; init; }
+    public int Ring { get; init; }
+    /// <summary>Every stack ring's window, sent with each page. Their spent ticks are not read: the totals are in
+    /// <see cref="TraceInfo.Stack"/>.</summary>
+    public IReadOnlyList<SnapRingInfo> Rings { get; init; } = Array.Empty<SnapRingInfo>();
+    public int Count { get; init; }
+    public ulong Next { get; init; }
+    public ulong Orphans { get; init; }
+    public IReadOnlyList<StackSlot> Items { get; init; } = Array.Empty<StackSlot>();
 }

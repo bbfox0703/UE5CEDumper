@@ -463,6 +463,10 @@ public interface IDumpService
     /// <summary>[LIVEFUNCS-STEP2] One page of snapshot ring <paramref name="ring"/>, decoded.</summary>
     Task<SnapPage> PeSnapGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
         => throw new NotSupportedException("This service has no parameter snapshots.");
+    /// <summary>[LIVEFUNCS-STEP3] One page of stack ring <paramref name="ring"/> (the stacks' own index space), each
+    /// slot's frames resolved to the page's sites.</summary>
+    Task<StackPage> PeStackGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
+        => throw new NotSupportedException("This service has no native stack snapshots.");
 
     /// <summary>
     /// Fetch a <c>get_diagnostics</c> snapshot: how long each pipe command has

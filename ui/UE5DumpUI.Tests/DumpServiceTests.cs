@@ -2034,6 +2034,240 @@ public class DumpServiceTests
     public void TheTraceReadersRunOnTheBulkLane(string cmd, bool bulk)
         => Assert.Equal(bulk, LaneRoutingPipeClient.IsBulk(cmd));
 
+    // ---- [LIVEFUNCS-STEP3] native stack snapshots (docs/live-funcs-step3-items.md, S3-U1) ----
+    // The replies are parsed from JSON text, as the pipe delivers them, so every number reads the way it will on the wire.
+
+    private sealed class MarkingCodePage : ISystemCodePage
+    {
+        public string AnsiModuleName(string moduleFile) => "ce:" + moduleFile;
+    }
+
+    private static JsonObject Reply(string json) => JsonNode.Parse(json)!.AsObject();
+
+    [Fact]
+    public async Task PeProfileStartAsync_SendsStacksInsideSnapshots_WithoutSizes_AndStacksOnlyHasNoParamFuncs()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req => { sent = req; return new JsonObject { ["ok"] = true, ["hook_active"] = true }; });
+        IDumpService svc = CreateService();
+        var defaults = new StackStartOptions();
+        Assert.Equal((16, 100, 200), (defaults.Depth, defaults.PerRingPerSec, defaults.TotalPerSec));
+
+        await svc.PeProfileStartAsync(new TraceStartOptions
+        {
+            Bytes = 64L << 20,
+            Snapshots = new SnapshotStartOptions
+            {
+                Bytes = 32L << 20,
+                Stacks = new StackStartOptions
+                {
+                    // A size the UI happens to know must still not go out: it would size a parameter ring.
+                    Funcs = new[] { new NamedFunction { ClassName = "DumperTest58Actor", FuncName = "SnapProbe_Call", ParmsSize = 96,
+                                                        Keys = new[] { new NameKey(5, 0, 3, 4), new NameKey(5, 1, 3, 4) } } },
+                    Depth = 12, PerRingPerSec = 50, TotalPerSec = 150,
+                },
+            },
+        }, TestContext.Current.CancellationToken);
+
+        var snaps = sent!["trace"]!["snapshots"]!.AsObject();
+        Assert.Empty(snaps["funcs"]!.AsArray());
+        Assert.Equal(32L << 20, snaps["bytes"]!.GetValue<long>());
+        var st = Assert.IsType<JsonObject>(snaps["stacks"]);
+        var f = Assert.Single(st["funcs"]!.AsArray())!.AsObject();
+        Assert.Equal("DumperTest58Actor", f["class"]!.GetValue<string>());
+        Assert.Equal("SnapProbe_Call", f["func"]!.GetValue<string>());
+        Assert.Equal(new[] { 5, 1, 3, 4 }, f["keys"]!.AsArray()[1]!.AsArray().Select(n => n!.GetValue<int>()));
+        Assert.False(f.ContainsKey("parms_size"));
+        Assert.Equal(12, st["depth"]!.GetValue<int>());
+        Assert.Equal(50, st["per_ring_per_s"]!.GetValue<int>());
+        Assert.Equal(150, st["total_per_s"]!.GetValue<int>());
+    }
+
+    // A guard: it passes before stacks exist. A DLL that predates them must keep getting exactly the step-2 request.
+    [Fact]
+    public async Task PeProfileStartAsync_WithoutStacks_IsTheStepTwoRequestByteForByte()
+    {
+        var sent = new List<string>();
+        _pipe.SetHandler(req => { sent.Add(req.ToJsonString()); return new JsonObject { ["ok"] = true, ["hook_active"] = true }; });
+        IDumpService svc = CreateService();
+        await svc.PeProfileStartAsync(TestContext.Current.CancellationToken);
+        await svc.PeProfileStartAsync(new TraceStartOptions
+        {
+            Bytes = 64L << 20, Ticked = new[] { "0x10" }, ExcludePerFrame = true,
+            TickedNames = new[] { new NamedFunction { ClassName = "A", FuncName = "Outer", Keys = new[] { new NameKey(1, 2, 3, 4) } } },
+            Snapshots = new SnapshotStartOptions
+            {
+                Funcs = new[] { new NamedFunction { ClassName = "A", FuncName = "Call", ParmsSize = 152, Keys = new[] { new NameKey(5, 0, 3, 4) } } },
+                Bytes = 32L << 20, PerRingPerSec = 30, TotalPerSec = 10000,
+            },
+        }, TestContext.Current.CancellationToken);
+
+        Assert.Equal("{\"cmd\":\"pe_profile_start\"}", sent[0]);
+        Assert.Equal(
+            "{\"cmd\":\"pe_profile_start\",\"trace\":{\"bytes\":67108864,\"ticked\":[\"0x10\"],\"exclude_per_frame\":true,"
+            + "\"ticked_names\":[{\"class\":\"A\",\"func\":\"Outer\",\"keys\":[[1,2,3,4]]}],"
+            + "\"snapshots\":{\"funcs\":[{\"class\":\"A\",\"func\":\"Call\",\"keys\":[[5,0,3,4]],\"parms_size\":152}],"
+            + "\"bytes\":33554432,\"per_ring_per_s\":30,\"total_per_s\":10000}}}",
+            sent[1]);
+    }
+
+    // M3 of the design review: "every stack choice refused" (names.stacks 0) must read apart from "an old DLL" (absent).
+    [Fact]
+    public async Task TheStartAndStopReplies_ReadTraceStackAndNamesStacks_AndTheirAbsenceReadsNull()
+    {
+        var replies = new Queue<string>(new[]
+        {
+            // Stacks only: the snapshot buffer is allocated with no parameter ring.
+            """
+            {"ok":true,"hook_active":true,"trace":{"allocated":true,"tracing":true,"gen":4,"qpc_freq":10000000,"snap_only":true,
+             "snap":{"allocated":true,"bytes":33554432,"slots_per_ring":139810,"rings":0},
+             "stack":{"rings":2,"depth":16,"per_ring_per_s":100,"total_per_s":200,"captures":812,"skipped_budget":3,
+                      "dropped_budget":1443,"spent_ticks":2412345,"max_ticks":51234},
+             "names":{"ticks":0,"chosen":0,"stacks":2,"refused":[]}}}
+            """,
+            // A DLL that knows stacks and refused every one asked: no stack ring, but names.stacks is there.
+            """
+            {"ok":true,"hook_active":true,"trace":{"allocated":true,"gen":5,
+             "names":{"ticks":1,"chosen":0,"stacks":0,"refused":[{"class":"B","func":"Gone","why":"no key"}]}}}
+            """,
+            // A DLL that predates stacks.
+            """
+            {"ok":true,"hook_active":true,"trace":{"allocated":true,"gen":6,"names":{"ticks":1,"chosen":0}}}
+            """,
+            """
+            {"ok":true,"recording":false,"trace":{"allocated":false,"gen":4},
+             "names":[{"class":"A","func":"Lone","key":[9,0,3,0],"tick":false,"chosen":false,"stack":true,"addresses":1,"arms":1,"arms_full":0},
+                      {"class":"A","func":"Old","key":[8,0,3,0],"tick":false,"chosen":true,"addresses":1,"arms":1,"arms_full":0}]}
+            """,
+        });
+        _pipe.SetHandler(_ => Reply(replies.Dequeue()));
+        IDumpService svc = CreateService();
+        var ct = TestContext.Current.CancellationToken;
+        var asked = new TraceStartOptions { Bytes = 64L << 20 };
+
+        var r = (await svc.PeProfileStartAsync(asked, ct)).Trace!;
+        var s = Assert.IsType<StackInfo>(r.Stack);
+        Assert.Equal((2, 16, 100, 200), (s.Rings, s.Depth, s.PerRingPerSec, s.TotalPerSec));
+        Assert.Equal((812UL, 3UL, 1443UL), (s.Captures, s.SkippedBudget, s.DroppedBudget));
+        Assert.Equal((2412345UL, 51234UL), (s.SpentTicks, s.MaxTicks));
+        Assert.Equal(2, r.Names!.Stacks);
+        Assert.Equal(0, r.Snap!.Rings);
+
+        var refused = (await svc.PeProfileStartAsync(asked, ct)).Trace!;
+        Assert.Null(refused.Stack);
+        Assert.Equal(0, refused.Names!.Stacks);
+
+        var old = (await svc.PeProfileStartAsync(asked, ct)).Trace!;
+        Assert.Null(old.Stack);
+        Assert.Null(old.Names!.Stacks);
+
+        var stopped = await svc.PeProfileStopWithTraceAsync(ct);
+        Assert.True(stopped!.Followed[0].Stack);
+        Assert.False(stopped.Followed[1].Stack);
+    }
+
+    [Fact]
+    public async Task PeStackGetAsync_SendsKindStack_AndResolvesFramesToTheirSites_WithTheCeModule()
+    {
+        JsonObject? sent = null;
+        _pipe.SetHandler(req =>
+        {
+            sent = req;
+            // Frame lists are deliberately not 0, 1, 2: an index is a position in "sites", not in the frame list.
+            return Reply("""
+                {"ok":true,"allocated":true,"gen":5,"qpc_freq":10000000,"ring":1,"kind":"stack",
+                 "rings":[{"ring":0,"cap":128,"depth":16,"written":420,"first_valid":0,"skipped_budget":0,"dropped_budget":1443,"spent_ticks":1234567},
+                          {"ring":1,"cap":128,"depth":16,"written":9,"first_valid":0,"skipped_budget":2,"dropped_budget":0,"spent_ticks":7654}],
+                 "count":2,"next":9,"orphans":3,
+                 "items":[{"index":7,"entry_seq":1234,"flags":0,"ticks":412,"frames":[2,0,1]},
+                          {"index":8,"entry_seq":1240,"flags":5,"ticks":4294967295,"frames":[3,9,-1,1]}],
+                 "sites":[{"addr":"0x7FF6A14804C9","module":"DumperTest58-Win64-Shipping.exe","module_base":"0x7FF6A0000000",
+                           "rva":21497033,"fn":"0x7FF6A1480440","fn_rva":21496896,"unwind":true},
+                          {"addr":"0x7FF6A0F00123","module":"DumperTest58-Win64-Shipping.exe","module_base":"0x7FF6A0000000",
+                           "rva":15728931,"fn":"0x7FF6A0F00000","fn_rva":15728640,"unwind":true,"known":"process_event"},
+                          {"addr":"0x7FFC12345678","module":"dxgi.dll","module_base":"0x7FFC12300000",
+                           "rva":284280,"fn":"0x7FFC12345000","fn_rva":282624,"unwind":true,"own":true},
+                          {"addr":"0x1F000012345","module":"","unwind":false}]}
+                """);
+        });
+        IDumpService svc = new DumpService(_pipe, _log, new MarkingCodePage());
+        var page = await svc.PeStackGetAsync(5, 1, 7, 512, TestContext.Current.CancellationToken);
+
+        Assert.Equal("pe_snap_get", sent!["cmd"]!.GetValue<string>());
+        Assert.True(LaneRoutingPipeClient.IsBulk(sent["cmd"]!.GetValue<string>()));
+        Assert.Equal("stack", sent["kind"]?.GetValue<string>());
+        Assert.Equal((5UL, 1, 7UL, 512),
+                     (sent["gen"]!.GetValue<ulong>(), sent["ring"]!.GetValue<int>(), sent["from"]!.GetValue<ulong>(), sent["max"]!.GetValue<int>()));
+
+        Assert.Equal(5UL, page.Info.Gen);
+        Assert.False(page.Stale);
+        Assert.Equal((1, 2, 9UL, 3UL), (page.Ring, page.Count, page.Next, page.Orphans));
+        Assert.Equal(2, page.Rings.Count);
+        Assert.Equal((128, 420UL, 1443UL), (page.Rings[0].Cap, page.Rings[0].Written, page.Rings[0].DroppedBudget));
+        Assert.Equal((9UL, 2UL), (page.Rings[1].Written, page.Rings[1].SkippedBudget));
+
+        var a = page.Items[0];
+        Assert.Equal((7UL, 1234UL, 0, 412u), (a.Index, a.EntrySeq, a.Flags, a.Ticks));
+        Assert.Equal(new[] { 0x7FFC12345678UL, 0x7FF6A14804C9UL, 0x7FF6A0F00123UL }, a.Frames.Select(x => x.Addr));
+
+        var own = a.Frames[0];
+        Assert.True(own.Own);
+        Assert.Equal(("dxgi.dll", "ce:dxgi.dll", 0x7FFC12300000UL, 284280u), (own.Module, own.CeModule, own.ModuleBase, own.Rva));
+        Assert.Equal("", own.Known);
+
+        var game = a.Frames[1];
+        Assert.Equal("ce:DumperTest58-Win64-Shipping.exe", game.CeModule);
+        Assert.Equal("0x7FF6A0000000", game.ModuleBaseHex);
+        Assert.Equal((0x7FF6A1480440UL, 21496896u, 21497033u), (game.Fn, game.FnRva, game.Rva));
+        Assert.True(game.Unwind);
+        Assert.False(game.Own);
+        Assert.Equal("", game.Known);
+        Assert.Equal("process_event", a.Frames[2].Known);
+
+        var b = page.Items[1];
+        Assert.Equal(StackSlot.Partial | StackSlot.More, b.Flags);
+        Assert.Equal(uint.MaxValue, b.Ticks);
+        Assert.Equal(2, b.Frames.Count);                 // 9 and -1 name no site: dropped, and logged
+        var nowhere = b.Frames[0];
+        Assert.Equal(0x1F000012345UL, nowhere.Addr);
+        Assert.Equal(("", "", 0UL, ""), (nowhere.Module, nowhere.CeModule, nowhere.ModuleBase, nowhere.ModuleBaseHex));
+        Assert.Equal((0UL, 0u, 0u), (nowhere.Fn, nowhere.FnRva, nowhere.Rva));
+        Assert.False(nowhere.Unwind);
+        Assert.Same(a.Frames[2], b.Frames[1]);           // one site, one object, whichever slots hold it
+        Assert.Contains(_log.Messages, m => m.StartsWith("[WARN") && m.Contains("dropped 2 frame"));
+    }
+
+    // One command, two reply shapes (design D5): a page not marked as stacks carries parameter slots, which must never be
+    // joined to calls as stacks. A refused or stale page carries nothing to misread, and stays quiet.
+    [Fact]
+    public async Task PeStackGetAsync_APageNotMarkedAsStacks_ReadsNoSlots_AndAStalePageStaysQuiet()
+    {
+        var replies = new Queue<string>(new[]
+        {
+            """
+            {"ok":true,"gen":5,"ring":0,"count":1,"next":3,"orphans":0,
+             "items":[{"index":2,"entry_seq":9,"phase":"entry","len":4,"flags":0,"arm":0,"data":"KQAAAA=="}]}
+            """,
+            """
+            {"ok":true,"gen":6,"ring":0,"stale":true,"count":0,"next":2,"items":[]}
+            """,
+        });
+        _pipe.SetHandler(_ => Reply(replies.Dequeue()));
+        IDumpService svc = CreateService();
+        var ct = TestContext.Current.CancellationToken;
+
+        var param = await svc.PeStackGetAsync(5, 0, 2, 512, ct);
+        Assert.Empty(param.Items);
+        Assert.Equal(0, param.Count);
+        Assert.Equal(2UL, param.Next);                  // no further page: the caller's paging stops here
+        Assert.Single(_log.Messages, m => m.StartsWith("[WARN"));
+
+        var stale = await svc.PeStackGetAsync(5, 0, 2, 512, ct);
+        Assert.True(stale.Stale);
+        Assert.Empty(stale.Items);
+        Assert.Single(_log.Messages, m => m.StartsWith("[WARN"));
+    }
+
     // --- WalkFunctionsAsync: struct_fields parsing ---
 
     [Fact]
