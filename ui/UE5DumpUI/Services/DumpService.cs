@@ -2862,13 +2862,27 @@ public sealed class DumpService : IDumpService
             if (trace.TickedNames.Count > 0) traceReq["ticked_names"] = NamedFunctionsJson(trace.TickedNames, withSize: false);
             if (trace.Snapshots is { } s)
             {
-                traceReq["snapshots"] = new JsonObject
+                var snaps = new JsonObject
                 {
                     ["funcs"] = NamedFunctionsJson(s.Funcs, withSize: true),
                     ["bytes"] = s.Bytes,
                     ["per_ring_per_s"] = s.PerRingPerSec,
                     ["total_per_s"] = s.TotalPerSec,
                 };
+                // [LIVEFUNCS-STEP3] Stacks ride inside the snapshot object because they share its buffer. Sent only when
+                // asked, and last, so a Start without them is the step-2 request byte for byte. No size goes with a stack
+                // choice: the depth alone sizes a stack slot.
+                if (s.Stacks is { } st)
+                {
+                    snaps["stacks"] = new JsonObject
+                    {
+                        ["funcs"] = NamedFunctionsJson(st.Funcs, withSize: false),
+                        ["depth"] = st.Depth,
+                        ["per_ring_per_s"] = st.PerRingPerSec,
+                        ["total_per_s"] = st.TotalPerSec,
+                    };
+                }
+                traceReq["snapshots"] = snaps;
             }
             req["trace"] = traceReq;
         }
@@ -3064,10 +3078,23 @@ public sealed class DumpService : IDumpService
             SkippedBudget = s["skipped_budget"]?.GetValue<ulong>() ?? 0,
             DroppedBudget = s["dropped_budget"]?.GetValue<ulong>() ?? 0,
         } : null,
+        Stack       = t["stack"] is JsonObject k ? new StackInfo
+        {
+            Rings         = k["rings"]?.GetValue<int>() ?? 0,
+            Depth         = k["depth"]?.GetValue<int>() ?? 0,
+            PerRingPerSec = k["per_ring_per_s"]?.GetValue<int>() ?? 0,
+            TotalPerSec   = k["total_per_s"]?.GetValue<int>() ?? 0,
+            Captures      = k["captures"]?.GetValue<ulong>() ?? 0,
+            SkippedBudget = k["skipped_budget"]?.GetValue<ulong>() ?? 0,
+            DroppedBudget = k["dropped_budget"]?.GetValue<ulong>() ?? 0,
+            SpentTicks    = k["spent_ticks"]?.GetValue<ulong>() ?? 0,
+            MaxTicks      = k["max_ticks"]?.GetValue<ulong>() ?? 0,
+        } : null,
         Names = t["names"] is JsonObject n ? new StartNames
         {
             Ticks  = n["ticks"]?.GetValue<int>() ?? 0,
             Chosen = n["chosen"]?.GetValue<int>() ?? 0,
+            Stacks = n["stacks"]?.GetValue<int>(),   // absent stays null: see StartNames.Stacks
             Refused = n["refused"] is JsonArray r
                 ? r.OfType<JsonObject>().Select(x => (x["class"]?.GetValue<string>() ?? "",
                                                       x["func"]?.GetValue<string>() ?? "",
@@ -3081,6 +3108,7 @@ public sealed class DumpService : IDumpService
             Key       = ParseNameKey(x["key"]) ?? default,
             Tick      = x["tick"]?.GetValue<bool>() ?? false,
             Chosen    = x["chosen"]?.GetValue<bool>() ?? false,
+            Stack     = x["stack"]?.GetValue<bool>() ?? false,
             Addresses = x["addresses"]?.GetValue<long>() ?? 0,
             Arms      = x["arms"]?.GetValue<long>() ?? 0,
             ArmsFull  = x["arms_full"]?.GetValue<long>() ?? 0,
@@ -3213,6 +3241,96 @@ public sealed class DumpService : IDumpService
                     RawOnly  = i["raw_only"]?.GetValue<string>() ?? "",
                 }).ToList()
                 : new List<SnapSlot>(),
+        };
+    }
+
+    /// <summary>[LIVEFUNCS-STEP3] One page of stack ring <paramref name="ring"/>. It is pe_snap_get with
+    /// <c>"kind":"stack"</c>, so it runs on the bulk lane with the parameter pages. Each slot's frames come back as
+    /// indices into the page's <c>sites</c> and are resolved to them here; each site's module is named as Cheat Engine
+    /// names it on this machine.</summary>
+    public async Task<StackPage> PeStackGetAsync(ulong gen, int ring, ulong from, int max, CancellationToken ct = default)
+    {
+        var res = await _pipe.SendAsync(new JsonObject
+        {
+            ["cmd"] = "pe_snap_get", ["kind"] = "stack", ["gen"] = gen, ["ring"] = ring, ["from"] = from, ["max"] = max,
+        }, ct);
+        CheckResponse(res);
+        var info  = res is JsonObject o ? ParseTraceInfo(o) : new TraceInfo();
+        var stale = res["stale"]?.GetValue<bool>() ?? false;
+        var items = res["items"] as JsonArray;
+        // One command, two reply shapes. Slots in a page not marked as stacks are parameter slots (a DLL that ignored
+        // the kind): read as stacks they would join to the wrong calls, and paging on would walk a parameter ring.
+        if (items is { Count: > 0 } && (res["kind"]?.GetValue<string>() ?? "") != "stack")
+        {
+            _log.Warn(Constants.LogCatPipe,
+                $"pe_snap_get kind:stack ring {ring}: the reply is not a stack page ({items.Count} items); none read");
+            return new StackPage { Info = info, Stale = stale, Ring = ring, Next = from };
+        }
+
+        // Positions are kept, a malformed entry included: a frame's index means a position in this array.
+        var sites = res["sites"] is JsonArray sa
+            ? sa.Select(n => n is JsonObject s ? ParseStackSite(s) : new StackSite()).ToList()
+            : new List<StackSite>();
+        var slots = new List<StackSlot>(items?.Count ?? 0);
+        int dropped = 0;
+        foreach (var i in items?.OfType<JsonObject>() ?? Enumerable.Empty<JsonObject>())
+        {
+            var frames = new List<StackSite>();
+            if (i["frames"] is JsonArray fa)
+            {
+                foreach (var f in fa)
+                {
+                    if (f is JsonValue v && v.TryGetValue(out int idx) && idx >= 0 && idx < sites.Count) frames.Add(sites[idx]);
+                    else ++dropped;
+                }
+            }
+            slots.Add(new StackSlot
+            {
+                Index    = i["index"]?.GetValue<ulong>() ?? 0,
+                EntrySeq = i["entry_seq"]?.GetValue<ulong>() ?? 0,
+                Flags    = i["flags"]?.GetValue<int>() ?? 0,
+                Ticks    = i["ticks"]?.GetValue<uint>() ?? 0,
+                Frames   = frames,
+            });
+        }
+        if (dropped > 0)
+            _log.Warn(Constants.LogCatPipe,
+                $"pe_snap_get kind:stack ring {ring}: dropped {dropped} frame index(es) outside the page's {sites.Count} sites");
+        return new StackPage
+        {
+            Info    = info,
+            Stale   = stale,
+            Ring    = res["ring"]?.GetValue<int>() ?? ring,
+            Rings   = res["rings"] is JsonArray rings ? ParseSnapRings(rings) : new List<SnapRingInfo>(),
+            Count   = res["count"]?.GetValue<int>() ?? 0,
+            Next    = res["next"]?.GetValue<ulong>() ?? from,
+            Orphans = res["orphans"]?.GetValue<ulong>() ?? 0,
+            Items   = slots,
+        };
+    }
+
+    // [PATH-CE-MODULE-VIEW] CeModule is set here, at parse time, from the UI machine's code page: CE narrows a module
+    // name with its own machine's, never the game's. An address outside any module has no name to narrow.
+    private StackSite ParseStackSite(JsonObject s)
+    {
+        var module = s["module"]?.GetValue<string>() ?? "";
+        return new StackSite
+        {
+            Addr       = ParseAddr(s["addr"]?.GetValue<string>()),
+            Module     = module,
+            CeModule   = module.Length == 0 ? "" : _codePage.AnsiModuleName(module),
+            ModuleBase = ParseAddr(s["module_base"]?.GetValue<string>()),
+            Rva        = s["rva"]?.GetValue<uint>() ?? 0,
+            Fn         = ParseAddr(s["fn"]?.GetValue<string>()),
+            FnRva      = s["fn_rva"]?.GetValue<uint>() ?? 0,
+            Unwind     = s["unwind"]?.GetValue<bool>() ?? false,
+            Own        = s["own"]?.GetValue<bool>() ?? false,
+            Known      = s["known"]?.GetValue<string>() ?? "",
+            // [LIVEFUNCS-STEP3] S3-A1: absent from a DLL without the native-entry index, and on a site none enters at.
+            UFunc      = ParseAddr(s["ufunc"]?.GetValue<string>()),
+            ClassName  = s["class"]?.GetValue<string>() ?? "",
+            FuncName   = s["func"]?.GetValue<string>() ?? "",
+            Shared     = s["shared"]?.GetValue<int>() ?? 0,
         };
     }
 

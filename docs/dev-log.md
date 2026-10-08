@@ -27,6 +27,82 @@ builds ≤696 in
 
 -----
 
+## 2026-10-08 (build 3643) — Live Funcs stacks: a question for per-frame functions, a cost estimate, native entries named `[LIVEFUNCS-STEP3]` `[CT-COLUMNS-OVERLAP]`
+
+- **Choosing a per-frame function's stack asks first.** A function called every frame in the last recording would
+  have its stack taken every frame until the budget is spent, so ticking its "S" box asks once per connection,
+  naming the function and the budget. Cancel leaves it unticked; a reconnect asks again.
+- **An estimate line under the stack budget:** about how many stacks a second the chosen functions will take within
+  the budget, and how much of the game's time a second that costs -- at the capture cost measured at the last Stop
+  with stacks, or an assumed 10 µs until there is one. It turns orange above 2 ms a second.
+- **The Call stack tab names more frames.** A frame in the native code of a UFunction reads "native entry of
+  Class::Function" even when that function was not traced; code several functions share says how many.
+- **The Call Trace list cuts its columns** when the detail pane is dragged wide, instead of drawing them over each
+  other.
+- Checked live on DumperTest58 Shipping: the stacks rig 34 / 34, the game's PDB naming every function start it was
+  asked; the UI walkthrough on this AOT build (`UE5DumpUI.exe` 61.0 MB).
+
+-----
+
+## 2026-10-08 (no build change) — Correction to the entry below `[LIVEFUNCS-STEP3]`
+
+- The integrated GPU's ~100 % was the desktop's, not the fixture's: with no game running it stayed there, `dwm.exe`
+  54 % and the Claude desktop app (computer use's screen effect) 45 % of its 3D engine. "Copying frames to the
+  display" below is wrong. The capture costs below stand.
+
+-----
+
+## 2026-10-08 (no build change) — What a native stack capture costs, and what it does not depend on `[LIVEFUNCS-STEP3]`
+
+- **Measured on the maintainer's PC (Ryzen 9 9955HX3D laptop, Radeon iGPU + RTX 5090):** a 16-frame capture costs
+  about 3.25 µs on Avowed (6,200 captures, the 64 busiest functions) and 20-31 µs on the DumperTest58 fixture. The
+  fixture's cost is per walked frame (about 0.75 µs), and it is not the hybrid GPU or the frame rate:
+  - on the integrated Radeon, uncapped: median 20-22 µs (the iGPU at 98 %, 90 °C);
+  - on the RTX (`-preferNvidia`), uncapped: 21-22.5 µs -- the iGPU still at 100 % copying frames to the display, the
+    CPU at 85-94 % of nominal, not boosting;
+  - on the RTX at 30 fps: 31 µs -- dearer, the game thread's caches cold between frames.
+- The budget the maintainer chose (50 a second in all) rests on the fixture's figure, so it is the conservative one;
+  on a game like Avowed it costs about a seventh of what it allows for.
+- The native-entry index (build 3643's S3-A1) first took 3.9 s on the fixture, one VirtualQuery per function at about
+  300 µs each while the game churned its address space; a per-region cache brought it to 11 ms.
+
+-----
+
+## 2026-10-08 (build 3642) — A smaller stack budget; the Object Tree stays collapsed `[LIVEFUNCS-STEP3]` `[OT-COLLAPSE-PERSIST]`
+
+- **The native-stack budget is smaller:** Standard takes at most 25 stacks a second per function and 50 in all; Low
+  12 and 25. A capture measured 20-28 µs on the test fixture, so 50 a second keeps it near 1.4 ms of the game's time a
+  second. (On Avowed a capture measured 3.25 µs.)
+- **The Object Tree remembers that it was collapsed.** Collapse it with its arrow and the next start opens it
+  collapsed; expand it and the next start opens it expanded.
+
+-----
+
+## 2026-10-08 (build 3641) — Live Funcs takes a function's native call stack `[LIVEFUNCS-STEP3]`
+
+- **Native call stacks (experimental, with Trace).** A "Stack?" column (header "S") chooses functions. Each traced call
+  of a chosen function keeps the native return addresses above it, the game's caller first, 16 frames deep. Any
+  function can be chosen, with or without parameters, and a function can be chosen for both.
+  - A per-second budget caps how many stacks are taken: **Standard** (100 a second per function, 200 in all) or
+    **Low** (half of that). The first calls of each second are kept.
+  - **A warning shows while stacks are chosen.** A stack is read in software inside the hooked call, on the game's own
+    thread, not by a debugger as Cheat Engine does. A capture measured 20-28 µs in a 160 MB game on a fast PC, and
+    that time is added to the game's frame. The walk is guarded (the stack's bounds and reserve, faults), but an
+    unforeseen case could still stall or crash the game: save first, and choose few functions.
+  - Stop says how many stacks were kept, how many calls the budget left without one, and what a capture cost.
+- **Call Trace has a "Call stack" tab.** Each frame shows its address (following the Address setting) and where it
+  is: "+0x… into the function at "Game.exe"+RVA", "native entry of Class::Func" for a traced function, "UObject::
+  ProcessEvent", or "the dumper's ProcessEvent hook". Notes say when the stack was cut, recorded alone, over the
+  budget, or untrustworthy below a frame without unwind data.
+  - **Copy** puts the frame in Cheat Engine's own form, `"Game.exe"+RVA`, whatever the Address setting, so it
+    survives a relaunch. **ASM** moves Cheat Engine's disassembler there (with the AOBMaker plugin).
+  - Rows with a stack carry `(s)`, and the summary counts them.
+- A call chosen only for its stack no longer reads "overwritten" in the Parameters tab: it says it was not chosen.
+- Checked live on DumperTest58 (UE 5.8 Shipping): every stack taken inside a traced call shows ProcessEvent and the
+  hook above it, and none taken alone does; the budget kept 30 a second when asked for 30.
+
+-----
+
 ## 2026-10-08 (builds 3639-3640) — Live Funcs follows functions by name and copies their parameters `[LIVEFUNCS-STEP2]`
 
 - **Ticks follow a function by name, not by address.** A function a closed menu unloaded can be ticked from its

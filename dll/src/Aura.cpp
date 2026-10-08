@@ -6519,7 +6519,15 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
     return 0;
 }
 
+// A native function's Func slot, before the code test: 0 for a script function, an undetected offset or a failed read.
+static uintptr_t NativeFuncSlot(uintptr_t funcAddr);
+
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr) {
+    const uintptr_t exec = NativeFuncSlot(funcAddr);
+    return exec && Macht::LooksLikeCodePointer(exec) ? exec : 0;
+}
+
+static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
     if (!funcAddr) return 0;
     EnsureUFunctionFuncOffset();
     if (DynOff::UFUNCTION_FUNC == 0) return 0;
@@ -6534,9 +6542,7 @@ uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr) {
     if ((ReadFunctionFlags(funcAddr) & FUNC_Native) == 0) return 0;
 
     uintptr_t exec = 0;
-    if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec) ||
-        !Macht::LooksLikeCodePointer(exec))
-        return 0;
+    if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec)) return 0;
     return exec;
 }
 
@@ -10303,6 +10309,85 @@ SnapshotChunkResult CaptureSnapshotChunk(int32_t offset, int32_t limit,
     }
 
     return result;
+}
+
+
+// [LIVEFUNCS-STEP3] S3-A1 follow-up. A region VirtualQuery reports has one state, type and protection throughout, so
+// its verdict holds for every address in it; non-code regions are kept too, so a run of bad pointers asks once each.
+bool CodeRangeCache::IsCode(uintptr_t p) {
+    if (p < 0x10000) return false;
+    for (const Range& r : ranges)
+        if (p >= r.lo && p < r.hi) return r.code;
+    ++queries;
+    MEMORY_BASIC_INFORMATION mbi{};
+    if (VirtualQuery(reinterpret_cast<LPCVOID>(p), &mbi, sizeof(mbi)) == 0) return false;
+    const DWORD execMask = PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY;
+    Range r;
+    r.lo = reinterpret_cast<uintptr_t>(mbi.BaseAddress);
+    r.hi = r.lo + mbi.RegionSize;
+    r.code = mbi.State == MEM_COMMIT && mbi.Type == MEM_IMAGE && !(mbi.Protect & PAGE_GUARD) &&
+             (mbi.Protect & execMask) != 0;
+    ranges.push_back(r);
+    return r.code;
+}
+
+// [LIVEFUNCS-STEP3] S3-A1.
+void SortCodeEntries(std::vector<CodeEntry>& entries) {
+    std::sort(entries.begin(), entries.end(), [](const CodeEntry& a, const CodeEntry& b) {
+        return a.code != b.code ? a.code < b.code : a.ufunc < b.ufunc;
+    });
+    entries.erase(std::unique(entries.begin(), entries.end(),
+                              [](const CodeEntry& a, const CodeEntry& b) { return a.code == b.code && a.ufunc == b.ufunc; }),
+                  entries.end());
+}
+
+size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc) {
+    ufunc = 0;
+    const auto lo = std::lower_bound(sorted.begin(), sorted.end(), code,
+                                     [](const CodeEntry& e, uintptr_t c) { return e.code < c; });
+    auto hi = lo;
+    while (hi != sorted.end() && hi->code == code) ++hi;
+    if (lo == hi) return 0;
+    ufunc = lo->ufunc;
+    return static_cast<size_t>(hi - lo);
+}
+
+bool CollectCodeEntries(std::vector<CodeEntry>& out, CodeIndexStats* stats) {
+    out.clear();
+    CodeIndexStats s;
+    const auto t0 = std::chrono::steady_clock::now();
+    // A class pointer's verdict, read once: a pool of hundreds of thousands holds a few thousand classes.
+    std::unordered_map<uintptr_t, bool> isFunctionClass;
+    CodeRangeCache codeRanges;
+    const bool whole = ForEach([&](int32_t, uintptr_t obj) {
+        ++s.objects;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) return true;
+        auto it = isFunctionClass.find(cls);
+        if (it == isFunctionClass.end()) {
+            uint32_t nameIdx = 0;
+            bool fn = false;
+            if (Macht::ReadSafe(cls + Grimoire::OFF_UOBJECT_NAME, nameIdx)) {
+                const std::string n = Serie::GetString(nameIdx);
+                fn = n == "Function" || n == "DelegateFunction" || n == "SparseDelegateFunction";
+            }
+            it = isFunctionClass.emplace(cls, fn).first;
+        }
+        if (!it->second) return true;
+        ++s.functions;
+        const auto c0 = std::chrono::steady_clock::now();
+        const uintptr_t slot = NativeFuncSlot(obj);
+        const uintptr_t code = slot && codeRanges.IsCode(slot) ? slot : 0;
+        s.codeMicros += static_cast<uint64_t>(
+            std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count());
+        if (code) out.push_back(CodeEntry{ code, obj });
+        return true;
+    });
+    SortCodeEntries(out);
+    s.totalMicros = static_cast<uint64_t>(
+        std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - t0).count());
+    if (stats) *stats = s;
+    return whole;
 }
 
 } // namespace Aura

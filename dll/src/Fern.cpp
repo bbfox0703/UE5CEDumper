@@ -1741,6 +1741,13 @@ static json SerializeField(const Ubel::LiveFieldValue& fv, bool lean = false) {
     return fj;
 }
 
+// [LIVEFUNCS-STEP3] S3-A1: the native-entry index of the stopped recording a stack page is read from -- one pass over
+// the object array, kept for that recording's other pages. Only a whole pass is kept: a cancel leaves a partial one,
+// which serves the page that asked and is built again for the next.
+static std::mutex g_codeIndexMu;
+static uint64_t g_codeIndexGen = 0;
+static std::vector<Aura::CodeEntry> g_codeIndex;
+
 // [LIVEFUNCS-TIMELINE-2026-10-04] The trace's state as the UI reads it: what it needs to page the ring
 // ([first_valid, written)), to turn ticks into time (qpc_freq), and to tell an unreadable ring from an empty one.
 static json TraceInfoToJson(const Linie::TraceInfo& i) {
@@ -1761,7 +1768,8 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
     t["scoped"]       = i.scoped;
     t["ticked_names"] = i.tickedNames;
     t["snap_only"]    = i.snapOnly;
-    // Only when parameters were chosen: an absent key tells the UI no snapshot buffer exists (or the DLL predates it).
+    // Only when something was chosen -- parameters or [LIVEFUNCS-STEP3] stacks, which share the buffer: an absent key
+    // tells the UI no snapshot buffer exists (or the DLL predates it). Its `rings` counts the parameter rings alone.
     if (i.snap.allocated) {
         json s;
         s["allocated"]      = true;
@@ -1773,6 +1781,21 @@ static json TraceInfoToJson(const Linie::TraceInfo& i) {
         s["skipped_budget"] = i.snap.skippedBudget;
         s["dropped_budget"] = i.snap.droppedBudget;
         t["snap"] = s;
+    }
+    // [LIVEFUNCS-STEP3] Only when stacks were chosen: its absence is how the UI tells a DLL that predates them. The
+    // mean cost of a capture is spent_ticks / captures / qpc_freq.
+    if (i.stack.rings > 0) {
+        json k;
+        k["rings"]          = i.stack.rings;
+        k["depth"]          = i.stack.depth;
+        k["per_ring_per_s"] = i.stack.perRingPerSec;
+        k["total_per_s"]    = i.stack.totalPerSec;
+        k["captures"]       = i.stack.captures;
+        k["skipped_budget"] = i.stack.skippedBudget;
+        k["dropped_budget"] = i.stack.droppedBudget;
+        k["spent_ticks"]    = i.stack.spentTicks;
+        k["max_ticks"]      = i.stack.maxTicks;
+        t["stack"] = k;
     }
     return t;
 }
@@ -1900,6 +1923,7 @@ json ArmsSummaryToJson() {
         n["key"]       = json::array({ s.key.fnIdx, s.key.fnNum, s.key.clsIdx, s.key.clsNum });
         n["tick"]      = s.tick;
         n["chosen"]    = s.ring >= 0;
+        n["stack"]     = s.stackRing >= 0;   // [LIVEFUNCS-STEP3]
         n["addresses"] = s.addresses;
         n["arms"]      = s.arms;
         n["arms_full"] = s.armsFull;
@@ -4486,7 +4510,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     Linie::FreeTrace();
                     std::vector<Linie::ArmSpec> specs;
                     json refused = json::array();
-                    size_t tickAsked = 0, tickOk = 0, snapAsked = 0, snapOk = 0;
+                    size_t tickAsked = 0, tickOk = 0, snapAsked = 0, snapOk = 0, stackAsked = 0, stackOk = 0;
                     // The keys of one item that still name what the UI showed: both halves rendered and compared.
                     auto goodKeys = [](const json& item, std::string& cls, std::string& fn) {
                         std::vector<Linie::NameKey> keys;
@@ -4533,13 +4557,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                         }
                         cfg.snapBytes = sb;
                         // The budget words hold a count in 24 bits; Linie clamps too, the reply says what was used.
-                        auto budget = [&s](const char* key, uint32_t def) {
-                            const int64_t v = s.contains(key) && s[key].is_number_integer() ? s[key].get<int64_t>()
+                        // A value that is not an integer takes the default rather than throwing.
+                        auto budget = [](const json& o, const char* key, uint32_t def) {
+                            const int64_t v = o.contains(key) && o[key].is_number_integer() ? o[key].get<int64_t>()
                                                                                              : int64_t(def);
                             return static_cast<uint32_t>(std::clamp<int64_t>(v, 1, 0xFFFFFF));
                         };
-                        cfg.snapPerRingPerSec = budget("per_ring_per_s", cfg.snapPerRingPerSec);
-                        cfg.snapTotalPerSec   = budget("total_per_s", cfg.snapTotalPerSec);
+                        cfg.snapPerRingPerSec = budget(s, "per_ring_per_s", cfg.snapPerRingPerSec);
+                        cfg.snapTotalPerSec   = budget(s, "total_per_s", cfg.snapTotalPerSec);
                         cfg.copier = &Macht::ReadBytesSafe;
                         if (s.contains("funcs") && s["funcs"].is_array()) {
                             for (const auto& item : s["funcs"]) {
@@ -4563,13 +4588,45 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                 }
                             }
                         }
+                        // [LIVEFUNCS-STEP3] Stacks ride in the same block and the same buffer: each function chosen for
+                        // its stack gets a stack ring, numbered among the stack rings. A name in both lists keeps both:
+                        // BuildArmState merges its specs.
+                        if (s.contains("stacks") && s["stacks"].is_object()) {
+                            const json& sk = s["stacks"];
+                            static_assert(Linie::kStackMaxDepth + Macht::kStackOwnSlack + 1 <= Macht::kStackRawFrames,
+                                          "the walk's buffer holds the deepest stack ring, our own frames, and one more");
+                            cfg.stackDepth = std::clamp<uint32_t>(budget(sk, "depth", Linie::kStackDefaultDepth), 1,
+                                                                  Linie::kStackMaxDepth);
+                            cfg.stackPerRingPerSec = budget(sk, "per_ring_per_s", cfg.stackPerRingPerSec);
+                            cfg.stackTotalPerSec   = budget(sk, "total_per_s", cfg.stackTotalPerSec);
+                            cfg.stackCapturer      = &Macht::CaptureCallerStack;
+                            if (sk.contains("funcs") && sk["funcs"].is_array()) {
+                                for (const auto& item : sk["funcs"]) {
+                                    if (!item.is_object()) continue;
+                                    ++stackAsked;
+                                    std::string cls, fn;
+                                    const auto keys = goodKeys(item, cls, fn);
+                                    if (keys.empty()) { refuse(cls, fn); continue; }
+                                    ++stackOk;
+                                    const int32_t sr = static_cast<int32_t>(cfg.stackRings++);
+                                    for (const auto& k : keys) {
+                                        Linie::ArmSpec sp;
+                                        sp.key       = k;
+                                        sp.stackRing = sr;
+                                        specs.push_back(sp);
+                                    }
+                                }
+                            }
+                        }
                     }
                     // Nothing left is a refusal, never a trace of every call; and ticks that all failed never quietly
                     // become a snapshots-only trace -- the user asked for a scope.
-                    if (tickOk + snapOk == 0 || (tickAsked != 0 && tickOk == 0)) {
+                    if (tickOk + snapOk + stackOk == 0 || (tickAsked != 0 && tickOk == 0)) {
                         Sein::Warn("PIPE:profile", "pe_profile_start: refused by name (%llu/%llu ticks, %llu/%llu "
-                                   "choices still named)", (unsigned long long)tickOk, (unsigned long long)tickAsked,
-                                   (unsigned long long)snapOk, (unsigned long long)snapAsked);
+                                   "choices, %llu/%llu stacks still named)", (unsigned long long)tickOk,
+                                   (unsigned long long)tickAsked, (unsigned long long)snapOk,
+                                   (unsigned long long)snapAsked, (unsigned long long)stackOk,
+                                   (unsigned long long)stackAsked);
                         return Renge::MakeError(id, tickAsked != 0 && tickOk == 0
                             ? "None of the ticked functions is known by that name in this game any more, so the trace "
                               "would follow none of them. Record once without the trace so the table names them again."
@@ -4581,6 +4638,9 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                     cfg.scoped      = true;
                     cfg.tickedNames = tickOk;
                     namesReply = { { "ticks", tickOk }, { "chosen", snapOk }, { "refused", refused } };
+                    // [LIVEFUNCS-STEP3] Present only when stacks were asked for, so an absent key and a 0 differ: the
+                    // UI tells a DLL that predates stacks from one that refused every stack choice.
+                    if (stackAsked != 0) namesReply["stacks"] = stackOk;
                 }
                 // `ticked` addresses are for a DLL that predates names; one that reads ticked_names ignores them.
                 if (!namesTicked && t.contains("ticked") && t["ticked"].is_array()) {
@@ -4614,21 +4674,24 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 }
                 // T5 (b): the previous recording's per-frame functions, read before StartRecording clears its table.
                 if (t.value("exclude_per_frame", false)) cfg.exclude = Linie::PerFrameFuncs();
-                // Chosen functions and nothing ticked records only the chosen calls (T11).
-                cfg.snapOnly = !cfg.snapRingCaps.empty() && cfg.tickedNames == 0 && cfg.ticked.empty();
+                // Chosen functions -- for their parameters or [LIVEFUNCS-STEP3] their stacks -- and nothing ticked
+                // records only the chosen calls (T11).
+                cfg.snapOnly = (!cfg.snapRingCaps.empty() || cfg.stackRings != 0) && cfg.tickedNames == 0 &&
+                               cfg.ticked.empty();
                 const Linie::TraceStartStatus st = Linie::StartTrace(cfg);
                 if (st == Linie::TraceStartStatus::SnapTooSmall || st == Linie::TraceStartStatus::SnapNoMemory) {
-                    Sein::Warn("PIPE:profile", "pe_profile_start: snapshot buffer of %llu MB for %llu functions "
-                               "refused (%s)", (unsigned long long)(cfg.snapBytes >> 20),
-                               (unsigned long long)cfg.snapRingCaps.size(),
+                    const size_t nRings = cfg.snapRingCaps.size() + cfg.stackRings;   // [LIVEFUNCS-STEP3]
+                    Sein::Warn("PIPE:profile", "pe_profile_start: snapshot buffer of %llu MB for %llu rings (%llu "
+                               "for stacks) refused (%s)", (unsigned long long)(cfg.snapBytes >> 20),
+                               (unsigned long long)nRings, (unsigned long long)cfg.stackRings,
                                st == Linie::TraceStartStatus::SnapNoMemory ? "no memory" : "too small");
                     return Renge::MakeError(id, st == Linie::TraceStartStatus::SnapNoMemory
                         ? "The game process could not spare " + std::to_string(cfg.snapBytes >> 20) +
                           " MB for the snapshot buffer. Pick a smaller one and Start again."
                         : "The snapshot buffer of " + std::to_string(cfg.snapBytes >> 20) + " MB cannot keep " +
-                          std::to_string(Linie::kSnapMinSlots) + " calls for each of the " +
-                          std::to_string(cfg.snapRingCaps.size()) +
-                          " chosen functions. Choose fewer functions, or a larger snapshot buffer.").dump();
+                          std::to_string(Linie::kSnapMinSlots) + " calls in each of the " + std::to_string(nRings) +
+                          " rings the choices need (one per function for its parameters, one for its stack). Choose "
+                          "fewer functions, or a larger snapshot buffer.").dump();
                 }
                 if (st != Linie::TraceStartStatus::Ok) {
                     const char* why = st == Linie::TraceStartStatus::NoMemory ? "no memory"
@@ -4661,12 +4724,14 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             const long long startMs = std::chrono::duration_cast<std::chrono::milliseconds>(
                 std::chrono::steady_clock::now() - startT0).count();
             Sein::Info("PIPE:profile", "pe_profile_start: recording begun in %lld ms (hook_active=%d, trace=%llu MB, "
-                       "ticked=%llu, by name=%llu, chosen=%llu, snapshot buffer=%llu MB, excluded=%llu)",
+                       "ticked=%llu, by name=%llu, chosen=%llu, stacks=%llu, snapshot buffer=%llu MB, excluded=%llu)",
                        startMs, hookActive ? 1 : 0,
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["bytes"].get<uint64_t>() >> 20),
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["ticked"].get<uint64_t>()),
                        (unsigned long long)(namesReply.is_null() ? 0 : namesReply["ticks"].get<uint64_t>()),
                        (unsigned long long)(namesReply.is_null() ? 0 : namesReply["chosen"].get<uint64_t>()),
+                       (unsigned long long)(namesReply.is_null() || !namesReply.contains("stacks") ? 0
+                                            : namesReply["stacks"].get<uint64_t>()),
                        (unsigned long long)(traceReply.is_null() || !traceReply.contains("snap") ? 0
                                             : traceReply["snap"]["bytes"].get<uint64_t>() >> 20),
                        (unsigned long long)(traceReply.is_null() ? 0 : traceReply["excluded"].get<uint64_t>()));
@@ -4958,7 +5023,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 item["class_name"] = cls;
                 item["func_name"]  = fname;
                 if (haveKey) item["fname_key"] = json::array({ key.fnIdx, key.fnNum, key.clsIdx, key.clsNum });
-                // Always, not only behind skip_per_frame: the UI marks the row, and its snapshot estimate counts it.
+                // Always, not only behind skip_per_frame: the flag describes the row, and the UI needs it on every row it
+                // shows.
                 if (Linie::IsPerFrame(snap[i], windowMs)) item["per_frame"] = true;
                 item["func_addr"]  = Renge::AddrToStr(snap[i].func);
                 item["num_parms"]  = fd.numParms;
@@ -5241,6 +5307,112 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             json data = TraceInfoToJson(Linie::GetTraceInfo());
             data["ring"] = ringIn;
             const bool stale = request.contains("gen") && request.value("gen", uint64_t(0)) != gen;
+            // [LIVEFUNCS-STEP3] kind "stack": one page of one stack ring (numbered among the stack rings), same
+            // refusals. The frames are integers copied under the trace's lock; each distinct address of the page is
+            // resolved once, outside it -- module, RVA, the function holding ret-1, ours or not, ProcessEvent or not.
+            if (request.contains("kind") && request["kind"].is_string() && request["kind"].get<std::string>() == "stack") {
+                data["kind"] = "stack";
+                json ringsJ = json::array();
+                std::vector<Linie::SnapRingInfo> sri;
+                if (!stale && Linie::StackRings(sri)) {
+                    for (const auto& r : sri) {
+                        ringsJ.push_back({ { "ring", r.index }, { "cap", r.cap }, { "depth", r.cap / 8 },
+                                           { "written", r.written }, { "first_valid", r.firstValid },
+                                           { "skipped_budget", r.skippedBudget }, { "dropped_budget", r.droppedBudget },
+                                           { "spent_ticks", r.spentTicks } });
+                    }
+                }
+                data["rings"] = std::move(ringsJ);
+                if (stale) data["stale"] = true;
+                std::vector<Linie::StackCopy> stacks;
+                uint64_t snext = from, sorphans = 0;
+                const bool got = !stale && ringIn >= 0 &&
+                    Linie::CopyStacks(static_cast<uint32_t>(ringIn), from, static_cast<size_t>(maxSlots), stacks, &snext,
+                                      &sorphans);
+                if (!got) {
+                    data["count"] = 0;
+                    data["next"]  = from;
+                    data["items"] = json::array();
+                    data["sites"] = json::array();
+                    return Renge::MakeResponse(id, data).dump();
+                }
+                const uintptr_t processEvent = Stark::HookedAddress();
+                std::lock_guard<std::mutex> indexLock(g_codeIndexMu);   // pipe threads only; the hook never takes it
+                if (g_codeIndexGen != gen || gen == 0) {
+                    std::vector<Aura::CodeEntry> fresh;
+                    Aura::CodeIndexStats cost;
+                    const bool whole = Aura::CollectCodeEntries(fresh, &cost);
+                    Sein::Info("PIPE:profile", "native-entry index: %zu entries from %llu functions of %llu objects in "
+                               "%llu ms (%llu ms reading the entries)%s", fresh.size(),
+                               (unsigned long long)cost.functions, (unsigned long long)cost.objects,
+                               (unsigned long long)(cost.totalMicros / 1000), (unsigned long long)(cost.codeMicros / 1000),
+                               whole ? "" : "; cut short by a cancel");
+                    g_codeIndex.swap(fresh);
+                    g_codeIndexGen = whole ? gen : 0;
+                }
+                json items = json::array(), sites = json::array();
+                std::unordered_map<uint64_t, size_t> siteOf;
+                size_t bytes = 0;
+                uint64_t pageNext = snext;
+                for (size_t k = 0; k < stacks.size(); ++k) {
+                    const Linie::StackCopy& s = stacks[k];
+                    if (bytes > kSnapPageBytes || ((k & 0xFF) == 0 && k && Tot::Requested())) {
+                        pageNext = s.index;   // the rest on the next page
+                        break;
+                    }
+                    json frames = json::array();
+                    for (uint64_t a : s.frames) {
+                        auto it = siteOf.find(a);
+                        if (it == siteOf.end()) {
+                            Macht::CodeSite cs;
+                            const bool inModule = Macht::DescribeCode(static_cast<uintptr_t>(a), cs);
+                            json sj;
+                            sj["addr"]   = Renge::AddrToStr(static_cast<uintptr_t>(a));
+                            sj["module"] = inModule ? cs.moduleUtf8 : std::string();
+                            if (inModule) {
+                                sj["module_base"] = Renge::AddrToStr(cs.moduleBase);
+                                sj["rva"]         = a - cs.moduleBase;
+                            }
+                            sj["unwind"] = cs.unwind;
+                            if (cs.unwind) {
+                                sj["fn"] = Renge::AddrToStr(cs.fnBegin);
+                                if (inModule) sj["fn_rva"] = cs.fnBegin - cs.moduleBase;
+                                // [LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry this is, ProcessEvent or
+                                // not; `shared` when several enter there (the interpreter, identical code folded).
+                                uintptr_t uf = 0;
+                                const size_t n = Aura::LookupCodeEntry(g_codeIndex, cs.fnBegin, uf);
+                                if (n != 0) {
+                                    sj["ufunc"] = Renge::AddrToStr(uf);
+                                    sj["func"]  = Ubel::GetName(uf);
+                                    sj["class"] = Ubel::GetName(Ubel::GetOuter(uf));
+                                    if (n > 1) sj["shared"] = n;
+                                }
+                            }
+                            if (cs.own) sj["own"] = true;
+                            if (cs.unwind && processEvent != 0 && cs.fnBegin == processEvent) sj["known"] = "process_event";
+                            bytes += sj.dump().size();   // the sites count toward the page as the items do
+                            it = siteOf.emplace(a, sites.size()).first;
+                            sites.push_back(std::move(sj));
+                        }
+                        frames.push_back(it->second);
+                    }
+                    json item;
+                    item["index"]     = s.index;
+                    item["entry_seq"] = s.entrySeq;
+                    item["flags"]     = s.flags;
+                    item["ticks"]     = s.ticks;
+                    item["len"]       = s.len;
+                    item["frames"]    = std::move(frames);
+                    bytes += item.dump().size();
+                    items.push_back(std::move(item));
+                }
+                data["count"]   = items.size();
+                data["next"]    = pageNext;
+                data["orphans"] = sorphans;
+                data["items"]   = std::move(items);
+                data["sites"]   = std::move(sites);
+                return Renge::MakeResponse(id, data).dump();
+            }
             std::vector<Linie::SnapCopy> slots;
             uint64_t next = from, orphans = 0;
             const bool copied = !stale && ringIn >= 0 &&

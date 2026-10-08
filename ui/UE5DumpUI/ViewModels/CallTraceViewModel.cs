@@ -243,7 +243,7 @@ public partial class CallTraceViewModel : ViewModelBase
             var read = await ReadAndBuildAsync(info, kept, ct);
             if (read.Trace == null)
             {
-                StatusText = Res.Get(read.StatusKey ?? "str.CT.Status.Changed");
+                StatusText = StringLookup(read.StatusKey ?? "str.CT.Status.Changed");
                 return;
             }
             var trace = read.Trace;
@@ -265,7 +265,9 @@ public partial class CallTraceViewModel : ViewModelBase
             Progress = 1;
             StatusText = Summary(trace);
             _log.Info($"CallTrace: loaded {trace.Count} calls ({kept} records, gen {info.Gen}), " +
-                      $"{read.Funcs} functions, {read.Objs} objects");
+                      $"{read.Funcs} functions, {read.Objs} objects" +
+                      (trace.Stacks is { } st
+                          ? $", {st.Calls.Count} stacks ({st.Orphans} orphaned, {st.Unjoined} unjoined)" : ""));
         }
         catch (OperationCanceledException)
         {
@@ -348,7 +350,9 @@ public partial class CallTraceViewModel : ViewModelBase
         var rings = new List<SnapRingInfo>();
         var slots = new List<SnapSlot>();
         ulong orphans = 0;
-        if (info.Snap is { Allocated: true })
+        // [LIVEFUNCS-STEP3] A Start that chose stacks alone allocates the buffer with no parameter ring and no arm:
+        // there is nothing to ask the layouts of.
+        if (info.Snap is { Allocated: true, Rings: > 0 })
         {
             StatusText = Res.Get("str.CT.Status.ReadingSnapshots");
             arms = new List<SnapArm>();
@@ -376,6 +380,34 @@ public partial class CallTraceViewModel : ViewModelBase
             }
         }
 
+        // [LIVEFUNCS-STEP3] The native stacks, before the release too, and whatever the parameters were: a stacks-only
+        // trace has none. Every reply carries every stack ring's window, so a first one-slot read fetches them, and each
+        // ring is then paged over its window as the parameter rings are (review M1). A page whose slots were all
+        // orphans -- the oldest ones, once the trace's ring lapped -- comes back empty yet moves on, so only a page
+        // that does not move ends a ring.
+        List<StackSlot>? stackSlots = null;
+        ulong stackOrphans = 0;
+        if (info.Stack is { Rings: > 0 })
+        {
+            StatusText = Res.Get("str.CT.Status.ReadingStacks");
+            stackSlots = new List<StackSlot>();
+            var head = await _dump.PeStackGetAsync(info.Gen, 0, 0, 1, ct);
+            if (head.Stale || head.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
+            foreach (var ring in head.Rings)
+            {
+                for (ulong slotFrom = ring.FirstValid; slotFrom < ring.Written;)
+                {
+                    ct.ThrowIfCancellationRequested();
+                    var sp = await _dump.PeStackGetAsync(info.Gen, ring.Ring, slotFrom, SnapPage, ct);
+                    if (sp.Stale || sp.Info.Gen != info.Gen) return (null, "str.CT.Status.Changed", 0, 0);
+                    stackSlots.AddRange(sp.Items);
+                    stackOrphans += sp.Orphans;
+                    if (sp.Next <= slotFrom) break;   // refused or nothing more: what was read stands
+                    slotFrom = sp.Next;
+                }
+            }
+        }
+
         StatusText = Res.Get("str.CT.Status.Building");
         CollectPageGarbage();   // the build's columns take the room the pages left, not new memory
         long count = n;
@@ -385,6 +417,7 @@ public partial class CallTraceViewModel : ViewModelBase
         {
             var built = CallTraceBuilder.Build(all.AsSpan(0, (int)count), info, funcs, objs);
             if (arms != null) built.Snapshots = CallTraceSnapshots.Join(built, arms, rings, slots, orphans);
+            if (stackSlots != null) built.Stacks = CallTraceStacks.Join(built, stackSlots, stackOrphans, info.Stack);
             return built;
         });
         NoteLoadPeak();   // the window and the columns at once: the load's structural peak
@@ -403,13 +436,15 @@ public partial class CallTraceViewModel : ViewModelBase
 
     private void NoteLoadPeak() => _loadPeakWs = Math.Max(_loadPeakWs, Environment.WorkingSet);
 
-    /// <summary>Nothing on screen holds the shown trace any more: its rows, the filter's matches, the detail.</summary>
+    /// <summary>Nothing the view model keeps reaches the shown trace any more, a cache built from it included: whatever
+    /// still held it would keep it alive beside the next load's window and columns.</summary>
     private void DropShownTrace()
     {
         if (_trace == null) return;
         _trace = null;
         _tree = null;
         _matches = Array.Empty<int>();
+        _codeIndexCache = null;
         IsFiltered = false;
         SelectedIndex = -1;
         Rows = Array.Empty<CallTraceRow>();
@@ -437,31 +472,42 @@ public partial class CallTraceViewModel : ViewModelBase
     [RelayCommand]
     private void CancelLoad() => _loadCts?.Cancel();
 
-    internal static string Summary(CallTrace t)
+    /// <summary>The status line under a loaded trace. Its sentences come through <see cref="StringLookup"/>, so a test
+    /// reads the ones a user reads.</summary>
+    internal string Summary(CallTrace t)
     {
-        var sb = new StringBuilder(Res.Format("str.CT.Status.Loaded", t.Count, t.WindowSeconds));
-        if (t.Info.FirstValid > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Lapped", t.Info.FirstValid));
-        if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(Res.Get("str.CT.Status.BeforeWindowOne"));
-        else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
+        var sb = new StringBuilder(Say("str.CT.Status.Loaded", t.Count, t.WindowSeconds));
+        if (t.Info.FirstValid > 0) sb.Append(' ').Append(Say("str.CT.Status.Lapped", t.Info.FirstValid));
+        if (t.ReturnsBeforeWindow == 1) sb.Append(' ').Append(StringLookup("str.CT.Status.BeforeWindowOne"));
+        else if (t.ReturnsBeforeWindow > 0) sb.Append(' ').Append(Say("str.CT.Status.BeforeWindow", t.ReturnsBeforeWindow));
         // "Every call" only when nothing was left out; a left-out function's calls show under its caller (DLL-9).
         switch (ScopeKey(t.Info))
         {
-            case "str.CT.Status.Scoped": sb.Append(' ').Append(Res.Format("str.CT.Status.Scoped", t.Info.Ticked)); break;
+            case "str.CT.Status.Scoped": sb.Append(' ').Append(Say("str.CT.Status.Scoped", t.Info.Ticked)); break;
             case "str.CT.Status.ScopedNames":
-                sb.Append(' ').Append(Res.Format("str.CT.Status.ScopedNames", t.Info.TickedNames)); break;
-            case { } key: sb.Append(' ').Append(Res.Get(key)); break;
+                sb.Append(' ').Append(Say("str.CT.Status.ScopedNames", t.Info.TickedNames)); break;
+            case { } key: sb.Append(' ').Append(StringLookup(key)); break;
         }
-        if (t.Info.Excluded > 0) sb.Append(' ').Append(Res.Format("str.CT.Status.Excluded", t.Info.Excluded));
+        if (t.Info.Excluded > 0) sb.Append(' ').Append(Say("str.CT.Status.Excluded", t.Info.Excluded));
         // [TRACE-UNLOADED-NAMES] Always, whatever the buffer: how much is named only from a first call, and how much
         // has no name at all -- 0% included, so a clean trace says so.
         if (t.UnloadedFuncs > 0)
-            sb.Append(' ').Append(Res.Format("str.CT.Status.Unloaded", t.UnloadedFuncs, t.DistinctFuncs,
-                                             CallTrace.ShareText(t.UnloadedCalls, t.Count)));
-        sb.Append(' ').Append(Res.Format("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
-                                         t.UnnamedFuncs, t.DistinctFuncs));
+            sb.Append(' ').Append(Say("str.CT.Status.Unloaded", t.UnloadedFuncs, t.DistinctFuncs,
+                                      CallTrace.ShareText(t.UnloadedCalls, t.Count)));
+        sb.Append(' ').Append(Say("str.CT.Status.Unnamed", CallTrace.ShareText(t.UnnamedCalls, t.Count),
+                                  t.UnnamedFuncs, t.DistinctFuncs));
         if (t.Snapshots is { } s)
-            sb.Append(' ').Append(Res.Format("str.CT.Status.Snapshots", s.CallsWithParams, s.Arms.Count,
-                                             (long)(t.Info.Snap?.SkippedBudget ?? 0)));
+            sb.Append(' ').Append(Say("str.CT.Status.Snapshots", s.CallsWithParams, s.Arms.Count,
+                                      (long)(t.Info.Snap?.SkippedBudget ?? 0)));
+        // [LIVEFUNCS-STEP3] The calls the budget left without a stack, recorded or not, and what the DLL measured a
+        // capture to cost: that time falls inside its call's duration, so the durations above carry it.
+        if (t.Stacks is { } st)
+        {
+            ulong skipped = st.Info?.SkippedBudget ?? 0, dropped = st.Info?.DroppedBudget ?? 0;
+            sb.Append(' ').Append(Say("str.CT.Status.Stacks", st.Calls.Count, (long)(skipped + dropped), (long)dropped));
+            if (st.Info is { Captures: > 0 } si && t.Info.QpcFreq > 0)
+                sb.Append(' ').Append(Say("str.CT.Status.StackCost", (double)si.SpentTicks / si.Captures * 1e6 / t.Info.QpcFreq));
+        }
         return sb.ToString();
     }
 
@@ -544,6 +590,7 @@ public partial class CallTraceViewModel : ViewModelBase
         ParamRows = p.Rows;
         ParamsNote = string.Join(Environment.NewLine, p.Notes);
         ParamsHex = p.Hex;
+        ShowStack(call);
     }
 
     // ---- [LIVEFUNCS-STEP2] U13: the selected call's parameters (view C) ----
@@ -565,7 +612,9 @@ public partial class CallTraceViewModel : ViewModelBase
         var entry = s?.EntryOf(i);
         var after = s?.AfterOf(i);
         const uint Taken = 2, Lone = 4, Excluded = 8, Budget = 16;
-        if ((f & (Taken | Lone | Excluded | Budget)) == 0 && entry == null && after == null)
+        // [LIVEFUNCS-STEP3] Taken and Budget are the parameters' own flags; Lone and Excluded say a call was chosen
+        // for something, and a call chosen for its stack alone carries them without a parameter to show.
+        if ((f & (Taken | Budget)) == 0 && entry == null && after == null)
             return (Array.Empty<ParamRow>(), new[] { StringLookup("str.CT.Param.NotChosen") }, "");
         var notes = new List<string>();
         if ((f & Lone) != 0) notes.Add(StringLookup("str.CT.Param.Lone"));
@@ -649,6 +698,163 @@ public partial class CallTraceViewModel : ViewModelBase
         _ => "",
     };
 
+    // ---- [LIVEFUNCS-STEP3] S3-U5: the selected call's native stack (view A), and a frame to Cheat Engine (view D) ----
+
+    [ObservableProperty] private IReadOnlyList<StackFrameRow> _stackRows = Array.Empty<StackFrameRow>();
+    [ObservableProperty] private string _stackNote = "";
+
+    private void ShowStack(int call)
+    {
+        var s = Stack(call);
+        StackRows = s.Rows;
+        StackNote = string.Join(Environment.NewLine, s.Notes);
+    }
+
+    /// <summary>What the Call stack tab shows for call <paramref name="i"/>: a row per return address, nearest first, and
+    /// the notes that say why there is no stack, or how far to trust the one there is.</summary>
+    internal (IReadOnlyList<StackFrameRow> Rows, IReadOnlyList<string> Notes) Stack(int i)
+    {
+        var t = _trace;
+        var none = ((IReadOnlyList<StackFrameRow>)Array.Empty<StackFrameRow>(), (IReadOnlyList<string>)Array.Empty<string>());
+        if (t == null || i < 0 || i >= t.Count) return none;
+        uint f = t.Flags[i];
+        var slot = t.Stacks?.StackOf(i);
+        const uint Lone = 4, Excluded = 8;
+        if ((f & (StackInfo.TakenEntryFlag | StackInfo.BudgetEntryFlag)) == 0 && slot == null)
+            return (Array.Empty<StackFrameRow>(), new[] { StringLookup("str.CT.Stack.NotChosen") });
+        // A call chosen for anything carries Lone or Excluded: the parameters' sentences are written for either kind.
+        var notes = new List<string>();
+        if ((f & Lone) != 0) notes.Add(StringLookup("str.CT.Param.Lone"));
+        if ((f & Excluded) != 0) notes.Add(StringLookup("str.CT.Param.Excluded"));
+        if (slot == null)
+        {
+            notes.Add(StringLookup((f & StackInfo.BudgetEntryFlag) != 0 ? "str.CT.Stack.Budget" : "str.CT.Stack.Overwritten"));
+            return (Array.Empty<StackFrameRow>(), notes);
+        }
+        if ((slot.Flags & StackSlot.Partial) != 0) notes.Add(StringLookup("str.CT.Stack.Partial"));
+        if ((slot.Flags & StackSlot.Fault) != 0) notes.Add(StringLookup("str.CT.Stack.Fault"));
+        if ((slot.Flags & StackSlot.More) != 0) notes.Add(StringLookup("str.CT.Stack.More"));
+        if ((slot.Flags & StackSlot.BadSp) != 0) notes.Add(StringLookup("str.CT.Stack.BadSp"));
+        if ((slot.Flags & StackSlot.LowStack) != 0) notes.Add(StringLookup("str.CT.Stack.LowStack"));
+        if ((slot.Flags & StackSlot.NoCapturer) != 0) notes.Add(StringLookup("str.CT.Stack.NoCapturer"));
+
+        var index = CodeIndexOf(t);
+        var format = (AddressFormat)SelectedAddressFormatIndex;
+        var rows = new StackFrameRow[slot.Frames.Count];
+        int doubtful = -1;
+        for (int k = 0; k < rows.Length; k++)
+        {
+            var site = slot.Frames[k];
+            // A frame without unwind data was walked as a leaf, which reads its caller from the wrong slot when it is
+            // not one: the frames below it are the ones in doubt, so the last frame's own lack casts none.
+            if (doubtful < 0 && !site.Unwind && k < rows.Length - 1) doubtful = k;
+            rows[k] = new StackFrameRow
+            {
+                Index = k,
+                Address = FrameAddress(site, format),
+                Where = FrameWhere(site, index),
+                CopyText = FrameCopyText(site),
+                Abs = site.Addr,
+            };
+        }
+        if (doubtful >= 0) notes.Add(Say("str.CT.Stack.MayBeWrong", doubtful));
+        // The walk ran after the entry was timed (D11): its cost is part of the duration the Call tab shows.
+        if (slot.Ticks > 0 && t.Info.QpcFreq > 0)
+            notes.Add(Say("str.CT.Stack.Cost", slot.Ticks * 1e6 / t.Info.QpcFreq));
+        return (rows, notes);
+    }
+
+    // The index with the trace it was built from, so a redraw does not rebuild it. That is a strong reference to a whole
+    // trace: a load drops it with the shown trace, or the old trace outlives its screen ([TRACE-UI-LOAD-MEMORY]). One
+    // field, so the index cannot be dropped apart from its trace.
+    private (CallTrace Trace, Dictionary<ulong, string[]> Index)? _codeIndexCache;
+
+    private Dictionary<ulong, string[]> CodeIndexOf(CallTrace t)
+    {
+        if (_codeIndexCache is { } c && ReferenceEquals(c.Trace, t)) return c.Index;
+        var index = CodeIndex(t);
+        _codeIndexCache = (t, index);
+        return index;
+    }
+
+    /// <summary>The trace's own native entries (pe_trace_names' code_addr, read for a function still live), each with the
+    /// Class::Func of every traced function that starts there, in order. Identical code folding gives several functions
+    /// one entry, so a frame there is none of them in particular.</summary>
+    internal static Dictionary<ulong, string[]> CodeIndex(CallTrace t)
+        => t.Funcs.Values
+            .Where(f => f.CodeAddr != 0 && f.Named)
+            .GroupBy(f => f.CodeAddr)
+            .ToDictionary(g => g.Key,
+                          g => g.Select(f => f.ClassName.Length > 0 ? f.ClassName + "::" + f.FuncName : f.FuncName)
+                                .Distinct(StringComparer.Ordinal).OrderBy(n => n, StringComparer.Ordinal).ToArray());
+
+    /// <summary>A frame's address as the Address setting writes it, against the frame's OWN module: a stack crosses
+    /// modules, so the game module the trace was loaded from would give an RVA into the wrong image. The module's name
+    /// is CE's (narrowed with this machine's code page), so a module+RVA form resolves in CE.</summary>
+    internal static string FrameAddress(StackSite s, AddressFormat f)
+        => AddressHelper.FormatAddress(s.Addr.ToString("X", CultureInfo.InvariantCulture), s.CeModule, s.ModuleBaseHex, f);
+
+    /// <summary>What Copy puts on the clipboard, whatever the Address setting (D13): CE's module+RVA form, which names
+    /// the same code after a relaunch moves the module; outside every module, this run's absolute address.</summary>
+    internal static string FrameCopyText(StackSite s)
+        => s.CeModule.Length > 0 ? CeForm(s.CeModule, s.Rva) : $"0x{s.Addr.ToString("X", CultureInfo.InvariantCulture)}";
+
+    private static string CeForm(string ceModule, uint rva) => $"\"{ceModule}\"+{rva.ToString("X", CultureInfo.InvariantCulture)}";
+
+    /// <summary>What a frame is, by the first rule that fits: the dumper's own image (the hook of an enclosing call), then
+    /// ProcessEvent, then a traced native's entry, then the entry of any UFunction the DLL's index knows (an exec thunk
+    /// reached without ProcessEvent), then an offset into the function holding it, else why none is known. The DLL tells
+    /// own, ProcessEvent and the index's names from addresses only it has.</summary>
+    internal string FrameWhere(StackSite s, IReadOnlyDictionary<ulong, string[]> codeIndex)
+    {
+        ulong off = s.Addr - s.Fn;
+        if (s.Own) return StringLookup("str.CT.Stack.Hook");
+        if (s.Known == "process_event") return Say("str.CT.Stack.ProcessEvent", off);
+        if (s.Fn != 0 && codeIndex.TryGetValue(s.Fn, out var names))
+            return names.Length == 1
+                ? Say("str.CT.Stack.Native", names[0], off)
+                : Say("str.CT.Stack.NativeShared", names[0], off, names.Length - 1);
+        if (s.Fn != 0 && s.FuncName.Length > 0)
+        {
+            string name = s.ClassName.Length > 0 ? s.ClassName + "::" + s.FuncName : s.FuncName;
+            return s.Shared > 1 ? Say("str.CT.Stack.NativeIndexShared", name, off, s.Shared)
+                                : Say("str.CT.Stack.Native", name, off);
+        }
+        if (s.Fn != 0)
+            return Say("str.CT.Stack.Into", off,
+                       s.CeModule.Length > 0 ? CeForm(s.CeModule, s.FnRva)
+                                             : $"0x{s.Fn.ToString("X", CultureInfo.InvariantCulture)}");
+        return StringLookup(s.Module.Length > 0 ? "str.CT.Stack.NoUnwind" : "str.CT.Stack.NoModule");
+    }
+
+    /// <summary>[LIVEFUNCS-STEP3] D13: the frame in CE's module form. The status says whether it arrived: a copy that
+    /// silently failed would leave an older address to paste.</summary>
+    [RelayCommand]
+    private async Task CopyFrameAsync(StackFrameRow? r)
+    {
+        if (r == null || r.CopyText.Length == 0) return;
+        bool copied = await ClipboardDelivery.TryAsync(_platform, r.CopyText);
+        StatusText = Say(copied ? "str.CT.Stack.Copied" : "str.CT.Stack.CopyFailed", r.CopyText);
+    }
+
+    /// <summary>[LIVEFUNCS-STEP3] D13: CE's disassembler at the frame's absolute address. That address belongs to the
+    /// process the trace was read from, so a trace kept past its connection sends nothing: the game now running may
+    /// hold anything there.</summary>
+    [RelayCommand]
+    private async Task AsmFrameAsync(StackFrameRow? r)
+    {
+        if (r == null || r.Abs == 0) return;
+        if (_loadedGen == 0)
+        {
+            StatusText = StringLookup("str.CT.Stack.AsmOldTrace");
+            return;
+        }
+        string text = await AobMakerActions.AsmAsync(LiveFuncs.AobMaker,
+                                                     "0x" + r.Abs.ToString("X", CultureInfo.InvariantCulture),
+                                                     r.CopyText, _log);
+        if (text.Length > 0) StatusText = text;
+    }
+
     private int SelectedCall()
         => Rows is CallTraceRowList l && SelectedIndex >= 0 && SelectedIndex < l.Count ? l.CallAt(SelectedIndex) : -1;
 
@@ -724,7 +930,7 @@ public partial class CallTraceViewModel : ViewModelBase
         return sb.ToString();
     }
 
-    /// <summary>Where the detail pane's sentences come from: en.axaml, through Res. A unit test has no Avalonia
+    /// <summary>Where the sentences a test checks come from: en.axaml, through Res. A unit test has no Avalonia
     /// application for Res to ask, so it reads en.axaml itself and hands it in here.</summary>
     internal Func<string, string> StringLookup { get; set; } = Res.Get;
 
@@ -739,7 +945,12 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>The toolbar's Address setting (an <see cref="AddressFormat"/>), fanned out by the main window as to the
     /// other tabs that show addresses.</summary>
     [ObservableProperty] private int _selectedAddressFormatIndex;
-    partial void OnSelectedAddressFormatIndexChanged(int value) => DetailText = Detail(SelectedCall());
+    partial void OnSelectedAddressFormatIndexChanged(int value)
+    {
+        int call = SelectedCall();
+        DetailText = Detail(call);
+        ShowStack(call);
+    }
 
     private EngineState? _engineState;
     /// <summary>The game the trace was loaded from: its module turns a native entry into a CE address. Taken at the
@@ -853,7 +1064,8 @@ public partial class CallTraceViewModel : ViewModelBase
 
     /// <summary>The pipe dropped. Every game process numbers its traces from 1, so the generation already shown means
     /// nothing in the next one: forget it, so the next process's first trace is read. The trace on screen stays, marked
-    /// as from an earlier connection; a load in progress stops.</summary>
+    /// as from an earlier connection, and its frames' absolute addresses are no longer sent to CE; a load in progress
+    /// stops.</summary>
     public void ClearOnDisconnect()
     {
         _loadedGen = 0;
@@ -894,6 +1106,8 @@ public sealed class CallTraceRow
     public bool IsScopeRoot { get; init; }
     /// <summary>[LIVEFUNCS-STEP2] The call carries a parameter copy: marked in the tree.</summary>
     public bool HasParams { get; init; }
+    /// <summary>[LIVEFUNCS-STEP3] The call carries its native stack: marked in the tree too.</summary>
+    public bool HasStack { get; init; }
 }
 
 /// <summary>[LIVEFUNCS-STEP2] One row of the Parameters tab: a parameter, or a struct member under it.</summary>
@@ -911,6 +1125,20 @@ public sealed class ParamRow
     /// <summary>The raw bytes differ between the copy at the call and the one after it.</summary>
     public bool Changed { get; init; }
     public int Depth { get; init; }
+}
+
+/// <summary>[LIVEFUNCS-STEP3] One row of the Call stack tab: a return address on the call's native stack.</summary>
+public sealed class StackFrameRow
+{
+    /// <summary>Its place on the stack, 0 the nearest: the notes name a frame by it.</summary>
+    public int Index { get; init; }
+    /// <summary>As the Address setting writes it.</summary>
+    public string Address { get; init; } = "";
+    public string Where { get; init; } = "";
+    /// <summary>What Copy gives, whatever the Address setting.</summary>
+    public string CopyText { get; init; } = "";
+    /// <summary>The address in the process the trace was read from.</summary>
+    public ulong Abs { get; init; }
 }
 
 /// <summary>
@@ -957,6 +1185,7 @@ public sealed class CallTraceRowList : IList, IReadOnlyList<CallTraceRow>
                 ObjectStale = _t.ObjStale(i),
                 IsScopeRoot = (_t.Flags[i] & TraceRecord.ScopeRootFlag) != 0,
                 HasParams = _t.Snapshots?.Has(i) == true,
+                HasStack = _t.Stacks?.Has(i) == true,
             };
             _cache[index] = row;
             return row;

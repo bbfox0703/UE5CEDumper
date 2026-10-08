@@ -745,7 +745,9 @@ Entry-record flags (the record table above), from step 2:
 | 2 | a snapshot ring holds this call's parameters |
 | 4 | lone: a chosen call outside every scope, recorded only for its snapshot; it opened no scope |
 | 8 | excluded but chosen: a per-frame function left out by exclude_per_frame, recorded for its snapshot |
-| 16 | in scope and chosen, over the budget: recorded without its parameters |
+| 16 | chosen for its parameters, over their budget: recorded without them (in scope; or lone / excluded with its stack taken) |
+| 32 | `[LIVEFUNCS-STEP3]` a stack ring holds this call's native return addresses (step 3) |
+| 64 | chosen for its stack, over the stack budget: recorded without it |
 
 A snapshot slot is 24 bytes of header (`Linie::SnapSlotHeader`: the slot's number with bit 63 on the copy after the
 call, the call's entry sequence, len, flags, the arm) and the copy. The copy after the call is taken for functions
@@ -755,6 +757,57 @@ What the snapshots do not hold: a call between the Start's trace and its table (
 takes none; a name whose class or function reloads under another Number is another key ("not called"); calls that
 skip ProcessEvent; an arm whose layout was never read (gone first, replaced, sealed at Stop) keeps raw bytes only;
 struct members are read with the function, not checked again; the per-frame exclusion stays by address.
+
+#### Native stack snapshots (step 3) `[LIVEFUNCS-STEP3]`
+
+A function can be chosen for its native stack: at the entry of each of its calls the DLL takes the return addresses
+above the hook, the game's caller first. Stacks ride in the snapshot buffer (the same K) with a budget of their own.
+The design: [live-funcs-step3-design.md](live-funcs-step3-design.md); the build:
+[live-funcs-step3-items.md](live-funcs-step3-items.md). No command is added: `pe_snap_get` takes `"kind":"stack"`.
+
+```jsonc
+// Start: trace.snapshots gains "stacks" (funcs may then be []: stacks only). depth: frames, 1..62 (default 16);
+// per_ring_per_s / total_per_s: the stack budget, clamped to 1..16777215 (defaults 25 / 50). A function in both
+// lists gets a parameter ring and a stack ring. Refused as in step 2, stacks counted: nothing left of ticks, choices
+// and stacks together, or every tick refused when ticks were asked.
+{ "id": 80, "cmd": "pe_profile_start",
+  "trace": { "bytes": 67108864,
+             "snapshots": { "bytes": 33554432, "funcs": [],
+                            "stacks": { "funcs": [ { "class": "DumperTest58Actor", "func": "SnapProbe_Call",
+                                                     "keys": [[815, 0, 811, 0]] } ],
+                                        "depth": 16, "per_ring_per_s": 100, "total_per_s": 200 } } } }
+// Every trace object gains, only when stacks were chosen (its absence: a DLL that predates them):
+//   "stack": { rings, depth, per_ring_per_s, total_per_s, captures, skipped_budget, dropped_budget, spent_ticks,
+//              max_ticks }       -- the mean capture is spent_ticks / captures / qpc_freq seconds
+// "snap" is sent whenever the buffer exists, a stacks-only Start included; its rings counts the parameter rings only.
+// The Start reply's names gains "stacks" (the stack choices still named) ONLY when stacks were asked for: absent
+// means a DLL that ignores them. The Stop reply's names[] items gain "stack" (bool).
+
+// One page of one stack ring (0..stack.rings-1), with pe_snap_get's gen / from / max and refusals.
+{ "id": 81, "cmd": "pe_snap_get", "kind": "stack", "gen": 3, "ring": 0, "from": 0, "max": 1024 }
+// Reply: the trace object, ring, kind "stack", rings (always: [{ ring, cap, depth, written, first_valid,
+// skipped_budget, dropped_budget, spent_ticks }]), count, next, orphans,
+//   items: [{ index, entry_seq, flags, ticks (what the capture cost), len (bytes of frames), frames: [site index] }]
+//   sites: [{ addr, module ("" outside any), module_base, rva, unwind, fn, fn_rva, own, known,
+//            ufunc, class, func, shared }] -- once per distinct
+//          address of the page. module_base / rva only inside a module; fn / fn_rva only with unwind data (fn: the
+//          start of the function holding ret-1, from .pdata); own only when true (this DLL, by base address);
+//          known "process_event" when fn is the hooked ProcessEvent. The UI owns the text for both.
+//          ufunc / class / func: the UFunction whose native entry (UFunction::Func) fn is, from one pass over the
+//          object array per stopped recording (S3-A1); shared: how many functions enter there, when more than one
+//          (a script function's Func is the interpreter, so every Blueprint function shares it).
+//   stack slot flags: 1 Partial (the game's return address was not among the walked frames: the caller only),
+//          2 Fault (the walk faulted: nothing), 4 More (deeper than the depth), 8 BadSp (the hook's return slot is not
+//          on this thread's stack: nothing read), 16 LowStack (under 32 KB of stack left: no walk), 0x8000 no capturer
+```
+
+What the stacks do not hold: exec thunks reached without ProcessEvent are not named by the trace's own natives; a
+thunk that tail-jumps leaves no frame; inlined functions have none; a PGO / hot-cold fragment reports its fragment's
+start (chained unwind is not followed yet); code without unwind data unwinds as a leaf, so the frames below it may be
+wrong; frames past the depth are cut (flag 4); an absolute address belongs to one run (the `"module"+RVA` form
+survives a relaunch); registers and Blueprint's script stack are not captured. Frames outside any image send the walk
+through the dynamic function tables, which may run a registered callback: the same exposure as any C++ exception the
+game throws on that thread.
 
 -----
 

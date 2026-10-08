@@ -154,6 +154,73 @@
                  FontFamily="Consolas, Menlo, monospace" FontSize="12"
                  Background="#1E1E1E" Foreground="#D4D4D4"/>
       </TabItem>
+      <!-- [LIVEFUNCS-STEP3] View A: the call's native stack, nearest return address first, and per frame Copy (CE's
+           module form) and ASM (CE's disassembler) for view D. The grid never sorts: a stack's order is what it says,
+           and the DataGrid's reflection sort fails in the trimmed build. Fixed widths, no star column, so a narrow
+           pane scrolls sideways instead of squeezing the Where text. -->
+      <TabItem Header="{StaticResource str.CT.Tab.Stack}" FontSize="12">
+        <DockPanel Background="#1E1E1E">
+          <TextBlock DockPanel.Dock="Top" Text="{Binding StackNote}" TextWrapping="Wrap"
+                     Foreground="#E5A050" FontSize="12" Margin="4,4,4,2"
+                     IsVisible="{Binding StackNote, Converter={x:Static StringConverters.IsNotNullOrEmpty}}"/>
+          <DataGrid ItemsSource="{Binding StackRows}"
+                    AutoGenerateColumns="False" IsReadOnly="True"
+                    CanUserSortColumns="False" CanUserReorderColumns="False" CanUserResizeColumns="True"
+                    HeadersVisibility="Column" GridLinesVisibility="Horizontal"
+                    Background="#1E1E1E" Foreground="#D4D4D4" BorderThickness="0"
+                    FontFamily="Consolas, Menlo, monospace" FontSize="12">
+            <DataGrid.Columns>
+              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Frame}" Width="32" MinWidth="24">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="vm:StackFrameRow">
+                    <TextBlock Text="{Binding Index}" Foreground="#808080" VerticalAlignment="Center" Margin="4,0"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Address}" Width="170" MinWidth="60">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="vm:StackFrameRow">
+                    <TextBlock Text="{Binding Address}" ToolTip.Tip="{Binding Address}" Foreground="#7FB6E8"
+                               VerticalAlignment="Center" Margin="4,0" TextTrimming="CharacterEllipsis"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Width="104" MinWidth="104">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="vm:StackFrameRow">
+                    <StackPanel Orientation="Horizontal" Spacing="4" Margin="2,1">
+                      <Button Content="{StaticResource str.CT.Stack.Copy}"
+                              Command="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).CopyFrameCommand}"
+                              CommandParameter="{Binding}"
+                              ToolTip.Tip="{StaticResource str.Tip.CT.Stack.Copy}"
+                              Foreground="#DCDCAA" Background="Transparent"
+                              BorderThickness="1" BorderBrush="#DCDCAA"
+                              Padding="6,1" FontSize="11" Cursor="Hand"/>
+                      <Button Content="{StaticResource str.Pointers.AobMakerAsm}"
+                              Command="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).AsmFrameCommand}"
+                              CommandParameter="{Binding}"
+                              IsEnabled="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).LiveFuncs.AobMaker.IsAvailable}"
+                              ToolTip.Tip="{StaticResource str.Tip.CT.Stack.Asm}"
+                              ToolTip.ShowOnDisabled="True"
+                              Foreground="#E5C07B" Background="Transparent"
+                              BorderThickness="1" BorderBrush="#E5C07B"
+                              Padding="6,1" FontSize="11" FontFamily="Consolas" Cursor="Hand"/>
+                    </StackPanel>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+              <DataGridTemplateColumn Header="{StaticResource str.CT.Stack.Col.Where}" Width="420" MinWidth="80">
+                <DataGridTemplateColumn.CellTemplate>
+                  <DataTemplate x:DataType="vm:StackFrameRow">
+                    <TextBlock Text="{Binding Where}" ToolTip.Tip="{Binding Where}" Foreground="#D4D4D4"
+                               VerticalAlignment="Center" Margin="4,0" TextTrimming="CharacterEllipsis"/>
+                  </DataTemplate>
+                </DataGridTemplateColumn.CellTemplate>
+              </DataGridTemplateColumn>
+            </DataGrid.Columns>
+          </DataGrid>
+        </DockPanel>
+      </TabItem>
       <TabItem Header="{StaticResource str.CT.Tab.Params}" FontSize="12">
         <DockPanel Background="#1E1E1E">
           <TextBlock DockPanel.Dock="Top" Text="{Binding ParamsNote}" TextWrapping="Wrap"
@@ -208,22 +275,26 @@
     <!-- Column header for the rows below (a ListBox: a flat, virtualized tree; see CallTraceTree). The cells are laid
          out as each row's are and take the same widths from the view model, so header and rows move together; a
          thumb on each fixed column's inner edge drags its width (U10). Function takes what is left. -->
-    <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2">
-      <Panel DockPanel.Dock="Left" Width="{Binding TimeColWidth}">
+    <!-- [CT-COLUMNS-OVERLAP] When the list is narrower than its fixed columns, DockPanel gives a cell that no longer fits
+         only the width that is left, and Avalonia centres a fixed-width cell in a narrower slot: it drew over the column
+         on its left. Aligned left, each fixed cell keeps its start and its dragged width and runs past the list's edge.
+         The header cuts that overflow itself: it is drawn after the detail pane and would cover it. -->
+    <DockPanel DockPanel.Dock="Top" Margin="4,0,0,2" ClipToBounds="True">
+      <Panel DockPanel.Dock="Left" Width="{Binding TimeColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Time}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
         <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
                Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
                DragDelta="OnTimeThumbDragDelta"/>
       </Panel>
-      <Panel DockPanel.Dock="Left" Width="{Binding DurationColWidth}">
+      <Panel DockPanel.Dock="Left" Width="{Binding DurationColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Duration}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
         <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
                Background="Transparent" BorderBrush="#3C3C3C" BorderThickness="0,0,1,0"
                DragDelta="OnDurationThumbDragDelta"/>
       </Panel>
-      <Panel DockPanel.Dock="Left" Width="{Binding ThreadColWidth}">
+      <Panel DockPanel.Dock="Left" Width="{Binding ThreadColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Thread}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="0,0,6,0"/>
         <Thumb HorizontalAlignment="Right" Width="5" Cursor="SizeWestEast"
@@ -231,7 +302,7 @@
                DragDelta="OnThreadThumbDragDelta"/>
       </Panel>
       <!-- Docked at the right, as in the rows: its handle is its LEFT edge, the one it shares with Function. -->
-      <Panel DockPanel.Dock="Right" Width="{Binding ObjectColWidth}">
+      <Panel DockPanel.Dock="Right" Width="{Binding ObjectColWidth}" HorizontalAlignment="Left">
         <TextBlock Text="{StaticResource str.CT.Col.Object}" Foreground="#888" FontSize="11"
                    TextTrimming="CharacterEllipsis" Margin="6,0,0,0"/>
         <Thumb HorizontalAlignment="Left" Width="5" Cursor="SizeWestEast"
@@ -252,20 +323,23 @@
           <!-- U10: a DockPanel, not a Grid. Its cells take the widths the header drags, from the panel's view model by
                the compiled $parent route the Toggle button takes; a ColumnDefinition is not a Visual, so the same
                binding on one never resolves. -->
-          <DockPanel>
-            <TextBlock DockPanel.Dock="Left"
+          <!-- [CT-COLUMNS-OVERLAP] Each fixed cell is aligned left, as in the header, so a list narrower than its columns
+               cannot centre one over its neighbour. The row cuts its own overflow: the list's viewport reaches past the
+               row by the item's padding, and there a column placed at the row's edge would draw over the one cut. -->
+          <DockPanel ClipToBounds="True">
+            <TextBlock DockPanel.Dock="Left" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).TimeColWidth}"
                        Text="{Binding TimeText}" Foreground="#7FB6E8" VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock DockPanel.Dock="Left"
+            <TextBlock DockPanel.Dock="Left" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).DurationColWidth}"
                        Text="{Binding DurationText}" Foreground="#DCDCAA" VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock DockPanel.Dock="Left"
+            <TextBlock DockPanel.Dock="Left" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ThreadColWidth}"
                        Text="{Binding ThreadText}" Foreground="#808080" VerticalAlignment="Center"
                        TextTrimming="CharacterEllipsis"/>
-            <TextBlock DockPanel.Dock="Right"
+            <TextBlock DockPanel.Dock="Right" HorizontalAlignment="Left"
                        Width="{Binding $parent[UserControl].((vm:CallTraceViewModel)DataContext).ObjectColWidth}"
                        Text="{Binding ObjectText}" ToolTip.Tip="{Binding ObjectTip}" VerticalAlignment="Center"
                        Foreground="#B0B0B0" Opacity="{Binding ObjectOpacity}"
@@ -284,6 +358,10 @@
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.LF.Unloaded.Marker}"
                          IsVisible="{Binding FuncUnloaded}" ToolTip.Tip="{StaticResource str.Tip.CT.Unloaded}"
                          Foreground="#808080" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
+              <!-- [LIVEFUNCS-STEP3] The call carries its native stack. Docked before (p), so it reads after it. -->
+              <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Stack.Marker}"
+                         IsVisible="{Binding HasStack}" ToolTip.Tip="{StaticResource str.Tip.CT.Stack.Marker}"
+                         Foreground="#4FC1FF" FontSize="11" Margin="6,0,10,0" VerticalAlignment="Center"/>
               <!-- [LIVEFUNCS-STEP2] The call carries a parameter copy: its Parameters tab has values. -->
               <TextBlock DockPanel.Dock="Right" Text="{StaticResource str.CT.Param.Marker}"
                          IsVisible="{Binding HasParams}" ToolTip.Tip="{StaticResource str.Tip.CT.Param.Marker}"

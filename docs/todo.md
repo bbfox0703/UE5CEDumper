@@ -73,7 +73,7 @@ Open work only. **Read this when deciding what to do next.**
 > no re-derivation is needed to begin.
 >
 > **What IS in this file, and is not in that one:**
-> - [verification-register.md](verification-register.md) — **11 open batches** needing a running game (moved out 2026-09-03;
+> - [verification-register.md](verification-register.md) — **12 open batches** needing a running game (moved out 2026-09-03;
 >   this is a DERIVED count and it has drifted to a stale 43, 36, 40 and 30 in turn; re-derive,
 >   never hand-adjust:
 >   `awk '/^## Pending live-game verification/,0' docs/verification-register.md | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜`).
@@ -277,7 +277,29 @@ Open work only. **Read this when deciding what to do next.**
   time the trace was read, and all their copies decode; a second run proved a reload as a second arm (34 names
   armed twice, every arm decoding with its own layout) and the budget on a real game. ⬜ Open, in the verification
   register (`[LIVEFUNCS-STEP2]`): the UI's memory while it loads snapshots, the default budgets on a busier game
-  (the cost measured on Avowed: -0.4% calls/s, fps unchanged). Step 3 not started.
+  (the cost measured on Avowed: -0.4% calls/s, fps unchanged). ✅ **Step 3 (native stack snapshots) BUILT in build 3641
+  (2026-10-08), proven live on DumperTest58** -- [live-funcs-step3-design.md](live-funcs-step3-design.md) and its
+  ledger [live-funcs-step3-items.md](live-funcs-step3-items.md); T15-T19 confirmed, T20 (Low budget, warning) added.
+  ✅ The budget decided as (A), Standard 50 a second in all and Low 25 (build 3642); the ledger's next items S3-U6 /
+  U7 / A1 / R2 built and checked live (build 3643). ⬜ **Open:** the register's "Live Funcs step 3" batch (the
+  hitch, the rig's real-DLL mutations, DQ XI S); deferred: B1 / E1 / P1 / O1.
+  ✅ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08; fixed the same day, the list now cuts
+  its columns -- checked live in build 3643): with the Call Trace detail pane dragged
+  wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
+  ⬜ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08): the Call stack tab's Where column
+  has a fixed width (`CallTracePanel.axaml`), so with the detail pane dragged wide a long name ("native entry of
+  DumperTest58Actor::SnapNest_Outer +0x73") stays cut beside empty space. Give it the rest of the width. Effort **S**.
+  ⬜ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
+  called faster than `--stack-per-ring` (30 on the fixture). With the fixture at about 30 fps it reported a DLL
+  failure (written 240, dropped 0) for a precondition the run did not meet. Derive the budget from the plain
+  recording's rate, or report "not run: the probe ran at N a second, under the budget". Effort **S**.
+  ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
+  same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
+  strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
+  off by default so an older file opens the tree); tracked, applied and saved by MainWindowViewModel like every option.
+  ✅ `[MODULE-HELPERS-FOLD]` (LOW, step-3 design 2.5; done 2026-10-08): Genau's file-static ModuleOfAddress /
+  ModuleNameOf and Macht's DescribeCode found a module the same way; Macht now owns ModuleOfAddress and
+  ModuleLeafUtf8 (any path length), and Genau's "(unknown)" fallback is a thin wrapper.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.

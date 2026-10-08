@@ -60,6 +60,7 @@ std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCa
             ArmSpec& m = st->specs.back();   // the same name ticked and chosen: one spec does both
             m.tick = m.tick || sp.tick;
             if (sp.ring >= 0) { m.ring = sp.ring; m.ringCap = sp.ringCap; }
+            if (sp.stackRing >= 0) m.stackRing = sp.stackRing;
             continue;
         }
         st->specs.push_back(sp);
@@ -96,6 +97,9 @@ static void ArmLocked(Stat& s, uintptr_t ufunc, uint64_t nowMs) {
     s.armSpec = static_cast<int32_t>(si);
     s.arm.gen = g_arms->gen;
     if (it->tick) s.arm.flags |= kArmTick;
+    // [LIVEFUNCS-STEP3] A stack needs no arm: no layout to read, nothing in the log. So it is armed before the returns
+    // below, which a stack-only choice and a full log both take.
+    s.arm.stackRing = it->stackRing;
     if (it->ring < 0) return;
     if (g_arms->stopped.load(std::memory_order_relaxed)) return;   // no call is traced any more: nothing to copy
     if (g_arms->log.size() >= g_arms->capacity) { ++count.armsFull; return; }
@@ -325,7 +329,7 @@ std::vector<ArmSummary> ArmsSummary() {
     for (size_t i = 0; i < g_arms->specs.size(); ++i) {
         const ArmSpec& sp = g_arms->specs[i];
         const ArmState::Count& c = g_arms->counts[i];
-        out.push_back(ArmSummary{ sp.key, sp.tick, sp.ring, c.addresses, c.arms, c.armsFull });
+        out.push_back(ArmSummary{ sp.key, sp.tick, sp.ring, c.addresses, c.arms, c.armsFull, sp.stackRing });
     }
     return out;
 }
@@ -375,7 +379,9 @@ struct alignas(64) SnapRing {
     std::atomic<uint64_t> window{ 0 };          // the budget: the second in the high 40 bits, its count in the low 24
     std::atomic<uint64_t> skippedBudget{ 0 };
     std::atomic<uint64_t> droppedBudget{ 0 };
+    std::atomic<uint64_t> spentTicks{ 0 };      // [LIVEFUNCS-STEP3] a stack ring's: what its captures cost
 };
+static_assert(sizeof(SnapRing) == 64, "one ring a cache line: two busy choices never share one");
 
 struct TraceState {
     TraceRecord* buf      = nullptr;
@@ -402,6 +408,13 @@ struct TraceState {
     BytesCopier copier = nullptr;
     uint32_t snapPerRing = 0, snapTotal = 0;
     std::atomic<uint64_t> snapTotalWindow{ 0 };
+    // [LIVEFUNCS-STEP3] The stack rings sit after the parameter rings in snapRings: stack ring s is
+    // snapRings[snapCount + s]. snapCount stays the parameter rings' count, which keeps every parameter reader blind to
+    // them.
+    uint32_t stackCount = 0, stackDepth = 0, stackPerRing = 0, stackTotal = 0;
+    StackCapturer stackCapturer = nullptr;
+    std::atomic<uint64_t> stackTotalWindow{ 0 };
+    std::atomic<uint64_t> stackMaxTicks{ 0 };
 };
 
 TraceState            g_trace;
@@ -469,6 +482,9 @@ bool FreeTraceLocked() {
     g_trace.snapBytes = g_trace.snapK = 0;
     g_trace.snapCount = 0;
     g_trace.snapRings.reset();
+    g_trace.stackCount = g_trace.stackDepth = 0;
+    g_trace.stackCapturer = nullptr;
+    g_trace.stackMaxTicks.store(0, std::memory_order_relaxed);
     g_trace.distinctReady = false;
     std::vector<uintptr_t>().swap(g_trace.distinctFuncs);
     std::vector<uintptr_t>().swap(g_trace.distinctObjs);
@@ -508,6 +524,46 @@ bool SnapAdmit(int32_t ring, uint64_t ticks) {
 // [LIVEFUNCS-STEP2] One slot of ring `ring`, inside the hook's in-flight section: the header, the copy, the slot's
 // number last -- a reader keeps a slot only when its number is the one it expects. Never a write-back: the copy after
 // the call takes a slot of its own (TR3).
+// [LIVEFUNCS-STEP3] Stack ring `s` among the stack rings.
+SnapRing& StackRingAt(int32_t s) { return g_trace.snapRings[g_trace.snapCount + static_cast<uint32_t>(s)]; }
+
+// The stack's budget: its own words, the same rule as the parameters'. A walk costs about a hundred parameter copies,
+// so neither budget may spend the other's.
+bool StackAdmit(int32_t s, uint64_t ticks) {
+    const uint64_t sec = ticks / QpcFreq();
+    return AdmitWord(StackRingAt(s).window, sec, g_trace.stackPerRing) &&
+           AdmitWord(g_trace.stackTotalWindow, sec, g_trace.stackTotal);
+}
+
+// One stack slot, inside the hook's in-flight section, with SnapWrite's discipline: the slot's number is written last,
+// so a walk that throws out of here leaves a slot no reader hands out. The capturer is asked for frames, never the
+// slot's bytes, and a count past the slot is never trusted. Its cost is measured around it (D9): the slot keeps its
+// own, the ring the sum, the trace the dearest.
+void StackWrite(int32_t s, uint64_t entrySeq, uintptr_t sp) {
+    SnapRing& r = StackRingAt(s);
+    const uint64_t k = r.next.fetch_add(1, std::memory_order_relaxed);
+    uint8_t* slot = r.base + (k % g_trace.snapK) * r.slot;
+    auto* hdr = reinterpret_cast<SnapSlotHeader*>(slot);
+    hdr->seqKind = UINT64_MAX;
+    hdr->entrySeq = entrySeq;
+    const uint32_t max = r.cap / 8;
+    uint16_t fl = 0;
+    uint32_t n = 0;
+    const uint64_t t0 = g_clock();
+    if (g_trace.stackCapturer) n = g_trace.stackCapturer(sp, reinterpret_cast<uint64_t*>(slot + sizeof(SnapSlotHeader)), max, fl);
+    else fl = kSnapNoCapturer;
+    const uint64_t dt = g_clock() - t0;
+    if (n > max) n = max;
+    hdr->len = static_cast<uint16_t>(n * 8);
+    hdr->flags = fl;
+    hdr->arm = dt > UINT32_MAX ? UINT32_MAX : static_cast<uint32_t>(dt);
+    r.spentTicks.fetch_add(dt, std::memory_order_relaxed);
+    for (uint64_t m = g_trace.stackMaxTicks.load(std::memory_order_relaxed);
+         dt > m && !g_trace.stackMaxTicks.compare_exchange_weak(m, dt, std::memory_order_relaxed);) {
+    }
+    hdr->seqKind = k;
+}
+
 void SnapWrite(int32_t ring, uint64_t entrySeq, bool after, uintptr_t params, const ArmHint& hint) {
     SnapRing& r = g_trace.snapRings[ring];
     const uint64_t k = r.next.fetch_add(1, std::memory_order_relaxed);
@@ -582,21 +638,25 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
 
     // [LIVEFUNCS-STEP2] The snapshot rings: K slots each, K the same for every ring, each ring 64-aligned (the 64 per
     // ring the formula sets aside). A buffer that cannot keep kSnapMinSlots calls a ring refuses the Start, the ring
-    // just made freed with it: the trace never records without what was asked (T1).
+    // just made freed with it: the trace never records without what was asked (T1). [LIVEFUNCS-STEP3] The stack rings
+    // come after the parameter rings, in the same block and with the same K.
     uint8_t* snapBlock = nullptr;
     uint64_t snapSize = 0, snapK = 0;
     std::unique_ptr<SnapRing[]> snapRings;
-    const uint64_t nRings = cfg.snapRingCaps.size();
+    const uint32_t stackDepth = std::clamp<uint32_t>(cfg.stackDepth, 1, kStackMaxDepth);
+    std::vector<uint32_t> caps = cfg.snapRingCaps;
+    caps.insert(caps.end(), cfg.stackRings, StackRingCap(stackDepth));
+    const uint64_t nRings = caps.size();
     if (nRings != 0) {
         uint64_t perCall = 0;
-        for (uint32_t c : cfg.snapRingCaps) perCall += kSnapHeaderBytes + ((static_cast<uint64_t>(c) + 7) & ~7ull);
+        for (uint32_t c : caps) perCall += kSnapHeaderBytes + ((static_cast<uint64_t>(c) + 7) & ~7ull);
         if (cfg.snapBytes <= 64 * nRings || (snapK = (cfg.snapBytes - 64 * nRings) / perCall) < kSnapMinSlots) {
             VirtualFree(p, 0, MEM_RELEASE);
             return TraceStartStatus::SnapTooSmall;
         }
         snapRings = std::make_unique<SnapRing[]>(static_cast<size_t>(nRings));
         for (uint64_t r = 0; r < nRings; ++r) {
-            snapRings[r].cap  = (cfg.snapRingCaps[r] + 7u) & ~7u;
+            snapRings[r].cap  = (caps[r] + 7u) & ~7u;
             snapRings[r].slot = kSnapHeaderBytes + snapRings[r].cap;
             snapSize += (snapK * snapRings[r].slot + 63) & ~63ull;
         }
@@ -616,13 +676,20 @@ TraceStartStatus StartTrace(const TraceConfig& cfg) {
     g_trace.snapBlock = snapBlock;
     g_trace.snapBytes = snapSize;
     g_trace.snapK     = snapK;
-    g_trace.snapCount = static_cast<uint32_t>(nRings);
+    g_trace.snapCount = static_cast<uint32_t>(cfg.snapRingCaps.size());
     g_trace.snapRings = std::move(snapRings);
     g_trace.copier    = cfg.copier;
     // The budget's words hold a count in 24 bits; a cap of 0 would admit nothing ever.
     g_trace.snapPerRing = std::clamp<uint32_t>(cfg.snapPerRingPerSec, 1, 0xFFFFFF);
     g_trace.snapTotal   = std::clamp<uint32_t>(cfg.snapTotalPerSec, 1, 0xFFFFFF);
     g_trace.snapTotalWindow.store(0, std::memory_order_relaxed);
+    g_trace.stackCount    = cfg.stackRings;
+    g_trace.stackDepth    = stackDepth;
+    g_trace.stackCapturer = cfg.stackCapturer;
+    g_trace.stackPerRing  = std::clamp<uint32_t>(cfg.stackPerRingPerSec, 1, 0xFFFFFF);
+    g_trace.stackTotal    = std::clamp<uint32_t>(cfg.stackTotalPerSec, 1, 0xFFFFFF);
+    g_trace.stackTotalWindow.store(0, std::memory_order_relaxed);
+    g_trace.stackMaxTicks.store(0, std::memory_order_relaxed);
 
     g_trace.buf   = static_cast<TraceRecord*>(p);
     g_trace.bytes = size;
@@ -662,6 +729,9 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     // 1, so a default hint never is); its ring only when this trace has it.
     const bool named = hint.gen == gen;
     const int32_t ring = (named && hint.ring >= 0 && static_cast<uint32_t>(hint.ring) < g_trace.snapCount) ? hint.ring : -1;
+    // [LIVEFUNCS-STEP3] Its stack ring, on the same terms.
+    const int32_t sring =
+        (named && hint.stackRing >= 0 && static_cast<uint32_t>(hint.stackRing) < g_trace.stackCount) ? hint.stackRing : -1;
     bool open = false, lone = false, excluded = false;
     if (g_trace.scoped) {
         if (t_scopeGen != gen) {
@@ -674,31 +744,31 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
             if ((named && (hint.flags & kArmTick)) || g_trace.ticked.Contains(ufunc)) {
                 t_scopeSp = sp;
                 open = true;
-            } else if (ring >= 0) {
-                lone = true;        // [LIVEFUNCS-STEP2] T11: alone, for its parameters; it opens no scope
+            } else if (ring >= 0 || sring >= 0) {
+                lone = true;        // [LIVEFUNCS-STEP2] T11: alone, for what it was chosen for; it opens no scope
             } else {
                 return;
             }
         }
     }
     if (!open && !lone && g_trace.exclude.Contains(ufunc)) {
-        if (ring < 0) return;
-        excluded = true;            // [LIVEFUNCS-STEP2] kept for its parameters; the scope around it stays as it was
+        if (ring < 0 && sring < 0) return;
+        excluded = true;            // [LIVEFUNCS-STEP2] kept for what it was chosen for; the scope stays as it was
     }
     const uint64_t ticks = g_clock();   // one read: the record's time and the budget's second
-    // [LIVEFUNCS-STEP2] The budget. Over it, a call the scope records anyway keeps its record, flagged; one recorded
-    // only for its parameters (lone, or kept from the exclusion) writes nothing -- no record only to say "skipped".
-    bool taken = false;
-    if (ring >= 0) {
-        taken = SnapAdmit(ring, ticks);
-        if (!taken) {
-            if (lone || excluded) {
-                g_trace.snapRings[ring].droppedBudget.fetch_add(1, std::memory_order_relaxed);
-                return;
-            }
-            g_trace.snapRings[ring].skippedBudget.fetch_add(1, std::memory_order_relaxed);
-        }
+    // [LIVEFUNCS-STEP2] The budgets, the parameters' and [LIVEFUNCS-STEP3] the stack's. Over them, a call the scope
+    // records anyway keeps its record, flagged. One recorded only for what it was chosen for (lone, or kept from the
+    // exclusion) is dropped -- no record only to say "skipped" -- when NOTHING it was chosen for was taken (D10);
+    // otherwise it is recorded, and each kind left out counts as skipped.
+    const bool taken      = ring >= 0 && SnapAdmit(ring, ticks);
+    const bool stackTaken = sring >= 0 && StackAdmit(sring, ticks);
+    if ((lone || excluded) && !taken && !stackTaken) {
+        if (ring >= 0) g_trace.snapRings[ring].droppedBudget.fetch_add(1, std::memory_order_relaxed);
+        if (sring >= 0) StackRingAt(sring).droppedBudget.fetch_add(1, std::memory_order_relaxed);
+        return;
     }
+    if (ring >= 0 && !taken) g_trace.snapRings[ring].skippedBudget.fetch_add(1, std::memory_order_relaxed);
+    if (sring >= 0 && !stackTaken) StackRingAt(sring).skippedBudget.fetch_add(1, std::memory_order_relaxed);
     const uint64_t seq = g_trace.next.fetch_add(1, std::memory_order_relaxed);
     TraceRecord& r = g_trace.buf[seq % g_trace.cap];
     r.seqKind = seq;
@@ -707,7 +777,7 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
     r.b       = obj;
     r.tid     = tid;
     r.flags   = (open ? kTraceScopeRoot : 0) | (lone ? kTraceSnapLone : 0) | (excluded ? kTraceSnapExcluded : 0) |
-                ((ring >= 0 && !taken) ? kTraceSnapBudget : 0);
+                ((ring >= 0 && !taken) ? kTraceSnapBudget : 0) | ((sring >= 0 && !stackTaken) ? kTraceStackBudget : 0);
     // The record and the token are whole before the copy: a copy that faults out of here (the copier is game memory)
     // still leaves a call that returns and closes its scope, and a record that does not claim a copy.
     tok.entrySeq = seq;
@@ -721,6 +791,12 @@ void TraceEnter(uintptr_t ufunc, uintptr_t obj, uintptr_t sp, uint32_t tid, Trac
             tok.after = hint;
             tok.after.ring = ring;
         }
+    }
+    // [LIVEFUNCS-STEP3] The stack last: microseconds against the parameters' tens of nanoseconds. Flagged only once the
+    // walk has returned, so a walk that throws leaves a record that claims no stack.
+    if (stackTaken) {
+        StackWrite(sring, seq, sp);
+        r.flags |= kTraceStackTaken;
     }
 }
 
@@ -771,6 +847,20 @@ TraceInfo InfoLocked() {
         for (uint32_t r = 0; r < g_trace.snapCount; ++r) {
             i.snap.skippedBudget += g_trace.snapRings[r].skippedBudget.load(std::memory_order_relaxed);
             i.snap.droppedBudget += g_trace.snapRings[r].droppedBudget.load(std::memory_order_relaxed);
+        }
+    }
+    if (g_trace.snapBlock && g_trace.stackCount != 0) {   // [LIVEFUNCS-STEP3]
+        i.stack.rings         = g_trace.stackCount;
+        i.stack.depth         = g_trace.stackDepth;
+        i.stack.perRingPerSec = g_trace.stackPerRing;
+        i.stack.totalPerSec   = g_trace.stackTotal;
+        i.stack.maxTicks      = g_trace.stackMaxTicks.load(std::memory_order_relaxed);
+        for (uint32_t s = 0; s < g_trace.stackCount; ++s) {
+            const SnapRing& r = StackRingAt(static_cast<int32_t>(s));
+            i.stack.captures      += r.next.load(std::memory_order_relaxed);
+            i.stack.skippedBudget += r.skippedBudget.load(std::memory_order_relaxed);
+            i.stack.droppedBudget += r.droppedBudget.load(std::memory_order_relaxed);
+            i.stack.spentTicks    += r.spentTicks.load(std::memory_order_relaxed);
         }
     }
     return i;
@@ -839,6 +929,63 @@ bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
         out.push_back(SnapRingInfo{ r, ring.cap, w, w > g_trace.snapK ? w - g_trace.snapK : 0,
                                     ring.skippedBudget.load(std::memory_order_relaxed),
                                     ring.droppedBudget.load(std::memory_order_relaxed) });
+    }
+    return true;
+}
+
+// [LIVEFUNCS-STEP3] CopySnaps' loop, copied rather than shared: a stack slot carries no after bit and its payload is
+// frames, and step 2's tested reader stays as it was.
+bool CopyStacks(uint32_t s, uint64_t from, size_t maxSlots, std::vector<StackCopy>& out, uint64_t* next,
+                uint64_t* orphans) {
+    if (orphans) *orphans = 0;
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (!g_trace.snapBlock || s >= g_trace.stackCount || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced)
+        return false;
+    const SnapRing& r = StackRingAt(static_cast<int32_t>(s));
+    const uint64_t w = r.next.load(std::memory_order_relaxed);
+    const uint64_t first = w > g_trace.snapK ? w - g_trace.snapK : 0;
+    const uint64_t begin = from > first ? from : first;
+    if (next) *next = begin;
+    if (begin >= w) return true;
+    const uint64_t want = (static_cast<uint64_t>(maxSlots) > UINT64_MAX - from) ? UINT64_MAX : from + maxSlots;
+    const uint64_t end = want < w ? want : w;
+    if (end <= begin) return true;
+    if (next) *next = end;
+    const uint64_t traceFirst = FirstValidLocked();
+    for (uint64_t k = begin; k < end; ++k) {
+        const uint8_t* slot = r.base + (k % g_trace.snapK) * r.slot;
+        const auto* hdr = reinterpret_cast<const SnapSlotHeader*>(slot);
+        if (hdr->seqKind != k) continue;          // written out of turn when the ring lapped mid-write, or unfinished
+        if (hdr->entrySeq < traceFirst) {         // its call's entry record is gone from the trace
+            if (orphans) ++*orphans;
+            continue;
+        }
+        StackCopy c;
+        c.index    = k;
+        c.entrySeq = hdr->entrySeq;
+        c.len      = hdr->len;
+        c.flags    = hdr->flags;
+        c.ticks    = hdr->arm;
+        const uint32_t n = (hdr->len <= r.cap ? hdr->len : r.cap) / 8;
+        c.frames.resize(n);
+        if (n != 0) memcpy(c.frames.data(), slot + sizeof(SnapSlotHeader), n * sizeof(uint64_t));
+        out.push_back(std::move(c));
+    }
+    return true;
+}
+
+bool StackRings(std::vector<SnapRingInfo>& out, uint64_t* gen) {
+    std::lock_guard<std::mutex> lk(g_traceMu);
+    if (gen) *gen = g_trace.gen;
+    out.clear();
+    if (!g_trace.snapBlock || g_tracing.load(std::memory_order_seq_cst) || !g_trace.quiesced) return false;
+    for (uint32_t s = 0; s < g_trace.stackCount; ++s) {
+        const SnapRing& ring = StackRingAt(static_cast<int32_t>(s));
+        const uint64_t w = ring.next.load(std::memory_order_relaxed);
+        out.push_back(SnapRingInfo{ s, ring.cap, w, w > g_trace.snapK ? w - g_trace.snapK : 0,
+                                    ring.skippedBudget.load(std::memory_order_relaxed),
+                                    ring.droppedBudget.load(std::memory_order_relaxed),
+                                    ring.spentTicks.load(std::memory_order_relaxed) });
     }
     return true;
 }

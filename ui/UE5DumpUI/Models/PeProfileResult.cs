@@ -8,8 +8,8 @@ namespace UE5DumpUI.Models;
 /// user performed an in-game action.
 ///
 /// Init-only (hand-parsed from the pipe JsonObject like <see cref="AllFunctionEntry"/>): the Start → Stop → Get
-/// flow produces an immutable snapshot per fetch. The one exception is <see cref="IsTicked"/>, which the call
-/// trace's tick column changes on a row already on screen, so the row notifies.
+/// flow produces an immutable snapshot per fetch. The exceptions are the observable choice flags (<see cref="IsTicked"/>
+/// and its kind), which the panel's columns change on a row already on screen, so the row notifies.
 /// </summary>
 public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentModel.ObservableObject
 {
@@ -21,6 +21,14 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// <summary>[LIVEFUNCS-STEP2] Chosen for parameter snapshots: the next traced Start copies its parameter block on
     /// each call. Kept by name in LiveFuncsViewModel, like the ticks.</summary>
     [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isSnapChosen;
+
+    /// <summary>[LIVEFUNCS-STEP3] Chosen for a native stack: the next traced Start takes the return addresses above each
+    /// of its calls. Kept by name in LiveFuncsViewModel, like the parameter choice.</summary>
+    [CommunityToolkit.Mvvm.ComponentModel.ObservableProperty] private bool _isStackChosen;
+
+    /// <summary>[LIVEFUNCS-STEP3] Read <see cref="IsStackChosen"/> back into the views bound to it, unchanged: a click
+    /// the view model refuses has already flipped its box, and an unchanged value raises nothing by itself.</summary>
+    public void RaiseIsStackChosen() => OnPropertyChanged(nameof(IsStackChosen));
 
     public string ClassName { get; init; } = "";
     public string FuncName  { get; init; } = "";
@@ -57,6 +65,10 @@ public sealed partial class PeProfileEntry : CommunityToolkit.Mvvm.ComponentMode
     /// not; left out when the DLL read it as having no parameters. Flags of 0 are an offset never decided, not
     /// "none": such a row stays choosable and the DLL decides.</summary>
     public bool CanChooseSnapshot => FnameKey != null && !(NumParms == 0 && FunctionFlags != 0);
+
+    /// <summary>[LIVEFUNCS-STEP3] A row whose native stack can be chosen: by name, so it needs a key. Every call has a
+    /// stack, so <see cref="CanChooseSnapshot"/>'s parameters rule does not apply (D1).</summary>
+    public bool CanChooseStack => FnameKey != null;
 
     // UE FunctionFlags (ObjectMacros.h) relevant to "is this a thing I can CALL vs
     // an event the engine fires AT me". Event/delegate signatures are reactions,

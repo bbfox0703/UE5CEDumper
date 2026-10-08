@@ -18,7 +18,10 @@ internal static class CallTraceExport
 {
     // [LIVEFUNCS-STEP2] The entry-record flags of a chosen call (docs/pipe-protocol.md, "Entry-record flags").
     private const uint SnapTakenFlag = 2, SnapLoneFlag = 4, SnapExcludedFlag = 8, SnapBudgetFlag = 16;
-    private const uint ChosenFlags = SnapTakenFlag | SnapLoneFlag | SnapExcludedFlag | SnapBudgetFlag;
+    // [LIVEFUNCS-STEP3] The flags that say a call was chosen for its parameters. Lone and Excluded say it was chosen
+    // for something: a call chosen for its stack alone carries them too, and has no parameters to report.
+    private const uint ParamChosenFlags = SnapTakenFlag | SnapBudgetFlag;
+    private const uint AloneFlags = SnapLoneFlag | SnapExcludedFlag;
 
     internal static readonly string[] CsvColumns =
     {
@@ -48,10 +51,12 @@ internal static class CallTraceExport
         Int(sb, "ticked_names", t.Info.TickedNames);
         Bool(sb, "scoped", t.Info.Scoped ?? t.Info.Ticked > 0);
         Bool(sb, "snapshots_only", t.Info.SnapOnly);
-        if (t.Info.Snap is { } snap)
+        // [LIVEFUNCS-STEP3] Only with a parameter ring: a Start that chose stacks alone allocates the buffer with none,
+        // and has no parameter budget to account for.
+        if (t.Info.Snap is { Rings: > 0 } snap)
         {
-            // Calls the budget left without parameters: the skipped ones are below; the dropped ones, recorded only
-            // for their parameters, are not.
+            // Calls the budget left without parameters: the skipped ones are below; the dropped ones, for which nothing
+            // they were chosen for was taken, were not recorded.
             Int(sb, "snapshot_skipped_budget", (long)snap.SkippedBudget);
             Int(sb, "snapshot_dropped_budget", (long)snap.DroppedBudget);
         }
@@ -104,8 +109,11 @@ internal static class CallTraceExport
             // Only when true, like the object keys only with an object: a live function's line is as it was.
             if (t.FuncUnloaded(i)) Bool(sb, "func_unloaded", true);
             if (t.FuncReused(i)) Bool(sb, "func_reused", true);
-            // [LIVEFUNCS-STEP2] Last, and on the chosen calls only, for the same reason.
-            if ((t.Flags[i] & ChosenFlags) != 0 || t.Snapshots?.Has(i) == true) AppendSnapshot(sb, t, i);
+            // [LIVEFUNCS-STEP2] Last, and on the chosen calls only, for the same reason. [LIVEFUNCS-STEP3] A call chosen
+            // for its stack alone gets no snapshot field; recorded on its own, it still says so.
+            uint f = t.Flags[i];
+            if ((f & ParamChosenFlags) != 0 || t.Snapshots?.Has(i) == true) AppendSnapshot(sb, t, i);
+            else if ((f & AloneFlags) != 0) AppendAlone(sb, f);
             sb.Append("}\n");
             w.Write(sb);
         }
@@ -150,8 +158,7 @@ internal static class CallTraceExport
         SnapSlot? entry = snaps?.EntryOf(i), after = snaps?.AfterOf(i);
         var any = entry ?? after;
         Str(sb, "snapshot", SnapshotState(t, i, any != null));
-        Bool(sb, "lone", (t.Flags[i] & SnapLoneFlag) != 0);
-        Bool(sb, "excluded", (t.Flags[i] & SnapExcludedFlag) != 0);
+        AppendAlone(sb, t.Flags[i]);
         if (any == null) return;
         Int(sb, "arm", any.Arm);
         if (snaps!.ArmOf(any)?.Layout is { } layout && (entry?.Values != null || after?.Values != null))
@@ -178,6 +185,13 @@ internal static class CallTraceExport
         }
         if (entry != null) Str(sb, "params_hex_in", Convert.ToHexString(entry.Data));
         if (after != null) Str(sb, "params_hex_out", Convert.ToHexString(after.Data));
+    }
+
+    // Recorded outside every ticked scope, or for a per-frame function the trace leaves out: for what it was chosen for.
+    private static void AppendAlone(StringBuilder sb, uint flags)
+    {
+        Bool(sb, "lone", (flags & SnapLoneFlag) != 0);
+        Bool(sb, "excluded", (flags & SnapExcludedFlag) != 0);
     }
 
     // From the flags, and whether the copy they claim is still among the loaded snapshots: a ring keeps only its last

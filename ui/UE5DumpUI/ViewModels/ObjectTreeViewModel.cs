@@ -65,9 +65,10 @@ public partial class ObjectTreeViewModel : ViewModelBase, IDisposable
 
     /// <summary>
     /// Collapses the left Object Tree to a thin strip so the right-hand panels
-    /// get the full window width. View state only (not persisted): the panel's
-    /// ◀ button toggles it on, a slim re-expand strip with ▶ restores it, and
-    /// MainWindow resizes the grid column / hides the splitter in response.
+    /// get the full window width. The panel's ◀ button toggles it on, a slim
+    /// re-expand strip with ▶ restores it, and MainWindow resizes the grid column /
+    /// hides the splitter in response. The next start keeps it ([OT-COLLAPSE-PERSIST]:
+    /// MainWindowViewModel saves it in ui-options.json).
     /// </summary>
     [ObservableProperty] private bool _isCollapsed;
 

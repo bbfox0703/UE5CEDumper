@@ -46,6 +46,8 @@ public sealed class CallTrace
 
     /// <summary>[LIVEFUNCS-STEP2] The parameter snapshots, when the trace took any; null otherwise.</summary>
     public CallTraceSnapshots? Snapshots { get; internal set; }
+    /// <summary>[LIVEFUNCS-STEP3] The native stacks, when the trace armed any; null otherwise.</summary>
+    public CallTraceStacks? Stacks { get; internal set; }
 
     public Dictionary<ulong, TraceFuncName> Funcs { get; } = new();
     public Dictionary<ulong, TraceObjName> Objs { get; } = new();

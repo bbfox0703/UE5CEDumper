@@ -2,7 +2,9 @@
 
 **Status: STEP 1 (the timeline) BUILT, build 3633, 2026-10-07; STEP 2 (parameter snapshots, following functions by
 name) BUILT, builds 3639-3640, 2026-10-08 -- checked live on DumperTest58 and Avowed, see "Step 2 built" at the end
-(the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); step 3 (native stack) not started.** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
+(the ledger [live-funcs-step2-items.md](live-funcs-step2-items.md)); STEP 3 (native stack) BUILT in build 3641 (2026-10-08),
+proven live on DumperTest58 -- see "Step 3 design" and "Step 3 built" at the end ([live-funcs-step3-design.md](live-funcs-step3-design.md), the ledger
+[live-funcs-step3-items.md](live-funcs-step3-items.md)).** Step 1 was reviewed and checked live on DumperTest 5.4 and DumperTest58 (UE 5.8) — see "Step 1
 built" at the end. **Decided 2026-10-06 and 2026-10-07:** T1 (a ring buffer, 32–512 MB), T3, T4, T5, T6, T7 and T8
 — see "Decisions" — after a design review whose findings are TR1–TR7 below.
 Written 2026-10-04 from a reading of the code; the sizes and rates in the sections before "Step 1 built" are
@@ -212,6 +214,12 @@ own (T9; was "the same tick snapshots them", changed 2026-10-07). **With nothing
 | T12 | **The snapshot buffer** (maintainer, 2026-10-07) | **A slider of its own**, powers of two from 8 to 128 MB, default 32, remembered like the trace's; shown while something is chosen, and counted in D3's game figure. Game memory held from Start until the UI has read it, as the trace's ring is. |
 | T13 | **When the snapshot estimate warns** (maintainer, 2026-10-07) | **Orange when the busiest chosen function keeps less time than the trace buffer**: its ring's calls at its rate from the last recording, against the seconds the trace buffer is estimated to keep. Derived, no new constant; a warning, never a refusal (T9). A grey note says separately how many calls a second the budget will skip. |
 | T14 | **The Snapshot column** (maintainer, 2026-10-07) | **One checkbox** in step 2, apart from the Trace tick (T9). Step 3 decides whether native stacks get a column of their own or the checkbox becomes a kind. |
+| T15 | **Stacks get their own "Stack?" column** (step-3 design D1, 2026-10-08; **confirmed by the maintainer 2026-10-08, as recommended**) | Who can be chosen differs (every function has a stack, not every one parameters), T9's ask-once and bulk rule apply to stacks only, and a walk costs about 100 times a parameter copy. |
+| T16 | **The minimum lands before T9.1's estimate line and T9.2's ask-once** (D2; **confirmed by the maintainer 2026-10-08, as recommended**) | The time box; the DLL's budget is the guarantee meanwhile, and the column stays behind the experimental gate. They are the first items after the minimum. |
+| T17 | **Stack budget 25 a second per function, 50 in all; depth 16 frames** (D3; the maintainer's (A), 2026-10-08, after the live measurement) | First 100 / 200 as recommended. The fixture measured 20-28 µs a capture, so D3's rule gave 50 in all, which the maintainer took (Avowed later measured 3.25 µs, a seventh: the fixture's figure is the conservative one). A function may take half the total. |
+| T18 | **Stack rings share the snapshot buffer and its K** (D4; **confirmed by the maintainer 2026-10-08, as recommended**) | One allocation, one memory figure, one release; no second slider. |
+| T19 | **`pe_snap_get` with `"kind":"stack"`, no new command** (D5; **confirmed by the maintainer 2026-10-08, as recommended**) | It reuses the paging, gen and bulk-lane logic; the pipe count stays 104. Cheap to flip. |
+| T20 | **A Low stack budget, and a warning in the UI** (the maintainer, 2026-10-08) | T17's defaults are not measured on any machine: they come from the plan's 10 µs upper estimate (200 × 10 µs = T9's 2 ms a second), and the test exe measured 1.4-2.6 µs a capture on the maintainer's PC. A slower machine, or a game whose .pdata pages are cold, pays more, so the UI offers **Low: 12 a second per function, 25 in all** (half of T17, rounded down; first 50 / 100) beside Standard. The UI also says, wherever stacks are chosen, what the capture is and what it can cost: a software walk inside the hooked call (not a debugger capture like Cheat Engine's), so slower, and its time is added to the game's frame (many in one frame show as stutter); guarded against the cases the design foresaw, but run on the game's own thread, so an unforeseen one -- stopping mid-capture included -- could still stall or crash the game. Built as S3-U8. |
 
 ### Why the trace rides on Live Funcs (T2, T3)
 
@@ -795,3 +803,55 @@ closed (`I`, held: an instant press is missed) during both recordings of
   - The busiest choice (3,150 calls/s) kept about 1,021 a second against its budget of 1,000 and dropped 63,366.
   - Still owed (verification register): the UI's memory while it loads snapshots, and the default budgets re-weighed
     on a game busier than this one (the total of 10,000 a second was not reached).
+
+## Step 3 design (2026-10-08)
+
+**Status: designed, not built.** It covers native stack snapshots for chosen functions: view A (the call stack, each
+frame as `module+RVA` with the function it falls in) and view D (to Cheat Engine) ship first; view B (the raw stack
+copy) is deferred. The design is [live-funcs-step3-design.md](live-funcs-step3-design.md): three code maps, two
+designs (reuse-first and risk-first), a merge and an adversarial critic, all from one design workflow. The build
+ledger is [live-funcs-step3-items.md](live-funcs-step3-items.md).
+
+In short:
+- **Capture:** inside `Linie::TraceEnter`, at entry, through an injected capturer, the way `BytesCopier` is
+  injected. The capturer is `Macht::CaptureCallerStack`:
+  - it bound-checks the hook's return slot against the thread's stack and keeps 32 KB of headroom;
+  - it walks with `RtlCaptureStackBackTrace` under `__try`;
+  - it trims our own frames by searching for the game's return address.
+  - Stark.cpp does not change.
+- **Storage:**
+  - stack rings sit after the parameter rings in step 2's one allocation (same K), with their own index space,
+    budget words and entry flags (32 taken, 64 over the budget);
+  - every step-2 reader stays parameters-only;
+  - each capture is timed (the slot's ticks, per-ring time, the maximum).
+- **Resolution, in the DLL after Stop:** module, RVA, the function start from `.pdata` at ret−1, unwind data present,
+  our own frames and ProcessEvent labelled. The UI matches function starts against the trace's native entries.
+- **Pipe:** `pe_snap_get` with `"kind":"stack"`; no new command.
+- **UI:** a "Stack?" column, a "Call stack" tab in the Call Trace detail, and per frame "Copy CE address" and "Open in
+  CE disassembler".
+- **Decisions:** T15-T19 confirmed by the maintainer 2026-10-08 as recommended; T20 (a Low stack budget and the UI's warning) added the same day.
+- **The critic's HIGH:** the build does not fit one hour; the ledger's order and the mutations to keep are revised in
+  its review.
+
+## Step 3 built (build 3641, 2026-10-08)
+
+**Status: built; proven live on DumperTest58 Shipping (the stacks rig 31/31 with 7 recorded, the step-2 and step-1
+rigs unchanged, the AOT walkthrough).** The ledger is [live-funcs-step3-items.md](live-funcs-step3-items.md), with
+the per-item mutations, the builders' deviations and the live results ("8.0 Results").
+
+- **Deviations from the design:**
+  - FollowChain (the review's M4) was built before the live check, as S3-M3, so S3's `known` half is a check.
+  - T20 (the maintainer): a Standard / Low budget and the warning in the UI (S3-U8).
+  - The UI's deviations are listed at the ledger's end ("The UI items as built").
+- **The cost (S6), the number T17 waited for:** about 20-28 µs a capture in the fixture's ~162 MB image on a Ryzen 9
+  9955HX3D (median 20-22 µs, the rig's mean 28, max 179 µs), against 1.4-2.6 µs in the test exe. Depth barely matters.
+  D3's rule gives a total of **50 a second**; the defaults stay at T17's 100 / 200 and T20's Low 50 / 100 until the
+  maintainer decides (put to them 2026-10-08), and Avowed's measurement is a register row.
+- **Not reached live:** the register's "Live Funcs step 3" batch (Avowed's cost, the once-a-second hitch, the rig's
+  real-DLL mutations, the one 8.1 ms capture, T9.1 / T9.2).
+- **Next:** S3-U6 (the per-frame ask-once), S3-U7 (the estimate line), S3-A1 (the native-entry index), S3-R2 (the PDB
+  check); deferred: view B, stack export, `.pdata` prewarm, own-frame calibration.
+- **Since:** the maintainer chose the budget (A), Standard 50 a second in all and Low 25 (build 3642); S3-U6, S3-U7,
+  S3-A1 and S3-R2 were built in build 3643 and checked live (the ledger's "8.4 Results"). Still open: the register's
+  batch (the once-a-second hitch, the rig's real-DLL mutations, DQ XI S with a save loaded).
+

@@ -106,7 +106,11 @@ struct ArmHint {
     uint32_t arm   = 0;    // which arming of the name: a reload at a new address, or a new class, is a new arm
     uint16_t copy  = 0;    // bytes to copy from the parameter block
     uint8_t  flags = 0;
+    // [LIVEFUNCS-STEP3] The stack ring of the choice this address is armed for, numbered among the stack rings
+    // (0..S-1); -1: no stack. Last, so the hint keeps its size and every aggregate initializer means what it did.
+    int32_t  stackRing = -1;
 };
+static_assert(sizeof(ArmHint) == 24, "the hint lives in the hook's frame: stackRing fills what was padding");
 inline constexpr uint8_t kArmTick      = 1;   // the address is a ticked function's: its call opens a scope
 inline constexpr uint8_t kArmAfter     = 2;   // take a copy after the call returns too (out parameters, the return)
 inline constexpr uint8_t kArmTruncated = 4;   // the parameter block is larger than its ring's slot
@@ -174,14 +178,19 @@ inline constexpr uint64_t kTraceReturnBit = 1ull << 63;
 inline constexpr uint64_t kTraceSeqMask   = kTraceReturnBit - 1;
 inline constexpr uint32_t kTraceScopeRoot = 1;
 inline constexpr uint32_t kTraceSnapTaken = 1u << 1;   // [LIVEFUNCS-STEP2] a snapshot ring holds this call's parameters
-// [LIVEFUNCS-STEP2] A chosen call the scope would not record, recorded alone for its parameters (T11): it opened no
-// scope, so the calls it made are not in the trace.
+// [LIVEFUNCS-STEP2] A chosen call the scope would not record, recorded alone for what it was chosen for -- its
+// parameters, its stack, or both (T11): it opened no scope, so the calls it made are not in the trace.
 inline constexpr uint32_t kTraceSnapLone     = 1u << 2;
-// A chosen call on the per-frame exclusion list, kept inside an open scope for its parameters; its callees are traced
-// as the scope's are.
+// A chosen call on the per-frame exclusion list, kept inside an open scope for its parameters or its stack; its
+// callees are traced as the scope's are.
 inline constexpr uint32_t kTraceSnapExcluded = 1u << 3;
-// A chosen call in the scope whose parameters the budget left out (T9 item 3: the first calls of each second kept).
+// A call chosen for its parameters that the budget left them out of (T9 item 3: the first calls of each second
+// kept). A lone or excluded call carries it only when its stack was taken: with nothing taken it is not recorded.
 inline constexpr uint32_t kTraceSnapBudget   = 1u << 4;
+// [LIVEFUNCS-STEP3] A stack ring holds this call's native return addresses, taken at its entry.
+inline constexpr uint32_t kTraceStackTaken   = 1u << 5;
+// A call chosen for its stack that the stack budget left out; lone and excluded calls follow the rule above.
+inline constexpr uint32_t kTraceStackBudget  = 1u << 6;
 
 // [LIVEFUNCS-STEP2] One snapshot slot's header; the parameter copy follows it. Inside the DLL only: pe_snap_get sends
 // slots decoded, never these bytes.
@@ -189,8 +198,8 @@ struct SnapSlotHeader {
     uint64_t seqKind;    // the slot's number in its ring; kSnapAfterBit on the copy after the call. Written last.
     uint64_t entrySeq;   // the trace sequence number of the call's ENTRY record: the link a return record uses too
     uint16_t len;        // bytes copied
-    uint16_t flags;      // kSnapNullParams / kSnapCopyFault / kSnapTruncated
-    uint32_t arm;        // the arm whose layout decodes it
+    uint16_t flags;      // a parameter slot's kSnap* bits; a stack slot's are its capturer's, or kSnapNoCapturer
+    uint32_t arm;        // the arm whose layout decodes it; a stack slot has no arm and holds what its capture cost
 };
 static_assert(sizeof(SnapSlotHeader) == 24, "kSnapHeaderBytes is the header's size");
 inline constexpr uint64_t kSnapAfterBit    = 1ull << 63;
@@ -199,6 +208,29 @@ inline constexpr uint16_t kSnapCopyFault   = 2;   // the block could not be read
 inline constexpr uint16_t kSnapTruncated   = 4;   // the block is larger than the slot: its end is missing
 // Copies `n` bytes of game memory, false when it faults. Linie knows nothing of SEH helpers: the pipe installs Macht's.
 using BytesCopier = bool (*)(uintptr_t src, void* dst, size_t n);
+
+// [LIVEFUNCS-STEP3] The native stack above a hooked call (docs/live-funcs-step3-design.md): up to `max` return
+// addresses into `out`, the game's caller first, from the hook's own return-address slot `retSlot`; `flags` says what
+// happened. Linie knows nothing of stack walks, as it knows nothing of SEH: the pipe installs Macht's.
+using StackCapturer = uint32_t (*)(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);
+// The stack choice's limits. The UI pins each.
+inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 bytes a slot (plan section 3)
+inline constexpr uint32_t kStackMaxDepth             = 62;
+// The budget, the maintainer's (A) of 2026-10-08 (T17): D3's rule on the fixture's measured 28 us a capture gave 50 a
+// second in all, about 1.4 ms of the game thread a second; a function may take half of it. That figure is the
+// conservative one: Avowed measured 3.25 us a capture on the same PC. The fixture's cost is not this laptop's hybrid
+// GPU nor its frame rate -- 20-22 us rendering on the integrated GPU or the RTX, uncapped, and 31 us capped at 30 fps
+// (docs/live-funcs-step3-items.md, "8.0 Results") -- so re-weigh against a real game before raising it.
+inline constexpr uint32_t kStackDefaultPerRingPerSec = 25;
+inline constexpr uint32_t kStackDefaultTotalPerSec   = 50;
+// The UI's Low budget (T20): half the defaults, rounded down, for a slower machine or a game where a capture costs more.
+inline constexpr uint32_t kStackLowPerRingPerSec     = 12;
+inline constexpr uint32_t kStackLowTotalPerSec       = 25;
+inline constexpr uint16_t kSnapNoCapturer            = 0x8000;   // Linie's one stack-slot bit; the rest are the capturer's
+// A stack ring's slot payload: 8 bytes a frame, the depth clamped to 1..kStackMaxDepth.
+inline uint32_t StackRingCap(uint32_t depth) {
+    return (depth < 1 ? 1u : depth > kStackMaxDepth ? kStackMaxDepth : depth) * 8u;
+}
 
 // The slider's range (T1): powers of two from 32 to 512 MB. Linie itself takes any size of two records or more,
 // so a test can wrap a small ring; the pipe handler holds the user to this range.
@@ -242,6 +274,13 @@ struct TraceConfig {
     // of each second are kept. Provisional, to be measured live; the pipe clamps what the UI sends.
     uint32_t              snapPerRingPerSec = 1000;
     uint32_t              snapTotalPerSec   = 10000;
+    // [LIVEFUNCS-STEP3] The stack rings, one per function chosen for its stack: after the parameter rings in the same
+    // allocation, with the same K, and a budget of their own under the same rule.
+    uint32_t              stackRings = 0;
+    uint32_t              stackDepth = kStackDefaultDepth;   // every stack ring's, in frames; clamped 1..kStackMaxDepth
+    StackCapturer         stackCapturer = nullptr;           // nullptr: every stack slot is empty, kSnapNoCapturer
+    uint32_t              stackPerRingPerSec = kStackDefaultPerRingPerSec;
+    uint32_t              stackTotalPerSec   = kStackDefaultTotalPerSec;
 };
 // Busy: the last Stop could not wait out a hook inside its write, so the ring it may still write to stays as it is.
 // SnapTooSmall: the snapshot buffer keeps fewer than kSnapMinSlots calls per ring; SnapNoMemory: it could not be had.
@@ -300,9 +339,19 @@ struct TraceInfo {
         uint64_t slotsPerRing = 0;   // K: the calls each ring keeps
         size_t   rings        = 0;
         uint32_t perRingPerSec = 0, totalPerSec = 0;
-        uint64_t skippedBudget = 0;   // in-scope calls recorded without their parameters (kTraceSnapBudget)
-        uint64_t droppedBudget = 0;   // lone or excluded calls over the budget: no record at all
+        uint64_t skippedBudget = 0;   // calls recorded without their parameters (kTraceSnapBudget)
+        uint64_t droppedBudget = 0;   // lone or excluded calls the budget left with nothing taken: no record at all
     } snap;
+    // [LIVEFUNCS-STEP3] The stack rings. `snap` counts the parameter rings only, and describes the block holding both.
+    struct Stack {
+        size_t   rings = 0;
+        uint32_t depth = 0, perRingPerSec = 0, totalPerSec = 0;
+        uint64_t captures      = 0;   // stack slots ever written
+        uint64_t skippedBudget = 0;   // calls recorded without their stack (kTraceStackBudget)
+        uint64_t droppedBudget = 0;   // lone or excluded calls the budget left with nothing taken
+        uint64_t spentTicks    = 0;   // what the captures cost, in the trace clock's ticks
+        uint64_t maxTicks      = 0;   // the dearest one
+    } stack;
 };
 TraceInfo GetTraceInfo();
 // One snapshot ring's window, as the trace's readers see it.
@@ -313,6 +362,7 @@ struct SnapRingInfo {
     uint64_t firstValid = 0;
     uint64_t skippedBudget = 0;
     uint64_t droppedBudget = 0;
+    uint64_t spentTicks    = 0;   // [LIVEFUNCS-STEP3] a stack ring's: what its captures cost, in trace-clock ticks
 };
 // One per ring, in order. False while a trace runs, when none is allocated, or when the last stop could not quiesce.
 bool SnapRings(std::vector<SnapRingInfo>& out, uint64_t* gen = nullptr);
@@ -331,6 +381,20 @@ struct SnapCopy {
 // keeps is an orphan -- it has no call to belong to -- and is left out; `orphans`, when given, counts them.
 bool CopySnaps(uint32_t ring, uint64_t from, size_t maxSlots, std::vector<SnapCopy>& out, uint64_t* next = nullptr,
                uint64_t* orphans = nullptr);
+// [LIVEFUNCS-STEP3] The stack rings, numbered 0..S-1 on their own: the parameter readers above never see them.
+// One stack slot as a reader gets it: `len` is the header's (bytes of frames); `frames`, what the slot holds of them.
+struct StackCopy {
+    uint64_t              index    = 0;
+    uint64_t              entrySeq = 0;
+    uint16_t              len      = 0;
+    uint16_t              flags    = 0;
+    uint32_t              ticks    = 0;   // what the capture cost
+    std::vector<uint64_t> frames;
+};
+bool StackRings(std::vector<SnapRingInfo>& out, uint64_t* gen = nullptr);
+// Stack ring `s`'s slots, with CopySnaps' window, refusals and orphan rule.
+bool CopyStacks(uint32_t s, uint64_t from, size_t maxSlots, std::vector<StackCopy>& out, uint64_t* next = nullptr,
+                uint64_t* orphans = nullptr);
 // Records [from, from + maxRecords) clipped to the kept window, in sequence order. False while a trace runs, when
 // none is allocated, or when the last stop could not quiesce. `next`, when given, is where the following page
 // starts: past this page, never before the window, and at or past `written` once there is nothing more.
@@ -418,6 +482,7 @@ struct ArmSpec {
     bool     tick    = false;   // a trace tick: its calls open a scope
     int32_t  ring    = -1;      // a snapshot choice: its ring; -1 when the name is not chosen
     uint32_t ringCap = 0;       // that ring's slot payload, RingCapFor of the choice's parameter size
+    int32_t  stackRing = -1;    // [LIVEFUNCS-STEP3] a stack choice: its stack ring; -1 when the name is not chosen
 };
 // One arming of a chosen name: the first call of a matching address, or a call after the address's key changed.
 struct ArmRecord {
@@ -495,7 +560,8 @@ bool ArmIsPending(ArmState& st, uint32_t index);
 // Every arm the log holds, with its layout's state.
 std::vector<ArmView> CopyArms(ArmState& st);
 inline constexpr size_t kArmLogCapacity = 16384;
-// Sorts the specs by key and merges a key both ticked and chosen into one; reserves the log for `logCapacity` arms.
+// Sorts the specs by key and merges every spec of one key -- ticked, chosen for its parameters, chosen for its stack --
+// into one; reserves the log for `logCapacity` arms.
 std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity);
 
 // The names the trace follows, for its readers after Stop (the arms and their layouts); `gen`, when given, is the
@@ -510,6 +576,7 @@ struct ArmSummary {
     uint64_t addresses = 0;   // distinct addresses that matched it; 0: never called
     uint64_t arms      = 0;   // snapshot arms made for it
     uint64_t armsFull  = 0;   // matches the full arm log could not take: no snapshots there, the tick still opened
+    int32_t  stackRing = -1;  // [LIVEFUNCS-STEP3]
 };
 // One per spec of the running (or last) recording's ArmState, in its order; empty when it follows no names.
 std::vector<ArmSummary> ArmsSummary();

@@ -223,6 +223,51 @@ reached:
    Acceptance: a full 32 MB snapshot buffer loaded in the Call Trace tab, and the load's memory log line.
 4. **UE4's property model** is not checked live, by decision (2026-10-07); if ever needed, UE 4.27.
 
+### ⬜ Live Funcs step 3 — what its live checks did not reach `[LIVEFUNCS-STEP3]`
+
+Built in build 3641 (2026-10-08) and proven live on DumperTest58 Shipping: the stacks rig 31/31 (7 recorded), the
+step-2 rig 33/33 and the trace rig 18/18 on the same DLL, and the UI walkthrough on the AOT build (the Stack? column,
+the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM through the AOBMaker plugin) --
+[live-funcs-step3-items.md](live-funcs-step3-items.md), "8.0 Results". Not reached:
+
+1. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP3-AVOWED]`** (Avowed, UE 5.3 Shipping, dxgi proxy refreshed to 3641, 272,494 objects; `livefuncs_snap_live.py --stacks --choose "" --plain-s 20 --record-s 30`, 5/5 and 6 recorded: the 64 busiest functions at the 3641 DLL's defaults, 100 / 200 a second): **3.25 µs a capture on average, 241 µs at
+   most**, over 6,200 captures (206.7 a second against the total of 200: the budget held, 269,282 calls dropped);
+   calls/s 9,206 without stacks and 9,218 with; the fps overlay read 135-141 in both phases (DLSS upscaling WITHOUT
+   frame generation, the maintainer said: every frame counted is a frame the game made); 2,702 of 6,200 stacks deeper
+   than 16 frames. D3's rule on this mean gives 600 a second. A capture here costs a seventh of the fixture's 20-28 µs
+   (the fixture runs uncapped, so its game thread is never idle); the fixture's number stays the conservative one.
+   *Was:* **The stack cost on a real game** (8.3). A capture cost 20-28 µs on the fixture's ~162 MB image, ten times the
+   test exe; a bigger game may pay more. Acceptance: Avowed (dxgi proxy, refreshed first),
+   `livefuncs_snap_live.py --stacks --choose "" --plain-s 20 --record-s 30` -- the 60 busiest functions at Linie's
+   default budget -- recording mean and max µs a capture, captures a second, calls/s and fps with and without stacks.
+   Then D3's re-weigh with that mean, which the maintainer decides (the fixture's mean gives a total of 50 a second).
+2. 🟡 **PARTIAL 2026-10-08 `[LIVEFUNCS-STEP3-AVOWED]`**: in item 1's run the fps overlay read 135-141 throughout,
+   with stacks and without (real frames: DLSS without frame generation), and a capture never cost more than 241 µs,
+   so 200 captures bunched into one frame would add well under a millisecond on average. Still owed: single frame
+   times, which an average does not show (a frame-time graph or PresentMon). *Was:* **A once-a-second hitch (the
+   review's M3).** The budget keeps the first calls of each second, so up to the total's
+   worth of captures can land in one frame. Acceptance: on Avowed with a busy function chosen, a frame-time trace
+   (the fps overlay's graph, or PresentMon) shows no spike once a second; if it does, M3's 100 ms window.
+3. **The rig's own mutations against a real DLL.** S3-F1's stackOk left out of the refusal, S3-F2's ignored `kind`
+   and the trampoline compared for `known` are scripted against the rig's dry run (`--self-test`), each failing its
+   named check; a DLL built with each mutation and the rig run live is owed.
+4. ✅ **CLOSED 2026-10-08 `[LIVEFUNCS-STEP3-AVOWED]`**: Avowed's max over 6,200 captures was 241 µs, under the
+   1 ms trigger, so S3-P1 (prewarm) stays deferred. *Was:* **A worst-case capture of 8.1 ms**, seen once (the first run, the machine loaded by three `dotnet test` runs) and
+   not again in ~3,500 captures (max 0.5 ms; a fresh game's first capture 112 µs). Read as preemption mid-walk.
+   Acceptance: `max_ticks` on Avowed (item 1) under 1 ms; over it, S3-P1's `.pdata` prewarm.
+5. ✅ **CLOSED 2026-10-08 (build 3643)**: S3-U6 and S3-U7 built and checked live on DumperTest58 (the ledger's
+   "8.4 Results": the question, Cancel, the ask after a reconnect; the line assumed, then measured). *Was:* **T9.1 /
+   T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The budget is
+   the guarantee meanwhile.
+6. **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
+   decided to be covered by tests rather than live (2026-10-07); this is the exception the maintainer asked for. The
+   maintainer first named Elliot, but Elliot is UE 5.4 (docs/test-games.md: its PE version is stripped, so the DLL
+   takes the publisher's 4.27 and reconciles to 5.4 at run time, which is why it can read as UE4). DQ XI S is UE 4.18
+   with a licensee fork's +0x10-shifted UObject layout and the UProperty model: the hardest UE4 shape installed
+   (exe `DRAGON QUEST XI S.exe`, in the D: Steam library). **Load a save first** (the maintainer): the title screen
+   holds too few objects and calls to say anything. Acceptance: the same run as item 1 (`--stacks --choose ""`), its
+   cost recorded beside Avowed's, and S3-A1's names on its stacks.
+
 ### ⛔ PRECONDITION FOR EVERY GAME ROW — as of 2026-08-19, ALL NINE deployed proxies are STALE
 
 Measured with `tools/verify/proxy_refresh.py report` (build 3263, `dist/proxy` = dinput8 2,875,904 /
@@ -274,7 +319,7 @@ same shape the rule forbids: two `### ⬜ Original checklist (kept for the steps
 at all, so a heading-level scan could not tell you *whose* checklist they were. They now read
 `### ⬜ AE2 / AE3 — original checklist …` and `### ⬜ Y9 — original checklist …`, matching the
 `U3 + U17` block that already had it right. **Re-derive with the two commands below and expect
-`11` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
+`12` and `0`** — and as of 2026-09-03 this IS the machine check it asked to be:
 `tools/check_derived_counts.py` carries `open_verification_batches`, so the number below and
 `todo.md`'s copy of it now fail the build together if either drifts. It had drifted a third time
 (this line still said `40`) and the gate caught it in the commit that added it:

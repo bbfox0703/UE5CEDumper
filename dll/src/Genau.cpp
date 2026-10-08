@@ -1146,22 +1146,12 @@ static constexpr int kBatchSize = 8;
 // (Satisfactory 4.25). When the anchor is a DLL we only REORDER; we refuse nothing.
 static uintptr_t s_moduleAnchor = 0;
 
-static HMODULE ModuleOfAddress(uintptr_t addr) {
-    HMODULE h = nullptr;
-    if (!addr) return nullptr;
-    GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
-                       GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                       reinterpret_cast<LPCWSTR>(addr), &h);
-    return h;
-}
+using Macht::ModuleOfAddress;
 
+// A module's name for a log line or a refusal: Macht's leaf, or "(unknown)" when it cannot be read.
 static std::string ModuleNameOf(HMODULE h) {
-    wchar_t path[MAX_PATH] = {};
-    if (!h || !GetModuleFileNameW(h, path, MAX_PATH)) return "(unknown)";
-    std::wstring w(path);
-    auto slash = w.find_last_of(L"\\/");
-    if (slash != std::wstring::npos) w = w.substr(slash + 1);
-    return Utf8Helpers::EncodeUtf16(w.c_str(), w.size());
+    std::string n = Macht::ModuleLeafUtf8(h);
+    return n.empty() ? std::string("(unknown)") : n;
 }
 
 /// Classify where the anchor lives. `AnchorState::None` covers BOTH "GObjects has not

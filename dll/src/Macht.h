@@ -7,6 +7,7 @@
 
 #include <Windows.h>
 #include <cstdint>
+#include <string>
 #include <vector>
 #include "Grimoire.h"   // SANITY_MAX_CONTAINER_NUM -- the container-header plausibility ceiling
 
@@ -185,9 +186,10 @@ inline bool ParsePattern(const char* patStr, ParsedPattern& out) {
 //
 // Recorded here because the absence has now been raised three times, and refuted
 // once for the WRONG reason. To be exact: it is not that the `__try`/`__except`
-// blocks are cancellation — there is no `__try` in any scan core at all. The four
-// SEH sites are ReadSafe / ReadBytesSafe / WriteBytes / GetFunctionExtent; the
-// scan cores dereference the image with no guard of any kind.
+// blocks are cancellation — there is no `__try` in any scan core at all. The SEH
+// sites are the guarded reads and writes, the .pdata lookup and the stack walk,
+// none of them a scan core; the scan cores dereference the image with no guard
+// of any kind.
 //
 // Cancellation lives one level up, at the PATTERN boundary in
 // Genau::ScanForTarget (its batch loop and its multi-module Pass 2). That is
@@ -439,5 +441,69 @@ inline int32_t ComputeMapValueOffset(int32_t keySize, int32_t valueSize, int32_t
     }
     return (keySize + valAlign - 1) & ~(valAlign - 1);
 }
+
+// ============================================================
+// [LIVEFUNCS-STEP3] The native stack above a hooked call (docs/live-funcs-step3-design.md, section 2.4; ledger
+// S3-M1). Taken on the GAME's thread inside ProcessEvent's hook, so it must never fault, never run the stack out, and
+// never take a lock: the bounds are checked first, the walk runs under __try, and our own frames are cut at the
+// game's return address (the anchor), which no inlining can move.
+// ============================================================
+
+// Stack-slot flags: bits 0-14 are Macht's; bit 15 is left free for the slot's owner.
+inline constexpr uint16_t kStackPartial  = 1;    // the anchor was not among the walked frames: only the caller is known
+inline constexpr uint16_t kStackFault    = 2;    // the walk faulted: nothing kept
+inline constexpr uint16_t kStackMore     = 4;    // the stack is deeper than what was kept
+inline constexpr uint16_t kStackBadSp    = 8;    // the return slot is not on this thread's stack: nothing read
+inline constexpr uint16_t kStackLowStack = 16;   // too little stack left to walk safely: nothing read
+inline constexpr uint32_t kStackOwnSlack  = 12;          // our frames above the anchor, at most (Release about 5)
+inline constexpr uint32_t kStackMaxFrames = 62;          // the most frames one capture keeps
+inline constexpr uint32_t kStackRawFrames = kStackOwnSlack + kStackMaxFrames + 1;
+inline constexpr uintptr_t kStackHeadroom = 32 * 1024;  // D16: the walk's CONTEXT and buffers, with margin
+
+// The first i below min(n, window) with raw[i] == ret; n when there is none. Pure.
+inline uint32_t AnchorIndex(void* const* raw, uint32_t n, uintptr_t ret, uint32_t window) {
+    const uint32_t lim = n < window ? n : window;
+    for (uint32_t i = 0; i < lim; ++i)
+        if (reinterpret_cast<uintptr_t>(raw[i]) == ret) return i;
+    return n;
+}
+
+// RtlCaptureStackBackTrace's shape, so a test can hand in a walker that misbehaves.
+using StackWalker = WORD (NTAPI*)(DWORD framesToSkip, DWORD framesToCapture, PVOID* backTrace, PDWORD hash);
+
+// The return addresses above the hooked call, the game's caller first: `retSlot` is the hook's own return-address slot
+// (_AddressOfReturnAddress in the hook). At most `max` (clamped to kStackMaxFrames) go to `out`; `flags` says what
+// happened. `headroom` and `walk` are parameters for the tests; the hook goes through CaptureCallerStack.
+// The cost is per walked frame -- a .pdata search and an unwind in each frame's image -- and the walk always takes our
+// own frames too: measured 2026-10-08 at about 0.75 us a frame on DumperTest58 Shipping (14 us at depth 4, 22 us at
+// 16) and about a seventh of that on Avowed, on the same PC (docs/live-funcs-step3-items.md, "8.0 Results").
+uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags, uintptr_t headroom,
+                              StackWalker walk);
+uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);
+
+// The module holding `addr`, no reference taken; nullptr outside any module (heap, JIT, unloaded).
+HMODULE ModuleOfAddress(uintptr_t addr);
+// A module's file name without its folder, as exact UTF-8, read in full whatever the path's length; "" when it cannot
+// be read.
+std::string ModuleLeafUtf8(HMODULE h);
+
+// [LIVEFUNCS-STEP3] What a captured return address is (design section 2.5; ledger S3-M2). It asks the loader, so it
+// runs on the pipe thread over addresses already copied out of a ring, never in the hook.
+struct CodeSite {
+    uintptr_t moduleBase = 0;   // 0 when the address is in no module
+    std::string moduleUtf8;     // the module file's leaf name; "" when in no module
+    uintptr_t fnBegin = 0;      // the start of the function holding ret-1, from .pdata; 0 without unwind data
+    bool unwind = false;        // .pdata covers ret-1
+    bool own = false;           // the module is this one: by base address, never by name (the proxies are renamed)
+};
+// False, with `out` reset, when the address is in no module.
+bool DescribeCode(uintptr_t retAddr, CodeSite& out);
+
+// [LIVEFUNCS-STEP3] S3-M3. The primary function of a .pdata entry that may be a chained fragment (shrink-wrapped or
+// hot/cold code): follows UNW_FLAG_CHAININFO, and an entry whose UnwindData has bit 0 set (an indirect entry), to the
+// entry whose unwind info chains no further, and returns its BeginAddress (an RVA). Pure over memory the caller
+// knows is readable; at most kChainMaxHops links, so a corrupt chain still ends.
+inline constexpr uint32_t kChainMaxHops = 32;
+uint32_t FollowChain(uintptr_t imageBase, uint32_t beginRva, uint32_t unwindData);
 
 } // namespace Macht
