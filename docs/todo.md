@@ -242,6 +242,23 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🐞 Maintainer report 2026-10-08 — IS Defense (UE 4.10) is not refused as unsupported `[UE410-2026-10-08]`
+
+The maintainer added IS Defense's logs as an unsupported UE game (docs/test-games.md has its row) and said the UE 4.10
+source and editor are installed for when they are needed.
+
+- ⬜ `[VER-410-GATE]` (MED): a genuine UE 4.10 title is scanned instead of refused, and the UI shows garbage
+  (`is_version_too_old: false`, 308 "objects", names 0/10). Audit #4 B25 made a sub-4.11 PE reading count only
+  when the memory string scan corroborates it, and that table floors at 4.18, so a real 4.0-4.10 title can never be
+  corroborated -- the code's own note accepted that, and IS Defense is the first title to meet it. The PE already
+  carries the corroboration: ProductVersion `4.10.2-0+++depot+UE4-Releases+4.10` is the engine's build string, a
+  second signal independent of FileVersion 4.10.2.0, which a game-authored version would not carry. Fix: count a
+  ProductVersion whose branch suffix names the same major.minor (`+UE4-Releases+4.10`, `++UE4+Release-4.10`) as
+  corroboration, so the gate refuses it with the existing "older than the minimum supported" message. Red first,
+  on a pure helper. Effort **S**.
+- ⬜ `[UE410-SUPPORT]` (decision, the maintainer): whether to support 4.10 at all. A feasibility study (UE 4.10
+  source, the game's PDB, what the DLL would need, a fixture) is running; its result goes here.
+
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 - ✅ **Step 1 (the timeline) BUILT, build 3633, 2026-10-07** — reviewed (36 findings, all fixed) and checked live on
