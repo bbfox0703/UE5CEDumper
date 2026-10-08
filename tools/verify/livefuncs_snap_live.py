@@ -3358,6 +3358,18 @@ def self_test() -> int:
            lambda: pick(60, 8, total=35) == (16, True) and pick(60, 2, total=40) == (30, True) and
            pick(60, 8, total=20) == (30, False) and
            per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, None, 35)["starves"] is False)
+    # The starve rule's two terms, pinned (the second review's T2 / T3): SnapProbe_PerFrame keeps no more than it is
+    # called, so a budget above its rate leaves the rest of the total free; and the room is every other choice's
+    # rate, summed, not the busiest one's.
+    expect("S5 rate: a budget of 100 over a probe at 60 a second leaves 60 + 1.5 x 2 in a total of 80: nothing starves",
+           lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, 100, 80)["starves"] is False)
+    expect("S5 rate: two other choices at 8 a second need 1.5 x 16 beside 30 (54): a total of 50 starves them",
+           lambda: per_frame_budget({"A": 8, "B": 8, "SnapProbe_PerFrame": 60}, 30, 50)["starves"] is True)
+    expect("S5 rate: when no budget fits, the total may still starve the others (5 a second against 60 and 2)",
+           lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, None, 5)["starves"] is True)
+    # The main-rate rule holds at exactly 1.5x, as bites() does (the second review's P1).
+    expect("S5 rate: the main recording at exactly 1.5x the budget lets the check run; just under it does not",
+           lambda: main_rate_problem(45.0, 30, 60.0) is None and main_rate_problem(44.9, 30, 60.0) is not None)
 
     def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = (),
                main_pf_rate: float | None = None) -> tuple[Checks, dict, int | None]:
@@ -3420,6 +3432,14 @@ def self_test() -> int:
                     [p for p in s3_in_scope if any(n.startswith(p) and "starve" in why for n, why in r[0].skipped)] ==
                     list(s3_in_scope) and not any(n.startswith(s3_in_scope) for n in ran(r[0])))(
                s5_run(30, ("--stack-per-ring", "40", "--stack-total", "15"))))
+    # The same without a given budget (the second review's T4 / T5): none fits, the fallback is sent, and the total
+    # still starves SnapProbe_Call, so the in-scope checks must stand down here too.
+    expect("dry run: --stack-total 5 with no --stack-per-ring and the probe at 60 a second: no budget fits, the total "
+           "starves the others, said in the output, and S3's two in-scope checks not run, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[1]["stack_budget"]["starves"] is True and
+                    r[1]["stack_budget"]["given"] is False and
+                    [p for p in s3_in_scope if any(n.startswith(p) and "starve" in why for n, why in r[0].skipped)] ==
+                    list(s3_in_scope))(s5_run(60, ("--stack-total", "5"))))
     expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
            lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],
                                               r[1]["stack_budget"]["runs"]) == (30, False, True))(s5_run()))
