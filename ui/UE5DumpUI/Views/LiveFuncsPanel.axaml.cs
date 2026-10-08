@@ -56,8 +56,9 @@ public partial class LiveFuncsPanel : UserControl
     }
 
     // [LIVEFUNCS-TIMELINE-2026-10-04] The call trace's view-side pieces: T7's question needs a window to ask in, and
-    // the tick column shows only with the experimental tabs on (T6). A DataGrid column is not in the visual tree, so
-    // its visibility cannot be bound to the view model; it follows TraceAvailable from here.
+    // the tick column and the choice columns beside it show only with the experimental tabs on (T6). A DataGrid
+    // column is not in the visual tree, so its visibility cannot be bound to the view model; it follows TraceAvailable
+    // from here.
     private LiveFuncsViewModel? _wired;
 
     private void WireTrace()
@@ -81,10 +82,13 @@ public partial class LiveFuncsPanel : UserControl
     {
         var grid = this.FindControl<DataGrid>("ResultsGrid");
         if (grid == null || _wired == null) return;
-        // [LIVEFUNCS-STEP2] The Snapshot column with it: both ride on the experimental trace.
-        string header = Core.Res.Get("str.LF.Col.Trace"), snapHeader = Core.Res.Get("str.LF.Col.Snapshot");
+        // [LIVEFUNCS-STEP2] [LIVEFUNCS-STEP3] The choice columns with it: they ride on the experimental trace. Every
+        // column the axaml hides must be compared here, or it stays hidden for good; a test reads both files for that.
+        string header = Core.Res.Get("str.LF.Col.Trace"), snapHeader = Core.Res.Get("str.LF.Col.Snapshot"),
+               stackHeader = Core.Res.Get("str.LF.Col.Stack");
         foreach (var col in grid.Columns)
-            if (col.Header as string == header || col.Header as string == snapHeader) col.IsVisible = _wired.TraceAvailable;
+            if (col.Header is string h && (h == header || h == snapHeader || h == stackHeader))
+                col.IsVisible = _wired.TraceAvailable;
     }
 
     private void InitializeComponent()

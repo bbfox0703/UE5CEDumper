@@ -129,7 +129,9 @@
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
     </StackPanel>
     <!-- [LIVEFUNCS-STEP2] Parameter snapshots (T9, T12, T13): the choices, the buffer and what it would keep. Disabled
-         while recording; the slider's bounds are the view model's. -->
+         while recording; the slider's bounds are the view model's. [LIVEFUNCS-STEP3] The stack count follows the bulk
+         button, so that button reads as the parameters' own, and precedes Clear, which drops the stack choices too:
+         they fill the same buffer (D4). -->
     <StackPanel DockPanel.Dock="Top" Orientation="Horizontal" Spacing="8" Margin="0,0,0,4"
                 IsVisible="{Binding TraceAvailable}">
       <TextBlock Text="{StaticResource str.LF.Snap.Label}"
@@ -141,6 +143,8 @@
               IsEnabled="{Binding CanSnapshot}"
               ToolTip.Tip="{StaticResource str.Tip.LF.Snap.ShownRows}"
               Padding="6,2" FontSize="11" VerticalAlignment="Center" Cursor="Hand"/>
+      <TextBlock Text="{Binding StackCountText}"
+                 Foreground="#DCDCAA" FontSize="12" VerticalAlignment="Center"/>
       <Button Content="{StaticResource str.LF.Snap.Clear}"
               Command="{Binding ClearSnapshotsCommand}"
               IsEnabled="{Binding !IsRecording}"
@@ -157,8 +161,15 @@
                  Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
                  VerticalAlignment="Center" MinWidth="44"/>
     </StackPanel>
-    <!-- The estimate, orange per T13; the budget's cut in grey. Two TextBlocks toggled by a bool, the D3 pattern. -->
-    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4" IsVisible="{Binding HasSnapshotChoices}">
+    <!-- The estimate, orange per T13; the budget's cut in grey. Two TextBlocks toggled by a bool, the D3 pattern.
+         [LIVEFUNCS-STEP3] Stacks alone still have the buffer's refusal to show, so the row shows for either choice. -->
+    <StackPanel DockPanel.Dock="Top" Margin="0,0,0,4">
+      <StackPanel.IsVisible>
+        <MultiBinding Converter="{x:Static BoolConverters.Or}">
+          <Binding Path="HasSnapshotChoices"/>
+          <Binding Path="HasStackChoices"/>
+        </MultiBinding>
+      </StackPanel.IsVisible>
       <Panel IsVisible="{Binding TraceAvailable}">
         <TextBlock Text="{Binding SnapshotEstimate}" IsVisible="{Binding !SnapshotEstimateWarn}"
                    Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
@@ -290,6 +301,22 @@
                         IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanSnapshot}"
                         IsVisible="{Binding CanChooseSnapshot}"
                         ToolTip.Tip="{StaticResource str.Tip.LF.Snap.Choose}"
+                        HorizontalAlignment="Center" Margin="6,0"/>
+            </DataTemplate>
+          </DataGridTemplateColumn.CellTemplate>
+        </DataGridTemplateColumn>
+        <!-- [LIVEFUNCS-STEP3] Choose for a native stack (D1): a column of its own, because every function has a stack
+             but not every one has parameters, and a walk costs far more than a parameter copy. Params?'s bindings and
+             rules otherwise; it rides on the experimental trace the same way. -->
+        <DataGridTemplateColumn Header="{StaticResource str.LF.Col.Stack}" Width="52" CanUserSort="False" IsVisible="False">
+          <DataGridTemplateColumn.CellTemplate>
+            <DataTemplate x:DataType="m:PeProfileEntry">
+              <CheckBox IsChecked="{Binding IsStackChosen, Mode=OneWay}"
+                        Command="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).ToggleStackCommand}"
+                        CommandParameter="{Binding}"
+                        IsEnabled="{Binding $parent[UserControl].((vm:LiveFuncsViewModel)DataContext).CanSnapshot}"
+                        IsVisible="{Binding CanChooseStack}"
+                        ToolTip.Tip="{StaticResource str.Tip.LF.Stack.Choose}"
                         HorizontalAlignment="Center" Margin="6,0"/>
             </DataTemplate>
           </DataGridTemplateColumn.CellTemplate>
