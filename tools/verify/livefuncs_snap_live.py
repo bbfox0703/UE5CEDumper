@@ -1152,9 +1152,9 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     trace = {"bytes": 64 << 20, "ticked_names": [item(rows["SnapNest_Outer"])],
              "snapshots": {"bytes": snap_bytes, "per_ring_per_s": 1000, "funcs": [item(rows["SnapProbe_Call"])],
                            "stacks": stacks}}
-    t0 = time.perf_counter()
+    t0 = clock()
     start = c.request("pe_profile_start", trace=trace)
-    t1 = time.perf_counter()
+    t1 = clock()
     if not check("S0 the main Start is accepted", ok_of(start), str(start.get("error", ""))[:120]):
         return
     st = data_of(start).get("trace", {})
@@ -1178,7 +1178,7 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
           snap.get("allocated") is True and snap.get("rings") == 1 and snap.get("slots_per_ring") == k,
           f"rings={snap.get('rings')} K={snap.get('slots_per_ring')} want {k}")
     sleep(args.record_s)
-    t2 = time.perf_counter()
+    t2 = clock()
     stop = data_of(c.request("pe_profile_stop"))
     span_lo, span_hi = t2 - t1, t2 - t0   # the trace starts inside the Start and stops when the Stop arrives
     out["stack_stop"] = stop
@@ -1310,7 +1310,7 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     stack2, snap2 = st2.get("stack", {}), st2.get("snap", {})
     say(f"     SnapProbe_PerFrame: about {pf_row.get('count', 0) / win if win else 0:.0f} calls/s; its stack ring wrote "
         f"{pf_ring.get('written')}, skipped {pf_ring.get('skipped_budget')}, dropped {pf_ring.get('dropped_budget')}")
-    check(f"S5 SnapProbe_PerFrame's stack ring keeps about {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
+    check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
           f"({lo:.0f}..{hi:.0f}) and the budget drops the rest",
           lo <= int_or(pf_ring.get("written"), -1) <= hi and int_or(pf_ring.get("dropped_budget"), 0) > 0 and
           int_or(stack2.get("dropped_budget"), 0) > 0,
@@ -1418,10 +1418,10 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
             stacks[key] = given
     say(f"\nstacks-only recording ({args.record_s:.0f} s), {len(chosen)} chosen, budgets "
         f"{json.dumps({k: v for k, v in stacks.items() if k != 'funcs'})} (the DLL's default for any left out):")
-    t0 = time.perf_counter()
+    t0 = clock()
     start = c.request("pe_profile_start", trace={"bytes": 64 << 20, "snapshots": {"bytes": 32 << 20, "funcs": [],
                                                                                   "stacks": stacks}})
-    t1 = time.perf_counter()
+    t1 = clock()
     if not check("the stacks-only Start is accepted", ok_of(start), str(start.get("error", ""))[:120]):
         return
     st = data_of(start).get("trace", {})
@@ -1433,8 +1433,8 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     per, total = int_or(st["stack"].get("per_ring_per_s"), 0), int_or(st["stack"].get("total_per_s"), 0)
     out["stack_budgets"] = {"per_ring_per_s": per, "total_per_s": total}
     say(f"     the DLL uses {per}/s a function, {total}/s in all")
-    time.sleep(args.record_s)
-    t2 = time.perf_counter()
+    sleep(args.record_s)
+    t2 = clock()
     stop = data_of(c.request("pe_profile_stop"))
     after = data_of(c.request("pe_profile_get", limit=1))
     st2 = stop.get("trace", {})
