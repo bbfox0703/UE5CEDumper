@@ -481,6 +481,12 @@ uint32_t CaptureCallerStackEx(uintptr_t retSlot, uint64_t* out, uint32_t max, ui
                               StackWalker walk);
 uint32_t CaptureCallerStack(uintptr_t retSlot, uint64_t* out, uint32_t max, uint16_t& flags);
 
+// The module holding `addr`, no reference taken; nullptr outside any module (heap, JIT, unloaded).
+HMODULE ModuleOfAddress(uintptr_t addr);
+// A module's file name without its folder, as exact UTF-8, read in full whatever the path's length; "" when it cannot
+// be read.
+std::string ModuleLeafUtf8(HMODULE h);
+
 // [LIVEFUNCS-STEP3] What a captured return address is (design section 2.5; ledger S3-M2). It asks the loader, so it
 // runs on the pipe thread over addresses already copied out of a ring, never in the hook.
 struct CodeSite {

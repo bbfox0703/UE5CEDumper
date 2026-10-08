@@ -920,25 +920,36 @@ static bool PrimaryFunctionStart(uintptr_t addr, uintptr_t& begin) {
     return true;
 }
 
-// [LIVEFUNCS-STEP3] S3-M2. The module the way Genau's ModuleOfAddress / ModuleNameOf find it (file-static there).
-// `own` compares bases: in the game this module is UE5Dumper.dll or a proxy under a system DLL's name, and in
-// dll_core_test it is the test exe itself.
+HMODULE ModuleOfAddress(uintptr_t addr) {
+    HMODULE h = nullptr;
+    if (!addr) return nullptr;
+    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                            reinterpret_cast<LPCWSTR>(addr), &h))
+        return nullptr;
+    return h;
+}
+
+std::string ModuleLeafUtf8(HMODULE h) {
+    if (!h) return {};
+    // A game under a long path is not cut at MAX_PATH: the loader keeps paths up to 32K characters.
+    std::vector<wchar_t> path(32768);
+    const DWORD len = GetModuleFileNameW(h, path.data(), static_cast<DWORD>(path.size()));
+    if (len == 0 || len >= path.size()) return {};
+    return Utf8Helpers::LeafUtf8(path.data(), len);
+}
+
+// [LIVEFUNCS-STEP3] S3-M2. `own` compares bases: in the game this module is UE5Dumper.dll or a proxy under a system
+// DLL's name, and in dll_core_test it is the test exe itself.
 extern "C" IMAGE_DOS_HEADER __ImageBase;
 
 bool DescribeCode(uintptr_t retAddr, CodeSite& out) {
     out = CodeSite{};
     if (retAddr < 2) return false;
-    HMODULE h = nullptr;
-    if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-                            reinterpret_cast<LPCWSTR>(retAddr), &h) ||
-        h == nullptr)
-        return false;
+    const HMODULE h = ModuleOfAddress(retAddr);
+    if (h == nullptr) return false;
     out.moduleBase = reinterpret_cast<uintptr_t>(h);
     out.own = out.moduleBase == reinterpret_cast<uintptr_t>(&__ImageBase);
-    // A game under a long path is not cut at MAX_PATH: the loader keeps paths up to 32K characters.
-    std::vector<wchar_t> path(32768);
-    const DWORD len = GetModuleFileNameW(h, path.data(), static_cast<DWORD>(path.size()));
-    if (len > 0 && len < path.size()) out.moduleUtf8 = Utf8Helpers::LeafUtf8(path.data(), len);
+    out.moduleUtf8 = ModuleLeafUtf8(h);
     // ret-1: a return address that follows a function's last call (a noreturn one) lies past that function's end. A
     // chained fragment names its primary function (S3-M3), so a call in ProcessEvent's cold part is still ProcessEvent.
     uintptr_t begin = 0;

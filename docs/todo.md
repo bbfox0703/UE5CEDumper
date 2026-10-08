@@ -289,8 +289,9 @@ Open work only. **Read this when deciding what to do next.**
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
   off by default so an older file opens the tree); tracked, applied and saved by MainWindowViewModel like every option.
-  ⬜ `[MODULE-HELPERS-FOLD]` (LOW, step-3 design 2.5): Genau's file-static ModuleOfAddress / ModuleNameOf and Macht's
-  DescribeCode find a module the same way; fold Genau's into Macht.
+  ✅ `[MODULE-HELPERS-FOLD]` (LOW, step-3 design 2.5; done 2026-10-08): Genau's file-static ModuleOfAddress /
+  ModuleNameOf and Macht's DescribeCode found a module the same way; Macht now owns ModuleOfAddress and
+  ModuleLeafUtf8 (any path length), and Genau's "(unknown)" fallback is a thin wrapper.
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
