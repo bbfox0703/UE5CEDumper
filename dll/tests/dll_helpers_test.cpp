@@ -4749,6 +4749,9 @@ static void Test_EngineBuildStringCode() {
     EXPECT("EngineBuildString: a branch the game named (no UE4) is 0", EngineBuildStringCode("4.10.2-0+MyGame") == 0);
     EXPECT("EngineBuildString: a full branch naming another major is 0",
            EngineBuildStringCode("4.10.2-0+++depot+UE5-Releases+4.10") == 0);
+    // [VER-410-GATE] review: the release the full branch repeats must carry the leading MAJOR too, not just the minor.
+    EXPECT("EngineBuildString: a full branch repeating 5.10 after 4.10.2 is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+5.10") == 0);
     EXPECT("EngineBuildString: a simplified branch naming another major is 0",
            EngineBuildStringCode("4.11.0-0+UE5") == 0);
     EXPECT("EngineBuildString: a branch-first string naming another major is 0",
@@ -4767,6 +4770,11 @@ static void Test_EngineBuildStringCode() {
            EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.10x") == 0);
     EXPECT("EngineBuildString: a trailing space after a simplified branch is 0",
            EngineBuildStringCode("4.11.0-0+UE4 ") == 0);
+    // [VER-410-GATE] review: the branch-first shape ends at its changelist, as the others end at their branch.
+    EXPECT("EngineBuildString: trailing text after a branch-first changelist is 0",
+           EngineBuildStringCode("++UE4+Release-4.15-CL-0x") == 0);
+    EXPECT("EngineBuildString: a trailing space after a branch-first changelist is 0",
+           EngineBuildStringCode("++UE4+Release-4.15-CL-0 ") == 0);
 }
 
 // [VER-410-GATE] What may refuse the scan: a reading below the floor, and a second signal naming the same version.
