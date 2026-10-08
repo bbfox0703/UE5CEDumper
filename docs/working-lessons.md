@@ -2832,17 +2832,27 @@ bump was reverted twice, so the third would have shipped 3631 a second time (the
 the IL2026 / IL3050 errors a trimmed publish fails on, from a plain build. Measured 2026-10-07: the publish's own
 failure (`JsonArray.Add<T>` at `DumpService.cs`) showed up as the same two errors in about a minute, and a clean
 build showed none — the negative control, with the bad line put back, is what made the clean result mean something.
-**How to apply:** run it after any UI change that touches JSON nodes, reflection-shaped APIs or bindings, before
+**How to apply:** run it after any UI change in C# that touches JSON nodes or reflection-shaped APIs, before
 `-Mode Publish`. ⚠ `JsonArray.Add(JsonValue.Create(x))` is **still** the generic `Add<T>` — the identity conversion
 to `T` beats the conversion to `JsonNode`, and the first fix for that publish was exactly this. Cast to `JsonNode?`.
+⚠ **It sees C# only.** Avalonia compiles XAML into IL after Roslyn has run, so a `{ReflectionBinding}` or
+`x:CompileBindings="False"` passes it and fails only at the ILC step of `-Mode Publish`. Measured 2026-10-08
+([LF-COMPACT-TOP] review fixes): a `{ReflectionBinding CaptureSummary}` planted in `LiveFuncsPanel.axaml` built clean
+under the two properties (exit 0, no IL2026 / IL3050, both editorconfig lines below present) while the built
+`UE5DumpUI.dll` referenced `ReflectionBindingExtension`; that the publish then fails on it with IL2026 / IL3050 is the
+[LF-COMPACT-TOP] reviewer's measurement of the same day, not repeated here (it needs a publish). Check a XAML change by
+reading it — `{Binding}` under an `x:DataType`, no `ReflectionBinding`, no `CompileBindings="False"` — and know that
+only `-Mode Publish` proves it.
 ⚠ **A clean result printed without the analyzer engaged is no result.** "0 Warning(s)" says nothing about IL2026 /
-IL3050 unless the analyzer ran, and the properties reach the compiler only through what restore and the build wrote
-under `obj\`. After the build, read `obj\Release\net10.0-windows\win-x64\UE5DumpUI.GeneratedMSBuildEditorConfig.editorconfig`:
-it must carry `build_property.EnableTrimAnalyzer = true` (and `build_property.EnableAotAnalyzer = true`); a plain
-build's has neither line (checked 2026-10-08, [LF-CLEAR-CHOICES] review). When they are missing, run
-`dotnet restore ui/UE5DumpUI/UE5DumpUI.csproj -p:EnableTrimAnalyzer=true -p:EnableAotAnalyzer=true` and build again
-with the same two properties. The negative control above is the stronger proof: put a known-bad call back, see it
-fail, take it out.
+IL3050 unless the analyzer ran. Read `obj\Release\net10.0-windows\win-x64\UE5DumpUI.GeneratedMSBuildEditorConfig.editorconfig`
+**right after the analyzer build**, before a plain build or a test run (which builds the project as a reference)
+rewrites `obj\`: it must carry `build_property.EnableTrimAnalyzer = true` and `build_property.EnableAotAnalyzer = true`.
+Both lines were there after the analyzer build and gone after a plain one (2026-10-08). The build's own restore takes
+the two properties, so no separate restore is needed — **unless you pass `--no-restore`**: the analyzer comes in the
+`Microsoft.NET.ILLink.Tasks` package, which only a restore with the properties adds, and after a plain restore a
+`--no-restore` build with them printed clean over a planted `JsonSerializer.Serialize` (exit 0, no IL lines, neither
+editorconfig line) where the same build without `--no-restore` failed on it with IL2026 and IL3050 (2026-10-08). The
+negative control above is the stronger proof: put a known-bad call back, see it fail, take it out.
 
 -----
 
