@@ -221,8 +221,7 @@ inline constexpr uint32_t kStackDefaultTotalPerSec   = 200;      // 200 captures
 inline constexpr uint16_t kSnapNoCapturer            = 0x8000;   // Linie's one stack-slot bit; the rest are the capturer's
 // A stack ring's slot payload: 8 bytes a frame, the depth clamped to 1..kStackMaxDepth.
 inline uint32_t StackRingCap(uint32_t depth) {
-    (void)depth;
-    return 0;
+    return (depth < 1 ? 1u : depth > kStackMaxDepth ? kStackMaxDepth : depth) * 8u;
 }
 
 // The slider's range (T1): powers of two from 32 to 512 MB. Linie itself takes any size of two records or more,
@@ -553,7 +552,8 @@ bool ArmIsPending(ArmState& st, uint32_t index);
 // Every arm the log holds, with its layout's state.
 std::vector<ArmView> CopyArms(ArmState& st);
 inline constexpr size_t kArmLogCapacity = 16384;
-// Sorts the specs by key and merges a key both ticked and chosen into one; reserves the log for `logCapacity` arms.
+// Sorts the specs by key and merges every spec of one key -- ticked, chosen for its parameters, chosen for its stack --
+// into one; reserves the log for `logCapacity` arms.
 std::shared_ptr<ArmState> BuildArmState(std::vector<ArmSpec> specs, size_t logCapacity);
 
 // The names the trace follows, for its readers after Stop (the arms and their layouts); `gen`, when given, is the

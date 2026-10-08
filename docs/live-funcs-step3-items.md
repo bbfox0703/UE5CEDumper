@@ -15,7 +15,8 @@ Fern.cpp and Stark.cpp are compiled by no test target. Their items are proven by
   - M5 (M1): `noinline` on the capturers, and recursion that works after its call.
 - **The LOW items L1-L11** are notes on the items they name.
 
-**Status 2026-10-08 06:55: S3-M1's capture (cases 1-7) and S3-M2 built; everything else open.** The design workflow (three
+**Status 2026-10-08 12:15: the DLL's capture, storage and budget are built (S3-M1, S3-M2, S3-L1, S3-L2); the pipe,
+the rig and the UI are under way.** The design workflow (three
 code maps, two designs, a merge, a critic) took an hour of the unattended window. S3-M1 went first because it needs
 nothing else, it is the safety-critical part, and its bench gives T17 a number: **about 1.4 µs per 16-frame capture
 from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as one cycle (H1), then S3-M1's case 8.
@@ -24,9 +25,9 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 |---|---|---|---|---|
 | S3-X0 | docs | The plan's "Step 3 design" (decisions D1-D17; T15-T19 for the maintainer) and this ledger, with its docs/README.md row | — | ✅ this commit |
 | S3-R1 | pipe | Rig `tools/verify/livefuncs_snap_live.py --stacks` (paths as arguments; committed before it runs) | S3-X0 | open (red: 3640 has no `trace.stack`) |
-| S3-L1 | DLL | Linie: a stack choice armed by name (`stackRing` in ArmSpec / ArmHint, still 24 B / ArmSummary; the merge; ArmLocked before the parameters-only return); stack rings after the param rings in one allocation (own index space, same K); TraceConfig stack fields and constants; StackWrite through the injected capturer; TraceEnter's stack gate, lone and excluded for stack choices, flag 32; StackRings / CopyStacks; step-2 readers param rings only; TraceInfo.stack | — | open |
-| S3-L2 | DLL | Linie: the stack budget (own per-ring word, own total window), D10's drop rule, flag 64, skipped / dropped by kind, captures / spent / max ticks, the slot's ticks | S3-L1 | open |
-| S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | ◐ cases 1-7 + the capture bench (red 49dde439, green after it; 7 / 7 mutants killed); case 8 and the TraceEnter bench wait for S3-L1 |
+| S3-L1 | DLL | Linie: a stack choice armed by name (`stackRing` in ArmSpec / ArmHint, still 24 B / ArmSummary; the merge; ArmLocked before the parameters-only return); stack rings after the param rings in one allocation (own index space, same K); TraceConfig stack fields and constants; StackWrite through the injected capturer; TraceEnter's stack gate, lone and excluded for stack choices, flag 32; StackRings / CopyStacks; step-2 readers param rings only; TraceInfo.stack | — | ✅ red 4f7644b0 (with L2 and M1 case 8), green after it; 8 / 8 mutants killed |
+| S3-L2 | DLL | Linie: the stack budget (own per-ring word, own total window), D10's drop rule, flag 64, skipped / dropped by kind, captures / spent / max ticks, the slot's ticks | S3-L1 | ✅ one cycle with S3-L1; 5 / 5 mutants killed |
+| S3-M1 | DLL | Macht: CaptureCallerStack(Ex) — stack bounds and 32 KB headroom, the walk under `__try`, the anchor trim (AnchorIndex), Partial / Fault / More / BadSp / LowStack; through TraceEnter; bench line | S3-L1 | ✅ cases 1-7 + the capture bench (red 49dde439; 7 / 7 mutants killed); case 8 and the TraceEnter bench with S3-L1 (red 4f7644b0) |
 | S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | ✅ red 9463e34a, green after it; 3 / 3 mutants killed. FollowChain (the review's M4) owed |
 | S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | open |
 | S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | open |
@@ -97,6 +98,12 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
   - The 4/8 flag comments are updated.
 - **Files:** `dll/src/Linie.h`, `dll/src/Linie.cpp`, `dll/tests/dll_core_test.cpp`
 
+- **Done 2026-10-08 (one cycle with S3-L2, red 4f7644b0):** cases 1-11 pass; case 12 is a guard (the step-1 and
+  step-2 blocks run unchanged). Mutants, all killed: stackRing after the parameters-only return; the stack ring
+  indexed without `snapCount +`; SnapRings over P+S rings (L3's replacement for "snapCount = P+S"); lone gated on a
+  parameter ring alone; the slot's bytes as `max`; flag 32 before the walk returned; the slot's number written first;
+  ArmsSummary without the stack ring.
+
 ## S3-L2 — Linie: the stack budget apart from the parameters', and its cost
 
 - **Red:** the S5 test-clock pattern (the dll_core_test.cpp:8129 block), with a clock advancing 7 ticks per read, all inside one second. `stackPerRingPerSec` 2, `stackTotalPerSec` 3, param budgets 1000 (case 4: 1).
@@ -113,6 +120,9 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
   - Drop the record when the params were refused even though the stack was taken (case 4 fails).
   - Sum the stack rings into `snap` in InfoLocked (case 1's `snap.skippedBudget == 0` fails).
 - **Files:** `dll/src/Linie.h`, `dll/src/Linie.cpp`, `dll/tests/dll_core_test.cpp`
+- **Done 2026-10-08:** cases 1-7 pass. Mutants, all killed: StackAdmit with the parameters' per-ring budget;
+  StackAdmit with `snapTotalWindow` / `snapTotal` (L4's wording); D10 dropping a call whose stack was taken; the stack
+  rings summed into `snap`; the dearest capture never recorded.
 
 ## S3-M1 — Macht: the caller's stack from the hook's return slot, safely
 
@@ -155,6 +165,11 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
     the call. Plain arithmetic is never a guard against a tail call; a store or a call is.
   - Owed: case 8 (through TraceEnter) and the TraceEnter bench, both after S3-L1; the `kStackMaxDepth` static_assert
     lands with S3-L1's constant.
+- **Done 2026-10-08 (case 8, with S3-L1):** through TraceEnter with Macht's capturer and a 20-deep caller, the first
+  frame is the hooked frame's caller, four kept, flag More. The TraceEnter bench, measured while the UI helpers'
+  `dotnet test` runs loaded the machine: about 3.3 µs per hooked call with a 16-frame stack against about 0.12 µs
+  without, and 2.6 µs per bare capture (1.4 µs on the idle machine at 06:26). The live check (S6) gives the number
+  that counts.
 
 ## S3-M2 — Macht: what a return address is
 
