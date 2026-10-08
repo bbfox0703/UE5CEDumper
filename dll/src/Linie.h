@@ -218,6 +218,9 @@ inline constexpr uint32_t kStackDefaultDepth         = 16;       // frames: 128 
 inline constexpr uint32_t kStackMaxDepth             = 62;
 inline constexpr uint32_t kStackDefaultPerRingPerSec = 100;      // provisional (T17), as step 2's were
 inline constexpr uint32_t kStackDefaultTotalPerSec   = 200;      // 200 captures at 10 us: T9's 2 ms a second
+// The UI's Low budget (T20): half the defaults, for a slower machine or a game where a capture costs more.
+inline constexpr uint32_t kStackLowPerRingPerSec     = 50;
+inline constexpr uint32_t kStackLowTotalPerSec       = 100;
 inline constexpr uint16_t kSnapNoCapturer            = 0x8000;   // Linie's one stack-slot bit; the rest are the capturer's
 // A stack ring's slot payload: 8 bytes a frame, the depth clamped to 1..kStackMaxDepth.
 inline uint32_t StackRingCap(uint32_t depth) {
