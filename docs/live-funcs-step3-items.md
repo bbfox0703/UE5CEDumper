@@ -15,8 +15,8 @@ Fern.cpp and Stark.cpp are compiled by no test target. Their items are proven by
   - M5 (M1): `noinline` on the capturers, and recursion that works after its call.
 - **The LOW items L1-L11** are notes on the items they name.
 
-**Status 2026-10-08 12:15: the DLL's capture, storage and budget are built (S3-M1, S3-M2, S3-L1, S3-L2); the pipe,
-the rig and the UI are under way.** The design workflow (three
+**Status 2026-10-08 14:00: everything in the minimum is built and S3-R1 / S3-F1 / S3-F2 are green live; the UI items
+S3-U1 to U5 and S3-U8 are built (C# 6439, 0 failed) and wait for the AOT walkthrough (S3-X2).** The design workflow (three
 code maps, two designs, a merge, a critic) took an hour of the unattended window. S3-M1 went first because it needs
 nothing else, it is the safety-critical part, and its bench gives T17 a number: **about 1.4 µs per 16-frame capture
 from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as one cycle (H1), then S3-M1's case 8.
@@ -31,14 +31,14 @@ from 20 deep** (Release, this PC). The next session starts at S3-L1 + S3-L2 as o
 | S3-M2 | DLL | Macht: DescribeCode (module base and UTF-8 leaf, function start at ret−1, unwind, own by `__ImageBase`) | — | ✅ red 9463e34a, green after it; 3 / 3 mutants killed. FollowChain landed as S3-M3 |
 | S3-F1 | pipe | Fern: `trace.snapshots.stacks` at Start (keys, depth, budgets, capturer), refusal and snapOnly count stacks, `names.stacks`, `trace.stack` in TraceInfoToJson, `names[].stack` at Stop | S3-L2, S3-M1, S3-R1 | ✅ 5f4dd21e; S0 green live (both halves). The rig's mutation of it is scripted offline (no_stack_ok); the real-DLL rig mutation is owed |
 | S3-F2 | pipe | Fern: `pe_snap_get` `kind:"stack"` (CopyStacks under the lock; `rings`, items, per-page `sites` with module / rva / fn / unwind / own / known outside it; page cap; Tot poll); pipe-protocol.md subsection and flag rows 32 / 64; pipe count unchanged (104) | S3-F1, S3-M2 | ✅ with S3-F1 (and L7: a 32K path, LeafUtf8, the sites counted in the page); S1-S6 green live. Rig mutations scripted offline (ignore_kind, no_known); real-DLL runs owed |
-| S3-U1 | UI | Models and DumpService: `stacks` in the Start request (unchanged bytes without), TraceInfo.Stack and names.stacks parsed, PeStackGetAsync (`kind:"stack"`) with frames resolved to sites and CeModule by the UI's code page | §3 (wire frozen) | open |
-| S3-U2 | UI | Live Funcs: the stack choice (key and Trace on, no parameters rule), Start options, T7 with stacks, the old-DLL guard, status and Stop notes, TraceStartKey's count, TraceGameMb, the K estimate with stack rings, refresh and disconnect | S3-U1 | open |
-| S3-U3 | UI | Live Funcs view: Stack? column, the visibility loop, the snapshot row shown for either choice, the count, strings | S3-U2 | open |
-| S3-U4 | UI | Call Trace: the stack load before the release, CallTraceStacks joined by entrySeq, no params load when `snap.rings == 0`, the Params(i) and export NotChosen fixes, the `(s)` marker, the Summary sentence | S3-U1 | open |
-| S3-U5 | UI | Call Trace: the Call stack tab (view A rows and notes), Copy CE address and Open in CE disassembler (view D), ASM refused for an earlier connection | S3-U4 | open |
+| S3-U1 | UI | Models and DumpService: `stacks` in the Start request (unchanged bytes without), TraceInfo.Stack and names.stacks parsed, PeStackGetAsync (`kind:"stack"`) with frames resolved to sites and CeModule by the UI's code page | §3 (wire frozen) | ✅ red 8938ae8b, green 64335d4f; 6 / 6 mutants killed (the ledger's 3 and 3 more) |
+| S3-U2 | UI | Live Funcs: the stack choice (key and Trace on, no parameters rule), Start options, T7 with stacks, the old-DLL guard, status and Stop notes, TraceStartKey's count, TraceGameMb, the K estimate with stack rings, refresh and disconnect | S3-U1 | ✅ e806b7de (a refactor, no behaviour), red 236fa8d0, green 39709447; with M3 and L6; mutants all killed |
+| S3-U3 | UI | Live Funcs view: Stack? column, the visibility loop, the snapshot row shown for either choice, the count, strings | S3-U2 | ✅ red 39f25f04, green 1f6de090; 12 / 12 mutants killed |
+| S3-U4 | UI | Call Trace: the stack load before the release, CallTraceStacks joined by entrySeq, no params load when `snap.rings == 0`, the Params(i) and export NotChosen fixes, the `(s)` marker, the Summary sentence | S3-U1 | ✅ 88a0f5d1 (a refactor), red 2d168319, green 0b1ea384; with M1 and L6; 15 / 15 mutants killed |
+| S3-U5 | UI | Call Trace: the Call stack tab (view A rows and notes), Copy CE address and Open in CE disassembler (view D), ASM refused for an earlier connection | S3-U4 | ✅ red d2e66e5d, green 626320d2 (16 / 16 mutants killed, with M2 and L8); the review's two findings fixed (a8ee346e / 5f71198c) |
 | S3-X1 | docs | Plan "Step 3 built" (deviations, measured µs and max per capture, the defaults re-weighed by D3's rule), the dev-log entry, verification-register rows (Avowed stack cost; T9.1 / T9.2 owed per D2; M3), todo rows for §6's deferred items and for folding Genau's module helpers into Macht; comment pass (`comment_impact.py --staged`) | S3-F2, S3-U5 | open |
 | S3-X2 | docs | `-Mode Publish` (AOT, size and SHA, the build bumped), proxy refresh, S3-R1 green on DumperTest58 Shipping, the step-2 rigs re-run, the UI walkthrough; µs per capture, max, calls/s and fps with and without stacks, the machine recorded | S3-X1, S3-R1 | open |
-| S3-U8 | UI | The maintainer's T20 (2026-10-08): a Standard / Low stack budget (Low = `kStackLowPerRingPerSec` 50 and `kStackLowTotalPerSec` 100, pinned from Linie.h) sent in the Start's `stacks`, and the warning wherever stacks are chosen (a software walk, not a debugger capture; frame time; an unforeseen case could stall or crash the game, stopping mid-capture included) | S3-U2, S3-U3 | open |
+| S3-U8 | UI | The maintainer's T20 (2026-10-08): a Standard / Low stack budget (Low = `kStackLowPerRingPerSec` 50 and `kStackLowTotalPerSec` 100, pinned from Linie.h) sent in the Start's `stacks`, and the warning wherever stacks are chosen (a software walk, not a debugger capture; frame time; an unforeseen case could stall or crash the game, stopping mid-capture included) | S3-U2, S3-U3 | ✅ in a worktree from U3: red a90039e4, green 13776eb4 (8 / 8 mutants killed); the warning's cost corrected to the live measurement in a8da0830 |
 | S3-U6 | UI | (next) The per-frame ask-once for stacks (T9.2): `ConfirmStackPerFrame`, `_stackPerFrameConfirmed`, an async ToggleStack that re-raises `IsStackChosen` when refused | S3-U2 | next |
 | S3-U7 | UI | (next) The stack estimate line (T9.1): pure `EstimateStacks(rates, perFunc, total, usPerCapture)` → ms/s; orange above 2.0; µs measured from the last Stop, else 10 "assumed" | S3-U2, S3-X2 | next |
 | S3-A1 | DLL | (next) The native-entry index: one GObjects pass (class-pointer memo, Function / DelegateFunction / SparseDelegateFunction), `Func → ufunc` sorted, cached per gen; sites gain `ufunc` / `class` / `func` / `shared` | S3-F2 | next |
@@ -393,3 +393,30 @@ The fixture's paths (DumperTest58Actor.cpp:224-233) give two kinds of call:
 - **Record:** calls/s and the fps overlay with and without stacks, mean and max µs, captures a second, skipped and dropped, and whether any hitch shows once a second (M3).
 - **Expected:** at most 200 captures a second, so at most about 2 ms/s at 10 µs.
 - If it is not run in this session, it is the register row "Avowed stack cost" (S3-X1), and the D3 defaults stay provisional.
+
+## The UI items as built (2026-10-08)
+
+Built by helpers in worktrees (S3-U1 to U5 in order on one branch, S3-U8 on another from U3, the rig on a third),
+then an adversarial review per branch, two skeptics per finding, and a fixer; merged onto dev by the main session.
+Deviations the builders reported, kept here because the design does not say them:
+- **U1:** a `kind:"stack"` reply that has items but no `"kind":"stack"` reads as no slots (the DLL always sends it);
+  `FollowedName.Stack` (the Stop reply's `names[].stack`) and `StackSite.ModuleBaseHex` were added for U2 / U5;
+  the slot-flag constants are named as in 5.1 (Partial, Fault, More, BadSp, LowStack, NoCapturer).
+- **U2:** Live Funcs' sentences go through a lookup a test can hand en.axaml (a refactor commit first).
+- **U3:** the stack count sits after the "Choose shown rows" button, before Clear: `Parameters: N chosen [Choose
+  shown rows] Stacks: M [Clear] Buffer`.
+- **U4:** the summary keys are `str.CT.Status.Stacks` and `str.CT.Status.StackCost` (the design's
+  `str.CT.Summary.Stacks`); M1's paging makes one extra one-slot read to learn the rings' windows; the Lone /
+  Excluded / SnapOnly texts are kind-neutral ("for what it was chosen for").
+- **U5:** `FrameWhere` is an instance method (its text goes through the lookup); folded code has its own key
+  (`str.CT.Stack.NativeShared`); "may be wrong" shows only when frames follow the first one without unwind data; Copy
+  goes through `ClipboardDelivery.TryAsync` as 5.6 says (it reports Copied / CopyFailed).
+- **U5 review fix:** the code index held the previous trace alive through a new load; the index and its trace are
+  now one cache that `DropShownTrace` drops. One mutant survives by design: dropping the cache's ReferenceEquals check
+  is equivalent today, because every path that replaces the trace runs `DropShownTrace` first.
+- **U8:** the budget is not saved in ui-options.json (the panel's other options are); the warning reuses the panel's
+  warning orange; a test pins Linie.h's Low pair to half the defaults, so a re-weigh that moves one pair fails it.
+- **Rig (S3-R1):** `--stack-per-ring` / `--stack-total` default to unset; the fixture run (8.1) still sends 30 / 200,
+  and `--stacks --choose` (8.3) sends a budget only when one is given, so the Avowed command measures Linie's
+  defaults. One rig mutant survives: checking the game run's total against 200 instead of the echoed total (the
+  DLL's default total is also 200).
