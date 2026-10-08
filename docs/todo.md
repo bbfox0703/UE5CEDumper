@@ -397,7 +397,9 @@ source and editor are installed for when they are needed.
   script functions' entry (DLL red 6e63a7b1 / green 7a964f0e, 3 / 3 mutants) and the Call stack tab names "the
   Blueprint interpreter +0x.. (UObject::ProcessInternal, the native entry of N Blueprint functions)" (UI red
   e29ec156 / green 1996e3c6, 5 / 5 mutants). Live look: DQ XI S, OnDrawMapSymbolRenderTarget's stacks.
-  ✅ `[SNAPRIG-NAMES]` (LOW, the same review; built 2026-10-08, offline by `--self-test` -- its first live run is owed):
+  ✅ `[SNAPRIG-NAMES]` (LOW, the same review; built 2026-10-08, offline by `--self-test`; live 2026-10-09 on
+  DumperTest58 Shipping, `--stacks --choose "" --names --stack-depth 62`: the 14 functions chosen named no frame, so
+  both A1 checks were reported not run with that reason, as designed -- the first run with names is owed on DQ XI S):
   `livefuncs_snap_live.py --stacks --choose` checks no S3-A1 name; DQ XI
   S's were checked by scratch probes (`get_object` on each `ufunc`; the site's `fn` at one offset inside the
   UFunction; the named frame exactly one below a `known: "process_event"` frame, which sits directly below the hook).
