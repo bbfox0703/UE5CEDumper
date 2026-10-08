@@ -180,13 +180,29 @@
                  Foreground="#D4D4D4" FontSize="12" FontWeight="Bold"
                  VerticalAlignment="Center" MinWidth="44"/>
     </StackPanel>
-    <!-- [LIVEFUNCS-STEP3] T20: what a stack capture is and what it can cost, whenever one is chosen. A line of its own,
-         because a TextBlock in a horizontal StackPanel never wraps; in the panel's warning orange. Hidden with the row
-         above when Trace is unavailable, as a Start then takes no stacks. -->
+    <!-- [LIVEFUNCS-STEP3] Under the stack count and budget, whenever a stack is chosen: T9.1's estimate of what the
+         stacks chosen would cost the game a second, then T20's warning of what a capture is. Both turn the panel's
+         warning orange above T9's threshold and stay calm under it, so the warning stands out when the estimate says
+         it applies. Lines of their own, because a TextBlock in a horizontal StackPanel never wraps; each twice, toggled
+         by a bool (the D3 pattern). Hidden with the row above when Trace is unavailable, as a Start then takes no
+         stacks. -->
     <Panel DockPanel.Dock="Top" IsVisible="{Binding TraceAvailable}">
-      <TextBlock Text="{StaticResource str.LF.Stack.Warning}"
-                 IsVisible="{Binding HasStackChoices}"
-                 Foreground="#E5A050" FontSize="12" TextWrapping="Wrap" Margin="0,0,0,4"/>
+      <StackPanel IsVisible="{Binding HasStackChoices}" Margin="0,0,0,4">
+        <Panel>
+          <TextBlock Text="{Binding StackEstimate}" IsVisible="{Binding !StackEstimateWarn}"
+                     Foreground="#8FA0B8" FontSize="12" TextWrapping="Wrap"
+                     ToolTip.Tip="{Binding StackEstimateTip}"/>
+          <TextBlock Text="{Binding StackEstimate}" IsVisible="{Binding StackEstimateWarn}"
+                     Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"
+                     ToolTip.Tip="{Binding StackEstimateTip}"/>
+        </Panel>
+        <Panel>
+          <TextBlock Text="{StaticResource str.LF.Stack.Warning}" IsVisible="{Binding !StackEstimateWarn}"
+                     Foreground="#808080" FontSize="12" TextWrapping="Wrap"/>
+          <TextBlock Text="{StaticResource str.LF.Stack.Warning}" IsVisible="{Binding StackEstimateWarn}"
+                     Foreground="#E5A050" FontSize="12" TextWrapping="Wrap"/>
+        </Panel>
+      </StackPanel>
     </Panel>
     <!-- The estimate, orange per T13; the budget's cut in grey. Two TextBlocks toggled by a bool, the D3 pattern.
          [LIVEFUNCS-STEP3] Stacks alone still have the buffer's refusal to show, so the row shows for either choice. -->

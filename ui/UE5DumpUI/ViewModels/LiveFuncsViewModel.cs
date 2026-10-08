@@ -401,6 +401,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             // Raised for a refused write too, so a control that sent it reads the kept value back.
             OnPropertyChanged();
             OnPropertyChanged(nameof(StackBudgetStandard));
+            RaiseStackEstimate();
         }
     }
 
@@ -529,6 +530,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(TraceMemoryOverAvailable));
         OnPropertyChanged(nameof(TraceMemoryEstimate));
         RaiseSnapshotEstimate();
+        RaiseStackEstimate();
     }
 
     // ---- T9 item 1: the estimate, from the last fetch's rates. Pure, like EstimateSeconds, so a test pins it.
@@ -602,16 +604,21 @@ public partial class LiveFuncsViewModel : ViewModelBase
                                 busiest, busiestRate > 0 ? kept / busiestRate : double.PositiveInfinity);
     }
 
-    private List<SnapRate> ChosenRates()
+    /// <summary>A chosen name's calls a second over the last fetch's window: every row of the name, as a function that
+    /// reloaded at a new address is one choice and one ring. 0 when the fetch did not show it, or had no window.</summary>
+    private double LastRateOf(string name)
     {
         double seconds = _lastWindowMs / 1000.0;
+        return seconds > 0 ? _allEntries.Where(e => Key(e) == name).Sum(e => e.Count) / seconds : 0;
+    }
+
+    private List<SnapRate> ChosenRates()
+    {
         var list = new List<SnapRate>();
         foreach (var name in _snapChosen.Names)
         {
-            var rows = _allEntries.Where(e => Key(e) == name).ToList();
-            double rate = seconds > 0 ? rows.Sum(e => e.Count) / seconds : 0;
-            uint flags = rows.Select(e => e.FunctionFlags).FirstOrDefault(f => f != 0);
-            list.Add(new SnapRate(name, rate, _snapChosen.ParmsSizeOf(name), flags));
+            uint flags = _allEntries.Where(e => Key(e) == name).Select(e => e.FunctionFlags).FirstOrDefault(f => f != 0);
+            list.Add(new SnapRate(name, LastRateOf(name), _snapChosen.ParmsSizeOf(name), flags));
         }
         return list;
     }
@@ -690,16 +697,69 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(SnapshotBudgetNote));
     }
 
-    // ---- [LIVEFUNCS-STEP3] T9.1: the stack estimate line (S3-U7). Declarations only.
+    // ---- [LIVEFUNCS-STEP3] T9.1: what the stacks chosen would cost the game, from the last fetch's rates. The DLL's
+    // budget is the guarantee; this is the advice, so a warning never refuses a Start (T9).
 
+    /// <summary>T9's threshold: above this much of the game's time a second the stack estimate turns orange. An eighth of
+    /// a 60 fps frame, if every capture of the second landed in one, which the budget's first-calls window allows.</summary>
+    internal const double StackWarnMsPerSec = 2.0;
+    /// <summary>A capture's cost when no Stop has measured one: the plan's upper estimate, which T17's first defaults
+    /// were set against. Games measured live ([LIVEFUNCS-STEP3]) came out on both sides of it, so the line says it was
+    /// assumed.</summary>
+    internal const double StackAssumedUsPerCapture = 10.0;
+
+    /// <summary>The captures a second the budget lets through, and the milliseconds of the game's time they take.</summary>
     internal readonly record struct StackCost(double CapturesPerSec, double MsPerSec);
 
+    /// <summary>T9.1: each chosen function's calls a second held to its own budget, their sum held to the total -- the
+    /// DLL's per-ring and total budgets over one second -- and what that many captures cost at
+    /// <paramref name="usPerCapture"/>. A function not called counts nothing.</summary>
     internal static StackCost EstimateStacks(IReadOnlyList<double> rates, int perFunc, int total, double usPerCapture)
-        => default;
+    {
+        double admitted = 0;
+        foreach (double rate in rates) admitted += Math.Min(Math.Max(rate, 0), perFunc);
+        double captures = Math.Min(admitted, Math.Max(total, 0));
+        return new StackCost(captures, captures * usPerCapture / 1000.0);
+    }
 
-    public string StackEstimate => "";
-    public bool StackEstimateWarn => false;
-    public string StackEstimateTip => "";
+    /// <summary>The mean µs a capture took in a stopped trace (D9's measurement); null when it took none.</summary>
+    internal static double? MeanUsPerCapture(StackInfo? stack, ulong qpcFreq)
+        => stack is { Captures: > 0 } s && qpcFreq > 0 ? (double)s.SpentTicks / s.Captures * 1e6 / qpcFreq : null;
+
+    /// <summary>The last Stop's cost of a capture, when that recording took stacks. A recording that took none measured
+    /// nothing, and a disconnect drops it: the next connection may be another game.</summary>
+    private double? _stackUsMeasured;
+    private double StackUsPerCapture => _stackUsMeasured ?? StackAssumedUsPerCapture;
+
+    private List<double> StackRates() => _stackChosen.Names.Select(LastRateOf).ToList();
+
+    private StackCost CurrentStackCost()
+        => EstimateStacks(StackRates(), StackBudgetPerFunc, StackBudgetTotal, StackUsPerCapture);
+
+    /// <summary>T9.1's line, under the budget chosen. With no chosen function called last time there is no rate to weigh,
+    /// so the line says so and gives the most the budget takes instead of an estimate of nothing.</summary>
+    public string StackEstimate
+    {
+        get
+        {
+            if (_stackChosen.Count == 0) return "";
+            if (StackRates().All(r => r <= 0)) return Say("str.LF.Stack.EstimateNone", StackBudgetTotal, StackBudgetPerFunc);
+            var c = CurrentStackCost();
+            return Say("str.LF.Stack.Estimate", c.CapturesPerSec, c.MsPerSec, StackUsPerCapture,
+                       StringLookup(_stackUsMeasured.HasValue ? "str.LF.Stack.EstimateMeasured" : "str.LF.Stack.EstimateAssumed"));
+        }
+    }
+
+    /// <summary>Orange above <see cref="StackWarnMsPerSec"/>: the estimate line, and T20's warning with it.</summary>
+    public bool StackEstimateWarn => _stackChosen.Count > 0 && CurrentStackCost().MsPerSec > StackWarnMsPerSec;
+
+    public string StackEstimateTip => Say("str.Tip.LF.Stack.Estimate", StackWarnMsPerSec, StackAssumedUsPerCapture);
+
+    private void RaiseStackEstimate()
+    {
+        OnPropertyChanged(nameof(StackEstimate));
+        OnPropertyChanged(nameof(StackEstimateWarn));
+    }
 
     /// <summary>The ticked functions, followed by name (Class::Func) with their name keys and the live addresses the
     /// last fetch saw ([LIVEFUNCS-STEP2] T10; the rules are FunctionTickSet's). A key is good only within the connection
@@ -1118,6 +1178,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// to read.</summary>
     private void NoteStoppedTrace(bool traced, TraceInfo? info)
     {
+        // T9.1 weighs the stacks with this Stop's cost alone: a recording that took none measured none.
+        _stackUsMeasured = traced ? MeanUsPerCapture(info?.Stack, info?.QpcFreq ?? 0) : null;
+        RaiseStackEstimate();
         if (!traced) return;
         LastTraceInfo = info;
         NoteNotCalled(info);
@@ -1150,9 +1213,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     private string StackStopNote(StackInfo s, ulong qpcFreq)
     {
         string note = Say("str.LF.Stack.StopNote", s.Captures, s.SkippedBudget + s.DroppedBudget, s.DroppedBudget);
-        if (s.Captures > 0 && qpcFreq > 0)
-            note += " " + Say("str.LF.Stack.Cost", (double)s.SpentTicks / s.Captures * 1e6 / qpcFreq,
-                              (double)s.MaxTicks * 1e6 / qpcFreq);
+        if (MeanUsPerCapture(s, qpcFreq) is double mean)
+            note += " " + Say("str.LF.Stack.Cost", mean, (double)s.MaxTicks * 1e6 / qpcFreq);
         return note;
     }
 
@@ -1496,6 +1558,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _stackChosen.Clear();
         foreach (var e in _allEntries) { e.IsSnapChosen = false; e.IsStackChosen = false; }
         _stackPerFrameConfirmed = false;
+        _stackUsMeasured = null;
         _lastWindowMs = 0;
         RefreshSnapshotList();
         _lastCallsPerSecond = 0;
