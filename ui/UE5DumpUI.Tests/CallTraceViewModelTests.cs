@@ -1597,8 +1597,12 @@ public class CallTraceViewModelTests
         {
             Assert.Equal(Av + "DataGridTemplateColumn", c.Name);
             Assert.Equal("vm:StackFrameRow", (string?)c.Descendants(Av + "DataTemplate").Single().Attribute(Xaml + "DataType"));
-            Assert.DoesNotContain("*", (string?)c.Attribute("Width") ?? "", StringComparison.Ordinal);   // no star column
         }
+        // [CT-STACK-WHERE-WIDTH] Where is the one star column: it takes what a wide pane leaves, and its 420 floor keeps a
+        // narrow pane scrolling sideways instead of squeezing it (CallTraceColumnsTests lays both out).
+        var star = Assert.Single(columns, c => ((string?)c.Attribute("Width") ?? "").Contains('*'));
+        Assert.Equal("{StaticResource str.CT.Stack.Col.Where}", (string?)star.Attribute("Header"));
+        Assert.Equal("420", (string?)star.Attribute("MinWidth"));
         foreach (var path in new[] { "Index", "Address", "Where" })
             Assert.Contains(grid.Descendants(Av + "TextBlock"), e => (string?)e.Attribute("Text") == "{Binding " + path + "}");
 
