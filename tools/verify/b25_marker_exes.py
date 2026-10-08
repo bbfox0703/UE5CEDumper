@@ -126,50 +126,18 @@ END
 # C copies IS Defense's resource as measured: fixed 4.10.2.0 and a ProductVersion string
 # only, no FileVersion string, under the same 0409/1200 translation.
 IS_DEFENSE_BUILD_STRING = "4.10.2-0+++depot+UE4-Releases+4.10"
-RC_C = """1 VERSIONINFO
-FILEVERSION 4,10,2,0
-PRODUCTVERSION 4,10,2,0
-FILEOS 0x4L
-FILETYPE 0x1L
-BEGIN
-  BLOCK "StringFileInfo"
-  BEGIN
-    BLOCK "040904b0"
-    BEGIN
-      VALUE "FileDescription", "UE5CEDumper VER-410-GATE branch-C marker (synthetic)"
-      VALUE "ProductName", "B25 Corroborated SubFloor Marker"
-      VALUE "ProductVersion", "%s"
-    END
-  END
-  BLOCK "VarFileInfo"
-  BEGIN
-    VALUE "Translation", 0x409, 1200
-  END
-END
-""" % IS_DEFENSE_BUILD_STRING
+# The resource script lives in dll/tests/res, where dll_core_test builds it into a resource-only DLL and
+# judges it offline ([VER-410-GATE] review): one copy, so the live exe and the offline test carry the
+# same bytes. Asserted to carry the build string, which `build` and `selftest` also use.
+RES = ROOT / "dll" / "tests" / "res"
+RC_C = (RES / "b25c_corroborated.rc").read_text(encoding="ascii")
+if f'"ProductVersion", "{IS_DEFENSE_BUILD_STRING}"' not in RC_C:
+    raise SystemExit("b25: FAILED -- dll/tests/res/b25c_corroborated.rc lost IS Defense's build string")
 
 BARE_STRING = "4.10.3"
-RC_D = """1 VERSIONINFO
-FILEVERSION 4,10,3,0
-PRODUCTVERSION 4,10,3,0
-FILEOS 0x4L
-FILETYPE 0x1L
-BEGIN
-  BLOCK "StringFileInfo"
-  BEGIN
-    BLOCK "040904b0"
-    BEGIN
-      VALUE "FileDescription", "UE5CEDumper VER-410-GATE branch-D marker (synthetic)"
-      VALUE "ProductName", "B25 Bare SubFloor Marker"
-      VALUE "ProductVersion", "%s"
-    END
-  END
-  BLOCK "VarFileInfo"
-  BEGIN
-    VALUE "Translation", 0x409, 1200
-  END
-END
-""" % BARE_STRING
+RC_D = (RES / "b25d_bare.rc").read_text(encoding="ascii")
+if f'"ProductVersion", "{BARE_STRING}"' not in RC_D:
+    raise SystemExit("b25: FAILED -- dll/tests/res/b25d_bare.rc lost its bare version string")
 
 # (exe stem, C source, resource script or None, the fixed version its resource must carry)
 BRANCHES = (

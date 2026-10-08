@@ -1,0 +1,20 @@
+1 VERSIONINFO
+FILEVERSION 4,10,3,0
+PRODUCTVERSION 4,10,3,0
+FILEOS 0x4L
+FILETYPE 0x1L
+BEGIN
+  BLOCK "StringFileInfo"
+  BEGIN
+    BLOCK "040904b0"
+    BEGIN
+      VALUE "FileDescription", "UE5CEDumper VER-410-GATE branch-D marker (synthetic)"
+      VALUE "ProductName", "B25 Bare SubFloor Marker"
+      VALUE "ProductVersion", "4.10.3"
+    END
+  END
+  BLOCK "VarFileInfo"
+  BEGIN
+    VALUE "Translation", 0x409, 1200
+  END
+END
