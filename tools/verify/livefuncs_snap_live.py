@@ -33,8 +33,11 @@ The full run (docs/live-funcs-step2-items.md, P2), each check named after its it
 --stacks (`[LIVEFUNCS-STEP3]`, docs/live-funcs-step3-items.md, "8. Live checks") runs step 3's checks instead, on
 the same fixture: SnapNest_Outer ticked by name, SnapProbe_Call chosen for its parameters, SnapProbe_Call and
 SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --stack-total a second), recorded
---record-s; then an altered stack key alone, and a stacks-only Start. The wire is the design's section 3
-(docs/live-funcs-step3-design.md). Each check is named after the ledger's:
+--record-s; then an altered stack key alone, and a stacks-only Start. Without --stack-per-ring the per-function budget
+is chosen from the fixture check's plain rates (`[SNAPRIG-S5-RATE]`): 30 when it sits 1.5x below SnapProbe_PerFrame's
+rate and 1.5x above SnapProbe_Call's, else a budget between the two (a fixture at about 30 fps calls
+SnapProbe_PerFrame about 30 times a second); the choice and why are printed and kept in the output. The wire is the
+design's section 3 (docs/live-funcs-step3-design.md). Each check is named after the ledger's:
   S0  the Start echoes the choices: names.stacks (absent on a DLL without step 3, the review's M3), trace.stack's
       rings, depth and budgets, K with the stack terms; the Stop's names[] carry `stack`; an altered stack key alone
       refuses the Start; a stacks-only Start (no ticks, funcs []) is snap_only with no parameter ring, refuses its
@@ -48,8 +51,9 @@ SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --sta
       chained fragment to ProcessEvent's start (the review's M4)
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
-  S5  SnapProbe_PerFrame's stack ring keeps about --stack-per-ring a second and drops the rest; the parameter
-      counters stay 0
+  S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
+      counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits), the window is
+      reported not run with those rates, never failed: on a correct DLL such a budget drops nothing
   S6  recorded: mean and max microseconds a capture, captures a second, calls/s with and without stacks, the CPU,
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
@@ -96,6 +100,7 @@ import ctypes
 import ctypes.wintypes as w
 import io
 import json
+import math
 import os
 import pathlib
 import re
@@ -527,7 +532,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="step 3: native stack snapshots (S0-S7) instead of the step-2 checks; with --choose, the "
                          "stack cost on a real game")
     ap.add_argument("--stack-per-ring", type=int, default=None,
-                    help=f"--stacks: the per-function stack budget a second ({FIXTURE_STACK_PER_RING} on the fixture; "
+                    help="--stacks: the per-function stack budget a second (on the fixture, unless given, chosen from "
+                         f"the plain recording's rates so S5's budget bites: {FIXTURE_STACK_PER_RING} when it fits; "
                          "with --choose, the DLL's own default unless given)")
     ap.add_argument("--stack-total", type=int, default=None,
                     help=f"--stacks: the stack budget a second, every stack choice together ({FIXTURE_STACK_TOTAL} on "
@@ -849,9 +855,14 @@ S5_WINDOW = "S5 SnapProbe_PerFrame's stack ring keeps about"
 # that every slot of ring s belongs to the s-th name.
 STACK_CHOICES = ("SnapProbe_Call", "SnapProbe_PerFrame")
 STACKS_ONLY_S = 3.0       # the stacks-only recording: SnapProbe_Call runs about four times a second
-# The fixture run's budgets when none is given (the ledger's 8.1): 30/s sits far below SnapProbe_PerFrame's rate, so
-# S5 sees the budget drop calls. A game run (8.3) sends none unless given: it measures the DLL's own defaults.
+# The fixture run's budgets when none is given (the ledger's 8.1). 30/s a function is kept while it sits clearly below
+# SnapProbe_PerFrame's measured rate; a fixture at about 30 fps calls it about 30 times a second, and then a lower
+# budget is chosen (stack_budget_for). A game run (8.3) sends none unless given: it measures the DLL's own defaults.
 FIXTURE_STACK_PER_RING, FIXTURE_STACK_TOTAL = 30, 200
+# "Clearly" above and below: a frame rate wobbles from second to second, and stacks slow the game a little, so the
+# budget keeps this factor from SnapProbe_PerFrame's rate (or it may not bite in every second) and from every other
+# stack choice's (or the budget may cut the calls S1-S4 count).
+BUDGET_MARGIN = 1.5
 # --names (the ledger's S3-A1 on a real game): its checks by name, so --self-test's controls name the check each fault
 # must fail.
 NAMES_IS = "A1 every named entry's ufunc is a Function of that name, in that class"
@@ -1101,6 +1112,42 @@ def outer_frame(frames: list[dict], code_addr: int, bound: int | None) -> int | 
     return None
 
 
+def stack_budget_for(rates: dict[str, float], given: int | None, total: int) -> dict:
+    """The fixture run's per-function stack budget, and whether S5 can run at it, from the plain recording's calls a
+    second of each stack choice (by name). S5 needs the budget to bite on SnapProbe_PerFrame, so it sits BUDGET_MARGIN
+    below that rate, and must not cut the other choices, so it sits BUDGET_MARGIN above theirs. A given budget is sent
+    as given. Else FIXTURE_STACK_PER_RING when it fits; else the whole number between the bounds as far from both as it
+    can be (near their geometric mean); else FIXTURE_STACK_PER_RING, S5 not run. What S5 holds the ring to is the lower
+    of the budget and the total, as its window is, so that is what must bite."""
+    pf = rates.get("SnapProbe_PerFrame", 0.0)
+    top = max((r for n, r in rates.items() if n != "SnapProbe_PerFrame"), default=0.0)
+    lo, hi = top * BUDGET_MARGIN, pf / BUDGET_MARGIN
+    seen = ", ".join(f"{n} {r:.1f}/s" for n, r in rates.items())
+    out: dict = {"rates": dict(rates), "given": given is not None, "bounds": [round(lo, 2), round(hi, 2)]}
+
+    def bites(per: int) -> bool:
+        return min(budget_echo(per), budget_echo(total)) * BUDGET_MARGIN <= pf
+    if given is not None:
+        why = f"{given}/s as given ({seen})"
+        if not bites(given):
+            why += f": SnapProbe_PerFrame is not {BUDGET_MARGIN:g}x above it, so it cannot bite"
+        return dict(out, per=given, s5=bites(given), why=why)
+    if lo <= FIXTURE_STACK_PER_RING <= hi:
+        per = FIXTURE_STACK_PER_RING
+    else:
+        per = int(math.sqrt(pf * top)) if top > 0 else int(hi)
+        if per < lo:
+            per = math.ceil(lo)
+        per = max(per, 1)
+        if not lo <= per <= hi:
+            return dict(out, per=FIXTURE_STACK_PER_RING, s5=False,
+                        why=f"no budget sits {BUDGET_MARGIN:g}x below SnapProbe_PerFrame and {BUDGET_MARGIN:g}x above "
+                            f"every other stack choice ({seen}); {FIXTURE_STACK_PER_RING}/s sent")
+    # At or under `hi` the budget bites by construction, and a lower total only bites harder.
+    return dict(out, per=per, s5=True, why=f"{per}/s, chosen between {lo:.1f} and {hi:.1f} ({seen})" +
+                ("" if per == FIXTURE_STACK_PER_RING else f": {FIXTURE_STACK_PER_RING}/s does not fit"))
+
+
 def budget_window(per_s: int, span_lo: float, span_hi: float) -> tuple[float, float]:
     """The slots a ring keeps when its function is called more often than its budget. The DLL admits the first per_s
     calls of each second, so a recording of L seconds keeps per_s x L, give or take one second's worth: the windows
@@ -1218,11 +1265,18 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     out["machine"] = machine()
     out["game_module"] = {"pid": pid, "name": game_module, "from_process": bool(named),
                           "image": [hex(x) for x in exe] if exe else None}
-    per_sent = FIXTURE_STACK_PER_RING if args.stack_per_ring is None else args.stack_per_ring
+    # The per-function budget from the fixture check's plain recording: S5 holds only where it bites (the fixture's
+    # frame rate decides SnapProbe_PerFrame's), and no other stack choice may be cut by it.
+    win = (out.get("fixture") or {}).get("window_ms", 0) / 1000.0
+    rates = {n: (rows.get(n) or {}).get("count", 0) / win if win else 0.0 for n in STACK_CHOICES}
     total_sent = FIXTURE_STACK_TOTAL if args.stack_total is None else args.stack_total
+    budget = stack_budget_for(rates, args.stack_per_ring, total_sent)
+    out["stack_budget"] = budget
+    per_sent = budget["per"]
     per, total = budget_echo(per_sent), budget_echo(total_sent)
     say(f"\ngame module {game_module} ({'pid %d' % pid if named else 'the fixture name: no usable out/host.pid'}); "
         f"CPU {out['machine']['cpu'] or '?'}; stack budgets {per}/s a function, {total}/s in all, depth {STACK_DEPTH}")
+    say(f"     the per-function budget: {budget['why']}" + ("" if budget["s5"] else "; S5's window will not run"))
     snap_bytes = 32 << 20
     stacks = {"funcs": [stack_item(rows[n]) for n in STACK_CHOICES], "depth": STACK_DEPTH,
               "per_ring_per_s": per_sent, "total_per_s": total_sent}
@@ -1392,12 +1446,15 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     stack2, snap2 = st2.get("stack", {}), st2.get("snap", {})
     say(f"     SnapProbe_PerFrame: about {pf_row.get('count', 0) / win if win else 0:.0f} calls/s; its stack ring wrote "
         f"{pf_ring.get('written')}, skipped {pf_ring.get('skipped_budget')}, dropped {pf_ring.get('dropped_budget')}")
-    check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
-          f"({lo:.0f}..{hi:.0f}) and the budget drops the rest",
-          lo <= int_or(pf_ring.get("written"), -1) <= hi and int_or(pf_ring.get("dropped_budget"), 0) > 0 and
-          int_or(stack2.get("dropped_budget"), 0) > 0,
-          f"written {pf_ring.get('written')}, ring dropped {pf_ring.get('dropped_budget')}, "
-          f"stack.dropped_budget {stack2.get('dropped_budget')}")
+    if budget["s5"]:
+        check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
+              f"({lo:.0f}..{hi:.0f}) and the budget drops the rest",
+              lo <= int_or(pf_ring.get("written"), -1) <= hi and int_or(pf_ring.get("dropped_budget"), 0) > 0 and
+              int_or(stack2.get("dropped_budget"), 0) > 0,
+              f"written {pf_ring.get('written')}, ring dropped {pf_ring.get('dropped_budget')}, "
+              f"stack.dropped_budget {stack2.get('dropped_budget')}")
+    else:   # a budget that cannot bite drops nothing on a correct DLL: a failure here would blame the DLL for the run
+        check.not_run(f"{S5_WINDOW} the budget a second, and the budget drops the rest", budget["why"])
     check("S5 the parameter counters are untouched by the stack budget (snap skipped and dropped 0)",
           snap2.get("skipped_budget") == 0 and snap2.get("dropped_budget") == 0,
           f"skipped {snap2.get('skipped_budget')}, dropped {snap2.get('dropped_budget')}")
@@ -1912,7 +1969,7 @@ def run_pdb(check: Checks, out: dict, opened, slots: list[dict], in_scope: list[
                   "names": {f"{rva:#x}": answers.get(rva) for rva in sorted(answers)}, "first_in_scope": first}
 
 
-DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at 30/s is then 30..90, both ends above zero
+DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at a budget of B a second is then B..3B, above zero
 
 
 class FakeClock:

@@ -289,10 +289,14 @@ Open work only. **Read this when deciding what to do next.**
   ⬜ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08): the Call stack tab's Where column
   has a fixed width (`CallTracePanel.axaml`), so with the detail pane dragged wide a long name ("native entry of
   DumperTest58Actor::SnapNest_Outer +0x73") stays cut beside empty space. Give it the rest of the width. Effort **S**.
-  ⬜ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
+  ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test` -- its first live run
+  is owed): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
   called faster than `--stack-per-ring` (30 on the fixture). With the fixture at about 30 fps it reported a DLL
   failure (written 240, dropped 0) for a precondition the run did not meet. Derive the budget from the plain
   recording's rate, or report "not run: the probe ran at N a second, under the budget". Effort **S**.
+  **Fixed:** without `--stack-per-ring` the fixture run picks the budget from the plain rates (30 when it sits 1.5x
+  under SnapProbe_PerFrame and over SnapProbe_Call, else between them), printed and in the output; a given budget that
+  cannot bite, or no fit, reports S5's window not run with the rates instead of failing.
   ⬜ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
   `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
   neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
