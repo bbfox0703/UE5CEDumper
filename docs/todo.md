@@ -348,8 +348,10 @@ source and editor are installed for when they are needed.
   0a2a5a87 / green 9ec9fb8a, 3 / 3 mutants); live, a wide pane showed every name whole and a narrow one scrolled.
   The live look also found Address squeezed to its floor in a narrow pane; its floor is now its width (red 3c1ea493 /
   green d7da0d04, for build 3645 -- a live look owed).
-  ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test` -- its first live run
-  is owed): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
+  ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test`; **live 2026-10-09**:
+  DumperTest58 Shipping at ~30 fps, DLL 3644, `--stacks --pdb` with no budget given chose 11/s ("between 6.1 and
+  20.2 ... 30/s does not fit"), S5 kept 99 in its 77..99 window and dropped 141, the parameter counters were checked
+  as refused calls were measured, 35 / 35 and 8 recorded -- the run that failed on 2026-10-08 at that rate passes): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
   called faster than `--stack-per-ring` (30 on the fixture). With the fixture at about 30 fps it reported a DLL
   failure (written 240, dropped 0) for a precondition the run did not meet. Derive the budget from the plain
   recording's rate, or report "not run: the probe ran at N a second, under the budget". Effort **S**.
