@@ -777,6 +777,7 @@ KNOWN_PE = "process_event"
 S3_KNOWN_IN = 'S3 every in-scope stack holds known:"process_event" before its own frame'
 S3_KNOWN_LONE = 'S3 no lone stack holds known:"process_event"'
 S3_KNOWN_ONE = "S3 every known frame names one function, and no stack holds two"
+S5_WINDOW = "S5 SnapProbe_PerFrame's stack ring keeps about"
 # The Start's stack list, in order: the DLL numbers stack rings by the accepted items' order, and S1's join checks
 # that every slot of ring s belongs to the s-th name.
 STACK_CHOICES = ("SnapProbe_Call", "SnapProbe_PerFrame")
@@ -1119,10 +1120,11 @@ def read_stack_rings(c, gen: int, rings: int) -> dict[int, dict]:
     return {s: page_stack_ring(fetch(s), s) for s in range(rings)}
 
 
-def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = None, sleep=time.sleep) -> None:
+def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = None, sleep=time.sleep,
+               clock=time.perf_counter) -> None:
     """--stacks on DumperTest58: S0-S7 (the module docstring). `rows` are the fixture check's rows, by name. `pid`
-    (out/host.pid when None) names the game process for frame 0's module; --self-test passes 0 and a sleep that
-    returns at once, with a scripted DLL as `c`."""
+    (out/host.pid when None) names the game process for frame 0's module; --self-test passes 0, a scripted DLL as
+    `c`, and a fake clock that only its sleep moves."""
     need = ("SnapNest_Outer",) + STACK_CHOICES
     missing = [n for n in need if not isinstance((rows.get(n) or {}).get("fname_key"), list)]
     if missing:
@@ -1392,9 +1394,10 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
                   "separate invocations: cut 4, which the review's H1 took")
 
 
-def run_game_stacks(c, check: Checks, out: dict, args) -> None:
+def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=time.perf_counter) -> None:
     """--stacks --choose on a real game (the design's 8.3): the busiest named functions whose class or name holds one
-    of the substrings, chosen for stacks alone at the given budgets. What it reports is their cost."""
+    of the substrings, chosen for stacks alone at the given budgets. What it reports is their cost. `sleep` and
+    `clock` as run_stacks takes them."""
     say(f"\nplain recording ({args.plain_s:.0f} s) to find the functions to choose:")
     table = plain_table(c, args.plain_s)
     pats = [p.lower() for p in args.choose]
@@ -1462,6 +1465,22 @@ def run_game_stacks(c, check: Checks, out: dict, args) -> None:
     c.request("pe_trace_release")
 
 
+DRY_RECORD_S = 2.0        # the dry run's --record-s: S5's window at 30/s is then 30..90, both ends above zero
+
+
+class FakeClock:
+    """The dry run's time. It moves only when the run sleeps, so a recording spans exactly what it slept and S5's
+    window is tested at its real width; on the real clock a sleep that returns at once makes the span about zero."""
+    def __init__(self) -> None:
+        self.t = 1000.0
+
+    def now(self) -> float:
+        return self.t
+
+    def sleep(self, s: float) -> None:
+        self.t += s
+
+
 class ScriptedDll:
     """A DLL with step 3 answering as the design's section 3 says it does, so --self-test can drive run_stacks and
     run_game_stacks end to end with no pipe. Its calls are a fixed script shaped like DumperTest58's: four rounds of
@@ -1473,6 +1492,9 @@ class ScriptedDll:
              "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
+    # SnapProbe_PerFrame's slots in the main recording: its budget kept over the dry run's span, the middle of S5's
+    # window, so a fault that keeps too few or too many falls outside it.
+    PER_FRAME_KEPT = int(FIXTURE_STACK_PER_RING * DRY_RECORD_S)
     FAULTS = {
         "old": "a DLL without step 3: no names.stacks, no trace.stack, no names[].stack",
         "no_known": "no site labelled known (S3-F2's mutation: known compared with the trampoline)",
@@ -1482,11 +1504,12 @@ class ScriptedDll:
         "known_split": "every other in-scope stack labels a frame of another function known, not ProcessEvent's",
     }
 
-    def __init__(self, *faults: str) -> None:
+    def __init__(self, *faults: str, per_frame: int = PER_FRAME_KEPT) -> None:
         unknown = set(faults) - set(self.FAULTS)
         if unknown:   # a misspelt fault would script the good DLL, and its control would test nothing
             raise ValueError(f"the scripted DLL has no fault {sorted(unknown)}")
         self.f = set(faults)
+        self.per_frame = per_frame
         self.gen = 0
         self.t: dict | None = None
         self.cmds: list[str] = []
@@ -1562,7 +1585,7 @@ class ScriptedDll:
                 call("SnapNest_Outer", F_ROOT, [], lambda fr=in_scope: call("SnapProbe_Call", 0, fr))
                 call("SnapProbe_Call", F_LONE, lone)
             if "SnapProbe_PerFrame" in ring_of:
-                for _ in range(20):
+                for _ in range(self.per_frame):
                     call("SnapProbe_PerFrame", F_LONE, lone[:3])
                 dropped[ring_of["SnapProbe_PerFrame"]] = 25
         else:          # stacks only: every chosen call is lone
@@ -1669,16 +1692,17 @@ class ScriptedDll:
 
 
 def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
-    """run_stacks (or run_game_stacks) against a scripted DLL, its printing captured: no pipe, no game, no sleep.
-    `argv` adds options to the command line the run parses."""
+    """run_stacks (or run_game_stacks) against a scripted DLL, its printing captured: no pipe, no game, and no wait,
+    on a FakeClock. `argv` adds options to the command line the run parses."""
     check, out = Checks(), {"label": "dry", "fixture": {"total_calls": 9000, "window_ms": 3000}}
-    args = build_parser().parse_args(["--stacks", "--record-s", "0", "--plain-s", "0"] + list(argv) +
+    args = build_parser().parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] + list(argv) +
                                      (["--choose", ""] if game else []))
+    fake = FakeClock()
     with contextlib.redirect_stdout(io.StringIO()):
         if game:
-            run_game_stacks(dll, check, out, args)
+            run_game_stacks(dll, check, out, args, sleep=fake.sleep, clock=fake.now)
         else:
-            run_stacks(dll, check, out, args, dll.rows(), pid=0, sleep=lambda s: None)
+            run_stacks(dll, check, out, args, dll.rows(), pid=0, sleep=fake.sleep, clock=fake.now)
     return check, out
 
 
@@ -1900,6 +1924,15 @@ def self_test() -> int:
                     {n.split()[0] for n in ran(ch)} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
                     recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and
                     len(recorded(ch, "S6")) == 6)(dry_run(ScriptedDll())[0]))
+    expect(f"dry run: S5's window over {DRY_RECORD_S:g} s is {FIXTURE_STACK_PER_RING * (DRY_RECORD_S - 1):g}.."
+           f"{FIXTURE_STACK_PER_RING * (DRY_RECORD_S + 1):g}, read on the run's own clock",
+           lambda: any(n.startswith(S5_WINDOW) and
+                       f"({FIXTURE_STACK_PER_RING * (DRY_RECORD_S - 1):.0f}..{FIXTURE_STACK_PER_RING * (DRY_RECORD_S + 1):.0f})"
+                       in n for n in ran(dry_run(ScriptedDll())[0])))
+    expect("dry run: SnapProbe_PerFrame keeping too few stacks falls under S5's window",
+           lambda: fail_set(dry_run(ScriptedDll(per_frame=20))[0], S5_WINDOW))
+    expect("dry run: SnapProbe_PerFrame keeping too many stacks falls over S5's window",
+           lambda: fail_set(dry_run(ScriptedDll(per_frame=100))[0], S5_WINDOW))
     expect("dry run: S4 finds SnapNest_Outer's entry at frame 1 of every in-scope stack",
            lambda: any(n.startswith("S4") and g.startswith("4 of 4; at frames [1]")
                        for n, _, g in dry_run(ScriptedDll())[0].records))
