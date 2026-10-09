@@ -272,6 +272,35 @@ source and editor are installed for when they are needed.
   the b25 marker-exe rig gains a refused branch (FileVersion 4.10.2 + the IS Defense string) and a still-scanned one
   (4.10.3 + a bare `4.10.3`); and `Himmel.h`'s "the 4.10 array address is never materialised inline" is false for
   VS2013 builds (IS Defense inlines it), which the same commit corrects. Effort **S**.
+  ✅ **Review 2026-10-08/09 (`out/step3/gate_review.txt`: 1 MED, 7 LOW), every finding fixed, in source** (the MED's
+  two layers are under `[UE-OVERRIDE-411]`; the round was interrupted by the laptop crash and resumed):
+  - *The glue had no test* (LOW): `Genau::DetectVersionFromResources(exePath, crcPath)` is the resource half of
+    detection, moved out unchanged; `dll/CMakeLists.txt` builds each `dll/tests/res/*.rc` into a resource-only DLL,
+    and dll_core_test runs the reads, the decision and the tier-1 short-circuit on them. The b25 rig reads its C / D
+    scripts from the same files. The reviewer's R4 / R5 are killed.
+  - *Two parser constraints unpinned* (LOW): `...+UE4-Releases+5.10` and a branch-first string with text after its
+    changelist are 0 (R1 / R2 killed).
+  - *The tier-3 log lines put a CrashReportClient's reading in the exe's mouth* (LOW): the verdict carries its
+    source (`VersionSource`), and both lines name the CrashReportClient and what the exe read; the exe's own line is
+    unchanged (the rig judges it).
+  - *The string fallback missed the version-first build string* (LOW): an exe with a game version in its fixed
+    fields now reads `4.10.2-0+++depot+UE4-Releases+4.10` / `4.11.0-0+UE4` from ProductVersion or FileVersion, as a
+    code that cannot corroborate itself (only an agreeing CrashReportClient refuses on it).
+    `kVersionDetectLogicRev` 8 -> 9; measured: 0 of 422 exes on this PC change reading. `pe_version_probe.py`
+    mirrors it, and its `--selftest` is a new gate (check_all and ci.yml); the probe's `main()` had run at import
+    and answered `crc_authority_survey.py --selftest` with its own selftest, so that gate had gone green unrun.
+  - *Text made false* (3 LOW): Grimoire.h's ProcessEvent-slot note, roadmap.md's override range, GROUND-TRUTH.md
+    and corpus-preservation.md on the 4.10.4 PDBs (public symbols only) and "never materialised inline" (VS2015
+    builds only), test-games.md's IS Defense row, the ResourceReading comment, and EngineBuildStringCode's header
+    (the branch is licensee-editable: Satisfactory, Titan Quest II, Dolls Nest measured).
+  Live check still owed, as above; `[VER-410-RIG-EF]` below adds the two shapes this round made reachable.
+- ⬜ `[VER-410-RIG-EF]` (LOW, from the 2026-10-09 review round): the b25 marker-exe rig judges only exes that read
+  their own version. Two shapes this round changed are pinned offline only (dll_core_test, resource-only DLLs):
+  E -- game fixed fields + the IS Defense string beside a 4.10 CrashReportClient (rev 9: refused, by the
+  CrashReportClient's agreement) and F -- an exe reading nothing beside a 4.10 CrashReportClient (scanned; the new
+  "CrashReportClient says UE 410 ... the game exe's own PE VERSIONINFO read nothing usable" lines, which no test
+  reads). The rig needs a CrashReportClient copy at `<root>/Engine/Binaries/Win64` above each marker exe
+  (`Grimoire::CrashReportCandidates`). Effort **S**.
 - ⬜ `[UE410-SUPPORT]` (**decided 2026-10-08: not now** -- the maintainer; the gate above refuses 4.10 cleanly). The
   feasibility study (UE 4.10 source, IS Defense's PDB, the DLL) found it doable but L (~700-900 lines, 4-6 sessions
   plus 2-3 live): a third object-array shape (`FUObjectArray`+0x10 is an INLINE 512-slot chunk table, 16,384 objects
@@ -288,6 +317,19 @@ source and editor are installed for when they are needed.
   maintainer chose it 2026-10-08) the UE version override accepts only 418..509
   (`Fern.cpp`'s set-override range), so a 4.11-4.17 title cannot be set by hand, although the too-old message names
   the override as the escape hatch. Widen it to 411 (the UI's range with it). Effort **S**.
+  ✅ **Review 2026-10-08/09, the MED fixed in two layers, in source** (it shares `[VER-410-GATE]`'s round): a wrong
+  4.11-4.17 pick on a 4.18+ title shifted the UFunction tail by 2, so ParmsSize was read from ReturnValueOffset and
+  every ProcessEvent buffer sized from it ended where the return value starts.
+  - *Buffers* (7 / 7 mutants killed): `DynOff::ProcessEventBufferBytes` = max(ParmsSize, the CPF_Parm chain's end),
+    through `Ubel::ParamBufferSize`, for every buffer the DLL hands ProcessEvent -- Wirbel, Schlacht, Dunste and
+    `invoke_function` (which reads the chain at the address); Mimic's fixed slab is unchanged.
+  - *The override itself* (11 / 11 killed): `set_ue_version_override` asks `Ubel::CheckVersionOverrideTail` first
+    and refuses a version whose tail base contradicts the base the sampled UFunctions measure (8 samples, 60 %), with
+    an error naming both; clearing is always accepted, and an unmeasured check (no scan yet) applies the override as
+    asked. The FunctionFlags vote stores its measurement and warns when it contradicts the readers' base.
+  Owed besides the AOT publish and the live check above: Fern.cpp is compiled by no test target, so the refusal is
+  checked by build and reading only -- live, `set_ue_version_override` 417 on a 4.18 title (OCTOPATH or DQ XI S)
+  must answer the error and change nothing; 4.15 on a 4.11-4.17 title (NEKOPALIVE, Extinction) must be accepted.
 - ⬜ `[DUMPERTEST410-FIXTURE]` (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
   installed UE 4.10.4 (the TP_ThirdPersonBP template, the prebuilt UE4Game-Win64-Shipping) while the editor is still
   installed: `tools/ue-sample/repackage.py` needs a content-only mode (no `Build.bat <Project>Editor`, `-nocompile
