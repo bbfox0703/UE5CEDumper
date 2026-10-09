@@ -5920,6 +5920,24 @@ std::vector<NoiseClassVerdict> ClassifyNoiseClasses(const std::vector<std::strin
 // because the UFunction count per class is small (usually <50) and the
 // per-class walk caches nothing — we pay the full O(F) per class.
 
+// One list_all_functions row from a function WalkFunctions read, its parameter chain included. Separate so
+// dll_core_test can pin the row without a pool of classes.
+static AllFunctionEntry FunctionEntryFor(const ClassInfo& ci, uintptr_t classAddr, const std::string& classPath,
+                                         const FunctionInfo& f) {
+    AllFunctionEntry entry;
+    entry.className     = ci.Name;
+    entry.classAddr     = classAddr;
+    entry.superName     = ci.SuperName;
+    entry.classPath     = classPath;
+    entry.funcName      = f.name;
+    entry.funcAddr      = f.address;
+    entry.functionFlags = f.functionFlags;
+    entry.numParms      = f.numParms;
+    entry.parmsSize     = f.parmsSize;
+    entry.bufferBytes   = Ubel::ParamBufferSize(f);
+    return entry;
+}
+
 AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
     AllFunctionsResult result;
 
@@ -5970,18 +5988,7 @@ AllFunctionsResult EnumerateAllFunctions(bool gameOnly, int maxEntries) {
 
         for (const auto& f : funcs) {
             if (static_cast<int>(result.entries.size()) >= maxEntries) { result.truncated = true; break; }
-
-            AllFunctionEntry entry;
-            entry.className     = ci.Name;
-            entry.classAddr     = obj;
-            entry.superName     = ci.SuperName;
-            entry.classPath     = classPath;
-            entry.funcName      = f.name;
-            entry.funcAddr      = f.address;
-            entry.functionFlags = f.functionFlags;
-            entry.numParms      = f.numParms;
-            entry.parmsSize     = f.parmsSize;
-            result.entries.push_back(std::move(entry));
+            result.entries.push_back(FunctionEntryFor(ci, obj, classPath, f));
             result.totalFunctions++;
         }
     }
@@ -6522,9 +6529,28 @@ static uint32_t ReadFunctionFlags(uintptr_t funcAddr) {
 // A native function's Func slot, before the code test: 0 for a script function, an undetected offset or a failed read.
 static uintptr_t NativeFuncSlot(uintptr_t funcAddr);
 
+bool IsScriptFunctionFlags(uint32_t flags) {
+    constexpr uint32_t FUNC_Native = 0x00000400;
+    return flags != 0 && (flags & FUNC_Native) == 0;
+}
+
+bool IsScriptFunction(uintptr_t funcAddr) {
+    return funcAddr != 0 && IsScriptFunctionFlags(ReadFunctionFlags(funcAddr));
+}
+
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr) {
     const uintptr_t exec = NativeFuncSlot(funcAddr);
     return exec && Macht::LooksLikeCodePointer(exec) ? exec : 0;
+}
+
+// A function's Func slot whatever its flags: 0 for an undetected offset or a failed read.
+static uintptr_t FuncSlot(uintptr_t funcAddr) {
+    if (!funcAddr) return 0;
+    EnsureUFunctionFuncOffset();
+    if (DynOff::UFUNCTION_FUNC == 0) return 0;
+    uintptr_t exec = 0;
+    if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec)) return 0;
+    return exec;
 }
 
 static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
@@ -6541,9 +6567,16 @@ static uintptr_t NativeFuncSlot(uintptr_t funcAddr) {
     constexpr uint32_t FUNC_Native = 0x00000400;
     if ((ReadFunctionFlags(funcAddr) & FUNC_Native) == 0) return 0;
 
-    uintptr_t exec = 0;
-    if (!Macht::ReadSafe(funcAddr + DynOff::UFUNCTION_FUNC, exec)) return 0;
-    return exec;
+    return FuncSlot(funcAddr);
+}
+
+// [A1-SCRIPT-FUNCS] The slot the native-entry index (S3-A1) reads: every function's, the FUNC_Native gate above left
+// out. A stack frame inside the interpreter is the reason. The CE code address refuses a script function because the
+// interpreter is not that function's code; the index wants exactly that entry, so the frame names one of the functions
+// entering there and says how many share it. Measured 2026-10-08 on DQ XI S: with the gate, 12,482 of 19,162
+// functions entered the index and no frame in the interpreter could be named.
+static uintptr_t IndexFuncSlot(uintptr_t funcAddr) {
+    return FuncSlot(funcAddr);
 }
 
 // --- Path 2: disassemble a native UFunction and map [this+off] to props ---
@@ -10376,7 +10409,7 @@ bool CollectCodeEntries(std::vector<CodeEntry>& out, CodeIndexStats* stats) {
         if (!it->second) return true;
         ++s.functions;
         const auto c0 = std::chrono::steady_clock::now();
-        const uintptr_t slot = NativeFuncSlot(obj);
+        const uintptr_t slot = IndexFuncSlot(obj);
         const uintptr_t code = slot && codeRanges.IsCode(slot) ? slot : 0;
         s.codeMicros += static_cast<uint64_t>(
             std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::steady_clock::now() - c0).count());

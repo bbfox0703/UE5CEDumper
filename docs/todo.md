@@ -2,16 +2,9 @@
 
 Open work only. **Read this when deciding what to do next.**
 
-> 🤝 **Coming back? Read [handover-2026-08-22.md](handover-2026-08-22.md) first.** It is the single
-> entry point: current state, the grants and how to launch each fixture, the traps, and a ranked
-> "start here". ⚠ **The build number and the gate count both drifted in this very paragraph**
-> (it said `3315` and *twelve*; on 2026-08-24 they are **3350** and **13**). Do not read either from
-> here — `cat dist/build_number.txt`, and take the gate count from `py tools/check_all.py`'s own
-> `N gate(s) run` line. `dist/` is republished AOT-trimmed.
-> ⚠ Its two predecessors are **archived**: [archive/handover-2026-08-20.md](archive/handover-2026-08-20.md)
-> and [archive/handover-2026-08-19.md](archive/handover-2026-08-19.md). Everything in them that is
-> still operationally true was carried forward; go back to them only for the *history* of the
-> 2026-08-19/20 verification programme.
+> 🤝 **How to work here: [handover.md](handover.md)** — the runbook (procedures only).
+>
+> ▶ **Current programme:** `[LIVEFUNCS-TIMELINE-2026-10-04]` (Live Funcs) · open but idle: the `[FIXPASS-2026-09-10]` live-check backlog. Change this line in the commit that starts or ends a programme.
 
 > ## ⛔ BEFORE YOU PLAN OFF ANY HEADING IN THIS FILE — READ THIS 2026-08-24 RECONCILIATION
 >
@@ -249,6 +242,302 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🐞 Maintainer report 2026-10-08 — IS Defense (UE 4.10) is not refused as unsupported `[UE410-2026-10-08]`
+
+The maintainer added IS Defense's logs as an unsupported UE game (docs/test-games.md has its row) and said the UE 4.10
+source and editor are installed for when they are needed.
+
+- ✅ `[LIVE-3646]` **Build 3646's live checks, 2026-10-09** (quota-limited: the maintainer chose three; the rest
+  is listed as not run):
+  - `[UE-OVERRIDE-411]` / `[UE-OVERRIDE-HINT-AUTO]`, DumperTest58 Shipping (UE 5.8), through the pipe: 4.15 refused
+    ("its UFunctions keep NumParms / ParmsSize behind +0xB0, where UE 4.15's layout puts them behind +0xB2 ... The
+    override was not applied"); 5.05 accepted (`get_pointers`: 505, `is_user_override` true); Auto put 508 back at
+    once (`auto_restore: "restored"`, the override flag cleared), and the UI then showed 508 Detected, Override Auto.
+    The new tooltip was read from the strings; the automation could not raise the hover. Not run: Auto with no
+    detection on record (the next-launch path), an override on a UE4 title.
+  - `[VER-410-GATE]`, IS Defense (UE 4.10.2) through its refreshed proxy: "PE VERSIONINFO says UE 410, below the 411
+    floor, CORROBORATED by the exe's own engine build string '4.10.2-0+++depot+UE4-Releases+4.10' -- accepting it at
+    tier 1", then "SKIPPING the scan", no GObjects batch; `get_pointers`: 410, `is_version_too_old` true, 0 objects;
+    the System tab's red "Unsupported engine" notice. Two LOWs found, below. Not run: the b25 C / D marker exes,
+    NEKOPALIVE.
+  - `[CT-DETAIL-COVERS-LIST]` and UE 4.15's parameters, Extinction (proxy refreshed by hand to 3646, see
+    `[PROXYREFRESH-NONSHIPPING-EXE]`): Actor::ReceiveTick 976 calls, Params "1 (4B)"; chosen for parameters and a
+    stack, Call Trace loaded 1,004 calls over 4.2 s, each with its parameter copy, 125 with a stack; the Parameters
+    tab read **DeltaSeconds 0.0167** (60 fps) -- the 4.11-4.17 UFunction tail read right; the Call stack's 16 frames
+    all resolve into Extinction.exe and none is named, as expected (ReceiveTick is a Blueprint event reached from
+    native tick code: no caller is a UFunction entry), so naming on 4.15 is still not exercised. The list kept its
+    floor: dragging the pane's handle stopped with the list at about 512 and Where whole.
+  - Also seen: `launch_dumpertest.py` printed "the cap is this machine's saved FrameRateLimit=30".
+  - Not in this release, so not run: `[LF-EXPOFF-TRACE]`. Not run: Mimic's invoke slab (the CE mailbox path).
+- ⬜ `[REFUSED-STRIDE-NOTICE]` (LOW, `[LIVE-3646]`): on a game refused as too old the header still shows "Object-array
+  stride not detected -- the default is in use; object counts and names ..." -- no scan ran, so nothing was
+  defaulted. Hide it (or say the scan was skipped) when `is_version_too_old`. Effort **S**.
+- ⬜ `[TOOOLD-VERSION-TEXT]` (LOW, `[LIVE-3646]`): the too-old notice reads "UE 411 is the oldest this tool can read.
+  UE 410 and earlier ..." -- the internal numbers, not 4.11 / 4.10. Effort **S**.
+- ⬜ `[PROXYREFRESH-NONSHIPPING-EXE]` (LOW, `[LIVE-3646]`): `tools/verify/proxy_refresh.py` finds a game folder only
+  through a `*-Win64-Shipping.exe`, so the proxies beside `Extinction.exe`, `Nekopara.exe` or `DRAGON QUEST XI S.exe`
+  are neither reported nor refreshed: Extinction ran build 3645 after the tool said it had refreshed every stale
+  proxy. Find the game exe the way the proxy's own loader does (the folder holding our DLL), keep the ownership and
+  backup guards. Effort **S**.
+- ⬜ `[OVERRIDE-REVIEW2-LOWS]` (3 LOW, the `[UE-OVERRIDE-HINT-AUTO]` round's first review, 2026-10-09; left for after
+  the release by the maintainer's quota call): (1) Mimic's HandleInvoke glue -- `Ubel::ParamBufferSize` feeding
+  `InvokeSlabRefusal` before the first ProcessEvent call -- has no source pin (mutant M1 survived); (2) an override
+  persisted before `[UE-OVERRIDE-411]`, or set before any scan, that the sampled UFunctions contradict is applied at
+  every launch with only a log line -- latch it and show a note beside the badge; (3) the Auto arm's pin checks only
+  that the ladder is called, not that its version is the one put in force (mutant M2 survived). The second reviewer
+  (detection / docs / UI text) was not run. Effort **S** each.
+- ⬜ `[CT-FLOOR-208]` (the maintainer chose 2026-10-09, paused for quota): the list's floor becomes 208 (Time +
+  Duration clickable) and wins over the pane's 200, so a wide pane can show the Call stack's Where whole at the
+  default window; a drag writes the remembered width only when it moves; and the round-1 review's LOWs (a narrow
+  panel can still squeeze the list, a drag that moves nothing rewrites the remembered width, the live recipe's window
+  sizes, a view-model swap not remeasured, comments) -- `out/step3/ct_detail_review.json`. Worktree
+  `wf_f6c68db8-98a-1`: red `d542a5c6` plus an uncommitted edit of `CallTraceViewModel.cs`. Effort **S-M**.
+- ⬜ `[EXPOFF-ROUND3-PAUSED]` (paused for quota, not in this release): `[LF-EXPOFF-TRACE]`'s round 3 -- the opt-in
+  unticks connected or not and tears down at once, or at the next connect -- is built in worktree
+  `wf_2e0b3559-405-1` (`34501dcc`, 19 commits on `36a13a4d`); its first review found one MED (the teardown decides
+  whether Fly runs from `_flyActive`, which `ApplyFlyReadout` clears when there is no CMC, so a flight can be left
+  running) and seven LOWs (`out/step3/expoff_round3_partial.json`); the second review was not run. Effort **M**.
+- ✅ `[VER-410-GATE]` **BUILT 2026-10-08, in source; refused live on IS Defense 2026-10-09, `[LIVE-3646]`** (red `3b4e5e4d`, green `d0260b4f`, rig `5af81317` /
+  `9ade3939`; 6 / 6 mutants killed) -- live check owed: `py tools/verify/b25_marker_exes.py build`, run each exe,
+  inject, trigger the scan, then `check` (C refused, D scanned, A and B as before); then IS Defense through a
+  refreshed proxy (the corroboration line, "SKIPPING the scan", no GObjects batch, `is_version_too_old: true`,
+  the Pointers notice) and NEKOPALIVE / Extinction still scanning. A CrashReportClient counts only when it agrees
+  with the exe; the 4.18.3 CrashReportClient's `4.18.3-3832480+++UE4+Release-4.18` is a fourth measured shape, also
+  parsed. Was: (MED) a genuine UE 4.10 title is scanned instead of refused, and the UI shows garbage
+  (`is_version_too_old: false`, 308 "objects", names 0/10). Audit #4 B25 made a sub-4.11 PE reading count only
+  when the memory string scan corroborates it, and that table floors at 4.18, so a real 4.0-4.10 title can never be
+  corroborated -- the code's own note accepted that, and IS Defense is the first title to meet it. The PE already
+  carries the corroboration: ProductVersion `4.10.2-0+++depot+UE4-Releases+4.10` is the engine's build string, a
+  second signal independent of FileVersion 4.10.2.0, which a game-authored version would not carry. UBT writes it as
+  `Major.Minor.Patch-Changelist+Branch`, full (IS Defense: `+++depot+UE4-Releases+4.10`) or simplified (NEKOPALIVE's
+  `Nekopara.exe` and its CrashReportClient both say `4.11.0-0+UE4`), and in a third, branch-first shape (Extinction:
+  `++UE4+Release-4.15-CL-0`, FileVersion 4.15.0). Fix: count as corroboration a ProductVersion in any of those
+  shapes, its branch naming UE4 and its major.minor equal to FileVersion's -- and a CrashReportClient.exe that
+  agrees, when the game ships one (IS Defense does not: its `Engine/Binaries` holds only `ThirdParty`) -- so the
+  gate refuses it with the existing "older than the minimum supported" message (Extinction ships none either).
+  Red first, on a pure helper, with the three shapes and the counter-cases (a bare game version `4.10.1`, Gal*Gun's `1.0.10897.0`). The memory string
+  table floors at `4.18.`; 4.11-4.17 never need it, as a PE reading at or above the floor is taken directly.
+  The study adds: `kVersionDetectLogicRev` must go 7 -> 8, or this PC's cached record (IS Defense: 410, low
+  confidence, rev 7) keeps the gate off; a CrashReportClient counts only when it agrees with the exe's FileVersion;
+  the b25 marker-exe rig gains a refused branch (FileVersion 4.10.2 + the IS Defense string) and a still-scanned one
+  (4.10.3 + a bare `4.10.3`); and `Himmel.h`'s "the 4.10 array address is never materialised inline" is false for
+  VS2013 builds (IS Defense inlines it), which the same commit corrects. Effort **S**.
+  ✅ **Review 2026-10-08/09 (`out/step3/gate_review.txt`: 1 MED, 7 LOW), every finding fixed, in source** (the MED's
+  two layers are under `[UE-OVERRIDE-411]`; the round was interrupted by the laptop crash and resumed):
+  - *The glue had no test* (LOW): `Genau::DetectVersionFromResources(exePath, crcPath)` is the resource half of
+    detection, moved out unchanged; `dll/CMakeLists.txt` builds each `dll/tests/res/*.rc` into a resource-only DLL,
+    and dll_core_test runs the reads and the decision on them (the short-circuit's return only since the second
+    review, below). The b25 rig reads its C / D scripts from the same files. The reviewer's R4 / R5 are killed.
+  - *Two parser constraints unpinned* (LOW): `...+UE4-Releases+5.10` and a branch-first string with text after its
+    changelist are 0 (R1 / R2 killed).
+  - *The tier-3 log lines put a CrashReportClient's reading in the exe's mouth* (LOW): the verdict carries its
+    source (`VersionSource`), and both lines name the CrashReportClient and what the exe read; the exe's own line is
+    unchanged (the rig judges it).
+  - *The string fallback missed the version-first build string* (LOW): an exe with a game version in its fixed
+    fields now reads `4.10.2-0+++depot+UE4-Releases+4.10` / `4.11.0-0+UE4` from ProductVersion or FileVersion, as a
+    code that cannot corroborate itself (only an agreeing CrashReportClient refuses on it).
+    `kVersionDetectLogicRev` 8 -> 9; measured: 0 of 422 exes on this PC change reading. `pe_version_probe.py`
+    mirrors it, and its `--selftest` is a new gate (check_all and ci.yml); the probe's `main()` had run at import
+    and answered `crc_authority_survey.py --selftest` with its own selftest, so that gate had gone green unrun.
+  - *Text made false* (3 LOW): Grimoire.h's ProcessEvent-slot note, roadmap.md's override range, GROUND-TRUTH.md
+    and corpus-preservation.md on the 4.10.4 PDBs (public symbols only) and "never materialised inline" (VS2015
+    builds only), test-games.md's IS Defense row, the ResourceReading comment, and EngineBuildStringCode's header
+    (the branch is licensee-editable: Satisfactory, Titan Quest II, Dolls Nest measured).
+  Live check still owed, as above; `[VER-410-RIG-EF]` below adds the two shapes this round made reachable.
+  ✅ **Second review 2026-10-09 (`out/step3/gate_review2.json`), this tag's four LOW fixed, in source** (the MED and
+  three LOW are under `[UE-OVERRIDE-411]`; the ninth finding is `[VER-410-FIXED-VS-STRING]` below, not taken):
+  - *The glue test skipped the paths production uses* (`d4a069c1`; the reviewer's M1 / M2 / M4, 3 / 3 killed):
+    `dll/CMakeLists.txt` lays the fixtures out as an install (`verres_tree`: the 4.10 build-string exe as
+    `Game/Binaries/Win64/Game.exe`, b25c's 4.10.2 resource as `Engine/Binaries/Win64/CrashReportClient.exe`;
+    `verres_tree_nocrc`: the exe alone), so `DetectVersionFromResources(exe, nullptr)` finds the CrashReportClient
+    the way the DLL looks. `DetectVersionDetailed(exePath, base, size)` is a seam (the zero-argument form passes the
+    process's own): handed an image whose only tag is a Tier-1 needle for 4.27, the tree returns 410 before the
+    memory scan and the lone exe goes on to find 427. New fixture `game_product_fixedfile_410.rc` (game
+    PRODUCTVERSION, FILEVERSION 4,10,2,0, the IS Defense string): a fixed-field reading, tier 1 by the string.
+  - *The tier-3 line for a reading out of the exe's own build string said no build string corroborates it* (red
+    `b6713c35`, green `69bae937`, 3 / 3 mutants): `Genau::Tier3ResourceNote` now says the string cannot corroborate
+    its own reading; the exe's fixed-field line and the CrashReportClient's are unchanged word for word, none carries
+    a sweep_title.py keyword or judge_d's must-not (pinned). The b25-judged Warn line is untouched.
+  - *Rev 9's note and the fallback comment overstated the old gap* (`79b574e5`, comments): the old prefix path finds
+    `++UEn+Release-` anywhere, so a version-first string with a full 4.18+ branch read before rev 9 too; rev 9 added
+    only the `++depot+UE4-Releases+` and `+UE<M>` branches. The prefix path checks no branch / M.m agreement
+    (`4.10.2-0+++UE4+Release-4.11` reads 411), so it and EngineBuildStringCode are not interchangeable.
+  - *Two offline mirrors kept their own string checks* (red `6a70df60`, green `0355cce1`, `bd14348b`; 5 / 5
+    mutants): `pe_version_probe.py` walks every translation (first non-empty, as ReadVersionInfoString) and takes a
+    prefix only when its `%u.%u` gives a code (sscanf's whitespace / sign rules), else the build string, else the next
+    key; `tier_triage.py` and `tier1_host_survey.py` read through its `read_resource`. On the fixture install's
+    `Game.exe` and `game_buildstring_411` the old tools said FALLS THROUGH / PE_MISS, the new ones Tier0 410 / 411.
+    Selftest 46 / 46. The two tools still have no selftest of their own -- checked on the fixtures, before and after.
+  Owed: a re-run of `tier1_host_survey.py` over both Steam libraries, to see whether any installed title changes
+  verdict (the reviewer's own mirror measured 0 of 422 readings changing between rev 8 and 9).
+- ⬜ `[VER-410-FIXED-VS-STRING]` (LOW, from the 2026-10-09 second review; **a follow-up, not taken**): a game version
+  in the fixed fields that lands inside 4.0-4.27 / 5.0-5.9 beats the exe's own engine build string, unlogged.
+  `ReadUeVersionFromFile` returns the fixed-field code before any string is read, and `DecideResourceVersion` uses
+  the build string only to corroborate an EQUAL code -- although the build string is the engine-stamped signal. Shapes:
+  a game at 4.5 (fixed 4.5.0.0) with ProductVersion `4.15.0-0+UE4` reads 405 (tier 3, then scanned with 4.05's
+  UFunction tail where 4.15 needs +2 -- now read at the measured base, since `[UE-OVERRIDE-411]`'s second review); the
+  same engine with game version 5.1 reads 501 at tier 1, no low-confidence badge. **Unmeasured in the wild:** the
+  reviewer's sweep found 0 of the 373 fixed readings on this PC contradicted by their own build string. Fix sketch:
+  when the ProductVersion or FileVersion string gives a nonzero `EngineBuildStringCode` that differs from the
+  fixed-field code, take the string's code with `fromFixedField` false (below the floor it then still needs an
+  agreeing CrashReportClient) and log the disagreement the way "SOURCES DISAGREE" is; its own
+  `kVersionDetectLogicRev` bump (9 -> 10, every cached title re-detects once); a `dll/tests/res` fixture per shape,
+  red first; `pe_version_probe.py` mirrors it. Effort **S**.
+- ⬜ `[VER-410-RIG-EF]` (LOW, from the 2026-10-09 review round): the b25 marker-exe rig judges only exes that read
+  their own version. Two shapes this round changed are pinned offline only (dll_core_test, resource-only DLLs):
+  E -- game fixed fields + the IS Defense string beside a 4.10 CrashReportClient (rev 9: refused, by the
+  CrashReportClient's agreement) and F -- an exe reading nothing beside a 4.10 CrashReportClient (scanned; the new
+  "CrashReportClient says UE 410 ... the game exe's own PE VERSIONINFO read nothing usable" lines, which no test
+  reads). The rig needs a CrashReportClient copy at `<root>/Engine/Binaries/Win64` above each marker exe
+  (`Grimoire::CrashReportCandidates`). Effort **S**. Since the second review E is also pinned offline through the
+  lookup production runs (dll_core_test's `verres_tree`, a CrashReportClient found above the exe); the live rig is
+  still owed for both.
+- ⬜ `[UE410-SUPPORT]` (**decided 2026-10-08: not now** -- the maintainer; the gate above refuses 4.10 cleanly). The
+  feasibility study (UE 4.10 source, IS Defense's PDB, the DLL) found it doable but L (~700-900 lines, 4-6 sessions
+  plus 2-3 live): a third object-array shape (`FUObjectArray`+0x10 is an INLINE 512-slot chunk table, 16,384 objects
+  a chunk, bare stride-8 `UObjectBase*`, Num at +0x1010, NumChunks at +0x1014, no Max, no `FUObjectItem`), version
+  rows below 4.11 (one memory-safety-critical: UFunction's ParmsSize sits 2 bytes on, so invoke buffers would be
+  sized short; ProcessEvent at vtable 0x190; UProperty Offset_Internal 0x4C / subclass start 0x70), a no-item mode
+  for flags and serials, and a way to find the array -- an AOB reaches VS2013 builds like IS Defense (it inlines
+  `GetUObjectArray`: `lea rcx,[rip+GUOA+0x10]`), not VS2015 ones like Epic's 4.10.4. If it is ever taken up: first a
+  live CE measurement on IS Defense, then the rows and the shape behind the gate, the floor moved last. Its PDB (310 MB,
+  full types) is the only 4.10 type oracle on disk; the 4.10.4 corpus PDBs hold public symbols only.
+- ✅ `[UE-OVERRIDE-411]` **BUILT 2026-10-08, in source; live 2026-10-09, `[LIVE-3646]`** (red `a9be4339`, green `7be3b6c6`; 4 / 4 DLL and 3 / 3 C#
+  mutants killed): the override's floor is `MIN_SUPPORTED_UE_VERSION` (411..509), and the Pointers list offers
+  UE 4.11-4.17 -- AOT publish and live check owed (set 4.15 on a 4.11-4.17 title, then Auto, which since
+  `[UE-OVERRIDE-HINT-AUTO]` hands the detection back at once). Was: (LOW, the
+  maintainer chose it 2026-10-08) the UE version override accepts only 418..509
+  (`Fern.cpp`'s set-override range), so a 4.11-4.17 title cannot be set by hand, although the too-old message names
+  the override as the escape hatch. Widen it to 411 (the UI's range with it). Effort **S**.
+  ✅ **Review 2026-10-08/09, the MED fixed in two layers, in source** (it shares `[VER-410-GATE]`'s round): a wrong
+  4.11-4.17 pick on a 4.18+ title shifted the UFunction tail by 2, so ParmsSize was read from ReturnValueOffset and
+  every ProcessEvent buffer sized from it ended where the return value starts.
+  - *Buffers* (7 / 7 mutants killed): `DynOff::ProcessEventBufferBytes` = max(ParmsSize, the CPF_Parm chain's end),
+    through `Ubel::ParamBufferSize`, for every buffer the DLL hands ProcessEvent -- Wirbel, Schlacht, Dunste and
+    `invoke_function` (which reads the chain at the address); Mimic's fixed slab was left unchanged (the second
+    review's MED, below).
+  - *The override itself* (11 / 11 killed): `set_ue_version_override` asks `Ubel::CheckVersionOverrideTail` first
+    and refuses a version whose tail base contradicts the base the sampled UFunctions measure (8 samples, 60 %), with
+    an error naming both; clearing is always accepted, and an unmeasured check (no scan yet) applies the override as
+    asked. The FunctionFlags vote stores its measurement and warns when it contradicts the readers' base.
+  Owed besides the AOT publish and the live check above: Fern.cpp is compiled by no test target, so the refusal is
+  checked by build and reading only -- live, `set_ue_version_override` 417 on a 4.18 title (OCTOPATH or DQ XI S)
+  must answer the error and change nothing; 4.15 on a 4.11-4.17 title (NEKOPALIVE, Extinction) must be accepted.
+  ✅ **Second review 2026-10-09 (`out/step3/gate_review2.json`), the MED and this tag's three LOW fixed, in source**
+  (the other four LOW are under `[VER-410-GATE]`). Totals at the round's end: dll_core_test 1162 checks, 0
+  failure(s); dll_helpers_test Pass 3179, Fail 0; C# 6495 (6493 passed, 2 skipped); headless 43 / 43; Lua 11 / 11 on
+  CE's VM; 33 gate(s) run, 0 failed, 1 skipped (check_processevent_slots: no vendored templates in the worktree).
+  - *MED -- Mimic's paramsData slab was never checked against the chain*: CMD_INVOKE handed ProcessEvent the fixed
+    1024-byte slab (or a 1024-byte owned copy), and the CE helper's `parmsSize > 1024` gated a baked tail-read
+    ParmsSize -- the NumParms byte under a wrong version. DLL (red `61e42820`, green `7efc2006`; 5 / 5 mutants):
+    `Mimic::InvokeSlabRefusal` -- HandleInvoke sizes the block with `Ubel::ParamBufferSize` and publishes -13
+    (`MB_ERR_INVOKE_TOO_LARGE`) past the slab, -12 (`MB_ERR_INVOKE_UNRESOLVED`) for a function that does not resolve
+    (it used to be queued). Not a mailbox contract change (new failures of an existing command; v5 / min 1, hash
+    unchanged); Frieren.h now says a buffer must reach the chain's end. CE side (red `bc71b3d5`, green `b92ecb65`;
+    7 / 7 mutants): every baked invoke carries `BakedScriptGenerator.BakedParmsSize` -- `RequiredSpan` over the
+    parameters for InvokeParamDialog (which also sizes its pipe buffer by it) and the three no-argument fast paths, and
+    the DLL's new `buffer_bytes` on list_all_functions rows (`Aura::FunctionEntryFor`) for Interesting Functions'
+    cheat-table rows; a source scan holds every call site to it. ue5_invoke_helper.lua's gate is unchanged and now
+    sees that number.
+  - *The refusal held only while a measurement existed* (red `25a12663`, green `09e49712`; 5 / 5 mutants):
+    `DynOff::FunctionTailReadBase` -- the readers (ReadFuncFlagsAndParams, so every walk_functions row / FIND_FUNCTION
+    reply / baked script, and the Live Funcs capture) read NumParms / ParmsSize / ReturnValueOffset at
+    `UFUNCTION_TAIL_MEASURED` whenever it is >= 0, whatever the version; on a right version it is the vote's base.
+    A held measurement judges an override before a re-init's probe. **The pipe refusal is KEPT, not advisory**: the
+    tail reads no longer need it, but the version keys more than the tail, and a version the UFunctions contradict is
+    wrong for all of it; its message says where the version's LAYOUT puts the tail (`OverrideTailCheck::versionBase`).
+  - *No test pinned the vote's +4 extra in the override check* (`87056173`): an OVERRIDETAIL tail 4 past the shift
+    -- 5.5 / 5.0 agree, 4.17 contradicts; the reviewer's M1 (`extra = 0`) is killed.
+  - *The converted call sites had no pin* (`ba6b090b`, `c86c6fee`, `8e69f5c6`, green `2481406b`, `e42baf50`):
+    `tools/check_processevent_buffers.py`, a gate in check_all and ci.yml -- an allocation sized from a ParmsSize
+    (directly or through a local, each `?:` arm on its own, a `min()` never lifted) without ParamBufferSize /
+    ProcessEventBufferBytes, or a `UE5_CallProcessEventEx` size that is not its buffer's own, fails; 19 controls
+    (11 red, 8 green) run first on every run. Its first run on the tree found one real case: `invoke_function` kept
+    the caller's parms_size whenever ResolveFunctionInfo failed -- it now reads the chain at the address either way.
+    8 / 8 mutants killed after one survivor (a ternary arm) hardened the gate.
+  Owed besides the AOT publish (the UI changed): live, CMD_INVOKE on a function whose chain passes 1 KB answers -13 and
+  leaves the game untouched; Interesting Functions -> Generate Cheat Table on a function with an out parameter carries
+  the chain's end in its invokeUFunction; on a 4.11-4.17 title under a 4.18 override (or the reverse) walk_functions
+  shows the real ParmsSize and the vote's WARN says the tail is read at the measured base. Mimic.cpp and Fern.cpp
+  are compiled by no test target -- their glue is checked by build, the new gate and reading.
+- ⬜ `[DUMPERTEST410-FIXTURE]` (the maintainer chose it 2026-10-08): package a Blueprint-only DumperTest410 from the
+  installed UE 4.10.4 (the TP_ThirdPersonBP template, the prebuilt UE4Game-Win64-Shipping) while the editor is still
+  installed: `tools/ue-sample/repackage.py` needs a content-only mode (no `Build.bat <Project>Editor`, `-nocompile
+  -nocompileeditor` instead of `-build`). It serves the gate's refusal now and a 4.10 port if one is ever made (the
+  VS2015, not-inlined shape). Unproven: that BuildCookRun completes without VS2015. Effort **S-M**.
+  **Not attempted (the maintainer, 2026-10-08):** "先別試" -- a pre-4.18 project needs a C++ toolchain this PC does
+  not have (4.18 itself is shaky here), and the night goes to Live Funcs and the 4.11 floor's version strings. The
+  gate's refusal is checked on IS Defense instead. Reopen only on the maintainer's word.
+- ✅ `[UE-OVERRIDE-HINT-AUTO]` **BUILT 2026-10-09, in source; live 2026-10-09 on build 3646, `[LIVE-3646]`** (built on `[UE-OVERRIDE-411]`'s second-review commits,
+  in the same worktree). AOT publish and the live checks below owed. 49 / 49 mutants killed. Totals at the end:
+  dll_core_test 1162 checks, 0 failure(s); dll_helpers_test Pass 3242, Fail 0; C# 6508 (6506 passed, 2 skipped);
+  headless 43 / 43; 33 gate(s) run, 0 failed, 1 skipped; check_mailbox_contract green (no CE script reads this
+  command, so no contract bump).
+  - *One ladder, one cache rule* (`5d573026`, 20 / 20 mutants): the cache holds the version from BEFORE init's
+    structural ladder, so Auto has to climb the same ladder or Elliot's cached 4.27 fallback comes back on a UE5
+    title. `DynOff::ApplyVersionLadder` (UProperty -> 4.18 / 4.24, tagged FFieldVariant 503, CMC 5.0-5.3, reordered
+    item 507, virtual ~FFieldClass 5.0-5.7 -> 508; nothing moves before the offsets probe) with
+    `FrierenInit::CorrectVersionStructurally` as its live half, which UE5_Init now calls (log text unchanged, the A4
+    rig greps it); `Flamme::CachedDetectionTrusted` / `CachedLowConfidence` and `Grimoire::RefusedAsTooOld`, which
+    FindAll now calls. `40c796cd` moved the CMC source pin after it (the UI suite was not run before `5d573026`).
+  - *Auto restores at once* (red `f5a73a22`, green `7c04b376`; 13 / 13 DLL mutants, 7 / 7 source-pin mutants):
+    `Flamme::PlanAutoRestore` -- with an override in force, the record's detection under the launch's own rules
+    (logic rev, publisher), refused when the next launch would refuse it as too old. Restored: the ladder climbs it,
+    the lazy markers refine it, the record's detected / low-confidence flags, the override flag cleared, the soft /
+    lazy envelopes dropped as an override drops them. Otherwise (`no_detection`, `stale_detection`, `too_old`) the
+    override's version stays in force AND stays an override -- so a UI reconnect cannot record it in the hint cache as
+    a detection, which the old flag-only clear allowed, poisoning the next launch -- and `auto_pending` says it waits
+    for the next launch (only when persisted). The reply carries `auto_restore`, `auto_pending`, `version_detected`,
+    `is_low_confidence`; get_pointers carries `auto_pending`; UE5_Init resets it; setting an override ends it.
+    Scan-time choices (the too-old refusal, the sparse-delegate scan) are not re-made in-process.
+  - *The panel* (red `370d8838`, green `bc32657c`; 9 / 9 mutants): the ComboBox keeps Auto while it is pending (it
+    snapped back to the override's label), the override badge stays and the detected badge does not, and
+    `str.Pointers.VersionAutoPendingText` says Auto applies at the next launch; the log line names what the DLL did
+    (`DumpService.DescribeAutoRestore`, one line per `Flamme::AutoRestoreName`, read from the header by a test).
+  - *The tooltip* (`4df180ae`): `str.Pointers.VersionOverrideTooltip` now says what is measured and stays, what follows
+    the version (UE4 property fields, soft / lazy pointers, sets and maps, the CE export layout, UFunction parameters
+    until a scan has measured them), the risk, use only when detection is wrong, per game at every launch where it
+    skips the too-old check, what follows only at the next launch, and when Auto lands. `VersionLowConfidenceText`
+    pointed at "the Override ComboBox below" (it is above) and named only exports; fixed, and the badge's tooltip
+    says the override holds until Auto.
+  **Owed:** the AOT publish; live, set an override then Auto on DumperTest58 (badge back to Detected at 508 at once;
+  the pipe log says `set_ue_version_override: Auto -- restored the detection on record`) and on a UE4 title
+  (NEKOPALIVE or Extinction: the same, at its detected 4.x); on Elliot the restored 4.27 fallback must climb back to
+  its UE5 minor (the init log's `set_ue_version_override: structural marker ...` lines); and a record with no detection (seed the hint cache the
+  A4 rig's way, override only) must show the pending note and Auto still chosen after a UI reconnect, then Detected
+  after a game restart. Fern.cpp and Frieren.cpp are compiled by no test target: their glue is checked by build, the
+  C# source pins and reading. Not done, by the maintainer's choice: detecting afresh in-process when nothing is on
+  record (DetectVersionDetailed is ~0.35 s; Auto would then never wait). The GitHub wiki's Pointers / System page,
+  if it describes the override, is not in this repo and was not checked.
+  Was: (MED, the maintainer asked 2026-10-09 whether the UE version override is only a
+  label; it is not): (1) **the tooltip** says only "Force a specific UE version for this game. Saved per-game and
+  reapplied on every launch. Choose Auto to revert to auto-detection." -- nothing on what it changes. Set over the
+  pipe, it rewrites the cached version at once (no rescan), and everything derived from the version follows it:
+  where UFunction's flags are read while the FunctionFlags vote is undecided, and its NumParms / ParmsSize /
+  ReturnValueOffset until a scan has measured the tail (since `[UE-OVERRIDE-411]`'s second review the measured
+  tail wins; Teleport, invoke_function, Live Funcs parameters), UE4 UProperty subclass fields, the soft / lazy pointer envelopes, the set / map layout, FName
+  alignment, the weak-pointer garbage test, the CE export layout; GObjects, GNames and the measured DynOff offsets
+  stay (the handler does not re-run ValidateAndFixOffsets, on purpose). Saved, it replaces detection before the next
+  scan and skips the too-old refusal. A wrong pick misreads, and the [UE-OVERRIDE-411] review's MED was a crash
+  shape. (2) **Auto does not revert in the session:** the handler only clears the override flag ("would require
+  re-init"), so the DLL keeps the overridden version until the game restarts, and the UI shows it unbadged, as if
+  detected. **The maintainer chose (2026-10-09): rewrite the tooltip, and make Auto restore at once** -- the last
+  real detection from the hint cache, its soft / lazy envelopes dropped as the override drops them; with no real
+  detection on record, the UI says Auto applies at the next launch. Scan-time choices (the too-old refusal, the
+  sparse-delegate scan) change only with a rescan, and the tooltip says so. After `[UE-OVERRIDE-411]`'s review fixes
+  land on dev (they touch the same handler). Effort **S-M**.
+
+**Found by the 4.10 study, worth doing whatever 4.10's fate** (they help titles already supported):
+- ⬜ `[UE4-ASSETPTR-PROPS]` (LOW): AssetObjectProperty / AssetClassProperty (4.11-4.17's soft pointers) do not go
+  down the soft-pointer path in Ubel. Effort **S**.
+- ⬜ `[UE4-USTRUCT-GIVEUP]` (LOW): in UProperty mode, when no Guid / Vector struct validates the offsets, the fallback
+  gives FProperty-era UStruct offsets (0x40/0x48/0x58); UE4 below 4.25 is 0x30/0x38/0x40/0x48. Effort **S**.
+- ⬜ `[AOB-SKIP-OWN-DLL]` (LOW): `Macht::AOBScanAllModules` does not skip our own module -- on IS Defense GOBJ_V1
+  matched twice inside our `version.dll` proxy, so every multi-module scan has us as a false-candidate source.
+  Effort **S**.
+- ⬜ `[UE4-WIDE-FNAME]` (LOW): Serie's UE4 name path never tests the wide-character bit (Index & 1), so a non-ASCII
+  FName reads as garbage on 4.10-4.22. Effort **S**.
+
 ## 🧭 Idea 2026-10-04 — Live Funcs call timeline and stack snapshots `[LIVEFUNCS-TIMELINE-2026-10-04]`
 
 - ✅ **Step 1 (the timeline) BUILT, build 3633, 2026-10-07** — reviewed (36 findings, all fixed) and checked live on
@@ -282,17 +571,162 @@ Open work only. **Read this when deciding what to do next.**
   ledger [live-funcs-step3-items.md](live-funcs-step3-items.md); T15-T19 confirmed, T20 (Low budget, warning) added.
   ✅ The budget decided as (A), Standard 50 a second in all and Low 25 (build 3642); the ledger's next items S3-U6 /
   U7 / A1 / R2 built and checked live (build 3643). ⬜ **Open:** the register's "Live Funcs step 3" batch (the
-  hitch, the rig's real-DLL mutations, DQ XI S); deferred: B1 / E1 / P1 / O1.
+  hitch, the rig's real-DLL mutations; DQ XI S ✅ 2026-10-08); deferred: B1 / E1 / P1 / O1.
   ✅ `[CT-COLUMNS-OVERLAP]` (LOW, seen in the step-3 walkthrough 2026-10-08; fixed the same day, the list now cuts
   its columns -- checked live in build 3643): with the Call Trace detail pane dragged
   wide, the list's Thread and Object columns overlap -- their remembered widths are not clipped to the narrower list.
-  ⬜ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08): the Call stack tab's Where column
-  has a fixed width (`CallTracePanel.axaml`), so with the detail pane dragged wide a long name ("native entry of
-  DumperTest58Actor::SnapNest_Outer +0x73") stays cut beside empty space. Give it the rest of the width. Effort **S**.
-  ⬜ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
+  ✅ `[CT-STACK-WHERE-WIDTH]` (LOW, seen in the build-3643 walkthrough 2026-10-08; fixed in build 3644, live on
+  DumperTest58): the Call stack tab's Where column had a fixed width (`CallTracePanel.axaml`), so with the detail
+  pane dragged wide a long name stayed cut beside empty space. Where is now a star column with a 420 floor (red
+  0a2a5a87 / green 9ec9fb8a, 3 / 3 mutants); live, a wide pane showed every name whole and a narrow one scrolled.
+  The live look also found Address squeezed to its floor in a narrow pane; its floor is now its width (red 3c1ea493 /
+  green d7da0d04, build 3645; **live 2026-10-09** on DumperTest58 Shipping: with the detail pane dragged to about
+  400 px, Address kept its 170 with Copy / ASM beside it, and Where kept its floor and scrolled).
+  ✅ `[CT-DETAIL-COVERS-LIST]` (MED, the maintainer on build 3645, 2026-10-09, Extinction, UE 4.15; fixed in source
+  2026-10-09, build 3646; **live 2026-10-09, `[LIVE-3646]`**; the floor of 208 is `[CT-FLOOR-208]`): 「Call Trace
+  UI有個問題：Call, Call Stack, Parameters 那個 Panel 可以完全蓋掉左側的 timeline，我剛剛使用時，由於 timeline 的UI完全看不到，
+  我只看到 C,S,P 那個完全沒內容的 panel，沒內容是因為就算我選了 C,S,P要錄，但是沒辦法點到 timeline 項目，整個資料沒顯示」 --
+  the detail pane covered the whole list, so no row could be clicked and the pane had nothing to show. Layout only:
+  the UI's log has the trace (31,320 calls and 225 stacks loaded, then 32,068 and 250, 0 orphaned). Cause: the pane
+  was docked at `DetailPaneWidth`, clamped to [200, 4096] and never against the panel's width, so a remembered width
+  (`ui-options.json` `callTrace.detailPaneWidth`, 766 on that machine) or a drag left the list nothing, its handle
+  with it. The same shape in the list: no column was fitted to the list either, so a wide one hid Function and the
+  handles of the columns after it -- the "remembered widths are not clipped to the narrower list" that
+  `[CT-COLUMNS-OVERLAP]` names. That row's overlap had another cause (a fixed cell centred in a narrower slot); its
+  fix, aligned left and cut at the edge, stays and still lays out a list below its floor.
+  **Built:** every width keeps its remembered value (dragged, saved, never written by a layout, so it comes back
+  when the panel can show it) and gets a shown one, which the pane, the header and the rows bind: the remembered
+  width fitted to the room the panel has. The view hands the view model that room in `MeasureOverride`, before the
+  children are measured, so a window resize, the object tree folded or unfolded, a width restored at start, the tab
+  shown again or a view model set late is fitted in the same layout. The list's floor (`CallTraceViewModel.MinListWidth`)
+  is 512: a row's item padding (24), Time / Duration / Thread at their defaults (96 / 88 / 64), Object at its floor
+  (80) and 160 of Function (a root row's glyph and about twenty Consolas characters, a dozen beside its (p) and (s)
+  marks). Narrower than both floors, the pane keeps its 200 and the list takes the rest: below its floor the list
+  still shows Time and Duration to click, while a pane under 200 wraps the call into fragments; its columns are then
+  laid out as at the floor and cut at the edge. The columns are fitted left to right, each to what Function's 160,
+  the columns before it and the floors of those after it leave, so they give way from the right, Object first. A
+  drag adds its step to the SHOWN width and remembers what it leaves shown, capped where the list or Function keeps
+  its floor: a drag past the limit stops there and the next drag back moves at once. AOT-safe: compiled bindings,
+  `FindControl`, no reflection. Red d1b84799 (UI 9 of 6495 failing, headless 6 of 49), green 834a8231, wiring tests
+  f2738a26, e50b5679 (drops a remeasure on a new view model that no test could tell from none). Totals on e50b5679:
+  UI 6495 total, 6479 succeeded, 16 skipped, 0 failed; headless 54 / 54. **Mutants: 24 / 25 killed**, each a
+  single-anchor edit restored byte for byte (the pane's fit, its 200 floor, its drag's start and cap; the columns'
+  fit, the row room's floor, the cap's later floors, the column drag's start and cap; the refit on a new room, a
+  layout writing a remembered width, Function's 160, the item padding, the unlaid-out path, the shown pane raised;
+  the view's room, handle and margin; Object's, the pane's and Duration's handles; the three Shown bindings); the
+  survivor (the remeasure) is removed. **Live check owed** (an AOT `-Mode Publish` build; any fixture with a trace,
+  DumperTest58 Shipping is enough): before start set `callTrace.detailPaneWidth` to 766 or more in `ui-options.json`;
+  in a narrow window (about 1000, the object tree unfolded) the list keeps at least 512 px beside the pane, a row
+  shows Time / Duration / Thread whole and the start of Function, a click selects it and the pane fills; drag the
+  pane's handle far left: it stops there, and a drag back moves at once; widen the window or fold the object tree:
+  the pane returns to its remembered width; drag Thread's handle far right: Object narrows to its floor and Thread
+  stops with Function's slice left.
+  ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test`; **live 2026-10-09**:
+  DumperTest58 Shipping at ~30 fps, DLL 3644, `--stacks --pdb` with no budget given chose 11/s ("between 6.1 and
+  20.2 ... 30/s does not fit"), S5 kept 99 in its 77..99 window and dropped 141, the parameter counters were checked
+  as refused calls were measured, 35 / 35 and 8 recorded -- the run that failed on 2026-10-08 at that rate passes): `livefuncs_snap_live.py --stacks`'s S5 needs SnapProbe_PerFrame
   called faster than `--stack-per-ring` (30 on the fixture). With the fixture at about 30 fps it reported a DLL
   failure (written 240, dropped 0) for a precondition the run did not meet. Derive the budget from the plain
   recording's rate, or report "not run: the probe ran at N a second, under the budget". Effort **S**.
+  **Fixed:** without `--stack-per-ring` the fixture run picks the budget from the plain rates (30 when it sits 1.5x
+  under SnapProbe_PerFrame and over SnapProbe_Call, else between them), printed and in the output; a given budget that
+  cannot bite, or no fit, reports S5's window not run with the rates instead of failing.
+  **The review's findings, fixed 2026-10-08:** with the window not run, S5's parameter-counter check is not run
+  either, for the same reason -- a budget that refuses nothing leaves nothing to miscount, so 0 there proved nothing
+  (MED-2). The budget is still chosen on the plain recording, but S5 also stands down, with both rates, where the
+  main recording's own SnapProbe_PerFrame rate is under 1.5x the budget (LOW-1). The total is one total for every
+  stack choice, admitted in call order each second: a chosen budget leaves the others 1.5x their rates beside
+  SnapProbe_PerFrame's share, and a given total that does not is said in the output, with S5's window not run (LOW-2).
+  **The second review's findings, fixed 2026-10-08:** MED-2 went too far -- where the window cannot run the stack
+  budget may still refuse calls, and a DLL counting them as parameter skips passed. The counters are now checked
+  wherever a call was refused (measured beside the DLL's counters: the main table's SnapProbe_PerFrame count over
+  its ring's written, or trace.stack's skips and drops), a nonzero one always fails, and only where nothing was
+  refused are they reported not run (MED-A). A main table that cannot give SnapProbe_PerFrame's rate (an error, no
+  window, no row) was read as 0.0/s and stood S5 down; it now fails a check of its own, and S5's window runs from the
+  trace ring as before (LOW). The starve prediction from the plain rates no longer stands S3's two in-scope checks
+  down by itself: Linie admits in call order, so a SnapProbe_Call early in a second keeps its stack. They are reported
+  not run only where the main recording shows every in-scope stack refused (none kept, each entry flagged 64) and the
+  total starves the others at SnapProbe_PerFrame's plain or main rate; otherwise they run over the stacks kept. The
+  scripted DLL admits in call order too, and books a refused call taken for its parameters as skipped (LOW).
+  **The third rig review's LOWs (round 4), fixed 2026-10-09** (worktree ids): S5's, S3's and the step-2 budget
+  check's stand-downs weigh the main rate as the table's, or the probe's own ring's where that is higher (red
+  807b0de9 / green adac8c4c; R1a-R1f killed), two comments no longer say a budget that cannot bite drops nothing
+  (24e1a358), and S3's in-scope checks fail on an in-scope refusal neither budget explains, stacks kept or not (red
+  060f4181 / green 0412afc4; R3a-R3g killed).
+  ✅ `[A1-SCRIPT-FUNCS]` (MED, found by the DQ XI S review 2026-10-08): S3-A1's native-entry index is built through
+  `NativeFuncSlot`, which returns 0 for a function without FUNC_Native -- so no script function enters it, and so
+  neither does their Func, the interpreter (`UObject::ProcessInternal`). The contract says the opposite in four places
+  (Aura.h's S3-A1 header, Fern's `shared` comment, pipe-protocol.md's `shared`, the step-3 design's 4.3: "`shared: N`
+  for ProcessInternal"); the UI's shared sentence has never shown live, and a frame in the interpreter reads "+0x..
+  into the function at ..." with no name. Fix: index a script function's Func too, as the design says, so the count
+  names the interpreter -- or, if that is decided against, correct the four places. Red first: a test that a script
+  function's Func enters the index. Effort **S-M** (CollectCodeEntries reads live memory: the gate may need a seam).
+  ✅ **Fixed in build 3644** (red 22465c0c / green a97da808, 3 / 3 mutants), live: the index grew from 12,445 to
+  13,176 entries of 13,179 functions on DumperTest58 and from 12,482 to 19,160 of 19,162 on DQ XI S, where a frame
+  in the interpreter was named with `shared: 6678` -- exactly the script functions added.
+  ✅ `[A1-INTERP-LABEL]` (LOW, found by that live check; built for build 3645; **live 2026-10-09** on DQ XI S, the
+  autosave loaded: JackUMGMiniMapWidget::OnDrawMapSymbolRenderTarget's 111 stacks show frames 5 and 7 as "the
+  Blueprint interpreter +0xBF (UObject::ProcessInternal, the native entry of 6,678 Blueprint functions)"): the interpreter's
+  frame read "native entry of <the lowest-addressed script function> (one of 6,678 ...)" -- on DQ XI S a level
+  script's function on the minimap widget's stack, which was not running. The pipe now says `script: true` on the
+  script functions' entry (DLL red 6e63a7b1 / green 7a964f0e, 3 / 3 mutants) and the Call stack tab names "the
+  Blueprint interpreter +0x.. (UObject::ProcessInternal, the native entry of N Blueprint functions)" (UI red
+  e29ec156 / green 1996e3c6, 5 / 5 mutants). Live look: DQ XI S, OnDrawMapSymbolRenderTarget's stacks.
+  ✅ `[SNAPRIG-NAMES]` (LOW, the same review; built 2026-10-08, offline by `--self-test`; live 2026-10-09 on
+  DumperTest58 Shipping, `--stacks --choose "" --names --stack-depth 62`: the 14 functions chosen named no frame, so
+  both A1 checks were reported not run with that reason, as designed; **with names, live 2026-10-09** on DQ XI S,
+  DLL 3645, the autosave loaded: 48 per-frame functions chosen, 195 frames named over 2 distinct entries, both
+  entries' `ufunc` a Function of that name in that class and their `fn` at UFunction+0xC0, all 195 one frame from the
+  next `process_event` frame toward the root, 7 / 7 and 8 recorded):
+  `livefuncs_snap_live.py --stacks --choose` checks no S3-A1 name; DQ XI
+  S's were checked by scratch probes (`get_object` on each `ufunc`; the site's `fn` at one offset inside the
+  UFunction; the named frame exactly one below a `known: "process_event"` frame, which sits directly below the hook).
+  Add them as `--names`, so the check can be repeated from the repo. Effort **S**.
+  **Built:** `--names` (and `--stack-depth N`, both only with `--stacks --choose`) checks the 64 most frequent (ufunc, fn)
+  entries by `get_object` and by `read_mem` (fn at one offset common to all), records the shared entries and each
+  named frame's distance to the next ProcessEvent frame, and reports both checks not run when nothing is named.
+  **The review's findings, fixed 2026-10-08:** `read_mem` is one copy, all or nothing, and a UFunction (0xC8-0xE0
+  bytes) is smaller than the 0x180 once read, so a read at the end of a block failed a correct DLL: the run now reads
+  the DLL's Func window (0x160) and retries a failed read at 0x100 / 0xE0 / 0xC8; an entry no read reaches, or read
+  short of the slot, is listed and kept out of the offset and the count, and with none read the check is not run; a
+  `get_object` error is the wrong entry's reason (MED-1). An entry named "" -- a name read that gave nothing, on the
+  frame and from `get_object` alike -- is wrong, not a match (LOW-3).
+  **The second review's findings, fixed 2026-10-08:** a UE5 layout (Func at 0xD8, so a read retried down to 0xE0
+  still reaches it) has controls of its own beside the scripted 0x148 (MED-B). The DLL named each frame by reading
+  its slot, so an entry read short of the common offset, or not read at all, now has that slot read alone (8 bytes):
+  fn holds, another value fails, and an unreadable slot is listed as gone since the frame was named; a decoy copy of
+  fn in the one entry read whole is ruled out the same way. The line counts the entries judged and gives the number
+  asked beside it ("in 40 of 40 read (64 asked)"), so entries gone are not read as failures. Controls were added for
+  a frame without fn, a half-name read empty, and the branch where nothing reaches a slot.
+  **The third rig review's LOWs (round 4), fixed 2026-10-09** (worktree ids): an entry headed for 'gone' is asked
+  about again, and one `get_object` still names is absent, not gone (red 0d316ef2 / green 2078f9a6; R4a-R4e
+  killed), and candidate offsets lie only inside the DLL's Func window, +0x80..+0x158, so a decoy below it never
+  wins (red ed5b3aed / green a3813522; R5a-R5e killed).
+  ✅ `[SNAPRIG-STEP2-RATE]` (LOW, found by the review of `[SNAPRIG-S5-RATE]` 2026-10-08; fixed the same day, offline by
+  `--self-test`; **live 2026-10-09**: the default step-2 run on DumperTest58 Shipping at ~30 fps, DLL 3644, chose a
+  parameter budget of 10/s ("between 5.9 and 20.2 ... 30/s does not fit"), wrote 82 and dropped 160, 34 / 34): the step-2 run (`run_full`, no `--stacks`) sends a fixed parameter
+  budget of 30 a second and checks that SnapProbe_PerFrame's lone calls over it are dropped -- on a fixture at about
+  30 fps it fails a correct DLL exactly as S5 did, and its `written <= 31 x (record_s + 3)` bound is the 30 written
+  out. Choose the budget from the plain recording's rates by S5's rule, or report the check not run with the rate;
+  bound what is written by the budget sent. Effort **S**.
+  **Fixed:** S5's rule is one helper (`per_frame_budget`) for both runs; the step-2 run chooses its parameter budget
+  from F1's plain rates (30 while it fits), bounds what is written by the budget sent, and reports the check not run
+  with the rates where none bites or the main recording ran the probe under 1.5x it. The scripted DLL now scripts
+  step 2 as far as that budget, so `--self-test` drives `run_full` too.
+  **The second review's findings, fixed 2026-10-08:** the main recording's `pe_profile_get` was never checked: an
+  error, no window or no row for the probe read as 0.0/s and stood the budget check down. It is now a check of its
+  own (ok, a window, the row with a count), and a broken reply fails there while the budget check still runs.
+  **Round 4 (2026-10-09):** the main rate is the table's, or the parameter ring's (written + dropped over the trace's
+  span) where that is higher, so a plausible but wrong table cannot stand the check down (807b0de9 / adac8c4c in the
+  worktree, cherry-picked; R1c killed).
+  ⬜ `[SNAPRIG-ROUND5]` (LOW, the round-4 review of the rig, 2026-10-09; left for after the live checks): (1) the
+  ring rate's span is not pinned -- `FakeClock` moves only on sleep, so a span shortened to `span_lo` (run_stacks) or
+  `--record-s` (run_full) overstates the rate and survives (R1g, R1h); give the scripted DLL the clock so Start and
+  Stop take time and its rings count only while the trace is open, add a control just under 1.5x, and take the
+  clock after the Stop's reply in run_stacks. (2) `unexplained_refusals` weighs SnapProbe_PerFrame's take of the total
+  at min(per, its average) with no margin, while Linie's StackAdmit lets it take every call of a second the ring
+  allows: give it the same 1.5x the others get, or count refusals unexplained only where per caps the probe; helper
+  control: per 100, total 40, pf 30 is explained. Effort **S**.
   ✅ `[OT-COLLAPSE-PERSIST]` (LOW, the maintainer, 2026-10-08, not Live Funcs; built in 3642 and checked live the
   same day: collapsed, restarted, still collapsed; expanded, the width back, `false` saved): the left Object list collapses to a
   strip with its arrow button, and the next start forgot it. Remember it in ui-options.json (`Main.ObjectTreeCollapsed`,
@@ -303,6 +737,102 @@ Open work only. **Read this when deciding what to do next.**
   ⬜ `[INT8-PREVIEW]` (LOW, found while designing step 2): `Ubel`'s `PreviewScalarValue` reads an `Int8Property`
   through `uint8_t`, so every preview built on it shows -1 as 255. The snapshot decoder reads Int8 signed (B6) and is
   not affected; the other callers are. Effort **S**.
+  ✅ `[LF-CLEAR-CHOICES]` (LOW, the maintainer, 2026-10-08; built and review-fixed; **live 2026-10-09**, build 3645
+  on DumperTest58 Shipping: with T, P and S ticked and the settings folded, Clear T/P/S on the header emptied all three
+  columns and the summary went to "ticked 0, parameters 0, stacks 0", its orange gone): the table's
+  three choice columns (Trace, Params?, Stack?) had no clear-all -- Clear ticks empties the first and the Parameters
+  row's Clear the other two. A "Clear T/P/S" button empties all three at once (both clears run, so every count and
+  estimate follows; disabled while recording). Built: red ef95e913 / green b8963e8b, 6 / 6 mutants. Review fixes:
+  tests that pin what it leaves alone (the rows on screen, the filter, Trace on/off, the stack budget) and a filtered,
+  Trace-off and stack-only start (886e8454; R1-R7 killed); it moved off the status line, which wrapped one line sooner
+  for it, onto the capture settings' header beside the fold button, shown folded or not and adding no line (8616cf31 /
+  5ae8cc8b); its label, "Clear choices" until then, names the columns it clears, "Clear T/P/S", the tooltip unchanged
+  (5b0f4957 / 822b5851, worktree ids; the orchestrator's wording, the maintainer may change it); working-lessons 3.xc
+  on what a clean analyzer result proves (a0952263, 022d19f0). Effort **S**. The second review's LOWs (an unfold-path
+  test, two more estimate-raise cases, one settled post, two counting comments, the headless width note) were fixed
+  2026-10-09, in round 4 (under [LF-COMPACT-TOP] and [LF-SNAP-WARN-RAISE]).
+  ✅ `[LF-COMPACT-TOP]` (MED, the maintainer chose the whole package, 2026-10-08; built and review-fixed; **live
+  2026-10-09**, the last sentence): with a stack chosen the controls above the Live Funcs table took 13-16 lines, over 40 % of the panel; the
+  4-line stack warning was the biggest block. Built: (1) the warning is one line of essentials with a Details toggle
+  for the unchanged whole text, the orange variant kept (7e0bb92a / 5f799482); (3) the "No baseline" hint is in Set
+  Baseline's tooltip and the baseline line shows only with a baseline or Diff on (8c0638c7 / b6132dfc); (2) the
+  capture settings fold under a header line (the fold button, Clear T/P/S, Open in Call Trace, then the Fetch limit
+  row); folded, it sums up what is set and carries a short warning for every orange line it folds away plus a short
+  stack warning, orange when any warns; remembered as LiveFuncs.CaptureSettingsCollapsed in ui-options.json, unfolded
+  by default (8616cf31 / 5ae8cc8b). **The review's findings, fixed 2026-10-08** (worktree ids, renumbered when
+  cherry-picked): the summary is raised only while folded, once a burst through one dispatcher post, its estimates
+  made once a getter and its tooltip bound once -- a choice click built it 28 times folded or not, now not at all
+  unfolded and once a binding folded (ea03527e / 5c7b859a; P1-P6 killed, P1b near-equivalent); the one line says the
+  risk ("Stacks: a soft capture on the game's own thread, added to its frame — it could stall or crash the game. Save
+  first; choose few functions.") and the folded summary carries "⚠ stacks: save first, choose few" in its place, also
+  while the estimate is orange (5b0f4957 / 822b5851; W1-W6 killed; the orchestrator's wording, the maintainer may
+  change it); tests for the memory warning with Trace unticked, the summary's counts by the choices under a filter,
+  and Start / Stop / the filter / the fold button on screen folded (afc24900; L1-L6 killed); working-lessons 3.xc (the
+  analyzer check sees C# only, read the editorconfig at once; 022d19f0) and 3.xd (headless text is about twice as wide
+  as the app's Inter; db242747). Measured headless (1389x868), the table's top with a stack chosen: 490 px before the
+  item, 408 unfolded now (the new one line wraps in the headless font only; in Inter it is 772 px of the 1,308 px
+  row), 142 folded (the summary 164 characters, 916 px in Inter). Effort **M**. The second review's LOWs (an
+  unfold-path test, two more estimate-raise cases, one settled post, two counting comments, the headless width note)
+  are being fixed. **The round-4 LOWs, fixed 2026-10-09** (worktree ids): the coalesced raise's unfold path is
+  pinned and each raise case settles its own post (8d93d359; M1, M4 killed), the raise's comments stop counting
+  inputs and bindings (178ecd96), and the one-line check's 0.7 is stated against the harness's row, the panel alone
+  at 1,373 px, about 0.95 of the app's 1,011-px row beside the object tree -- the 1,308 px above did not reproduce
+  (935d3c37, working-lessons 3.xd). **Live 2026-10-09**, build 3645 on DumperTest58 Shipping, the app maximized on
+  the laptop panel: the stack warning is the one line, and Details opens the whole text and closes it again; no
+  baseline line shows without a baseline; folded, the settings are the header and a summary that wraps once ("Fetch
+  limit 512, min calls 1 · Trace on, 64 MB · ticked 1, parameters 1, stacks 1 · stack budget Standard · snapshot
+  buffer 32 MB · ⚠ the busiest parameter choice keeps less time than the trace · ⚠ stacks: save first, choose
+  few"), orange; a tick under the fold changed it at once (ticked 0); Open in Call Trace joined the header once a
+  trace existed; and the fold was in ui-options.json (`captureSettingsCollapsed: true`) the moment it was clicked.
+  ✅ `[LF-SNAP-WARN-RAISE]` (LOW, found by the [LF-COMPACT-TOP] review 2026-10-08, older than it; fixed the same day,
+  offline by a unit test, seen live with [LF-COMPACT-TOP]'s look): `SnapshotEstimateWarn`, T13's orange on the
+  parameter estimate, weighs the busiest choice against what the trace keeps (`TraceSecondsForComparison`), which
+  reads the trace buffer and the ticked set -- but neither a buffer change nor a tick raised it, so the line kept its
+  old colour and the folded summary could disagree with it. `OnTraceBufferExponentChanged` and `RefreshTickedList` now
+  call `RaiseSnapshotEstimate` (red 2f0980a6 / green 883c177c, worktree ids; S1-S4 killed). Effort **S**. Two more
+  cases (Clear ticks; the buffer with Trace off) are being added. **The round-4 LOWs, fixed 2026-10-09:** Clear ticks,
+  and the buffer with Trace unticked, flip the orange and raise it (06bafa08, worktree id; M2, M3 killed). **Live
+  2026-10-09**, build 3645 on DumperTest58 Shipping: SnapProbe_PerFrame's parameters chosen, the estimate was orange
+  (its 3,027 s against a trace scoped to the chosen rows); Trace ticked on all 14 rows turned it grey (the trace then
+  about 48.8 min), and Clear ticks turned it orange again.
+  ⬜ `[LF-EXPOFF-TRACE]` (LOW, found 2026-10-09 by the maintainer's ask to check the layout with the experimental
+  features off, build 3645 on DumperTest58 Shipping): off, the layout is as designed -- the five experimental tabs go,
+  the Live Funcs header keeps the fold button, Fetch limit, Min calls and Hide per-frame (no Clear T/P/S), the Trace,
+  Parameters, estimate and memory lines and the T / P / S columns are gone, a recording made while off offers no trace,
+  and the folded summary reads "Fetch limit 512, min calls 1", not orange. **The defect:** a trace recorded while the
+  features were on survives turning them off (System tab, possible until an experimental tab is opened in the
+  session): the header keeps "Open in Call Trace" and the status line "Trace: N records. Open it in the Call Trace
+  tab.", and the button shows the hidden Call Trace panel's content with no tab selected, Load trace and the exports
+  working -- the opt-out bypassed. `HasTraceToOpen` is set at a Stop and cleared by a Start, a disconnect or Call
+  Trace's load of it; the gate's `Changed` handler raises `TraceAvailable` but leaves it. Fix: the button, the status
+  line's trace clause and `OpenCallTrace` all follow `TraceAvailable` as well (red test first). INFO, the
+  maintainer's call: off, the fold saves no line (the header already holds the only row it folds). Effort **S**.
+  ⬜ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08): the next release -- the first with the Call Trace tab
+  (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
+  draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
+  line against the build being released -- the switch's and buttons' names, the budget names, what a stack names --
+  and drop this row once the notes carry it. ASM is the AOBMaker CE plugin's (the maintainer: well under 10 % of
+  users have it), so Copy leads and ASM is the aside.
+
+  ```markdown
+  ## Call Trace: when to use it, and its limits
+
+  **Experimental.** Turn on *Enable advanced experimental features* in the System tab, tick **Trace** in Live Funcs, Start and Stop, then open the **Call Trace** tab.
+
+  Use it to:
+  - Find which UFunction runs when you do something in the game, on which object, and what called it.
+  - See a function's parameters as the game passed them, decoded by type, at the call and after it returns.
+  - Get a chosen function's native call stack, and **Copy** a frame's address in Cheat Engine's form to dig further there (**ASM** opens it in CE's disassembler, and needs the AOBMaker CE plugin).
+
+  It does not:
+  - See calls that skip `ProcessEvent`: native C++ calling native C++, or a Blueprint calling a native function directly.
+  - Name most native frames: only `ProcessEvent`, a UFunction's native entry and the Blueprint interpreter; the rest show as module + offset.
+  - Pause, step or change the game: it watches. Use Cheat Engine or a debugger for that.
+  - Keep every stack: a per-second budget keeps the first calls of each second (**Low** halves it).
+
+  > ⚠ Native stacks are read on the game's own thread and add to its frame time. Save first and choose few functions: an unforeseen case could stall or crash the game.
+  > ℹ️ It works in games where the dumper can be loaded; games with anti-cheat are out of scope, as for every other feature.
+  ```
   Steps 2 and 3, as decided before: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
   what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
   guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").
@@ -840,7 +1370,7 @@ the usage window — re-derive before acting.
 
 | id | sev | effort | what | where |
 |---|---|---|---|---|
-| `[VND583-01]` | ✅ **FIXED** (was breaking) | S–M | **FIXED 2026-09-24**: a one-shot vote (`Ubel::EnsureFunctionFlagsOffset`) scores the measured `PropertiesSize` relation, the table and the six template values (tail +0/+4) against each sampled UFunction's own CPF_Parm chain; both readers use it, and a decided offset is never swept. Tests: `Test_FunctionFlagsOffset` +19 (red 19 fail → green). ✅ **LIVE-VERIFIED 2026-09-24, red → green on DQ XI S** (UE418, measured `UStruct::PropsSize = +0x50`), with one game launch per arm. **Red** = dist build 3547 (`7b1a26a2`): of 17,888 functions, **3,868 (21.6%)** had NumParms > 64 or ParmsSize > 4096, and the flags of 3,867 functions were heap-pointer low dwords (`0xBD992380`, `0xC5765EC0`, …). Every `ExecuteUbergraph_*` read `np 75 / ps 0`. **Green** = `295bc50e` (`a78fb235`): `DetectFunctionFlags: 64 UFunction samples -> FunctionFlags=+0x98 tailExtra=+0 (64/64 votes; measured primary +0x98, version table +0x88)`. Absurd tails dropped to **1 of 17,893**; the flags became real combinations (`0x4CC20000`, `0x0C000000`); and all 220 `ExecuteUbergraph_*` read `1 / 4`, their one int32 `EntryPoint` (their flags word is 0, and it is no longer swept past). Native `Add_IntInt` was right in both arms (`0x14022401 / 3 / 12`): natives have an empty ScriptObjectReferences, as the finding said. ⚠ "BP (`_C`) functions carrying FUNC_Native" is NOT a garbage signal on this title (23.8% in green, with sane flags and tails): DQ XI S appears to ship nativized Blueprints. **Stock control**: DumperTest 5.4 and 5.1 Shipping both vote `+0xB0` 64/64, equal to the table, and `Add_IntInt` reads `3 / 12`. Evidence: `out\vnd01\{red,green,stock_shipping,stock_shipping51}\` (`probe.txt`, `functions.json`, DLL logs). Was: `UFunction::FunctionFlags` keyed on version only; FF7R is +0x90, DQ XI S 0x98 (table gives 0x88 = `ScriptObjectReferences.Data`). Derive from measured PropertiesSize (+0x48 / +0x58) and vote on NumParms | `Grimoire.h:466-480`, `Ubel.cpp:1530-1565`, `Aura.cpp:6428-6440` |
+| `[VND583-01]` | ✅ **FIXED** (was breaking) | S–M | **FIXED 2026-09-24**: a one-shot vote (`Ubel::EnsureFunctionFlagsOffset`) scores the measured `PropertiesSize` relation, the table and the six template values (tail +0/+4) against each sampled UFunction's own CPF_Parm chain; both readers use it, and a decided offset is never swept. Tests: `Test_FunctionFlagsOffset` +19 (red 19 fail → green). ✅ **LIVE-VERIFIED 2026-09-24, red → green on DQ XI S** (UE418, measured `UStruct::PropsSize = +0x50`), with one game launch per arm. **Red** = dist build 3547 (`7b1a26a2`): of 17,888 functions, **3,868 (21.6%)** had NumParms > 64 or ParmsSize > 4096, and the flags of 3,867 functions were heap-pointer low dwords (`0xBD992380`, `0xC5765EC0`, …). Every `ExecuteUbergraph_*` read `np 75 / ps 0`. **Green** = `295bc50e` (`a78fb235`): `DetectFunctionFlags: 64 UFunction samples -> FunctionFlags=+0x98 tailExtra=+0 (64/64 votes; measured primary +0x98, version table +0x88)`. Absurd tails dropped to **1 of 17,893**; the flags became real combinations (`0x4CC20000`, `0x0C000000`); and all 220 `ExecuteUbergraph_*` read `1 / 4`, their one int32 `EntryPoint` (their flags word is 0, and it is no longer swept past). Native `Add_IntInt` was right in both arms (`0x14022401 / 3 / 12`): natives have an empty ScriptObjectReferences, as the finding said. ⚠ "BP (`_C`) functions carrying FUNC_Native" is NOT a garbage signal on this title (23.8% in green, with sane flags and tails): DQ XI S appears to ship nativized Blueprints (confirmed 2026-10-08: `BP_TimeChangePost_C` and `BP_SkyBase_C` are `DynamicClass`, their ReceiveTick a native exec thunk -- `[LIVEFUNCS-STEP3-DQ11S]`). **Stock control**: DumperTest 5.4 and 5.1 Shipping both vote `+0xB0` 64/64, equal to the table, and `Add_IntInt` reads `3 / 12`. Evidence: `out\vnd01\{red,green,stock_shipping,stock_shipping51}\` (`probe.txt`, `functions.json`, DLL logs). Was: `UFunction::FunctionFlags` keyed on version only; FF7R is +0x90, DQ XI S 0x98 (table gives 0x88 = `ScriptObjectReferences.Data`). Derive from measured PropertiesSize (+0x48 / +0x58) and vote on NumParms | `Grimoire.h:466-480`, `Ubel.cpp:1530-1565`, `Aura.cpp:6428-6440` |
 | `[VND583-02]` | ✅ **FIXED** (was gap) | S | **FIXED 2026-09-24**: `Genau::ProbeUFieldNextFProperty` walks a stock class's function chain (`KismetSystemLibrary` first) at each candidate, default first, and takes the first that chains >= 2 Function hops (`DynOff::PickUFieldNextOffset`). A failed probe keeps the default WITHOUT flipping validated, and the summary now prints UField::Next in FProperty mode. Tests: `Test_UFieldNextFProperty` (red 3 fail → green), plus `dll_core_test` UFIELDNEXT, which BUILDS the Pathless shape in memory: at the old 0x28 the walk sees 1 of 3 functions, the probe measures 0x30 and the walk sees all 3. ✅ **Live regression 2026-09-24** (`8857be9d`, DLL `857488f6`): DumperTest 5.4, 5.1 and 5.8 Shipping each log `UField::Next at +0x28 (FProperty mode, probed on KismetSystemLibrary's function chain)` with validated=YES, and `list_all_functions` returns the same totals as before the fix (5.4 9,642; 5.1 7,905; 5.8 12,722). The shifted shape itself exists only in the built fixture: no title here has it (evidence `out\vnd02\`). Was: `UField::Next` never measured in FProperty mode — function lists wrong on 4.25+ titles with a 0x30 UObject (The Pathless) | `Genau.cpp:3378-3383`, `:3962-4086`; `Ubel.cpp:1762` |
 | `[VND583-03]` | ✅ **FIXED** (was gap) | S | **FIXED 2026-09-24**: `Ubel::ResolveElementAlignment` no longer asks Scharf for a NameProperty. It MEASURES alignof(FName) once (`UScriptStruct::MinAlignment` of the single-FName ScriptStruct CollisionProfileName, else PrimaryAssetType, else GameplayTag; `DynOff::PickFNameAlign` takes it only when the struct is FName-sized and the value is 4 or 8, and the class check skips FBodyInstance's NameProperty of the same name). With no measurement it falls back to `DynOff::FNameAlignFor`: 8 on non-CPN 4.11–4.21, whose NameTypes.h unions FName with `uint64 CompositeComparisonValue` (origin/4.11–4.21; absent on 4.10 and 4.22), and 4 everywhere else. Tests: `Test_FNameAlign` (red 6 + 3 fail → green; pins TMap<FName,int32> on 4.18 to stride 24), plus `dll_core_test` FNAMEALIGN and FNAMEMEASURE, which builds the struct and a same-named decoy (red 1 + 2 → green). ✅ **LIVE-VERIFIED 2026-09-24, red → green on DQ XI S** (UE418), one game launch per arm, on `BP_TextManager_C.OverrideTextTypeFromTextPack`, a TMap<FName, EnumProperty(1 byte)> holding 2 pairs. Raw bytes at its data (`read_mem`) put the pairs 0x18 apart: FName at +0x00 and +0x18, value bytes `01` / `09`. **Red** = dist 3547 (`7b1a26a2`): stride **20**, pair 1 read as `None_242696` / `00`, i.e. `{0, 0x3B409}` taken from +0x14. **Green** = `908c58aa` (`0d5e5aa1`): `DetectFNameAlign: alignof(FName) = 8, measured on ScriptStruct CollisionProfileName (version rule says 8)`, stride **24**, pair 1 `-PTT` / `09`. **Stock control**: DumperTest 5.4 Shipping measures `alignof(FName) = 4` on the same struct, and `DumperTestActor.Map_NameToInt` (TMap<FName,int32>) still strides 20 and reads Alpha/111, Beta/222, Gamma/333. Evidence: `out\vnd03\{red,green,stock_shipping54}\` (`raw.txt`, `textmanager.txt`, `probe.txt`, DLL logs). Was: `alignof(FName)` is 8 on non-CPN 4.11–4.21; `Scharf.h:80` says 4 → TMap stride 4 short for some shapes | `Scharf.h:80`, `Ubel.cpp:1965-1970`, `:5460-5473` |
 | `[VND583-04]` | ✅ **FIXED** (was gap) | S | **FIXED 2026-09-24**: `Neu::EnumNamesLayout` now carries the legacy pair's `valueSize` (8 = int64, 1 = uint8) and `legacyStride`, and `ReadEntry` reads a uint8 value as ONE byte. Source: `TArray<TPair<FName, uint8>> Names` on origin/4.9–4.14, int64 from 4.15. `DetectUEnumNames` tries the version's width first (`Neu::PickLegacyValueSize`), then the other, with a stride that follows alignof(FName) (`Neu::LegacyStrideFor`: 16 on 4.11–4.14, 12 on 4.9/4.10). On ENetRole, whose values are 0..n-1, it MEASURES the column: int64 reads that are not sequential over low bytes that are prove a uint8 column whatever the version says. Ubel's reader applies `DynOff::UENUM_VALUE_SIZE` / `UENUM_PAIR_STRIDE`, which replace the dead `UENUM_ENTRY_SIZE`. Tests: `Test_Neu_Legacy_Uint8Values` (red 10 fail → green) and `dll_core_test` ENUMU8 (red 5 → green), which builds ENetRole with 0xCD padding: 4.11 reads 1-byte values; 4.27's rule is overruled by the measurement; 4.10 strides 12; and the 4.18 int64 control stays 8. ✅ **LIVE-VERIFIED 2026-09-24, red → green on NEKOPALIVE** (UE411, 25.7K objects), one game launch per arm, reading `list_enums` (457 enums, 2,728 entries). **Red** = dist 3547 (`7b1a26a2`): **1,802 entries (66.1%)** held values a uint8 cannot hold, only 38 of 456 enums read 0..n-1, and ENetRole read `ROLE_None=30681262087733248, ROLE_SimulatedProxy=24770077128458241, …` (the right low byte under heap garbage). **Green** = `47f1130e` (`88e4dbe0`) logs `UEnum::Names value column: int64 reads NOT 0..n-1, low bytes 0..n-1 -> 1-byte values (UE 411)` and `value 1 B, pair stride 16`. It reads **0** out-of-range values; **450 of 456** enums read 0..n-1, and the 6 that do not are the ones with explicit values in the source (`EAITaskPriority` 0/64/127/192/254, `ECompositingSampleCount` 1/2/4/8, …). ENetRole reads 0..4. Evidence: `out\vnd04\{red,green}\` (`probe.txt`, `enums.json`, DLL logs). Was: `UEnum::Names` value is `uint8` on 4.9–4.14; `Neu::ReadEntry` reads int64 → garbage padding decides resolution (NEKOPALIVE) | `Neu.h:159-168`, `Ubel.cpp:147-148` |
@@ -1332,7 +1862,7 @@ The **two-concurrent-Cheat-Engine hazard measured live on 2026-09-10** — CE is
 single-instance, only one process can own `\\.\pipe\AOBMakerCEBridge`, the losers retry-spam
 `err=231` forever, and every CE window looks fine — **is in neither of the two documents a fresh
 session is told to read.** It lives in `tools/verify/front_window.py`'s docstring and
-`pipebusy_capacity.py`, plus scattered dev-log/register entries. `handover-2026-08-22.md:263`'s
+`pipebusy_capacity.py`, plus scattered dev-log/register entries. `handover.md` §3 ("Starting the UI")'s
 "single-instance" line is about **UE5DumpUI**, not CE.
 
 ⭐ **This was not deduced, it was demonstrated**: a W1 refuter grepped both files for the hazard,
@@ -6000,7 +6530,7 @@ mailbox the DLL still owns — the exact overwrite audit #5 AA19 exists to preve
 2. **Packed bitfield:** edit a `uint8 b:1` bool. Only its bit changes; read the sibling bools back in CE or via a Refresh.
 3. **Unresolved:** a bool whose mask shows as 0 must be REFUSED with the reason.
 4. **Preview and invoke:** a struct holding two packed bools (e.g. `FHitResult`, or a DumperTest struct) previews each bit separately. FIRE with both ticked sets both bits. Copy AA Script run in CE sets both bits too.
-5. **Read-back:** a field the game recomputes each tick reports the read-back mismatch, not "Written". ✅ **CLOSED — steps 1, 2, 4a on 2026-09-12; steps 4b, 4c and 5 on 2026-09-16 (at the end of this row). Step 3 is NOT PRODUCIBLE on a stock 5.4 host and is carried forward, not claimed.** DumperTest **Shipping** (pid 42732, 24,497 objects, UE504) + the AOT UI. ⭐⭐ **FIRST, THE BUILD IDENTITY — and `assert_build()` CANNOT establish it here.** `dist\build_number.txt` holds **3546** dated **Sep 10**, while the three fixes landed **2026-09-11** (`68a404d6`, `d5e9148d`) and every build since used `-NoBumpBuildNumber` — so a DLL with no bool fix at all passes that gate cleanly. The `init` command settles it instead: `build_git 943975f3`, `build_time 2026-09-11T23:56:03`, and **`git merge-base --is-ancestor` confirms BOTH fix commits are ancestors of `943975f3`**. Second, independent identity witness: `bPlainBool`'s wire row carries **`bool_native: true`** — an additive key **no pre-fix DLL emits at all**. **STEP 1 — native bool. ✅** `bPlainBool` (off 1633, seeded `true`/`01`; `true → false` is the discriminating direction) edited in Live Walker. Status `Written: bPlainBool = false`, the row re-reads `false`, and ⭐ **the byte at `0x208254AE681` reads `00`** on an independent pipe client. ⚠ **The status string is NOT the evidence** — a pre-fix build prints exactly `Written: bPlainBool = false` too; that IS the defect. The byte is. Note the fix writes `0x00` / `0x01`, **not `0xFF`**, which the ledger names as unsafe (C++ that XORs a bool reads `0xFF` as still true). Two controls: the packed byte next door (`bFlagA/B/C` at `0x208254AE680`) stayed **`05`**, so the whole-byte native write did not spill; and the **CDO** kept `true`/`01`. ⚠ **Stated plainly: "it flips in the game" was NOT shown.** Nothing reads `bPlainBool` after the constructor (`DumperTestActor.cpp:204` is its only writer and there is no consumer), so this step demonstrates persistence and re-read, not a gameplay effect. **STEP 2 — packed bitfield. ✅ but recorded as a REGRESSION CONTROL, not evidence.** `bFlagB` `false → true`: byte **`05` → `07`**, `bFlagA (bit 0)` and `bFlagC (bit 2)` unchanged, status `Written: bFlagB = true`. ⚠⭐ **This is byte-identical on the pre-fix build** — `git show 68a404d6^` shows the old edit path was already `ReadMemAsync → ApplyBoolMask → WriteMemAsync`, the same masked read-modify-write as the fixed `MaskedBit` arm, and the ledger says as much (*"the read-modify-write control, which was green before and after"*). It guards only against the NEW native path mis-firing on a packed bool. **STEP 3 — unresolved mask. ⛔ NOT PRODUCIBLE on this fixture, measured.** `ClassifyBoolLayout` returns Unresolved only for `fieldSize != 1` or a mask that is neither the native `0xFF` shape nor a single bit; the documented mask-0 host was DQ XI S's shifted layout. Checked here rather than assumed: across the live `PlayerController`'s **48** BoolProperty rows the DLL classified **2 native, 46 single-bit, 0 unresolved**, and `bShowMouseCursor` — declared `uint32 b:1`, i.e. the FieldSize-4 shape one would expect to fail — comes back as an ordinary **`bit 0, mask 0x01`** with `bool_bit`/`bool_mask` keys. So a refusal cannot be produced on a stock UE 5.4 host, and **a refusal appearing here would be a probe regression, not a pass**. Carried forward to a shifted-layout host; `UnresolvedMask_IsRefused_NothingIsWritten` covers it as a unit. **STEP 4a — the struct PREVIEW. ✅** ⚠ **The drilled rows are NOT the witness:** drilling re-walks the struct as an INSTANCE, so its rows come from the live field walk, which applied the mask before the fix too. The fix lives in `PreviewScalarValue(…, boolMask)` (`mask != 0 ? (p[0] & mask) != 0 : p[0] != 0`), reached only for the **PARENT** row's preview string. Measured on `ReplicatedMovement` (off 208, `FRepMovement`): `bSimulatedPhysicSleep` (bit 0, mask 0x01) and `bRepPhysics` (bit 1, mask 0x02) **do share offset 96**. ⭐ **The byte had to be ARMED first** — its default is `00`, which previews `false, false` on BOTH builds. With exactly one bit set (byte → `02`) the parent preview reads **`{bSimulatedPhysicSleep=false, bRepPhysics=true, …}`**; a pre-fix build reads the whole byte for each and shows **both true**. Restored to `00`, both false again. ⚠ The preview was read **from the wire**, not from the grid: the Value column is a fixed 200px with **no ellipsis**, so a longer preview is cut with nothing on screen saying so (`[V8PREVIEWCLIP-2026-08-23]`). ✅ **4b, 4c AND 5 CLOSED 2026-09-16 — the row is now COMPLETE except step 3, which stays not-producible on a stock 5.4 host (above).** DumperTest **Shipping pid 34428**, DLL injected by `tools/verify/inject.py`, the AOT UI *Connected — UE504 (24508 objects)*, CE attached for 4c's run. ⭐⭐ **BUILD IDENTITY, again established the hard way** (`assert_build()` still cannot): `init` reports `build_number 3546`, **`build_git 6203d23c-dirty`**, `build_time 2026-09-16T05:44:33`, and `git merge-base --is-ancestor` confirms **both** `68a404d6` and `d5e9148d` are ancestors of `6203d23c`. The `-dirty` is C#-side and datable: the last C++ commit was `88632f29` (12:41), the build ran 13:44, and the only uncommitted work at that moment was the ProxyDeploy change committed at 13:49 as `e82d0cf0`. Second witness, as before: `bPlainBool`'s wire row carries **`bool_native: true`**. ⭐ **THIRD witness, new this round and the one 4b/4c actually depend on:** the `struct_fields` of `D4_OnActorHitProbe`'s `Hit` param carry **`bool_mask`** (1 and 2) — an additive key whose ABSENCE is what makes a pre-fix build do the whole-byte write (`DumpService.cs:1687-1688`, *"additive; absent = 0 (whole-byte write)"*). **THE HOST, measured over the pipe rather than read out of an engine header:** `D4_OnActorHitProbe(AActor*, AActor*, FVector, const FHitResult&)`, ParmsSize **288**; `Hit` is a `StructProperty` at param offset **40**, size 248; `bBlockingHit` is at struct offset **173** with `bool_mask 1` and `bStartPenetrating` at struct offset **173** with `bool_mask 2` — **the same byte**, so the absolute params offset under test is 40 + 173 = **213**. ⭐ **The function is DELIBERATELY EMPTY** (`DumperTestActor.cpp:273-276`: *"its only job is to exist so `OnActorHit` is a bound sparse delegate… must never DO anything"*), so nothing in the game can perturb the buffer and the observable is purely what the WRITER wrote — an unusually clean host for this. **STEP 4b — FIRE. ✅ IN BOTH DIRECTIONS.** Driven from Live Walker → the function row's **PIPE** button (the shipped route; `str.Tip.LiveWalker.FuncPipeInvoke`). **(i)** `bBlockingHit=true, bStartPenetrating=false` → byte 213 = **`01`**, and the dialog decoded `bBlockingHit=true, bStartPenetrating=false`. Pre-fix would be `00`. **(ii)** `bBlockingHit=true, bStartPenetrating=true` → byte 213 = **`03`**. Pre-fix would be `01`. ⭐ **(ii) is the stronger direction and the reason it was added:** a pre-fix build produces `01` there, which decodes as a perfectly plausible *true, false* — a reader checking only that "the first bool took" would pass a broken build. Only the masked read-modify-write can produce `03`. ⚠ **The dialog's own `raw:` line CANNOT carry this evidence** — it truncates at 64 hex chars (`InvokeParamDialog.cs:762-764`) and byte 213 sits at hex offset 426; the full 288-byte `result_hex` was read out of `ui-pipe-0.log` instead. Controls: bytes **212** (`ElementIndex`) and **214** read `00` in both runs, so the masked write did not spill into the neighbours. The fix under test is `ParamBufferBuilder.WriteStructParam`'s `IsSingleBitMask` branch (`ParamBufferBuilder.cs:214-218`); without it the second sub-field's `false` reaches `WriteParam` and zeroes the whole byte. **STEP 4c — Copy AA Script. ✅ BOTH HALVES.** *Clipboard half, no CE:* the emitted text carries `{ name='Hit.bBlockingHit', type='bool', offset=213, mask=0x01, value=1 }` and `{ name='Hit.bStartPenetrating', type='bool', offset=213, mask=0x02, value=1 }` — same offset, two masks. Emitter: `BakedScriptGenerator.cs:225-226`, `$"mask=0x{v.BoolFieldMask:X2}, "`, gated on `helperType == "bool" && IsSingleBitMask`. ⭐ **`git show 68a404d6^:…/BakedScriptGenerator.cs | grep mask` returns NOTHING** — the pre-fix emitter had no mask token at all, so the Lua (`ue5_invoke_helper.lua:303-307`) fell to the whole-byte write. Built-in control inside the same text: `{ name='Hit.ElementIndex', type='byte', offset=212, value=0 }` — a byte-sized NON-bool neighbour carries no mask, so the token is not simply stamped on everything. *CE half:* the helper was exported via **Tools → Export CE Helper Lua File…** and is **sha256-identical** to `scripts/ue5_invoke_helper.lua` (`91125c657d5ce3666b4d…`), embedded as a table file, the script pasted into CE's address list with Ctrl+V (the route the UI's own status line names), and the record ticked → `[Invoke] OK: DumperTestActor::D4_OnActorHitProbe (void return)` with `params[213] = 03` at `g_invokeMailbox + 0x328` — **the value predicted from the script text before CE ran it**. ⚠⭐ **An ambiguity that had to be killed, not argued away:** the UI's FIRE (ii) had ALSO left `03`, so the value alone could not prove the CE script wrote it. The byte was zeroed from CE Lua (`params[213] now = 00`), the record re-ticked, and it came back **`03`**. Controls: `params[208..218] = 00 00 00 00 00 03 00 00 00 00 00`. ℹ The second copy is ~2× the first because *Verify return value* was ticked, which makes the emitter add the `[Invoke] Before/After` params dump and a contract check BEFORE the first mailbox write. ⛔ **Do NOT reach for that dump as the observable on a re-run — it cannot carry this byte.** `ComputeDumpLength` (`BakedScriptGenerator.cs:68-84`) starts at `DefaultDumpBytes = 32` (`:44`) and only grows to reach a RETURN slot; `D4_OnActorHitProbe` returns **void**, so the dump stays **32 bytes** and byte 213 is outside it. Observed exactly that: both dumps read all-zero. The mailbox read above is the observable; the tick-box is useful only because `AppendCleanupAndClose(sb, keepEngineOpen: verifyReturn)` then suppresses the Lua Engine auto-close. ⚠ **And the clipboard half only exists while CE is CLOSED.** `OnCopyBakedScriptClicked` PREFERS AOBMaker (`InvokeParamDialog.cs:893-899`) and pushes straight into CE's address list when it is available, in which case nothing reaches the clipboard and this row's *"readable without CE"* claim silently evaporates. The witness that the clipboard branch actually ran is the status line's own opening literal, **`AOBMaker not connected.`**, which is what it read here — CE was launched only afterwards, for the run half. ℹ The record unticks ITSELF ~100 ms after a successful run (`BakedScriptGenerator.cs:433-438`), so `Active == false` a second later is the expected SUCCESS state, not a refusal to tick. **STEP 5 — read-back mismatch. ✅ BOTH ARMS.** ⭐⭐ **First, the finding that decides the whole step: THE READ-BACK IS BOOL-ONLY.** The verify branch lives inside `if (field.TypeName == "BoolProperty")` (`LiveWalkerViewModel.cs:5711`, read-back at `:5749`); the scalar/enum `else` writes and never reads back. So the fixture's ticking FLOAT (`F32_Ticking`), the obvious "field the game recomputes each tick", **can only ever print "Written"** — a run that picked it would have measured nothing and looked like a failure of the fix. ⛔ **And the fixture has NO tick-written bool:** `ADumperTestActor::Tick` (`DumperTestActor.cpp:473`) writes `FrameCount`, `FrameCountReflected` and, only when armed, `ContestWrites` plus the PLAYER PAWN's `bCanBeDamaged` — every one an int32 except that pawn bool, which moves at the frame rate (~15 Hz) against a write→read-back gap of about one pipe round trip. An in-game contender is therefore structurally ~2 orders of magnitude too slow, which is WHY this row demanded a deterministic contender rather than suggesting one. ⭐ **The contender is OUT-OF-PROCESS (`WriteProcessMemory`), costing ZERO pipe slots.** `Fern.h:51` `kMaxPipeInstances = 3`, the UI holds 2, and `docs/handover-2026-08-22.md:349` forbids a third pipe client while the UI is connected — so the row's own suggestion (*"a third-slot pipe client"*) is the one thing that must NOT be done. Same trick as `tg1_clearall_result_gate.py`. **Rate MEASURED, never quoted:** 203,427 writes in 35.00 s (**5,812/s**), 258,421 in 45.00 s (**5,743/s**), and **342,501 in 60.00 s (5,708/s)** during the armed edit itself. Host: `bPlainBool`, offset `0x661`, address **`0x191703EA061`** (base `0x191703E9A00` + 1633), read off the grid's own Address column rather than computed and trusted. **ARMED →** *"⚠ Wrote bPlainBool = false, but the game now reads true (byte 0x01) — it may be recomputing this field."*, byte-for-byte the template at `LiveWalkerViewModel.cs:5756-5757`. **DISARMED →** *"Written: bPlainBool = false"*, and the byte really became `00`. ⭐⭐ **THE PRE-FIX FACT, which is the real discriminator and is stronger than the byte:** at `68a404d6^` the editor had **NO READ-BACK AT ALL** — `git show 68a404d6^:…/LiveWalkerViewModel.cs` matches `nowReads` / `readBackMismatch` / `read back` **zero** times, and `:5627` is an **unconditional** `StatusText = $"Written: {field.Name} = {newValue}";`. So a pre-fix build prints `Written:` for every bool edit that did not throw, and the warning observed here is **unreachable on it by construction** — not by winning a race. `68a404d6` is the commit that added it (51 lines in that file). ⚠ **CORRECTED 2026-09-16 by the adversarial review of this run: there were TWO armed runs, not one.** An earlier draft reported a single armed edit because I read the TOP status bar instead of Live Walker's own status line and concluded the first armed edit had not committed. It had. `ui-view-0.log` carries all three edits, and every one falls cleanly inside or outside a contender window whose start is derived from that run's own end time minus its own measured duration: **15:32:30.568 WARN** (inside `bzd2tcj26` 15:31:58–15:32:43, ARMED) · **15:33:06.927 clean** (between windows, 15:32:43–15:33:45, DISARMED) · **15:34:51.396 WARN** (inside `bvz7oesgq` 15:34:45–15:35:45, ARMED). **2 armed → 2 mismatches; 1 disarmed → 1 clean**, with no mismatch outside an armed window. ⭐ **The review proposed the opposite reading and it was checked rather than waved away:** from the log timestamps alone it argued `bPlainBool` mismatches non-deterministically with nothing armed, which would have voided the attribution. It did not have the contender schedule; against that schedule the claim does not survive. Recorded so the next reader does not re-open it. ⭐ **The same-byte control, which the log gives for free:** the WARN line is `EDIT bPlainBool @ 0x191703EA061: wrote 0x00, read back 0x01` (`LiveWalkerViewModel.cs:5757` prints `writeAddr` verbatim) — **byte-identical to the contender's target address**, so "the contender and the UI wrote the same byte" is measured, not assumed. A contender parked on the wrong byte would otherwise read as a clean pass. ⭐ **The arms are a true A/B:** same starting state (`true` / `01`), same target (`false`), same keystrokes (double-click the Value cell, type `f` for the ComboBox's prefix match, Enter); the ONLY difference is whether the contender was running. ⚠ **Two honest notes.** (1) `pipe_client.py` WAS run while the UI was connected for the layout queries above, which `docs/handover-2026-08-22.md:349` forbids; slot 3 happened to be free and nothing broke, but it was against a recorded rule — the step-5 contender was deliberately built out-of-process so the violation was not repeated where it would have mattered. (2) The read-back at `:5749` runs BEFORE `RefreshAsync()` at `:5779`, so the status line and the grid row are two different samples of the same byte; under a live contender they can disagree, and that is expected rather than a fault. ℹ **No machine state left:** the contender's last write put `bPlainBool` back to `01`, which is the fixture constructor's own value. | DumperTest + UI; **CE for the Copy AA Script and bit read-back steps** — go-ahead given 2026-09-12 |
+5. **Read-back:** a field the game recomputes each tick reports the read-back mismatch, not "Written". ✅ **CLOSED — steps 1, 2, 4a on 2026-09-12; steps 4b, 4c and 5 on 2026-09-16 (at the end of this row). Step 3 is NOT PRODUCIBLE on a stock 5.4 host and is carried forward, not claimed.** DumperTest **Shipping** (pid 42732, 24,497 objects, UE504) + the AOT UI. ⭐⭐ **FIRST, THE BUILD IDENTITY — and `assert_build()` CANNOT establish it here.** `dist\build_number.txt` holds **3546** dated **Sep 10**, while the three fixes landed **2026-09-11** (`68a404d6`, `d5e9148d`) and every build since used `-NoBumpBuildNumber` — so a DLL with no bool fix at all passes that gate cleanly. The `init` command settles it instead: `build_git 943975f3`, `build_time 2026-09-11T23:56:03`, and **`git merge-base --is-ancestor` confirms BOTH fix commits are ancestors of `943975f3`**. Second, independent identity witness: `bPlainBool`'s wire row carries **`bool_native: true`** — an additive key **no pre-fix DLL emits at all**. **STEP 1 — native bool. ✅** `bPlainBool` (off 1633, seeded `true`/`01`; `true → false` is the discriminating direction) edited in Live Walker. Status `Written: bPlainBool = false`, the row re-reads `false`, and ⭐ **the byte at `0x208254AE681` reads `00`** on an independent pipe client. ⚠ **The status string is NOT the evidence** — a pre-fix build prints exactly `Written: bPlainBool = false` too; that IS the defect. The byte is. Note the fix writes `0x00` / `0x01`, **not `0xFF`**, which the ledger names as unsafe (C++ that XORs a bool reads `0xFF` as still true). Two controls: the packed byte next door (`bFlagA/B/C` at `0x208254AE680`) stayed **`05`**, so the whole-byte native write did not spill; and the **CDO** kept `true`/`01`. ⚠ **Stated plainly: "it flips in the game" was NOT shown.** Nothing reads `bPlainBool` after the constructor (`DumperTestActor.cpp:204` is its only writer and there is no consumer), so this step demonstrates persistence and re-read, not a gameplay effect. **STEP 2 — packed bitfield. ✅ but recorded as a REGRESSION CONTROL, not evidence.** `bFlagB` `false → true`: byte **`05` → `07`**, `bFlagA (bit 0)` and `bFlagC (bit 2)` unchanged, status `Written: bFlagB = true`. ⚠⭐ **This is byte-identical on the pre-fix build** — `git show 68a404d6^` shows the old edit path was already `ReadMemAsync → ApplyBoolMask → WriteMemAsync`, the same masked read-modify-write as the fixed `MaskedBit` arm, and the ledger says as much (*"the read-modify-write control, which was green before and after"*). It guards only against the NEW native path mis-firing on a packed bool. **STEP 3 — unresolved mask. ⛔ NOT PRODUCIBLE on this fixture, measured.** `ClassifyBoolLayout` returns Unresolved only for `fieldSize != 1` or a mask that is neither the native `0xFF` shape nor a single bit; the documented mask-0 host was DQ XI S's shifted layout. Checked here rather than assumed: across the live `PlayerController`'s **48** BoolProperty rows the DLL classified **2 native, 46 single-bit, 0 unresolved**, and `bShowMouseCursor` — declared `uint32 b:1`, i.e. the FieldSize-4 shape one would expect to fail — comes back as an ordinary **`bit 0, mask 0x01`** with `bool_bit`/`bool_mask` keys. So a refusal cannot be produced on a stock UE 5.4 host, and **a refusal appearing here would be a probe regression, not a pass**. Carried forward to a shifted-layout host; `UnresolvedMask_IsRefused_NothingIsWritten` covers it as a unit. **STEP 4a — the struct PREVIEW. ✅** ⚠ **The drilled rows are NOT the witness:** drilling re-walks the struct as an INSTANCE, so its rows come from the live field walk, which applied the mask before the fix too. The fix lives in `PreviewScalarValue(…, boolMask)` (`mask != 0 ? (p[0] & mask) != 0 : p[0] != 0`), reached only for the **PARENT** row's preview string. Measured on `ReplicatedMovement` (off 208, `FRepMovement`): `bSimulatedPhysicSleep` (bit 0, mask 0x01) and `bRepPhysics` (bit 1, mask 0x02) **do share offset 96**. ⭐ **The byte had to be ARMED first** — its default is `00`, which previews `false, false` on BOTH builds. With exactly one bit set (byte → `02`) the parent preview reads **`{bSimulatedPhysicSleep=false, bRepPhysics=true, …}`**; a pre-fix build reads the whole byte for each and shows **both true**. Restored to `00`, both false again. ⚠ The preview was read **from the wire**, not from the grid: the Value column is a fixed 200px with **no ellipsis**, so a longer preview is cut with nothing on screen saying so (`[V8PREVIEWCLIP-2026-08-23]`). ✅ **4b, 4c AND 5 CLOSED 2026-09-16 — the row is now COMPLETE except step 3, which stays not-producible on a stock 5.4 host (above).** DumperTest **Shipping pid 34428**, DLL injected by `tools/verify/inject.py`, the AOT UI *Connected — UE504 (24508 objects)*, CE attached for 4c's run. ⭐⭐ **BUILD IDENTITY, again established the hard way** (`assert_build()` still cannot): `init` reports `build_number 3546`, **`build_git 6203d23c-dirty`**, `build_time 2026-09-16T05:44:33`, and `git merge-base --is-ancestor` confirms **both** `68a404d6` and `d5e9148d` are ancestors of `6203d23c`. The `-dirty` is C#-side and datable: the last C++ commit was `88632f29` (12:41), the build ran 13:44, and the only uncommitted work at that moment was the ProxyDeploy change committed at 13:49 as `e82d0cf0`. Second witness, as before: `bPlainBool`'s wire row carries **`bool_native: true`**. ⭐ **THIRD witness, new this round and the one 4b/4c actually depend on:** the `struct_fields` of `D4_OnActorHitProbe`'s `Hit` param carry **`bool_mask`** (1 and 2) — an additive key whose ABSENCE is what makes a pre-fix build do the whole-byte write (`DumpService.cs:1687-1688`, *"additive; absent = 0 (whole-byte write)"*). **THE HOST, measured over the pipe rather than read out of an engine header:** `D4_OnActorHitProbe(AActor*, AActor*, FVector, const FHitResult&)`, ParmsSize **288**; `Hit` is a `StructProperty` at param offset **40**, size 248; `bBlockingHit` is at struct offset **173** with `bool_mask 1` and `bStartPenetrating` at struct offset **173** with `bool_mask 2` — **the same byte**, so the absolute params offset under test is 40 + 173 = **213**. ⭐ **The function is DELIBERATELY EMPTY** (`DumperTestActor.cpp:273-276`: *"its only job is to exist so `OnActorHit` is a bound sparse delegate… must never DO anything"*), so nothing in the game can perturb the buffer and the observable is purely what the WRITER wrote — an unusually clean host for this. **STEP 4b — FIRE. ✅ IN BOTH DIRECTIONS.** Driven from Live Walker → the function row's **PIPE** button (the shipped route; `str.Tip.LiveWalker.FuncPipeInvoke`). **(i)** `bBlockingHit=true, bStartPenetrating=false` → byte 213 = **`01`**, and the dialog decoded `bBlockingHit=true, bStartPenetrating=false`. Pre-fix would be `00`. **(ii)** `bBlockingHit=true, bStartPenetrating=true` → byte 213 = **`03`**. Pre-fix would be `01`. ⭐ **(ii) is the stronger direction and the reason it was added:** a pre-fix build produces `01` there, which decodes as a perfectly plausible *true, false* — a reader checking only that "the first bool took" would pass a broken build. Only the masked read-modify-write can produce `03`. ⚠ **The dialog's own `raw:` line CANNOT carry this evidence** — it truncates at 64 hex chars (`InvokeParamDialog.cs:762-764`) and byte 213 sits at hex offset 426; the full 288-byte `result_hex` was read out of `ui-pipe-0.log` instead. Controls: bytes **212** (`ElementIndex`) and **214** read `00` in both runs, so the masked write did not spill into the neighbours. The fix under test is `ParamBufferBuilder.WriteStructParam`'s `IsSingleBitMask` branch (`ParamBufferBuilder.cs:214-218`); without it the second sub-field's `false` reaches `WriteParam` and zeroes the whole byte. **STEP 4c — Copy AA Script. ✅ BOTH HALVES.** *Clipboard half, no CE:* the emitted text carries `{ name='Hit.bBlockingHit', type='bool', offset=213, mask=0x01, value=1 }` and `{ name='Hit.bStartPenetrating', type='bool', offset=213, mask=0x02, value=1 }` — same offset, two masks. Emitter: `BakedScriptGenerator.cs:225-226`, `$"mask=0x{v.BoolFieldMask:X2}, "`, gated on `helperType == "bool" && IsSingleBitMask`. ⭐ **`git show 68a404d6^:…/BakedScriptGenerator.cs | grep mask` returns NOTHING** — the pre-fix emitter had no mask token at all, so the Lua (`ue5_invoke_helper.lua:303-307`) fell to the whole-byte write. Built-in control inside the same text: `{ name='Hit.ElementIndex', type='byte', offset=212, value=0 }` — a byte-sized NON-bool neighbour carries no mask, so the token is not simply stamped on everything. *CE half:* the helper was exported via **Tools → Export CE Helper Lua File…** and is **sha256-identical** to `scripts/ue5_invoke_helper.lua` (`91125c657d5ce3666b4d…`), embedded as a table file, the script pasted into CE's address list with Ctrl+V (the route the UI's own status line names), and the record ticked → `[Invoke] OK: DumperTestActor::D4_OnActorHitProbe (void return)` with `params[213] = 03` at `g_invokeMailbox + 0x328` — **the value predicted from the script text before CE ran it**. ⚠⭐ **An ambiguity that had to be killed, not argued away:** the UI's FIRE (ii) had ALSO left `03`, so the value alone could not prove the CE script wrote it. The byte was zeroed from CE Lua (`params[213] now = 00`), the record re-ticked, and it came back **`03`**. Controls: `params[208..218] = 00 00 00 00 00 03 00 00 00 00 00`. ℹ The second copy is ~2× the first because *Verify return value* was ticked, which makes the emitter add the `[Invoke] Before/After` params dump and a contract check BEFORE the first mailbox write. ⛔ **Do NOT reach for that dump as the observable on a re-run — it cannot carry this byte.** `ComputeDumpLength` (`BakedScriptGenerator.cs:68-84`) starts at `DefaultDumpBytes = 32` (`:44`) and only grows to reach a RETURN slot; `D4_OnActorHitProbe` returns **void**, so the dump stays **32 bytes** and byte 213 is outside it. Observed exactly that: both dumps read all-zero. The mailbox read above is the observable; the tick-box is useful only because `AppendCleanupAndClose(sb, keepEngineOpen: verifyReturn)` then suppresses the Lua Engine auto-close. ⚠ **And the clipboard half only exists while CE is CLOSED.** `OnCopyBakedScriptClicked` PREFERS AOBMaker (`InvokeParamDialog.cs:893-899`) and pushes straight into CE's address list when it is available, in which case nothing reaches the clipboard and this row's *"readable without CE"* claim silently evaporates. The witness that the clipboard branch actually ran is the status line's own opening literal, **`AOBMaker not connected.`**, which is what it read here — CE was launched only afterwards, for the run half. ℹ The record unticks ITSELF ~100 ms after a successful run (`BakedScriptGenerator.cs:433-438`), so `Active == false` a second later is the expected SUCCESS state, not a refusal to tick. **STEP 5 — read-back mismatch. ✅ BOTH ARMS.** ⭐⭐ **First, the finding that decides the whole step: THE READ-BACK IS BOOL-ONLY.** The verify branch lives inside `if (field.TypeName == "BoolProperty")` (`LiveWalkerViewModel.cs:5711`, read-back at `:5749`); the scalar/enum `else` writes and never reads back. So the fixture's ticking FLOAT (`F32_Ticking`), the obvious "field the game recomputes each tick", **can only ever print "Written"** — a run that picked it would have measured nothing and looked like a failure of the fix. ⛔ **And the fixture has NO tick-written bool:** `ADumperTestActor::Tick` (`DumperTestActor.cpp:473`) writes `FrameCount`, `FrameCountReflected` and, only when armed, `ContestWrites` plus the PLAYER PAWN's `bCanBeDamaged` — every one an int32 except that pawn bool, which moves at the frame rate (~15 Hz) against a write→read-back gap of about one pipe round trip. An in-game contender is therefore structurally ~2 orders of magnitude too slow, which is WHY this row demanded a deterministic contender rather than suggesting one. ⭐ **The contender is OUT-OF-PROCESS (`WriteProcessMemory`), costing ZERO pipe slots.** `Fern.h:51` `kMaxPipeInstances = 3`, the UI holds 2, and `docs/handover.md` §4 rule 4 forbids a third pipe client while the UI is connected — so the row's own suggestion (*"a third-slot pipe client"*) is the one thing that must NOT be done. Same trick as `tg1_clearall_result_gate.py`. **Rate MEASURED, never quoted:** 203,427 writes in 35.00 s (**5,812/s**), 258,421 in 45.00 s (**5,743/s**), and **342,501 in 60.00 s (5,708/s)** during the armed edit itself. Host: `bPlainBool`, offset `0x661`, address **`0x191703EA061`** (base `0x191703E9A00` + 1633), read off the grid's own Address column rather than computed and trusted. **ARMED →** *"⚠ Wrote bPlainBool = false, but the game now reads true (byte 0x01) — it may be recomputing this field."*, byte-for-byte the template at `LiveWalkerViewModel.cs:5756-5757`. **DISARMED →** *"Written: bPlainBool = false"*, and the byte really became `00`. ⭐⭐ **THE PRE-FIX FACT, which is the real discriminator and is stronger than the byte:** at `68a404d6^` the editor had **NO READ-BACK AT ALL** — `git show 68a404d6^:…/LiveWalkerViewModel.cs` matches `nowReads` / `readBackMismatch` / `read back` **zero** times, and `:5627` is an **unconditional** `StatusText = $"Written: {field.Name} = {newValue}";`. So a pre-fix build prints `Written:` for every bool edit that did not throw, and the warning observed here is **unreachable on it by construction** — not by winning a race. `68a404d6` is the commit that added it (51 lines in that file). ⚠ **CORRECTED 2026-09-16 by the adversarial review of this run: there were TWO armed runs, not one.** An earlier draft reported a single armed edit because I read the TOP status bar instead of Live Walker's own status line and concluded the first armed edit had not committed. It had. `ui-view-0.log` carries all three edits, and every one falls cleanly inside or outside a contender window whose start is derived from that run's own end time minus its own measured duration: **15:32:30.568 WARN** (inside `bzd2tcj26` 15:31:58–15:32:43, ARMED) · **15:33:06.927 clean** (between windows, 15:32:43–15:33:45, DISARMED) · **15:34:51.396 WARN** (inside `bvz7oesgq` 15:34:45–15:35:45, ARMED). **2 armed → 2 mismatches; 1 disarmed → 1 clean**, with no mismatch outside an armed window. ⭐ **The review proposed the opposite reading and it was checked rather than waved away:** from the log timestamps alone it argued `bPlainBool` mismatches non-deterministically with nothing armed, which would have voided the attribution. It did not have the contender schedule; against that schedule the claim does not survive. Recorded so the next reader does not re-open it. ⭐ **The same-byte control, which the log gives for free:** the WARN line is `EDIT bPlainBool @ 0x191703EA061: wrote 0x00, read back 0x01` (`LiveWalkerViewModel.cs:5757` prints `writeAddr` verbatim) — **byte-identical to the contender's target address**, so "the contender and the UI wrote the same byte" is measured, not assumed. A contender parked on the wrong byte would otherwise read as a clean pass. ⭐ **The arms are a true A/B:** same starting state (`true` / `01`), same target (`false`), same keystrokes (double-click the Value cell, type `f` for the ComboBox's prefix match, Enter); the ONLY difference is whether the contender was running. ⚠ **Two honest notes.** (1) `pipe_client.py` WAS run while the UI was connected for the layout queries above, which `docs/handover.md` §4 rule 4 forbids; slot 3 happened to be free and nothing broke, but it was against a recorded rule — the step-5 contender was deliberately built out-of-process so the violation was not repeated where it would have mattered. (2) The read-back at `:5749` runs BEFORE `RefreshAsync()` at `:5779`, so the status line and the grid row are two different samples of the same byte; under a live contender they can disagree, and that is expected rather than a fault. ℹ **No machine state left:** the contender's last write put `bPlainBool` back to `01`, which is the fixture constructor's own value. | DumperTest + UI; **CE for the Copy AA Script and bit read-back steps** — go-ahead given 2026-09-12 |
 | L11 | `[A2-UFUNC-TAIL-4X]` `[A3-CEFORM-4X-STALESLAB]` | On a **4.11-4.17** title (NEKOPALIVE 4.11 or Extinction 4.15, per `test-games.md`), with the NEW DLL:
 1. **ParmsSize:** list a class's functions. A UFunction with params reports a `parms_size` of at least its last param's offset + size, not a small number equal to its param count, and `num_parms` matches the param list.
 2. **Invoke:** FIRE a function that has an out-param or a return value. It completes, and the game survives several repeats; the old buffer was undersized inside the game.

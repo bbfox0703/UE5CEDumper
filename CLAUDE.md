@@ -38,7 +38,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
   a patch that matched nothing.
 - ⛔ **No new PowerShell: every helper is Python** (`build.ps1` is the one exception). Bitdefender
   quarantined six files when a new `.ps1` ran. **Commit before executing anything newly written.**
-  The rest of the session rules: [handover §4](docs/handover-2026-08-22.md).
+  The rest of the session rules: [handover §4](docs/handover.md).
 
 -----
 
@@ -240,11 +240,11 @@ line, trim a row, do not grow.
 
 | Document | Contents |
 |----------|----------|
-| [docs/handover-2026-08-22.md](docs/handover-2026-08-22.md) | 🤝 **START HERE — the single entry point.** A fresh session's first ten minutes: tree state, computer-use grants, launching a fixture, the hard rules, gates/tests/builds, driving CE, what is open, traps, closing a row. |
+| [docs/handover.md](docs/handover.md) | 🤝 **START HERE — the runbook.** Open it first in a fresh session, and again whenever you grant an app, launch a fixture or a game, run a rig, drive CE or need a session rule. Procedures only; what is open is in `docs/todo.md`. |
 | [docs/todo.md](docs/todo.md) | **What's next** — open work only, with effort/risk tags. |
 | [docs/verification-register.md](docs/verification-register.md) | **What is shipped but not yet proven on a running game** — one row per check, each naming its acceptance test. ⛔ Read its charter before proposing to delete a row. |
 | [docs/dev-log.md](docs/dev-log.md) | **What shipped** — append-only, newest-first milestone history per build number. Read when investigating when or why X was added. |
-| [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 40 .h** DLL files, **242** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
+| [docs/architecture.md](docs/architecture.md) | Directory structure (**31 .cpp + 40 .h** DLL files, **243** test files, and what each does), git submodules, build environment, component interaction + startup sequence, log layout + retention. |
 | [docs/dll-spec.md](docs/dll-spec.md) | C++ DLL interface — C ABI exports (**63** — derive it, never hand-edit), the public headers, DynOff runtime offset tables, the CE Lua inject-only bridge. ⚠ The headers are ground truth; this doc trails them. |
 | [docs/working-lessons.md](docs/working-lessons.md) | ⭐ **How to work here.** Long — read the section the task needs: §1 before a verification claim, §2 before an audit, §3 before an Avalonia / CE / SQLite / build change, §4 for UE and CE facts, §6 before proposing an architecture or UX change (settled decisions), §8 before writing a code comment. Write new lessons here. |
 | [docs/naming-convention.md](docs/naming-convention.md) | Frieren-themed C++ file / namespace mapping (Macht/Genau/Aura/Serie/Ubel/Frieren/Fern/...) |

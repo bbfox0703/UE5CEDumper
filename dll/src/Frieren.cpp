@@ -45,8 +45,9 @@ uintptr_t   g_cachedGWorld          = 0;
 uintptr_t   g_cachedSparseDelegates = 0;  // FSparseDelegateStorage::SparseDelegates (UE 5.0+, optional)
 uint32_t    g_cachedUEVersion = 0;
 bool        g_cachedVersionDetected = true;  // false if UE version detection failed (PE + memory scan)
-bool        g_cachedIsUserOverride  = false; // true = ueVersion came from a user-set persistent override
+bool        g_cachedIsUserOverride  = false; // true = the version in force is the user's override (persisted, or cleared with Auto pending)
 bool        g_cachedIsLowConfidence = false; // true = Tier 3 bare-pattern OR publisher-bias fallback
+bool        g_cachedAutoPending     = false; // true = Auto chosen, nothing on record to hand back: the override's version holds until the next launch
 bool        g_cachedVersionTooOld   = false; // true = engine predates 4.11 — scan skipped, see Genau.h
 const char* g_cachedPublisherThumbprint = nullptr;  // e.g. "SQUARE_ENIX" (nullptr if no match)
 const char* g_cachedGObjectsMethod        = "not_found";  // "aob", "data_scan", "not_found"
@@ -141,6 +142,111 @@ static bool CopyToBuffer(const std::string& src, char* buf, int32_t bufLen) {
     return true;
 }
 
+namespace FrierenInit {
+// The live half of DynOff::ApplyVersionLadder: the probe's facts, the CMC read and the log lines. Init runs it after
+// the offsets probe, and Auto chosen over an override runs it on the detection it restores, so both land on the
+// version the same evidence proves. `who` prefixes the log lines, which the A4 rig greps for.
+DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who) {
+    DynOff::StructuralVersionFacts f;
+    f.measured            = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
+    f.fproperty           = DynOff::bUseFProperty;
+    f.flatObjectArray     = Aura::IsFlat();
+    f.taggedFFieldVariant = DynOff::bTaggedFFieldVariant;
+    // The UE5.7 reordered FUObjectItem: the Object* moved to +0x08 (e.g. Solarpunk, the stock-UE5.7 repro). Detected
+    // during the GObjects scan, so reliable even in a menu. The item SIZE grows with the build configuration -- 24
+    // Shipping, 32 Development (STATS=1 appends TStatId), 40 Test (UE 5.7's Build.h added
+    // ENABLE_STATNAMEDEVENTS_UOBJECT, appending TStatId + StatIDStringStorage; see Lineal::kItemStrideCandidates) --
+    // and pinning 24 alone silently excluded every stripped 5.7+ Development or Test build. Avowed's custom 20-byte
+    // packed layout (UE5.3, not a version signal) keeps its Object at +0x00 (docs/avowed-gobjects-fix.md), so the
+    // offset test excludes it on its own and the size guard is belt-and-braces. The "unverified" packed
+    // reconstruction (IsPacked, never seen in a real game) would also be 24 bytes at +0x00; the offset test stays
+    // specific to the reorder.
+    const int itemSz      = Aura::GetItemSize();
+    f.reorderedItem57     = DynOff::IsReorderedFUObjectItem57(Aura::GetItemObjOffset(), itemSz);
+    // UE 5.8 made ~FFieldClass() VIRTUAL (5.7.4 Field.h `COREUOBJECT_API ~FFieldClass();` -> 5.8.0/5.8.1/5.8.2
+    // `COREUOBJECT_API virtual ~FFieldClass();`), unconditionally -- the `#if UE_WITH_CONSTINIT_UOBJECT` block begins
+    // after it -- and FFieldClass has no base class with `FName Name` first, so the vfptr takes +0x00 and Name moves
+    // to +0x08. Without it the ladder topped out at 507 and a string-stripped 5.8 title badged as UE 5.7: the 507
+    // predicate is satisfied by a 5.8 binary too, because FUObjectItem did not change between them. FFIELDCLASS_NAME
+    // defaults to 0x00 and is latched ONLY on a successful PickFFieldClassNameOffset, so 0x08 is always a probe that
+    // chose it against the stricter LooksLikeFieldClassName suffix test, never a leftover default.
+    f.virtualDtor58       = DynOff::IsVirtualDtorFFieldClass58(DynOff::FFIELDCLASS_NAME);
+
+    // CharacterMovementComponent markers [R7-X4]: the reflected UFUNCTION SetGravityDirection means UE5.4+, the
+    // FVector GravityDirection PROPERTY only 5.3+ -- stock 5.3 already has it, and treating it as 5.4 raised every
+    // stock 5.3 title with a CMC to 504. The rule and its measurements are DynOff::CmcMarkerVersion. Best-effort and
+    // bounded: one CMC answers it.
+    bool cmcProp = false, cmcFunc = false;
+    auto probeCmc = [&](bool& prop, bool& func) -> bool {
+        auto cmcSet = Aura::FindInstancesByClass("CharacterMovementComponent", false, 3);
+        for (const auto& r : cmcSet.results) {
+            if (!r.addr) continue;
+            uintptr_t cls = Ubel::GetClass(r.addr);
+            if (!cls) continue;
+            prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
+                                         nullptr, "StructProperty") >= 0;
+            FunctionInfo fn;
+            func = Ubel::ResolveFunctionInChain(
+                cls, "SetGravityDirection",
+                [](uintptr_t c) { return Ubel::WalkFunctions(c); },
+                [](uintptr_t c, uintptr_t& super) {
+                    return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
+                },
+                fn);
+            cmcProp = prop;
+            cmcFunc = func;
+            return true;
+        }
+        return false;
+    };
+
+    auto onRung = [&](DynOff::VersionRung rung, unsigned from, unsigned to) {
+        switch (rung) {
+        case DynOff::VersionRung::UPropertyMode:
+            // UProperty mode definitively means UE4 pre-4.25. Structural detection beats user input here -- wrong
+            // offsets break exports far worse than a wrong label -- so it overrides even a user override, and says
+            // so loudly for the UI / log triage.
+            if (userOverride)
+                LOG_WARN("%s: User override = %u but UProperty mode detected — "
+                         "structural correction wins, overriding to %u (flat=%s). "
+                         "Update your UE Version override to UE4 if this game is misclassified.",
+                         who, from, to, f.flatObjectArray ? "yes" : "no");
+            else
+                LOG_WARN("%s: UProperty mode detected (no FProperty) but version=%u (>= 500). "
+                         "Overriding to %u (flat=%s)", who, from, to, f.flatObjectArray ? "yes" : "no");
+            break;
+        case DynOff::VersionRung::TaggedFieldVariant:
+            // Heavily-stripped games (e.g. The Adventures of Elliot) lose every version string and fall back to 4.27,
+            // yet are really UE5 -- the probes already proved it (tagged FFieldVariant = UE5.3+; FProperty mode).
+            LOG_WARN("%s: structural marker (tagged FFieldVariant = UE5.3+) but "
+                     "version=%u — raising floor to 503 (UE5).", who, from);
+            break;
+        case DynOff::VersionRung::CmcMarkers:
+            LOG_WARN("%s: CMC markers (GravityDirection property=%s, SetGravityDirection "
+                     "function=%s) -- raising version %u -> %u.", who, cmcProp ? "yes" : "no",
+                     cmcFunc ? "yes" : "no", from, to);
+            break;
+        case DynOff::VersionRung::ReorderedItem:
+            LOG_WARN("%s: structural marker (FUObjectItem Object@+0x08, %dB = UE5.7+) "
+                     "but version=%u — raising floor to 507.", who, itemSz, from);
+            break;
+        case DynOff::VersionRung::VirtualFieldClassDtor:
+            // ⚠ This badge is NOT independent corroboration of the probe: a wrong FFIELDCLASS_NAME latch has ALREADY
+            // broken the property walk by the time we get here, so a 5.8 badge on a broken walk means the probe was
+            // wrong, not that the game is 5.8. Say so in the line that will be read during triage.
+            LOG_WARN("%s: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) "
+                     "but version=%u — raising floor to 508. NOTE: inherits the "
+                     "FFieldClass::Name probe's confidence; if the property walk also looks "
+                     "wrong, suspect the probe rather than trusting this badge.",
+                     who, from);
+            break;
+        }
+    };
+
+    return DynOff::ApplyVersionLadder(ueVersion, f, probeCmc, onRung);
+}
+} // namespace FrierenInit
+
 extern "C" {
 
 bool UE5_Init() {
@@ -196,6 +302,7 @@ bool UE5_Init() {
     g_cachedVersionDetected = ptrs.bVersionDetected;
     g_cachedIsUserOverride  = ptrs.bUserOverride;
     g_cachedIsLowConfidence = ptrs.bLowConfidence;
+    g_cachedAutoPending     = false;   // a fresh scan read the cache, so a cleared override is already gone
     g_cachedVersionTooOld   = ptrs.bVersionTooOld;
     g_cachedPublisherThumbprint = ptrs.publisherThumbprint;
     g_cachedGObjectsMethod        = ptrs.gobjectsMethod;
@@ -424,130 +531,18 @@ bool UE5_Init() {
         g_cachedGEngineAobLen    = ptrs.gengineAobLen;
         g_cachedGEngineExport    = ptrs.gengineExport;
 
-        // Post-DynOff version correction: UProperty mode definitively means UE4 pre-4.25.
-        // Structural detection beats user input here — wrong offsets break exports far worse
-        // than a wrong label, so we override even when bUserOverride is set (and log loudly
-        // so the UI / log triage notices).
-        if (!DynOff::bUseFProperty && ptrs.UEVersion >= 500) {
-            uint32_t corrected = Aura::IsFlat() ? 418 : 424;
-            if (ptrs.bUserOverride) {
-                LOG_WARN("UE5_Init: User override = %u but UProperty mode detected — "
-                         "structural correction wins, overriding to %u (flat=%s). "
-                         "Update your UE Version override to UE4 if this game is misclassified.",
-                         ptrs.UEVersion, corrected, Aura::IsFlat() ? "yes" : "no");
-            } else {
-                LOG_WARN("UE5_Init: UProperty mode detected (no FProperty) but version=%u (>= 500). "
-                         "Overriding to %u (flat=%s)", ptrs.UEVersion, corrected,
-                         Aura::IsFlat() ? "yes" : "no");
-            }
-            ptrs.UEVersion = corrected;
-            g_cachedUEVersion = ptrs.UEVersion;
-            g_cachedIsLowConfidence = true; // post-correction, user shouldn't blindly trust label
-        }
-
-        // Post-DynOff version correction (UPWARD): structural / property markers can
-        // reveal that a stripped binary is a NEWER engine than the version-string scan
-        // found. Heavily-stripped games (e.g. The Adventures of Elliot) lose every
-        // version string and fall back to 4.27, yet are really UE5 — the structural
-        // probes already proved it (tagged FFieldVariant = UE5.3+; FProperty mode).
-        // Raise the floor so version-gated behaviour (the >=500 branches in Aura/Ubel)
-        // and the UI badge are honest. Runtime-only: the cached RAW detection is left
-        // as-is and re-corrected here on every init, so no cache delete is ever needed.
-        if (DynOff::bUseFProperty && DynOff::bTaggedFFieldVariant && g_cachedUEVersion < 503) {
-            LOG_WARN("UE5_Init: structural marker (tagged FFieldVariant = UE5.3+) but "
-                     "version=%u — raising floor to 503 (UE5).", g_cachedUEVersion);
-            ptrs.UEVersion    = 503;
-            g_cachedUEVersion = 503;
-        }
-        // CharacterMovementComponent markers [R7-X4]: the reflected UFUNCTION SetGravityDirection
-        // means UE5.4+, the FVector GravityDirection PROPERTY only 5.3+ -- stock 5.3 already has it,
-        // and treating it as 5.4 raised every stock 5.3 title with a CMC to 504. The rule and its
-        // measurements are DynOff::CmcMarkerVersion. Only probe for UE5 games below 504, so
-        // genuine UE4 games never pay the GObjects walk. Best-effort + bounded: one CMC answers it.
-        if (DynOff::bUseFProperty && g_cachedUEVersion >= 500 && g_cachedUEVersion < 504) {
-            auto cmcSet = Aura::FindInstancesByClass("CharacterMovementComponent", false, 3);
-            for (const auto& r : cmcSet.results) {
-                if (!r.addr) continue;
-                uintptr_t cls = Ubel::GetClass(r.addr);
-                if (!cls) continue;
-                const bool prop = Ubel::FindFieldOffset(cls, "GravityDirection", "GravityDirection",
-                                                        nullptr, "StructProperty") >= 0;
-                FunctionInfo fn;
-                const bool func = Ubel::ResolveFunctionInChain(
-                    cls, "SetGravityDirection",
-                    [](uintptr_t c) { return Ubel::WalkFunctions(c); },
-                    [](uintptr_t c, uintptr_t& super) {
-                        return Macht::ReadSafe(c + static_cast<uintptr_t>(DynOff::USTRUCT_SUPER), super);
-                    },
-                    fn);
-                const unsigned raised = DynOff::CmcMarkerVersion(g_cachedUEVersion, true, prop, func);
-                if (raised != g_cachedUEVersion) {
-                    LOG_WARN("UE5_Init: CMC markers (GravityDirection property=%s, SetGravityDirection "
-                             "function=%s) -- raising version %u -> %u.", prop ? "yes" : "no",
-                             func ? "yes" : "no", g_cachedUEVersion, raised);
-                    ptrs.UEVersion    = raised;
-                    g_cachedUEVersion = raised;
-                }
-                break;
-            }
-        }
-        // Structural marker: the UE5.7 reordered FUObjectItem — the standard 24-byte
-        // item with the Object* moved to +0x08 (e.g. Solarpunk, the stock-UE5.7 repro).
-        // Detected during the GObjects scan, so reliable even in a menu. The ==24 stride
-        // guard excludes Avowed's CUSTOM 20-byte packed layout (UE5.3 — not a version
-        // signal). The "unverified" packed reconstruction (IsPacked, never seen in a
-        // real game) would also be 24B at +0x00; this offset test stays specific to the
-        // reorder.
-        // ⚠ The size set is {24, 32, 40}, not just 24. Object@+0x08 IS the 5.7 reorder,
-        // but the item grows with the build configuration: 24 Shipping, 32 Development
-        // (STATS=1 appends TStatId), 40 Test (UE 5.7's Build.h added
-        // ENABLE_STATNAMEDEVENTS_UOBJECT, appending TStatId + StatIDStringStorage — see
-        // Lineal::kItemStrideCandidates). Pinning ==24 silently excluded every stripped
-        // 5.7+ Development or Test build from this raise. Avowed's custom 20-byte packed
-        // layout is already excluded by the +0x08 test alone: its Object is at +0x00
-        // (docs/avowed-gobjects-fix.md), so the size guard is belt-and-braces, not the
-        // discriminator it was written as.
-        const int itemSz = Aura::GetItemSize();
-        if (DynOff::bUseFProperty && g_cachedUEVersion < 507
-            && DynOff::IsReorderedFUObjectItem57(Aura::GetItemObjOffset(), itemSz)) {
-            LOG_WARN("UE5_Init: structural marker (FUObjectItem Object@+0x08, %dB = UE5.7+) "
-                     "but version=%u — raising floor to 507.", itemSz, g_cachedUEVersion);
-            ptrs.UEVersion    = 507;
-            g_cachedUEVersion = 507;
-        }
-
-        // Structural marker: UE 5.8 made ~FFieldClass() VIRTUAL (5.7.4 Field.h:100
-        // `COREUOBJECT_API ~FFieldClass();` -> 5.8.0/5.8.1/5.8.2 Field.h:101
-        // `COREUOBJECT_API virtual ~FFieldClass();`). It is UNCONDITIONAL — the
-        // `#if UE_WITH_CONSTINIT_UOBJECT` block begins after it — and FFieldClass has no
-        // base class with `FName Name` first, so the vfptr takes +0x00 and Name moves to
-        // +0x08. Without this the chain topped out at 507, and a string-stripped 5.8 title
-        // badged as UE 5.7: the 507 predicate above is satisfied by a 5.8 binary too,
-        // because FUObjectItem did not change between them.
-        //
-        // FFIELDCLASS_NAME defaults to 0x00 (the <=5.7 layout) and is latched ONLY on a
-        // successful PickFFieldClassNameOffset (Genau.cpp, `fcNameOff >= 0`), so 0x08 can
-        // never be a leftover default — it is always a probe that specifically chose 0x08
-        // against the stricter `LooksLikeFieldClassName` suffix test.
-        //
-        // ⚠ The `>= 500` guard is NOT cosmetic. A false positive in that probe on a UE4
-        // title would otherwise raise 427 -> 508, crossing the >=500 / >=501 gates in
-        // Aura and Ubel — a breaking raise, unlike the harmless 507 -> 508. The 504 marker
-        // above carries the same guard for the same reason.
-        if (DynOff::bUseFProperty && g_cachedUEVersion >= 500 && g_cachedUEVersion < 508
-            && DynOff::IsVirtualDtorFFieldClass58(DynOff::FFIELDCLASS_NAME)) {
-            // ⚠ This badge is NOT independent corroboration of the probe: a wrong
-            // FFIELDCLASS_NAME latch has ALREADY broken the property walk by the time we
-            // get here, so a 5.8 badge on a broken walk means the probe was wrong, not
-            // that the game is 5.8. Say so in the line that will be read during triage.
-            LOG_WARN("UE5_Init: structural marker (FFieldClass::Name@+0x08 = vfptr, UE5.8+) "
-                     "but version=%u — raising floor to 508. NOTE: inherits the "
-                     "FFieldClass::Name probe's confidence; if the property walk also looks "
-                     "wrong, suspect the probe rather than trusting this badge.",
-                     g_cachedUEVersion);
-            ptrs.UEVersion    = 508;
-            g_cachedUEVersion = 508;
-        }
+        // Post-DynOff version correction: UProperty mode down to UE4, then the structural markers
+        // up to the UE5 minor the layout proves, so version-gated behaviour (the >=500 branches in
+        // Aura/Ubel) and the UI badge are honest. Runtime-only: the cached RAW detection is left
+        // as-is and re-corrected here on every init, so no cache delete is ever needed. The rungs
+        // and their order are DynOff::ApplyVersionLadder; the reads and the log lines are
+        // FrierenInit::CorrectVersionStructurally.
+        const DynOff::StructuralVersion corrected =
+            FrierenInit::CorrectVersionStructurally(ptrs.UEVersion, ptrs.bUserOverride, "UE5_Init");
+        ptrs.UEVersion    = corrected.version;
+        g_cachedUEVersion = corrected.version;
+        if (corrected.loweredToUE4)
+            g_cachedIsLowConfidence = true;   // post-correction, the user shouldn't blindly trust the label
     } else {
         LOG_WARN("UE5_Init: Partial init — GObjects=%s GNames=%s — skipping offset validation",
                  ptrs.GObjects ? "OK" : "MISSING", ptrs.GNames ? "OK" : "MISSING");

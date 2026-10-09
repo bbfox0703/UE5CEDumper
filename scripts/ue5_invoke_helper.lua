@@ -562,9 +562,13 @@ if not invokeUFunction or _invokeOutdated then
   --- @param className string  e.g. 'PlayerCharacter' (must match a
   ---                          live, non-CDO instance's UClass name)
   --- @param funcName  string  e.g. 'AddMoney'
-  --- @param parmsSize number  Total params buffer size in bytes
-  ---                          (from the function metadata; zero-fill
-  ---                          uses this to clear stale bytes)
+  --- @param parmsSize number  Total params buffer size in bytes: where the
+  ---                          function's parameter chain ends, which the
+  ---                          UI bakes (BakedScriptGenerator.BakedParmsSize)
+  ---                          -- not the tail's ParmsSize, another field
+  ---                          under a wrong UE version. It gates the slab
+  ---                          below and bounds every write; the DLL also
+  ---                          refuses a block past the slab on its own.
   --- @param params    table   Array of param descriptors:
   ---                          { { name=..., type='int32',
   ---                              offset=0, value=1000 }, ... }

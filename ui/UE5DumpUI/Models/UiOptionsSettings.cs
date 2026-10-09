@@ -10,7 +10,8 @@ namespace UE5DumpUI.Models;
 ///
 /// Deliberately EXCLUDED (session-only by nature): search/filter/query text boxes,
 /// live-data selections + results, addresses, one-shot modes, transient view state
-/// (tab index, panel-collapse), busy/status flags. Also excluded because already
+/// (tab index, panel-collapse), busy/status flags. A collapse the maintainer asked the
+/// next start to keep is a layout choice instead, and is kept. Also excluded because already
 /// persisted elsewhere: snapshot quota + the experimental opt-in (ExperimentalGate /
 /// experimental.json), UE-version override + invoke timeout (DLL per-game state),
 /// teleport hotkeys (TeleportHotkeyStore), per-game class denylists (SnapshotStore).
@@ -253,6 +254,9 @@ public sealed class LiveFuncsUiOptions
     /// <summary>[LIVEFUNCS-STEP2] The snapshot buffer, 2^N MB: 3..7 is 8..128 MB, default 32 (T12). The choices
     /// themselves are never kept: they are name keys of one game process.</summary>
     public int SnapshotBufferExponent { get; set; } = 5;
+    /// <summary>[LF-COMPACT-TOP] The capture settings folded under their header line (the maintainer, 2026-10-08). Off
+    /// by default, so a file from before it shows every setting.</summary>
+    public bool CaptureSettingsCollapsed { get; set; }
 }
 
 public sealed class GameClassFilterUiOptions

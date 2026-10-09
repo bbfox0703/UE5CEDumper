@@ -13,7 +13,7 @@ namespace UE5DumpUI.Tests;
 /// version number: 400-410 = "UE 4.0-4.10, the right family but too old", and the sentinel 300 =
 /// "positively identified as pre-UE4 (UE3), a different object model". They must never collapse
 /// into one message, because the 4.10 text's remedy line ("set a UE version override") is
-/// meaningless for UE3 — the override list has no value below 4.18 and no value at any version
+/// meaningless for UE3 — the override list has no value below 4.11 and no value at any version
 /// would make UE3's absent structures appear.
 ///
 /// Also pins the notification fix: <c>ShowVersionTooOldWarning</c> was missing from
@@ -221,5 +221,175 @@ public class PointerPanelVersionGateTests
         // Mirrors Grimoire::PRE_UE4_SENTINEL_VERSION. If the DLL's value ever moves, this is the
         // canary — the two are compared only by this number, there is no shared header.
         Assert.Equal(300, PointerPanelViewModel.PreUE4SentinelVersion);
+    }
+
+    // ══ [UE-OVERRIDE-411] The override reaches the support floor ══════════════════════════════
+    //
+    // The too-old banner tells the user to set an override when the detection is wrong, and the
+    // DLL accepts every version from its support floor up. The list stopped at 4.18, so a 4.11-4.17
+    // title had nothing to pick. The floor is read from the DLL's own header, never typed here.
+
+    private static int DllSupportFloor()
+    {
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "build.ps1"))) d = d.Parent;
+        string grimoire = File.ReadAllText(Path.Combine(
+            d?.FullName ?? throw new DirectoryNotFoundException("repo root"), "dll", "src", "Grimoire.h"));
+        var m = System.Text.RegularExpressions.Regex.Match(grimoire,
+            @"constexpr\s+uint32_t\s+MIN_SUPPORTED_UE_VERSION\s*=\s*(\d+)\s*;");
+        Assert.True(m.Success, "MIN_SUPPORTED_UE_VERSION not found in Grimoire.h");
+        return int.Parse(m.Groups[1].Value);
+    }
+
+    private static List<int> OverrideVersions()
+        => PointerPanelViewModel.UeVersionOverrideOptions.Where(o => o != "Auto")
+            .Select(PointerPanelViewModel.LabelToVersion).ToList();
+
+    [Fact]
+    public void OverrideList_StartsAtTheDllSupportFloor()
+    {
+        int floor = DllSupportFloor();
+        Assert.Equal(floor, OverrideVersions().Min());
+    }
+
+    [Fact]
+    public void OverrideList_OffersEveryUe4MinorFromTheFloor_InOrder()
+    {
+        int floor = DllSupportFloor();
+        var ue4 = OverrideVersions().Where(v => v < 500).ToList();
+        Assert.Equal(Enumerable.Range(floor, 427 - floor + 1), ue4);
+    }
+
+    [Fact]
+    public void OverrideList_KeepsAutoFirstAndEveryLabelRoundTrips()
+    {
+        Assert.Equal("Auto", PointerPanelViewModel.UeVersionOverrideOptions[0]);
+        foreach (string label in PointerPanelViewModel.UeVersionOverrideOptions.Skip(1))
+            Assert.Equal(label, PointerPanelViewModel.VersionToLabel(PointerPanelViewModel.LabelToVersion(label)));
+    }
+
+    private sealed class OverrideRecorder : StubDumpService
+    {
+        public readonly List<int> Sent = new();
+        public override Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true,
+                                                                    CancellationToken ct = default)
+        {
+            Sent.Add(version);
+            return Task.FromResult(new EngineState { UEVersion = version, IsUserOverride = true, ObjectCount = 1 });
+        }
+    }
+
+    [Fact]
+    public void ChoosingUe411_SendsItAndShowsItBack()
+    {
+        var dump = new OverrideRecorder();
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(new EngineState { UEVersion = 504, ObjectCount = 1 });
+
+        vm.SelectedUeVersionOverride = "UE 4.11";
+
+        Assert.Equal(new[] { 411 }, dump.Sent);
+        Assert.Equal("UE 4.11", vm.SelectedUeVersionOverride);
+        Assert.Contains(vm.SelectedUeVersionOverride, PointerPanelViewModel.UeVersionOverrideOptions);
+    }
+
+    // ══ [UE-OVERRIDE-HINT-AUTO] Auto, chosen over an override ════════════════════════════════════
+    //
+    // Auto used to clear only the DLL's override flag and keep the overridden version, which the panel then showed
+    // unbadged, as if detected. The DLL now hands back the detection on record at once; with none to hand back, the
+    // override's version stays in force until the next launch, the DLL keeps calling it an override, and get_pointers
+    // says Auto is pending. The ComboBox shows the user's choice; the badge shows what is in force.
+
+    private sealed class AutoRecorder : StubDumpService
+    {
+        private readonly EngineState _reply;
+        public readonly List<int> Sent = new();
+        public AutoRecorder(EngineState reply) => _reply = reply;
+        public override Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true,
+                                                                    CancellationToken ct = default)
+        {
+            Sent.Add(version);
+            return Task.FromResult(_reply);
+        }
+    }
+
+    private static EngineState Overridden(int ueVersion) => new()
+    {
+        UEVersion = ueVersion, VersionDetected = true, IsUserOverride = true, ObjectCount = 1,
+    };
+
+    private static EngineState AutoPending(int ueVersion) => new()
+    {
+        UEVersion = ueVersion, VersionDetected = true, IsUserOverride = true, IsAutoPending = true, ObjectCount = 1,
+    };
+
+    [Fact]
+    public void Auto_WithADetectionOnRecord_ShowsItAsDetected()
+    {
+        var dump = new AutoRecorder(new EngineState { UEVersion = 504, VersionDetected = true, ObjectCount = 1 });
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(Overridden(427));
+        Assert.Equal("UE 4.27", vm.SelectedUeVersionOverride);
+
+        vm.SelectedUeVersionOverride = "Auto";
+
+        Assert.Equal(new[] { 0 }, dump.Sent);
+        Assert.Equal(504, vm.UeVersion);
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);
+        Assert.True(vm.ShowVersionDetectedBadge);
+        Assert.False(vm.ShowUserOverrideBadge);
+        Assert.False(vm.ShowAutoPendingNote);
+    }
+
+    [Fact]
+    public void Auto_WithNoDetectionOnRecord_KeepsAutoChosenAndSaysWhenItApplies()
+    {
+        var dump = new AutoRecorder(AutoPending(427));
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(Overridden(427));
+
+        vm.SelectedUeVersionOverride = "Auto";
+
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);   // it used to snap back to "UE 4.27"
+        Assert.True(vm.ShowAutoPendingNote);
+        Assert.True(vm.ShowUserOverrideBadge);                // the version in force is still the override's...
+        Assert.False(vm.ShowVersionDetectedBadge);            // ...and is never shown as detected
+        Assert.False(vm.ShowLowConfidenceWarning);
+    }
+
+    [Fact]
+    public void Reconnect_WhileAutoIsPending_ShowsAutoAndTheNote()
+    {
+        var vm = NewVm();
+        vm.Update(AutoPending(427));
+
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);
+        Assert.True(vm.ShowAutoPendingNote);
+        Assert.True(vm.ShowUserOverrideBadge);
+    }
+
+    [Fact]
+    public void AnOverrideInForce_IsShownAsTheOverride_WithNoPendingNote()
+    {
+        var vm = NewVm();
+        vm.Update(Overridden(427));
+
+        Assert.Equal("UE 4.27", vm.SelectedUeVersionOverride);
+        Assert.False(vm.ShowAutoPendingNote);
+    }
+
+    [Fact]
+    public void Update_RaisesTheAutoPendingNote()
+    {
+        var vm = NewVm();
+        var raised = new List<string>();
+        ((INotifyPropertyChanged)vm).PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != null) raised.Add(e.PropertyName);
+        };
+
+        vm.Update(AutoPending(427));
+
+        Assert.Contains(nameof(PointerPanelViewModel.ShowAutoPendingNote), raised);
     }
 }

@@ -111,7 +111,9 @@ __declspec(dllexport) uintptr_t UE5_FindInstanceOfClass(const char* className);
 __declspec(dllexport) uintptr_t UE5_FindFunctionByName(uintptr_t classAddr, const char* funcName);
 
 // Call UObject::ProcessEvent(ufunc, params). Returns 0 on success, negative on error.
-// params must point to a buffer of at least UFunction::ParmsSize bytes.
+// params must reach the end of the function's own parameter chain (the furthest CPF_Parm entry's
+// Offset_Internal + ElementSize, the return value included; Ubel::ParamBufferSize). UFunction::ParmsSize
+// read under a wrong UE version is another field, not that size.
 //
 // Error codes (the FULL set — verified against Frieren.cpp's UE5_CallProcessEventEx and
 // Stark::EnqueueInvoke; there is no -6):

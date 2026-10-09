@@ -102,6 +102,13 @@ GATES = [
      ["tools/verify/crc_authority_survey.py", "--selftest"],
      "the CRC oracle merge self-test failed", False),
 
+    # [VER-410-GATE] rev 9: the offline mirror of Genau's VERSIONINFO reader ports EngineBuildStringCode; a port that
+    # drifts mis-plans every row chosen by which tier a title's resource reaches
+    ("pe_version_probe_selftest",
+     ["tools/verify/pe_version_probe.py", "--selftest"],
+     "pe_version_probe.py's port of Grimoire::EngineBuildStringCode no longer gives the C++ helper test's answers",
+     False),
+
     # [SDK-METACLASS] the engine-source oracle for SDK headers: its verdicts are evidence, so every blind spot the
     # review of 2026-09-27 found is a fixture that must keep its verdict
     ("sdk_source_oracle_selftest",
@@ -188,6 +195,14 @@ GATES = [
      "'py tools/check_processevent_slots.py --list'. ⚠ The runtime pattern scan is "
      "still primary and a per-BUILD difference is not a bug; this only pins the "
      "fallback table against its own source", False),
+
+    # [UE-OVERRIDE-411] review 2: the call sites that size a ProcessEvent buffer live in files no test target compiles
+    ("check_processevent_buffers",
+     ["tools/check_processevent_buffers.py"],
+     "a buffer handed to ProcessEvent is sized from a UFunction ParmsSize without Ubel::ParamBufferSize / "
+     "DynOff::ProcessEventBufferBytes, or a UE5_CallProcessEventEx size is not its buffer's own size. ParmsSize is "
+     "read from the UFunction's tail, which a UE version from the wrong side of 4.18 misplaces, and ProcessEvent then "
+     "writes the return value past the buffer ([UE-OVERRIDE-411]). Size it with Ubel::ParamBufferSize", False),
 
     ("check_property_family",
      ["tools/check_property_family.py"],

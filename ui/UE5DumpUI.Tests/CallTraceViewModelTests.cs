@@ -1035,6 +1035,144 @@ public class CallTraceViewModelTests
         Assert.Equal(260.0, older.CallTrace.ObjectColWidth);
     }
 
+    // ---- [CT-DETAIL-COVERS-LIST] the remembered widths fitted to the room the panel has ----
+    // SplitWidth is the width the list and the detail pane share. The list's floor is 512: a row's item padding (24),
+    // Time, Duration and Thread at their default widths (96 + 88 + 64), Object at its floor (80), and 160 of Function.
+
+    private static (double time, double duration, double thread, double obj) ShownColumns(CallTraceViewModel vm)
+        => (vm.ShownTimeColWidth, vm.ShownDurationColWidth, vm.ShownThreadColWidth, vm.ShownObjectColWidth);
+
+    [Fact]
+    public void The_pane_shows_its_remembered_width_where_the_list_keeps_its_floor_beside_it()
+    {
+        // Build 3645: a remembered 766 in a narrower panel covered the whole list.
+        var (vm, _) = MakeVm(Dump());
+        vm.DetailPaneWidth = 766;
+        Assert.Equal(766.0, vm.ShownDetailPaneWidth);       // not laid out yet: nothing to fit it to
+        vm.SplitWidth = 1000;
+        Assert.Equal(1000.0 - 512, vm.ShownDetailPaneWidth);
+        Assert.Equal(766.0, vm.DetailPaneWidth);            // still the user's
+        vm.SplitWidth = 1600;                               // a wider window gives it back
+        Assert.Equal(766.0, vm.ShownDetailPaneWidth);
+    }
+
+    [Fact]
+    public void A_panel_narrower_than_both_floors_keeps_the_pane_at_its_200_and_gives_the_list_the_rest()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.DetailPaneWidth = 4096;
+        vm.SplitWidth = 600;
+        Assert.Equal(200.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 50;
+        Assert.Equal(200.0, vm.ShownDetailPaneWidth);
+    }
+
+    [Fact]
+    public void A_layout_raises_the_shown_widths_and_never_writes_a_remembered_one()
+    {
+        // A remembered width's change is what saves ui-options.json: a window resize must neither save nor lose it.
+        var (vm, _) = MakeVm(Dump());
+        vm.DetailPaneWidth = 766;
+        vm.TimeColWidth = 300;
+        vm.ObjectColWidth = 900;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.SplitWidth = 700;
+        vm.SplitWidth = 2400;
+        vm.SplitWidth = 700;
+        string[] remembered = { nameof(CallTraceViewModel.TimeColWidth), nameof(CallTraceViewModel.DurationColWidth),
+                                nameof(CallTraceViewModel.ThreadColWidth), nameof(CallTraceViewModel.ObjectColWidth),
+                                nameof(CallTraceViewModel.DetailPaneWidth) };
+        Assert.DoesNotContain(raised, n => remembered.Contains(n));
+        Assert.Equal((300.0, 88.0, 64.0, 900.0, 766.0),
+                     (vm.TimeColWidth, vm.DurationColWidth, vm.ThreadColWidth, vm.ObjectColWidth, vm.DetailPaneWidth));
+        foreach (var shown in new[] { nameof(CallTraceViewModel.ShownDetailPaneWidth), nameof(CallTraceViewModel.ShownTimeColWidth),
+                                      nameof(CallTraceViewModel.ShownObjectColWidth) })
+            Assert.Contains(shown, raised);
+    }
+
+    [Fact]
+    public void A_pane_drag_past_the_limit_stops_there_and_the_next_drag_back_moves_at_once()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.SplitWidth = 1000;          // the pane may show 488
+        vm.DragDetailPane(+400);       // from 380, asks for 780
+        Assert.Equal(488.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(488.0, vm.DetailPaneWidth);   // what a drag leaves shown is what is remembered
+        vm.DragDetailPane(-30);
+        Assert.Equal(458.0, vm.ShownDetailPaneWidth);
+    }
+
+    [Fact]
+    public void A_pane_drag_starts_from_the_width_shown_not_the_one_remembered()
+    {
+        // The remembered 766 shows as 488: a drag 10 narrower moves the pane at once, with no margin to undo first.
+        var (vm, _) = MakeVm(Dump());
+        vm.DetailPaneWidth = 766;
+        vm.SplitWidth = 1000;
+        vm.DragDetailPane(-10);
+        Assert.Equal((478.0, 478.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        vm.DragDetailPane(-1000);
+        Assert.Equal(200.0, vm.ShownDetailPaneWidth);   // its own floor
+    }
+
+    [Fact]
+    public void Object_gives_way_so_Function_keeps_160_and_comes_back_to_its_remembered_width_with_room()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.SplitWidth = 1000;   // the pane 380, the list 620: a row's cells have 596
+        Assert.Equal((96.0, 88.0, 64.0, 596.0 - 248 - 160), ShownColumns(vm));
+        Assert.Equal(260.0, vm.ObjectColWidth);
+        vm.SplitWidth = 1400;   // 996 for the cells: every column as remembered
+        Assert.Equal((96.0, 88.0, 64.0, 260.0), ShownColumns(vm));
+    }
+
+    [Fact]
+    public void The_columns_give_way_from_the_right_each_to_its_floor()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.TimeColWidth = 4096;   // hand-edited, or dragged on a wider screen
+        vm.SplitWidth = 1000;     // 596 for the cells: Time keeps what Function and the others' floors leave
+        Assert.Equal((596.0 - 160 - 40 - 32 - 80, 40.0, 32.0, 80.0), ShownColumns(vm));
+        Assert.Equal(4096.0, vm.TimeColWidth);
+    }
+
+    [Fact]
+    public void A_list_below_its_floor_is_laid_out_as_at_its_floor_and_cut_at_its_edge()
+    {
+        // The pane keeps its 200 and the list has 400 of its 512. Squeezed to their floors instead, the columns would
+        // show less of every one of them, Time included; laid out as at the floor, Time and Duration stay whole.
+        var (vm, _) = MakeVm(Dump());
+        vm.SplitWidth = 600;
+        Assert.Equal((96.0, 88.0, 64.0, 80.0), ShownColumns(vm));
+    }
+
+    [Fact]
+    public void A_column_drag_starts_from_the_width_shown_stops_where_Function_keeps_160_and_comes_back_at_once()
+    {
+        var (vm, _) = MakeVm(Dump());
+        vm.SplitWidth = 1000;   // 596 for the cells; Object shows 188 of its 260
+        vm.DragThread(+1000);   // Thread pushes Object to its floor, then stops: 596 - 160 - 96 - 88 - 80
+        Assert.Equal((96.0, 88.0, 172.0, 80.0), ShownColumns(vm));
+        Assert.Equal(172.0, vm.ThreadColWidth);
+        vm.DragThread(-10);
+        Assert.Equal((96.0, 88.0, 162.0, 90.0), ShownColumns(vm));
+        Assert.Equal(260.0, vm.ObjectColWidth);   // pushed, not dragged: still the user's
+
+        vm.TimeColWidth = 4096;   // shown as 284, the columns after it at their floors
+        Assert.Equal((284.0, 40.0, 32.0, 80.0), ShownColumns(vm));
+        vm.DragTime(-10);         // from the 284 shown; the 10 it frees goes to Duration, the next that wants room
+        Assert.Equal((274.0, 50.0, 32.0, 80.0), ShownColumns(vm));
+        Assert.Equal(274.0, vm.TimeColWidth);
+
+        vm.TimeColWidth = 96;
+        vm.SplitWidth = 1400;     // 996 for the cells
+        vm.DragObject(+1000);     // Object's step widens it, up to what Function's 160 leaves
+        Assert.Equal(996.0 - 160 - 96 - 88 - 162, vm.ShownObjectColWidth);
+        vm.DragObject(-5);
+        Assert.Equal(996.0 - 160 - 96 - 88 - 162 - 5, vm.ShownObjectColWidth);
+    }
+
     private static readonly XNamespace Av = "https://github.com/avaloniaui";
     private static readonly XNamespace Xaml = "http://schemas.microsoft.com/winfx/2006/xaml";
     /// <summary>A row cell's width binding: a row's DataContext is its CallTraceRow, so the width comes from the
@@ -1053,14 +1191,15 @@ public class CallTraceViewModelTests
         var row = RowTemplate(PanelAxaml());
         // A ColumnDefinition is not a Visual, so a $parent binding on it never resolves: fixed columns cannot follow a drag.
         Assert.DoesNotContain(row.DescendantsAndSelf(), e => e.Attribute("ColumnDefinitions") != null);
-        foreach (var (width, text) in new[] { ("TimeColWidth", "TimeText"), ("DurationColWidth", "DurationText"),
-                                              ("ThreadColWidth", "ThreadText"), ("ObjectColWidth", "ObjectText") })
+        // [CT-DETAIL-COVERS-LIST] The width shown, fitted to the list; the remembered one is what is saved.
+        foreach (var (width, text) in new[] { ("ShownTimeColWidth", "TimeText"), ("ShownDurationColWidth", "DurationText"),
+                                              ("ShownThreadColWidth", "ThreadText"), ("ShownObjectColWidth", "ObjectText") })
         {
             var cells = row.Descendants().Where(e => (string?)e.Attribute("Width") == RowWidth + width + "}").ToList();
             Assert.True(cells.Count == 1, $"{cells.Count} row cell(s) bind {width}");
             Assert.Contains(cells[0].DescendantsAndSelf(), e => (string?)e.Attribute("Text") == "{Binding " + text + "}");
         }
-        var obj = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ObjectColWidth}");
+        var obj = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ShownObjectColWidth}");
         Assert.Contains(obj.DescendantsAndSelf(),
                         e => ((string?)e.Attribute("ToolTip.Tip") ?? "").StartsWith("{Binding Object", StringComparison.Ordinal));
     }
@@ -1072,14 +1211,14 @@ public class CallTraceViewModelTests
         var row = RowTemplate(doc);
         var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
         Assert.DoesNotContain(outside, e => e.Attribute("ColumnDefinitions") != null);
-        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        foreach (var width in new[] { "ShownTimeColWidth", "ShownDurationColWidth", "ShownThreadColWidth", "ShownObjectColWidth" })
         {
             var cells = outside.Where(e => (string?)e.Attribute("Width") == "{Binding " + width + "}").ToList();
             Assert.True(cells.Count == 1, $"{cells.Count} header cell(s) bind {width}");
             Assert.Contains(cells[0].Descendants(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
         }
         // [LIVEFUNCS-STEP2] U13: the pane is a TabControl now (Call | Parameters); the width and its thumb are its.
-        var pane = outside.Single(e => (string?)e.Attribute("Width") == "{Binding DetailPaneWidth}");
+        var pane = outside.Single(e => (string?)e.Attribute("Width") == "{Binding ShownDetailPaneWidth}");
         Assert.Contains(pane.Descendants(Av + "TextBox"),
                         e => (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
         Assert.Contains(pane.Parent!.Elements(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
@@ -1110,7 +1249,7 @@ public class CallTraceViewModelTests
         var doc = PanelAxaml();
         var row = RowTemplate(doc);
         var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
-        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        foreach (var width in new[] { "ShownTimeColWidth", "ShownDurationColWidth", "ShownThreadColWidth", "ShownObjectColWidth" })
         {
             var header = outside.Single(e => (string?)e.Attribute("Width") == "{Binding " + width + "}");
             var cell = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + width + "}");
@@ -1118,12 +1257,12 @@ public class CallTraceViewModelTests
             Assert.True((string?)cell.Attribute("HorizontalAlignment") == "Left", $"the row's {width} cell is not aligned left");
         }
         // The header is outside the list and is drawn after the detail pane: unclipped, its overflow covers that pane.
-        var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding TimeColWidth}").Parent!;
+        var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding ShownTimeColWidth}").Parent!;
         Assert.True((string?)headerRow.Attribute("ClipToBounds") == "True", "the header's row does not clip what overflows it");
         // A row is narrower than the list's viewport by the item's padding: a column the row places at its own edge
         // would show there, over the column cut at that edge (measured with the list narrower than Time, Duration and
         // Thread together).
-        var rowPanel = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "TimeColWidth}").Parent!;
+        var rowPanel = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ShownTimeColWidth}").Parent!;
         Assert.True((string?)rowPanel.Attribute("ClipToBounds") == "True", "a row does not clip what overflows it");
     }
 
@@ -1301,13 +1440,13 @@ public class CallTraceViewModelTests
     /// module unless one is given.</summary>
     private static StackSite Site(ulong addr, string module = "", ulong moduleBase = 0, ulong fn = 0, bool unwind = true,
                                   bool own = false, string known = "", string? ceModule = null, string cls = "",
-                                  string func = "", int shared = 0)
+                                  string func = "", int shared = 0, bool script = false)
         => new()
         {
             Addr = addr, Module = module, CeModule = ceModule ?? module, ModuleBase = moduleBase,
             Rva = module.Length == 0 ? 0 : (uint)(addr - moduleBase), Fn = fn,
             FnRva = fn == 0 || module.Length == 0 ? 0 : (uint)(fn - moduleBase), Unwind = unwind, Own = own, Known = known,
-            UFunc = func.Length == 0 ? 0 : 0x5000UL, ClassName = cls, FuncName = func, Shared = shared,
+            UFunc = func.Length == 0 ? 0 : 0x5000UL, ClassName = cls, FuncName = func, Shared = shared, Script = script,
         };
 
     // Call 0's stack, nearest first: a frame of each kind the tab names.
@@ -1448,6 +1587,17 @@ public class CallTraceViewModelTests
         // A name without its class still reads.
         Assert.Equal(Line("str.CT.Stack.Native", "Fire", 0x18UL),
                      vm.FrameWhere(Site(thunk + 0x18, "Game.exe", GameBase, fn: thunk, func: "Fire"), index));
+        // [A1-INTERP-LABEL] The script functions' entry is the Blueprint interpreter: the function the DLL names is only
+        // the lowest-addressed of them (live on DQ XI S, a level script's function on the minimap widget's stack), so
+        // the line names the interpreter and how many enter it, never that function.
+        string interp = vm.FrameWhere(Site(thunk + 0x525, "Game.exe", GameBase, fn: thunk, cls: "x00_Snd_Common_C",
+                                           func: "Game - CasinoNpcScheduleEnd", shared: 6678, script: true), index);
+        Assert.DoesNotContain("CasinoNpcScheduleEnd", interp, StringComparison.Ordinal);
+        Assert.Equal(Line("str.CT.Stack.Interpreter", 0x525UL, 6678), interp);
+        // A script entry no other function shares (one Blueprint function loaded) is still the interpreter.
+        Assert.Equal(Line("str.CT.Stack.InterpreterOne", 0x525UL),
+                     vm.FrameWhere(Site(thunk + 0x525, "Game.exe", GameBase, fn: thunk, cls: "BP_A_C", func: "Tick",
+                                        script: true), index));
     }
 
     private static readonly string[] SlotFlagKeys =
@@ -1597,8 +1747,12 @@ public class CallTraceViewModelTests
         {
             Assert.Equal(Av + "DataGridTemplateColumn", c.Name);
             Assert.Equal("vm:StackFrameRow", (string?)c.Descendants(Av + "DataTemplate").Single().Attribute(Xaml + "DataType"));
-            Assert.DoesNotContain("*", (string?)c.Attribute("Width") ?? "", StringComparison.Ordinal);   // no star column
         }
+        // [CT-STACK-WHERE-WIDTH] Where is the one star column: it takes what a wide pane leaves, and its 420 floor keeps a
+        // narrow pane scrolling sideways instead of squeezing it (CallTraceColumnsTests lays both out).
+        var star = Assert.Single(columns, c => ((string?)c.Attribute("Width") ?? "").Contains('*'));
+        Assert.Equal("{StaticResource str.CT.Stack.Col.Where}", (string?)star.Attribute("Header"));
+        Assert.Equal("420", (string?)star.Attribute("MinWidth"));
         foreach (var path in new[] { "Index", "Address", "Where" })
             Assert.Contains(grid.Descendants(Av + "TextBlock"), e => (string?)e.Attribute("Text") == "{Binding " + path + "}");
 

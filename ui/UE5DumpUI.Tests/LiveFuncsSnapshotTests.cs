@@ -10,6 +10,8 @@ namespace UE5DumpUI.Tests;
 /// [LIVEFUNCS-STEP2] Live Funcs' parameter snapshots: choosing by name (U5), the estimate (U6), the bulk choice (U7)
 /// and the view's wiring (U8). docs/live-funcs-step2-items.md. [LIVEFUNCS-STEP3] The native-stack choice beside them,
 /// with its view, budget, per-frame question and estimate: the S3-U items of docs/live-funcs-step3-items.md.
+/// Clear choices: the one clear that drops the trace's ticks with them. [LF-COMPACT-TOP] The controls above the table,
+/// made smaller: what each still says and when.
 /// </summary>
 public class LiveFuncsSnapshotTests
 {
@@ -98,13 +100,17 @@ public class LiveFuncsSnapshotTests
         public void StopProcessMirror() { }
     }
 
-    private static (LiveFuncsViewModel vm, FakeDumpService dump) MakeVm(bool experimental = true)
+    private static (LiveFuncsViewModel vm, FakeDumpService dump) MakeVm(bool experimental = true,
+                                                                         IPlatformService? platform = null)
     {
         var dump = new FakeDumpService();
-        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), null, experimentalGate: new Gate(experimental))
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), platform, experimentalGate: new Gate(experimental))
         {
             StringLookup = En,
         };
+        // Folded, the summary's raise is posted to the UI thread, which a unit test does not run: held per view model
+        // rather than left on the process-wide dispatcher. A test that reads the raise takes the queue (HoldPosts).
+        HoldPosts(vm);
         return (vm, dump);
     }
 
@@ -292,6 +298,63 @@ public class LiveFuncsSnapshotTests
         vm.SnapshotBufferExponent = 3;
         vm.ToggleSnapshotCommand.Execute(vm.Results.Single());
         Assert.True(vm.SnapshotEstimateWarn);
+    }
+
+    /// <summary>T13's orange compares the busiest choice with what the trace keeps, and the trace keeps less with a
+    /// smaller buffer or more ticked calls: either change can flip it, and a flip nobody raises leaves the line its old
+    /// colour, and the folded summary disagreeing with it. Clearing the ticks is such a change too, and so is the buffer
+    /// with Trace unticked: the estimate weighs them either way.</summary>
+    [Fact]
+    public async Task The_parameter_estimates_orange_is_raised_when_the_trace_buffer_or_a_tick_flips_it()
+    {
+        var (vm, dump) = MakeVm();
+        // A::Hot, chosen: 100 calls a second, and 8 MB of 2,072-byte slots keeps 2,024 of them, ~20 s. The trace keeps
+        // 32 MB / (100 x 80 B) = ~4,194 s of the chosen calls alone, but with A::Busy ticked (30,000 a second) ~14 s, and
+        // ~28 s once the trace has 64 MB.
+        dump.NextGet = ResultOf(10_000, Row("A", "Hot", "0x1", KeyF, count: 1_000, size: 2048),
+                                Row("A", "Busy", "0x2", KeyG, count: 300_000));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.SnapshotBufferExponent = 3;
+        vm.TraceBufferExponent = 5;
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "Hot"));
+        Assert.True(vm.SnapshotEstimateWarn);
+        var raised = Raised(vm);
+
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "Busy"));
+        Assert.False(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        raised.Clear();
+        vm.TraceBufferExponent = 6;
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        // Back to 32 MB with A::Busy ticked (~14 s): not orange. Clear ticks leaves the trace A::Hot's calls alone
+        // again (~4,194 s): orange.
+        vm.TraceBufferExponent = 5;
+        Assert.False(vm.SnapshotEstimateWarn);
+        raised.Clear();
+        vm.ClearTicksCommand.Execute(null);
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        // Trace unticked, the choices stay, and so does the estimate the line shows for them.
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "Busy"));
+        vm.TraceEnabled = false;
+        Assert.False(vm.SnapshotEstimateWarn);
+        raised.Clear();
+        vm.TraceBufferExponent = 6;
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
+
+        // ...and Clear ticks with Trace still unticked: the ticks it clears still weigh in the estimate.
+        vm.TraceBufferExponent = 5;
+        Assert.False(vm.SnapshotEstimateWarn);
+        raised.Clear();
+        vm.ClearTicksCommand.Execute(null);
+        Assert.True(vm.SnapshotEstimateWarn);
+        Assert.Contains(nameof(LiveFuncsViewModel.SnapshotEstimateWarn), raised);
     }
 
     // ---- U7 ----
@@ -1433,6 +1496,655 @@ public class LiveFuncsSnapshotTests
         Assert.Equal(Line("str.Tip.LF.Stack.Estimate", 2.0, 10.0), vm.StackEstimateTip);
         Assert.Contains("2.0", vm.StackEstimateTip, StringComparison.Ordinal);
         Assert.Contains("10", vm.StackEstimateTip, StringComparison.Ordinal);
+    }
+
+    // ---- [LF-COMPACT-TOP] the controls above the table, made smaller ----
+
+    /// <summary>(1) The warning shows one line of its essentials and keeps the whole text one click away: the four-line
+    /// text was the biggest block above the table. The one line is still the warning, so it keeps the D3 pair (grey,
+    /// orange with the estimate) and wraps rather than clip in a narrow window; the whole text keeps every point the
+    /// maintainer asked the step-3 warning to make, and shows only while its Details toggle is down.</summary>
+    [Fact]
+    public void The_stack_warning_is_one_line_of_essentials_and_Details_shows_the_whole_text()
+    {
+        string shortLine = Line("str.LF.Stack.WarningShort");
+        // The risk too, not only the advice: "save first" says what to do, and the stall or crash is why.
+        foreach (var essential in new[] { "soft capture", "game's own thread", "frame", "stall or crash", "save first",
+                                          "few functions" })
+            Assert.Contains(essential, shortLine, StringComparison.OrdinalIgnoreCase);
+        string whole = Line("str.LF.Stack.Warning");
+        foreach (var point in new[] { "not a debugger capture like Cheat Engine's", "in software", "added to the game's frame",
+                                      "stopping mid-capture", "stall or crash the game", "save first", "few functions" })
+            Assert.Contains(point, whole, StringComparison.Ordinal);
+        Assert.True(shortLine.Length * 4 < whole.Length, $"the one line is {shortLine.Length} characters of {whole.Length}");
+        Assert.True(Line("str.LF.Stack.WarningDetails").Length > 0);
+        Assert.True(Line("str.Tip.LF.Stack.WarningDetails").Length > 0);
+
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var blocks = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value).ToList();
+        var pair = blocks.Where(b => b.Contains("Text=\"{StaticResource str.LF.Stack.WarningShort}\"", StringComparison.Ordinal))
+                         .ToList();
+        Assert.True(pair.Count == 2, "the one line is not shown by two TextBlocks");
+        var full = blocks.Single(b => b.Contains("Text=\"{StaticResource str.LF.Stack.Warning}\"", StringComparison.Ordinal)
+                                      && b.Contains("IsVisible=\"{Binding StackEstimateWarn}\"", StringComparison.Ordinal));
+        string orange = Regex.Match(full, @"Foreground=""(?<c>[^""]+)""").Groups["c"].Value;
+        string hot = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding StackEstimateWarn}\"", StringComparison.Ordinal));
+        string calm = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding !StackEstimateWarn}\"", StringComparison.Ordinal));
+        Assert.Contains($"Foreground=\"{orange}\"", hot, StringComparison.Ordinal);
+        Assert.DoesNotContain($"Foreground=\"{orange}\"", calm, StringComparison.Ordinal);
+        foreach (var b in pair) Assert.Contains("TextWrapping=\"Wrap\"", b, StringComparison.Ordinal);
+
+        // The toggle, by its name, and the whole text inside the one panel that follows it.
+        var toggle = Regex.Matches(axaml, @"<ToggleButton\b[^>]*/>").Select(m => m.Value)
+                          .Single(t => t.Contains("Content=\"{StaticResource str.LF.Stack.WarningDetails}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Stack.WarningDetails}\"", toggle, StringComparison.Ordinal);
+        string name = Regex.Match(toggle, @"x:Name=""(?<n>\w+)""").Groups["n"].Value;
+        Assert.True(name.Length > 0, "the Details toggle has no name to bind to");
+        int shortAt = axaml.IndexOf("Text=\"{StaticResource str.LF.Stack.WarningShort}\"", StringComparison.Ordinal);
+        int toggleAt = axaml.IndexOf(toggle, StringComparison.Ordinal);
+        int wholeAt = axaml.IndexOf("Text=\"{StaticResource str.LF.Stack.Warning}\"", StringComparison.Ordinal);
+        Assert.True(shortAt < toggleAt && toggleAt < wholeAt, "the one line, its toggle and the whole text are out of order");
+        var opens = Regex.Matches(axaml[..wholeAt], @"<Panel\b[^>]*>");
+        Assert.Contains($"IsVisible=\"{{Binding #{name}.IsChecked}}\"", opens[^1].Value, StringComparison.Ordinal);
+    }
+
+    /// <summary>(3) The baseline's line speaks only when there is a baseline, or Diff is on and there is none: it said "No
+    /// baseline" to every user who never asked for one, a line of the panel spent on a hint. Each way it can change is
+    /// raised, the last one when Diff was already off and nothing else would be.</summary>
+    [Fact]
+    public async Task The_baseline_line_shows_only_with_a_baseline_or_with_Diff_on()
+    {
+        var (vm, dump) = MakeVm();
+        var raised = Raised(vm);
+        Assert.False(vm.BaselineStatusVisible);
+
+        vm.DiffMode = true;                                   // Diff without a baseline: the line says there is none
+        Assert.True(vm.BaselineStatusVisible);
+        Assert.Contains(nameof(LiveFuncsViewModel.BaselineStatusVisible), raised);
+        vm.DiffMode = false;
+        Assert.False(vm.BaselineStatusVisible);
+
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF));
+        await Fetch(vm);
+        raised.Clear();
+        vm.SetBaselineCommand.Execute(null);
+        Assert.True(vm.BaselineStatusVisible);
+        Assert.Contains(nameof(LiveFuncsViewModel.BaselineStatusVisible), raised);
+        vm.DiffMode = false;                                  // a baseline kept with Diff off is still worth its line
+        Assert.True(vm.BaselineStatusVisible);
+
+        raised.Clear();
+        vm.ClearBaselineCommand.Execute(null);
+        Assert.False(vm.BaselineStatusVisible);
+        Assert.Contains(nameof(LiveFuncsViewModel.BaselineStatusVisible), raised);
+    }
+
+    /// <summary>(3) The hint the line gave moves into Set Baseline's tooltip, and the line binds its visibility.</summary>
+    [Fact]
+    public void The_no_baseline_hint_is_in_Set_Baselines_tooltip_and_the_line_binds_its_visibility()
+    {
+        Assert.Contains("record idle, then Set Baseline", Line("str.Tip.LF.SetBaseline"), StringComparison.Ordinal);
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var line = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value)
+                        .Single(b => b.Contains("Text=\"{Binding BaselineStatus}\"", StringComparison.Ordinal));
+        Assert.Contains("IsVisible=\"{Binding BaselineStatusVisible}\"", line, StringComparison.Ordinal);
+        var button = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value)
+                          .Single(b => b.Contains("Command=\"{Binding SetBaselineCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.SetBaseline}\"", button, StringComparison.Ordinal);
+    }
+
+    /// <summary>(2) The capture settings start unfolded, so a user who never folds them sees what they always saw, and the
+    /// header's button folds and unfolds them, saying which it will do. Folding is a view choice that changes no setting,
+    /// so it is not refused while recording.</summary>
+    [Fact]
+    public async Task The_capture_settings_start_unfolded_and_the_header_button_folds_and_unfolds_them()
+    {
+        var (vm, _) = MakeVm();
+        var raised = Raised(vm);
+        Assert.False(vm.CaptureSettingsCollapsed);
+        Assert.Equal(Line("str.LF.Settings.Collapse"), vm.CaptureSettingsToggleText);
+
+        vm.ToggleCaptureSettingsCommand.Execute(null);
+        Assert.True(vm.CaptureSettingsCollapsed);
+        Assert.Equal(Line("str.LF.Settings.Expand"), vm.CaptureSettingsToggleText);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSettingsCollapsed), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSettingsToggleText), raised);
+        // Unfolded, nothing raised the summary: the fold brings it up to date at once, not after a post.
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummary), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn), raised);
+        Assert.NotEqual(vm.CaptureSettingsToggleText, Line("str.LF.Settings.Collapse"));
+
+        vm.ToggleCaptureSettingsCommand.Execute(null);
+        Assert.False(vm.CaptureSettingsCollapsed);
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        vm.ToggleCaptureSettingsCommand.Execute(null);
+        Assert.True(vm.CaptureSettingsCollapsed);
+    }
+
+    private static string Summary(params string[] parts) => string.Join(" · ", parts);
+
+    /// <summary>The summary's raise, posted where the app posts it to the UI thread, held here instead: a unit test has no
+    /// UI thread to run it. <see cref="Settle"/> runs what was posted, as the UI thread does once the burst is over.</summary>
+    private static Queue<Action> HoldPosts(LiveFuncsViewModel vm)
+    {
+        var posted = new Queue<Action>();
+        vm.PostCaptureSummaryRaise = posted.Enqueue;
+        return posted;
+    }
+
+    private static void Settle(Queue<Action> posted)
+    {
+        while (posted.TryDequeue(out var post)) post();
+    }
+
+    /// <summary>(2) Folded, the header says what is set: the plain capture's settings always, and with the experimental
+    /// trace its switch and buffer, the three choice counts, the stack budget once a stack is chosen, the snapshot buffer
+    /// once anything fills it, and, with a stack chosen, a short warning of the stack's risk, which folding never hides.</summary>
+    [Fact]
+    public async Task The_summary_says_what_is_set()
+    {
+        var (plain, _) = MakeVm(experimental: false);
+        Assert.Equal(Line("str.LF.Summary.Fetch", 512, 1), plain.CaptureSummary);
+        plain.FetchLimitExponent = 10;
+        plain.MinCallsExponent = 2;
+        plain.HidePerFrame = true;
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 1024, 4), Line("str.LF.Summary.HidePerFrame")), plain.CaptureSummary);
+        plain.TraceEnabled = true;                               // no trace without the experimental tabs: nothing to say
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 1024, 4), Line("str.LF.Summary.HidePerFrame")), plain.CaptureSummary);
+
+        var (vm, dump) = MakeVm();
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
+                             Line("str.LF.Summary.Choices", 0, 0, 0)), vm.CaptureSummary);
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        vm.TraceBufferExponent = 5;
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        Assert.Equal(Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOn", 32),
+                             Line("str.LF.Summary.Choices", 0, 0, 1),
+                             Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Standard")),
+                             Line("str.LF.Summary.SnapBuffer", 32), Line("str.LF.Summary.StackRisk")), vm.CaptureSummary);
+        Assert.False(vm.CaptureSummaryWarn);
+        // The section's own one line is too long for a line that sums up; the summary says the stack risk shortly, and
+        // still as a warning.
+        Assert.DoesNotContain(Line("str.LF.Stack.WarningShort"), vm.CaptureSummary, StringComparison.Ordinal);
+        string risk = Line("str.LF.Summary.StackRisk");
+        Assert.StartsWith("⚠", risk, StringComparison.Ordinal);
+        foreach (var essential in new[] { "stacks", "save first", "few" })
+            Assert.Contains(essential, risk, StringComparison.OrdinalIgnoreCase);
+        Assert.True(risk.Length * 3 < Line("str.LF.Stack.WarningShort").Length,
+                    $"the summary's stack warning is {risk.Length} characters, the section's {Line("str.LF.Stack.WarningShort").Length}");
+
+        // A 128 MB snapshot buffer keeps G's one call a second longer than the 32 MB trace keeps the chosen calls, so
+        // nothing here warns and the summary is the settings alone. Three different counts, so counts in the wrong
+        // places show: two ticked, one for parameters, one for a stack.
+        vm.StackBudgetLow = true;
+        vm.SnapshotBufferExponent = 7;
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "F"));
+        vm.ToggleTickCommand.Execute(Shown(vm, "A", "G"));
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        vm.TraceEnabled = false;
+        Assert.False(vm.SnapshotEstimateWarn);
+        string expected = Summary(Line("str.LF.Summary.Fetch", 512, 1), Line("str.LF.Summary.TraceOff"),
+                                  Line("str.LF.Summary.Choices", 2, 1, 1),
+                                  Line("str.LF.Summary.StackBudget", Line("str.LF.Stack.Low")),
+                                  Line("str.LF.Summary.SnapBuffer", 128), Line("str.LF.Summary.StackRisk"));
+        Assert.Equal(expected, vm.CaptureSummary);
+        Assert.False(vm.CaptureSummaryWarn);
+
+        // The counts are the choices, not the rows on screen: a filter that hides A::F (ticked, and chosen for a stack)
+        // leaves them as they are, as the next Start takes every choice.
+        vm.FilterText = "G";
+        Assert.DoesNotContain(vm.Results, r => r.FuncName == "F");
+        Assert.Equal(expected, vm.CaptureSummary);
+    }
+
+    /// <summary>(2) Folding never hides a warning: each orange line the section can show puts its own short warning in
+    /// the summary and turns it orange -- the stack estimate over 2 ms a second, the parameter estimate (a choice that
+    /// keeps less time than the trace, or a buffer the DLL refuses), and memory over what is free.</summary>
+    [Fact]
+    public async Task Every_orange_line_of_the_section_turns_the_summary_orange_with_its_warning()
+    {
+        var (stacks, stacksDump) = await WithRatesToEstimate();
+        await stacks.ToggleStackCommand.ExecuteAsync(Shown(stacks, "A", "F"));
+        Assert.False(stacks.CaptureSummaryWarn);
+        await RecordStacks(stacks, stacksDump, captures: 100, spentTicks: 100_000);   // 100 us: 25 a second is 2.5 ms
+        Assert.True(stacks.StackEstimateWarn);
+        Assert.True(stacks.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.StackWarn", 2.5), stacks.CaptureSummary, StringComparison.Ordinal);
+        // The risk stays beside the cost: a summary that kept only the cost once it is orange would hide the risk.
+        Assert.Contains(Line("str.LF.Summary.StackRisk"), stacks.CaptureSummary, StringComparison.Ordinal);
+
+        var (busy, busyDump) = MakeVm();
+        busyDump.NextGet = ResultOf(10_000, Row("A", "Hot", "0x1", KeyF, count: 100_000, size: 2048));
+        await Fetch(busy);
+        busy.TraceEnabled = true;
+        busy.SnapshotBufferExponent = 3;
+        busy.ToggleSnapshotCommand.Execute(busy.Results.Single());
+        Assert.True(busy.SnapshotEstimateWarn);
+        Assert.True(busy.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.SnapWarn"), busy.CaptureSummary, StringComparison.Ordinal);
+        Assert.DoesNotContain(Line("str.LF.Summary.SnapTooSmall"), busy.CaptureSummary, StringComparison.Ordinal);
+
+        // 510 functions of a 2 KB block in 8 MB: fewer than 8 slots a ring, so the DLL would refuse the Start.
+        var (many, manyDump) = MakeVm();
+        manyDump.NextGet = ResultOf(10_000, Enumerable.Range(1, 510)
+            .Select(i => Row("A", $"F{i}", $"0x{i:X}", new NameKey(i, 0, 9, 0), size: 2048)).ToArray());
+        await Fetch(many);
+        many.TraceEnabled = true;
+        many.SnapshotBufferExponent = 3;
+        many.SnapshotShownRowsCommand.Execute(null);
+        Assert.Contains(Line("str.LF.Snap.TooSmall", 7).Split(':')[0], many.SnapshotEstimate, StringComparison.Ordinal);
+        Assert.True(many.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.SnapTooSmall"), many.CaptureSummary, StringComparison.Ordinal);
+
+        var platform = new MockPlatformService(Path.GetTempPath()) { AvailablePhysicalMemory = 1L << 30 };   // 1 GB
+        var (memory, _) = MakeVm(platform: platform);
+        memory.TraceEnabled = true;
+        Assert.False(memory.CaptureSummaryWarn);
+        memory.TraceBufferExponent = 9;                          // 512 MB in the game and about 1.2 GB in the UI
+        Assert.True(memory.TraceMemoryOverAvailable);
+        Assert.True(memory.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.MemoryOver", Line("str.LF.Trace.Gb", 1.0)), memory.CaptureSummary,
+                        StringComparison.Ordinal);
+        // The memory line shows with the experimental tabs, Trace ticked or not, and is orange either way: so is the
+        // summary that stands for it.
+        memory.TraceEnabled = false;
+        Assert.True(memory.TraceMemoryOverAvailable);
+        Assert.True(memory.CaptureSummaryWarn);
+        Assert.Contains(Line("str.LF.Summary.MemoryOver", Line("str.LF.Trace.Gb", 1.0)), memory.CaptureSummary,
+                        StringComparison.Ordinal);
+
+        // Without the experimental tabs the section shows none of these lines, so the summary has none to carry.
+        var (plain, _) = MakeVm(experimental: false, platform: platform);
+        plain.TraceBufferExponent = 9;
+        Assert.True(plain.TraceMemoryOverAvailable);
+        Assert.False(plain.CaptureSummaryWarn);
+        Assert.DoesNotContain("⚠", plain.CaptureSummary, StringComparison.Ordinal);
+    }
+
+    /// <summary>(2) A summary the screen keeps showing after a setting moved would be wrong while folded, which is the only
+    /// time it is read: so every change it names raises it, and its orange flag with it, once the change's work is
+    /// done.</summary>
+    [Fact]
+    public async Task The_summary_is_raised_by_every_change_it_names()
+    {
+        var (vm, dump) = await WithRatesToEstimate();
+        var posted = HoldPosts(vm);
+        vm.CaptureSettingsCollapsed = true;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        void Raises(string what, Action change)
+        {
+            raised.Clear();
+            change();
+            Settle(posted);
+            Assert.True(raised.Contains(nameof(LiveFuncsViewModel.CaptureSummary)), $"{what} does not raise the summary");
+            Assert.True(raised.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn)), $"{what} does not raise its flag");
+        }
+        Raises("the fetch limit", () => vm.FetchLimitExponent = 12);
+        Raises("min calls", () => vm.MinCallsExponent = 3);
+        Raises("hide per-frame", () => vm.HidePerFrame = true);
+        Raises("the trace's switch", () => vm.TraceEnabled = false);
+        Raises("the trace's buffer", () => vm.TraceBufferExponent = 8);
+        Raises("a tick", () => vm.ToggleTickCommand.Execute(Shown(vm, "A", "F")));
+        // A case of its own, so its post is run and checked here: left waiting, it would raise the summary for the
+        // next case, which would then pass whether or not its own change raised anything.
+        Raises("the trace's switch back on", () => vm.TraceEnabled = true);
+        Raises("a parameter choice", () => vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G")));
+        Raises("a stack choice", () => vm.ToggleStackCommand.Execute(Shown(vm, "A", "H")));
+        Raises("the stack budget", () => vm.StackBudgetLow = true);
+        Raises("the snapshot buffer", () => vm.SnapshotBufferExponent = 6);
+        raised.Clear();
+        await RecordStacks(vm, dump, captures: 100, spentTicks: 100_000);
+        Settle(posted);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummaryWarn), raised);
+        Raises("the free memory read again", () => vm.OnEnteringTab());
+    }
+
+    /// <summary>(2) What a choice click costs the summary. The click raises many of the summary's inputs, and when each
+    /// raise had every binding build the summary again, its estimates with it, a click built it once for every input it
+    /// raised and every binding, folded or not ([LF-COMPACT-TOP] keeps the count measured then). Unfolded nothing shows
+    /// it, so a click builds it not at all; folded, once a binding, after the click's work, from the one raise posted
+    /// when the first input moved. A raise posted before an unfold has nothing to show.</summary>
+    [Fact]
+    public async Task A_choice_click_builds_the_summary_once_folded_and_not_at_all_unfolded()
+    {
+        var (vm, _) = await WithRatesToEstimate();
+        var posted = HoldPosts(vm);
+        int builds = 0;
+        var lookup = vm.StringLookup;
+        // Every summary opens with the fetch limit's part, so its lookups count the summaries built.
+        vm.StringLookup = key =>
+        {
+            if (key == "str.LF.Summary.Fetch") builds++;
+            return lookup(key);
+        };
+        // As a binding does: read the value again on each raise of it.
+        vm.PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName == nameof(LiveFuncsViewModel.CaptureSummary)) _ = vm.CaptureSummary;
+            if (e.PropertyName == nameof(LiveFuncsViewModel.CaptureSummaryWarn)) _ = vm.CaptureSummaryWarn;
+        };
+
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        Settle(posted);
+        Assert.Equal(0, builds);
+
+        vm.CaptureSettingsCollapsed = true;
+        Assert.Equal(1, builds);
+        builds = 0;
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        Assert.Equal(0, builds);
+        Assert.Single(posted);
+        Settle(posted);
+        Assert.Equal(1, builds);
+        Assert.Contains(Line("str.LF.Summary.Choices", 0, 1, 2), vm.CaptureSummary, StringComparison.Ordinal);
+
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "F"));
+        Assert.Single(posted);
+        vm.CaptureSettingsCollapsed = false;
+        builds = 0;
+        Settle(posted);
+        Assert.Equal(0, builds);
+    }
+
+    /// <summary>(2) A raise posted folded that runs after an unfold shows nothing, and it is still done: the next
+    /// change made folded posts a raise of its own. One left waiting would stand for every later change, and the
+    /// summary would never be raised again.</summary>
+    [Fact]
+    public void A_raise_run_unfolded_leaves_the_next_folded_change_a_raise_of_its_own()
+    {
+        var (vm, _) = MakeVm();
+        var posted = HoldPosts(vm);
+        vm.CaptureSettingsCollapsed = true;
+        vm.FetchLimitExponent = 12;
+        Assert.Single(posted);
+        vm.CaptureSettingsCollapsed = false;
+        Settle(posted);
+
+        vm.CaptureSettingsCollapsed = true;
+        var raised = new List<string?>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName);
+        vm.MinCallsExponent = 3;
+        Settle(posted);
+        Assert.Contains(nameof(LiveFuncsViewModel.CaptureSummary), raised);
+    }
+
+    /// <summary>(2) The section's fold, its summary and the header's buttons, as the view binds them: compiled bindings
+    /// only, the summary the D3 pair (calm, and the panel's orange when it warns), wrapping so a warning is never cut.</summary>
+    [Fact]
+    public void The_header_binds_the_fold_and_the_summary_and_the_section_folds_under_it()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var buttons = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value).ToList();
+        string toggle = Assert.Single(buttons, b => b.Contains("Command=\"{Binding ToggleCaptureSettingsCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("Content=\"{Binding CaptureSettingsToggleText}\"", toggle, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.Settings.Toggle}\"", toggle, StringComparison.Ordinal);
+        Assert.DoesNotContain("IsEnabled", toggle, StringComparison.Ordinal);   // folding is not refused while recording
+        Assert.True(Line("str.Tip.LF.Settings.Toggle").Length > 0);
+
+        var blocks = Regex.Matches(axaml, @"<TextBlock\b[^>]*/>").Select(m => m.Value).ToList();
+        var pair = blocks.Where(b => b.Contains("Text=\"{Binding CaptureSummary}\"", StringComparison.Ordinal)).ToList();
+        Assert.True(pair.Count == 2, "the summary is not shown by two TextBlocks");
+        string orange = Regex.Match(blocks.Single(b => b.Contains("IsVisible=\"{Binding TraceMemoryOverAvailable}\"",
+                                                                  StringComparison.Ordinal)),
+                                    @"Foreground=""(?<c>[^""]+)""").Groups["c"].Value;
+        string hot = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding CaptureSummaryWarn}\"", StringComparison.Ordinal));
+        string calm = Assert.Single(pair, b => b.Contains("IsVisible=\"{Binding !CaptureSummaryWarn}\"", StringComparison.Ordinal));
+        Assert.Contains($"Foreground=\"{orange}\"", hot, StringComparison.Ordinal);
+        Assert.DoesNotContain($"Foreground=\"{orange}\"", calm, StringComparison.Ordinal);
+        foreach (var b in pair) Assert.Contains("TextWrapping=\"Wrap\"", b, StringComparison.Ordinal);
+
+        // Its tooltip is bound once, on the panel that holds the pair: a binding on each TextBlock built the summary once
+        // more per raise for each of them.
+        Assert.Single(Regex.Matches(axaml, Regex.Escape("ToolTip.Tip=\"{Binding CaptureSummary}\"")));
+        foreach (var b in pair) Assert.DoesNotContain("ToolTip.Tip", b, StringComparison.Ordinal);
+        string holder = Regex.Matches(axaml, @"<Panel\b[^>]*>").Select(m => m.Value)
+                             .Single(p => p.Contains("IsVisible=\"{Binding CaptureSettingsCollapsed}\"", StringComparison.Ordinal));
+        Assert.Contains("ToolTip.Tip=\"{Binding CaptureSummary}\"", holder, StringComparison.Ordinal);
+        int open = axaml.IndexOf(holder, StringComparison.Ordinal);
+        int close = axaml.IndexOf("</Panel>", open, StringComparison.Ordinal);
+        foreach (var b in pair)
+        {
+            int at = axaml.IndexOf(b, StringComparison.Ordinal);
+            Assert.True(open < at && at < close, "the summary's pair is not inside the panel that holds its tooltip");
+        }
+
+        // The summary shows folded, the section's own rows unfolded; one binding each way.
+        Assert.Contains("IsVisible=\"{Binding CaptureSettingsCollapsed}\"", axaml, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding !CaptureSettingsCollapsed}\"", axaml, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void The_fold_is_remembered_through_the_main_window()
+    {
+        // MainWindowViewModel cannot be built in a unit test; pin its three persistence sites by source, as
+        // LiveFuncsViewModelTests.HidePerFrame_PersistsThroughTheMainWindow does.
+        var main = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "ViewModels", "MainWindowViewModel.cs"));
+        Assert.Contains("nameof(LiveFuncsViewModel.CaptureSettingsCollapsed)", main, StringComparison.Ordinal);
+        Assert.Contains("LiveFuncs.CaptureSettingsCollapsed = o.LiveFuncs.CaptureSettingsCollapsed;", main, StringComparison.Ordinal);
+        Assert.Contains("o.LiveFuncs.CaptureSettingsCollapsed = LiveFuncs.CaptureSettingsCollapsed;", main, StringComparison.Ordinal);
+        // Unfolded by default on both sides, so a file from before the option shows every setting.
+        Assert.False(new UiOptionsSettings().LiveFuncs.CaptureSettingsCollapsed);
+    }
+
+    // ---- Clear choices: one clear for the three choice columns ----
+
+    /// <summary>A view model with every kind of choice, Trace on: A::F ticked and chosen for parameters and for a stack,
+    /// A::G for parameters, A::H for a stack. F carries all three, so a clear that misses one kind leaves a box ticked
+    /// on a row whose other boxes it cleared.</summary>
+    private static async Task<(LiveFuncsViewModel vm, FakeDumpService dump)> WithEveryKindOfChoice()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG), Row("A", "H", "0x3", KeyH));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        var f = Shown(vm, "A", "F");
+        vm.ToggleTickCommand.Execute(f);
+        vm.ToggleSnapshotCommand.Execute(f);
+        await vm.ToggleStackCommand.ExecuteAsync(f);
+        vm.ToggleSnapshotCommand.Execute(Shown(vm, "A", "G"));
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "H"));
+        Assert.Equal(new[] { "A::F" }, vm.TickedFunctions);
+        Assert.Equal(new[] { "A::F", "A::G" }, vm.SnapshotFunctions.Order());
+        Assert.Equal(new[] { "A::F", "A::H" }, vm.StackFunctions.Order());
+        return (vm, dump);
+    }
+
+    [Fact]
+    public async Task Clear_choices_unticks_all_three_columns_and_every_count_and_estimate_follows()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        Assert.True(vm.TraceGameMb > vm.TraceBufferMb, "the choices do not hold the snapshot buffer");
+
+        vm.ClearChoicesCommand.Execute(null);
+
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+        foreach (var r in vm.Results)
+        {
+            Assert.False(r.IsTicked, $"{r.FuncName} is still ticked for the trace");
+            Assert.False(r.IsSnapChosen, $"{r.FuncName} is still chosen for parameters");
+            Assert.False(r.IsStackChosen, $"{r.FuncName} is still chosen for a stack");
+        }
+        Assert.False(vm.HasTickedFunctions);
+        Assert.False(vm.HasSnapshotChoices);
+        Assert.False(vm.HasStackChoices);
+        Assert.Equal(Line("str.LF.Trace.TickedCount", 0), vm.TickedCountText);
+        Assert.Equal(Line("str.LF.Snap.Count", 0), vm.SnapshotCountText);
+        Assert.Equal(Line("str.LF.Stack.Count", 0), vm.StackCountText);
+        Assert.Equal(vm.TraceBufferMb, vm.TraceGameMb);   // nothing left to fill the snapshot buffer
+        Assert.Equal("", vm.SnapshotEstimate);
+        Assert.Equal("", vm.StackEstimate);
+        Assert.False(vm.StackEstimateWarn);
+    }
+
+    /// <summary>A count, a "has" flag or an estimate the clear changes but does not raise keeps its old figure on
+    /// screen beside an empty column, and the values above cannot show that: so whatever the two clears raise between
+    /// them, Clear choices raises too.</summary>
+    [Fact]
+    public async Task Clear_choices_raises_every_property_the_two_clears_raise()
+    {
+        var (separate, _) = await WithEveryKindOfChoice();
+        var bySeparate = Raised(separate);
+        separate.ClearTicksCommand.Execute(null);
+        separate.ClearSnapshotsCommand.Execute(null);
+
+        var (together, _) = await WithEveryKindOfChoice();
+        var byTogether = Raised(together);
+        together.ClearChoicesCommand.Execute(null);
+
+        Assert.Contains(nameof(LiveFuncsViewModel.TickedCountText), bySeparate);
+        Assert.Contains(nameof(LiveFuncsViewModel.StackCountText), bySeparate);
+        Assert.Empty(bySeparate.Except(byTogether).Order());
+    }
+
+    private static HashSet<string> Raised(LiveFuncsViewModel vm)
+    {
+        var names = new HashSet<string>(StringComparer.Ordinal);
+        vm.PropertyChanged += (_, e) => { if (e.PropertyName != null) names.Add(e.PropertyName); };
+        return names;
+    }
+
+    [Fact]
+    public async Task Clear_choices_holds_still_while_recording()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        await vm.StartCommand.ExecuteAsync(null);
+        Assert.True(vm.IsRecording);
+        vm.ClearChoicesCommand.Execute(null);      // the button is disabled; a call that arrives anyway is refused
+        Assert.Equal(new[] { "A::F" }, vm.TickedFunctions);
+        Assert.Equal(2, vm.SnapshotFunctions.Count);
+        Assert.Equal(2, vm.StackFunctions.Count);
+        Assert.True(Shown(vm, "A", "F") is { IsTicked: true, IsSnapChosen: true, IsStackChosen: true });
+
+        await vm.StopCommand.ExecuteAsync(null);
+        vm.ClearChoicesCommand.Execute(null);
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+    }
+
+    /// <summary>A guard: the two clears it joins keep their own scopes. Clear ticks drops the ticks alone; the
+    /// Parameters row's Clear drops the parameter and the stack choices, which fill the same buffer (D4).</summary>
+    [Fact]
+    public async Task Clear_ticks_and_the_Parameters_Clear_keep_their_own_scopes()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        vm.ClearTicksCommand.Execute(null);
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Equal(2, vm.SnapshotFunctions.Count);
+        Assert.Equal(2, vm.StackFunctions.Count);
+
+        (vm, _) = await WithEveryKindOfChoice();
+        vm.ClearSnapshotsCommand.Execute(null);
+        Assert.Equal(new[] { "A::F" }, vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+    }
+
+    /// <summary>What a layout cannot read: the button runs the command, is disabled while recording like the two clears
+    /// it joins, and shows only with the experimental trace, as the three columns do. Its tooltip names the columns,
+    /// and the two clears stay in their rows.</summary>
+    [Fact]
+    public void The_Clear_choices_button_runs_the_command_holds_still_while_recording_and_shows_with_the_columns()
+    {
+        var axaml = File.ReadAllText(Path.Combine(RepoRoot(), "ui", "UE5DumpUI", "Views", "LiveFuncsPanel.axaml"));
+        var buttons = Regex.Matches(axaml, @"<Button\b[^>]*/>").Select(m => m.Value).ToList();
+        string clear = Assert.Single(buttons, b => b.Contains("Command=\"{Binding ClearChoicesCommand}\"", StringComparison.Ordinal));
+        Assert.Contains("Content=\"{StaticResource str.LF.ClearChoices}\"", clear, StringComparison.Ordinal);
+        Assert.Contains("ToolTip.Tip=\"{StaticResource str.Tip.LF.ClearChoices}\"", clear, StringComparison.Ordinal);
+        Assert.Contains("IsEnabled=\"{Binding !IsRecording}\"", clear, StringComparison.Ordinal);
+        Assert.Contains("IsVisible=\"{Binding TraceAvailable}\"", clear, StringComparison.Ordinal);
+        // On the capture settings' header it could read as resetting the settings beside it: its label names the three
+        // columns it clears, by their headers' first letters.
+        Assert.Equal($"Clear {Line("str.LF.Col.Trace")[0]}/{Line("str.LF.Col.Snapshot")[0]}/{Line("str.LF.Col.Stack")[0]}",
+                     Line("str.LF.ClearChoices"));
+        string tip = Line("str.Tip.LF.ClearChoices");
+        foreach (var column in new[] { "str.LF.Col.Trace", "str.LF.Col.Snapshot", "str.LF.Col.Stack" })
+            Assert.Contains(Line(column), tip, StringComparison.Ordinal);
+
+        Assert.Contains("Command=\"{Binding ClearTicksCommand}\"", EnclosingStackPanel(axaml, "{Binding TickedCountText}"),
+                        StringComparison.Ordinal);
+        Assert.Contains("Command=\"{Binding ClearSnapshotsCommand}\"", EnclosingStackPanel(axaml, "{Binding SnapshotCountText}"),
+                        StringComparison.Ordinal);
+    }
+
+    /// <summary>The user chose, then narrowed the table and switched the trace off: the filter hides A::G (chosen for
+    /// parameters) and A::H (chosen for a stack), and Trace off makes the rows unchoosable. Clear choices still clears
+    /// every row the table holds, not the rows on screen, and does not wait for the trace to be on: a choice made while
+    /// it was on is still a choice, and the next traced Start would take it.</summary>
+    [Fact]
+    public async Task Clear_choices_reaches_the_rows_the_filter_hides_and_works_with_the_trace_off()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        vm.FilterText = "F";
+        Assert.Equal(new[] { "F" }, vm.Results.Select(r => r.FuncName));
+        vm.TraceEnabled = false;
+        Assert.False(vm.CanSnapshot);
+
+        vm.ClearChoicesCommand.Execute(null);
+        vm.FilterText = "";
+
+        Assert.Equal(new[] { "F", "G", "H" }, vm.Results.Select(r => r.FuncName).Order());
+        foreach (var r in vm.Results)
+        {
+            Assert.False(r.IsTicked, $"{r.FuncName} is still ticked for the trace");
+            Assert.False(r.IsSnapChosen, $"{r.FuncName} is still chosen for parameters");
+            Assert.False(r.IsStackChosen, $"{r.FuncName} is still chosen for a stack");
+        }
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Empty(vm.StackFunctions);
+    }
+
+    /// <summary>Stacks are the only choice: nothing ticked and no parameters, which a "nothing to clear" shortcut that
+    /// asks only the first two would take for an empty table.</summary>
+    [Fact]
+    public async Task Clear_choices_clears_a_stack_chosen_alone()
+    {
+        var (vm, dump) = MakeVm();
+        dump.NextGet = ResultOf(10_000, Row("A", "F", "0x1", KeyF), Row("A", "G", "0x2", KeyG));
+        await Fetch(vm);
+        vm.TraceEnabled = true;
+        await vm.ToggleStackCommand.ExecuteAsync(Shown(vm, "A", "F"));
+        Assert.Empty(vm.TickedFunctions);
+        Assert.Empty(vm.SnapshotFunctions);
+        Assert.Equal(new[] { "A::F" }, vm.StackFunctions);
+
+        vm.ClearChoicesCommand.Execute(null);
+
+        Assert.Empty(vm.StackFunctions);
+        Assert.False(vm.HasStackChoices);
+        Assert.False(Shown(vm, "A", "F").IsStackChosen);
+        Assert.Equal("", vm.StackEstimate);
+    }
+
+    /// <summary>It clears choices and nothing else: the rows and the filter on screen, the trace's switch and the stack
+    /// budget are settings the user made, and the next Start uses them as they are. Each is set away from its default
+    /// first, so a clear that reset it would show.</summary>
+    [Fact]
+    public async Task Clear_choices_leaves_the_rows_the_filter_the_trace_switch_and_the_stack_budget_as_they_are()
+    {
+        var (vm, _) = await WithEveryKindOfChoice();
+        vm.StackBudgetLow = true;
+        vm.FilterText = "A";
+        var rows = vm.Results.ToList();
+        Assert.Equal(3, rows.Count);
+        Assert.True(vm.TraceEnabled);
+
+        vm.ClearChoicesCommand.Execute(null);
+
+        Assert.Empty(vm.StackFunctions);                 // it did clear
+        Assert.Equal("A", vm.FilterText);
+        Assert.Equal(rows.Count, vm.Results.Count);
+        for (int i = 0; i < rows.Count; i++) Assert.Same(rows[i], vm.Results[i]);
+        Assert.True(vm.TraceEnabled);
+        Assert.True(vm.StackBudgetLow);
     }
 
     /// <summary>Where the last StackPanel opened before <paramref name="marker"/> starts, and where the marker is.</summary>

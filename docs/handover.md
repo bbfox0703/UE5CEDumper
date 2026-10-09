@@ -1,15 +1,29 @@
-# Handover — 2026-08-22
+# Handover — how to work on this repo, on these machines
 
-> 🤝 **START HERE. This is the single entry point.** It supersedes
-> [`archive/handover-2026-08-20.md`](archive/handover-2026-08-20.md) and
-> [`archive/handover-2026-08-19.md`](archive/handover-2026-08-19.md), both of which were archived
-> when this file was written. Everything in them that is still operationally true has been carried
-> forward here — go back to them only for the *history* of the 2026-08-19/20 verification programme.
+> 🤝 **START HERE.** This is the runbook: how to work in this repo on these machines — the first ten
+> minutes, computer-use grants, launching fixtures and games, the session rules, gates, tests, builds
+> and pipe rigs, driving Cheat Engine, and what is true only on one machine.
+>
+> **What it holds: procedures only** — no open work, no counts, no current state. What is open lives
+> in [`todo.md`](todo.md) (its current-programme line is at the top); what shipped in
+> [`dev-log.md`](dev-log.md); what is shipped but not yet proven live in
+> [`verification-register.md`](verification-register.md); how to work, and why, in
+> [`working-lessons.md`](working-lessons.md).
+>
+> **How to update it.** Edit in place whenever a procedure changes. Never write a count, a build
+> number or a list of open items here; write the command that derives it. A measurement keeps its own
+> date inline. A trap whose story `working-lessons.md` owns gets a one-line pointer here, not a copy.
+> Cite this file by section (`handover §N`), never by line, and keep the §0–§10 numbering: an emptied
+> section keeps its heading and says where its content went.
+>
+> Its two predecessors, and this file's own former name, are recorded in
+> [`archive/README.md`](archive/README.md).
 >
 > ⚠ **`out/` is gitignored and does NOT travel.** Two of the most useful records of what was
 > actually done (`out/NIGHT-RUN-2026-08-19.md`, `out/KILLED-2026-08-21.md`) exist only on this
-> machine. This file, [`todo.md`](todo.md), [`dev-log.md`](dev-log.md) and
-> [`working-lessons.md`](working-lessons.md) are the whole travelling record.
+> machine. This file, [`todo.md`](todo.md), [`dev-log.md`](dev-log.md),
+> [`verification-register.md`](verification-register.md) and [`working-lessons.md`](working-lessons.md)
+> are the whole travelling record.
 
 -----
 
@@ -27,11 +41,10 @@ git status -sb && cat build_number.txt
 py tools/check_audit_register.py --list
 ```
 
-⚠ `--list` prints only the **HIGH/MED** tier, and there is none — so it reports "4 open" and names
-**no rows**. That is the expected output, not an empty register. §7's table names all four.
+⚠ `--list` names only the **HIGH/MED** rows; when there are none it prints the open count and names
+**no rows**. That is the expected output, not an empty register.
 
-Then read §7 for what is open. **Do not** re-plan a verification programme — the 2026-08-19 plan was
-run to completion on 2026-08-20/21/22 and its batches are spent (see §7's ⛔).
+Then read the current-programme line at the top of [`todo.md`](todo.md) for what is open (§7).
 
 ⚠ **Every ad-hoc Python one-liner in this repo needs this first line**, or it dies with
 `UnicodeEncodeError` before printing anything — the console codepage here is **cp950** and every doc
@@ -61,10 +74,10 @@ Derive the state; values written into this file go stale.
 The convention is commit to `dev` → `gh pr create --base main --head dev` →
 `gh pr merge N --merge`, never `--admin`.
 
-⚠ **`dist/` is gitignored**, so `git status` says nothing about which binary is sitting there. As of
-build 3315 `build.ps1` verifies the publish copy **by SHA256** and fails loudly
-(`[DISTCOPY-2026-08-22]`) — it used to print `[OK] (54.7 MB)` and exit 0 over a copy that never
-happened, because a **stale** AOT exe is 54.7 MB too. Checking the size is no longer the test.
+⚠ **`dist/` is gitignored**, so `git status` says nothing about which binary is sitting there. Since
+`[DISTCOPY-2026-08-22]` `build.ps1` verifies the publish copy **by SHA256** and fails loudly — it
+used to print `[OK] (54.7 MB)` and exit 0 over a copy that never happened, because a **stale** AOT
+exe is 54.7 MB too. Checking the size is no longer the test.
 
 -----
 
@@ -76,11 +89,12 @@ Two measurements, hours apart on the same machine, and they point opposite ways:
 
 * **2026-08-22 morning** — `list_granted_applications` returned **20 grants made on 2026-08-19
   19:31–19:36**, still valid three days and many sessions later. So a new session does **not** clear
-  them: the plan doc's "grants do not survive a session" is FALSE here.
+  them: the plan doc's "grants do not survive a session" (removed from it on 2026-10-08) is FALSE
+  here.
 * **2026-08-22 18:20, same boot** — the list came back **empty**, and all 20 had to be re-requested
-  (batches of 7 · 7 · 6; every one granted, same names, same tiers, so the table below is
-  re-verified verbatim). `GetTickCount64` puts the last boot at **2026-08-21 14:31**, *before* the
-  morning reading — so **no reboot happened between the two**.
+  (batches of 7 · 7 · 6; every one granted, same names, same tiers). `GetTickCount64` puts the
+  last boot at **2026-08-21 14:31**, *before* the morning reading — so **no reboot happened
+  between the two**.
 
 ⛔ **"A reboot is the real invalidation event" is therefore REFUTED** — do not re-assert it. What
 actually clears them is unidentified; an MCP-server or app restart is the obvious suspect and is
@@ -96,41 +110,7 @@ A blanket re-request costs three or four dialogs and, if the maintainer is away,
 nothing. An *assumed* grant is worse: it fails at the first click, mid-row. The check is one call
 with no side effects — make it the first one, every time.
 
-### The 26 currently granted
-
-⚠ **This table is a SNAPSHOT and has already been wrong once.** It said "the 20" while the live list
-held 24; six were added on 2026-08-22/23 (TQ2, the DQ7R / GalGun / Elliot exes, and both Glimmith
-entries). **`list_granted_applications` is the authority — read it, do not read this.** The table is
-kept for the *names that worked*, which the live list does not tell you.
-
-| # | `request_access` name | what it is | tier |
-|---|---|---|---|
-| 1 | `UE5DumpUI` | the UI under test (`dist\UE5DumpUI.exe`) | full |
-| 2 | `Cheat Engine (64-bit)` | `cheatengine-x86_64.exe` | full |
-| 3 | **`Cheat Engine (64-bit SSE4-AVX2)`** | ⭐ **the CE the maintainer actually launches** — prefer this one | full |
-| 4 | `Cheat Engine tutorial (64-bit)` | | full |
-| 5 | `Steam` | `steam.exe` — the bootstrapper only, see §3 | full |
-| 6 | **`steamwebhelper.exe`** | ⭐ owns the Steam **library window**; without it the whole Steam UI is a masked black rectangle. **Request it with the `.exe` suffix** — a bare `steamwebhelper` resolves back to `Steam`. ⚠ It is *listed* as `Steamwebhelper`, so matching the listing string literally will not re-request it correctly | full |
-| 7 | `DumperTest Development` | the inner exe, not the shim (§3) | full |
-| 8 | `DumperTest Shipping` | | full |
-| 9 | `冒險家艾略特的千年奇譚` | Elliot · appid **3483510** | full |
-| 10 | `Lushfoil Photography Sim` | **1749860** | full |
-| 11 | `Solarpunk` | **1805110** | full |
-| 12 | `EVERSPACE 2` | ES2 · **1128920** | full |
-| 13 | `勇者鬥惡龍 VII Reimagined` | DQ7R · **2499860** | full |
-| 14 | `OCTOPATH TRAVELER` | **921570** | full |
-| 15 | `莊園領主 Manor Lords` | **1363080** | full |
-| 16 | `Star Trek Voyager - Across the Unknown` | **2643390** | full |
-| 17 | `Notepad++` | | full |
-| 18 | `記事本` | Notepad | full |
-| 19 | `Everything` | | full |
-| 20 | `檔案總管` | Explorer | **click only** |
-| 21 | `Titan Quest II` | **1154030** — the note below calling it "NOT granted" is stale | full |
-| 22 | `Dq7r-win64-shipping` | DQ7R's shipping **exe** (added when a row needed to click in-game) | full |
-| 23 | `Gg2game` | GalGun Double Peace's exe | full |
-| 24 | `Elliot-win64-shipping` | Elliot's exe | full |
-| 25 | `The Artisan of Glimmith` | Geri · **4160210** — the LAUNCH grant only | full |
-| 26 | **`Geri-Win64-Shipping.exe`** | ⭐ Geri's exe. **Request it WITH the `.exe` suffix** — see below | full |
+### System key combos are not granted
 
 ⚠ **`systemKeyCombos` is NOT granted.** `alt+F4`, `ctrl+alt+del` and friends are refused with
 *"is a system-level shortcut"*. To close a window, post `WM_CLOSE` yourself:
@@ -155,13 +135,14 @@ Names are the Start-menu names of a **zh-TW Windows**; an English Windows says `
 | `UE5DumpUI` | UE5DumpUI | the UI under test, `dist\UE5DumpUI.exe` (a copy elsewhere, e.g. under `out\pathshape\`, is a separate grant: request its exe while it runs) |
 | `Cheat Engine (64-bit SSE4-AVX2)` | same | ⭐ the CE the maintainer launches |
 | `Cheat Engine (64-bit)` | same | the plain CE build, for rows that name it |
+| `Cheat Engine tutorial (64-bit)` | same | CE's bundled tutorial; granted in August 2026, absent from the 2026-09-27 list, so in neither batch below: request it only when a row names it |
 | `Notepad++` | same | reading logs and `.CT` files on screen |
-| `記事本` | 記事本 | Notepad (not granted at the moment; it was in earlier sessions) |
+| `記事本` | 記事本 | Notepad (not in the 2026-09-27 list; it was in earlier sessions) |
 | `Everything` | same | file search |
 | `檔案總管` | 檔案總管 | Explorer — **click tier only**; typing into it is refused |
 | `textinputhost.exe` | Textinputhost | the Windows text-input host (IME candidate window, emoji panel). When it pops over the app, an ungranted host blocks the next call |
 | `nvidia overlay.exe` | Nvidia overlay | the NVIDIA App overlay: after a SendInput key it takes the foreground, and every later call is refused as *"The user doesn't want to take this action right now"* (2026-09-27) |
-| `Steam` | Steam | `steam.exe`, the bootstrapper (not granted at the moment) |
+| `Steam` | Steam | `steam.exe`, the bootstrapper (not in the 2026-09-27 list) |
 | `steamwebhelper.exe` | Steamwebhelper | the Steam library window — **with `.exe`** (a bare name resolves back to `Steam`); only grantable while Steam runs |
 
 - **Batch 1:** `UE5DumpUI`, `Cheat Engine (64-bit SSE4-AVX2)`, `Cheat Engine (64-bit)`, `Notepad++`,
@@ -179,10 +160,10 @@ installed with `fixture_census.py` (§3) before planning around one.
 
 | request name | appid / kind | notes |
 |---|---|---|
-| `DumperTest Shipping` | fixture (UE 5.4) | ⭐ the default fixture (§3); self-built, so every PC can have it |
-| `DumperTest Development` | fixture (UE 5.4) | the other-direction check |
+| `DumperTest Shipping` | fixture (UE 5.4) | ⭐ the default fixture (§3); self-built, so every PC can have it; its shortcut targets the inner exe, not the shim |
+| `DumperTest Development` | fixture (UE 5.4) | the other-direction check; the inner exe, not the shim |
 | `DumperTest58 Shipping` / `DumperTest58 Development` | fixture (UE 5.8) | |
-| DumperTest51 | fixture (UE 5.1) | packaged, not yet granted anywhere; request its exe while it runs |
+| DumperTest51 | fixture (UE 5.1) | packaged; not in the 2026-09-27 list — request its exe while it runs |
 | `冒險家艾略特的千年奇譚` | 3483510 | Elliot; clicking in-game also needs `Elliot-win64-shipping` |
 | `勇者鬥惡龍 VII Reimagined` | 2499860 | DQ7R; in-game clicks need `Dq7r-win64-shipping` |
 | `OCTOPATH TRAVELER` | 921570 | relaunches itself unless started with `-applaunch` (§3) |
@@ -196,7 +177,7 @@ installed with `fixture_census.py` (§3) before planning around one.
 | `Gg2game` | exe | GalGun Double Peace |
 
 The Steam titles are granted by name (a `steam://rungameid/<appid>` grant) and their shipping exe
-separately, only while it runs; the full list of what has been granted is the table under "The 26 currently granted" above.
+separately, only while it runs; `list_granted_applications` says what is granted now.
 
 ### The ≤7 rule, and what breaking it looks like
 
@@ -206,13 +187,16 @@ dialog **taller than the display**, the Accept button could not be reached, and 
 
 > **Never diagnose a blanket `user_denied` as a decision without checking the batch size first.**
 
-The five batches that actually produced today's 20 grants were **7 · 7 · 4 · 1 · 1**.
-
 ### Other grant facts worth knowing before you need them
 
 * **`notInstalled` is not a refusal** — the request short-circuits at name resolution and the dialog
   is never shown. The resolver's index is the **all-users** Start Menu
   (`C:\ProgramData\Microsoft\Windows\Start Menu\Programs`); the per-user one is not enumerated here.
+  **To make an app grantable that is not there** (`UE5DumpUI`, a DumperTest package): the maintainer
+  creates a shortcut in that all-users folder through Explorer (it needs elevation, which computer use
+  cannot answer), named **exactly** as `request_access` will ask, targeting the **inner** exe; then
+  request it — in the same session, no restart (verified 2026-08-17, with the probes that found the
+  folder: [`auto-verification-session-plan.md`](auto-verification-session-plan.md) §1, "SOLVED").
 * **Resolver lag is real.** `DumperTest Development` / `Shipping` returned `notInstalled` minutes
   after their shortcuts existed and `Get-StartApps` already listed them; **retried ~10 minutes later
   with nothing changed, both granted**. Wait and retry — do not start editing names or paths on the
@@ -240,8 +224,6 @@ The five batches that actually produced today's 20 grants were **7 · 7 · 4 · 
   (made the same day) removes the block.
 * **Avowed is installed but ungrantable** — absent from the Start menu, so `request_access` cannot
   resolve it. Perfectly usable for headless pipe/log rows.
-* ⚠ **STALE:** "`Titan Quest II` … is NOT granted" was true when written; it has been granted
-  since 2026-08-22 (row 21). Its `appmanifest_1154030.acf` `StateFlags 6` note may still hold.
 * Not needed: browsers (read-only tier anyway), terminals/IDEs (all shell work goes through Bash),
   `python.exe`.
 * ⚠ `tools/verify/register_apps.py` is a **refuted hypothesis** (per-user registry registration made
@@ -329,8 +311,7 @@ Then click **Connect** (top-left) to attach to an injected game; the header goes
 `Disconnected` → `Connected — UE504 (25,189 objects)`. ⚠ **The moment it connects it takes 2 of the
 3 pipe slots**, so no `pipe_client.py` rig can run until you press **Disconnect** or close it.
 ⚠ It is a **single-instance** app (Mutex) — a second launch silently does nothing.
-⚠ The UI is the fixture for the whole `第 1 步` bucket and for several `第 2 步` rows, so this is
-usually step one, not an afterthought.
+⚠ Many rows use the UI as their fixture, so this is usually step one, not an afterthought.
 
 ### DumperTest — the default fixture, never launched by hand
 
@@ -353,6 +334,9 @@ machine — this PC also drives the game under test). ⚠ It is `t.MaxFPS`, **no
 which would switch UE to a fixed timestep and silently change what every timing row measures. It
 writes the PID to `out/host.pid` so the injector and the killer agree on one target, and it **fails
 loudly** if the process died — a dead host makes every downstream "nothing found" meaningless.
+⚠ The stock-template Shipping fixtures (`shipping58`, `shipping51`) have no self-cap and drop `-ExecCmds`: their
+cap is whatever `FrameRateLimit` the machine saved in the game's `GameUserSettings.ini` (set through the pipe,
+working-lessons §1), and the launcher prints it. Another PC may run them uncapped.
 
 `--idle` adds `-DumperTestIdle` and is **opt-in only**: B8's deferred half needs it, the D2
 heartbeat row breaks with it, and it makes every game-thread dispatch time out while you work in the
@@ -371,10 +355,9 @@ back. **Displace with `TP facing direction` (100 uu), never with absolute coordi
 py tools/verify/proxy_refresh.py report
 ```
 
-**Measured 2026-08-22: 9 deployed proxies, 9 STALE — all of them.** `dll/src` changed today, so every
-proxy planted in a game before 2026-08-21 predates the See-through fixes. Launch such a title and the
-game loads the **old** DLL: you will reproduce a defect that is already fixed, and nothing in the
-logs will say which build answered.
+A proxy planted in a game before the last `dll/src` change loads the **old** DLL when the title
+launches: you will reproduce a defect that is already fixed, and nothing in the logs will say which
+build answered. (Measured 2026-08-22: 9 deployed proxies, all 9 STALE.)
 
 ```bash
 py tools/verify/proxy_refresh.py refresh "<title substring>"
@@ -383,8 +366,10 @@ py tools/verify/proxy_refresh.py refresh "<title substring>"
 It refuses to refresh while a game is running and backs up with a SHA-256 first. ⚠ This does **not**
 apply to DumperTest (no proxy — it is injected directly) and does not apply to a title you inject by
 hand with `inject.py`, which loads `dist/UE5Dumper.dll` as it is on disk.
-⚠ Historically `proxy_refresh.py` cried STALE after a mere republish of identical source and that was
-a **false alarm**. It is not one now — the DLL genuinely changed.
+⚠ A republish of identical source also reads STALE (the comparison is byte-for-byte, and the build is
+not reproducible). **The tell is that the sizes match exactly**: that one is a false alarm and is NOT
+refreshed (working-lessons §3.x). A proxy of a different build — on 2026-08-22 it was real because
+`dll/src` had changed — is refreshed without asking (the maintainer, 2026-09-29; working-lessons §7.3).
 
 ### Is it even installed?
 
@@ -393,12 +378,12 @@ py tools/verify/fixture_census.py
 ```
 
 ⛔ **A folder under `steamapps/common` is not an installed game — the census prints a `GHOSTS` list
-of folders holding no executable at all** (11 of them when last run; the denominator moves as titles
-come and go, so read the tool, do not quote a ratio). Two of the ghosts are **FINAL FANTASY VII
-REBIRTH** and **Tower of Mask**, both cited in `docs/` as the fixture an open row is waiting for. Run
-this before planning a session around a title.
-⭐ And do **not** predict pool size from install size: OCTOPATH is 2 GB with 273,956 objects; Avowed
-is 64 GB with 92,036.
+of folders holding no executable at all** (read the tool; the list moves as titles come and go). On
+2026-08-22 two of the ghosts were **FINAL FANTASY VII REBIRTH** and **Tower of Mask**, both cited in
+`docs/` as the fixture an open row was waiting for. Run this before planning a session around a title.
+⭐ And do **not** predict pool size from install size: OCTOPATH is 2 GB with 273,956 objects
+(2026-08-18); Avowed is 64 GB with 92,036 at its main menu (2026-08-22) and 272,494 in the 2026-10-08
+Live Funcs run.
 
 -----
 
@@ -445,11 +430,11 @@ py tools/check_all.py
 ```
 
 ⚠ **All of them, not the few you remember.** `.github/workflows/ci.yml` runs every gate
-`check_all.py --list` prints before the build (derive the count from the `N gate(s) run` line; it
-was twelve when this was written and 27 on 2026-09-26), plus `check_proxy_exports --artifacts` over
-the built proxies; `check_ci_gate_parity` keeps the two lists equal. This session ran four of them
-all day and the first full run **failed** on `check_no_local_paths` over a test fixture committed
-hours earlier. Order matters — `aob_specificity` reads the TSV `extract_patterns` writes.
+`check_all.py --list` prints before the build (derive the count from the `N gate(s) run` line),
+plus `check_proxy_exports --artifacts` over the built proxies; `check_ci_gate_parity` keeps the two
+lists equal. On 2026-08-22 a session ran four of them all day, and the first full run **failed** on
+`check_no_local_paths` over a test fixture committed hours earlier. Order matters — `aob_specificity`
+reads the TSV `extract_patterns` writes.
 
 ### Tests
 
@@ -469,9 +454,14 @@ global UI Dispatcher the view-model tests must not share. `build.ps1` runs both.
 ```bash
 dotnet test --project ui/UE5DumpUI.HeadlessTests/UE5DumpUI.HeadlessTests.csproj -c Release
 ```
-⛔ **Never `build.ps1 -Target Test`** — it republishes `dist/` with the 106.8 MB **non-trimmed** exe.
+⛔ **Never `build.ps1 -Target Test`** to run tests — it republishes `dist/` non-trimmed (CLAUDE.md
+`## Build & Deploy`).
 
 ### Builds
+
+What to build, which binary to hand over, the build-number bump, and why a plain `build.ps1` or
+`-Target Test` is not read-only: CLAUDE.md `## Build & Deploy` and its build commands, the single copy.
+What this machine adds:
 
 ```bash
 py tools/verify/build_dll.py --targets UE5Dumper dll_helpers_test dll_core_test
@@ -480,9 +470,6 @@ py tools/verify/build_dll.py --targets UE5Dumper dll_helpers_test dll_core_test
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build.ps1" -Mode Publish
 ```
 
-* ⚠ **Every `build.ps1` run bumps `build_number.txt`**, and that is intended: the build number is the
-  release number. For a verification-only build use `build_dll.py` above, which neither bumps it nor
-  touches `dist\`.
 * ⚠ **A publish takes several minutes** (Native AOT links with MSVC). The Bash tool's default timeout
   is 120 s — **run it with `run_in_background: true`** or it is killed mid-link and reads as a build
   failure.
@@ -490,19 +477,18 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\Github\UE5CEDumper\build
   Kill both first. Since `[DISTCOPY-2026-08-22]` the failure is loud (per-file `copy failed`, a
   hash-mismatch verdict, exit 1, and `dist/publish/` **left in place** so the good binary survives) —
   but it is still a wasted build.
-* ⚠ Native AOT is **not byte-reproducible**: four publishes of one source gave four hashes. A hash
-  confirms *this copy landed*; it can never confirm two builds are the same build.
+* ⚠ A hash confirms *this copy landed*, never that two builds are the same build: Native AOT is not
+  byte-reproducible (working-lessons §2.5c).
 * ⚠ Fresh clone only: `git submodule update --init vendor/minhook vendor/zydis`.
-* ⚠ **`-Target Test` does not compile the DLL** — it links headers, so a syntax error in a `.cpp`
-  passes it clean. Use `-Target DLL` before claiming a C++ change builds.
-* **Which `.cpp` any test target compiles** (CMakeLists is the authority): `dll_helpers_test` =
-  its own `.cpp` + **`Radar.cpp`** + `Denken.cpp`. **No target compiles `Aura` / `Solide` / `Ubel` /
-  `Genau` / `Macht` / `Fern` / `Schlacht` / `Mimic`.cpp.** It *does* include ~15 headers, so **moving
-  a rule into a header is how we pin it**. Grep the include list before saying a fix cannot be tested.
+* ⚠ **Which `.cpp` files a test target compiles, and so what `-Target Test` cannot catch:** CLAUDE.md's
+  "Run tests only" block, whose counts `check_derived_counts` pins. Build the DLL target
+  (`build_dll.py --targets UE5Dumper`, or `-Target DLL`) before claiming a C++ change builds. Moving a
+  rule into a header is how we pin it in a test; grep a target's include list before saying a fix
+  cannot be tested.
 
 ### The pipe (headless, no UI)
 
-`tools/verify/pipe_client.py` is the library 49 other rigs import. It enforces the two traps itself:
+`tools/verify/pipe_client.py` is the library the other pipe rigs import. It enforces the two traps itself:
 `assert_build()` (a stale deployed **proxy** answers the pipe happily while the fresh DLL sits inert)
 and `ensure_scanned()` (proxy mode starts the pipe **only**; `init` returns `ok:true` in ~0 ms having
 scanned nothing, after which every pointer reads `not_found` and looks like a broken AOB table).
@@ -526,6 +512,10 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
 
 ## 6. Driving Cheat Engine
 
+* ⛔ **`open_application` starts a NEW Cheat Engine every call** — CE does not single-instance itself.
+  Use it once to start CE; front it afterwards with `py tools/verify/front_window.py front
+  cheatengine-x86_64-SSE4-AVX2` (the measurement: `verification-register.md`, "open_application
+  LAUNCHES A NEW CHEAT ENGINE EVERY CALL").
 * The real process is **`cheatengine-x86_64-SSE4-AVX2.exe`** (`Cheat Engine.exe` is a shim). The
   AOBMaker plugin auto-loads from `plugins\AOBMaker_CEPlugin.dll` and writes `PipeServer: listening on
   \\.\pipe\AOBMakerCEBridge` to `%LOCALAPPDATA%\AOBMaker\CEPlugin.log`. ⚠ **The toolbar's "AOBMaker DLL" dot
@@ -580,192 +570,80 @@ preconditions and a few refuse to run in the wrong state rather than degrading i
 
 ```bash
 py tools/check_audit_register.py --list          # audit #5 register (manual since 2026-09-03; no longer a gate)
-grep -c '^> | `\[' docs/todo.md                  # OPEN FIXES INDEX rows  -> 4  (still todo.md)
-grep -c '^### ⬜ NEW DEFECT' docs/todo.md         # defect WRITE-UPS       -> 1 (not the queue!)
+grep -c '^> | `\[' docs/todo.md                  # OPEN FIXES INDEX rows -- the defect queue (still todo.md)
+grep -c '^### ⬜ NEW DEFECT' docs/todo.md         # defect WRITE-UPS (not the queue!)
 awk '/^## Pending live-game verification/,0' docs/verification-register.md \
   | awk '/^## /&&!/^## Pending live-game/{exit}1' | grep '^### ' | grep -c ⬜
 ```
 
-⚠⚠ **The two defect greps answer different questions and the obvious one is wrong.**
-`^### ⬜ NEW DEFECT` finds the long write-**ups** and returns **1**; the actual queue is the
-OPEN FIXES INDEX **table** near the top of `todo.md`, whose heading and rows sit **inside a
-blockquote** (`> ###`, `> |`) and are therefore invisible to any `grep '^### '`. Using the write-up
-grep as "the number of open defects" silently drops three. (`todo.md` documents the blockquote
-convention at its own line ~1736.)
+⚠⚠ **The two defect greps answer different questions and the obvious one is wrong.** The
+OPEN FIXES INDEX table near the top of `todo.md` sits **inside a blockquote** (`> ###`, `> |`), so it
+is invisible to any `grep '^### '`; the `^### ⬜ NEW DEFECT` grep finds only the long write-ups.
 
 Run the commands above for the counts; numbers written into this file go stale.
 
-**Current work** is recorded in [`todo.md`](todo.md) under `[FIXPASS-2026-09-10]` (the fix-pass ledger
-and its live-check backlog) and in [`fixpass-low-live-plan.md`](fixpass-low-live-plan.md). The older
-verification queue below still exists underneath it.
+**Current work** is not written here: the current-programme line at the top of [`todo.md`](todo.md)
+names it by tag. Each programme's live-check order and per-row status is in its live plan or build
+ledger (indexed in [`README.md`](README.md)); what is shipped but not yet proven live is in
+[`verification-register.md`](verification-register.md).
 
-### Where to actually start
+### Before planning off any row
+
+Re-derive before planning — `grep` the row id across `docs/`, and read the ✅ block, not the ⬜
+heading: closures are written where the work happened ([`working-lessons.md`](working-lessons.md)
+§1.ab; §1.ab-2 for why a pointer file like this one rots fastest).
 
 The checklist is [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md). ⚠ **Two different
 things are both called "step N"** and they are easy to transpose: `第 N 步` is a **bucket** (what the
 row COSTS to run — 第 1 步 needs only the UI, 第 5 步 has no fixture anywhere), while "step 1 / step 2"
-inside a row is a **sub-step**. Every bullet below is written `row · 第N步 bucket · sub-step N`.
-
-⚠ **`第 1 步` is effectively empty of doable work.** Its only row is `AF16–AF23`, whose sub-step 1 is
-✅ and whose sub-step 3 was deleted — what remains needs a real game, i.e. **more** than its bucket
-implies, not less. Do not read the bucket名 as the cost of what is left in it.
-
-⛔⛔ **THIS LIST WAS FOUR-FIFTHS STALE AND IT IS THE FIRST THING A NEW SESSION READS.** Audited
-2026-09-06, each bullet checked against its closure tag: **four of the five original rows had
-already closed**, three of them within two days of this file being written, and nothing came back
-to update it. A session planned off the old text would have re-run finished work for an estimated
-4–6 sittings. ⭐ The lesson generalises and is the reason this banner stays: **a pointer file rots
-faster than the file it points at**, because closures are written where the work happened. Re-derive
-before planning — `grep` the row id across `docs/`, and read the ✅ block, not the ⬜ heading.
-
-| original bullet | actual state 2026-09-06 |
-|---|---|
-| `AC15` · sub-step 1 — "needs no game at all" | ✅ **CLOSED 2026-08-22** `[AC15-ORACLE-2026-08-22]` — *both* halves, each against an independent oracle. The Steam half had already passed on 08-21 (`[AE27-AC15-2026-08-21]`); the drive half landed the next day. |
-| `AF16–AF23` · sub-step 2 — "needs a game with Blueprint bytecode" | ✅ **CLOSED IN BOTH HALVES**, on the AOT binary the row insists on: Xref `[AF16-XREF-2026-08-23]` (58 candidates on DQ7R, two fixtures, all six headers sort), Props `[AF16-PROPSSORT-2026-08-22]`, numeric-vs-string residual `[AF16-BYCONSTRUCTION-2026-08-24]` as *unreachable*. ⚠ The register has carried a ⛔ SUPERSEDED banner saying exactly this since 08-23. ⚠ The premise was wrong too: DumperTest ships **5** `*_C` Blueprint classes (`ABP_Quinn_C`, 56 props, super `ABP_Manny_C`) — measured, register § W1/W7 step 4. |
-| `W1`/`W7` — third-party parser must read our `.usmap` | 🔲 **STILL OPEN, and still the genuinely cheap one.** The bullet below is unchanged and remains correct. |
-| `M1–M5` · sub-step 1, arms (a)+(b) — "need a human" | ✅ **CLOSED 2026-08-23** `[SEETHRU-ARMS-AB-2026-08-23]`; the register states **"M1–M5 is now complete: steps 1, 2, 3, 4 and 5 all closed."** ⚠ One residual, and it is NOT the arm this bullet meant: the 繁中 file's arm (a) was *"close the game **while** moving"*, a different question, still open — and **not human-gated**. It needs one rig concatenating two that already work (`seethrough_arm_a.py:97-99` movement loop + `seethrough_arm_b.py:147-148` posted close). |
-| `A6` · sub-step 5's spawn half | ✅ **CLOSED 2026-08-23 on DQ7R** `[A6-SPAWN-DQ7R-2026-08-23]`. So the "DumperTest has no repeatable object-recreation lever" note is moot for this row. ⚠ It is also no longer true of the fixture: `Spawn_Holders` / `Spawn_DestroyHolders` / `Spawn_RecycleChurn` / `Spawn_LateInstance` were added to `DumperTestActor.h` on 08-23, the day *after* this file was written. |
-
-⭐ The one row that is still cheaper than its bucket suggests:
-
-* **`W1`/`W7`** (a real third-party parser must read our `.usmap`) is unblocked. ⚠ Source for that:
-  the maintainer's instruction is recorded in the row itself in
-  [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md) (2026-08-22) — **CUE4Parse as a
-  NuGet package, in a throwaway verification project only**, never in `UE5DumpUI`'s deps, which are
-  AOT/trimming constrained. Read it there before acting; this file is a pointer, not the authority.
-  ⚠ Step 4 of that row is itself corrected in place: since `[W8-USMAP-2026-08-20]`, finding `*_C`
-  classes is the **expected** result, not a bonus — not finding them is the defect.
-
-⛔ **Do NOT plan a batch off `auto-verification-session-plan.md` §5 or §10.** Both are spent; CLAUDE.md
-marks §10 RETIRED. The plan doc is still the authority for **grant mechanics** (§3) and for the
-**authorised destructive steps** (§4) — nothing else.
-⛔ **Do not hunt for new audit findings.** The register is 0 HIGH / 0 MED; verification is the work.
+inside a row is a **sub-step**.
 
 -----
 
 ## 8. Things that will mislead you
 
-* ⭐⭐ **The rule that found eight defects on 2026-08-22, every one of them while *running a
-  verification row* rather than hunting: demand a second, independent witness for any claim the
-  system makes about itself.** Six of the eight were one shape — *the report and the reality computed
-  by different code paths*. The extreme case: See-through was a **total no-op** on UE 5.4 while its
-  count, the UI card and the log all said it worked, because the reality path did not exist at all.
-* ⭐ **A detector must be shown able to FIRE before its silence means anything** — and it must be
-  right about the **format** of what it reads, not just the location. `walk_instance` renders a
-  bit-field bool as `true (bit 7, mask 0x80)`, so `== "true"` reads a hidden actor as not hidden.
-* ⚠ **A computer-use coordinate is a measurement and it expires.** The Live Walker toolbar reflows
-  (`Find Refs` / `Related` appear once an object loads); two "press ▼" clicks landed on the
-  **"2 matches" label** and nearly produced a false defect report. Re-read the control's position
-  from a fresh screenshot before any click an assertion depends on, and prove the click **landed**.
-  Same for toggles: read their state back off the screen, do not track it in your head.
+* ⭐⭐ **Demand a second, independent witness for any claim the system makes about itself** — the
+  dominant defect shape here is the report and the reality computed by different code paths
+  ([`working-lessons.md`](working-lessons.md) §1.4, §1.12).
+* ⭐ **A detector must be shown able to FIRE before its silence means anything** (working-lessons
+  §1.1) — and it must be right about the **format** of what it reads, not just the location.
+  `walk_instance` renders a bit-field bool as `true (bit 7, mask 0x80)`, so `== "true"` reads a hidden
+  actor as not hidden.
+* ⚠ **A computer-use coordinate is a measurement and it expires** — re-read the control's position
+  from a fresh screenshot before any click an assertion depends on, prove the click **landed**, and
+  read a toggle's state back off the screen (working-lessons §2.5d).
 * ⚠ **computer-use `type " "` — a lone space — is silently swallowed** (measured 2026-09-15, L10: a
   "space refused" test fired an EMPTY box and looked like a gate failure). Use `key space`, then
   prove the content before asserting on it: `shift+Home` must show a one-character selection, or
   type a visible character after it and check its indent.
-* ⚠ **`find_instances` without `exact_match` is a NAME SUBSTRING match.** "The first live instance of
-  `Actor`" came back as a `UActorSequence`.
-* ⚠ **Proxy staleness is now REAL, not the old false alarm.** `dll/src` changed on 2026-08-22 and
-  `dist/proxy` was rebuilt, so any proxy deployed into a game before 2026-08-21 predates the
-  See-through fixes. A See-through or invoke row run through an old proxy will reproduce a **fixed**
-  defect. `py tools/verify/proxy_refresh.py report` (it refuses to refresh while a game runs).
-* ⚠ **Log-window measurement.** Four variants of one mistake were hit in a single day: line-count
-  slicing across several growing files; a one-second timestamp watermark between events milliseconds
-  apart; a counter read outside the timed window; and a byte offset recorded before a process start
-  that **rotates** the log. Use before/after **counts**.
-* ⚠ **ProcessEvent vtable slots: the PATTERN SCAN is primary and is what has to work. There is now
-  also a version table, and it is only the fallback.** Values measured in past sessions, every one
-  of them *by the pattern scan*: `0x268` DumperTest 5.4 · `0x260` Lushfoil 5.6 · `0x278` EVERSPACE 2.
-  The ES2 figure was taken TWICE and both records name the engine version explicitly:
-  **2026-05-11** (`docs/lessons-learned.md:140` — "Live test 2026-05-11 on ES2 (UE 5.5) with the
-  build-648 pattern scanner picking `vtable+0x278`", alongside a working `Add_IntInt(3,4)=7`) and
-  **2026-08-20** (`[PEHOOK-6-2026-08-20]`, `docs/verification-register.md:3504`). Both predate the
-  2026-09-01 patch, so both ran on the **5.5.4** build — see the ES2 sub-bullet below.
-  ⛔ **This bullet used to end "these are session measurements, not a table in the tree … there is
-  nothing to 'fix' if a new title differs; that is the design". THAT HALF IS NOW FALSE** — audit A2
-  (`1d647a08`, 2026-09-05) put a real per-version table in the tree:
-  `DynOff::ProcessEventVTableSlotFor`, [`dll/src/Grimoire.h:321`](../dll/src/Grimoire.h), measured
-  4.11–5.8 from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`. All three values above **agree**
-  with it (5.4 `0x268` · 5.5 `0x278` · 5.6 `0x260`), which is the strongest corroboration it has.
-  * **Still true, do not re-derive it:** the pattern scan runs first, the fire-count validator is
-    still the backstop, and a per-BUILD difference is still not a bug. Build configuration does not
-    move the slot (5.8 Shipping/Development/DebugGame all `0x250`; 5.4 Shipping and Development both
-    `0x268`).
-  * **What changed:** a *pattern-scanned* slot that disagrees with the table for that title's
-    detected version is now worth reporting rather than shrugging at — it means one of the two is
-    wrong. And the fallback no longer lies quietly: an unmeasured version prints
-    `<-- EXTRAPOLATED, no measurement for this version` (the whole line is
-    `DetectProcessEvent (fallback): pattern scan missed, falling back to UE=%u version-table
-    primary=0x%X` — grep the `DetectProcessEvent (fallback)` prefix, not the whole sentence;
-    `Frieren.cpp:1623`, **`init-0.log`**). Its absence is the healthy case.
-  * ⛔ The table is **not monotonic** (4.20 `0x208` → 4.21 `0x200`; 5.5 `0x278` → 5.6 `0x260`), so
-    do not "simplify" it back into a `>=` ladder — that is exactly the bug A2 fixed. And the oracle
-    is a **non-editor** dump: do not extend it to an editor process.
-  * ⚠⚠ **ES2 HAS PATCHED, and it walked across a table boundary. MEASURED 2026-09-05.** The
-    installed exe was replaced on **2026-09-01** (168,169,472 B) and its `VS_FIXEDFILEINFO`
-    `dwProductVersionMS` — the exact field `Genau.cpp`'s `DetectVersionFromPEResource` reads —
-    is **5.6.1**, i.e. detector code **506**. The two archived builds under
-    `D:\UE_Analyze_Data\Game archive\ES2\` are both **5.5.4** (505). So the version is NOT
-    unknown, and `test-games.md:12`'s `UE5.5 (PE: 505)` row is now **stale** — its findings
-    belong to the 5.5 build.
-    ⛔ **This makes the `0x278` figure a CONFIRMED 5.5 measurement, not an ambiguous one.** The
-    handover is dated 2026-08-22 and the grant in `auto-verification-session-plan.md:119` is
-    2026-08-18 — both before the 09-01 patch — so it was taken on a 5.5.4 binary, and it agrees
-    with the A2 table's 5.5 row (`0x278`), which is the one row the audit's own first draft got
-    wrong. ⚠ Also note the provenance row `UE5.5-Everspace2` in
-    `tools/ghidra/corpus-provenance.tsv` still points at the LIVE path while recording the old
-    169,063,424 B — it describes the archive copy, not what is installed.
-    ⭐ **The follow-up is free and high-value:** the live build is 5.6, and the table says 5.6 =
-    `0x260`. Measuring it gives a SECOND independent live confirmation of that row (Lushfoil is
-    the first) — or falsifies it.
-    Two ways to re-check, and the cheap one is **offline**: a full **1.98 GB**
-    `ES2-Win64-Shipping.pdb` sits beside the exe carrying the exe's own mtime, so this title is
-    its own symbol oracle — vet it with `py tools/pe/pdb_match.py <exe>`, then mine it the way
-    `reference-builds.md:124-126` mines a packaged sample. No game need be running. The live route is
-    inject, read the version out of the `[SUMMARY]` lines in `init-0.log` and the slot out of
-    `DetectProcessEvent (pattern): match at vtable+0x…`. ⚠ **If you take the live route, refresh
-    the proxy first** — the `version.dll` sitting in that folder is ours and is dated
-    **2026-08-27**, so it predates A4's 508 marker rung and A5's stride-40 sweep, both of which
-    move the very version number you would be reading.
+* ⚠ **`find_instances` without `exact_match` is a NAME SUBSTRING match** (working-lessons §1.y).
+* ⚠ **An old proxy reproduces a FIXED defect** — §3's proxy precondition: `proxy_refresh.py report`
+  before every proxy-mode game row.
+* ⚠ **Log-window measurement: use before/after COUNTS**, not line slices, byte offsets, or a timestamp
+  watermark finer than its 1 s resolution allows (working-lessons §1.x).
+* ⚠ **ProcessEvent vtable slots: the PATTERN SCAN is primary, the version table only the fallback** —
+  how to read which one answered, and how to re-check a slot offline: working-lessons §4.7.
 * ⚠ **Invoke order is `init → trigger_scan → invoke → pe_profile_start`.** Profiler-first used to
   poison the PE hook permanently.
 * ⚠ **Elliot's PE hook is intermittent by title** ("sometimes yes, sometimes no"). Switch host to
   Lushfoil rather than retrying. Elliot also *detects* as UE 427 while really being 5.04 — honestly
   flagged `detected=no, lowConfidence=yes`, not a bug.
 * ⚠ **OCTOPATH's `version.dll` proxy is silently bypassed** (only System32's VERSION.dll maps). Use
-  `winmm.dll` or `dxgi.dll` there (dxgi crashed it until build 3366 —
+  `winmm.dll` or `dxgi.dll` there (dxgi crashed it until the fix in
   `docs/audit-2026-08-26-dxgi-appcompat-crash.md`). The honest check after launching any proxy title is
   whether `%LOCALAPPDATA%\UE5CEDumper\Logs\<ProcessName>\` was created at all.
-* ⚠ **`Serie::GetString` drops the FName `Number`** — 40 of 42 objects are named differently by two
-  pipe commands and 6 of 6 are unfindable by the name the DLL itself reports. **Only 4 call sites
-  pass a Number**; derive the total with `grep -rc "GetString" dll/src/` rather than quoting one (a
-  figure of 71 was carried in the docs and does not reproduce). ⛔ **Do not sed it** — display and
-  identity are different jobs.
+* ⚠ **`Serie::GetString` drops the FName `Number`** unless its caller passes one. Measured 2026-08-20:
+  40 of 42 objects were named differently by two pipe commands and 6 of 6 were unfindable by the name
+  the DLL itself reports. Derive which call sites pass a Number with `grep -rn "GetString" dll/src/`
+  rather than quoting a count (the 2026-08-20 figures, 71 sites and 4 passing a Number, no longer
+  reproduce). ⛔ **Do not sed it** — display and identity are different jobs.
 
 -----
 
 ## 9. How to close a verification row
 
-1. **Record the evidence in [`todo.md`](todo.md)** — the finding id, what was measured, the controls,
-   and what is still not covered. A ✅ with no numbers evaporates.
-2. **Delete the item's section from [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md)**
-   — do not annotate it in place — and **recount the table with a script**. The count is
-   `grep -c '^### '` minus **however many `###` currently sit under 「怎麼用這份清單」** (3 today, 2
-   before 2026-08-22 — count them, do not assume). ⚠ A ✅ in the audit register is **never** grounds
-   to delete a section there: in the audit doc ✅ means *the fix shipped*, which is exactly when the
-   live check becomes owed.
-3. **Tick every individual row** in the audit doc, not just the grouped one, and run
-   `py tools/check_audit_register.py`. ⚠ **Many rows are already ✅ there** — in the audit doc ✅ means
-   *the fix shipped*, which is usually years-old news by the time the live check runs. Check before
-   editing; a live PASS adds nothing to a ticked row.
-4. ⚠ **If only SOME sub-steps closed, do not delete the section — retitle it.** The heading carries
-   the remainder (`（**只剩步驟 5**）`) and it **goes stale silently**: `A6`'s heading still said
-   「只剩步驟 3、5」 after step 3 had been marked ✅ in its own table. When you tick a sub-step, fix the
-   heading in the same edit.
-5. **New method lessons go in [`working-lessons.md`](working-lessons.md)** — single copy, travels with
-   git. Not into memory files, which do not.
-6. **`dev-log.md` is append-only, newest first** — never edit a past entry, even to fix a stale
-   number. Add a new `(later)` entry for the same day instead; the file already does this.
-7. `py tools/check_all.py`, then commit.
+Moved on 2026-10-08 to [`verification-register.md`](verification-register.md), "How to close a row",
+which owns it. A programme's backlog row closes the same way, with its record in that programme's ledger.
 
 -----
 
@@ -791,10 +669,12 @@ This is one of the two PCs — `%COMPUTERNAME%` says which. Things that are true
   `~/.claude/settings.json` (every repo's sessions), never in the repo. Installing, and how any other
   repo joins or leaves: [tools/llm/README.md](../tools/llm/README.md).
 
-**Two-machine sync point: 3315.** The other PC last took **3262 — which is BURNED** (it came to name
-three different binaries) and must not be re-used as a version. When the other machine syncs, it
-needs `git submodule update --init vendor/minhook vendor/zydis` and a fresh `-Mode Publish`; none of
-the `dist/` artifacts travel.
+**Two-machine sync point: derive it, never quote it.** `git fetch`, compare with `origin/dev`, then
+read [`dev-log.md`](dev-log.md) newest-first: a build number either PC has consumed is gone, never
+reuse one. ⛔ **Build 3262 is BURNED** (it came to name three different binaries) and must not be
+re-used as a version. When the other machine syncs, it needs
+`git submodule update --init vendor/minhook vendor/zydis` and a fresh `-Mode Publish`; none of the
+`dist/` artifacts travel.
 
 ⚠ **Skia/HarfBuzz are pinned to what Avalonia was built against** (3.119.4 / 8.3.1.3) and two guards
 enforce it. **Do not "update all packages" past them** — that is what crashed the UI.

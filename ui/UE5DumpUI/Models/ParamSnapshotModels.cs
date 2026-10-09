@@ -283,6 +283,9 @@ public sealed class StackSite
     public string FuncName   { get; init; } = "";
     /// <summary>How many functions enter at <see cref="Fn"/> when more than one (identical code folded); 0 otherwise.</summary>
     public int    Shared     { get; init; }
+    /// <summary>[A1-INTERP-LABEL] The functions entering at <see cref="Fn"/> are script functions: the frame is in the
+    /// Blueprint interpreter, and <see cref="FuncName"/> is only the lowest-addressed of them, not the one running.</summary>
+    public bool   Script     { get; init; }
     /// <summary>The module base in the form AddressHelper takes; "" with no module.</summary>
     public string ModuleBaseHex => ModuleBase == 0 ? "" : $"0x{ModuleBase:X}";
 }

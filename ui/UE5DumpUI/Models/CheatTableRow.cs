@@ -60,6 +60,8 @@ public sealed record CtFunctionRow : CheatTableRow
 {
     public required string ClassName { get; init; }
     public required string FuncName { get; init; }
+    /// <summary>The CE helper's <c>parmsSize</c>, which gates the mailbox slab: where the function's parameter chain
+    /// ends (<see cref="BakedScriptGenerator.BakedParmsSize(AllFunctionEntry)"/>), not the tail's ParmsSize.</summary>
     public required int ParmsSize { get; init; }
     public required IReadOnlyList<BakedParamValue> BakedValues { get; init; }
     public override string GenerateScript()

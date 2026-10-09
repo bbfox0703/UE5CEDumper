@@ -49,6 +49,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     [ObservableProperty] private int _ueVersion;
     [ObservableProperty] private bool _versionDetected = true;
     [ObservableProperty] private bool _isUserOverride;
+    [ObservableProperty] private bool _isAutoPending;   // [UE-OVERRIDE-HINT-AUTO] see EngineState.IsAutoPending
     [ObservableProperty] private bool _isLowConfidence;
     // Default true so a DLL that predates get_offsets shows no banner — see EngineState.
     [ObservableProperty] private bool _offsetsValidated = true;
@@ -309,8 +310,12 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// </summary>
     public bool ShowVersionWarning => HasData && !VersionDetected && !IsUserOverride;
 
-    /// <summary>True when ueVersion came from a user-set persistent override.</summary>
+    /// <summary>True when the version in force is the user's override -- persisted, or cleared with Auto pending.</summary>
     public bool ShowUserOverrideBadge => HasData && IsUserOverride;
+
+    /// <summary>[UE-OVERRIDE-HINT-AUTO] Auto was chosen, but this session keeps the override's version until the next
+    /// launch: the ComboBox shows the choice, the override badge what is in force, and this note when Auto lands.</summary>
+    public bool ShowAutoPendingNote => HasData && IsAutoPending;
 
     /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
     public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;
@@ -380,10 +385,14 @@ public partial class PointerPanelViewModel : ViewModelBase
         _ => PublisherThumbprint,
     };
 
-    /// <summary>List of override choices for the ComboBox (display strings).</summary>
+    /// <summary>List of override choices for the ComboBox (display strings). It starts at the DLL's
+    /// support floor (Grimoire::MIN_SUPPORTED_UE_VERSION), the lowest version set_ue_version_override
+    /// accepts: the too-old banner names the override as the way out of a wrong detection, so every
+    /// version the dumper reads has to be on it. [UE-OVERRIDE-411]</summary>
     public static System.Collections.Generic.IReadOnlyList<string> UeVersionOverrideOptions { get; } = new[]
     {
         "Auto",
+        "UE 4.11", "UE 4.12", "UE 4.13", "UE 4.14", "UE 4.15", "UE 4.16", "UE 4.17",
         "UE 4.18", "UE 4.19", "UE 4.20", "UE 4.21", "UE 4.22", "UE 4.23",
         "UE 4.24", "UE 4.25", "UE 4.26", "UE 4.27",
         "UE 5.0", "UE 5.1", "UE 5.2", "UE 5.3", "UE 5.4",
@@ -632,6 +641,7 @@ public partial class PointerPanelViewModel : ViewModelBase
         UeVersion = state.UEVersion;
         VersionDetected = state.VersionDetected;
         IsUserOverride = state.IsUserOverride;
+        IsAutoPending = state.IsAutoPending;
         IsLowConfidence = state.IsLowConfidence;
         IsVersionTooOld = state.IsVersionTooOld;
         OffsetsValidated = state.OffsetsValidated;
@@ -640,9 +650,11 @@ public partial class PointerPanelViewModel : ViewModelBase
         PublisherThumbprint = state.PublisherThumbprint;
         // Re-sync the ComboBox selection to whatever the DLL actually has (override or auto).
         // _suppressOverrideSelectionEvent gates the partial method so this assignment doesn't
-        // re-trigger the apply path.
+        // re-trigger the apply path. A pending Auto is the user's choice even though the
+        // override's version is still in force, so it shows as Auto ([UE-OVERRIDE-HINT-AUTO]).
         _suppressOverrideSelectionEvent = true;
-        SelectedUeVersionOverride = state.IsUserOverride ? VersionToLabel(state.UEVersion) : "Auto";
+        SelectedUeVersionOverride = state.IsUserOverride && !state.IsAutoPending
+            ? VersionToLabel(state.UEVersion) : "Auto";
         _suppressOverrideSelectionEvent = false;
         TotalObjects = state.ObjectCount;
         ItemPacked = state.ItemPacked;
@@ -771,6 +783,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(ShowVersionWarning));
         OnPropertyChanged(nameof(ShowUserOverrideBadge));
+        OnPropertyChanged(nameof(ShowAutoPendingNote));
         OnPropertyChanged(nameof(ShowLowConfidenceWarning));
         OnPropertyChanged(nameof(ShowVersionDetectedBadge));
         // Both refusal banners. ShowVersionTooOldWarning was MISSING here before the pre-UE4
@@ -945,7 +958,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     /// <summary>"UE 4.27" → 427, "UE 5.4" → 504, "Auto" → 0.</summary>
-    private static int LabelToVersion(string label)
+    internal static int LabelToVersion(string label)
     {
         if (string.IsNullOrEmpty(label) || label == "Auto") return 0;
         // Format: "UE M.N"  (M = 4 or 5, N = 0..27)
@@ -959,7 +972,7 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     /// <summary>504 → "UE 5.4", 427 → "UE 4.27", 0 → "Auto".</summary>
-    private static string VersionToLabel(int version)
+    internal static string VersionToLabel(int version)
     {
         if (version <= 0) return "Auto";
         int major = version / 100;

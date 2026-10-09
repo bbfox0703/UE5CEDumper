@@ -1833,6 +1833,67 @@ static bool ReadParamShape(uintptr_t func, int& count, int& end) {
     return count > 0;
 }
 
+namespace {
+// One lock for the vote and for CheckVersionOverrideTail's later measurement, so the two never sample at once.
+std::mutex s_funcFlagsMutex;
+
+struct ParamShapeSample { uintptr_t f; int count; int end; };
+
+// The first `want` UFunctions in GObjects order whose own parameter chain reads (ReadParamShape).
+std::vector<ParamShapeSample> SampleParamShapes(int want) {
+    std::vector<ParamShapeSample> samples;
+    const int32_t total = Aura::GetCount();
+    for (int32_t i = 0; i < total && static_cast<int>(samples.size()) < want; ++i) {
+        uintptr_t obj = Aura::GetByIndex(i);
+        if (!obj) continue;
+        uintptr_t cls = 0;
+        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
+        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "Function") continue;
+        ParamShapeSample s{ obj, 0, 0 };
+        if (ReadParamShape(obj, s.count, s.end)) samples.push_back(s);
+    }
+    return samples;
+}
+
+// The FunctionFlags offsets the vote weighs under `ver`, in its order (ties keep the earlier): the measured
+// primary, the version table, then the sweep.
+std::vector<int> FunctionFlagsCandidates(unsigned ver) {
+    const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
+    std::vector<int> cands{ DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName,
+                                                            DynOff::USTRUCT_PROPSSIZE, measured,
+                                                            DynOff::bUseFProperty) };
+    auto addCand = [&](int c) { if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c); };
+    addCand(DynOff::FunctionFlagsOffsetFor(ver, DynOff::bCasePreservingName));
+    for (int c : DynOff::FUNCTIONFLAGS_SWEEP) addCand(c);
+    return cands;
+}
+
+// [UE-OVERRIDE-411] review: where the samples themselves keep NumParms / ParmsSize, whatever the version says. Every
+// base a reader can produce is weighed -- each candidate FunctionFlags offset plus a version shift of 0 or 2 and an
+// extra of 0 or 4 -- with the vote's own per-sample rule, so a wrong version cannot hide the right base the way it
+// hides it from the vote (which adds only its own version's shift). -1 when no base wins.
+int MeasureTailBase(const std::vector<ParamShapeSample>& samples, const std::vector<int>& flagCands) {
+    std::vector<int> bases;
+    for (int c : flagCands)
+        for (int gap : { 0, 2, 4, 6 })
+            if (std::find(bases.begin(), bases.end(), c + gap) == bases.end()) bases.push_back(c + gap);
+    std::vector<int> hits(bases.size(), 0);
+    for (size_t b = 0; b < bases.size(); ++b) {
+        for (const ParamShapeSample& s : samples) {
+            uint8_t numParms = 0;
+            uint16_t parmsSize = 0;
+            const uintptr_t tail = s.f + bases[b];
+            if (Macht::ReadSafe<uint8_t>(tail + 0x04, numParms)
+                && Macht::ReadSafe<uint16_t>(tail + 0x06, parmsSize)
+                && DynOff::FunctionTailMatches(numParms, parmsSize, s.count, s.end))
+                ++hits[b];
+        }
+    }
+    return DynOff::PickMeasuredTailBase(bases.data(), hits.data(), static_cast<int>(bases.size()),
+                                        static_cast<int>(samples.size()));
+}
+}  // namespace
+
 // [VND583-01] Decide UFunction::FunctionFlags' offset ONCE, by measurement. Candidates: the
 // measured primary (PropertiesSize + 0x48/0x58), the version table, and the six template
 // values; each with the version's own tail shift and an extra 0 or +4 (Split Fiction). A
@@ -1840,37 +1901,22 @@ static bool ReadParamShape(uintptr_t func, int& count, int& end) {
 // own parameter chain (DynOff::FunctionTailMatches). The winner needs >= 60% of at least 8
 // samples; otherwise the measured primary is latched when there is one, and 0 (undecided)
 // when there is not. Runs only after the offsets probe, because it walks property chains.
+// The same samples then measure the tail base with no version in it (MeasureTailBase), which
+// CheckVersionOverrideTail holds an override to.
 static void EnsureFunctionFlagsOffset() {
     if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_acquire)) return;
     if (!DynOff::bOffsetsProbeRan.load(std::memory_order_acquire)) return;
-    static std::mutex s_mutex;
-    std::lock_guard<std::mutex> lk(s_mutex);
+    std::lock_guard<std::mutex> lk(s_funcFlagsMutex);
     if (DynOff::bUFunctionFlagsDetected.load(std::memory_order_relaxed)) return;
 
     const unsigned ver = g_cachedUEVersion;
     const bool measured = DynOff::bOffsetsValidated.load(std::memory_order_acquire);
-    const int primary = DynOff::FunctionFlagsPrimaryFor(ver, DynOff::bCasePreservingName,
-                                                        DynOff::USTRUCT_PROPSSIZE, measured,
-                                                        DynOff::bUseFProperty);
+    const std::vector<int> cands = FunctionFlagsCandidates(ver);
+    const int primary = cands.front();
     const int table = DynOff::FunctionFlagsOffsetFor(ver, DynOff::bCasePreservingName);
-    std::vector<int> cands{ primary };
-    auto addCand = [&](int c) { if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c); };
-    addCand(table);
-    for (int c : DynOff::FUNCTIONFLAGS_SWEEP) addCand(c);
 
-    struct Sample { uintptr_t f; int count; int end; };
-    std::vector<Sample> samples;
-    constexpr int kWant = 64;
-    const int32_t total = Aura::GetCount();
-    for (int32_t i = 0; i < total && static_cast<int>(samples.size()) < kWant; ++i) {
-        uintptr_t obj = Aura::GetByIndex(i);
-        if (!obj) continue;
-        uintptr_t cls = 0;
-        if (!Macht::ReadSafe(obj + Grimoire::OFF_UOBJECT_CLASS, cls) || !cls) continue;
-        if (ReadFName(cls + Grimoire::OFF_UOBJECT_NAME) != "Function") continue;
-        Sample s{ obj, 0, 0 };
-        if (ReadParamShape(obj, s.count, s.end)) samples.push_back(s);
-    }
+    using Sample = ParamShapeSample;
+    const std::vector<Sample> samples = SampleParamShapes(64);
 
     const int shift = DynOff::FunctionTailShiftFor(ver);
     int bestOff = 0, bestExtra = 0, bestHits = -1;
@@ -1905,12 +1951,62 @@ static void EnsureFunctionFlagsOffset() {
                  n, bestOff, bestHits < 0 ? 0 : bestHits, need,
                  measured ? "keeping the measured primary" : "undecided, readers keep the table + sweep");
     }
+
+    // [UE-OVERRIDE-411] review. The vote adds only this version's shift, so under a version from the wrong side of
+    // 4.18 -- a persisted override, set before any scan could check it -- it cannot find the tail. The measurement
+    // can, and the readers follow it (DynOff::FunctionTailReadBase); the version is still wrong for this game in
+    // whatever else it keys, so say so.
+    const int tailBase = MeasureTailBase(samples, cands);
+    DynOff::UFUNCTION_TAIL_MEASURED.store(tailBase, std::memory_order_relaxed);
+    if (tailBase >= 0 && DynOff::UFUNCTION_FLAGS > 0) {
+        const int layout = DynOff::FunctionTailBaseFor(ver, DynOff::UFUNCTION_FLAGS, DynOff::UFUNCTION_TAIL_EXTRA);
+        if (layout != tailBase)
+            LOG_WARN("DetectFunctionFlags: the sampled UFunctions keep NumParms / ParmsSize behind +0x%X, but UE %u's "
+                     "layout puts them behind +0x%X -- that version does not fit this game's UFunctions (a wrong UE "
+                     "version override?). The tail is read at the measured base; correct the version.",
+                     tailBase, ver, layout);
+    }
     DynOff::bUFunctionFlagsDetected.store(true, std::memory_order_release);
 }
 
 int FunctionFlagsOffset() {
     EnsureFunctionFlagsOffset();
     return DynOff::UFUNCTION_FLAGS;
+}
+
+OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion) {
+    OverrideTailCheck r;
+    // Asked before the override is applied, so a vote that runs here runs under the version the scan detected; the
+    // measurement does not depend on the version either way.
+    const int decided = FunctionFlagsOffset();
+    int measured = DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed);
+    // A re-init clears the probe flag and keeps the measurement, which the same game's UFunctions still fit, so a
+    // held one judges until the new probe runs. With neither there is nothing to sample: property chains are read
+    // only after the probe.
+    const bool probeRan = DynOff::bOffsetsProbeRan.load(std::memory_order_acquire);
+    if (!probeRan && measured < 0) return r;
+    if (measured < 0) {
+        // The vote's samples decided nothing -- typically too few UFunctions loaded when it ran. Sample again now,
+        // over both versions' candidates.
+        std::lock_guard<std::mutex> lk(s_funcFlagsMutex);
+        std::vector<int> cands = FunctionFlagsCandidates(g_cachedUEVersion);
+        for (int c : FunctionFlagsCandidates(newVersion))
+            if (std::find(cands.begin(), cands.end(), c) == cands.end()) cands.push_back(c);
+        if (decided > 0 && std::find(cands.begin(), cands.end(), decided) == cands.end()) cands.push_back(decided);
+        measured = MeasureTailBase(SampleParamShapes(64), cands);
+        if (measured >= 0) DynOff::UFUNCTION_TAIL_MEASURED.store(measured, std::memory_order_relaxed);
+    }
+    // Where the new version's layout puts the tail: a decided offset and its extra stay latched across an override;
+    // undecided, it starts from the new version's own primary (ReadFuncFlagsAndParams).
+    const int flagsOff = decided > 0 ? decided
+        : DynOff::FunctionFlagsPrimaryFor(newVersion, DynOff::bCasePreservingName, DynOff::USTRUCT_PROPSSIZE,
+                                          DynOff::bOffsetsValidated.load(std::memory_order_acquire),
+                                          DynOff::bUseFProperty);
+    const int extra = decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0;
+    r.versionBase  = DynOff::FunctionTailBaseFor(newVersion, flagsOff, extra);
+    r.measuredBase = measured;
+    r.verdict      = DynOff::CheckTailForVersion(newVersion, flagsOff, extra, measured);
+    return r;
 }
 
 // Read UFunction::FunctionFlags (+ the NumParms/ParmsSize/ReturnValueOffset that
@@ -1953,10 +2049,12 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // shifts all three by 2. This comment used to call the flat offsets "stable across all UE
     // versions"; on 4.11-4.17 that read NumParms as ParmsSize and undersized every invoke buffer
     // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
-    // on DynOff::FunctionTailShiftFor.
+    // on DynOff::FunctionTailShiftFor. Once the sampled UFunctions have measured the tail, that
+    // measurement decides instead, so a wrong version cannot move it ([UE-OVERRIDE-411] review 2).
     if (funcFlagsOff >= 0) {
-        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
-                       + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);   // [VND583-01]
+        const int tail = DynOff::FunctionTailReadBase(g_cachedUEVersion, funcFlagsOff,
+                                                      decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0,   // [VND583-01]
+                                                      DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed));
         Macht::ReadSafe<uint8_t> (funcAddr + tail + 0x04, fi.numParms);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x06, fi.parmsSize);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x08, fi.returnValueOffset);
@@ -2000,6 +2098,26 @@ bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size) {
     return false;
 }
 
+uint32_t ParamBufferSize(const FunctionInfo& fi) {
+    int64_t end = 0;
+    for (const FunctionParam& p : fi.params)
+        if ((p.isParm || p.isReturn) && p.offset >= 0 && p.size > 0)
+            end = (std::max)(end, static_cast<int64_t>(p.offset) + p.size);
+    return DynOff::ProcessEventBufferBytes(fi.parmsSize, end);
+}
+
+uint32_t ParamBufferSize(uintptr_t funcAddr, uint16_t parmsSize) {
+    int64_t end = 0;
+    int count = 0, shapeEnd = 0;
+    if (ReadParamShape(funcAddr, count, shapeEnd)) end = shapeEnd;
+    // The return value carries CPF_Parm as well, but ReadParamShape gives up on the whole chain at one implausible
+    // entry; the return's own end still counts then, because ProcessEvent writes it.
+    int32_t retOff = -1, retSize = 0;
+    if (ReadReturnSlot(funcAddr, retOff, retSize))
+        end = (std::max)(end, static_cast<int64_t>(retOff) + retSize);
+    return DynOff::ProcessEventBufferBytes(parmsSize, end);
+}
+
 bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out) {
     if (!funcAddr) return false;
     uintptr_t metaClass = 0;
@@ -2040,8 +2158,9 @@ FunctionCaptureSetup PrepareFunctionCapture() {
                                           DynOff::bUseFProperty);
     if (primary > 0) {
         s.flagsOffset = primary;
-        s.tailOffset  = primary + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
-                      + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);
+        s.tailOffset  = DynOff::FunctionTailReadBase(g_cachedUEVersion, primary,
+                                                     decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0,
+                                                     DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed));
     }
     // pe_profile_get's is_widget tests the class chain for these two names; the capture tests for these classes.
     std::lock_guard<std::mutex> lk(s_widgetBasesMutex);

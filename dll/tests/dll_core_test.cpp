@@ -241,6 +241,205 @@ int main() {
         // ⚠ Without this, every assertion below would pass against a pool of zero objects.
     }
 
+    // [VER-410-GATE] What the resource readings decide before any memory scan. Tier 1 below the floor is a refusal of
+    // the whole scan, so each way to reach it is pinned, and so is each way that must NOT reach it.
+    {   blk("VER-410-GATE - a reading below the floor is taken at tier 1 only when the resources corroborate it");
+        using Genau::DecideResourceVersion;
+        const char* isDefense = "4.10.2-0+++depot+UE4-Releases+4.10";
+
+        auto v = DecideResourceVersion(410, true, isDefense, 0);
+        check("VER-410-GATE ⭐: IS Defense (fixed 4.10.2, its engine build string) is tier 1",
+              v.version == 410 && v.tier == 1 && v.byBuildString && !v.byCrc);
+        v = DecideResourceVersion(410, true, "", 410);
+        check("VER-410-GATE ⭐: 410 with a CrashReportClient agreeing is tier 1",
+              v.version == 410 && v.tier == 1 && v.byCrc && !v.byBuildString);
+        v = DecideResourceVersion(410, true, isDefense, 410);
+        check("VER-410-GATE: both signals at once say so", v.tier == 1 && v.byBuildString && v.byCrc);
+
+        v = DecideResourceVersion(0, false, "", 410);
+        check("VER-410-GATE: a CrashReportClient alone (the exe carries no engine version) stays tier 3",
+              v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(427, true, "++UE4+Release-4.27-CL-0", 410);
+        check("VER-410-GATE: a CrashReportClient saying 410 against an exe saying 427 stays tier 3",
+              v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(410, true, isDefense, 409);
+        check("VER-410-GATE: the exe's corroboration does not carry over to a CrashReportClient overriding it (409)",
+              v.version == 409 && v.tier == 3 && !v.byBuildString);
+        v = DecideResourceVersion(410, false, "++UE4+Release-4.10-CL-0", 0);
+        check("VER-410-GATE: a code read out of the string cannot corroborate itself -- tier 3", v.tier == 3);
+        v = DecideResourceVersion(410, true, "4.10.3", 0);
+        check("VER-410-GATE: a bare 4.10.3 beside a fixed 4.10 stays tier 3", v.version == 410 && v.tier == 3);
+        v = DecideResourceVersion(405, true, "4.5.0.0", 0);
+        check("VER-410-GATE: the b25a marker (4.5.0.0) stays tier 3", v.version == 405 && v.tier == 3);
+
+        v = DecideResourceVersion(411, true, "4.11.0-0+UE4", 0);
+        check("VER-410-GATE: the floor itself is tier 1, with nothing to corroborate",
+              v.version == 411 && v.tier == 1 && !v.byBuildString && !v.byCrc);
+        v = DecideResourceVersion(504, true, "", 0);
+        check("VER-410-GATE: a supported reading needs no second signal", v.version == 504 && v.tier == 1);
+        v = DecideResourceVersion(0, false, "", 0);
+        check("VER-410-GATE: no reading at all is tier 0", v.version == 0 && v.tier == 0);
+
+        // [VER-410-GATE] review: the tier-3 log lines said "PE VERSIONINFO says UE %u" of a CrashReportClient's reading
+        // too. The verdict now says whose reading it is.
+        using Genau::VersionSource;
+        check("VER-410-GATE source ⭐: a CrashReportClient's 410 beside an exe reading nothing is the CrashReportClient's",
+              DecideResourceVersion(0, false, "", 410).source == VersionSource::Crc);
+        check("VER-410-GATE source ⭐: ...and beside an exe reading 427 it is still the CrashReportClient's",
+              DecideResourceVersion(427, true, "++UE4+Release-4.27-CL-0", 410).source == VersionSource::Crc);
+        check("VER-410-GATE source: a CrashReportClient overriding the exe's 410 with 409 is the CrashReportClient's",
+              DecideResourceVersion(410, true, isDefense, 409).source == VersionSource::Crc);
+        check("VER-410-GATE source ⭐: the exe's own 410 is the exe's",
+              DecideResourceVersion(410, true, "4.10.3", 0).source == VersionSource::Exe);
+        check("VER-410-GATE source: an agreeing CrashReportClient leaves it the exe's",
+              DecideResourceVersion(410, true, "", 410).source == VersionSource::Exe);
+        check("VER-410-GATE source: a supported exe reading is the exe's",
+              DecideResourceVersion(504, true, "", 0).source == VersionSource::Exe);
+        check("VER-410-GATE source: no reading has no source", DecideResourceVersion(0, false, "", 0).source == VersionSource::None);
+    }
+
+    // [VER-410-GATE] review: the same decision with its glue -- the VERSIONINFO reads, the ProductVersion string handed
+    // on, and the tier-1 short-circuit -- on real files. dll/CMakeLists.txt builds each dll/tests/res/*.rc into a
+    // resource-only DLL beside this exe; b25c / b25d are the resources the b25 rig's live marker exes carry. Only the
+    // pure helpers were pinned before, and a refactor that dropped the string or the short-circuit stayed green.
+    {   blk("VER-410-GATE glue - the resource half of detection, run on built VERSIONINFO files");
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(nullptr, self, MAX_PATH);
+        std::wstring dir(self);
+        dir.resize(dir.find_last_of(L"\\/") + 1);
+        auto res = [&](const wchar_t* stem) { return dir + L"verres_" + stem + L".dll"; };
+        const std::wstring b25c = res(L"b25c_corroborated"), b25d = res(L"b25d_bare"), gameOnly = res(L"game_only");
+        const std::wstring gameBuild410 = res(L"game_buildstring_410"), gameBuild411 = res(L"game_buildstring_411");
+        for (const std::wstring* f : { &b25c, &b25d, &gameOnly, &gameBuild410, &gameBuild411 })
+            check("VER-410-GATE glue setup: the resource fixture was built beside the test",
+                  GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
+                  Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
+        const char* isDefense = "4.10.2-0+++depot+UE4-Releases+4.10";
+        char gb[160];
+        auto phase = [&](const std::wstring& exe, const wchar_t* crc) {
+            const auto p = Genau::DetectVersionFromResources(exe.c_str(), crc);
+            snprintf(gb, sizeof(gb), "done %d version %u tier %d build %d crc %d fixed %d pv '%s'", p.done ? 1 : 0,
+                     p.result.version, p.result.tier, p.verdict.byBuildString ? 1 : 0, p.verdict.byCrc ? 1 : 0,
+                     p.exeReading.fromFixedField ? 1 : 0, p.exeReading.productVersion.c_str());
+            return p;
+        };
+
+        auto c = phase(b25c, L"");
+        check("VER-410-GATE glue: b25c reads fixed 4.10.2 and hands its ProductVersion string on",
+              c.exeReading.fromFixedField && c.exeReading.productVersion == isDefense, gb);
+        check("VER-410-GATE glue ⭐: b25c (IS Defense's resource) stops at tier 1 on its engine build string",
+              c.done && c.result.version == 410 && c.result.tier == 1 && c.verdict.byBuildString, gb);
+        auto d = phase(b25d, L"");
+        check("VER-410-GATE glue ⭐: b25d (a bare 4.10.3) goes on to the memory scan at tier 3",
+              !d.done && d.result.version == 410 && d.result.tier == 3, gb);
+        auto dc = phase(b25d, b25c.c_str());
+        check("VER-410-GATE glue ⭐: b25d beside a CrashReportClient agreeing on 410 stops at tier 1",
+              dc.done && dc.result.version == 410 && dc.result.tier == 1 && dc.verdict.byCrc, gb);
+        auto gc = phase(gameOnly, b25c.c_str());
+        check("VER-410-GATE glue: a CrashReportClient's 410 beside an exe carrying only a game version stays tier 3",
+              !gc.done && gc.result.version == 410 && gc.result.tier == 3, gb);
+        check("VER-410-GATE glue: ...and the verdict names the CrashReportClient as its source, the exe as reading nothing",
+              gc.verdict.source == Genau::VersionSource::Crc && gc.exeVersion == 0, gb);
+        phase(b25d, L"");
+        check("VER-410-GATE glue: b25d's tier-3 reading is the exe's own", d.verdict.source == Genau::VersionSource::Exe
+              && d.exeVersion == 410, gb);
+        auto none = phase(dir + L"verres_absent.dll", L"");
+        check("VER-410-GATE glue: a file that is not there reads nothing", !none.done && none.result.version == 0, gb);
+
+        // [VER-410-GATE] review (rev 9): an exe whose fixed fields carry the GAME's version, but whose ProductVersion
+        // string is the engine's own build string, used to read nothing -- the string fallback knew only the
+        // branch-first shape -- so a 4.10 title beside an agreeing CrashReportClient was scanned at tier 3, and a
+        // 4.11-4.17 title fell to the memory scan, whose needles floor at 4.18. The string is now read, as a code
+        // that cannot corroborate itself: below the floor only an agreeing CrashReportClient makes it tier 1.
+        auto s10 = phase(gameBuild410, L"");
+        check("VER-410-GATE rev 9 ⭐: game fixed fields + a 4.10 engine build string read 410, from the string",
+              s10.exeVersion == 410 && !s10.exeReading.fromFixedField, gb);
+        check("VER-410-GATE rev 9 ⭐: ...which alone stays tier 3 -- the string does not corroborate itself",
+              !s10.done && s10.result.version == 410 && s10.result.tier == 3 && !s10.verdict.byBuildString, gb);
+        // [VER-410-GATE] second review: the line under "PE resource failed" told this reading that no engine build
+        // string corroborates it, two lines after the log said the reading IS the build string. A code read out of the
+        // string cannot corroborate itself, and the line says so now. The b25-judged Warn line is not this one.
+        const std::string n10 = Genau::Tier3ResourceNote(s10);
+        check("VER-410-GATE note ⭐: a reading out of the exe's build string says it cannot corroborate itself",
+              n10.find("build string") != std::string::npos && n10.find("cannot corroborate") != std::string::npos
+              && n10.find("neither an engine build string") == std::string::npos, n10.c_str());
+        const std::string nFixed = Genau::Tier3ResourceNote(d);
+        check("VER-410-GATE note control: a fixed-field reading keeps its line word for word",
+              nFixed == "DetectVersion: (the PE resource did not fail: it read UE 410, below the 411 floor, and neither "
+                        "an engine build string nor an agreeing CrashReportClient corroborates it — the memory scan "
+                        "decides)", nFixed.c_str());
+        const std::string nCrc = Genau::Tier3ResourceNote(gc);
+        check("VER-410-GATE note control: a CrashReportClient's reading keeps its line",
+              nCrc == "DetectVersion: (the game exe's resource read nothing usable; CrashReportClient says UE 410, "
+                      "below the 411 floor, which alone does not corroborate a reading below it — the memory scan "
+                      "decides)", nCrc.c_str());
+        // sweep_title.py's WANT keywords end its fallback window at the next line it collects, and judge_d's must-not
+        // is case-sensitive.
+        for (const std::string* note : { &n10, &nFixed, &nCrc })
+            for (const char* kw : { "PE VERSIONINFO", "PE resource failed", "Tier 1 (", "Tier 2 ", "Tier 3 ",
+                                    "pre-UE4 markers", "UE Version =", "DetectPublisher", "skipped DetectVersion",
+                                    "CORROBORATED" })
+                if (note->find(kw) != std::string::npos)
+                    check("VER-410-GATE note: no tier-3 line carries a sweep_title.py keyword or 'CORROBORATED'", false,
+                          (std::string(kw) + " in: " + *note).c_str());
+        auto s10c = phase(gameBuild410, b25c.c_str());
+        check("VER-410-GATE rev 9 ⭐: ...and beside a CrashReportClient agreeing on 410 it stops at tier 1, the exe's",
+              s10c.done && s10c.result.version == 410 && s10c.result.tier == 1 && s10c.verdict.byCrc
+              && !s10c.verdict.byBuildString && s10c.verdict.source == Genau::VersionSource::Exe, gb);
+        // The 4.11 fixture carries its build string in FileVersion, under a game ProductVersion: the fallback reads both
+        // keys, and the 4.10 fixture already holds the ProductVersion one.
+        auto s11 = phase(gameBuild411, L"");
+        check("VER-410-GATE rev 9 ⭐: game fixed fields + a simplified 4.11 build string in FileVersion read 411 at tier 1",
+              s11.done && s11.result.version == 411 && s11.result.tier == 1 && s11.exeVersion == 411
+              && !s11.exeReading.fromFixedField, gb);
+        auto g0 = phase(gameOnly, L"");
+        check("VER-410-GATE rev 9 control: a game version with no engine build string still reads nothing",
+              !g0.done && g0.result.version == 0 && g0.exeVersion == 0, gb);
+
+        // [VER-410-GATE] second review: the paths production uses. It names no CrashReportClient -- Genau looks above
+        // the exe -- and DetectVersionDetailed returns a decided verdict before any memory scan. dll/CMakeLists.txt lays
+        // the fixtures out as an install: the 4.10 build-string exe under Game/Binaries/Win64 with a 4.10.2
+        // CrashReportClient under Engine/Binaries/Win64, and the same exe with nothing above it.
+        const std::wstring treeExe = dir + L"verres_tree\\Game\\Binaries\\Win64\\Game.exe";
+        const std::wstring loneExe = dir + L"verres_tree_nocrc\\Game\\Binaries\\Win64\\Game.exe";
+        for (const std::wstring* f : { &treeExe, &loneExe })
+            check("VER-410-GATE tree setup: the fixture install was laid out beside the test",
+                  GetFileAttributesW(f->c_str()) != INVALID_FILE_ATTRIBUTES,
+                  Utf8Helpers::EncodeUtf16(f->c_str(), f->size()).c_str());
+        auto tr = phase(treeExe, nullptr);
+        check("VER-410-GATE tree ⭐: the CrashReportClient above the exe is found the way the DLL looks -- tier 1 by it",
+              tr.done && tr.result.version == 410 && tr.result.tier == 1 && tr.verdict.byCrc
+              && tr.verdict.source == Genau::VersionSource::Exe, gb);
+        auto lone = phase(loneExe, nullptr);
+        check("VER-410-GATE tree control: the same exe with nothing above it stays tier 3",
+              !lone.done && lone.result.version == 410 && lone.result.tier == 3 && !lone.verdict.byCrc, gb);
+        // The memory half sees an image whose only engine tag is a Tier-1 needle for 4.27.
+        static const char kImage[] = "........++UE4+Release-4.27-CL-18319896................................";
+        const auto dTree = Genau::DetectVersionDetailed(treeExe.c_str(), reinterpret_cast<uintptr_t>(kImage),
+                                                        sizeof(kImage));
+        snprintf(gb, sizeof(gb), "version %u tier %d", dTree.version, dTree.tier);
+        check("VER-410-GATE tree ⭐: a decided resource verdict returns before the memory scan -- 410, not the image's 4.27",
+              dTree.version == 410 && dTree.tier == 1, gb);
+        const auto dLone = Genau::DetectVersionDetailed(loneExe.c_str(), reinterpret_cast<uintptr_t>(kImage),
+                                                        sizeof(kImage));
+        snprintf(gb, sizeof(gb), "version %u tier %d", dLone.version, dLone.tier);
+        check("VER-410-GATE tree control: an undecided one goes on to the memory scan, which finds the image's 4.27",
+              dLone.version == 427 && dLone.tier == 1, gb);
+
+        // A game version in the fixed ProductVersion, the engine's 4.10.2 in the fixed FileVersion and its build string
+        // in the ProductVersion string: the FileVersion branch is a fixed-field reading, so the string corroborates it.
+        const std::wstring productFixedFile = res(L"game_product_fixedfile_410");
+        auto pf = phase(productFixedFile, L"");
+        check("VER-410-GATE glue ⭐: a fixed FileVersion of 4.10.2 under a game ProductVersion is a fixed-field reading, "
+              "corroborated by the build string -- tier 1",
+              pf.done && pf.result.version == 410 && pf.result.tier == 1 && pf.exeReading.fromFixedField
+              && pf.verdict.byBuildString, gb);
+        // The new readings change the verdict a cached title holds, and the cache-reuse branch would restore the old
+        // one for ever: the string fallback's widening is a logic change, rev 8 -> 9.
+        check("VER-410-GATE rev 9: the detection logic rev was bumped for the string fallback",
+              Genau::kVersionDetectLogicRev >= 9);
+    }
+
     {   blk("A7 — ForEach honours Tot::Requested() and stops");
         ResetCancel();
         Tot::g_perCommand.store(true);          // cancel BEFORE the walk starts
@@ -1078,6 +1277,103 @@ int main() {
         const auto f505 = readAt(505);
         check("UFUNCTAIL control: UE 5.5 reads as before",
               f505.numParms == 4 && f505.parmsSize == 0x40 && f505.returnValueOffset == 0x38);
+
+        // [UE-OVERRIDE-411] review. The version decides where ParmsSize is read, so a wrong one -- an override of 4.17
+        // on a 4.18 title, which the override now reaches -- reads the field next door. A K2_SetActorLocation-shaped
+        // 4.18 tail: NumParms 5, ParmsSize 0x9A, ReturnValueOffset 0x99 (bTeleport +0x98, the bool return +0x99).
+        memset(fn, 0, sizeof(fn));
+        memcpy(fn + 0x88, &flags, 4);
+        fn[0x8C] = 5;
+        put16(fn + 0x8E, 0x9A);
+        put16(fn + 0x90, 0x99);
+        const auto wrong = readAt(417);
+        snprintf(buf, sizeof(buf), "parmsSize 0x%X", wrong.parmsSize);
+        check("PEBUF the hazard: a 4.18 tail read as 4.17 takes ReturnValueOffset for ParmsSize",
+              wrong.parmsSize == 0x99, buf);
+
+        // The chain WalkFunctions reads does not depend on the tail: each entry carries its own offset and size.
+        auto parm = [](int32_t off, int32_t size, bool isReturn) {
+            FunctionParam p{};
+            p.name = "p"; p.offset = off; p.size = size; p.isParm = true; p.isReturn = isReturn;
+            return p;
+        };
+        FunctionInfo shifted = wrong;
+        shifted.params = { parm(0, 12, false), parm(0xC, 1, false), parm(0x10, 0x88, false),
+                           parm(0x98, 1, false), parm(0x99, 1, true) };
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(shifted));
+        check("PEBUF ⭐: the buffer still covers the return value ProcessEvent writes at +0x99",
+              Ubel::ParamBufferSize(shifted) == 0x9A, buf);
+        FunctionParam local = parm(0x200, 8, false);   // a Blueprint function's local: in the chain, not CPF_Parm
+        local.isParm = false;
+        shifted.params.push_back(local);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(shifted));
+        check("PEBUF: a local past the parameters does not grow the buffer", Ubel::ParamBufferSize(shifted) == 0x9A, buf);
+        // Both kinds of entry count on their own: a function with no return value (the reverse misread, a 4.15
+        // tail read as 4.18, takes NumParms 1 for ParmsSize), and a return entry whose CPF_Parm bit did not read.
+        FunctionInfo noReturn{};
+        noReturn.parmsSize = 1;
+        noReturn.params = { parm(0, 12, false) };
+        check("PEBUF ⭐: a function with no return value gets its whole chain (12), not NumParms (1)",
+              Ubel::ParamBufferSize(noReturn) == 12, std::to_string(Ubel::ParamBufferSize(noReturn)).c_str());
+        FunctionInfo onlyReturn{};
+        onlyReturn.parmsSize = 0;
+        onlyReturn.params = { parm(0, 12, true) };
+        onlyReturn.params[0].isParm = false;
+        check("PEBUF: a return entry counts even when its CPF_Parm bit did not read -- ProcessEvent writes it",
+              Ubel::ParamBufferSize(onlyReturn) == 12, std::to_string(Ubel::ParamBufferSize(onlyReturn)).c_str());
+        // [UE-OVERRIDE-411] review 2: a list_all_functions row carries the chain's end beside the tail's ParmsSize, so
+        // a cheat-table row built from that list hands the CE helper the number that gates the mailbox slab.
+        ClassInfo rowClass{};
+        rowClass.Name = "Actor";
+        const Aura::AllFunctionEntry row = Aura::FunctionEntryFor(rowClass, 0x1000, "/Script/Engine.Actor", noReturn);
+        snprintf(buf, sizeof(buf), "bufferBytes %u parmsSize %u", row.bufferBytes, row.parmsSize);
+        check("PEBUF ⭐: a list_all_functions row carries where the chain ends (12) beside the misread ParmsSize (1)",
+              row.bufferBytes == 12 && row.parmsSize == 1, buf);
+        check("PEBUF control: ...and the row's other fields are the function's",
+              row.funcName == noReturn.name && row.className == "Actor" && row.classAddr == 0x1000);
+
+        // invoke_function holds only ResolveFunctionInfo's tail read, so its form reads the chain at the address.
+        // UProperty mode, as on 4.18: Children -> UProperty entries with PropertyFlags / Offset_Internal / ElementSize.
+        const bool savedFPropT = DynOff::bUseFProperty;
+        DynOff::bUseFProperty = false;
+        static uint8_t tailProps[5][0x100];
+        memset(tailProps, 0, sizeof(tailProps));
+        const int32_t pOff[5]  = { 0, 0xC, 0x10, 0x98, 0x99 };
+        const int32_t pSize[5] = { 12, 1, 0x88, 1, 1 };
+        auto putP = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        putP(fn, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(tailProps[0]));
+        for (int i = 0; i < 5; ++i) {
+            const uint64_t pf = 0x0080 | (i == 4 ? 0x0400 : 0);   // CPF_Parm, and CPF_ReturnParm on the last
+            memcpy(tailProps[i] + DynOff::UPROPERTY_FLAGS, &pf, sizeof(pf));
+            memcpy(tailProps[i] + DynOff::UPROPERTY_OFFSET, &pOff[i], 4);
+            memcpy(tailProps[i] + DynOff::UPROPERTY_ELEMSIZE, &pSize[i], 4);
+            if (i < 4) putP(tailProps[i], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(tailProps[i + 1]));
+        }
+        const uintptr_t fnAddr = reinterpret_cast<uintptr_t>(fn);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(fnAddr, wrong.parmsSize));
+        check("PEBUF ⭐: read at the address, the chain gives 0x9A over the misread 0x99",
+              Ubel::ParamBufferSize(fnAddr, wrong.parmsSize) == 0x9A, buf);
+        check("PEBUF control: a correct ParmsSize is kept", Ubel::ParamBufferSize(fnAddr, 0x9A) == 0x9A);
+        // One implausible entry makes the shape read give up on the whole chain; the return slot still counts.
+        const int32_t bogus = 0x20000;
+        memcpy(tailProps[2] + DynOff::UPROPERTY_ELEMSIZE, &bogus, 4);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(fnAddr, wrong.parmsSize));
+        check("PEBUF ⭐: an unreadable chain still gives the return's end (0x9A)",
+              Ubel::ParamBufferSize(fnAddr, wrong.parmsSize) == 0x9A, buf);
+        memcpy(tailProps[2] + DynOff::UPROPERTY_ELEMSIZE, &pSize[2], 4);
+        // No return value at all: only the shape read can answer. One 12-byte parameter, NumParms 1 read as ParmsSize.
+        static uint8_t oneParmFn[0x100] = {};
+        putP(oneParmFn, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(tailProps[0]));
+        const uintptr_t savedNext0 = *reinterpret_cast<uintptr_t*>(tailProps[0] + DynOff::UFIELD_NEXT);
+        putP(tailProps[0], DynOff::UFIELD_NEXT, 0);
+        snprintf(buf, sizeof(buf), "%u", Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(oneParmFn), 1));
+        check("PEBUF ⭐: with no return value the chain's own end (12) answers, not NumParms (1)",
+              Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(oneParmFn), 1) == 12, buf);
+        putP(tailProps[0], DynOff::UFIELD_NEXT, savedNext0);
+        static uint8_t noChain[0x100] = {};
+        check("PEBUF control: a function with no chain keeps its ParmsSize",
+              Ubel::ParamBufferSize(reinterpret_cast<uintptr_t>(noChain), 0x20) == 0x20);
+        DynOff::bUseFProperty = savedFPropT;
 
         g_cachedUEVersion           = savedVer;
         DynOff::bCasePreservingName = savedCpn;
@@ -4192,6 +4488,237 @@ int main() {
         DynOff::UFIELD_NEXT         = svNextU;
         DynOff::USTRUCT_CHILDREN    = svChildU;
         g_cachedUEVersion           = svVerU;
+    }
+
+    // -- [UE-OVERRIDE-411] review: an override is held to the UFunction tail the game has ------------------
+    //
+    // ⛔ POOL-FAKING, like UFIELDNEXT: the vote samples GObjects for objects whose class is NAMED "Function". Own
+    // pool and name pool; the main fixture goes back at the end.
+    //
+    // The override now reaches 4.11-4.17, whose UFunction tail sits 2 later (a uint16 RepOffset first). A wrong pick
+    // on a 4.18 title moved every NumParms / ParmsSize / ReturnValueOffset read, and nothing measured the tail itself:
+    // the vote adds only the version's own shift. Ten built UFunctions with one to three 4-byte parameters each, in
+    // UProperty mode, FunctionFlags at 0x88 -- the offset both sides of 4.18 share.
+    {
+        blk("OVERRIDETAIL - an override is held to where the sampled UFunctions keep their tail");
+        ResetCancel();
+
+        enum : int32_t { oClass = 1, oFunction, oNames };
+        const char* otNames[oNames] = { "", "Class", "Function" };
+        static uint8_t otEntry[oNames][0x40] = {};
+        static uintptr_t otChunk[oNames + 1] = {};
+        for (int i = 1; i < oNames; ++i) {
+            memcpy(otEntry[i] + 0x10, otNames[i], strlen(otNames[i]) + 1);
+            otChunk[i] = reinterpret_cast<uintptr_t>(otEntry[i]);
+        }
+        static uintptr_t otChunks[2] = { reinterpret_cast<uintptr_t>(otChunk), 0 };
+        Serie::InitUE4(reinterpret_cast<uintptr_t>(otChunks), 0x10);
+        check("OVERRIDETAIL setup: the name pool resolves Function",
+              Serie::GetString(oFunction) == "Function", Serie::GetString(oFunction).c_str());
+
+        const bool     svCpnO   = DynOff::bCasePreservingName;
+        const bool     svFPropO = DynOff::bUseFProperty;
+        const uint32_t svVerO   = g_cachedUEVersion;
+        const bool     svRanO   = DynOff::bOffsetsProbeRan.load();
+        const bool     svValO   = DynOff::bOffsetsValidated.load();
+        const bool     svDetO   = DynOff::bUFunctionFlagsDetected.load();
+        const int      svFlagsO = DynOff::UFUNCTION_FLAGS;
+        const int      svExtraO = DynOff::UFUNCTION_TAIL_EXTRA;
+        const int      svMeasO  = DynOff::UFUNCTION_TAIL_MEASURED.load();
+        DynOff::bCasePreservingName = false;
+        DynOff::bUseFProperty       = false;    // UProperty mode: a function's parameters are its Children
+        DynOff::bOffsetsValidated.store(false); // the version table is the primary: 0x88 on both sides of 4.18
+
+        constexpr int kOtFns = 10;
+        enum { bMeta = 0, bFnCls = 1, bFn0 = 2, kOT = bFn0 + kOtFns };
+        alignas(16) static uint8_t otB[kOT][0x200] = {};
+        static uint8_t otP[kOtFns][3][0x100] = {};
+        auto A     = [&](int b) { return reinterpret_cast<uintptr_t>(otB[b]); };
+        auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
+        auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
+        auto put16 = [](uint8_t* b, int off, uint16_t v)  { memcpy(b + off, &v, sizeof(v)); };
+        // tail: where NumParms / ParmsSize sit behind. 0x88 is 4.18's (NumParms 0x8C), 0x8A a 4.11-4.17 one (RepOffset
+        // at 0x8C, NumParms 0x8E), 0x8C one 4 past the version's shift (Split Fiction's shape: the vote's extra).
+        auto build = [&](int tail) {
+            memset(otB, 0, sizeof(otB));
+            memset(otP, 0, sizeof(otP));
+            putP(otB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(otB[bMeta], Grimoire::OFF_UOBJECT_NAME, oClass);
+            putP(otB[bFnCls], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));  put32(otB[bFnCls], Grimoire::OFF_UOBJECT_NAME, oFunction);
+            for (int i = 0; i < kOtFns; ++i) {
+                uint8_t* f = otB[bFn0 + i];
+                const int count = i % 3 + 1, end = 4 * count;
+                putP(f, Grimoire::OFF_UOBJECT_CLASS, A(bFnCls));
+                put32(f, 0x88, 0x00080401);                          // FunctionFlags
+                f[tail + 4] = static_cast<uint8_t>(count);           // NumParms
+                put16(f, tail + 6, static_cast<uint16_t>(end));      // ParmsSize
+                put16(f, tail + 8, 0xFFFF);                          // ReturnValueOffset: none
+                putP(f, DynOff::USTRUCT_CHILDREN, reinterpret_cast<uintptr_t>(otP[i][0]));
+                for (int j = 0; j < count; ++j) {
+                    const uint64_t parm = 0x0080;   // CPF_Parm
+                    memcpy(otP[i][j] + DynOff::UPROPERTY_FLAGS, &parm, sizeof(parm));
+                    put32(otP[i][j], DynOff::UPROPERTY_OFFSET, 4 * j);
+                    put32(otP[i][j], DynOff::UPROPERTY_ELEMSIZE, 4);
+                    if (j + 1 < count) putP(otP[i][j], DynOff::UFIELD_NEXT, reinterpret_cast<uintptr_t>(otP[i][j + 1]));
+                }
+            }
+        };
+        FakePool otPool;
+        otPool.Build(kOT);
+        auto setItem = [&](int i, uintptr_t o) {
+            memcpy(otPool.chunks[0].data() + static_cast<size_t>(i) * FakePool::kItemSize, &o, sizeof(o));
+        };
+        for (int i = 0; i < kOT; ++i) setItem(i, A(i));
+        Aura::InitWithExtendedLayout(otPool.Addr(), FakePool::kItemSize);
+        auto resetVote = [&]() {
+            DynOff::bUFunctionFlagsDetected.store(false);
+            DynOff::UFUNCTION_FLAGS = 0;
+            DynOff::UFUNCTION_TAIL_EXTRA = 0;
+            DynOff::UFUNCTION_TAIL_MEASURED.store(-1);
+        };
+        using DynOff::TailCheck;
+        char ob[96];
+        auto verdictOf = [&](unsigned v) {
+            const Ubel::OverrideTailCheck c = Ubel::CheckVersionOverrideTail(v);
+            snprintf(ob, sizeof(ob), "verdict %d version +0x%X measured +0x%X", static_cast<int>(c.verdict),
+                     c.versionBase, c.measuredBase);
+            return c;
+        };
+        // [UE-OVERRIDE-411] review 2: what the readers take from the third function (three 4-byte parameters, no
+        // return), whatever version is cached.
+        char rb[96];
+        auto readOf = [&](int b) {
+            FunctionInfo fi{};   // global scope, like Ubel's
+            const bool ok = Ubel::ResolveFunctionInfo(A(b), fi);
+            snprintf(rb, sizeof(rb), "ok %d numParms %u parmsSize %u rvo 0x%X", ok ? 1 : 0, fi.numParms, fi.parmsSize,
+                     fi.returnValueOffset);
+            return fi;
+        };
+        auto readsRight = [](const FunctionInfo& fi) {
+            return fi.numParms == 3 && fi.parmsSize == 12 && fi.returnValueOffset == 0xFFFF;
+        };
+
+        // A 4.18 title (the OCTOPATH / DQ XI S tail), detected as 4.18.
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 418;
+        DynOff::bOffsetsProbeRan.store(true);
+        const int votedA = Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: the vote decides FunctionFlags +0x88 on the 4.18 tail", votedA == 0x88,
+              std::to_string(votedA).c_str());
+        check("OVERRIDETAIL ⭐: the vote's samples measure the tail base at +0x88",
+              DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88, std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        auto c417 = verdictOf(417);
+        check("OVERRIDETAIL ⭐: 4.17 on a 4.18 title contradicts it -- its layout puts the tail at +0x8A",
+              c417.verdict == TailCheck::Contradicts && c417.versionBase == 0x8A, ob);
+        check("OVERRIDETAIL ⭐: ...and so does the new floor, 4.11", verdictOf(411).verdict == TailCheck::Contradicts, ob);
+        check("OVERRIDETAIL control: 4.18 itself agrees", verdictOf(418).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDETAIL control: 4.21 keeps the same tail and agrees", verdictOf(421).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDETAIL measured control: a right version reads NumParms 3 and ParmsSize 12, as before",
+              readsRight(readOf(bFn0 + 2)), rb);
+
+        // The inverse, which the widening lets a user correct: a 4.15 title misdetected as 4.18. The vote adds only
+        // 4.18's shift, so it finds nothing; the measurement is not tied to the version and finds +0x8A.
+        build(0x8A);
+        resetVote();
+        g_cachedUEVersion = 418;
+        const int votedB = Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: under 4.18 the vote cannot find a 4.15 tail (undecided)", votedB == 0,
+              std::to_string(votedB).c_str());
+        check("OVERRIDETAIL ⭐: ...but the measurement does, at +0x8A",
+              DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8A, std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        check("OVERRIDETAIL ⭐: 4.15 agrees -- the override can correct a 4.11-4.17 title read as 4.18",
+              verdictOf(415).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDETAIL: 4.18 contradicts that tail", verdictOf(418).verdict == TailCheck::Contradicts, ob);
+
+        // [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed; the readers kept the
+        // version's shift, so under 4.18 this tail read RepOffset's byte for NumParms and NumParms for ParmsSize. The
+        // measurement now drives every tail reader, whatever the version.
+        check("OVERRIDETAIL measured ⭐: a 4.15 tail read under 4.18 gives NumParms 3 and ParmsSize 12",
+              readsRight(readOf(bFn0 + 2)), rb);
+        const Ubel::FunctionCaptureSetup capB = Ubel::PrepareFunctionCapture();
+        check("OVERRIDETAIL measured ⭐: ...a Live Funcs capture puts the tail at the measured +0x8A",
+              capB.tailOffset == 0x8A, std::to_string(capB.tailOffset).c_str());
+        Ubel::SetFunctionCapture(capB);
+        Linie::FuncIdentity idB{};
+        Ubel::CaptureFunctionIdentity(A(bFn0 + 2), idB);
+        Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
+        snprintf(rb, sizeof(rb), "numParms %u parmsSize %u", idB.numParms, idB.parmsSize);
+        check("OVERRIDETAIL measured ⭐: ...and the identity it captures carries NumParms 3 and ParmsSize 12",
+              idB.numParms == 3 && idB.parmsSize == 12, rb);
+
+        // The review's second route: an override from the other side of 4.18, persisted by an earlier session, is
+        // applied before the scan, so the vote runs under it -- and under 4.17 it cannot find a 4.18 tail.
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 417;
+        const int votedC = Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: under a persisted 4.17 the vote cannot find a 4.18 tail (undecided)", votedC == 0,
+              std::to_string(votedC).c_str());
+        check("OVERRIDETAIL setup: ...the measurement does, at +0x88", DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        check("OVERRIDETAIL measured ⭐: ...and the readers follow it: NumParms 3, ParmsSize 12",
+              readsRight(readOf(bFn0 + 2)), rb);
+
+        // [UE-OVERRIDE-411] review 2: a tail 4 past the version's shift, Split Fiction's shape. The vote absorbs it as
+        // UFUNCTION_TAIL_EXTRA, and the override check has to add that extra to the version it judges: without it
+        // every override on such a title is refused, the right one included.
+        build(0x8C);
+        resetVote();
+        g_cachedUEVersion = 505;
+        const int votedD = Ubel::FunctionFlagsOffset();
+        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", votedD, DynOff::UFUNCTION_TAIL_EXTRA,
+                 DynOff::UFUNCTION_TAIL_MEASURED.load());
+        check("OVERRIDETAIL setup: the vote decides FunctionFlags +0x88 with the +4 extra, measured +0x8C",
+              votedD == 0x88 && DynOff::UFUNCTION_TAIL_EXTRA == 4 && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8C, ob);
+        auto c505 = verdictOf(505);
+        check("OVERRIDETAIL ⭐: on a +4 tail the right version, 5.5, agrees -- the extra counts",
+              c505.verdict == TailCheck::Agrees && c505.versionBase == 0x8C, ob);
+        check("OVERRIDETAIL ⭐: ...5.0 as well", verdictOf(500).verdict == TailCheck::Agrees, ob);
+        auto c417d = verdictOf(417);
+        check("OVERRIDETAIL ⭐: ...and 4.17 contradicts it: its layout puts the tail at +0x8E",
+              c417d.verdict == TailCheck::Contradicts && c417d.versionBase == 0x8E, ob);
+        check("OVERRIDETAIL measured control: the +4 tail reads NumParms 3, ParmsSize 12", readsRight(readOf(bFn0 + 2)), rb);
+
+        // The vote ran while only three of the ten functions were loaded: it measured nothing, so the override check
+        // samples again.
+        build(0x88);
+        resetVote();
+        g_cachedUEVersion = 418;
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, 0);
+        Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: three samples measure nothing", DynOff::UFUNCTION_TAIL_MEASURED.load() == -1,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, A(i));
+        auto again = verdictOf(417);
+        check("OVERRIDETAIL ⭐: the override check samples again and 4.17 contradicts the 4.18 tail",
+              again.verdict == TailCheck::Contradicts && again.measuredBase == 0x88, ob);
+        check("OVERRIDETAIL: ...and that measurement is kept", DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88);
+
+        // A re-init clears the probe flag but keeps the measurement, which the same game's UFunctions still fit: until
+        // the new probe runs, the held one judges (the review's third route).
+        resetVote();
+        DynOff::UFUNCTION_TAIL_MEASURED.store(0x88);
+        DynOff::bOffsetsProbeRan.store(false);
+        g_cachedUEVersion = 418;
+        check("OVERRIDETAIL ⭐: before the re-init's probe, a held 4.18 measurement still contradicts 4.17",
+              verdictOf(417).verdict == TailCheck::Contradicts, ob);
+
+        // Before any scan there is nothing to sample: never a refusal.
+        resetVote();
+        DynOff::bOffsetsProbeRan.store(false);
+        check("OVERRIDETAIL: before the offsets probe an override is Unmeasured, not refused",
+              verdictOf(417).verdict == TailCheck::Unmeasured, ob);
+
+        Aura::InitWithExtendedLayout(pool.Addr(), FakePool::kItemSize);   // the main fixture, for any later block
+        DynOff::bCasePreservingName = svCpnO;
+        DynOff::bUseFProperty       = svFPropO;
+        g_cachedUEVersion           = svVerO;
+        DynOff::bOffsetsProbeRan.store(svRanO);
+        DynOff::bOffsetsValidated.store(svValO);
+        DynOff::bUFunctionFlagsDetected.store(svDetO);
+        DynOff::UFUNCTION_FLAGS      = svFlagsO;
+        DynOff::UFUNCTION_TAIL_EXTRA = svExtraO;
+        DynOff::UFUNCTION_TAIL_MEASURED.store(svMeasO);
     }
 
     // -- [VND583-03] a NameProperty's alignment follows the engine version -----------------
@@ -9109,6 +9636,43 @@ int main() {
             const bool heapCode = cache.IsCode(reinterpret_cast<uintptr_t>(heapBlock.data()));
             check("...a heap address is not code, cached or not", !heapCode && !cache.IsCode(0x1000) &&
                   !cache.IsCode(reinterpret_cast<uintptr_t>(heapBlock.data())));
+        }
+
+        // [A1-SCRIPT-FUNCS] A script function's Func is the interpreter, and the index reads it like any other: a frame
+        // in the interpreter then names one of the functions entering there, with how many share it. Its CE code
+        // address stays none, the "Blueprint-only" answer. A fake UFunction: FunctionFlags zero wherever they are read
+        // (no FUNC_Native), Func at an offset this block sets and puts back.
+        {
+            const int savedFunc = DynOff::UFUNCTION_FUNC;
+            const bool savedDetected = DynOff::bUFunctionFuncDetected.load();
+            DynOff::UFUNCTION_FUNC = 0x80;
+            DynOff::bUFunctionFuncDetected.store(true);
+            alignas(16) static uint8_t scriptFn[0x200];
+            memset(scriptFn, 0, sizeof scriptFn);
+            const uintptr_t interp = reinterpret_cast<uintptr_t>(&S3Outer);
+            memcpy(scriptFn + 0x80, &interp, sizeof interp);
+            const uintptr_t fn = reinterpret_cast<uintptr_t>(scriptFn);
+            const uintptr_t slot = Aura::IndexFuncSlot(fn);
+            check("[A1-SCRIPT-FUNCS] a script function's Func is the slot the native-entry index reads", slot == interp,
+                  (std::to_string(slot) + " vs " + std::to_string(interp)).c_str());
+            check("[A1-SCRIPT-FUNCS] ...while its CE code address stays none", Aura::GetFunctionCodeAddr(fn) == 0);
+            memset(scriptFn + 0x80, 0, sizeof interp);
+            check("[A1-SCRIPT-FUNCS] ...and an unbound one (Func null) gives the index nothing",
+                  Aura::IndexFuncSlot(fn) == 0);
+            DynOff::UFUNCTION_FUNC = savedFunc;
+            DynOff::bUFunctionFuncDetected.store(savedDetected);
+        }
+
+        // [A1-INTERP-LABEL] Which shared entry is the interpreter: the one script functions enter. Flags read as zero
+        // are "not found" (the CE code address's three-way rule), never "script".
+        {
+            constexpr uint32_t kNative = 0x00000400, kEvent = 0x00000800, kBlueprintEvent = 0x08000000,
+                               kPublic = 0x00020000;
+            check("[A1-INTERP-LABEL] a Blueprint event's flags (no FUNC_Native) say script",
+                  Aura::IsScriptFunctionFlags(kEvent | kBlueprintEvent | kPublic));
+            check("[A1-INTERP-LABEL] ...a native function's do not", !Aura::IsScriptFunctionFlags(kNative | kPublic));
+            check("[A1-INTERP-LABEL] ...and flags not found (zero) are no verdict", !Aura::IsScriptFunctionFlags(0));
+            check("[A1-INTERP-LABEL] ...nor is a null function", !Aura::IsScriptFunction(0));
         }
 
         // Case 8 (S3-L1): through TraceEnter, as Stark calls it -- the hook's own return-address slot as `sp`, Macht's

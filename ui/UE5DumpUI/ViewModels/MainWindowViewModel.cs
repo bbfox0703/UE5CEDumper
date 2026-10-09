@@ -1828,7 +1828,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
-                        className, funcName, funcMatch.ParmsSize,
+                        className, funcName, Services.BakedScriptGenerator.BakedParmsSize(funcMatch),
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"Invoke (baked, no args): {className}::{funcName}";
                     // Probe live before send: IsAvailable is only a cache of the
@@ -2047,7 +2047,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
                 if (inputParams.Count == 0 && !hasReturn)
                 {
                     var script = Services.BakedScriptGenerator.Generate(
-                        className, funcName, funcMatch.ParmsSize,
+                        className, funcName, Services.BakedScriptGenerator.BakedParmsSize(funcMatch),
                         Array.Empty<Models.BakedParamValue>());
                     var description = $"exec (baked, no args): {className}::{funcName}";
                     // Probe live before send — IsAvailable is a stale connect cache (X8).
@@ -2539,6 +2539,8 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         nameof(LiveFuncsViewModel.TraceEnabled), nameof(LiveFuncsViewModel.TraceBufferExponent),
         nameof(LiveFuncsViewModel.SnapshotBufferExponent),
         nameof(LiveFuncsViewModel.TraceExcludePerFrame),
+        // [LF-COMPACT-TOP] The fold is a layout choice the next start keeps, like the Object Tree's collapse.
+        nameof(LiveFuncsViewModel.CaptureSettingsCollapsed),
     };
     private static readonly HashSet<string> DumpExplorerPersist = new()
     {
@@ -2651,6 +2653,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         LiveFuncs.TraceBufferExponent = o.LiveFuncs.TraceBufferExponent;   // the VM clamps a hand-edited value
         LiveFuncs.SnapshotBufferExponent = o.LiveFuncs.SnapshotBufferExponent;
         LiveFuncs.TraceExcludePerFrame = o.LiveFuncs.TraceExcludePerFrame;
+        LiveFuncs.CaptureSettingsCollapsed = o.LiveFuncs.CaptureSettingsCollapsed;
         DumpExplorer.DiffIncludeEngine = o.DumpExplorer.DiffIncludeEngine;
         DumpExplorer.DiffBreakingOnly = o.DumpExplorer.DiffBreakingOnly;
         GameClassFilter.GameClassesOnly = o.GameClassFilter.GameClassesOnly;
@@ -2822,6 +2825,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         o.LiveFuncs.TraceBufferExponent = LiveFuncs.TraceBufferExponent;
         o.LiveFuncs.SnapshotBufferExponent = LiveFuncs.SnapshotBufferExponent;
         o.LiveFuncs.TraceExcludePerFrame = LiveFuncs.TraceExcludePerFrame;
+        o.LiveFuncs.CaptureSettingsCollapsed = LiveFuncs.CaptureSettingsCollapsed;
         o.DumpExplorer.DiffIncludeEngine = DumpExplorer.DiffIncludeEngine;
         o.DumpExplorer.DiffBreakingOnly = DumpExplorer.DiffBreakingOnly;
         o.GameClassFilter.GameClassesOnly = GameClassFilter.GameClassesOnly;

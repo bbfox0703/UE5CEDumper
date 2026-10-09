@@ -429,6 +429,98 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task GetPointersAsync_CarriesAutoPending()
+    {
+        // [UE-OVERRIDE-HINT-AUTO] Auto chosen with no detection on record to hand back: the override's version stays
+        // in force until the next launch, and every refresh -- a reconnect included -- must keep saying so.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 427,
+                    ["is_user_override"] = true,
+                    ["auto_pending"] = true,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().GetPointersAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(state.IsAutoPending);
+        Assert.True(state.IsUserOverride);
+    }
+
+    [Fact]
+    public async Task GetPointersAsync_OmittedAutoPendingReadsAsNotPending()
+    {
+        // An older DLL omits auto_pending; it never restored Auto in-process, so "not pending" is the right default.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 504,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().GetPointersAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(state.IsAutoPending);
+    }
+
+    [Theory]
+    [InlineData("restored", "restored the detection on record")]
+    [InlineData("no_detection", "Auto applies at the next launch")]
+    [InlineData("stale_detection", "Auto applies at the next launch")]
+    [InlineData("too_old", "Auto applies at the next launch")]
+    public async Task SetUeVersionOverrideAsync_Auto_LogsWhatTheDllDid(string outcome, string expected)
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_ue_version_override")
+                return new JsonObject { ["ok"] = true, ["auto_restore"] = outcome };
+            return new JsonObject { ["ok"] = true, ["gobjects"] = "0x1", ["gnames"] = "0x2" };
+        });
+
+        await CreateService().SetUeVersionOverrideAsync(0, persist: true, TestContext.Current.CancellationToken);
+
+        Assert.Contains(_log.Messages, m => m.Contains("override cleared") && m.Contains(expected));
+    }
+
+    [Fact]
+    public void DescribeAutoRestore_NamesEveryOutcomeTheDllSends()
+    {
+        // The wire names are the DLL's (Flamme::AutoRestoreName). Read them from the header, so one added there cannot
+        // reach the log as "the DLL did not say".
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "build.ps1"))) d = d.Parent;
+        string flamme = File.ReadAllText(Path.Combine(
+            d?.FullName ?? throw new DirectoryNotFoundException("repo root"), "dll", "src", "Flamme.h")).Replace("\r\n", "\n");
+        int start = flamme.IndexOf("constexpr const char* AutoRestoreName(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Flamme::AutoRestoreName not found");
+        int end = flamme.IndexOf("\n}\n", start, StringComparison.Ordinal);
+        var names = System.Text.RegularExpressions.Regex.Matches(flamme[start..end], "return \"([a-z_]+)\";")
+            .Select(m => m.Groups[1].Value).Where(n => n != "unknown").ToList();
+        Assert.Equal(5, names.Count);
+
+        string silent = DumpService.DescribeAutoRestore(null);
+        var described = names.Select(DumpService.DescribeAutoRestore).ToList();
+        Assert.All(described, s => Assert.NotEqual(silent, s));
+        Assert.Equal(described.Count, described.Distinct().Count());
+    }
+
+    [Fact]
     public async Task SetUeVersionOverrideAsync_SendsCorrectPayloadAndRefetches()
     {
         JsonObject? lastOverrideReq = null;
@@ -2186,6 +2278,34 @@ public class DumpServiceTests
         Assert.Equal((0x2C0001230UL, "Weapon", "Fire", 3), (named.UFunc, named.ClassName, named.FuncName, named.Shared));
         var plain = page.Items[0].Frames[1];
         Assert.Equal((0UL, "", "", 0), (plain.UFunc, plain.ClassName, plain.FuncName, plain.Shared));
+    }
+
+    [Fact]
+    public async Task PeStackGetAsync_ReadsWhetherASitesEntryIsTheInterpreter()
+    {
+        // [A1-INTERP-LABEL] script: true on the script functions' entry; absent (an older DLL, or native code) is false.
+        _pipe.SetHandler(req => Reply("""
+            {"ok":true,"allocated":true,"gen":5,"qpc_freq":10000000,"ring":0,"kind":"stack","rings":[],"count":1,"next":1,
+             "orphans":0,
+             "items":[{"index":0,"entry_seq":1,"flags":0,"ticks":9,"len":16,"frames":[0,1,2,3]}],
+             "sites":[{"addr":"0x7FF6A0001525","module":"Game.exe","module_base":"0x7FF6A0000000","rva":5413,
+                       "fn":"0x7FF6A0001000","fn_rva":4096,"unwind":true,"ufunc":"0x2C0001230","class":"x00_Snd_Common_C",
+                       "func":"Game - CasinoNpcScheduleEnd","shared":6678,"script":true},
+                      {"addr":"0x7FF6A0002010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":8208,
+                       "fn":"0x7FF6A0002000","fn_rva":8192,"unwind":true,"ufunc":"0x2C0004560","class":"Weapon",
+                       "func":"Fire"},
+                      {"addr":"0x7FF6A0003010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":12304,
+                       "fn":"0x7FF6A0003000","fn_rva":12288,"unwind":true,"ufunc":"0x2C0007890","class":"Gen",
+                       "func":"execStub","shared":300},
+                      {"addr":"0x7FF6A0004010","module":"Game.exe","module_base":"0x7FF6A0000000","rva":16400,
+                       "fn":"0x7FF6A0004000","fn_rva":16384,"unwind":true,"ufunc":"0x2C000ABC0","class":"BP_A_C",
+                       "func":"Tick","script":true}]}
+            """));
+        IDumpService svc = CreateService();
+        var page = await svc.PeStackGetAsync(5, 0, 0, 16, TestContext.Current.CancellationToken);
+        var f = page.Items[0].Frames;
+        // Read from its own key: many natives folded onto one thunk are not script, and a lone script entry is.
+        Assert.Equal(new[] { true, false, false, true }, f.Select(s => s.Script).ToArray());
     }
 
     [Fact]

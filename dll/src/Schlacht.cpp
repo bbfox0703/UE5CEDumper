@@ -166,10 +166,10 @@ int32_t Invoke(uintptr_t instance, const FunctionInfo& fi, std::vector<uint8_t>&
 bool InvokeRetVec(uintptr_t instance, const char* fn, double out[3]) {
     if (!instance) return false;
     FunctionInfo fi;
-    if (!FindFuncByName(Ubel::GetClass(instance), fn, fi) || fi.parmsSize <= 0) return false;
+    if (!FindFuncByName(Ubel::GetClass(instance), fn, fi) || Ubel::ParamBufferSize(fi) == 0) return false;
     const FunctionParam* rv = FindReturnParam(fi);
     if (!rv || rv->offset < 0) return false;
-    std::vector<uint8_t> buf(fi.parmsSize, 0);
+    std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
     if (Invoke(instance, fi, buf) != 0) return false;
     int32_t need = (rv->size >= 24) ? 24 : 12;
     if (rv->offset + need > static_cast<int32_t>(buf.size())) return false;
@@ -359,7 +359,7 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
         if (!s_warned) { s_warned = true; LOG_WARN("SeeThrough: SetActorHiddenInGame NOT FOUND (cooked out?) — can't hide occluders"); }
         return false;
     }
-    std::vector<uint8_t> buf((std::max<size_t>)(static_cast<size_t>(fi.parmsSize), size_t{1}), 0);
+    std::vector<uint8_t> buf((std::max<size_t>)(static_cast<size_t>(Ubel::ParamBufferSize(fi)), size_t{1}), 0);
     WriteBoolParam(buf, fi, "bNewHidden", hidden);
     Invoke(actor, fi, buf);
     return true;
@@ -378,7 +378,7 @@ bool InvokeSetHidden(uintptr_t actor, bool hidden) {
 bool ProbeProducers(const char** missing) {
     FunctionInfo fi;
     const uintptr_t kslCls = Aura::FindClassByPath(Grimoire::SCHLACHT_KSL_CLASS_PATH);
-    if (!kslCls || !FindFuncByName(kslCls, "LineTraceSingle", fi) || fi.parmsSize <= 0
+    if (!kslCls || !FindFuncByName(kslCls, "LineTraceSingle", fi) || Ubel::ParamBufferSize(fi) == 0
         || !FindParam(fi, "OutHit")) {
         *missing = "KismetSystemLibrary::LineTraceSingle";
         return false;
@@ -427,7 +427,7 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
         // object whose class name merely contains it. [SEETHRU-PROBE-SUBSTRING]
         uintptr_t ksl = Aura::FindLiveOrDefaultOf("KismetSystemLibrary");
         if (ksl && FindFuncByName(Ubel::GetClass(ksl), "LineTraceSingle", s_lt)
-            && s_lt.parmsSize > 0) {
+            && Ubel::ParamBufferSize(s_lt) > 0) {
             s_ksl = ksl;
         } else if (ksl) {
             LOG_WARN("SeeThrough: LineTraceSingle not found (cooked out?) — no occluder detection");
@@ -444,7 +444,7 @@ void CollectOccluders(uintptr_t pawn, const double start0[3], const double fwd[3
     double curStart[3] = { start0[0], start0[1], start0[2] };
     const int32_t maxIters = pierceN + Grimoire::SCHLACHT_MAX_EXTRA_ITERS;
     for (int32_t iter = 0; iter < maxIters && static_cast<int32_t>(out.size()) < pierceN; ++iter) {
-        std::vector<uint8_t> buf(lt.parmsSize, 0);
+        std::vector<uint8_t> buf(Ubel::ParamBufferSize(lt), 0);
         WritePtrParam(buf, lt, "WorldContextObject", pawn);
         WriteVecParam(buf, lt, "Start", curStart);
         WriteVecParam(buf, lt, "End",   end);

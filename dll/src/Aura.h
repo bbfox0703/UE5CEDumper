@@ -1237,6 +1237,10 @@ struct AllFunctionEntry {
     uint32_t    functionFlags = 0;
     uint8_t     numParms    = 0;
     uint16_t    parmsSize   = 0;
+    // [UE-OVERRIDE-411] review 2: where the function's parameter chain ends (Ubel::ParamBufferSize). A cheat-table row
+    // built from this list carries it as the CE helper's parmsSize, which gates the 1 KB mailbox slab; parmsSize is
+    // the tail read, another field under a wrong UE version.
+    uint32_t    bufferBytes = 0;
 };
 
 // A class CONTRIBUTED iff it owns at least one emitted entry. DERIVED from the
@@ -1369,6 +1373,12 @@ PropertyXrefResult FindFunctionsByClassParam(uintptr_t classAddr, bool gameOnly,
 // address to disassemble (native funcs) or the interpreter (BP funcs). 0 if the
 // Func offset isn't detected yet or the slot isn't a code pointer. See Aura.cpp.
 uintptr_t GetFunctionCodeAddr(uintptr_t funcAddr);
+
+// [A1-INTERP-LABEL] FunctionFlags that were read and say "script" (no FUNC_Native): such a function's Func is the
+// interpreter. A zero is flags not found, which is no verdict either way. Pure.
+bool IsScriptFunctionFlags(uint32_t flags);
+// The same verdict for a UFunction in memory, its flags read as the CE code address reads them.
+bool IsScriptFunction(uintptr_t funcAddr);
 
 // === Reverse edge: function -> properties it reads/writes ===
 //
@@ -1955,8 +1965,8 @@ void SortCodeEntries(std::vector<CodeEntry>& entries);
 // The functions whose native entry is `code` in a sorted index: how many (0 when none), and the first of them (the
 // lowest UFunction address) in `ufunc`. Pure.
 size_t LookupCodeEntry(const std::vector<CodeEntry>& sorted, uintptr_t code, uintptr_t& ufunc);
-// One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction with a native entry,
-// sorted. False when a cancel cut the pass short (the index is then partial).
+// One pass over the object array: every Function, DelegateFunction and SparseDelegateFunction whose Func is code --
+// a script function's too, the interpreter -- sorted. False when a cancel cut the pass short (the index is then partial).
 // Is `p` in executable image memory -- Macht::LooksLikeCodePointer's test -- asked of the kernel once per memory region,
 // not once per address. Measured 2026-10-08: a VirtualQuery cost about 300 µs while the game ran uncapped, so one per
 // function made the index take 3.9 s for 13,179 functions; native entries cluster in a few modules' code, so the

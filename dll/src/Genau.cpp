@@ -2868,14 +2868,29 @@ static void LogResourceVersion(const char* label, uint32_t major, uint32_t minor
 // the game exe. The alternative — a second reader with its own copy of the parse and its own
 // bounds — is the defect shape working-lessons.md 1.12 catalogues, and the version arithmetic had
 // already been written out four times in this one function before the split.
+//
+// What a file's VERSIONINFO said besides the code: a reading below the floor needs a second signal --
+// from the same exe's resource, or an agreeing CrashReportClient -- before it may refuse the scan, and
+// that signal has to be independent of the reading itself. [VER-410-GATE]
+struct ResourceReading {
+    std::string productVersion;          // StringFileInfo ProductVersion, empty when absent
+    bool        fromFixedField = false;  // the code came from VS_FIXEDFILEINFO, not from a string
+};
+
 static uint32_t ReadUeVersionFromFile(const wchar_t* path,
-                                      const char* productLabel, const char* fileLabel) {
+                                      const char* productLabel, const char* fileLabel,
+                                      ResourceReading* reading = nullptr) {
     DWORD handle = 0;
     DWORD infoSize = GetFileVersionInfoSizeW(path, &handle);
     if (!infoSize) return 0;
 
     std::vector<uint8_t> buf(infoSize);
     if (!GetFileVersionInfoW(path, handle, infoSize, buf.data())) return 0;
+
+    // Read once: the string fallback below wants it, and so does the corroboration of a reading
+    // below the floor, which needs it whatever the fixed fields say.
+    const std::string productVersion = ReadVersionInfoString(buf.data(), L"ProductVersion");
+    if (reading) reading->productVersion = productVersion;
 
     VS_FIXEDFILEINFO* fi = nullptr;
     UINT len = 0;
@@ -2887,6 +2902,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     uint32_t minor = LOWORD(fi->dwProductVersionMS);
     if (uint32_t code = Grimoire::UeVersionCode(major, minor)) {
         LogResourceVersion(productLabel, major, minor, code);
+        if (reading) reading->fromFixedField = true;
         return code;
     }
 
@@ -2895,6 +2911,7 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     uint32_t fminor = LOWORD(fi->dwFileVersionMS);
     if (uint32_t code = Grimoire::UeVersionCode(fmajor, fminor)) {
         LogResourceVersion(fileLabel, fmajor, fminor, code);
+        if (reading) reading->fromFixedField = true;
         return code;
     }
 
@@ -2905,8 +2922,10 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     // for, available here as an O(1) resource lookup. ReadVersionInfoString already walks
     // every (lang, codepage) pair, which matters: .NET's FileVersionInfo returns empty
     // for this file because the strings are not under the default translation.
-    for (const wchar_t* key : { L"ProductVersion", L"FileVersion" }) {
-        std::string s = ReadVersionInfoString(buf.data(), key);
+    const wchar_t* const kStringKeys[] = { L"ProductVersion", L"FileVersion" };
+    for (const wchar_t* key : kStringKeys) {
+        const std::string s = key == kStringKeys[0] ? productVersion
+                                                    : ReadVersionInfoString(buf.data(), key);
         if (s.empty()) continue;
         for (const char* prefix : { "++UE5+Release-", "++UE4+Release-" }) {
             size_t p = s.find(prefix);
@@ -2923,6 +2942,18 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
                 }
             }
         }
+        // The engine's own build string, version first (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`), in the
+        // shapes the prefixes above miss: UBT stamps it from Version.h whatever the game put in the fixed fields, and
+        // without it an exe carrying a game version read nothing unless its string held a `++UE<n>+Release-` branch.
+        // EngineBuildStringCode demands a UE<M> branch that agrees with the leading M.m, so a game's own version
+        // string does not read as one -- an agreement the prefix path above does not check (it takes the M.m after
+        // the prefix, wherever the prefix sits). `fromFixedField` stays false: a code read out of this string cannot
+        // corroborate itself below the floor; only an agreeing CrashReportClient can. [VER-410-GATE] rev 9
+        if (uint32_t code = Grimoire::EngineBuildStringCode(s)) {
+            Sein::Info("SCAN:Ver", "DetectVersion: VERSIONINFO string '%s' = '%s' is the engine's build string -> %u",
+                       Utf8Helpers::EncodeUtf16(key, wcslen(key)).c_str(), s.c_str(), code);
+            return code;
+        }
     }
 
     Sein::Warn("SCAN:Ver", "DetectVersion: %s Product=%u.%u File=%u.%u — unrecognised",
@@ -2930,10 +2961,8 @@ static uint32_t ReadUeVersionFromFile(const wchar_t* path,
     return 0;
 }
 
-static uint32_t DetectVersionFromPEResource() {
-    wchar_t exePath[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
-    return ReadUeVersionFromFile(exePath, "PE VERSIONINFO", "PE FileVersion");
+static uint32_t DetectVersionFromPEResource(const wchar_t* exePath, ResourceReading* reading = nullptr) {
+    return ReadUeVersionFromFile(exePath, "PE VERSIONINFO", "PE FileVersion", reading);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -2954,10 +2983,7 @@ static uint32_t DetectVersionFromPEResource() {
 //
 // ⚠ Absence is the COMMON case, not an error: 8 of 66 folders on the maintainer's machine ship
 // one, and Avowed / DQ XI S / OCTOPATH / DumperTest ship none.
-static uint32_t DetectVersionFromCrashReportClient() {
-    wchar_t exePath[MAX_PATH] = {};
-    if (!GetModuleFileNameW(nullptr, exePath, MAX_PATH)) return 0;
-
+static uint32_t DetectVersionFromCrashReportClient(const wchar_t* exePath) {
     for (const std::wstring& cand : Grimoire::CrashReportCandidates(exePath)) {
         if (GetFileAttributesW(cand.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
         uint32_t v = ReadUeVersionFromFile(cand.c_str(),
@@ -2981,7 +3007,7 @@ static uint32_t DetectVersionFromCrashReportClient() {
 // Pre-UE4 (Unreal Engine 3) positive identification
 //
 // The too-old gate can only be reached by a version NUMBER below 4.11, and the only path
-// that produces one is DetectVersionFromPEResource's major==4 branch — so a UE3 title, whose
+// that produces one is a VERSIONINFO reading's major==4 branch — so a UE3 title, whose
 // PE resource carries a game version like 1.0.x, slipped straight through it and consumed a
 // full 150-pattern AOB sweep to arrive at "no winner" plus a misleading "set an override"
 // nudge. These markers give the DLL a way to say "this is not Unreal 4/5 at all".
@@ -3146,9 +3172,61 @@ struct VersionScanResult {
     bool     preUE4  = false;
 };
 
-static VersionScanResult DetectVersionDetailed() {
-    VersionScanResult r;
-    Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
+// Which file a resource reading came from: the game exe, or its CrashReportClient.
+enum class VersionSource { None, Exe, Crc };
+
+// What the two resource readings decide on their own, before any memory scan. [VER-410-GATE]
+//   tier 1 = take `version` and stop; tier 3 = a reading below the floor that nothing in the resources
+//   corroborates, so the memory scan gets its say; tier 0 = no reading at all.
+// Pure, so dll_core_test pins it: the refusal it can arm is the most destructive verdict detection reaches.
+struct ResourceVersionVerdict {
+    uint32_t version       = 0;
+    int      tier          = 0;
+    bool     byBuildString = false;  // corroborated by the exe's own engine build string
+    bool     byCrc         = false;  // corroborated by a CrashReportClient agreeing with the exe
+    // Whose reading `version` is: the game exe's own (a CrashReportClient may agree with it), or a
+    // CrashReportClient's standing against an exe that read nothing usable or another version.
+    VersionSource source   = VersionSource::None;
+};
+
+static ResourceVersionVerdict DecideResourceVersion(uint32_t exeVer, bool exeFromFixedField,
+                                                    std::string_view exeProductVersion, uint32_t crcVer) {
+    ResourceVersionVerdict v;
+    v.version = crcVer ? crcVer : exeVer;   // engine-shipped beats game-authored
+    if (!v.version) return v;
+    v.source = v.version == exeVer ? VersionSource::Exe : VersionSource::Crc;
+    if (v.version >= Grimoire::MIN_SUPPORTED_UE_VERSION) { v.tier = 1; return v; }
+    // Below the floor only the exe's own reading can be corroborated: a CrashReportClient that
+    // overrode a different exe reading, or stands alone, is one signal however it was read.
+    if (v.version == exeVer) {
+        v.byBuildString = exeFromFixedField
+                       && Grimoire::SubFloorReadingCorroborated(exeVer, exeProductVersion, 0);
+        v.byCrc         = Grimoire::SubFloorReadingCorroborated(exeVer, {}, crcVer);
+    }
+    v.tier = (v.byBuildString || v.byCrc) ? 1 : 3;
+    return v;
+}
+
+// The resource half of DetectVersionDetailed: the game exe's VERSIONINFO and a CrashReportClient's, and what they
+// decide before any memory scan. `done` = the verdict stands at tier 1; otherwise `result` carries a sub-floor
+// reading at tier 3 (or nothing) for the memory scan to decide.
+// It takes the paths, rather than asking the process for its own, so dll_core_test runs it -- the readings and the
+// decision -- on resource-only DLLs built from dll/tests/res: the glue between the pinned helpers had no test, and a
+// refactor that dropped it would have reverted IS Defense to "scanned" [VER-410-GATE] review. The short-circuit itself
+// is DetectVersionDetailed's return on `done`, which takes the exe path and the image for the same reason.
+// `crcPath`: the CrashReportClient to read; nullptr looks above `exePath` the way the DLL does (dll/CMakeLists.txt lays
+// the fixtures out as an install so that lookup is run too), "" reads none.
+struct ResourcePhase {
+    VersionScanResult      result;
+    ResourceVersionVerdict verdict;
+    ResourceReading        exeReading;
+    uint32_t               exeVersion = 0;   // the game exe's own reading, whatever the verdict took
+    bool                   done = false;
+};
+
+static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wchar_t* crcPath) {
+    ResourcePhase p;
+    VersionScanResult& r = p.result;
 
     // Fast path: two INDEPENDENT resource reads (both treated as Tier 1 — high confidence).
     //
@@ -3157,8 +3235,13 @@ static VersionScanResult DetectVersionDetailed() {
     // disagree the disagreement is itself the finding: both poisoned hint-cache entries this repo
     // has found — Avowed and DragonSword, each holding a persisted runtime raise of 504 — would
     // have been caught here, because CrashReportClient reports 503 for both.
-    const uint32_t crcVer = DetectVersionFromCrashReportClient();
-    uint32_t ver = DetectVersionFromPEResource();
+    const uint32_t crcVer = !crcPath ? DetectVersionFromCrashReportClient(exePath)
+                          : *crcPath ? ReadUeVersionFromFile(crcPath, "CrashReportClient ProductVersion",
+                                                             "CrashReportClient FileVersion")
+                                     : 0;
+    ResourceReading& exeReading = p.exeReading;
+    const uint32_t ver = DetectVersionFromPEResource(exePath, &exeReading);
+    p.exeVersion = ver;
 
     if (crcVer && ver && crcVer != ver) {
         // CrashReportClient wins: it is shipped BY the engine, while the game exe's VERSIONINFO is
@@ -3171,32 +3254,101 @@ static VersionScanResult DetectVersionDetailed() {
         Sein::Info("SCAN:Ver", "DetectVersion: CrashReportClient and the game exe AGREE on %u",
                    ver);
     }
-    if (crcVer) ver = crcVer;
+    p.verdict = DecideResourceVersion(ver, exeReading.fromFixedField, exeReading.productVersion, crcVer);
+    const ResourceVersionVerdict& rv = p.verdict;
 
-    if (ver) {
+    if (rv.version) {
         // ...with ONE exception: a result BELOW the support floor arms a total scan refusal, and
-        // that is the most destructive verdict this detector can reach. A single uncorroborated
-        // VS_FIXEDFILEINFO field is not enough evidence for it, and every other version signal in
-        // this file demands context. So a sub-4.11 PE reading does NOT short-circuit as tier 1 —
-        // fall through to the memory scan and let it agree or not. If it cannot corroborate, the
-        // terminal branch keeps the PE value but marks it tier 3, which sets bLowConfidence, which
-        // the refusal gate requires to be false. The cost of being wrong that way is a wasted
-        // sweep (~0.35 s since the G2 gate, was ~29 s); the cost of being wrong the other way is refusing to scan a game that
-        // works. (Audit #4 B25. Note the memory needle table floors at "4.18.", so a GENUINE
-        // 4.0-4.10 title will not be corroborated and will pay that sweep — accepted.)
-        if (ver >= Grimoire::MIN_SUPPORTED_UE_VERSION) { r.version = ver; r.tier = 1; return r; }
-        Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
-                   "NOT accepting that on its own (it would refuse the whole scan). "
-                   "Corroborating against the memory string scan.",
-                   ver, Grimoire::MIN_SUPPORTED_UE_VERSION);
-        r.version = ver;
+        // that is the most destructive verdict this detector can reach. A single VS_FIXEDFILEINFO
+        // field is not enough evidence for it, because a game's own version can read as 4.x
+        // (audit #4 B25). So a sub-4.11 reading short-circuits as tier 1 only when the resources
+        // corroborate it with a second, independent signal: the exe's ProductVersion is the
+        // engine's own build string naming the same version (a licensee can edit that string's
+        // branch, which is why Grimoire::EngineBuildStringCode is strict about it), or a
+        // CrashReportClient agrees with the exe. The memory scan cannot do that job -- its needle table floors at "4.18.", so a
+        // genuine 4.0-4.10 title was never corroborated, stayed tier 3 and was scanned instead of
+        // refused, which is what IS Defense (4.10.2) hit [VER-410-GATE]. An uncorroborated reading
+        // still falls through to the memory scan; if that cannot agree, the terminal branch keeps
+        // the value at tier 3, which sets bLowConfidence, which the refusal gate requires to be
+        // false. The cost of being wrong that way is a wasted sweep (~0.35 s since the G2 gate,
+        // was ~29 s); the cost of being wrong the other way is refusing to scan a game that works.
+        if (rv.tier == 1) {
+            if (rv.version < Grimoire::MIN_SUPPORTED_UE_VERSION) {
+                std::string by;
+                if (rv.byBuildString)
+                    by = "the exe's own engine build string '" + exeReading.productVersion + "'";
+                if (rv.byCrc)
+                    by += std::string(by.empty() ? "" : " and ")
+                        + "a CrashReportClient agreeing with the exe";
+                Sein::Info("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u "
+                           "floor, CORROBORATED by %s — accepting it at tier 1, so the scan will be "
+                           "refused as too old.",
+                           rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION, by.c_str());
+            }
+            r.version = rv.version; r.tier = 1; p.done = true; return p;
+        }
+        // The exe's own reading keeps its line word for word (b25_marker_exes.py judges it); a CrashReportClient's
+        // says so, rather than putting its number in the exe's mouth. Both still name "PE VERSIONINFO", which is
+        // what sweep_title.py collects version evidence by.
+        if (rv.source == VersionSource::Crc)
+            Sein::Warn("SCAN:Ver", "DetectVersion: CrashReportClient says UE %u, below the %u floor, and the "
+                       "game exe's own PE VERSIONINFO %s — NOT accepting that on its own (it would refuse the "
+                       "whole scan). Corroborating against the memory string scan.",
+                       rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION,
+                       ver ? ("says UE " + std::to_string(ver)).c_str() : "read nothing usable");
+        else
+            Sein::Warn("SCAN:Ver", "DetectVersion: PE VERSIONINFO says UE %u, below the %u floor — "
+                       "NOT accepting that on its own (it would refuse the whole scan). "
+                       "Corroborating against the memory string scan.",
+                       rv.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+        r.version = rv.version;
         r.tier    = 3;   // downgraded unless the memory scan below agrees
     }
+    return p;
+}
+
+// The line under "PE resource failed" when the resources read a version below the floor that they could not
+// corroborate: whose reading it was, and why it stands alone. None of it may carry a sweep_title.py keyword -- its
+// fallback window ends at the next line it collects -- nor judge_d's case-sensitive must-not. Pure, so dll_core_test
+// pins each source's wording.
+static std::string Tier3ResourceNote(const ResourcePhase& rp) {
+    char buf[384];
+    if (rp.verdict.source == VersionSource::Crc)
+        snprintf(buf, sizeof(buf), "DetectVersion: (the game exe's resource %s; CrashReportClient says UE %u, below "
+                 "the %u floor, which alone does not corroborate a reading below it — the memory scan decides)",
+                 rp.exeVersion ? ("says UE " + std::to_string(rp.exeVersion)).c_str() : "read nothing usable",
+                 rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    else if (!rp.exeReading.fromFixedField)
+        // Read out of the exe's own engine build string (rev 9): the string is the reading, so it cannot also be the
+        // second signal -- only an agreeing CrashReportClient could have been.
+        snprintf(buf, sizeof(buf), "DetectVersion: (the PE resource did not fail: it read UE %u out of the exe's own "
+                 "engine build string, below the %u floor; that string cannot corroborate its own reading, and no "
+                 "CrashReportClient agreed — the memory scan decides)",
+                 rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    else
+        snprintf(buf, sizeof(buf), "DetectVersion: (the PE resource did not fail: it read UE %u, below the "
+                 "%u floor, and neither an engine build string nor an agreeing CrashReportClient "
+                 "corroborates it — the memory scan decides)",
+                 rp.result.version, Grimoire::MIN_SUPPORTED_UE_VERSION);
+    return buf;
+}
+
+// `exePath` and the image [`base`, `base` + `size`) are the process's own in production (the overload below); a test
+// hands a fixture install's exe and a buffer of its own, so a decided resource verdict's return before the memory scan
+// is run, not only the readings that decide it ([VER-410-GATE] second review).
+static VersionScanResult DetectVersionDetailed(const wchar_t* exePath, uintptr_t base, size_t size) {
+    Sein::Info("SCAN:Ver", "DetectVersion: Attempting to detect UE version...");
+
+    const ResourcePhase rp = DetectVersionFromResources(exePath, nullptr);
+    if (rp.done) return rp.result;
+    VersionScanResult r = rp.result;
 
     Sein::Warn("SCAN:Ver", "DetectVersion: PE resource failed, falling back to memory string scan");
+    // The line above is kept word for word (sweep_title.py times the fallback from it), but below the
+    // floor it is misleading: a resource was read, and only its corroboration is missing.
+    if (r.tier == 3)
+        Sein::Info("SCAN:Ver", "%s", Tier3ResourceNote(rp).c_str());
 
-    uintptr_t base = Macht::GetModuleBase(nullptr);
-    size_t    size = Macht::GetModuleSize(nullptr);
     if (!base || !size) {
         Sein::Warn("SCAN:Ver", "DetectVersion: Cannot get module base");
         return r;
@@ -3317,6 +3469,13 @@ static VersionScanResult DetectVersionDetailed() {
                "(pre-UE4 markers %d/%d, below the %d needed)",
                markers, kPreUE4MarkerCount, kPreUE4MarkerThreshold);
     return r;
+}
+
+static VersionScanResult DetectVersionDetailed() {
+    // An empty path (GetModuleFileNameW failed) reads nothing from either source, as the readers always did.
+    wchar_t exePath[MAX_PATH] = {};
+    GetModuleFileNameW(nullptr, exePath, MAX_PATH);
+    return DetectVersionDetailed(exePath, Macht::GetModuleBase(nullptr), Macht::GetModuleSize(nullptr));
 }
 
 uint32_t DetectVersion() {
@@ -5300,8 +5459,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         out.bLowConfidence   = false;
         LOG_INFO("FindAll: UE Version = %u (USER OVERRIDE — persistent for this game)",
                  out.UEVersion);
-    } else if (hints.hasVersionHint && hints.ueVersion != 0
-               && hints.versionDetectRev == kVersionDetectLogicRev) {
+    } else if (Flamme::CachedDetectionTrusted(hints, kVersionDetectLogicRev)) {
         // Reuse the cached version (skip the slow memory string scan) whenever it was stamped
         // by the current detection-logic rev — regardless of publisher or confidence. The same
         // binary produces the same detection deterministically, so a re-scan only wastes time.
@@ -5316,14 +5474,13 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         // Applying it live (not just from cache) keeps the badge honest even if the publisher table
         // gains a new shipper after this game was already cached (the old publisher gate was live too).
         //
-        // The >= MIN_SUPPORTED guard mirrors the identical rule in the fresh-detection branch
-        // below, and it MUST be here too: this is the branch that runs on every launch after the
-        // first, so guarding only the fresh path would gate a pre-UE4 game correctly once and
-        // then silently un-gate it from launch 2 onward. Publisher bias exists to flag an
-        // UNRELIABLE version STRING; it has nothing to say about a version we refused outright.
-        out.bLowConfidence   = hints.lowConfidence
-                            || (publisher != nullptr
-                                && out.UEVersion >= Grimoire::MIN_SUPPORTED_UE_VERSION);
+        // The >= MIN_SUPPORTED guard (inside Flamme::CachedLowConfidence) mirrors the identical
+        // rule in the fresh-detection branch below, and it MUST be here too: this is the branch
+        // that runs on every launch after the first, so guarding only the fresh path would gate a
+        // pre-UE4 game correctly once and then silently un-gate it from launch 2 onward. Publisher
+        // bias exists to flag an UNRELIABLE version STRING; it has nothing to say about a version
+        // we refused outright.
+        out.bLowConfidence   = Flamme::CachedLowConfidence(hints, publisher != nullptr);
         LOG_INFO("FindAll: UE Version = %u (cached, rev=%u, detected=%s, lowConf=%s) — skipped DetectVersion",
                  out.UEVersion, hints.versionDetectRev,
                  out.bVersionDetected ? "yes" : "no",
@@ -5396,11 +5553,11 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     //      oracle, no pattern, so that half is reasoned, not measured. Verified against Epic's
     //      source: 4.7 is the flat TArray, 4.8 introduces the indirect array;
     //      4.10.2 has no FUObjectItem; 4.11.0 introduces
-    //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY via DetectVersionFromPEResource's
-    //      major==4 branch — the memory needle table floors at "4.18." and can never go below it,
-    //      which is worth knowing before assuming this path is exercised often. (It is not: no
-    //      title in the local 35-game corpus reports a 4.0-4.10 PE version. The 4.10 evidence is
-    //      the two reference builds in the AOB corpus, see Himmel.h's provenance block.)
+    //      it (16 bytes, ClusterAndFlags packed). Reachable ONLY through a VERSIONINFO reading —
+    //      the memory needle table floors at "4.18." and can never go below it — and it is rare:
+    //      IS Defense (4.10.2, 2016) is the first installed title seen to report a 4.0-4.10 version.
+    //      The other 4.10 evidence is the two reference builds in the AOB corpus, see Himmel.h's
+    //      provenance block.
     //
     //  (b) UEVersion == PRE_UE4_SENTINEL_VERSION — positively identified as pre-UE4 (UE3) by
     //      CountPreUE4Markers. A different object model, not an older version of this one: no
@@ -5417,12 +5574,14 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // That gate is only as good as what counts as confident, and case (a) used to slip through:
     // DetectVersionFromPEResource's `major == 4` branch returned tier 1 off a single
     // uncorroborated VS_FIXEDFILEINFO field, so bLowConfidence was false and this refusal armed
-    // on one PE value. It no longer short-circuits below the floor — see the note in
-    // DetectVersionDetailed — so reaching here with case (a) now means the memory scan agreed, or
-    // at least did not contradict it with a tier 1/2 hit. Case (b) is unchanged: the pre-UE4
-    // sentinel is a POSITIVE 2-of-4 marker identification and is deliberately tier 1. (B25)
-    if (out.UEVersion < Grimoire::MIN_SUPPORTED_UE_VERSION
-        && out.bVersionDetected && !out.bLowConfidence && !out.bUserOverride) {
+    // on one PE value (B25). Then for a while nothing below the floor could be confident at all,
+    // since the memory scan that was to corroborate it cannot read a version under 4.18, and a
+    // genuine 4.10 title was scanned instead of refused. Reaching here with case (a) now means the
+    // resources corroborated the reading — the exe's ProductVersion is the engine's own build
+    // string naming the same version, or a CrashReportClient agrees with the exe — see
+    // DetectVersionDetailed [VER-410-GATE]. Case (b) is unchanged: the pre-UE4 sentinel is a
+    // POSITIVE 2-of-4 marker identification and is deliberately tier 1.
+    if (Grimoire::RefusedAsTooOld(out.UEVersion, out.bVersionDetected, out.bLowConfidence, out.bUserOverride)) {
         out.bVersionTooOld = true;
         if (out.UEVersion == Grimoire::PRE_UE4_SENTINEL_VERSION) {
             LOG_WARN("FindAll: PRE-UE4 engine (Unreal Engine 3) — SKIPPING the scan. There is no "

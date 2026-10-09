@@ -9,16 +9,17 @@ a title with a needle that resolves at Tier 0 never looks (every stock UE5 title
 ⚠ Walks every `Binaries\Win64` directory rather than globbing a fixed depth -- a
 fixed-depth glob silently skipped installed titles and an absence claim built on a
 silent skip is worthless.
-"""
-import io, os, re, sys, ctypes, struct
-from ctypes import wintypes
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
 
-ver = ctypes.WinDLL("version", use_last_error=True)
-ver.GetFileVersionInfoSizeW.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(wintypes.DWORD)]
-ver.GetFileVersionInfoW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p]
-ver.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
-                               ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT)]
+Fact 1 reads through pe_version_probe.read_resource, the one offline port of Genau's reader (every
+translation, the engine build strings; its --selftest is a gate). This file kept its own copy until
+the [VER-410-GATE] second review, and that copy knew only '++UEn+Release-': a 4.10-4.17 exe carrying
+its engine build string read "FALLS THROUGH" here while the DLL took it at Tier 0, which is the
+mis-planned row this survey exists to prevent.
+"""
+import os, pathlib, re, sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import pe_version_probe as PV  # noqa: E402  (it also makes stdout UTF-8)
 
 SKIP = ("crashreportclient", "unrealcefsubprocess", "crashpad_handler", "epicwebhelper")
 ASCII = re.compile(rb"\+\+UE([45])\+Release-(\d+)\.(\d+)")
@@ -26,32 +27,16 @@ UTF16 = re.compile(rb"(?:\+\x00){2}U\x00E\x00([45])\x00\+\x00R\x00e\x00l\x00e\x0
                    rb"((?:\d\x00)+)\.\x00((?:\d\x00)+)")
 
 def tier0(path):
-    d = wintypes.DWORD(0)
-    size = ver.GetFileVersionInfoSizeW(path, ctypes.byref(d))
-    if not size: return "FALLS THROUGH (no resource)", "-"
-    buf = ctypes.create_string_buffer(size)
-    if not ver.GetFileVersionInfoW(path, 0, size, buf): return "resource unreadable", "-"
-    p, n = ctypes.c_void_p(), wintypes.UINT()
-    if not (ver.VerQueryValueW(buf, "\\", ctypes.byref(p), ctypes.byref(n)) and n.value >= 52):
-        return "FALLS THROUGH (no fixedinfo)", "-"
-    raw = ctypes.string_at(p, n.value)
-    fms, _ = struct.unpack_from("<II", raw, 8); pms, pls = struct.unpack_from("<II", raw, 16)
-    pmaj, pmin = pms >> 16, pms & 0xFFFF; fmaj, fmin = fms >> 16, fms & 0xFFFF
-    prod = f"{pmaj}.{pmin}.{pls >> 16}.{pls & 0xFFFF}"
-    if pmaj == 5 and pmin <= 9:  return f"Tier0 -> {500 + pmin}", prod
-    if pmaj == 4 and pmin <= 27: return f"Tier0 -> {400 + pmin}", prod
-    if fmaj == 5 and fmin <= 9:  return f"Tier0 -> {500 + fmin} (File)", prod
-    if fmaj == 4 and fmin <= 27: return f"Tier0 -> {400 + fmin} (File)", prod
-    q, m = ctypes.c_void_p(), wintypes.UINT()
-    if ver.VerQueryValueW(buf, r"\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
-        a = ctypes.cast(q, ctypes.POINTER(wintypes.WORD))
-        for key in ("ProductVersion", "FileVersion"):
-            r2, n2 = ctypes.c_void_p(), wintypes.UINT()
-            if ver.VerQueryValueW(buf, r"\StringFileInfo\%04x%04x\%s" % (a[0], a[1], key),
-                                  ctypes.byref(r2), ctypes.byref(n2)) and n2.value:
-                s = ctypes.wstring_at(r2, n2.value).rstrip("\x00")
-                if "++UE5+Release-" in s or "++UE4+Release-" in s:
-                    return f"Tier0 STRING '{s}'", prod
+    r = PV.read_resource(path)
+    k = r["kind"]
+    if k == "no resource": return "FALLS THROUGH (no resource)", "-"
+    if k == "unreadable": return "resource unreadable", "-"
+    if k == "no fixedinfo": return "FALLS THROUGH (no fixedinfo)", "-"
+    prod = r["prod"]
+    if k == "fixed":
+        return f"Tier0 -> {r['code']}" + (" (File)" if r["key"] == "FileVersion" else ""), prod
+    if r["code"]:
+        return f"Tier0 {k.upper()} '{r['string']}' -> {r['code']}", prod
     return "FALLS THROUGH (unrecognised)", prod
 
 def needles(path):
@@ -95,4 +80,5 @@ def main():
     for e, encs, tags in hosts:
         print(f"  {'/'.join(encs):12} {tags}  {e}")
 
-main()
+if __name__ == "__main__":
+    main()

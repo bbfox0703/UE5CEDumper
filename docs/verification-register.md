@@ -70,6 +70,51 @@ Tags have always resolved across files, so the split changed nothing about the l
 
 -----
 
+## How to close a row
+
+Moved here from [`handover.md`](handover.md) §9 on 2026-10-08 and corrected to current practice. A row
+of a programme's live-check backlog closes the same way, but its record goes in that programme's ledger
+in [`todo.md`](todo.md): while a programme runs, its backlog lives there; when the programme closes, the
+backlog moves here **byte-identical** ([`working-lessons.md`](working-lessons.md) §7.1).
+
+1. **Record the evidence in a `✅ CLOSED <YYYY-MM-DD> [TAG]` record** (the date in the text; the tag
+   need not carry it) — the finding id, what was measured and under which conditions, the controls, and
+   what is still not covered. A ✅ with no numbers evaporates. A numbered item inside a section closes in
+   place and keeps its original text after *Was:*. **In the same commit, update the row's heading**:
+   `⬜` → `🟡` for a partial close, `✅` for a full one ([`working-lessons.md`](working-lessons.md) §1.ab
+   rules 3–4) — the archive rule moves only a section whose heading announces its closure. A heading is
+   still not evidence when READING (above): before planning off one, grep its tag across `docs/`.
+2. **Update the live plan in the same commit.** When the row belongs to a `*-live-plan.md` (indexed in
+   [`README.md`](README.md)), its status there changes in the same commit as the row's record.
+3. **Delete the item's section from [`pending-verification_zh-TW.md`](pending-verification_zh-TW.md)**
+   — do not annotate it in place — remove its key from `BUCKETS` in
+   `tools/verify/zhtw_rebuild_buckets.py`, dry-run it, then rebuild the bucket table with
+   `py tools/verify/zhtw_rebuild_buckets.py --apply`: the table is derived, never hand-edited, and the
+   script stops on a key that matches no section. ⚠ A ✅ in
+   the audit register is **never** grounds to delete a section there: in the audit doc ✅ means *the fix
+   shipped*, which is exactly when the live check becomes owed.
+4. ⚠ **If only SOME sub-steps closed, do not delete the section — retitle it.** The heading carries
+   the remainder (`（**只剩步驟 5**）`) and it **goes stale silently**: `A6`'s heading still said
+   「只剩步驟 3、5」 after step 3 had been marked ✅ in its own table. When you tick a sub-step, fix the
+   heading in the same edit.
+5. **If the row came from the audit #5 register, tick every individual row** in the audit doc
+   ([`audit-2026-08-13-early-code-findings.md`](audit-2026-08-13-early-code-findings.md)), not just
+   the grouped one, and run `py tools/check_audit_register.py`. ⚠ **Many rows are already ✅ there** — in the audit doc ✅ means
+   *the fix shipped*, which is usually years-old news by the time the live check runs. Check before
+   editing; a live PASS adds nothing to a ticked row.
+6. **Archive closed sections only byte-identical.** Closed sections lifted out of "Pending live-game
+   verification" move verbatim to a new `archive/verification-register-closed-*.md` with a row in
+   [`archive/README.md`](archive/README.md), and a 📦 note at the head of that section says what moved
+   (the two there now are the pattern). A `✅` section whose body still owes anything stays here; the
+   archive file's header gives the full selection rule.
+7. **New method lessons go in [`working-lessons.md`](working-lessons.md)** — single copy, travels with
+   git. Not into memory files, which do not.
+8. **`dev-log.md` is append-only, newest first** — never edit a past entry, even to fix a stale
+   number. Add a new `(later)` entry for the same day instead; the file already does this.
+9. `py tools/check_all.py`, then commit — one commit per closed item (working-lessons §7.3).
+
+-----
+
 ## Pending live-game verification (verify only — no code)
 
 > 📦 **84 closed sections (6,247 lines) were archived 2026-08-23** to
@@ -259,7 +304,43 @@ the warning and the Standard / Low budget, the Call stack tab, Copy, and ASM thr
    "8.4 Results": the question, Cancel, the ask after a reconnect; the line assumed, then measured). *Was:* **T9.1 /
    T9.2 are not built** (D2): no estimate line for stacks (S3-U7) and no per-frame ask-once (S3-U6). The budget is
    the guarantee meanwhile.
-6. **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
+6. ✅ **CLOSED 2026-10-08 (build 3643) `[LIVEFUNCS-STEP3-DQ11S]`** (DQ XI S, UE 4.18, `UE5Dumper.dll` injected, a
+   save loaded: the hero in Heliodor's church, 350,453 objects). Reviewed by three independent skeptics before closing;
+   none refuted it, and their limits are below.
+   - **The cost, item 1's run** (`--stacks --choose "" --plain-s 20 --record-s 30`, 49 functions chosen): at 3643's
+     defaults (25 / 50 a second) **2.41 µs a capture on average, 97.2 µs at most** over 1,550 captures; at Avowed's
+     3641 budgets (`--stack-per-ring 100 --stack-total 200`) **1.99 / 47.8 µs** over 6,200 (Avowed: 3.25 / 241 over
+     6,200). The budget held both times (1,550 against at most 1,551; 6,200 against 6,203). All the captures together
+     took 3.7 ms of the 30 s, and 12.3 ms at 200 a second (0.04 %). Calls a second 5,983 / 5,979 and 5,977 / 5,977 --
+     consistent with no cost, though that pair (a 20 s window, then a later 30 s one) cannot resolve a cost this small:
+     the summed capture time is the measure. The fps overlay read 60 in both phases of the 100 / 200 run (six
+     readings), but 60 is this game's cap here, so it says less than Avowed's uncapped 135-141. All 1,550 stacks, and
+     6,138 of the 6,200, were deeper than 16 frames. The scene is quiet: about 6,000 calls a second against Avowed's
+     9,200.
+   - **S3-A1's names:** the index was built in 19-23 ms (12,482 entries from 19,162 functions). On depth-62 stacks
+     (a scratch probe; every stack reached its thread's root) it named 454 frames with two entries,
+     `BP_TimeChangePost_C::ReceiveTick` (435) and `BP_SkyBase_C::ReceiveTick` (19).
+     - Each `ufunc` is that Function (`get_object`).
+     - Its `fn` is an exact, unchained .pdata start, which disassembles as a UE4 exec thunk taking one float
+       (ReceiveTick's DeltaSeconds). It is stored at the fork's `UFunction::Func`, +0xC0: stock 4.18's +0xB0 plus the
+       fork's +0x10.
+     - A third run had 326 stacks with a named frame. In every one, the named frame sits exactly one frame
+       (UFunction::Invoke) below a `known: "process_event"` frame, which sits directly below the dumper's hook. Its
+       return address is `fn+0xC1` each time.
+     - Both classes are `DynamicClass`: DQ XI S ships nativized Blueprints.
+     - The UI's Call stack tab showed the same in a `Get Time Float` stack: frame 5 "native entry of
+       BP_TimeChangePost_C::ReceiveTick", frame 7 `UObject::ProcessEvent +0x2B0`, frame 8 the hook. Its estimate line
+       measured 6.4 µs a capture.
+   - **Limits:**
+     - S3-A1 named both of the entries seen correctly. Both are nativized ReceiveTick thunks reached through
+       ProcessEvent. A thunk reached from the interpreter without ProcessEvent, the case S3-A1 was built for, did not
+       occur.
+     - No `shared` site appeared. The index leaves script functions out, against its contract (`[A1-SCRIPT-FUNCS]`,
+       todo.md).
+     - Step 2's parameter snapshots were not run here; the UProperty model stays step 2's item 4.
+     - The name checks came from scratch probes (`[SNAPRIG-NAMES]`).
+
+   *Was:* **A UE4 game: DRAGON QUEST XI S** (the maintainer, 2026-10-08). **After step 3 is complete, not before.** UE4 was
    decided to be covered by tests rather than live (2026-10-07); this is the exception the maintainer asked for. The
    maintainer first named Elliot, but Elliot is UE 5.4 (docs/test-games.md: its PE version is stripped, so the DLL
    takes the publisher's 4.27 and reconciles to 5.4 at run time, which is why it can read as UE4). DQ XI S is UE 4.18
@@ -439,7 +520,7 @@ stated facts are false here**. Each cost, or would have cost, a launch.*
 3. `build.ps1 -Target DLL`, then **`build.ps1 -Mode Publish`** — hand-over rule. Verify `dist\UE5DumpUI.exe` is ~54.7 MiB (57,398,784 B), **not** ~107 MB, and record the sha.
 4. `py tools/check_all.py` — 12 gates green, including `check_derived_counts` at its new number.
 5. **Census the fixtures on THIS machine** — the Steam layout may differ from the primary PC. Parse `libraryfolders.vdf` and check for: Lushfoil, Satisfactory, EVERSPACE 2, OCTOPATH, Solarpunk, and **Star Wars Jedi: Fallen Order** (the A3 gate — on the primary PC it is a ghost, only `steam_appid.txt`). Record what is present before planning further.
-6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover-2026-08-22.md:75-99`); the plan doc's §3 claim that they do not is refuted and is being corrected. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
+6. Grant list: `list_granted_applications` **first**, then request only what is missing — grants outlive sessions here (`docs/handover.md` §2); the plan doc's §3 claim that they do not is refuted, and was corrected on 2026-10-08. Include `Cheat Engine (64-bit SSE4-AVX2)` and `steamwebhelper.exe`, both absent from `auto-verification-session-plan.md` §3.
 
 #### Step 1 — EVERSPACE 2 (Row 2, A2) — ~20 min, highest information per minute
 
@@ -499,7 +580,7 @@ CE injection only (EA app blocks the proxies). Check `scan-0.log` for `UE Versio
 8. **Do not grep `walk-0.log` for A1's DLL observable.** It lives in `Ubel.cpp` but its category is `DYNO:PersistPtr`, which routes to **offsets**. The natural grep returns nothing and reads as a failure.
 9. **Do not use DQ III or DQ I&II as A1's negative control** (§3, Row 1) — they cannot discriminate and would be scored as a regression against a title the register already records as version-misdetecting.
 10. **Do not "simplify" the ProcessEvent table into a `>=` ladder**, do not narrow Ubel's `{base, ±4, +8, −8}` bool probe spread now that the base is derived, and do not enable the `Bookmarks\` age sweep. All three are deliberate; the first two are the exact bugs A2 and A6 fixed.
-11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which `handover:75-99` measured false. Use it for §3 grant mechanics and §4 authorised writes only — and ⚠ **do NOT read §4.1 as spent on the verification PC**: Light Maze **IS** installed here, at exactly the path §4.1 names (`D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\`, holding `LightMaze-Win64-Shipping.exe`, UE **5.0.3** — which also makes it the sharpest available pre-5.3 UE5 control for A1). ⚠ And this machine has **two** Steam libraries, not four. (original text: its Light Maze target is not installed in any of this machine's four Steam libraries).
+11. **Do not plan a batch off `docs/auto-verification-session-plan.md` §5 or §10.** Its own top banner still points at §10 as the live authority and its §3 still asserts "grants do not survive a session", which handover §2 measured false (the plan was corrected on 2026-10-08). Use it for §3 grant mechanics and §4 authorised writes only — and ⚠ **do NOT read §4.1 as spent on the verification PC**: Light Maze **IS** installed here, at exactly the path §4.1 names (`D:\SteamLibrary\steamapps\common\Light Maze\LightMaze\Binaries\Win64\`, holding `LightMaze-Win64-Shipping.exe`, UE **5.0.3** — which also makes it the sharpest available pre-5.3 UE5 control for A1). ⚠ And this machine has **two** Steam libraries, not four. (original text: its Light Maze target is not installed in any of this machine's four Steam libraries).
 
 -----
 
@@ -834,7 +915,7 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 ⚠ **Lead with `num_parms` / `parms_size`, not the badges** — `Ubel.cpp:1450-1453` reads them off `funcFlagsOff + 4/6/8`, so a wrong base corrupts them too, and `2 (65413B)` is self-evidently wrong where a garbage bitmask is not. ⚠ `walk-0.log`'s `WalkFunctions: %zu functions found at 0x%llX` (`Ubel.cpp:1659`) is a **liveness marker only** — count and address, no flags. Do not write the row against it.
 
-**Negative control** — an in-session A/B on the **same binary**, which the pre-fix build could not give you: `set_ue_version_override` (`Fern.cpp:1715-1768`, accepts 418..509, sets `g_cachedUEVersion` immediately, no re-scan). Run at **421** (correct flags), override to **422** (the old garbage reappears — `0x98` on a 4.21 layout is `FirstPropertyToInit`), then back to 421. ⚠ Pass `persist:false`, or clear afterwards — `persist:true` writes into `UE5CEDumper.{Machine}.json` and the next session inherits it. Second control: **OCTOPATH 4.18** must be byte-identical (`0x88` before and after; a stock layout hits the primary so the reordered sweep never runs).
+**Negative control** — an in-session A/B on the **same binary**, which the pre-fix build could not give you: `set_ue_version_override` (`Fern.cpp:1715-1768`, accepts 418..509 — 411..509 since `[UE-OVERRIDE-411]` —, sets `g_cachedUEVersion` immediately, no re-scan). Run at **421** (correct flags), override to **422** (the old garbage reappears — `0x98` on a 4.21 layout is `FirstPropertyToInit`), then back to 421. ⚠ Pass `persist:false`, or clear afterwards — `persist:true` writes into `UE5CEDumper.{Machine}.json` and the next session inherits it. Second control: **OCTOPATH 4.18** must be byte-identical (`0x88` before and after; a stock layout hits the primary so the reordered sweep never runs).
 
 -----
 
@@ -4774,7 +4855,8 @@ again:
 
 - **"Lushfoil 5.6 → table `0x228`" is impossible.** The table read `>= 550 → 0x228 / >= 500 → 0x220`,
   and **550 is not a producible version** — versions are encoded `major*100+minor` and capped at 509
-  (`Genau.cpp` `major == 5 && minor <= 9`; `Fern.cpp`'s 418..509 bound). The `0x228` arm was dead
+  (`Genau.cpp` `major == 5 && minor <= 9`; `Fern.cpp`'s 418..509 bound, 411..509 in
+  `Grimoire::UeVersionOverrideAccepted` since `[UE-OVERRIDE-411]`). The `0x228` arm was dead
   code. Lushfoil got `0x220`, exactly as DumperTest did, and so did every other UE5 title.
 - **"Slot position is a build-flag property, not a version property" is refuted by these very two
   observations.** The measured non-editor slots are 5.4 = `0x268` and 5.6 = `0x260`

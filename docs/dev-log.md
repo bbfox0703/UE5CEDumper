@@ -27,6 +27,107 @@ builds ≤696 in
 
 -----
 
+## 2026-10-09 (build 3646) — the version override says what it changes and Auto restores at once; UFunction parameters follow the measured layout; a UE 4.10 game refused live; the Call Trace list keeps its room `[UE-OVERRIDE-411]` `[UE-OVERRIDE-HINT-AUTO]` `[VER-410-GATE]` `[CT-DETAIL-COVERS-LIST]` `[LIVE-3646]`
+
+- **The UE version override is safer and says what it does.** Its tooltip now explains that it changes how the
+  DLL reads the game (not just a label), what follows the version, the risk of a wrong pick, and when each part
+  takes effect. A version the game's own UFunctions contradict is refused with the reason (checked live: UE 4.15 on
+  a UE 5.8 game). **Choosing Auto returns to the detected version at once**; with no detection on record it says it
+  applies at the next launch. Checked live on DumperTest58.
+- **UFunction parameters are read where the game really keeps them.** Once a scan has measured the UFunction
+  layout (4.11-4.17 differ from 4.18+), parameter counts and sizes follow the measurement rather than the version
+  number, so a wrong override can no longer misread them. Every buffer the DLL hands ProcessEvent is sized to the
+  function's whole parameter chain, and the CE mailbox refuses a call whose parameters would not fit its 1 KB slab
+  instead of overrunning it. Checked live on UE 4.15 (Extinction): Actor::ReceiveTick's DeltaSeconds read 0.0167.
+- **A UE 4.10 game is refused, checked live.** IS Defense (4.10.2) is recognised from the engine build string in its
+  own exe and refused as too old; version detection reads more build-string shapes.
+- **The Call Trace list can no longer be covered by the detail pane** (Call / Call stack / Parameters): the list
+  keeps room beside it at any window size or remembered width. Checked live on Extinction.
+- Known issues in this build, not fixed yet:
+  - Turning the experimental features off after recording a trace still offers "Open in Call Trace", which opens the
+    hidden tab `[LF-EXPOFF-TRACE]`.
+  - On a game refused as too old, the header still shows "Object-array stride not detected", and the notice reads
+    "UE 411" / "UE 410" instead of 4.11 / 4.10 `[REFUSED-STRIDE-NOTICE]` `[TOOOLD-VERSION-TEXT]`.
+  - At the default window size the Call Trace detail pane can only be widened to about 500 px, so the Call stack's
+    Where column scrolls sideways; fold the object tree or widen the window for more `[CT-FLOOR-208]`.
+- Tests: the C++ test executables all passed (dll_core_test 1,162 checks, dll_helpers_test 3,242); C# 6,517 run, 0 failed;
+  headless 54 / 54. `UE5DumpUI.exe` 61,071,360 bytes, Native-AOT.
+
+## 2026-10-09 (build 3645) — Live Funcs' controls fold; Clear T/P/S; the Blueprint interpreter named on stacks; a UE 4.10 game refused `[LF-COMPACT-TOP]` `[LF-CLEAR-CHOICES]` `[LF-SNAP-WARN-RAISE]` `[A1-INTERP-LABEL]` `[CT-STACK-WHERE-WIDTH]` `[VER-410-GATE]` `[UE-OVERRIDE-411]`
+
+- **Live Funcs' controls take far less of the panel.** With a stack chosen they took 13-16 lines. The stack
+  warning is now one line with a Details button for the whole text; the capture settings fold under one header
+  line that sums up what is set, orange with a short ⚠ whenever a line folded away would warn, and the fold is
+  remembered; the "No baseline" hint moved into Set Baseline's tooltip. Checked live on DumperTest58.
+- **Clear T/P/S** on that header empties the Trace, Params and Stack columns at once. Checked live.
+- **The parameter estimate's orange follows the ticks and the trace buffer**; it used to keep its old colour
+  until something else changed. Checked live: ticking every row turned it off, Clear ticks turned it on again.
+- **A stack frame inside the Blueprint interpreter reads "the Blueprint interpreter +0x.. (UObject::ProcessInternal,
+  the native entry of N Blueprint functions)"** instead of naming one arbitrary Blueprint function. Checked live on
+  DQ XI S (6,678 functions).
+- **The Call stack tab's Address column keeps its width in a narrow pane** (it was squeezed to a sliver); Where
+  scrolls sideways instead. Checked live.
+- **A UE 4.10 game is refused instead of misread.** A version below 4.11 read from the game's own resource now
+  counts when the engine build string in the same resource, or an agreeing CrashReportClient, backs it, so a 4.10
+  title such as IS Defense is refused as too old (tests and rigs only so far; the live check is owed). The UE
+  version override now reaches down to 4.11. ⚠ The review of these two found that a wrong 4.11-4.17 override pick
+  on a 4.18+ game can make the DLL size some ProcessEvent buffers short (Teleport, invoke_function and others); the
+  fix comes in the next build. **With this build, leave the override on Auto.**
+- Known, found live on this build: a trace recorded with the experimental features on still offers "Open in Call
+  Trace" after they are turned off, and opens the hidden tab `[LF-EXPOFF-TRACE]`. Being fixed: the features will
+  turn off only while disconnected.
+- Tests: the C++ test executables all passed, C# 6,486 / 6,486, headless 43 / 43. `UE5DumpUI.exe` 61,056,000
+  bytes, Native-AOT.
+
+## 2026-10-08 (build 3644) — Live Funcs stacks name the Blueprint interpreter; the Call stack tab's Where fills the pane `[A1-SCRIPT-FUNCS]` `[CT-STACK-WHERE-WIDTH]`
+
+Published before the handover entry below, written after it.
+- **A frame inside the Blueprint interpreter is named.** The native-entry index now holds every UFunction's
+  native entry, Blueprint functions' too, so a frame in the interpreter reads "native entry of ... (one of N
+  functions that share this code)" instead of an offset into an unnamed function. Checked live: the index grew
+  from 12,445 to 13,176 entries on DumperTest58 and from 12,482 to 19,160 on DQ XI S, where the interpreter
+  showed on the minimap widget's stacks. (The name it shows there is only the lowest-addressed of those
+  functions; build 3645 names the interpreter itself, `[A1-INTERP-LABEL]`.)
+- **The Call stack tab's Where column takes the rest of a wide pane**, so a long name is no longer cut beside
+  empty space; in a narrow pane it keeps 420 pixels and the grid scrolls sideways. Checked live on DumperTest58.
+  (In a narrow pane Address was squeezed to its floor; fixed for build 3645.)
+
+-----
+
+## 2026-10-08 (no build change) — `docs/handover-2026-08-22.md` is now `docs/handover.md`, the runbook: procedures only `[HANDOVER-RUNBOOK]`
+
+- **Renamed** (`ace59452`, a pure move). 29 commits had touched the file since it was created on 2026-08-22,
+  so the date in its name only said when it was born. Older entries that name `handover-2026-08-22.md` mean this
+  file; its `handover §N` sections keep their numbers.
+- **Pruned to procedures**: how to work in this repo on these machines, with no open work, no counts and no
+  current state. Each kind of information now has one home:
+  - what is open: one current-programme line at the top of `todo.md`, by tag (it was the handover's §7, and
+    `MEMORY.md`, which does not travel between the PCs);
+  - how to close a verification row: `verification-register.md`, "How to close a row" (was handover §9);
+  - a pending live check: its programme's `todo.md` ledger while the programme runs, then the register,
+    moved byte-identical, once it closes (`working-lessons.md` §7.1);
+  - grant mechanics: handover §2 (the spent auto-verification plan's "grants never survive a session" now
+    points there);
+  - rules CLAUDE.md or `working-lessons.md` own: one-line pointers. ProcessEvent's slot method is now
+    `working-lessons.md` §4.7, and the ES2 provenance caveat is in `corpus-preservation.md` §3a.
+- **Deleted as closed or stale**: §7's "where to start" table (every row closed), quoted counts and build
+  numbers (the 3315 sync point, "49 rigs", "11 ghosts", the gate counts), the wrong claim about which
+  `.cpp` files a test target compiles, and the ES2 follow-up that `[A2-ES2-506-2026-09-05]` closed.
+
+-----
+
+## 2026-10-08 (no build change) — Live Funcs native stacks on a UE4 game: DQ XI S `[LIVEFUNCS-STEP3-DQ11S]`
+
+- Build 3643 was checked on DRAGON QUEST XI S (UE 4.18, a licensee fork), with a save loaded.
+  - A capture costs about 2 µs, under 0.1 ms at most, at either budget.
+  - The calls a second did not change.
+  - The Call stack tab names the native entry of the Blueprint event that dispatched the call (this game ships
+    nativized Blueprints).
+- Found by the review of that run: the native-entry index leaves script functions out, so a frame in the Blueprint
+  interpreter is not named. The design said it would be named as shared code (`[A1-SCRIPT-FUNCS]`, todo.md).
+
+-----
+
 ## 2026-10-08 (build 3643) — Live Funcs stacks: a question for per-frame functions, a cost estimate, native entries named `[LIVEFUNCS-STEP3]` `[CT-COLUMNS-OVERLAP]`
 
 - **Choosing a per-frame function's stack asks first.** A function called every frame in the last recording would

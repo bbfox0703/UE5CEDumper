@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.ComponentModel;
 using System.Globalization;
 using System.Linq;
 using System.Text;
@@ -216,6 +217,10 @@ public partial class LiveFuncsViewModel : ViewModelBase
         (_lastUnloaded > 0 ? Say("str.LF.Unloaded.Note", _lastUnloaded) : "")
         + (_lastUnnamed > 0 ? Say("str.LF.Unnamed.Note", _lastUnnamed) : "");
     [ObservableProperty] private string _baselineStatus = "No baseline — record idle, then Set Baseline.";
+    /// <summary>[LF-COMPACT-TOP] The baseline's line speaks only with a baseline, or with Diff on and none: the one time a
+    /// missing baseline is news. Shown always, it spent a line of the panel on a hint, which Set Baseline's tooltip
+    /// carries now.</summary>
+    public bool BaselineStatusVisible => _baseline.Count > 0 || DiffMode;
 
     /// <summary>Per-session remembered filter keywords (LRU) surfaced as the filter
     /// box's AutoCompleteBox suggestions — see <see cref="KeywordSearchMemory"/>.
@@ -668,16 +673,16 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>T13: orange when the busiest choice keeps less time than the trace does, or the buffer is too small.</summary>
-    public bool SnapshotEstimateWarn
+    public bool SnapshotEstimateWarn => AnySnapshotChoice && SnapshotWarns(CurrentEstimate());
+
+    /// <summary><see cref="SnapshotEstimateWarn"/> for an estimate already made, so a reader that shows the estimate too
+    /// makes it once.</summary>
+    private bool SnapshotWarns(SnapEstimate e)
     {
-        get
-        {
-            if (!AnySnapshotChoice) return false;
-            if (_snapChosen.Count == 0) return CurrentEstimate().TooSmall;
-            if (_lastWindowMs <= 0) return false;
-            var e = CurrentEstimate();
-            return e.TooSmall || e.BusiestSeconds < TraceSecondsForComparison();
-        }
+        if (!AnySnapshotChoice) return false;
+        if (_snapChosen.Count == 0) return e.TooSmall;
+        if (_lastWindowMs <= 0) return false;
+        return e.TooSmall || e.BusiestSeconds < TraceSecondsForComparison();
     }
 
     /// <summary>The grey note: what the budget would skip.</summary>
@@ -768,7 +773,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     /// <summary>Orange above <see cref="StackWarnMsPerSec"/>: the estimate line, and T20's warning with it.</summary>
-    public bool StackEstimateWarn => _stackChosen.Count > 0 && CurrentStackCost().MsPerSec > StackWarnMsPerSec;
+    public bool StackEstimateWarn => _stackChosen.Count > 0 && StackWarns(CurrentStackCost());
+
+    /// <summary><see cref="StackEstimateWarn"/> for a cost already weighed, so a reader that shows the cost too weighs it
+    /// once.</summary>
+    private bool StackWarns(StackCost c) => _stackChosen.Count > 0 && c.MsPerSec > StackWarnMsPerSec;
 
     public string StackEstimateTip => Say("str.Tip.LF.Stack.Estimate", StackWarnMsPerSec, StackAssumedUsPerCapture);
 
@@ -848,6 +857,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         OnPropertyChanged(nameof(TraceUiPeakMb));
         OnPropertyChanged(nameof(TraceUiHeldMb));
         RefreshAvailableMemory();
+        // T13's orange weighs the busiest choice against what the trace keeps, which the buffer sets.
+        RaiseSnapshotEstimate();
     }
 
     /// <summary>Tick or untick a row for the trace. Not while recording: the ticks a recording traces are the ones
@@ -879,12 +890,127 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshTickedList();
     }
 
+    /// <summary>Empties the table's three choice columns at once. It runs the two clears rather than a loop of its own,
+    /// so whatever they bring up to date follows here too, and it is refused while recording because they are.</summary>
+    [RelayCommand]
+    private void ClearChoices()
+    {
+        ClearTicks();
+        ClearSnapshots();
+    }
+
     private void RefreshTickedList()
     {
         TickedFunctions.Clear();
         foreach (var k in _ticked.Names) TickedFunctions.Add(k);
         OnPropertyChanged(nameof(HasTickedFunctions));
         OnPropertyChanged(nameof(TickedCountText));
+        // A ticked call is one the trace keeps, so the ticks move what T13's orange compares the choices with.
+        RaiseSnapshotEstimate();
+    }
+
+    // ---- [LF-COMPACT-TOP] The capture settings fold under their header line, which then sums them up: with a stack
+    // chosen they took most of the panel's height above the table.
+
+    /// <summary>The capture settings folded to their header line. MainWindowViewModel keeps it in ui-options.json, and
+    /// it starts unfolded, so a file from before it shows every setting. It hides controls and changes no setting, so it
+    /// is not refused while recording.</summary>
+    [ObservableProperty] private bool _captureSettingsCollapsed;
+
+    partial void OnCaptureSettingsCollapsedChanged(bool value)
+    {
+        OnPropertyChanged(nameof(CaptureSettingsToggleText));
+        // Nothing raises the summary while it is unfolded, so a change of the fold brings it up to date at once.
+        RaiseCaptureSummary();
+    }
+
+    /// <summary>The header button's text, which says what pressing it does.</summary>
+    public string CaptureSettingsToggleText
+        => StringLookup(CaptureSettingsCollapsed ? "str.LF.Settings.Expand" : "str.LF.Settings.Collapse");
+
+    [RelayCommand]
+    private void ToggleCaptureSettings() => CaptureSettingsCollapsed = !CaptureSettingsCollapsed;
+
+    /// <summary>What the folded header says is set, then the warnings of the lines folded away: folding hides no
+    /// warning. The trace's part only with the experimental tabs, as the section shows it only then.</summary>
+    public string CaptureSummary
+    {
+        get
+        {
+            var parts = new List<string> { Say("str.LF.Summary.Fetch", FetchLimit, MinCalls) };
+            if (HidePerFrame) parts.Add(StringLookup("str.LF.Summary.HidePerFrame"));
+            if (TraceAvailable)
+            {
+                parts.Add(TraceEnabled ? Say("str.LF.Summary.TraceOn", TraceBufferMb) : StringLookup("str.LF.Summary.TraceOff"));
+                parts.Add(Say("str.LF.Summary.Choices", TickedFunctions.Count, SnapshotFunctions.Count, StackFunctions.Count));
+                if (HasStackChoices)
+                    parts.Add(Say("str.LF.Summary.StackBudget",
+                                  StringLookup(StackBudgetLow ? "str.LF.Stack.Low" : "str.LF.Stack.Standard")));
+                if (AnySnapshotChoice) parts.Add(Say("str.LF.Summary.SnapBuffer", SnapshotBufferMb));
+                // Each estimate once: each walks every chosen name over the table's rows.
+                var stack = CurrentStackCost();
+                if (StackWarns(stack)) parts.Add(Say("str.LF.Summary.StackWarn", stack.MsPerSec));
+                var snap = CurrentEstimate();
+                if (SnapshotWarns(snap))
+                    parts.Add(StringLookup(snap.TooSmall ? "str.LF.Summary.SnapTooSmall" : "str.LF.Summary.SnapWarn"));
+                if (TraceMemoryOverAvailable) parts.Add(Say("str.LF.Summary.MemoryOver", MemText(_availableMb)));
+                // The section's one line would make the summary several lines long; this keeps its warning, shortly.
+                if (HasStackChoices) parts.Add(StringLookup("str.LF.Summary.StackRisk"));
+            }
+            // A separator, not a sentence: punctuation stays in code, like the panel's other joins.
+            return string.Join(" · ", parts.Where(p => p.Length > 0));
+        }
+    }
+
+    /// <summary>Orange whenever a line folded away would be, as the summary then carries its warning.</summary>
+    public bool CaptureSummaryWarn
+        => TraceAvailable && (StackEstimateWarn || SnapshotEstimateWarn || TraceMemoryOverAvailable);
+
+    /// <summary>The names the summary's inputs are raised under. A summary left stale is wrong exactly when it is read,
+    /// folded, so a setting added to the summary adds its name here.</summary>
+    private static readonly HashSet<string> CaptureSummaryInputs = new(StringComparer.Ordinal)
+    {
+        nameof(FetchLimit), nameof(MinCalls), nameof(HidePerFrame), nameof(TraceAvailable), nameof(TraceEnabled),
+        nameof(TraceBufferText), nameof(TickedCountText), nameof(SnapshotCountText), nameof(StackCountText),
+        nameof(StackBudgetLow), nameof(SnapshotBufferText), nameof(StackEstimate), nameof(StackEstimateWarn),
+        nameof(SnapshotEstimateWarn), nameof(TraceMemoryEstimate), nameof(TraceMemoryOverAvailable),
+    };
+    private static readonly PropertyChangedEventArgs CaptureSummaryChangedArgs = new(nameof(CaptureSummary));
+    private static readonly PropertyChangedEventArgs CaptureSummaryWarnChangedArgs = new(nameof(CaptureSummaryWarn));
+
+    /// <summary>How the summary's raise is put off to the end of the burst that moved its inputs: onto the UI thread's
+    /// queue, behind the work in hand. A unit test has no UI thread to run it, so it hands in a queue it runs itself.</summary>
+    internal Action<Action> PostCaptureSummaryRaise { get; set; } = static a => Avalonia.Threading.Dispatcher.UIThread.Post(a);
+
+    /// <summary>A raise is posted and has not run yet: the rest of its burst needs no other.</summary>
+    private bool _captureSummaryPosted;
+
+    /// <summary>Raises the summary and its flag after any of their inputs, in one place rather than beside every raise
+    /// of an input. Only while folded, as nothing shows them unfolded and every binding of them, hidden or not, builds
+    /// them again on a raise; and once a burst: a choice click raises many of the inputs in turn, so the raise is posted
+    /// when the first one moves and runs after the click's work.</summary>
+    protected override void OnPropertyChanged(PropertyChangedEventArgs e)
+    {
+        base.OnPropertyChanged(e);
+        if (!CaptureSettingsCollapsed || _captureSummaryPosted) return;
+        if (e.PropertyName is { } name && CaptureSummaryInputs.Contains(name))
+        {
+            _captureSummaryPosted = true;
+            PostCaptureSummaryRaise(RaisePostedCaptureSummary);
+        }
+    }
+
+    private void RaisePostedCaptureSummary()
+    {
+        _captureSummaryPosted = false;
+        // Unfolded since it was posted: nothing shows it now, and the next fold raises it.
+        if (CaptureSettingsCollapsed) RaiseCaptureSummary();
+    }
+
+    private void RaiseCaptureSummary()
+    {
+        base.OnPropertyChanged(CaptureSummaryChangedArgs);
+        base.OnPropertyChanged(CaptureSummaryWarnChangedArgs);
     }
 
     [RelayCommand]
@@ -985,7 +1111,11 @@ public partial class LiveFuncsViewModel : ViewModelBase
         ApplyFilter();
         _filterMemory.Schedule(value);
     }
-    partial void OnDiffModeChanged(bool value) => ApplyDiffAndFilter();
+    partial void OnDiffModeChanged(bool value)
+    {
+        OnPropertyChanged(nameof(BaselineStatusVisible));
+        ApplyDiffAndFilter();
+    }
     partial void OnEarliestFirstChanged(bool value) => ApplyDiffAndFilter();
     partial void OnNewChangedOnlyChanged(bool value) => ApplyFilter();
     partial void OnHideWidgetsChanged(bool value) => ApplyFilter();
@@ -1061,6 +1191,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _baselineLimit     = 0;
         _baselinePerFrameEffective = false;
         _baselinePerFrameAddrs = new(StringComparer.OrdinalIgnoreCase);
+        // With Diff already off, nothing else tells the line it has gone.
+        OnPropertyChanged(nameof(BaselineStatusVisible));
         DiffMode = false;  // triggers ApplyDiffAndFilter
         BaselineStatus = "No baseline — record idle, then Set Baseline.";
     }

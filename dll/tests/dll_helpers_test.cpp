@@ -1266,6 +1266,35 @@ static void Test_Mimic_InvokeRouting() {
     EXPECT("page counts never look static-native", true);
 }
 
+// [UE-OVERRIDE-411] review 2: CMD_INVOKE hands ProcessEvent the fixed paramsData slab, and nothing compared it with
+// the function's own parameter chain. The only gate in front of it was the CE helper's `parmsSize > 1024`, on a
+// ParmsSize the tail read gave -- a few bytes when the version is from the wrong side of 4.18.
+static void Test_Mimic_InvokeSlab() {
+    constexpr uint32_t slab = sizeof(Mimic::MailboxData::paramsData);
+    EXPECT("INVOKESLAB setup: the slab is paramsData's 1024 bytes", slab == 1024);
+
+    EXPECT("INVOKESLAB control: a block that ends at the slab's end fits",
+           Mimic::InvokeSlabRefusal(true, slab, slab) == 0);
+    EXPECT("INVOKESLAB control: a function with no parameters fits", Mimic::InvokeSlabRefusal(true, 0, slab) == 0);
+    EXPECT("INVOKESLAB ⭐: a block one byte past the slab is refused",
+           Mimic::InvokeSlabRefusal(true, slab + 1, slab) == Mimic::MB_ERR_INVOKE_TOO_LARGE);
+    // The review's shape: a 4.15 title read as 4.18 reads ParmsSize at the NumParms byte (3), while an
+    // FMinimalViewInfo-sized out parameter ends at 0x810. The buffer CMD_INVOKE sizes with is the chain's end.
+    const uint32_t misread = DynOff::ProcessEventBufferBytes(3, 0x810);
+    EXPECT("INVOKESLAB ⭐: a misread ParmsSize of 3 does not let a 0x810-byte block through",
+           Mimic::InvokeSlabRefusal(true, misread, slab) == Mimic::MB_ERR_INVOKE_TOO_LARGE);
+    EXPECT("INVOKESLAB ⭐: a function that does not resolve is refused, whatever the size",
+           Mimic::InvokeSlabRefusal(false, 0, slab) == Mimic::MB_ERR_INVOKE_UNRESOLVED
+           && Mimic::InvokeSlabRefusal(false, 16, slab) == Mimic::MB_ERR_INVOKE_UNRESOLVED);
+
+    // ProcessEvent's own codes ride the same `result` field (Frieren.h), and so do -10 / -11.
+    bool distinct = Mimic::MB_ERR_INVOKE_UNRESOLVED != Mimic::MB_ERR_INVOKE_TOO_LARGE
+                 && Mimic::MB_ERR_INVOKE_UNRESOLVED < 0 && Mimic::MB_ERR_INVOKE_TOO_LARGE < 0;
+    for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 })
+        distinct = distinct && taken != Mimic::MB_ERR_INVOKE_UNRESOLVED && taken != Mimic::MB_ERR_INVOKE_TOO_LARGE;
+    EXPECT("INVOKESLAB: the two refusals are negative and apart from every code already in `result`", distinct);
+}
+
 static void Test_Mimic_CommandRequiresInit() {
     // The ONE exemption, and the reason it is safe: Grausam touches no UObject and
     // the pipe path gates it on nothing.
@@ -4711,6 +4740,115 @@ static void Test_UeVersionCodeBounds() {
         EXPECT("UeVersionCode: oracle entry maps", Grimoire::UeVersionCode(o.maj, o.min) == o.want);
 }
 
+// [VER-410-GATE] The engine's build string in a VERSIONINFO. Every positive below is a ProductVersion read
+// off a real exe on this machine, except the 4.9 one, which is the 4.10 shape at the next version down.
+static void Test_EngineBuildStringCode() {
+    using Grimoire::EngineBuildStringCode;
+    // Version first, full branch -- the branch names the release again.
+    EXPECT("EngineBuildString: IS Defense (4.10.2) -> 410",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.10") == 410);
+    EXPECT("EngineBuildString: the launcher's 4.10.4 UE4Game -> 410",
+           EngineBuildStringCode("4.10.4-2872498+++depot+UE4-Releases+4.10") == 410);
+    EXPECT("EngineBuildString: the same shape at 4.9 -> 409",
+           EngineBuildStringCode("4.9.2-0+++depot+UE4-Releases+4.9") == 409);
+    EXPECT("EngineBuildString: the launcher's 4.18.3 CrashReportClient, the later full branch -> 418",
+           EngineBuildStringCode("4.18.3-3832480+++UE4+Release-4.18") == 418);
+    // Version first, simplified branch.
+    EXPECT("EngineBuildString: NEKOPALIVE and its CrashReportClient (4.11) -> 411",
+           EngineBuildStringCode("4.11.0-0+UE4") == 411);
+    // Branch first.
+    EXPECT("EngineBuildString: Extinction (4.15) -> 415", EngineBuildStringCode("++UE4+Release-4.15-CL-0") == 415);
+    EXPECT("EngineBuildString: the 4.15.3 corpus build -> 415",
+           EngineBuildStringCode("++UE4+Release-4.15-CL-3450819") == 415);
+    EXPECT("EngineBuildString: UE4Game 4.18 -> 418", EngineBuildStringCode("++UE4+Release-4.18-CL-3832480") == 418);
+    EXPECT("EngineBuildString: DropIn 4.27.2 -> 427", EngineBuildStringCode("++UE4+Release-4.27-CL-18319896") == 427);
+
+    // Not a build string: a version the game team could have typed.
+    EXPECT("EngineBuildString: a bare 4.10.1 is 0", EngineBuildStringCode("4.10.1") == 0);
+    EXPECT("EngineBuildString: a bare 4.10.3 is 0", EngineBuildStringCode("4.10.3") == 0);
+    EXPECT("EngineBuildString: the four-part 4.10.2.0 is 0", EngineBuildStringCode("4.10.2.0") == 0);
+    EXPECT("EngineBuildString: Gal*Gun's 1.0.10897.0 is 0", EngineBuildStringCode("1.0.10897.0") == 0);
+    EXPECT("EngineBuildString: the b25a marker's 4.5.0.0 is 0", EngineBuildStringCode("4.5.0.0") == 0);
+    EXPECT("EngineBuildString: the empty string is 0", EngineBuildStringCode("") == 0);
+    // The right shape, the wrong branch.
+    EXPECT("EngineBuildString: a full branch naming another release (4.9 after 4.10.2) is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.9") == 0);
+    EXPECT("EngineBuildString: the later full branch naming another release (4.11 after 4.10.2) is 0",
+           EngineBuildStringCode("4.10.2-0+++UE4+Release-4.11") == 0);
+    EXPECT("EngineBuildString: a branch the game named (no UE4) is 0", EngineBuildStringCode("4.10.2-0+MyGame") == 0);
+    EXPECT("EngineBuildString: a full branch naming another major is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE5-Releases+4.10") == 0);
+    // [VER-410-GATE] review: the release the full branch repeats must carry the leading MAJOR too, not just the minor.
+    EXPECT("EngineBuildString: a full branch repeating 5.10 after 4.10.2 is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+5.10") == 0);
+    EXPECT("EngineBuildString: a simplified branch naming another major is 0",
+           EngineBuildStringCode("4.11.0-0+UE5") == 0);
+    EXPECT("EngineBuildString: a branch-first string naming another major is 0",
+           EngineBuildStringCode("++UE4+Release-5.4-CL-0") == 0);
+    // The digit boundary on a minor: `+4.1` is not 4.10, and 4.100 is not 4.10 either.
+    EXPECT("EngineBuildString: a full branch `+4.1` after 4.10.2 is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.1") == 0);
+    EXPECT("EngineBuildString: a leading 4.1 against a branch 4.10 is 0",
+           EngineBuildStringCode("4.1.0-0+++depot+UE4-Releases+4.10") == 0);
+    EXPECT("EngineBuildString: 4.100 is 0", EngineBuildStringCode("4.100.0-0+UE4") == 0);
+    // Truncated or trailing text.
+    EXPECT("EngineBuildString: no changelist is 0", EngineBuildStringCode("4.10.2-+UE4") == 0);
+    EXPECT("EngineBuildString: a branch-first string without -CL- is 0",
+           EngineBuildStringCode("++UE4+Release-4.15") == 0);
+    EXPECT("EngineBuildString: trailing text after a full branch is 0",
+           EngineBuildStringCode("4.10.2-0+++depot+UE4-Releases+4.10x") == 0);
+    EXPECT("EngineBuildString: a trailing space after a simplified branch is 0",
+           EngineBuildStringCode("4.11.0-0+UE4 ") == 0);
+    // [VER-410-GATE] review: the branch-first shape ends at its changelist, as the others end at their branch.
+    EXPECT("EngineBuildString: trailing text after a branch-first changelist is 0",
+           EngineBuildStringCode("++UE4+Release-4.15-CL-0x") == 0);
+    EXPECT("EngineBuildString: a trailing space after a branch-first changelist is 0",
+           EngineBuildStringCode("++UE4+Release-4.15-CL-0 ") == 0);
+}
+
+// [VER-410-GATE] What may refuse the scan: a reading below the floor, and a second signal naming the same version.
+static void Test_SubFloorReadingCorroborated() {
+    using Grimoire::SubFloorReadingCorroborated;
+    const char* isDefense = "4.10.2-0+++depot+UE4-Releases+4.10";
+    EXPECT("SubFloor: IS Defense's 410 with its own build string is corroborated",
+           SubFloorReadingCorroborated(410, isDefense, 0));
+    EXPECT("SubFloor: 410 with a CrashReportClient agreeing is corroborated", SubFloorReadingCorroborated(410, "", 410));
+    EXPECT("SubFloor: 409 with its own build string is corroborated",
+           SubFloorReadingCorroborated(409, "4.9.2-0+++depot+UE4-Releases+4.9", 0));
+
+    EXPECT("SubFloor: 410 with a bare 4.10.3 string is not", !SubFloorReadingCorroborated(410, "4.10.3", 0));
+    EXPECT("SubFloor: the b25a marker (405, 4.5.0.0) is not", !SubFloorReadingCorroborated(405, "4.5.0.0", 0));
+    EXPECT("SubFloor: 410 with a build string naming 4.11 is not",
+           !SubFloorReadingCorroborated(410, "4.11.0-0+UE4", 0));
+    EXPECT("SubFloor: 410 with a CrashReportClient saying 411 is not", !SubFloorReadingCorroborated(410, "", 411));
+    EXPECT("SubFloor: no reading at all is not", !SubFloorReadingCorroborated(0, "", 0));
+    // At or above the floor nothing needs corroborating, however strong the second signal is.
+    EXPECT("SubFloor: 427 with a matching build string is not a sub-floor reading",
+           !SubFloorReadingCorroborated(427, "++UE4+Release-4.27-CL-18319896", 0));
+    EXPECT("SubFloor: the floor itself (411, both signals) is not a sub-floor reading",
+           !SubFloorReadingCorroborated(411, "4.11.0-0+UE4", 411));
+}
+
+// [UE-OVERRIDE-411] The too-old refusal names the override as the way out, so it must reach the support floor.
+static void Test_UeVersionOverrideAccepted() {
+    using Grimoire::UeVersionOverrideAccepted;
+    const int floor = static_cast<int>(Grimoire::MIN_SUPPORTED_UE_VERSION);
+    EXPECT("Override: 0 clears an override", UeVersionOverrideAccepted(0));
+    EXPECT("Override: the support floor itself is accepted", UeVersionOverrideAccepted(floor));
+    EXPECT("Override: one below the support floor is not", !UeVersionOverrideAccepted(floor - 1));
+    for (int v = 411; v <= 417; ++v)
+        EXPECT("Override: 4.11-4.17 (NEKOPALIVE, Fantasynth, Extinction) can be set by hand",
+               UeVersionOverrideAccepted(v));
+    EXPECT("Override: 4.18 still is", UeVersionOverrideAccepted(418));
+    EXPECT("Override: 4.27 still is", UeVersionOverrideAccepted(427));
+    EXPECT("Override: 5.9 (the top of the UE5 band) still is", UeVersionOverrideAccepted(509));
+    EXPECT("Override: 4.10 is not", !UeVersionOverrideAccepted(410));
+    EXPECT("Override: the pre-UE4 sentinel is not", !UeVersionOverrideAccepted(
+        static_cast<int>(Grimoire::PRE_UE4_SENTINEL_VERSION)));
+    EXPECT("Override: past the UE5 band is not", !UeVersionOverrideAccepted(510));
+    EXPECT("Override: a negative version is not", !UeVersionOverrideAccepted(-1));
+}
+
 static void Test_CrashReportCandidates() {
     // The standard packaged layout: <root>/<Project>/Binaries/Win64/Game.exe, engine binaries at
     // <root>/Engine/Binaries/Win64/. The correct answer is three levels up.
@@ -6257,6 +6395,96 @@ static void Test_FunctionFlagsOffset() {
            !DynOff::FunctionTailMatches(2, 0x4000, 2, 8));
 }
 
+// [UE-OVERRIDE-411] review: a ProcessEvent buffer is never smaller than the function's own parameter chain, whatever
+// ParmsSize the version's tail read gave. The block is K2_SetActorLocation-shaped on a 4.18 layout: NewLocation +0x0
+// (12), bSweep +0xC, SweepHitResult +0x10 (0x88), bTeleport +0x98, the bool return +0x99 -- ParmsSize 0x9A,
+// ReturnValueOffset 0x99.
+static void Test_ProcessEventBufferBytes() {
+    using DynOff::ProcessEventBufferBytes;
+    EXPECT("PEBuf: a correct ParmsSize stands", ProcessEventBufferBytes(0x9A, 0x9A) == 0x9A);
+    // Read with 4.11-4.17's +2 (a 4.17 override on that title): ParmsSize comes from ReturnValueOffset.
+    EXPECT("PEBuf ⭐: ParmsSize read from ReturnValueOffset (0x99) still gets the whole block",
+           ProcessEventBufferBytes(0x99, 0x9A) == 0x9A);
+    // The reverse: a 4.11-4.17 layout read without the shift takes NumParms for ParmsSize.
+    EXPECT("PEBuf ⭐: ParmsSize read from NumParms (5) still gets the whole block",
+           ProcessEventBufferBytes(5, 0x9A) == 0x9A);
+    EXPECT("PEBuf ⭐: a ReturnValueOffset of 0 read as ParmsSize (an FVector getter) still gets the FVector",
+           ProcessEventBufferBytes(0, 12) == 12);
+    EXPECT("PEBuf: a ParmsSize past the chain's end is kept", ProcessEventBufferBytes(0x10, 0xC) == 0x10);
+    EXPECT("PEBuf: no chain read keeps ParmsSize", ProcessEventBufferBytes(0x18, 0) == 0x18);
+    EXPECT("PEBuf: a chain end past 0xFFFF is no parameter block (ParmsSize is a uint16)",
+           ProcessEventBufferBytes(0x18, 0x10000) == 0x18);
+    EXPECT("PEBuf: ...and 0xFFFF itself can be one", ProcessEventBufferBytes(0x18, 0xFFFF) == 0xFFFF);
+    EXPECT("PEBuf: a negative end is no chain", ProcessEventBufferBytes(0x18, -4) == 0x18);
+    EXPECT("PEBuf: no ParmsSize and no chain is an empty buffer", ProcessEventBufferBytes(0, 0) == 0);
+}
+
+// [UE-OVERRIDE-411] review: an override must keep the readers on the tail the game's own UFunctions measure.
+static void Test_CheckTailForVersion() {
+    using DynOff::CheckTailForVersion;
+    using DynOff::TailCheck;
+    EXPECT("TailBase: 4.15 reads the tail 2 behind FunctionFlags", DynOff::FunctionTailBaseFor(415, 0x88, 0) == 0x8A);
+    EXPECT("TailBase: 4.18 reads it at FunctionFlags", DynOff::FunctionTailBaseFor(418, 0x88, 0) == 0x88);
+    EXPECT("TailBase: the vote's extra adds on top", DynOff::FunctionTailBaseFor(505, 0xB0, 4) == 0xB4);
+    // A 4.18 title (OCTOPATH / DQ XI S): FunctionFlags 0x88, NumParms 0x8C -- the tail base is 0x88.
+    EXPECT("TailCheck ⭐: 4.17 on a 4.18 tail contradicts it (ParmsSize would come from ReturnValueOffset)",
+           CheckTailForVersion(417, 0x88, 0, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck ⭐: ...and so does the floor, 4.11", CheckTailForVersion(411, 0x88, 0, 0x88) == TailCheck::Contradicts);
+    EXPECT("TailCheck: 4.18 agrees", CheckTailForVersion(418, 0x88, 0, 0x88) == TailCheck::Agrees);
+    EXPECT("TailCheck: 4.21 keeps the same tail and agrees", CheckTailForVersion(421, 0x88, 0, 0x88) == TailCheck::Agrees);
+    // The inverse the widening lets a user correct: a 4.15 title (RepOffset first, base 0x8A) misdetected as 4.18+.
+    EXPECT("TailCheck ⭐: 4.15 on a 4.11-4.17 tail agrees", CheckTailForVersion(415, 0x88, 0, 0x8A) == TailCheck::Agrees);
+    EXPECT("TailCheck ⭐: 4.18 on that tail contradicts it", CheckTailForVersion(418, 0x88, 0, 0x8A) == TailCheck::Contradicts);
+    // Split Fiction's tail sits +4 later on 5.x (the vote's extra).
+    EXPECT("TailCheck: a 5.x tail with the +4 extra agrees at 5.5", CheckTailForVersion(505, 0xB0, 4, 0xB4) == TailCheck::Agrees);
+    EXPECT("TailCheck: ...and 4.17 on it contradicts", CheckTailForVersion(417, 0xB0, 4, 0xB4) == TailCheck::Contradicts);
+    // Nothing to judge is never a refusal.
+    EXPECT("TailCheck: nothing measured is Unmeasured", CheckTailForVersion(417, 0x88, 0, -1) == TailCheck::Unmeasured);
+    EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
+}
+
+// [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed in-process; a persisted override, a
+// pick made before any scan, or a misdetection reached the readers unchecked and moved every tail read by 2. The
+// measurement now drives the readers whatever the version.
+static void Test_FunctionTailReadBase() {
+    using DynOff::FunctionTailReadBase;
+    EXPECT("TailRead ⭐: a 4.15 tail measured at +0x8A is read there under 4.18",
+           FunctionTailReadBase(418, 0x88, 0, 0x8A) == 0x8A);
+    EXPECT("TailRead ⭐: a 4.18 tail measured at +0x88 is read there under 4.17",
+           FunctionTailReadBase(417, 0x88, 0, 0x88) == 0x88);
+    EXPECT("TailRead ⭐: ...and under the new floor, 4.11", FunctionTailReadBase(411, 0x88, 0, 0x88) == 0x88);
+    EXPECT("TailRead: a right version agrees with its measurement (4.18)", FunctionTailReadBase(418, 0x88, 0, 0x88) == 0x88);
+    EXPECT("TailRead: Split Fiction's +4 extra agrees with its measurement", FunctionTailReadBase(505, 0xB0, 4, 0xB4) == 0xB4);
+    EXPECT("TailRead control: nothing measured keeps the version's base (4.15)", FunctionTailReadBase(415, 0x88, 0, -1) == 0x8A);
+    EXPECT("TailRead control: ...and 4.18's", FunctionTailReadBase(418, 0x88, 0, -1) == 0x88);
+    EXPECT("TailRead control: ...and the extra", FunctionTailReadBase(505, 0xB0, 4, -1) == 0xB4);
+}
+
+// [UE-OVERRIDE-411] review: the tail measurement's winner, at the FunctionFlags vote's own bar.
+static void Test_PickMeasuredTailBase() {
+    using DynOff::PickMeasuredTailBase;
+    const int bases[] = { 0x88, 0x8A, 0x8C, 0x8E };
+    { const int hits[] = { 0, 10, 0, 0 };
+      EXPECT("TailPick ⭐: 10 of 10 at one base wins", PickMeasuredTailBase(bases, hits, 4, 10) == 0x8A); }
+    { const int hits[] = { 6, 0, 0, 0 };
+      EXPECT("TailPick: 6 of 10 is the 60% the vote needs", PickMeasuredTailBase(bases, hits, 4, 10) == 0x88); }
+    { const int hits[] = { 5, 0, 0, 0 };
+      EXPECT("TailPick: 5 of 10 is not", PickMeasuredTailBase(bases, hits, 4, 10) == -1); }
+    { const int hits[] = { 7, 0, 0, 0 };
+      EXPECT("TailPick: 7 samples are too few, however unanimous", PickMeasuredTailBase(bases, hits, 4, 7) == -1); }
+    { const int hits[] = { 8, 0, 0, 0 };
+      EXPECT("TailPick: 8 of 8 is enough", PickMeasuredTailBase(bases, hits, 4, 8) == 0x88); }
+    { const int hits[] = { 0, 0, 0, 39 };
+      EXPECT("TailPick: 39 of 64 is 60%", PickMeasuredTailBase(bases, hits, 4, 64) == 0x8E); }
+    { const int hits[] = { 0, 0, 0, 38 };
+      EXPECT("TailPick: 38 of 64 is not", PickMeasuredTailBase(bases, hits, 4, 64) == -1); }
+    { const int hits[] = { 9, 9, 0, 0 };
+      EXPECT("TailPick: two bases tied at the top decide nothing", PickMeasuredTailBase(bases, hits, 4, 10) == -1); }
+    { const int hits[] = { 9, 2, 2, 0 };
+      EXPECT("TailPick: a tie below the top does not matter", PickMeasuredTailBase(bases, hits, 4, 10) == 0x88); }
+    EXPECT("TailPick: no candidates is -1", PickMeasuredTailBase(bases, bases, 0, 10) == -1);
+}
+
 // [VND583-02] UField::Next was never measured in FProperty mode (4.25+): DetectUPropertyMode
 // returned before touching it and the FProperty arm probed only FField::Next. On a 4.25+ title
 // whose UObject has an extra 8-byte tail (The Pathless: UField Next 0x30, SuperStruct 0x48)
@@ -6429,6 +6657,225 @@ static void Test_CmcMarkerVersion() {
     EXPECT("R7-X4: never lowers a 5.4+ detection", CmcMarkerVersion(506, true, true, false) == 506);
     EXPECT("R7-X4: never raises UE4 (UProperty mode)", CmcMarkerVersion(427, false, true, true) == 427);
     EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
+}
+
+// [UE-OVERRIDE-HINT-AUTO] The init version ladder as one function: init climbs it after the offsets probe, and Auto
+// chosen over an override climbs it from the detection it restores, so a stripped UE5 title is not handed back its
+// 4.27 fallback. Pinned rung by rung, in order, with each rung's guard.
+static void Test_VersionLadder() {
+    std::printf("\n--- UE-OVERRIDE-HINT-AUTO: the init version ladder ---\n");
+    using DynOff::StructuralVersionFacts;
+    using DynOff::VersionRung;
+    struct Probe { bool present = false, prop = false, func = false; int asked = 0; };
+    auto run = [](unsigned v, const StructuralVersionFacts& f, Probe& p, std::vector<VersionRung>* rungs = nullptr) {
+        return DynOff::ApplyVersionLadder(v, f,
+            [&](bool& prop, bool& func) { ++p.asked; prop = p.prop; func = p.func; return p.present; },
+            [&](VersionRung r, unsigned, unsigned) { if (rungs) rungs->push_back(r); });
+    };
+    auto measured = [](bool fproperty) {
+        StructuralVersionFacts f;
+        f.measured  = true;
+        f.fproperty = fproperty;
+        return f;
+    };
+
+    {   // Nothing is a fact before the probe has run.
+        StructuralVersionFacts f;
+        f.fproperty = true; f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
+        Probe p; p.present = true; p.func = true;
+        const auto r = run(427, f, p);
+        EXPECT("Ladder ⭐: nothing measured leaves a 4.27 label alone", r.version == 427 && !r.loweredToUE4);
+        EXPECT("Ladder: ...and walks no object array for a CMC", p.asked == 0);
+        StructuralVersionFacts u;
+        u.fproperty = false;
+        EXPECT("Ladder: nothing measured never lowers a UE5 label", run(504, u, p).version == 504);
+    }
+    {   // UProperty mode is UE4 before 4.25.
+        auto f = measured(false);
+        Probe p;
+        const auto r = run(504, f, p);
+        EXPECT("Ladder ⭐: UProperty mode under a UE5 label is UE4 -- 4.24 on a chunked object array",
+               r.version == 424 && r.loweredToUE4);
+        f.flatObjectArray = true;
+        EXPECT("Ladder: ...4.18 on a flat one", run(504, f, p).version == 418);
+        const auto keep = run(427, f, p);
+        EXPECT("Ladder: UProperty mode leaves a UE4 label alone, and does not call it lowered",
+               keep.version == 427 && !keep.loweredToUE4);
+        f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
+        Probe q; q.present = true; q.func = true;
+        EXPECT("Ladder: no UE5 rung fires in UProperty mode", run(427, f, q).version == 427 && q.asked == 0);
+        EXPECT("Ladder: ...nor after the UProperty rung lowered the label", run(508, f, q).version == 418 && q.asked == 0);
+    }
+    {   // Tagged FFieldVariant: UE5.3+.
+        auto f = measured(true);
+        f.taggedFFieldVariant = true;
+        Probe p;
+        EXPECT("Ladder ⭐: a 4.27 fallback with a tagged FFieldVariant climbs to 5.3 (Elliot)", run(427, f, p).version == 503);
+        EXPECT("Ladder: the tagged rung never lowers a 5.4 detection", run(504, f, p).version == 504);
+    }
+    {   // The CMC rung, inside its window only.
+        auto f = measured(true);
+        Probe both; both.present = true; both.prop = true; both.func = true;
+        EXPECT("Ladder: CMC's SetGravityDirection lifts 5.1 to 5.4", run(501, f, both).version == 504 && both.asked == 1);
+        Probe prop; prop.present = true; prop.prop = true;
+        EXPECT("Ladder: CMC's property alone floors 5.1 at 5.3", run(501, f, prop).version == 503);
+        Probe func; func.present = true; func.func = true;
+        auto g = f;
+        g.taggedFFieldVariant = true;
+        EXPECT("Ladder ⭐: the tagged rung then the CMC rung -- 4.27 -> 5.3 -> 5.4", run(427, g, func).version == 504);
+        Probe ue4; ue4.present = true; ue4.func = true;
+        EXPECT("Ladder ⭐: a UE4 label never pays the CMC walk", run(427, f, ue4).version == 427 && ue4.asked == 0);
+        Probe top; top.present = true; top.func = true;
+        EXPECT("Ladder: 5.4 and above never ask", run(504, f, top).version == 504 && top.asked == 0);
+        Probe absent; absent.func = true;
+        EXPECT("Ladder: no CMC loaded changes nothing", run(502, f, absent).version == 502 && absent.asked == 1);
+        Probe bare; bare.present = true;
+        std::vector<VersionRung> heard;
+        EXPECT("Ladder: a CMC with neither marker changes nothing, and no rung is reported",
+               run(502, f, bare, &heard).version == 502 && heard.empty());
+    }
+    {   // The reordered FUObjectItem: UE5.7+.
+        auto f = measured(true);
+        f.reorderedItem57 = true;
+        Probe p;
+        EXPECT("Ladder: the reordered FUObjectItem lifts 5.4 to 5.7", run(504, f, p).version == 507);
+        EXPECT("Ladder: ...and a 4.27 fallback, which no UE4 layout shares", run(427, f, p).version == 507);
+        EXPECT("Ladder: the 5.7 rung never lowers 5.8", run(508, f, p).version == 508);
+    }
+    {   // The virtual ~FFieldClass: UE5.8, and never from a UE4 label.
+        auto f = measured(true);
+        f.virtualDtor58 = true;
+        Probe p;
+        EXPECT("Ladder: the virtual ~FFieldClass lifts 5.7 to 5.8", run(507, f, p).version == 508);
+        EXPECT("Ladder ⭐: ...but never a UE4 label (a false 0x08 would cross every >= 500 gate)",
+               run(427, f, p).version == 427);
+        f.reorderedItem57 = true;
+        EXPECT("Ladder: the 5.7 rung then the 5.8 rung -- 4.27 -> 5.7 -> 5.8", run(427, f, p).version == 508);
+    }
+    {   // The whole ladder.
+        auto f = measured(true);
+        f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
+        Probe p; p.present = true; p.func = true;
+        std::vector<VersionRung> rungs;
+        const auto r = run(427, f, p, &rungs);
+        EXPECT("Ladder: every rung from 4.27 lands on 5.8", r.version == 508 && !r.loweredToUE4);
+        EXPECT("Ladder: ...and reports each rung that moved it, in order",
+               (rungs == std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
+                                                  VersionRung::ReorderedItem, VersionRung::VirtualFieldClassDtor}));
+        std::vector<VersionRung> again;
+        Probe q; q.present = true; q.func = true;
+        EXPECT("Ladder ⭐: climbing again from where it landed changes nothing (a cached value that already climbed)",
+               run(r.version, f, q, &again).version == 508 && again.empty());
+    }
+}
+
+// [UE-OVERRIDE-HINT-AUTO] The cached detection, as a launch reuses it -- and so as Auto hands it back -- and the
+// too-old refusal's verdict, which decides whether a launch would refuse what Auto restores.
+static void Test_CachedDetectionRules() {
+    std::printf("\n--- UE-OVERRIDE-HINT-AUTO: the cached detection's rules ---\n");
+    Flamme::ScanHints h;
+    h.hasVersionHint = true; h.ueVersion = 504; h.versionDetected = true; h.versionDetectRev = 9;
+    EXPECT("Cache: a detection the current logic stamped is reused", Flamme::CachedDetectionTrusted(h, 9));
+    EXPECT("Cache ⭐: one an older logic stamped is detected again", !Flamme::CachedDetectionTrusted(h, 10));
+    EXPECT("Cache: no record is nothing to reuse", !Flamme::CachedDetectionTrusted(Flamme::ScanHints{}, 0));
+    Flamme::ScanHints zero = h;
+    zero.ueVersion = 0;
+    EXPECT("Cache: a zero version is nothing to reuse", !Flamme::CachedDetectionTrusted(zero, 9));
+    Flamme::ScanHints unset = h;
+    unset.hasVersionHint = false;
+    EXPECT("Cache: an unpopulated version hint is nothing to reuse", !Flamme::CachedDetectionTrusted(unset, 9));
+
+    EXPECT("Cache: a confident record with no publisher stays confident", !Flamme::CachedLowConfidence(h, false));
+    Flamme::ScanHints low = h;
+    low.lowConfidence = true;
+    EXPECT("Cache: the record's own low confidence is kept", Flamme::CachedLowConfidence(low, false));
+    EXPECT("Cache: a matched publisher flags a supported version", Flamme::CachedLowConfidence(h, true));
+    Flamme::ScanHints atFloor = h;
+    atFloor.ueVersion = Grimoire::MIN_SUPPORTED_UE_VERSION;
+    EXPECT("Cache: ...the support floor included", Flamme::CachedLowConfidence(atFloor, true));
+    Flamme::ScanHints below = h;
+    below.ueVersion = Grimoire::MIN_SUPPORTED_UE_VERSION - 1;
+    EXPECT("Cache ⭐: ...but not a version below it, which is a refusal and not a guess",
+           !Flamme::CachedLowConfidence(below, true));
+
+    using Grimoire::RefusedAsTooOld;
+    EXPECT("TooOld: a confident 4.10 is refused", RefusedAsTooOld(410, true, false, false));
+    EXPECT("TooOld: the pre-UE4 sentinel is refused", RefusedAsTooOld(Grimoire::PRE_UE4_SENTINEL_VERSION, true, false, false));
+    EXPECT("TooOld: the support floor is not", !RefusedAsTooOld(Grimoire::MIN_SUPPORTED_UE_VERSION, true, false, false));
+    EXPECT("TooOld: a guess is never refused", !RefusedAsTooOld(410, false, false, false));
+    EXPECT("TooOld: a low-confidence reading is never refused", !RefusedAsTooOld(410, true, true, false));
+    EXPECT("TooOld: a user's override is never refused", !RefusedAsTooOld(410, true, false, true));
+}
+
+// [UE-OVERRIDE-HINT-AUTO] Auto chosen over an override used to clear only the flag, so the session kept the overridden
+// version and the UI showed it unbadged, as if detected. It now hands back the detection the next launch would start
+// from, or says the override's version holds until that launch.
+static void Test_PlanAutoRestore() {
+    std::printf("\n--- UE-OVERRIDE-HINT-AUTO: Auto chosen over an override ---\n");
+    using Flamme::AutoRestore;
+    using Flamme::PlanAutoRestore;
+    const uint32_t rev = 9;
+    // The Adventures of Elliot's shape: a stripped UE5 title, cached as the 4.27 publisher fallback, low confidence.
+    Flamme::ScanHints elliot;
+    elliot.hasVersionHint = true; elliot.ueVersion = 427; elliot.versionDetected = false;
+    elliot.lowConfidence = true; elliot.versionDetectRev = rev;
+    const auto e = PlanAutoRestore(true, elliot, rev, false);
+    EXPECT("Auto ⭐: an override over a detection on record hands it back", e.outcome == AutoRestore::Restored);
+    EXPECT("Auto: ...the record's version, which init's ladder then climbs", e.version == 427);
+    EXPECT("Auto: ...its detected flag verbatim", !e.detected);
+    EXPECT("Auto: ...and its low confidence", e.lowConfidence);
+    // DumperTest58's shape: a confident 5.8 detection.
+    Flamme::ScanHints dt58 = elliot;
+    dt58.ueVersion = 508; dt58.versionDetected = true; dt58.lowConfidence = false;
+    const auto d = PlanAutoRestore(true, dt58, rev, false);
+    EXPECT("Auto: a confident 5.8 detection comes back confident",
+           d.outcome == AutoRestore::Restored && d.version == 508 && d.detected && !d.lowConfidence);
+    EXPECT("Auto: a matched publisher flags it, as a launch reusing it would",
+           PlanAutoRestore(true, dt58, rev, true).lowConfidence);
+
+    EXPECT("Auto: no override in force has nothing to undo",
+           PlanAutoRestore(false, dt58, rev, false).outcome == AutoRestore::NotOverridden);
+    EXPECT("Auto ⭐: no detection on record waits for the next launch",
+           PlanAutoRestore(true, Flamme::ScanHints{}, rev, false).outcome == AutoRestore::NoDetection);
+    Flamme::ScanHints zero = dt58;
+    zero.ueVersion = 0;
+    EXPECT("Auto: a zero version on record is no detection", PlanAutoRestore(true, zero, rev, false).outcome == AutoRestore::NoDetection);
+    EXPECT("Auto ⭐: a detection an older logic stamped waits for the launch that detects again",
+           PlanAutoRestore(true, dt58, rev + 1, false).outcome == AutoRestore::StaleDetection);
+    Flamme::ScanHints isDefense = dt58;   // IS Defense: a confident 4.10 the launch refuses
+    isDefense.ueVersion = 410;
+    EXPECT("Auto ⭐: a detection the next launch refuses as too old is not handed back",
+           PlanAutoRestore(true, isDefense, rev, false).outcome == AutoRestore::TooOld);
+    Flamme::ScanHints ue3 = dt58;
+    ue3.ueVersion = Grimoire::PRE_UE4_SENTINEL_VERSION;
+    EXPECT("Auto: ...nor the pre-UE4 sentinel", PlanAutoRestore(true, ue3, rev, false).outcome == AutoRestore::TooOld);
+    Flamme::ScanHints guess410 = isDefense;
+    guess410.lowConfidence = true;
+    EXPECT("Auto: a low-confidence 4.10 is a guess a launch scans with, so it comes back",
+           PlanAutoRestore(true, guess410, rev, false).outcome == AutoRestore::Restored);
+    Flamme::ScanHints floor = dt58;
+    floor.ueVersion = Grimoire::MIN_SUPPORTED_UE_VERSION;
+    EXPECT("Auto: the support floor itself comes back", PlanAutoRestore(true, floor, rev, false).outcome == AutoRestore::Restored);
+
+    using Flamme::AutoPendsUntilNextLaunch;
+    EXPECT("Pending ⭐: no detection, persisted -- the override's version holds until the next launch",
+           AutoPendsUntilNextLaunch(AutoRestore::NoDetection, true));
+    EXPECT("Pending: a stale detection, persisted", AutoPendsUntilNextLaunch(AutoRestore::StaleDetection, true));
+    EXPECT("Pending: a too-old detection, persisted", AutoPendsUntilNextLaunch(AutoRestore::TooOld, true));
+    EXPECT("Pending: a restored detection is not pending", !AutoPendsUntilNextLaunch(AutoRestore::Restored, true));
+    EXPECT("Pending: no override in force is not pending", !AutoPendsUntilNextLaunch(AutoRestore::NotOverridden, true));
+    EXPECT("Pending ⭐: unpersisted, the override is still on disk, so nothing is pending",
+           !AutoPendsUntilNextLaunch(AutoRestore::NoDetection, false)
+           && !AutoPendsUntilNextLaunch(AutoRestore::StaleDetection, false)
+           && !AutoPendsUntilNextLaunch(AutoRestore::TooOld, false));
+
+    using Flamme::AutoRestoreName;
+    EXPECT("Wire: the five names the UI reads",
+           std::string(AutoRestoreName(AutoRestore::Restored)) == "restored"
+           && std::string(AutoRestoreName(AutoRestore::NotOverridden)) == "not_overridden"
+           && std::string(AutoRestoreName(AutoRestore::NoDetection)) == "no_detection"
+           && std::string(AutoRestoreName(AutoRestore::StaleDetection)) == "stale_detection"
+           && std::string(AutoRestoreName(AutoRestore::TooOld)) == "too_old");
 }
 
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
@@ -9144,6 +9591,7 @@ int main() {
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Mimic_InvokeRouting);
+    RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);
     RUN(Test_Mimic_CommandRequiresInit);
     RUN(Test_Flamme_AtomicPublishGate);
@@ -9252,6 +9700,9 @@ int main() {
     // Neu — UEnum::Names layout: legacy TArray vs UE5.6+ FNameData (synthetic memory)
     RUN(Test_Neu_Legacy_Basic);
     RUN(Test_UeVersionCodeBounds);
+    RUN(Test_EngineBuildStringCode);
+    RUN(Test_SubFloorReadingCorroborated);
+    RUN(Test_UeVersionOverrideAccepted);
     RUN(Test_CrashReportCandidates);
     RUN(Test_DynOff_FNameSlotVsSizeof);
     RUN(Test_Neu_Legacy_CasePreserving);
@@ -9294,9 +9745,16 @@ int main() {
     RUN(Test_VersionTier2_BareNeedle_G11);
     RUN(Test_SoftObjectPathSize);
     RUN(Test_FunctionFlagsOffset);
+    RUN(Test_ProcessEventBufferBytes);
+    RUN(Test_CheckTailForVersion);
+    RUN(Test_FunctionTailReadBase);
+    RUN(Test_PickMeasuredTailBase);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);
+    RUN(Test_VersionLadder);         // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
+    RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
+    RUN(Test_PlanAutoRestore);       // [UE-OVERRIDE-HINT-AUTO] what Auto hands back, or that it waits
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);

@@ -16,6 +16,8 @@
 #include <string>
 #include <cstdint>
 
+#include "Grimoire.h"   // MIN_SUPPORTED_UE_VERSION -- the publisher rule stops at the support floor
+
 // Forward declare to avoid pulling OffsetFinder.h
 namespace Genau { struct EnginePointers; }
 
@@ -82,6 +84,87 @@ struct ScanHints {
     int32_t     invokeTimeoutMs        = 0;
     bool        hasInvokeTimeoutOverride = false;
 };
+
+// ============================================================
+// The cached detection, as a launch reuses it [UE-OVERRIDE-HINT-AUTO]
+// ============================================================
+// A launch reuses the cached version instead of detecting again, and Auto chosen over an override hands one back to
+// the running session. One copy of the rule, so Auto restores exactly what the next launch would start from.
+
+/// Reused only when the current detection logic stamped it: a record from an older rev is detected again once.
+inline bool CachedDetectionTrusted(const ScanHints& h, uint32_t currentLogicRev) {
+    return h.hasVersionHint && h.ueVersion != 0 && h.versionDetectRev == currentLogicRev;
+}
+
+/// The cached flag, or a publisher known to ship unreliable version strings -- judged live, so a shipper added to
+/// the table after this game was cached still flags it. Not below the support floor: a version there is a refusal,
+/// not a guess, and the too-old refusal needs !lowConfidence to fire.
+inline bool CachedLowConfidence(const ScanHints& h, bool publisherMatched) {
+    return h.lowConfidence || (publisherMatched && h.ueVersion >= Grimoire::MIN_SUPPORTED_UE_VERSION);
+}
+
+// ============================================================
+// Auto, chosen over an override [UE-OVERRIDE-HINT-AUTO]
+// ============================================================
+// What set_ue_version_override(0) hands back to the running session. Only an override in force has anything to undo,
+// and the detection it returns to is the one the next launch would start from (CachedDetectionTrusted) -- unless that
+// launch would refuse it as too old, because a session scanned under the override has no business being read by a
+// version the dumper cannot read. Anything else waits for the next launch, which detects afresh.
+enum class AutoRestore {
+    Restored,         // the detection on record is in force again
+    NotOverridden,    // no override was in force: nothing to undo
+    NoDetection,      // the record holds no detection: every launch so far ran under the override
+    StaleDetection,   // the record's detection predates the current detection logic, which the next launch re-runs
+    TooOld,           // the record's detection is one the next launch refuses
+};
+
+/// The reply's wire name for each outcome; the UI's DumpService reads them.
+constexpr const char* AutoRestoreName(AutoRestore a) {
+    switch (a) {
+        case AutoRestore::Restored:       return "restored";
+        case AutoRestore::NotOverridden:  return "not_overridden";
+        case AutoRestore::NoDetection:    return "no_detection";
+        case AutoRestore::StaleDetection: return "stale_detection";
+        case AutoRestore::TooOld:         return "too_old";
+    }
+    return "unknown";
+}
+
+struct AutoRestorePlan {
+    AutoRestore outcome       = AutoRestore::NotOverridden;
+    uint32_t    version       = 0;       // the detection to hand back, before init's structural ladder climbs it
+    bool        detected      = false;
+    bool        lowConfidence = false;
+};
+
+/// `overrideInForce` is the session's own flag (an override applied at launch or set since); `publisherMatched`
+/// whether a publisher thumbprint matched this exe, which a launch re-applies to a reused version.
+inline AutoRestorePlan PlanAutoRestore(bool overrideInForce, const ScanHints& h, uint32_t currentLogicRev,
+                                       bool publisherMatched) {
+    AutoRestorePlan p;
+    if (!overrideInForce) return p;
+    if (!h.hasVersionHint || h.ueVersion == 0) {
+        p.outcome = AutoRestore::NoDetection;
+        return p;
+    }
+    if (!CachedDetectionTrusted(h, currentLogicRev)) {
+        p.outcome = AutoRestore::StaleDetection;
+        return p;
+    }
+    p.version       = h.ueVersion;
+    p.detected      = h.versionDetected;
+    p.lowConfidence = CachedLowConfidence(h, publisherMatched);
+    p.outcome = Grimoire::RefusedAsTooOld(p.version, p.detected, p.lowConfidence, /*userOverride=*/false)
+                    ? AutoRestore::TooOld : AutoRestore::Restored;
+    return p;
+}
+
+/// Whether the override's version holds until the next launch: Auto found nothing to hand back, and the clear was
+/// persisted. Unpersisted, the override is still on disk and the next launch applies it again, so nothing is pending.
+constexpr bool AutoPendsUntilNextLaunch(AutoRestore outcome, bool persisted) {
+    return persisted && (outcome == AutoRestore::NoDetection || outcome == AutoRestore::StaleDetection
+                         || outcome == AutoRestore::TooOld);
+}
 
 /// Load hints for a given PE hash from the cache file.
 /// Returns empty strings if the file doesn't exist, is corrupt,

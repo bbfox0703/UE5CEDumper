@@ -660,8 +660,8 @@ done — worth checking, never sufficient on its own.
 Added 2026-09-06, after a fixture-coverage audit found the rot had spread from the register into
 the two documents a session is *told to read first*:
 
-* **`docs/handover-2026-08-22.md` — its "rows that are cheaper than their bucket suggests" list was
-  four-fifths stale.** Four of the five bullets had closed, **three of them within two days of the
+* **`docs/handover.md` (then `handover-2026-08-22.md`) — its "rows that are cheaper than their bucket suggests" list was
+  four-fifths stale** (the list was deleted on 2026-10-08: every row had closed). Four of the five bullets had closed, **three of them within two days of the
   file being written**. The register had even carried a ⛔ SUPERSEDED banner for one of them
   (`AF16`) since 08-23; the correction existed and simply never propagated to the pointer.
 * **`docs/log-verification-checklist.md` contained ZERO closure tags.** It is a *method* doc — it
@@ -881,7 +881,11 @@ frames). What to do:
 - Vary one condition at a time before blaming the machine; a timing that moves the wrong way (the cap) says the cause
   is elsewhere.
 - A Shipping UE build ignores `-ExecCmds`; cap it through the pipe: `invoke_function` GameUserSettings
-  `SetFrameRateLimit` (a float) then `ApplySettings` (false).
+  `SetFrameRateLimit` (a float) then `ApplySettings` (false). ⚠ `ApplySettings` SAVES the limit to the game's
+  `GameUserSettings.ini` under `%LOCALAPPDATA%`, so every later launch on that machine inherits it, and another
+  machine may have none: measured 2026-10-09, DumperTest58 Shipping ran at 30.2 fps on the RTX at 12 % load while
+  `launch_dumpertest.py` said it ran uncapped. The launcher now prints the saved cap. The same day, with the laptop
+  in dGPU-direct mode, the fixture ran on the RTX with no `-preferNvidia`.
 - A per-call kernel query (VirtualQuery) cost about 300 µs in the same uncapped game: anything that asks the kernel per
   item in a pass over the object array needs a cache (Aura::CodeRangeCache).
 
@@ -2832,9 +2836,53 @@ bump was reverted twice, so the third would have shipped 3631 a second time (the
 the IL2026 / IL3050 errors a trimmed publish fails on, from a plain build. Measured 2026-10-07: the publish's own
 failure (`JsonArray.Add<T>` at `DumpService.cs`) showed up as the same two errors in about a minute, and a clean
 build showed none — the negative control, with the bad line put back, is what made the clean result mean something.
-**How to apply:** run it after any UI change that touches JSON nodes, reflection-shaped APIs or bindings, before
+**How to apply:** run it after any UI change in C# that touches JSON nodes or reflection-shaped APIs, before
 `-Mode Publish`. ⚠ `JsonArray.Add(JsonValue.Create(x))` is **still** the generic `Add<T>` — the identity conversion
 to `T` beats the conversion to `JsonNode`, and the first fix for that publish was exactly this. Cast to `JsonNode?`.
+⚠ **It sees C# only.** Avalonia compiles XAML into IL after Roslyn has run, so a `{ReflectionBinding}` or
+`x:CompileBindings="False"` passes it and fails only at the ILC step of `-Mode Publish`. Measured 2026-10-08
+([LF-COMPACT-TOP] review fixes): a `{ReflectionBinding CaptureSummary}` planted in `LiveFuncsPanel.axaml` built clean
+under the two properties (exit 0, no IL2026 / IL3050, both editorconfig lines below present) while the built
+`UE5DumpUI.dll` referenced `ReflectionBindingExtension`; that the publish then fails on it with IL2026 / IL3050 is the
+[LF-COMPACT-TOP] reviewer's measurement of the same day, not repeated here (it needs a publish). Check a XAML change by
+reading it — `{Binding}` under an `x:DataType`, no `ReflectionBinding`, no `CompileBindings="False"` — and know that
+only `-Mode Publish` proves it.
+⚠ **A clean result printed without the analyzer engaged is no result.** "0 Warning(s)" says nothing about IL2026 /
+IL3050 unless the analyzer ran. Read `obj\Release\net10.0-windows\win-x64\UE5DumpUI.GeneratedMSBuildEditorConfig.editorconfig`
+**right after the analyzer build**, before a plain build or a test run (which builds the project as a reference)
+rewrites `obj\`: it must carry `build_property.EnableTrimAnalyzer = true` and `build_property.EnableAotAnalyzer = true`.
+Both lines were there after the analyzer build and gone after a plain one (2026-10-08). The build's own restore takes
+the two properties, so no separate restore is needed — **unless you pass `--no-restore`**: the analyzer comes in the
+`Microsoft.NET.ILLink.Tasks` package, which only a restore with the properties adds, and after a plain restore a
+`--no-restore` build with them printed clean over a planted `JsonSerializer.Serialize` (exit 0, no IL lines, neither
+editorconfig line) where the same build without `--no-restore` failed on it with IL2026 and IL3050 (2026-10-08). The
+negative control above is the stronger proof: put a known-bad call back, see it fail, take it out.
+
+### 3.xd A headless test's text is about twice as wide as the app's: a line count there is not the app's
+
+The headless test platform (`UseHeadlessDrawing = true`) draws every glyph as wide as the font size: a hundred `x` at
+12 px measure 1,200 px. The app draws Inter (`WithInterFont()` in `Program.cs`, not the system's Segoe UI), whose advance
+widths average about 5.6 px a character of English text at 12 px (read from the Inter fonts `Avalonia.Fonts.Inter`
+12.1.3 embeds). So a line the app shows on one line can wrap in a headless test, and push what follows it in a
+`WrapPanel` onto the next line. Measured 2026-10-08 ([LF-COMPACT-TOP]): the 137-character stack warning needs 1,644 px
+headless and 772 px in Inter; `Lines(line) == 1` and a Details-beside-it box check both failed on a wording that is one
+line in the app.
+
+**The room a headless test measures is the harness's, not the app's.** `LiveFuncsLayout.Laid` puts the Live Funcs
+panel alone in the maintainer's 1389-px window: the stack warning's row is 1,373 px there (measured 2026-10-09; the
+1,308 px first written here did not reproduce). The app puts the panel beside the object tree: laid out as
+`MainWindow.axaml` does it (the tree's 350-px column, the 4-px splitter, the tab's 4-px padding) the same row is
+1,011 px, and only with the tree folded away does the panel get about the harness's width. The stack warning with its
+Details toggle comes to about 826 px in Inter (the toggle's 15 px of chrome and margin, and its text by the average
+above): about 0.6 of the harness's row, about 0.82 of the app's. The harness keeps the panel alone all the same: the
+table's top it measures stays comparable with what [LF-COMPACT-TOP] recorded at that width, and 1.5 times the narrower
+row would refuse that line, which is one line in the app.
+
+**How to apply:** a headless pin on a line count, or on two controls sharing a line, pins the headless font. Hold "one
+line in the app" as `LiveFuncsLayout.AssertOneLineInTheAppsFont` does (the parts, unwrapped and side by side, under 1.5
+times the room headless: under 0.7 of it in Inter), and know what that bound is: 0.7 of the harness's row is about 0.95
+of the app's beside the tree, a guard against a wording that grows rather than a margin. Measure a wording in Inter
+before shortening it to please a headless test, and against the app's row, not the harness's.
 
 -----
 
@@ -3324,6 +3372,37 @@ every pasted ID is checked against the whole list, and **silence**: any exceptio
 non-numeric `<ID>` / `<Length>`, is swallowed (`don't complain`) and leaves whatever was pasted before it.
 Size a guard on what the generator's memory can hold, and say in the message that the guard is ours.
 
+### 4.7 ProcessEvent's vtable slot: the pattern scan answers, the version table is only the fallback
+
+Moved here from the handover on 2026-10-08. How the table was built and checked is history: `dev-log.md`
+and the verification register (`[PEHOOK-6-2026-08-20]`, `[A2-ES2-506-2026-09-05]`).
+
+- **The pattern scan runs first and is what has to work.** The slot it found is in `init-0.log`, on the
+  line `DetectProcessEvent (pattern): match at vtable+0x…`. The per-version table
+  (`DynOff::ProcessEventVTableSlotFor` in `dll/src/Grimoire.h`; audit A2, `1d647a08`, measured 4.11–5.8
+  from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/`) is only the fallback, and the fire-count
+  validator is still the backstop.
+- **A fallback says so.** Its line starts `DetectProcessEvent (fallback): pattern scan missed, falling
+  back to UE=… version-table primary=0x…`, and an unmeasured version adds
+  `<-- EXTRAPOLATED, no measurement for this version`. Grep the `DetectProcessEvent (fallback)` prefix, not
+  the whole sentence. Its absence is the healthy case.
+- **A per-BUILD difference is not a bug, and build configuration does not move the slot** (5.8
+  Shipping / Development / DebugGame all `0x250`; 5.4 Shipping and Development both `0x268`). But a
+  *pattern-scanned* slot that disagrees with the table for that title's detected version is worth
+  reporting: one of the two is wrong.
+- ⛔ **The table is not monotonic** (4.20 `0x208` → 4.21 `0x200`; 5.5 `0x278` → 5.6 `0x260`): do not
+  "simplify" it back into a `>=` ladder, which is the bug A2 fixed. Its oracle is a **non-editor** dump:
+  do not extend it to an editor process.
+- **Slots measured by the pattern scan, all agreeing with the table:** `0x268` DumperTest 5.4 · `0x260`
+  Lushfoil 5.6 · `0x278` EVERSPACE 2 on UE 5.5.4 (2026-05-11 and 2026-08-20) and `0x260` on the same title
+  after its 2026-09-01 patch to UE 5.6.1 (2026-09-05). A title's engine version can move under you: read
+  it from the `[SUMMARY]` lines in `init-0.log`, never from an older record.
+- **Re-checking a slot, and the cheap route is offline.** A title that ships its PDB is its own symbol
+  oracle: vet the PDB against the exe with `py tools/pe/pdb_match.py <exe>`, then mine it the way
+  `reference-builds.md` ("Making another one") mines a packaged sample; no game need be running. The live
+  route: inject, then read the version from the `[SUMMARY]` lines and the slot from the
+  `DetectProcessEvent (pattern)` line, after refreshing any deployed proxy (handover §3).
+
 -----
 
 ## 5. Triage recipes
@@ -3571,12 +3650,15 @@ being silently truncated past ~140 lines, so the section map went too).
 |---|---|
 | A verification method, a trap in our stack, a UE/CE fact, a settled decision, a comment-style rule | **This file** (§1–§6, §8) |
 | What shipped, when, and why | `dev-log.md` (append-only) |
-| Open work, effort/risk, pending live verification | `todo.md` |
+| Open work, effort/risk | `todo.md` |
+| A pending live check | while its programme runs: that programme's ledger in `todo.md`; when the programme closes, the backlog moves to `verification-register.md` **byte-identical**. A check outside any programme goes to the register directly; closing a row: the register's "How to close a row" A programme started before 2026-10-08 keeps its backlog where it already is (Live Funcs keeps its register batches). |
 | What a *game* does differently | `lessons-learned.md` |
 | A standing instruction from the maintainer on how to work, whose loss costs something | **This file**, §7.3 |
+| How to operate this machine, the fixtures, Cheat Engine and the rigs; the session rules | `handover.md` — procedures only: no open work, no counts, no current state |
 | A machine-local path (`$GHIDRA_PROJS`, corpus location, sibling repo checkouts) | memory |
 | In-flight project state that has no home in the repo yet | memory |
-| Which doc to read next, and where the current work is | `MEMORY.md`, as a **pointer**, not a copy |
+| Which doc to read next | `MEMORY.md`, as a **pointer**, not a copy |
+| Where the current work is | the **current-programme line** at the top of `todo.md`: the current programme's tag, plus any idle programme whose backlog is still open; no counts; changed in the commit that starts or ends a programme (`MEMORY.md` does not travel between the two PCs) |
 
 **Two corollaries, both learned by paying for them:**
 
@@ -3640,7 +3722,8 @@ other machine does not keep following the old one.
 build.
 
 *How.* Take the items from the dev-log entries and the product commits since the last tag
-(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`). The notes are all English. **One item is
+(`git log v<prev>..HEAD -- dll/src ui/UE5DumpUI scripts`), and any `[RELNOTES-*]` row in `todo.md`: a section the
+maintainer asked the next notes to carry, with its draft. The notes are all English. **One item is
 one line** (2026-10-02): what changed, with no sub-bullets, no how-it-works and no measurements; a
 reader who wants the detail has the compare link. A thing the user must do or must not do goes in a
 one-line `> ⚠` or `> ℹ️` note under the list. The v3615 draft was first written with sub-bullets and
@@ -3673,6 +3756,15 @@ closes only in part is committed as a partial, with the untested half stated.
 
 *Why.* The machine can hang in the middle of a long, unattended session. A result that exists only
 in the working tree is lost when it does, and the evidence is what cost the time, not the edit.
+
+**4. A deployed proxy of an older build is refreshed without asking.** (2026-09-29)
+
+`py tools/verify/proxy_refresh.py refresh "<title>"` before the row that runs that title; its guards
+(the game not running, the backup with its SHA-256 first, ownership) still apply. A STALE whose sizes
+match exactly is a same-source rebuild, not an older build, and is left alone (§3.x).
+
+*Why.* An old proxy owns the pipe at game start, so the row measures the old binary; asking first only
+cost a round trip.
 
 ## 8. Writing code comments
 

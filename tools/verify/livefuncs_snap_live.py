@@ -5,6 +5,7 @@ r"""Live check of Live Funcs steps 2 and 3 -- parameter snapshots, native stacks
     py tools/verify/livefuncs_snap_live.py --label avowed --choose Inventory --plain-s 20 --record-s 30
     py tools/verify/livefuncs_snap_live.py --stacks [--stack-per-ring 30] [--stack-total 200] [--pdb [DIR]]
     py tools/verify/livefuncs_snap_live.py --label avowed --stacks --choose "" --plain-s 20 --record-s 30
+    py tools/verify/livefuncs_snap_live.py --label dq11s --stacks --choose "" --names [--stack-depth 62]
     py tools/verify/livefuncs_snap_live.py --self-test
 
 `[LIVEFUNCS-STEP2]` Runs against the game whose DLL serves the pipe (one game at a time, never while the UI holds
@@ -28,12 +29,23 @@ The full run (docs/live-funcs-step2-items.md, P2), each check named after its it
       ReturnValue=3R with the In parameters blank; SnapProbe_RetOnly has an after copy; Label is const_ref; no orphans
   F6  SnapNest_Outer's code_addr lies inside the game's module (a script function's "" is not checkable on a C++-only
       fixture: reported as not run)
+  the budget: SnapProbe_PerFrame's parameter ring drops its lone calls over the per-function budget and keeps no more
+      than about the budget a second. The budget is chosen from F1's plain rates by S5's rule (30 while it fits:
+      `[SNAPRIG-STEP2-RATE]`), and the check is reported not run where none bites, or where the main recording ran
+      the probe under 1.5x the budget. That rate is read from the main recording's table, which must carry the
+      probe's row over a window (a check of its own): a reply that cannot give it fails there, never stands the
+      budget check down; and a reply that gives a plausible, wrong one stands it down only where the probe's own
+      ring agrees -- every lone call it copied or counted dropped, so a rate never above the truth
 
 --stacks (`[LIVEFUNCS-STEP3]`, docs/live-funcs-step3-items.md, "8. Live checks") runs step 3's checks instead, on
 the same fixture: SnapNest_Outer ticked by name, SnapProbe_Call chosen for its parameters, SnapProbe_Call and
 SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --stack-total a second), recorded
---record-s; then an altered stack key alone, and a stacks-only Start. The wire is the design's section 3
-(docs/live-funcs-step3-design.md). Each check is named after the ledger's:
+--record-s; then an altered stack key alone, and a stacks-only Start. Without --stack-per-ring the per-function budget
+is chosen from the fixture check's plain rates (`[SNAPRIG-S5-RATE]`): 30 when it sits 1.5x below SnapProbe_PerFrame's
+rate and 1.5x above SnapProbe_Call's, leaving SnapProbe_Call 1.5x its rate in the total, else a budget between the
+bounds (a fixture at about 30 fps calls SnapProbe_PerFrame about 30 times a second); the choice and why are printed
+and kept in the output. The wire is the
+design's section 3 (docs/live-funcs-step3-design.md). Each check is named after the ledger's:
   S0  the Start echoes the choices: names.stacks (absent on a DLL without step 3, the review's M3), trace.stack's
       rings, depth and budgets, K with the stack terms; the Stop's names[] carry `stack`; an altered stack key alone
       refuses the Start; a stacks-only Start (no ticks, funcs []) is snap_only with no parameter ring, refuses its
@@ -44,11 +56,26 @@ SnapProbe_PerFrame chosen for a native stack (depth 16, --stack-per-ring / --sta
       the CE text `"module"+RVA` added back on psapi's base; every site's module_base + rva and fn add up
   S3  in-scope stacks hold known:"process_event" and after it an `own` frame (the outer hook); lone ones neither;
       every known frame names one function, and no stack holds two. The known halves fail since S3-M3 follows a
-      chained fragment to ProcessEvent's start (the review's M4)
+      chained fragment to ProcessEvent's start (the review's M4). The stack total is one total, admitted in call
+      order each second, so a --stack-total that leaves the other choices no room beside what SnapProbe_PerFrame may
+      keep can refuse in-scope stacks on a correct DLL. The plain rates predict it (printed, and S5's window is not
+      run on it); the two in-scope checks are reported not run only where the main recording shows it -- no in-scope
+      stack kept, every in-scope SnapProbe_Call entry flagged 64 -- and the total starves the others at
+      SnapProbe_PerFrame's plain or main rate. Otherwise they run over the stacks kept, and fail on any in-scope
+      SnapProbe_Call entry flagged 64 that neither budget explains: the per-function budget 1.5x above
+      SnapProbe_Call's plain rate, and a total that starves nothing at SnapProbe_PerFrame's plain or main rate
   S4  recorded, not failed: an in-scope frame whose fn is SnapNest_Outer's code_addr, before the ProcessEvent frame;
       a miss is the tail-call case
-  S5  SnapProbe_PerFrame's stack ring keeps about --stack-per-ring a second and drops the rest; the parameter
-      counters stay 0
+  S5  SnapProbe_PerFrame's stack ring keeps about the per-function budget a second and drops the rest; the parameter
+      counters stay 0. When the plain rates show the budget cannot bite (one given, or none fits, or a total that
+      starves the others), or the main recording itself ran SnapProbe_PerFrame under 1.5x the budget (its table's
+      rate, or the one its stack ring shows where that is higher: every lone call written or counted dropped, so
+      never above the truth), the window is reported not run with those rates, never failed nor passed. The main
+      recording's table must carry that rate (a check of its own): a reply without it fails there, and the window
+      runs as it did before the rate was read, never stood down on a rate nobody measured. The counters are checked
+      wherever the stack budget refused a call -- the main table counts more SnapProbe_PerFrame calls than its ring
+      wrote, or trace.stack counts a skip or a drop -- and a nonzero one fails whatever was refused; only where
+      nothing was refused, and both are 0, are they reported not run, since 0 there proves nothing
   S6  recorded: mean and max microseconds a capture, captures a second, calls/s with and without stacks, the CPU,
       and D3's re-weighed total
   S7  each release frees everything. Re-running the default checks and livefuncs_trace_live.py on the same DLL is a
@@ -66,9 +93,30 @@ Without a PDB that matches the exe, the PDB checks are reported not run, never f
 No red run on a DLL without step 3 (H1): it sends no names.stacks, so S0 fails by construction and S1-S6 cannot run.
 --stacks --choose is the design's 8.3 on a real game: the busiest named functions whose class or name holds one of
 the substrings ("" for any), chosen for stacks alone at the DLL's default budgets (a budget given on the command line
-is sent instead); it reports their cost. --self-test runs the pure pieces against hand-made replies, then both --stacks
-runs against a scripted DLL (ScriptedDll), whole and with each fault it scripts, every check of the runs failing on a
-fault it exists to catch: no pipe, no game.
+is sent instead); it reports their cost. --stack-depth N (1..62, 16 unless given) is the depth its stacks are taken
+at; the fixture run refuses it, its checks being written for 16. --names (S3-A1 on a real game, only with --stacks
+--choose) then checks the names the DLL puts on those stacks' frames, grouped by entry (ufunc, fn), the most frequent
+NAMES_MAX asked and the rest counted:
+  A1  every named entry's ufunc is a Function (or a delegate's) of that name, in that class (get_object); an entry
+      named "" (a name read that gave nothing) is wrong, never a match of two empty names
+  A1  every named entry's fn is stored inside its UFunction, at one offset common to all (read_mem): the DLL reads one
+      slot for every name, at an offset inside the window it searches Func in (+0x80..+0x158), so a copy of fn outside
+      it is never a candidate. That the slot is UFunction::Func is shown by the frame order recorded next, and a PDB.
+      read_mem is all or nothing, so a read of the DLL's Func window (0x160 bytes) that fails is retried smaller. The
+      DLL named each frame by reading that slot, so an entry read short of the offset, or not read at all, has its slot
+      there read alone (8 bytes): fn holds, another value fails (and rules out a candidate offset first, a decoy copy
+      in the entries read whole), and a slot that cannot be read now is listed as gone since the frame was named
+      where get_object, asked again, no longer names that function; where it still does, the slot never held fn,
+      and that fails. The line counts the entries judged, the number asked beside it. With no common offset an entry
+      read short is listed; with no entry read the check is reported not run
+  recorded, not failed: the frames named, the entries, the shared ones (the interpreter is one, shared by every
+      script function), and how many frames lie between a named frame and the next known:"process_event" toward
+      the root (a native entry entered through ProcessEvent sits one below it, UFunction::Invoke between; a thunk
+      reached from the interpreter has none)
+With no frame named, both A1 checks are reported not run, never passed.
+--self-test runs the pure pieces against hand-made replies, then both --stacks runs against a scripted DLL
+(ScriptedDll), whole and with each fault it scripts, every check of the runs failing on a fault it exists to catch, and
+the step-2 run as far as its parameter budget (the scripted DLL scripts no snapshot's values): no pipe, no game.
 
 Against a DLL older than the item, its checks fail: that run is the item's red. Every recording is stopped in a
 `finally` and the trace released. Exit 0 when every check holds; 1 otherwise; 2 when the pipe or the game is not
@@ -83,6 +131,7 @@ import ctypes
 import ctypes.wintypes as w
 import io
 import json
+import math
 import os
 import pathlib
 import re
@@ -108,6 +157,11 @@ SNAP_NULL_PARAMS = 1
 # SnapProbe_Call's parameters as the fixture declares them, by their case-folded name.
 CANON = {n.lower(): n for n in ("Round", "F", "D", "bFlag", "Kind", "Tag", "Label", "Values", "Who", "Soft", "V", "S",
                                 "OutTwice", "InOut", "ReturnValue")}
+# [SNAPRIG-STEP2-RATE] The full run's parameter budget on SnapProbe_PerFrame, chosen by S5's rule (per_frame_budget):
+# 30 a second while it fits, the budget the run always sent. The total is left to the DLL, which uses Linie's 10,000
+# (TraceConfig's snapTotalPerSec) and so never starves a choice here. The check by name, for --self-test's controls.
+STEP2_PER_RING, SNAP_TOTAL_DEFAULT = 30, 10000
+STEP2_BUDGET = "the budget: the per-frame probe's lone calls over"
 
 
 def say(s: str) -> None:
@@ -514,7 +568,8 @@ def build_parser() -> argparse.ArgumentParser:
                     help="step 3: native stack snapshots (S0-S7) instead of the step-2 checks; with --choose, the "
                          "stack cost on a real game")
     ap.add_argument("--stack-per-ring", type=int, default=None,
-                    help=f"--stacks: the per-function stack budget a second ({FIXTURE_STACK_PER_RING} on the fixture; "
+                    help="--stacks: the per-function stack budget a second (on the fixture, unless given, chosen from "
+                         f"the plain recording's rates so S5's budget bites: {FIXTURE_STACK_PER_RING} when it fits; "
                          "with --choose, the DLL's own default unless given)")
     ap.add_argument("--stack-total", type=int, default=None,
                     help=f"--stacks: the stack budget a second, every stack choice together ({FIXTURE_STACK_TOTAL} on "
@@ -523,9 +578,16 @@ def build_parser() -> argparse.ArgumentParser:
                     help="--stacks on the fixture: name the stacks' function starts against the game's PDB through "
                          "dbghelp, the PDB looked for in DIR, else beside the exe the game runs from; without one the "
                          "PDB checks are not run")
+    ap.add_argument("--names", action="store_true",
+                    help="--stacks --choose: check S3-A1's names on the stacks: each named entry's ufunc is a Function "
+                         "of that name in that class (get_object), and its fn is stored in it at one offset common to "
+                         f"all (read_mem); the {NAMES_MAX} most frequent entries are asked")
+    ap.add_argument("--stack-depth", type=int, default=None, metavar="N",
+                    help=f"--stacks --choose: the stacks' depth, 1..{STACK_MAX_DEPTH} ({STACK_DEPTH} unless given: the "
+                         "fixture run's checks are written for that depth)")
     ap.add_argument("--self-test", action="store_true",
-                    help="run the --stacks helpers against hand-made replies and the --stacks runs against a "
-                         "scripted DLL; needs no pipe and no game")
+                    help="run the --stacks helpers against hand-made replies and the --stacks runs (and the step-2 "
+                         "run's budget) against a scripted DLL; needs no pipe and no game")
     return ap
 
 
@@ -535,7 +597,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     --self-test reads no other option, so nothing is refused beside it."""
     ap = build_parser()
     args = ap.parse_args(argv)
-    bad = None if args.self_test else pdb_option_problem(args)
+    bad = None if args.self_test else pdb_option_problem(args) or game_option_problem(args)
     if bad:
         ap.error(bad)
     return args
@@ -606,11 +668,14 @@ def run_selected(c, check: Checks, out: dict, args, pid: int | None = None, slee
             run_stacks(c, check, out, args, out["fixture"]["probes"], pid=pid, sleep=sleep, clock=clock,
                        symbols=symbols)
         else:
-            run_full(c, check, out, args)
+            run_full(c, check, out, args, pid=pid, sleep=sleep, clock=clock)
     return None
 
 
-def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
+def run_full(c, check: Checks, out: dict, args, pid: int | None = None, sleep=time.sleep,
+             clock=time.perf_counter) -> None:
+    """The step-2 checks on DumperTest58 (the module docstring). `pid`, `sleep` and `clock` as run_stacks takes them,
+    so --self-test can drive it against a scripted DLL."""
     # ---- F1: the rows' name keys and per_frame. SnapLate_Begin is invoked once so SnapLate_Call has a row (a key).
     say("\nF1 -- name keys and per_frame:")
     t1 = plain_table(c, args.plain_s, before_stop=lambda: invoke_late(c, 1))
@@ -662,7 +727,7 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     say("\nF4 -- a choice never called:")
     r = c.request("pe_profile_start", trace={"bytes": 32 << 20, "snapshots": {"funcs": [item(rows["SnapLate_Call"])],
                                                                             "bytes": 8 << 20}})
-    time.sleep(1.0)
+    sleep(1.0)
     stop = data_of(c.request("pe_profile_stop"))
     names = {n.get("func"): n for n in stop.get("names", [])}
     check("F2 a name never called this recording is accepted", ok_of(r), str(r.get("error", ""))[:90])
@@ -675,8 +740,17 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     say("\nmain recording:")
     chosen = ["SnapProbe_Call", "SnapProbe_PerFrame", "SnapProbe_RetOnly", "SnapProbe_ConstRefOnly", "SnapLate_Call"]
     snap_bytes = 32 << 20
+    # The parameter budget by S5's rule, from F1's plain recording: the check below needs it to bite on
+    # SnapProbe_PerFrame, whose rate the fixture's frame rate decides, and to cut no other choice.
+    win = t1.get("window_ms", 0) / 1000.0
+    budget = per_frame_budget({n: rows[n].get("count", 0) / win if win else 0.0 for n in chosen}, None,
+                              SNAP_TOTAL_DEFAULT, STEP2_PER_RING)
+    out["param_budget"] = budget
+    say(f"     the parameter budget: {budget['why']}" + ("" if budget["runs"] else "; its check will not run"))
     trace = {"bytes": 64 << 20, "ticked_names": [item(rows["SnapNest_Outer"])],
-             "snapshots": {"funcs": [item(rows[n]) for n in chosen], "bytes": snap_bytes, "per_ring_per_s": 30}}
+             "snapshots": {"funcs": [item(rows[n]) for n in chosen], "bytes": snap_bytes,
+                           "per_ring_per_s": budget["per"]}}
+    opened = clock()   # the rings open inside the Start: the span is weighed from before it, its longest
     start = c.request("pe_profile_start", trace=trace)
     if not ok_of(start):
         check("the main Start is accepted", False, str(start.get("error", ""))[:120])
@@ -691,14 +765,15 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     check("F3 the snapshot buffer: one ring per choice, K as the UI computes it",
           snap.get("allocated") is True and snap.get("rings") == len(chosen) and snap.get("slots_per_ring") == k,
           f"rings={snap.get('rings')} K={snap.get('slots_per_ring')} want {k}")
-    time.sleep(args.record_s)
+    sleep(args.record_s)
     invoke_late(c, 4242)
-    t0 = time.perf_counter()
+    t0 = clock()
     stop = data_of(c.request("pe_profile_stop"))
-    stop_s = time.perf_counter() - t0
+    stop_s = clock() - t0
     out["stop"] = stop
     check("F4 Stop returns within about 2.5 s", stop_s < 2.5, f"{stop_s:.2f} s")
     gen = stop.get("trace", {}).get("gen", 0)
+    main_reply = c.request("pe_profile_get", limit=32768, include_unloaded=True)   # the main recording's own rates
 
     # ---- K1: roots and the in-scope calls' snapshots.
     say("\nK1 -- the hint and the parameter block reach the trace:")
@@ -784,13 +859,32 @@ def run_full(c: PipeClient, check: Checks, out: dict, args) -> None:
     pf = stop.get("trace", {}).get("snap_rings", [])
     pf_ring = next((x for x in pf if x.get("ring") == ring_of["SnapProbe_PerFrame"]), {})
     out["per_frame_ring"] = pf_ring
-    check("the budget: the per-frame probe's lone calls over 30/s are dropped, the first ones kept",
-          pf_ring.get("dropped_budget", 0) > 0 and 0 < pf_ring.get("written", 0) <= 31 * (args.record_s + 3),
-          f"written {pf_ring.get('written')}, dropped {pf_ring.get('dropped_budget')}")
+    per = budget_echo(budget["per"])
+    main_pf, main_what = main_table_rate(main_reply)
+    ring_pf = ring_rate(pf_ring, t0 + stop_s - opened)
+    out["param_budget"].update(main_rate=main_pf, main_rate_ring=ring_pf)
+    check(f"the budget: {MAIN_TABLE}", main_pf is not None, main_what)
+    # A reply that cannot give the rate fails just above, and the budget check then runs as it did before the main
+    # rate was read: standing it down on a rate nobody measured would hide that reply's defect. One that gives a
+    # plausible, wrong rate stands it down only where the probe's own parameter ring agrees (main_rate).
+    why = budget["why"] if not budget["runs"] else None if main_pf is None else \
+        main_rate_problem(main_pf, per, budget["rates"].get("SnapProbe_PerFrame", 0.0), ring_pf)
+    if why is None:
+        # The first `per` calls of each second are kept. The bound is the one the run always had, now on the budget
+        # sent: one call a second over it, and three seconds over --record-s, which the Start, invoke_late and the
+        # Stop (up to 2.5 s, F4) keep the ring open beyond.
+        check(f"{STEP2_BUDGET} {per}/s are dropped, the first ones kept",
+              int_or(pf_ring.get("dropped_budget"), 0) > 0 and
+              0 < int_or(pf_ring.get("written"), 0) <= (per + 1) * (args.record_s + 3),
+              f"written {pf_ring.get('written')}, dropped {pf_ring.get('dropped_budget')}")
+    else:
+        # A budget that cannot bite may still drop calls, but not steadily enough to hold the ring to it: a failure
+        # would blame the DLL for the run.
+        check.not_run(f"{STEP2_BUDGET} the budget a second are dropped, the first ones kept", why)
 
     # ---- F6: code_addr.
     say("\nF6 -- code_addr:")
-    pid = int(HOST_PID.read_text().strip()) if HOST_PID.exists() else 0
+    pid = host_pid() if pid is None else pid
     rng = module_range(pid) if pid else None
     ca = fnames.get(outer, {}).get("code_addr") if outer else None
     if rng and ca:
@@ -821,17 +915,47 @@ BUDGET_MAX = 0xFFFFFF     # a budget word holds its count in 24 bits: the DLL cl
 FIXTURE_EXE = "DumperTest58-Win64-Shipping.exe"   # frame 0's module when the process cannot be asked (no out/host.pid)
 KNOWN_PE = "process_event"
 # S3's known checks by name, so --self-test's controls name the check each fault must fail.
+S3_OWN_IN = "S3 every in-scope stack holds an own frame (the hook under SnapNest_Outer's ProcessEvent)"
 S3_KNOWN_IN = 'S3 every in-scope stack holds known:"process_event" before its own frame'
 S3_KNOWN_LONE = 'S3 no lone stack holds known:"process_event"'
 S3_KNOWN_ONE = "S3 every known frame names one function, and no stack holds two"
 S5_WINDOW = "S5 SnapProbe_PerFrame's stack ring keeps about"
+S5_PARAMS = "S5 the parameter counters are untouched by the stack budget (snap skipped and dropped 0)"
+# The main recording's own SnapProbe_PerFrame rate is read from the table fetched after its Stop. The check that the
+# reply carries it, by name: each run puts its own prefix before it.
+MAIN_TABLE = "the main recording's table carries SnapProbe_PerFrame over a window"
 # The Start's stack list, in order: the DLL numbers stack rings by the accepted items' order, and S1's join checks
 # that every slot of ring s belongs to the s-th name.
 STACK_CHOICES = ("SnapProbe_Call", "SnapProbe_PerFrame")
 STACKS_ONLY_S = 3.0       # the stacks-only recording: SnapProbe_Call runs about four times a second
-# The fixture run's budgets when none is given (the ledger's 8.1): 30/s sits far below SnapProbe_PerFrame's rate, so
-# S5 sees the budget drop calls. A game run (8.3) sends none unless given: it measures the DLL's own defaults.
+# The fixture run's budgets when none is given (the ledger's 8.1). 30/s a function is kept while it sits clearly below
+# SnapProbe_PerFrame's measured rate; a fixture at about 30 fps calls it about 30 times a second, and then a lower
+# budget is chosen (per_frame_budget). A game run (8.3) sends none unless given: it measures the DLL's own defaults.
 FIXTURE_STACK_PER_RING, FIXTURE_STACK_TOTAL = 30, 200
+# "Clearly" above and below: a frame rate wobbles from second to second, and stacks slow the game a little, so the
+# budget keeps this factor from SnapProbe_PerFrame's rate (or it may not bite in every second) and from every other
+# choice's (or the budget may cut the calls the other checks count), and the total keeps this factor of their rates
+# free. The step-2 run's parameter budget keeps the same margins.
+BUDGET_MARGIN = 1.5
+# --names (the ledger's S3-A1 on a real game): its checks by name, so --self-test's controls name the check each fault
+# must fail.
+NAMES_IS = "A1 every named entry's ufunc is a Function of that name, in that class"
+NAMES_AT = "A1 every named entry's fn is stored inside its UFunction, at one offset common to all"
+NAMES_MAX = 64            # entries asked about, two requests each, the most frequent first; the rest are counted
+# The object classes a ufunc may have: a delegate's signature is a UFunction subclass that ProcessEvent can enter too.
+NAME_FUNC_CLASSES = ("Function", "DelegateFunction", "SparseDelegateFunction")
+# The bytes of a UFunction searched for its fn: the window the DLL searches for UFunction::Func in (Aura's
+# EnsureUFunctionFuncOffset reads 8 bytes at +0x80..+0x158), so every offset the DLL can have read the name through lies
+# inside, and no more is asked.
+NAMES_READ = 0x160
+# The offsets the DLL can have read a name through, every 8 bytes of that window: the only candidates for the offset
+# common to the entries, as a copy of fn outside them is a decoy by construction.
+FUNC_OFFSETS = range(0x80, NAMES_READ - 8 + 1, 8)
+# read_mem is one copy under SEH, all or nothing, and a UFunction (0xC8 bytes on UE 4.18, about 0xE0 on UE5) is smaller
+# than the window: where it ends a block whose next page cannot be read, the whole read fails. These smaller reads are
+# tried in turn, down to the smallest UFunction, so the bytes the object does have are still searched; they jump past
+# some sizes, so a slot beyond the one that succeeded is then read alone.
+NAMES_READ_RETRY = (0x100, 0xE0, 0xC8)
 
 
 def stack_item(row: dict) -> dict:
@@ -867,7 +991,9 @@ def stack_echo_state(trace: dict, asked: int) -> str:
 
 
 def parse_site(s: dict) -> dict:
-    """One `sites` entry with its hex strings as integers. An absent field is None; an absent module is ""."""
+    """One `sites` entry with its hex strings as integers. An absent field is None; an absent module, known, class or
+    func is "". ufunc / class / func / shared are S3-A1's: the UFunction whose native entry fn is, and how many
+    functions enter there when more than one."""
     def hx(k: str) -> int | None:
         v = s.get(k)
         try:
@@ -879,7 +1005,8 @@ def parse_site(s: dict) -> dict:
         return s.get(k) if type(s.get(k)) is int else None
     return {"addr": hx("addr"), "module": s.get("module") or "", "module_base": hx("module_base"), "rva": num_("rva"),
             "fn": hx("fn"), "fn_rva": num_("fn_rva"), "unwind": s.get("unwind") is True, "own": s.get("own") is True,
-            "known": s.get("known") or ""}
+            "known": s.get("known") or "", "ufunc": hx("ufunc"), "class": str(s.get("class") or ""),
+            "func": str(s.get("func") or ""), "shared": num_("shared")}
 
 
 def resolve_stack_page(d: dict) -> tuple[list[dict], list[tuple]]:
@@ -1068,6 +1195,152 @@ def outer_frame(frames: list[dict], code_addr: int, bound: int | None) -> int | 
     return None
 
 
+def others_room(rates: dict[str, float]) -> float:
+    """What a total must leave the choices other than SnapProbe_PerFrame: BUDGET_MARGIN times their rates, summed."""
+    return sum(r for n, r in rates.items() if n != "SnapProbe_PerFrame") * BUDGET_MARGIN
+
+
+def total_starves(rates: dict[str, float], per: int, total: int) -> bool:
+    """Whether one total, admitted in call order each second, can starve the other choices at these rates: beside
+    what SnapProbe_PerFrame may keep of it (its per-function budget, or its rate when lower) it does not leave them
+    their room. It says what may happen; whether it did is the main recording's to show."""
+    return budget_echo(total) < min(budget_echo(per), rates.get("SnapProbe_PerFrame", 0.0)) + others_room(rates)
+
+
+def per_frame_budget(rates: dict[str, float], given: int | None, total: int,
+                     default: int = FIXTURE_STACK_PER_RING) -> dict:
+    """A fixture run's per-function budget, and whether the check that SnapProbe_PerFrame is held to it can run
+    (`runs`), from the plain recording's calls a second of each choice the budget applies to (by name): the stack
+    choices for S5, the parameter choices for the step-2 run. The check needs the budget to bite on SnapProbe_PerFrame,
+    so it sits BUDGET_MARGIN below that rate, and must not cut the other choices, so it sits BUDGET_MARGIN above theirs.
+    What the ring is held to is the lower of the budget and the total, so that is what must bite. The total is one
+    total for every choice, admitted in call order each second, and SnapProbe_PerFrame, called every frame, may spend
+    it before the others are called: beside what SnapProbe_PerFrame may keep it must leave them BUDGET_MARGIN times
+    their rates, or it may starve them (`starves`, total_starves at the plain rates: a prediction, printed), and
+    SnapProbe_PerFrame's share of the total is then no budget it can be held to. A given budget is sent as given. Else
+    `default` when it fits; else the whole number between the bounds as far from both as it can be (their geometric
+    mean); else `default`, the check not run."""
+    pf = rates.get("SnapProbe_PerFrame", 0.0)
+    others = [r for n, r in rates.items() if n != "SnapProbe_PerFrame"]
+    top, room = max(others, default=0.0), others_room(rates)
+    lo, hi = top * BUDGET_MARGIN, min(pf / BUDGET_MARGIN, budget_echo(total) - room)
+    seen = ", ".join(f"{n} {r:.1f}/s" for n, r in rates.items())
+    out: dict = {"rates": dict(rates), "given": given is not None, "bounds": [round(lo, 2), round(hi, 2)]}
+
+    def bites(per: int) -> bool:
+        return min(budget_echo(per), budget_echo(total)) * BUDGET_MARGIN <= pf
+
+    def starves(per: int) -> bool:
+        return total_starves(rates, per, total)
+
+    def starving(per: int) -> str:
+        return (f"; the total {budget_echo(total)}/s is under the {min(budget_echo(per), pf) + room:.1f}/s that "
+                f"SnapProbe_PerFrame may keep plus {BUDGET_MARGIN:g}x the other choices' rates: one total, admitted in "
+                f"call order each second, which SnapProbe_PerFrame may spend before the others are called and so "
+                f"starve them, and its share of the total is no budget it can be held to")
+    if given is not None:
+        why = f"{given}/s as given ({seen})"
+        if not bites(given):
+            why += f": SnapProbe_PerFrame is not {BUDGET_MARGIN:g}x above it, so it cannot bite"
+        if starves(given):
+            why += starving(given)
+        return dict(out, per=given, runs=bites(given) and not starves(given), starves=starves(given), why=why)
+    if lo <= default <= hi:
+        per = default
+    else:
+        per = int(math.sqrt(lo * hi)) if lo > 0 and hi > 0 else int(hi)
+        if per < lo:
+            per = math.ceil(lo)
+        per = max(per, 1)
+        if not lo <= per <= hi:
+            return dict(out, per=default, runs=False, starves=starves(default),
+                        why=f"no budget sits {BUDGET_MARGIN:g}x below SnapProbe_PerFrame and {BUDGET_MARGIN:g}x above "
+                            f"every other choice with their room left in the total ({seen}); {default}/s sent" +
+                            (starving(default) if starves(default) else ""))
+    # At or under `hi` the budget bites by construction, and leaves the other choices their room in the total.
+    return dict(out, per=per, runs=True, starves=False, why=f"{per}/s, chosen between {lo:.1f} and {hi:.1f} ({seen})" +
+                ("" if per == default else f": {default}/s does not fit"))
+
+
+def main_rate_problem(main_pf: float, held_to: int, plain_pf: float, ring_pf: float | None = None) -> str | None:
+    """Why the check that SnapProbe_PerFrame is held to `held_to` a second cannot run on the main recording, or None:
+    the budget was chosen on the plain recording's `plain_pf`, but whether it bit is the main recording's own rate,
+    which the trace may have slowed or the frame rate moved. That rate is its table's `main_pf`, or `ring_pf`, what
+    the probe's own ring shows (ring_rate), where that is higher (main_rate)."""
+    seen = main_pf if ring_pf is None else main_rate(main_pf, ring_pf)
+    if seen >= held_to * BUDGET_MARGIN:
+        return None
+    ring = "" if ring_pf is None else f" (its table {main_pf:.1f}/s, its ring at least {ring_pf:.1f}/s)"
+    return (f"the main recording ran SnapProbe_PerFrame at {seen:.1f}/s{ring}, under {BUDGET_MARGIN:g}x the "
+            f"{held_to}/s it is held to, so the budget may not bite (chosen on the plain recording's {plain_pf:.1f}/s)")
+
+
+def starved_in_scope(in_entries: list[tuple], kept: int, rates: dict[str, float], main_pf: float | None, per: int,
+                     total: int) -> str | None:
+    """Why S3's in-scope checks cannot run, or None. `in_entries` are the main recording's in-scope SnapProbe_Call
+    entries, `kept` the in-scope stacks it kept. They stand down only where the recording shows the stack budget
+    refused them all -- none kept, every entry flagged 64 -- and a total explains it: one total, admitted in call order
+    each second, that starves the others at SnapProbe_PerFrame's plain rate or at the main recording's own
+    (main_rate). Otherwise the checks run over the stacks kept, which says nothing of the ones refused: those are
+    judged apart (unexplained_refusals)."""
+    if kept or not in_entries or not all(e[5] & F_STACK_BUDGET for e in in_entries):
+        return None
+    at = [("the plain recording's", rates.get("SnapProbe_PerFrame", 0.0))] + \
+        ([("the main recording's", main_pf)] if main_pf is not None else [])
+    for which, pf in at:
+        if total_starves(dict(rates, SnapProbe_PerFrame=pf), per, total):
+            return (f"the stack budget refused all {len(in_entries)} in-scope SnapProbe_Call stacks (each entry flagged "
+                    f"64): one total of {budget_echo(total)}/s, admitted in call order each second, starves them at "
+                    f"{which} {pf:.1f}/s SnapProbe_PerFrame")
+    return None
+
+
+def unexplained_refusals(in_entries: list[tuple], rates: dict[str, float], main_pf: float | None, per: int,
+                         total: int) -> int:
+    """How many of the main recording's in-scope SnapProbe_Call entries the stack budget refused (flag 64) where
+    neither budget explains it, or 0. The per-function budget explains a refusal unless it sits BUDGET_MARGIN above
+    SnapProbe_Call's plain rate; the total, unless it starves nothing at SnapProbe_PerFrame's plain rate and at the
+    main recording's (`main_pf`, main_rate). Beyond both a correct DLL has no reason to refuse, so S3's in-scope
+    checks fail on what this counts, kept stacks or not."""
+    refused = sum(1 for e in in_entries if e[5] & F_STACK_BUDGET)
+    if not refused or budget_echo(per) < BUDGET_MARGIN * rates.get("SnapProbe_Call", 0.0):
+        return 0
+    pfs = [rates.get("SnapProbe_PerFrame", 0.0)] + ([] if main_pf is None else [main_pf])
+    return 0 if any(total_starves(dict(rates, SnapProbe_PerFrame=pf), per, total) for pf in pfs) else refused
+
+
+def main_table_rate(reply: dict) -> tuple[float | None, str]:
+    """SnapProbe_PerFrame's calls a second in the main recording's table (the pe_profile_get reply after its Stop),
+    with what it was measured from; or None with what is wrong with the reply: an error, no window, or no row for the
+    probe. A reply that cannot give the rate is not a slow probe, so it never stands a check down."""
+    if not ok_of(reply):
+        return None, f"pe_profile_get failed: {str(reply.get('error', ''))[:90]}"
+    d = data_of(reply)
+    win = d.get("window_ms")
+    if type(win) not in (int, float) or win <= 0:
+        return None, f"window_ms {win!r}"
+    row = fixture_rows(d).get("SnapProbe_PerFrame")
+    if row is None or type(row.get("count")) is not int:
+        return None, f"no SnapProbe_PerFrame row with a count over its {win} ms"
+    return row["count"] / (win / 1000.0), f"{row['count']} calls over {win} ms"
+
+
+def ring_rate(ring: dict, span_s: float) -> float:
+    """The least SnapProbe_PerFrame's calls a second can have been in a traced recording, from its own ring (a reply's
+    `written` and `dropped_budget`): Linie writes every lone call of a chosen function to that function's ring or
+    counts it in the ring's dropped_budget, and the trace was open `span_s` at most. A table can be wrong and still
+    plausible, a count too low or a window too long; this is never above the truth on a DLL that counts its ring."""
+    calls = int_or(ring.get("written"), 0) + int_or(ring.get("dropped_budget"), 0)
+    return calls / span_s if span_s > 0 else 0.0
+
+
+def main_rate(main_pf: float | None, ring_pf: float) -> float | None:
+    """The main recording's SnapProbe_PerFrame rate as the checks weigh it: its table's, or its ring's where that is
+    higher, since a table that undercounts must not stand down a check the ring shows can run. None where the table
+    gives none: that reply fails a check of its own and stands nothing down."""
+    return None if main_pf is None else max(main_pf, ring_pf)
+
+
 def budget_window(per_s: int, span_lo: float, span_hi: float) -> tuple[float, float]:
     """The slots a ring keeps when its function is called more often than its budget. The DLL admits the first per_s
     calls of each second, so a recording of L seconds keeps per_s x L, give or take one second's worth: the windows
@@ -1185,11 +1458,18 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     out["machine"] = machine()
     out["game_module"] = {"pid": pid, "name": game_module, "from_process": bool(named),
                           "image": [hex(x) for x in exe] if exe else None}
-    per_sent = FIXTURE_STACK_PER_RING if args.stack_per_ring is None else args.stack_per_ring
+    # The per-function budget from the fixture check's plain recording: S5 holds only where it bites (the fixture's
+    # frame rate decides SnapProbe_PerFrame's), and no other stack choice may be cut by it or starved of the total.
+    win = (out.get("fixture") or {}).get("window_ms", 0) / 1000.0
+    rates = {n: (rows.get(n) or {}).get("count", 0) / win if win else 0.0 for n in STACK_CHOICES}
     total_sent = FIXTURE_STACK_TOTAL if args.stack_total is None else args.stack_total
+    budget = per_frame_budget(rates, args.stack_per_ring, total_sent)
+    out["stack_budget"] = budget
+    per_sent = budget["per"]
     per, total = budget_echo(per_sent), budget_echo(total_sent)
     say(f"\ngame module {game_module} ({'pid %d' % pid if named else 'the fixture name: no usable out/host.pid'}); "
         f"CPU {out['machine']['cpu'] or '?'}; stack budgets {per}/s a function, {total}/s in all, depth {STACK_DEPTH}")
+    say(f"     the per-function budget: {budget['why']}" + ("" if budget["runs"] else "; S5's window will not run"))
     snap_bytes = 32 << 20
     stacks = {"funcs": [stack_item(rows[n]) for n in STACK_CHOICES], "depth": STACK_DEPTH,
               "per_ring_per_s": per_sent, "total_per_s": total_sent}
@@ -1240,7 +1520,9 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     if not st2.get("allocated"):
         check("the trace kept calls", False, "empty, and released at Stop")
         return
-    table = data_of(c.request("pe_profile_get", limit=32768, include_unloaded=True))
+    main_reply = c.request("pe_profile_get", limit=32768, include_unloaded=True)   # the main recording's own rates
+    table = data_of(main_reply)
+    main_pf, main_what = main_table_rate(main_reply)
 
     # ---- S1: the slots, joined to the entries by entry_seq.
     say("\nS1 -- the slots and their join:")
@@ -1313,15 +1595,37 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
             in_scope.append(sl)
     ns_in = [nesting(sl["frames"]) for sl in in_scope]
     ns_lone = [nesting(sl["frames"]) for sl in lone]
-    check("S3 every in-scope stack holds an own frame (the hook under SnapNest_Outer's ProcessEvent)",
-          in_scope != [] and all(o is not None for _, o in ns_in),
-          f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}")
+    # The in-scope SnapProbe_Call entries, a stack kept or not: one refused has no slot, only its flag 64.
+    in_entries = [e for e in entries.values() if ring_func[0] is not None and e[2] == ring_func[0] and
+                  not e[5] & F_LONE and outer is not None and (entries.get(parent.get(e[0])) or (0, 0, None))[2] == outer]
+    n_refused = sum(1 for e in in_entries if e[5] & F_STACK_BUDGET)
+    ring_pf = ring_rate(reads[1]["ring"], span_hi)
+    main_seen = main_rate(main_pf, ring_pf)
+    starved = starved_in_scope(in_entries, len(in_scope), budget["rates"], main_seen, per_sent, total_sent)
+    n_unexplained = unexplained_refusals(in_entries, budget["rates"], main_seen, per_sent, total_sent)
+    say(f"     in-scope SnapProbe_Call: {len(in_entries)} entries, {len(in_scope)} stacks kept, {n_refused} refused by "
+        f"the stack budget (64)")
+    # The stacks kept say nothing of the ones refused, so a refusal neither budget explains fails both in-scope
+    # checks beside them, and the line says so.
+    unexplained = (f"; {n_unexplained} of {len(in_entries)} in-scope entries refused by the stack budget (64) though "
+                   f"neither budget explains it" if n_unexplained else
+                   f"; {n_refused} of {len(in_entries)} in-scope entries refused by the stack budget (64), which the "
+                   f"total does not explain" if not in_scope and n_refused else "")
+    if starved:
+        check.not_run(S3_OWN_IN, starved)
+    else:
+        check(S3_OWN_IN, in_scope != [] and all(o is not None for _, o in ns_in) and not n_unexplained,
+              f"{sum(1 for _, o in ns_in if o is not None)} of {len(in_scope)}{unexplained}")
     check("S3 no lone stack holds an own frame", lone != [] and all(o is None for _, o in ns_lone),
           f"{sum(1 for _, o in ns_lone if o is not None)} of {len(lone)} do")
     # The known halves are checks since S3-M3: DescribeCode follows a chained fragment to its primary function, so a
     # ProcessEvent call site in a hot/cold or shrink-wrapped fragment is still labelled (the review's M4).
     with_known = sum(1 for n in ns_in if known_before_own(n))
-    check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope), f"{with_known} of {len(in_scope)}")
+    if starved:
+        check.not_run(S3_KNOWN_IN, starved)
+    else:
+        check(S3_KNOWN_IN, in_scope != [] and with_known == len(in_scope) and not n_unexplained,
+              f"{with_known} of {len(in_scope)}{unexplained}")
     lone_known = sum(1 for kn, _ in ns_lone if kn is not None)
     check(S3_KNOWN_LONE, lone != [] and lone_known == 0, f"{lone_known} of {len(lone)} do")
     # The DLL labels a frame by comparing its function start with one address, so every label names one function;
@@ -1355,19 +1659,44 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
     per_s = min(per, total)
     lo, hi = budget_window(per_s, span_lo, span_hi)
     pf_row = fixture_rows(table).get("SnapProbe_PerFrame", {})
-    win = table.get("window_ms", 0) / 1000.0
+    out["stack_budget"].update(main_rate=main_pf, main_rate_ring=ring_pf)
     stack2, snap2 = st2.get("stack", {}), st2.get("snap", {})
-    say(f"     SnapProbe_PerFrame: about {pf_row.get('count', 0) / win if win else 0:.0f} calls/s; its stack ring wrote "
+    say(f"     SnapProbe_PerFrame: about {fmt(main_pf, '.0f')} calls/s; its stack ring wrote "
         f"{pf_ring.get('written')}, skipped {pf_ring.get('skipped_budget')}, dropped {pf_ring.get('dropped_budget')}")
-    check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
-          f"({lo:.0f}..{hi:.0f}) and the budget drops the rest",
-          lo <= int_or(pf_ring.get("written"), -1) <= hi and int_or(pf_ring.get("dropped_budget"), 0) > 0 and
-          int_or(stack2.get("dropped_budget"), 0) > 0,
-          f"written {pf_ring.get('written')}, ring dropped {pf_ring.get('dropped_budget')}, "
-          f"stack.dropped_budget {stack2.get('dropped_budget')}")
-    check("S5 the parameter counters are untouched by the stack budget (snap skipped and dropped 0)",
-          snap2.get("skipped_budget") == 0 and snap2.get("dropped_budget") == 0,
-          f"skipped {snap2.get('skipped_budget')}, dropped {snap2.get('dropped_budget')}")
+    check(f"S5 {MAIN_TABLE}", main_pf is not None, main_what)
+    # A reply that cannot give the rate fails just above, and the window then runs from the trace ring as it did
+    # before the main rate was read: standing it down on a rate nobody measured would hide that reply's defect. One
+    # that gives a plausible, wrong rate stands it down only where the probe's own stack ring agrees (main_rate).
+    s5_why = budget["why"] if not budget["runs"] else None if main_pf is None else \
+        main_rate_problem(main_pf, per_s, budget["rates"].get("SnapProbe_PerFrame", 0.0), ring_pf)
+    if s5_why is None:
+        check(f"{S5_WINDOW} {per_s}/s over {span_lo:.1f}-{span_hi:.1f} s "
+              f"({lo:.0f}..{hi:.0f}) and the budget drops the rest",
+              lo <= int_or(pf_ring.get("written"), -1) <= hi and int_or(pf_ring.get("dropped_budget"), 0) > 0 and
+              int_or(stack2.get("dropped_budget"), 0) > 0,
+              f"written {pf_ring.get('written')}, ring dropped {pf_ring.get('dropped_budget')}, "
+              f"stack.dropped_budget {stack2.get('dropped_budget')}")
+    else:
+        # A budget that cannot bite may still drop calls, but not steadily enough to hold the ring to a window: a
+        # failed window would blame the DLL for the run.
+        check.not_run(f"{S5_WINDOW} the budget a second, and the budget drops the rest", s5_why)
+    # The parameter counters, apart from the window: a stack budget that cannot hold SnapProbe_PerFrame to a window
+    # still refuses calls, and a nonzero counter is always a defect here (S0's parameter budget is far above
+    # SnapProbe_Call's calls). Whether anything was refused is measured beside the DLL's own counters, from the main
+    # table: SnapProbe_PerFrame called more often than its ring wrote. Where nothing was, 0 proves nothing.
+    sk_p, dr_p = snap2.get("skipped_budget"), snap2.get("dropped_budget")
+    pf_written = int_or(pf_ring.get("written"), 0)
+    refused = int_or(pf_row.get("count"), 0) > pf_written or \
+        int_or(stack2.get("skipped_budget"), 0) + int_or(stack2.get("dropped_budget"), 0) > 0
+    if refused or (sk_p, dr_p) != (0, 0):
+        check(S5_PARAMS, (sk_p, dr_p) == (0, 0), f"skipped {sk_p}, dropped {dr_p}; the stack budget "
+              f"{'refused calls' if refused else 'refused nothing'} (SnapProbe_PerFrame {pf_row.get('count')} calls, "
+              f"{pf_written} written; stack skipped {stack2.get('skipped_budget')}, dropped "
+              f"{stack2.get('dropped_budget')})")
+    else:
+        check.not_run(S5_PARAMS, f"the stack budget refused nothing (SnapProbe_PerFrame {pf_row.get('count')} calls, "
+                                 f"{pf_written} written; stack skipped and dropped 0), so the counters at 0 prove "
+                                 f"nothing")
 
     # ---- S6: the cost, recorded.
     say("\nS6 -- the cost (recorded):")
@@ -1450,8 +1779,8 @@ def run_stacks(c, check: Checks, out: dict, args, rows: dict, pid: int | None = 
 
 def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=time.perf_counter) -> None:
     """--stacks --choose on a real game (the design's 8.3): the busiest named functions whose class or name holds one
-    of the substrings, chosen for stacks alone at the given budgets. What it reports is their cost. `sleep` and
-    `clock` as run_stacks takes them."""
+    of the substrings, chosen for stacks alone at the given budgets and depth. What it reports is their cost, and with
+    --names the names on their stacks (run_names). `sleep` and `clock` as run_stacks takes them."""
     say(f"\nplain recording ({args.plain_s:.0f} s) to find the functions to choose:")
     table = plain_table(c, args.plain_s)
     pats = [p.lower() for p in args.choose]
@@ -1466,7 +1795,8 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     out["machine"] = mc = machine()
     if not check("functions to choose were found", chosen != [], ", ".join(out["chosen"][:12])):
         return
-    stacks = {"funcs": [stack_item(f) for f in chosen], "depth": STACK_DEPTH}
+    stacks = {"funcs": [stack_item(f) for f in chosen],
+              "depth": STACK_DEPTH if args.stack_depth is None else args.stack_depth}
     for key, given in (("per_ring_per_s", args.stack_per_ring), ("total_per_s", args.stack_total)):
         if given is not None:   # left out, the DLL applies its own default, which is what 8.3 measures
             stacks[key] = given
@@ -1499,8 +1829,10 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     check(f"the total budget held: at most about {total}/s captured", cost["captures"] <= hi,
           f"{cost['captures']} captures, at most {hi:.0f}")
     census: dict[str, int] = {}
+    slots: list[dict] = []
     if st2.get("allocated"):
         for r in read_stack_rings(c, st2.get("gen", 0), len(chosen)).values():
+            slots.extend(r["slots"])
             for sl in r["slots"]:
                 for nm, bit in (("partial", STK_PARTIAL), ("fault", STK_FAULT), ("more", STK_MORE),
                                 ("bad_sp", STK_BADSP), ("low_stack", STK_LOWSTACK), ("no_capturer", STK_NOCAPTURER)):
@@ -1517,6 +1849,243 @@ def run_game_stacks(c, check: Checks, out: dict, args, sleep=time.sleep, clock=t
     check.record("the machine", f"{mc['cpu'] or '?'}, battery {mc['battery']}, on AC {mc['on_ac']}")
     check.record("D3's re-weighed total", f"{cost['reweighed_total']} against {total} now")
     c.request("pe_trace_release")
+    # The stacks are in hand and the DLL holds no trace; the names' UFunctions are asked about as objects.
+    if args.names:
+        run_names(c, check, out, slots)
+
+
+def named_entries(slots: list[dict]) -> tuple[list[dict], int]:
+    """S3-A1's named frames of these stacks as entries, one per (ufunc, fn), the most frequent first (ties in the order
+    first seen), and how many frames were named. A ufunc reached at two starts is two entries: each start is a claim
+    of its own about that UFunction's Func."""
+    by: dict[tuple, dict] = {}
+    named = 0
+    for sl in slots:
+        for f in sl["frames"]:
+            if f["ufunc"] is None:
+                continue
+            named += 1
+            e = by.setdefault((f["ufunc"], f["fn"]), {"ufunc": f["ufunc"], "fn": f["fn"], "class": f["class"],
+                                                      "func": f["func"], "shared": f["shared"], "frames": 0})
+            e["frames"] += 1
+    return sorted(by.values(), key=lambda e: -e["frames"]), named
+
+
+def pe_gap(frames: list[dict], i: int) -> int | None:
+    """How many frames lie between frame i and the next known:"process_event" frame toward the root, or None when no
+    such frame follows it."""
+    j = next((k for k in range(i + 1, len(frames)) if frames[k]["known"] == KNOWN_PE), None)
+    return None if j is None else j - i - 1
+
+
+def fn_offsets(blob: bytes, fn: int) -> list[int]:
+    """Every 8-aligned offset of `blob` holding `fn` as a little-endian u64: a pointer member of a UFunction sits at a
+    multiple of 8, as x64 stores it."""
+    return [o for o in range(0, len(blob) - 7, 8) if struct.unpack_from("<Q", blob, o)[0] == fn]
+
+
+def common_offsets(per_entry: list[list[int]], reach: list[int] | None = None) -> list[int]:
+    """Every offset every entry holds its fn at, the lowest first, among the ones the DLL can have read a name through
+    (FUNC_OFFSETS); none when there is no entry, or one without its fn. `reach` is how many bytes of each entry were
+    read (all of NAMES_READ when None): an offset whose 8 bytes lie past an entry's read is not contradicted by that
+    entry, which says nothing there, but must be held by some entry."""
+    reach = [NAMES_READ] * len(per_entry) if reach is None else reach
+    return [o for o in sorted({o for offs in per_entry for o in offs})
+            if o in FUNC_OFFSETS and all(o in offs or o + 8 > n for offs, n in zip(per_entry, reach))]
+
+
+def common_offset(per_entry: list[list[int]], reach: list[int] | None = None) -> int | None:
+    """The lowest of common_offsets, or None."""
+    return next(iter(common_offsets(per_entry, reach)), None)
+
+
+def read_ufunc(c, addr: str) -> bytes | None:
+    """A named UFunction's bytes for --names: the whole window when read_mem gives it, else the most one of the smaller
+    reads gives; None when no read gives 8 bytes, the least that can hold a slot."""
+    for size in (NAMES_READ,) + NAMES_READ_RETRY:
+        m = c.request("read_mem", addr=addr, size=size)
+        if ok_of(m):
+            try:
+                blob = bytes.fromhex(str(data_of(m).get("bytes") or ""))
+            except ValueError:
+                return None
+            return blob if len(blob) >= 8 else None
+    return None
+
+
+def read_slot(c, addr: int) -> int | None:
+    """The 8 bytes at `addr` as a little-endian u64 (one UFunction slot, read alone), or None when read_mem cannot give
+    them."""
+    m = c.request("read_mem", addr=f"{addr:X}", size=8)
+    if not ok_of(m):
+        return None
+    try:
+        blob = bytes.fromhex(str(data_of(m).get("bytes") or ""))
+    except ValueError:
+        return None
+    return struct.unpack_from("<Q", blob)[0] if len(blob) >= 8 else None
+
+
+def names_entry(d: dict, e: dict) -> bool:
+    """Whether get_object's answer `d` is the named entry's UFunction: a Function (or a delegate's) of the entry's
+    name, in its class."""
+    return d.get("class") in NAME_FUNC_CLASSES and d.get("name") == e["func"] and d.get("outer") == e["class"]
+
+
+def still_named(c, e: dict) -> bool:
+    """Whether get_object, asked again, still names the entry's UFunction as its frames do. An entry named "" never
+    is: two empty names are no match."""
+    o = c.request("get_object", addr=f"{e['ufunc']:X}")
+    return ok_of(o) and bool(e["func"]) and bool(e["class"]) and names_entry(data_of(o), e)
+
+
+def run_names(c, check: Checks, out: dict, slots: list[dict]) -> None:
+    """--names: S3-A1's names on the --choose run's stacks, the ledger's DQ XI S probes made repeatable. Each named
+    entry, the most frequent first and NAMES_MAX at most, is asked of the DLL as an object (get_object) and as
+    memory (read_mem); every named frame counts toward what is recorded."""
+    say("\nA1 -- the stacks' names:")
+    entries, named = named_entries(slots)
+    asked = entries[:NAMES_MAX]
+    left = len(entries) - len(asked)
+    shared = sorted((e for e in entries if e["shared"] is not None), key=lambda e: -e["shared"])
+    gaps: dict[int | None, int] = {}
+    for sl in slots:
+        for i, f in enumerate(sl["frames"]):
+            if f["ufunc"] is not None:
+                g = pe_gap(sl["frames"], i)
+                gaps[g] = gaps.get(g, 0) + 1
+    gap_text = {("none" if g is None else str(g)): n
+                for g, n in sorted(gaps.items(), key=lambda kv: (kv[0] is None, kv[0] or 0))}
+    out["names"] = {"frames": named, "entries": len(entries), "asked": len(asked), "unchecked": left,
+                    "shared_entries": len(shared), "shared_max": shared[0]["shared"] if shared else None,
+                    "pe_gap": gap_text, "func_offset": None, "wrong": [], "held": 0, "short": 0, "gone": 0,
+                    "unreadable": 0, "per_entry": []}
+    say(f"     {named} frames named, {len(entries)} entries; {len(asked)} asked" +
+        (f", {left} less frequent left unchecked" if left else ""))
+    if not entries:
+        why = "no frame was named" + ("" if slots else ": no stack was kept")
+        check.not_run(NAMES_IS, why)
+        check.not_run(NAMES_AT, why)
+    else:
+        wrong: list[str] = []
+        reads: list[tuple[int, list[int]] | None] = []   # per entry: the bytes read and the offsets holding fn
+        for e in asked:
+            addr = f"{e['ufunc']:X}"
+            o = c.request("get_object", addr=addr)
+            d = data_of(o)
+            if not ok_of(o):
+                wrong.append(f"{e['class']}::{e['func']} at {addr}: get_object failed: {o.get('error')!r}")
+            elif not e["func"] or not e["class"]:
+                # A name read that gave nothing gives "" on the frame and "" from get_object alike: no name to check.
+                wrong.append(f"{e['class']!r}::{e['func']!r} at {addr}: named empty")
+            elif not names_entry(d, e):
+                wrong.append(f"{e['class']}::{e['func']} at {addr} is {d.get('class')!r} "
+                             f"{d.get('outer')!r}::{d.get('name')!r}")
+            blob = read_ufunc(c, addr)
+            r = None if blob is None else (len(blob), fn_offsets(blob, e["fn"]) if e["fn"] is not None else [])
+            reads.append(r)
+            out["names"]["per_entry"].append({"ufunc": addr, "class": e["class"], "func": e["func"],
+                                              "frames": e["frames"], "shared": e["shared"], "fn": fmt(e["fn"], "#x"),
+                                              "read": None if r is None else r[0],
+                                              "offsets": [] if r is None else [hex(x) for x in r[1]]})
+        # An entry no read reached says nothing about the offset: it is kept out of it. So is a named frame without fn,
+        # which has nothing to look for; the DLL names a frame by its fn, so that one is wrong.
+        got = [(e, r) for e, r in zip(asked, reads) if r is not None]
+        looked = [r for e, r in got if e["fn"] is not None]
+        cands = common_offsets([r[1] for r in looked], [r[0] for r in looked])
+
+        def unreached(o: int) -> list[int]:
+            """The asked entries with fn whose slot at `o` no read reached: short of it, or not read at all."""
+            return [k for k, (e, r) in enumerate(zip(asked, reads))
+                    if e["fn"] is not None and (r is None or o + 8 > r[0])]
+        # The DLL named each frame by reading its UFunction's slot, so the slot was readable then: an unreached one is
+        # read alone (8 bytes). The offset is the first candidate none of those slots contradicts -- a decoy copy of
+        # fn in the entries read whole is told apart there, as it is by an entry read past it -- else the lowest, and
+        # the slots that contradict it fail.
+        slot_at: dict[tuple[int, int], int | None] = {}
+        off = None
+        for o in cands:
+            for k in unreached(o):
+                slot_at[(k, o)] = read_slot(c, asked[k]["ufunc"] + o)
+            if all(slot_at[(k, o)] in (None, asked[k]["fn"]) for k in unreached(o)):
+                off = o
+                break
+        else:
+            off = cands[0] if cands else None
+        held, short, absent, gone, unread = [], [], [], [], []
+        for k, (e, r, pe) in enumerate(zip(asked, reads, out["names"]["per_entry"])):
+            label = f"{e['class']}::{e['func']}"
+            n, offs = r if r is not None else (0, [])
+            if r is not None and e["fn"] is None:
+                absent.append(f"{label} (no fn)")
+                pe["verdict"] = "no fn"
+            elif off is not None and off in offs:
+                held.append(label)
+                pe["verdict"] = "held"
+            elif off is not None and e["fn"] is not None:
+                # common_offsets leaves every entry read past the offset holding fn there, so this one stopped short
+                # of the slot or was not read at all, and its slot was read alone: what it holds now is the verdict.
+                assert (k, off) in slot_at, "common_offsets left an entry read past the offset without fn there"
+                slot = slot_at[(k, off)]
+                pe["slot"] = fmt(slot, "#x")
+                if slot is None and still_named(c, e):
+                    # The DLL read this slot when it built its index and named the frame through it: an object
+                    # get_object still names, whose slot there cannot be read, is no object freed since, and its
+                    # slot never held fn.
+                    absent.append(f"{label} (+0x{off:X} unreadable, though get_object still names it)")
+                    pe["verdict"] = "absent"
+                elif slot is None:
+                    gone.append(label)
+                    pe["verdict"] = "gone"
+                elif slot == e["fn"]:
+                    held.append(label)
+                    pe["verdict"] = "held"
+                else:
+                    absent.append(f"{label} (+0x{off:X} holds {slot:#x})")
+                    pe["verdict"] = "absent"
+            elif r is None:
+                unread.append(label)
+                pe["verdict"] = "unreadable"
+            elif not offs and n < NAMES_READ:
+                short.append(f"{label} (read to +0x{n:X})")   # with no offset known, the slot may lie past the read
+                pe["verdict"] = "short"
+            else:
+                absent.append(label)
+                pe["verdict"] = "absent"
+        out["names"].update(func_offset=off, wrong=wrong, held=len(held), short=len(short), gone=len(gone),
+                            unreadable=len(unread))
+        tail = f" ({left} less frequent left unchecked)" if left else ""
+        check(NAMES_IS, not wrong, f"{len(asked) - len(wrong)} of {len(asked)} asked{tail}; first wrong {wrong[:2]}")
+        # This shows the DLL reads one slot for every name, not on its own that the slot is UFunction::Func: the DLL
+        # found each name by reading that very slot. The independent evidence is the frame order recorded below (a
+        # native entry one frame, UFunction::Invoke, below ProcessEvent) and, where the game ships one, a PDB.
+        apart = (f"; {len(gone)} gone since its frame was named (the slot unreadable now, get_object no longer naming "
+                 f"it) {gone[:3]}"
+                 if gone else "") + \
+            (f"; {len(short)} read short of it {short[:3]}" if short else "") + \
+            (f"; {len(unread)} unreadable {unread[:3]}" if unread else "")
+        if not got:
+            check.not_run(NAMES_AT, f"no named UFunction could be read: read_mem failed at every size down to "
+                                    f"0x{NAMES_READ_RETRY[-1]:X} for all {len(asked)}{tail}")
+        elif off is None and not absent:
+            check.not_run(NAMES_AT, f"no read reached a slot holding fn{apart}{tail}")
+        else:
+            # N is the entries judged, held or not; an entry gone since it was named is no verdict on the DLL, so it is
+            # listed beside the count, with the number asked, and never read as a failure.
+            check(NAMES_AT, off is not None and not absent,
+                  (f"Func at +0x{off:X} in {len(held)} of {len(held) + len(absent)} read ({len(asked)} asked)"
+                   if off is not None else
+                   f"no offset common to the {len(got)} read; without their fn {absent[:3]}; offsets "
+                   f"{[[hex(x) for x in r[1]] for _, r in got[:3]]}") +
+                  (f"; without it {absent[:3]}" if off is not None and absent else "") + apart + tail)
+    examples = ", ".join(f"{e['class']}::{e['func']} (shared by {e['shared']}, {e['frames']} frames)"
+                         for e in shared[:5])
+    check.record("A1 frames named, distinct entries, shared entries",
+                 f"{named} frames, {len(entries)} entries; {len(shared)} shared" +
+                 (f", the largest by {shared[0]['shared']}: {examples}" if shared else ""))
+    # A record, not a check: a thunk reached from the interpreter has no ProcessEvent beyond it, legitimately.
+    check.record('A1 frames between a named frame and the next known:"process_event" toward the root',
+                 json.dumps(gap_text))
 
 
 # ======================================================================================================================
@@ -1569,6 +2138,17 @@ def pdb_option_problem(args) -> str | None:
         return None
     if not args.stacks or args.choose is not None or args.fixture_check:
         return "--pdb names the stacks of the --stacks fixture run: not with --choose or --fixture-check"
+    return None
+
+
+def game_option_problem(args) -> str | None:
+    """Why --names or --stack-depth cannot go with the other options, or None. Both belong to the --stacks --choose run:
+    --names reads that run's stacks-only recording, and the fixture run's checks are written for its stacks at
+    STACK_DEPTH. A depth outside Linie's range would be clamped by the DLL, so the run would not get what it asked."""
+    if (args.names or args.stack_depth is not None) and not (args.stacks and args.choose is not None):
+        return "--names and --stack-depth belong to the --stacks --choose run"
+    if args.stack_depth is not None and not 1 <= args.stack_depth <= STACK_MAX_DEPTH:
+        return f"--stack-depth takes 1..{STACK_MAX_DEPTH}, the depths Linie keeps"
     return None
 
 
@@ -1756,7 +2336,7 @@ def run_pdb(check: Checks, out: dict, opened, slots: list[dict], in_scope: list[
                   "names": {f"{rva:#x}": answers.get(rva) for rva in sorted(answers)}, "first_in_scope": first}
 
 
-DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at 30/s is then 30..90, both ends above zero
+DRY_RECORD_S = 2.0       # the dry run's --record-s: S5's window at a budget of B a second is then B..3B, above zero
 
 
 class FakeClock:
@@ -1776,17 +2356,46 @@ class ScriptedDll:
     """A DLL with step 3 answering as the design's section 3 says it does, so --self-test can drive run_stacks and
     run_game_stacks end to end with no pipe. Its calls are a fixed script shaped like DumperTest58's: four rounds of
     SnapNest_Outer -> SnapProbe_Call in scope beside a lone SnapProbe_Call, and SnapProbe_PerFrame over its budget.
-    Each fault named in FAULTS makes it answer as one broken DLL would, so a control can show the check that must
-    catch that DLL failing. It proves the rig's glue, never the DLL."""
+    Its stacks carry S3-A1's names, and get_object / read_mem answer for the UFunctions they name. Each fault named in
+    FAULTS makes it answer as one broken DLL would, so a control can show the check that must catch that DLL failing.
+    Step 2 (run_full) it scripts only as far as the parameter budget on SnapProbe_PerFrame: no snapshot's values, no
+    layout, no refusal by K, so that run's other checks fail against it and only its budget line is read.
+    It proves the rig's glue, never the DLL."""
     QPC, BASE, OWN = 10_000_000, 0x7FF6A0000000, 0x7FFC12300000
     FUNCS = {"SnapNest_Outer": (0x1000, [1, 0, 9, 0], 4), "SnapProbe_Call": (0x1100, [2, 0, 9, 0], 96),
              "SnapProbe_PerFrame": (0x1200, [3, 0, 9, 0], 4), "SnapProbe_RetOnly": (0x1300, [4, 0, 9, 0], 8),
              "SnapProbe_ConstRefOnly": (0x1400, [5, 0, 9, 0], 16)}
+    # The step-2 run's late choice, kept apart: a --choose run chooses every keyed function, and its counts are FUNCS'.
+    LATE = {"SnapLate_Call": (0x1500, [6, 0, 9, 0], 4)}
     OUTER_FN = 0x6000            # SnapNest_Outer's native entry, as an RVA
+    INTERP_FN = 0xA000           # the interpreter's start, as an RVA: a script function's native entry
+    # UFunction::Func in the scripted UFunctions: past 0x100, where the DLL's window (up to +0x158) still finds it, so
+    # a run that searched less of the window would miss it.
+    FUNC_AT = 0x148
+    # names_func_low's: where UE5 keeps Func in a UFunction of about 0xE0 bytes, so a read retried at 0xE0 still
+    # reaches it -- the path a read at the end of a block takes on a real game.
+    FUNC_LOW = 0xD8
+    # names_slot_only's second decoy in SnapNest_Outer's UFunction: inside the window the DLL searches for Func, so it
+    # is a candidate the other entry's slot, read alone, must rule out; the decoy below the window never is one.
+    DECOY_IN = 0x88
+    INTERP = 0x2A000             # the script function whose names the interpreter's frames carry
+    NAMES_MANY = 70              # names_many's extra entries: more than the run asks about
+    # The UFunctions a stack's names point at, as get_object and read_mem answer them: ufunc -> (class, func, the
+    # object's class, fn as an RVA, the offsets fn is stored at, shared). SnapNest_Outer's native entry is its own; the
+    # interpreter's is shared by every script function, and named after the lowest-addressed function entering it, as
+    # the DLL names it -- here a delegate's signature, a DelegateFunction, which the DLL indexes beside Function and
+    # SparseDelegateFunction. Each holds a decoy copy of its fn at an offset the other lacks, so only the offset common
+    # to both is Func; SnapNest_Outer's lies below the window the DLL searches Func in, so it is never a candidate.
+    UFUNCS = {FUNCS["SnapNest_Outer"][0]: (FIXTURE_CLASS, "SnapNest_Outer", "Function", OUTER_FN, (0x30, FUNC_AT), None),
+              INTERP: ("BP_ScriptedActor_C", "OnScripted__DelegateSignature", "DelegateFunction", INTERP_FN,
+                       (FUNC_AT, 0x140), 37)}
     PAGE = 2                     # slots a page: small, so the rig's paging runs over several pages
-    # SnapProbe_PerFrame's slots in the main recording: its budget kept over the dry run's span, the middle of S5's
-    # window, so a fault that keeps too few or too many falls outside it.
-    PER_FRAME_KEPT = int(FIXTURE_STACK_PER_RING * DRY_RECORD_S)
+    # The plain recording's window, as pe_profile_get reports it. A traced recording reports its own, the dry run's
+    # --record-s: apart, a rig that divides one recording's count by another's window is seen.
+    WINDOW_S = 3.0
+    # SnapProbe_PerFrame's calls a second by default, in the plain recording and in the main one (each can be set):
+    # a fixture far above 30 fps. The main recording keeps what a per-second budget keeps of them (see _start).
+    PF_RATE = 60.0
     FAULTS = {
         "old": "a DLL without step 3: no names.stacks, no trace.stack, no names[].stack",
         "no_known": "no site labelled known (S3-F2's mutation: known compared with the trampoline)",
@@ -1840,8 +2449,14 @@ class ScriptedDll:
         "bad_ref": "a frame index past its page's sites",
         "short_slot": "a stack slot of two frames",
         "nothing_taken": "every stack choice over its budget: entries flagged 64, no slot written",
+        "call_refused": "every SnapProbe_Call stack of the main recording refused as over the budget (flagged 64, "
+                        "skipped) though the total has room for it",
+        "call_refused_some": "the first round's in-scope SnapProbe_Call stack of the main recording refused as over "
+                             "the budget (flagged 64, skipped) though both budgets have room for it; the others "
+                             "kept",
         "known_no_fn": "a known frame without unwind data, so without fn",
-        "snap_skipped": "the stack budget's skips counted in the parameter counters",
+        "snap_skipped": "the stack budget's refusals counted as skips in the parameter counters",
+        "snap_phantom": "the parameter counters count one skip though no budget refused anything",
         "leak_snap": "a release leaves snap in the reply",
         "leak_alloc": "a release leaves the trace allocated",
         "only_empty": "a stacks-only recording keeps no call",
@@ -1849,12 +2464,61 @@ class ScriptedDll:
         "no_calls": "a plain recording that records no call (the game not running, or the hook down)",
         "no_probes": "a plain recording without the fixture's probes (a package without them)",
         "no_code_addr": "pe_trace_names gives SnapNest_Outer no code_addr",
+        # The table fetched after a traced recording, which the main recording's own rate is read from.
+        "main_get_error": "pe_profile_get answers an error once a trace was started",
+        "main_window0": "pe_profile_get reports window_ms 0 once a trace was started",
+        "main_rows_lost": "pe_profile_get loses SnapProbe_PerFrame's row once a trace was started",
+        "main_pf_under": "pe_profile_get counts a tenth of SnapProbe_PerFrame's calls once a trace was started: a "
+                         "plausible count, and wrong",
+        "main_window_long": "pe_profile_get reports three times the traced window once a trace was started: a "
+                            "plausible window, and wrong",
         # The game's PDB, as --pdb's session reads it.
         "pdb_none": "no PDB matches the exe",
         "pdb_fragment": "the PDB names one function start at a displacement (a fragment's start)",
         "pdb_unnamed": "the PDB names nothing at one function start",
         "pdb_pe_other": "the known site's function is not ProcessEvent in the PDB",
         "pdb_outer_other": "SnapNest_Outer's native entry is another function in the PDB",
+        # S3-A1's names, as --names asks the DLL about them.
+        "names_none": "no site named (no ufunc on any frame)",
+        "names_wrong_func": "get_object names SnapNest_Outer's UFunction another function",
+        "names_wrong_outer": "get_object puts SnapNest_Outer's UFunction in another class",
+        "names_not_function": "get_object says the interpreter's UFunction is a Class, not a Function",
+        "names_fn_absent": "SnapNest_Outer's UFunction does not hold its fn",
+        "names_offset_split": "the interpreter's UFunction holds its fn at another offset than SnapNest_Outer's",
+        "names_many": "the first stack holds NAMES_MANY more named frames, each its own entry, before the others",
+        "names_read_edge": "the interpreter's UFunction ends right after its Func slot, before a page that cannot be "
+                           "read: read_mem of anything past Func + 8 fails",
+        "names_read_failed": "read_mem fails at every size for the interpreter's UFunction, freed after the run first "
+                             "asked about it: get_object, asked again, names nothing there",
+        "names_fn_nowhere_edge": "the interpreter's UFunction holds its fn nowhere and ends 0xE0 bytes in, before a "
+                                 "page that cannot be read: read_mem past it fails, its slot at the common offset "
+                                 "read alone too, while get_object, asked again, still names it",
+        "names_slot_only": "read_mem of the interpreter's UFunction fails at the window and every retry, yet a read of "
+                           "one of its slots alone (8 bytes) answers; SnapNest_Outer's holds a second decoy copy of "
+                           "its fn inside the DLL's window (DECOY_IN)",
+        "names_unreadable": "read_mem fails at every size for every UFunction",
+        "names_object_error": "get_object answers an error for SnapNest_Outer's UFunction",
+        "names_empty": "SnapNest_Outer's UFunction named \"\": its frames carry class and func \"\", and get_object "
+                       "answers \"\" for its name and outer (the DLL's name reads gave nothing)",
+        "names_empty_class": "only the outer's name read gave nothing: SnapNest_Outer's frames carry class \"\", and "
+                             "get_object answers \"\" for its outer, its own name kept",
+        "names_empty_func": "only the function's name read gave nothing: SnapNest_Outer's frames carry func \"\", and "
+                            "get_object answers \"\" for its name, its outer kept",
+        "names_empty_edge": "SnapNest_Outer's UFunction named \"\" as names_empty names it, and ending 0xE0 bytes in, "
+                            "before a page that cannot be read, its fn only at FUNC_AT past that: its slot there "
+                            "cannot be read alone either, and get_object, asked again, answers \"\" for its names "
+                            "as before",
+        "names_no_fn": "the interpreter's named frame has no unwind data, so no fn (and no fn_rva)",
+        "names_no_fn_all": "no named frame has unwind data, so none has fn",
+        "names_short_only": "the interpreter's UFunction cannot be read at any size, and SnapNest_Outer's fails past "
+                            "0xE0 and holds its fn only at FUNC_AT, with no decoy",
+        "names_func_low": "both UFunctions keep Func at 0xD8 (FUNC_LOW), where UE5's UFunction of about 0xE0 bytes "
+                          "keeps it",
+        "names_read_edge_all": "every UFunction ends 0xE0 bytes in, before a page that cannot be read: read_mem of "
+                               "more fails for each",
+        # The step-2 run's parameter budget on SnapProbe_PerFrame (a DLL made with late=True).
+        "param_dropped0": "SnapProbe_PerFrame's parameter ring counts no budget drop though it dropped calls",
+        "param_overkept": "SnapProbe_PerFrame's parameter ring keeps 25 a second whatever its budget, the rest dropped",
     }
     # The scripted game's PDB: a name for each function start its stacks hold, by RVA.
     PDB_NAMES = {0x480440: "ADumperTest58Actor::SnapProbe_Dispatch", OUTER_FN: "ADumperTest58Actor::execSnapNest_Outer",
@@ -1862,18 +2526,111 @@ class ScriptedDll:
                  0x3000: "ADumperTest58Actor::TraceNest_Dispatch", 0x2000: "ADumperTest58Actor::SnapNest_Fire",
                  0x1000: "FTimerManager::Tick", 0x0800: "UWorld::Tick"}
 
-    def __init__(self, *faults: str, per_frame: int = PER_FRAME_KEPT) -> None:
+    def __init__(self, *faults: str, per_frame: int | None = None, pf_rate: float = PF_RATE,
+                 main_pf_rate: float | None = None, late: bool = False) -> None:
+        """`pf_rate` is SnapProbe_PerFrame's calls a second (a fixture at 30 fps calls it about 30 times) in the plain
+        recordings, `main_pf_rate` in every recording a trace is started for (pf_rate unless given: a game slowed by
+        the trace, or one whose frame rate moved); `per_frame`, when given, is the count of its slots a DLL that keeps
+        the wrong count writes, whatever the budget. `late` adds SnapLate_Call (LATE), which the step-2 run needs."""
         unknown = set(faults) - set(self.FAULTS)
         if unknown:   # a misspelt fault would script the good DLL, and its control would test nothing
             raise ValueError(f"the scripted DLL has no fault {sorted(unknown)}")
         self.f = set(faults)
+        self.funcs = dict(self.FUNCS, **(self.LATE if late else {}))
         self.per_frame = per_frame
+        self.pf_rate = pf_rate
+        self.main_pf_rate = pf_rate if main_pf_rate is None else main_pf_rate
         self.gen = 0
         self.t: dict | None = None
         self.cmds: list[str] = []
         self.starts: list[dict | None] = []   # each Start's trace object, as the rig sent it
         self.pdb_opens: list[str | None] = []   # each --pdb session's search folder, as the rig asked
         self.pdb_sessions: list[ScriptedPdb] = []
+        self.asked: list[tuple[str, dict]] = []   # each get_object / read_mem, with what the rig sent
+        self.object_asks: dict[int, int] = {}     # get_object's answers so far, by address
+
+    def _ufuncs(self) -> dict[int, tuple]:
+        """The UFunctions of the script (UFUNCS), names_many's extras with them."""
+        u = dict(self.UFUNCS)
+        if "names_many" in self.f:
+            u.update({0x40000 + 0x200 * k: ("ManyActor", f"Fn{k}", "Function", 0xB0000 + 0x40 * k, (self.FUNC_AT,), None)
+                      for k in range(self.NAMES_MANY)})
+        return u
+
+    def _named(self, ufunc: int) -> dict:
+        """A site's S3-A1 fields for the UFunction at `ufunc`, as the DLL sends them: `class` is its outer's name."""
+        if "names_none" in self.f:
+            return {}
+        cls, func, _, _, _, shared = self._ufuncs()[ufunc]
+        if ufunc == self.FUNCS["SnapNest_Outer"][0]:
+            if self.f & {"names_empty", "names_empty_class", "names_empty_edge"}:
+                cls = ""
+            if self.f & {"names_empty", "names_empty_func", "names_empty_edge"}:
+                func = ""
+        return {"ufunc": f"0x{ufunc:X}", "class": cls, "func": func, **({"shared": shared} if shared else {})}
+
+    def _object(self, addr: str) -> dict:
+        """get_object, as the DLL answers it: the object's own name, its class's and its outer's."""
+        u = int(str(addr), 16)   # with or without 0x, as Renge::StrToAddr reads it
+        row = self._ufuncs().get(u)
+        asks = self.object_asks[u] = self.object_asks.get(u, 0) + 1
+        freed = "names_read_failed" in self.f and u == self.INTERP and asks > 1
+        if row is None or freed:   # not an object (or no longer one): the DLL's name reads give nothing
+            return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": "", "outer": ""}
+        cls, func, kind, _, _, _ = row
+        first = u == self.FUNCS["SnapNest_Outer"][0]
+        if "names_object_error" in self.f and first:
+            return {"ok": False, "error": "the scripted get_object failed (names_object_error)"}
+        if self.f & {"names_empty", "names_empty_edge"} and first:
+            return {"ok": True, "addr": addr, "name": "", "full_name": "", "class": kind, "outer": ""}
+        if "names_empty_class" in self.f and first:
+            cls = ""
+        if "names_empty_func" in self.f and first:
+            func = ""
+        if "names_wrong_func" in self.f and first:
+            func = "SnapNest_Fire"
+        if "names_wrong_outer" in self.f and first:
+            cls = "OtherActor"
+        if "names_not_function" in self.f and u == self.INTERP:
+            kind = "Class"
+        return {"ok": True, "addr": addr, "name": func, "full_name": f"{kind} /Script/Scripted.{cls}:{func}",
+                "class": kind, "outer": cls}
+
+    def _memory(self, addr: str, size: int) -> dict:
+        """read_mem inside a scripted UFunction, from its start or from a slot within it: filler that never holds an
+        address, fn wherever the UFunction stores it. Like Macht::ReadBytesSafe it is one copy, all or nothing: a read
+        that runs into memory it cannot read fails whole."""
+        a = int(str(addr), 16)
+        u = next((x for x in self._ufuncs() if x <= a < x + NAMES_READ), None)
+        row = None if u is None else self._ufuncs()[u]
+        rel = 0 if u is None else a - u
+        end = rel + size                  # how far into the object the read runs
+        f = self.f
+        outer = u == self.FUNCS["SnapNest_Outer"][0]
+        func_at = self.FUNC_LOW if "names_func_low" in f else self.FUNC_AT
+        if row is None or "names_unreadable" in f or (u == self.INTERP and (
+                f & {"names_read_failed", "names_short_only"} or ("names_read_edge" in f and end > func_at + 8) or
+                ("names_slot_only" in f and size > 8))) or \
+                ("names_read_edge_all" in f and end > 0xE0) or ("names_short_only" in f and outer and end > 0xE0) or \
+                ("names_fn_nowhere_edge" in f and u == self.INTERP and end > 0xE0) or \
+                ("names_empty_edge" in f and outer and end > 0xE0):
+            return {"ok": False, "error": "Read failed"}
+        offsets = tuple(func_at if o == self.FUNC_AT else o for o in row[4])
+        if f & {"names_short_only", "names_empty_edge"} and outer:
+            offsets = (self.FUNC_AT,)
+        if "names_slot_only" in f and outer:
+            offsets += (self.DECOY_IN,)
+        if "names_fn_absent" in self.f and outer:
+            offsets = ()
+        if "names_offset_split" in self.f and u == self.INTERP:
+            offsets = (self.FUNC_AT + 8, 0x140)
+        if "names_fn_nowhere_edge" in self.f and u == self.INTERP:
+            offsets = ()
+        blob = bytearray((k * 37 + 11) & 0xFF for k in range(rel, end))
+        for o in offsets:
+            if rel <= o and o + 8 <= end:
+                blob[o - rel: o - rel + 8] = struct.pack("<Q", self.BASE + row[3])
+        return {"ok": True, "bytes": bytes(blob).hex().upper()}   # Renge::BytesToHex: two digits a byte, no spaces
 
     def open_symbols(self, pid: int, exe: tuple[int, int] | None, search: str | None):
         """--pdb's session over the scripted game, as open_game_pdb opens one: a session, or why there is none."""
@@ -1892,13 +2649,20 @@ class ScriptedDll:
         self.pdb_sessions.append(ScriptedPdb(names, self.BASE, 0x10000000))
         return self.pdb_sessions[-1]
 
+    def window_s(self) -> float:
+        """The window pe_profile_get reports: the plain recording's, or once a trace was started the traced one's."""
+        return DRY_RECORD_S if any(self.starts) else self.WINDOW_S
+
     def rows(self) -> dict[str, dict]:
-        """The fixture rows a plain recording gives, by name."""
+        """The fixture rows a recording gives, by name: SnapProbe_PerFrame at the main rate, over the traced
+        recording's window, once a trace was started."""
         unkeyed = "SnapProbe_PerFrame" if "unkeyed" in self.f else None
+        pf = self.main_pf_rate if any(self.starts) else self.pf_rate
         return {n: {"class_name": FIXTURE_CLASS, "func_name": n, "fname_key": None if n == unkeyed else k,
-                    "parms_size": ps, "num_parms": 1, "count": 180 if n == "SnapProbe_PerFrame" else 6,
+                    "parms_size": ps, "num_parms": 1,
+                    "count": round(pf * self.window_s()) if n == "SnapProbe_PerFrame" else 6,
                     "per_frame": n == "SnapProbe_PerFrame"}
-                for n, (_, k, ps) in self.FUNCS.items()}
+                for n, (_, k, ps) in self.funcs.items()}
 
     def _site(self, rva: int, fn_rva: int, **extra) -> dict:
         return dict({"addr": f"0x{self.BASE + rva:X}", "module": FIXTURE_EXE, "module_base": f"0x{self.BASE:X}",
@@ -1918,8 +2682,9 @@ class ScriptedDll:
         own = {"addr": f"0x{self.OWN + 0x45678:X}", "module": "dxgi.dll", "module_base": f"0x{self.OWN:X}",
                "rva": 0x45678, "fn": f"0x{self.OWN + 0x45000:X}", "fn_rva": 0x45000, "unwind": True, "own": True}
         call = g(0x4804C9, 0x480440)
-        in_scope = [call, g(self.OUTER_FN + 0x31, self.OUTER_FN), invoke, pe, own, g(0x3010, 0x3000),
-                    g(0x2010, 0x2000), g(0x1010, 0x1000)]
+        # SnapNest_Outer's native entry carries its name, as S3-A1 sends it.
+        outer = g(self.OUTER_FN + 0x31, self.OUTER_FN, **self._named(self.FUNCS["SnapNest_Outer"][0]))
+        in_scope = [call, outer, invoke, pe, own, g(0x3010, 0x3000), g(0x2010, 0x2000), g(0x1010, 0x1000)]
         if "known_twice" in self.f:
             in_scope.insert(5, g(0x9456, 0x9000, **known))
         if "no_own" in self.f:
@@ -1936,10 +2701,26 @@ class ScriptedDll:
             in_scope, lone = ([dict(s, known=KNOWN_PE) if s.get("unwind") else s for s in x] for x in (in_scope, lone))
         return in_scope, lone
 
+    def _game_stack(self, first: bool) -> list[dict]:
+        """A stacks-only call's stack, standing for a real game's: SnapNest_Outer's native entry one frame
+        (UFunction::Invoke) below ProcessEvent, and past the hook the interpreter, the entry every script function
+        shares, with no ProcessEvent beyond it. names_many puts its extra named frames first in the first stack, so
+        only the run's ordering by frequency keeps the two entries above in the ones it asks about."""
+        frames = self._stacks()[0]
+        k = next((i + 1 for i, s in enumerate(frames) if s.get("own")), len(frames))
+        frames.insert(k, self._site(self.INTERP_FN + 0x51, self.INTERP_FN, **self._named(self.INTERP)))
+        if first and "names_many" in self.f:
+            frames = [self._site(row[3] + 0x11, row[3], **self._named(u)) for u, row in self._ufuncs().items()
+                      if u not in self.UFUNCS] + frames
+        interp = f"0x{self.INTERP:X}"
+        return [{k: v for k, v in s.items() if k not in ("fn", "fn_rva")} | {"unwind": False}
+                if "ufunc" in s and ("names_no_fn_all" in self.f or ("names_no_fn" in self.f and s["ufunc"] == interp))
+                else s for s in frames]
+
     def _start(self, t: dict | None) -> dict:
         if t is None:
             return {"data": {"recording": True, "hook_active": True}}
-        by_key = {tuple(k): n for n, (_, k, _) in self.FUNCS.items()}
+        by_key = {tuple(k): n for n, (_, k, _) in self.funcs.items()}
         f = self.f
 
         def good(it: dict, lax: bool = False) -> bool:
@@ -1968,15 +2749,49 @@ class ScriptedDll:
         lone = self._stacks()[1]
         recs: list[bytes] = []
         slots: list[list[dict]] = [[] for _ in stacks]
-        dropped = [0] * len(stacks)
+        dropped = [0] * len(stacks)           # each stack ring's lone calls refused, and so not recorded at all
+        skipped = [0] * len(stacks)           # its calls recorded for their parameters without their stack
+        # The budgets as the DLL clamps them, admitted as Linie's StackAdmit does: in call order within each second,
+        # the ring's word first, then the total's, which every stack choice shares. A call the total refuses has used
+        # one of its ring's places.
+        per = min(max(int((st or {}).get("per_ring_per_s", 100)), 1), 0xFFFFFF)
+        total = min(max(int((st or {}).get("total_per_s", 200)), 1), 0xFFFFFF)
+        ring_word: dict[tuple[str, int], int] = {}
+        total_word: dict[int, int] = {}
+        p_kept = {n: 0 for n in params}       # each parameter choice's calls copied, and those its budget dropped
+        p_dropped = {n: 0 for n in params}
 
-        def call(func: str, flags: int, frames: list[dict], inner=None, flag32: bool = True, slot: bool = True) -> None:
+        def admit(func: str, at: float) -> bool:
+            sec = int(at)
+            if ring_word.get((func, sec), 0) >= per:
+                return False
+            ring_word[(func, sec)] = ring_word.get((func, sec), 0) + 1
+            if total_word.get(sec, 0) >= total:
+                return False
+            total_word[sec] = total_word.get(sec, 0) + 1
+            return True
+
+        def call(func: str, flags: int, frames: list[dict], at: float = 0.0, inner=None, flag32: bool = True,
+                 slot: bool = True, forced: bool = False, refused: bool = False) -> None:
+            """One call at `at` seconds into the recording. `forced` keeps its stack whatever the budget, as a DLL that
+            keeps the wrong count does; `refused` refuses it whatever the budget, as a DLL that refuses wrongly does."""
+            stacked = func in ring_of and flag32
+            refuse = "nothing_taken" in f or ("call_refused" in f and func == "SnapProbe_Call" and bool(ticks)) or \
+                refused
+            taken = stacked and not refuse and (forced or admit(func, at))
+            over = stacked and not taken
+            if over and flags & F_LONE and func not in params:
+                # Linie's TraceEnter: a lone call that took nothing it was chosen for is dropped -- no record at all.
+                dropped[ring_of[func]] += 1
+                return
+            if over:      # recorded for its parameters, flagged, its stack counted as skipped
+                skipped[ring_of[func]] += 1
             seq = len(recs)
-            over = func in ring_of and "nothing_taken" in f
-            taken = func in ring_of and flag32 and not over
+            if func in params:
+                p_kept[func] += 1
             flags |= (F_TAKEN if func in params else 0) | (F_STACK_TAKEN if taken else 0) | \
                 (F_STACK_BUDGET if over else 0)
-            recs.append(REC.pack(seq, seq * 10, self.FUNCS[func][0], 0x5000, 1, flags))
+            recs.append(REC.pack(seq, seq * 10, self.funcs[func][0], 0x5000, 1, flags))
             if taken and slot:
                 ring = slots[ring_of[func]]
                 first = ring_of[func] == 0 and not ring
@@ -1991,24 +2806,49 @@ class ScriptedDll:
             r = len(recs)
             recs.append(REC.pack(r | RET_BIT, r * 10, seq, 0, 1, 0))
         if ticks:      # the main recording: scoped by SnapNest_Outer
-            for rnd in range(4):
-                in_scope = self._stacks(rnd)[0]
-                call("SnapNest_Outer", F_ROOT, [], lambda fr=in_scope, r=rnd: call(
-                    "SnapProbe_Call", 0, fr, slot=not ("slot_lost" in f and r == 0)))
-                call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and rnd == 0 else lone,
-                     flag32=not ("call_noflag" in f and rnd == 0))
-            if "SnapProbe_PerFrame" in ring_of:
+            # The calls in time order over the dry run's --record-s (the DLL is never told the span): four rounds
+            # evenly spaced, each SnapNest_Outer -> SnapProbe_Call then a lone SnapProbe_Call, and SnapProbe_PerFrame
+            # every 1/main_pf_rate seconds from the start, a frame's call before a round's at the same instant.
+            pf_events = "SnapProbe_PerFrame" in ring_of and self.per_frame is None
+            events = [((rnd + 0.5) * DRY_RECORD_S / 4, 1, rnd) for rnd in range(4)]
+            if pf_events:
+                events += [(k / self.main_pf_rate, 0, k) for k in range(round(self.main_pf_rate * DRY_RECORD_S))]
+            for at, kind, k in sorted(events):
+                if kind == 0:
+                    call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3], at)
+                    continue
+                in_scope = self._stacks(k)[0]
+                call("SnapNest_Outer", F_ROOT, [], at, lambda fr=in_scope, r=k, a=at: call(
+                    "SnapProbe_Call", 0, fr, a, slot=not ("slot_lost" in f and r == 0),
+                    refused="call_refused_some" in f and r == 0))
+                call("SnapProbe_Call", F_LONE, lone[:2] if "short_slot" in f and k == 0 else lone, at,
+                     flag32=not ("call_noflag" in f and k == 0))
+            if "SnapProbe_PerFrame" in ring_of and not pf_events:
+                # A DLL that keeps the wrong count writes per_frame slots whatever the budget, and counts as dropped
+                # what a probe at main_pf_rate over min(per, total) a second would drop.
+                rate, cap = self.main_pf_rate, min(per, total)
                 for k in range(self.per_frame):
-                    call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3])
-                dropped[ring_of["SnapProbe_PerFrame"]] = 25
-        else:          # stacks only: every chosen call is lone
+                    call("SnapProbe_PerFrame", F_LONE | (F_TAKEN if "pf_flags" in f and k == 0 else 0), lone[:3],
+                         forced=True)
+                dropped[ring_of["SnapProbe_PerFrame"]] = round(max(0.0, rate - cap) * DRY_RECORD_S)
+            elif "SnapProbe_PerFrame" in params:
+                # Step 2: chosen for its parameters, it is held to the parameter budget by the same rule.
+                rate = self.main_pf_rate
+                cap = 25 if "param_overkept" in f else min(max(int(s.get("per_ring_per_s", 1000)), 1), 0xFFFFFF)
+                for _ in range(round(min(rate, cap) * DRY_RECORD_S)):
+                    call("SnapProbe_PerFrame", F_LONE, [])
+                if "param_dropped0" not in f:
+                    p_dropped["SnapProbe_PerFrame"] = round(max(0.0, rate - cap) * DRY_RECORD_S)
+        else:          # stacks only: every chosen call is lone, a few of each, all kept (over_total: past the total)
+            game, game_first = self._game_stack(False), self._game_stack(True)
             for n in [] if "only_empty" in f else stacks:
                 for k in range(1000 if "over_total" in f else 3):
-                    call(n, F_LONE | (F_TAKEN if "only_flags" in f and k == 0 else 0), lone)
+                    call(n, F_LONE | (F_TAKEN if "only_flags" in f and k == 0 else 0), game if recs else game_first,
+                         forced=True)
             if "only_other" in f:   # flagged as a kept stack would be, so only the function tells it apart
                 call("SnapProbe_PerFrame", F_LONE | F_STACK_TAKEN, [])
         depth = min(max(int((st or {}).get("depth", 16)), 1), 62)
-        caps = [ring_cap(self.FUNCS[n][2]) for n in params]
+        caps = [ring_cap(self.funcs[n][2]) for n in params]
         stack_terms = 0 if "k_no_stacks" in f else len(stacks)
         per_round = sum(24 + c for c in caps) + stack_terms * (24 + 8 * depth)
         sb = s.get("bytes", 0)
@@ -2019,25 +2859,30 @@ class ScriptedDll:
         else:
             budget = lambda k, dflt: min(max(int(st.get(k, dflt)), 1), 0xFFFFFF)
         captures = sum(len(x) for x in slots)
-        self.t = {"gen": self.gen, "recs": recs, "slots": slots, "depth": depth, "dropped": dropped,
+        self.t = {"gen": self.gen, "recs": recs, "slots": slots, "depth": depth, "dropped": dropped, "skipped": skipped,
                   "tracing": True, "ticks": len(ticks),
+                  "snap_rings": [{"ring": k, "written": p_kept[n], "skipped_budget": 0, "dropped_budget": p_dropped[n]}
+                                 for k, n in enumerate(params)],
                   "snap_only": not ticks and (bool(params) or "not_snap_only" not in f),
                   "snap": {"allocated": "snap_unallocated" not in f, "bytes": sb,
                            "rings": len(params) + (len(stacks) if "snap_rings_off" in f else 0),
                            "per_ring_per_s": 1000, "total_per_s": 10000,
-                           "skipped_budget": 7 if "snap_skipped" in f else 0,
+                           # A refusal counted in the wrong place shows only as far as the stack budget refused calls,
+                           # as on the DLL it stands for; a phantom count shows whatever was refused.
+                           "skipped_budget": (sum(dropped) + sum(skipped) if "snap_skipped" in f else 0) +
+                                             ("snap_phantom" in f),
                            "dropped_budget": sum(dropped) if "snap_counted" in f else 0,
                            "slots_per_ring": (sb - 64 * (len(params) + stack_terms)) // per_round if per_round else 0},
                   "stack": {"rings": len(stacks) + ("stack_rings_off" in f), "depth": depth * (1 + ("depth_off" in f)),
                             "per_ring_per_s": budget("per_ring_per_s", 100),
                             "total_per_s": budget("total_per_s", 200), "captures": captures,
-                            "skipped_budget": 0, "dropped_budget": 0 if "stack_dropped0" in f else sum(dropped),
+                            "skipped_budget": sum(skipped), "dropped_budget": 0 if "stack_dropped0" in f else sum(dropped),
                             "spent_ticks": 7 * captures, "max_ticks": 7} if stacks else None,
                   "names": [{"class": FIXTURE_CLASS, "func": n, "tick": n in [i["func"] for i in ticks],
                              "chosen": n in params, "addresses": 1, "arms": 1,
                              **({} if f & {"old", "names_no_stack"} else
                                 {"stack": "names_all_stack" in f or (n in ring_of and "names_stack_false" not in f)})}
-                            for n in self.FUNCS if n in params or n in ring_of or n in [i["func"] for i in ticks]]}
+                            for n in self.funcs if n in params or n in ring_of or n in [i["func"] for i in ticks]]}
         accepted = [id(i) for i in stack_items if i not in turned_away]
         refused = [i for i in asked if id(i) not in accepted and (i in turned_away or not good(i))]
         if "refused_phantom" in f:
@@ -2060,6 +2905,8 @@ class ScriptedDll:
         d = {"allocated": True, "tracing": t["tracing"], "quiesced": not t["tracing"], "gen": t["gen"],
              "qpc_freq": self.QPC, "written": len(t["recs"]), "first_valid": 0, "scoped": True,
              "ticked_names": t["ticks"], "snap_only": t["snap_only"], "snap": t["snap"]}
+        if t.get("snap_rings"):
+            d["snap_rings"] = t["snap_rings"]
         if t["stack"] and "no_trace_stack" not in self.f:
             d["stack"] = t["stack"]
         return d
@@ -2073,7 +2920,7 @@ class ScriptedDll:
             return {"data": dict(d, count=1, next=frm + 1, orphans=0, items=[
                 {"index": frm, "entry_seq": 1, "phase": "entry", "len": 0, "flags": 0, "arm": 0, "data": ""}])}
         d.update(kind="stack", rings=[{"ring": k, "cap": 8 * t["depth"], "depth": t["depth"], "written": len(x),
-                                       "first_valid": 0, "skipped_budget": 0,
+                                       "first_valid": 0, "skipped_budget": t.get("skipped", [0] * (k + 1))[k],
                                        "dropped_budget": 0 if "ring_dropped0" in self.f else t["dropped"][k],
                                        "spent_ticks": 7 * len(x)} for k, x in enumerate(t["slots"])])
         if p.get("gen") != t["gen"] or not 0 <= ring < len(t["slots"]):
@@ -2110,10 +2957,20 @@ class ScriptedDll:
                 self.t = None
             return {"data": {"recording": False, "trace": self._info(), "names": t["names"]}}
         if cmd == "pe_profile_get":
+            traced = any(self.starts)
+            if traced and "main_get_error" in self.f:
+                return {"error": "the scripted pe_profile_get failed (main_get_error)"}
             rows = [] if "no_calls" in self.f else list(self.rows().values())
             if "no_probes" in self.f:   # a game without the fixture's probes still records its own calls
                 rows = [{"class_name": "OtherActor", "func_name": "Tick", "fname_key": None, "count": 100}]
-            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": 3000,
+            if traced and "main_rows_lost" in self.f:
+                rows = [r for r in rows if r.get("func_name") != "SnapProbe_PerFrame"]
+            if traced and "main_pf_under" in self.f:
+                rows = [dict(r, count=r["count"] // 10) if r.get("func_name") == "SnapProbe_PerFrame" else r
+                        for r in rows]
+            window_ms = 0 if traced and "main_window0" in self.f else \
+                int(self.window_s() * 1000) * (3 if traced and "main_window_long" in self.f else 1)
+            return {"data": {"total_calls": sum(r["count"] for r in rows), "window_ms": window_ms,
                              "functions": rows[: p.get("limit", len(rows))]}}
         if cmd == "pe_trace_get":
             if t is None:
@@ -2125,7 +2982,7 @@ class ScriptedDll:
             items = [{"addr": f"0x{a:X}", "class_name": FIXTURE_CLASS, "func_name": n,
                       "code_addr": "" if "no_code_addr" in self.f and n == "SnapNest_Outer" else
                       f"0x{self.BASE + (self.OUTER_FN if n == 'SnapNest_Outer' else 0x8000):X}"}
-                     for n, (a, _, _) in self.FUNCS.items()
+                     for n, (a, _, _) in self.funcs.items()
                      if not ("names_missing" in self.f and n == "SnapProbe_PerFrame")]
             off = p.get("offset", 0)
             return {"data": {"items": items[off: off + p.get("limit", 20000)], "total": len(items)}}
@@ -2134,6 +2991,17 @@ class ScriptedDll:
         if cmd == "pe_trace_release":
             self.t = None
             return {"data": {"released": True}}
+        if cmd == "get_object":
+            self.asked.append((cmd, dict(p)))
+            return self._object(p.get("addr", "0"))
+        if cmd == "read_mem":
+            self.asked.append((cmd, dict(p)))
+            return self._memory(p.get("addr", "0"), int(p.get("size", 256)))
+        # Step 2's commands, answered as far as its budget line needs (the class docstring).
+        if cmd == "invoke_function":
+            return {"ok": True, "data": {}}
+        if cmd == "pe_snap_layouts":
+            return {"data": {"arms": [], "layouts": [], "total": 0, "next": 0}}
         raise PipeError(f"the scripted DLL has no {cmd}")
 
 
@@ -2151,13 +3019,15 @@ class ScriptedPdb:
         self.closed = True
 
 
-def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) -> tuple[Checks, dict]:
+def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = (), stacks: bool = True) -> \
+        tuple[Checks, dict]:
     """main()'s --stacks run (run_selected) against a scripted DLL, its printing captured: no pipe, no game, and no
     wait, on a FakeClock; --pdb reads the scripted game's PDB. `argv` adds options to the command line the run parses,
     after (so over) the ones it sets, parsed as main() parses it: a combination main() refuses raises SystemExit here
-    before the DLL is asked anything. out["exit"] is what run_selected returned."""
+    before the DLL is asked anything. `stacks` False runs the step-2 checks instead (run_full), on a DLL made with
+    late=True. out["exit"] is what run_selected returned."""
     check, out = Checks(), {"label": "dry"}
-    args = parse_args(["--stacks", "--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
+    args = parse_args((["--stacks"] if stacks else []) + ["--record-s", str(DRY_RECORD_S), "--plain-s", "0"] +
                       (["--choose", ""] if game else []) + list(argv))
     fake = FakeClock()
     with contextlib.redirect_stdout(io.StringIO()):
@@ -2169,9 +3039,10 @@ def dry_run(dll: ScriptedDll, game: bool = False, argv: tuple[str, ...] = ()) ->
 def self_test() -> int:
     """--self-test: the pure pieces of --stacks against hand-made replies, each rule holding on a good input AND failing
     on a bad one, so a helper that silently accepts everything cannot pass. Then run_stacks and run_game_stacks against
-    a scripted DLL, whole and with each fault it scripts. Two controls keep that side complete: every scripted fault
-    has its control, and every check the good runs make is named by a control whose fault fails it, so a check whose
-    condition is reduced to True fails the self-test."""
+    a scripted DLL, whole and with each fault it scripts, and run_full as far as its parameter budget, whose line alone
+    is read. That side is kept complete by controls of two kinds: every scripted fault has its control, and every check
+    the good runs make (--names's included) is named by a control whose fault fails it, so a check whose condition is
+    reduced to True fails the self-test."""
     results: list[tuple[str, bool, str]] = []
 
     def expect(name: str, fn) -> None:
@@ -2456,8 +3327,8 @@ def self_test() -> int:
     # What a live --stacks run on a correct DLL prints: main() checks the fixture first, then S0-S7.
     fixture_names = ["the table recorded calls"] + [f"{FIXTURE_CLASS}::{p} was called" for p in PROBES]
     expect(f"dry run: --stacks on a DLL with step 3 holds every check, the fixture's {len(fixture_names)} then S0-S7's "
-           f"25, {len(fixture_names) + 25} in all, and records 7 facts",
-           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == len(fixture_names) + 25 and
+           f"26, {len(fixture_names) + 26} in all, and records 7 facts",
+           lambda: (lambda ch: failing(ch) == [] and len(ran(ch)) == len(fixture_names) + 26 and
                     ran(ch)[:len(fixture_names)] == fixture_names and
                     {n.split()[0] for n in ran(ch)[len(fixture_names):]} == {"S0", "S1", "S2", "S3", "S5", "S7"} and
                     recorded(ch, "S3") == [] and len(recorded(ch, "S4")) == 1 and len(recorded(ch, "S6")) == 6 and
@@ -2488,14 +3359,14 @@ def self_test() -> int:
     exercised: set[str] = {"old"}
 
     def caught(faults: tuple[str, ...], *prefixes: str, game: bool = False, argv: tuple[str, ...] = (),
-               exact: bool = True, per_frame: int = ScriptedDll.PER_FRAME_KEPT) -> None:
+               exact: bool = True, per_frame: int | None = None, pf_rate: float = ScriptedDll.PF_RATE) -> None:
         caught_by.update(prefixes)
         exercised.update(faults)
-        what = "+".join(faults) or (f"per_frame={per_frame}" if per_frame != ScriptedDll.PER_FRAME_KEPT else "") or \
-            " ".join(argv)
+        what = "+".join(faults) or (f"per_frame={per_frame}" if per_frame is not None else "") or \
+            (f"pf_rate={pf_rate:g}" if pf_rate != ScriptedDll.PF_RATE else "") or " ".join(argv)
 
         def run() -> bool:
-            ch = dry_run(ScriptedDll(*faults, per_frame=per_frame), game=game, argv=argv)[0]
+            ch = dry_run(ScriptedDll(*faults, per_frame=per_frame, pf_rate=pf_rate), game=game, argv=argv)[0]
             if exact:
                 return fail_set(ch, *prefixes)
             return all(any(n.startswith(p) for n in failing(ch)) for p in prefixes)
@@ -2553,6 +3424,7 @@ def self_test() -> int:
     caught(("ring_dropped0",), S5_WINDOW)
     caught(("snap_counted",), "S5 the parameter counters")
     caught(("snap_skipped",), "S5 the parameter counters")
+    caught(("snap_phantom",), "S5 the parameter counters")
     caught(("leak",), s7_main, s7_only)
     caught(("leak_snap",), s7_main, s7_only)
     caught(("leak_alloc",), s7_main, "S0 an altered stack key alone refuses", s7_only)
@@ -2575,10 +3447,10 @@ def self_test() -> int:
 
     # --pdb against the scripted game's PDB.
     pdb_checks = [PDB_DISP, PDB_PE, PDB_OUTER]
-    expect(f"dry run --pdb: every check holds, {len(fixture_names) + 25} and the PDB's {len(pdb_checks)}, with 8 "
+    expect(f"dry run --pdb: every check holds, {len(fixture_names) + 26} and the PDB's {len(pdb_checks)}, with 8 "
            "recorded (the first in-scope stack named)",
            lambda: (lambda ch: failing(ch) == [] and [n for n in ran(ch) if n.startswith("PDB")] == pdb_checks and
-                    len(ran(ch)) == len(fixture_names) + 25 + len(pdb_checks) and len(ch.records) == 8 and
+                    len(ran(ch)) == len(fixture_names) + 26 + len(pdb_checks) and len(ch.records) == 8 and
                     len(recorded(ch, "PDB")) == 1)(dry_run(ScriptedDll(), argv=("--pdb",))[0]))
 
     def pdb_stack_record(ch: Checks) -> str:
@@ -2610,11 +3482,262 @@ def self_test() -> int:
     caught(("no_known",), S3_KNOWN_IN, PDB_PE, argv=("--pdb",))
     caught(("nothing_taken",), PDB_DISP, PDB_PE, argv=("--pdb",), exact=False)
 
-    expect("every scripted fault has a control", lambda: exercised == set(ScriptedDll.FAULTS))
-    expect("every check the good runs make has a fault that fails it",
-           lambda: (lambda names: names != [] and [n for n in names if not any(n.startswith(p) for p in caught_by)]
-                    == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0]) +
-                           ran(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
+    # --names (S3-A1 on a real game): its pieces over hand-made sites, then the --choose run against the scripted DLL.
+    A1_KEYS = ("ufunc", "class", "func", "shared")
+    expect("A1: a site keeps ufunc / class / func / shared; absent they are None / \"\" / \"\" / None, as is a shared "
+           "that is not a count",
+           lambda: (lambda s, t, u: (s["ufunc"], s["class"], s["func"], s["shared"]) == (0x2A000, "C", "F", 3) and
+                    (t["ufunc"], t["class"], t["func"], t["shared"]) == (None, "", "", None) and u["shared"] is None and
+                    {k: v for k, v in s.items() if k not in A1_KEYS} == {k: v for k, v in t.items() if k not in A1_KEYS}
+                    and len(s) == len(A1_KEYS) + 9)(
+               parse_site(dict(raw_sites[0], ufunc="0x2A000", func="F", shared=3, **{"class": "C"})),
+               parse_site(raw_sites[0]), parse_site(dict(raw_sites[0], shared="3"))))
+    fn_a, fn_b, uf_a, uf_b = base + 0x5000, base + 0xA000, 0x2A000, 0x2B000
+
+    def nsite(ufunc: int | None, fn: int, known: str = "", **more) -> dict:
+        raw = {"addr": f"0x{fn + 0x10:X}", "fn": f"0x{fn:X}", "unwind": True, "known": known, **more}
+        if ufunc is not None:
+            raw.update({"ufunc": f"0x{ufunc:X}", "class": "C", "func": f"F{ufunc:X}"})
+        return parse_site(raw)
+    expect("A1: named frames group by (ufunc, fn), the most frequent first, every named frame counted",
+           lambda: (lambda r: r[1] == 5 and [(e["ufunc"], e["fn"], e["frames"]) for e in r[0]] ==
+                    [(uf_a, fn_a, 3), (uf_b, fn_b, 1), (uf_a, fn_b, 1)] and r[0][1]["shared"] == 5 and
+                    r[0][0]["shared"] is None and (r[0][0]["class"], r[0][0]["func"]) == ("C", "F2A000"))(
+               named_entries([{"frames": [nsite(uf_b, fn_b, shared=5), nsite(None, base + 0x7000), nsite(uf_a, fn_a)]},
+                              {"frames": [nsite(uf_a, fn_a), nsite(uf_a, fn_a), nsite(uf_a, fn_b)]}])))
+    pe_at = nsite(None, base + 0x9000, KNOWN_PE)
+    na, nb, plain = nsite(uf_a, fn_a), nsite(uf_b, fn_b), nsite(None, base + 0x7000)
+    expect("A1: the frames between a named frame and the next known:\"process_event\" toward the root; None past the "
+           "last one",
+           lambda: pe_gap([na, plain, pe_at, nb], 0) == 1 and pe_gap([na, pe_at], 0) == 0 and
+           pe_gap([pe_at, na, plain], 1) is None and pe_gap([na, plain, pe_at, nb, pe_at], 3) == 0)
+    blob = bytearray((k * 37 + 11) & 0xFF for k in range(0x180))
+    for o in (0x30, 0xD8):
+        blob[o: o + 8] = struct.pack("<Q", fn_a)
+    blob[0x101: 0x109] = struct.pack("<Q", fn_a)    # unaligned: no pointer member sits there
+    blob[0x140: 0x148] = struct.pack(">Q", fn_b)    # big-endian: not how x64 stores it
+    expect("A1: fn is found at every 8-aligned offset that holds it little-endian, and nowhere else",
+           lambda: fn_offsets(bytes(blob), fn_a) == [0x30, 0xD8] and fn_offsets(bytes(blob), fn_b) == [] and
+           fn_offsets(bytes(blob[:0xDC]), fn_a) == [0x30] and fn_offsets(b"", fn_a) == [])
+    expect("A1: the offset common to every entry, the lowest of several; none when one entry lacks it or none is shared",
+           lambda: common_offset([[0x30, 0xD8], [0xD8, 0x140]]) == 0xD8 and
+           common_offset([[0x30, 0xD8, 0x140], [0xD8, 0x140]]) == 0xD8 and common_offset([[0x30], [0xD8]]) is None and
+           common_offset([[0xD8], []]) is None and common_offset([]) is None)
+    expect("A1: an offset past where an entry's read stopped is not contradicted by it; one inside its read is",
+           lambda: common_offset([[0x30, 0x148], []], [0x160, 0xE0]) == 0x148 and
+           common_offset([[0x88, 0x148], [0x88]], [0x160, 0xE0]) == 0x88 and
+           common_offset([[0x148], []], [0x160, 0x160]) is None and
+           common_offset([[0x148], []], [0x160, 0x14C]) == 0x148 and common_offset([[0x148], []], [0x160, 0x150]) is None
+           and common_offset([[], []], [0xE0, 0xC8]) is None)
+    # [SNAPRIG-NAMES] The round-3 review's LOW: Aura's EnsureUFunctionFuncOffset tries Func at +0x80..+0x158 only, so
+    # a copy of fn outside that window is a decoy by construction, and NAMES_READ is the window's end.
+    expect("A1: only offsets inside the DLL's window (0x80..0x158) are candidates: a copy below or past it never is, "
+           "so with one entry read the decoy below the window loses to Func; NAMES_READ ends the window",
+           lambda: common_offsets([[0x78, 0x80, 0x158, 0x160]], [0x168]) == [0x80, 0x158] and
+           common_offsets([[0x30, 0x148]]) == [0x148] and common_offset([[0x30], []], [0x160, 0x20]) is None and
+           NAMES_READ == 0x158 + 8)
+
+    names_argv = ("--names",)
+
+    def names_run(*faults: str, argv: tuple[str, ...] = names_argv) -> tuple[Checks, dict, list]:
+        dll = ScriptedDll(*faults)
+        ch, out = dry_run(dll, game=True, argv=argv)
+        return ch, out, dll.asked
+    expect("dry run --names: --stacks --choose holds every check, A1's two after the run's 5, and records 2 more",
+           lambda: (lambda r: failing(r[0]) == [] and ran(r[0])[5:] == [NAMES_IS, NAMES_AT] and len(ran(r[0])) == 7 and
+                    len(r[0].records) == 8 and len(recorded(r[0], "A1")) == 2)(names_run()))
+    expect("dry run --names: under the cap every entry is asked and none is left unchecked, and no line says one was",
+           lambda: (lambda r: (r[1]["names"]["asked"], r[1]["names"]["unchecked"]) == (2, 0) and
+                    not any("left unchecked" in g for n, _, g in r[0].items if n.startswith("A1")))(names_run()))
+    # N is the entries judged -- held, or a slot that holds something else -- and the number asked is said beside it,
+    # so a line with entries gone since they were named does not read as that many failures (the second review's N).
+    expect("dry run --names: Func at the one offset both entries share, never at a decoy, 'in 2 of 2 read (2 asked)'",
+           lambda: names_run()[1]["names"]["func_offset"] == ScriptedDll.FUNC_AT and
+           any(f"Func at +0x{ScriptedDll.FUNC_AT:X} in 2 of 2 read (2 asked)" in g
+               for n, _, g in names_run()[0].items if n == NAMES_AT))
+    expect("dry run --names: 30 frames named in 2 entries, 1 shared (by 37); the native entry 1 frame below ProcessEvent, "
+           "the interpreter with none beyond it",
+           lambda: (lambda n: n["frames"] == 30 and n["entries"] == 2 and n["shared_entries"] == 1 and
+                    n["shared_max"] == 37 and n["pe_gap"] == {"1": 15, "none": 15})(names_run()[1]["names"]))
+    expect("dry run --names: each entry asked once, get_object by its ufunc in hex without 0x, then read_mem of 0x160 "
+           "bytes there (0x158 + 8, the end of the window the DLL looks for Func in); without --names nothing is asked",
+           lambda: names_run()[2] == [("get_object", {"addr": "1000"}), ("read_mem", {"addr": "1000", "size": 0x160}),
+                                      ("get_object", {"addr": "2A000"}), ("read_mem", {"addr": "2A000", "size": 0x160})]
+           and names_run(argv=())[2] == [])
+
+    def read_sizes(asked: list, addr: str) -> list[int]:
+        return [p["size"] for cmd, p in asked if cmd == "read_mem" and p["addr"] == addr]
+    # [SNAPRIG-NAMES] MED-1: read_mem is one copy, all or nothing, and a UFunction (0xC8 to 0xE0 bytes) is smaller than
+    # the window. An object that ends a block whose next page cannot be read fails a read of the whole window.
+    # The second review's LOW: the DLL named every frame by reading its UFunction's slot, so once the offset is known an
+    # entry read short of it (the retries jump from 0x160 to 0x100, past a slot in between) has that slot read alone.
+    interp_slot = f"{ScriptedDll.INTERP + ScriptedDll.FUNC_AT:X}"
+    expect("dry run --names: a UFunction that ends right after Func, before a page that cannot be read: the window "
+           "read fails, the retry at 0x100 stops short of Func, and the slot at the common offset, read alone (8 bytes), "
+           "holds fn: both held, nothing read short, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and NAMES_AT in ran(r[0]) and
+                    read_sizes(r[2], "2A000") == [0x160, 0x100] and read_sizes(r[2], "1000") == [0x160] and
+                    read_sizes(r[2], interp_slot) == [8] and
+                    [x["read"] for x in r[1]["names"]["per_entry"]] == [0x160, 0x100] and
+                    (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["short"]) ==
+                    (ScriptedDll.FUNC_AT, 2, 0) and
+                    any(n == NAMES_AT and "in 2 of 2 read (2 asked)" in g for n, _, g in r[0].items))(
+               names_run("names_read_edge")))
+    # Read alone, a slot that holds another value is the wrong slot: the frame's fn is not where every other entry
+    # keeps it.
+    caught(("names_read_edge", "names_offset_split"), NAMES_AT, game=True, argv=names_argv)
+    expect("dry run --names: an entry read short whose slot, read alone, holds another value fails the offset check, "
+           "what the slot holds the reason",
+           lambda: any(n == NAMES_AT and not ok and f"+0x{ScriptedDll.FUNC_AT:X} holds 0x" in g and "OnScripted" in g
+                       for n, ok, g in names_run("names_read_edge", "names_offset_split")[0].items))
+    def slot_reads(asked: list) -> list[str]:
+        return [p["addr"] for cmd, p in asked if cmd == "read_mem" and p["size"] == 8]
+
+    def object_asks(asked: list) -> list[str]:
+        return [p["addr"] for cmd, p in asked if cmd == "get_object"]
+    # [SNAPRIG-NAMES] The round-3 review's LOW: the DLL read each UFunction's slot when it built its index, and named
+    # the frame from it, so a slot that cannot be read now is an object freed since -- unless get_object, asked
+    # again, still names the same function there. Then the slot never held fn: the entry is absent, not gone.
+    caught(("names_fn_nowhere_edge",), NAMES_AT, game=True, argv=names_argv)
+    expect("dry run --names: an entry read to 0xE0 holding fn nowhere, its slot at the common offset unreadable and "
+           "get_object asked again still naming it, fails the offset check as absent, never gone, the reason said",
+           lambda: (lambda r: object_asks(r[2]) == ["1000", "2A000", "2A000"] and r[1]["names"]["gone"] == 0 and
+                    r[1]["names"]["per_entry"][1]["verdict"] == "absent" and
+                    any(n == NAMES_AT and not ok and "unreadable, though get_object still names it" in g and
+                        "OnScripted" in g for n, ok, g in r[0].items))(names_run("names_fn_nowhere_edge")))
+    # With one entry read, every copy of fn in it inside the DLL's window is a candidate; a slot that cannot be read
+    # contradicts none, so the lowest stands, read alone once.
+    expect("dry run --names: a UFunction no read reaches (every size down to 0xC8 tried) whose slot cannot be read "
+           "alone either, and which get_object, asked again, no longer names, is listed as gone since it was named, "
+           "kept out of N, and fails nothing",
+           lambda: (lambda r: failing(r[0]) == [] and object_asks(r[2]) == ["1000", "2A000", "2A000"] and
+                    r[1]["names"]["per_entry"][1]["verdict"] == "gone" and
+                    r[1]["names"]["func_offset"] == ScriptedDll.FUNC_AT and
+                    read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0, 0xC8] and
+                    slot_reads(r[2]) == [f"{ScriptedDll.INTERP + (r[1]['names']['func_offset'] or 0):X}"] and
+                    (r[1]["names"]["held"], r[1]["names"]["gone"]) == (1, 1) and
+                    r[1]["names"]["per_entry"][1]["read"] is None and
+                    any(n == NAMES_AT and ok and "in 1 of 1 read (2 asked)" in g and "1 gone since" in g and
+                        "OnScripted" in g for n, ok, g in r[0].items))(names_run("names_read_failed")))
+    # SnapNest_Outer's UFunction, read whole, holds a decoy copy of fn below Func: read alone, the other entry's slot at
+    # the decoy holds something else, which rules the decoy out rather than failing the DLL; its slot at Func holds fn.
+    exercised.add("names_slot_only")
+    expect("dry run --names: one entry read whole (fn at a decoy and at Func), the other's window and retries all "
+           "failing but its slots answering alone: the decoy's slot contradicts, Func's holds, both held at Func",
+           lambda: (lambda r: failing(r[0]) == [] and
+                    slot_reads(r[2]) == [f"{ScriptedDll.INTERP + ScriptedDll.DECOY_IN:X}", interp_slot] and
+                    (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["gone"]) ==
+                    (ScriptedDll.FUNC_AT, 2, 0) and
+                    any(n == NAMES_AT and ok and f"+0x{ScriptedDll.FUNC_AT:X} in 2 of 2 read (2 asked)" in g
+                        for n, ok, g in r[0].items))(names_run("names_slot_only")))
+    expect("dry run --names: when no named UFunction can be read, the offset check is not run (the reason given), the "
+           "name check still runs, and nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and NAMES_IS in ran(r[0]) and NAMES_AT not in ran(r[0]) and
+                    [n for n, why in r[0].skipped if "could be read" in why] == [NAMES_AT])(
+               names_run("names_unreadable")))
+    exercised.update(("names_read_edge", "names_read_failed", "names_unreadable"))
+    # [SNAPRIG-NAMES] The second review's MED-B: a real UE5 game's layout, Func at 0xD8 in a UFunction of about 0xE0
+    # bytes, where a read retried at 0xE0 after the window failed still reaches the slot. Such an entry holds fn: it
+    # is never read short, nor left out of the offset, and asks for nothing past its own reads.
+    exercised.update(("names_func_low", "names_read_edge_all"))
+
+    def low_layout(r) -> bool:
+        return failing(r[0]) == [] and NAMES_AT in ran(r[0]) and \
+            (r[1]["names"]["func_offset"], r[1]["names"]["held"], r[1]["names"]["short"]) == (ScriptedDll.FUNC_LOW, 2, 0) \
+            and {p["addr"] for cmd, p in r[2] if cmd == "read_mem"} == {"1000", "2A000"}
+    expect("dry run --names: Func at 0xD8 and the interpreter's next page unreadable: its read retried down to 0xE0 "
+           "reaches Func, and both entries hold it there",
+           lambda: (lambda r: low_layout(r) and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] and
+                    read_sizes(r[2], "1000") == [0x160])(names_run("names_func_low", "names_read_edge")))
+    expect("dry run --names: Func at 0xD8 and every UFunction's next page unreadable: no read covers the window, the "
+           "offset is still found from the reads retried at 0xE0, and both entries hold it there",
+           lambda: (lambda r: low_layout(r) and read_sizes(r[2], "2A000") == [0x160, 0x100, 0xE0] ==
+                    read_sizes(r[2], "1000"))(names_run("names_func_low", "names_read_edge_all")))
+    # The defensive branch: no offset common to the reads, and the one entry read short of its slot with no copy of
+    # fn in what it read, says nothing either way (the second review's U4).
+    exercised.add("names_short_only")
+    expect("dry run --names: with no offset common to the reads and the only readable entry read short of its slot, "
+           "holding no copy of fn, the offset check is not run ('no read reached'), and nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and NAMES_IS in ran(r[0]) and
+                    [n for n, why in r[0].skipped if "no read reached" in why] == [NAMES_AT])(
+               names_run("names_short_only")))
+    # A named frame without fn has nothing to look for, and the DLL names a frame by its fn: it is wrong, never
+    # skipped (the second review's U2 / U3); with no named frame carrying fn, the check fails, it is not stood down
+    # as if nothing could be read (U8).
+    caught(("names_no_fn",), NAMES_AT, game=True, argv=names_argv)
+    caught(("names_no_fn_all",), NAMES_AT, game=True, argv=names_argv)
+    caught(("names_object_error",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: a get_object that answers an error lists the entry as wrong, the DLL's error the reason",
+           lambda: any(n == NAMES_IS and not ok and "get_object failed" in g and "names_object_error" in g
+                       for n, ok, g in names_run("names_object_error")[0].items))
+    # The review's LOW-3: a name read that gives nothing gives "" on the frame and "" from get_object, which agree.
+    caught(("names_empty",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: an entry named \"\" (class and func) is wrong whatever get_object answers, 'named empty' "
+           "the reason",
+           lambda: any(n == NAMES_IS and not ok and "named empty" in g
+                       for n, ok, g in names_run("names_empty")[0].items))
+    # Either half read empty is enough (the second review's E1 / E2): '' == '' must not pass for the other half.
+    caught(("names_empty_class",), NAMES_IS, game=True, argv=names_argv)
+    caught(("names_empty_func",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: an entry with only its class, or only its func, named \"\" is wrong, 'named empty' the "
+           "reason",
+           lambda: all(any(n == NAMES_IS and not ok and "named empty" in g for n, ok, g in names_run(fault)[0].items)
+                       for fault in ("names_empty_class", "names_empty_func")))
+    # An entry named "" is never "still named": get_object answering "" again is no match of two empty names, so
+    # its unreadable slot leaves it gone, and only the name check fails.
+    caught(("names_empty_edge",), NAMES_IS, game=True, argv=names_argv)
+    expect("dry run --names: an entry named \"\", its slot at the common offset unreadable and get_object asked again "
+           "answering \"\" again, is listed as gone, not absent",
+           lambda: (lambda r: [x["verdict"] for x in r[1]["names"]["per_entry"]] == ["gone", "held"] and
+                    object_asks(r[2]) == ["1000", "2A000", "1000"])(names_run("names_empty_edge")))
+    many = ScriptedDll.NAMES_MANY + 2
+    expect(f"dry run --names: of {many} entries the {NAMES_MAX} most frequent are asked, the frequent two among them, "
+           f"and the {many - NAMES_MAX} left are counted, never silently",
+           lambda: (lambda r: failing(r[0]) == [] and
+                    (r[1]["names"]["entries"], r[1]["names"]["asked"], r[1]["names"]["unchecked"]) ==
+                    (many, NAMES_MAX, many - NAMES_MAX) and
+                    sum(1 for cmd, _ in r[2] if cmd == "get_object") == NAMES_MAX and
+                    {"1000", "2A000"} <= {p["addr"] for cmd, p in r[2] if cmd == "get_object"} and
+                    any(f"{many - NAMES_MAX} less frequent left unchecked" in g for n, _, g in r[0].items
+                        if n == NAMES_IS))(names_run("names_many")))
+
+    def depth_sent(argv: tuple[str, ...]) -> int | None:
+        dll = ScriptedDll()
+        dry_run(dll, game=True, argv=argv)
+        return next(t["snapshots"]["stacks"].get("depth") for t in dll.starts if t and "stacks" in t.get("snapshots", {}))
+    expect(f"dry run: --stacks --choose sends --stack-depth as the stacks' depth, {STACK_DEPTH} when none is given, and "
+           "--names holds at 62",
+           lambda: depth_sent(()) == STACK_DEPTH and depth_sent(("--stack-depth", "62")) == 62 and
+           depth_sent(("--names", "--stack-depth", "1")) == 1 and
+           failing(names_run(argv=("--names", "--stack-depth", "62"))[0]) == [])
+    # --choose without --stacks with each option alone: the step-2 game run takes neither (LOW-9).
+    bad_game = (("--names",), ("--stacks", "--names"), ("--choose", "x", "--names"), ("--stacks", "--stack-depth", "16"),
+                ("--stack-depth", "8"), ("--choose", "x", "--stack-depth", "8"),
+                ("--stacks", "--choose", "", "--stack-depth", "0"), ("--stacks", "--choose", "", "--stack-depth", "63"))
+    expect("A1: main() refuses --names and --stack-depth outside --stacks --choose, and a depth outside 1..62, before the "
+           "pipe opens; --stacks --choose takes both",
+           lambda: [main_refuses(a) for a in bad_game] == [(2, 0)] * len(bad_game) and
+           main_refuses(("--stacks", "--choose", "", "--names", "--stack-depth", "62")) == (None, 1) and
+           main_refuses(("--stacks", "--choose", "x", "--stack-depth", "1")) == (None, 1))
+    expect("A1: the dry run refuses them as main() does, before the DLL is asked anything, and runs on with --choose",
+           lambda: dry_refused(False, ("--names",)) == (2, []) and dry_refused(False, ("--stack-depth", "16")) == (2, [])
+           and dry_refused(True, ("--stack-depth", "63")) == (2, []) and
+           dry_refused(True, ("--names", "--stack-depth", "62"))[0] is None)
+    for fault in ("names_wrong_func", "names_wrong_outer", "names_not_function"):
+        caught((fault,), NAMES_IS, game=True, argv=names_argv)
+    for fault in ("names_fn_absent", "names_offset_split"):
+        caught((fault,), NAMES_AT, game=True, argv=names_argv)
+    exercised.update(("names_none", "names_many"))
+    expect("dry run --names: with no frame named, A1's two checks are not run (the reason given), never passed, nothing "
+           "is asked, and the run fails nothing",
+           lambda: (lambda r: failing(r[0]) == [] and not any(n.startswith("A1") for n in ran(r[0])) and
+                    [n for n, why in r[0].skipped if why.startswith("no frame was named")] == [NAMES_IS, NAMES_AT] and
+                    r[2] == [])(names_run("names_none")))
+    expect("dry run --names: with no stack kept at all, A1's two checks are not run and say so ('no stack was "
+           "kept'), nothing is asked, and nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and not any(n.startswith("A1") for n in ran(r[0])) and
+                    [n for n, why in r[0].skipped if "no stack was kept" in why] == [NAMES_IS, NAMES_AT] and
+                    r[2] == [])(names_run("only_empty")))
 
     def refuses_unknown_fault() -> bool:
         try:
@@ -2647,6 +3770,319 @@ def self_test() -> int:
     expect("dry run: --stacks --choose checks the total the DLL echoes, its own default when none was given",
            lambda: any(n.startswith("the total budget held: at most about 200/s")
                        for n in ran(dry_run(ScriptedDll(), game=True, argv=("--stack-per-ring", "100"))[0])))
+
+    # [SNAPRIG-S5-RATE] The fixture run's per-function budget from the plain recording's rates: S5 needs it to bite on
+    # SnapProbe_PerFrame and to cut no other stack choice. Live on 2026-10-08 the fixture ran at about 30 fps, and a
+    # budget of 30 never bit.
+    def pick(pf: float, call: float, given: int | None = None, total: int = FIXTURE_STACK_TOTAL) -> tuple:
+        ch_ = per_frame_budget({"SnapProbe_Call": call, "SnapProbe_PerFrame": pf}, given, total)
+        return ch_["per"], ch_["runs"]
+    expect("S5 rate: the old 30 is kept whenever it sits 1.5x under SnapProbe_PerFrame and 1.5x over SnapProbe_Call",
+           lambda: pick(178, 8) == (30, True) and pick(45, 20) == (30, True))
+    expect("S5 rate: else the budget between them, as far from both as it can be (30/s: 15; 40/s: 17; 60/s against "
+           "25/s: 38)",
+           lambda: pick(30, 8) == (15, True) and pick(40, 8) == (17, True) and pick(60, 25) == (38, True))
+    expect("S5 rate: when none fits the old 30 is sent and S5 cannot run, the measured rates in the reason",
+           lambda: (lambda c_: (c_["per"], c_["runs"], c_["given"]) == (30, False, False) and "25.0/s" in c_["why"] and
+                    "30.0/s" in c_["why"])(
+               per_frame_budget({"SnapProbe_Call": 25, "SnapProbe_PerFrame": 30}, None, FIXTURE_STACK_TOTAL)) and
+           pick(0, 0) == (30, False) and pick(7.875, 3.5) == (30, False))
+    expect("S5 rate: a given budget is sent as given; S5 runs only when SnapProbe_PerFrame is 1.5x above it",
+           lambda: pick(30, 8, given=20) == (20, True) and pick(30, 8, given=21) == (21, False) and
+           pick(30, 8, given=30) == (30, False) and pick(178, 8, given=100) == (100, True) and per_frame_budget(
+               {"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 20, FIXTURE_STACK_TOTAL)["given"] is True)
+    # The review's LOW-2: the total is one total for every stack choice, admitted in call order each second, so a total
+    # that leaves the others no room beside SnapProbe_PerFrame's share may starve SnapProbe_Call on a correct DLL.
+    expect("S5 rate: a total under SnapProbe_PerFrame's share plus 1.5x the others' rates starves them: said in why, "
+           "and S5 not run (SnapProbe_PerFrame's share of a shared total is not the budget)",
+           lambda: (lambda c_: (c_["per"], c_["runs"], c_["starves"]) == (40, False, True) and "starve" in c_["why"])(
+               per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 30}, 40, 15)) and
+           per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, 30, 42)["starves"] is False and
+           per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, 30, 41)["starves"] is True)
+    expect("S5 rate: a chosen budget leaves the others their room in the total (60/s against 8/s in 35: between 12 and "
+           "23, so 16, not 30), and none fits when the total has no room at all",
+           lambda: pick(60, 8, total=35) == (16, True) and pick(60, 2, total=40) == (30, True) and
+           pick(60, 8, total=20) == (30, False) and
+           per_frame_budget({"SnapProbe_Call": 8, "SnapProbe_PerFrame": 60}, None, 35)["starves"] is False)
+    # The starve rule's two terms, pinned (the second review's T2 / T3): SnapProbe_PerFrame keeps no more than it is
+    # called, so a budget above its rate leaves the rest of the total free; and the room is every other choice's
+    # rate, summed, not the busiest one's.
+    expect("S5 rate: a budget of 100 over a probe at 60 a second leaves 60 + 1.5 x 2 in a total of 80: nothing starves",
+           lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, 100, 80)["starves"] is False)
+    expect("S5 rate: two other choices at 8 a second need 1.5 x 16 beside 30 (54): a total of 50 starves them",
+           lambda: per_frame_budget({"A": 8, "B": 8, "SnapProbe_PerFrame": 60}, 30, 50)["starves"] is True)
+    expect("S5 rate: when no budget fits, the total may still starve the others (5 a second against 60 and 2)",
+           lambda: per_frame_budget({"SnapProbe_Call": 2, "SnapProbe_PerFrame": 60}, None, 5)["starves"] is True)
+    # The main-rate rule holds at exactly 1.5x, as bites() does (the second review's P1).
+    expect("S5 rate: the main recording at exactly 1.5x the budget lets the check run; just under it does not",
+           lambda: main_rate_problem(45.0, 30, 60.0) is None and main_rate_problem(44.9, 30, 60.0) is not None)
+    # S3's stand-down from the main recording: measured refusals, every one, and a total that explains them.
+    refused_in = [(k, 0, CALL, 0, 1, F_STACK_BUDGET) for k in range(4)]
+    plain_rates = {"SnapProbe_Call": 2.0, "SnapProbe_PerFrame": 60.0}
+    expect("S3 starve: every in-scope entry refused (64), none kept, and a total that starves them stands the checks "
+           "down, naming the rate that explains it",
+           lambda: "the plain recording's 60.0/s" in (starved_in_scope(refused_in, 0, plain_rates, None, 30, 5) or "")
+           and "the main recording's 60.0/s" in (starved_in_scope(
+               refused_in, 0, dict(plain_rates, SnapProbe_PerFrame=4.0), 60.0, 100, 10) or ""))
+    expect("S3 starve: a stack kept, an entry not refused, no entry, or a total that explains nothing runs the checks",
+           lambda: starved_in_scope(refused_in, 1, plain_rates, 60.0, 30, 5) is None and
+           starved_in_scope(refused_in[:3] + [(3, 0, CALL, 0, 1, F_STACK_TAKEN)], 0, plain_rates, 60.0, 30, 5) is None
+           and starved_in_scope([], 0, plain_rates, 60.0, 30, 5) is None and
+           starved_in_scope(refused_in, 0, plain_rates, 60.0, 30, 200) is None and
+           starved_in_scope(refused_in, 0, dict(plain_rates, SnapProbe_PerFrame=4.0), None, 100, 10) is None)
+    # Refusals judged apart from the stacks kept (the round-3 review's LOW): counted only beyond both budgets.
+    slow_pf = dict(plain_rates, SnapProbe_PerFrame=4.0)
+    expect("S3 unexplained: in-scope refusals with the per-function budget 1.5x above SnapProbe_Call's 2 a second "
+           "(3 or more) and a total that starves nothing are counted; none refused counts none",
+           lambda: unexplained_refusals(refused_in, plain_rates, 60.0, 30, 200) == 4 and
+           unexplained_refusals(refused_in, plain_rates, 60.0, 3, 200) == 4 and
+           unexplained_refusals(refused_in[:1] + [(1, 0, CALL, 0, 1, F_STACK_TAKEN)], plain_rates, 60.0, 30, 200) == 1
+           and unexplained_refusals([(k, 0, CALL, 0, 1, F_STACK_TAKEN) for k in range(4)], plain_rates, 60.0, 30,
+                                    200) == 0)
+    expect("S3 unexplained: a per-function budget under 1.5x SnapProbe_Call's rate explains them (2 against 2 a "
+           "second)",
+           lambda: unexplained_refusals(refused_in, plain_rates, 60.0, 2, 200) == 0)
+    expect("S3 unexplained: a total that starves the others at SnapProbe_PerFrame's plain rate explains them, the main "
+           "rate unknown or not",
+           lambda: unexplained_refusals(refused_in, plain_rates, None, 30, 20) == 0 and
+           unexplained_refusals(refused_in, plain_rates, 4.0, 30, 20) == 0)
+    expect("S3 unexplained: a total that starves them at the main rate alone explains them; with no main rate, or a "
+           "main rate at which it starves nothing, it does not",
+           lambda: unexplained_refusals(refused_in, slow_pf, 60.0, 100, 40) == 0 and
+           unexplained_refusals(refused_in, slow_pf, None, 100, 40) == 4 and
+           unexplained_refusals(refused_in, slow_pf, 6.0, 100, 40) == 4)
+
+    def s5_run(pf_rate: float = ScriptedDll.PF_RATE, argv: tuple[str, ...] = (), faults: tuple[str, ...] = (),
+               main_pf_rate: float | None = None) -> tuple[Checks, dict, int | None]:
+        """The fixture run at a probe rate: its checks, its out, and the per-function budget its Start sent."""
+        dll = ScriptedDll(*faults, pf_rate=pf_rate, main_pf_rate=main_pf_rate)
+        ch, out = dry_run(dll, argv=argv)
+        sent = next((t["snapshots"]["stacks"] for t in dll.starts if t and "stacks" in t.get("snapshots", {})), {})
+        return ch, out, sent.get("per_ring_per_s")
+
+    def s5_ran(ch: Checks) -> list[str]:
+        return [n for n in ran(ch) if n.startswith(S5_WINDOW)]
+
+    def s5_skipped(ch: Checks) -> list[str]:
+        return [why for n, why in ch.skipped if n.startswith(S5_WINDOW)]
+
+    def s5_params(ch: Checks) -> tuple[list[bool], list[str]]:
+        """S5's parameter-counter check: its verdicts where it ran, its reasons where it was not run."""
+        return [ok for n, ok, _ in ch.items if n == S5_PARAMS], [why for n, why in ch.skipped if n == S5_PARAMS]
+
+    def s5_vacuous(ch: Checks) -> bool:
+        """S5's two lines both reported not run, the counters' because the stack budget refused nothing: there a DLL
+        that counts its refusals in the wrong place has nothing to count, and 0 proves nothing."""
+        oks, whys = s5_params(ch)
+        return s5_ran(ch) == [] and len(s5_skipped(ch)) == 1 and oks == [] and len(whys) == 1 and \
+            "refused nothing" in whys[0]
+    lo7, hi7 = budget_window(7, DRY_RECORD_S, DRY_RECORD_S)
+    expect(f"dry run: a probe at 30 a second (the fixture at 30 fps), no --stack-per-ring: the budget is lowered to 7 "
+           f"so it bites, and S5 holds at {lo7:.0f}..{hi7:.0f}",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 7 and r[1]["stack_budget"]["per"] == 7 and
+                    len(s5_ran(r[0])) == 1 and f"({lo7:.0f}..{hi7:.0f})" in s5_ran(r[0])[0])(s5_run(30)))
+    # 25, not the 30 the run falls back to, so a run that sends its fallback in place of a given budget is seen; and the
+    # ring drops some calls at it, so a run that runs S5 whenever the ring dropped something is seen too (LOW-4).
+    expect("dry run: --stack-per-ring 25 with the probe at 30 a second cannot bite (25 x 1.5 > 30), though the ring "
+           "drops some: S5's window not run (the rate in the reason), neither failed nor passed, 25 still sent; the "
+           "budget refused calls, so the parameter counters are checked, and hold",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 25 and s5_ran(r[0]) == [] and
+                    int_or(r[1]["stack_rings"][1].get("dropped_budget"), 0) > 0 and
+                    len(s5_skipped(r[0])) == 1 and "30.0/s" in s5_skipped(r[0])[0] and
+                    s5_params(r[0]) == ([True], []))(s5_run(30, ("--stack-per-ring", "25"))))
+    # [SNAPRIG-S5-RATE] The second review's MED-A: a nonzero parameter counter is a defect whether or not the window
+    # runs, and the stack budget refuses calls on paths where the window cannot: those refusals are what a DLL counts
+    # in the wrong place.
+    expect("dry run: the same with a DLL that counts the ring's refusals as parameter skips: the counter check fails, "
+           "and nothing else does",
+           lambda: (lambda r: fail_set(r[0], S5_PARAMS) and s5_ran(r[0]) == [])(
+               s5_run(30, ("--stack-per-ring", "25"), faults=("snap_skipped",))))
+    expect("dry run: no budget fits (the probe at 4 a second): S5's window not run with the measured rates, the "
+           "counters not run as the budget refused nothing, every other check run at the old 30",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_ran(r[0]) == [] and
+                    len(s5_skipped(r[0])) == 1 and "4.0/s" in s5_skipped(r[0])[0] and "2.0/s" in s5_skipped(r[0])[0]
+                    and s5_vacuous(r[0]) and len(ran(r[0])) == len(fixture_names) + 24)(s5_run(4)))
+    expect("dry run: where the stack budget refuses nothing, a DLL that would count its refusals in the parameter "
+           "counters shows nothing: the counter check is not run, never passed",
+           lambda: all(failing(r[0]) == [] and s5_vacuous(r[0])
+                       for r in (s5_run(4, faults=("snap_skipped",)), s5_run(4, faults=("snap_counted",)))))
+    expect("dry run: where the stack budget refuses nothing, a parameter counter that moves anyway fails the check",
+           lambda: (lambda r: fail_set(r[0], S5_PARAMS) and s5_ran(r[0]) == [])(s5_run(4, faults=("snap_phantom",))))
+    # Whether anything was refused has two detectors beside the parameter counters, and each must see a refusal the
+    # other cannot: a trace.stack that counts no drop leaves the main table's count over the ring's written, and a
+    # main table without the probe's row leaves trace.stack's drops.
+    expect("dry run: --stack-per-ring 25 at 30 a second with trace.stack counting no drop: the main table still shows "
+           "the refusals, so the counters are checked, and hold",
+           lambda: (lambda r: failing(r[0]) == [] and s5_params(r[0]) == ([True], []))(
+               s5_run(30, ("--stack-per-ring", "25"), faults=("stack_dropped0",))))
+    expect("dry run: --stack-per-ring 25 at 30 a second with no SnapProbe_PerFrame row in the main table: trace.stack's "
+           "drops still show the refusals, so the counters are checked, and hold",
+           lambda: (lambda r: fail_set(r[0], f"S5 {MAIN_TABLE}") and s5_params(r[0]) == ([True], []))(
+               s5_run(30, ("--stack-per-ring", "25"), faults=("main_rows_lost",))))
+    # The plain recording chooses the budget; the main recording is the one S5 reads, and its own rate decides whether
+    # the budget bit there (the review's LOW-1).
+    expect("dry run: the plain recording at 60 a second, the main one at 30 (under 1.5x the 30 sent): S5's window not "
+           "run, both rates in the reason, the counters not run as nothing was refused, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and s5_vacuous(r[0]) and
+                    "60.0/s" in s5_skipped(r[0])[0] and "30.0/s" in s5_skipped(r[0])[0])(
+               s5_run(60, main_pf_rate=30)))
+    expect("dry run: the main recording slower than the plain one but still 1.5x over the budget: S5 runs and holds",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 30 and len(s5_ran(r[0])) == 1 and
+                    S5_PARAMS in ran(r[0]))(s5_run(60, main_pf_rate=46)))
+    # The second review's LOW: a reply that cannot give the main rate -- an error, no window, no row for the probe --
+    # is not a slow probe. Its own check fails, and S5's window runs from the trace ring, as it did before the main
+    # rate was read, rather than standing down at "0.0/s".
+    s5_main, main_faults = f"S5 {MAIN_TABLE}", ("main_get_error", "main_window0", "main_rows_lost")
+    for fault in main_faults:
+        caught((fault,), s5_main)
+    expect("dry run: a main table without SnapProbe_PerFrame's rate fails its own check, and S5's window still runs "
+           "and holds, never stood down",
+           lambda: all((lambda r: fail_set(r[0], s5_main) and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [])(
+               s5_run(faults=(fault,))) for fault in main_faults))
+    # The round-3 review's LOW: a main table can give a rate that is plausible and wrong -- a count too low, a window
+    # too long -- under 1.5x the 30 sent though the probe ran at 60 a second. The probe's own ring counts every lone
+    # call it wrote or dropped, so its rate is never above the truth, and it shows the budget bit.
+    under_faults = ("main_pf_under", "main_window_long")
+    exercised.update(under_faults)
+    expect("dry run: a main table whose SnapProbe_PerFrame rate is a tenth or a third of the truth (its count, or its "
+           "window three times too long): the probe's own ring shows the rate, so S5's window still runs and holds, "
+           "nothing stood down and nothing failed",
+           lambda: all((lambda r: failing(r[0]) == [] and len(s5_ran(r[0])) == 1 and s5_skipped(r[0]) == [] and
+                        r[1]["stack_budget"]["main_rate"] < BUDGET_MARGIN * 30 and
+                        r[1]["stack_budget"]["main_rate_ring"] == 60.0)(s5_run(faults=(fault,)))
+                       for fault in under_faults))
+    s3_in_scope = ("S3 every in-scope stack holds an own frame", S3_KNOWN_IN)
+
+    def s3_starved(ch: Checks, *words: str) -> bool:
+        """S3's two in-scope checks both reported not run, never run, each reason holding every word."""
+        return [p for p in s3_in_scope if any(n.startswith(p) and all(w in why for w in words)
+                                              for n, why in ch.skipped)] == list(s3_in_scope) and \
+            not any(n.startswith(s3_in_scope) for n in ran(ch))
+    # The second review's LOW: the total is one total, admitted in call order each second, so what SnapProbe_PerFrame
+    # has spent of it grows through the second, and SnapProbe_Call called early in a second still keeps its stack.
+    # Whether the total starves the in-scope stacks is the main recording's to say, not the plain rates' prediction.
+    expect("dry run: --stack-per-ring 40 --stack-total 15 with the probe at 30 a second: the total, predicted to "
+           "starve (said, S5's window not run on it), is spent by mid-second, so each second's first round keeps its "
+           "stacks and the later one is refused, booked as skipped; S3's two in-scope checks run over the kept stacks "
+           "and hold, the counters are checked, nothing fails",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 40 and r[1]["stack_budget"]["starves"] is True and
+                    (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget"),
+                     r[1]["stack_rings"][0].get("dropped_budget")) == (4, 4, 0) and
+                    s5_ran(r[0]) == [] and "starve" in s5_skipped(r[0])[0] and s5_params(r[0]) == ([True], []) and
+                    all(any(n.startswith(p) and ok and g.startswith("2 of 2") for n, ok, g in r[0].items)
+                        for p in s3_in_scope))(
+               s5_run(30, ("--stack-per-ring", "40", "--stack-total", "15"))))
+    # Without a given budget (the second review's T4 / T5): none fits, the fallback is sent, and SnapProbe_PerFrame
+    # spends the total before every round, so every in-scope stack is refused and the checks stand down on that.
+    expect("dry run: --stack-total 5 with no --stack-per-ring and the probe at 60 a second: no budget fits, the total "
+           "is predicted to starve the others and does, every in-scope SnapProbe_Call entry flagged 64; S3's two "
+           "in-scope checks not run with the refusals and the starving total the reason, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[1]["stack_budget"]["starves"] is True and
+                    r[1]["stack_budget"]["given"] is False and
+                    (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget")) == (0, 8) and
+                    s3_starved(r[0], "starve", "4 in-scope", "flagged 64"))(s5_run(60, ("--stack-total", "5"))))
+    # Refusals the plain rates did not predict, where the main recording ran SnapProbe_PerFrame fast enough to spend
+    # the total first: the main rate explains them.
+    expect("dry run: --stack-per-ring 100 --stack-total 10, the probe at 4 a second in the plain recording and 60 in "
+           "the main one: every in-scope stack refused, which only the main rate explains; S3's two in-scope checks "
+           "not run, that rate the reason, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[1]["stack_budget"]["starves"] is False and
+                    s3_starved(r[0], "starve", "the main recording's 60.0/s"))(
+               s5_run(4, ("--stack-per-ring", "100", "--stack-total", "10"), main_pf_rate=60)))
+    # The same with a table that counts a tenth of the probe's calls (6 a second, under which a total of 10 starves
+    # nothing): its ring shows the 60, and that explains the refusals as the table would have.
+    expect("dry run: the same with a main table that counts a tenth of SnapProbe_PerFrame's calls: its ring shows the "
+           "60 a second, S3's two in-scope checks not run, that rate the reason, nothing failed",
+           lambda: (lambda r: failing(r[0]) == [] and r[1]["stack_budget"]["main_rate"] == 6.0 and
+                    s3_starved(r[0], "starve", "the main recording's 60.0/s"))(
+               s5_run(4, ("--stack-per-ring", "100", "--stack-total", "10"), faults=("main_pf_under",),
+                      main_pf_rate=60)))
+    # Some kept and some refused: the probe at 4 a second in the plain recording and 60 in the main one, per 100, and
+    # a total of 40 that SnapProbe_PerFrame spends by mid-second, so each second's first round keeps its stacks and
+    # its second is refused. Only the main rate explains it; with a table that counts a tenth (6 a second, at which
+    # 40 starves nothing) the ring's 60 still does.
+    expect("dry run: --stack-per-ring 100 --stack-total 40, the probe at 4 a second in the plain recording and 60 in "
+           "the main one: half the in-scope stacks refused, which the main rate explains; S3's two in-scope checks "
+           "run over the 2 kept and hold, nothing failed -- the main table whole or counting a tenth",
+           lambda: all((lambda r: failing(r[0]) == [] and
+                        (r[1]["stack_rings"][0].get("written"), r[1]["stack_rings"][0].get("skipped_budget")) == (4, 4)
+                        and all(any(n.startswith(p) and ok and g.startswith("2 of 2") for n, ok, g in r[0].items)
+                                for p in s3_in_scope))(
+               s5_run(4, ("--stack-per-ring", "100", "--stack-total", "40"), faults=faults, main_pf_rate=60))
+               for faults in ((), ("main_pf_under",))))
+    # Refusals no total explains are the DLL's: the checks run, and fail on the stacks it did not keep.
+    caught(("call_refused",), *s3_in_scope)
+    # The round-3 review's LOW: where some in-scope stacks were kept, the checks ran over those alone, and a stack
+    # refused with both budgets' room left -- the per-function budget 1.5x above SnapProbe_Call's rate, a total that
+    # starves nothing -- passed unjudged.
+    caught(("call_refused_some",), *s3_in_scope)
+    expect("dry run: the default rates keep the old 30, and out says it was chosen, not given",
+           lambda: (lambda r: r[2] == 30 and (r[1]["stack_budget"]["per"], r[1]["stack_budget"]["given"],
+                                              r[1]["stack_budget"]["runs"]) == (30, False, True))(s5_run()))
+    lo12, hi12 = budget_window(12, DRY_RECORD_S, DRY_RECORD_S)
+    expect(f"dry run: a given --stack-per-ring that bites is honoured, S5 holding at its window {lo12:.0f}..{hi12:.0f}",
+           lambda: (lambda r: failing(r[0]) == [] and r[2] == 12 and r[1]["stack_budget"]["given"] is True and
+                    len(s5_ran(r[0])) == 1 and f"({lo12:.0f}..{hi12:.0f})" in s5_ran(r[0])[0])(
+               s5_run(argv=("--stack-per-ring", "12"))))
+
+    # [SNAPRIG-STEP2-RATE] The step-2 run (run_full) holds SnapProbe_PerFrame's parameter ring to a budget and checks
+    # it dropped calls over it: the same precondition as S5's, which a fixture at about 30 fps does not meet at 30.
+    def step2_run(pf_rate: float = ScriptedDll.PF_RATE, main_pf_rate: float | None = None,
+                  faults: tuple[str, ...] = ()) -> tuple[Checks, dict, int | None]:
+        """The step-2 run at a probe rate: its checks, its out, and the parameter budget its main Start sent."""
+        dll = ScriptedDll(*faults, pf_rate=pf_rate, main_pf_rate=main_pf_rate, late=True)
+        ch, out = dry_run(dll, stacks=False)
+        main = next((t for t in dll.starts if t and t.get("ticked_names") and (t.get("snapshots") or {}).get("funcs")),
+                    {})
+        return ch, out, (main.get("snapshots") or {}).get("per_ring_per_s")
+
+    def step2_line(ch: Checks) -> tuple[list[bool], list[str]]:
+        """The budget check's verdicts where it ran, and its reasons where it was not run."""
+        return ([ok for n, ok, _ in ch.items if n.startswith(STEP2_BUDGET)],
+                [why for n, why in ch.skipped if n.startswith(STEP2_BUDGET)])
+    expect("dry run step 2: the probe at 60 a second, the old 30 sent, and the budget check holds",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0]) == ([True], []))(step2_run()))
+    expect("dry run step 2: the probe at 30 a second (the fixture at 30 fps): the budget is lowered to 7 so it bites, "
+           "and the check holds",
+           lambda: (lambda r: r[2] == 7 and step2_line(r[0]) == ([True], []))(step2_run(30)))
+    expect("dry run step 2: no budget fits (the probe at 4 a second): the old 30 sent, the check not run with the "
+           "measured rates, never failed",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
+                    "4.0/s" in step2_line(r[0])[1][0] and "2.0/s" in step2_line(r[0])[1][0])(step2_run(4)))
+    expect("dry run step 2: the plain recording at 60 a second, the main one at 30: the check not run, both rates in "
+           "the reason",
+           lambda: (lambda r: r[2] == 30 and step2_line(r[0])[0] == [] and len(step2_line(r[0])[1]) == 1 and
+                    "60.0/s" in step2_line(r[0])[1][0] and "30.0/s" in step2_line(r[0])[1][0])(
+               step2_run(60, main_pf_rate=30)))
+    # The same for the step-2 run. Its other checks fail on the scripted DLL (the class docstring), so these controls
+    # name the lines they read.
+    step2_main = f"the budget: {MAIN_TABLE}"
+    expect("dry run step 2: a whole main table passes its own check",
+           lambda: (lambda ch: step2_main in ran(ch) and step2_main not in failing(ch))(step2_run()[0]))
+    expect("dry run step 2: a main table without SnapProbe_PerFrame's rate fails its own check, and the budget check "
+           "still runs and holds",
+           lambda: all((lambda ch: step2_main in failing(ch) and step2_line(ch) == ([True], []))(
+               step2_run(faults=(fault,))[0]) for fault in main_faults))
+    expect("dry run step 2: a main table whose SnapProbe_PerFrame rate is a tenth or a third of the truth: the "
+           "parameter ring shows the rate, so the budget check still runs and holds",
+           lambda: all(step2_line(step2_run(faults=(fault,))[0]) == ([True], []) for fault in under_faults))
+    exercised.update(("param_dropped0", "param_overkept"))
+    expect("dry run step 2: a parameter ring that counts no drop fails the budget check",
+           lambda: step2_line(step2_run(faults=("param_dropped0",))[0]) == ([False], []))
+    expect("dry run step 2: at 7 a second, a ring that keeps 25 a second fails the check (what it keeps is bounded by "
+           "the budget sent, not by 30)",
+           lambda: step2_line(step2_run(30, faults=("param_overkept",))[0]) == ([False], []))
+
+    # The bookkeeping last, so it counts every control above.
+    expect("every scripted fault has a control", lambda: exercised == set(ScriptedDll.FAULTS))
+    expect("every check the good runs make has a fault that fails it",
+           lambda: (lambda names: names != [] and [n for n in names if not any(n.startswith(p) for p in caught_by)]
+                    == [])(ran(dry_run(ScriptedDll())[0]) + ran(dry_run(ScriptedDll(), game=True)[0]) +
+                           ran(dry_run(ScriptedDll(), argv=("--pdb",))[0])))
+    expect("every check the --names run makes has a fault that fails it, A1's two among them",
+           lambda: (lambda names: NAMES_IS in names and NAMES_AT in names and
+                    [n for n in names if not any(n.startswith(p) for p in caught_by)] == [])(
+               ran(dry_run(ScriptedDll(), game=True, argv=names_argv)[0])))
 
     failed = [r for r in results if not r[1]]
     for name, _, why in failed:

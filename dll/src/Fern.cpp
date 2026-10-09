@@ -88,7 +88,12 @@ extern "C" bool      UE5_IsGameThreadHookActive();
 extern "C" int       UE5_GetProcessEventOffset();
 
 // [R7-C-05] Frieren.cpp: the init fence apply_rescan holds (see FrierenInit there).
-namespace FrierenInit { void BeginApply(); void EndApply(); }
+// [UE-OVERRIDE-HINT-AUTO] ...and init's version ladder, which Auto climbs from the detection it hands back.
+namespace FrierenInit {
+void BeginApply();
+void EndApply();
+DynOff::StructuralVersion CorrectVersionStructurally(unsigned ueVersion, bool userOverride, const char* who);
+}
 
 // ============================================================
 // Radar wire helpers — parse "100" / "-42" / "3.14" / "true" /
@@ -1291,6 +1296,7 @@ static void FillPointerSnapshot(json& data) {
     extern bool        g_cachedVersionDetected;
     extern bool        g_cachedIsUserOverride;
     extern bool        g_cachedIsLowConfidence;
+    extern bool        g_cachedAutoPending;
     extern bool        g_cachedVersionTooOld;
     extern const char* g_cachedPublisherThumbprint;
     extern const char* g_cachedGObjectsMethod;
@@ -1333,6 +1339,9 @@ static void FillPointerSnapshot(json& data) {
     data["version_detected"]     = g_cachedVersionDetected;
     data["is_user_override"]     = g_cachedIsUserOverride;
     data["is_low_confidence"]    = g_cachedIsLowConfidence;
+    // [UE-OVERRIDE-HINT-AUTO] On every snapshot, so a UI that reconnects mid-session still says Auto waits for the
+    // next launch rather than offering the override's version back as the choice.
+    data["auto_pending"]         = g_cachedAutoPending;
     data["is_version_too_old"]   = g_cachedVersionTooOld;
     // build_number: compile-time DLL build (e.g. 648). Also emitted on the
     // init response; surfacing it on every snapshot lets the UI's
@@ -2089,28 +2098,64 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
 
         // ─────────────────────────────────────────────────────────────────
         // set_ue_version_override { version: int, persist: bool }
-        //   version == 0  → clear the override (revert to auto-detect on next launch)
-        //   version != 0  → record as the persistent override for this game
-        //   persist=false → only update the in-process cached version (no disk write)
+        //   version != 0  → record as the persistent override for this game, unless the
+        //                   sampled UFunctions contradict its tail layout: then an error,
+        //                   and nothing is persisted or changed
+        //   version == 0  → Auto: clear the persisted override and hand the session back the
+        //                   detection a launch would start from (Flamme::PlanAutoRestore); with
+        //                   none to hand back, the override's version stays in force until the
+        //                   next launch, and the reply and get_pointers say so (auto_pending)
+        //   persist=false → only the in-process version changes (no disk write)
         //
-        // Updates g_cachedUEVersion immediately so version-dependent code paths
-        // (Soft array CE XML layout, FProperty offset selection, etc.) start
-        // using the new value on the next request — no re-init / re-scan needed.
+        // The version changes on the next request — no re-init / re-scan. What the scan
+        // MEASURED stays (GObjects, GNames, the DynOff offsets, the UFunction tail); what is
+        // derived from the version follows it. Scan-time choices (the too-old refusal, the
+        // sparse-delegate scan) are not made again: they follow at the next launch.
         // ─────────────────────────────────────────────────────────────────
         if (cmd == Renge::CMD_SET_UE_VERSION_OVERRIDE) {
             extern uint32_t    g_cachedUEVersion;
             extern bool        g_cachedVersionDetected;
             extern bool        g_cachedIsUserOverride;
             extern bool        g_cachedIsLowConfidence;
+            extern bool        g_cachedAutoPending;
+            extern const char* g_cachedPublisherThumbprint;
             extern char        g_cachedPeHash[17];
 
             int     newVersion = request.value("version", 0);
             bool    persist    = request.value("persist", true);
 
-            // Defensive bounds — UE 4.18 .. 5.9 plus 0 (clear).
-            if (newVersion != 0 && (newVersion < 418 || newVersion > 509)) {
+            // Defensive bounds, plus 0 (clear) — Grimoire::UeVersionOverrideAccepted says why.
+            if (!Grimoire::UeVersionOverrideAccepted(newVersion)) {
                 return Renge::MakeError(id,
-                    "version out of supported range (418..509 or 0 to clear)").dump();
+                    "version out of supported range ("
+                    + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MIN) + ".."
+                    + std::to_string(Grimoire::UE_VERSION_OVERRIDE_MAX) + " or 0 to clear)").dump();
+            }
+
+            // [UE-OVERRIDE-411] review: a version from the other side of 4.18 puts the UFunction tail 2 off this game's
+            // (NumParms / ParmsSize / ReturnValueOffset), so one the sampled UFunctions contradict is refused here,
+            // before anything is persisted or changed. KEPT, not advisory, since review 2 made the readers follow the
+            // measurement (DynOff::FunctionTailReadBase): the tail reads no longer need it, but the version keys more
+            // than the tail, and a version this game's UFunctions contradict is the wrong one for everything else it
+            // keys. Clearing is always accepted -- what it hands back is a detection, never a pick -- and with nothing
+            // measured, the override is applied as asked: DynOff::CheckTailForVersion says why.
+            if (newVersion != 0) {
+                const Ubel::OverrideTailCheck tc = Ubel::CheckVersionOverrideTail(static_cast<unsigned>(newVersion));
+                if (tc.verdict == DynOff::TailCheck::Contradicts) {
+                    char msg[384];
+                    snprintf(msg, sizeof(msg),
+                             "UE %d.%d does not fit this game: its UFunctions keep NumParms / ParmsSize behind +0x%X, "
+                             "where UE %d.%d's layout puts them behind +0x%X (4.11-4.17 carry a RepOffset that 4.18 "
+                             "dropped). The override was not applied.",
+                             newVersion / 100, newVersion % 100, tc.measuredBase,
+                             newVersion / 100, newVersion % 100, tc.versionBase);
+                    Sein::Warn("PIPE:cmd", "set_ue_version_override: refused -- %s", msg);
+                    return Renge::MakeError(id, msg).dump();
+                }
+                if (tc.verdict == DynOff::TailCheck::Unmeasured)
+                    Sein::Info("PIPE:cmd", "set_ue_version_override: UE %d could not be checked against the "
+                                           "UFunction tail (no scan has sampled one) -- applying it as asked",
+                               newVersion);
             }
 
             if (persist) {
@@ -2134,42 +2179,83 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                          nameUtf8.c_str());
             }
 
-            if (newVersion == 0) {
-                // Clear: don't change the in-process version (would require re-init);
-                // just clear the override flag so UI shows "auto-detected" branding.
-                g_cachedIsUserOverride = false;
-            } else {
-                g_cachedUEVersion       = static_cast<uint32_t>(newVersion);
-                g_cachedVersionDetected = true;
-                g_cachedIsUserOverride  = true;
-                g_cachedIsLowConfidence = false;
-
-                // ⛔ THE SOFT/LAZY ENVELOPES ARE LATCHED AND MUST BE DROPPED WITH THE VERSION.
-                // `DynOff::PersistentPtrEnvelopeFor` (Grimoire.h) consults `latched` BEFORE it
-                // ever looks at ueVersion, so a latch taken under the OLD version outranks the
-                // new one for every call that cannot produce a fresh accepted measurement — and
-                // several cannot: Ubel.cpp's `ReadSoftObjectArrayElements` passes a literal 0 elemSize, and a garbage
-                // FPROPERTY_ELEMSIZE is exactly why the fallback exists. The override then
-                // silently changes the version and NOT the layout it implies, which is the one
-                // thing a version override is for. Clearing them re-derives on the next read
-                // (or re-measures, which re-latches).
-                // ⚠ SCOPE, stated so this is not mistaken for a re-detect: the override does NOT
-                // re-run ValidateAndFixOffsets, so the rest of the DynOff family keeps whatever
-                // the real scan probed. That is deliberate — those are MEASURED from the running
-                // image, not derived from the version number, and re-deriving them from a
-                // hypothetical version would replace fact with guess. These two are different
-                // precisely because their fallback IS version-derived.
+            // ⛔ THE SOFT/LAZY ENVELOPES ARE LATCHED AND MUST BE DROPPED WITH THE VERSION, whichever
+            // way it moves. `DynOff::PersistentPtrEnvelopeFor` (Grimoire.h) consults `latched` BEFORE it
+            // ever looks at ueVersion, so a latch taken under the OLD version outranks the
+            // new one for every call that cannot produce a fresh accepted measurement — and
+            // several cannot: Ubel.cpp's `ReadSoftObjectArrayElements` passes a literal 0 elemSize, and a garbage
+            // FPROPERTY_ELEMSIZE is exactly why the fallback exists. The version would then
+            // silently change and NOT the layout it implies, which is the one thing a version
+            // change is for. Clearing them re-derives on the next read (or re-measures, which
+            // re-latches).
+            // ⚠ SCOPE, stated so this is not mistaken for a re-detect: neither arm re-runs
+            // ValidateAndFixOffsets, so the rest of the DynOff family keeps whatever the real
+            // scan probed. That is deliberate — those are MEASURED from the running image, not
+            // derived from the version number, and re-deriving them from a hypothetical version
+            // would replace fact with guess. These two are different precisely because their
+            // fallback IS version-derived.
+            auto dropVersionDerivedEnvelopes = [&]() {
                 DynOff::SOFTPTR_PATH = -1;
                 DynOff::LAZYPTR_GUID = -1;
                 Sein::Info("PIPE:cmd", "set_ue_version_override: UE %u — soft/lazy payload "
                                        "envelopes un-latched so they re-derive for this version",
                            g_cachedUEVersion);
+            };
+
+            Flamme::AutoRestore autoRestore = Flamme::AutoRestore::NotOverridden;
+            if (newVersion == 0) {
+                // [UE-OVERRIDE-HINT-AUTO] Clearing used to change only the flag ("would require re-init"):
+                // the session kept the overridden version, the UI showed it unbadged as if detected, and
+                // a reconnect then recorded it in the hint cache as a detection, so the next launch
+                // reused it too. Auto now hands back what the next launch would start from -- the
+                // record's own detection, climbed up init's structural ladder (the record holds the
+                // version from before it) and refined by the lazy markers this session has seen.
+                const Flamme::ScanHints hints = Flamme::LoadHints(g_cachedPeHash);
+                const Flamme::AutoRestorePlan plan = Flamme::PlanAutoRestore(
+                    g_cachedIsUserOverride, hints, Genau::kVersionDetectLogicRev,
+                    g_cachedPublisherThumbprint != nullptr);
+                autoRestore = plan.outcome;
+                if (plan.outcome == Flamme::AutoRestore::Restored) {
+                    const DynOff::StructuralVersion climbed = FrierenInit::CorrectVersionStructurally(
+                        plan.version, /*userOverride=*/false, "set_ue_version_override");
+                    g_cachedUEVersion       = DynOff::RefineVersionFromLazyMarkers(
+                        climbed.version, Ubel::SawUtf8OrAnsiStr(), DynOff::bEnumNamesNewContainer);
+                    g_cachedVersionDetected = plan.detected;
+                    g_cachedIsLowConfidence = plan.lowConfidence || climbed.loweredToUE4;
+                    g_cachedIsUserOverride  = false;
+                    g_cachedAutoPending     = false;
+                    Sein::Info("PIPE:cmd", "set_ue_version_override: Auto -- restored the detection on record "
+                                           "(UE %u, detected=%s, lowConf=%s) -> UE %u in force",
+                               plan.version, plan.detected ? "yes" : "no",
+                               g_cachedIsLowConfidence ? "yes" : "no", g_cachedUEVersion);
+                    dropVersionDerivedEnvelopes();
+                } else if (plan.outcome != Flamme::AutoRestore::NotOverridden) {
+                    // Nothing to hand back that a launch would start from: the override's version stays
+                    // in force, and stays called an override, so no reconnect records it as a detection.
+                    g_cachedAutoPending = Flamme::AutoPendsUntilNextLaunch(plan.outcome, persist);
+                    Sein::Info("PIPE:cmd", "set_ue_version_override: Auto -- %s; UE %u stays in force %s",
+                               Flamme::AutoRestoreName(plan.outcome), g_cachedUEVersion,
+                               g_cachedAutoPending ? "until the next launch"
+                                                   : "(not persisted, so the override stays too)");
+                }
+            } else {
+                g_cachedUEVersion       = static_cast<uint32_t>(newVersion);
+                g_cachedVersionDetected = true;
+                g_cachedIsUserOverride  = true;
+                g_cachedIsLowConfidence = false;
+                g_cachedAutoPending     = false;
+                dropVersionDerivedEnvelopes();
             }
 
             json data;
-            data["ue_version"]       = g_cachedUEVersion;
-            data["is_user_override"] = g_cachedIsUserOverride;
-            data["persisted"]        = persist;
+            data["ue_version"]        = g_cachedUEVersion;
+            data["version_detected"]  = g_cachedVersionDetected;
+            data["is_user_override"]  = g_cachedIsUserOverride;
+            data["is_low_confidence"] = g_cachedIsLowConfidence;
+            data["auto_pending"]      = g_cachedAutoPending;
+            data["persisted"]         = persist;
+            if (newVersion == 0)
+                data["auto_restore"]  = Flamme::AutoRestoreName(autoRestore);
             return Renge::MakeResponse(id, data).dump();
         }
 
@@ -4446,6 +4532,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                 item["function_flags"]= e.functionFlags;
                 item["num_parms"]     = e.numParms;
                 item["parms_size"]    = e.parmsSize;
+                item["buffer_bytes"]  = e.bufferBytes;
                 functions.push_back(item);
             }
 
@@ -5379,6 +5466,8 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                 if (inModule) sj["fn_rva"] = cs.fnBegin - cs.moduleBase;
                                 // [LIVEFUNCS-STEP3] S3-A1: the UFunction whose native entry this is, ProcessEvent or
                                 // not; `shared` when several enter there (the interpreter, identical code folded).
+                                // [A1-INTERP-LABEL] `script` when it is the script functions' entry, the interpreter:
+                                // the function named is then only the lowest-addressed of them, not the one running.
                                 uintptr_t uf = 0;
                                 const size_t n = Aura::LookupCodeEntry(g_codeIndex, cs.fnBegin, uf);
                                 if (n != 0) {
@@ -5386,6 +5475,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
                                     sj["func"]  = Ubel::GetName(uf);
                                     sj["class"] = Ubel::GetName(Ubel::GetOuter(uf));
                                     if (n > 1) sj["shared"] = n;
+                                    if (Aura::IsScriptFunction(uf)) sj["script"] = true;
                                 }
                             }
                             if (cs.own) sj["own"] = true;
@@ -6674,23 +6764,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the two rather than replacing the caller's value: a caller asking for MORE
             // is harmless slack (the hex overlay is already clamped to the buffer), while a
             // caller asking for less — or for nothing — is the overflow above.
-            size_t bufSize = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
-            {
-                FunctionInfo fi{};
-                if (Ubel::ResolveFunctionInfo(ufuncAddr, fi) && fi.parmsSize > 0) {
-                    const size_t authoritative = static_cast<size_t>(fi.parmsSize);
-                    if (authoritative > bufSize) {
-                        if (bufSize > 0) {
-                            LOG_WARN("invoke_function: caller asked for parms_size=%zu but "
-                                     "%s::%s reports ParmsSize=%zu — using the larger; the "
-                                     "smaller would overflow the buffer ProcessEvent writes",
-                                     bufSize, className.c_str(), funcName.c_str(),
-                                     authoritative);
-                        }
-                        bufSize = authoritative;
-                    }
-                }
+            // ParmsSize itself is read from the UFunction's tail, which a wrong version misplaced;
+            // Ubel::ParamBufferSize also reads the function's own parameter chain and never answers
+            // less than where that ends. [UE-OVERRIDE-411]
+            // The chain is read at the address even when the tail does not resolve: that case used to
+            // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
+            FunctionInfo fi{};
+            const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
+            const size_t asked = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
+            if (asked > 0 && authoritative > asked) {
+                LOG_WARN("invoke_function: caller asked for parms_size=%zu but "
+                         "%s::%s needs %zu (ParmsSize=%u) — using the larger; the "
+                         "smaller would overflow the buffer ProcessEvent writes",
+                         asked, className.c_str(), funcName.c_str(),
+                         authoritative, static_cast<unsigned>(fi.parmsSize));
             }
+            const size_t bufSize = (std::max)(authoritative, asked);
             std::vector<uint8_t> paramBuf(bufSize, 0);
 
             if (!paramsHex.empty()) {
@@ -6790,7 +6880,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // dereferencing this freed stack-local buffer (use-after-free).
             int32_t callResult = directCall
                 ? UE5_CallProcessEventDirect(instanceAddr, ufuncAddr, paramPtr)
-                : UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr, (uint32_t)bufSize);
+                : UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr, (uint32_t)paramBuf.size());
 
             // Free the by-value FString buffers. UE's calling convention makes
             // the CALLER own the params, and a UFUNCTION receives its FString by

@@ -474,6 +474,13 @@ Measured 2026-07-29. **21 sweep rows resolve to a PDB, but only 20 distinct PDB 
 > single largest fragility in the corpus. `UE5.6-Satisfactory` needs the whole
 > `Engine/Binaries/Win64` PDB set, not just the anchor.
 
+> ⚠ **EVERSPACE 2 already patched past these rows.** Measured 2026-09-05: the installed exe was replaced
+> on 2026-09-01 and is UE 5.6.1 (detector code 506), with a 1.98 GB `ES2-Win64-Shipping.pdb` carrying the
+> new exe's mtime beside it; the two archived builds are both 5.5.4. `UE5.5-Everspace2` in
+> `tools/ghidra/corpus-provenance.tsv` still names the live Steam location while recording the old
+> 169,063,424 B, so it describes the archive copy, not what is installed. (Moved from the handover,
+> 2026-10-08.)
+
 ### 3b. Archive-held — safe, already yours
 
 6 files, 1.39 GB, under `D:\tmp\Game archive` (mirrored to `X:\UE_Analyze_Data\Game archive`):
@@ -683,7 +690,7 @@ Take these strictly in order. Re-run `preflight.py --sizes` between steps.
 
 | Step | What | Frees | Capability lost |
 |------|------|-------|-----------------|
-| 0 | The orphan `.rep` — `Meltopia` 3.35, `Satfi426` 0.68, `ISDefenseEditor_UE410` 0.16, `ES1` 0.16 | **4.35 GB** | **None.** GROUND-TRUTH.md already calls Meltopia "superseded and can be deleted" and Satfi426 "superseded, do not re-chase". **Both 2026-07-29 caveats on this row are now discharged:** `UE423_Flying-Win64-DebugGame` (3.08 GB) is no longer an orphan at all — it is the live project behind the `UE4.23-FlyingDbgGame` sweep row, so it has been REMOVED from this list; and `ISDefenseEditor_UE410` is no longer the only evidence for the pre-4.11 floor, which is now measured by two full-PDB 4.10.4 oracles (`UE410_Game_Shipping` / `..._Development`). Drop all four without further thought. |
+| 0 | The orphan `.rep` — `Meltopia` 3.35, `Satfi426` 0.68, `ISDefenseEditor_UE410` 0.16, `ES1` 0.16 | **4.35 GB** | **None.** GROUND-TRUTH.md already calls Meltopia "superseded and can be deleted" and Satfi426 "superseded, do not re-chase". **Both 2026-07-29 caveats on this row are now discharged:** `UE423_Flying-Win64-DebugGame` (3.08 GB) is no longer an orphan at all — it is the live project behind the `UE4.23-FlyingDbgGame` sweep row, so it has been REMOVED from this list; and `ISDefenseEditor_UE410` is no longer the only evidence for the pre-4.11 floor, which is now measured by two 4.10.4 rows with public-symbol PDBs (`UE410_Game_Shipping` / `..._Development`; their type stream has 0 records, measured 2026-10-08, so the 4.10 type oracle is IS Defense's own PDB). Drop all four without further thought. |
 | 1 | 4 zero-contribution noise probes — `UE4.27-Artisan` 1.35, `UE5.5-ManorLords` 2.88, `UEx-DQ12HD2D` 1.60, `UE5.2-SatGameDLL` 2.28 | **8.11 GB** | Nothing measurable. Simulated exclusion: **0** patterns stop firing, **0** lose correctness evidence. Only §6 denominator mass. |
 | 2 | 5 exclusive-exercise noise probes — `UE4.27-Hogwarts` 3.65, `UE5.6-TQ2` 3.30, `UE5.1-Palworld` 2.77, `UE4.x-FF7Rebirth` 2.33, `UE4.18-Octopath` 0.77 | **12.82 GB** | **0** correctness. 6 patterns fall into the already-populated "never hits anywhere" bucket (`GOBJ_RE1`, `GOBJ_V9`, `GOBJ_OT_2`, `GWLD_TQ_2`, `GWLD_SF_3`, `GWLD_TQ_3`). Taking steps 1+2 removes 865.5 MB of the 2,877.2 MB monolithic executable mass (30.1%). Hogwarts first: it is Denuvo-packed and contributes 4.0% of §6 **numerator** hits from non-`.text` bytes. |
 | 3 | Version-redundant ORACLES, **one at a time**, re-sweeping between each — `UE5.5-Meltopia` 4.54, `UE4.27-DQ7R` 3.89, `UE4.27-Maelstrom` 3.81, `UE4.27-Breeders` 2.84, `UE4.20-HeliumRain` 1.39 | ≤ **16.47 GB** | Individually nothing. **Not jointly redundant**: Breeders + Maelstrom are the two independent symbolised 4.27s that proved DropIn's 32-byte `FUObjectItem` is a config artifact — keep at least one. Meltopia is the second symbolised *monolithic* 5.5 in a modular-heavy corpus. |

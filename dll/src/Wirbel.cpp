@@ -429,8 +429,8 @@ int32_t GetPoseImpl(Pose& out, char* mapName, int32_t mapNameCap, uint8_t* outSo
         // an approximate display than an error).
         FunctionInfo fi;
         if (FindFunc(Ubel::GetClass(c.pawn), "K2_GetActorLocation", fi)
-            && fi.parmsSize > 0) {
-            std::vector<uint8_t> buf(fi.parmsSize, 0);
+            && Ubel::ParamBufferSize(fi) > 0) {
+            std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
             const FunctionParam* rv = FindReturnParam(fi);
             if (rv && Invoke(c.pawn, fi, buf) == 0
                 && ParamFits(buf, rv, (rv->size >= 24) ? 24 : 12)) {
@@ -553,7 +553,7 @@ void SetCmcMode(uintptr_t cmc, uint8_t mode) {
     if (!cmc) return;
     FunctionInfo fi;
     if (!FindFunc(Ubel::GetClass(cmc), "SetMovementMode", fi)) return;
-    std::vector<uint8_t> buf((std::max<size_t>)(fi.parmsSize, 1), 0);
+    std::vector<uint8_t> buf((std::max<size_t>)(Ubel::ParamBufferSize(fi), 1), 0);
     WriteByteParam(buf, fi, "NewMovementMode", mode);
     Invoke(cmc, fi, buf);
 }
@@ -562,9 +562,9 @@ void SetCmcMode(uintptr_t cmc, uint8_t mode) {
 // Returns true when the invoke ran and reported success.
 bool InvokeSetActorLocation(uintptr_t pawn, const double xyz[3]) {
     FunctionInfo fi;
-    if (!FindFunc(Ubel::GetClass(pawn), "K2_SetActorLocation", fi) || fi.parmsSize <= 0)
+    if (!FindFunc(Ubel::GetClass(pawn), "K2_SetActorLocation", fi) || Ubel::ParamBufferSize(fi) == 0)
         return false;
-    std::vector<uint8_t> buf(fi.parmsSize, 0);
+    std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
     if (!WriteVecParam(buf, fi, "NewLocation", xyz)) return false;
     WriteBoolParam(buf, fi, "bSweep", false);
     WriteBoolParam(buf, fi, "bTeleport", true);
@@ -586,8 +586,8 @@ bool TeleportViaComponent(const Chain& c, const double xyz[3]) {
         // K2_SetRelativeLocation only equals world space when not attached.
         if (!attached || std::strcmp(n, "K2_SetWorldLocation") == 0) {
             FunctionInfo fi;
-            if (!FindFunc(rootClass, n, fi) || fi.parmsSize <= 0) continue;
-            std::vector<uint8_t> buf(fi.parmsSize, 0);
+            if (!FindFunc(rootClass, n, fi) || Ubel::ParamBufferSize(fi) == 0) continue;
+            std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
             if (!WriteVecParam(buf, fi, "NewLocation", xyz)) continue;
             WriteBoolParam(buf, fi, "bSweep", false);
             WriteBoolParam(buf, fi, "bTeleport", true);
@@ -656,9 +656,9 @@ int DeepForceWorldPos(const Chain& c, const double oldPos[3], const double targe
 // the function / return param can't be resolved.
 bool GetActorWorld(uintptr_t pawn, double out[3]) {
     FunctionInfo fi;
-    if (!FindFunc(Ubel::GetClass(pawn), "K2_GetActorLocation", fi) || fi.parmsSize <= 0)
+    if (!FindFunc(Ubel::GetClass(pawn), "K2_GetActorLocation", fi) || Ubel::ParamBufferSize(fi) == 0)
         return false;
-    std::vector<uint8_t> buf(fi.parmsSize, 0);
+    std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
     const FunctionParam* rv = FindReturnParam(fi);
     if (!rv || Invoke(pawn, fi, buf) != 0) return false;
     int32_t need = (rv->size >= 24) ? 24 : 12;
@@ -674,8 +674,8 @@ bool GetActorWorld(uintptr_t pawn, double out[3]) {
 // resolved or the invoke fails (game thread idle).
 bool InvokeRetVec(uintptr_t instance, const char* fn, double out[3]) {
     FunctionInfo fi;
-    if (!FindFunc(Ubel::GetClass(instance), fn, fi) || fi.parmsSize <= 0) return false;
-    std::vector<uint8_t> buf(fi.parmsSize, 0);
+    if (!FindFunc(Ubel::GetClass(instance), fn, fi) || Ubel::ParamBufferSize(fi) == 0) return false;
+    std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
     const FunctionParam* rv = FindReturnParam(fi);
     if (!rv || Invoke(instance, fi, buf) != 0) return false;
     int32_t need = (rv->size >= 24) ? 24 : 12;
@@ -687,8 +687,8 @@ bool InvokeRetVec(uintptr_t instance, const char* fn, double out[3]) {
 // Invoke a no-arg getter returning a float/double scalar (e.g. GetFOVAngle).
 bool InvokeRetFloat(uintptr_t instance, const char* fn, double& out) {
     FunctionInfo fi;
-    if (!FindFunc(Ubel::GetClass(instance), fn, fi) || fi.parmsSize <= 0) return false;
-    std::vector<uint8_t> buf(fi.parmsSize, 0);
+    if (!FindFunc(Ubel::GetClass(instance), fn, fi) || Ubel::ParamBufferSize(fi) == 0) return false;
+    std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
     const FunctionParam* rv = FindReturnParam(fi);
     if (!rv || rv->offset < 0 || Invoke(instance, fi, buf) != 0) return false;
     if (rv->size == 8 && rv->offset + 8 <= static_cast<int32_t>(buf.size())) {
@@ -1010,8 +1010,8 @@ int32_t TeleportPawnTo(const Chain& c, const double xyz[3], const double* destPy
         haveFn = FindFunc(pawnClass,
                           preferTeleportTo ? "K2_SetActorLocation" : "K2_TeleportTo", fi);
 
-    if (haveFn && fi.parmsSize > 0) {
-        std::vector<uint8_t> buf(fi.parmsSize, 0);
+    if (haveFn && Ubel::ParamBufferSize(fi) > 0) {
+        std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
         bool isTeleportTo = IEquals(fi.name, "K2_TeleportTo");
         bool packed;
         if (isTeleportTo) {
@@ -1157,8 +1157,8 @@ int32_t TeleportPawnTo(const Chain& c, const double xyz[3], const double* destPy
 // ControlRotation as fallback (known-safe — the PC re-consumes it per frame).
 void SetRotation(const Chain& c, const double pyr[3]) {
     FunctionInfo fi;
-    if (FindFunc(Ubel::GetClass(c.pc), "SetControlRotation", fi) && fi.parmsSize > 0) {
-        std::vector<uint8_t> buf(fi.parmsSize, 0);
+    if (FindFunc(Ubel::GetClass(c.pc), "SetControlRotation", fi) && Ubel::ParamBufferSize(fi) > 0) {
+        std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
         if (WriteVecParam(buf, fi, "NewRotation", pyr)
             && Invoke(c.pc, fi, buf) == 0)
             return;
@@ -1182,7 +1182,7 @@ void SetRotation(const Chain& c, const double pyr[3]) {
 void StopMovement(const Chain& c) {
     FunctionInfo pcStop;
     if (FindFunc(Ubel::GetClass(c.pc), "StopMovement", pcStop)) {
-        std::vector<uint8_t> b((std::max<size_t>)(pcStop.parmsSize, 1), 0);
+        std::vector<uint8_t> b((std::max<size_t>)(Ubel::ParamBufferSize(pcStop), 1), 0);
         Invoke(c.pc, pcStop, b);
         LOG_INFO("Teleport: AController::StopMovement invoked on PC 0x%llX",
                  (unsigned long long)c.pc);
@@ -1198,7 +1198,7 @@ void StopMovement(const Chain& c) {
     }
     FunctionInfo fi;
     if (!FindFunc(Ubel::GetClass(cm), "StopMovementImmediately", fi)) return;
-    std::vector<uint8_t> buf((std::max<size_t>)(fi.parmsSize, 1), 0);
+    std::vector<uint8_t> buf((std::max<size_t>)(Ubel::ParamBufferSize(fi), 1), 0);
     Invoke(cm, fi, buf);
     LOG_INFO("Teleport: StopMovementImmediately invoked on CMC 0x%llX",
              (unsigned long long)cm);
@@ -1287,11 +1287,11 @@ int32_t ResolveCursorBit(uintptr_t& outPc, uintptr_t& byteAddr, uint8_t& mask) {
 bool InvokeWblInputMode(uintptr_t wbl, uintptr_t wblClass, const char* fn,
                         uintptr_t pc, bool gameAndUI) {
     FunctionInfo fi;
-    if (!FindFunc(wblClass, fn, fi) || fi.parmsSize <= 0) {
+    if (!FindFunc(wblClass, fn, fi) || Ubel::ParamBufferSize(fi) == 0) {
         LOG_WARN("Teleport: cursor — %s not found on WidgetBlueprintLibrary", fn);
         return false;
     }
-    std::vector<uint8_t> buf(fi.parmsSize, 0);
+    std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
     WritePtrParam(buf, fi, "PlayerController", pc);
     if (gameAndUI) {
         WriteByteParam(buf, fi, "InMouseLockMode", 0);              // DoNotLock
@@ -1549,8 +1549,8 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
     // 1. Mouse position (screen-space floats in every UE version).
     double mx = 0, my = 0;
     bool haveMouse = false;
-    if (FindFunc(pcClass, "GetMousePosition", fi) && fi.parmsSize > 0) {
-        std::vector<uint8_t> buf(fi.parmsSize, 0);
+    if (FindFunc(pcClass, "GetMousePosition", fi) && Ubel::ParamBufferSize(fi) > 0) {
+        std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
         if (Invoke(c.pc, fi, buf) == 0 && ReturnedTrue(fi, buf)) {
             haveMouse = ReadFloatParam(buf, fi, "LocationX", mx)
                      && ReadFloatParam(buf, fi, "LocationY", my);
@@ -1567,8 +1567,8 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
     bool usedCenter = false;
     if (!haveMouse) {
         if (!fallbackToCenter) return TP_ERR_NO_CURSOR;
-        if (FindFunc(pcClass, "GetViewportSize", fi) && fi.parmsSize > 0) {
-            std::vector<uint8_t> buf(fi.parmsSize, 0);
+        if (FindFunc(pcClass, "GetViewportSize", fi) && Ubel::ParamBufferSize(fi) > 0) {
+            std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
             int32_t sx = 0, sy = 0;
             if (Invoke(c.pc, fi, buf) == 0
                 && ReadIntParam(buf, fi, "SizeX", sx)
@@ -1599,12 +1599,12 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
     // cursor position (works even when our GetMousePosition read (0,0)). Cursor
     // games only; skipped for the screen-center fallback.
     if (!usedCenter && FindFunc(pcClass, "GetHitResultUnderCursorByChannel", fi)
-        && fi.parmsSize > 0) {
+        && Ubel::ParamBufferSize(fi) > 0) {
         const FunctionParam* hr = FindParam(fi, "HitResult");
         for (int32_t i = 0; !haveHit && i <= 10; ++i) {
             int32_t chan = (i == 0) ? traceChannel : (i - 1);
             if (i > 0 && chan == traceChannel) continue;
-            std::vector<uint8_t> buf(fi.parmsSize, 0);
+            std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
             WriteByteParam(buf, fi, "TraceChannel", static_cast<uint8_t>(chan));
             WriteBoolParam(buf, fi, "bTraceComplex", true);
             if (hr && Invoke(c.pc, fi, buf) == 0 && ReturnedTrue(fi, buf)
@@ -1620,13 +1620,13 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
     // (a real cursor OR the screen center), needs NO cursor and NO
     // KismetSystemLibrary (which TQ2 doesn't expose).
     if (!haveHit && FindFunc(pcClass, "GetHitResultAtScreenPosition", fi)
-        && fi.parmsSize > 0) {
+        && Ubel::ParamBufferSize(fi) > 0) {
         const FunctionParam* sp = FindParam(fi, "ScreenPosition");  // FVector2D
         const FunctionParam* hr = FindParam(fi, "HitResult");
         for (int32_t i = 0; !haveHit && i <= 10; ++i) {
             int32_t chan = (i == 0) ? traceChannel : (i - 1);
             if (i > 0 && chan == traceChannel) continue;
-            std::vector<uint8_t> buf(fi.parmsSize, 0);
+            std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
             if (sp && sp->offset >= 0) {
                 if (sp->size >= 16) {
                     double v[2] = { mx, my };
@@ -1648,12 +1648,12 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
     }
     if (!haveHit) {
         if (!FindFunc(pcClass, "DeprojectScreenPositionToWorld", fi)
-            || fi.parmsSize <= 0) {
+            || Ubel::ParamBufferSize(fi) == 0) {
             LOG_WARN("Teleport: cursor — DeprojectScreenPositionToWorld not found on PC "
                      "class '%s' (cooked out?) — can't trace", Ubel::GetName(pcClass).c_str());
             return TP_ERR_REFLECTION;
         }
-        std::vector<uint8_t> buf(fi.parmsSize, 0);
+        std::vector<uint8_t> buf(Ubel::ParamBufferSize(fi), 0);
         WriteFloatParam(buf, fi, "ScreenX", mx);
         WriteFloatParam(buf, fi, "ScreenY", my);
         double loc[3] = {}, dir[3] = {};
@@ -1681,12 +1681,12 @@ int32_t TeleportToCursor(double zOffset, int32_t traceChannel,
             return TP_ERR_REFLECTION;
         }
         FunctionInfo lt;
-        if (!FindFunc(Ubel::GetClass(ksl), "LineTraceSingle", lt) || lt.parmsSize <= 0) {
+        if (!FindFunc(Ubel::GetClass(ksl), "LineTraceSingle", lt) || Ubel::ParamBufferSize(lt) == 0) {
             LOG_WARN("Teleport: cursor — LineTraceSingle not found on KismetSystemLibrary "
                      "(cooked out?) — no trace fallback");
             return TP_ERR_REFLECTION;
         }
-        std::vector<uint8_t> buf2(lt.parmsSize, 0);
+        std::vector<uint8_t> buf2(Ubel::ParamBufferSize(lt), 0);
         WritePtrParam(buf2, lt, "WorldContextObject", c.pawn);
         WriteVecParam(buf2, lt, "Start", loc);
         WriteVecParam(buf2, lt, "End", end);

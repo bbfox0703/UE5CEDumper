@@ -15,6 +15,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "Grimoire.h"   // DynOff::TailCheck: OverrideTailCheck's verdict
 #include "Linie.h"   // FuncIdentity: what the profiler's table read at a function's first call
 
 struct FieldInfo {
@@ -373,6 +374,13 @@ bool ResolveFunctionInfo(uintptr_t funcAddr, FunctionInfo& out);
 // or the chain cannot be read.
 bool ReadReturnSlot(uintptr_t funcAddr, int32_t& offset, int32_t& size);
 
+// [UE-OVERRIDE-411] review: how many bytes a ProcessEvent buffer for a function gets -- never fewer than its
+// own parameter chain ends at, whatever ParmsSize the tail read gave (DynOff::ProcessEventBufferBytes says why).
+// The first form uses the chain WalkFunctions read into fi.params; a FunctionInfo without it (ResolveFunctionInfo's)
+// takes the second, which reads the chain at funcAddr.
+uint32_t ParamBufferSize(const FunctionInfo& fi);
+uint32_t ParamBufferSize(uintptr_t funcAddr, uint16_t parmsSize);
+
 // [TRACE-UNLOADED-NAMES] D1: a function the game unloads before Stop keeps the name it had when it fired.
 //
 // What CaptureFunctionIdentity reads beyond the FNames, decided on the pipe thread before a recording starts: the
@@ -567,6 +575,20 @@ inline ParamKind ParamKindOf(uint64_t propertyFlags) {
 // (DynOff::UFUNCTION_FLAGS), running the vote on first use. 0 = undecided (the offsets probe
 // has not run, or it could not measure) -- the caller then keeps its primary + sweep.
 int FunctionFlagsOffset();
+
+// [UE-OVERRIDE-411] review: whether a UE version override fits the UFunction tail this game actually has. A version's
+// layout puts NumParms / ParmsSize where its FunctionTailShiftFor says, and the sampled UFunctions say where they are.
+// The readers follow the measurement whenever there is one (DynOff::FunctionTailReadBase), so set_ue_version_override
+// refuses a version the measurement contradicts as a version wrong for this game, not to protect those reads. Runs the
+// FunctionFlags vote first when nothing has asked for it yet, and measures again when that vote could not; a held
+// measurement judges before a re-init's probe has run. Unmeasured when there is none to hold and no scan has run (there
+// is nothing to sample), or the samples do not decide.
+struct OverrideTailCheck {
+    DynOff::TailCheck verdict = DynOff::TailCheck::Unmeasured;
+    int versionBase  = -1;   // where the requested version's layout puts the tail
+    int measuredBase = -1;   // where the sampled UFunctions put it
+};
+OverrideTailCheck CheckVersionOverrideTail(unsigned newVersion);
 
 // Get the UClass* of a UObject
 uintptr_t GetClass(uintptr_t uobjectAddr);

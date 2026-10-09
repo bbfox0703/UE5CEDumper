@@ -6971,7 +6971,7 @@ public partial class LiveWalkerViewModel : ViewModelBase, IDisposable
             if (inputParams.Count == 0 && !hasReturn)
             {
                 var script = Services.BakedScriptGenerator.Generate(
-                    CurrentClassName, func.Name, func.ParmsSize,
+                    CurrentClassName, func.Name, Services.BakedScriptGenerator.BakedParmsSize(func),
                     Array.Empty<Models.BakedParamValue>());
                 var description = $"Invoke (baked, no args): {CurrentClassName}::{func.Name}";
                 // Sample availability BEFORE the send so we can distinguish

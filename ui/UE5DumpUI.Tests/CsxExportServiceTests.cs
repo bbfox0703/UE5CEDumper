@@ -67,7 +67,7 @@ public class StubDumpService : IDumpService
     // so its tests must be able to supply one. Non-overriding stubs keep throwing.
     public virtual Task<EngineState> GetPointersAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<TrainerOffsets> GetTrainerOffsetsAsync(CancellationToken ct = default) => throw new NotImplementedException();
-    public Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
+    public virtual Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<EngineState> SetInvokeTimeoutAsync(int timeoutMs, bool persist = true, CancellationToken ct = default) => throw new NotImplementedException();
     public Task<int> GetObjectCountAsync(CancellationToken ct = default) => throw new NotImplementedException();
     public virtual Task<ObjectListResult> GetObjectListAsync(int offset, int limit, CancellationToken ct = default, bool includePath = false) => throw new NotImplementedException();

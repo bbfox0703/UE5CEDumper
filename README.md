@@ -59,7 +59,7 @@ Games grouped by UE version range. Per-game detail — layout quirks, proxy note
 | **5.0 – 5.2** | ✅ | ✅ | ✅ | Squirrel With A Gun, Caravan Sandwitch, Meltopia, Retro Rewind Demo |
 | **5.3 – 5.4** | ✅ | ✅ | ✅ | Satisfactory (v1.1.3.1), Colossal, Avowed, Echoes of Aincrad Demo, The Adventures of Elliot, MindsEye, DragonSword Awakening, The Outer Worlds 2 |
 | **5.5 – 5.7** | ✅ | ✅ | ✅ | Titan Quest II, EverSpace 2, Lushfoil Photography Sim, Manor Lords, Cat Island Petrichor Demo, Way of the Hunter 2 Demo, COMBAT PILOT: CARRIER QUALIFICATION Demo, Solarpunk, Pionero Capital Demo, Satisfactory (v1.2.3.1), Star Trek Voyager – Across the Unknown |
-| **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo |
+| **5.8** | ✅ | ✅ | ✅ | Ski-E-O Demo, Unknown Operations: The Habitus Demo |
 
 *UE 4.11 is the supported floor; 4.10 and older are reported as unsupported.*
 

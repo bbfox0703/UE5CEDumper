@@ -9,6 +9,7 @@
 #include <atomic>
 #include <string>    // DynOff::LooksLikeFieldClassName / PickFFieldClassNameOffset
 #include <cwchar>    // _wcsnicmp / _wcsicmp — IsCheatEngineExeName
+#include <string_view>  // EngineBuildStringCode: a VERSIONINFO string is parsed without copying it
 
 namespace Grimoire {
 
@@ -345,7 +346,8 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 // ⛔ The table it replaces was wrong for EVERY UE5 game, and silently. It read
 //      >= 550 -> 0x228 ; >= 500 -> 0x220
 // but 550 is unreachable — versions are encoded major*100+minor and capped at 509
-// (Genau.cpp `major == 5 && minor <= 9`, Fern.cpp's 418..509 bound), so every UE5
+// (UeVersionCode's UE_MAX_UE5_MINOR, and UeVersionOverrideAccepted's UE_VERSION_OVERRIDE_MAX for the
+// pipe's override), so every UE5
 // title took the 0x220 arm, which is off by 0x38 (5.0) to 0x58 (5.5).
 //
 // MEASURED, from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` — UVTD's per-version
@@ -427,10 +429,11 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // It exists because heavily-stripped titles lose every version string and fall back to
 // 4.27 while the structural probes have already proved otherwise. The PURE predicates
 // live in this header so the tests can pin them (the two below, and the CMC rule as
-// DynOff::CmcMarkerVersion); the live reads that feed them stay in UE5_Init.
+// DynOff::CmcMarkerVersion), and so does the ladder's order (DynOff::ApplyVersionLadder);
+// the live reads that feed them stay in Frieren.cpp.
 //
 // ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
-// PER RUNG at its UE5_Init call site: a rung whose probe could misfire on a UE4 title must
+// PER RUNG in DynOff::ApplyVersionLadder: a rung whose probe could misfire on a UE4 title must
 // carry the guard, while one keyed on a layout no UE4 build has may go without — lifting a
 // 4.27-fallback title is the 503 rung's whole job. The guard is not cosmetic: a false
 // positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
@@ -539,6 +542,9 @@ constexpr bool FunctionTailMatches(int numParms, int parmsSize, int paramCount, 
 inline int UFUNCTION_FLAGS      = 0;
 inline int UFUNCTION_TAIL_EXTRA = 0;
 inline std::atomic<bool> bUFunctionFlagsDetected{false};
+// [UE-OVERRIDE-411] review: where the sampled UFunctions themselves keep NumParms / ParmsSize, as the base those two
+// sit +4 / +6 behind -- measured against every candidate, whatever the version says. -1 = not measured.
+inline std::atomic<int> UFUNCTION_TAIL_MEASURED{-1};
 
 // [VND583-03] alignof(FName), per engine version. On stock UE 4.x up to 4.21, in a NON
 // case-preserving build (every packaged game), FName sits in a union with
@@ -665,6 +671,68 @@ constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool has
     return ueVersion;
 }
 
+// === The init version ladder, in one place [UE-OVERRIDE-HINT-AUTO] ===
+//
+// After the offsets probe, init corrects the scan's version from what the probe measured: UProperty mode is UE4
+// before 4.25 whatever the label says, and the raise-only rungs above lift a stripped title to the UE5 minor its
+// layout proves. The DLL caches its detection before this ladder runs, so anything that hands a cached detection
+// back to the session -- Auto chosen over an override -- has to climb the same ladder, or a UE5 title whose strings
+// were stripped lands on its 4.27 fallback. One function, so the two cannot drift. Climbing twice changes nothing
+// (every rung is a floor or a window it leaves), so a cached value that already climbed -- the UI records the
+// version it was shown -- lands in the same place.
+//
+// The facts are the probe's. None of them is a fact until it has run (`measured`): a default FFIELDCLASS_NAME or
+// bUseFProperty would pass for a measurement, so the ladder then leaves the version alone.
+struct StructuralVersionFacts {
+    bool measured            = false;  // DynOff::bOffsetsProbeRan
+    bool fproperty           = false;  // DynOff::bUseFProperty
+    bool flatObjectArray     = false;  // the flat FUObjectArray (4.18-era), which picks the UE4 version the UProperty rung lands on
+    bool taggedFFieldVariant = false;  // DynOff::bTaggedFFieldVariant
+    bool reorderedItem57     = false;  // IsReorderedFUObjectItem57 over the measured item layout
+    bool virtualDtor58       = false;  // IsVirtualDtorFFieldClass58(FFIELDCLASS_NAME)
+};
+
+enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, ReorderedItem, VirtualFieldClassDtor };
+
+struct StructuralVersion {
+    unsigned version      = 0;
+    bool     loweredToUE4 = false;   // the UProperty rung fired: the label was wrong, so it is not trusted as detected
+};
+
+// `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
+// CharacterMovementComponent class and returns false when there is none. It is asked only inside the CMC rung's
+// window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 title must never pay for that.
+// `onRung(rung, from, to)` hears each rung that changed the version, so the caller's log names the evidence.
+template <class ProbeCmc, class OnRung>
+StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersionFacts& f, ProbeCmc&& probeCmc,
+                                     OnRung&& onRung) {
+    StructuralVersion r{ueVersion, false};
+    if (!f.measured) return r;
+    auto step = [&](VersionRung rung, unsigned to) {
+        if (to == r.version) return;
+        onRung(rung, r.version, to);
+        r.version = to;
+    };
+    if (!f.fproperty && r.version >= 500) {
+        step(VersionRung::UPropertyMode, f.flatObjectArray ? 418u : 424u);
+        r.loweredToUE4 = true;
+    }
+    if (f.fproperty && f.taggedFFieldVariant && r.version < 503)
+        step(VersionRung::TaggedFieldVariant, 503u);
+    if (f.fproperty && r.version >= 500 && r.version < 504) {
+        bool prop = false, func = false;
+        if (probeCmc(prop, func))
+            step(VersionRung::CmcMarkers, CmcMarkerVersion(r.version, true, prop, func));
+    }
+    if (f.fproperty && r.version < 507 && f.reorderedItem57)
+        step(VersionRung::ReorderedItem, 507u);
+    // The >= 500 guard is the rung's, not cosmetic: a false 0x08 on a UE4 title would raise 427 to 508 and cross the
+    // >= 500 / >= 501 layout gates in Aura and Ubel.
+    if (f.fproperty && r.version >= 500 && r.version < 508 && f.virtualDtor58)
+        step(VersionRung::VirtualFieldClassDtor, 508u);
+    return r;
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
 // the live slot and the serial -- which Ubel::ResolveWeakObjectPtr does -- AND the object's GC state,
 // which it did not, so a Garbage object stayed resolvable until the next GC. UE5 mirrors
@@ -716,6 +784,74 @@ inline int PickUFieldNextOffset(const int* offs, const int* hops, int n) {
 // RepOffset (OCTOPATH, DQ XI S). An unknown version (0) keeps the reads it always had.
 constexpr int FunctionTailShiftFor(unsigned ueVersion) {
     return (ueVersion >= 411 && ueVersion < 418) ? 2 : 0;
+}
+
+// === The bytes a ProcessEvent parameter buffer gets [UE-OVERRIDE-411] ===
+//
+// `parmsSize` is UFunction::ParmsSize as read from the tail; `chainEnd` is where the function's own
+// parameter chain ends (the furthest Offset_Internal + ElementSize of a CPF_Parm entry, the return
+// value included), 0 when the chain was not read.
+//
+// ParmsSize alone cannot size a buffer the game writes into, because where it is read depends on the
+// version (the shift above): a wrong version reads the field next door. A 4.18 layout read with 4.11-4.17's
+// +2 -- an override of 4.17 on a 4.18 title -- takes ReturnValueOffset for ParmsSize, so the buffer ends
+// exactly where the return value starts and ProcessEvent writes it past the end, in the game's heap; the
+// reverse misread takes NumParms. The chain does not depend on the tail: every entry records its own
+// offset and size, and the engine computes ParmsSize from the same entries. So the buffer is never smaller
+// than the chain's end. An end above 0xFFFF is no parameter block (ParmsSize is a uint16), so it is ignored
+// rather than trusted with an allocation.
+constexpr uint32_t ProcessEventBufferBytes(uint32_t parmsSize, int64_t chainEnd) {
+    return (chainEnd > static_cast<int64_t>(parmsSize) && chainEnd <= 0xFFFF)
+        ? static_cast<uint32_t>(chainEnd) : parmsSize;
+}
+
+// === Does a UE version fit the UFunction tail the game actually has? [UE-OVERRIDE-411] review ===
+//
+// The override reaches 4.11-4.17 since [UE-OVERRIDE-411], so one pick puts a version's tail 2 off the game's in
+// either direction: 4.17 on a 4.18 title, or 4.18 on a 4.15 one. The FunctionFlags vote cannot catch a wrong one --
+// it adds only that version's shift. The sampled UFunctions can: at the right base NumParms and ParmsSize match each
+// function's own parameter chain (FunctionTailMatches). The readers follow that measurement (FunctionTailReadBase
+// below), so a wrong version no longer misreads the tail; set_ue_version_override still refuses a version whose base
+// the measurement contradicts, because the version keys more than the tail, and that one is not this game's.
+// The base a version's layout puts the tail at: NumParms / ParmsSize / ReturnValueOffset sit +4 / +6 / +8 behind it.
+constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtra) {
+    return flagsOff + FunctionTailShiftFor(ueVersion) + tailExtra;
+}
+
+// [UE-OVERRIDE-411] review 2: where the readers put the tail -- the measurement (UFUNCTION_TAIL_MEASURED), whenever
+// there is one, else the version's base. The measurement does not depend on the version, so a version from the wrong
+// side of 4.18 -- a persisted override, a pick made before any scan, a misdetection -- no longer moves NumParms /
+// ParmsSize / ReturnValueOffset by 2. On a title whose version is right the two agree: the vote's winning base is one
+// of the bases the measurement weighs, under the same per-sample rule.
+constexpr int FunctionTailReadBase(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
+    return measuredBase >= 0 ? measuredBase : FunctionTailBaseFor(ueVersion, flagsOff, tailExtra);
+}
+
+enum class TailCheck { Agrees, Contradicts, Unmeasured };
+
+// `flagsOff` / `tailExtra` are what the vote latched, or `ueVersion`'s own primary when it decided nothing;
+// `measuredBase` is UFUNCTION_TAIL_MEASURED. Nothing measured (no scan yet, or samples that do not decide) is never
+// a refusal: the too-old refusal sends the user to the override precisely when no scan has run.
+constexpr TailCheck CheckTailForVersion(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
+    if (measuredBase < 0 || flagsOff <= 0) return TailCheck::Unmeasured;
+    return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra) == measuredBase ? TailCheck::Agrees
+                                                                               : TailCheck::Contradicts;
+}
+
+// The measurement's winner among candidate tail bases, given each one's hits over `samples` sampled
+// UFunctions; -1 when none wins. The vote's own bar (Ubel::EnsureFunctionFlagsOffset): at least 8 samples
+// and 60% of them. Two bases tied at the top cannot both be the tail, so a tie decides nothing.
+inline int PickMeasuredTailBase(const int* bases, const int* hits, int n, int samples) {
+    if (samples < 8) return -1;
+    const int sixty = (samples * 6 + 9) / 10;
+    const int need = sixty > 6 ? sixty : 6;
+    int best = -1, bestHits = -1;
+    bool tied = false;
+    for (int i = 0; i < n; ++i) {
+        if (hits[i] > bestHits)       { best = bases[i]; bestHits = hits[i]; tied = false; }
+        else if (hits[i] == bestHits) { tied = true; }
+    }
+    return (!tied && bestHits >= need) ? best : -1;
 }
 
 // === UBoolProperty::FieldSize, derived from the probed Offset_Internal ===
@@ -1144,6 +1280,14 @@ constexpr uint32_t MIN_SUPPORTED_UE_VERSION = 411;
 // it. Skipping the scan and saying so is the only honest answer.
 constexpr uint32_t PRE_UE4_SENTINEL_VERSION = 300;
 
+/// The too-old refusal's verdict: a version below the support floor refuses the scan only when it was detected with
+/// confidence. A guess, or a user's override, is never refused -- misreading a working game as too old and skipping
+/// its scan is far worse than four wasted seconds. Shared so Auto, chosen over an override, cannot hand back a
+/// detection the next launch would refuse. [UE-OVERRIDE-HINT-AUTO]
+constexpr bool RefusedAsTooOld(uint32_t ueVersion, bool versionDetected, bool lowConfidence, bool userOverride) {
+    return ueVersion < MIN_SUPPORTED_UE_VERSION && versionDetected && !lowConfidence && !userOverride;
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // UE version code arithmetic, and where to find a second opinion about it.
 //
@@ -1165,6 +1309,134 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
     if (major == 5 && minor <= UE_MAX_UE5_MINOR) return 500u + minor;
     if (major == 4 && minor <= UE_MAX_UE4_MINOR) return 400u + minor;
     return 0;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The engine's own build string, as a second opinion on a reading below the floor [VER-410-GATE]
+//
+// A reading below MIN_SUPPORTED_UE_VERSION refuses the whole scan, so one VS_FIXEDFILEINFO field is
+// not enough evidence for it (audit #4 B25): a game's own version can read as 4.x. The same
+// VERSIONINFO carries a second signal. UBT stamps the ProductVersion STRING as
+// `Major.Minor.Patch-Changelist+Branch`, the branch either full, naming the release a second time
+// (`++depot+UE4-Releases+4.10`, later `++UE4+Release-4.18`), or simplified (`UE4`); by 4.15 a game
+// exe's string can also be branch first, `++UE4+Release-4.15-CL-0`, with no version half at all.
+// ⚠ The string is NOT unwritable, so the parser's strictness is what makes it a second signal. The
+// version half comes from the engine's Version.h, but the branch is Build.version's BranchName, which a
+// licensee edits, and a branch-first string's M.m is the branch's own. Measured on this machine:
+//     Satisfactory       ++FactoryGame+rel-main-anniversary-2026-CL-502094  (exe and CrashReportClient)
+//     Titan Quest II     ++TQ2S+tq2-beta-no-binaries-CL-137244              (its CrashReportClient)
+//     Dolls Nest         ++UE4+4.27-Nitro-CL-0                              (exe and CrashReportClient)
+// So EngineBuildStringCode demands a `UE<M>` branch AND an M.m that agrees: the version half with a
+// full or simplified branch, or a branch-first string's major with its release. A licensee branch reads
+// 0, which costs a corroboration, never causes a refusal; loosening the parser to accept one would let
+// a single game-authored resource arm the refusal again (the B25 shape).
+// Engine build strings measured:
+//     IS Defense         4.10.2-0+++depot+UE4-Releases+4.10          (fixed version 4.10.2.0)
+//     launcher 4.10.4    4.10.4-2872498+++depot+UE4-Releases+4.10    (UE4Game and CrashReportClient)
+//     NEKOPALIVE         4.11.0-0+UE4                                (its CrashReportClient says the same)
+//     Extinction         ++UE4+Release-4.15-CL-0
+//     launcher 4.18.3    ++UE4+Release-4.18-CL-3832480               (UE4Game)
+//                        4.18.3-3832480+++UE4+Release-4.18           (its CrashReportClient)
+// The memory needle table cannot stand in for this: it floors at 4.18, so before this a genuine
+// 4.0-4.10 title could never be corroborated, and IS Defense was scanned instead of refused.
+
+namespace BuildStringParse {
+// A greedy run of decimal digits, so a number ends at the first non-digit: that boundary is what keeps
+// a branch's `+4.1` from reading as 4.10, and lets `4.100` read as 100 for UeVersionCode to reject.
+inline bool ReadDecimal(std::string_view s, size_t& pos, uint32_t& out) {
+    const size_t start = pos;
+    uint64_t v = 0;
+    while (pos < s.size() && s[pos] >= '0' && s[pos] <= '9') {
+        v = v * 10 + static_cast<uint64_t>(s[pos] - '0');
+        if (v > 0xFFFFFFFFull) return false;
+        ++pos;
+    }
+    if (pos == start) return false;
+    out = static_cast<uint32_t>(v);
+    return true;
+}
+inline bool Consume(std::string_view s, size_t& pos, std::string_view lit) {
+    if (pos > s.size() || s.substr(pos, lit.size()) != lit) return false;
+    pos += lit.size();
+    return true;
+}
+// `<major>.<minor>` ending exactly at the end of `s`.
+inline bool ReadMajorMinorToEnd(std::string_view s, size_t pos, uint32_t& major, uint32_t& minor) {
+    return ReadDecimal(s, pos, major) && Consume(s, pos, ".") && ReadDecimal(s, pos, minor)
+        && pos == s.size();
+}
+}  // namespace BuildStringParse
+
+/// The engine version a UBT build string names, as our version code; 0 when the string has none of
+/// the shapes above, its branch names another engine major, or a full branch repeats a different
+/// major.minor. A bare `4.10.3`, a four-part `4.10.2.0` or a game's `1.0.10897.0` is 0 by design.
+inline uint32_t EngineBuildStringCode(std::string_view s) {
+    using namespace BuildStringParse;
+    size_t pos = 0;
+    uint32_t major = 0, minor = 0, branchMajor = 0, unused = 0;
+
+    // Branch first: ++UE<M>+Release-<M>.<m>-CL-<changelist>
+    if (Consume(s, pos, "++UE")) {
+        if (!ReadDecimal(s, pos, branchMajor) || !Consume(s, pos, "+Release-")
+            || !ReadDecimal(s, pos, major) || !Consume(s, pos, ".") || !ReadDecimal(s, pos, minor)
+            || !Consume(s, pos, "-CL-") || !ReadDecimal(s, pos, unused) || pos != s.size()
+            || branchMajor != major)
+            return 0;
+        return UeVersionCode(major, minor);
+    }
+
+    // Version first: <M>.<m>.<patch>-<changelist>+<branch>
+    if (!ReadDecimal(s, pos, major) || !Consume(s, pos, ".") || !ReadDecimal(s, pos, minor)
+        || !Consume(s, pos, ".") || !ReadDecimal(s, pos, unused) || !Consume(s, pos, "-")
+        || !ReadDecimal(s, pos, unused) || !Consume(s, pos, "+"))
+        return 0;
+    const uint32_t code = UeVersionCode(major, minor);
+    if (!code) return 0;
+    const size_t branch = pos;
+
+    // Simplified branch: UE<M>
+    if (Consume(s, pos, "UE") && ReadDecimal(s, pos, branchMajor) && pos == s.size())
+        return branchMajor == major ? code : 0;
+
+    // Full branch, which names the release again: ++depot+UE<M>-Releases+<M>.<m> or ++UE<M>+Release-<M>.<m>
+    for (const auto& [head, tail] : { std::pair<std::string_view, std::string_view>{ "++depot+UE", "-Releases+" },
+                                      std::pair<std::string_view, std::string_view>{ "++UE", "+Release-" } }) {
+        pos = branch;
+        uint32_t relMajor = 0, relMinor = 0;
+        if (Consume(s, pos, head) && ReadDecimal(s, pos, branchMajor) && Consume(s, pos, tail)
+            && ReadMajorMinorToEnd(s, pos, relMajor, relMinor))
+            return branchMajor == major && relMajor == major && relMinor == minor ? code : 0;
+    }
+    return 0;
+}
+
+/// Whether a reading below the support floor is corroborated enough to refuse the scan.
+/// `code` is the GAME EXE's reading. `productVersion` is that exe's ProductVersion string, passed
+/// only when `code` came from a fixed field -- a code read out of that string cannot corroborate
+/// itself. `crcCode` is CrashReportClient's reading: it counts as agreement with the exe, never on
+/// its own, so a CrashReportClient beside an exe carrying a game version decides nothing here.
+/// At or above the floor the answer is false: nothing there needs corroborating.
+inline bool SubFloorReadingCorroborated(uint32_t code, std::string_view productVersion,
+                                        uint32_t crcCode) {
+    if (code == 0 || code >= MIN_SUPPORTED_UE_VERSION) return false;
+    return EngineBuildStringCode(productVersion) == code || crcCode == code;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// What set_ue_version_override may set [UE-OVERRIDE-411]
+//
+// The too-old refusal names the override as the way out of a wrong detection, so the override has to
+// reach every version this dumper reads: its floor is the support floor. Below it, an override would
+// force a scan of an object model nothing here can read (an override is never refused as too old);
+// above 5.9 there is no version-code band. It used to start at 4.18, so a 4.11-4.17 title could not be
+// set by hand at all.
+
+constexpr int UE_VERSION_OVERRIDE_MIN = static_cast<int>(MIN_SUPPORTED_UE_VERSION);
+constexpr int UE_VERSION_OVERRIDE_MAX = 500 + static_cast<int>(UE_MAX_UE5_MINOR);
+
+/// Whether set_ue_version_override accepts `version`; 0 clears an override and is always accepted.
+inline bool UeVersionOverrideAccepted(int version) {
+    return version == 0 || (version >= UE_VERSION_OVERRIDE_MIN && version <= UE_VERSION_OVERRIDE_MAX);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

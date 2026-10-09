@@ -11,16 +11,20 @@ That title is the only sample that can serve:
                      the terminal all-failed branch, so a Tier 1 hit keeps that
                      second whole-image sweep OUT of the measured window.
 
-The PE half calls the SAME version.dll APIs as DetectVersionFromPEResource
-(GetFileVersionInfoSizeW / GetFileVersionInfoW / VerQueryValueW) rather than
-reimplementing a resource parser, so the verdict cannot drift from the code
-under test. The tag half reuses tools/pe/ue_version.py's own regexes.
+The PE half reads through pe_version_probe.read_resource, the one offline port of
+DetectVersionFromPEResource (the same version.dll APIs, every translation, the
+engine build strings; its --selftest is a gate). It kept its own copy of the
+string fallback until the [VER-410-GATE] second review, and that copy knew only
+'++UEn+Release-': a 4.10-4.17 exe carrying its engine build string read PE_MISS
+here while the DLL took it at Tier 0. The tag half reuses tools/pe/ue_version.py's
+own regexes.
 """
-import ctypes
-import ctypes.wintypes as w
 import pathlib
 import re
 import sys
+
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+import pe_version_probe as PV  # noqa: E402
 
 # --- the tag needles, copied from tools/pe/ue_version.py ---------------------
 RE_UTF16 = re.compile(
@@ -28,87 +32,17 @@ RE_UTF16 = re.compile(
     rb"((?:[0-9]\x00|\.\x00)+)")
 RE_ASCII = re.compile(rb"\+\+UE[45]\+Release-([0-9][0-9.]*)")
 
-ver = ctypes.WinDLL("version.dll")
-ver.GetFileVersionInfoSizeW.argtypes = [w.LPCWSTR, ctypes.POINTER(w.DWORD)]
-ver.GetFileVersionInfoSizeW.restype = w.DWORD
-ver.GetFileVersionInfoW.argtypes = [w.LPCWSTR, w.DWORD, w.DWORD, ctypes.c_void_p]
-ver.GetFileVersionInfoW.restype = w.BOOL
-ver.VerQueryValueW.argtypes = [ctypes.c_void_p, w.LPCWSTR,
-                               ctypes.POINTER(ctypes.c_void_p),
-                               ctypes.POINTER(ctypes.c_uint)]
-ver.VerQueryValueW.restype = w.BOOL
-
-
-class FIXEDFILEINFO(ctypes.Structure):
-    _fields_ = [("dwSignature", w.DWORD), ("dwStrucVersion", w.DWORD),
-                ("dwFileVersionMS", w.DWORD), ("dwFileVersionLS", w.DWORD),
-                ("dwProductVersionMS", w.DWORD), ("dwProductVersionLS", w.DWORD),
-                ("dwFileFlagsMask", w.DWORD), ("dwFileFlags", w.DWORD),
-                ("dwFileOS", w.DWORD), ("dwFileType", w.DWORD),
-                ("dwFileSubtype", w.DWORD), ("dwFileDateMS", w.DWORD),
-                ("dwFileDateLS", w.DWORD)]
-
-
-def hi(dword):
-    return (dword >> 16) & 0xFFFF
-
-
-def lo(dword):
-    return dword & 0xFFFF
-
-
-RE_TAG_IN_STRING = re.compile(r"\+\+UE([45])\+Release-(\d+)\.(\d+)")
-
-
 def pe_branch(path):
-    """Replicate DetectVersionFromPEResource. Return (verdict, detail)."""
-    size = w.DWORD(0)
-    n = ver.GetFileVersionInfoSizeW(str(path), ctypes.byref(size))
-    if not n:
-        return ("NO_RESOURCE", "GetFileVersionInfoSizeW=0")
-    buf = ctypes.create_string_buffer(n)
-    if not ver.GetFileVersionInfoW(str(path), 0, n, buf):
-        return ("NO_RESOURCE", "GetFileVersionInfoW failed")
-
-    ptr = ctypes.c_void_p()
-    ln = ctypes.c_uint(0)
-    if not ver.VerQueryValueW(buf, "\\", ctypes.byref(ptr), ctypes.byref(ln)):
-        return ("NO_RESOURCE", "VerQueryValue(root) failed")
-    fi = ctypes.cast(ptr, ctypes.POINTER(FIXEDFILEINFO)).contents
-
-    pmaj, pmin = hi(fi.dwProductVersionMS), lo(fi.dwProductVersionMS)
-    fmaj, fmin = hi(fi.dwFileVersionMS), lo(fi.dwFileVersionMS)
-
-    if pmaj == 5 and pmin <= 9:
-        return ("PE_HIT", f"Product {pmaj}.{pmin} -> {500 + pmin}")
-    if pmaj == 4 and pmin <= 27:
-        return ("PE_HIT", f"Product {pmaj}.{pmin} -> {400 + pmin}")
-    if fmaj == 5 and fmin <= 9:
-        return ("PE_HIT", f"File {fmaj}.{fmin} -> {500 + fmin}")
-    if fmaj == 4 and fmin <= 27:
-        return ("PE_HIT", f"File {fmaj}.{fmin} -> {400 + fmin}")
-
-    # StringFileInfo last resort -- walk EVERY (lang, codepage) like
-    # ReadVersionInfoString does, not just the default translation.
-    if ver.VerQueryValueW(buf, "\\VarFileInfo\\Translation",
-                          ctypes.byref(ptr), ctypes.byref(ln)) and ln.value >= 4:
-        raw = ctypes.string_at(ptr, ln.value)
-        for i in range(0, ln.value - 3, 4):
-            lang = int.from_bytes(raw[i:i + 2], "little")
-            cp = int.from_bytes(raw[i + 2:i + 4], "little")
-            for key in ("ProductVersion", "FileVersion"):
-                sub = f"\\StringFileInfo\\{lang:04x}{cp:04x}\\{key}"
-                if not ver.VerQueryValueW(buf, sub, ctypes.byref(ptr),
-                                          ctypes.byref(ln)):
-                    continue
-                s = ctypes.wstring_at(ptr, ln.value).rstrip("\x00")
-                m = RE_TAG_IN_STRING.search(s)
-                if not m:
-                    continue
-                maj, mn = int(m.group(2)), int(m.group(3))
-                if (maj == 5 and mn <= 9) or (maj == 4 and mn <= 27):
-                    return ("PE_HIT", f"{key} string '{s}'")
-    return ("PE_MISS", f"Product={pmaj}.{pmin} File={fmaj}.{fmin} unrecognised")
+    """DetectVersionFromPEResource's verdict, through pe_version_probe.read_resource. Return (verdict, detail)."""
+    r = PV.read_resource(str(path))
+    if r["kind"] in ("no resource", "unreadable", "no fixedinfo"):
+        return ("NO_RESOURCE", r["kind"])
+    if r["code"]:
+        if r["kind"] == "fixed":
+            fixed = r["prod"] if r["key"] == "ProductVersion" else r["fver"]
+            return ("PE_HIT", f"{r['key']} {fixed} -> {r['code']}")
+        return ("PE_HIT", f"{r['key']} {r['kind']} '{r['string']}' -> {r['code']}")
+    return ("PE_MISS", f"Product={r['prod']} File={r['fver']} unrecognised")
 
 
 def tag_scan(path, chunk=64 << 20):
