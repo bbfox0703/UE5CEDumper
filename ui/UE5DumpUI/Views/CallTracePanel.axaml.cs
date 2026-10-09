@@ -41,13 +41,6 @@ public partial class CallTracePanel : UserControl
         return base.MeasureOverride(availableSize);
     }
 
-    /// <summary>A view model set after the last measure has not been told the room yet.</summary>
-    protected override void OnDataContextChanged(EventArgs e)
-    {
-        base.OnDataContextChanged(e);
-        InvalidateMeasure();
-    }
-
     private void OnTimeThumbDragDelta(object? sender, VectorEventArgs e) => Vm?.DragTime(e.Vector.X);
 
     private void OnDurationThumbDragDelta(object? sender, VectorEventArgs e) => Vm?.DragDuration(e.Vector.X);

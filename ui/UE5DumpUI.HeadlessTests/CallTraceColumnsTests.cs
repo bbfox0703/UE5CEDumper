@@ -435,7 +435,10 @@ public class CallTraceColumnsTests
         }
     });
 
-    /// <summary>A view model given to a panel already laid out is fitted too, though the panel's size never changed.</summary>
+    /// <summary>A view model given to a panel already laid out is fitted too, though the panel's size never changed: its
+    /// pane width, bound and not yet fitted, changes the pane's, and Avalonia measures up to the panel again, which
+    /// tells the view model the room. The panel needs no remeasure of its own on a new view model (a mutation pass
+    /// removed one with this test still green).</summary>
     [Fact]
     public Task A_view_model_set_after_the_panel_was_laid_out_is_fitted_too() => Headless.Run(() =>
     {
