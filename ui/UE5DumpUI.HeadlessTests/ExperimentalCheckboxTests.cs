@@ -218,11 +218,13 @@ public class ExperimentalCheckboxTests
         string kept = string.Format(Res("str.LF.Trace.KeptAll"), vm.LastTraceInfo!.Kept);
         var status = LiveFuncsLayout.Shown(panel, vm.StatusText);   // this class's own Shown lays out the System tab
         Assert.Contains(kept, status.Text, StringComparison.Ordinal);
+        string before = status.Text!;
 
         gate.IsEnabled = false;
         Dispatcher.UIThread.RunJobs();
         Assert.False(open.IsEffectivelyVisible, "Open in Call Trace shows with the experimental features off");
         Assert.DoesNotContain(kept, status.Text ?? "", StringComparison.Ordinal);
+        Assert.StartsWith(status.Text + " " + kept, before, StringComparison.Ordinal);   // the Stop's own line stays
         Assert.DoesNotContain(kept, ToolTip.GetTip(status) as string ?? "", StringComparison.Ordinal);
     });
 }

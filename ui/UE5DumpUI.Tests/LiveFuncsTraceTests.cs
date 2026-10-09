@@ -809,7 +809,9 @@ public class LiveFuncsTraceTests
         Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
         Assert.Contains(nameof(LiveFuncsViewModel.StatusText), raised);
         Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
-        Assert.StartsWith(vm.StatusText, on, StringComparison.Ordinal);   // what is left is the Stop's own line
+        // What is left is the Stop's own line: exactly what came before the sentences, not a blank one.
+        Assert.NotEmpty(vm.StatusText);
+        Assert.StartsWith(vm.StatusText + " " + kept, on, StringComparison.Ordinal);
         vm.OpenCallTraceCommand.Execute(null);
         Assert.Equal(0, navigated);
 
