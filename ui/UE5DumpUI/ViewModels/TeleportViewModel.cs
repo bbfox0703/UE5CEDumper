@@ -170,7 +170,8 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     public ObservableCollection<TeleportHotkeyRow> HotkeyRows { get; } = new();
 
     /// <summary>Hotkeys for the experimental-gated cards (Keep Foreground / Fly),
-    /// shown in their own card and only registered while <see cref="ExperimentalEnabled"/>.</summary>
+    /// shown in their own card and registered while <see cref="ExperimentalEnabled"/>, and after an
+    /// untick until its teardown has turned off what they drive.</summary>
     public ObservableCollection<TeleportHotkeyRow> ExperimentalHotkeyRows { get; } = new();
 
     /// <summary>All hotkey rows (both cards) — capture / registration / conflict-warning
@@ -906,6 +907,11 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
             // IsBusy, which flickers every CanOperate-bound button, and write
             // StatusText, which would overwrite the "Connected" just set above.
             ConnectPrime = PrimeHeldBadgesAsync();
+            // [EXPOFF-TEARDOWN] With the features off, what the prime finds running of theirs is turned off after it.
+            // A host with no gate has no opt-in to have turned off.
+            int gen = ++_connectTeardownGen;
+            if (_experimentalGate is { IsEnabled: false })
+                ExperimentalTeardown = TearDownAfterConnectPrimeAsync(ConnectPrime, gen);
         }
         else
         {
@@ -1929,12 +1935,19 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
 
     /// <summary>Map the DLL state (1=on, 0=off, &lt;0=error/unknown) onto the badge.</summary>
     private void ApplyForegroundLockState(int state)
-        => (ForegroundLockState, ForegroundLockBadgeColor) = state switch
+    {
+        _foregroundLockOn = state == 1;
+        (ForegroundLockState, ForegroundLockBadgeColor) = state switch
         {
             1 => ("ON",      "#4EC9B0"),   // green — game always sees itself as foreground
             0 => ("OFF",     "#999999"),   // grey — normal (idles/pauses when unfocused)
             _ => ("Unknown", "#888888"),
         };
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] The lock was last read or set ON: the connect-time teardown turns it off only then
+    /// (<see cref="TearDownAfterConnectPrimeAsync"/>).</summary>
+    private bool _foregroundLockOn;
 
     [RelayCommand]
     private Task ForceForegroundLockOnAsync()  => ForceForegroundLockAsync(wantOn: true);
@@ -4796,9 +4809,18 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
               $"{string.Join(", ", failed)}. Free the combo and reconnect, or re-bind below.";
     }
 
-    /// <summary>[LF-EXPOFF-TRACE] The experimental teardown last started, so a test can await it. Production never
-    /// awaits it.</summary>
+    /// <summary>[EXPOFF-TEARDOWN] The experimental teardown last started -- an untick's, or a connect's with the features
+    /// off -- so a test can await it. Production never awaits it.</summary>
     internal Task ExperimentalTeardown { get; private set; } = Task.CompletedTask;
+
+    /// <summary>[EXPOFF-TEARDOWN] Moved by every gate change, so an untick's teardown that is still running when the box
+    /// is ticked again leaves the hotkeys registered: they are wanted again.</summary>
+    private int _hotkeyReleaseGen;
+
+    /// <summary>[EXPOFF-TEARDOWN] Moved by every connect, so only the last connect's teardown runs: the main window calls
+    /// <see cref="SetConnected"/> twice for one connect (its pipe's state handler, then the finished scan), and the
+    /// later prime reads the DLL again.</summary>
+    private int _connectTeardownGen;
 
     /// <summary>Experimental gate flipped (System-tab checkbox). Refresh the gated
     /// card visibility and (dis)engage the experimental-feature hotkeys. On disable
@@ -4810,6 +4832,7 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         // Lock), so act synchronously — same pattern as MainWindowViewModel.
         OnPropertyChanged(nameof(ExperimentalEnabled));
         OnPropertyChanged(nameof(ShowExperimentalHotkeys));
+        _hotkeyReleaseGen++;
 
         if (ExperimentalEnabled)
         {
@@ -4817,26 +4840,65 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
         }
         else
         {
-            // Clean teardown before hiding: force the experimental features OFF
-            // (best-effort; needs a live connection to reach the DLL) so the game
-            // can't stay cursor-locked / flying with no visible way to undo.
-            if (IsConnected)
-            {
-                _ = ForceForegroundLockOffCommand.ExecuteAsync(null);
-                if (_flyActive) _ = ResetFlyCommand.ExecuteAsync(null);
-                if (_seeThroughActive) _ = ResetSeeThroughCommand.ExecuteAsync(null);
-                // Release an active Solide stealth-meter hold too — its card is about to be
-                // hidden (IsVisible=ExperimentalEnabled), so a live re-assert worker would
-                // otherwise keep writing game memory with no visible way to stop it. (M9)
-                if (StealthState == StealthHoldingState) _ = ResetStealthCommand.ExecuteAsync(null);
-            }
             // The Coordinate Library holds no live game-side state, so there is
             // nothing to force off -- but an un-applied import preview must not
             // survive behind a hidden card, where the user can neither see it nor
             // cancel it. The library itself stays on disk; only the pending diff goes.
             if (HasPendingCoordImport) CancelCoordImportCommand.Execute(null);
-            UnregisterExperimentalHotkeys();
+            ExperimentalTeardown = TearDownOnUntickAsync(_hotkeyReleaseGen);
         }
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] The untick's teardown (the maintainer's choice after the review, 2026-10-09: the box
+    /// unticks while connected, and what the features run goes off at once). Connected, the features are forced OFF
+    /// before their hotkeys go, so the game cannot stay cursor-locked, flying or held behind hidden cards. Disconnected,
+    /// nothing reaches the DLL: the next connect with the features off does it from the DLL's own state
+    /// (<see cref="TearDownAfterConnectPrimeAsync"/>), as the DLL's last-client teardown does not end these.</summary>
+    private async Task TearDownOnUntickAsync(int gen)
+    {
+        try
+        {
+            if (IsConnected)
+            {
+                // Unconditionally: the badge can read Unknown over a hook that holds, and OFF is idempotent.
+                await ForceForegroundLockOffCommand.ExecuteAsync(null);
+                await TurnOffRunningExperimentalAsync();
+            }
+        }
+        catch (Exception ex) { _log.Error("Teleport experimental teardown failed", ex); }
+        // The keys go last, once every OFF above has been answered, so none is given back while what it drives may
+        // still run. A key pressed meanwhile does nothing: OnMarkerHotkeyPressed drops one while the gate is off.
+        if (gen == _hotkeyReleaseGen) UnregisterExperimentalHotkeys();
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] A connect with the features off, once its prime has read the DLL: whatever of theirs
+    /// the DLL still runs -- unticked while disconnected, or left by an earlier session -- runs behind hidden cards, so
+    /// it is turned off. Not when a later connect primes again, when the connection went, or when the box was ticked
+    /// meanwhile: with the features on, the cards show what runs.</summary>
+    private async Task TearDownAfterConnectPrimeAsync(Task prime, int gen)
+    {
+        try
+        {
+            await prime;
+            if (gen != _connectTeardownGen || !IsConnected || ExperimentalEnabled) return;
+            // Keep Foreground only when the prime read it ON: an OFF at every connect would cost a new user's connect a
+            // round trip and stamp over its "Connected", and a read that failed keeps its honest Unknown.
+            if (_foregroundLockOn) await ForceForegroundLockOffCommand.ExecuteAsync(null);
+            await TurnOffRunningExperimentalAsync();
+        }
+        catch (Exception ex) { _log.Error("Teleport connect-time experimental teardown failed", ex); }
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] Fly, See-through and a Stealth hold, each only when its card reads it running. One at a
+    /// time: each command sets IsBusy and the status line, and the pipe serves them in order anyway.</summary>
+    private async Task TurnOffRunningExperimentalAsync()
+    {
+        if (_flyActive) await ResetFlyCommand.ExecuteAsync(null);
+        if (_seeThroughActive) await ResetSeeThroughCommand.ExecuteAsync(null);
+        // Release an active Solide stealth-meter hold too — its card is about to be
+        // hidden (IsVisible=ExperimentalEnabled), so a live re-assert worker would
+        // otherwise keep writing game memory with no visible way to stop it. (M9)
+        if (StealthState == StealthHoldingState) await ResetStealthCommand.ExecuteAsync(null);
     }
 
     /// <summary>Register the saved combos for the experimental-feature hotkeys.
