@@ -807,7 +807,9 @@ source and editor are installed for when they are needed.
   Trace's load of it; the gate's `Changed` handler raises `TraceAvailable` but leaves it. Fix: the button, the status
   line's trace clause and `OpenCallTrace` all follow `TraceAvailable` as well (red test first). INFO, the
   maintainer's call: off, the fold saves no line (the header already holds the only row it folds). Effort **S**.
-  ⬜ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08): the next release -- the first with the Call Trace tab
+  ✅ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08; **carried by the v3646 draft release, 2026-10-09**, its
+  enable step corrected: the experimental box has no label of its own, so the notes name its tooltip and place;
+  drop this row once the maintainer publishes v3646): the next release -- the first with the Call Trace tab
   (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
   draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
   line against the build being released -- the switch's and buttons' names, the budget names, what a stack names --
