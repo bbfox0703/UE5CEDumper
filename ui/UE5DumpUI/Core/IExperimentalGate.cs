@@ -24,7 +24,9 @@ public interface IExperimentalGate
     /// While locked the opt-in checkbox can no longer be unticked, and
     /// <see cref="IsEnabled"/> can no longer be set back to false.
     /// <b>Session-only</b> — NOT persisted; a restart clears it, so the user can
-    /// untick again until they re-open an experimental tab.</summary>
+    /// untick again until they re-open an experimental tab. Unlocked, an untick
+    /// still waits for a Disconnect: the System tab view model's rule, as this
+    /// gate does not know the connection.</summary>
     bool IsLocked { get; }
 
     /// <summary>Lock the opt-in for this session (idempotent). Raises

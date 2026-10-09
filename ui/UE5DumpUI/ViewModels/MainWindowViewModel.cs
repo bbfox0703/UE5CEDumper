@@ -182,6 +182,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         OnPropertyChanged(nameof(ShowDllBuildOk));
         OnPropertyChanged(nameof(ShowPackedLayoutBadge));
         OnPropertyChanged(nameof(ShowStrideGuessBadge));
+        // [LF-EXPOFF-TRACE] The experimental opt-in is unticked only while disconnected, as this flag (the toolbar's
+        // Connect / Disconnect button) says; a dropped pipe clears it too, through the state handler.
+        Pointers.SetConnected(value);
     }
     [ObservableProperty] private bool _needsScan;       // True when connected but scan not yet done (proxy DLL mode)
     [ObservableProperty] private bool _isScanning;      // True while trigger_scan is in progress
