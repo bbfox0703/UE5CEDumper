@@ -334,6 +334,9 @@ machine — this PC also drives the game under test). ⚠ It is `t.MaxFPS`, **no
 which would switch UE to a fixed timestep and silently change what every timing row measures. It
 writes the PID to `out/host.pid` so the injector and the killer agree on one target, and it **fails
 loudly** if the process died — a dead host makes every downstream "nothing found" meaningless.
+⚠ The stock-template Shipping fixtures (`shipping58`, `shipping51`) have no self-cap and drop `-ExecCmds`: their
+cap is whatever `FrameRateLimit` the machine saved in the game's `GameUserSettings.ini` (set through the pipe,
+working-lessons §1), and the launcher prints it. Another PC may run them uncapped.
 
 `--idle` adds `-DumperTestIdle` and is **opt-in only**: B8's deferred half needs it, the D2
 heartbeat row breaks with it, and it makes every game-thread dispatch time out while you work in the

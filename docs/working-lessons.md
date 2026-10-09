@@ -881,7 +881,11 @@ frames). What to do:
 - Vary one condition at a time before blaming the machine; a timing that moves the wrong way (the cap) says the cause
   is elsewhere.
 - A Shipping UE build ignores `-ExecCmds`; cap it through the pipe: `invoke_function` GameUserSettings
-  `SetFrameRateLimit` (a float) then `ApplySettings` (false).
+  `SetFrameRateLimit` (a float) then `ApplySettings` (false). ⚠ `ApplySettings` SAVES the limit to the game's
+  `GameUserSettings.ini` under `%LOCALAPPDATA%`, so every later launch on that machine inherits it, and another
+  machine may have none: measured 2026-10-09, DumperTest58 Shipping ran at 30.2 fps on the RTX at 12 % load while
+  `launch_dumpertest.py` said it ran uncapped. The launcher now prints the saved cap. The same day, with the laptop
+  in dGPU-direct mode, the fixture ran on the RTX with no `-preferNvidia`.
 - A per-call kernel query (VirtualQuery) cost about 300 µs in the same uncapped game: anything that asks the kernel per
   item in a pass over the object array needs a cache (Aura::CodeRangeCache).
 

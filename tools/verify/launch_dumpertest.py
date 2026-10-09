@@ -52,6 +52,14 @@ TWO ARG TRAPS, both already paid for elsewhere in this repo:
    the one that keeps costing: (1) a careful choice of MECHANISM is worthless if the
    mechanism is gated out of the build you launch; (2) when a measurement contradicts a
    configured value, the next question is "what else sets this?", not "so it is unset".
+
+!! THE STOCK-TEMPLATE SHIPPING FIXTURES (5.8, 5.1) PAID LESSON (2) AGAIN (measured 2026-10-09).
+   They have no self-cap and drop -ExecCmds, so this launcher said they ran UNCAPPED -- yet
+   DumperTest58 Shipping ran at 30.2 fps on an RTX 5090 at 12 % load. An earlier session had
+   capped it through the pipe (GameUserSettings::SetFrameRateLimit, then ApplySettings), and
+   ApplySettings SAVES the limit to the game's GameUserSettings.ini under %LOCALAPPDATA%, so
+   every later launch on that machine inherits it, and another machine may have none. The
+   launcher now reads that file and says which cap applies.
 """
 import argparse
 import os
@@ -146,7 +154,63 @@ def alive(pid):
     return str(pid) in out
 
 
+def parse_frame_rate_limit(text):
+    """FrameRateLimit from GameUserSettings.ini text; None when the key is absent or not a number.
+    0 is UE's "no limit" and is returned as 0.0 for the caller to read so."""
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if sep and key.strip() == "FrameRateLimit":
+            try:
+                return float(value.strip())
+            except ValueError:
+                return None
+    return None
+
+
+def saved_frame_rate_limit(project, appdata=None):
+    """The FrameRateLimit `project` saved in this machine's GameUserSettings.ini, or None when it saved none.
+    UE writes the file as UTF-8 or, on some setups, UTF-16 with a BOM; both are read."""
+    base = pathlib.Path(appdata if appdata is not None else os.environ.get("LOCALAPPDATA", ""))
+    ini = base / project / "Saved" / "Config" / "Windows" / "GameUserSettings.ini"
+    try:
+        raw = ini.read_bytes()
+    except OSError:
+        return None
+    text = raw.decode("utf-16") if raw[:2] in (b"\xff\xfe", b"\xfe\xff") else raw.decode("utf-8", errors="replace")
+    return parse_frame_rate_limit(text)
+
+
+def self_test():
+    """Offline checks of the cap reader: hand-made ini text and files, no game."""
+    import tempfile
+    failures = 0
+
+    def check(name, got, want):
+        nonlocal failures
+        ok = got == want
+        failures += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'}  {name}: {got!r}" + ("" if ok else f" (want {want!r})"))
+
+    check("a saved 30", parse_frame_rate_limit("[/Script/Engine.GameUserSettings]\nFrameRateLimit=30.000000\n"), 30.0)
+    check("0 is no limit", parse_frame_rate_limit("FrameRateLimit=0.000000"), 0.0)
+    check("absent", parse_frame_rate_limit("[/Script/Engine.GameUserSettings]\nbUseVSync=False\n"), None)
+    check("empty value", parse_frame_rate_limit("FrameRateLimit="), None)
+    check("a longer key is not it", parse_frame_rate_limit("MaxFrameRateLimit=60"), None)
+    with tempfile.TemporaryDirectory() as d:
+        ini = pathlib.Path(d) / "Proj" / "Saved" / "Config" / "Windows" / "GameUserSettings.ini"
+        ini.parent.mkdir(parents=True)
+        ini.write_bytes("FrameRateLimit=45.000000\r\n".encode("utf-8"))
+        check("a UTF-8 file", saved_frame_rate_limit("Proj", d), 45.0)
+        ini.write_bytes(b"\xff\xfe" + "FrameRateLimit=60.000000\r\n".encode("utf-16-le"))
+        check("a UTF-16 file", saved_frame_rate_limit("Proj", d), 60.0)
+        check("no file", saved_frame_rate_limit("Other", d), None)
+    print(f"{'FAILED' if failures else 'all passed'}: {failures} failure(s)")
+    return 1 if failures else 0
+
+
 def main(argv=None):
+    if "--self-test" in (sys.argv[1:] if argv is None else argv):
+        return self_test()
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("flavour", choices=sorted(FLAVOURS))
@@ -202,9 +266,18 @@ def main(argv=None):
     args = [str(exe)] + house + (["-DumperTestIdle"] if (a.idle and a.flavour not in IS_58) else []) + a.extra
     print("launching:", " ".join(args))
     if a.flavour in ("shipping58", "shipping51"):
-        print("  note: Shipping discards -ExecCmds, and the 5.8 template has no self-cap "
-               "of its own (that is DumperTest's ApplyMaxFPS, which does not exist here). "
-               "This one runs UNCAPPED -- measure the rate for any timing-sensitive row.")
+        # The cap is not in the launch line at all here: see the module docstring's last lesson.
+        project = exe.parents[2].name
+        cap = saved_frame_rate_limit(project)
+        if cap:
+            print(f"  note: Shipping discards -ExecCmds and the stock template has no self-cap; the cap is "
+                  f"this machine's saved FrameRateLimit={cap:g} ({project}'s GameUserSettings.ini, saved by "
+                  f"GameUserSettings::ApplySettings). Machine-local: another PC may run uncapped.")
+        else:
+            print(f"  note: Shipping discards -ExecCmds, the stock template has no self-cap, and this machine "
+                  f"saved no FrameRateLimit for {project}: it runs UNCAPPED. To cap it, invoke_function "
+                  f"GameUserSettings SetFrameRateLimit (a float), then ApplySettings(false), through the "
+                  f"pipe -- it is saved. Measure the rate for any timing-sensitive row.")
     if a.flavour == "shipping":
         # Say it at the point of use: an operator reading the launch line sees BOTH
         # switches and should know which of the two is doing the work here.
