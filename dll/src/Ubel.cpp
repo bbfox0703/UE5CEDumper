@@ -2047,8 +2047,9 @@ static void ReadFuncFlagsAndParams(uintptr_t funcAddr, FunctionInfo& fi) {
     // inside the game. [A2-UFUNC-TAIL-4X] -- the table, and why it is keyed on the version, live
     // on DynOff::FunctionTailShiftFor.
     if (funcFlagsOff >= 0) {
-        const int tail = funcFlagsOff + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
-                       + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);   // [VND583-01]
+        const int tail = DynOff::FunctionTailReadBase(g_cachedUEVersion, funcFlagsOff,
+                                                      decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0,   // [VND583-01]
+                                                      DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed));
         Macht::ReadSafe<uint8_t> (funcAddr + tail + 0x04, fi.numParms);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x06, fi.parmsSize);
         Macht::ReadSafe<uint16_t>(funcAddr + tail + 0x08, fi.returnValueOffset);
@@ -2152,8 +2153,9 @@ FunctionCaptureSetup PrepareFunctionCapture() {
                                           DynOff::bUseFProperty);
     if (primary > 0) {
         s.flagsOffset = primary;
-        s.tailOffset  = primary + DynOff::FunctionTailShiftFor(g_cachedUEVersion)
-                      + (decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0);
+        s.tailOffset  = DynOff::FunctionTailReadBase(g_cachedUEVersion, primary,
+                                                     decided > 0 ? DynOff::UFUNCTION_TAIL_EXTRA : 0,
+                                                     DynOff::UFUNCTION_TAIL_MEASURED.load(std::memory_order_relaxed));
     }
     // pe_profile_get's is_widget tests the class chain for these two names; the capture tests for these classes.
     std::lock_guard<std::mutex> lk(s_widgetBasesMutex);

@@ -6443,6 +6443,23 @@ static void Test_CheckTailForVersion() {
     EXPECT("TailCheck: no FunctionFlags offset is Unmeasured", CheckTailForVersion(417, 0, 0, 0x88) == TailCheck::Unmeasured);
 }
 
+// [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed in-process; a persisted override, a
+// pick made before any scan, or a misdetection reached the readers unchecked and moved every tail read by 2. The
+// measurement now drives the readers whatever the version.
+static void Test_FunctionTailReadBase() {
+    using DynOff::FunctionTailReadBase;
+    EXPECT("TailRead ⭐: a 4.15 tail measured at +0x8A is read there under 4.18",
+           FunctionTailReadBase(418, 0x88, 0, 0x8A) == 0x8A);
+    EXPECT("TailRead ⭐: a 4.18 tail measured at +0x88 is read there under 4.17",
+           FunctionTailReadBase(417, 0x88, 0, 0x88) == 0x88);
+    EXPECT("TailRead ⭐: ...and under the new floor, 4.11", FunctionTailReadBase(411, 0x88, 0, 0x88) == 0x88);
+    EXPECT("TailRead: a right version agrees with its measurement (4.18)", FunctionTailReadBase(418, 0x88, 0, 0x88) == 0x88);
+    EXPECT("TailRead: Split Fiction's +4 extra agrees with its measurement", FunctionTailReadBase(505, 0xB0, 4, 0xB4) == 0xB4);
+    EXPECT("TailRead control: nothing measured keeps the version's base (4.15)", FunctionTailReadBase(415, 0x88, 0, -1) == 0x8A);
+    EXPECT("TailRead control: ...and 4.18's", FunctionTailReadBase(418, 0x88, 0, -1) == 0x88);
+    EXPECT("TailRead control: ...and the extra", FunctionTailReadBase(505, 0xB0, 4, -1) == 0xB4);
+}
+
 // [UE-OVERRIDE-411] review: the tail measurement's winner, at the FunctionFlags vote's own bar.
 static void Test_PickMeasuredTailBase() {
     using DynOff::PickMeasuredTailBase;
@@ -9511,6 +9528,7 @@ int main() {
     RUN(Test_FunctionFlagsOffset);
     RUN(Test_ProcessEventBufferBytes);
     RUN(Test_CheckTailForVersion);
+    RUN(Test_FunctionTailReadBase);
     RUN(Test_PickMeasuredTailBase);
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);

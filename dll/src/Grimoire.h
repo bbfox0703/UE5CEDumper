@@ -754,6 +754,16 @@ constexpr int FunctionTailBaseFor(unsigned ueVersion, int flagsOff, int tailExtr
     return flagsOff + FunctionTailShiftFor(ueVersion) + tailExtra;
 }
 
+// [UE-OVERRIDE-411] review 2: where the readers put the tail -- the measurement (UFUNCTION_TAIL_MEASURED), whenever
+// there is one, else the version's base. The measurement does not depend on the version, so a version from the wrong
+// side of 4.18 -- a persisted override, a pick made before any scan, a misdetection -- no longer moves NumParms /
+// ParmsSize / ReturnValueOffset by 2. On a title whose version is right the two agree: the vote's winning base is one
+// of the bases the measurement weighs, under the same per-sample rule.
+constexpr int FunctionTailReadBase(unsigned ueVersion, int flagsOff, int tailExtra, int measuredBase) {
+    (void)measuredBase;
+    return FunctionTailBaseFor(ueVersion, flagsOff, tailExtra);
+}
+
 enum class TailCheck { Agrees, Contradicts, Unmeasured };
 
 // `flagsOff` / `tailExtra` are what the readers would use under `ueVersion`; `measuredBase` is

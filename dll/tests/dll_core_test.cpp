@@ -4518,6 +4518,19 @@ int main() {
                      c.readersBase, c.measuredBase);
             return c;
         };
+        // [UE-OVERRIDE-411] review 2: what the readers take from the third function (three 4-byte parameters, no
+        // return), whatever version is cached.
+        char rb[96];
+        auto readOf = [&](int b) {
+            FunctionInfo fi{};   // global scope, like Ubel's
+            const bool ok = Ubel::ResolveFunctionInfo(A(b), fi);
+            snprintf(rb, sizeof(rb), "ok %d numParms %u parmsSize %u rvo 0x%X", ok ? 1 : 0, fi.numParms, fi.parmsSize,
+                     fi.returnValueOffset);
+            return fi;
+        };
+        auto readsRight = [](const FunctionInfo& fi) {
+            return fi.numParms == 3 && fi.parmsSize == 12 && fi.returnValueOffset == 0xFFFF;
+        };
 
         // A 4.18 title (the OCTOPATH / DQ XI S tail), detected as 4.18.
         build(false);
@@ -4535,6 +4548,8 @@ int main() {
         check("OVERRIDETAIL ⭐: ...and so does the new floor, 4.11", verdictOf(411).verdict == TailCheck::Contradicts, ob);
         check("OVERRIDETAIL control: 4.18 itself agrees", verdictOf(418).verdict == TailCheck::Agrees, ob);
         check("OVERRIDETAIL control: 4.21 keeps the same tail and agrees", verdictOf(421).verdict == TailCheck::Agrees, ob);
+        check("OVERRIDETAIL measured control: a right version reads NumParms 3 and ParmsSize 12, as before",
+              readsRight(readOf(bFn0 + 2)), rb);
 
         // The inverse, which the widening lets a user correct: a 4.15 title misdetected as 4.18. The vote adds only
         // 4.18's shift, so it finds nothing; the measurement is not tied to the version and finds +0x8A.
@@ -4550,6 +4565,35 @@ int main() {
               verdictOf(415).verdict == TailCheck::Agrees, ob);
         check("OVERRIDETAIL: 4.18 contradicts that tail", verdictOf(418).verdict == TailCheck::Contradicts, ob);
 
+        // [UE-OVERRIDE-411] review 2: the refusal held only while a measurement existed; the readers kept the
+        // version's shift, so under 4.18 this tail read RepOffset's byte for NumParms and NumParms for ParmsSize. The
+        // measurement now drives every tail reader, whatever the version.
+        check("OVERRIDETAIL measured ⭐: a 4.15 tail read under 4.18 gives NumParms 3 and ParmsSize 12",
+              readsRight(readOf(bFn0 + 2)), rb);
+        const Ubel::FunctionCaptureSetup capB = Ubel::PrepareFunctionCapture();
+        check("OVERRIDETAIL measured ⭐: ...a Live Funcs capture puts the tail at the measured +0x8A",
+              capB.tailOffset == 0x8A, std::to_string(capB.tailOffset).c_str());
+        Ubel::SetFunctionCapture(capB);
+        Linie::FuncIdentity idB{};
+        Ubel::CaptureFunctionIdentity(A(bFn0 + 2), idB);
+        Ubel::SetFunctionCapture(Ubel::FunctionCaptureSetup{});
+        snprintf(rb, sizeof(rb), "numParms %u parmsSize %u", idB.numParms, idB.parmsSize);
+        check("OVERRIDETAIL measured ⭐: ...and the identity it captures carries NumParms 3 and ParmsSize 12",
+              idB.numParms == 3 && idB.parmsSize == 12, rb);
+
+        // The review's second route: an override from the other side of 4.18, persisted by an earlier session, is
+        // applied before the scan, so the vote runs under it -- and under 4.17 it cannot find a 4.18 tail.
+        build(false);
+        resetVote();
+        g_cachedUEVersion = 417;
+        const int votedC = Ubel::FunctionFlagsOffset();
+        check("OVERRIDETAIL setup: under a persisted 4.17 the vote cannot find a 4.18 tail (undecided)", votedC == 0,
+              std::to_string(votedC).c_str());
+        check("OVERRIDETAIL setup: ...the measurement does, at +0x88", DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88,
+              std::to_string(DynOff::UFUNCTION_TAIL_MEASURED.load()).c_str());
+        check("OVERRIDETAIL measured ⭐: ...and the readers follow it: NumParms 3, ParmsSize 12",
+              readsRight(readOf(bFn0 + 2)), rb);
+
         // The vote ran while only three of the ten functions were loaded: it measured nothing, so the override check
         // samples again.
         build(false);
@@ -4564,6 +4608,15 @@ int main() {
         check("OVERRIDETAIL ⭐: the override check samples again and 4.17 contradicts the 4.18 tail",
               again.verdict == TailCheck::Contradicts && again.measuredBase == 0x88, ob);
         check("OVERRIDETAIL: ...and that measurement is kept", DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x88);
+
+        // A re-init clears the probe flag but keeps the measurement, which the same game's UFunctions still fit: until
+        // the new probe runs, the held one judges (the review's third route).
+        resetVote();
+        DynOff::UFUNCTION_TAIL_MEASURED.store(0x88);
+        DynOff::bOffsetsProbeRan.store(false);
+        g_cachedUEVersion = 418;
+        check("OVERRIDETAIL ⭐: before the re-init's probe, a held 4.18 measurement still contradicts 4.17",
+              verdictOf(417).verdict == TailCheck::Contradicts, ob);
 
         // Before any scan there is nothing to sample: never a refusal.
         resetVote();
