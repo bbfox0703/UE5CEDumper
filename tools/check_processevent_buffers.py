@@ -16,7 +16,8 @@ WHAT IT REFUSES, in dll/src after comments and string literals are blanked:
      directly or through a local assigned from one in the same file, and does not go through a helper.
      "Through a helper" means the expression calls `ParamBufferSize(` / `ProcessEventBufferBytes(`, or names a local
      every assignment of which does: `max(chain end, what the caller asked for)` is fine, the caller's number alone
-     is not. A local with one unprotected assignment stays unprotected whatever else is assigned to it.
+     is not. A local with one unprotected assignment stays unprotected whatever else is assigned to it; each arm of
+     a `?:` is judged on its own; and a min() never counts as lifted, since it can undercut the helper it holds.
   2. A `UE5_CallProcessEventEx` call whose size argument is not a buffer's own `.size()` or a `sizeof(..)`, or 0 (no
      owned copy: the legacy export's caller keeps its buffer). Its size is the bytes the queued request copies and
      copies back, so anything else can disagree with the buffer it describes.
@@ -116,6 +117,54 @@ def names_in(expr: str, names: set[str]) -> bool:
     return any(re.search(r"(?<![\w])" + re.escape(n) + r"(?![\w])", expr) for n in names)
 
 
+def branches(expr: str) -> list[str]:
+    """The values an expression can take: a top-level `c ? a : b` is its two arms (recursively), anything else is
+    itself. A helper in one arm must not vouch for the other -- `resolved ? max(chain, asked) : asked` is the
+    caller's number whenever the function does not resolve."""
+    e = expr.strip()
+    while e.startswith("(") and matching(e, 0) == len(e) - 1:
+        e = e[1:-1].strip()
+    depth, q = 0, -1
+    for k, ch in enumerate(e):
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif ch == "?" and depth == 0:
+            q = k
+            break
+    if q < 0:
+        return [e]
+    depth, nested = 0, 0
+    for k in range(q + 1, len(e)):
+        ch = e[k]
+        if ch in "([{":
+            depth += 1
+        elif ch in ")]}":
+            depth -= 1
+        elif depth == 0 and ch == "?":
+            nested += 1
+        elif depth == 0 and ch == ":" and e[k - 1] != ":" and (k + 1 >= len(e) or e[k + 1] != ":"):
+            if nested:
+                nested -= 1
+                continue
+            return branches(e[q + 1:k]) + branches(e[k + 1:])
+    return [e]
+
+
+MIN_CALL = re.compile(r"(?<![\w])min\s*\)?\s*(?:<[^<>()]*>\s*)?\(")
+
+
+def unsafe(expr: str, unprot: set[str], prot: set[str]) -> bool:
+    """An arm that reads a ParmsSize (or an unprotected local) and is not lifted to the chain's end: no helper and no
+    protected local in it -- or a min(), which can undercut whatever helper it holds."""
+    for b in branches(expr):
+        reads = bool(PARMS.search(b)) or names_in(b, unprot)
+        if reads and (MIN_CALL.search(b) or not (HELPER.search(b) or names_in(b, prot))):
+            return True
+    return False
+
+
 def classify_names(text: str):
     """(unprotected, protected) locals. Protected first, to a fixpoint: every assignment goes through a helper or
     another protected local. Then unprotected, to a fixpoint: some assignment reads a ParmsSize or an unprotected
@@ -128,7 +177,8 @@ def classify_names(text: str):
         if name in ("if", "while", "for", "return", "case"):
             continue
         assigns.setdefault(name, []).append(rhs)
-    helped = lambda rhs, prot: bool(HELPER.search(rhs)) or names_in(rhs, prot)
+    helped = lambda rhs, prot: all((HELPER.search(b) or names_in(b, prot)) and not MIN_CALL.search(b)
+                                   for b in branches(rhs))
     prot: set[str] = set()
     changed = True
     while changed:
@@ -141,16 +191,13 @@ def classify_names(text: str):
     while changed:
         changed = False
         for name, rhss in assigns.items():
-            if name in unprot:
-                continue
-            if any((PARMS.search(r) or names_in(r, unprot)) and not helped(r, prot) for r in rhss):
+            if name not in unprot and any(unsafe(r, unprot, prot) for r in rhss):
                 unprot.add(name); changed = True
     return unprot, prot
 
 
 def size_is_unprotected(expr: str, unprot: set[str], prot: set[str]) -> bool:
-    reads = bool(PARMS.search(expr)) or names_in(expr, unprot)
-    return reads and not (HELPER.search(expr) or names_in(expr, prot))
+    return unsafe(expr, unprot, prot)
 
 
 def split_args(text: str, open_at: int) -> list[str]:
@@ -230,6 +277,13 @@ SELFTEST = [
     ("red: a local with one unprotected assignment stays unprotected", "Fern.cpp",
      "size_t bufSize = parmsSize;\nif (ok) bufSize = Ubel::ParamBufferSize(u, fi.parmsSize);\n"
      "std::vector<uint8_t> paramBuf(bufSize, 0);", 1),
+    ("red: a helper in one arm does not vouch for the other", "Fern.cpp",
+     "const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, fi.parmsSize);\n"
+     "const size_t asked = parmsSize;\n"
+     "const size_t bufSize = resolved ? (std::max)(authoritative, asked) : asked;\n"
+     "std::vector<uint8_t> paramBuf(bufSize, 0);", 1),
+    ("red: a min() undercuts the helper it holds", "Edel.cpp",
+     "std::vector<uint8_t> b((std::min)(Ubel::ParamBufferSize(fi), static_cast<uint32_t>(fi.parmsSize)), 0);", 1),
     ("red: a size argument that is not the buffer's", "Edel.cpp",
      "UE5_CallProcessEventEx(i, f, reinterpret_cast<uintptr_t>(buf.data()), (uint32_t)fi.parmsSize);", 1),
     ("green: the helper", "Wirbel.cpp",
