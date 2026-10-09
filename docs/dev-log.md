@@ -27,6 +27,32 @@ builds ≤696 in
 
 -----
 
+## 2026-10-09 (build 3646) — the version override says what it changes and Auto restores at once; UFunction parameters follow the measured layout; a UE 4.10 game refused live; the Call Trace list keeps its room `[UE-OVERRIDE-411]` `[UE-OVERRIDE-HINT-AUTO]` `[VER-410-GATE]` `[CT-DETAIL-COVERS-LIST]` `[LIVE-3646]`
+
+- **The UE version override is safer and says what it does.** Its tooltip now explains that it changes how the
+  DLL reads the game (not just a label), what follows the version, the risk of a wrong pick, and when each part
+  takes effect. A version the game's own UFunctions contradict is refused with the reason (checked live: UE 4.15 on
+  a UE 5.8 game). **Choosing Auto returns to the detected version at once**; with no detection on record it says it
+  applies at the next launch. Checked live on DumperTest58.
+- **UFunction parameters are read where the game really keeps them.** Once a scan has measured the UFunction
+  layout (4.11-4.17 differ from 4.18+), parameter counts and sizes follow the measurement rather than the version
+  number, so a wrong override can no longer misread them. Every buffer the DLL hands ProcessEvent is sized to the
+  function's whole parameter chain, and the CE mailbox refuses a call whose parameters would not fit its 1 KB slab
+  instead of overrunning it. Checked live on UE 4.15 (Extinction): Actor::ReceiveTick's DeltaSeconds read 0.0167.
+- **A UE 4.10 game is refused, checked live.** IS Defense (4.10.2) is recognised from the engine build string in its
+  own exe and refused as too old; version detection reads more build-string shapes.
+- **The Call Trace list can no longer be covered by the detail pane** (Call / Call stack / Parameters): the list
+  keeps room beside it at any window size or remembered width. Checked live on Extinction.
+- Known issues in this build, not fixed yet:
+  - Turning the experimental features off after recording a trace still offers "Open in Call Trace", which opens the
+    hidden tab `[LF-EXPOFF-TRACE]`.
+  - On a game refused as too old, the header still shows "Object-array stride not detected", and the notice reads
+    "UE 411" / "UE 410" instead of 4.11 / 4.10 `[REFUSED-STRIDE-NOTICE]` `[TOOOLD-VERSION-TEXT]`.
+  - At the default window size the Call Trace detail pane can only be widened to about 500 px, so the Call stack's
+    Where column scrolls sideways; fold the object tree or widen the window for more `[CT-FLOOR-208]`.
+- Tests: the C++ test executables all passed (dll_core_test 1,162 checks, dll_helpers_test 3,242); C# 6,517 run, 0 failed;
+  headless 54 / 54. `UE5DumpUI.exe` 61,071,360 bytes, Native-AOT.
+
 ## 2026-10-09 (build 3645) — Live Funcs' controls fold; Clear T/P/S; the Blueprint interpreter named on stacks; a UE 4.10 game refused `[LF-COMPACT-TOP]` `[LF-CLEAR-CHOICES]` `[LF-SNAP-WARN-RAISE]` `[A1-INTERP-LABEL]` `[CT-STACK-WHERE-WIDTH]` `[VER-410-GATE]` `[UE-OVERRIDE-411]`
 
 - **Live Funcs' controls take far less of the panel.** With a stack chosen they took 13-16 lines. The stack
