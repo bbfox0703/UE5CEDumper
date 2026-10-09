@@ -412,4 +412,40 @@ public class CallTraceColumnsTests
         Drag(top, HeaderHandle(panel, "str.CT.Col.Thread"), -10);
         Assert.Equal(limit - 10, HeaderCell(panel, "str.CT.Col.Thread").Bounds.Width, 0.5);
     });
+
+    /// <summary>Each column's handle widens its own column by the step dragged, in the direction the handle faces:
+    /// Time, Duration and Thread to the right, Object to the left. In a 1600 window no column is at a limit.</summary>
+    [Theory]
+    [InlineData("str.CT.Col.Time", 20)]
+    [InlineData("str.CT.Col.Duration", 20)]
+    [InlineData("str.CT.Col.Thread", 20)]
+    [InlineData("str.CT.Col.Object", -20)]
+    public Task Each_column_handle_widens_its_own_column_by_the_step_dragged(string key, double dx) => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidIn(1600, 380, Row);
+        var before = HeaderCells(panel, vm).Select(c => (c.name, c.cell.Bounds.Width)).ToList();
+        Drag(top, HeaderHandle(panel, key), dx);
+        var after = HeaderCells(panel, vm).Select(c => (c.name, c.cell.Bounds.Width)).ToList();
+        string dragged = Header(key);
+        for (int i = 0; i < before.Count; i++)
+        {
+            bool mine = Header("str.CT.Col." + before[i].name) == dragged;
+            Assert.True(Math.Abs(after[i].Width - before[i].Width - (mine ? 20 : 0)) < 0.5,
+                        $"{before[i].name} went from {before[i].Width:0.#} to {after[i].Width:0.#} on a drag of {key}");
+        }
+    });
+
+    /// <summary>A view model given to a panel already laid out is fitted too, though the panel's size never changed.</summary>
+    [Fact]
+    public Task A_view_model_set_after_the_panel_was_laid_out_is_fitted_too() => Headless.Run(() =>
+    {
+        LoadStrings();
+        var panel = new CallTracePanel();
+        var window = new Window { Content = panel, Width = 800, Height = 600 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        panel.DataContext = NewVm(4096, new[] { Row, Row2 });
+        Dispatcher.UIThread.RunJobs();
+        AssertListFloor(panel, Row2);
+    });
 }
