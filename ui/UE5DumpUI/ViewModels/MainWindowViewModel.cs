@@ -598,7 +598,7 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
         DumpExplorer = new DumpExplorerViewModel(dump, log, platform);
         // Detect Player Stats (P4). snapshotStore is optional — the behavioral
         // signal is opt-in and no-ops (with a note) when it's null.
-        DetectStats = new DetectStatsViewModel(dump, log, snapshotStore);
+        DetectStats = new DetectStatsViewModel(dump, log, snapshotStore, experimentalGate);
         Console = new ConsoleViewModel(dump, log);
         Teleport = new TeleportViewModel(dump, log, platform, aobMaker, globalHotkeys, experimentalGate, coordLibrary);
         if (snapshotStore != null)

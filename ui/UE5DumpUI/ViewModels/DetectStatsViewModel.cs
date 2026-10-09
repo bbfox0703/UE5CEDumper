@@ -67,8 +67,9 @@ public partial class DetectStatsViewModel : ViewModelBase
     /// <summary>Client-side filter on property / class / category name (substring).</summary>
     [ObservableProperty] private string _filterText = "";
     [ObservableProperty] private bool _isBusy;
-    [ObservableProperty] private string _statusText =
-        "Click Detect to shortlist likely HP / MP / Gold fields and confirm them live.";
+    /// <summary>The status before any Detect, and again once a run is discarded.</summary>
+    private const string IdlePrompt = "Click Detect to shortlist likely HP / MP / Gold fields and confirm them live.";
+    [ObservableProperty] private string _statusText = IdlePrompt;
     /// <summary>Opt-in behavioral signal: cross-reference the two most-recent
     /// snapshots and boost fields that decreased (capture → take damage → capture).</summary>
     [ObservableProperty] private bool _useSnapshotSignal;
@@ -108,11 +109,26 @@ public partial class DetectStatsViewModel : ViewModelBase
         _log = log;
         _snapshotStore = snapshotStore;
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
+        if (experimentalGate != null)
+            experimentalGate.Changed += (_, _) => { if (!experimentalGate.IsEnabled) DiscardRunForExperimentalOff(); };
     }
 
-    // [A1-DETECT-REPUBLISH] Bumped by ClearOnDisconnect. DetectAsync has no cancellation and its per-class catch swallows
-    // every pipe failure, so a run suspended at the disconnect finished anyway and republished the old game's rows. It
-    // now compares after every await and bails without touching the rows or the status (InstanceFinder's _searchGen).
+    /// <summary>[EXPOFF-TEARDOWN] The experimental features went off. This tab is hidden then, and it is not one of the
+    /// tabs that lock the opt-in, so the box can be unticked while a Detect runs: the run would go on asking the DLL
+    /// for up to <see cref="MaxClassesProbed"/> classes and publish to a hidden tab. It is discarded the way a
+    /// disconnect discards it. Rows a finished run published stay for the features to come back: they hold nothing in
+    /// the game.</summary>
+    private void DiscardRunForExperimentalOff()
+    {
+        if (!IsBusy) return;
+        _detectGen++;
+        StatusText = IdlePrompt;
+    }
+
+    // [A1-DETECT-REPUBLISH] Bumped by ClearOnDisconnect, and by an untick ([EXPOFF-TEARDOWN]). DetectAsync has no
+    // cancellation and its per-class catch swallows every pipe failure, so a run suspended at the disconnect finished
+    // anyway and republished the old game's rows. It now compares after every await and bails without touching the rows
+    // or the status (InstanceFinder's _searchGen).
     private int _detectGen;
 
     /// <summary>Drop detected-stat rows so a reconnect never shows fields (and live
@@ -124,7 +140,7 @@ public partial class DetectStatsViewModel : ViewModelBase
         _allResults = new List<DetectedStat>();
         SelectedResult = null;
         Results.Clear();
-        StatusText = "Click Detect to shortlist likely HP / MP / Gold fields and confirm them live.";
+        StatusText = IdlePrompt;
     }
 
     /// <summary>Test seam: the rows a Detect run would publish, without the pipe round trips

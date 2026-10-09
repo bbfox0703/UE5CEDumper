@@ -1,7 +1,7 @@
 {
   "ui/UE5DumpUI/ViewModels/ClassPivotViewModel.cs": 30,
   "ui/UE5DumpUI/ViewModels/ConsoleViewModel.cs": 18,
-  "ui/UE5DumpUI/ViewModels/DetectStatsViewModel.cs": 7,
+  "ui/UE5DumpUI/ViewModels/DetectStatsViewModel.cs": 6,
   "ui/UE5DumpUI/ViewModels/DumpExplorerViewModel.cs": 12,
   "ui/UE5DumpUI/ViewModels/GameClassFilterViewModel.cs": 8,
   "ui/UE5DumpUI/ViewModels/InstanceFinderViewModel.cs": 19,
