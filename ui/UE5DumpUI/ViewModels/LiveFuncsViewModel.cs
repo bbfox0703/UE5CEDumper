@@ -847,6 +847,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
         if (_experimentalGate != null)
             _experimentalGate.Changed += (_, _) =>
             {
+                // [EXPOFF-TEARDOWN] Nothing to stop when the features go off: the box that turns them off is on the
+                // System tab, and leaving this tab for it stops a recording, traced or not (OnLeavingTab). What that
+                // stop keeps of a trace is hidden with the switch here, and offered again when it comes back.
                 OnPropertyChanged(nameof(TraceAvailable));
                 OnPropertyChanged(nameof(CanOpenCallTrace));
                 ComposeTraceStatus();
@@ -1358,7 +1361,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     // send the user to the Call Trace tab, hidden while the features are off. Kept apart from the line they follow so a
     // flip can take them off and put them back; any other status replaces both.
 
-    /// <summary>The last Stop's trace sentences; null once another status replaced that Stop's line.</summary>
+    /// <summary>The last Stop's trace sentences; null once another status replaced that Stop's line, or a disconnect
+    /// took the trace.</summary>
     private string? _traceClause;
     /// <summary>The Stop's line the sentences follow.</summary>
     private string _statusBeforeTraceClause = "";
@@ -1765,5 +1769,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
         RefreshSnapshotList();
         _lastCallsPerSecond = 0;
         OnPropertyChanged(nameof(TraceEstimate));
+        // [LF-EXPOFF-TRACE] The Stop's trace sentences go with the trace: left, they sent the user to a trace the DLL no
+        // longer holds, and the switch turned off and on again composed them back. The Stop's own line stays. Cleared
+        // here rather than left to the status write, which raises nothing when the switch already took them off.
+        if (_traceClause != null)
+        {
+            _traceClause = null;
+            StatusText = _statusBeforeTraceClause;
+        }
     }
 }
