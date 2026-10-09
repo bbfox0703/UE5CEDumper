@@ -49,13 +49,14 @@ public static class BakedScriptGenerator
     /// over the parameters, or the DLL's own <c>buffer_bytes</c> where only a list_all_functions row is at hand.
     /// </summary>
     internal static int BakedParmsSize(int parmsSize, IEnumerable<FunctionParamModel> parameters)
-        => parmsSize;
+        => (int)Math.Min(InvokeScriptGenerator.RequiredSpan(parmsSize, parameters), int.MaxValue);
 
     /// <inheritdoc cref="BakedParmsSize(int, IEnumerable{FunctionParamModel})"/>
     internal static int BakedParmsSize(FunctionInfoModel func) => BakedParmsSize(func.ParmsSize, func.Parameters);
 
     /// <inheritdoc cref="BakedParmsSize(int, IEnumerable{FunctionParamModel})"/>
-    internal static int BakedParmsSize(AllFunctionEntry entry) => entry.ParmsSize;
+    internal static int BakedParmsSize(AllFunctionEntry entry)
+        => (int)Math.Min(Math.Max((uint)entry.ParmsSize, entry.BufferBytes), int.MaxValue);
 
     /// <summary>Baseline verify-mode dump width when nothing needs more.</summary>
     internal const int DefaultDumpBytes = 32;

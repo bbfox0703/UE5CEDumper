@@ -5934,7 +5934,7 @@ static AllFunctionEntry FunctionEntryFor(const ClassInfo& ci, uintptr_t classAdd
     entry.functionFlags = f.functionFlags;
     entry.numParms      = f.numParms;
     entry.parmsSize     = f.parmsSize;
-    entry.bufferBytes   = 0;
+    entry.bufferBytes   = Ubel::ParamBufferSize(f);
     return entry;
 }
 
