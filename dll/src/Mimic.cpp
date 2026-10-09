@@ -667,18 +667,33 @@ static void HandleInvoke() {
     //     thread, exactly what the comment above forbids;
     //   * CMD_LIST_FUNCTIONS and CMD_LIST_INSTANCES overwrite it with a PAGE COUNT.
     // ResolveFunctionInfo also validates the meta-class is "Function", so a stale or
-    // recycled ufuncAddr fails safe instead of routing on garbage. Unresolved ⇒
-    // queue: the false negative costs latency, the false positive corrupts state.
-    // (audit #5 MB1)
+    // recycled ufuncAddr fails safe instead of routing on garbage: it is refused just
+    // below, because a function that does not resolve cannot be sized either. (audit #5 MB1)
     FunctionInfo fi{};   // global scope, like Fern's Linie query path
     const bool flagsResolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+
+    // [UE-OVERRIDE-411] review 2: ProcessEvent writes into this fixed slab (or into the queued
+    // path's owned copy of it), so the function's parameter block has to fit it -- measured by
+    // its own chain, since a ParmsSize read under a wrong UE version is another field.
+    // Mimic::InvokeSlabRefusal says why each case is refused.
+    const uint32_t needBytes = flagsResolved ? Ubel::ParamBufferSize(ufuncAddr, fi.parmsSize) : 0;
+    const int32_t refusal = InvokeSlabRefusal(flagsResolved, needBytes,
+                                              static_cast<uint32_t>(sizeof(g_invokeMailbox.paramsData)));
+    if (refusal != 0) {
+        char msg[256];
+        if (!flagsResolved)
+            snprintf(msg, sizeof(msg), "0x%llX is not a live UFunction -- not invoked (its parameters "
+                     "cannot be sized)", (unsigned long long)ufuncAddr);
+        else
+            snprintf(msg, sizeof(msg), "'%s' needs %u bytes of parameters (where its parameter chain ends), "
+                     "the mailbox holds %zu -- not invoked", fi.name.c_str(), needBytes,
+                     sizeof(g_invokeMailbox.paramsData));
+        SetError(refusal, msg);
+        return;
+    }
     const bool isStaticNative = ShouldRouteDirectInvoke(fi.functionFlags, flagsResolved);
 
-    if (!flagsResolved) {
-        LOG_WARN("Mailbox: INVOKE could not re-read FunctionFlags from ufunc=0x%llX "
-                 "(not a live UFunction?) — routing through GameThreadDispatch",
-                 (unsigned long long)ufuncAddr);
-    } else if (fi.functionFlags != g_invokeMailbox.functionFlags) {
+    if (fi.functionFlags != g_invokeMailbox.functionFlags) {
         // The whole point of MB1, made greppable: the mailbox field disagreed with
         // the function actually being invoked. Before the fix this decided the route.
         LOG_WARN("Mailbox: INVOKE mailbox functionFlags=0x%08X is STALE — '%s' "

@@ -1266,6 +1266,35 @@ static void Test_Mimic_InvokeRouting() {
     EXPECT("page counts never look static-native", true);
 }
 
+// [UE-OVERRIDE-411] review 2: CMD_INVOKE hands ProcessEvent the fixed paramsData slab, and nothing compared it with
+// the function's own parameter chain. The only gate in front of it was the CE helper's `parmsSize > 1024`, on a
+// ParmsSize the tail read gave -- a few bytes when the version is from the wrong side of 4.18.
+static void Test_Mimic_InvokeSlab() {
+    constexpr uint32_t slab = sizeof(Mimic::MailboxData::paramsData);
+    EXPECT("INVOKESLAB setup: the slab is paramsData's 1024 bytes", slab == 1024);
+
+    EXPECT("INVOKESLAB control: a block that ends at the slab's end fits",
+           Mimic::InvokeSlabRefusal(true, slab, slab) == 0);
+    EXPECT("INVOKESLAB control: a function with no parameters fits", Mimic::InvokeSlabRefusal(true, 0, slab) == 0);
+    EXPECT("INVOKESLAB ⭐: a block one byte past the slab is refused",
+           Mimic::InvokeSlabRefusal(true, slab + 1, slab) == Mimic::MB_ERR_INVOKE_TOO_LARGE);
+    // The review's shape: a 4.15 title read as 4.18 reads ParmsSize at the NumParms byte (3), while an
+    // FMinimalViewInfo-sized out parameter ends at 0x810. The buffer CMD_INVOKE sizes with is the chain's end.
+    const uint32_t misread = DynOff::ProcessEventBufferBytes(3, 0x810);
+    EXPECT("INVOKESLAB ⭐: a misread ParmsSize of 3 does not let a 0x810-byte block through",
+           Mimic::InvokeSlabRefusal(true, misread, slab) == Mimic::MB_ERR_INVOKE_TOO_LARGE);
+    EXPECT("INVOKESLAB ⭐: a function that does not resolve is refused, whatever the size",
+           Mimic::InvokeSlabRefusal(false, 0, slab) == Mimic::MB_ERR_INVOKE_UNRESOLVED
+           && Mimic::InvokeSlabRefusal(false, 16, slab) == Mimic::MB_ERR_INVOKE_UNRESOLVED);
+
+    // ProcessEvent's own codes ride the same `result` field (Frieren.h), and so do -10 / -11.
+    bool distinct = Mimic::MB_ERR_INVOKE_UNRESOLVED != Mimic::MB_ERR_INVOKE_TOO_LARGE
+                 && Mimic::MB_ERR_INVOKE_UNRESOLVED < 0 && Mimic::MB_ERR_INVOKE_TOO_LARGE < 0;
+    for (int32_t taken : { -1, -2, -3, -4, -5, -6, -7, -8, -10, -11 })
+        distinct = distinct && taken != Mimic::MB_ERR_INVOKE_UNRESOLVED && taken != Mimic::MB_ERR_INVOKE_TOO_LARGE;
+    EXPECT("INVOKESLAB: the two refusals are negative and apart from every code already in `result`", distinct);
+}
+
 static void Test_Mimic_CommandRequiresInit() {
     // The ONE exemption, and the reason it is safe: Grausam touches no UObject and
     // the pipe path gates it on nothing.
@@ -9326,6 +9355,7 @@ int main() {
     RUN(Test_Mimic_ListInstancesGeometry);
     RUN(Test_Mimic_CommandNumbering);
     RUN(Test_Mimic_InvokeRouting);
+    RUN(Test_Mimic_InvokeSlab);
     RUN(Test_Mimic_InitFastPath);
     RUN(Test_Mimic_CommandRequiresInit);
     RUN(Test_Flamme_AtomicPublishGate);

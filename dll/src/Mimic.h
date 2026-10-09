@@ -477,6 +477,26 @@ constexpr bool ShouldRouteDirectInvoke(uint32_t functionFlags, bool flagsResolve
                == (FUNC_FLAG_NATIVE | FUNC_FLAG_STATIC);
 }
 
+/// [UE-OVERRIDE-411] review 2: what CMD_INVOKE publishes instead of handing ProcessEvent the paramsData slab.
+/// Negative and apart from ProcessEvent's own codes (Frieren.h lists them) and the mailbox's -10 / -11; like
+/// MB_ERR_HANDLER_THREW in Mimic.cpp, not a contract change, because every script treats a non-zero result as a
+/// failure and shows errorMsg.
+constexpr int32_t MB_ERR_INVOKE_UNRESOLVED = -12;   // ufuncAddr is not a live UFunction
+constexpr int32_t MB_ERR_INVOKE_TOO_LARGE  = -13;   // its parameter block ends past the slab
+
+/// May CMD_INVOKE hand ProcessEvent the slab? 0 = yes, otherwise the refusal to publish.
+///
+/// ProcessEvent writes each parameter where the function's own chain puts it, out parameters and the return
+/// value included, so the slab must reach the chain's END (`bufferBytes`, Ubel::ParamBufferSize), never just the
+/// ParmsSize the tail read gave: under a wrong UE version that read is another field (NumParms, ReturnValueOffset),
+/// and a small one let an out parameter past 1 KB run through cmdFlags / cmdOutFlags and out of g_invokeMailbox.
+/// A function that does not resolve cannot be sized, and the queued path's owned copy is only the slab's size, so
+/// routing it anyway risks the same overrun.
+constexpr int32_t InvokeSlabRefusal(bool resolved, uint32_t bufferBytes, uint32_t slabBytes) {
+    (void)resolved; (void)bufferBytes; (void)slabBytes;
+    return 0;
+}
+
 /// [A3-MIMIC-INIT-FASTPATH] May a mailbox command skip EnsureInitialized's call into UE5_Init? UE5_Init publishes
 /// g_cachedGObjects / g_cachedGNames right after FindAll -- BEFORE Serie / Aura init, decoy recovery and
 /// ValidateAndFixOffsets -- so "both are set" is NOT "initialized" while an init is still scanning. Pure, so
