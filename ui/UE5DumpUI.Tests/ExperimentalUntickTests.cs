@@ -26,11 +26,12 @@ public class ExperimentalUntickTests : IDisposable
         catch { /* best effort */ }
     }
 
-    private (MainWindowViewModel main, ExperimentalGate gate) Make(bool enabled, bool connected)
+    private (MainWindowViewModel main, ExperimentalGate gate) Make(bool enabled, bool connected,
+                                                                   StubDumpService? dump = null)
     {
         var platform = new MockPlatformService(_dir);
         var gate = new ExperimentalGate(platform) { IsEnabled = enabled };
-        var main = new MainWindowViewModel(pipeClient: new NoopPipe(), dump: new StubDumpService(),
+        var main = new MainWindowViewModel(pipeClient: new NoopPipe(), dump: dump ?? new StubDumpService(),
                                            log: new MockLoggingService(), platform: platform, experimentalGate: gate);
         main.IsConnected = connected;
         return (main, gate);
@@ -102,6 +103,40 @@ public class ExperimentalUntickTests : IDisposable
         gate.Lock();
         Assert.Contains(nameof(PointerPanelViewModel.CanToggleExperimental), raised);
         Assert.Contains(nameof(PointerPanelViewModel.ExperimentalToggleTip), raised);
+    }
+
+    /// <summary>[EXPOFF-TEARDOWN] The main window hands its gate to Detect Stats, so the box's untick reaches a scan
+    /// running on the hidden tab (DetectStatsViewModelTests has the scan's side).</summary>
+    [Fact]
+    public async Task The_boxs_untick_reaches_a_running_Detect_Stats_scan()
+    {
+        var dump = new HeldSearch();
+        var (main, _) = Make(enabled: true, connected: true, dump);
+        string idle = main.DetectStats.StatusText;
+
+        var run = main.DetectStats.DetectCommand.ExecuteAsync(null);
+        Assert.True(main.DetectStats.IsBusy);
+        main.Pointers.ExperimentalEnabled = false;
+        Assert.Equal(idle, main.DetectStats.StatusText);
+
+        dump.Hold.SetResult(true);
+        await run;
+        Assert.False(main.DetectStats.IsBusy);
+        Assert.Equal(idle, main.DetectStats.StatusText);
+    }
+
+    /// <summary>A scorer batch that answers, empty, only when the test lets it.</summary>
+    private sealed class HeldSearch : StubDumpService
+    {
+        public TaskCompletionSource<bool> Hold { get; } = new();
+
+        public override async Task<UE5DumpUI.Models.PropertySearchBatchResult> SearchPropertiesBatchAsync(
+            string[] queries, string[]? types = null, bool gameOnly = true, int limitPerQuery = 200,
+            CancellationToken ct = default)
+        {
+            await Hold.Task;
+            return new UE5DumpUI.Models.PropertySearchBatchResult();
+        }
     }
 
     private sealed class NoopPipe : IPipeClient
