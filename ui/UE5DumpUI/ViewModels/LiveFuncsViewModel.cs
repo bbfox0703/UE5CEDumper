@@ -827,9 +827,9 @@ public partial class LiveFuncsViewModel : ViewModelBase
     /// <summary>A traced recording stopped and its trace waits in the DLL: offer the Call Trace tab.</summary>
     [ObservableProperty] private bool _hasTraceToOpen;
     /// <summary>[LF-EXPOFF-TRACE] Open in Call Trace shows for a kept trace while the experimental features are on. Off,
-    /// the Call Trace tab is hidden, and the button would show its content all the same: the opt-out bypassed. The
-    /// System tab lets the features go off only while disconnected, and a disconnect withdraws the offer; this holds
-    /// for any other path, and an offer the DLL still backs comes back when they are on again.</summary>
+    /// the Call Trace tab is hidden, and the button would show its content all the same: the opt-out bypassed. An
+    /// offer the DLL still backs comes back when they are on again; a disconnect withdraws it for good, as the DLL drops
+    /// the trace with the client.</summary>
     public bool CanOpenCallTrace => HasTraceToOpen && TraceAvailable;
     partial void OnHasTraceToOpenChanged(bool value) => OnPropertyChanged(nameof(CanOpenCallTrace));
     /// <summary>Raised by "Open in Call Trace"; the main window switches tabs and loads the trace.</summary>

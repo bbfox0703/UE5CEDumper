@@ -611,44 +611,26 @@ public partial class PointerPanelViewModel : ViewModelBase
     }
 
     /// <summary>
-    /// False once the experimental opt-in has been locked (the user opened an
-    /// experimental tab while enabled), and while it is ticked and the UI is
-    /// connected (<see cref="ExperimentalUntickNeedsDisconnect"/>). The System-tab
-    /// checkbox binds its <c>IsEnabled</c> to this.
+    /// False once the experimental opt-in has been locked for the session (the user opened a tab that locks it while
+    /// enabled). The System-tab checkbox binds its <c>IsEnabled</c> to this so a locked opt-in can no longer be
+    /// unticked. [LF-EXPOFF-TRACE] The connection does not enter into it (the maintainer's choice after the review,
+    /// 2026-10-09: an untick while connected turns off at once what the features run in the game, and one while
+    /// disconnected at the next connect -- Teleport's teardown).
     /// </summary>
-    public bool CanToggleExperimental => !ExperimentalLocked && !ExperimentalUntickNeedsDisconnect;
+    public bool CanToggleExperimental => !ExperimentalLocked;
 
     private bool ExperimentalLocked => _experimentalGate?.IsLocked ?? false;
 
-    /// <summary>[LF-EXPOFF-TRACE] Connected, as the main window's Connect / Disconnect button shows it.</summary>
-    private bool _connected;
-
-    /// <summary>[LF-EXPOFF-TRACE] The main window's connection flag, at each change: a dropped pipe clears it as a
-    /// Disconnect does, and it changes on the UI thread, where the pipe's own state changes on the pipe's threads.</summary>
-    public void SetConnected(bool connected)
-    {
-        if (_connected == connected) return;
-        _connected = connected;
-        RaiseExperimentalToggle();
-    }
-
-    /// <summary>[LF-EXPOFF-TRACE] Ticked and connected: unticking waits for a Disconnect (the maintainer's choice,
-    /// 2026-10-09). One rule rather than a list of what counts as "running" per feature, and a disconnect already
-    /// ends what an experimental feature holds in the game: Live Funcs withdraws the trace it offers, and the DLL drops
-    /// the trace with the client. Ticking stays free. False when locked: a Disconnect would not free a locked box, so
-    /// the tooltip must not send the user to one.</summary>
-    public bool ExperimentalUntickNeedsDisconnect => !ExperimentalLocked && ExperimentalEnabled && _connected;
-
-    /// <summary>[LF-EXPOFF-TRACE] The checkbox's tooltip: why it cannot be clicked, when a Disconnect would free it.
-    /// The box shows it while disabled too (ToolTip.ShowOnDisabled), or the reason would never be seen.</summary>
+    /// <summary>[LF-EXPOFF-TRACE] The checkbox's tooltip. Locked, the box is disabled, and its tooltip says why it
+    /// cannot be unticked and until when; the box opens it while disabled too (ToolTip.ShowOnDisabled), or the reason
+    /// would never be seen.</summary>
     public string ExperimentalToggleTip
-        => Res.Get(ExperimentalUntickNeedsDisconnect ? "str.Experimental.DisconnectFirst" : "str.Experimental.EnableHint");
+        => Res.Get(ExperimentalLocked ? "str.Experimental.LockedForSession" : "str.Experimental.EnableHint");
 
-    /// <summary>What the checkbox binds besides its tick, each read from the gate and the connection.</summary>
+    /// <summary>What the checkbox binds besides its tick, each read from the gate.</summary>
     private void RaiseExperimentalToggle()
     {
         OnPropertyChanged(nameof(CanToggleExperimental));
-        OnPropertyChanged(nameof(ExperimentalUntickNeedsDisconnect));
         OnPropertyChanged(nameof(ExperimentalToggleTip));
     }
 
@@ -663,13 +645,6 @@ public partial class PointerPanelViewModel : ViewModelBase
         set
         {
             if (_experimentalGate == null || _experimentalGate.IsEnabled == value) return;
-            // [LF-EXPOFF-TRACE] Connected, the box is disabled and sends no untick; the property refuses one all the
-            // same, as the gate refuses an untick while locked, and raises so a binding reads the gate again.
-            if (!value && _connected)
-            {
-                OnPropertyChanged();
-                return;
-            }
             _experimentalGate.IsEnabled = value;
             OnPropertyChanged();
         }

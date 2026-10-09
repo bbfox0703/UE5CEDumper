@@ -843,9 +843,9 @@
          the System tab so the attribution doesn't depend on a live DLL connection. -->
     <StackPanel Spacing="3" HorizontalAlignment="Center" Margin="0,8,0,4">
       <StackPanel Orientation="Horizontal" Spacing="6" HorizontalAlignment="Center">
-        <!-- Bare, faint experimental opt-in checkbox (no label of its own). [LF-EXPOFF-TRACE] Ticked, it is
-             unticked only while disconnected; disabled for that, its tooltip says so, and ShowOnDisabled lets a
-             disabled box open its tooltip at all. -->
+        <!-- Bare, faint experimental opt-in checkbox (no label of its own). [LF-EXPOFF-TRACE] Disabled once the
+             session lock holds it, when its tooltip says why; ShowOnDisabled lets a disabled box open its tooltip
+             at all. -->
         <CheckBox IsChecked="{Binding ExperimentalEnabled}"
                   IsEnabled="{Binding CanToggleExperimental}"
                   Opacity="0.1"

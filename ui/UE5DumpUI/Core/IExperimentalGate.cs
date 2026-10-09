@@ -20,13 +20,12 @@ public interface IExperimentalGate
     /// <see cref="Changed"/> (the Snapshot tab owns its own quota UI).</summary>
     int SnapshotQuotaMb { get; set; }
 
-    /// <summary>True once the user has opened an experimental tab while enabled.
+    /// <summary>True once the user has opened, while enabled, an experimental tab
+    /// that locks the opt-in (the main window's tab switch decides which).
     /// While locked the opt-in checkbox can no longer be unticked, and
     /// <see cref="IsEnabled"/> can no longer be set back to false.
     /// <b>Session-only</b> — NOT persisted; a restart clears it, so the user can
-    /// untick again until they re-open an experimental tab. Unlocked, an untick
-    /// still waits for a Disconnect: the System tab view model's rule, as this
-    /// gate does not know the connection.</summary>
+    /// untick again until they re-open such a tab.</summary>
     bool IsLocked { get; }
 
     /// <summary>Lock the opt-in for this session (idempotent). Raises
