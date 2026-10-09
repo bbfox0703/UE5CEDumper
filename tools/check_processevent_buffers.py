@@ -110,44 +110,45 @@ def blank_exempt_bodies(text: str, fname: str) -> str:
     return text
 
 
+def names_in(expr: str, names: set[str]) -> bool:
+    return any(re.search(r"(?<![\w])" + re.escape(n) + r"(?![\w])", expr) for n in names)
+
+
 def classify_names(text: str):
-    """(unprotected, protected): locals assigned from a ParmsSize without a helper, and locals every assignment of
-    which goes through one. Iterated to a fixpoint, so a local assigned from another one inherits its class."""
+    """(unprotected, protected) locals. Protected first, to a fixpoint: every assignment goes through a helper or
+    another protected local. Then unprotected, to a fixpoint: some assignment reads a ParmsSize or an unprotected
+    local and is not helped. The order matters -- deciding a local before the locals it is built from are known reads
+    `max(chain end, asked)` as unhelped -- and the two sets cannot meet: a protected local has no unhelped
+    assignment."""
     assigns: dict[str, list[str]] = {}
     for m in ASSIGN.finditer(text):
         name, rhs = m.group(1), m.group(2)
         if name in ("if", "while", "for", "return", "case"):
             continue
         assigns.setdefault(name, []).append(rhs)
-    unprot: set[str] = set()
+    helped = lambda rhs, prot: bool(HELPER.search(rhs)) or names_in(rhs, prot)
     prot: set[str] = set()
     changed = True
     while changed:
         changed = False
         for name, rhss in assigns.items():
-            for rhs in rhss:
-                helped = bool(HELPER.search(rhs)) or any(re.search(r"(?<![\w])" + re.escape(p) + r"(?![\w])", rhs)
-                                                         for p in prot - unprot)
-                reads = bool(PARMS.search(rhs)) or any(re.search(r"(?<![\w])" + re.escape(u) + r"(?![\w])", rhs)
-                                                       for u in unprot)
-                if reads and not helped and name not in unprot:
-                    unprot.add(name); changed = True
-        for name, rhss in assigns.items():
-            if name in unprot or name in prot:
-                continue
-            if all(HELPER.search(r) or any(re.search(r"(?<![\w])" + re.escape(p) + r"(?![\w])", r)
-                                           for p in prot - unprot) for r in rhss):
+            if name not in prot and all(helped(r, prot) for r in rhss):
                 prot.add(name); changed = True
+    unprot: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name, rhss in assigns.items():
+            if name in unprot:
+                continue
+            if any((PARMS.search(r) or names_in(r, unprot)) and not helped(r, prot) for r in rhss):
+                unprot.add(name); changed = True
     return unprot, prot
 
 
 def size_is_unprotected(expr: str, unprot: set[str], prot: set[str]) -> bool:
-    reads = bool(PARMS.search(expr)) or any(re.search(r"(?<![\w])" + re.escape(u) + r"(?![\w])", expr) for u in unprot)
-    if not reads:
-        return False
-    helped = bool(HELPER.search(expr)) or any(re.search(r"(?<![\w])" + re.escape(p) + r"(?![\w])", expr)
-                                              for p in prot - unprot)
-    return not helped
+    reads = bool(PARMS.search(expr)) or names_in(expr, unprot)
+    return reads and not (HELPER.search(expr) or names_in(expr, prot))
 
 
 def split_args(text: str, open_at: int) -> list[str]:
