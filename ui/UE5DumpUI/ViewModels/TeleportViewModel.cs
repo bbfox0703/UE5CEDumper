@@ -2398,6 +2398,16 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     }
 
 
+    /// <summary>The in-flight connect prime, so a test can await it instead of racing it.</summary>
+    /// <remarks>⚠ NOT just a convenience. The prime is fire-and-forget by design (a
+    /// reconnect must not block the UI thread on eight pipe round-trips), which makes any
+    /// assertion that COUNTS calls non-deterministic: `RefreshCursor_reads_live_state`
+    /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
+    /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
+    /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
+    /// honest fix. Production code never awaits this.</remarks>
+    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
+
     /// <summary>
     /// Quiet read-back of EVERY badge the disconnect branch resets, run once on connect.
     /// </summary>
@@ -2431,16 +2441,6 @@ public partial class TeleportViewModel : ViewModelBase, IDisposable
     /// here. The two lists are kept honest by <c>tools/check_badge_prime_symmetry.py</c>,
     /// which fails if a badge is reset on disconnect and primed by nothing on connect.</para>
     /// </remarks>
-    /// <summary>The in-flight connect prime, so a test can await it instead of racing it.</summary>
-    /// <remarks>⚠ NOT just a convenience. The prime is fire-and-forget by design (a
-    /// reconnect must not block the UI thread on eight pipe round-trips), which makes any
-    /// assertion that COUNTS calls non-deterministic: `RefreshCursor_reads_live_state`
-    /// asserts one <c>GetMouseCursorAsync</c> and would see one or two depending on whether
-    /// the background prime had landed yet. Weakening that assertion to ">= 1" would hide
-    /// exactly the kind of duplicate-call regression it exists to catch, so the seam is the
-    /// honest fix. Production code never awaits this.</remarks>
-    internal Task ConnectPrime { get; private set; } = Task.CompletedTask;
-
     private async Task PrimeHeldBadgesAsync()
     {
         // God Mode, and the two time lanes — the three that were already primed.

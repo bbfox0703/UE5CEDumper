@@ -1647,6 +1647,8 @@ public partial class PointerPanelViewModel : ViewModelBase
     {
         // Defense in depth: the button is hidden unless experimental is enabled, but
         // guard the command too (and no-op without a store).
+        // [EXPOFF-TEARDOWN] An untick does not stop a run: the confirmation is modal, and the
+        // delete after it touches local files only, which cut short would be half deleted.
         if (_snapshotStore == null || !(_experimentalGate?.IsEnabled ?? false)) return;
 
         bool confirmed = await UE5DumpUI.Views.ConfirmDialog.ShowAsync(

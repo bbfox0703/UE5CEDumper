@@ -330,7 +330,9 @@ public partial class MainWindowViewModel : ViewModelBase, IDisposable
 
     /// <summary>Enable the "Pivot this property" context-menu items only when the
     /// experimental Class Pivot tab is both present and opted in — so the handoff
-    /// stays invisible while experimental features are off.</summary>
+    /// stays invisible while experimental features are off. [EXPOFF-TEARDOWN] A handoff
+    /// already made needs no stopping on an untick: it opens Class Pivot, which locks the
+    /// opt-in for the session, so the box cannot be unticked under it.</summary>
     private void UpdatePivotHandoffEnabled()
     {
         bool on = ExperimentalEnabled && Pivot != null;

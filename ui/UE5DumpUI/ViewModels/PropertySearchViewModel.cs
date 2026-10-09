@@ -428,6 +428,9 @@ public partial class PropertySearchViewModel : ViewModelBase, IDisposable
 
     private void OnExperimentalGateChanged(object? sender, EventArgs e)
     {
+        // [EXPOFF-TEARDOWN] Turning the features off hides the Force submenu but releases no hold: the forced-fields
+        // strip shows every live hold whatever the gate, with its own remove and Clear all, so none runs out of sight.
+        // (The Teleport Stealth card releases its own meter hold, whose card does hide.)
         OnPropertyChanged(nameof(ForceEnabled));
         OnPropertyChanged(nameof(ForceMenuVisible));
     }
