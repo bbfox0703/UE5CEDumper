@@ -27,6 +27,32 @@ builds ≤696 in
 
 -----
 
+## 2026-10-09 (build 3645) — Live Funcs' controls fold; Clear T/P/S; the Blueprint interpreter named on stacks; a UE 4.10 game refused `[LF-COMPACT-TOP]` `[LF-CLEAR-CHOICES]` `[LF-SNAP-WARN-RAISE]` `[A1-INTERP-LABEL]` `[CT-STACK-WHERE-WIDTH]` `[VER-410-GATE]` `[UE-OVERRIDE-411]`
+
+- **Live Funcs' controls take far less of the panel.** With a stack chosen they took 13-16 lines. The stack
+  warning is now one line with a Details button for the whole text; the capture settings fold under one header
+  line that sums up what is set, orange with a short ⚠ whenever a line folded away would warn, and the fold is
+  remembered; the "No baseline" hint moved into Set Baseline's tooltip. Checked live on DumperTest58.
+- **Clear T/P/S** on that header empties the Trace, Params and Stack columns at once. Checked live.
+- **The parameter estimate's orange follows the ticks and the trace buffer**; it used to keep its old colour
+  until something else changed. Checked live: ticking every row turned it off, Clear ticks turned it on again.
+- **A stack frame inside the Blueprint interpreter reads "the Blueprint interpreter +0x.. (UObject::ProcessInternal,
+  the native entry of N Blueprint functions)"** instead of naming one arbitrary Blueprint function. Checked live on
+  DQ XI S (6,678 functions).
+- **The Call stack tab's Address column keeps its width in a narrow pane** (it was squeezed to a sliver); Where
+  scrolls sideways instead. Checked live.
+- **A UE 4.10 game is refused instead of misread.** A version below 4.11 read from the game's own resource now
+  counts when the engine build string in the same resource, or an agreeing CrashReportClient, backs it, so a 4.10
+  title such as IS Defense is refused as too old (tests and rigs only so far; the live check is owed). The UE
+  version override now reaches down to 4.11. ⚠ The review of these two found that a wrong 4.11-4.17 override pick
+  on a 4.18+ game can make the DLL size some ProcessEvent buffers short (Teleport, invoke_function and others); the
+  fix comes in the next build. **With this build, leave the override on Auto.**
+- Known, found live on this build: a trace recorded with the experimental features on still offers "Open in Call
+  Trace" after they are turned off, and opens the hidden tab `[LF-EXPOFF-TRACE]`. Being fixed: the features will
+  turn off only while disconnected.
+- Tests: the C++ test executables all passed, C# 6,486 / 6,486, headless 43 / 43. `UE5DumpUI.exe` 61,056,000
+  bytes, Native-AOT.
+
 ## 2026-10-08 (build 3644) — Live Funcs stacks name the Blueprint interpreter; the Call stack tab's Where fills the pane `[A1-SCRIPT-FUNCS]` `[CT-STACK-WHERE-WIDTH]`
 
 Published before the handover entry below, written after it.
