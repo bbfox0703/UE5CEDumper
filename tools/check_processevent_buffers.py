@@ -38,8 +38,10 @@ HELPER = re.compile(r"(?<![\w])(?:ParamBufferSize|ProcessEventBufferBytes)\s*\("
 # The helper bodies: (file name, function name).
 EXEMPT = {("Grimoire.h", "ProcessEventBufferBytes"), ("Ubel.cpp", "ParamBufferSize")}
 
-# A plain assignment or an initialisation: the name right before a lone '=' (so not ==, <=, +=, ...).
-ASSIGN = re.compile(r"(?<![\w])([A-Za-z_]\w*)\s*=(?!=)\s*([^;{}]*);")
+# A plain assignment or an initialisation of a LOCAL: the name right before a lone '=' (so not ==, <=, +=, ...), and
+# not a member (`s.arm.copy =`, `hdr->len =`): members are tracked by name across a whole file, where `len` / `copy`
+# mean something else three functions later, and a buffer is sized from a local.
+ASSIGN = re.compile(r"(?<![\w.])(?<!->)([A-Za-z_]\w*)\s*=(?!=)\s*([^;{}]*);")
 # A vector's size comes only from parentheses; a braced list is its elements.
 ALLOC_CALLS = re.compile(
     r"(?:std::vector\s*<[^;(){}]*?>\s*(?:[A-Za-z_]\w*\s*)?\()"
@@ -250,6 +252,11 @@ SELFTEST = [
      "uint32_t ParamBufferSize(const FunctionInfo& fi) {\n    std::vector<int> v(fi.parmsSize);\n    return 0;\n}", 1),
     ("green: a sanity bound is not an allocation", "Schlacht.cpp",
      "if (out.parmsSize < 0 || out.parmsSize > kMaxSaneParmsSize) return false;", 0),
+    # Linie's shape on the first run: a member set from a ParmsSize (the arm's ring-capped copy) whose name later
+    # reads as a stack-frame count and a Base64 length.
+    ("green: a member is not a local", "Linie.cpp",
+     "s.arm.copy = ArmCopyBytes(s.ident.parmsSize, f, cap);\nuint32_t n = hint.copy < cap ? hint.copy : cap;\n"
+     "hdr->len = n;\nc.frames.resize(hdr->len / 8);\nout.resize(((len + 2) / 3) * 4);", 0),
 ]
 
 
