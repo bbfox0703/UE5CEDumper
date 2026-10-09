@@ -394,11 +394,14 @@
     <sys:String x:Key="str.Pointers.VersionWarning">&#x26A0; Version not detected — inferred from engine analysis (custom UE build?)</sys:String>
     <sys:String x:Key="str.Pointers.VersionDetectedBadge">&#x2713; Detected</sys:String>
     <sys:String x:Key="str.Pointers.VersionUserOverrideBadge">&#x1F527; User Override</sys:String>
-    <sys:String x:Key="str.Pointers.VersionUserOverrideTooltip">UE version was set manually. The override is saved per-game and reapplied on every launch.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionUserOverrideTooltip">UE version set manually with Override. It is saved per game and applied at every launch until Auto is chosen; Override's tooltip says what it changes.</sys:String>
     <sys:String x:Key="str.Pointers.VersionLowConfidenceBadge">&#x26A0; Low Confidence</sys:String>
-    <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via fragile fallback path — bare pattern match or publisher bias. If exports look wrong, set the correct UE version using the Override ComboBox below.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via a fragile fallback — a bare pattern match or a publisher bias — so this version may be wrong. If values, exports or function calls look wrong, set the right version with Override above; its tooltip says what that changes.</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
-    <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Force a specific UE version for this game. Saved per-game and reapplied on every launch. Choose Auto to revert to auto-detection.</sys:String>
+    <!-- [UE-OVERRIDE-HINT-AUTO] The maintainer asked (2026-10-09) whether the override is only a label. It is not:
+         say what it changes, what it risks, and when each part takes effect. Keep it in step with what the DLL's
+         set_ue_version_override handler does. -->
+    <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Not just a label: it changes how the DLL reads this game. GObjects, GNames and the property offsets are measured from the game and stay as they are; what cannot be measured follows this version, including UE4 property fields, soft and lazy pointers, sets and maps, the CE export layout, and UFunction parameters until a scan has measured them. A wrong version misreads those, and a write or function call built on a misread can crash the game. Use it only when detection is wrong. Saved per game and applied at every launch, where it also skips the too-old check; that check and the sparse-delegate scan follow a change only at the next launch. Auto returns to the detected version at once, or at the next launch if none is on record.</sys:String>
     <sys:String x:Key="str.Pointers.VersionAutoPendingText">Auto applies at the next launch: there is no detection of this game on record that this session can return to, so the overridden version above stays in force until the game restarts.</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutLabel">Invoke timeout (ms):</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutTooltip">UFunction call wait time. Default 5000 = 5s. Increase if "GameThreadDispatch: invoke timeout" appears in logs (Blueprint widget delegates often need 10-30s). Saved per-game; reset to 5000 to clear.</sys:String>
