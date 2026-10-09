@@ -4472,8 +4472,9 @@ int main() {
         auto putP  = [](uint8_t* b, int off, uintptr_t v) { memcpy(b + off, &v, sizeof(v)); };
         auto put32 = [](uint8_t* b, int off, int32_t v)   { memcpy(b + off, &v, sizeof(v)); };
         auto put16 = [](uint8_t* b, int off, uint16_t v)  { memcpy(b + off, &v, sizeof(v)); };
-        // repOffset: a 4.11-4.17 tail (RepOffset at 0x8C, NumParms 0x8E), else 4.18's (NumParms 0x8C).
-        auto build = [&](bool repOffset) {
+        // tail: where NumParms / ParmsSize sit behind. 0x88 is 4.18's (NumParms 0x8C), 0x8A a 4.11-4.17 one (RepOffset
+        // at 0x8C, NumParms 0x8E), 0x8C one 4 past the version's shift (Split Fiction's shape: the vote's extra).
+        auto build = [&](int tail) {
             memset(otB, 0, sizeof(otB));
             memset(otP, 0, sizeof(otP));
             putP(otB[bMeta], Grimoire::OFF_UOBJECT_CLASS, A(bMeta));   put32(otB[bMeta], Grimoire::OFF_UOBJECT_NAME, oClass);
@@ -4481,7 +4482,6 @@ int main() {
             for (int i = 0; i < kOtFns; ++i) {
                 uint8_t* f = otB[bFn0 + i];
                 const int count = i % 3 + 1, end = 4 * count;
-                const int tail = repOffset ? 0x8A : 0x88;
                 putP(f, Grimoire::OFF_UOBJECT_CLASS, A(bFnCls));
                 put32(f, 0x88, 0x00080401);                          // FunctionFlags
                 f[tail + 4] = static_cast<uint8_t>(count);           // NumParms
@@ -4533,7 +4533,7 @@ int main() {
         };
 
         // A 4.18 title (the OCTOPATH / DQ XI S tail), detected as 4.18.
-        build(false);
+        build(0x88);
         resetVote();
         g_cachedUEVersion = 418;
         DynOff::bOffsetsProbeRan.store(true);
@@ -4553,7 +4553,7 @@ int main() {
 
         // The inverse, which the widening lets a user correct: a 4.15 title misdetected as 4.18. The vote adds only
         // 4.18's shift, so it finds nothing; the measurement is not tied to the version and finds +0x8A.
-        build(true);
+        build(0x8A);
         resetVote();
         g_cachedUEVersion = 418;
         const int votedB = Ubel::FunctionFlagsOffset();
@@ -4583,7 +4583,7 @@ int main() {
 
         // The review's second route: an override from the other side of 4.18, persisted by an earlier session, is
         // applied before the scan, so the vote runs under it -- and under 4.17 it cannot find a 4.18 tail.
-        build(false);
+        build(0x88);
         resetVote();
         g_cachedUEVersion = 417;
         const int votedC = Ubel::FunctionFlagsOffset();
@@ -4594,9 +4594,29 @@ int main() {
         check("OVERRIDETAIL measured ⭐: ...and the readers follow it: NumParms 3, ParmsSize 12",
               readsRight(readOf(bFn0 + 2)), rb);
 
+        // [UE-OVERRIDE-411] review 2: a tail 4 past the version's shift, Split Fiction's shape. The vote absorbs it as
+        // UFUNCTION_TAIL_EXTRA, and the override check has to add that extra to the version it judges: without it
+        // every override on such a title is refused, the right one included.
+        build(0x8C);
+        resetVote();
+        g_cachedUEVersion = 505;
+        const int votedD = Ubel::FunctionFlagsOffset();
+        snprintf(ob, sizeof(ob), "flags +0x%X extra %d measured +0x%X", votedD, DynOff::UFUNCTION_TAIL_EXTRA,
+                 DynOff::UFUNCTION_TAIL_MEASURED.load());
+        check("OVERRIDETAIL setup: the vote decides FunctionFlags +0x88 with the +4 extra, measured +0x8C",
+              votedD == 0x88 && DynOff::UFUNCTION_TAIL_EXTRA == 4 && DynOff::UFUNCTION_TAIL_MEASURED.load() == 0x8C, ob);
+        auto c505 = verdictOf(505);
+        check("OVERRIDETAIL ⭐: on a +4 tail the right version, 5.5, agrees -- the extra counts",
+              c505.verdict == TailCheck::Agrees && c505.versionBase == 0x8C, ob);
+        check("OVERRIDETAIL ⭐: ...5.0 as well", verdictOf(500).verdict == TailCheck::Agrees, ob);
+        auto c417d = verdictOf(417);
+        check("OVERRIDETAIL ⭐: ...and 4.17 contradicts it: its layout puts the tail at +0x8E",
+              c417d.verdict == TailCheck::Contradicts && c417d.versionBase == 0x8E, ob);
+        check("OVERRIDETAIL measured control: the +4 tail reads NumParms 3, ParmsSize 12", readsRight(readOf(bFn0 + 2)), rb);
+
         // The vote ran while only three of the ten functions were loaded: it measured nothing, so the override check
         // samples again.
-        build(false);
+        build(0x88);
         resetVote();
         g_cachedUEVersion = 418;
         for (int i = bFn0 + 3; i < kOT; ++i) setItem(i, 0);
