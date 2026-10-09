@@ -399,6 +399,7 @@
     <sys:String x:Key="str.Pointers.VersionLowConfidenceText">Detected via fragile fallback path — bare pattern match or publisher bias. If exports look wrong, set the correct UE version using the Override ComboBox below.</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideLabel">Override:</sys:String>
     <sys:String x:Key="str.Pointers.VersionOverrideTooltip">Force a specific UE version for this game. Saved per-game and reapplied on every launch. Choose Auto to revert to auto-detection.</sys:String>
+    <sys:String x:Key="str.Pointers.VersionAutoPendingText">Auto applies at the next launch: there is no detection of this game on record that this session can return to, so the overridden version above stays in force until the game restarts.</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutLabel">Invoke timeout (ms):</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutTooltip">UFunction call wait time. Default 5000 = 5s. Increase if "GameThreadDispatch: invoke timeout" appears in logs (Blueprint widget delegates often need 10-30s). Saved per-game; reset to 5000 to clear.</sys:String>
     <sys:String x:Key="str.Pointers.InvokeTimeoutOverrideBadge">&#x23F1; Custom</sys:String>

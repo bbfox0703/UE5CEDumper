@@ -8,7 +8,8 @@ public sealed class EngineState
     public int UEVersion { get; init; }
     public bool VersionDetected { get; init; } = true;
 
-    /// <summary>True when ueVersion came from a user-set persistent override (UI-driven, kept in HintCache).</summary>
+    /// <summary>True when the version in force is the user's override (UI-driven, kept in HintCache) -- or one Auto
+    /// has cleared but cannot replace until the next launch (<see cref="IsAutoPending"/>).</summary>
     public bool IsUserOverride { get; init; }
 
     /// <summary>[UE-OVERRIDE-HINT-AUTO] True when Auto was chosen over an override and the DLL had no detection of

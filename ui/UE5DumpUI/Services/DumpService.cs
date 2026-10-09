@@ -100,14 +100,25 @@ public sealed class DumpService : IDumpService
         CheckResponse(res);
         _log.Info(Constants.LogCatInit,
             version == 0
-                ? $"UE version override cleared (persisted={persist})"
+                ? $"UE version override cleared (persisted={persist}) -- "
+                  + DescribeAutoRestore(res["auto_restore"]?.GetValue<string>())
                 : $"UE version override set to {version} (persisted={persist})");
         // Re-fetch full state so the caller can update all panels with one ApplyState() call.
         return await GetPointersAsync(ct);
     }
 
-    /// <summary>[UE-OVERRIDE-HINT-AUTO] What the DLL did with Auto, for the log, from the reply's auto_restore.</summary>
-    internal static string DescribeAutoRestore(string? outcome) => "";
+    /// <summary>[UE-OVERRIDE-HINT-AUTO] What the DLL did with Auto, for the log, from the reply's auto_restore. The
+    /// names are the DLL's (Flamme::AutoRestoreName); a DLL that predates them sends none, and kept the override's
+    /// version until the next launch.</summary>
+    internal static string DescribeAutoRestore(string? outcome) => outcome switch
+    {
+        "restored"        => "restored the detection on record",
+        "not_overridden"  => "no override was in force",
+        "no_detection"    => "no detection of this game is on record: Auto applies at the next launch",
+        "stale_detection" => "the detection on record predates this DLL's detection logic: Auto applies at the next launch",
+        "too_old"         => "the detection on record is one the next launch refuses as too old: Auto applies at the next launch",
+        _                 => "the DLL did not say what it restored (a DLL before [UE-OVERRIDE-HINT-AUTO] keeps the version until the next launch)",
+    };
 
     /// <summary>
     /// Adjust the per-game GameThreadDispatch invoke timeout (UFunction call wait).
@@ -161,6 +172,9 @@ public sealed class DumpService : IDumpService
             VersionDetected = versionDetected ?? ptrs["version_detected"]?.GetValue<bool>() ?? true,
             IsUserOverride = isUserOverride ?? ptrs["is_user_override"]?.GetValue<bool>() ?? false,
             IsLowConfidence = isLowConfidence ?? ptrs["is_low_confidence"]?.GetValue<bool>() ?? false,
+            // [UE-OVERRIDE-HINT-AUTO] Only the pointers payload carries it. Absent (an older DLL, which never handed
+            // a detection back in-process) reads as not pending.
+            IsAutoPending = ptrs["auto_pending"]?.GetValue<bool>() ?? false,
             // Only the pointers payload carries this — an older DLL omits it, which reads as
             // false, i.e. "not gated", which is the right default for a DLL that predates the gate.
             IsVersionTooOld = ptrs["is_version_too_old"]?.GetValue<bool>() ?? false,

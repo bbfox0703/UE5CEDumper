@@ -83,6 +83,13 @@
                      Foreground="#E6A817" FontSize="11" TextWrapping="Wrap"
                      Margin="0,6,0,0"
                      IsVisible="{Binding ShowLowConfidenceWarning}"/>
+          <!-- [UE-OVERRIDE-HINT-AUTO] Auto chosen with no detection on record to return to: the ComboBox
+               shows the choice, the override badge what is still in force, and this when Auto lands.
+               Blue, the override badge's colour: nothing is wrong, the change is only deferred. -->
+          <TextBlock Text="{StaticResource str.Pointers.VersionAutoPendingText}"
+                     Foreground="#569CD6" FontSize="11" TextWrapping="Wrap"
+                     Margin="0,6,0,0"
+                     IsVisible="{Binding ShowAutoPendingNote}"/>
           <!-- Publisher hint (Square Enix detected, etc.) -->
           <StackPanel Orientation="Horizontal" Spacing="6" Margin="0,4,0,0"
                       IsVisible="{Binding ShowPublisherHint}">

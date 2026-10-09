@@ -12,9 +12,10 @@ public interface IDumpService
 
     /// <summary>
     /// Set or clear the user UE version override for the current game.
-    /// version=0 clears the override; non-zero sets it. The override persists in the
-    /// HintCache JSON file (per game) and survives game restarts. Returns the updated
-    /// EngineState (re-fetched after the override took effect).
+    /// version=0 clears the override and hands back the detection on record at once, or, with
+    /// none, keeps the override's version until the next launch (EngineState.IsAutoPending);
+    /// non-zero sets it. The override persists in the HintCache JSON file (per game) and
+    /// survives game restarts. Returns the updated EngineState (re-fetched after the change).
     /// </summary>
     Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true, CancellationToken ct = default);
 
