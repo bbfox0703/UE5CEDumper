@@ -733,10 +733,10 @@ public partial class MainWindow : Window
         if (tag != "Pointers") vm.Pointers.OnLeavingTab();
         else                   vm.Pointers.OnEnteringTab();
 
-        // Opening any experimental tab while enabled permanently commits the
-        // opt-in: the System-tab checkbox can no longer be unticked from here
-        // on. The gate persists the lock; LockExperimental is idempotent and a
-        // no-op when the feature isn't enabled.
+        // Opening any experimental tab while enabled commits the opt-in for the
+        // rest of the session: the System-tab checkbox can no longer be unticked
+        // until a restart, as the gate does not persist the lock. LockExperimental
+        // is idempotent and a no-op when the feature isn't enabled.
         if (tag is "Snapshot" or "SpcQuery" or "ClassPivot" or "CallTrace")
             vm.LockExperimental();
 
