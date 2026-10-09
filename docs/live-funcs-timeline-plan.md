@@ -635,6 +635,17 @@ is unit-tested with fake readers, and Avowed is its live proof.
 UObject headers -- 4.11 to 4.27, the standard one and both case-preserving shapes -- and its UProperty and FField
 property models are covered by dll_core_test, since after the UE5 live checks what differs is the offsets. A
 UE4 live check, if one is ever needed, is UE 4.27.
+**Since, UE4 seen live** (the decision above stands; these came from other checks):
+- **UE 4.18** -- DQ XI S, a save loaded, 2026-10-08 (builds 3643-3645): stacks, the native-entry index and the
+  Blueprint interpreter's name (`[A1-SCRIPT-FUNCS]`, `[A1-INTERP-LABEL]`, `[SNAPRIG-NAMES]` in todo.md).
+- **UE 4.15** -- Extinction, 2026-10-09, build 3645, the maintainer by hand (logs `Extinction`, 09:48-09:52). The
+  DLL side works: four recordings (about 154,000-160,000 calls, 212-214 functions), one with every call traced
+  and three with a function ticked, chosen for parameters and for a stack; the trace and the parameter rings read
+  and loaded into Call Trace each time (31,320 calls with 225 stacks; 2,116 with 175; 154,142; 32,068 with 250;
+  0 orphaned, 0 unjoined); the native-entry index 7,607 entries from 7,609 functions. **Not seen:** what Call
+  Trace showed -- the stack names and the parameter values -- because the detail pane covered the whole list
+  (`[CT-DETAIL-COVERS-LIST]`). 4.15 has the 4.11-4.17 UFunction tail, so the parameter values are the part worth a
+  look; it is owed with that row's live check.
 
 ### Build order
 
