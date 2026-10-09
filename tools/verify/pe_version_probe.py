@@ -103,6 +103,67 @@ _SELFTEST = [
 ]
 
 
+# ── Genau's string fallback (ReadUeVersionFromFile), ported ([VER-410-GATE] second review) ───────────
+# tier_triage.py and tier1_host_survey.py read their Tier-0 verdict through read_resource() below, so a title is
+# planned for the tier the DLL will really reach.
+_PREFIXES = ("++UE5+Release-", "++UE4+Release-")
+STRING_KEYS = ("ProductVersion", "FileVersion")
+
+
+def first_nonempty(translations, query, key):
+    """ReadVersionInfoString: walk every (lang, codepage) in VarFileInfo\\Translation and take the first non-empty
+    value -- DropIn's strings are not under the first translation. `query(lang, cp, key)` -> str or None."""
+    if not translations:
+        return ""
+    return query(translations[0][0], translations[0][1], key) or ""
+
+
+def string_reading(strs):
+    """The C++ string fallback over {key: value}: ProductVersion, then FileVersion; in each, a `++UE5+Release-` /
+    `++UE4+Release-` prefix found anywhere whose `%u.%u` gives a version code, else the engine build string.
+    -> (kind, key, string, code) or None."""
+    for key in STRING_KEYS:
+        s = strs.get(key, "")
+        if not s:
+            continue
+        for pre in _PREFIXES:
+            if pre in s:
+                return ("STRING", key, s, None)
+        code = engine_build_string_code(s)
+        if code:
+            return ("BUILD STRING", key, s, code)
+    return None
+
+
+# (strings, translations-to-values, want). Each mirrors a branch of the C++ reader the old port did not.
+_READER_SELFTEST = [
+    ("branch-first prefix", {"ProductVersion": "++UE4+Release-4.15-CL-0"}, ("STRING", "ProductVersion", 415)),
+    ("version-first with a full 4.18+ branch reads through the prefix",
+     {"ProductVersion": "4.18.3-3832480+++UE4+Release-4.18"}, ("STRING", "ProductVersion", 418)),
+    ("the prefix path checks no agreement (as the C++)",
+     {"ProductVersion": "4.10.2-0+++UE4+Release-4.11"}, ("STRING", "ProductVersion", 411)),
+    ("a prefix whose M.m gives no code falls through to the next key",
+     {"ProductVersion": "++UE4+Release-4.99", "FileVersion": "4.11.0-0+UE4"}, ("BUILD STRING", "FileVersion", 411)),
+    ("a prefix with no M.m after it falls through too",
+     {"ProductVersion": "++UE4+Release-", "FileVersion": "++UE5+Release-5.4-CL-0"}, ("STRING", "FileVersion", 504)),
+    ("the IS Defense build string", {"ProductVersion": "4.10.2-0+++depot+UE4-Releases+4.10"},
+     ("BUILD STRING", "ProductVersion", 410)),
+    ("a game version alone reads nothing", {"ProductVersion": "1.0.0.0", "FileVersion": "1.0.10897.0"}, None),
+]
+
+_TRANSLATION_SELFTEST = [
+    # DropIn's shape: nothing under the first translation, the value under the second.
+    ("the second translation answers when the first has nothing",
+     [(0x409, 1200), (0x411, 1200)], {(0x411, 1200): "++UE4+Release-4.27-CL-18319896"},
+     "++UE4+Release-4.27-CL-18319896"),
+    ("an empty value is skipped like a missing one", [(0x409, 1200), (0x411, 1200)],
+     {(0x409, 1200): "", (0x411, 1200): "4.11.0-0+UE4"}, "4.11.0-0+UE4"),
+    ("the first non-empty wins", [(0x409, 1200), (0x411, 1200)],
+     {(0x409, 1200): "A", (0x411, 1200): "B"}, "A"),
+    ("no translation, no value", [], {}, ""),
+]
+
+
 def selftest():
     # Only from this file's own command line. Reached through an import, it is an importer's `--selftest` (the
     # CRC survey's) answered by the wrong selftest, and a pass would hide that its own never ran.
@@ -115,51 +176,97 @@ def selftest():
         ok = got == want
         bad += not ok
         print(f"  {'ok ' if ok else 'BAD'}  {s!r:48} -> {got} (want {want})")
-    print(f"selftest: {len(_SELFTEST) - bad}/{len(_SELFTEST)} passed")
+    for name, strs, want in _READER_SELFTEST:
+        r = string_reading(strs)
+        got = (r[0], r[1], r[3]) if r else None
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  reader: {name} -> {got} (want {want})")
+    for name, translations, values, want in _TRANSLATION_SELFTEST:
+        got = first_nonempty(translations, lambda lang, cp, key: values.get((lang, cp)), "ProductVersion")
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  translations: {name} -> {got!r} (want {want!r})")
+    total = len(_SELFTEST) + len(_READER_SELFTEST) + len(_TRANSLATION_SELFTEST)
+    print(f"selftest: {total - bad}/{total} passed")
     return 1 if bad else 0
 
-def probe(path):
-    """-> (verdict, product, file, strings). Verdict contains FALLTHROUGH when usable."""
+def read_resource(path):
+    """Genau's ReadUeVersionFromFile, offline. -> dict:
+      kind   'no resource' | 'unreadable' | 'no fixedinfo' | 'fixed' | 'string' | 'build string' | 'unrecognised'
+      code   the version code the DLL takes at Tier 0 (None when it falls through to the memory scan)
+      key    for a fixed reading 'ProductVersion' / 'FileVersion' (which fixed field), else the string's key
+      string the string read, when the reading came from one
+      prod / fver   the fixed fields as dotted text (None without a VS_FIXEDFILEINFO)
+      strs   {key: first non-empty value over every translation}"""
+    out = {"kind": "no resource", "code": None, "key": None, "string": None, "prod": None, "fver": None, "strs": {}}
     dummy = wintypes.DWORD(0)
     size = ver.GetFileVersionInfoSizeW(path, ctypes.byref(dummy))
     if not size:
-        return (f"no resource -- {FALLTHROUGH}", None, None, {})
+        return out
     buf = ctypes.create_string_buffer(size)
     if not ver.GetFileVersionInfoW(path, 0, size, buf):
-        return ("resource UNREADABLE", None, None, {})
+        out["kind"] = "unreadable"
+        return out
+
+    translations = []
+    q, m = ctypes.c_void_p(), wintypes.UINT()
+    if ver.VerQueryValueW(buf, r"\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
+        a = ctypes.cast(q, ctypes.POINTER(wintypes.WORD))
+        translations = [(a[2 * i], a[2 * i + 1]) for i in range(m.value // 4)]
+
+    def query(lang, cp, key):
+        r2, n2 = ctypes.c_void_p(), wintypes.UINT()
+        sub = r"\StringFileInfo\%04x%04x\%s" % (lang, cp, key)
+        if ver.VerQueryValueW(buf, sub, ctypes.byref(r2), ctypes.byref(n2)) and n2.value:
+            return ctypes.wstring_at(r2, n2.value).split("\x00", 1)[0]   # the C++ converts up to the first NUL
+        return None
+
+    out["strs"] = {k: v for k in STRING_KEYS if (v := first_nonempty(translations, query, k))}
+
     p, n = ctypes.c_void_p(), wintypes.UINT()
-    if not (ver.VerQueryValueW(buf, "\\" , ctypes.byref(p), ctypes.byref(n)) and n.value >= 52):
-        return (f"no VS_FIXEDFILEINFO -- {FALLTHROUGH}", None, None, {})
+    if not (ver.VerQueryValueW(buf, "\\", ctypes.byref(p), ctypes.byref(n)) and n.value >= 52):
+        out["kind"] = "no fixedinfo"   # the C++ returns here, before the strings
+        return out
     raw = ctypes.string_at(p, n.value)
     fms, fls = struct.unpack_from("<II", raw, 8)
     pms, pls = struct.unpack_from("<II", raw, 16)
     pmaj, pmin = pms >> 16, pms & 0xFFFF
     fmaj, fmin = fms >> 16, fms & 0xFFFF
-    prod = f"{pmaj}.{pmin}.{pls >> 16}.{pls & 0xFFFF}"
-    fver = f"{fmaj}.{fmin}.{fls >> 16}.{fls & 0xFFFF}"
+    out["prod"] = f"{pmaj}.{pmin}.{pls >> 16}.{pls & 0xFFFF}"
+    out["fver"] = f"{fmaj}.{fmin}.{fls >> 16}.{fls & 0xFFFF}"
 
-    strs = {}
-    q, m = ctypes.c_void_p(), wintypes.UINT()
-    if ver.VerQueryValueW(buf, r"\VarFileInfo\Translation", ctypes.byref(q), ctypes.byref(m)) and m.value >= 4:
-        a = ctypes.cast(q, ctypes.POINTER(wintypes.WORD))
-        for key in ("ProductVersion", "FileVersion"):
-            r2, n2 = ctypes.c_void_p(), wintypes.UINT()
-            sub = r"\StringFileInfo\%04x%04x\%s" % (a[0], a[1], key)
-            if ver.VerQueryValueW(buf, sub, ctypes.byref(r2), ctypes.byref(n2)) and n2.value:
-                strs[key] = ctypes.wstring_at(r2, n2.value).rstrip("\x00")
-
-    if pmaj == 5 and pmin <= 9:  return (f"Tier0 ProductVersion -> {500 + pmin}", prod, fver, strs)
-    if pmaj == 4 and pmin <= 27: return (f"Tier0 ProductVersion -> {400 + pmin}", prod, fver, strs)
-    if fmaj == 5 and fmin <= 9:  return (f"Tier0 FileVersion -> {500 + fmin}", prod, fver, strs)
-    if fmaj == 4 and fmin <= 27: return (f"Tier0 FileVersion -> {400 + fmin}", prod, fver, strs)
-    for key, s in strs.items():
-        for pre in ("++UE5+Release-", "++UE4+Release-"):
-            if pre in s:
-                return (f"Tier0 STRING {key}='{s}'", prod, fver, strs)
-        code = engine_build_string_code(s)
+    for key, (maj, mnr) in (("ProductVersion", (pmaj, pmin)), ("FileVersion", (fmaj, fmin))):
+        code = ue_version_code(maj, mnr)
         if code:
-            return (f"Tier0 BUILD STRING {key}='{s}' -> {code}", prod, fver, strs)
-    return (f"unrecognised -- {FALLTHROUGH}", prod, fver, strs)
+            out.update(kind="fixed", code=code, key=key)
+            return out
+    r = string_reading(out["strs"])
+    if r:
+        out.update(kind=r[0].lower(), key=r[1], string=r[2], code=r[3])
+    else:
+        out["kind"] = "unrecognised"
+    return out
+
+
+def probe(path):
+    """-> (verdict, product, file, strings). Verdict contains FALLTHROUGH when usable."""
+    r = read_resource(path)
+    k = r["kind"]
+    if k == "no resource":
+        return (f"no resource -- {FALLTHROUGH}", None, None, {})
+    if k == "unreadable":
+        return ("resource UNREADABLE", None, None, {})
+    if k == "no fixedinfo":
+        return (f"no VS_FIXEDFILEINFO -- {FALLTHROUGH}", None, None, {})
+    strs = r["strs"]
+    if k == "fixed":
+        return (f"Tier0 {r['key']} -> {r['code']}", r["prod"], r["fver"], strs)
+    if k == "string":
+        return (f"Tier0 STRING {r['key']}='{r['string']}'", r["prod"], r["fver"], strs)
+    if k == "build string":
+        return (f"Tier0 BUILD STRING {r['key']}='{r['string']}' -> {r['code']}", r["prod"], r["fver"], strs)
+    return (f"unrecognised -- {FALLTHROUGH}", r["prod"], r["fver"], strs)
 
 def collect(roots):
     out = []
