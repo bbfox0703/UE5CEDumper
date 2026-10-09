@@ -269,7 +269,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public Helpers.AobMakerStatus AobMaker { get; }
 
     // ---- [LIVEFUNCS-TIMELINE-2026-10-04] The call trace: armed by this panel's Start, read in the Call Trace tab.
-    // Experimental (T6): the controls show, and a Start asks for a trace, only while the experimental tabs are on.
+    // Experimental (T6): the controls show, a Start asks for a trace, and a kept trace is offered ([LF-EXPOFF-TRACE]),
+    // only while the experimental tabs are on.
     // The plan and its decisions: docs/live-funcs-timeline-plan.md.
 
     private readonly IExperimentalGate? _experimentalGate;
@@ -825,8 +826,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public TraceInfo? LastTraceInfo { get; private set; }
     /// <summary>A traced recording stopped and its trace waits in the DLL: offer the Call Trace tab.</summary>
     [ObservableProperty] private bool _hasTraceToOpen;
-    /// <summary>[LF-EXPOFF-TRACE] What Open in Call Trace shows on.</summary>
-    public bool CanOpenCallTrace => HasTraceToOpen;
+    /// <summary>[LF-EXPOFF-TRACE] Open in Call Trace shows for a kept trace while the experimental features are on. Off,
+    /// the Call Trace tab is hidden, and the button would show its content all the same: the opt-out bypassed. The
+    /// System tab lets the features go off only while disconnected, and a disconnect withdraws the offer; this holds
+    /// for any other path, and an offer the DLL still backs comes back when they are on again.</summary>
+    public bool CanOpenCallTrace => HasTraceToOpen && TraceAvailable;
+    partial void OnHasTraceToOpenChanged(bool value) => OnPropertyChanged(nameof(CanOpenCallTrace));
     /// <summary>Raised by "Open in Call Trace"; the main window switches tabs and loads the trace.</summary>
     public event Action? NavigateToCallTrace;
 
@@ -840,7 +845,13 @@ public partial class LiveFuncsViewModel : ViewModelBase
         _filterMemory = new KeywordSearchMemory(() => (FilterText, Results.Count > 0));
         _experimentalGate = experimentalGate;
         if (_experimentalGate != null)
-            _experimentalGate.Changed += (_, _) => { OnPropertyChanged(nameof(TraceAvailable)); RefreshAvailableMemory(); };
+            _experimentalGate.Changed += (_, _) =>
+            {
+                OnPropertyChanged(nameof(TraceAvailable));
+                OnPropertyChanged(nameof(CanOpenCallTrace));
+                ComposeTraceStatus();
+                RefreshAvailableMemory();
+            };
         RefreshAvailableMemory();
     }
 
@@ -1016,7 +1027,12 @@ public partial class LiveFuncsViewModel : ViewModelBase
     }
 
     [RelayCommand]
-    private void OpenCallTrace() => NavigateToCallTrace?.Invoke();
+    private void OpenCallTrace()
+    {
+        // [LF-EXPOFF-TRACE] Off, the Call Trace tab is hidden: switching to it would show it anyway.
+        if (!TraceAvailable) return;
+        NavigateToCallTrace?.Invoke();
+    }
 
     /// <summary>What a Start asks of the trace, or null for a Start without one. Null too when the Start must not
     /// run, with <paramref name="refusal"/> set to the status string that says why.</summary>
@@ -1312,7 +1328,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
             _recordingTrace = false;
             NoteStoppedTrace(traced, traceInfo);
             await FetchAndPopulateAsync();
-            if (traced) StatusText += " " + TraceStopNote();
+            if (traced) ShowTraceClause(TraceStopNote());
         }
         catch (Exception ex)
         {
@@ -1336,6 +1352,40 @@ public partial class LiveFuncsViewModel : ViewModelBase
         LastTraceInfo = info;
         NoteNotCalled(info);
         HasTraceToOpen = info is { Allocated: true, Quiesced: true } && info.Written > 0;
+    }
+
+    // ---- [LF-EXPOFF-TRACE] A Stop's trace sentences follow the experimental switch as Open in Call Trace does: they
+    // send the user to the Call Trace tab, hidden while the features are off. Kept apart from the line they follow so a
+    // flip can take them off and put them back; any other status replaces both.
+
+    /// <summary>The last Stop's trace sentences; null once another status replaced that Stop's line.</summary>
+    private string? _traceClause;
+    /// <summary>The Stop's line the sentences follow.</summary>
+    private string _statusBeforeTraceClause = "";
+    /// <summary>Set while <see cref="ComposeTraceStatus"/> writes the line, which is not another status.</summary>
+    private bool _composingTraceStatus;
+
+    partial void OnStatusTextChanged(string value)
+    {
+        if (!_composingTraceStatus) _traceClause = null;
+    }
+
+    /// <summary>Follows the status line just written with a Stop's trace sentences.</summary>
+    private void ShowTraceClause(string clause)
+    {
+        _statusBeforeTraceClause = StatusText;
+        _traceClause = clause;
+        ComposeTraceStatus();
+    }
+
+    /// <summary>The Stop's line, with its trace sentences while the experimental features are on; nothing once another
+    /// status replaced it.</summary>
+    private void ComposeTraceStatus()
+    {
+        if (_traceClause == null) return;
+        _composingTraceStatus = true;
+        try { StatusText = TraceAvailable ? string.Join(' ', _statusBeforeTraceClause, _traceClause) : _statusBeforeTraceClause; }
+        finally { _composingTraceStatus = false; }
     }
 
     private string TraceStopNote()
@@ -1685,7 +1735,7 @@ public partial class LiveFuncsViewModel : ViewModelBase
         catch (Exception ex) { _log.Error("LivePEProfiler auto-stop failed", ex); }
         StatusText = "Recording auto-stopped (left the tab). Re-open and Refresh to see counts.";
         // Only a stop that went through says anything about this recording's trace.
-        if (traced && stopped) StatusText += " " + TraceStopNote();
+        if (traced && stopped) ShowTraceClause(TraceStopNote());
     }
 
     /// <summary>Reset the recording UI state on pipe disconnect. The DLL (Linie) already
