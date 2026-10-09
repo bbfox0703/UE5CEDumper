@@ -247,7 +247,57 @@ Open work only. **Read this when deciding what to do next.**
 The maintainer added IS Defense's logs as an unsupported UE game (docs/test-games.md has its row) and said the UE 4.10
 source and editor are installed for when they are needed.
 
-- ✅ `[VER-410-GATE]` **BUILT 2026-10-08, in source** (red `3b4e5e4d`, green `d0260b4f`, rig `5af81317` /
+- ✅ `[LIVE-3646]` **Build 3646's live checks, 2026-10-09** (quota-limited: the maintainer chose three; the rest
+  is listed as not run):
+  - `[UE-OVERRIDE-411]` / `[UE-OVERRIDE-HINT-AUTO]`, DumperTest58 Shipping (UE 5.8), through the pipe: 4.15 refused
+    ("its UFunctions keep NumParms / ParmsSize behind +0xB0, where UE 4.15's layout puts them behind +0xB2 ... The
+    override was not applied"); 5.05 accepted (`get_pointers`: 505, `is_user_override` true); Auto put 508 back at
+    once (`auto_restore: "restored"`, the override flag cleared), and the UI then showed 508 Detected, Override Auto.
+    The new tooltip was read from the strings; the automation could not raise the hover. Not run: Auto with no
+    detection on record (the next-launch path), an override on a UE4 title.
+  - `[VER-410-GATE]`, IS Defense (UE 4.10.2) through its refreshed proxy: "PE VERSIONINFO says UE 410, below the 411
+    floor, CORROBORATED by the exe's own engine build string '4.10.2-0+++depot+UE4-Releases+4.10' -- accepting it at
+    tier 1", then "SKIPPING the scan", no GObjects batch; `get_pointers`: 410, `is_version_too_old` true, 0 objects;
+    the System tab's red "Unsupported engine" notice. Two LOWs found, below. Not run: the b25 C / D marker exes,
+    NEKOPALIVE.
+  - `[CT-DETAIL-COVERS-LIST]` and UE 4.15's parameters, Extinction (proxy refreshed by hand to 3646, see
+    `[PROXYREFRESH-NONSHIPPING-EXE]`): Actor::ReceiveTick 976 calls, Params "1 (4B)"; chosen for parameters and a
+    stack, Call Trace loaded 1,004 calls over 4.2 s, each with its parameter copy, 125 with a stack; the Parameters
+    tab read **DeltaSeconds 0.0167** (60 fps) -- the 4.11-4.17 UFunction tail read right; the Call stack's 16 frames
+    all resolve into Extinction.exe and none is named, as expected (ReceiveTick is a Blueprint event reached from
+    native tick code: no caller is a UFunction entry), so naming on 4.15 is still not exercised. The list kept its
+    floor: dragging the pane's handle stopped with the list at about 512 and Where whole.
+  - Also seen: `launch_dumpertest.py` printed "the cap is this machine's saved FrameRateLimit=30".
+  - Not in this release, so not run: `[LF-EXPOFF-TRACE]`. Not run: Mimic's invoke slab (the CE mailbox path).
+- ⬜ `[REFUSED-STRIDE-NOTICE]` (LOW, `[LIVE-3646]`): on a game refused as too old the header still shows "Object-array
+  stride not detected -- the default is in use; object counts and names ..." -- no scan ran, so nothing was
+  defaulted. Hide it (or say the scan was skipped) when `is_version_too_old`. Effort **S**.
+- ⬜ `[TOOOLD-VERSION-TEXT]` (LOW, `[LIVE-3646]`): the too-old notice reads "UE 411 is the oldest this tool can read.
+  UE 410 and earlier ..." -- the internal numbers, not 4.11 / 4.10. Effort **S**.
+- ⬜ `[PROXYREFRESH-NONSHIPPING-EXE]` (LOW, `[LIVE-3646]`): `tools/verify/proxy_refresh.py` finds a game folder only
+  through a `*-Win64-Shipping.exe`, so the proxies beside `Extinction.exe`, `Nekopara.exe` or `DRAGON QUEST XI S.exe`
+  are neither reported nor refreshed: Extinction ran build 3645 after the tool said it had refreshed every stale
+  proxy. Find the game exe the way the proxy's own loader does (the folder holding our DLL), keep the ownership and
+  backup guards. Effort **S**.
+- ⬜ `[OVERRIDE-REVIEW2-LOWS]` (3 LOW, the `[UE-OVERRIDE-HINT-AUTO]` round's first review, 2026-10-09; left for after
+  the release by the maintainer's quota call): (1) Mimic's HandleInvoke glue -- `Ubel::ParamBufferSize` feeding
+  `InvokeSlabRefusal` before the first ProcessEvent call -- has no source pin (mutant M1 survived); (2) an override
+  persisted before `[UE-OVERRIDE-411]`, or set before any scan, that the sampled UFunctions contradict is applied at
+  every launch with only a log line -- latch it and show a note beside the badge; (3) the Auto arm's pin checks only
+  that the ladder is called, not that its version is the one put in force (mutant M2 survived). The second reviewer
+  (detection / docs / UI text) was not run. Effort **S** each.
+- ⬜ `[CT-FLOOR-208]` (the maintainer chose 2026-10-09, paused for quota): the list's floor becomes 208 (Time +
+  Duration clickable) and wins over the pane's 200, so a wide pane can show the Call stack's Where whole at the
+  default window; a drag writes the remembered width only when it moves; and the round-1 review's LOWs (a narrow
+  panel can still squeeze the list, a drag that moves nothing rewrites the remembered width, the live recipe's window
+  sizes, a view-model swap not remeasured, comments) -- `out/step3/ct_detail_review.json`. Worktree
+  `wf_f6c68db8-98a-1`: red `d542a5c6` plus an uncommitted edit of `CallTraceViewModel.cs`. Effort **S-M**.
+- ⬜ `[EXPOFF-ROUND3-PAUSED]` (paused for quota, not in this release): `[LF-EXPOFF-TRACE]`'s round 3 -- the opt-in
+  unticks connected or not and tears down at once, or at the next connect -- is built in worktree
+  `wf_2e0b3559-405-1` (`34501dcc`, 19 commits on `36a13a4d`); its first review found one MED (the teardown decides
+  whether Fly runs from `_flyActive`, which `ApplyFlyReadout` clears when there is no CMC, so a flight can be left
+  running) and seven LOWs (`out/step3/expoff_round3_partial.json`); the second review was not run. Effort **M**.
+- ✅ `[VER-410-GATE]` **BUILT 2026-10-08, in source; refused live on IS Defense 2026-10-09, `[LIVE-3646]`** (red `3b4e5e4d`, green `d0260b4f`, rig `5af81317` /
   `9ade3939`; 6 / 6 mutants killed) -- live check owed: `py tools/verify/b25_marker_exes.py build`, run each exe,
   inject, trigger the scan, then `check` (C refused, D scanned, A and B as before); then IS Defense through a
   refreshed proxy (the corroboration line, "SKIPPING the scan", no GObjects batch, `is_version_too_old: true`,
@@ -352,7 +402,7 @@ source and editor are installed for when they are needed.
   `GetUObjectArray`: `lea rcx,[rip+GUOA+0x10]`), not VS2015 ones like Epic's 4.10.4. If it is ever taken up: first a
   live CE measurement on IS Defense, then the rows and the shape behind the gate, the floor moved last. Its PDB (310 MB,
   full types) is the only 4.10 type oracle on disk; the 4.10.4 corpus PDBs hold public symbols only.
-- ✅ `[UE-OVERRIDE-411]` **BUILT 2026-10-08, in source** (red `a9be4339`, green `7be3b6c6`; 4 / 4 DLL and 3 / 3 C#
+- ✅ `[UE-OVERRIDE-411]` **BUILT 2026-10-08, in source; live 2026-10-09, `[LIVE-3646]`** (red `a9be4339`, green `7be3b6c6`; 4 / 4 DLL and 3 / 3 C#
   mutants killed): the override's floor is `MIN_SUPPORTED_UE_VERSION` (411..509), and the Pointers list offers
   UE 4.11-4.17 -- AOT publish and live check owed (set 4.15 on a 4.11-4.17 title, then Auto, which since
   `[UE-OVERRIDE-HINT-AUTO]` hands the detection back at once). Was: (LOW, the
@@ -418,7 +468,7 @@ source and editor are installed for when they are needed.
   **Not attempted (the maintainer, 2026-10-08):** "先別試" -- a pre-4.18 project needs a C++ toolchain this PC does
   not have (4.18 itself is shaky here), and the night goes to Live Funcs and the 4.11 floor's version strings. The
   gate's refusal is checked on IS Defense instead. Reopen only on the maintainer's word.
-- ✅ `[UE-OVERRIDE-HINT-AUTO]` **BUILT 2026-10-09, in source** (built on `[UE-OVERRIDE-411]`'s second-review commits,
+- ✅ `[UE-OVERRIDE-HINT-AUTO]` **BUILT 2026-10-09, in source; live 2026-10-09 on build 3646, `[LIVE-3646]`** (built on `[UE-OVERRIDE-411]`'s second-review commits,
   in the same worktree). AOT publish and the live checks below owed. 49 / 49 mutants killed. Totals at the end:
   dll_core_test 1162 checks, 0 failure(s); dll_helpers_test Pass 3242, Fail 0; C# 6508 (6506 passed, 2 skipped);
   headless 43 / 43; 33 gate(s) run, 0 failed, 1 skipped; check_mailbox_contract green (no CE script reads this
@@ -533,7 +583,7 @@ source and editor are installed for when they are needed.
   green d7da0d04, build 3645; **live 2026-10-09** on DumperTest58 Shipping: with the detail pane dragged to about
   400 px, Address kept its 170 with Copy / ASM beside it, and Where kept its floor and scrolled).
   ✅ `[CT-DETAIL-COVERS-LIST]` (MED, the maintainer on build 3645, 2026-10-09, Extinction, UE 4.15; fixed in source
-  2026-10-09, in no build yet; ⬜ **AOT publish and live check owed**): 「Call Trace
+  2026-10-09, build 3646; **live 2026-10-09, `[LIVE-3646]`**; the floor of 208 is `[CT-FLOOR-208]`): 「Call Trace
   UI有個問題：Call, Call Stack, Parameters 那個 Panel 可以完全蓋掉左側的 timeline，我剛剛使用時，由於 timeline 的UI完全看不到，
   我只看到 C,S,P 那個完全沒內容的 panel，沒內容是因為就算我選了 C,S,P要錄，但是沒辦法點到 timeline 項目，整個資料沒顯示」 --
   the detail pane covered the whole list, so no row could be clicked and the pane had nothing to show. Layout only:
