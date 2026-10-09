@@ -269,10 +269,13 @@ public class CallTraceColumnsTests
         FunctionText = "DumperTest58Actor_C::SnapProbe_Call", ObjectText = "DumperTest58Actor_1",
     };
 
-    /// <summary>The list's floor, as the view model states it: a row's item padding, Time, Duration and Thread at their
-    /// default widths, Object at its floor and <see cref="FunctionSlice"/> of Function.</summary>
-    private const double ListFloor = 512;
+    /// <summary>The list's floor, as the view model states it: a row's item padding and Time and Duration at their
+    /// default widths, so a call can be told by when it ran and clicked (the maintainer's choice, 2026-10-09).</summary>
+    private const double ListFloor = 24 + 96 + 88;
     private const double FunctionSlice = 160;
+    /// <summary>The narrowest list a row's columns are fitted to: the floor, Thread at its default and Object at its
+    /// floor beside <see cref="FunctionSlice"/> of Function.</summary>
+    private const double FittedList = ListFloor + 64 + 80 + FunctionSlice;
     /// <summary>What the panel's width loses before the list and the pane share it: its margin on each side and the
     /// pane's handle.</summary>
     private const double PanelChrome = 8 + 8 + 8;
@@ -286,22 +289,61 @@ public class CallTraceColumnsTests
     private static DockPanel FunctionCell(Visual panel, CallTraceRow row)
         => panel.GetVisualDescendants().OfType<DockPanel>().Single(d => ToolTip.GetTip(d) as string == row.FunctionText);
 
-    /// <summary>The list at its floor or wider, and in <paramref name="row"/> Time, Duration and Thread whole and at
-    /// least <see cref="FunctionSlice"/> of Function: what a call is picked by.</summary>
-    private static void AssertListFloor(Visual panel, CallTraceRow row)
+    /// <summary>No row cell showing one of <paramref name="texts"/> is cut.</summary>
+    private static void AssertWhole(Visual panel, params string[] texts)
     {
-        double list = List(panel).Bounds.Width;
-        Assert.True(list >= ListFloor - 0.5, $"the list is {list:0.#} wide, under its floor of {ListFloor}");
-        foreach (var text in new[] { row.TimeText, row.DurationText, row.ThreadText })
+        foreach (var text in texts)
         {
             var cell = Text(panel, text);
             var (left, right) = Span(cell, panel);
             double seen = VisibleRight(cell, panel);
             Assert.True(seen >= right - 0.5, $"the cell {text} at {left:0.#}-{right:0.#} is cut at {seen:0.#}");
         }
+    }
+
+    /// <summary>The list at its floor or wider (all the room there is, in a panel with less), and in
+    /// <paramref name="row"/> Time whole, and Duration with it wherever the list has its floor: what a call is told by
+    /// and clicked on.</summary>
+    private static void AssertListFloor(Visual panel, CallTraceRow row)
+    {
+        double room = panel.Bounds.Width - PanelChrome;
+        double list = List(panel).Bounds.Width;
+        Assert.True(list >= Math.Min(ListFloor, room) - 0.5,
+                    $"the list is {list:0.#} wide in a room of {room:0.#}, under its floor of {ListFloor}");
+        AssertWhole(panel, list >= ListFloor - 0.5 ? new[] { row.TimeText, row.DurationText } : new[] { row.TimeText });
+    }
+
+    /// <summary>A list with room for a fitted row: Time, Duration and Thread whole and at least
+    /// <see cref="FunctionSlice"/> of Function.</summary>
+    private static void AssertFittedRow(Visual panel, CallTraceRow row)
+    {
+        double list = List(panel).Bounds.Width;
+        Assert.True(list >= FittedList - 0.5, $"the list is {list:0.#} wide, under a fitted row's {FittedList}");
+        AssertWhole(panel, row.TimeText, row.DurationText, row.ThreadText);
         var function = FunctionCell(panel, row);
         double shown = VisibleRight(function, panel) - Span(function, panel).left;
         Assert.True(shown >= FunctionSlice - 0.5, $"Function shows {shown:0.#} px, under {FunctionSlice}");
+    }
+
+    /// <summary>The panel as the app lays it out (MainWindow.axaml): in the column beside the object tree's
+    /// <paramref name="tree"/> and its 4 px splitter, in a tab whose content is padded 4 on each side.</summary>
+    private static (Window window, CallTracePanel panel, CallTraceViewModel vm) LaidInApp(
+        double windowWidth, double tree, double detailPaneWidth, params CallTraceRow[] rows)
+    {
+        var vm = NewVm(detailPaneWidth, rows);
+        var panel = new CallTracePanel { DataContext = vm };
+        var tabs = new TabControl { Padding = new Thickness(4) };
+        tabs.Items.Add(new TabItem { Header = "Call Trace", Content = panel });
+        var grid = new Grid();
+        grid.ColumnDefinitions.Add(new ColumnDefinition(tree, GridUnitType.Pixel));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(4, GridUnitType.Pixel));
+        grid.ColumnDefinitions.Add(new ColumnDefinition(1, GridUnitType.Star));
+        Grid.SetColumn(tabs, 2);
+        grid.Children.Add(tabs);
+        var window = new Window { Content = grid, Width = windowWidth, Height = 600 };
+        window.Show();
+        Dispatcher.UIThread.RunJobs();
+        return (window, panel, vm);
     }
 
     private static Point Centre(Visual v, TopLevel top)
@@ -329,18 +371,52 @@ public class CallTraceColumnsTests
 
     /// <summary>The maintainer's report on build 3645: a remembered pane wider than the panel covered the list, so no
     /// row could be clicked and the pane had nothing to show. However wide the pane is remembered, the list keeps its
-    /// floor beside it and a click selects a row. 800: the app's narrowest window; 1000 with 766, the width remembered on
-    /// the maintainer's machine.</summary>
+    /// floor beside it and a click selects a row. The panel is its window's only content here, with no object tree
+    /// beside it: a panel of 800 is the app's window at about 1160 with the tree unfolded, not its narrowest window. A
+    /// panel of 1000 with 766, the width remembered on the maintainer's machine, leaves the list 210.</summary>
     [Theory]
     [InlineData(800, 4096)]
     [InlineData(1000, 766)]
-    public Task A_remembered_pane_wider_than_the_panel_leaves_the_list_its_floor_and_a_row_to_click(double window, double pane)
+    public Task A_remembered_pane_wider_than_a_panel_without_the_object_tree_leaves_the_list_its_floor_and_a_row_to_click(
+        double panelWidth, double pane) => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidIn(panelWidth, pane, Row, Row2);
+        AssertListFloor(panel, Row2);
+        Assert.Equal(Math.Min(pane, panelWidth - PanelChrome - ListFloor), Pane(panel).Bounds.Width, 0.5);
+        Click(top, Text(panel, Row2.TimeText));
+        Assert.Equal(1, vm.SelectedIndex);
+    });
+
+    /// <summary>Narrower than the list's floor and the pane's 200 together, the pane gives way, to nothing if it must,
+    /// and the list keeps its floor: a row's Time and Duration whole, to click (the maintainer's choice, 2026-10-09).
+    /// The object tree's splitter has no limit and takes the panel there. A panel of 300 leaves the pane 68. One of 220
+    /// has 196 after its margin and the pane's handle, all of it the list's. Before, the pane kept its 200 and the list
+    /// had 76, then nothing: the reported symptom again.</summary>
+    [Theory]
+    [InlineData(300)]
+    [InlineData(220)]
+    public Task A_panel_narrower_than_both_floors_gives_the_pane_way_to_the_list_and_leaves_a_row_to_click(double panelWidth)
         => Headless.Run(() =>
     {
-        var (top, panel, vm) = LaidIn(window, pane, Row, Row2);
+        var (top, panel, vm) = LaidIn(panelWidth, 766, Row, Row2);
         AssertListFloor(panel, Row2);
-        Assert.Equal(window - PanelChrome - ListFloor, Pane(panel).Bounds.Width, 0.5);
-        Click(top, FunctionCell(panel, Row2));
+        Assert.Equal(Math.Max(0, panelWidth - PanelChrome - ListFloor), Pane(panel).Bounds.Width, 0.5);
+        Click(top, Text(panel, Row2.TimeText));
+        Assert.Equal(1, vm.SelectedIndex);
+    });
+
+    /// <summary>The app's narrowest layout: its 800 window (MainWindow's MinWidth) with the object tree unfolded at its
+    /// 350 leaves the panel 438. The remembered 766 gives way to 206 beside a list of 208, Time and Duration whole,
+    /// and a click selects a row.</summary>
+    [Fact]
+    public Task The_apps_narrowest_window_with_the_object_tree_unfolded_leaves_the_list_its_floor_and_a_row_to_click()
+        => Headless.Run(() =>
+    {
+        var (top, panel, vm) = LaidInApp(800, 350, 766, Row, Row2);
+        Assert.Equal(800 - 350 - 4 - 4 - 4, panel.Bounds.Width, 0.5);
+        AssertListFloor(panel, Row2);
+        Assert.Equal(panel.Bounds.Width - PanelChrome - ListFloor, Pane(panel).Bounds.Width, 0.5);
+        Click(top, Text(panel, Row2.TimeText));
         Assert.Equal(1, vm.SelectedIndex);
     });
 
@@ -408,7 +484,7 @@ public class CallTraceColumnsTests
         Drag(top, HeaderHandle(panel, "str.CT.Col.Thread"), +400);
         Assert.Equal(limit, HeaderCell(panel, "str.CT.Col.Thread").Bounds.Width, 0.5);
         Assert.Equal(80, Text(panel, Row.ObjectText).Bounds.Width, 0.5);
-        AssertListFloor(panel, Row);
+        AssertFittedRow(panel, Row);
         Drag(top, HeaderHandle(panel, "str.CT.Col.Thread"), -10);
         Assert.Equal(limit - 10, HeaderCell(panel, "str.CT.Col.Thread").Bounds.Width, 0.5);
     });

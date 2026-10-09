@@ -1036,8 +1036,10 @@ public class CallTraceViewModelTests
     }
 
     // ---- [CT-DETAIL-COVERS-LIST] the remembered widths fitted to the room the panel has ----
-    // SplitWidth is the width the list and the detail pane share. The list's floor is 512: a row's item padding (24),
-    // Time, Duration and Thread at their default widths (96 + 88 + 64), Object at its floor (80), and 160 of Function.
+    // SplitWidth is the width the list and the detail pane share. The list's floor is 208, the maintainer's choice
+    // (2026-10-09): a row's item padding (24) and Time and Duration at their default widths (96 + 88), so a call can
+    // always be clicked. A row's columns are fitted to a list of 512 or wider: the floor, Thread at its default (64),
+    // Object at its floor (80) and 160 of Function.
 
     private static (double time, double duration, double thread, double obj) ShownColumns(CallTraceViewModel vm)
         => (vm.ShownTimeColWidth, vm.ShownDurationColWidth, vm.ShownThreadColWidth, vm.ShownObjectColWidth);
@@ -1049,22 +1051,42 @@ public class CallTraceViewModelTests
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 766;
         Assert.Equal(766.0, vm.ShownDetailPaneWidth);       // not laid out yet: nothing to fit it to
-        vm.SplitWidth = 1000;
-        Assert.Equal(1000.0 - 512, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 900;
+        Assert.Equal(900.0 - 208, vm.ShownDetailPaneWidth);
         Assert.Equal(766.0, vm.DetailPaneWidth);            // still the user's
         vm.SplitWidth = 1600;                               // a wider window gives it back
         Assert.Equal(766.0, vm.ShownDetailPaneWidth);
     }
 
     [Fact]
-    public void A_panel_narrower_than_both_floors_keeps_the_pane_at_its_200_and_gives_the_list_the_rest()
+    public void A_panel_narrower_than_both_floors_gives_the_pane_way_so_the_list_keeps_its_208()
     {
+        // The pane's 200 gives way to the list's floor, not the other way round: the list is how a call is chosen, and
+        // the pane has nothing to show until one is.
         var (vm, _) = MakeVm(Dump());
         vm.DetailPaneWidth = 4096;
-        vm.SplitWidth = 600;
+        vm.SplitWidth = 408;                                // both floors exactly
         Assert.Equal(200.0, vm.ShownDetailPaneWidth);
-        vm.SplitWidth = 50;
-        Assert.Equal(200.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 300;
+        Assert.Equal(300.0 - 208, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 208;
+        Assert.Equal(0.0, vm.ShownDetailPaneWidth);
+        vm.SplitWidth = 50;                                 // under the list's floor: the list has it all
+        Assert.Equal(0.0, vm.ShownDetailPaneWidth);
+        Assert.Equal(4096.0, vm.DetailPaneWidth);
+    }
+
+    [Fact]
+    public void A_pane_the_list_has_taken_below_its_200_cannot_be_dragged()
+    {
+        // Narrower would remember a width under the pane's floor, and wider takes the list's: neither moves it.
+        var (vm, _) = MakeVm(Dump());
+        vm.SplitWidth = 300;                                // the pane shows 92 of its 380
+        foreach (double step in new[] { 60.0, -60.0, 0.0 })
+        {
+            vm.DragDetailPane(step);
+            Assert.Equal((92.0, 380.0), (vm.ShownDetailPaneWidth, vm.DetailPaneWidth));
+        }
     }
 
     [Fact]
