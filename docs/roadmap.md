@@ -104,7 +104,7 @@ Persisted in HintCache JSON per PE hash, surfaces in the Pointer panel:
 
 | Setting | Range | Default | Pipe cmd | Since |
 |---|---|---|---|---|
-| UE version override | Auto / 4.11-4.27 / 5.0-5.8 (the pipe also accepts 5.9) | Auto (detect) | `set_ue_version_override` | build 549; 4.11-4.17 since [UE-OVERRIDE-411] |
+| UE version override | Auto / 4.11-4.27 / 5.0-5.8 (the pipe also accepts 5.9) | Auto (detect) | `set_ue_version_override` | build 549; 4.11-4.17 since [UE-OVERRIDE-411]; Auto hands back the detection on record at once (else at the next launch) since [UE-OVERRIDE-HINT-AUTO] |
 | Invoke timeout | 1000-60000 ms | 5000 ms | `set_invoke_timeout` | build 583 |
 
 ## UFunction invoke export (build 590-596)

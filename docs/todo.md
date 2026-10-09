@@ -354,7 +354,8 @@ source and editor are installed for when they are needed.
   full types) is the only 4.10 type oracle on disk; the 4.10.4 corpus PDBs hold public symbols only.
 - ✅ `[UE-OVERRIDE-411]` **BUILT 2026-10-08, in source** (red `a9be4339`, green `7be3b6c6`; 4 / 4 DLL and 3 / 3 C#
   mutants killed): the override's floor is `MIN_SUPPORTED_UE_VERSION` (411..509), and the Pointers list offers
-  UE 4.11-4.17 -- AOT publish and live check owed (set 4.15 on a 4.11-4.17 title, then Auto). Was: (LOW, the
+  UE 4.11-4.17 -- AOT publish and live check owed (set 4.15 on a 4.11-4.17 title, then Auto, which since
+  `[UE-OVERRIDE-HINT-AUTO]` hands the detection back at once). Was: (LOW, the
   maintainer chose it 2026-10-08) the UE version override accepts only 418..509
   (`Fern.cpp`'s set-override range), so a 4.11-4.17 title cannot be set by hand, although the too-old message names
   the override as the escape hatch. Widen it to 411 (the UI's range with it). Effort **S**.
@@ -417,7 +418,48 @@ source and editor are installed for when they are needed.
   **Not attempted (the maintainer, 2026-10-08):** "先別試" -- a pre-4.18 project needs a C++ toolchain this PC does
   not have (4.18 itself is shaky here), and the night goes to Live Funcs and the 4.11 floor's version strings. The
   gate's refusal is checked on IS Defense instead. Reopen only on the maintainer's word.
-- ⬜ `[UE-OVERRIDE-HINT-AUTO]` (MED, the maintainer asked 2026-10-09 whether the UE version override is only a
+- ✅ `[UE-OVERRIDE-HINT-AUTO]` **BUILT 2026-10-09, in source** (built on `[UE-OVERRIDE-411]`'s second-review commits,
+  in the same worktree). AOT publish and the live checks below owed. 49 / 49 mutants killed. Totals at the end:
+  dll_core_test 1162 checks, 0 failure(s); dll_helpers_test Pass 3242, Fail 0; C# 6508 (6506 passed, 2 skipped);
+  headless 43 / 43; 33 gate(s) run, 0 failed, 1 skipped; check_mailbox_contract green (no CE script reads this
+  command, so no contract bump).
+  - *One ladder, one cache rule* (`5d573026`, 20 / 20 mutants): the cache holds the version from BEFORE init's
+    structural ladder, so Auto has to climb the same ladder or Elliot's cached 4.27 fallback comes back on a UE5
+    title. `DynOff::ApplyVersionLadder` (UProperty -> 4.18 / 4.24, tagged FFieldVariant 503, CMC 5.0-5.3, reordered
+    item 507, virtual ~FFieldClass 5.0-5.7 -> 508; nothing moves before the offsets probe) with
+    `FrierenInit::CorrectVersionStructurally` as its live half, which UE5_Init now calls (log text unchanged, the A4
+    rig greps it); `Flamme::CachedDetectionTrusted` / `CachedLowConfidence` and `Grimoire::RefusedAsTooOld`, which
+    FindAll now calls. `40c796cd` moved the CMC source pin after it (the UI suite was not run before `5d573026`).
+  - *Auto restores at once* (red `f5a73a22`, green `7c04b376`; 13 / 13 DLL mutants, 7 / 7 source-pin mutants):
+    `Flamme::PlanAutoRestore` -- with an override in force, the record's detection under the launch's own rules
+    (logic rev, publisher), refused when the next launch would refuse it as too old. Restored: the ladder climbs it,
+    the lazy markers refine it, the record's detected / low-confidence flags, the override flag cleared, the soft /
+    lazy envelopes dropped as an override drops them. Otherwise (`no_detection`, `stale_detection`, `too_old`) the
+    override's version stays in force AND stays an override -- so a UI reconnect cannot record it in the hint cache as
+    a detection, which the old flag-only clear allowed, poisoning the next launch -- and `auto_pending` says it waits
+    for the next launch (only when persisted). The reply carries `auto_restore`, `auto_pending`, `version_detected`,
+    `is_low_confidence`; get_pointers carries `auto_pending`; UE5_Init resets it; setting an override ends it.
+    Scan-time choices (the too-old refusal, the sparse-delegate scan) are not re-made in-process.
+  - *The panel* (red `370d8838`, green `bc32657c`; 9 / 9 mutants): the ComboBox keeps Auto while it is pending (it
+    snapped back to the override's label), the override badge stays and the detected badge does not, and
+    `str.Pointers.VersionAutoPendingText` says Auto applies at the next launch; the log line names what the DLL did
+    (`DumpService.DescribeAutoRestore`, one line per `Flamme::AutoRestoreName`, read from the header by a test).
+  - *The tooltip* (`4df180ae`): `str.Pointers.VersionOverrideTooltip` now says what is measured and stays, what follows
+    the version (UE4 property fields, soft / lazy pointers, sets and maps, the CE export layout, UFunction parameters
+    until a scan has measured them), the risk, use only when detection is wrong, per game at every launch where it
+    skips the too-old check, what follows only at the next launch, and when Auto lands. `VersionLowConfidenceText`
+    pointed at "the Override ComboBox below" (it is above) and named only exports; fixed, and the badge's tooltip
+    says the override holds until Auto.
+  **Owed:** the AOT publish; live, set an override then Auto on DumperTest58 (badge back to Detected at 508 at once;
+  the pipe log says `set_ue_version_override: Auto -- restored the detection on record`) and on a UE4 title
+  (NEKOPALIVE or Extinction: the same, at its detected 4.x); on Elliot the restored 4.27 fallback must climb back to
+  its UE5 minor (the init log's `set_ue_version_override: structural marker ...` lines); and a record with no detection (seed the hint cache the
+  A4 rig's way, override only) must show the pending note and Auto still chosen after a UI reconnect, then Detected
+  after a game restart. Fern.cpp and Frieren.cpp are compiled by no test target: their glue is checked by build, the
+  C# source pins and reading. Not done, by the maintainer's choice: detecting afresh in-process when nothing is on
+  record (DetectVersionDetailed is ~0.35 s; Auto would then never wait). The GitHub wiki's Pointers / System page,
+  if it describes the override, is not in this repo and was not checked.
+  Was: (MED, the maintainer asked 2026-10-09 whether the UE version override is only a
   label; it is not): (1) **the tooltip** says only "Force a specific UE version for this game. Saved per-game and
   reapplied on every launch. Choose Auto to revert to auto-detection." -- nothing on what it changes. Set over the
   pipe, it rewrites the cached version at once (no rescan), and everything derived from the version follows it:
