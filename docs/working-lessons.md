@@ -3577,6 +3577,20 @@ architecture or UX changes in these areas.
   - **Map / set element sizes cross the wire as 0.** `Fern` gates `array_elem_size` on `> 0` but emits
     `map_key_size` / `map_value_size` / `set_elem_size` unconditionally. Every consumer gates, and
     gating the emit would drop a field older UI builds read.
+- **The UI's JSON stays on System.Text.Json, not CAPCOM's RE:Dox (`CAPCOM.REDox`)** (maintainer, 2026-10-09,
+  after an evaluation of v1.0.1 at upstream `57a6aa3`). The shipped exe is Native-AOT trimmed, and RE:Dox binds
+  types by runtime reflection -- `MakeGenericType`, `Expression.Compile` and `Activator.CreateInstance` in its
+  core, no source generator, no trim annotations, no `IsAotCompatible` (its README calls AOT / source-generator
+  support future work). That is the shape behind every AOT bug in this repo, and our `JsonSerializerContext`s
+  are already AOT-safe. The gain is small and unmeasured here: its 1.4-1.8x is typed deserialisation against
+  STJ's `JsonSerializer`, while the pipe parses with `JsonNode.Parse`; the one measured workload (a CE export,
+  [multipipe-eval.md](multipipe-eval.md) §10.5) spent 653 of 3,437 ms parsing, against 1,506 in the DLL and
+  1,278 in IPC, so its lever is bytes. Its other features (CBOR / MessagePack / TOML, an editable DOM, JSON5
+  trivia, `$type` / `$ref`) meet no need here, and it had been public for nine days. **Revisit only when all
+  three hold:** it ships a source generator or `IsAotCompatible` and our `-Mode Publish` stays free of new
+  warnings with it; a user-visible path is measured to be bound by JSON parsing; it has a few months of releases
+  and issues behind it. A parse hotspot found before then takes STJ's `Utf8JsonReader` on that one path, as
+  `DumpDiffModels` does.
 
 Evaluations that concluded "do not build" live in the repo rather than here — see [README.md](README.md)'s
 index for `text-translation-eval.md` and `multipipe-eval.md`; `Nibble-Mask-Evaluation.md` is in the
