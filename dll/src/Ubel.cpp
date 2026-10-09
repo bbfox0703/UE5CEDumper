@@ -1954,7 +1954,8 @@ static void EnsureFunctionFlagsOffset() {
 
     // [UE-OVERRIDE-411] review. The vote adds only this version's shift, so under a version from the wrong side of
     // 4.18 -- a persisted override, set before any scan could check it -- it cannot find the tail and the readers
-    // keep the wrong one. Say so: the buffers are covered (Ubel::ParamBufferSize), the values read are not.
+    // keep the wrong one. Say so: every buffer handed to ProcessEvent is sized or checked by its chain
+    // (Ubel::ParamBufferSize; Mimic's slab by Mimic::InvokeSlabRefusal), the values read are not.
     const int tailBase = MeasureTailBase(samples, cands);
     DynOff::UFUNCTION_TAIL_MEASURED.store(tailBase, std::memory_order_relaxed);
     if (tailBase >= 0 && DynOff::UFUNCTION_FLAGS > 0) {

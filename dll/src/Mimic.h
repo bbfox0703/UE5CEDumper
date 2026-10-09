@@ -493,8 +493,8 @@ constexpr int32_t MB_ERR_INVOKE_TOO_LARGE  = -13;   // its parameter block ends 
 /// A function that does not resolve cannot be sized, and the queued path's owned copy is only the slab's size, so
 /// routing it anyway risks the same overrun.
 constexpr int32_t InvokeSlabRefusal(bool resolved, uint32_t bufferBytes, uint32_t slabBytes) {
-    (void)resolved; (void)bufferBytes; (void)slabBytes;
-    return 0;
+    if (!resolved) return MB_ERR_INVOKE_UNRESOLVED;
+    return bufferBytes > slabBytes ? MB_ERR_INVOKE_TOO_LARGE : 0;
 }
 
 /// [A3-MIMIC-INIT-FASTPATH] May a mailbox command skip EnsureInitialized's call into UE5_Init? UE5_Init publishes

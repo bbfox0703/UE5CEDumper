@@ -45,8 +45,9 @@ bool IsHookActive();
 ///                    the UFunction's ParmsSize) when the caller's buffer is
 ///                    transient (the common case — prevents a use-after-free if
 ///                    the invoke times out but is later drained by the game
-///                    thread). Pass 0 only when `params` is a persistent buffer
-///                    that outlives the request (e.g. Mimic's mailbox global).
+///                    thread). Pass 0 only when `params` outlives the request AND
+///                    nothing rewrites it meanwhile: Mimic's mailbox does not
+///                    qualify, because CE rewrites it with its next command.
 /// @return 0 on success, -4 if SEH exception, -5 if timeout, -7 if hook not active
 int32_t EnqueueInvoke(uintptr_t instance, uintptr_t ufunc, uintptr_t params, size_t paramsSize);
 
