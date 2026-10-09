@@ -6708,26 +6708,23 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // the two rather than replacing the caller's value: a caller asking for MORE
             // is harmless slack (the hex overlay is already clamped to the buffer), while a
             // caller asking for less — or for nothing — is the overflow above.
-            // ParmsSize itself is read where the version says the tail is, so a wrong version
-            // misreads it as well; Ubel::ParamBufferSize also reads the function's own parameter
-            // chain and never answers less than where that ends. [UE-OVERRIDE-411]
-            size_t bufSize = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
-            {
-                FunctionInfo fi{};
-                if (Ubel::ResolveFunctionInfo(ufuncAddr, fi)) {
-                    const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, fi.parmsSize);
-                    if (authoritative > bufSize) {
-                        if (bufSize > 0) {
-                            LOG_WARN("invoke_function: caller asked for parms_size=%zu but "
-                                     "%s::%s needs %zu (ParmsSize=%u) — using the larger; the "
-                                     "smaller would overflow the buffer ProcessEvent writes",
-                                     bufSize, className.c_str(), funcName.c_str(),
-                                     authoritative, static_cast<unsigned>(fi.parmsSize));
-                        }
-                        bufSize = authoritative;
-                    }
-                }
+            // ParmsSize itself is read from the UFunction's tail, which a wrong version misplaced;
+            // Ubel::ParamBufferSize also reads the function's own parameter chain and never answers
+            // less than where that ends. [UE-OVERRIDE-411]
+            // The chain is read at the address even when the tail does not resolve: that case used to
+            // keep the caller's parms_size alone, unchecked (review 2; check_processevent_buffers).
+            FunctionInfo fi{};
+            const bool resolved = Ubel::ResolveFunctionInfo(ufuncAddr, fi);
+            const size_t authoritative = Ubel::ParamBufferSize(ufuncAddr, resolved ? fi.parmsSize : 0);
+            const size_t asked = (parmsSize > 0) ? static_cast<size_t>(parmsSize) : 0;
+            if (asked > 0 && authoritative > asked) {
+                LOG_WARN("invoke_function: caller asked for parms_size=%zu but "
+                         "%s::%s needs %zu (ParmsSize=%u) — using the larger; the "
+                         "smaller would overflow the buffer ProcessEvent writes",
+                         asked, className.c_str(), funcName.c_str(),
+                         authoritative, static_cast<unsigned>(fi.parmsSize));
             }
+            const size_t bufSize = (std::max)(authoritative, asked);
             std::vector<uint8_t> paramBuf(bufSize, 0);
 
             if (!paramsHex.empty()) {
@@ -6827,7 +6824,7 @@ std::string Fern::DispatchCommand(const std::shared_ptr<Connection>& conn, const
             // dereferencing this freed stack-local buffer (use-after-free).
             int32_t callResult = directCall
                 ? UE5_CallProcessEventDirect(instanceAddr, ufuncAddr, paramPtr)
-                : UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr, (uint32_t)bufSize);
+                : UE5_CallProcessEventEx(instanceAddr, ufuncAddr, paramPtr, (uint32_t)paramBuf.size());
 
             // Free the by-value FString buffers. UE's calling convention makes
             // the CALLER own the params, and a UFUNCTION receives its FString by

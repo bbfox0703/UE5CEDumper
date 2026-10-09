@@ -196,6 +196,14 @@ GATES = [
      "still primary and a per-BUILD difference is not a bug; this only pins the "
      "fallback table against its own source", False),
 
+    # [UE-OVERRIDE-411] review 2: the call sites that size a ProcessEvent buffer live in files no test target compiles
+    ("check_processevent_buffers",
+     ["tools/check_processevent_buffers.py"],
+     "a buffer handed to ProcessEvent is sized from a UFunction ParmsSize without Ubel::ParamBufferSize / "
+     "DynOff::ProcessEventBufferBytes, or a UE5_CallProcessEventEx size is not its buffer's own size. ParmsSize is "
+     "read from the UFunction's tail, which a UE version from the wrong side of 4.18 misplaces, and ProcessEvent then "
+     "writes the return value past the buffer ([UE-OVERRIDE-411]). Size it with Ubel::ParamBufferSize", False),
+
     ("check_property_family",
      ["tools/check_property_family.py"],
      "somebody assigned a DynOff sizeof(FProperty) family member directly instead of "
