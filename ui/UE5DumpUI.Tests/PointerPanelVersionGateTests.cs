@@ -292,4 +292,104 @@ public class PointerPanelVersionGateTests
         Assert.Equal("UE 4.11", vm.SelectedUeVersionOverride);
         Assert.Contains(vm.SelectedUeVersionOverride, PointerPanelViewModel.UeVersionOverrideOptions);
     }
+
+    // ══ [UE-OVERRIDE-HINT-AUTO] Auto, chosen over an override ════════════════════════════════════
+    //
+    // Auto used to clear only the DLL's override flag and keep the overridden version, which the panel then showed
+    // unbadged, as if detected. The DLL now hands back the detection on record at once; with none to hand back, the
+    // override's version stays in force until the next launch, the DLL keeps calling it an override, and get_pointers
+    // says Auto is pending. The ComboBox shows the user's choice; the badge shows what is in force.
+
+    private sealed class AutoRecorder : StubDumpService
+    {
+        private readonly EngineState _reply;
+        public readonly List<int> Sent = new();
+        public AutoRecorder(EngineState reply) => _reply = reply;
+        public override Task<EngineState> SetUeVersionOverrideAsync(int version, bool persist = true,
+                                                                    CancellationToken ct = default)
+        {
+            Sent.Add(version);
+            return Task.FromResult(_reply);
+        }
+    }
+
+    private static EngineState Overridden(int ueVersion) => new()
+    {
+        UEVersion = ueVersion, VersionDetected = true, IsUserOverride = true, ObjectCount = 1,
+    };
+
+    private static EngineState AutoPending(int ueVersion) => new()
+    {
+        UEVersion = ueVersion, VersionDetected = true, IsUserOverride = true, IsAutoPending = true, ObjectCount = 1,
+    };
+
+    [Fact]
+    public void Auto_WithADetectionOnRecord_ShowsItAsDetected()
+    {
+        var dump = new AutoRecorder(new EngineState { UEVersion = 504, VersionDetected = true, ObjectCount = 1 });
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(Overridden(427));
+        Assert.Equal("UE 4.27", vm.SelectedUeVersionOverride);
+
+        vm.SelectedUeVersionOverride = "Auto";
+
+        Assert.Equal(new[] { 0 }, dump.Sent);
+        Assert.Equal(504, vm.UeVersion);
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);
+        Assert.True(vm.ShowVersionDetectedBadge);
+        Assert.False(vm.ShowUserOverrideBadge);
+        Assert.False(vm.ShowAutoPendingNote);
+    }
+
+    [Fact]
+    public void Auto_WithNoDetectionOnRecord_KeepsAutoChosenAndSaysWhenItApplies()
+    {
+        var dump = new AutoRecorder(AutoPending(427));
+        var vm = new PointerPanelViewModel(new StubPlatform(), dump);
+        vm.Update(Overridden(427));
+
+        vm.SelectedUeVersionOverride = "Auto";
+
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);   // it used to snap back to "UE 4.27"
+        Assert.True(vm.ShowAutoPendingNote);
+        Assert.True(vm.ShowUserOverrideBadge);                // the version in force is still the override's...
+        Assert.False(vm.ShowVersionDetectedBadge);            // ...and is never shown as detected
+        Assert.False(vm.ShowLowConfidenceWarning);
+    }
+
+    [Fact]
+    public void Reconnect_WhileAutoIsPending_ShowsAutoAndTheNote()
+    {
+        var vm = NewVm();
+        vm.Update(AutoPending(427));
+
+        Assert.Equal("Auto", vm.SelectedUeVersionOverride);
+        Assert.True(vm.ShowAutoPendingNote);
+        Assert.True(vm.ShowUserOverrideBadge);
+    }
+
+    [Fact]
+    public void AnOverrideInForce_IsShownAsTheOverride_WithNoPendingNote()
+    {
+        var vm = NewVm();
+        vm.Update(Overridden(427));
+
+        Assert.Equal("UE 4.27", vm.SelectedUeVersionOverride);
+        Assert.False(vm.ShowAutoPendingNote);
+    }
+
+    [Fact]
+    public void Update_RaisesTheAutoPendingNote()
+    {
+        var vm = NewVm();
+        var raised = new List<string>();
+        ((INotifyPropertyChanged)vm).PropertyChanged += (_, e) =>
+        {
+            if (e.PropertyName != null) raised.Add(e.PropertyName);
+        };
+
+        vm.Update(AutoPending(427));
+
+        Assert.Contains(nameof(PointerPanelViewModel.ShowAutoPendingNote), raised);
+    }
 }

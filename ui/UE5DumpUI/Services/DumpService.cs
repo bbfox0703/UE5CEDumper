@@ -106,6 +106,9 @@ public sealed class DumpService : IDumpService
         return await GetPointersAsync(ct);
     }
 
+    /// <summary>[UE-OVERRIDE-HINT-AUTO] What the DLL did with Auto, for the log, from the reply's auto_restore.</summary>
+    internal static string DescribeAutoRestore(string? outcome) => "";
+
     /// <summary>
     /// Adjust the per-game GameThreadDispatch invoke timeout (UFunction call wait).
     /// Pass 0 to clear the per-game override and revert to Stark::kDefaultInvokeTimeoutMs (5000).

@@ -429,6 +429,98 @@ public class DumpServiceTests
     }
 
     [Fact]
+    public async Task GetPointersAsync_CarriesAutoPending()
+    {
+        // [UE-OVERRIDE-HINT-AUTO] Auto chosen with no detection on record to hand back: the override's version stays
+        // in force until the next launch, and every refresh -- a reconnect included -- must keep saying so.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 427,
+                    ["is_user_override"] = true,
+                    ["auto_pending"] = true,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().GetPointersAsync(TestContext.Current.CancellationToken);
+
+        Assert.True(state.IsAutoPending);
+        Assert.True(state.IsUserOverride);
+    }
+
+    [Fact]
+    public async Task GetPointersAsync_OmittedAutoPendingReadsAsNotPending()
+    {
+        // An older DLL omits auto_pending; it never restored Auto in-process, so "not pending" is the right default.
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "get_pointers")
+                return new JsonObject
+                {
+                    ["ok"] = true,
+                    ["ue_version"] = 504,
+                    ["gobjects"] = "0x1",
+                    ["gnames"] = "0x2",
+                };
+            return new JsonObject { ["ok"] = true };
+        });
+
+        var state = await CreateService().GetPointersAsync(TestContext.Current.CancellationToken);
+
+        Assert.False(state.IsAutoPending);
+    }
+
+    [Theory]
+    [InlineData("restored", "restored the detection on record")]
+    [InlineData("no_detection", "Auto applies at the next launch")]
+    [InlineData("stale_detection", "Auto applies at the next launch")]
+    [InlineData("too_old", "Auto applies at the next launch")]
+    public async Task SetUeVersionOverrideAsync_Auto_LogsWhatTheDllDid(string outcome, string expected)
+    {
+        _pipe.SetHandler(req =>
+        {
+            var cmd = req["cmd"]?.GetValue<string>();
+            if (cmd == "set_ue_version_override")
+                return new JsonObject { ["ok"] = true, ["auto_restore"] = outcome };
+            return new JsonObject { ["ok"] = true, ["gobjects"] = "0x1", ["gnames"] = "0x2" };
+        });
+
+        await CreateService().SetUeVersionOverrideAsync(0, persist: true, TestContext.Current.CancellationToken);
+
+        Assert.Contains(_log.Messages, m => m.Contains("override cleared") && m.Contains(expected));
+    }
+
+    [Fact]
+    public void DescribeAutoRestore_NamesEveryOutcomeTheDllSends()
+    {
+        // The wire names are the DLL's (Flamme::AutoRestoreName). Read them from the header, so one added there cannot
+        // reach the log as "the DLL did not say".
+        var d = new DirectoryInfo(AppContext.BaseDirectory);
+        while (d != null && !File.Exists(Path.Combine(d.FullName, "build.ps1"))) d = d.Parent;
+        string flamme = File.ReadAllText(Path.Combine(
+            d?.FullName ?? throw new DirectoryNotFoundException("repo root"), "dll", "src", "Flamme.h")).Replace("\r\n", "\n");
+        int start = flamme.IndexOf("constexpr const char* AutoRestoreName(", StringComparison.Ordinal);
+        Assert.True(start >= 0, "Flamme::AutoRestoreName not found");
+        int end = flamme.IndexOf("\n}\n", start, StringComparison.Ordinal);
+        var names = System.Text.RegularExpressions.Regex.Matches(flamme[start..end], "return \"([a-z_]+)\";")
+            .Select(m => m.Groups[1].Value).Where(n => n != "unknown").ToList();
+        Assert.Equal(5, names.Count);
+
+        string silent = DumpService.DescribeAutoRestore(null);
+        var described = names.Select(DumpService.DescribeAutoRestore).ToList();
+        Assert.All(described, s => Assert.NotEqual(silent, s));
+        Assert.Equal(described.Count, described.Distinct().Count());
+    }
+
+    [Fact]
     public async Task SetUeVersionOverrideAsync_SendsCorrectPayloadAndRefetches()
     {
         JsonObject? lastOverrideReq = null;

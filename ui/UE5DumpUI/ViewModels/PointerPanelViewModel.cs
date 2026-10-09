@@ -312,6 +312,10 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// <summary>True when ueVersion came from a user-set persistent override.</summary>
     public bool ShowUserOverrideBadge => HasData && IsUserOverride;
 
+    /// <summary>[UE-OVERRIDE-HINT-AUTO] Auto was chosen, but this session keeps the override's version until the next
+    /// launch.</summary>
+    public bool ShowAutoPendingNote => false;
+
     /// <summary>True when detection succeeded but used the low-confidence Tier 3 / publisher-bias path.</summary>
     public bool ShowLowConfidenceWarning => HasData && IsLowConfidence && !IsUserOverride;
 

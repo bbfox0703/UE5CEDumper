@@ -11,6 +11,11 @@ public sealed class EngineState
     /// <summary>True when ueVersion came from a user-set persistent override (UI-driven, kept in HintCache).</summary>
     public bool IsUserOverride { get; init; }
 
+    /// <summary>[UE-OVERRIDE-HINT-AUTO] True when Auto was chosen over an override and the DLL had no detection of
+    /// this game on record to hand back: the override is cleared for the next launch, and until then its version stays
+    /// in force, so <see cref="IsUserOverride"/> stays true beside this.</summary>
+    public bool IsAutoPending { get; init; }
+
     /// <summary>True when ueVersion came from Tier 3 bare-pattern OR publisher-bias fallback — UI surfaces a warning.</summary>
     public bool IsLowConfidence { get; init; }
 
