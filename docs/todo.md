@@ -807,34 +807,6 @@ source and editor are installed for when they are needed.
   Trace's load of it; the gate's `Changed` handler raises `TraceAvailable` but leaves it. Fix: the button, the status
   line's trace clause and `OpenCallTrace` all follow `TraceAvailable` as well (red test first). INFO, the
   maintainer's call: off, the fold saves no line (the header already holds the only row it folds). Effort **S**.
-  ✅ `[RELNOTES-CALLTRACE]` (the maintainer, 2026-10-08; **carried by the v3646 draft release, 2026-10-09**, its
-  enable step corrected: the experimental box has no label of its own, so the notes name its tooltip and place;
-  drop this row once the maintainer publishes v3646): the next release -- the first with the Call Trace tab
-  (v3615 had none) -- gets a section on when to use Call Trace and its limits, after `## Fixed` (or `## New`). The
-  draft follows working-lessons §7.3 item 1 (English, one item a line, the ⚠ / ℹ️ notes under the list). Check each
-  line against the build being released -- the switch's and buttons' names, the budget names, what a stack names --
-  and drop this row once the notes carry it. ASM is the AOBMaker CE plugin's (the maintainer: well under 10 % of
-  users have it), so Copy leads and ASM is the aside.
-
-  ```markdown
-  ## Call Trace: when to use it, and its limits
-
-  **Experimental.** Turn on *Enable advanced experimental features* in the System tab, tick **Trace** in Live Funcs, Start and Stop, then open the **Call Trace** tab.
-
-  Use it to:
-  - Find which UFunction runs when you do something in the game, on which object, and what called it.
-  - See a function's parameters as the game passed them, decoded by type, at the call and after it returns.
-  - Get a chosen function's native call stack, and **Copy** a frame's address in Cheat Engine's form to dig further there (**ASM** opens it in CE's disassembler, and needs the AOBMaker CE plugin).
-
-  It does not:
-  - See calls that skip `ProcessEvent`: native C++ calling native C++, or a Blueprint calling a native function directly.
-  - Name most native frames: only `ProcessEvent`, a UFunction's native entry and the Blueprint interpreter; the rest show as module + offset.
-  - Pause, step or change the game: it watches. Use Cheat Engine or a debugger for that.
-  - Keep every stack: a per-second budget keeps the first calls of each second (**Low** halves it).
-
-  > ⚠ Native stacks are read on the game's own thread and add to its frame time. Save first and choose few functions: an unforeseen case could stall or crash the game.
-  > ℹ️ It works in games where the dumper can be loaded; games with anti-cheat are out of scope, as for every other feature.
-  ```
   Steps 2 and 3, as decided before: **decided (T9, 2026-10-07)** only for chosen functions; the call rate is
   what is limited (an estimate with a warning, per-frame functions asked for stacks, the DLL's budget as the
   guarantee); a Snapshot column apart from the Trace tick (the plan's "How much may be chosen").
