@@ -242,6 +242,51 @@ Open work only. **Read this when deciding what to do next.**
 
 -----
 
+## 🐞 Maintainer report 2026-10-09 — FINAL FANTASY RESONANCE DEMO's logs `[FFRS-2026-10-09]`
+
+The maintainer added FINAL FANTASY RESONANCE DEMO's logs (build 3646 through the dxgi.dll proxy; docs/test-games.md
+has its row). Scan, walk, Live Funcs, Call Trace with parameters and stacks, and the ASM jump all worked. Two
+findings, with one cause: the exe has a protector's shape (scrambled section names, a 294 MB writable and executable
+section, no ASLR), as Elliot's and P3R's do -- the only three of the 37 UE exes on this machine without ASLR
+(measured 2026-10-09 from their PE headers; every other title and fixture has it).
+
+- ⬜ `[VER-MARKERS-PAST-504]` (MED): a title whose PE version is stripped and whose exe holds no `++UE5+Release-`
+  string is reported as **504** at most: the runtime marker ladder (tagged FFieldVariant → 503, the
+  `SetGravityDirection` UFUNCTION → 504, `DynOff::CmcMarkerVersion`) has no rung past 5.4. FFRS reads 504 and is
+  most likely **5.6**; so is Elliot, recorded as 5.4. Evidence, measured 2026-10-09 on every UE title installed here:
+  each exe's own PE product version against the files it ships (the IoStore `global.utoc` version byte, then the file
+  versions of `D3D12Core.dll`, `tbb12.dll` and NNE's `onnxruntime.dll`):
+  - 5.4 (The Outer Worlds 2, 5.4.4): utoc 6, D3D12Core 1.611.2, tbb12 without a version resource.
+  - 5.5 (Manor Lords, 5.5.4): D3D12Core 1.614.0, no tbb12, onnxruntime 1.17.24.
+  - 5.6 (EVERSPACE 2, Lushfoil, Satisfactory at 5.6.1; Star Trek Voyager at 5.6.0; DumperTest56): utoc 8,
+    D3D12Core 1.614.0, tbb12 2021.13.0, onnxruntime 1.20.24.
+  - 5.7 (Solarpunk 5.7.1, Titan Quest II 5.7.4): utoc 8, D3D12Core 1.616.1, tbb12 2021.13.0.
+  - 5.8 (Ski-E-O 5.8.2, Unknown Operations 5.8.3, DumperTest58): utoc 8, D3D12Core 1.618.5, tbb12 2022.3.0.
+  - FFRS and Elliot: utoc 8, D3D12Core 1.614.0, tbb12 2021.13.0, onnxruntime 1.20.24 -- the 5.6 set exactly. FFRS
+    reads `UEnum::Names` as the legacy TArray, which caps it at 5.6 (FNameData is 5.7+, `Neu.h`).
+
+  Effect in this run: none seen -- parameters, functions, enums and soft pointers are measured, not versioned; but
+  anything still keyed on the version reads 5.4's rules on these titles. Fix: (a) rungs past 5.4 from structural
+  facts measured on our PDB-bearing fixtures (5.6 and 5.8 exist; 5.5 and 5.7 do not); or (b) a low-confidence
+  signal, below the PE and the build string, from the file versions of the engine modules the game has loaded
+  (`D3D12Core.dll`, `tbb12.dll`) -- one-to-one with 5.4 / 5.5-5.6 / 5.7 / 5.8 above; a licensee can ship its own
+  Agility SDK, so it should only raise a marker-ladder result. Then correct Elliot's row in test-games.md. Effort
+  **M**.
+- ⬜ `[MH-PRERESERVE-PROXY]` (LOW, a proposal): FFRS's game-thread hook failed with `MH_ERROR_MEMORY_ALLOC` at the
+  first two Live Funcs Starts (14:34:33, 14:34:48) and recovered at the third (14:35:31, "hook RECOVERED on attempt
+  3", validated 1,620 hooks / 1,500 ms): the bounded retry of `[MHPOISON-STARVE-2026-09-07]` working on a real game
+  for the first time, and the UI's `hook_detail` advice was the right one. Elliot is where this failure was first
+  seen (2026-07-23). Likely cause, not measured (no address-space map was taken): without ASLR the 474 MB image
+  stays at `0x140000000`, inside the range the game's heap spans (objects seen from `0x21E4A2A0` to `0x1B61B0008`,
+  the viewport at `0x17A9D0FD0`), so MinHook's ±1 GB window around ProcessEvent (`0x141592D00`, `MAX_MEMORY_RANGE`)
+  fills up; an image with ASLR is moved high, away from the heap. The proxy DLL is loaded at process start (87 s
+  before the first install here), while that window is still free: taking a MinHook block near the image then, and
+  holding it, would make the install not depend on luck. MinHook frees a block with its last slot, so this needs a
+  held slot or a small change to the vendored MinHook; an injection loads late and gains nothing. Check first, on
+  FFRS or Elliot: a `VirtualQuery` map of the window when the install fails. Also INFO: each failing Start logs
+  "attempt N/8" twice -- the counted automatic attempt and the uncounted forced one (B24) print the same N; mark the
+  second "forced". Effort **S-M**, risk **med** (the hook path).
+
 ## 🐞 Maintainer report 2026-10-08 — IS Defense (UE 4.10) is not refused as unsupported `[UE410-2026-10-08]`
 
 The maintainer added IS Defense's logs as an unsupported UE game (docs/test-games.md has its row) and said the UE 4.10
