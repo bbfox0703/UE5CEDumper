@@ -410,14 +410,45 @@ source and editor are installed for when they are needed.
   The live look also found Address squeezed to its floor in a narrow pane; its floor is now its width (red 3c1ea493 /
   green d7da0d04, build 3645; **live 2026-10-09** on DumperTest58 Shipping: with the detail pane dragged to about
   400 px, Address kept its 170 with Copy / ASM beside it, and Where kept its floor and scrolled).
-  ⬜ `[CT-DETAIL-COVERS-LIST]` (MED, the maintainer on build 3645, 2026-10-09, Extinction, UE 4.15): 「Call Trace
+  ✅ `[CT-DETAIL-COVERS-LIST]` (MED, the maintainer on build 3645, 2026-10-09, Extinction, UE 4.15; fixed in source
+  2026-10-09, in no build yet; ⬜ **AOT publish and live check owed**): 「Call Trace
   UI有個問題：Call, Call Stack, Parameters 那個 Panel 可以完全蓋掉左側的 timeline，我剛剛使用時，由於 timeline 的UI完全看不到，
   我只看到 C,S,P 那個完全沒內容的 panel，沒內容是因為就算我選了 C,S,P要錄，但是沒辦法點到 timeline 項目，整個資料沒顯示」 --
   the detail pane covered the whole list, so no row could be clicked and the pane had nothing to show. Layout only:
   the UI's log has the trace (31,320 calls and 225 stacks loaded, then 32,068 and 250, 0 orphaned). Cause: the pane
-  is docked at `DetailPaneWidth`, clamped to [200, 4096] and never against the panel's width, so a remembered width
-  (`ui-options.json` `callTrace.detailPaneWidth`, 766 on that machine) or a drag leaves the list nothing, its handle
-  with it. In progress: red tests first.
+  was docked at `DetailPaneWidth`, clamped to [200, 4096] and never against the panel's width, so a remembered width
+  (`ui-options.json` `callTrace.detailPaneWidth`, 766 on that machine) or a drag left the list nothing, its handle
+  with it. The same shape in the list: no column was fitted to the list either, so a wide one hid Function and the
+  handles of the columns after it -- the "remembered widths are not clipped to the narrower list" that
+  `[CT-COLUMNS-OVERLAP]` names. That row's overlap had another cause (a fixed cell centred in a narrower slot); its
+  fix, aligned left and cut at the edge, stays and still lays out a list below its floor.
+  **Built:** every width keeps its remembered value (dragged, saved, never written by a layout, so it comes back
+  when the panel can show it) and gets a shown one, which the pane, the header and the rows bind: the remembered
+  width fitted to the room the panel has. The view hands the view model that room in `MeasureOverride`, before the
+  children are measured, so a window resize, the object tree folded or unfolded, a width restored at start, the tab
+  shown again or a view model set late is fitted in the same layout. The list's floor (`CallTraceViewModel.MinListWidth`)
+  is 512: a row's item padding (24), Time / Duration / Thread at their defaults (96 / 88 / 64), Object at its floor
+  (80) and 160 of Function (a root row's glyph and about twenty Consolas characters, a dozen beside its (p) and (s)
+  marks). Narrower than both floors, the pane keeps its 200 and the list takes the rest: below its floor the list
+  still shows Time and Duration to click, while a pane under 200 wraps the call into fragments; its columns are then
+  laid out as at the floor and cut at the edge. The columns are fitted left to right, each to what Function's 160,
+  the columns before it and the floors of those after it leave, so they give way from the right, Object first. A
+  drag adds its step to the SHOWN width and remembers what it leaves shown, capped where the list or Function keeps
+  its floor: a drag past the limit stops there and the next drag back moves at once. AOT-safe: compiled bindings,
+  `FindControl`, no reflection. Red d1b84799 (UI 9 of 6495 failing, headless 6 of 49), green 834a8231, wiring tests
+  f2738a26, e50b5679 (drops a remeasure on a new view model that no test could tell from none). Totals on e50b5679:
+  UI 6495 total, 6479 succeeded, 16 skipped, 0 failed; headless 54 / 54. **Mutants: 24 / 25 killed**, each a
+  single-anchor edit restored byte for byte (the pane's fit, its 200 floor, its drag's start and cap; the columns'
+  fit, the row room's floor, the cap's later floors, the column drag's start and cap; the refit on a new room, a
+  layout writing a remembered width, Function's 160, the item padding, the unlaid-out path, the shown pane raised;
+  the view's room, handle and margin; Object's, the pane's and Duration's handles; the three Shown bindings); the
+  survivor (the remeasure) is removed. **Live check owed** (an AOT `-Mode Publish` build; any fixture with a trace,
+  DumperTest58 Shipping is enough): before start set `callTrace.detailPaneWidth` to 766 or more in `ui-options.json`;
+  in a narrow window (about 1000, the object tree unfolded) the list keeps at least 512 px beside the pane, a row
+  shows Time / Duration / Thread whole and the start of Function, a click selects it and the pane fills; drag the
+  pane's handle far left: it stops there, and a drag back moves at once; widen the window or fold the object tree:
+  the pane returns to its remembered width; drag Thread's handle far right: Object narrows to its floor and Thread
+  stops with Function's slice left.
   ✅ `[SNAPRIG-S5-RATE]` (LOW, the same walkthrough; fixed 2026-10-08, offline by `--self-test`; **live 2026-10-09**:
   DumperTest58 Shipping at ~30 fps, DLL 3644, `--stacks --pdb` with no budget given chose 11/s ("between 6.1 and
   20.2 ... 30/s does not fit"), S5 kept 99 in its 77..99 window and dropped 141, the parameter counters were checked
