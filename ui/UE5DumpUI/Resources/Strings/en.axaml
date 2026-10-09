@@ -628,6 +628,7 @@
 
     <!-- Experimental features gate (System-tab credit checkbox) -->
     <sys:String x:Key="str.Experimental.EnableHint">Enable advanced experimental features</sys:String>
+    <sys:String x:Key="str.Experimental.DisconnectFirst">Advanced experimental features are on. Disconnect first to turn them off.</sys:String>
 
     <!-- Snapshot tab (experimental — Phase A) -->
     <sys:String x:Key="str.Snapshot.Intro">Capture every numeric UPROPERTY of every (scoped) object into a persisted snapshot. Snapshots feed SPC Query and Class Pivot. Enable "Native-C" to also capture unmanaged (non-UPROPERTY) raw values.</sys:String>

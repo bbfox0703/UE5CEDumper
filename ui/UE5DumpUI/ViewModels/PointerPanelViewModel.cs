@@ -617,6 +617,16 @@ public partial class PointerPanelViewModel : ViewModelBase
     /// </summary>
     public bool CanToggleExperimental => !(_experimentalGate?.IsLocked ?? false);
 
+    /// <summary>[LF-EXPOFF-TRACE] MainWindowViewModel passes its connection on.</summary>
+    public void SetConnected(bool connected) { }
+
+    /// <summary>[LF-EXPOFF-TRACE] Ticked and connected: unticking waits for a Disconnect.</summary>
+    public bool ExperimentalUntickNeedsDisconnect => false;
+
+    /// <summary>[LF-EXPOFF-TRACE] The checkbox's tooltip.</summary>
+    public string ExperimentalToggleTip
+        => Res.Get(ExperimentalUntickNeedsDisconnect ? "str.Experimental.DisconnectFirst" : "str.Experimental.EnableHint");
+
     /// <summary>
     /// Opt-in toggle for the experimental analysis tabs (Snapshot / SPC Query /
     /// Class Pivot), surfaced as the System-tab credit checkbox. Backed by the
