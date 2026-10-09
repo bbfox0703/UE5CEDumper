@@ -296,6 +296,22 @@ source and editor are installed for when they are needed.
   **Not attempted (the maintainer, 2026-10-08):** "先別試" -- a pre-4.18 project needs a C++ toolchain this PC does
   not have (4.18 itself is shaky here), and the night goes to Live Funcs and the 4.11 floor's version strings. The
   gate's refusal is checked on IS Defense instead. Reopen only on the maintainer's word.
+- ⬜ `[UE-OVERRIDE-HINT-AUTO]` (MED, the maintainer asked 2026-10-09 whether the UE version override is only a
+  label; it is not): (1) **the tooltip** says only "Force a specific UE version for this game. Saved per-game and
+  reapplied on every launch. Choose Auto to revert to auto-detection." -- nothing on what it changes. Set over the
+  pipe, it rewrites the cached version at once (no rescan), and everything derived from the version follows it:
+  where UFunction's flags / NumParms / ParmsSize / ReturnValueOffset are read (Teleport, invoke_function, Live Funcs
+  parameters), UE4 UProperty subclass fields, the soft / lazy pointer envelopes, the set / map layout, FName
+  alignment, the weak-pointer garbage test, the CE export layout; GObjects, GNames and the measured DynOff offsets
+  stay (the handler does not re-run ValidateAndFixOffsets, on purpose). Saved, it replaces detection before the next
+  scan and skips the too-old refusal. A wrong pick misreads, and the [UE-OVERRIDE-411] review's MED was a crash
+  shape. (2) **Auto does not revert in the session:** the handler only clears the override flag ("would require
+  re-init"), so the DLL keeps the overridden version until the game restarts, and the UI shows it unbadged, as if
+  detected. **The maintainer chose (2026-10-09): rewrite the tooltip, and make Auto restore at once** -- the last
+  real detection from the hint cache, its soft / lazy envelopes dropped as the override drops them; with no real
+  detection on record, the UI says Auto applies at the next launch. Scan-time choices (the too-old refusal, the
+  sparse-delegate scan) change only with a rescan, and the tooltip says so. After `[UE-OVERRIDE-411]`'s review fixes
+  land on dev (they touch the same handler). Effort **S-M**.
 
 **Found by the 4.10 study, worth doing whatever 4.10's fate** (they help titles already supported):
 - ⬜ `[UE4-ASSETPTR-PROPS]` (LOW): AssetObjectProperty / AssetClassProperty (4.11-4.17's soft pointers) do not go
