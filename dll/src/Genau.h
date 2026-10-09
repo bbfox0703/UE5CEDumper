@@ -107,8 +107,13 @@ using ScanProgressFn = std::function<void(int phase, const char* text)>;
 // also shows.
 // rev 9 (2026-10-09, [VER-410-GATE] review): the VERSIONINFO string fallback also reads the engine's
 // own VERSION-FIRST build string (`4.10.2-0+++depot+UE4-Releases+4.10`, `4.11.0-0+UE4`) through
-// Grimoire::EngineBuildStringCode; it knew only the branch-first `++UE4+Release-4.15-CL-0`. An exe
-// whose fixed fields carry the GAME's version read nothing from such a string, so a 4.10 title beside
+// Grimoire::EngineBuildStringCode. Before it, the fallback knew only strings CONTAINING `++UE4+Release-` /
+// `++UE5+Release-` -- the prefix is found anywhere, so branch-first (`++UE4+Release-4.15-CL-0`) and
+// version-first with a full 4.18+ branch (`4.18.3-3832480+++UE4+Release-4.18`) both read, and still do,
+// unchanged -- and missed the `++depot+UE4-Releases+` (4.10 and earlier) and simplified `+UE<M>`
+// branches. ⚠ That prefix path checks no agreement between the branch and the leading M.m the way
+// EngineBuildStringCode does: `4.10.2-0+++UE4+Release-4.11` reads 411 through it. An exe
+// whose fixed fields carry the GAME's version read nothing from the two missed shapes, so a 4.10 title beside
 // an agreeing CrashReportClient was scanned at tier 3 (IS Defense's outcome, with two engine-shipped
 // signals agreeing), and a 4.11-4.17 title fell to the memory scan, whose needles floor at 4.18, and
 // landed on the 504 default with the wrong UFunction tail. The string reading keeps fromFixedField
