@@ -46,10 +46,11 @@ internal sealed class SwitchGate(bool enabled) : IExperimentalGate
 }
 
 /// <summary>
-/// [LF-EXPOFF-TRACE] The System tab's experimental checkbox, unticked only while disconnected: what the view shows while
-/// it waits for a Disconnect (disabled, with a tooltip that still shows and says why), and a dropped pipe counting as a
-/// Disconnect through the main window's own state handler -- the path a unit test cannot run, as it posts to the UI
-/// thread. And the defence line behind it, as Live Funcs' panel shows it.
+/// [LF-EXPOFF-TRACE] The System tab's experimental checkbox as the view shows it: free to untick connected or not (the
+/// maintainer's choice after the review, 「連線中也可取消，立即清理」), and disabled only by the session lock, when its
+/// tooltip -- which a disabled control opens only with ToolTip.ShowOnDisabled -- says why. The connection is the main
+/// window's own, raised by its pipe through the posted state handler. And the defence line behind the box, as Live
+/// Funcs' panel shows it.
 /// </summary>
 public class ExperimentalCheckboxTests
 {
@@ -91,20 +92,29 @@ public class ExperimentalCheckboxTests
         public void Dispose() { }
     }
 
-    /// <summary>The System tab with its view model, shown. The panel's one brush resource is the app's App.axaml's,
-    /// which the headless application does not load.</summary>
-    private static (PointerPanel panel, PointerPanelViewModel vm, SwitchGate gate) Shown(bool enabled)
+    /// <summary>The System tab of a main window, shown, connected through its pipe when <paramref name="connected"/>.
+    /// The panel's one brush resource is the app's App.axaml's, which the headless application does not load.</summary>
+    private static (PointerPanel panel, MainWindowViewModel main, SwitchGate gate) Shown(bool enabled, bool connected)
     {
         LoadAppResources();
         if (!Application.Current!.Resources.ContainsKey("AobMakerUiAccent"))
             Application.Current.Resources["AobMakerUiAccent"] = new SolidColorBrush(Color.Parse("#F78FB3"));
         var gate = new SwitchGate(enabled);
-        var vm = new PointerPanelViewModel(new BlankPlatform(), experimentalGate: gate);
-        var panel = new PointerPanel { DataContext = vm };
+        var pipe = new StatePipe();
+        var main = new MainWindowViewModel(pipe, DispatchProxy.Create<IDumpService, Canned>(),
+                                           DispatchProxy.Create<ILoggingService, Canned>(), new BlankPlatform(),
+                                           experimentalGate: gate);
+        if (connected)
+        {
+            pipe.Raise(true);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(main.IsConnected, "the main window did not take the pipe's connect");
+        }
+        var panel = new PointerPanel { DataContext = main.Pointers };
         var window = new Window { Content = panel, Width = 1200, Height = 900 };
         window.Show();
         Dispatcher.UIThread.RunJobs();
-        return (panel, vm, gate);
+        return (panel, main, gate);
     }
 
     /// <summary>The opt-in: the panel's one checkbox with no label of its own.</summary>
@@ -112,101 +122,88 @@ public class ExperimentalCheckboxTests
         => panel.GetVisualDescendants().OfType<CheckBox>().Single(c => c.Content == null);
 
     [Fact]
-    public Task Ticked_and_connected_the_box_is_disabled_and_its_tooltip_says_to_disconnect_first() => Headless.Run(() =>
+    public Task Ticked_and_connected_the_box_unticks() => Headless.Run(() =>
     {
-        var (panel, vm, _) = Shown(enabled: true);
-        var box = TheBox(panel);
-        Assert.True(box.IsChecked);
-        Assert.True(box.IsEnabled);
-        Assert.Equal(Res("str.Experimental.EnableHint"), ToolTip.GetTip(box) as string);
+        var (panel, main, gate) = Shown(enabled: true, connected: true);
+        try
+        {
+            var box = TheBox(panel);
+            Assert.True(box.IsChecked);
+            Assert.True(box.IsEnabled, "connected, the ticked box is disabled");
+            Assert.Equal(Res("str.Experimental.EnableHint"), ToolTip.GetTip(box) as string);
 
-        vm.SetConnected(true);
-        Dispatcher.UIThread.RunJobs();
-        Assert.False(box.IsEnabled);
-        Assert.Equal(Res("str.Experimental.DisconnectFirst"), ToolTip.GetTip(box) as string);
-        // A disabled control gets no pointer events, so without this its tooltip never opens and the reason is unseen.
-        Assert.True(ToolTip.GetShowOnDisabled(box), "the tooltip of the disabled box would never open");
-
-        vm.SetConnected(false);
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(box.IsEnabled);
-        Assert.Equal(Res("str.Experimental.EnableHint"), ToolTip.GetTip(box) as string);
+            box.SetCurrentValue(CheckBox.IsCheckedProperty, (bool?)false);   // as a click writes it
+            Dispatcher.UIThread.RunJobs();
+            Assert.False(gate.IsEnabled, "connected, the untick did not reach the gate");
+            Assert.False(main.ExperimentalEnabled);
+            Assert.True(box.IsEnabled);
+        }
+        finally { main.Dispose(); }
     });
 
     [Fact]
-    public Task The_disabled_box_opens_its_tooltip_under_the_pointer() => Headless.Run(() =>
+    public Task Unticked_and_connected_the_box_ticks_and_stays_free() => Headless.Run(() =>
+    {
+        var (panel, main, gate) = Shown(enabled: false, connected: true);
+        try
+        {
+            var box = TheBox(panel);
+            Assert.True(box.IsEnabled);
+
+            box.SetCurrentValue(CheckBox.IsCheckedProperty, (bool?)true);
+            Dispatcher.UIThread.RunJobs();
+            Assert.True(gate.IsEnabled);
+            Assert.True(box.IsEnabled, "ticked while connected, the box cannot be unticked again");
+        }
+        finally { main.Dispose(); }
+    });
+
+    [Theory]
+    [InlineData(true)]
+    [InlineData(false)]
+    public Task Locked_the_box_says_the_features_stay_on_until_a_restart(bool connected) => Headless.Run(() =>
+    {
+        var (panel, main, gate) = Shown(enabled: true, connected);
+        try
+        {
+            gate.Lock();
+            Dispatcher.UIThread.RunJobs();
+            var box = TheBox(panel);
+            Assert.False(box.IsEnabled);
+            Assert.Equal(Res("str.Experimental.LockedForSession"), ToolTip.GetTip(box) as string);
+            // A disabled control gets no pointer events, so without this its tooltip never opens and the reason is unseen.
+            Assert.True(ToolTip.GetShowOnDisabled(box), "the tooltip of the locked box would never open");
+        }
+        finally { main.Dispose(); }
+    });
+
+    [Fact]
+    public Task The_locked_box_opens_its_tooltip_under_the_pointer() => Headless.Run(() =>
     {
         // The property alone proves nothing about what the user sees: a disabled control is left out of the input hit
         // test, so the pointer over it is over nothing with a tooltip -- unless the tooltip service is told otherwise.
-        var (panel, vm, _) = Shown(enabled: true);
-        vm.SetConnected(true);
-        Dispatcher.UIThread.RunJobs();
-        var box = TheBox(panel);
-        Assert.False(box.IsEnabled);
-        ToolTip.SetShowDelay(box, 0);   // the app's delay is a timer the headless dispatcher does not wait out
-        var window = (Window)TopLevel.GetTopLevel(panel)!;
-        var centre = box.TranslatePoint(new Point(box.Bounds.Width / 2, box.Bounds.Height / 2), window)!.Value;
-
-        window.MouseMove(centre);
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(ToolTip.GetIsOpen(box), "the pointer is over the disabled box and its tooltip did not open");
-        Assert.Equal(Res("str.Experimental.DisconnectFirst"), ToolTip.GetTip(box) as string);
-    });
-
-    [Fact]
-    public Task Unticked_and_connected_the_box_can_be_ticked() => Headless.Run(() =>
-    {
-        var (panel, vm, gate) = Shown(enabled: false);
-        vm.SetConnected(true);
-        Dispatcher.UIThread.RunJobs();
-        var box = TheBox(panel);
-        Assert.True(box.IsEnabled);
-
-        box.IsChecked = true;
-        Dispatcher.UIThread.RunJobs();
-        Assert.True(gate.IsEnabled);
-        Assert.False(box.IsEnabled);
-        Assert.Equal(Res("str.Experimental.DisconnectFirst"), ToolTip.GetTip(box) as string);
-    });
-
-    [Fact]
-    public Task Locked_the_box_keeps_the_plain_tooltip_connected_or_not() => Headless.Run(() =>
-    {
-        // A Disconnect would not free a locked box, so its tooltip does not send the user to one.
-        var (panel, vm, gate) = Shown(enabled: true);
-        gate.Lock();
-        vm.SetConnected(true);
-        Dispatcher.UIThread.RunJobs();
-        var box = TheBox(panel);
-        Assert.False(box.IsEnabled);
-        Assert.Equal(Res("str.Experimental.EnableHint"), ToolTip.GetTip(box) as string);
-    });
-
-    [Fact]
-    public Task A_dropped_pipe_frees_the_box_as_a_Disconnect_does() => Headless.Run(() =>
-    {
-        var dump = DispatchProxy.Create<IDumpService, Canned>();
-        var log = DispatchProxy.Create<ILoggingService, Canned>();
-        var pipe = new StatePipe();
-        var main = new MainWindowViewModel(pipe, dump, log, new BlankPlatform(), experimentalGate: new SwitchGate(true));
+        var (panel, main, gate) = Shown(enabled: true, connected: false);
         try
         {
-            pipe.Raise(true);
+            gate.Lock();
             Dispatcher.UIThread.RunJobs();
-            Assert.True(main.IsConnected);
-            Assert.False(main.Pointers.CanToggleExperimental);
+            var box = TheBox(panel);
+            Assert.False(box.IsEnabled);
+            ToolTip.SetShowDelay(box, 0);   // the app's delay is a timer the headless dispatcher does not wait out
+            var window = (Window)TopLevel.GetTopLevel(panel)!;
+            var centre = box.TranslatePoint(new Point(box.Bounds.Width / 2, box.Bounds.Height / 2), window)!.Value;
 
-            // The game closed: the pipe says so, and nobody pressed Disconnect.
-            pipe.Raise(false);
+            window.MouseMove(centre);
             Dispatcher.UIThread.RunJobs();
-            Assert.False(main.IsConnected);
-            Assert.True(main.Pointers.CanToggleExperimental);
+            Assert.True(ToolTip.GetIsOpen(box), "the pointer is over the locked box and its tooltip did not open");
+            Assert.Equal(Res("str.Experimental.LockedForSession"), ToolTip.GetTip(box) as string);
         }
         finally { main.Dispose(); }
     });
 
     /// <summary>The defence line behind the box, on Live Funcs' own panel: a trace kept while the features were on, and
-    /// then they are off by any path, shows neither Open in Call Trace nor its sentences on the status line.</summary>
+    /// then they are off by any path, shows neither Open in Call Trace nor its sentences on the status line; on again,
+    /// the DLL still holds the trace, so both come back.</summary>
     [Fact]
     public Task Off_Live_Funcs_shows_neither_Open_in_Call_Trace_nor_the_trace_sentences() => Headless.Run(() =>
     {
@@ -226,5 +223,10 @@ public class ExperimentalCheckboxTests
         Assert.DoesNotContain(kept, status.Text ?? "", StringComparison.Ordinal);
         Assert.StartsWith(status.Text + " " + kept, before, StringComparison.Ordinal);   // the Stop's own line stays
         Assert.DoesNotContain(kept, ToolTip.GetTip(status) as string ?? "", StringComparison.Ordinal);
+
+        gate.IsEnabled = true;
+        Dispatcher.UIThread.RunJobs();
+        Assert.True(open.IsEffectivelyVisible, "on again, Open in Call Trace stays hidden over a trace the DLL holds");
+        Assert.Equal(before, status.Text);
     });
 }
