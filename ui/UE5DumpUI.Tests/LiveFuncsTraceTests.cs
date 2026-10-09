@@ -767,4 +767,119 @@ public class LiveFuncsTraceTests
         Assert.Null(vm.LastTraceInfo);
         Assert.Equal(0, vm.LastCallsPerSecond);
     }
+
+    // ---- [LF-EXPOFF-TRACE] The defence line behind the System tab's rule (the experimental opt-in is unticked only
+    // while disconnected): a trace kept while the features were on, and then they are off by any path, is neither
+    // offered nor opened, and the status line drops its sentences. The Call Trace tab is hidden then, and opening its
+    // content anyway would bypass the opt-out.
+
+    /// <summary>Trace on, a Stop that keeps <paramref name="firstValid"/>..1000, the strings by their keys, and an
+    /// experimental switch the test flips.</summary>
+    private static (LiveFuncsViewModel vm, RaisingGate gate) MakeSwitchable(ulong firstValid = 0)
+    {
+        var dump = new FakeDumpService
+        {
+            StopTrace = new TraceInfo { Allocated = true, Quiesced = true, Written = 1000, FirstValid = firstValid },
+        };
+        var gate = new RaisingGate();
+        gate.Turn(true);
+        var vm = new LiveFuncsViewModel(dump, new NoopLogger(), experimentalGate: gate) { StringLookup = k => k };
+        vm.TraceEnabled = true;
+        return (vm, gate);
+    }
+
+    [Theory]
+    [InlineData(0UL, "str.LF.Trace.KeptAll")]
+    [InlineData(200UL, "str.LF.Trace.KeptLast")]
+    public async Task Off_a_kept_trace_is_neither_offered_nor_opened_and_the_status_line_drops_it(ulong firstValid, string kept)
+    {
+        var (vm, gate) = MakeSwitchable(firstValid);
+        int navigated = 0;
+        vm.NavigateToCallTrace += () => navigated++;
+        await RecordOnce(vm);
+        string on = vm.StatusText;
+        Assert.Contains(kept, on, StringComparison.Ordinal);
+        Assert.True(vm.CanOpenCallTrace);
+
+        var raised = new List<string>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? "");
+        gate.Turn(false);
+        Assert.True(vm.HasTraceToOpen);   // the DLL still holds it: only what Live Funcs offers follows the switch
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
+        Assert.Contains(nameof(LiveFuncsViewModel.StatusText), raised);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.StartsWith(vm.StatusText, on, StringComparison.Ordinal);   // what is left is the Stop's own line
+        vm.OpenCallTraceCommand.Execute(null);
+        Assert.Equal(0, navigated);
+
+        // On again (ticking is free at any time): the trace is still the DLL's, so the offer and the sentences return.
+        gate.Turn(true);
+        Assert.True(vm.CanOpenCallTrace);
+        Assert.Equal(on, vm.StatusText);
+        vm.OpenCallTraceCommand.Execute(null);
+        Assert.Equal(1, navigated);
+    }
+
+    [Fact]
+    public async Task A_status_that_replaced_the_Stops_is_left_alone_by_the_switch()
+    {
+        var (vm, gate) = MakeSwitchable();
+        await RecordOnce(vm);
+        vm.ClearCommand.Execute(null);
+        string cleared = vm.StatusText;
+
+        gate.Turn(false);
+        Assert.Equal(cleared, vm.StatusText);
+        gate.Turn(true);
+        Assert.Equal(cleared, vm.StatusText);   // the Stop's trace sentences do not come back over a later status
+    }
+
+    [Fact]
+    public async Task The_stop_on_leaving_the_tab_drops_its_trace_sentences_with_the_switch_too()
+    {
+        var (vm, gate) = MakeSwitchable();
+        await vm.StartCommand.ExecuteAsync(null);
+        vm.OnLeavingTab();
+        await vm.PendingAutoStop;
+        Assert.Contains("str.LF.Trace.KeptAll", vm.StatusText, StringComparison.Ordinal);
+
+        gate.Turn(false);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+        Assert.False(vm.CanOpenCallTrace);
+        gate.Turn(true);
+        Assert.Contains("str.LF.Trace.KeptAll", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task A_traced_recording_stopped_with_the_switch_off_shows_its_trace_only_once_it_is_on()
+    {
+        var (vm, gate) = MakeSwitchable();
+        await vm.StartCommand.ExecuteAsync(null);
+        gate.Turn(false);   // connected, only a writer other than the System tab's box can do this
+        await vm.StopCommand.ExecuteAsync(null);
+        Assert.True(vm.HasTraceToOpen);
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.DoesNotContain("str.LF.Trace.", vm.StatusText, StringComparison.Ordinal);
+
+        gate.Turn(true);
+        Assert.True(vm.CanOpenCallTrace);
+        Assert.Contains("str.LF.Trace.KeptAll", vm.StatusText, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task The_offer_is_raised_when_a_trace_is_kept_and_when_it_is_withdrawn()
+    {
+        var (vm, _) = MakeSwitchable();
+        var raised = new List<string>();
+        vm.PropertyChanged += (_, e) => raised.Add(e.PropertyName ?? "");
+        await RecordOnce(vm);
+        Assert.True(vm.CanOpenCallTrace);
+        Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
+
+        raised.Clear();
+        vm.ResetOnDisconnect();
+        Assert.False(vm.CanOpenCallTrace);
+        Assert.Contains(nameof(LiveFuncsViewModel.CanOpenCallTrace), raised);
+    }
 }

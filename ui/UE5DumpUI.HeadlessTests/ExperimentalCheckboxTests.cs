@@ -49,7 +49,7 @@ internal sealed class SwitchGate(bool enabled) : IExperimentalGate
 /// [LF-EXPOFF-TRACE] The System tab's experimental checkbox, unticked only while disconnected: what the view shows while
 /// it waits for a Disconnect (disabled, with a tooltip that still shows and says why), and a dropped pipe counting as a
 /// Disconnect through the main window's own state handler -- the path a unit test cannot run, as it posts to the UI
-/// thread.
+/// thread. And the defence line behind it, as Live Funcs' panel shows it.
 /// </summary>
 public class ExperimentalCheckboxTests
 {
@@ -203,5 +203,26 @@ public class ExperimentalCheckboxTests
             Assert.True(main.Pointers.CanToggleExperimental);
         }
         finally { main.Dispose(); }
+    });
+
+    /// <summary>The defence line behind the box, on Live Funcs' own panel: a trace kept while the features were on, and
+    /// then they are off by any path, shows neither Open in Call Trace nor its sentences on the status line.</summary>
+    [Fact]
+    public Task Off_Live_Funcs_shows_neither_Open_in_Call_Trace_nor_the_trace_sentences() => Headless.Run(() =>
+    {
+        var gate = new SwitchGate(true);
+        var (panel, vm) = LaidWithAStackChosen(usPerCapture: 20, gate: gate);
+        Assert.True(vm.HasTraceToOpen);
+        var open = panel.GetVisualDescendants().OfType<Button>().Single(b => b.Content as string == Res("str.LF.Trace.Open"));
+        Assert.True(open.IsEffectivelyVisible, "Open in Call Trace is hidden with a trace kept and the features on");
+        string kept = string.Format(Res("str.LF.Trace.KeptAll"), vm.LastTraceInfo!.Kept);
+        var status = LiveFuncsLayout.Shown(panel, vm.StatusText);   // this class's own Shown lays out the System tab
+        Assert.Contains(kept, status.Text, StringComparison.Ordinal);
+
+        gate.IsEnabled = false;
+        Dispatcher.UIThread.RunJobs();
+        Assert.False(open.IsEffectivelyVisible, "Open in Call Trace shows with the experimental features off");
+        Assert.DoesNotContain(kept, status.Text ?? "", StringComparison.Ordinal);
+        Assert.DoesNotContain(kept, ToolTip.GetTip(status) as string ?? "", StringComparison.Ordinal);
     });
 }

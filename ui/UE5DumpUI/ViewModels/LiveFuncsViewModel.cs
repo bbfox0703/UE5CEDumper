@@ -825,6 +825,8 @@ public partial class LiveFuncsViewModel : ViewModelBase
     public TraceInfo? LastTraceInfo { get; private set; }
     /// <summary>A traced recording stopped and its trace waits in the DLL: offer the Call Trace tab.</summary>
     [ObservableProperty] private bool _hasTraceToOpen;
+    /// <summary>[LF-EXPOFF-TRACE] What Open in Call Trace shows on.</summary>
+    public bool CanOpenCallTrace => HasTraceToOpen;
     /// <summary>Raised by "Open in Call Trace"; the main window switches tabs and loads the trace.</summary>
     public event Action? NavigateToCallTrace;
 
