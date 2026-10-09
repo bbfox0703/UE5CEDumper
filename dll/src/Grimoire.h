@@ -346,7 +346,8 @@ constexpr int PersistentPtrEnvelopeFor(int elemSize, int payloadSize,
 // ⛔ The table it replaces was wrong for EVERY UE5 game, and silently. It read
 //      >= 550 -> 0x228 ; >= 500 -> 0x220
 // but 550 is unreachable — versions are encoded major*100+minor and capped at 509
-// (Genau.cpp `major == 5 && minor <= 9`, Fern.cpp's 418..509 bound), so every UE5
+// (UeVersionCode's UE_MAX_UE5_MINOR, and UeVersionOverrideAccepted's UE_VERSION_OVERRIDE_MAX for the
+// pipe's override), so every UE5
 // title took the 0x220 arm, which is off by 0x38 (5.0) to 0x58 (5.5).
 //
 // MEASURED, from `vendor/RE-UE4SS/assets/VTableLayoutTemplates/` — UVTD's per-version
@@ -1234,11 +1235,21 @@ inline uint32_t UeVersionCode(uint32_t major, uint32_t minor) {
 //
 // A reading below MIN_SUPPORTED_UE_VERSION refuses the whole scan, so one VS_FIXEDFILEINFO field is
 // not enough evidence for it (audit #4 B25): a game's own version can read as 4.x. The same
-// VERSIONINFO carries a second signal that a game team does not write. UBT stamps the ProductVersion
-// STRING from the engine's Version.h as `Major.Minor.Patch-Changelist+Branch`, the branch either full,
-// naming the release a second time (`++depot+UE4-Releases+4.10`, later `++UE4+Release-4.18`), or
-// simplified (`UE4`); by 4.15 a game exe's string can also be branch first, `++UE4+Release-4.15-CL-0`.
-// Measured:
+// VERSIONINFO carries a second signal. UBT stamps the ProductVersion STRING as
+// `Major.Minor.Patch-Changelist+Branch`, the branch either full, naming the release a second time
+// (`++depot+UE4-Releases+4.10`, later `++UE4+Release-4.18`), or simplified (`UE4`); by 4.15 a game
+// exe's string can also be branch first, `++UE4+Release-4.15-CL-0`, with no version half at all.
+// ⚠ The string is NOT unwritable, so the parser's strictness is what makes it a second signal. The
+// version half comes from the engine's Version.h, but the branch is Build.version's BranchName, which a
+// licensee edits, and a branch-first string's M.m is the branch's own. Measured on this machine:
+//     Satisfactory       ++FactoryGame+rel-main-anniversary-2026-CL-502094  (exe and CrashReportClient)
+//     Titan Quest II     ++TQ2S+tq2-beta-no-binaries-CL-137244              (its CrashReportClient)
+//     Dolls Nest         ++UE4+4.27-Nitro-CL-0                              (exe and CrashReportClient)
+// So EngineBuildStringCode demands a `UE<M>` branch AND an M.m that agrees: the version half with a
+// full or simplified branch, or a branch-first string's major with its release. A licensee branch reads
+// 0, which costs a corroboration, never causes a refusal; loosening the parser to accept one would let
+// a single game-authored resource arm the refusal again (the B25 shape).
+// Engine build strings measured:
 //     IS Defense         4.10.2-0+++depot+UE4-Releases+4.10          (fixed version 4.10.2.0)
 //     launcher 4.10.4    4.10.4-2872498+++depot+UE4-Releases+4.10    (UE4Game and CrashReportClient)
 //     NEKOPALIVE         4.11.0-0+UE4                                (its CrashReportClient says the same)

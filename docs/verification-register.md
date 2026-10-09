@@ -915,7 +915,7 @@ counts `^### .*⬜` inside this section, so leaving either here would keep the r
 
 ⚠ **Lead with `num_parms` / `parms_size`, not the badges** — `Ubel.cpp:1450-1453` reads them off `funcFlagsOff + 4/6/8`, so a wrong base corrupts them too, and `2 (65413B)` is self-evidently wrong where a garbage bitmask is not. ⚠ `walk-0.log`'s `WalkFunctions: %zu functions found at 0x%llX` (`Ubel.cpp:1659`) is a **liveness marker only** — count and address, no flags. Do not write the row against it.
 
-**Negative control** — an in-session A/B on the **same binary**, which the pre-fix build could not give you: `set_ue_version_override` (`Fern.cpp:1715-1768`, accepts 418..509, sets `g_cachedUEVersion` immediately, no re-scan). Run at **421** (correct flags), override to **422** (the old garbage reappears — `0x98` on a 4.21 layout is `FirstPropertyToInit`), then back to 421. ⚠ Pass `persist:false`, or clear afterwards — `persist:true` writes into `UE5CEDumper.{Machine}.json` and the next session inherits it. Second control: **OCTOPATH 4.18** must be byte-identical (`0x88` before and after; a stock layout hits the primary so the reordered sweep never runs).
+**Negative control** — an in-session A/B on the **same binary**, which the pre-fix build could not give you: `set_ue_version_override` (`Fern.cpp:1715-1768`, accepts 418..509 — 411..509 since `[UE-OVERRIDE-411]` —, sets `g_cachedUEVersion` immediately, no re-scan). Run at **421** (correct flags), override to **422** (the old garbage reappears — `0x98` on a 4.21 layout is `FirstPropertyToInit`), then back to 421. ⚠ Pass `persist:false`, or clear afterwards — `persist:true` writes into `UE5CEDumper.{Machine}.json` and the next session inherits it. Second control: **OCTOPATH 4.18** must be byte-identical (`0x88` before and after; a stock layout hits the primary so the reordered sweep never runs).
 
 -----
 
@@ -4855,7 +4855,8 @@ again:
 
 - **"Lushfoil 5.6 → table `0x228`" is impossible.** The table read `>= 550 → 0x228 / >= 500 → 0x220`,
   and **550 is not a producible version** — versions are encoded `major*100+minor` and capped at 509
-  (`Genau.cpp` `major == 5 && minor <= 9`; `Fern.cpp`'s 418..509 bound). The `0x228` arm was dead
+  (`Genau.cpp` `major == 5 && minor <= 9`; `Fern.cpp`'s 418..509 bound, 411..509 in
+  `Grimoire::UeVersionOverrideAccepted` since `[UE-OVERRIDE-411]`). The `0x228` arm was dead
   code. Lushfoil got `0x220`, exactly as DumperTest did, and so did every other UE5 title.
 - **"Slot position is a build-flag property, not a version property" is refuted by these very two
   observations.** The measured non-editor slots are 5.4 = `0x268` and 5.6 = `0x260`

@@ -2869,9 +2869,9 @@ static void LogResourceVersion(const char* label, uint32_t major, uint32_t minor
 // bounds — is the defect shape working-lessons.md 1.12 catalogues, and the version arithmetic had
 // already been written out four times in this one function before the split.
 //
-// What a file's VERSIONINFO said besides the code: a reading below the floor needs a second signal
-// from the same resource before it may refuse the scan, and that signal has to be independent of the
-// reading itself. [VER-410-GATE]
+// What a file's VERSIONINFO said besides the code: a reading below the floor needs a second signal --
+// from the same exe's resource, or an agreeing CrashReportClient -- before it may refuse the scan, and
+// that signal has to be independent of the reading itself. [VER-410-GATE]
 struct ResourceReading {
     std::string productVersion;          // StringFileInfo ProductVersion, empty when absent
     bool        fromFixedField = false;  // the code came from VS_FIXEDFILEINFO, not from a string
@@ -3260,9 +3260,10 @@ static ResourcePhase DetectVersionFromResources(const wchar_t* exePath, const wc
         // that is the most destructive verdict this detector can reach. A single VS_FIXEDFILEINFO
         // field is not enough evidence for it, because a game's own version can read as 4.x
         // (audit #4 B25). So a sub-4.11 reading short-circuits as tier 1 only when the resources
-        // corroborate it with a signal no game team authors: the exe's ProductVersion is the
-        // engine's own build string naming the same version, or a CrashReportClient agrees with
-        // the exe. The memory scan cannot do that job -- its needle table floors at "4.18.", so a
+        // corroborate it with a second, independent signal: the exe's ProductVersion is the
+        // engine's own build string naming the same version (a licensee can edit that string's
+        // branch, which is why Grimoire::EngineBuildStringCode is strict about it), or a
+        // CrashReportClient agrees with the exe. The memory scan cannot do that job -- its needle table floors at "4.18.", so a
         // genuine 4.0-4.10 title was never corroborated, stayed tier 3 and was scanned instead of
         // refused, which is what IS Defense (4.10.2) hit [VER-410-GATE]. An uncorroborated reading
         // still falls through to the memory scan; if that cannot agree, the terminal branch keeps

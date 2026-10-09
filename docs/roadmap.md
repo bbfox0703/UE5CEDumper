@@ -50,7 +50,8 @@ nobody has downloaded, so "is this fixed?" has two different answers. Derive the
 * **UE version detection has a second, independent source.** `CrashReportClient.exe` ships with the
   engine rather than being authored by the game team, so its version can never be the *game's*
   version; where it disagrees with the game exe, the log says so. The `UE version override` row
-  further down still reads `Auto / 4.18-4.27 / 5.0-5.8` and remains correct.
+  further down read `Auto / 4.18-4.27 / 5.0-5.8` then and stayed correct; `[UE-OVERRIDE-411]`
+  later widened it to 4.11.
 * **Cached version verdicts re-derive once** on each game's first launch after upgrading.
 * **The `dxgi.dll` proxy no longer stops some games launching** (OCTOPATH TRAVELER was the
   reproducer), so the proxy-choice advice in the README is now true for dxgi as written.
@@ -103,7 +104,7 @@ Persisted in HintCache JSON per PE hash, surfaces in the Pointer panel:
 
 | Setting | Range | Default | Pipe cmd | Since |
 |---|---|---|---|---|
-| UE version override | Auto / 4.18-4.27 / 5.0-5.8 | Auto (detect) | `set_ue_version_override` | build 549 |
+| UE version override | Auto / 4.11-4.27 / 5.0-5.8 (the pipe also accepts 5.9) | Auto (detect) | `set_ue_version_override` | build 549; 4.11-4.17 since [UE-OVERRIDE-411] |
 | Invoke timeout | 1000-60000 ms | 5000 ms | `set_invoke_timeout` | build 583 |
 
 ## UFunction invoke export (build 590-596)
@@ -669,7 +670,7 @@ shipping any major Walker / Detection change:
   still raises a string-stripped UE5 title as far as 508 (`Frieren.cpp`), so the
   residue is a cosmetic badge. **UE 5.9 needs nothing added today** — the
   PE-VERSIONINFO path already answers `5.9 → 509` and the pipe accepts
-  `418..509`; only a 5.9 title that is *also* string-stripped badges one minor
+  `411..509` (`Grimoire::UeVersionOverrideAccepted`); only a 5.9 title that is *also* string-stripped badges one minor
   low, and nothing in the 505–509 band is version-gated. If `{"5.9.",509}` and
   `{"6.0.",600}` are ever added, add them together so the
   `kVersionDetectLogicRev` bump is paid once; 600 additionally needs the pipe's

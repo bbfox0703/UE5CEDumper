@@ -392,11 +392,18 @@ Each cost at least one headless run to establish. Recorded so nobody spends anot
   `id=MISMATCH` against the **live** Steam install, correctly. Re-point it at the backup by
   re-running `build_corpus_manifest.py`; do not hand-edit the generated manifest.
 - **The pre-4.11 support floor is MEASURED, and it has two independent causes.** UE 4.10.4 joined
-  the corpus 2026-07-29 (`UE410_Game_Shipping` / `..._Development`, both full-PDB), and **GObjects
-  scores 0 on both — correctly. Leave it ❌.**
-  1. *It cannot be found.* At 4.10 the array is a **function-local static behind a magic-static
-     guard** inside `GetUObjectArray()`. Consumers reach it with a `call`; the address is never
-     materialised inline, and all 52 `GOBJ_*` patterns are `lea reg,[rip+GUObjectArray]`-shaped.
+  the corpus 2026-07-29 (`UE410_Game_Shipping` / `..._Development`, Epic's prebuilt UE4Game, whose
+  PDBs hold **public symbols only**: their type stream has 0 records, measured 2026-10-08, so they
+  name the globals but are no type oracle; for 4.10 types, IS Defense's own 4.10.2 PDB holds
+  1,321,531 type records), and **GObjects scores 0 on both — correctly. Leave it ❌.**
+  1. *It cannot be found in these builds.* At 4.10 the array is a **function-local static behind a
+     magic-static guard** inside `GetUObjectArray()`. In the 4.10.4 binaries (linker 14.0, VS2015)
+     consumers reach it with a `call`, so the address is never materialised inline there, and all
+     52 `GOBJ_*` patterns are `lea reg,[rip+GUObjectArray]`-shaped. That is the compiler's choice,
+     not the engine's: IS Defense (4.10.2, linker 12.0 = VS2013) inlines `GetUObjectArray`, so its
+     address does appear (`lea rcx,[rip+GlobalUObjectArray+0x10]` at RVA 0x4461C2, and three
+     RIP-relative `cmp` against `GlobalUObjectArray+0x1010`, checked against its PDB 2026-10-08,
+     `[VER-410-GATE]`; `Himmel.h`'s provenance block has the same). Cause 2 below still holds there.
      4.11 promoted it to a plain `GUObjectArray` global, which is why Nekopara (4.11) resolves.
      Measured: 74 GObjects candidates on Shipping / 105 on Development, and the true VA and its
      `+0x10` alias are in **neither list at any rank** — not merely outside the top N.
@@ -776,8 +783,9 @@ a hit inside `Core` as a correct `GObjects`, which lives in `CoreUObject`. Use s
 cannot alias: `-Core-Win64` does not match `-CoreUObject-Win64`.
 
 ```sh
-# UE 4.10.4 — UE4Game, the prebuilt monolithic target the LAUNCHER ENGINE ALREADY SHIPS with a full
-# PDB (Engine/Binaries/Win64/UE4Game{-Win64-Shipping,}.exe). Nothing was compiled: 4.10 needs VS2015
+# UE 4.10.4 — UE4Game, the prebuilt monolithic target the LAUNCHER ENGINE ALREADY SHIPS with a PDB
+# (Engine/Binaries/Win64/UE4Game{-Win64-Shipping,}.exe) -- public symbols only, 0 type records, so it
+# names the globals below but types nothing. Nothing was compiled: 4.10 needs VS2015
 # and it is not installed. Check for those prebuilt targets before assuming a version needs a
 # toolchain. The corpus's OLDEST binary. GObjects is EXPECTED to score 0 on both rows for two
 # independent reasons — see the pre-4.11 floor entry in "Settled facts". SparseDelegates absent by
