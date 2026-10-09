@@ -102,6 +102,13 @@ GATES = [
      ["tools/verify/crc_authority_survey.py", "--selftest"],
      "the CRC oracle merge self-test failed", False),
 
+    # [VER-410-GATE] rev 9: the offline mirror of Genau's VERSIONINFO reader ports EngineBuildStringCode; a port that
+    # drifts mis-plans every row chosen by which tier a title's resource reaches
+    ("pe_version_probe_selftest",
+     ["tools/verify/pe_version_probe.py", "--selftest"],
+     "pe_version_probe.py's port of Grimoire::EngineBuildStringCode no longer gives the C++ helper test's answers",
+     False),
+
     # [SDK-METACLASS] the engine-source oracle for SDK headers: its verdicts are evidence, so every blind spot the
     # review of 2026-09-27 found is a fixture that must keep its verdict
     ("sdk_source_oracle_selftest",

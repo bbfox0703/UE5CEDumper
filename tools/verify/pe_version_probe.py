@@ -10,14 +10,18 @@ answers "which titles can even reach the tier I want" before anything is launche
 Mirrors `Genau::DetectVersionFromPEResource` (dll/src/Genau.cpp) in order:
   1. VS_FIXEDFILEINFO.dwProductVersionMS   5.x -> 500+minor | 4.x -> 400+minor
   2. VS_FIXEDFILEINFO.dwFileVersionMS      same
-  3. StringFileInfo ProductVersion/FileVersion containing '++UEn+Release-'
+  3. StringFileInfo ProductVersion/FileVersion containing '++UEn+Release-', or (rev 9) one that is
+     the engine's own build string -- `engine_build_string_code`, a port of
+     Grimoire::EngineBuildStringCode. Such a code came from a string, so below the 4.11 floor it
+     cannot corroborate itself: only an agreeing CrashReportClient makes it refuse the scan.
   4. otherwise -> "unrecognised", and the caller falls back to the memory scan
 ⚠ Keep in step with that function; a divergence here silently mis-plans a row.
 
     py pe_version_probe.py <exe> [<exe> ...]
     py pe_version_probe.py --scan "D:\SteamLibrary\steamapps\common" [more roots]
+    py pe_version_probe.py --selftest      # the port against the C++ helper test's cases
 """
-import io, os, sys, ctypes, struct
+import io, os, re, sys, ctypes, struct
 from ctypes import wintypes
 
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
@@ -29,6 +33,90 @@ ver.VerQueryValueW.argtypes = [ctypes.c_void_p, wintypes.LPCWSTR,
                                ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(wintypes.UINT)]
 
 FALLTHROUGH = "FALLS THROUGH -> memory-string Tier 1"
+
+# ── Grimoire::EngineBuildStringCode, ported ([VER-410-GATE] rev 9) ───────────────────────────────
+# The C++ reads each number as a greedy decimal run that fails above 0xFFFFFFFF; `[0-9]+` plus the
+# U32 check is the same boundary, and fullmatch is its "ends exactly here".
+U32 = 0xFFFFFFFF
+_BRANCH_FIRST = re.compile(r"\+\+UE([0-9]+)\+Release-([0-9]+)\.([0-9]+)-CL-([0-9]+)")
+_VERSION_FIRST = re.compile(r"([0-9]+)\.([0-9]+)\.([0-9]+)-([0-9]+)\+(.*)", re.S)
+_SIMPLE_BRANCH = re.compile(r"UE([0-9]+)")
+_FULL_BRANCHES = (re.compile(r"\+\+depot\+UE([0-9]+)-Releases\+([0-9]+)\.([0-9]+)"),
+                  re.compile(r"\+\+UE([0-9]+)\+Release-([0-9]+)\.([0-9]+)"))
+
+
+def ue_version_code(major, minor):
+    """Grimoire::UeVersionCode."""
+    if major == 5 and minor <= 9:
+        return 500 + minor
+    if major == 4 and minor <= 27:
+        return 400 + minor
+    return 0
+
+
+def engine_build_string_code(s):
+    """The engine version a UBT build string names, as a version code; 0 when it names none."""
+    if s.startswith("++UE"):
+        m = _BRANCH_FIRST.fullmatch(s)
+        if not m:
+            return 0
+        bmaj, maj, mnr, cl = map(int, m.groups())
+        if max(bmaj, maj, mnr, cl) > U32 or bmaj != maj:
+            return 0
+        return ue_version_code(maj, mnr)
+    m = _VERSION_FIRST.fullmatch(s)
+    if not m:
+        return 0
+    maj, mnr, patch, cl = map(int, m.groups()[:4])
+    if max(maj, mnr, patch, cl) > U32:
+        return 0
+    code = ue_version_code(maj, mnr)
+    if not code:
+        return 0
+    branch = m.group(5)
+    b = _SIMPLE_BRANCH.fullmatch(branch)
+    if b:
+        return code if int(b.group(1)) == maj else 0
+    for rx in _FULL_BRANCHES:
+        f = rx.fullmatch(branch)
+        if f:
+            bm, rm, rn = map(int, f.groups())
+            return code if bm == maj and rm == maj and rn == mnr else 0
+    return 0
+
+
+# Every case of dll_helpers_test's Test_EngineBuildStringCode, so the port is held to the same answers.
+_SELFTEST = [
+    ("4.10.2-0+++depot+UE4-Releases+4.10", 410), ("4.10.4-2872498+++depot+UE4-Releases+4.10", 410),
+    ("4.9.2-0+++depot+UE4-Releases+4.9", 409), ("4.18.3-3832480+++UE4+Release-4.18", 418),
+    ("4.11.0-0+UE4", 411), ("++UE4+Release-4.15-CL-0", 415), ("++UE4+Release-4.15-CL-3450819", 415),
+    ("++UE4+Release-4.18-CL-3832480", 418), ("++UE4+Release-4.27-CL-18319896", 427),
+    ("4.10.1", 0), ("4.10.3", 0), ("4.10.2.0", 0), ("1.0.10897.0", 0), ("4.5.0.0", 0), ("", 0),
+    ("4.10.2-0+++depot+UE4-Releases+4.9", 0), ("4.10.2-0+++UE4+Release-4.11", 0), ("4.10.2-0+MyGame", 0),
+    ("4.10.2-0+++depot+UE5-Releases+4.10", 0), ("4.10.2-0+++depot+UE4-Releases+5.10", 0), ("4.11.0-0+UE5", 0),
+    ("++UE4+Release-5.4-CL-0", 0), ("4.10.2-0+++depot+UE4-Releases+4.1", 0),
+    ("4.1.0-0+++depot+UE4-Releases+4.10", 0), ("4.100.0-0+UE4", 0), ("4.10.2-+UE4", 0), ("++UE4+Release-4.15", 0),
+    ("4.10.2-0+++depot+UE4-Releases+4.10x", 0), ("4.11.0-0+UE4 ", 0), ("++UE4+Release-4.15-CL-0x", 0),
+    ("++UE4+Release-4.15-CL-0 ", 0),
+    # Port-only: the C++ decimal reader fails above 0xFFFFFFFF, so a 2^32 changelist is no build string.
+    ("4.10.2-4294967296+UE4", 0), ("4.10.2-4294967295+UE4", 410),
+]
+
+
+def selftest():
+    # Only from this file's own command line. Reached through an import, it is an importer's `--selftest` (the
+    # CRC survey's) answered by the wrong selftest, and a pass would hide that its own never ran.
+    if __name__ != "__main__":
+        print("pe_version_probe: --selftest reached from an import, not this file's command line")
+        return 1
+    bad = 0
+    for s, want in _SELFTEST:
+        got = engine_build_string_code(s)
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok ' if ok else 'BAD'}  {s!r:48} -> {got} (want {want})")
+    print(f"selftest: {len(_SELFTEST) - bad}/{len(_SELFTEST)} passed")
+    return 1 if bad else 0
 
 def probe(path):
     """-> (verdict, product, file, strings). Verdict contains FALLTHROUGH when usable."""
@@ -68,6 +156,9 @@ def probe(path):
         for pre in ("++UE5+Release-", "++UE4+Release-"):
             if pre in s:
                 return (f"Tier0 STRING {key}='{s}'", prod, fver, strs)
+        code = engine_build_string_code(s)
+        if code:
+            return (f"Tier0 BUILD STRING {key}='{s}' -> {code}", prod, fver, strs)
     return (f"unrecognised -- {FALLTHROUGH}", prod, fver, strs)
 
 def collect(roots):
@@ -86,6 +177,8 @@ def main():
     argv = sys.argv[1:]
     if not argv:
         print(__doc__); return
+    if argv[0] == "--selftest":
+        sys.exit(selftest())
     targets = collect(argv[1:] if argv[0] == "--scan" else argv)
     usable = []
     for t in targets:
@@ -99,4 +192,8 @@ def main():
     for t, strs in usable:
         print(f"  {t}\n      strings={strs}")
 
-main()
+# Only when run: crc_authority_survey.py imports this module, and a main() at import read the survey's own
+# argv -- harmless while no flag meant anything here, but `--selftest` would run this selftest and exit in place
+# of the survey's.
+if __name__ == "__main__":
+    main()

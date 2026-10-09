@@ -207,6 +207,8 @@ jobs:
           # (last) now fails whenever the two lists differ.
           & $py tools/verify/crc_authority_survey.py --selftest
           if ($LASTEXITCODE -ne 0) { throw "crc_oracle_selftest FAILED ($LASTEXITCODE) - the CRC oracle merge self-test failed" }
+          & $py tools/verify/pe_version_probe.py --selftest
+          if ($LASTEXITCODE -ne 0) { throw "pe_version_probe_selftest FAILED ($LASTEXITCODE) - pe_version_probe.py's port of Grimoire::EngineBuildStringCode no longer gives the C++ helper test's answers" }
           & $py tools/verify/sdk_source_oracle.py --selftest
           if ($LASTEXITCODE -ne 0) { throw "sdk_source_oracle_selftest FAILED ($LASTEXITCODE) - the SDK engine-source oracle self-test failed -- a verdict it gives on real headers can no longer be trusted" }
           & $py tools/check_processevent_slots.py
