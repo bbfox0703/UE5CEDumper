@@ -16,6 +16,8 @@
 #include <string>
 #include <cstdint>
 
+#include "Grimoire.h"   // MIN_SUPPORTED_UE_VERSION -- the publisher rule stops at the support floor
+
 // Forward declare to avoid pulling OffsetFinder.h
 namespace Genau { struct EnginePointers; }
 
@@ -82,6 +84,24 @@ struct ScanHints {
     int32_t     invokeTimeoutMs        = 0;
     bool        hasInvokeTimeoutOverride = false;
 };
+
+// ============================================================
+// The cached detection, as a launch reuses it [UE-OVERRIDE-HINT-AUTO]
+// ============================================================
+// A launch reuses the cached version instead of detecting again, and Auto chosen over an override hands one back to
+// the running session. One copy of the rule, so Auto restores exactly what the next launch would start from.
+
+/// Reused only when the current detection logic stamped it: a record from an older rev is detected again once.
+inline bool CachedDetectionTrusted(const ScanHints& h, uint32_t currentLogicRev) {
+    return h.hasVersionHint && h.ueVersion != 0 && h.versionDetectRev == currentLogicRev;
+}
+
+/// The cached flag, or a publisher known to ship unreliable version strings -- judged live, so a shipper added to
+/// the table after this game was cached still flags it. Not below the support floor: a version there is a refusal,
+/// not a guess, and the too-old refusal needs !lowConfidence to fire.
+inline bool CachedLowConfidence(const ScanHints& h, bool publisherMatched) {
+    return h.lowConfidence || (publisherMatched && h.ueVersion >= Grimoire::MIN_SUPPORTED_UE_VERSION);
+}
 
 /// Load hints for a given PE hash from the cache file.
 /// Returns empty strings if the file doesn't exist, is corrupt,

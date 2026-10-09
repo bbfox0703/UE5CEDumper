@@ -6659,6 +6659,154 @@ static void Test_CmcMarkerVersion() {
     EXPECT("R7-X4: never raises below the 5.x range", CmcMarkerVersion(427, true, true, true) == 427);
 }
 
+// [UE-OVERRIDE-HINT-AUTO] The init version ladder as one function: init climbs it after the offsets probe, and Auto
+// chosen over an override climbs it from the detection it restores, so a stripped UE5 title is not handed back its
+// 4.27 fallback. Pinned rung by rung, in order, with each rung's guard.
+static void Test_VersionLadder() {
+    std::printf("\n--- UE-OVERRIDE-HINT-AUTO: the init version ladder ---\n");
+    using DynOff::StructuralVersionFacts;
+    using DynOff::VersionRung;
+    struct Probe { bool present = false, prop = false, func = false; int asked = 0; };
+    auto run = [](unsigned v, const StructuralVersionFacts& f, Probe& p, std::vector<VersionRung>* rungs = nullptr) {
+        return DynOff::ApplyVersionLadder(v, f,
+            [&](bool& prop, bool& func) { ++p.asked; prop = p.prop; func = p.func; return p.present; },
+            [&](VersionRung r, unsigned, unsigned) { if (rungs) rungs->push_back(r); });
+    };
+    auto measured = [](bool fproperty) {
+        StructuralVersionFacts f;
+        f.measured  = true;
+        f.fproperty = fproperty;
+        return f;
+    };
+
+    {   // Nothing is a fact before the probe has run.
+        StructuralVersionFacts f;
+        f.fproperty = true; f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
+        Probe p; p.present = true; p.func = true;
+        const auto r = run(427, f, p);
+        EXPECT("Ladder ⭐: nothing measured leaves a 4.27 label alone", r.version == 427 && !r.loweredToUE4);
+        EXPECT("Ladder: ...and walks no object array for a CMC", p.asked == 0);
+        StructuralVersionFacts u;
+        u.fproperty = false;
+        EXPECT("Ladder: nothing measured never lowers a UE5 label", run(504, u, p).version == 504);
+    }
+    {   // UProperty mode is UE4 before 4.25.
+        auto f = measured(false);
+        Probe p;
+        const auto r = run(504, f, p);
+        EXPECT("Ladder ⭐: UProperty mode under a UE5 label is UE4 -- 4.24 on a chunked object array",
+               r.version == 424 && r.loweredToUE4);
+        f.flatObjectArray = true;
+        EXPECT("Ladder: ...4.18 on a flat one", run(504, f, p).version == 418);
+        const auto keep = run(427, f, p);
+        EXPECT("Ladder: UProperty mode leaves a UE4 label alone, and does not call it lowered",
+               keep.version == 427 && !keep.loweredToUE4);
+        f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
+        Probe q; q.present = true; q.func = true;
+        EXPECT("Ladder: no UE5 rung fires in UProperty mode", run(427, f, q).version == 427 && q.asked == 0);
+        EXPECT("Ladder: ...nor after the UProperty rung lowered the label", run(508, f, q).version == 418 && q.asked == 0);
+    }
+    {   // Tagged FFieldVariant: UE5.3+.
+        auto f = measured(true);
+        f.taggedFFieldVariant = true;
+        Probe p;
+        EXPECT("Ladder ⭐: a 4.27 fallback with a tagged FFieldVariant climbs to 5.3 (Elliot)", run(427, f, p).version == 503);
+        EXPECT("Ladder: the tagged rung never lowers a 5.4 detection", run(504, f, p).version == 504);
+    }
+    {   // The CMC rung, inside its window only.
+        auto f = measured(true);
+        Probe both; both.present = true; both.prop = true; both.func = true;
+        EXPECT("Ladder: CMC's SetGravityDirection lifts 5.1 to 5.4", run(501, f, both).version == 504 && both.asked == 1);
+        Probe prop; prop.present = true; prop.prop = true;
+        EXPECT("Ladder: CMC's property alone floors 5.1 at 5.3", run(501, f, prop).version == 503);
+        Probe func; func.present = true; func.func = true;
+        auto g = f;
+        g.taggedFFieldVariant = true;
+        EXPECT("Ladder ⭐: the tagged rung then the CMC rung -- 4.27 -> 5.3 -> 5.4", run(427, g, func).version == 504);
+        Probe ue4; ue4.present = true; ue4.func = true;
+        EXPECT("Ladder ⭐: a UE4 label never pays the CMC walk", run(427, f, ue4).version == 427 && ue4.asked == 0);
+        Probe top; top.present = true; top.func = true;
+        EXPECT("Ladder: 5.4 and above never ask", run(504, f, top).version == 504 && top.asked == 0);
+        Probe absent; absent.func = true;
+        EXPECT("Ladder: no CMC loaded changes nothing", run(502, f, absent).version == 502 && absent.asked == 1);
+        Probe bare; bare.present = true;
+        std::vector<VersionRung> heard;
+        EXPECT("Ladder: a CMC with neither marker changes nothing, and no rung is reported",
+               run(502, f, bare, &heard).version == 502 && heard.empty());
+    }
+    {   // The reordered FUObjectItem: UE5.7+.
+        auto f = measured(true);
+        f.reorderedItem57 = true;
+        Probe p;
+        EXPECT("Ladder: the reordered FUObjectItem lifts 5.4 to 5.7", run(504, f, p).version == 507);
+        EXPECT("Ladder: ...and a 4.27 fallback, which no UE4 layout shares", run(427, f, p).version == 507);
+        EXPECT("Ladder: the 5.7 rung never lowers 5.8", run(508, f, p).version == 508);
+    }
+    {   // The virtual ~FFieldClass: UE5.8, and never from a UE4 label.
+        auto f = measured(true);
+        f.virtualDtor58 = true;
+        Probe p;
+        EXPECT("Ladder: the virtual ~FFieldClass lifts 5.7 to 5.8", run(507, f, p).version == 508);
+        EXPECT("Ladder ⭐: ...but never a UE4 label (a false 0x08 would cross every >= 500 gate)",
+               run(427, f, p).version == 427);
+        f.reorderedItem57 = true;
+        EXPECT("Ladder: the 5.7 rung then the 5.8 rung -- 4.27 -> 5.7 -> 5.8", run(427, f, p).version == 508);
+    }
+    {   // The whole ladder.
+        auto f = measured(true);
+        f.taggedFFieldVariant = true; f.reorderedItem57 = true; f.virtualDtor58 = true;
+        Probe p; p.present = true; p.func = true;
+        std::vector<VersionRung> rungs;
+        const auto r = run(427, f, p, &rungs);
+        EXPECT("Ladder: every rung from 4.27 lands on 5.8", r.version == 508 && !r.loweredToUE4);
+        EXPECT("Ladder: ...and reports each rung that moved it, in order",
+               (rungs == std::vector<VersionRung>{VersionRung::TaggedFieldVariant, VersionRung::CmcMarkers,
+                                                  VersionRung::ReorderedItem, VersionRung::VirtualFieldClassDtor}));
+        std::vector<VersionRung> again;
+        Probe q; q.present = true; q.func = true;
+        EXPECT("Ladder ⭐: climbing again from where it landed changes nothing (a cached value that already climbed)",
+               run(r.version, f, q, &again).version == 508 && again.empty());
+    }
+}
+
+// [UE-OVERRIDE-HINT-AUTO] The cached detection, as a launch reuses it -- and so as Auto hands it back -- and the
+// too-old refusal's verdict, which decides whether a launch would refuse what Auto restores.
+static void Test_CachedDetectionRules() {
+    std::printf("\n--- UE-OVERRIDE-HINT-AUTO: the cached detection's rules ---\n");
+    Flamme::ScanHints h;
+    h.hasVersionHint = true; h.ueVersion = 504; h.versionDetected = true; h.versionDetectRev = 9;
+    EXPECT("Cache: a detection the current logic stamped is reused", Flamme::CachedDetectionTrusted(h, 9));
+    EXPECT("Cache ⭐: one an older logic stamped is detected again", !Flamme::CachedDetectionTrusted(h, 10));
+    EXPECT("Cache: no record is nothing to reuse", !Flamme::CachedDetectionTrusted(Flamme::ScanHints{}, 0));
+    Flamme::ScanHints zero = h;
+    zero.ueVersion = 0;
+    EXPECT("Cache: a zero version is nothing to reuse", !Flamme::CachedDetectionTrusted(zero, 9));
+    Flamme::ScanHints unset = h;
+    unset.hasVersionHint = false;
+    EXPECT("Cache: an unpopulated version hint is nothing to reuse", !Flamme::CachedDetectionTrusted(unset, 9));
+
+    EXPECT("Cache: a confident record with no publisher stays confident", !Flamme::CachedLowConfidence(h, false));
+    Flamme::ScanHints low = h;
+    low.lowConfidence = true;
+    EXPECT("Cache: the record's own low confidence is kept", Flamme::CachedLowConfidence(low, false));
+    EXPECT("Cache: a matched publisher flags a supported version", Flamme::CachedLowConfidence(h, true));
+    Flamme::ScanHints atFloor = h;
+    atFloor.ueVersion = Grimoire::MIN_SUPPORTED_UE_VERSION;
+    EXPECT("Cache: ...the support floor included", Flamme::CachedLowConfidence(atFloor, true));
+    Flamme::ScanHints below = h;
+    below.ueVersion = Grimoire::MIN_SUPPORTED_UE_VERSION - 1;
+    EXPECT("Cache ⭐: ...but not a version below it, which is a refusal and not a guess",
+           !Flamme::CachedLowConfidence(below, true));
+
+    using Grimoire::RefusedAsTooOld;
+    EXPECT("TooOld: a confident 4.10 is refused", RefusedAsTooOld(410, true, false, false));
+    EXPECT("TooOld: the pre-UE4 sentinel is refused", RefusedAsTooOld(Grimoire::PRE_UE4_SENTINEL_VERSION, true, false, false));
+    EXPECT("TooOld: the support floor is not", !RefusedAsTooOld(Grimoire::MIN_SUPPORTED_UE_VERSION, true, false, false));
+    EXPECT("TooOld: a guess is never refused", !RefusedAsTooOld(410, false, false, false));
+    EXPECT("TooOld: a low-confidence reading is never refused", !RefusedAsTooOld(410, true, true, false));
+    EXPECT("TooOld: a user's override is never refused", !RefusedAsTooOld(410, true, false, true));
+}
+
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse a resolved target?
 static void Test_WeakTargetGarbage() {
     EXPECT("VND583-06: UE5 RF_MirroredGarbage in ObjectFlags -> garbage",
@@ -9533,6 +9681,8 @@ int main() {
     RUN(Test_UFieldNextFProperty);
     RUN(Test_FNameAlign);
     RUN(Test_CmcMarkerVersion);
+    RUN(Test_VersionLadder);         // [UE-OVERRIDE-HINT-AUTO] the init ladder, as one function
+    RUN(Test_CachedDetectionRules);  // [UE-OVERRIDE-HINT-AUTO] the cache-reuse rule and the too-old verdict
     RUN(Test_WeakTargetGarbage);
     RUN(Test_UnresolvedWeakLabel);
     RUN(Test_FFieldVariantDefaults);

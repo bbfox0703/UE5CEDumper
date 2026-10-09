@@ -5459,8 +5459,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         out.bLowConfidence   = false;
         LOG_INFO("FindAll: UE Version = %u (USER OVERRIDE — persistent for this game)",
                  out.UEVersion);
-    } else if (hints.hasVersionHint && hints.ueVersion != 0
-               && hints.versionDetectRev == kVersionDetectLogicRev) {
+    } else if (Flamme::CachedDetectionTrusted(hints, kVersionDetectLogicRev)) {
         // Reuse the cached version (skip the slow memory string scan) whenever it was stamped
         // by the current detection-logic rev — regardless of publisher or confidence. The same
         // binary produces the same detection deterministically, so a re-scan only wastes time.
@@ -5475,14 +5474,13 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
         // Applying it live (not just from cache) keeps the badge honest even if the publisher table
         // gains a new shipper after this game was already cached (the old publisher gate was live too).
         //
-        // The >= MIN_SUPPORTED guard mirrors the identical rule in the fresh-detection branch
-        // below, and it MUST be here too: this is the branch that runs on every launch after the
-        // first, so guarding only the fresh path would gate a pre-UE4 game correctly once and
-        // then silently un-gate it from launch 2 onward. Publisher bias exists to flag an
-        // UNRELIABLE version STRING; it has nothing to say about a version we refused outright.
-        out.bLowConfidence   = hints.lowConfidence
-                            || (publisher != nullptr
-                                && out.UEVersion >= Grimoire::MIN_SUPPORTED_UE_VERSION);
+        // The >= MIN_SUPPORTED guard (inside Flamme::CachedLowConfidence) mirrors the identical
+        // rule in the fresh-detection branch below, and it MUST be here too: this is the branch
+        // that runs on every launch after the first, so guarding only the fresh path would gate a
+        // pre-UE4 game correctly once and then silently un-gate it from launch 2 onward. Publisher
+        // bias exists to flag an UNRELIABLE version STRING; it has nothing to say about a version
+        // we refused outright.
+        out.bLowConfidence   = Flamme::CachedLowConfidence(hints, publisher != nullptr);
         LOG_INFO("FindAll: UE Version = %u (cached, rev=%u, detected=%s, lowConf=%s) — skipped DetectVersion",
                  out.UEVersion, hints.versionDetectRev,
                  out.bVersionDetected ? "yes" : "no",
@@ -5583,8 +5581,7 @@ bool FindAll(EnginePointers& out, ScanProgressFn progress) {
     // string naming the same version, or a CrashReportClient agrees with the exe — see
     // DetectVersionDetailed [VER-410-GATE]. Case (b) is unchanged: the pre-UE4 sentinel is a
     // POSITIVE 2-of-4 marker identification and is deliberately tier 1.
-    if (out.UEVersion < Grimoire::MIN_SUPPORTED_UE_VERSION
-        && out.bVersionDetected && !out.bLowConfidence && !out.bUserOverride) {
+    if (Grimoire::RefusedAsTooOld(out.UEVersion, out.bVersionDetected, out.bLowConfidence, out.bUserOverride)) {
         out.bVersionTooOld = true;
         if (out.UEVersion == Grimoire::PRE_UE4_SENTINEL_VERSION) {
             LOG_WARN("FindAll: PRE-UE4 engine (Unreal Engine 3) — SKIPPING the scan. There is no "

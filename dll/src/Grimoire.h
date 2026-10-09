@@ -429,10 +429,11 @@ constexpr int ProcessEventVTableSlotFor(unsigned ueVersion) {
 // It exists because heavily-stripped titles lose every version string and fall back to
 // 4.27 while the structural probes have already proved otherwise. The PURE predicates
 // live in this header so the tests can pin them (the two below, and the CMC rule as
-// DynOff::CmcMarkerVersion); the live reads that feed them stay in UE5_Init.
+// DynOff::CmcMarkerVersion), and so does the ladder's order (DynOff::ApplyVersionLadder);
+// the live reads that feed them stay in Frieren.cpp.
 //
 // ⚠ Every rung is RAISE-ONLY, and whether it is also guarded on `ver >= 500` is decided
-// PER RUNG at its UE5_Init call site: a rung whose probe could misfire on a UE4 title must
+// PER RUNG in DynOff::ApplyVersionLadder: a rung whose probe could misfire on a UE4 title must
 // carry the guard, while one keyed on a layout no UE4 build has may go without — lifting a
 // 4.27-fallback title is the 503 rung's whole job. The guard is not cosmetic: a false
 // positive on a UE4 title would cross the >=500 / >=501 gates in Aura and Ubel,
@@ -668,6 +669,68 @@ constexpr unsigned CmcMarkerVersion(unsigned ueVersion, bool fproperty, bool has
     if (hasSetGravityDirectionFunction) return 504;
     if (hasGravityDirectionProperty && ueVersion < 503) return 503;
     return ueVersion;
+}
+
+// === The init version ladder, in one place [UE-OVERRIDE-HINT-AUTO] ===
+//
+// After the offsets probe, init corrects the scan's version from what the probe measured: UProperty mode is UE4
+// before 4.25 whatever the label says, and the raise-only rungs above lift a stripped title to the UE5 minor its
+// layout proves. The DLL caches its detection before this ladder runs, so anything that hands a cached detection
+// back to the session -- Auto chosen over an override -- has to climb the same ladder, or a UE5 title whose strings
+// were stripped lands on its 4.27 fallback. One function, so the two cannot drift. Climbing twice changes nothing
+// (every rung is a floor or a window it leaves), so a cached value that already climbed -- the UI records the
+// version it was shown -- lands in the same place.
+//
+// The facts are the probe's. None of them is a fact until it has run (`measured`): a default FFIELDCLASS_NAME or
+// bUseFProperty would pass for a measurement, so the ladder then leaves the version alone.
+struct StructuralVersionFacts {
+    bool measured            = false;  // DynOff::bOffsetsProbeRan
+    bool fproperty           = false;  // DynOff::bUseFProperty
+    bool flatObjectArray     = false;  // the flat FUObjectArray (4.18-era), which picks the UE4 version the UProperty rung lands on
+    bool taggedFFieldVariant = false;  // DynOff::bTaggedFFieldVariant
+    bool reorderedItem57     = false;  // IsReorderedFUObjectItem57 over the measured item layout
+    bool virtualDtor58       = false;  // IsVirtualDtorFFieldClass58(FFIELDCLASS_NAME)
+};
+
+enum class VersionRung { UPropertyMode, TaggedFieldVariant, CmcMarkers, ReorderedItem, VirtualFieldClassDtor };
+
+struct StructuralVersion {
+    unsigned version      = 0;
+    bool     loweredToUE4 = false;   // the UProperty rung fired: the label was wrong, so it is not trusted as detected
+};
+
+// `probeCmc(bool& hasGravityDirectionProperty, bool& hasSetGravityDirectionFunction)` reads one loaded
+// CharacterMovementComponent class and returns false when there is none. It is asked only inside the CMC rung's
+// window (FProperty mode, 5.0-5.3), because it walks the object array and a UE4 title must never pay for that.
+// `onRung(rung, from, to)` hears each rung that changed the version, so the caller's log names the evidence.
+template <class ProbeCmc, class OnRung>
+StructuralVersion ApplyVersionLadder(unsigned ueVersion, const StructuralVersionFacts& f, ProbeCmc&& probeCmc,
+                                     OnRung&& onRung) {
+    StructuralVersion r{ueVersion, false};
+    if (!f.measured) return r;
+    auto step = [&](VersionRung rung, unsigned to) {
+        if (to == r.version) return;
+        onRung(rung, r.version, to);
+        r.version = to;
+    };
+    if (!f.fproperty && r.version >= 500) {
+        step(VersionRung::UPropertyMode, f.flatObjectArray ? 418u : 424u);
+        r.loweredToUE4 = true;
+    }
+    if (f.fproperty && f.taggedFFieldVariant && r.version < 503)
+        step(VersionRung::TaggedFieldVariant, 503u);
+    if (f.fproperty && r.version >= 500 && r.version < 504) {
+        bool prop = false, func = false;
+        if (probeCmc(prop, func))
+            step(VersionRung::CmcMarkers, CmcMarkerVersion(r.version, true, prop, func));
+    }
+    if (f.fproperty && r.version < 507 && f.reorderedItem57)
+        step(VersionRung::ReorderedItem, 507u);
+    // The >= 500 guard is the rung's, not cosmetic: a false 0x08 on a UE4 title would raise 427 to 508 and cross the
+    // >= 500 / >= 501 layout gates in Aura and Ubel.
+    if (f.fproperty && r.version >= 500 && r.version < 508 && f.virtualDtor58)
+        step(VersionRung::VirtualFieldClassDtor, 508u);
+    return r;
 }
 
 // [VND583-06] Would UE's FWeakObjectPtr::Get() refuse this resolved target? Get() checks the index,
@@ -1216,6 +1279,14 @@ constexpr uint32_t MIN_SUPPORTED_UE_VERSION = 411;
 // CORRECT UE3 GObjects address, and neither a UE-version override nor an Extra Scan can bridge
 // it. Skipping the scan and saying so is the only honest answer.
 constexpr uint32_t PRE_UE4_SENTINEL_VERSION = 300;
+
+/// The too-old refusal's verdict: a version below the support floor refuses the scan only when it was detected with
+/// confidence. A guess, or a user's override, is never refused -- misreading a working game as too old and skipping
+/// its scan is far worse than four wasted seconds. Shared so Auto, chosen over an override, cannot hand back a
+/// detection the next launch would refuse. [UE-OVERRIDE-HINT-AUTO]
+constexpr bool RefusedAsTooOld(uint32_t ueVersion, bool versionDetected, bool lowConfidence, bool userOverride) {
+    return ueVersion < MIN_SUPPORTED_UE_VERSION && versionDetected && !lowConfidence && !userOverride;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // UE version code arithmetic, and where to find a second opinion about it.
