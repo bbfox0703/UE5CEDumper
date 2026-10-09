@@ -16,12 +16,12 @@ using Xunit;
 namespace UE5DumpUI.HeadlessTests;
 
 /// <summary>
-/// [CT-COLUMNS-OVERLAP] The Call Trace list as Avalonia 12.1.3 lays it out, with the detail pane dragged wide as the
-/// step-3 walkthrough left it: the list is narrower than its four fixed columns. Each column keeps its dragged width,
-/// none draws into the visible part of the one on its left, and what does not fit is cut at the list's edge instead of
-/// drawing over the detail pane. A source test cannot show this: the overlap came from where DockPanel puts a fixed
-/// width cell that no longer fits, which no attribute in the file states. [CT-DETAIL-COVERS-LIST]: the list keeps its
-/// floor beside the detail pane however wide the pane is remembered or dragged, and its rows can be clicked.
+/// [CT-COLUMNS-OVERLAP] The Call Trace list as Avalonia 12.1.3 lays it out when it is narrower than its four fixed
+/// columns, as the step-3 walkthrough saw it. Each column keeps the width shown, none draws into the visible part of
+/// the one on its left, and what does not fit is cut at the list's edge instead of drawing over the detail pane. A
+/// source test cannot show this: the overlap came from where DockPanel puts a fixed width cell that no longer fits,
+/// which no attribute in the file states. [CT-DETAIL-COVERS-LIST]: the list keeps its floor beside the detail pane
+/// however wide the pane is remembered or dragged, and its rows can be clicked.
 /// </summary>
 public class CallTraceColumnsTests
 {
@@ -122,60 +122,64 @@ public class CallTraceColumnsTests
 
     private static (string name, Visual cell, double width)[] HeaderCells(Visual panel, CallTraceViewModel vm) =>
     [
-        ("Time", HeaderCell(panel, "str.CT.Col.Time"), vm.TimeColWidth),
-        ("Duration", HeaderCell(panel, "str.CT.Col.Duration"), vm.DurationColWidth),
-        ("Thread", HeaderCell(panel, "str.CT.Col.Thread"), vm.ThreadColWidth),
-        ("Object", HeaderCell(panel, "str.CT.Col.Object"), vm.ObjectColWidth),
+        ("Time", HeaderCell(panel, "str.CT.Col.Time"), vm.ShownTimeColWidth),
+        ("Duration", HeaderCell(panel, "str.CT.Col.Duration"), vm.ShownDurationColWidth),
+        ("Thread", HeaderCell(panel, "str.CT.Col.Thread"), vm.ShownThreadColWidth),
+        ("Object", HeaderCell(panel, "str.CT.Col.Object"), vm.ShownObjectColWidth),
     ];
 
     private static (string name, Visual cell, double width)[] RowCells(Visual panel, CallTraceViewModel vm) =>
     [
-        ("Time", Text(panel, Row.TimeText), vm.TimeColWidth),
-        ("Duration", Text(panel, Row.DurationText), vm.DurationColWidth),
-        ("Thread", Text(panel, Row.ThreadText), vm.ThreadColWidth),
-        ("Object", Text(panel, Row.ObjectText), vm.ObjectColWidth),
+        ("Time", Text(panel, Row.TimeText), vm.ShownTimeColWidth),
+        ("Duration", Text(panel, Row.DurationText), vm.ShownDurationColWidth),
+        ("Thread", Text(panel, Row.ThreadText), vm.ShownThreadColWidth),
+        ("Object", Text(panel, Row.ObjectText), vm.ShownObjectColWidth),
     ];
 
-    /// <summary>Every cell as wide as it was dragged, and none starting inside what can be seen of the one before.</summary>
+    /// <summary>Every cell as wide as the view model shows it, and none starting inside what can be seen of the one
+    /// before.</summary>
     private static void AssertApart(string what, Visual panel, (string name, Visual cell, double width)[] cells)
     {
         var spans = cells.Select(c => (c.name, span: Span(c.cell, panel), seen: VisibleRight(c.cell, panel), c.width)).ToList();
         string layout = string.Join(", ", spans.Select(s => $"{s.name} {s.span.left:0.#}-{s.span.right:0.#} (seen to {s.seen:0.#})"));
         foreach (var s in spans)
             Assert.True(Math.Abs(s.span.right - s.span.left - s.width) < 0.5,
-                        $"{what}: {s.name} is {s.span.right - s.span.left:0.#} wide, dragged to {s.width} ({layout})");
+                        $"{what}: {s.name} is {s.span.right - s.span.left:0.#} wide, shown at {s.width} ({layout})");
         for (int i = 1; i < spans.Count; i++)
             Assert.True(spans[i].span.left >= Math.Min(spans[i - 1].span.right, spans[i - 1].seen) - 0.5,
                         $"{what}: {spans[i].name} draws over {spans[i - 1].name} ({layout})");
     }
 
-    // 700: the walkthrough's case, the list (272 wide) narrower than the four columns (508), so Function has nothing
-    // left and Object is cut. 760: narrower than Time, Duration and Thread together (248), so Thread is cut too.
+    // [CT-DETAIL-COVERS-LIST] The list is narrower than its columns only where the panel is narrower than both floors:
+    // the pane keeps its 200 and the list, laid out as at its floor, is cut. 500: the list 276 wide (its header 272),
+    // narrower than the four columns as the floor lays them out (328), so Function has nothing left and Object is cut.
+    // 440: narrower than Time, Duration and Thread together (248), so Thread is cut too. (Before the floor, the step-3
+    // walkthrough reached the same lists with the pane dragged to 700 and 760 in a 1000 window.)
     [Theory]
-    [InlineData(700)]
-    [InlineData(760)]
-    public Task A_narrow_list_keeps_every_header_column_out_of_the_next(double detailPaneWidth) => Headless.Run(() =>
+    [InlineData(500)]
+    [InlineData(440)]
+    public Task A_narrow_list_keeps_every_header_column_out_of_the_next(double window) => Headless.Run(() =>
     {
-        var (panel, vm) = Laid(detailPaneWidth);
+        var (_, panel, vm) = LaidIn(window, 380, Row);
         AssertApart("header", panel, HeaderCells(panel, vm));
     });
 
     [Theory]
-    [InlineData(700)]
-    [InlineData(760)]
-    public Task A_narrow_list_keeps_every_row_column_out_of_the_next(double detailPaneWidth) => Headless.Run(() =>
+    [InlineData(500)]
+    [InlineData(440)]
+    public Task A_narrow_list_keeps_every_row_column_out_of_the_next(double window) => Headless.Run(() =>
     {
-        var (panel, vm) = Laid(detailPaneWidth);
+        var (_, panel, vm) = LaidIn(window, 380, Row);
         AssertApart("row", panel, RowCells(panel, vm));
     });
 
     [Theory]
-    [InlineData(700)]
-    [InlineData(760)]
-    public Task What_does_not_fit_is_cut_at_the_list_and_never_drawn_over_the_detail_pane(double detailPaneWidth)
+    [InlineData(500)]
+    [InlineData(440)]
+    public Task What_does_not_fit_is_cut_at_the_list_and_never_drawn_over_the_detail_pane(double window)
         => Headless.Run(() =>
     {
-        var (panel, vm) = Laid(detailPaneWidth);
+        var (_, panel, vm) = LaidIn(window, 380, Row);
         var tabs = panel.GetVisualDescendants().OfType<TabControl>().Single();
         var handle = ((Panel)tabs.GetVisualParent()!).Children.OfType<Thumb>().Single();
         double edge = Span(handle, panel).left;
@@ -215,12 +219,13 @@ public class CallTraceColumnsTests
         Where = "native entry of DumperTest58Actor::SnapNest_Outer +0x73 (one of 2 functions that share this code)",
     };
 
-    /// <summary>The panel as <see cref="Laid"/> lays it out, its Call stack tab chosen and showing one frame: <see
-    /// cref="Frame"/>, or with <paramref name="shortWhere"/> the same frame with a Where of a few words.</summary>
+    /// <summary>The panel in a 1600-wide window, where the list's floor leaves the pane room for any width asked here,
+    /// its Call stack tab chosen and showing one frame: <see cref="Frame"/>, or with <paramref name="shortWhere"/> the
+    /// same frame with a Where of a few words.</summary>
     private static (DataGrid grid, DataGridColumn where) StackLaid(double detailPaneWidth, bool shortWhere = false)
     {
         LoadDataGridTheme();
-        var (panel, vm) = Laid(detailPaneWidth);
+        var (_, panel, vm) = LaidIn(1600, detailPaneWidth, Row);
         vm.StackRows = new[] { shortWhere ? new StackFrameRow { Index = Frame.Index, Address = Frame.Address, Where = "+0x6F" } : Frame };
         panel.GetVisualDescendants().OfType<TabControl>().Single().SelectedIndex = 1;
         Dispatcher.UIThread.RunJobs();

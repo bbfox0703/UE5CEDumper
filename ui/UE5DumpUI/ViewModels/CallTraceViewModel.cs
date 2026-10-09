@@ -112,52 +112,149 @@ public partial class CallTraceViewModel : ViewModelBase
     /// <summary>The ceiling for every width: a hand-edited value of millions of pixels would lay the panel out far
     /// past any screen.</summary>
     internal const double MaxWidth = 4096;
+    /// <summary>The fixed layout the tab had before its widths could be dragged: where they start, and what the list's
+    /// floor is made of.</summary>
+    internal const double DefaultTimeColWidth = 96, DefaultDurationColWidth = 88, DefaultThreadColWidth = 64,
+                          DefaultObjectColWidth = 260, DefaultDetailPaneWidth = 380;
+    /// <summary>[CT-DETAIL-COVERS-LIST] What Function keeps of a row before the columns give way: a root row's expand
+    /// glyph and about twenty characters of its name in Consolas 12, still a dozen beside its (p) and (s) marks.</summary>
+    internal const double MinFunctionWidth = 160;
+    /// <summary>A row is narrower than the list by its item's padding, Fluent's 12 on each side.</summary>
+    internal const double RowChrome = 24;
+    /// <summary>[CT-DETAIL-COVERS-LIST] The list's floor, 512: a row with Time, Duration and Thread at their default
+    /// widths, Object at its floor and Function's slice, so a call can still be told and picked. The pane is never
+    /// shown so wide that the list has less: a remembered or dragged width covered the whole list, its rows and the
+    /// pane's own handle.</summary>
+    internal const double MinListWidth = RowChrome + DefaultTimeColWidth + DefaultDurationColWidth
+                                         + DefaultThreadColWidth + MinObjectColWidth + MinFunctionWidth;
 
-    private double _timeColWidth = 96, _durationColWidth = 88, _threadColWidth = 64, _objectColWidth = 260,
-                   _detailPaneWidth = 380;
+    // The remembered widths: what the user dragged, saved in ui-options.json. A layout never writes them, so a width
+    // the panel cannot show now comes back when it can.
+    private double _timeColWidth = DefaultTimeColWidth, _durationColWidth = DefaultDurationColWidth,
+                   _threadColWidth = DefaultThreadColWidth, _objectColWidth = DefaultObjectColWidth,
+                   _detailPaneWidth = DefaultDetailPaneWidth;
+    // [CT-DETAIL-COVERS-LIST] The widths the panel shows: the remembered ones fitted to its room (Refit).
+    private double _shownTime = DefaultTimeColWidth, _shownDuration = DefaultDurationColWidth,
+                   _shownThread = DefaultThreadColWidth, _shownObject = DefaultObjectColWidth,
+                   _shownPane = DefaultDetailPaneWidth;
+    private double _splitWidth = double.NaN;
+
     public double TimeColWidth
     {
         get => _timeColWidth;
-        set => SetProperty(ref _timeColWidth, ClampWidth(value, MinTimeColWidth));
+        set { if (SetProperty(ref _timeColWidth, ClampWidth(value, MinTimeColWidth))) Refit(); }
     }
     public double DurationColWidth
     {
         get => _durationColWidth;
-        set => SetProperty(ref _durationColWidth, ClampWidth(value, MinDurationColWidth));
+        set { if (SetProperty(ref _durationColWidth, ClampWidth(value, MinDurationColWidth))) Refit(); }
     }
     public double ThreadColWidth
     {
         get => _threadColWidth;
-        set => SetProperty(ref _threadColWidth, ClampWidth(value, MinThreadColWidth));
+        set { if (SetProperty(ref _threadColWidth, ClampWidth(value, MinThreadColWidth))) Refit(); }
     }
     /// <summary>Docked at the right of each row: Function takes what the fixed columns leave.</summary>
     public double ObjectColWidth
     {
         get => _objectColWidth;
-        set => SetProperty(ref _objectColWidth, ClampWidth(value, MinObjectColWidth));
+        set { if (SetProperty(ref _objectColWidth, ClampWidth(value, MinObjectColWidth))) Refit(); }
     }
     public double DetailPaneWidth
     {
         get => _detailPaneWidth;
-        set => SetProperty(ref _detailPaneWidth, ClampWidth(value, MinDetailPaneWidth));
+        set { if (SetProperty(ref _detailPaneWidth, ClampWidth(value, MinDetailPaneWidth))) Refit(); }
     }
 
     /// <summary>NaN goes to the floor, not through: a Width of NaN is "auto" to Avalonia, and the column would size to
     /// its text row by row.</summary>
     private static double ClampWidth(double value, double min) => double.IsNaN(value) ? min : Math.Clamp(value, min, MaxWidth);
 
-    // [CT-DETAIL-COVERS-LIST] Declarations the tests compile against; they still show and drag the remembered widths.
-    internal double SplitWidth { get; set; } = double.NaN;
-    public double ShownTimeColWidth => TimeColWidth;
-    public double ShownDurationColWidth => DurationColWidth;
-    public double ShownThreadColWidth => ThreadColWidth;
-    public double ShownObjectColWidth => ObjectColWidth;
-    public double ShownDetailPaneWidth => DetailPaneWidth;
-    internal void DragTime(double step) => TimeColWidth += step;
-    internal void DragDuration(double step) => DurationColWidth += step;
-    internal void DragThread(double step) => ThreadColWidth += step;
-    internal void DragObject(double step) => ObjectColWidth += step;
-    internal void DragDetailPane(double step) => DetailPaneWidth += step;
+    /// <summary>[CT-DETAIL-COVERS-LIST] The width the list and the detail pane share, as the view last measured the
+    /// panel (its width less its margin and the pane's handle); NaN until then, when every width shows as remembered.</summary>
+    internal double SplitWidth
+    {
+        get => _splitWidth;
+        set { if (SetProperty(ref _splitWidth, double.IsNaN(value) ? double.NaN : Math.Max(0, value))) Refit(); }
+    }
+
+    // What the header, the rows and the pane bind.
+    public double ShownTimeColWidth => _shownTime;
+    public double ShownDurationColWidth => _shownDuration;
+    public double ShownThreadColWidth => _shownThread;
+    public double ShownObjectColWidth => _shownObject;
+    public double ShownDetailPaneWidth => _shownPane;
+
+    private double[] RememberedColumns => [_timeColWidth, _durationColWidth, _threadColWidth, _objectColWidth];
+    private double[] ShownColumns => [_shownTime, _shownDuration, _shownThread, _shownObject];
+    /// <summary>Each column's floor, in the order the columns are fitted: left to right, Object last.</summary>
+    private static readonly double[] ColumnFloors = [MinTimeColWidth, MinDurationColWidth, MinThreadColWidth, MinObjectColWidth];
+
+    /// <summary>Fits the remembered widths to the room: the pane first, so the list keeps its floor, then the columns
+    /// into the list the pane leaves. Raises a shown width only when it changes.</summary>
+    private void Refit()
+    {
+        double pane = FitPane(_detailPaneWidth, _splitWidth);
+        double[] cols = FitColumns(RememberedColumns, RowRoom(_splitWidth, pane));
+        SetProperty(ref _shownPane, pane, nameof(ShownDetailPaneWidth));
+        SetProperty(ref _shownTime, cols[0], nameof(ShownTimeColWidth));
+        SetProperty(ref _shownDuration, cols[1], nameof(ShownDurationColWidth));
+        SetProperty(ref _shownThread, cols[2], nameof(ShownThreadColWidth));
+        SetProperty(ref _shownObject, cols[3], nameof(ShownObjectColWidth));
+    }
+
+    /// <summary>The pane as shown: as remembered, but never so wide that the list loses its floor. Where the panel is
+    /// narrower than both floors the pane keeps its own 200 and the list takes what is left: the list below its floor
+    /// still shows a row's Time and Duration to click, and the pane is where the chosen call is read -- cut below 200
+    /// it wraps the call's text into fragments and its tabs into rows.</summary>
+    internal static double FitPane(double remembered, double split)
+        => double.IsNaN(split) ? remembered : Math.Min(remembered, Math.Max(MinDetailPaneWidth, split - MinListWidth));
+
+    /// <summary>The room a row gives its cells beside a pane <paramref name="shownPane"/> wide. A list below its floor
+    /// is laid out as at its floor and cut at its edge ([CT-COLUMNS-OVERLAP]): fitted to the narrower list, every
+    /// column would shrink to its floor, Time and Duration included, to keep a Function slice that is cut anyway.</summary>
+    internal static double RowRoom(double split, double shownPane)
+        => double.IsNaN(split) ? double.NaN : Math.Max(split - shownPane, MinListWidth) - RowChrome;
+
+    /// <summary>The widest column <paramref name="i"/> can show in a row of <paramref name="room"/>: what is left after
+    /// Function's slice, the columns before it as <paramref name="shown"/> and the floors of the ones after it. So the
+    /// columns give way from the right: Object first, the column a call is least told by, Time last.</summary>
+    internal static double ColumnCap(int i, double[] shown, double room)
+    {
+        if (double.IsNaN(room)) return MaxWidth;
+        double cap = room - MinFunctionWidth;
+        for (int j = 0; j < ColumnFloors.Length; j++)
+            if (j != i) cap -= j < i ? shown[j] : ColumnFloors[j];
+        return Math.Max(ColumnFloors[i], cap);
+    }
+
+    /// <summary>[CT-DETAIL-COVERS-LIST] The columns as shown: each as remembered where it fits, else at its cap, never
+    /// below its floor. Unfitted, a column wider than the list hid Function and the handles of the columns after it.</summary>
+    internal static double[] FitColumns(double[] remembered, double room)
+    {
+        var shown = new double[remembered.Length];
+        for (int i = 0; i < remembered.Length; i++)
+            shown[i] = Math.Min(remembered[i], ColumnCap(i, shown, room));
+        return shown;
+    }
+
+    // [CT-DETAIL-COVERS-LIST] A drag adds its step to the width SHOWN and remembers what it leaves shown. Added to a
+    // remembered width the panel does not show, a drag past the limit would keep a margin that the next drag back has
+    // to undo first, with nothing moving meanwhile.
+    internal void DragTime(double step) => TimeColWidth = DraggedColumn(0, step);
+    internal void DragDuration(double step) => DurationColWidth = DraggedColumn(1, step);
+    internal void DragThread(double step) => ThreadColWidth = DraggedColumn(2, step);
+    /// <summary>Object's step widens it: its handle is on its left edge.</summary>
+    internal void DragObject(double step) => ObjectColWidth = DraggedColumn(3, step);
+    /// <summary>The pane's step widens it: its handle is on its left edge.</summary>
+    internal void DragDetailPane(double step)
+        => DetailPaneWidth = Math.Clamp(_shownPane + step, MinDetailPaneWidth, FitPane(MaxWidth, _splitWidth));
+
+    private double DraggedColumn(int i, double step)
+    {
+        double[] shown = ShownColumns;
+        return Math.Clamp(shown[i] + step, ColumnFloors[i], ColumnCap(i, shown, RowRoom(_splitWidth, _shownPane)));
+    }
 
     internal CallTrace? Trace => _trace;
     internal CallTraceTree? Tree => _tree;

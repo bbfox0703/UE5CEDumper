@@ -1191,14 +1191,15 @@ public class CallTraceViewModelTests
         var row = RowTemplate(PanelAxaml());
         // A ColumnDefinition is not a Visual, so a $parent binding on it never resolves: fixed columns cannot follow a drag.
         Assert.DoesNotContain(row.DescendantsAndSelf(), e => e.Attribute("ColumnDefinitions") != null);
-        foreach (var (width, text) in new[] { ("TimeColWidth", "TimeText"), ("DurationColWidth", "DurationText"),
-                                              ("ThreadColWidth", "ThreadText"), ("ObjectColWidth", "ObjectText") })
+        // [CT-DETAIL-COVERS-LIST] The width shown, fitted to the list; the remembered one is what is saved.
+        foreach (var (width, text) in new[] { ("ShownTimeColWidth", "TimeText"), ("ShownDurationColWidth", "DurationText"),
+                                              ("ShownThreadColWidth", "ThreadText"), ("ShownObjectColWidth", "ObjectText") })
         {
             var cells = row.Descendants().Where(e => (string?)e.Attribute("Width") == RowWidth + width + "}").ToList();
             Assert.True(cells.Count == 1, $"{cells.Count} row cell(s) bind {width}");
             Assert.Contains(cells[0].DescendantsAndSelf(), e => (string?)e.Attribute("Text") == "{Binding " + text + "}");
         }
-        var obj = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ObjectColWidth}");
+        var obj = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ShownObjectColWidth}");
         Assert.Contains(obj.DescendantsAndSelf(),
                         e => ((string?)e.Attribute("ToolTip.Tip") ?? "").StartsWith("{Binding Object", StringComparison.Ordinal));
     }
@@ -1210,14 +1211,14 @@ public class CallTraceViewModelTests
         var row = RowTemplate(doc);
         var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
         Assert.DoesNotContain(outside, e => e.Attribute("ColumnDefinitions") != null);
-        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        foreach (var width in new[] { "ShownTimeColWidth", "ShownDurationColWidth", "ShownThreadColWidth", "ShownObjectColWidth" })
         {
             var cells = outside.Where(e => (string?)e.Attribute("Width") == "{Binding " + width + "}").ToList();
             Assert.True(cells.Count == 1, $"{cells.Count} header cell(s) bind {width}");
             Assert.Contains(cells[0].Descendants(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
         }
         // [LIVEFUNCS-STEP2] U13: the pane is a TabControl now (Call | Parameters); the width and its thumb are its.
-        var pane = outside.Single(e => (string?)e.Attribute("Width") == "{Binding DetailPaneWidth}");
+        var pane = outside.Single(e => (string?)e.Attribute("Width") == "{Binding ShownDetailPaneWidth}");
         Assert.Contains(pane.Descendants(Av + "TextBox"),
                         e => (string?)e.Attribute("Text") == "{Binding DetailText, Mode=OneWay}");
         Assert.Contains(pane.Parent!.Elements(Av + "Thumb"), t => t.Attribute("DragDelta") != null);
@@ -1248,7 +1249,7 @@ public class CallTraceViewModelTests
         var doc = PanelAxaml();
         var row = RowTemplate(doc);
         var outside = doc.Descendants().Where(e => !e.Ancestors().Contains(row) && e != row).ToList();
-        foreach (var width in new[] { "TimeColWidth", "DurationColWidth", "ThreadColWidth", "ObjectColWidth" })
+        foreach (var width in new[] { "ShownTimeColWidth", "ShownDurationColWidth", "ShownThreadColWidth", "ShownObjectColWidth" })
         {
             var header = outside.Single(e => (string?)e.Attribute("Width") == "{Binding " + width + "}");
             var cell = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + width + "}");
@@ -1256,12 +1257,12 @@ public class CallTraceViewModelTests
             Assert.True((string?)cell.Attribute("HorizontalAlignment") == "Left", $"the row's {width} cell is not aligned left");
         }
         // The header is outside the list and is drawn after the detail pane: unclipped, its overflow covers that pane.
-        var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding TimeColWidth}").Parent!;
+        var headerRow = outside.Single(e => (string?)e.Attribute("Width") == "{Binding ShownTimeColWidth}").Parent!;
         Assert.True((string?)headerRow.Attribute("ClipToBounds") == "True", "the header's row does not clip what overflows it");
         // A row is narrower than the list's viewport by the item's padding: a column the row places at its own edge
         // would show there, over the column cut at that edge (measured with the list narrower than Time, Duration and
         // Thread together).
-        var rowPanel = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "TimeColWidth}").Parent!;
+        var rowPanel = row.Descendants().Single(e => (string?)e.Attribute("Width") == RowWidth + "ShownTimeColWidth}").Parent!;
         Assert.True((string?)rowPanel.Attribute("ClipToBounds") == "True", "a row does not clip what overflows it");
     }
 
